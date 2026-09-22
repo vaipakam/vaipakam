@@ -36,13 +36,15 @@ PRs landing the same day never append-conflict.
      blank lines. Nothing below that line is examined — not a heading
      further down the file, and not a title underlined with `=` or `-`
      rather than prefixed with `#`.
-   - A fragment that **opens with `---`, or starts with a byte-order mark,
-     is refused outright** — before its heading is looked at. Neither is a
-     shape any fragment has ever used, and both read as one thing at the top
-     of their own file and as something else once folded into the dated
-     note: `---` becomes a thematic break, and a byte-order mark stops the
-     line after it being a heading at all. Open with the `##` heading
-     itself.
+   - A fragment that **opens with `---` is refused outright**, before its
+     heading is looked at. In its own file that is front matter; once folded
+     into the dated note it is a thematic break, and the lines under it
+     become a heading nobody wrote. Open with the `##` heading itself.
+   - A fragment saved with a **byte-order mark** is *not* refused, and is
+     published as-is. Refusing it was tried and removed: the advice it gave
+     — re-save the file — changed the very line the duplicate guard matches
+     on, which twice cost a fragment. No fragment has ever been saved that
+     way; if one is, the mark will sit visibly at the top of the section.
    - A heading with **no PR reference at all** is not refused. That is not an
      oversight — most fragments written so far carry none, as do most
      published section headings. The `(PR #<n>)` convention is the template's,

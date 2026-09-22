@@ -22,8 +22,8 @@ work over a heading level. The warning matters because such a heading is
 not merely untidy — folded after a shallower one it becomes a *subsection of
 that other change*, so an outline can present it as something an unrelated
 change does or does not do. Two published sections are in that state today;
-a third, with nothing shallower before it, instead skips a level. A heading
-carrying no reference at all is likewise
+a third, with only the generated release title above it, instead skips a
+level. A heading carrying no reference at all is likewise
 allowed, because most fragments carry none: the template's convention is
 not a rule the corpus follows. What is refused is the failure the template
 actually produces — shipping the placeholder and leaving it unsubstituted.
@@ -35,10 +35,10 @@ refuse the majority of real work.
 The check reads one line — the fragment's first line of content — and
 recognises a heading there only in `#` form. A title underlined instead of
 prefixed, a heading further down the file, and raw HTML are not examined. A
-fragment that opens with a byte-order mark or with `---` is refused outright
-rather than interpreted, because each reads as one thing at the top of its
-own file and as something else once folded, and the assembler publishes what
-the author wrote rather than a cleaned-up copy of it. That is a deliberate
+fragment that opens with `---` is refused outright rather than interpreted,
+because in its own file that is front matter and once folded it is a
+thematic break — the assembler publishes what the author wrote rather than a
+cleaned-up copy of it. That is a deliberate
 trade rather than an oversight:
 an earlier version scanned for the first heading anywhere in the file and
 produced six separate ways to be fooled, each one causing a real heading

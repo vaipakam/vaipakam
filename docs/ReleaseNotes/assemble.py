@@ -1489,7 +1489,11 @@ class Assembly:
     # ── fragment heading conformance (#2288) ─────────────────────────────
 
     def check_heading_conformance(self) -> None:
-        """Refuse a fragment whose first heading does not match the template.
+        """Refuse a fragment whose OPENING LINE does not match the template.
+
+        Not "its first heading": a fragment that opens with prose and carries
+        a `#` heading further down is published unexamined, deliberately, and
+        that narrowing is what `first_heading` exists to state (#2290 r21).
 
         `_TEMPLATE.md` opens `## Thread — <short title> (PR #<n>)`. Two
         things about that line are load-bearing the moment the fragment is
@@ -1623,29 +1627,31 @@ class Assembly:
             # title, so anything that reads differently at the top of its own
             # file than it does mid-document is a fragment the check cannot
             # honestly bless — see `first_heading` for the two worked cases.
-            # EVERY standard byte-order mark, not only UTF-8's (#2290 r15).
-            # The contributor note promises that a fragment starting with a
-            # byte-order mark is refused; recognising `EF BB BF` alone left a
-            # UTF-16 or UTF-32 file to take the no-heading allowance and
-            # publish mixed-encoding bytes into a UTF-8 document, consuming
-            # the source. These are fixed byte signatures, so the check is
-            # exact rather than a guess — UTF-32 first, because its little-
-            # endian mark begins with UTF-16's.
-            if body.startswith(
-                (
-                    b"\xef\xbb\xbf",          # UTF-8
-                    b"\xff\xfe\x00\x00",      # UTF-32 LE
-                    b"\x00\x00\xfe\xff",      # UTF-32 BE
-                    b"\xff\xfe",              # UTF-16 LE
-                    b"\xfe\xff",              # UTF-16 BE
-                )
-            ):
-                bad.append(
-                    f"{name}: starts with a byte-order mark, which is invisible "
-                    f"at the top of its own file and is not valid mid-document "
-                    f"once folded  ->  save it as UTF-8 without one"
-                )
-                continue
+            # THERE IS NO BOM REFUSAL, and removing it is the fix rather than
+            # a gap (#2290 r21). It was added in r11 to close a
+            # permit-by-misrecognition, and then caused three findings of its
+            # own: it recognised only UTF-8 (r15), and twice it produced a
+            # REPRODUCED DATA-LOSS path (r20, r21) — refusing a BOM tells the
+            # author to re-save the file, and that edit is exactly what makes
+            # the markerless duplicate guard stop recognising the copy already
+            # published, so the rerun appended a second one and consumed the
+            # source.
+            #
+            # It guarded nothing: ZERO of the 759 fragments ever committed
+            # begin with any byte-order mark. A refusal that has never been
+            # needed and has caused two data-loss paths is the speculative
+            # branch this change has already removed twice — the setext
+            # parser, and normalising-to-decide.
+            #
+            # Patching it again meant adding four more byte prefixes to the
+            # guard's de-BOM helper, which is precisely the grow-a-list option
+            # #2298 argues is the weaker one, because it couples a list of
+            # remedies to a list of refusals.
+            #
+            # A BOM-bearing fragment is therefore ALLOWED, exactly as it is on
+            # `main`, which has no heading check at all — so this is a strict
+            # non-regression. #2295 refuses it properly when it lands, as an
+            # unrecognised opening line, without ever asking for a re-save.
             _first_content = next(
                 (
                     ln[:-1] if ln.endswith(b"\r") else ln
@@ -1796,17 +1802,14 @@ class Assembly:
                 err("A ## heading becomes a section of the release. A deeper one becomes")
                 err("a SUBSECTION of whatever shallower heading precedes it in the")
                 err("finished file, and something always does — the dated file opens")
-                err("with its own `# Release Notes` title. So there are two outcomes,")
-                err("not one:")
+                err("with its own `# Release Notes` title. WHICH heading that is")
+                err("depends on the fold order and on the levels of every fragment")
+                err("ahead of yours: another change's ## section, another fragment's")
+                err("own ### subheading, or — if nothing else is shallower — the")
+                err("release title itself, which leaves your heading skipping a level.")
                 err("")
-                err("  - a ## section of another change precedes you: your heading is")
-                err("    filed under THAT change, and outlines and screen-reader")
-                err("    navigation attribute it to them;")
-                err("  - only the release title precedes you: your heading hangs off")
-                err("    the title at a level that skips one.")
-                err("")
-                err("Both have happened: two published sections were absorbed under")
-                err("another change, and one hangs off the title.")
+                err("Two published sections were absorbed under another change, and")
+                err("one hangs off the title.")
                 err("")
                 err("WHICH of those you get is not stated here, on purpose. It depends")
                 err("on the fold order and on the levels of every fragment ahead of")

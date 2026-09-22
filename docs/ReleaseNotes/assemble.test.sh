@@ -2551,17 +2551,20 @@ case_start "T78c: remediating a BOM does not orphan the published copy"
 W="$ROOT/t78c"; build "$W"
 out="$W/docs/ReleaseNotes"
 rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
-# THE FIX THIS SCRIPT ASKS FOR CHANGES THE EVIDENCE THIS GUARD MATCHES ON
-# (#2290 r20). A BOM-bearing fragment already folded into a legacy markerless
-# file sits there as `<BOM>## Title`; HEADING_RE does not match a line
-# starting with the BOM, so the guard said nothing and the conformance check
-# refused the BOM, telling the operator to save without one. The remediated
-# fragment then read `## Title`, which no longer equalled the published
-# `<BOM>## Title` — so the rerun matched nothing, appended a second copy and
-# consumed the source. Measured: pre-fix exit=0, copies=2, pending=0.
+# A legacy markerless dated file can hold a section as `<BOM>## Title`, and
+# HEADING_RE never matches a line beginning EF BB BF — so without stripping
+# the mark on both sides the guard sees no heading, appends a second copy and
+# consumes the source. Measured: pre-fix exit=0, copies=2, pending=0.
 #
-# Both sides of the comparison are now BOM-stripped. This is the r16 ordering
-# finding's BOM instance; the class is filed rather than patched a third time.
+# The route that first exposed this is GONE: refusing a BOM told the author
+# to re-save, and that edit is what stopped the published copy matching
+# (#2290 r20/r21). The refusal has since been removed for causing exactly
+# that. The stripping stays, because a legacy file can carry a BOM-bearing
+# section for reasons that predate this change and the guard must still
+# recognise it.
+#
+# The class — a refusal whose remedy edits the text this guard matches on —
+# is filed as #2298 rather than patched per remedy.
 printf '## Thread — already published (PR #4400)\n\nbody\n' \
   > "$W/docs/ReleaseNotes/unreleased/0001-a.md"
 printf '# Release Notes — 2026-08-16\n\n\xef\xbb\xbf## Thread — already published (PR #4400)\n\nbody\n' \
@@ -4615,52 +4618,47 @@ check "and names the real outcome" "$(says "$msg" 'SUBSECTION of whatever shallo
 # deliberately does not re-derive the fold order to find out.
 #
 # SOMETHING SHALLOWER ALWAYS PRECEDES IT — `build()` writes `# Release Notes`
-# as the file's first line (#2290 r18). An earlier version of this message
-# offered "where nothing shallower precedes it" as the second case, which
-# cannot happen. The real second case is that only the release TITLE precedes
-# it, so the heading hangs off the title at a level that skips one.
-check "and states the other case"  "$(says "$msg" 'only the release title precedes you')" "1"
+# as the file's first line (#2290 r18), so "where nothing shallower precedes
+# it" was an impossible second case.
+#
+# NOR ARE THERE EXACTLY TWO (#2290 r21). A `####` opener after a `###` one
+# lands under THAT — neither a `##` section nor the title. The message names
+# the rule (nearest preceding shallower heading) and gives the title case as
+# the endpoint, rather than enumerating outcomes that a deeper fragment can
+# always add one more to.
+check "and states the other case"  "$(says "$msg" 'release title itself')" "1"
 check "and that it continues"      "$(says "$msg" 'not a refusal')"              "1"
 
 # A WARNING MUST NOT EXEMPT THE REFUSAL. The first version of the warning
 # block `continue`d, which let `### Title (PR #TBD)` publish its placeholder
 # because the heading happened to be deep. Warnings and refusals are
 # independent tests of the same line.
-# ── A UTF-8 BOM is REFUSED, not stripped (#2290 r11 → r12) ─────────────────
-# r11 stripped it, which let `BOM + # Title` be seen. r12 found the strip was
-# local to the check: `build()` publishes the raw bytes, and mid-document a
-# U+FEFF is an ordinary zero-width character, so `BOM + ## Heading` renders as
-# a PARAGRAPH. The check was blessing a fragment it had made unpublishable —
-# validating one document while the assembler published another.
+# ── A BOM is ALLOWED — refusing it was tried and removed (r11 → r21) ──────
+# Refusing it closed a permit-by-misrecognition and then caused three
+# findings of its own: it recognised only UTF-8 (r15), and twice it produced
+# a reproduced DATA-LOSS path (r20, r21). Refusing a BOM tells the author to
+# re-save the file, and that edit is exactly what stops the markerless
+# duplicate guard recognising the copy already published.
 #
-# So it is refused, and the ACCEPTANCE case below is the one that matters:
-# under the r11 behaviour that fragment assembled and published wrong.
-case_start "T217m: a fragment starting with a BOM is refused"
+# It guarded nothing — ZERO of the 759 fragments ever committed carry any
+# byte-order mark — so it is the speculative branch this change has already
+# removed twice. A BOM fragment is published, as it is on `main`, which has
+# no heading check at all. #2295 refuses it properly, as an unrecognised
+# opening line, without ever asking for a re-save.
+case_start "T217m: a BOM-bearing fragment is published, not refused"
 W="$ROOT/t217m"; build "$W"
-printf '\xef\xbb\xbf# Thread — hidden behind a byte-order mark (PR #4249)\n' \
+printf '\xef\xbb\xbf## Thread — saved with a mark (PR #4249)\n' \
   > "$W/docs/ReleaseNotes/unreleased/0003-bom.md"
-msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
-check "the run refuses"      "$?"                                  "1"
-check "naming the file"      "$(says "$msg" '0003-bom.md')"        "1"
-check "saying why"           "$(says "$msg" 'byte-order mark')"    "1"
-check "nothing was consumed" "$(pending "$W")"                     "3"
-# A BOM in front of an OTHERWISE VALID heading is refused too — this is the
-# case r11 accepted and published as a paragraph.
+bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates >/dev/null 2>&1
+check "the run succeeds"     "$?"              "0"
+check "nothing left pending" "$(pending "$W")" "0"
+# UTF-16 likewise — the refusal that knew only UTF-8 is gone entirely.
 W="$ROOT/t217m2"; build "$W"
-printf '\xef\xbb\xbf## Thread — valid but behind a mark (PR #4250)\n' \
-  > "$W/docs/ReleaseNotes/unreleased/0003-bom-ok.md"
-msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
-check "the run refuses"      "$?"                                 "1"
-check "naming the file"      "$(says "$msg" '0003-bom-ok.md')"    "1"
-check "nothing was consumed" "$(pending "$W")"                    "3"
-# A BOM before front matter: refused for the BOM, which is checked first.
-W="$ROOT/t217m3"; build "$W"
-printf -- '\xef\xbb\xbf---\ntitle: x\n---\n\n# Peer title (PR #TBD)\n' \
-  > "$W/docs/ReleaseNotes/unreleased/0003-bom-fm.md"
-msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
-check "the run refuses"      "$?"                               "1"
-check "for the BOM"          "$(says "$msg" 'byte-order mark')" "1"
-check "nothing was consumed" "$(pending "$W")"                  "3"
+printf '\xff\xfe## Thread — saved as UTF-16 LE (PR #4250)\n' \
+  > "$W/docs/ReleaseNotes/unreleased/0003-bom16.md"
+bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates >/dev/null 2>&1
+check "the run succeeds"     "$?"              "0"
+check "nothing left pending" "$(pending "$W")" "0"
 
 # ── The front-matter refusal is not escaped by trailing whitespace (r14) ───
 # `---   ` and `---\t` are valid YAML delimiters. An exact comparison let
@@ -4700,26 +4698,6 @@ check "nothing left pending" "$(pending "$W")" "0"
 # reference and telling the operator to replace a placeholder that is not
 # there. Verified against the published corpus before changing: the new rule
 # refuses the same 179 headings and the same four tokens, zero differences.
-# ── Every standard byte-order mark, not only UTF-8's (#2290 r15) ──────────
-# The contributor note promises that a fragment starting with a byte-order
-# mark is refused. Recognising `EF BB BF` alone let a UTF-16 file take the
-# no-heading allowance and publish mixed-encoding bytes, consuming the source.
-case_start "T217p: a UTF-16 byte-order mark is refused like UTF-8's"
-W="$ROOT/t217p"; build "$W"
-printf '\xff\xfe# Thread — saved as UTF-16 LE (PR #4251)\n' \
-  > "$W/docs/ReleaseNotes/unreleased/0003-bom16le.md"
-msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
-check "the run refuses"      "$?"                                "1"
-check "naming the file"      "$(says "$msg" '0003-bom16le.md')"  "1"
-check "saying why"           "$(says "$msg" 'byte-order mark')"  "1"
-check "nothing was consumed" "$(pending "$W")"                   "3"
-W="$ROOT/t217p2"; build "$W"
-printf '\xfe\xff# Thread — saved as UTF-16 BE (PR #4252)\n' \
-  > "$W/docs/ReleaseNotes/unreleased/0003-bom16be.md"
-msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
-check "the run refuses"      "$?"              "1"
-check "nothing was consumed" "$(pending "$W")" "3"
-
 # ── The reference token is ALL DIGITS, and that is where it stops (r17) ───
 # Five consecutive rounds found an edge in this one rule and each fix opened
 # the next: capture to `)` missed `:`; allowing punctuation missed an em dash;
