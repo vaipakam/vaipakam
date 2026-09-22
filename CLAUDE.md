@@ -1502,18 +1502,54 @@ Two practical consequences:
 
 **Scope of what is actually left** (#2260, re-measured). `src/` carries 25 bare
 blocks, but **6 are the `x.slot := position` storage-pointer idiom and need
-nothing**. The real remainder is **19** — 18 in-scope blocks plus the
-`VaipakamDiamond` fallback, whose `calldatacopy(0, 0, …)` clobbers memory from
-offset 0 and wants its own verification rather than a bulk annotation — plus 9
-under `test/`. They are LATENT, not broken: those contracts compile today, and
+nothing**. The real remainder is **19**, all of them in scope — 18
+bulk-annotation candidates plus the `VaipakamDiamond` fallback, whose
+`calldatacopy(0, 0, …)` clobbers memory from offset 0 and wants its own
+verification rather than a bulk annotation — plus 9 under `test/`. They are LATENT, not broken: those contracts compile today, and
 #2268 showed a blanket sweep is not the remedy.
 
-**Caveat on that 18, stated rather than smoothed over.** It was counted when
-this section's test was "touches memory", so it is a count of blocks with a
-memory opcode. The live test is EITHER shape, and a block exporting a computed
-pointer without a memory opcode would have been filed under the 6 rather than
-the 18. Nobody has re-counted against the corrected criterion, so treat 18 as a
-lower bound on the in-scope set and 6 as an upper bound on the exempt one.
+**Both figures were bounds, and a re-count settled them — for THIS TREE, on a
+stated date.** Everything below is a measurement, not a rule: the rules are
+the two shapes above, and nothing here amends them. They were first counted
+when this section's test was "touches memory", which makes them counts of
+blocks with a memory opcode — so a block exporting a computed pointer without
+one would have been filed under the 6 rather than the 18, and 18 was recorded
+as a lower bound and 6 as an upper bound. The re-count (#2260 — parsing each
+block's body with comments stripped and string literals blanked, at `main`
+`a941c7873` and re-verified at `58ef57fb0`; the counts are identical at both,
+though line numbers moved) closes both directions **as of those commits**:
+
+- **The 6 are exempt because each body is ONLY the storage-pointer
+  assignment** — not because it contains one. That distinction is the whole
+  claim: a block that assigns `.slot` *and* does an `mstore` is in scope like
+  any other, so "contains `.slot :=`" is not a classifier and must never be
+  used as one. Each of these six was checked as assignment-only, the body
+  matching `<var>.slot := <name>` and nothing else: `LibAccessControl`,
+  `LibERC721`, `LibPausable`, `LibReentrancyGuard`, `LibVaipakam` and
+  `GuardianPausable`. **No facet carries the idiom at all.** A seventh such
+  block added tomorrow gets its own check; it does not inherit this one.
+- **19 `src/` blocks are in scope, and the 18 is that 19 minus the fallback.**
+  Every non-idiom `src/` block carries a memory opcode, so the first shape
+  catches all 19 and the second adds nothing here. `VaipakamDiamond`'s
+  fallback is the nineteenth and carries memory opcodes like the rest — it is
+  held out for its own verification, not because it is out of scope. So 18 is
+  exact as *the bulk-treatment remainder*, and **19** is the number of `src/`
+  blocks that can suppress the memory guard. Do not read 18 as the latter.
+
+Two things the re-count turned up that a line-based `grep` gets wrong. The
+count of bare blocks is **34** (25 `src/` + 9 `test/` + 0 `script/`), not 36 —
+a raw grep also counts a fully commented-out block in `RiskFacet.sol:1807` and
+a natspec quotation in `DeployDiamondVerificationProbes.sol:20`.
+
+And the storage-pointer idiom is **not the only member of the neither-shape
+class**, which is worth knowing because the rule above introduces the class by
+naming that idiom. `SignedOfferBook.t.sol:742` reads with `calldataload` and
+assigns `bytes32`/`uint8` locals: it accesses no memory and exports no pointer
+to a memory-reference variable, so under the criterion above it **needs no
+annotation** — the same conclusion the idiom gets, reached by the same rule
+rather than by a second exception. What is measured for the idiom and not for
+this block is the compile-both-ways evidence; the classification stands on the
+criterion either way.
 
 ## Task tracking — @vaipakam-labs GitHub Project is the live tracker
 
