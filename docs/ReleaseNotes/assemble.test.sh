@@ -4474,9 +4474,9 @@ check "nothing left pending" "$(pending "$W")" "0"
 # ── ONLY level 1 is refused, measured against practice (#2290 r6) ───────────
 # An earlier revision required exactly level 2, which reads as the obvious
 # rule and is wrong against what people actually write: of the 758 distinct
-# fragments ever committed, 605 open at `##`, 81 at `#` and 72 at `###` — two
-# of the last in PRs open while this was written and owned by other work.
-# Refusing a fifth of every fragment ever written, some of it in flight
+# fragments ever committed, 605 open at `##`, 81 at `#` and 72 at `###` — one
+# of the last in a pull request open while this was written and owned by other
+# work. Refusing a fifth of every fragment ever written, one of them in flight
 # elsewhere, is how a check gets deleted rather than obeyed. A `###` opener
 # nests under nothing; it is untidy, not a second document title.
 case_start "T217k: a level-3 opener is untidy, not refused"

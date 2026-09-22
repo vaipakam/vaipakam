@@ -1471,8 +1471,9 @@ class Assembly:
         An earlier revision required exactly level 2, which reads as the
         obvious rule and is wrong against practice: of the 758 distinct
         fragments ever committed, 605 open at `##`, 81 at `#` and **72 at
-        `###`**, two of the last in PRs open at the time this was written and
-        owned by other work. A level-3 opener is a style inconsistency — it
+        `###`**, one of the last in a pull request open at the time this was
+        written and owned by other work. A level-3 opener is an inconsistency
+        of style — it
         nests under nothing — while a level-1 opener is the structural defect
         this guard exists to prevent, and only the second is worth refusing a
         release over. Refusing a fifth of every fragment ever written, some of
