@@ -3190,4 +3190,21 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         assertEq(held, 5e18, "held");
         assertEq(attributed, 5e18, "fully attributed");
     }
+
+    /// @dev 3b-ii-A2 (Codex #2308 r7) — the activation refuses while a staging
+    ///      record is resolving; the count is written raw here, its
+    ///      maintenance being the staging suite's to prove.
+    function test_Activation_RefusesWhileAStagingRecordResolves() public {
+        _becomeMirror();
+        _admin().pause();
+        _custody().bindRewardCustodyHolder();
+        uint64 epoch = _epoch();
+        _custody().rebaseArmedFreshPaid(6e18, epoch);
+        _mut().setStagingResolvingCountRaw(1);
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.RewardCustodyActivationBlockedByResolvingRecords.selector, uint256(1)));
+        _custody().activateRewardCustody(epoch, false);
+        _mut().setStagingResolvingCountRaw(0);
+        _custody().activateRewardCustody(epoch, false);
+        _admin().unpause();
+    }
 }

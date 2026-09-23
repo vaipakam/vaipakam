@@ -2,6 +2,7 @@
 pragma solidity 0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibRewardCustody} from "../libraries/LibRewardCustody.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 
 /**
@@ -118,6 +119,14 @@ contract RewardEpochViewFacet {
     function getObligationDomainListsAnEpoch(address user) external view returns (bool) {
         return LibInteractionRewards.chunkListsAnEpochView(user);
     }
+    /// @notice The cooldown a non-settlement release put on `(user, side,
+    ///         day)`: until this timestamp a claim on the day opens no record
+    ///         and defers as before staging existed; zero when none stands
+    ///         (Codex #2308 r7). The key is {LibRewardCustody.stagingKey}'s.
+    function getStagingCooldown(address user, LibVaipakam.RewardSide side, uint256 day) external view returns (uint64 until) {
+        return LibVaipakam.storageSlot().stagingCooldownUntil[LibRewardCustody.stagingKey(user, side, day)];
+    }
+
     /// @notice The record under `key` — every scalar it carries. A key with
     ///         no record reads as phase `None` with zeros, never reverts.
     function getStagingRecord(bytes32 key) external view returns (StagingRecordView memory v) {

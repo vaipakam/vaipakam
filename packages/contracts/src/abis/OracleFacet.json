@@ -2904,6 +2904,17 @@
   },
   {
     "type": "error",
+    "name": "RewardCustodyActivationBlockedByResolvingRecords",
+    "inputs": [
+      {
+        "name": "resolving",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "RewardCustodyActivationDetachedNotSupported",
     "inputs": []
   },

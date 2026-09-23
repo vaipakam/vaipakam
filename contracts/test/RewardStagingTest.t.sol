@@ -1200,4 +1200,36 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         hs = _wideDayTyped(2);
         assertEq(_claim(), 0);
     }
+
+    // ───────────────────────── round 7 ─────────────────────────
+
+    event StagingCooldownSet(bytes32 indexed key, uint64 until);
+
+    function test_AResolvingRecord_IsCounted_ForTheCustodyCutover() public {
+        _stagedAndScanned();
+        _liveFresh(1e18);
+        _staging().reserveStagedDay(_key());
+        assertEq(_mut().stagingResolvingCountRaw(), 0, "reserved is not resolving");
+        _settle().resolveStagedDayPage(_key());
+        assertEq(_mut().stagingResolvingCountRaw(), 1, "counted from the first page");
+        assertTrue(_settle().resolveStagedDayPage(_key()));
+        assertEq(_mut().stagingResolvingCountRaw(), 0, "released with the payout");
+    }
+
+    function test_TheCooldown_IsPublished() public {
+        _stagedAndScanned();
+        uint64 deadline = _rec().deadline;
+        assertEq(_view().getStagingCooldown(alice, LibVaipakam.RewardSide.Lender, 1), 0, "none before a release");
+        vm.warp(uint256(deadline) + 1);
+        _settle().unwindStagedDayPage(_key());
+        uint64 until = uint64(block.timestamp) + 3 days;
+        vm.expectEmit(true, false, false, true);
+        emit StagingCooldownSet(_key(), until);
+        assertTrue(_settle().unwindStagedDayPage(_key()));
+        assertEq(_view().getStagingCooldown(alice, LibVaipakam.RewardSide.Lender, 1), until, "read back");
+        vm.prank(alice);
+        (bool ok, ) = address(diamond).call(abi.encodeWithSelector(RewardClaimFacet.claimInteractionRewards.selector));
+        ok; // deferred either way: the cooldown is what says why
+        assertEq(_rec().phase, uint8(LibVaipakam.StagingPhase.None), "no record while the published cooldown stands");
+    }
 }

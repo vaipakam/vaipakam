@@ -175,8 +175,13 @@ contract InteractionRewardsLensFacet {
         if (!active || today == 0) return (0, 0, 0);
 
         // Entry-path reward always contributes to the preview regardless
-        // of the legacy-window state.
-        amount = LibInteractionRewards.previewForUserEntries(user);
+        // of the legacy-window state. A deferral on a staging reservation is
+        // the CLAIM's, on its aggregate (3b-ii-A2; Codex #2308 r7): the
+        // claim reverts as a whole, so the preview reports nothing — the
+        // window's part included, which would otherwise be added below.
+        bool deferred;
+        (amount, deferred) = LibInteractionRewards.previewForUserEntries(user);
+        if (deferred) return (0, 0, 0);
 
         uint256 last = s.interactionLastClaimedDay[user];
         uint256 lastFinalized = today - 1;

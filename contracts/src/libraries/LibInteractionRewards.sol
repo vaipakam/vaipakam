@@ -2580,10 +2580,17 @@ library LibInteractionRewards {
     ///      r2); it stays deliberately uncapped ONLY by the 69M lifetime
     ///      headroom, the payment-time truncation axis on which the preview
     ///      remains an upper bound ({userClaimPendingUncapped}).
+    /// @return userTotal What the entry path would pay the user now.
+    /// @return deferred  The claim would refuse as a WHOLE — on a staging
+    ///         reservation (3b-ii-A2; Codex #2308 r3, r7), or on the delivered
+    ///         bound the legacy legs must fit: both tests here are on the
+    ///         AGGREGATE fresh the claim checks, the window's reserve included,
+    ///         so a caller that adds the window's preview to this must read
+    ///         the flag and report nothing, as the claim pays nothing.
     function previewForUserEntries(address user)
         internal
         view
-        returns (uint256 userTotal)
+        returns (uint256 userTotal, bool deferred)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         // Codex #1699 r15 P2 — display the USER legs; reserve BOTH halves.
@@ -2605,7 +2612,7 @@ library LibInteractionRewards {
         // for a claim that succeeds, breaking its upper-bound contract.
         uint256 deliveredLeft = deliveredFreshBound(s);
         uint256 cappedLegacy = _cappedFreshNeed(legacyFresh + _userWindowFreshReserved(s, user));
-        if (cappedLegacy > deliveredLeft) return 0;
+        if (cappedLegacy > deliveredLeft) return (0, true);
         deliveredLeft -= cappedLegacy;
         // Codex #1699 r14 P2 — the walk leg's fresh budget reserves the
         // PRECEDING legs, exactly as the live claim threads it: the facet
@@ -2623,7 +2630,7 @@ library LibInteractionRewards {
         // pays nothing, so the preview says nothing (3b-ii-A2, #2305; Codex
         // #2308 r3). The user-side fresh is the bound this upper-bound
         // preview has; the treasury's fresh is the claim's own check.
-        if (cappedLegacy + treasuryLegs + armedTotal > poolAvailable()) return 0;
+        if (cappedLegacy + treasuryLegs + armedTotal > poolAvailable()) return (0, true);
         userTotal += dryTotal;
     }
 

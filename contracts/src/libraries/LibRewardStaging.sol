@@ -81,6 +81,12 @@ library LibRewardStaging {
     /// @notice The record is gone: unwound (`paid == false`) or paid.
     /// @custom:event-category state-change/reward-staging
     event StagingRecordClosed(bytes32 indexed key, bool paid);
+    /// @notice A non-settlement release started the obligation's cooldown:
+    ///         until `until`, a claim on this key opens no record and defers
+    ///         as before staging existed (Codex #2308 r7; read back through
+    ///         {RewardEpochViewFacet.getStagingCooldown}).
+    /// @custom:event-category state-change/reward-staging
+    event StagingCooldownSet(bytes32 indexed key, uint64 until);
 
     // ────────────────────────────── constants ─────────────────────────────
 
@@ -347,6 +353,9 @@ library LibRewardStaging {
         LibVaipakam.StagingRecord storage r = record(s, key);
         if (r.phase == LibVaipakam.StagingPhase.Reserved) {
             r.phase = LibVaipakam.StagingPhase.Resolving;
+            // Counted while resolving: custody activation refuses until the
+            // record's last page pays it (Codex #2308 r7).
+            ++s.stagingResolvingCount;
         } else {
             _requirePhase(key, r, LibVaipakam.StagingPhase.Resolving);
         }
@@ -549,7 +558,9 @@ library LibRewardStaging {
             // A non-settlement release: the same obligation may not open a
             // new record until the cooldown passes; the restored coverage is
             // the window's meanwhile.
-            s.stagingCooldownUntil[key] = uint64(block.timestamp) + LibRewardCustody.STAGING_GRACE;
+            uint64 until = uint64(block.timestamp) + LibRewardCustody.STAGING_GRACE;
+            s.stagingCooldownUntil[key] = until;
+            emit StagingCooldownSet(key, until);
             _close(s, key, r, false);
             done = true;
         }
@@ -600,8 +611,8 @@ library LibRewardStaging {
     }
 
     function _close(LibVaipakam.Storage storage s, bytes32 key, LibVaipakam.StagingRecord storage r, bool paid) private {
+        if (r.phase == LibVaipakam.StagingPhase.Resolving) --s.stagingResolvingCount;
         emit StagingRecordClosed(key, paid);
         delete s.stagingRecords[key];
-        r; // silence: the storage pointer is dead after the delete
     }
 }

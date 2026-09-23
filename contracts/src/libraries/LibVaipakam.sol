@@ -7645,6 +7645,14 @@ library LibVaipakam {
         uint256 liveFreshReserved;
         uint256 recycleBucketReserved;
         mapping(uint256 => mapping(uint8 => uint256)) loanSideRewardReservedVpfi;
+        /// @dev 3b-ii-A2 (Codex #2308 r7) — records in `Resolving`: a page of
+        ///      such a record has consumed epoch value that, while custody is
+        ///      inactive, rests in the Diamond's balance under no attribution
+        ///      until the last page pays it. Custody activation relocates by
+        ///      attribution and would strand it, so activation refuses while
+        ///      this is non-zero; a resolving record only completes, by
+        ///      permissionless pages, so the refusal is never permanent.
+        uint256 stagingResolvingCount;
     }
 
     /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss: the

@@ -861,6 +861,12 @@ contract RewardCustodyFacet is DiamondAccessControl {
         LibPausable.requireManuallyPaused();
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (s.rewardCustodyActivated) revert IVaipakamErrors.RewardCustodyAlreadyActivated();
+        // Nothing in flight may straddle the cutover (3b-ii-A2; Codex #2308
+        // r7): a resolving record's consumed epoch value rests in this
+        // balance under no attribution until its last page pays it.
+        if (s.stagingResolvingCount != 0) {
+            revert IVaipakamErrors.RewardCustodyActivationBlockedByResolvingRecords(s.stagingResolvingCount);
+        }
         uint64 liveEpoch = LibPausable.pauseTransitions();
         if (pauseEpoch != liveEpoch) {
             revert IVaipakamErrors.RewardCustodyActivationStalePauseEpoch(pauseEpoch, liveEpoch);

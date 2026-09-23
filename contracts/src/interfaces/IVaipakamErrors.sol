@@ -320,6 +320,13 @@ interface IVaipakamErrors {
     /// @param unattributed The remainder no row describes (held minus
     ///                     attributed) at the time of the call.
     error RewardCustodyExceedsUnattributed(uint256 requested, uint256 unattributed);
+    /// @notice 3b-ii-A2 (Codex #2308 r7) — custody cannot be activated while a
+    ///         staging record is resolving: its consumed epoch value rests in
+    ///         the Diamond's balance under no attribution until its last page
+    ///         pays it, and the activation's relocation would strand it.
+    ///         Drive the record's remaining pages first — they are
+    ///         permissionless and a resolving record only completes.
+    error RewardCustodyActivationBlockedByResolvingRecords(uint256 resolving);
     /// @notice #1566 slice 4 PR A (Codex #2158 r27 P1) — the rebase was called
     ///         with a pause epoch that is not the live one: the figure was
     ///         established under a different pause (or none), and a payout in

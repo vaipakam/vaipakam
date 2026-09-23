@@ -3020,6 +3020,10 @@ library LibRewardCustody {
             // the restored coverage is the window's, directly consumable by
             // every other obligation meanwhile. The batch-keyed window and
             // priority mode of the design are A2-ii's (#2305).
+            // The cooldown is published: set with `StagingCooldownSet` at the
+            // release and read back through the epoch view's
+            // `getStagingCooldown`, so this silent deferral is never a state a
+            // client cannot name (Codex #2308 r7).
             if (block.timestamp < s.stagingCooldownUntil[key]) return (key, 0);
             opened = true;
             r.nonce = ++s.stagingNonce[key];

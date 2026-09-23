@@ -119,6 +119,25 @@
   },
   {
     "type": "event",
+    "name": "StagingCooldownSet",
+    "inputs": [
+      {
+        "name": "key",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "until",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "StagingPaid",
     "inputs": [
       {
@@ -2669,6 +2688,17 @@
         "name": "requested",
         "type": "address",
         "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodyActivationBlockedByResolvingRecords",
+    "inputs": [
+      {
+        "name": "resolving",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ]
   },

@@ -2601,4 +2601,14 @@ contract TestMutatorFacet {
     function uncreditFreshInHolderRaw(uint256 amount) external returns (uint256 moved) {
         return LibRewardCustody.uncreditFreshInHolder(LibVaipakam.storageSlot(), amount);
     }
+
+    /// @dev 3b-ii-A2 test-only — the count of resolving staging records the
+    ///      custody activation refuses on, read and written raw.
+    function stagingResolvingCountRaw() external view returns (uint256) {
+        return LibVaipakam.storageSlot().stagingResolvingCount;
+    }
+
+    function setStagingResolvingCountRaw(uint256 count) external {
+        LibVaipakam.storageSlot().stagingResolvingCount = count;
+    }
 }

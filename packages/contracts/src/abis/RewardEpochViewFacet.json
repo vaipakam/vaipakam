@@ -93,6 +93,35 @@
   },
   {
     "type": "function",
+    "name": "getStagingCooldown",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "side",
+        "type": "uint8",
+        "internalType": "enum LibVaipakam.RewardSide"
+      },
+      {
+        "name": "day",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "until",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getStagingRecord",
     "inputs": [
       {
