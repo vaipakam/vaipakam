@@ -2630,7 +2630,11 @@ library LibInteractionRewards {
         // pays nothing, so the preview says nothing (3b-ii-A2, #2305; Codex
         // #2308 r3). The user-side fresh is the bound this upper-bound
         // preview has; the treasury's fresh is the claim's own check.
-        if (cappedLegacy + treasuryLegs + armedTotal > poolAvailable()) return (0, true);
+        // The aggregate the claim checks against availability: the legacy
+        // fresh of BOTH destinations (`legacyFresh` already carries the
+        // forfeited legs' fresh — adding `treasuryLegs` again counted it
+        // twice, Codex #2308 r8), the window's reserve, and the armed total.
+        if (cappedLegacy + armedTotal > poolAvailable()) return (0, true);
         userTotal += dryTotal;
     }
 

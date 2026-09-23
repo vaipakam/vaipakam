@@ -207,18 +207,20 @@ library LibRewardStaging {
         ) = LibRewardCustody.planTakesForRecord(s, r.day, r.continuationNode, r.lateSeen, askF, askR, r.skippedIds);
         if (lastNode != bytes32(0)) r.continuationNode = lastNode;
         if (lastLate != bytes32(0)) r.lateSeen = lastLate;
-        // Epochs this scan passed over pending — untyped, or not yet whole —
-        // are remembered for re-check.
-        for (uint256 k; k < skipped.length; ) {
-            LibRewardCustody.noteSkipped(s, key, r, skipped[k]);
-            unchecked { ++k; }
-        }
-        // And every remembered epoch re-checked stageable this time is
-        // forgotten, staged or not: it was offered, and it will not be
-        // offered twice.
+        // Every remembered epoch re-checked stageable this time is forgotten
+        // FIRST, staged or not: it was offered, and it will not be offered
+        // twice. Then the epochs this scan passed over pending — untyped, or
+        // not yet whole — are remembered. In that order (Codex #2308 r8): the
+        // page cap is enforced against the RECONCILED set, so a full page
+        // that frees places by re-checking does not overflow on the epochs
+        // it takes in the same scan.
         bytes32[] memory rechecked = r.skippedIds;
         for (uint256 k; k < rechecked.length; ) {
             LibRewardCustody.forgetSkippedIfStageable(s, key, r, rechecked[k]);
+            unchecked { ++k; }
+        }
+        for (uint256 k; k < skipped.length; ) {
+            LibRewardCustody.noteSkipped(s, key, r, skipped[k]);
             unchecked { ++k; }
         }
         // The scan reached the end of the day's list: the reservation may

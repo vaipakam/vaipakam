@@ -1232,4 +1232,72 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         ok; // deferred either way: the cooldown is what says why
         assertEq(_rec().phase, uint8(LibVaipakam.StagingPhase.None), "no record while the published cooldown stands");
     }
+
+    // ───────────────────────── round 8 ─────────────────────────
+
+    function test_TheRecheckPage_IsReconciledBeforeTheCapIsEnforced() public {
+        // Sixty-four pending epochs fill the record's page exactly; one of
+        // them becomes stageable and a new pending epoch lands. The re-check
+        // frees a place before the new epoch takes one, so nothing overflows.
+        _scene();
+        _wideDayTyped(2); // 2 typed, 63 untyped
+        vm.warp(block.timestamp + 10);
+        _epochOf(TINY, 960, keccak256("extra-untyped")); // the 64th pending
+        assertEq(_claim(), 0);
+        _staging().prepareStagedDay(_key()); // the window: 62 pending
+        _staging().prepareStagedDay(_key()); // the 65th and 66th: 64 pending, the page full
+        assertEq(_rec().skippedCount, 64);
+        assertFalse(_rec().pendingOverflow);
+        _ingress().onRemitSplitAttested(CHAIN_BASE, REMITTER, 100 + 10, TINY, 0); // one becomes stageable
+        vm.warp(block.timestamp + 10);
+        _epochOf(TINY, 961, keccak256("new-untyped")); // a new pending epoch
+        (uint256 sf, ) = _staging().prepareStagedDay(_key());
+        assertFalse(_rec().pendingOverflow, "reconciled first: the page still fits");
+        assertEq(sf, TINY, "the re-checked epoch is staged");
+        assertEq(_rec().skippedCount, 64, "one forgotten, one remembered");
+    }
+
+    function test_TheAggregatePreview_CountsALegacyForfeitOnce() public {
+        _stagedAndScanned();
+        _liveFresh(1e18);
+        _staging().reserveStagedDay(_key()); // NEED of the pool reserved
+        // The delivered ledger is ample, so the pool's availability is the
+        // only figure that can defer bob's preview below.
+        _mut().setArmedFreshLedgerRaw(4000e18, 0);
+        // Bob holds a forfeited LEGACY entry on day 2 (finalized, and the
+        // arming now starts at day 3, so the cumulative — not yet advanced
+        // past day 1 — takes the day as legacy): its fresh goes to the
+        // treasury and is a leg of the claim's aggregate exactly once.
+        _armedDay(2, NEED);
+        _mut().setGovernorCommitArmedFromDayRaw(3);
+        address bob = makeAddr("staging-bob");
+        _mut().setFeeEntitlementRaw(
+            78,
+            LibVaipakam.FeeEntitlement({
+                borrowerMode: LibVaipakam.FeeEntitlementMode.None,
+                lenderMode: LibVaipakam.FeeEntitlementMode.None,
+                openDays: 1,
+                rewardHaircutBpsAtOpen: 0,
+                borrowerTariffPaid: 0,
+                lenderTariffPaid: 0,
+                cStarOpen: 0,
+                loanSideRewardCapOpen: type(uint128).max
+            })
+        );
+        uint256 bobEntry = _mut().pushRewardEntry(bob, 78, LibVaipakam.RewardSide.Lender, 0.1e18, 2);
+        _mut().closeRewardEntryRaw(bobEntry, 3);
+        _mut().setRewardEntryForfeitedRaw(bobEntry);
+        _mut().userClaimFundingNeedRaw(bob);
+        InteractionRewardsLensFacet lens = InteractionRewardsLensFacet(address(diamond));
+        (, , uint256 treasuryLegs, uint256 legacyFresh, , , ) = lens.getUserArmedFreshNeedWithLegs(bob);
+        assertGt(treasuryLegs, 0, "live: the forfeit's fresh is a treasury leg");
+        assertEq(legacyFresh, treasuryLegs, "and the same figure is the legacy fresh");
+        // Availability between the aggregate counted once and counted twice.
+        uint256 available = treasuryLegs + treasuryLegs / 2;
+        _mut().setInteractionPoolPaidOut(LibVaipakam.VPFI_INTERACTION_POOL_CAP - NEED - available);
+        assertEq(_mut().poolAvailableRaw(), available);
+        (uint256 amount, uint256 fromDay, ) = lens.previewInteractionRewards(bob);
+        assertEq(amount, 0, "a forfeit pays the user nothing");
+        assertEq(fromDay, 1, "not deferred: the forfeit's fresh fits availability, counted once");
+    }
 }
