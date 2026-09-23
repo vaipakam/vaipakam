@@ -3118,13 +3118,15 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](5);
+        s = new bytes4[](7);
         s[0] = RewardEpochViewFacet.getDryRunShareOfPoolDays.selector;
         s[1] = RewardEpochViewFacet.getObligationDomainNeeds.selector;
         s[2] = RewardEpochViewFacet.getObligationDomainListsAnEpoch.selector;
         // 3b-ii-A2 (#2305) — the staging records' reads.
         s[3] = RewardEpochViewFacet.getStagingRecord.selector;
         s[4] = RewardEpochViewFacet.getStagingRecordBatches.selector;
+        s[5] = RewardEpochViewFacet.getStagingRecordEntries.selector;
+        s[6] = RewardEpochViewFacet.getStagingRecordPending.selector;
     }
 
     /// @dev 3b-ii-A2 (#2305) — the claim's entry walk, hosted apart from the

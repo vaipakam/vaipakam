@@ -2997,7 +2997,8 @@ library LibRewardCustody {
         uint256[] memory entryIds,
         bytes32[] memory ids,
         uint256[] memory fresh,
-        uint256[] memory recycled
+        uint256[] memory recycled,
+        LibVaipakam.RewardDelivery deliverTo
     ) internal returns (bytes32 key, uint256 staged) {
         key = stagingKey(user, side, day);
         // A record stands only for a day read from its LIST (Codex #2308 r5):
@@ -3047,6 +3048,12 @@ library LibRewardCustody {
         // Opened only once something was staged, so no indexer holds an
         // opening for a record that never stood (Codex #2308 r1 P2).
         if (opened) emit StagingRecordOpened(key, user, uint8(side), r.day, commitment);
+        // The venue the claimant named on THIS claim binds the record (Codex
+        // #2308 r6): the staged part is delivered where the paid part was.
+        // `Default` names nothing, and the record resolves the claimant's
+        // default at payout as before; the claimant may still re-bind while
+        // the record stages ({LibRewardStaging.setVenue}).
+        if (deliverTo != LibVaipakam.RewardDelivery.Default) bindStagingVenue(key, r, deliverTo);
         // The walk records NO scan position (Codex #2308 r4): the day
         // primitive's plan is sorted by priority, not by the list, and it is
         // blind to the epochs its window passed that were not yet whole, so
@@ -3109,6 +3116,18 @@ library LibRewardCustody {
         }
         r.stagedFresh += stagedFresh;
         r.stagedRecycled += stagedRecycled;
+    }
+
+    /// @notice The record's delivery venue set — by the claimant's explicit
+    ///         claim at opening, or by the claimant later while the record
+    ///         stages; ONE writer, one event (Codex #2308 r6).
+    /// @custom:event-category state-change/reward-staging
+    event StagingVenueSet(bytes32 indexed key, uint8 venue);
+
+    function bindStagingVenue(bytes32 key, LibVaipakam.StagingRecord storage r, LibVaipakam.RewardDelivery venue) internal {
+        r.venue = venue;
+        r.venueSet = true;
+        emit StagingVenueSet(key, uint8(venue));
     }
 
     function recordNonceKey(bytes32 key, uint256 nonce) internal pure returns (bytes32) {

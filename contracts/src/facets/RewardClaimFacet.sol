@@ -229,7 +229,10 @@ contract RewardClaimFacet is
         // One memory result (3b-ii-A): the two splits, the walk flag and the
         // epoch-paid legs, read in place — see {ClaimEntriesResult}.
         LibInteractionRewards.ClaimEntriesResult memory res = LibInteractionRewards.callClaimEntriesWalk(
-            msg.sender, freshBudget, windowReward // #1566 closure 2 — the window reserves delivered headroom too
+            msg.sender,
+            freshBudget,
+            windowReward, // #1566 closure 2 — the window reserves delivered headroom too
+            deliverTo // 3b-ii-A2 (Codex #2308 r6) — a day the walk stages carries the venue into its record
         );
         uint256 entryReward = res.toUser.total;
         uint256 treasuryDelta = res.toTreasury.total;

@@ -25,8 +25,11 @@ import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 contract RewardEpochViewFacet {
     // ───────────── 3b-ii-A2 (#2305) — the staging records' reads ─────────────
 
-    /// @notice A lean view of a record — the scalars; the batch list is paged
-    ///         through {getStagingRecordBatches}.
+    /// @notice A lean view of a record — the scalars; its arrays are paged:
+    ///         the batches through {getStagingRecordBatches}, the committed
+    ///         entries with their reserved slices through
+    ///         {getStagingRecordEntries}, and the epochs it passed over pending
+    ///         through {getStagingRecordPending} (Codex #2308 r6).
     struct StagingRecordView {
         address user;
         uint8 side;
@@ -185,6 +188,56 @@ contract RewardEpochViewFacet {
             ids[i] = r.batchIds[from + i];
             fresh[i] = r.batchFresh[from + i];
             recycled[i] = r.batchRecycled[from + i];
+            unchecked { ++i; }
+        }
+    }
+
+    /// @notice One page of the record's committed entries, from `from`, at
+    ///         most `count`, each with the slice the reservation fixed for it
+    ///         and whether that slice is charged to its loan side — the
+    ///         figures {reserveStagedDay} wrote and the last page persists,
+    ///         so a reader can substantiate a loan side's reserved figure
+    ///         entry by entry (Codex #2308 r6). Before the reservation the
+    ///         slices are empty and read as zero.
+    function getStagingRecordEntries(bytes32 key, uint256 from, uint256 count)
+        external
+        view
+        returns (uint256[] memory entryIds, uint256[] memory sliceAmounts, bool[] memory sliceChargeable)
+    {
+        LibVaipakam.StagingRecord storage r = LibVaipakam.storageSlot().stagingRecords[key];
+        uint256 n = r.entryIds.length;
+        if (from >= n) return (entryIds, sliceAmounts, sliceChargeable);
+        uint256 end = from + count;
+        if (end > n) end = n;
+        uint256 m = end - from;
+        bool sliced = r.sliceAmounts.length == n;
+        entryIds = new uint256[](m);
+        sliceAmounts = new uint256[](m);
+        sliceChargeable = new bool[](m);
+        for (uint256 i; i < m; ) {
+            entryIds[i] = r.entryIds[from + i];
+            if (sliced) {
+                sliceAmounts[i] = r.sliceAmounts[from + i];
+                sliceChargeable[i] = r.sliceChargeable[from + i];
+            }
+            unchecked { ++i; }
+        }
+    }
+
+    /// @notice One page of the epochs the record passed over PENDING —
+    ///         untyped, or not yet whole — from `from`, at most `count`: the
+    ///         re-check page a preparation offers first, and what blocks the
+    ///         reservation once one becomes stageable (Codex #2308 r6).
+    function getStagingRecordPending(bytes32 key, uint256 from, uint256 count) external view returns (bytes32[] memory ids) {
+        LibVaipakam.StagingRecord storage r = LibVaipakam.storageSlot().stagingRecords[key];
+        uint256 n = r.skippedIds.length;
+        if (from >= n) return ids;
+        uint256 end = from + count;
+        if (end > n) end = n;
+        uint256 m = end - from;
+        ids = new bytes32[](m);
+        for (uint256 i; i < m; ) {
+            ids[i] = r.skippedIds[from + i];
             unchecked { ++i; }
         }
     }

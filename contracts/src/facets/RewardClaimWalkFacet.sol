@@ -2,6 +2,7 @@
 pragma solidity 0.8.29;
 
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
+import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 
 /**
@@ -36,12 +37,14 @@ contract RewardClaimWalkFacet is IVaipakamErrors {
     ///         stages. The claimant, the fresh budget and the window's reserved
     ///         fresh are passed in rather than read from the caller, which is
     ///         the Diamond here.
-    function epochClaimEntriesWalk(address user, uint256 freshBudget, uint256 windowFreshReserved)
-        external
-        returns (LibInteractionRewards.ClaimEntriesResult memory)
-    {
+    function epochClaimEntriesWalk(
+        address user,
+        uint256 freshBudget,
+        uint256 windowFreshReserved,
+        LibVaipakam.RewardDelivery deliverTo
+    ) external returns (LibInteractionRewards.ClaimEntriesResult memory) {
         _requireDiamondInternal();
-        return LibInteractionRewards.claimForUserEntries(user, freshBudget, windowFreshReserved);
+        return LibInteractionRewards.claimForUserEntries(user, freshBudget, windowFreshReserved, deliverTo);
     }
 
     function _requireDiamondInternal() private view {

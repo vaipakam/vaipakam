@@ -2529,12 +2529,14 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](5);
+        selectors = new bytes4[](7);
         selectors[0] = RewardEpochViewFacet.getDryRunShareOfPoolDays.selector;
         selectors[1] = RewardEpochViewFacet.getObligationDomainNeeds.selector;
         selectors[2] = RewardEpochViewFacet.getObligationDomainListsAnEpoch.selector;
         selectors[3] = RewardEpochViewFacet.getStagingRecord.selector;
         selectors[4] = RewardEpochViewFacet.getStagingRecordBatches.selector;
+        selectors[5] = RewardEpochViewFacet.getStagingRecordEntries.selector;
+        selectors[6] = RewardEpochViewFacet.getStagingRecordPending.selector;
     }
 
     /// 3b-ii-A2 (#2305) — the claim's entry walk, hosted. Mirrors

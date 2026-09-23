@@ -10,6 +10,7 @@ import {RewardEpochFacet} from "../src/facets/RewardEpochFacet.sol";
 import {RewardEpochViewFacet} from "../src/facets/RewardEpochViewFacet.sol";
 import {RewardIngressFacet} from "../src/facets/RewardIngressFacet.sol";
 import {RewardClaimFacet} from "../src/facets/RewardClaimFacet.sol";
+import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet.sol";
 import {RewardCustodyFacet} from "../src/facets/RewardCustodyFacet.sol";
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
@@ -1098,5 +1099,105 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         assertEq(_rec().lateWorkBase, 0, "the restart's work is counted from the chain's head");
         // 136 members and 71 late links: four pages.
         assertEq(_rec().deadline, r.openedAt + 4 days + 3 days, "the deadline grew by the restored page");
+    }
+
+    // ───────────────────────── round 6 ─────────────────────────
+
+    function test_AStandingRecord_PausesTheClaimantsExpiryClock() public {
+        // A standing record implies a day wider than one window, so there is
+        // no executable state of this scene to straddle: the mutation check
+        // (the record dropped from the refusal rule) is the discrimination.
+        (, uint256 id) = _stagedScene();
+        _liveFresh(1e18);
+        assertEq(_rec().phase, uint8(LibVaipakam.StagingPhase.Staging), "the record stands");
+        assertEq(_preview(), 0, "the dry run defers on the record");
+        assertFalse(_mut().entryExecutableNowRaw(id), "the clock does not count the interval the record holds");
+    }
+
+    function test_TheView_PagesTheRecordsEntriesAndPending() public {
+        (, uint256 id) = _scene2Typed();
+        RewardEpochViewFacet.StagingRecordView memory r = _rec();
+        assertEq(r.entryCount, 1);
+        (uint256[] memory eids, uint256[] memory amounts, bool[] memory chargeable) = _view().getStagingRecordEntries(_key(), 0, 10);
+        assertEq(eids.length, 1); assertEq(eids[0], id);
+        assertEq(amounts[0], 0, "no slice before the reservation");
+        assertFalse(chargeable[0]);
+        _staging().prepareStagedDay(_key());
+        bytes32[] memory pending = _view().getStagingRecordPending(_key(), 0, 100);
+        assertEq(pending.length, 62, "the untyped epochs the scan passed over");
+        bytes32[] memory page = _view().getStagingRecordPending(_key(), 60, 100);
+        assertEq(page.length, 2, "paged from an offset");
+        assertEq(page[0], pending[60]);
+        assertEq(_view().getStagingRecordPending(_key(), 62, 10).length, 0, "past the end");
+    }
+
+    function test_AnExplicitVenue_RidesTheClaimIntoTheRecord() public {
+        // Alice has a vault, so her DEFAULT delivery is the vault; she claims
+        // to her WALLET explicitly. The day stages; the record carries the
+        // wallet, and the payout reaches it.
+        _scene();
+        _wideDay(true);
+        address vault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(alice);
+        vm.prank(alice);
+        (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(LibVaipakam.RewardDelivery.Wallet);
+        assertEq(paid, 0);
+        RewardEpochViewFacet.StagingRecordView memory r = _rec();
+        assertTrue(r.venueSet, "the explicit venue is bound at opening");
+        assertEq(r.venue, uint8(LibVaipakam.RewardDelivery.Wallet));
+        _staging().prepareStagedDay(_key());
+        _staging().prepareStagedDay(_key());
+        _liveFresh(1e18);
+        _staging().reserveStagedDay(_key());
+        uint256 walletBefore = vpfi.balanceOf(alice);
+        uint256 vaultBefore = vpfi.balanceOf(vault);
+        _settle().resolveStagedDayPage(_key());
+        assertTrue(_settle().resolveStagedDayPage(_key()));
+        assertEq(vpfi.balanceOf(alice) - walletBefore, NEED, "paid to the wallet the claim named");
+        assertEq(vpfi.balanceOf(vault), vaultBefore, "not to the vault the default would have chosen");
+    }
+
+    function test_ADefaultClaim_BindsNoVenue() public {
+        _stagedScene();
+        assertFalse(_rec().venueSet, "a default claim leaves the venue to the record's payout");
+    }
+
+    function test_APendingOverflow_StopsPreparation_AndStagesNothingMore() public {
+        // Two typed epochs and 128 untyped ones on the day: the record opens
+        // on the two, and its scans pass more pending epochs than it tracks.
+        _scene();
+        _wideDayTyped(2);
+        // A typed epoch between the two wide days: it sits in the page that
+        // overflows, so that page has something it would otherwise stage.
+        vm.warp(block.timestamp + 10);
+        bytes32 typedLate = _epochOf(TINY, 950, keccak256("typed-late"));
+        _ingress().onRemitSplitAttested(CHAIN_BASE, REMITTER, 950, TINY, 0);
+        vm.warp(block.timestamp + 10);
+        _wideDayTypedFrom(0, 300); // 65 more, all untyped
+        assertEq(_claim(), 0);
+        assertEq(_rec().batchCount, 2);
+        _staging().prepareStagedDay(_key()); // the window rescanned: 62 pending
+        assertFalse(_rec().pendingOverflow);
+        // The next page passes 63 more: the tracked page overflows, and the
+        // page stages nothing — not even the typed epoch in it.
+        (uint256 sf, ) = _staging().prepareStagedDay(_key());
+        assertTrue(_rec().pendingOverflow, "more pending epochs than the record tracks");
+        assertEq(sf, 0, "the overflowing page stages nothing");
+        (, , uint256 refs) = _staged(typedLate);
+        assertEq(refs, 0, "no new reference for a record that can only be unwound");
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.StagingPendingOverflow.selector, _key()));
+        _staging().prepareStagedDay(_key());
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.StagingPendingOverflow.selector, _key()));
+        _staging().reserveStagedDay(_key());
+        // Unwindable by the claimant now, by anyone past the deadline.
+        vm.prank(alice);
+        _settle().unwindStagedDayPage(_key());
+        assertEq(_rec().phase, uint8(LibVaipakam.StagingPhase.None));
+    }
+
+    /// @dev Two typed epochs among 65 and the claim: the walk stages the two.
+    function _scene2Typed() internal returns (bytes32[] memory hs, uint256 id) {
+        id = _scene();
+        hs = _wideDayTyped(2);
+        assertEq(_claim(), 0);
     }
 }

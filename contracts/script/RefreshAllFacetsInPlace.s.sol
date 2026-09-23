@@ -2342,12 +2342,24 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     ///      (removing a live function would strand it) and that the list
     ///      names the legacy seed.
     function _retiredSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](1);
+        s = new bytes4[](4);
         // #1566 slice 4 PR A (Codex #2158 r29/r30 P1) — the legacy seed took
         // only the amount; it now carries the pause epoch too, so the old
         // selector must not survive routed to bytecode that checks neither
         // the manual pause, the epoch, nor the cap.
         s[0] = bytes4(keccak256("seedArmedFreshPaid(uint256)"));
+        // 3b-ii-A2 (#2305; Codex #2308 r6) — the two hinted index entries
+        // gained `lateHints` and the claim walk's host entry gained the
+        // delivery venue, so their earlier shapes are retired here. No chain
+        // has routed any of the three (the A1 and A2 cuts are undeployed), so
+        // each Remove leg is a no-op today; they are listed because the rule
+        // is stated once — a renamed selector needs its Remove leg, or an
+        // in-place refresh leaves the old shape routed to the old bytecode,
+        // and a stale hinted entry would link an epoch into the list without
+        // the late chain a standing record scans.
+        s[1] = bytes4(keccak256("materializeTransportBatchPageHinted(bytes32,uint256[],bytes32[])"));
+        s[2] = bytes4(keccak256("epochLinkTransportDayIndex(uint256,bytes32[])"));
+        s[3] = bytes4(keccak256("epochClaimEntriesWalk(address,uint256,uint256)"));
         // The four-argument vault credit is NOT retired (Codex #2276 r3 P1,
         // r14 P2): it stays on the refreshed VaultFactoryFacet as a
         // compatibility entry, in the facet's own selector list, so every

@@ -48,9 +48,8 @@ library LibRewardStaging {
 
     // `StagingRecordOpened` and `TransportStaged` are the custody library's:
     // the batch-side moves are made there, by the walk and by {prepare} alike.
-    /// @notice The claimant set the record's delivery venue.
-    /// @custom:event-category state-change/reward-staging
-    event StagingVenueSet(bytes32 indexed key, uint8 venue);
+    // `StagingVenueSet` is the custody library's: the venue is bound there,
+    // by the claimant's explicit claim at opening and by {setVenue} alike.
     /// @notice The day is covered: the residual legs and the cap headroom are
     ///         reserved, per source, and the record can no longer be re-priced.
     /// @custom:event-category state-change/reward-staging
@@ -119,9 +118,7 @@ library LibRewardStaging {
         if (caller != r.user || r.phase != LibVaipakam.StagingPhase.Staging) {
             revert IVaipakamErrors.StagingVenueNotSettable(key);
         }
-        r.venue = venue;
-        r.venueSet = true;
-        emit StagingVenueSet(key, uint8(venue));
+        LibRewardCustody.bindStagingVenue(key, r, venue);
     }
 
     // ─────────────────────────────── prepare ──────────────────────────────
@@ -144,6 +141,10 @@ library LibRewardStaging {
     function prepare(LibVaipakam.Storage storage s, bytes32 key) internal returns (uint256 stagedFresh, uint256 stagedRecycled) {
         LibVaipakam.StagingRecord storage r = record(s, key);
         _requirePhase(key, r, LibVaipakam.StagingPhase.Staging);
+        // A record that passed more pending epochs than it tracks can only be
+        // unwound (Codex #2308 r6): preparing it further would reference more
+        // shared epochs for a day that can never settle through it.
+        if (r.pendingOverflow) revert IVaipakamErrors.StagingPendingOverflow(key);
         (uint256 askF, uint256 askR) = _ask(s, key, r);
         // Nothing left to ask for still scans to the end: the reservation
         // needs the whole list seen, not merely the need met.
@@ -218,7 +219,10 @@ library LibRewardStaging {
         // proceed as long as the list has not grown since.
         r.scanComplete = complete;
         if (complete) r.listCountSeen = s.transportBatchesByDay[r.day].length;
-        if (ids.length == 0) return (0, 0);
+        // The page that overflowed the pending count stages nothing: the
+        // record is unwindable from here, and nothing more is referenced
+        // for it (Codex #2308 r6).
+        if (r.pendingOverflow || ids.length == 0) return (0, 0);
         return LibRewardCustody.stageTakes(s, key, r, ids, fresh, recycled);
     }
 
@@ -238,16 +242,17 @@ library LibRewardStaging {
     function reserve(LibVaipakam.Storage storage s, bytes32 key) internal {
         LibVaipakam.StagingRecord storage r = record(s, key);
         _requirePhase(key, r, LibVaipakam.StagingPhase.Staging);
+        // A record that passed more pending epochs than it tracks can only be
+        // unwound: the terminal refusal, named first (Codex #2308 r2, r6).
+        if (r.pendingOverflow) revert IVaipakamErrors.StagingPendingOverflow(key);
         // Transport first: nothing is reserved from the live sources while
         // the day's list still has epochs no preparation has scanned, or has
         // grown since the last one did (Codex #2308 r1).
         if (!r.scanComplete || s.transportBatchesByDay[r.day].length != r.listCountSeen) {
             revert IVaipakamErrors.StagingScanIncomplete(key);
         }
-        // Nor while a late link landed behind the record's place, an epoch it
-        // passed over pending has become stageable since, or it passed more
-        // of them than it tracks (Codex #2308 r2, r4).
-        if (r.pendingOverflow) revert IVaipakamErrors.StagingPendingOverflow(key);
+        // Nor while a late link landed behind the record's place, or an epoch
+        // it passed over pending has become stageable since (Codex #2308 r2, r4).
         if (s.transportDayLateGen[r.day] != r.lateGenSeen || LibRewardCustody.anySkippedNowStageable(s, r)) {
             revert IVaipakamErrors.StagingScanIncomplete(key);
         }

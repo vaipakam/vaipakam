@@ -1609,11 +1609,12 @@ library LibInteractionRewards {
     function callClaimEntriesWalk(
         address user,
         uint256 freshBudget,
-        uint256 windowFreshReserved
+        uint256 windowFreshReserved,
+        LibVaipakam.RewardDelivery deliverTo
     ) internal returns (ClaimEntriesResult memory res) {
         (bool ok, bytes memory ret) = address(this).call(
             abi.encodeWithSignature(
-                "epochClaimEntriesWalk(address,uint256,uint256)", user, freshBudget, windowFreshReserved
+                "epochClaimEntriesWalk(address,uint256,uint256,uint8)", user, freshBudget, windowFreshReserved, deliverTo
             )
         );
         if (!ok) {
@@ -1666,10 +1667,15 @@ library LibInteractionRewards {
     ///         "nothing to claim" revert must not roll it back — otherwise
     ///         the claimant retries the same zero-pay day forever and can
     ///         never reach the payable days behind it.
+    /// @param deliverTo The venue the claimant named (3b-ii-A2; Codex #2308
+    ///        r6): a day this walk stages carries it into the record, so the
+    ///        staged part is delivered where the paid part was; `Default`
+    ///        binds nothing and the record resolves the claimant's default.
     function claimForUserEntries(
         address user,
         uint256 freshBudget,
-        uint256 windowFreshReserved
+        uint256 windowFreshReserved,
+        LibVaipakam.RewardDelivery deliverTo
     ) internal returns (ClaimEntriesResult memory res) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256[] storage ids = s.userRewardEntryIds[user];
@@ -1704,7 +1710,7 @@ library LibInteractionRewards {
             (res.toUser.total - res.toUser.recycled) +
             (res.toTreasury.total - res.toTreasury.recycled);
         (EntrySplit memory wu, EntrySplit memory wt, bool walked) =
-            _walkShareOfPoolDays(s, user, freshBudget, legacyFresh, windowFreshReserved, res.transport);
+            _walkShareOfPoolDays(s, user, freshBudget, legacyFresh, windowFreshReserved, res.transport, deliverTo);
         _foldSplit(res.toUser, wu);
         _foldSplit(res.toTreasury, wt);
         res.advancedAnyDay = walked;
@@ -1729,7 +1735,8 @@ library LibInteractionRewards {
         uint256 freshBudget,
         uint256 legacyFreshReserved,
         uint256 windowFreshReserved,
-        TransportLegs memory tp
+        TransportLegs memory tp,
+        LibVaipakam.RewardDelivery deliverTo
     )
         private
         returns (
@@ -1774,7 +1781,8 @@ library LibInteractionRewards {
             pruned: false,
             capHit: false,
             daysLeft: LibVaipakam.MAX_INTERACTION_CLAIM_DAYS,
-            transport: TransportLegs({userFresh: 0, userRecycled: 0, treasuryFresh: 0, treasuryRecycled: 0})
+            transport: TransportLegs({userFresh: 0, userRecycled: 0, treasuryFresh: 0, treasuryRecycled: 0}),
+            deliverTo: deliverTo
         });
 
         for (uint8 sideIdx; sideIdx < 2; ) {
@@ -1937,7 +1945,7 @@ library LibInteractionRewards {
                 // call that can cover it. Any other deferral touches nothing.
                 if (charge.transportCapHit && charge.planIds.length != 0) {
                     (, uint256 staged) = LibRewardCustody.stageDayFromPlan(
-                        s, user, side, d, set, charge.planIds, charge.planFresh, charge.planRecycled
+                        s, user, side, d, set, charge.planIds, charge.planFresh, charge.planRecycled, ctx.deliverTo
                     );
                     // What was staged is the progress this call keeps, so a
                     // claim that could only stage returns nothing paid rather
@@ -2402,9 +2410,10 @@ library LibInteractionRewards {
         ///      defer included. Exceeds the live bucket exactly when the claim
         ///      would defer a day on it.
         uint256 bucketRecycled;
-        /// @dev A day the walk would defer on the transport scan window or
-        ///      on a staging reservation of its loan side (3b-ii-A2) — a
-        ///      refusal no figure above carries.
+        /// @dev A day the walk would defer for a reason no figure above
+        ///      carries — the transport scan window, a staging reservation of
+        ///      its loan side, or a standing staging record of the day itself
+        ///      (3b-ii-A2; {_dayRefusedWithoutFigure}).
         bool capHit;
         /// @dev The part of `armed` the LIVE delivery must fund — net of the
         ///      epoch-paid fresh — which the delivered bound and the backing
@@ -2898,6 +2907,16 @@ library LibInteractionRewards {
     /// @dev 3b-ii-A — a dry-run day's planned epoch draws join the run's
     ///      overlay, so the next day is priced against balances net of them
     ///      (Codex #2276 r1 P2). Bounded by the scan window per day.
+    /// @dev THE reasons a day defers that no figure carries — the ones the
+    ///      expiry gates must read as "not claimable now" (Codex #2308 r4,
+    ///      r6): the transport scan window ended before the list did; a
+    ///      staging reservation of the day's loan side binds; the day is a
+    ///      standing staging record's to settle. Stated once, so the dry
+    ///      run's refusal flag and the clocks it feeds cannot omit one.
+    function _dayRefusedWithoutFigure(DayCharge memory charge) private pure returns (bool) {
+        return charge.transportCapHit || charge.loanSideReserved || charge.stagedElsewhere;
+    }
+
     /// @dev Whether the live settlement of `charge`'s day reaches the epoch
     ///      draw, and so its prune: a nonzero draw, or a cap-hit deferral's
     ///      draw of nothing — the rule {_drawAndFold} and
@@ -3193,9 +3212,7 @@ library LibInteractionRewards {
             // walk's own verdict. A day deferred on the transport scan window
             // is flagged instead: no figure says the claim would not pay it.
             acc.bucketRecycled += charge.bucketRecycled;
-            // Likewise a day deferred on a staging reservation of its loan
-            // side (3b-ii-A2; Codex #2308 r4): the claim would not pay it.
-            if (charge.transportCapHit || charge.loanSideReserved) acc.capHit = true;
+            if (_dayRefusedWithoutFigure(charge)) acc.capHit = true;
             if (!charge.advanced) break;
 
             // The same draw the settle walk deducts.
@@ -6488,6 +6505,10 @@ library LibInteractionRewards {
         uint256 daysLeft;
         /// @dev 3b-ii-A — the transport-paid legs the walk drew, folded per day.
         TransportLegs transport;
+        /// @dev 3b-ii-A2 (Codex #2308 r6) — the venue the claimant named,
+        ///      bound on a record this walk opens or extends; `Default` binds
+        ///      nothing. On the context so the stage call adds no stack slot.
+        LibVaipakam.RewardDelivery deliverTo;
     }
 
     /// @notice #1351 slice 2e — one loan's in-memory loan-side deltas during
