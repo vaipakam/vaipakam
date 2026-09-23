@@ -252,10 +252,61 @@ contract InteractionRewardsLensFacet {
         return (fromDay, windowToDay, eTo, true, 0);
     }
 
-    /// @notice Remaining VPFI reservable from the 69M interaction pool.
-    /// @return Remaining VPFI wei (`cap - paidOut`) the pool can still pay out.
+    /// @notice The 69M interaction pool's HARD headroom: `cap − paidOut −
+    ///         rewardBudgetRemittedGlobal`, the lifetime figure the pool's cap
+    ///         is measured against. What a settlement may spend NOW is less
+    ///         by what staging records have reserved (3b-ii-A2, #2305) —
+    ///         {getRewardReservations} reports both, so this figure is never
+    ///         read as spendable (Codex #2308 r5).
+    /// @return Remaining VPFI wei of lifetime headroom.
     function getInteractionPoolRemaining() external view returns (uint256) {
         return LibInteractionRewards.poolRemaining();
+    }
+
+    /// @notice 3b-ii-A2 (#2305) — what staging records have RESERVED of each
+    ///         live source, and what each has AVAILABLE net of it (Codex
+    ///         #2308 r5): a settlement that fits a hard figure but not the
+    ///         available one defers on the reservation, and these are the
+    ///         figures that say why.
+    /// @return poolReserved      Pool headroom reserved by standing records.
+    /// @return poolAvailable     Pool headroom spendable now: the hard figure
+    ///                           less `poolReserved`.
+    /// @return armedFreshReserved The delivered fresh ledger's reserved
+    ///                           charge (the ledger's `remaining` on
+    ///                           {RewardRemittanceLensFacet.getDeliveredFreshBound}
+    ///                           is already net of it).
+    /// @return liveFreshReserved Live fresh reserved by count on the row (the
+    ///                           row itself is never reduced by a reservation).
+    /// @return bucketReserved    Recycled runway reserved from the bucket.
+    /// @return bucketAvailable   The bucket less `bucketReserved` — what the
+    ///                           claim walk draws against.
+    function getRewardReservations()
+        external
+        view
+        returns (
+            uint256 poolReserved,
+            uint256 poolAvailable,
+            uint256 armedFreshReserved,
+            uint256 liveFreshReserved,
+            uint256 bucketReserved,
+            uint256 bucketAvailable
+        )
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        poolReserved = s.interactionPoolReserved;
+        poolAvailable = LibInteractionRewards.poolAvailable();
+        armedFreshReserved = s.rewardBudgetArmedFreshReserved;
+        liveFreshReserved = s.liveFreshReserved;
+        bucketReserved = s.recycleBucketReserved;
+        bucketAvailable = LibVpfiRecycle.bucketAvailable(s);
+    }
+
+    /// @notice 3b-ii-A2 (#2305) — what staging records have reserved of one
+    ///         loan side's lifetime reward cap (Codex #2308 r5): encumbered,
+    ///         never paid, and a day that fits the side's hard headroom but
+    ///         not what is left after this defers rather than trims.
+    function getLoanSideRewardReserved(uint256 loanId, LibVaipakam.RewardSide side) external view returns (uint256) {
+        return LibVaipakam.storageSlot().loanSideRewardReservedVpfi[loanId][uint8(side)];
     }
 
     /// @notice Cumulative VPFI already paid out from the interaction pool.
@@ -267,10 +318,12 @@ contract InteractionRewardsLensFacet {
     /// @notice Interaction pool transparency snapshot.
     /// @return cap        69M VPFI hard cap.
     /// @return paidOut    Cumulative VPFI claimed so far.
-    /// @return remaining  Reservable pool: `cap − paidOut −
+    /// @return remaining  The pool's HARD headroom: `cap − paidOut −
     ///                    rewardBudgetRemittedGlobal` (#776 — matches
-    ///                    {getInteractionPoolRemaining} and the live claim cap,
-    ///                    so the three never disagree).
+    ///                    {getInteractionPoolRemaining} and the lifetime claim
+    ///                    cap, so the three never disagree). Spendable now is
+    ///                    less by standing reservations — see
+    ///                    {getRewardReservations} (Codex #2308 r5).
     /// @return launch     Launch timestamp (0 if not started).
     /// @return today      Current day index (0 if not started).
     /// @return aprBps     Annual rate for today (from schedule).

@@ -105,7 +105,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](232); // 3b-ii-A2 +9 raw reads +1 raw write; #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1
+        selectors = new bytes4[](233); // 3b-ii-A2 +9 raw reads +2 raw writes; #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -525,6 +525,7 @@ contract HelperTest {
         selectors[n++] = TestMutatorFacet.poolAvailableRaw.selector;
         selectors[n++] = TestMutatorFacet.entryExecutableNowRaw.selector;
         selectors[n++] = TestMutatorFacet.setRecycleBucketReservedRaw.selector;
+        selectors[n++] = TestMutatorFacet.uncreditFreshInHolderRaw.selector;
         selectors[n++] = TestMutatorFacet.acknowledgeTransportBatchRaw.selector;
         selectors[n++] = TestMutatorFacet.releaseTransportBatchRaw.selector;
         // #951 v2 (Codex #959 bind-to-live) — setSaleListingCollateralRaw removed
@@ -2161,7 +2162,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](22);
+        selectors = new bytes4[](24);
         selectors[0] = InteractionRewardsLensFacet.getInteractionLaunchTimestamp.selector;
         selectors[1] = InteractionRewardsLensFacet.getInteractionCurrentDay.selector;
         selectors[2] = InteractionRewardsLensFacet.getInteractionAnnualRateBps.selector;
@@ -2187,6 +2188,8 @@ contract HelperTest {
         selectors[19] = InteractionRewardsLensFacet.getRecycledCreditedPreLaunch.selector;
         selectors[20] = InteractionRewardsLensFacet.getUserArmedFreshNeed.selector;
         selectors[21] = InteractionRewardsLensFacet.getUserArmedFreshNeedWithLegs.selector;
+        selectors[22] = InteractionRewardsLensFacet.getRewardReservations.selector;
+        selectors[23] = InteractionRewardsLensFacet.getLoanSideRewardReserved.selector;
         return selectors;
     }
 

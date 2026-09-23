@@ -10,6 +10,7 @@ import {RewardEpochFacet} from "../src/facets/RewardEpochFacet.sol";
 import {RewardEpochViewFacet} from "../src/facets/RewardEpochViewFacet.sol";
 import {RewardIngressFacet} from "../src/facets/RewardIngressFacet.sol";
 import {RewardClaimFacet} from "../src/facets/RewardClaimFacet.sol";
+import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet.sol";
 import {RewardCustodyFacet} from "../src/facets/RewardCustodyFacet.sol";
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
@@ -976,5 +977,126 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         assertEq(_epoch().materializeTransportBatchPageHinted(h130, _one(1), hints, new bytes32[](1)), 1, "linked by the late hint");
         bytes32[] memory ids = _epoch().getTransportDayScanIds(1);
         assertEq(ids[0], h130, "the oldest stands first in the list");
+    }
+
+    // ───────────────────────── round 5 ─────────────────────────
+
+    function test_ARecheckedEpoch_MetAgainByARestartedChainWalk_IsPlannedOnce() public {
+        _stagedAndScanned();
+        uint256 t0 = arrivedAt[0];
+        // An untyped epoch older than everything: the chain's head, remembered
+        // as pending by the next preparation.
+        vm.warp(t0 - 1000);
+        bytes32 l1 = _epochOf(TINY, 810, keccak256("late-untyped"));
+        vm.warp(arrivedAt[64] + 200);
+        _staging().prepareStagedDay(_key());
+        assertEq(_rec().skippedCount, 1, "remembered");
+        // It is attested, and an older typed epoch lands ahead of it in the
+        // chain: the generation moves and the next walk restarts from the
+        // chain's head — where it meets the re-checked epoch again.
+        _ingress().onRemitSplitAttested(CHAIN_BASE, REMITTER, 810, TINY, 0);
+        vm.warp(t0 - 2000);
+        bytes32 l2 = _epochOf(TINY, 811, keccak256("late-typed"));
+        _ingress().onRemitSplitAttested(CHAIN_BASE, REMITTER, 811, TINY, 0);
+        vm.warp(arrivedAt[64] + 300);
+        (uint256 sf, ) = _staging().prepareStagedDay(_key());
+        assertEq(sf, 2 * TINY, "each staged once: the re-check and the new link");
+        assertEq(_rec().batchCount, WIDE + 2);
+        (uint256 s1, , uint256 r1) = _staged(l1);
+        assertEq(s1, TINY); assertEq(r1, 1);
+        (uint256 s2, , uint256 r2) = _staged(l2);
+        assertEq(s2, TINY); assertEq(r2, 1);
+        assertEq(_rec().skippedCount, 0, "forgotten once offered");
+    }
+
+    function test_ADemotion_LeavesTheReservedLiveFresh_InTheRowAndOnTheLedger() public {
+        _stagedAndScanned();
+        _liveFresh(1e18);
+        _staging().reserveStagedDay(_key());
+        uint256 reserved = _rec().reservedLiveUserFresh;
+        assertEq(reserved, NEED - WIDE * TINY);
+        uint256 row = _row(LibVaipakam.RewardCustodyRow.LiveFresh);
+        assertGt(row, reserved, "live: the row holds more than the reservation");
+        // A compensation demotion asks to uncredit more than the row holds:
+        // it takes everything but the reservation, on the row and on the
+        // delivered ledger alike, and the record still pays its last page.
+        uint256 moved = _mut().uncreditFreshInHolderRaw(2e18);
+        assertEq(moved, row - reserved, "the reserved live fresh is not the demotion's to take");
+        assertEq(_row(LibVaipakam.RewardCustodyRow.LiveFresh), reserved, "it stays in the row");
+        uint256 aliceBefore = vpfi.balanceOf(alice);
+        _settle().resolveStagedDayPage(_key());
+        assertTrue(_settle().resolveStagedDayPage(_key()), "and the last page pays");
+        assertEq(vpfi.balanceOf(alice) - aliceBefore, NEED);
+        assertEq(_row(LibVaipakam.RewardCustodyRow.LiveFresh), 0);
+    }
+
+    function test_TheLens_ReportsWhatIsReserved_AndWhatIsAvailable() public {
+        _stagedAndScanned();
+        _liveFresh(1e18);
+        InteractionRewardsLensFacet lens = InteractionRewardsLensFacet(address(diamond));
+        (uint256 pr, uint256 pa, uint256 ar, uint256 lr, uint256 br, uint256 ba) = lens.getRewardReservations();
+        assertEq(pr + ar + lr + br, 0, "nothing reserved before the reservation");
+        assertEq(pa, lens.getInteractionPoolRemaining(), "available equals the hard figure");
+        _staging().reserveStagedDay(_key());
+        (pr, pa, ar, lr, br, ba) = lens.getRewardReservations();
+        uint256 live = NEED - WIDE * TINY;
+        assertEq(pr, NEED, "the pool cap over the full fresh leg");
+        assertEq(pa, lens.getInteractionPoolRemaining() - NEED, "available is the hard figure less the reservation");
+        assertEq(ar, live, "the delivered ledger's reserved charge");
+        assertEq(lr, live, "the live fresh reserved by count");
+        assertEq(br, 0); ba;
+        assertEq(lens.getLoanSideRewardReserved(LOAN, LibVaipakam.RewardSide.Lender), NEED, "the loan side's reservation");
+        (, uint256 remaining) = RewardRemittanceLensFacet(address(diamond)).getDeliveredFreshBound();
+        assertEq(remaining, 1e18 - live, "the delivered bound is net of the reservation");
+    }
+
+    function test_APreListDay_OpensNoRecord() public {
+        // A day indexed before the list existed is read from its array; a
+        // wide one defers with nothing to stage, and the opener refuses a day
+        // not read from its list, so no record ever scans an array-backed day.
+        _scene();
+        _wideDay(true);
+        _mut().resetTransportDayListRaw(1);
+        vm.prank(alice);
+        (bool ok, ) = address(diamond).call(abi.encodeWithSelector(RewardClaimFacet.claimInteractionRewards.selector));
+        ok; // deferred either way: nothing to stage from an array-backed day
+        assertEq(_rec().phase, uint8(LibVaipakam.StagingPhase.None), "no record on a day read from its array");
+    }
+
+    function test_AChainRestart_CountsItsOwnWork_InTheDeadline() public {
+        // Seventy older epochs stand in the day's late chain BEFORE the record
+        // opens: its deadline counts none of them (the base is the count at
+        // opening). One more, older than all, lands ahead of the record's
+        // place: the walk restarts from the chain's head and the deadline
+        // grows by the pages that walk needs.
+        _scene();
+        _wideDay(true);
+        uint256 t0 = arrivedAt[0];
+        for (uint256 i; i < 70; ++i) {
+            vm.warp(t0 - 1000 + i);
+            _epochOf(TINY, 800 + i, keccak256(abi.encode("older", i)));
+            _ingress().onRemitSplitAttested(CHAIN_BASE, REMITTER, 800 + i, TINY, 0);
+        }
+        vm.warp(arrivedAt[64] + 100);
+        assertEq(_claim(), 0);
+        RewardEpochViewFacet.StagingRecordView memory r = _rec();
+        assertEq(r.lateWorkBase, 70, "the chain's count at opening");
+        // 135 members past the cursor, no late work: three pages.
+        assertEq(r.deadline, r.openedAt + 3 days + 3 days);
+        _staging().prepareStagedDay(_key());
+        _staging().prepareStagedDay(_key());
+        _staging().prepareStagedDay(_key());
+        assertTrue(_rec().scanComplete);
+        assertEq(_rec().deadline, r.openedAt + 3 days + 3 days, "unchanged by the record's own pages");
+        vm.warp(t0 - 2000);
+        // Older than all 135: beyond the unhinted walk, so both predecessors
+        // are named — the list's head and the chain's head.
+        _epochOfHinted(899, keccak256("older-than-all"), bytes32(0), bytes32(0), true);
+        _ingress().onRemitSplitAttested(CHAIN_BASE, REMITTER, 899, TINY, 0);
+        vm.warp(arrivedAt[64] + 200);
+        _staging().prepareStagedDay(_key()); // the restart: the chain from its head
+        assertEq(_rec().lateWorkBase, 0, "the restart's work is counted from the chain's head");
+        // 136 members and 71 late links: four pages.
+        assertEq(_rec().deadline, r.openedAt + 4 days + 3 days, "the deadline grew by the restored page");
     }
 }

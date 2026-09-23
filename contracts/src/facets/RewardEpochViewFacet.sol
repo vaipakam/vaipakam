@@ -71,7 +71,7 @@ contract RewardEpochViewFacet {
         bool wasReserved;
         uint256 skippedCount;
         bool pendingOverflow;
-        uint256 lateCountAtOpen;
+        uint256 lateWorkBase;
     }
 
     /// @notice The preview's dry run of `user`'s ShareOfPool days against the
@@ -162,7 +162,7 @@ contract RewardEpochViewFacet {
         v.wasReserved = r.wasReserved;
         v.skippedCount = r.skippedIds.length;
         v.pendingOverflow = r.pendingOverflow;
-        v.lateCountAtOpen = r.lateCountAtOpen;
+        v.lateWorkBase = r.lateWorkBase;
     }
 
     /// @notice One page of the record's batches — each with the components it

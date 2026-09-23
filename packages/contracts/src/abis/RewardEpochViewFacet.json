@@ -323,7 +323,7 @@
             "internalType": "bool"
           },
           {
-            "name": "lateCountAtOpen",
+            "name": "lateWorkBase",
             "type": "uint256",
             "internalType": "uint256"
           }

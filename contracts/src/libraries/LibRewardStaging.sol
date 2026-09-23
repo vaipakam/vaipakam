@@ -185,6 +185,9 @@ library LibRewardStaging {
         if (gen != r.lateGenSeen) {
             r.lateSeen = bytes32(0);
             r.lateGenSeen = gen;
+            // The restart re-walks the whole chain, history included: the
+            // deadline counts that work from here (Codex #2308 r5).
+            r.lateWorkBase = 0;
         }
         (
             bytes32[] memory ids,

@@ -2595,4 +2595,10 @@ contract TestMutatorFacet {
     function setRecycleBucketReservedRaw(uint256 amount) external {
         LibVaipakam.storageSlot().recycleBucketReserved = amount;
     }
+
+    /// @dev 3b-ii-A2 test-only — drive the compensation demotion's uncredit
+    ///      directly, so a cell can put it against a record's reservation.
+    function uncreditFreshInHolderRaw(uint256 amount) external returns (uint256 moved) {
+        return LibRewardCustody.uncreditFreshInHolder(LibVaipakam.storageSlot(), amount);
+    }
 }

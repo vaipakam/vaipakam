@@ -963,9 +963,7 @@ library LibVpfiRecycle {
             // Net of what staging records have reserved of the live row
             // (3b-ii-A2, #2305): fresh is reserved by count, never held out
             // of the row, so the room is the row less the count.
-            uint256 row = s.rewardCustodyRows[LibVaipakam.RewardCustodyRow.LiveFresh];
-            uint256 reserved = s.liveFreshReserved;
-            return row > reserved ? row - reserved : 0;
+            return LibRewardCustody.liveFreshUnreserved(s);
         }
         // Net of the live fresh staging records have reserved from THIS
         // balance too (3b-ii-A2, #2305; Codex #2308 r4): inactive, a record's

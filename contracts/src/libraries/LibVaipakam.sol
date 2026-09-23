@@ -8079,9 +8079,12 @@ library LibVaipakam {
         ///      reserved. Past the page the record can only be unwound.
         bytes32[] skippedIds;
         bool pendingOverflow;
-        /// @dev The day's late-link count when the record opened: the deadline
-        ///      counts only links made since, never the day's history.
-        uint256 lateCountAtOpen;
+        /// @dev The late-link count the deadline's chain work is measured
+        ///      from: the day's count when the record opened, so the deadline
+        ///      counts links made since and never the day's history; ZERO
+        ///      once a restart re-walks the chain from its head (Codex #2308
+        ///      r5), so the restored pages are counted as well.
+        uint256 lateWorkBase;
     }
 
     /// @notice #1566 transport epochs PR 3b — a batch's PENDING REMAINDER:
