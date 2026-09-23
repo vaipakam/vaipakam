@@ -2570,11 +2570,16 @@ library LibInteractionRewards {
         // from the full `poolRemaining()` previewed 0.8 for a claim that
         // pays 0.5, and — worse — let the armed-need figure demand
         // delivered allowance for headroom the earlier legs consume.
-        (uint256 dryTotal, , , , ) = LibRewardCustody.callDryRunShareOfPoolDays(
+        (uint256 dryTotal, uint256 armedTotal, , , ) = LibRewardCustody.callDryRunShareOfPoolDays(
             user,
             deliveredLeft,
             _userWalkFreshBudget(s, user, userTotal + treasuryLegs)
         );
+        // A staging reservation binding the claim is a deferral: the claim
+        // pays nothing, so the preview says nothing (3b-ii-A2, #2305; Codex
+        // #2308 r3). The user-side fresh is the bound this upper-bound
+        // preview has; the treasury's fresh is the claim's own check.
+        if (cappedLegacy + treasuryLegs + armedTotal > poolAvailable()) return 0;
         userTotal += dryTotal;
     }
 
@@ -4383,7 +4388,7 @@ library LibInteractionRewards {
         LibVaipakam.Storage storage s,
         uint256 id,
         LibVaipakam.RewardEntry storage e
-    ) private view returns (bool) {
+    ) internal view returns (bool) {
         if (LibVaipakam.isSanctionedAddress(e.user)) return false;
         if (LibPausable.paused()) return false; // every claim reverts paused
         // Codex #1499 r5 P2 — ONE walk for the bound, shared with the funding
@@ -4443,9 +4448,13 @@ library LibInteractionRewards {
         address user,
         ArmedNeed memory need
     ) private view returns (bool) {
+        // A staging reservation binds the claim as a deferral (3b-ii-A2,
+        // #2305; Codex #2308 r3): fresh the claim would spend past what is
+        // available now is not transferable, so no clock counts the interval.
+        uint256 freshTotal =
+            _userFreshTotalCapped(s, user, need.liveArmed, need.userLegs, need.treasuryLegs);
+        if (freshTotal > poolAvailable()) return false;
         if (LibRewardCustody.active(s)) {
-            uint256 freshTotal =
-                _userFreshTotalCapped(s, user, need.liveArmed, need.userLegs, need.treasuryLegs);
             return s.rewardCustodyRows[LibVaipakam.RewardCustodyRow.LiveFresh] >= freshTotal
                 && s.rewardCustodyRows[LibVaipakam.RewardCustodyRow.Recycled] >= need.bucketRecycled;
         }

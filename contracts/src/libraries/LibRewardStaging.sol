@@ -6,6 +6,8 @@ import {LibRewardCustody} from "./LibRewardCustody.sol";
 import {LibInteractionRewards} from "./LibInteractionRewards.sol";
 import {LibVpfiRecycle} from "./LibVpfiRecycle.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 /**
  * @title LibRewardStaging
@@ -190,6 +192,13 @@ library LibRewardStaging {
             LibRewardCustody.noteSkipped(s, key, r, skipped[k]);
             unchecked { ++k; }
         }
+        // And every remembered epoch re-checked typed this time is forgotten,
+        // staged or not: it was offered, and it will not be offered twice.
+        bytes32[] memory rechecked = r.skippedIds;
+        for (uint256 k; k < rechecked.length; ) {
+            LibRewardCustody.forgetSkippedIfTyped(s, key, r, rechecked[k]);
+            unchecked { ++k; }
+        }
         // The scan reached the end of the day's list: the reservation may
         // proceed as long as the list has not grown since.
         r.scanComplete = complete;
@@ -273,10 +282,15 @@ library LibRewardStaging {
         s.liveFreshReserved += liveUserFresh + liveTreasuryFresh;
         s.rewardBudgetArmedFreshReserved += liveUserFresh + liveTreasuryFresh;
         s.recycleBucketReserved += liveUserRecycled;
-        LibRewardCustody.hold(
-            s, LibVaipakam.RewardCustodyRow.Recycled, LibVaipakam.RewardCustodyRow.Resolving, liveUserRecycled, key
-        );
-        r.heldRecycled = liveUserRecycled;
+        // The hold is a custody-row move; while custody is inactive the
+        // Diamond's balance backs the payout as it backs a claim's, and the
+        // recycled residual is reserved by count alone (Codex #2308 r3).
+        if (LibRewardCustody.active(s)) {
+            LibRewardCustody.hold(
+                s, LibVaipakam.RewardCustodyRow.Recycled, LibVaipakam.RewardCustodyRow.Resolving, liveUserRecycled, key
+            );
+            r.heldRecycled = liveUserRecycled;
+        }
         r.reservedLiveUserFresh = liveUserFresh;
         r.reservedLiveTreasuryFresh = liveTreasuryFresh;
         r.reservedLiveUserRecycled = liveUserRecycled;
@@ -348,7 +362,7 @@ library LibRewardStaging {
             unchecked { ++i; }
         }
         r.resolveCursor = i;
-        if (held != 0) {
+        if (held != 0 && LibRewardCustody.active(s)) {
             LibRewardCustody.hold(
                 s, LibVaipakam.RewardCustodyRow.Unclassified, LibVaipakam.RewardCustodyRow.Resolving, held, key
             );
@@ -413,7 +427,13 @@ library LibRewardStaging {
             || (venue == LibVaipakam.RewardDelivery.Default && user.code.length == 0);
         uint256 userTotal = liveUserFresh + liveUserRecycled + r.epochUserFresh + r.epochUserRecycled;
         bool vaulted;
-        if (userTotal != 0) {
+        if (userTotal != 0 && !LibRewardCustody.active(s)) {
+            // Custody inactive: the Diamond's balance pays, as it pays a
+            // claim — the vault first where the venue or the sanctions path
+            // asks for it, the wallet otherwise; a flagged claimant's payout
+            // goes to the vault or does not go (Codex #2308 r3).
+            vaulted = _payFromDiamond(s, user, userTotal, toVault || LibVaipakam.isSanctionedAddress(user), LibVaipakam.isSanctionedAddress(user));
+        } else if (userTotal != 0) {
             if (LibVaipakam.isSanctionedAddress(user)) {
                 // A claimant flagged since preparation is paid into their
                 // vault and nowhere else: no wallet fallback (Codex #2308 r1).
@@ -536,6 +556,27 @@ library LibRewardStaging {
         dry.preparedFresh = r.stagedFresh;
         dry.preparedRecycled = r.stagedRecycled;
         (charge, slices) = LibInteractionRewards.processUserSideDay(r.user, r.day, r.entryIds, pool, dry);
+    }
+
+    /// @dev The claim facet's inactive-custody delivery, for one record: the
+    ///      vault credit from the Diamond's balance, else a wallet transfer —
+    ///      never the wallet for a flagged claimant.
+    function _payFromDiamond(
+        LibVaipakam.Storage storage s,
+        address user,
+        uint256 amount,
+        bool toVault,
+        bool vaultOnly
+    ) private returns (bool vaulted) {
+        address vpfi = s.vpfiToken;
+        if (toVault) {
+            (bool ok, ) = address(this).call(
+                abi.encodeWithSignature("vaultCreditFromDiamondERC20(address,address,uint256)", user, vpfi, amount)
+            );
+            if (ok) return true;
+            if (vaultOnly) revert IVaipakamErrors.RewardCustodyVaultDeliveryFailed(user);
+        }
+        SafeERC20.safeTransfer(IERC20(vpfi), user, amount);
     }
 
     function _close(LibVaipakam.Storage storage s, bytes32 key, LibVaipakam.StagingRecord storage r, bool paid) private {

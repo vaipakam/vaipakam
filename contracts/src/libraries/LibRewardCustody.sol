@@ -153,7 +153,11 @@ library LibRewardCustody {
     ///      epoch while the stale classifier had neither the gate nor the
     ///      debit, so two records would claim one sum. The bump is what makes
     ///      that cut refuse to certify.
-    uint32 internal constant CUTOVER_VERSION = 2;
+    /// @dev 3 since 3b-ii-A2 (#2305): a new holder-debiting settlement seam
+    ///      (the staged record's pages), a vault-only delivery entry on the
+    ///      custody facet, and the `Resolving` row in the attributed total —
+    ///      an activation must see a custody cut that carries all three.
+    uint32 internal constant CUTOVER_VERSION = 3;
 
     /// @notice A complete facet cut recorded the custody protocol version and
     ///         the routing it installed.
@@ -2652,7 +2656,15 @@ library LibRewardCustody {
     ) internal {
         uint64 current = r.deadline;
         if (current != 0 && block.timestamp >= current) return; // expired: terminal
-        uint256 members = s.transportBatchesByDay[r.day].length + s.transportDayLateCount[r.day];
+        // The work LEFT, not the day's history (Codex #2308 r3): the members
+        // the day's cursor has not passed, plus the late links made since the
+        // record opened — a mature day with thousands of exhausted members
+        // and one window left needs one page, and its lease says so.
+        uint256 len = s.transportBatchesByDay[r.day].length;
+        uint256 passed = transportDayListed(s, r.day) ? s.transportDayListCursor[r.day] : s.transportDayCursor[r.day];
+        uint256 members = len > passed ? len - passed : 0;
+        uint256 lateNow = s.transportDayLateCount[r.day];
+        members += lateNow > r.lateCountAtOpen ? lateNow - r.lateCountAtOpen : 0;
         uint256 pages = (members + TRANSPORT_DRAW_SCAN_CAP - 1) / TRANSPORT_DRAW_SCAN_CAP;
         if (pages == 0) pages = 1;
         uint64 next = r.openedAt + uint64(pages) * STAGING_RETRY_CADENCE + STAGING_GRACE;
@@ -2914,6 +2926,7 @@ library LibRewardCustody {
             // made after this are the chain's business for this record.
             r.lateSeen = s.transportDayLateTail[day];
             r.lateGenSeen = s.transportDayLateGen[day];
+            r.lateCountAtOpen = s.transportDayLateCount[day];
         }
         stagingDeadlineRefresh(s, key, r);
     }
@@ -3015,6 +3028,15 @@ library LibRewardCustody {
             unchecked { ++i; }
         }
         s.stagingSkippedSeen[nk][id] = false;
+    }
+
+    /// @notice Forget an epoch the record passed over untyped once it has been
+    ///         re-checked TYPED: it was offered to the plan, and whether it
+    ///         contributed or could not — exhausted, no room, nothing asked —
+    ///         it needs no further revisit (Codex #2308 r3).
+    function forgetSkippedIfTyped(LibVaipakam.Storage storage s, bytes32 key, LibVaipakam.StagingRecord storage r, bytes32 id) internal {
+        bytes32 nk = recordNonceKey(key, r.nonce);
+        if (s.stagingSkippedSeen[nk][id] && stageable(s, id)) _forgetSkipped(s, nk, r, id);
     }
 
     /// @notice Whether any epoch the record passed over untyped is stageable

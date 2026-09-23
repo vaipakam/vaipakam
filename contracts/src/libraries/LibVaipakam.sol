@@ -8079,6 +8079,9 @@ library LibVaipakam {
         ///      record can only be unwound.
         bytes32[] skippedIds;
         bool untypedOverflow;
+        /// @dev The day's late-link count when the record opened: the deadline
+        ///      counts only links made since, never the day's history.
+        uint256 lateCountAtOpen;
     }
 
     /// @notice #1566 transport epochs PR 3b — a batch's PENDING REMAINDER:

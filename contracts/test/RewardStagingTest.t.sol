@@ -164,6 +164,12 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
     ///      explicitly: viaIR folds a re-read `block.timestamp` across the loop).
     ///      The first `typed` are attested; the rest stay untyped, draw-only.
     function _wideDayTyped(uint256 typed) internal returns (bytes32[] memory hs) {
+        return _wideDayTypedFrom(typed, 100);
+    }
+
+    /// @dev As above, with the remit ids and packet ids salted by `salt` so a
+    ///      cell can mint a second wide day without replaying the first.
+    function _wideDayTypedFrom(uint256 typed, uint256 salt) internal returns (bytes32[] memory hs) {
         hs = new bytes32[](WIDE);
         delete arrivedAt;
         uint256 t0 = block.timestamp;
@@ -171,8 +177,8 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
             uint256 ti = t0 + 10 * (i + 1);
             vm.warp(ti);
             arrivedAt.push(ti);
-            hs[i] = _epochOf(TINY, 100 + i, keccak256(abi.encode("tiny", i)));
-            if (i < typed) _ingress().onRemitSplitAttested(CHAIN_BASE, REMITTER, 100 + i, TINY, 0);
+            hs[i] = _epochOf(TINY, salt + i, keccak256(abi.encode("tiny", salt, i)));
+            if (i < typed) _ingress().onRemitSplitAttested(CHAIN_BASE, REMITTER, salt + i, TINY, 0);
         }
     }
 
@@ -518,10 +524,16 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.InteractionPoolReservedShortfall.selector, NEED, 0.1e18));
         RewardClaimFacet(address(diamond)).claimInteractionRewards();
         assertEq(_mut().rewardEntryClaimNextDayRaw(bobEntry), 0, "nothing was written off");
+        (uint256 previewed, , ) = InteractionRewardsLensFacet(address(diamond)).previewInteractionRewards(bob);
+        assertEq(previewed, 0, "the preview says what the claim does: nothing, while the reservation binds");
+        assertFalse(_mut().entryExecutableNowRaw(bobEntry), "and the expiry clock does not count the interval");
         // The reservation unwinds: the room is bob's, in full.
         vm.warp(uint256(_rec().deadline) + 1);
         _settle().unwindStagedDayPage(_key());
         _settle().unwindStagedDayPage(_key());
+        (previewed, , ) = InteractionRewardsLensFacet(address(diamond)).previewInteractionRewards(bob);
+        assertEq(previewed, NEED, "and the full amount once it released");
+        assertTrue(_mut().entryExecutableNowRaw(bobEntry), "executable again once it released");
         uint256 bobBefore = vpfi.balanceOf(bob);
         vm.prank(bob);
         (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
@@ -576,6 +588,71 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         assertEq(sf, TINY, "the newly typed epoch staged");
         assertEq(_rec().batchCount, 3);
         assertEq(_rec().skippedCount, 62, "and forgotten as skipped");
+        _staging().reserveStagedDay(_key());
+        assertEq(_rec().phase, uint8(LibVaipakam.StagingPhase.Reserved));
+    }
+
+    function test_TheDeadline_IsSizedFromTheWorkLeft_NotTheDaysHistory() public {
+        // Alice's record resolves and the day's cursor passes its 65 spent
+        // epochs; 65 more arrive and bob's obligation on the same day opens
+        // a record whose lease counts only the epochs past the cursor.
+        (bytes32[] memory hs, ) = _stagedScene();
+        _staging().prepareStagedDay(_key());
+        _liveFresh(1e18);
+        _staging().reserveStagedDay(_key());
+        _settle().resolveStagedDayPage(_key());
+        _settle().resolveStagedDayPage(_key());
+        _epoch().epochPruneTransportDayCursor(1);
+        _epoch().epochPruneTransportDayCursor(1);
+        assertEq(_cursor(1), WIDE, "every spent epoch passed");
+        hs; // the spent ones
+        vm.warp(arrivedAt[64] + 1000);
+        _wideDayTypedFrom(WIDE, 900); // 65 more, all past the cursor
+        address bob = makeAddr("staging-bob");
+        _mut().setFeeEntitlementRaw(
+            78,
+            LibVaipakam.FeeEntitlement({
+                borrowerMode: LibVaipakam.FeeEntitlementMode.None,
+                lenderMode: LibVaipakam.FeeEntitlementMode.None,
+                openDays: 1,
+                rewardHaircutBpsAtOpen: 0,
+                borrowerTariffPaid: 0,
+                lenderTariffPaid: 0,
+                cStarOpen: 0,
+                loanSideRewardCapOpen: type(uint128).max
+            })
+        );
+        uint256 bobEntry = _mut().pushRewardEntry(bob, 78, LibVaipakam.RewardSide.Lender, 1e18, 1);
+        _mut().closeRewardEntryRaw(bobEntry, 2);
+        _mut().userClaimFundingNeedRaw(bob);
+        _mut().setArmedFreshLedgerRaw(0, 0);
+        vm.prank(bob);
+        (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
+        assertEq(paid, 0);
+        bytes32 bobKey = keccak256(abi.encode(bob, LibVaipakam.RewardSide.Lender, uint256(1)));
+        RewardEpochViewFacet.StagingRecordView memory r = _view().getStagingRecord(bobKey);
+        assertEq(r.phase, uint8(LibVaipakam.StagingPhase.Staging));
+        // 65 members left past the cursor → two pages → two cadences plus grace.
+        assertEq(r.deadline, r.openedAt + 2 days + 3 days, "sized from the 65 left, not the 130 the day has seen");
+    }
+
+    function test_ASkippedEpoch_RecheckedTypedButUseless_IsForgotten() public {
+        _scene();
+        _wideDayTyped(2);
+        assertEq(_claim(), 0);
+        _staging().prepareStagedDay(_key());
+        assertEq(_rec().skippedCount, 63);
+        // A skipped epoch is attested recycled-only: typed, but with no fresh
+        // room for a fresh-only day. Re-checked, it contributes nothing and
+        // must not hold the reservation hostage.
+        _ingress().onRemitSplitAttested(CHAIN_BASE, REMITTER, 100 + 10, 0, TINY);
+        _liveFresh(1e18);
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.StagingScanIncomplete.selector, _key()));
+        _staging().reserveStagedDay(_key());
+        (uint256 sf, ) = _staging().prepareStagedDay(_key());
+        assertEq(sf, 0, "nothing to take from it");
+        assertEq(_rec().batchCount, 2, "not referenced");
+        assertEq(_rec().skippedCount, 62, "but forgotten as skipped");
         _staging().reserveStagedDay(_key());
         assertEq(_rec().phase, uint8(LibVaipakam.StagingPhase.Reserved));
     }

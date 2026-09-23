@@ -2581,4 +2581,11 @@ contract TestMutatorFacet {
     function loanSideRewardReservedRaw(uint256 loanId, uint8 side) external view returns (uint256) {
         return LibVaipakam.storageSlot().loanSideRewardReservedVpfi[loanId][side];
     }
+
+    /// @dev The authoritative executable-now predicate the expiry clock reads,
+    ///      exposed raw so a cell can observe it without driving the sweep.
+    function entryExecutableNowRaw(uint256 id) external view returns (bool) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        return LibInteractionRewards._entryExecutableNow(s, id, s.rewardEntries[id]);
+    }
 }

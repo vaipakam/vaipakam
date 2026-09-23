@@ -321,6 +321,11 @@
             "name": "untypedOverflow",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "lateCountAtOpen",
+            "type": "uint256",
+            "internalType": "uint256"
           }
         ]
       }
