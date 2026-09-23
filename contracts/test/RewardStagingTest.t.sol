@@ -1098,9 +1098,20 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         _ingress().onRemitSplitAttested(CHAIN_BASE, REMITTER, 899, TINY, 0);
         vm.warp(arrivedAt[64] + 200);
         _staging().prepareStagedDay(_key()); // the restart: the chain from its head
-        assertEq(_rec().lateWorkBase, 0, "the restart's work is counted from the chain's head");
-        // 136 members and 71 late links: four pages.
+        assertEq(_rec().lateWorkBase, 70, "the base is the count at opening, still");
+        assertEq(_rec().lateWorkRestored, 71, "the restart restored the whole chain's walk");
+        // 136 members, one link since opening, 71 restored: four pages.
         assertEq(_rec().deadline, r.openedAt + 4 days + 3 days, "the deadline grew by the restored page");
+        // A SECOND restart — another epoch older than all — restores the
+        // walk again, and the deadline grows again (Codex #2308 r10).
+        vm.warp(t0 - 3000);
+        _epochOfHinted(898, keccak256("older-than-all-2"), bytes32(0), bytes32(0), true);
+        _ingress().onRemitSplitAttested(CHAIN_BASE, REMITTER, 898, TINY, 0);
+        vm.warp(arrivedAt[64] + 300);
+        _staging().prepareStagedDay(_key());
+        assertEq(_rec().lateWorkRestored, 71 + 72, "each restart adds the chain it re-walks");
+        // 137 members, two links since opening, 143 restored: five pages.
+        assertEq(_rec().deadline, r.openedAt + 5 days + 3 days, "the second restart's pages are in the lease too");
     }
 
     // ───────────────────────── round 6 ─────────────────────────

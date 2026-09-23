@@ -8089,10 +8089,13 @@ library LibVaipakam {
         bool pendingOverflow;
         /// @dev The late-link count the deadline's chain work is measured
         ///      from: the day's count when the record opened, so the deadline
-        ///      counts links made since and never the day's history; ZERO
-        ///      once a restart re-walks the chain from its head (Codex #2308
-        ///      r5), so the restored pages are counted as well.
+        ///      counts links made since and never the day's history.
         uint256 lateWorkBase;
+        /// @dev The late work RESTORED by restarts: every generation move
+        ///      re-walks the chain from its head, so each adds the chain's
+        ///      count at that moment here, and the deadline counts every
+        ///      restart's pages, not only the first's (Codex #2308 r5, r10).
+        uint256 lateWorkRestored;
     }
 
     /// @notice #1566 transport epochs PR 3b — a batch's PENDING REMAINDER:

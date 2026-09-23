@@ -201,8 +201,9 @@ library LibRewardStaging {
             r.lateSeen = bytes32(0);
             r.lateGenSeen = gen;
             // The restart re-walks the whole chain, history included: the
-            // deadline counts that work from here (Codex #2308 r5).
-            r.lateWorkBase = 0;
+            // chain's count now is work restored, and the deadline counts it
+            // for every restart, not only the first (Codex #2308 r5, r10).
+            r.lateWorkRestored += s.transportDayLateCount[r.day];
         }
         (
             bytes32[] memory ids,

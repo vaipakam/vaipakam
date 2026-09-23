@@ -2750,17 +2750,18 @@ library LibRewardCustody {
         uint64 current = r.deadline;
         if (current != 0 && block.timestamp >= current) return; // expired: terminal
         // The work LEFT, not the day's history (Codex #2308 r3): the members
-        // the day's cursor has not passed, plus the late links past the
-        // record's late-work base — the chain's count when it opened, and
-        // zero once a restart re-walks the whole chain (Codex #2308 r5) — so
-        // a mature day with thousands of exhausted members and one window
-        // left needs one page, and its lease says so, while a restart's pages
-        // are counted too.
+        // the day's cursor has not passed, plus the late links made since the
+        // record opened, plus the late work every restart restored — each
+        // generation move re-walks the whole chain and adds its count (Codex
+        // #2308 r5, r10) — so a mature day with thousands of exhausted
+        // members and one window left needs one page, and its lease says so,
+        // while every restart's pages are counted too.
         uint256 len = s.transportBatchesByDay[r.day].length;
         uint256 passed = transportDayListed(s, r.day) ? s.transportDayListCursor[r.day] : s.transportDayCursor[r.day];
         uint256 members = len > passed ? len - passed : 0;
         uint256 lateNow = s.transportDayLateCount[r.day];
         members += lateNow > r.lateWorkBase ? lateNow - r.lateWorkBase : 0;
+        members += r.lateWorkRestored;
         uint256 pages = (members + TRANSPORT_DRAW_SCAN_CAP - 1) / TRANSPORT_DRAW_SCAN_CAP;
         if (pages == 0) pages = 1;
         uint64 next = r.openedAt + uint64(pages) * STAGING_RETRY_CADENCE + STAGING_GRACE;
