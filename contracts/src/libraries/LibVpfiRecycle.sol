@@ -967,8 +967,15 @@ library LibVpfiRecycle {
             uint256 reserved = s.liveFreshReserved;
             return row > reserved ? row - reserved : 0;
         }
+        // Net of the live fresh staging records have reserved from THIS
+        // balance too (3b-ii-A2, #2305; Codex #2308 r4): inactive, a record's
+        // last page pays its reserved live fresh from the Diamond, so the
+        // room the gates read must already exclude it — the same subtraction
+        // the activated branch makes on the row. {backingPosition} keeps its
+        // published meaning; this is the gates' room.
         (, , uint256 unearmarked) = backingPosition(s);
-        return unearmarked;
+        uint256 reservedLive = s.liveFreshReserved;
+        return unearmarked > reservedLive ? unearmarked - reservedLive : 0;
     }
 
     /**

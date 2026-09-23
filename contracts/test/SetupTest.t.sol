@@ -156,6 +156,7 @@ import {RewardStagingFacet} from "../src/facets/RewardStagingFacet.sol";
 import {RewardClaimWalkFacet} from "../src/facets/RewardClaimWalkFacet.sol";
 import {RewardStagingSettleFacet} from "../src/facets/RewardStagingSettleFacet.sol";
 import {RewardSweepWalkFacet} from "../src/facets/RewardSweepWalkFacet.sol";
+import {RewardForfeitWalkFacet} from "../src/facets/RewardForfeitWalkFacet.sol";
 import {RewardCompensationDispatchFacet} from "../src/facets/RewardCompensationDispatchFacet.sol";
 import {RewardCommitmentFacet} from "../src/facets/RewardCommitmentFacet.sol";
 import {RepatriationFacet} from "../src/facets/RepatriationFacet.sol";
@@ -353,6 +354,7 @@ contract SetupTest is Test {
     RewardStagingFacet rewardStagingFacet;
     RewardClaimWalkFacet rewardClaimWalkFacet;
     RewardSweepWalkFacet rewardSweepWalkFacet;
+    RewardForfeitWalkFacet rewardForfeitWalkFacet;
     RewardStagingSettleFacet rewardStagingSettleFacet;
     RewardCompensationDispatchFacet rewardCompensationDispatchFacet;
     RewardCommitmentFacet rewardCommitmentFacet;
@@ -482,6 +484,7 @@ contract SetupTest is Test {
         rewardStagingFacet = new RewardStagingFacet();
         rewardClaimWalkFacet = new RewardClaimWalkFacet();
         rewardSweepWalkFacet = new RewardSweepWalkFacet();
+        rewardForfeitWalkFacet = new RewardForfeitWalkFacet();
         rewardStagingSettleFacet = new RewardStagingSettleFacet();
         rewardCompensationDispatchFacet = new RewardCompensationDispatchFacet();
         rewardCommitmentFacet = new RewardCommitmentFacet();
@@ -515,7 +518,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](87);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](88);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -845,6 +848,12 @@ contract SetupTest is Test {
             facetAddress: address(rewardStagingSettleFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getRewardStagingSettleFacetSelectors()
+        });
+        // 3b-ii-A2 (#2305; Codex #2308 r4) — the forfeit sweep walk's host (slot 87).
+        cuts[87] = IDiamondCut.FacetCut({
+            facetAddress: address(rewardForfeitWalkFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getRewardForfeitWalkFacetSelectors()
         });
         // #1306 follow-up — read-only lens facet (view/getter surface split
         // off InteractionRewardsFacet for EIP-170 headroom; shared storage).

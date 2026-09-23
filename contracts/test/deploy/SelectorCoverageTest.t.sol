@@ -78,7 +78,7 @@ contract SelectorCoverageTest is Test, DeployDiamond, DiamondFacetNames {
     function test_DeployDiamond_RoutesEveryFacetSelector() public {
         _populateRoutedSet();
 
-        string[86] memory facets = cutFacetNames();
+        string[87] memory facets = cutFacetNames();
         uint256 missing;
         for (uint256 i; i < facets.length; ++i) {
             string memory name = facets[i];
@@ -108,7 +108,7 @@ contract SelectorCoverageTest is Test, DeployDiamond, DiamondFacetNames {
     ///         4-byte selector — such a collision makes `diamondCut`
     ///         revert and the Diamond undeployable.
     function test_NoSelectorCollisionAcrossFacets() public {
-        string[86] memory facets = cutFacetNames();
+        string[87] memory facets = cutFacetNames();
         uint256 collisions;
         for (uint256 i; i < facets.length; ++i) {
             collisions += _recordAndCountCollisions(facets[i]);
@@ -262,6 +262,7 @@ contract SelectorCoverageTest is Test, DeployDiamond, DiamondFacetNames {
         _addAll(_getRewardStagingSelectors());
         _addAll(_getRewardClaimWalkSelectors());
         _addAll(_getRewardSweepWalkSelectors());
+        _addAll(_getRewardForfeitWalkSelectors());
         _addAll(_getRewardStagingSettleSelectors());
         _addAll(_getRepatriationSelectors());
         _addAll(_getConfigSelectors());

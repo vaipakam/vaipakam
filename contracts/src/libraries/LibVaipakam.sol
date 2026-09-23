@@ -8073,12 +8073,12 @@ library LibVaipakam {
         uint256 nonce;
         uint256 lateGenSeen;
         bool wasReserved;
-        /// @dev Epochs the record passed over untyped (at most one page); a
-        ///      preparation re-checks them first, so one attested since is
-        ///      staged before any live source is reserved. Past the page the
-        ///      record can only be unwound.
+        /// @dev Epochs the record passed over PENDING — untyped, or not yet
+        ///      whole (at most one page); a preparation re-checks them first,
+        ///      so one stageable since is staged before any live source is
+        ///      reserved. Past the page the record can only be unwound.
         bytes32[] skippedIds;
-        bool untypedOverflow;
+        bool pendingOverflow;
         /// @dev The day's late-link count when the record opened: the deadline
         ///      counts only links made since, never the day's history.
         uint256 lateCountAtOpen;

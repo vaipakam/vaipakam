@@ -95,6 +95,7 @@ import {RewardStagingFacet} from "../src/facets/RewardStagingFacet.sol";
 import {RewardClaimWalkFacet} from "../src/facets/RewardClaimWalkFacet.sol";
 import {RewardStagingSettleFacet} from "../src/facets/RewardStagingSettleFacet.sol";
 import {RewardSweepWalkFacet} from "../src/facets/RewardSweepWalkFacet.sol";
+import {RewardForfeitWalkFacet} from "../src/facets/RewardForfeitWalkFacet.sol";
 import {LibPausable} from "../src/libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {VaipakamRewardMessenger, REWARD_MESSENGER_WIRE_GENERATION} from "../src/crosschain/VaipakamRewardMessenger.sol";
@@ -232,7 +233,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     // (#1434) landed on either side of one merge.
     // 74 -> 75: OfferAcceptFeeFacet (#1835) — the borrower-LIF charge split
     // off OfferAcceptFacet, which was 164 bytes under EIP-170.
-    uint256 public constant EXPECTED_FACETS = 86;
+    uint256 public constant EXPECTED_FACETS = 87;
 
     function refresh() external {
         uint256 cid = block.chainid;
@@ -1563,6 +1564,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         items[83] = Item("rewardClaimWalkFacet", address(new RewardClaimWalkFacet()), _getRewardClaimWalkSelectors());
         items[84] = Item("rewardSweepWalkFacet", address(new RewardSweepWalkFacet()), _getRewardSweepWalkSelectors());
         items[85] = Item("rewardStagingSettleFacet", address(new RewardStagingSettleFacet()), _getRewardStagingSettleSelectors());
+        items[86] = Item("rewardForfeitWalkFacet", address(new RewardForfeitWalkFacet()), _getRewardForfeitWalkSelectors());
         items[26] = Item("rewardReporterFacet", address(new RewardReporterFacet()), _getRewardReporterSelectors());
         // #1222 M3 B3 — `getChainRecycledLedger` /
         // `getChainDailyRecycledCredit` moved here from ConfigFacet (EIP-170).

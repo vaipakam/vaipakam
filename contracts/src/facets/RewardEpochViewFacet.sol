@@ -70,7 +70,7 @@ contract RewardEpochViewFacet {
         uint256 nonce;
         bool wasReserved;
         uint256 skippedCount;
-        bool untypedOverflow;
+        bool pendingOverflow;
         uint256 lateCountAtOpen;
     }
 
@@ -161,7 +161,7 @@ contract RewardEpochViewFacet {
         v.nonce = r.nonce;
         v.wasReserved = r.wasReserved;
         v.skippedCount = r.skippedIds.length;
-        v.untypedOverflow = r.untypedOverflow;
+        v.pendingOverflow = r.pendingOverflow;
         v.lateCountAtOpen = r.lateCountAtOpen;
     }
 

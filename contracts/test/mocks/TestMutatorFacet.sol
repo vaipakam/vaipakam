@@ -2588,4 +2588,11 @@ contract TestMutatorFacet {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         return LibInteractionRewards._entryExecutableNow(s, id, s.rewardEntries[id]);
     }
+
+    /// @dev 3b-ii-A2 test-only — a raw write of what staging records have
+    ///      reserved of the recycle bucket, so a cell can put the clocks'
+    ///      predicate against a reservation without a mixed-composition day.
+    function setRecycleBucketReservedRaw(uint256 amount) external {
+        LibVaipakam.storageSlot().recycleBucketReserved = amount;
+    }
 }

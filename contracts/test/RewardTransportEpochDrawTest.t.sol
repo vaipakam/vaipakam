@@ -837,13 +837,13 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.TransportIndexWalkExceeded.selector, hOld, 1));
         _epoch().materializeTransportBatchPage(hOld, d1);
         bytes32[] memory hints = new bytes32[](1); // zero: at the head
-        assertEq(_epoch().materializeTransportBatchPageHinted(hOld, d1, hints), 1, "linked with the hint");
+        assertEq(_epoch().materializeTransportBatchPageHinted(hOld, d1, hints, new bytes32[](0)), 1, "linked with the hint");
         (bytes32[] memory page, , uint256 total, ) = _epoch().getTransportDayBatches(1, 0, 1);
         assertEq(total, 131);
         assertEq(page[0], hOld, "at the front");
         bytes32 wrong = page[0];
         vm.expectRevert();
-        _epoch().materializeTransportBatchPageHinted(hOld, d1, _hintOf(wrong)); // already listed: idempotent, refused as whole
+        _epoch().materializeTransportBatchPageHinted(hOld, d1, _hintOf(wrong), new bytes32[](0)); // already listed: idempotent, refused as whole
     }
 
     function _hintOf(bytes32 h) internal pure returns (bytes32[] memory a) {
@@ -925,7 +925,7 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         assertEq(total, 2);
         (avail, ) = _epoch().getTransportCoverageForDay(1);
         assertEq(avail, 10e18 - NEED + 1e18, "and is found there");
-        (linked, , ) = _epoch().epochLinkTransportDayIndex(1, new bytes32[](0));
+        (linked, , ) = _epoch().epochLinkTransportDayIndex(1, new bytes32[](0), new bytes32[](0));
         assertEq(linked, 2, "the link caught the list up");
         (bytes32[] memory order, , bytes32 next) = _epoch().getTransportDayBatchesFrom(1, bytes32(0), 10);
         assertEq(order.length, 2, "the list holds every member");
@@ -934,7 +934,7 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         assertEq(next, bytes32(0));
         (avail, ) = _epoch().getTransportCoverageForDay(1);
         assertEq(avail, 10e18 - NEED + 1e18, "the same coverage from the list");
-        (linked, , ) = _epoch().epochLinkTransportDayIndex(1, new bytes32[](0));
+        (linked, , ) = _epoch().epochLinkTransportDayIndex(1, new bytes32[](0), new bytes32[](0));
         assertEq(linked, 2, "idempotent");
     }
 
@@ -958,7 +958,7 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         assertEq(_claim(), 0, "deferred on the array window");
         assertEq(_cursor(1), 64, "the array cursor passed the husks");
         assertEq(_claim(), NEED, "the next attempt pays from the array");
-        (uint256 linked, uint256 total, ) = _epoch().epochLinkTransportDayIndex(1, new bytes32[](0));
+        (uint256 linked, uint256 total, ) = _epoch().epochLinkTransportDayIndex(1, new bytes32[](0), new bytes32[](0));
         assertEq(linked, 32, "an unhinted call links one page");
         assertEq(total, 65);
         assertEq(_cursor(1), 64, "still read from the array");
@@ -966,11 +966,11 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         bytes32[] memory hints = new bytes32[](40);
         for (uint256 i; i < 33; ++i) hints[i] = hs[31 + i];
         bool converted;
-        (linked, , converted) = _epoch().epochLinkTransportDayIndex(1, hints);
+        (linked, , converted) = _epoch().epochLinkTransportDayIndex(1, hints, new bytes32[](0));
         assertEq(linked, 65, "every member linked; surplus hints ignored");
         assertFalse(converted, "one bounded prune passed a whole window: the day still reads from its array");
         assertEq(_cursor(1), 64, "exact, from the array, until the conversion completes");
-        (, , converted) = _epoch().epochLinkTransportDayIndex(1, new bytes32[](0));
+        (, , converted) = _epoch().epochLinkTransportDayIndex(1, new bytes32[](0), new bytes32[](0));
         assertTrue(converted, "the next prune stopped short of its bound: the list is read now");
         assertEq(_cursor(1), 64, "and the list's own count is the same exact figure");
         (uint256 avail, bool capHit) = _epoch().getTransportCoverageForDay(1);
@@ -1076,11 +1076,11 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         // Nothing paid and no cursor moved: the empty claim reverts as ever.
         vm.expectRevert(IVaipakamErrors.NoInteractionRewardsToClaim.selector);
         _claim();
-        (uint256 linked, , ) = _epoch().epochLinkTransportDayIndex(1, new bytes32[](0));
+        (uint256 linked, , ) = _epoch().epochLinkTransportDayIndex(1, new bytes32[](0), new bytes32[](0));
         assertEq(linked, 32);
         assertEq(_preview(), 0, "still deferred: the list is not whole");
-        _epoch().epochLinkTransportDayIndex(1, new bytes32[](0));
-        (linked, , ) = _epoch().epochLinkTransportDayIndex(1, new bytes32[](0));
+        _epoch().epochLinkTransportDayIndex(1, new bytes32[](0), new bytes32[](0));
+        (linked, , ) = _epoch().epochLinkTransportDayIndex(1, new bytes32[](0), new bytes32[](0));
         assertEq(linked, 65, "the list is whole");
         (avail, capHit) = _epoch().getTransportCoverageForDay(1);
         assertEq(avail, 64e18, "the oldest window of the order");
@@ -1335,9 +1335,9 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         _mut().setPacketArrivedAtRaw(older, 1);
         bytes32[] memory hints = new bytes32[](1); // zero: at the head — inside the passed prefix
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.TransportIndexHintInvalid.selector, older, 1, bytes32(0)));
-        _epoch().materializeTransportBatchPageHinted(older, d1, hints);
+        _epoch().materializeTransportBatchPageHinted(older, d1, hints, new bytes32[](0));
         hints[0] = e1; // the cursor may precede an epoch older than itself
-        assertEq(_epoch().materializeTransportBatchPageHinted(older, d1, hints), 1);
+        assertEq(_epoch().materializeTransportBatchPageHinted(older, d1, hints, new bytes32[](0)), 1);
         (order, , , cursor) = _epoch().getTransportDayBatches(1, 0, 10);
         assertEq(cursor, 1, "still");
         assertEq(order[1], older, "the older late epoch leads the window, by key");
@@ -1376,12 +1376,12 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         bytes32[] memory hints = new bytes32[](1);
         hints[0] = e0; // passed, and not the cursor
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.TransportIndexHintInvalid.selector, hs[2], 1, e0));
-        _epoch().materializeTransportBatchPageHinted(hs[2], d1, hints);
+        _epoch().materializeTransportBatchPageHinted(hs[2], d1, hints, new bytes32[](0));
         hints[0] = bytes32(0); // the head: behind the window
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.TransportIndexHintInvalid.selector, hs[2], 1, bytes32(0)));
-        _epoch().materializeTransportBatchPageHinted(hs[2], d1, hints);
+        _epoch().materializeTransportBatchPageHinted(hs[2], d1, hints, new bytes32[](0));
         hints[0] = hs[1]; // arrival 1: the epoch before arrival 25
-        assertEq(_epoch().materializeTransportBatchPageHinted(hs[2], d1, hints), 1);
+        assertEq(_epoch().materializeTransportBatchPageHinted(hs[2], d1, hints, new bytes32[](0)), 1);
         (order, , , cursor) = _epoch().getTransportDayBatches(1, 0, 10);
         assertEq(cursor, 2);
         assertEq(order[2], hs[1]);
@@ -1477,14 +1477,14 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         bool converted;
         uint256 linked;
         for (uint256 i; i < 4; ++i) {
-            (linked, , converted) = _epoch().epochLinkTransportDayIndex(1, new bytes32[](0));
+            (linked, , converted) = _epoch().epochLinkTransportDayIndex(1, new bytes32[](0), new bytes32[](0));
             assertEq(_cursor(1), 100, "exact throughout the catch-up");
         }
         assertEq(linked, 100, "every member linked");
         assertFalse(converted, "one bounded prune cannot carry a hundred over: still the array");
         (, , , bool listed) = _epoch().getTransportDayIndex(1);
         assertFalse(listed);
-        (, , converted) = _epoch().epochLinkTransportDayIndex(1, new bytes32[](0));
+        (, , converted) = _epoch().epochLinkTransportDayIndex(1, new bytes32[](0), new bytes32[](0));
         assertTrue(converted, "the next prune stops short of its bound: converted");
         assertEq(_cursor(1), 100, "and the list's own count is the same exact figure");
         (, , , listed) = _epoch().getTransportDayIndex(1);

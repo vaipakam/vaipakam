@@ -128,7 +128,7 @@ contract InteractionRewardsFacet is
                the paid ledger is charged by {LibVpfiRecycle.absorbRewardFresh}
                with the fresh share that actually moves, so this facet has no
                use for it */
-        ) = LibInteractionRewards.sweepForfeitedByLoanId(
+        ) = LibInteractionRewards.callSweepForfeitedWalk(
             loanId, headroom, allowance, tp
         );
         // r18 P2 — NO unconditional exhaustion revert: a zero-liability

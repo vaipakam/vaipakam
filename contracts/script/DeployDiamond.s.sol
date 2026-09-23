@@ -90,6 +90,7 @@ import {RewardStagingFacet} from "../src/facets/RewardStagingFacet.sol";
 import {RewardClaimWalkFacet} from "../src/facets/RewardClaimWalkFacet.sol";
 import {RewardStagingSettleFacet} from "../src/facets/RewardStagingSettleFacet.sol";
 import {RewardSweepWalkFacet} from "../src/facets/RewardSweepWalkFacet.sol";
+import {RewardForfeitWalkFacet} from "../src/facets/RewardForfeitWalkFacet.sol";
 import {LibPausable} from "../src/libraries/LibPausable.sol";
 import {RewardCompensationDispatchFacet} from "../src/facets/RewardCompensationDispatchFacet.sol";
 import {RewardCommitmentFacet} from "../src/facets/RewardCommitmentFacet.sol";
@@ -354,6 +355,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // 3b-ii-A2 (#2305) — the settle walks' hosts (one per walk), refreshed with their facades.
         RewardClaimWalkFacet rewardClaimWalkFacet = new RewardClaimWalkFacet();
         RewardSweepWalkFacet rewardSweepWalkFacet = new RewardSweepWalkFacet();
+        RewardForfeitWalkFacet rewardForfeitWalkFacet = new RewardForfeitWalkFacet();
         // 3b-ii-A2 (#2305) — the staging record's settlement half (resolve, unwind, venue).
         RewardStagingSettleFacet rewardStagingSettleFacet = new RewardStagingSettleFacet();
         RewardCompensationDispatchFacet rewardCompensationDispatchFacet =
@@ -390,7 +392,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](86);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](87);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -472,6 +474,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         cuts[83] = _buildCut(address(rewardClaimWalkFacet), _getRewardClaimWalkSelectors());
         cuts[84] = _buildCut(address(rewardSweepWalkFacet), _getRewardSweepWalkSelectors());
         cuts[85] = _buildCut(address(rewardStagingSettleFacet), _getRewardStagingSettleSelectors());
+        cuts[86] = _buildCut(address(rewardForfeitWalkFacet), _getRewardForfeitWalkSelectors());
         cuts[26] = _buildCut(address(rewardReporterFacet), _getRewardReporterSelectors());
         cuts[27] = _buildCut(address(rewardAggregatorFacet), _getRewardAggregatorSelectors());
         cuts[28] = _buildCut(address(configFacet), _getConfigSelectors());
@@ -1140,6 +1143,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeFacet("rewardStagingFacet",      address(rewardStagingFacet));
         Deployments.writeFacet("rewardClaimWalkFacet",    address(rewardClaimWalkFacet));
         Deployments.writeFacet("rewardSweepWalkFacet",    address(rewardSweepWalkFacet));
+        Deployments.writeFacet("rewardForfeitWalkFacet",  address(rewardForfeitWalkFacet));
         Deployments.writeFacet("rewardStagingSettleFacet", address(rewardStagingSettleFacet));
         Deployments.writeFacet("repatriationFacet",       address(repatriationFacet));
         Deployments.writeFacet("configFacet",             address(configFacet));
@@ -3162,6 +3166,16 @@ contract DeployDiamond is Script, ArtifactRootBase {
     {
         s = new bytes4[](1);
         s[0] = RewardSweepWalkFacet.epochSweepExpiredEntry.selector;
+    }
+
+    /// 3b-ii-A2 (#2305; Codex #2308 r4) — the forfeit sweep walk's host.
+    function _getRewardForfeitWalkSelectors()
+        internal
+        pure
+        returns (bytes4[] memory s)
+    {
+        s = new bytes4[](1);
+        s[0] = RewardForfeitWalkFacet.epochSweepForfeitedByLoanId.selector;
     }
 
     /// #1434 P2-w4 — the compensation dispatch pair.

@@ -114,6 +114,7 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
             LibVaipakam.storageSlot(),
             batchId,
             dayIds,
+            new bytes32[](0),
             new bytes32[](0)
         );
     }
@@ -124,13 +125,21 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
     ///         head; verified on chain, so a wrong hint is refused and never
     ///         mis-orders. Needed only for an epoch indexed after more newer
     ///         epochs on a day than the unhinted entry's bounded walk covers.
+    ///         `lateHints` — empty, or aligned with `dayIds` — names the same
+    ///         for the day's LATE chain, which a link that lands anywhere but
+    ///         the list's tail joins (Codex #2308 r4): needed only when more
+    ///         late links stand newer than this one than that bounded walk
+    ///         covers; ignored for a link at the tail; verified the same way.
     function materializeTransportBatchPageHinted(
         bytes32 batchId,
         uint256[] calldata dayIds,
-        bytes32[] calldata hints
+        bytes32[] calldata hints,
+        bytes32[] calldata lateHints
     ) external nonReentrant returns (uint32 indexedDays) {
-        if (hints.length != dayIds.length) revert TransportDayListMismatch(batchId, bytes32(0), bytes32(0));
-        return LibRewardCustody.materializeTransportBatchPage(LibVaipakam.storageSlot(), batchId, dayIds, hints);
+        if (hints.length != dayIds.length || (lateHints.length != 0 && lateHints.length != dayIds.length)) {
+            revert TransportDayListMismatch(batchId, bytes32(0), bytes32(0));
+        }
+        return LibRewardCustody.materializeTransportBatchPage(LibVaipakam.storageSlot(), batchId, dayIds, hints, lateHints);
     }
 
     /// @notice PARK what a batch's obligations left, under the batch's own key.
@@ -557,14 +566,19 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
     ///         list — the catch-up for a day indexed before the list existed
     ///         (Codex #2276 r8 P1). Permissionless, idempotent and bounded;
     ///         see {LibRewardCustody.linkTransportDayIndex} for the page, the
-    ///         hints, and the conversion that follows the last page (r14
-    ///         P2): call again until `converted` reads true.
-    function epochLinkTransportDayIndex(uint256 dayId, bytes32[] calldata hints)
+    ///         hints — `lateHints` empty or aligned with `hints`, the late-
+    ///         chain predecessors (Codex #2308 r4) — and the conversion that
+    ///         follows the last page (r14 P2): call again until `converted`
+    ///         reads true.
+    function epochLinkTransportDayIndex(uint256 dayId, bytes32[] calldata hints, bytes32[] calldata lateHints)
         external
         nonReentrant
         returns (uint256 linked, uint256 total, bool converted)
     {
-        return LibRewardCustody.linkTransportDayIndex(LibVaipakam.storageSlot(), dayId, hints);
+        if (lateHints.length != 0 && lateHints.length != hints.length) {
+            revert TransportIndexHintInvalid(bytes32(0), dayId, bytes32(0));
+        }
+        return LibRewardCustody.linkTransportDayIndex(LibVaipakam.storageSlot(), dayId, hints, lateHints);
     }
 
     /// @notice Open the transport epoch of an old-wire packet that landed

@@ -318,7 +318,7 @@
             "internalType": "uint256"
           },
           {
-            "name": "untypedOverflow",
+            "name": "pendingOverflow",
             "type": "bool",
             "internalType": "bool"
           },

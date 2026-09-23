@@ -130,7 +130,11 @@ library LibRewardStaging {
     ///         continuation — the day's late chain first, then the list from
     ///         where the last scan stopped — up to one window, then re-size
     ///         the deadline. Derives the obligation from storage; the caller
-    ///         supplies only the key.
+    ///         supplies only the key. A record the walk opened has no
+    ///         continuation yet: its first preparation rescans the walk's
+    ///         window from the day's cursor, the one page that lets one
+    ///         scanner dispose of every epoch the window passed (Codex #2308
+    ///         r4).
     /// @dev The ask is transport-first, as A1's allocation is: the day's two
     ///      needs less what is already staged, not merely the live shortfall.
     ///      The record's own commitment is what is re-priced, so an entry
@@ -140,7 +144,7 @@ library LibRewardStaging {
     function prepare(LibVaipakam.Storage storage s, bytes32 key) internal returns (uint256 stagedFresh, uint256 stagedRecycled) {
         LibVaipakam.StagingRecord storage r = record(s, key);
         _requirePhase(key, r, LibVaipakam.StagingPhase.Staging);
-        (uint256 askF, uint256 askR) = _ask(s, r);
+        (uint256 askF, uint256 askR) = _ask(s, key, r);
         // Nothing left to ask for still scans to the end: the reservation
         // needs the whole list seen, not merely the need met.
         (stagedFresh, stagedRecycled) = _scanAndStage(s, key, r, askF, askR);
@@ -149,11 +153,17 @@ library LibRewardStaging {
 
     /// @dev The transport the record still asks for: the day's two needs less
     ///      what is already staged — transport-first, as A1's allocation is.
+    ///      A day another obligation's loan-side reservation defers has no
+    ///      need to read (Codex #2308 r4): the preparation refuses rather
+    ///      than scan with an ask of nothing, which would pass stageable
+    ///      epochs the record could never be offered again.
     function _ask(
         LibVaipakam.Storage storage s,
+        bytes32 key,
         LibVaipakam.StagingRecord storage r
     ) private view returns (uint256 askF, uint256 askR) {
         (LibInteractionRewards.DayCharge memory charge, ) = _price(s, r);
+        if (charge.loanSideReserved) revert IVaipakamErrors.StagingNotCovered(key);
         askF = charge.needFresh > r.stagedFresh ? charge.needFresh - r.stagedFresh : 0;
         askR = charge.needRecycled > r.stagedRecycled ? charge.needRecycled - r.stagedRecycled : 0;
     }
@@ -187,16 +197,18 @@ library LibRewardStaging {
         ) = LibRewardCustody.planTakesForRecord(s, r.day, r.continuationNode, r.lateSeen, askF, askR, r.skippedIds);
         if (lastNode != bytes32(0)) r.continuationNode = lastNode;
         if (lastLate != bytes32(0)) r.lateSeen = lastLate;
-        // Epochs this scan passed over untyped are remembered for re-check.
+        // Epochs this scan passed over pending — untyped, or not yet whole —
+        // are remembered for re-check.
         for (uint256 k; k < skipped.length; ) {
             LibRewardCustody.noteSkipped(s, key, r, skipped[k]);
             unchecked { ++k; }
         }
-        // And every remembered epoch re-checked typed this time is forgotten,
-        // staged or not: it was offered, and it will not be offered twice.
+        // And every remembered epoch re-checked stageable this time is
+        // forgotten, staged or not: it was offered, and it will not be
+        // offered twice.
         bytes32[] memory rechecked = r.skippedIds;
         for (uint256 k; k < rechecked.length; ) {
-            LibRewardCustody.forgetSkippedIfTyped(s, key, r, rechecked[k]);
+            LibRewardCustody.forgetSkippedIfStageable(s, key, r, rechecked[k]);
             unchecked { ++k; }
         }
         // The scan reached the end of the day's list: the reservation may
@@ -230,9 +242,9 @@ library LibRewardStaging {
             revert IVaipakamErrors.StagingScanIncomplete(key);
         }
         // Nor while a late link landed behind the record's place, an epoch it
-        // passed over untyped has been attested since, or it passed more of
-        // them than it tracks (Codex #2308 r2).
-        if (r.untypedOverflow) revert IVaipakamErrors.StagingUntypedOverflow(key);
+        // passed over pending has become stageable since, or it passed more
+        // of them than it tracks (Codex #2308 r2, r4).
+        if (r.pendingOverflow) revert IVaipakamErrors.StagingPendingOverflow(key);
         if (s.transportDayLateGen[r.day] != r.lateGenSeen || LibRewardCustody.anySkippedNowStageable(s, r)) {
             revert IVaipakamErrors.StagingScanIncomplete(key);
         }

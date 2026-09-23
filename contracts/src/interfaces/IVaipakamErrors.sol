@@ -1741,7 +1741,14 @@ interface IVaipakamErrors {
     ///         deferral, retryable once a reservation resolves or unwinds —
     ///         never a truncation, which only the lifetime cap may cause.
     error InteractionPoolReservedShortfall(uint256 needed, uint256 available);
-    /// @notice The record passed more untyped epochs than it tracks; it can
-    ///         only be unwound, and the day stays draw-only for the untyped.
-    error StagingUntypedOverflow(bytes32 key);
+    /// @notice The record passed more pending epochs — untyped, or not yet
+    ///         whole — than it tracks; it can only be unwound, and the day
+    ///         stays draw-only for them.
+    error StagingPendingOverflow(bytes32 key);
+    /// @notice The reward this settlement would pay a loan side fits the
+    ///         side's lifetime cap but not what is left of it after standing
+    ///         staging reservations: a deferral, retryable once a reservation
+    ///         resolves or unwinds — never a trim, which only the lifetime
+    ///         cap may cause (3b-ii-A2; Codex #2308 r4).
+    error LoanSideReservedShortfall(uint256 loanId, uint8 side, uint256 needed, uint256 available);
 }

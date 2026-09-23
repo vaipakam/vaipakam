@@ -2148,6 +2148,32 @@
   },
   {
     "type": "error",
+    "name": "LoanSideReservedShortfall",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "side",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "needed",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "available",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "MessengerPredatesV3",
     "inputs": []
   },
@@ -3876,6 +3902,17 @@
   },
   {
     "type": "error",
+    "name": "StagingPendingOverflow",
+    "inputs": [
+      {
+        "name": "key",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "StagingPhaseInvalid",
     "inputs": [
       {
@@ -3904,17 +3941,6 @@
   {
     "type": "error",
     "name": "StagingScanIncomplete",
-    "inputs": [
-      {
-        "name": "key",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "StagingUntypedOverflow",
     "inputs": [
       {
         "name": "key",
