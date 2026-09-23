@@ -1532,6 +1532,65 @@ library LibInteractionRewards {
 
     // ─── Claim / preview (entry path + legacy window path) ──────────────────
 
+    /// @dev 3b-ii-A2 (#2305) — {sweepExpiredEntry} reached through the Diamond
+    ///      on `RewardSweepWalkFacet`, where the walk is hosted; the legs the
+    ///      walk folds are returned and copied back, so the caller's struct
+    ///      reads as the inlined walk left it.
+    function callSweepExpiredEntryWalk(
+        uint256 id,
+        uint256 freshHeadroom,
+        uint256 deliveredAllowance,
+        TransportLegs memory tp
+    ) internal returns (EntrySplit memory expired, uint256 freshCredited, uint256 armedDelivered) {
+        (bool ok, bytes memory ret) = address(this).call(
+            abi.encodeWithSignature(
+                "epochSweepExpiredEntry(uint256,uint256,uint256,(uint256,uint256,uint256,uint256))",
+                id,
+                freshHeadroom,
+                deliveredAllowance,
+                tp
+            )
+        );
+        if (!ok) {
+            if (ret.length == 0) revert IVaipakamErrors.RewardCustodyCallFailed();
+            assembly ("memory-safe") {
+                revert(add(ret, 0x20), mload(ret))
+            }
+        }
+        TransportLegs memory legs;
+        (expired, freshCredited, armedDelivered, legs) =
+            abi.decode(ret, (EntrySplit, uint256, uint256, TransportLegs));
+        tp.userFresh = legs.userFresh;
+        tp.userRecycled = legs.userRecycled;
+        tp.treasuryFresh = legs.treasuryFresh;
+        tp.treasuryRecycled = legs.treasuryRecycled;
+    }
+
+    /// @dev 3b-ii-A2 (#2305) — {claimForUserEntries} reached through the
+    ///      Diamond on `RewardClaimWalkFacet`, where the walk is hosted, instead
+    ///      of inlined into the claim facet (61 bytes under EIP-170 at the A1
+    ///      head). One self-call, the walk's result decoded back; a failure
+    ///      re-raises the host's revert data unchanged, so a claimant sees the
+    ///      same error the inlined walk raised.
+    function callClaimEntriesWalk(
+        address user,
+        uint256 freshBudget,
+        uint256 windowFreshReserved
+    ) internal returns (ClaimEntriesResult memory res) {
+        (bool ok, bytes memory ret) = address(this).call(
+            abi.encodeWithSignature(
+                "epochClaimEntriesWalk(address,uint256,uint256)", user, freshBudget, windowFreshReserved
+            )
+        );
+        if (!ok) {
+            if (ret.length == 0) revert IVaipakamErrors.RewardCustodyCallFailed();
+            assembly ("memory-safe") {
+                revert(add(ret, 0x20), mload(ret))
+            }
+        }
+        res = abi.decode(ret, (ClaimEntriesResult));
+    }
+
     /**
      * @notice Walk `user`'s reward entries and route each CLOSED entry
      *         whose endDay is finalized in the cumRPN cursor. Processed
@@ -1672,7 +1731,7 @@ library LibInteractionRewards {
         WalkCtx memory ctx = WalkCtx({
             pool: PoolBudget({
                 fresh: freshLeft,
-                recycled: s.recycleBucket,
+                recycled: LibVpfiRecycle.bucketAvailable(s),
                 deliveredFresh: deliveredLeft,
                 domainFresh: domainFresh,
                 domainRecycled: domainRecycled
@@ -1804,6 +1863,17 @@ library LibInteractionRewards {
             uint256[] memory set = _entriesAtDay(s, work, d);
             if (set.length == 0) break;
 
+            // A day with a standing staging record is that record's to settle
+            // (3b-ii-A2, #2305): the walk stops here, as it stops on a cap hit,
+            // and resumes past it once the record has paid the day.
+            if (s.stagingRecords[LibRewardCustody.stagingKey(user, side, d)].phase != LibVaipakam.StagingPhase.None) {
+                // Progress the claim keeps: the record's, resolved through
+                // its own entries, so the claim returns nothing paid rather
+                // than failing as an empty claim on a day that is in hand.
+                ctx.capHit = true;
+                ctx.pruned = true;
+                break;
+            }
             (DayCharge memory charge, DaySlice[] memory slices) =
                 processUserSideDay(user, d, set, ctx.pool, _noDryRun());
             // Not advanced ⇒ a recycled-bucket shortfall, an unready RPN row,
@@ -1828,6 +1898,19 @@ library LibInteractionRewards {
                 // pays nothing (Codex #2276 r4 P2): otherwise the facet's
                 // empty-claim revert rolled it back and every retry scanned
                 // the same exhausted window.
+                // A cap-hit deferral STAGES what the window offered instead of
+                // drawing nothing (3b-ii-A2, #2305): the plan's legs move into
+                // a record for this day, and the day waits, unpaid, for the
+                // call that can cover it. Any other deferral touches nothing.
+                if (charge.transportCapHit && charge.planIds.length != 0) {
+                    (, uint256 staged) = LibRewardCustody.stageDayFromPlan(
+                        s, user, side, d, set, charge.planIds, charge.planFresh, charge.planRecycled
+                    );
+                    // What was staged is the progress this call keeps, so a
+                    // claim that could only stage returns nothing paid rather
+                    // than reverting as an empty claim and undoing the record.
+                    if (staged != 0) ctx.pruned = true;
+                }
                 if (_drawAndFold(d, charge, ctx.transport)) ctx.pruned = true;
                 if (charge.transportCapHit) ctx.capHit = true;
                 break;
@@ -2016,7 +2099,7 @@ library LibInteractionRewards {
         uint256 d,
         uint256[] memory set,
         DaySlice[] memory slices
-    ) private {
+    ) internal {
         uint8 sideKey = uint8(side);
         uint256 charged;
         for (uint256 i; i < set.length; ) {
@@ -2742,7 +2825,7 @@ library LibInteractionRewards {
         (uint256 domainFresh, uint256 domainRecycled) = LibRewardCustody.callDomainNeeds(user);
         PoolBudget memory pool = PoolBudget({
             fresh: freshBudget,
-            recycled: s.recycleBucket,
+            recycled: LibVpfiRecycle.bucketAvailable(s),
             deliveredFresh: deliveredCap,
             domainFresh: domainFresh,
             domainRecycled: domainRecycled
@@ -3475,7 +3558,7 @@ library LibInteractionRewards {
                 set,
                 PoolBudget({
                     fresh: freshHeadroom,
-                    recycled: s.recycleBucket,
+                    recycled: LibVpfiRecycle.bucketAvailable(s),
                     deliveredFresh: deliveredAllowance,
                     domainFresh: type(uint256).max, // one day per call: the day is the domain
                     domainRecycled: type(uint256).max
@@ -4068,7 +4151,7 @@ library LibInteractionRewards {
             set,
             PoolBudget({
                 fresh: freshHeadroom,
-                recycled: s.recycleBucket,
+                recycled: LibVpfiRecycle.bucketAvailable(s),
                 deliveredFresh: deliveredAllowance,
                 domainFresh: type(uint256).max, // one day per call: the day is the domain
                 domainRecycled: type(uint256).max
@@ -4767,7 +4850,11 @@ library LibInteractionRewards {
 
     function poolRemaining() internal view returns (uint256) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        uint256 reserved = s.interactionPoolPaidOut + s.rewardBudgetRemittedGlobal;
+        // Net of what staging records have RESERVED of the pool (3b-ii-A2,
+        // #2305): reserved is not paid, and a reservation-only shortfall is a
+        // deferral to the settlement that meets it, never a truncation.
+        uint256 reserved =
+            s.interactionPoolPaidOut + s.rewardBudgetRemittedGlobal + s.interactionPoolReserved;
         return
             LibVaipakam.VPFI_INTERACTION_POOL_CAP > reserved
                 ? LibVaipakam.VPFI_INTERACTION_POOL_CAP - reserved
@@ -4826,7 +4913,8 @@ library LibInteractionRewards {
         // `received` writer, so binding it would freeze every such deploy.
         if (role == LibVaipakam.RewardRole.Unconfigured) return type(uint256).max;
         uint256 received = s.rewardBudgetArmedFreshReceived;
-        uint256 paid = s.rewardBudgetArmedFreshPaid;
+        // Paid plus what staging records have reserved (3b-ii-A2, #2305).
+        uint256 paid = s.rewardBudgetArmedFreshPaid + s.rewardBudgetArmedFreshReserved;
         return received > paid ? received - paid : 0;
     }
 
@@ -5460,7 +5548,10 @@ library LibInteractionRewards {
         c.daysIncl = daysIncl;
         uint256 capEff = _loanSideRewardCapEff(s, loanId, daysIncl);
         uint256 paid = s.loanSideRewardPaidVpfi[loanId][side];
-        uint256 remaining = capEff > paid ? capEff - paid : 0;
+        // The cap's room is net of what staging records have RESERVED of it
+        // (3b-ii-A2, #2305); `newPaid` stays the paid figure, reserved apart.
+        uint256 encumbered = paid + s.loanSideRewardReservedVpfi[loanId][side];
+        uint256 remaining = capEff > encumbered ? capEff - encumbered : 0;
         if (armedReward <= remaining) {
             c.newPaid = paid + armedReward;
             return (userSplit, recycleRelease, c); // nothing capped
@@ -6285,6 +6376,15 @@ library LibInteractionRewards {
         ///      to treasury while an expiry credits the bucket — so it states
         ///      the shared property directly.
         bool recycleSettlement;
+        /// @dev 3b-ii-A2 (#2305) — a staged day's coverage is its RECORD's,
+        ///      never a scan: with `preparedOnly` the day primitive takes
+        ///      `preparedFresh` / `preparedRecycled` as the transport it may
+        ///      count (capped to the day's needs) and asks the epoch facet for
+        ///      nothing. The record's own scan, from its continuation, is the
+        ///      staging library's — on the host, never inlined here.
+        bool preparedOnly;
+        uint256 preparedFresh;
+        uint256 preparedRecycled;
     }
 
     /// @dev The inert overlay settling callers pass. Internal so the test
@@ -6939,19 +7039,28 @@ library LibInteractionRewards {
             }
             charge.needFresh = needFresh;
             charge.needRecycled = needRecycled;
-            LibRewardCustody.AllocRequest memory q;
-            q.dayId = d;
-            q.needFresh = needFresh;
-            q.needRecycled = needRecycled;
-            q.domainFresh = pool.domainFresh;
-            q.domainRecycled = pool.domainRecycled;
-            q.poolFresh = pool.fresh;
-            q.deliveredCap = charge.deliveredCapForDay;
-            q.bucket = pool.recycled;
-            q.ovIds = dry.ovIds;
-            q.ovFresh = dry.ovFresh;
-            q.ovRecycled = dry.ovRecycled;
-            LibRewardCustody.AllocResult memory ar = LibRewardCustody.callTransportAllocateForDay(s, q);
+            LibRewardCustody.AllocResult memory ar;
+            if (dry.preparedOnly) {
+                // 3b-ii-A2 (#2305) — a staged day's coverage is its record's:
+                // the prepared legs, capped to the day's needs, and no scan.
+                uint256 nf = needFresh > pool.fresh ? pool.fresh : needFresh;
+                ar.transportFresh = dry.preparedFresh > nf ? nf : dry.preparedFresh;
+                ar.transportRecycled = dry.preparedRecycled > needRecycled ? needRecycled : dry.preparedRecycled;
+            } else {
+                LibRewardCustody.AllocRequest memory q;
+                q.dayId = d;
+                q.needFresh = needFresh;
+                q.needRecycled = needRecycled;
+                q.domainFresh = pool.domainFresh;
+                q.domainRecycled = pool.domainRecycled;
+                q.poolFresh = pool.fresh;
+                q.deliveredCap = charge.deliveredCapForDay;
+                q.bucket = pool.recycled;
+                q.ovIds = dry.ovIds;
+                q.ovFresh = dry.ovFresh;
+                q.ovRecycled = dry.ovRecycled;
+                ar = LibRewardCustody.callTransportAllocateForDay(s, q);
+            }
             transportFresh = ar.transportFresh;
             transportRecycled = ar.transportRecycled;
             transportCapHit = ar.capHit;

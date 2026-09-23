@@ -86,6 +86,9 @@ import {RewardReconciliationFacet} from "../src/facets/RewardReconciliationFacet
 import {RewardIngressFacet} from "../src/facets/RewardIngressFacet.sol";
 import {RewardEpochFacet} from "../src/facets/RewardEpochFacet.sol";
 import {RewardEpochViewFacet} from "../src/facets/RewardEpochViewFacet.sol";
+import {RewardStagingFacet} from "../src/facets/RewardStagingFacet.sol";
+import {RewardClaimWalkFacet} from "../src/facets/RewardClaimWalkFacet.sol";
+import {RewardSweepWalkFacet} from "../src/facets/RewardSweepWalkFacet.sol";
 import {LibPausable} from "../src/libraries/LibPausable.sol";
 import {RewardCompensationDispatchFacet} from "../src/facets/RewardCompensationDispatchFacet.sol";
 import {RewardCommitmentFacet} from "../src/facets/RewardCommitmentFacet.sol";
@@ -345,6 +348,11 @@ contract DeployDiamond is Script, ArtifactRootBase {
         RewardEpochFacet rewardEpochFacet = new RewardEpochFacet();
         // 3b-ii-A (Codex #2276 r2) — the epochs' engine-inlining reads, hosted apart.
         RewardEpochViewFacet rewardEpochViewFacet = new RewardEpochViewFacet();
+        // 3b-ii-A2 (#2305) — the claim's entry walk, hosted; the staging machinery's home.
+        RewardStagingFacet rewardStagingFacet = new RewardStagingFacet();
+        // 3b-ii-A2 (#2305) — the settle walks' hosts (one per walk), refreshed with their facades.
+        RewardClaimWalkFacet rewardClaimWalkFacet = new RewardClaimWalkFacet();
+        RewardSweepWalkFacet rewardSweepWalkFacet = new RewardSweepWalkFacet();
         RewardCompensationDispatchFacet rewardCompensationDispatchFacet =
             new RewardCompensationDispatchFacet();
         RewardCommitmentFacet rewardCommitmentFacet = new RewardCommitmentFacet();
@@ -379,7 +387,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](82);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](85);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -457,6 +465,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         cuts[79] = _buildCut(address(rewardIngressFacet), _getRewardIngressSelectors());
         cuts[80] = _buildCut(address(rewardEpochFacet), _getRewardEpochSelectors());
         cuts[81] = _buildCut(address(rewardEpochViewFacet), _getRewardEpochViewSelectors());
+        cuts[82] = _buildCut(address(rewardStagingFacet), _getRewardStagingSelectors());
+        cuts[83] = _buildCut(address(rewardClaimWalkFacet), _getRewardClaimWalkSelectors());
+        cuts[84] = _buildCut(address(rewardSweepWalkFacet), _getRewardSweepWalkSelectors());
         cuts[26] = _buildCut(address(rewardReporterFacet), _getRewardReporterSelectors());
         cuts[27] = _buildCut(address(rewardAggregatorFacet), _getRewardAggregatorSelectors());
         cuts[28] = _buildCut(address(configFacet), _getConfigSelectors());
@@ -1122,6 +1133,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeFacet("rewardIngressFacet",      address(rewardIngressFacet));
         Deployments.writeFacet("rewardEpochFacet",        address(rewardEpochFacet));
         Deployments.writeFacet("rewardEpochViewFacet",    address(rewardEpochViewFacet));
+        Deployments.writeFacet("rewardStagingFacet",      address(rewardStagingFacet));
+        Deployments.writeFacet("rewardClaimWalkFacet",    address(rewardClaimWalkFacet));
+        Deployments.writeFacet("rewardSweepWalkFacet",    address(rewardSweepWalkFacet));
         Deployments.writeFacet("repatriationFacet",       address(repatriationFacet));
         Deployments.writeFacet("configFacet",             address(configFacet));
         // #394 (Codex #647 round-8 P2) — persist the carved-out NumeraireConfigFacet
@@ -3062,7 +3076,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](18);
+        s = new bytes4[](19);
         s[0] = RewardEpochFacet.materializeTransportBatchPage.selector;
         s[1] = RewardEpochFacet.parkTransportBatchRemainder.selector;
         s[2] = RewardEpochFacet.acknowledgeTransportBatchRemainder.selector;
@@ -3081,6 +3095,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[15] = RewardEpochFacet.getTransportDayIndex.selector;
         s[16] = RewardEpochFacet.epochLinkTransportDayIndex.selector;
         s[17] = RewardEpochFacet.getTransportDayScanIds.selector;
+        // 3b-ii-A2 (#2305) — the staged terms' read.
+        s[18] = RewardEpochFacet.getTransportBatchStaged.selector;
     }
 
     /// @dev 3b-ii-A (Codex #2276 r2) — the epochs' engine-inlining reads:
@@ -3090,10 +3106,48 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](3);
+        s = new bytes4[](5);
         s[0] = RewardEpochViewFacet.getDryRunShareOfPoolDays.selector;
         s[1] = RewardEpochViewFacet.getObligationDomainNeeds.selector;
         s[2] = RewardEpochViewFacet.getObligationDomainListsAnEpoch.selector;
+        // 3b-ii-A2 (#2305) — the staging records' reads.
+        s[3] = RewardEpochViewFacet.getStagingRecord.selector;
+        s[4] = RewardEpochViewFacet.getStagingRecordBatches.selector;
+    }
+
+    /// @dev 3b-ii-A2 (#2305) — the claim's entry walk, hosted apart from the
+    ///      claim facet; gated to the Diamond, so internal-only by design.
+    function _getRewardStagingSelectors()
+        internal
+        pure
+        returns (bytes4[] memory s)
+    {
+        s = new bytes4[](5);
+        s[0] = RewardStagingFacet.prepareStagedDay.selector;
+        s[1] = RewardStagingFacet.reserveStagedDay.selector;
+        s[2] = RewardStagingFacet.resolveStagedDayPage.selector;
+        s[3] = RewardStagingFacet.unwindStagedDayPage.selector;
+        s[4] = RewardStagingFacet.setStagingVenue.selector;
+    }
+
+    /// @dev 3b-ii-A2 (#2305) — the claim's entry walk, hosted; gated to the Diamond.
+    function _getRewardClaimWalkSelectors()
+        internal
+        pure
+        returns (bytes4[] memory s)
+    {
+        s = new bytes4[](1);
+        s[0] = RewardClaimWalkFacet.epochClaimEntriesWalk.selector;
+    }
+
+    /// @dev 3b-ii-A2 (#2305) — the expiry sweep's walk, hosted; gated to the Diamond.
+    function _getRewardSweepWalkSelectors()
+        internal
+        pure
+        returns (bytes4[] memory s)
+    {
+        s = new bytes4[](1);
+        s[0] = RewardSweepWalkFacet.epochSweepExpiredEntry.selector;
     }
 
     /// #1434 P2-w4 — the compensation dispatch pair.

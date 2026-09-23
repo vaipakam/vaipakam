@@ -91,6 +91,9 @@ import {RewardReconciliationFacet} from "../src/facets/RewardReconciliationFacet
 import {RewardIngressFacet} from "../src/facets/RewardIngressFacet.sol";
 import {RewardEpochFacet} from "../src/facets/RewardEpochFacet.sol";
 import {RewardEpochViewFacet} from "../src/facets/RewardEpochViewFacet.sol";
+import {RewardStagingFacet} from "../src/facets/RewardStagingFacet.sol";
+import {RewardClaimWalkFacet} from "../src/facets/RewardClaimWalkFacet.sol";
+import {RewardSweepWalkFacet} from "../src/facets/RewardSweepWalkFacet.sol";
 import {LibPausable} from "../src/libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {VaipakamRewardMessenger, REWARD_MESSENGER_WIRE_GENERATION} from "../src/crosschain/VaipakamRewardMessenger.sol";
@@ -228,7 +231,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     // (#1434) landed on either side of one merge.
     // 74 -> 75: OfferAcceptFeeFacet (#1835) — the borrower-LIF charge split
     // off OfferAcceptFacet, which was 164 bytes under EIP-170.
-    uint256 public constant EXPECTED_FACETS = 82;
+    uint256 public constant EXPECTED_FACETS = 85;
 
     function refresh() external {
         uint256 cid = block.chainid;
@@ -1554,6 +1557,10 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         items[80] = Item("rewardEpochFacet", address(new RewardEpochFacet()), _getRewardEpochSelectors());
         // 3b-ii-A (Codex #2276 r2) — the epochs' engine-inlining reads, read-only.
         items[81] = Item("rewardEpochViewFacet", address(new RewardEpochViewFacet()), _getRewardEpochViewSelectors());
+        // 3b-ii-A2 (#2305) — the claim's entry walk, hosted; refreshed with the claim facet.
+        items[82] = Item("rewardStagingFacet", address(new RewardStagingFacet()), _getRewardStagingSelectors());
+        items[83] = Item("rewardClaimWalkFacet", address(new RewardClaimWalkFacet()), _getRewardClaimWalkSelectors());
+        items[84] = Item("rewardSweepWalkFacet", address(new RewardSweepWalkFacet()), _getRewardSweepWalkSelectors());
         items[26] = Item("rewardReporterFacet", address(new RewardReporterFacet()), _getRewardReporterSelectors());
         // #1222 M3 B3 — `getChainRecycledLedger` /
         // `getChainDailyRecycledCredit` moved here from ConfigFacet (EIP-170).

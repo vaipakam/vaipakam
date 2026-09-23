@@ -1709,4 +1709,25 @@ interface IVaipakamErrors {
     ///         by less than the amount between the caller's snapshot and the
     ///         credit. The tag is derived from the operation, never chosen.
     error RecycleInflowUnverified(uint8 source, uint256 expected, uint256 delta);
+
+    // ───────── 3b-ii-A2 (#2305) — staging ─────────
+    /// @notice No staging record stands under this key.
+    error StagingRecordUnknown(bytes32 key);
+    /// @notice The record is not in a phase this operation may act on.
+    error StagingPhaseInvalid(bytes32 key, uint8 phase);
+    /// @notice The caller's entry set or operation differs from the record's commitment.
+    error StagingCommitmentMismatch(bytes32 key, bytes32 expected, bytes32 given);
+    /// @notice A batch with standing staging references cannot be parked or retired.
+    error TransportBatchReferenced(bytes32 batchId, uint256 references);
+    /// @notice The record's deadline has not passed and the caller is not its claimant.
+    error StagingNotExpired(bytes32 key, uint64 deadline);
+    /// @notice The day cannot be covered as priced — staged transport plus what
+    ///         the live sources can bear falls short — so nothing is reserved.
+    error StagingNotCovered(bytes32 key);
+    /// @notice A hold may not be taken out of the live fresh row (its era
+    ///         queue records every debit as spend); fresh is reserved by count.
+    error RewardCustodyHoldSourceInvalid(uint8 row);
+    /// @notice Only the record's claimant may set its delivery venue, and only
+    ///         before the record is reserved.
+    error StagingVenueNotSettable(bytes32 key);
 }

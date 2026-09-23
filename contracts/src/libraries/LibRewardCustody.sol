@@ -62,6 +62,16 @@ library LibRewardCustody {
     ///               emitted alongside).
     /// @custom:event-category state-change/reward-custody
     event RewardCustodyRowCredited(uint8 indexed row, uint256 amount, uint8 origin);
+    /// @notice 3b-ii-A2 (#2305) — an in-holder HOLD: `amount` moved from `from`
+    ///         into `to` against staging record `key`, credited to no one. Not a
+    ///         payout, so the era queue is not told; a hold out of the live
+    ///         fresh row is refused for exactly that reason.
+    /// @custom:event-category state-change/reward-custody
+    event RewardCustodyRowHeld(uint8 indexed from, uint8 indexed to, uint256 amount, bytes32 indexed key);
+    /// @notice 3b-ii-A2 (#2305) — a hold returned: `amount` moved back from `from`
+    ///         into `to`, the row it came from, for staging record `key`.
+    /// @custom:event-category state-change/reward-custody
+    event RewardCustodyRowHoldReleased(uint8 indexed from, uint8 indexed to, uint256 amount, bytes32 indexed key);
 
     /// @notice An attribution row was debited.
     /// @param row    The {LibVaipakam.RewardCustodyRow} ordinal.
@@ -367,6 +377,42 @@ library LibRewardCustody {
         );
         emit RewardCustodyRowDebited(uint8(from), amount, address(0));
         credit(s, to, amount, 1);
+    }
+
+    /// @notice 3b-ii-A2 (#2305) — HOLD `amount` of row `from` in row `to`
+    ///         against staging record `key`: an in-holder move that pays no
+    ///         one and tells the era queue nothing. The live fresh row is
+    ///         refused as a source — every debit of it is a spend to its era
+    ///         queue, so fresh is reserved by count, never held.
+    function hold(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.RewardCustodyRow from,
+        LibVaipakam.RewardCustodyRow to,
+        uint256 amount,
+        bytes32 key
+    ) internal {
+        if (amount == 0) return;
+        if (from == LibVaipakam.RewardCustodyRow.LiveFresh) {
+            revert IVaipakamErrors.RewardCustodyHoldSourceInvalid(uint8(from));
+        }
+        _debitRow(s, from, amount);
+        s.rewardCustodyRows[to] += amount;
+        emit RewardCustodyRowHeld(uint8(from), uint8(to), amount, key);
+    }
+
+    /// @notice 3b-ii-A2 (#2305) — return a hold: `amount` back from `from`
+    ///         into `to`, the row it was held out of, for record `key`.
+    function releaseHold(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.RewardCustodyRow from,
+        LibVaipakam.RewardCustodyRow to,
+        uint256 amount,
+        bytes32 key
+    ) internal {
+        if (amount == 0) return;
+        _debitRow(s, from, amount);
+        s.rewardCustodyRows[to] += amount;
+        emit RewardCustodyRowHoldReleased(uint8(from), uint8(to), amount, key);
     }
 
     function _debitRow(
@@ -1031,6 +1077,19 @@ library LibRewardCustody {
     /// @notice #1566 transport epochs PR 3b-ii-A — a day's consumption cursor
     ///         moved past exhausted epochs at the front of its index.
     event TransportDayCursorAdvanced(uint256 indexed dayId, bytes32 cursor);
+    /// @notice 3b-ii-A2 (#2305) — a staging record opened for (`user`, `side`,
+    ///         `day`) under `key`, committed to `commitment`.
+    /// @custom:event-category state-change/reward-staging
+    event StagingRecordOpened(bytes32 indexed key, address indexed user, uint8 side, uint64 day, bytes32 commitment);
+    /// @notice 3b-ii-A2 (#2305) — `fresh` / `recycled` of `batchId` moved from
+    ///         its balance into staged form for record `key`: debited from
+    ///         the batch, credited to no one.
+    /// @custom:event-category state-change/reward-staging
+    event TransportStaged(bytes32 indexed batchId, bytes32 indexed key, uint256 fresh, uint256 recycled);
+    /// @notice 3b-ii-A2 (#2305) — record `key`'s deadline moved: only upward,
+    ///         only while unexpired, only as the day's list grew.
+    /// @custom:event-category state-change/reward-staging
+    event StagingDeadlineSet(bytes32 indexed key, uint64 deadline);
     /// @dev A split attested after draws re-typed the legs already drawn so the
     ///      attested component caps hold (Codex #2276 r4): the epoch's total is
     ///      unchanged, one leg fell and the other rose by the same amount.
@@ -1977,6 +2036,18 @@ library LibRewardCustody {
         else s.transportDayNext[d][prev] = id;
         if (nxt == bytes32(0)) s.transportDayTail[d] = id;
         else s.transportDayPrev[d][nxt] = id;
+        // A LATE link (3b-ii-A2, #2305): anywhere but the tail means the
+        // epoch sorted ahead of members already listed, so a staging record
+        // whose continuation stands past this place would never scan it.
+        // The day keeps every such link in arrival order; a record's resume
+        // walks the ones it has not seen before it continues.
+        if (nxt != bytes32(0)) {
+            bytes32 lateTail = s.transportDayLateTail[d];
+            if (lateTail == bytes32(0)) s.transportDayLateHead[d] = id;
+            else s.transportDayLateNext[d][lateTail] = id;
+            s.transportDayLateTail[d] = id;
+            unchecked { ++s.transportDayLateCount[d]; }
+        }
     }
 
     /// @notice #1566 transport epochs PR 3b — PARK what this batch's
@@ -2013,6 +2084,10 @@ library LibRewardCustody {
         if (b.indexedDays < b.dayCount) {
             revert IVaipakamErrors.TransportBatchNotFullyIndexed(batchId, b.indexedDays, b.dayCount);
         }
+        // A referenced batch cannot be parked (3b-ii-A2, #2305): its staged
+        // components are a standing record's, and parking would strand both.
+        uint256 refs = s.transportBatchReferences[batchId];
+        if (refs != 0) revert IVaipakamErrors.TransportBatchReferenced(batchId, refs);
         LibVaipakam.TransportRemainder storage rem = s.transportRemainders[batchId];
         if (rem.batchId != bytes32(0)) revert IVaipakamErrors.TransportRemainderAlreadyParked(batchId);
         LibVaipakam.IngressPacket storage p = s.ingressPackets[batchId];
@@ -2156,6 +2231,11 @@ library LibRewardCustody {
     ///         window held.
     struct TransportDrawPlan {
         bytes32[] ids;
+        /// @dev 3b-ii-A2 (#2305) — set by {planTransportDrawForRecord} only:
+        ///      where the list scan and the late-chain scan stopped, carried
+        ///      in memory so the split's wide frame holds no extra slots.
+        bytes32 lastNode;
+        bytes32 lastLate;
         /// @dev Each drawable epoch's effective balance (net of the overlay)
         ///      and the ROOM each of its packet's two attested component caps
         ///      leaves it — the balance itself where the packet is unattested
@@ -2520,6 +2600,284 @@ library LibRewardCustody {
     ///         window, and whether the window ended before the index did.
     /// @dev    The plan's read half with nothing asked: a keeper's and a test's
     ///         view of a day. Zero, with no scan, on a day no epoch lists.
+    // ───────────────────────── 3b-ii-A2 (#2305) — staging ─────────────────────────
+
+    /// @dev The retry cadence a record's deadline is sized in — one page of
+    ///      scanning per cadence — plus a fixed grace, from its opening.
+    uint64 internal constant STAGING_RETRY_CADENCE = 1 days;
+    uint64 internal constant STAGING_GRACE = 3 days;
+
+    /// @notice A record's deadline, derived from the WORK its day needs:
+    ///         opening + cadence × the pages the day's list needs + grace.
+    /// @dev Moves only UPWARD, and only while the record is unexpired (Codex
+    ///      #2297 post-merge item 7: a passed deadline is terminal — later
+    ///      list growth belongs to the next obligation, never to a revived
+    ///      lease). Never by the stager's own action: the page count is the
+    ///      day index's, not the caller's. Set when the record opens and
+    ///      re-read on every preparation.
+    function stagingDeadlineRefresh(
+        LibVaipakam.Storage storage s,
+        bytes32 key,
+        LibVaipakam.StagingRecord storage r
+    ) internal {
+        uint64 current = r.deadline;
+        if (current != 0 && block.timestamp >= current) return; // expired: terminal
+        uint256 members = s.transportBatchesByDay[r.day].length + s.transportDayLateCount[r.day];
+        uint256 pages = (members + TRANSPORT_DRAW_SCAN_CAP - 1) / TRANSPORT_DRAW_SCAN_CAP;
+        if (pages == 0) pages = 1;
+        uint64 next = r.openedAt + uint64(pages) * STAGING_RETRY_CADENCE + STAGING_GRACE;
+        if (next > current) {
+            r.deadline = next;
+            emit StagingDeadlineSet(key, next);
+        }
+    }
+
+    function stagingKey(address user, LibVaipakam.RewardSide side, uint256 day) internal pure returns (bytes32) {
+        return keccak256(abi.encode(user, side, day));
+    }
+
+    function stagingCommitment(uint256[] memory entryIds, LibVaipakam.StagingOp op) internal pure returns (bytes32) {
+        return keccak256(abi.encode(entryIds, op));
+    }
+
+    /// @dev Staging waits for the type: only an ATTESTED packet's batch is
+    ///      staged from. The chain cannot tell a legacy rollout packet from
+    ///      one whose attestation is in flight until the typed wire (3d)
+    ///      lands, so the untyped population stays draw-only, as in A1.
+    function stageable(LibVaipakam.Storage storage s, bytes32 batchId) internal view returns (bool) {
+        return s.ingressPackets[batchId].attested;
+    }
+
+    /// @notice The plan for a RECORD's resume: the day's late chain past what
+    ///         the record has seen, then the list from its continuation (the
+    ///         day's cursor start when it has none), one window in all, only
+    ///         stageable batches, no overlay. Returns where both scans stopped
+    ///         so the record never rescans what it staged.
+    function planTransportDrawForRecord(
+        LibVaipakam.Storage storage s,
+        uint256 dayId,
+        bytes32 fromNode,
+        bytes32 lateSeen
+    ) internal view returns (TransportDrawPlan memory plan) {
+        bytes32[] memory ids = new bytes32[](TRANSPORT_DRAW_SCAN_CAP);
+        uint256[] memory bals = new uint256[](TRANSPORT_DRAW_SCAN_CAP);
+        uint256[] memory fRoom = new uint256[](TRANSPORT_DRAW_SCAN_CAP);
+        uint256[] memory rRoom = new uint256[](TRANSPORT_DRAW_SCAN_CAP);
+        uint256[] memory keys = new uint256[](TRANSPORT_DRAW_SCAN_CAP);
+        uint256 live;
+        uint256 seen;
+        // The late chain first: epochs linked ahead of places already scanned.
+        bytes32 node = lateSeen == bytes32(0) ? s.transportDayLateHead[dayId] : s.transportDayLateNext[dayId][lateSeen];
+        while (node != bytes32(0) && seen < TRANSPORT_DRAW_SCAN_CAP) {
+            live = _planAdd(s, node, ids, bals, fRoom, rRoom, keys, live, plan);
+            plan.lastLate = node;
+            node = s.transportDayLateNext[dayId][node];
+            unchecked { ++seen; }
+        }
+        // Then the list from the continuation, or from the day's cursor start.
+        if (fromNode == bytes32(0)) {
+            bytes32 cur = s.transportDayCursorNode[dayId];
+            node = cur == bytes32(0) ? s.transportDayHead[dayId] : s.transportDayNext[dayId][cur];
+        } else {
+            node = s.transportDayNext[dayId][fromNode];
+        }
+        while (node != bytes32(0) && seen < TRANSPORT_DRAW_SCAN_CAP) {
+            live = _planAdd(s, node, ids, bals, fRoom, rRoom, keys, live, plan);
+            plan.lastNode = node;
+            node = s.transportDayNext[dayId][node];
+            unchecked { ++seen; }
+        }
+        plan.capHit = node != bytes32(0);
+        assembly ("memory-safe") {
+            mstore(ids, live)
+            mstore(bals, live)
+            mstore(fRoom, live)
+            mstore(rRoom, live)
+        }
+        plan.ids = ids;
+        plan.bals = bals;
+        plan.freshRoom = fRoom;
+        plan.recycledRoom = rRoom;
+    }
+
+    /// @notice The takes for a record's resume: {planTransportDrawForRecord}
+    ///         split for the ask, in one frame that holds no record pointer —
+    ///         the split's own frame is wide, and a caller holding the key and
+    ///         the record beside it is what pushed viaIR past the stack.
+    function planTakesForRecord(
+        LibVaipakam.Storage storage s,
+        uint256 dayId,
+        bytes32 fromNode,
+        bytes32 lateSeen,
+        uint256 askF,
+        uint256 askR
+    )
+        internal
+        view
+        returns (bytes32[] memory ids, uint256[] memory fresh, uint256[] memory recycled, bytes32 lastNode, bytes32 lastLate)
+    {
+        TransportDrawPlan memory plan = planTransportDrawForRecord(s, dayId, fromNode, lateSeen);
+        if (plan.ids.length != 0) {
+            TransportTakes memory t = splitTransportTakes(plan, askF, askR);
+            ids = plan.ids;
+            fresh = t.fresh;
+            recycled = t.recycled;
+        }
+        lastNode = plan.lastNode;
+        lastLate = plan.lastLate;
+    }
+
+    /// @dev One candidate into the record plan: live, fully indexed, stageable
+    ///      (attested), rooms from its caps, sorted by the plan's key exactly
+    ///      as {planTransportDraw} sorts — fewest listed days, oldest arrival,
+    ///      batch id last.
+    function _planAdd(
+        LibVaipakam.Storage storage s,
+        bytes32 node,
+        bytes32[] memory ids,
+        uint256[] memory bals,
+        uint256[] memory fRoom,
+        uint256[] memory rRoom,
+        uint256[] memory keys,
+        uint256 live,
+        TransportDrawPlan memory plan
+    ) private view returns (uint256) {
+        LibVaipakam.TransportBatch storage b = s.transportBatches[node];
+        uint256 bal = b.balance;
+        if (bal == 0 || b.indexedDays != b.dayCount || !s.ingressPackets[node].attested) return live;
+        (uint256 fr, uint256 rr) = _capRooms(s, node, b, bal, 0, 0);
+        uint256 key = (uint256(b.dayCount) << 64) | uint256(s.ingressPackets[node].arrivedAt);
+        uint256 k = live;
+        while (k != 0 && (keys[k - 1] > key || (keys[k - 1] == key && ids[k - 1] > node))) {
+            ids[k] = ids[k - 1];
+            bals[k] = bals[k - 1];
+            fRoom[k] = fRoom[k - 1];
+            rRoom[k] = rRoom[k - 1];
+            keys[k] = keys[k - 1];
+            unchecked { --k; }
+        }
+        ids[k] = node;
+        bals[k] = bal;
+        fRoom[k] = fr;
+        rRoom[k] = rr;
+        keys[k] = key;
+        plan.available += fr + rr < bal ? fr + rr : bal;
+        unchecked { return live + 1; }
+    }
+
+    /// @notice Open a record for a claim day the walk could not settle, or
+    ///         extend the standing one, and stage the plan's legs into it.
+    ///         Called by the claim's entry walk on a cap-hit deferral — on the
+    ///         host, never inlined into a settle facet.
+    function stageDayFromPlan(
+        LibVaipakam.Storage storage s,
+        address user,
+        LibVaipakam.RewardSide side,
+        uint256 day,
+        uint256[] memory entryIds,
+        bytes32[] memory ids,
+        uint256[] memory fresh,
+        uint256[] memory recycled
+    ) internal returns (bytes32 key, uint256 staged) {
+        key = stagingKey(user, side, day);
+        LibVaipakam.StagingRecord storage r = s.stagingRecords[key];
+        bytes32 commitment = stagingCommitment(entryIds, LibVaipakam.StagingOp.Claim);
+        bool opened;
+        if (r.phase == LibVaipakam.StagingPhase.None) {
+            opened = true;
+            r.user = user;
+            r.side = side;
+            r.op = LibVaipakam.StagingOp.Claim;
+            r.phase = LibVaipakam.StagingPhase.Staging;
+            r.day = SafeCast.toUint64(day);
+            r.openedAt = uint64(block.timestamp);
+            r.commitment = commitment;
+            r.entryIds = entryIds;
+            emit StagingRecordOpened(key, user, uint8(side), r.day, commitment);
+        } else if (r.commitment != commitment) {
+            revert IVaipakamErrors.StagingCommitmentMismatch(key, r.commitment, commitment);
+        } else if (r.phase != LibVaipakam.StagingPhase.Staging) {
+            revert IVaipakamErrors.StagingPhaseInvalid(key, uint8(r.phase));
+        }
+        (uint256 sf, uint256 sr) = stageTakes(s, key, r, ids, fresh, recycled);
+        staged = sf + sr;
+        // A window with nothing stageable in it opens no record: an empty
+        // record would hold nothing, reference nothing, and only stop the
+        // walk on a day it could not help.
+        if (staged == 0 && opened) {
+            delete s.stagingRecords[key];
+            return (key, 0);
+        }
+        // The continuation starts past the furthest epoch the window offered:
+        // the plan is sorted by the list's own key, so its last id is the
+        // furthest live node the window scanned, and a resume never rescans
+        // what this call staged. The dead tail of that window, if any, is
+        // rescanned once, within one window's bound.
+        if (opened) r.continuationNode = ids[ids.length - 1];
+        stagingDeadlineRefresh(s, key, r);
+    }
+
+    /// @notice Move the takes into staged form for `key`: each stageable
+    ///         batch's balance falls by its take, its staged components rise,
+    ///         the record references it (once) and records the components it
+    ///         gave. An unstageable batch in the plan is skipped — the day
+    ///         primitive's window may hold untyped epochs a draw could have
+    ///         taken from; a stage may not.
+    function stageTakes(
+        LibVaipakam.Storage storage s,
+        bytes32 key,
+        LibVaipakam.StagingRecord storage r,
+        bytes32[] memory ids,
+        uint256[] memory fresh,
+        uint256[] memory recycled
+    ) internal returns (uint256 stagedFresh, uint256 stagedRecycled) {
+        uint256 n = ids.length;
+        for (uint256 k; k < n; ) {
+            uint256 bf = fresh[k];
+            uint256 br = recycled[k];
+            if (bf + br != 0) {
+                bytes32 id = ids[k];
+                if (stageable(s, id)) {
+                    LibVaipakam.TransportBatch storage b = s.transportBatches[id];
+                    b.balance -= bf + br;
+                    b.stagedFresh += bf;
+                    b.stagedRecycled += br;
+                    _reference(s, r, id, bf, br);
+                    stagedFresh += bf;
+                    stagedRecycled += br;
+                    emit TransportStaged(id, key, bf, br);
+                }
+            }
+            unchecked { ++k; }
+        }
+        r.stagedFresh += stagedFresh;
+        r.stagedRecycled += stagedRecycled;
+    }
+
+    /// @dev One reference per (record, batch): a batch staged twice by one
+    ///      record across retries is one entry with merged components.
+    function _reference(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.StagingRecord storage r,
+        bytes32 id,
+        uint256 bf,
+        uint256 br
+    ) private {
+        uint256 n = r.batchIds.length;
+        for (uint256 i; i < n; ) {
+            if (r.batchIds[i] == id) {
+                r.batchFresh[i] += bf;
+                r.batchRecycled[i] += br;
+                return;
+            }
+            unchecked { ++i; }
+        }
+        r.batchIds.push(id);
+        r.batchFresh.push(bf);
+        r.batchRecycled.push(br);
+        s.transportBatchReferences[id] += 1;
+    }
+
     function transportCoverageForDay(
         LibVaipakam.Storage storage s,
         uint256 dayId
@@ -2694,7 +3052,7 @@ library LibRewardCustody {
                     b.balance -= bf + br;
                     b.consumedFresh += bf;
                     b.consumedRecycled += br;
-                    _spendUntypedForDraw(s, batchId, bf + br);
+                    spendUntypedForDraw(s, batchId, bf + br);
                     emit TransportDrawn(batchId, dayId, bf, br);
                     unchecked { ++written; }
                 }
@@ -2720,7 +3078,7 @@ library LibRewardCustody {
     ///      remainder this value leaves. Steps the same figures down that a
     ///      classification's take does, through the same function, and none
     ///      of the classified ones.
-    function _spendUntypedForDraw(LibVaipakam.Storage storage s, bytes32 batchId, uint256 amount) private {
+    function spendUntypedForDraw(LibVaipakam.Storage storage s, bytes32 batchId, uint256 amount) internal {
         LibVaipakam.IngressPacket storage p = s.ingressPackets[batchId];
         uint256 have = p.unclassified;
         if (amount > have) {
@@ -2779,6 +3137,10 @@ library LibRewardCustody {
         uint256 ovF,
         uint256 ovR
     ) private view returns (bool) {
+        // A referenced batch is never exhausted for a cursor (3b-ii-A2,
+        // #2305): a standing record may unwind into it, and a cursor that had
+        // passed it would never revisit what the unwind restored.
+        if (s.transportBatchReferences[id] != 0) return false;
         LibVaipakam.TransportBatch storage b = s.transportBatches[id];
         uint256 bal = b.balance;
         bal = bal > ovF + ovR ? bal - (ovF + ovR) : 0;

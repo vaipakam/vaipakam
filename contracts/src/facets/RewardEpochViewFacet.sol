@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity 0.8.29;
 
+import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 
 /**
@@ -22,6 +23,42 @@ import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
  *         writes, and every caller is a preview or a gate.
  */
 contract RewardEpochViewFacet {
+    // ───────────── 3b-ii-A2 (#2305) — the staging records' reads ─────────────
+
+    /// @notice A lean view of a record — the scalars; the batch list is paged
+    ///         through {getStagingRecordBatches}.
+    struct StagingRecordView {
+        address user;
+        uint8 side;
+        uint8 op;
+        uint8 phase;
+        uint8 venue;
+        bool venueSet;
+        uint64 day;
+        uint64 openedAt;
+        uint64 deadline;
+        bytes32 commitment;
+        uint256 entryCount;
+        uint256 stagedFresh;
+        uint256 stagedRecycled;
+        uint256 needUserFresh;
+        uint256 needUserRecycled;
+        uint256 needTreasuryFresh;
+        uint256 needTreasuryRecycled;
+        uint256 epochUserFresh;
+        uint256 epochUserRecycled;
+        uint256 epochTreasuryFresh;
+        uint256 epochTreasuryRecycled;
+        uint256 reservedLiveUserFresh;
+        uint256 reservedLiveTreasuryFresh;
+        uint256 reservedLiveUserRecycled;
+        uint256 reservedPoolCap;
+        uint256 heldEpoch;
+        uint256 heldRecycled;
+        uint256 batchCount;
+        uint256 resolveCursor;
+    }
+
     /// @notice The preview's dry run of `user`'s ShareOfPool days against the
     ///         given delivered cap and fresh budget — what a claim would pay,
     ///         the full capped armed fresh it would charge, the part of it the
@@ -62,5 +99,63 @@ contract RewardEpochViewFacet {
     ///         zero over epochs that predate the release).
     function getObligationDomainListsAnEpoch(address user) external view returns (bool) {
         return LibInteractionRewards.chunkListsAnEpochView(user);
+    }
+    /// @notice The record under `key` — every scalar it carries. A key with
+    ///         no record reads as phase `None` with zeros, never reverts.
+    function getStagingRecord(bytes32 key) external view returns (StagingRecordView memory v) {
+        LibVaipakam.StagingRecord storage r = LibVaipakam.storageSlot().stagingRecords[key];
+        v.user = r.user;
+        v.side = uint8(r.side);
+        v.op = uint8(r.op);
+        v.phase = uint8(r.phase);
+        v.venue = uint8(r.venue);
+        v.venueSet = r.venueSet;
+        v.day = r.day;
+        v.openedAt = r.openedAt;
+        v.deadline = r.deadline;
+        v.commitment = r.commitment;
+        v.entryCount = r.entryIds.length;
+        v.stagedFresh = r.stagedFresh;
+        v.stagedRecycled = r.stagedRecycled;
+        v.needUserFresh = r.needUserFresh;
+        v.needUserRecycled = r.needUserRecycled;
+        v.needTreasuryFresh = r.needTreasuryFresh;
+        v.needTreasuryRecycled = r.needTreasuryRecycled;
+        v.epochUserFresh = r.epochUserFresh;
+        v.epochUserRecycled = r.epochUserRecycled;
+        v.epochTreasuryFresh = r.epochTreasuryFresh;
+        v.epochTreasuryRecycled = r.epochTreasuryRecycled;
+        v.reservedLiveUserFresh = r.reservedLiveUserFresh;
+        v.reservedLiveTreasuryFresh = r.reservedLiveTreasuryFresh;
+        v.reservedLiveUserRecycled = r.reservedLiveUserRecycled;
+        v.reservedPoolCap = r.reservedPoolCap;
+        v.heldEpoch = r.heldEpoch;
+        v.heldRecycled = r.heldRecycled;
+        v.batchCount = r.batchIds.length;
+        v.resolveCursor = r.resolveCursor;
+    }
+
+    /// @notice One page of the record's batches — each with the components it
+    ///         gave — from `from`, at most `count`.
+    function getStagingRecordBatches(bytes32 key, uint256 from, uint256 count)
+        external
+        view
+        returns (bytes32[] memory ids, uint256[] memory fresh, uint256[] memory recycled)
+    {
+        LibVaipakam.StagingRecord storage r = LibVaipakam.storageSlot().stagingRecords[key];
+        uint256 n = r.batchIds.length;
+        if (from >= n) return (ids, fresh, recycled);
+        uint256 end = from + count;
+        if (end > n) end = n;
+        uint256 m = end - from;
+        ids = new bytes32[](m);
+        fresh = new uint256[](m);
+        recycled = new uint256[](m);
+        for (uint256 i; i < m; ) {
+            ids[i] = r.batchIds[from + i];
+            fresh[i] = r.batchFresh[from + i];
+            recycled[i] = r.batchRecycled[from + i];
+            unchecked { ++i; }
+        }
     }
 }

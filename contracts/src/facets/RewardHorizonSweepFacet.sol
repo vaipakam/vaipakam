@@ -177,7 +177,7 @@ contract RewardHorizonSweepFacet is
                 uint256 freshCredited,
                 /* armedDelivered — the engine's per-day attribution; the
                    allowance depletes by the fresh credited (#1566 closure 2) */
-            ) = LibInteractionRewards.sweepExpiredEntry(
+            ) = LibInteractionRewards.callSweepExpiredEntryWalk(
                 entryIds[i], headroom, allowance, tp
             );
             headroom -= freshCredited;

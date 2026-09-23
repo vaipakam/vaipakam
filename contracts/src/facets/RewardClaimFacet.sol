@@ -228,7 +228,7 @@ contract RewardClaimFacet is
 
         // One memory result (3b-ii-A): the two splits, the walk flag and the
         // epoch-paid legs, read in place — see {ClaimEntriesResult}.
-        LibInteractionRewards.ClaimEntriesResult memory res = LibInteractionRewards.claimForUserEntries(
+        LibInteractionRewards.ClaimEntriesResult memory res = LibInteractionRewards.callClaimEntriesWalk(
             msg.sender, freshBudget, windowReward // #1566 closure 2 — the window reserves delivered headroom too
         );
         uint256 entryReward = res.toUser.total;
@@ -273,7 +273,8 @@ contract RewardClaimFacet is
         // #776 — reserve VPFI already remitted to mirrors: it funds mirror-side
         // claims and must not be re-lent to Base claimants (Base-only counter;
         // 0 on mirrors). Keeps the global 69M cap coherent across chains.
-        uint256 reserved = paidOut + s.rewardBudgetRemittedGlobal;
+        // Net of staging reservations too (3b-ii-A2, #2305), as `poolRemaining` is.
+        uint256 reserved = paidOut + s.rewardBudgetRemittedGlobal + s.interactionPoolReserved;
         uint256 remaining = LibVaipakam.VPFI_INTERACTION_POOL_CAP > reserved
             ? LibVaipakam.VPFI_INTERACTION_POOL_CAP - reserved
             : 0;

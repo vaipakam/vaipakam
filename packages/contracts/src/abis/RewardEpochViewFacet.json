@@ -92,6 +92,211 @@
     "stateMutability": "view"
   },
   {
+    "type": "function",
+    "name": "getStagingRecord",
+    "inputs": [
+      {
+        "name": "key",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "v",
+        "type": "tuple",
+        "internalType": "struct RewardEpochViewFacet.StagingRecordView",
+        "components": [
+          {
+            "name": "user",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "side",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "op",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "phase",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "venue",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "venueSet",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "day",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "openedAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "deadline",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "commitment",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "entryCount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "stagedFresh",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "stagedRecycled",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "needUserFresh",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "needUserRecycled",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "needTreasuryFresh",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "needTreasuryRecycled",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "epochUserFresh",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "epochUserRecycled",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "epochTreasuryFresh",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "epochTreasuryRecycled",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "reservedLiveUserFresh",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "reservedLiveTreasuryFresh",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "reservedLiveUserRecycled",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "reservedPoolCap",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "heldEpoch",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "heldRecycled",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "batchCount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "resolveCursor",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getStagingRecordBatches",
+    "inputs": [
+      {
+        "name": "key",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "from",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "count",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "ids",
+        "type": "bytes32[]",
+        "internalType": "bytes32[]"
+      },
+      {
+        "name": "fresh",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
+      },
+      {
+        "name": "recycled",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
     "type": "error",
     "name": "DayCapModeUnsetPostCutover",
     "inputs": [

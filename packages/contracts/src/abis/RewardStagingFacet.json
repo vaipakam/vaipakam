@@ -1,304 +1,168 @@
 [
   {
     "type": "function",
-    "name": "cancelExpiredIntent",
+    "name": "prepareStagedDay",
     "inputs": [
       {
-        "name": "loanId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "cancelSwapToRepayIntent",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "canonicalExtension",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bytes",
-        "internalType": "bytes"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "commitSwapToRepayIntent",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "params",
-        "type": "tuple",
-        "internalType": "struct SwapToRepayIntentFacet.FusionOrderParams",
-        "components": [
-          {
-            "name": "takerAmount",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "deadline",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "salt",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "makerTraits",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "extension",
-            "type": "bytes",
-            "internalType": "bytes"
-          }
-        ]
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "forceCancelIntentIfHFBelowOrRevert",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "forceCancelIntentIfPastDefaultOrRevert",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "getIntentCommit",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "internalType": "uint256"
+        "name": "key",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ],
     "outputs": [
       {
-        "name": "order",
-        "type": "tuple",
-        "internalType": "struct SwapToRepayIntentFacet.FusionOrderRead",
-        "components": [
-          {
-            "name": "maker",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "receiver",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "makerAsset",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "takerAsset",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "makerAmount",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "takerAmount",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "deadline",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "salt",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "makerTraits",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "extension",
-            "type": "bytes",
-            "internalType": "bytes"
-          }
-        ]
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "internalForceCancelIntent",
-    "inputs": [
-      {
-        "name": "loanId",
+        "name": "stagedFresh",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "reason",
+        "name": "stagedRecycled",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "reserveStagedDay",
+    "inputs": [
+      {
+        "name": "key",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "resolveStagedDayPage",
+    "inputs": [
+      {
+        "name": "key",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "done",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setStagingVenue",
+    "inputs": [
+      {
+        "name": "key",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "venue",
         "type": "uint8",
-        "internalType": "enum SwapToRepayIntentFacet.ForceCancelReason"
+        "internalType": "enum LibVaipakam.RewardDelivery"
       }
     ],
     "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "unwindStagedDayPage",
+    "inputs": [
+      {
+        "name": "key",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "done",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
     "stateMutability": "nonpayable"
   },
   {
     "type": "event",
-    "name": "CollateralConsolidated",
+    "name": "RewardCustodyRowHeld",
     "inputs": [
       {
-        "name": "loanId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "isLenderSide",
-        "type": "bool",
-        "indexed": false,
-        "internalType": "bool"
-      },
-      {
         "name": "from",
-        "type": "address",
+        "type": "uint8",
         "indexed": true,
-        "internalType": "address"
+        "internalType": "uint8"
       },
       {
         "name": "to",
-        "type": "address",
+        "type": "uint8",
         "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "asset",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
+        "internalType": "uint8"
       },
       {
         "name": "amount",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
+      },
+      {
+        "name": "key",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
       }
     ],
     "anonymous": false
   },
   {
     "type": "event",
-    "name": "SwapToRepayIntentCancelled",
+    "name": "RewardCustodyRowHoldReleased",
     "inputs": [
       {
-        "name": "loanId",
-        "type": "uint256",
+        "name": "from",
+        "type": "uint8",
         "indexed": true,
+        "internalType": "uint8"
+      },
+      {
+        "name": "to",
+        "type": "uint8",
+        "indexed": true,
+        "internalType": "uint8"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
         "internalType": "uint256"
       },
       {
-        "name": "orderHash",
+        "name": "key",
         "type": "bytes32",
         "indexed": true,
         "internalType": "bytes32"
-      },
-      {
-        "name": "cancelledBy",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
       }
     ],
     "anonymous": false
   },
   {
     "type": "event",
-    "name": "SwapToRepayIntentCommitted",
+    "name": "StagingDeadlineSet",
     "inputs": [
       {
-        "name": "loanId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "orderHash",
+        "name": "key",
         "type": "bytes32",
         "indexed": true,
         "internalType": "bytes32"
-      },
-      {
-        "name": "committedBy",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "makerAmount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "takerAmount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
       },
       {
         "name": "deadline",
@@ -311,34 +175,102 @@
   },
   {
     "type": "event",
-    "name": "SwapToRepayIntentFilled",
+    "name": "StagingPaid",
     "inputs": [
       {
-        "name": "loanId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "orderHash",
+        "name": "key",
         "type": "bytes32",
         "indexed": true,
         "internalType": "bytes32"
       },
       {
-        "name": "consumed",
+        "name": "user",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "userFresh",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
       },
       {
-        "name": "delivered",
+        "name": "userRecycled",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
       },
       {
-        "name": "residualToBorrowerVault",
+        "name": "treasuryFresh",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "treasuryRecycled",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "venue",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "StagingRecordClosed",
+    "inputs": [
+      {
+        "name": "key",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "paid",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "StagingReserved",
+    "inputs": [
+      {
+        "name": "key",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "liveUserFresh",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "liveTreasuryFresh",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "liveUserRecycled",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "poolCap",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -348,31 +280,131 @@
   },
   {
     "type": "event",
-    "name": "SwapToRepayIntentForceCancelled",
+    "name": "StagingResolvedBatch",
     "inputs": [
       {
-        "name": "loanId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "orderHash",
+        "name": "batchId",
         "type": "bytes32",
         "indexed": true,
         "internalType": "bytes32"
       },
       {
-        "name": "reason",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "enum SwapToRepayIntentFacet.ForceCancelReason"
+        "name": "key",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
       },
       {
-        "name": "source",
-        "type": "address",
+        "name": "fresh",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "recycled",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "StagingUnwoundBatch",
+    "inputs": [
+      {
+        "name": "batchId",
+        "type": "bytes32",
         "indexed": true,
-        "internalType": "address"
+        "internalType": "bytes32"
+      },
+      {
+        "name": "key",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "fresh",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "recycled",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "StagingVenueSet",
+    "inputs": [
+      {
+        "name": "key",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "venue",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "TransportStaged",
+    "inputs": [
+      {
+        "name": "batchId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "key",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "fresh",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "recycled",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "VpfiRecycleConsumed",
+    "inputs": [
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -1227,37 +1259,6 @@
   },
   {
     "type": "error",
-    "name": "EncumbranceUnderflow",
-    "inputs": [
-      {
-        "name": "user",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "asset",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "tokenId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "requested",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "available",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "EnforcedPause",
     "inputs": []
   },
@@ -1466,206 +1467,12 @@
   },
   {
     "type": "error",
-    "name": "IntentAlreadyCommitted",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "IntentAlreadyFilled",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "IntentBlockedHFTooLow",
-    "inputs": [
-      {
-        "name": "currentHF",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "minHF",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "IntentCollateralFeeOnTransferUnsupported",
-    "inputs": [
-      {
-        "name": "received",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "requested",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "IntentDeliveredBelowLiveFloor",
-    "inputs": [
-      {
-        "name": "actualDelivered",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "liveFloor",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "IntentMakerTraitsMismatch",
-    "inputs": [
-      {
-        "name": "reasonHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "IntentMinOutputBelowFloor",
-    "inputs": [
-      {
-        "name": "provided",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "required",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "IntentNoCommit",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "IntentNotPastCancelGrace",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "IntentNotPastDeadline",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "IntentNotRegistered",
-    "inputs": [
-      {
-        "name": "orderHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "IntentOrderFieldsMismatch",
-    "inputs": [
-      {
-        "name": "fieldHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "IntentOrderHashAlreadyInUse",
-    "inputs": [
-      {
-        "name": "orderHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "IntentPending",
     "inputs": [
       {
         "name": "loanId",
         "type": "uint256",
         "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "IntentPostInteractionUnauthorized",
-    "inputs": [
-      {
-        "name": "caller",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "IntentPreInteractionUnauthorized",
-    "inputs": [
-      {
-        "name": "caller",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "IntentPreInteractionUnknownOrder",
-    "inputs": [
-      {
-        "name": "orderHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "IntentSurfaceDisabled",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "IntentTokenNotAllowed",
-    "inputs": [
-      {
-        "name": "token",
-        "type": "address",
-        "internalType": "address"
       }
     ]
   },
@@ -2116,11 +1923,6 @@
   {
     "type": "error",
     "name": "OfferCreationFailed",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "OnlyDiamondInternal",
     "inputs": []
   },
   {
@@ -2719,6 +2521,11 @@
   },
   {
     "type": "error",
+    "name": "RecycleBackingTokenUnset",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "RecycleInflowUnverified",
     "inputs": [
       {
@@ -2914,11 +2721,6 @@
         "internalType": "uint256"
       }
     ]
-  },
-  {
-    "type": "error",
-    "name": "RepaymentPastGracePeriod",
-    "inputs": []
   },
   {
     "type": "error",
@@ -3523,12 +3325,17 @@
   },
   {
     "type": "error",
-    "name": "SafeERC20FailedOperation",
+    "name": "SafeCastOverflowedUintDowncast",
     "inputs": [
       {
-        "name": "token",
-        "type": "address",
-        "internalType": "address"
+        "name": "bits",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "value",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ]
   },
@@ -3573,17 +3380,6 @@
     "type": "error",
     "name": "SaleOfferAlreadyExists",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "SanctionedAddress",
-    "inputs": [
-      {
-        "name": "who",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
   },
   {
     "type": "error",
@@ -4216,11 +4012,6 @@
   {
     "type": "error",
     "name": "UnauthorizedCrossFacetCall",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "UnsupportedLoanShape",
     "inputs": []
   },
   {

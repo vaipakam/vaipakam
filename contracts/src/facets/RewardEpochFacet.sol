@@ -244,6 +244,19 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
         revert TransportReleaseNotYetAvailable(batchId);
     }
 
+    /// @notice 3b-ii-A2 (#2305) — a batch's STAGED components and the count of
+    ///         staging records referencing it: the terms the conservation
+    ///         identity gained, read beside {getTransportBatch}'s.
+    function getTransportBatchStaged(bytes32 batchId)
+        external
+        view
+        returns (uint256 stagedFresh, uint256 stagedRecycled, uint256 references)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.TransportBatch storage b = s.transportBatches[batchId];
+        return (b.stagedFresh, b.stagedRecycled, s.transportBatchReferences[batchId]);
+    }
+
     /// @notice A transport epoch as recorded.
     /// @dev    A lean tuple rather than the struct: an ABI-coded struct return
     ///         inflates the viaIR peak stack, which this codebase sits close

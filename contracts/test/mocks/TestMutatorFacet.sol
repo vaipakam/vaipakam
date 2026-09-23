@@ -2547,4 +2547,22 @@ contract TestMutatorFacet {
         p.dayListHash = dayListHash;
         p.dayCount = dayCount;
     }
+
+    // ───────── 3b-ii-A2 (#2305) — raw reads for the staging cells ─────────
+
+    function poolRemainingRaw() external view returns (uint256) {
+        return LibInteractionRewards.poolRemaining();
+    }
+
+    function rewardEntryClaimNextDayRaw(uint256 id) external view returns (uint256) {
+        return LibVaipakam.storageSlot().rewardEntryClaimNextDay[id];
+    }
+
+    function interactionPoolReservedRaw() external view returns (uint256) {
+        return LibVaipakam.storageSlot().interactionPoolReserved;
+    }
+
+    function liveFreshReservedRaw() external view returns (uint256) {
+        return LibVaipakam.storageSlot().liveFreshReserved;
+    }
 }

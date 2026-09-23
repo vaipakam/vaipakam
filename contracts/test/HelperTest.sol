@@ -86,6 +86,9 @@ import {RewardReconciliationFacet} from "../src/facets/RewardReconciliationFacet
 import {RewardIngressFacet} from "../src/facets/RewardIngressFacet.sol";
 import {RewardEpochFacet} from "../src/facets/RewardEpochFacet.sol";
 import {RewardEpochViewFacet} from "../src/facets/RewardEpochViewFacet.sol";
+import {RewardStagingFacet} from "../src/facets/RewardStagingFacet.sol";
+import {RewardClaimWalkFacet} from "../src/facets/RewardClaimWalkFacet.sol";
+import {RewardSweepWalkFacet} from "../src/facets/RewardSweepWalkFacet.sol";
 import {RewardCompensationDispatchFacet} from "../src/facets/RewardCompensationDispatchFacet.sol";
 import {RewardCommitmentFacet} from "../src/facets/RewardCommitmentFacet.sol";
 import {RepatriationFacet} from "../src/facets/RepatriationFacet.sol";
@@ -100,7 +103,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](222); // #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1
+        selectors = new bytes4[](226); // 3b-ii-A2 +4 raw reads; #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -509,6 +512,11 @@ contract HelperTest {
         selectors[n++] = TestMutatorFacet.resetTransportDayListRaw.selector; // 3b-ii-A r8: a day as it was before the list
         selectors[n++] = TestMutatorFacet.classifyPacketPreGateRaw.selector; // 3b-ii-A r9: a pre-gate classification
         selectors[n++] = TestMutatorFacet.resetTransportDrawWritesRaw.selector; // 3b-ii-A r14: a new transaction's empty transient count
+        // 3b-ii-A2 (#2305) — raw reads for the staging cells.
+        selectors[n++] = TestMutatorFacet.poolRemainingRaw.selector;
+        selectors[n++] = TestMutatorFacet.rewardEntryClaimNextDayRaw.selector;
+        selectors[n++] = TestMutatorFacet.interactionPoolReservedRaw.selector;
+        selectors[n++] = TestMutatorFacet.liveFreshReservedRaw.selector;
         selectors[n++] = TestMutatorFacet.acknowledgeTransportBatchRaw.selector;
         selectors[n++] = TestMutatorFacet.releaseTransportBatchRaw.selector;
         // #951 v2 (Codex #959 bind-to-live) — setSaleListingCollateralRaw removed
@@ -2479,7 +2487,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](18);
+        selectors = new bytes4[](19);
         selectors[0] = RewardEpochFacet.materializeTransportBatchPage.selector;
         selectors[1] = RewardEpochFacet.parkTransportBatchRemainder.selector;
         selectors[2] = RewardEpochFacet.acknowledgeTransportBatchRemainder.selector;
@@ -2499,6 +2507,7 @@ contract HelperTest {
         selectors[15] = RewardEpochFacet.getTransportDayIndex.selector;
         selectors[16] = RewardEpochFacet.epochLinkTransportDayIndex.selector;
         selectors[17] = RewardEpochFacet.getTransportDayScanIds.selector;
+        selectors[18] = RewardEpochFacet.getTransportBatchStaged.selector;
     }
 
     /// 3b-ii-A (Codex #2276 r2) — the epochs' engine-inlining reads. Mirrors
@@ -2508,10 +2517,49 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](3);
+        selectors = new bytes4[](5);
         selectors[0] = RewardEpochViewFacet.getDryRunShareOfPoolDays.selector;
         selectors[1] = RewardEpochViewFacet.getObligationDomainNeeds.selector;
         selectors[2] = RewardEpochViewFacet.getObligationDomainListsAnEpoch.selector;
+        selectors[3] = RewardEpochViewFacet.getStagingRecord.selector;
+        selectors[4] = RewardEpochViewFacet.getStagingRecordBatches.selector;
+    }
+
+    /// 3b-ii-A2 (#2305) — the claim's entry walk, hosted. Mirrors
+    /// `DeployDiamond._getRewardStagingSelectors`.
+    function getRewardStagingFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](5);
+        selectors[0] = RewardStagingFacet.prepareStagedDay.selector;
+        selectors[1] = RewardStagingFacet.reserveStagedDay.selector;
+        selectors[2] = RewardStagingFacet.resolveStagedDayPage.selector;
+        selectors[3] = RewardStagingFacet.unwindStagedDayPage.selector;
+        selectors[4] = RewardStagingFacet.setStagingVenue.selector;
+    }
+
+    /// 3b-ii-A2 (#2305) — the claim walk's host. Mirrors
+    /// `DeployDiamond._getRewardClaimWalkSelectors`.
+    function getRewardClaimWalkFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](1);
+        selectors[0] = RewardClaimWalkFacet.epochClaimEntriesWalk.selector;
+    }
+
+    /// 3b-ii-A2 (#2305) — the expiry sweep walk's host. Mirrors
+    /// `DeployDiamond._getRewardSweepWalkSelectors`.
+    function getRewardSweepWalkFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](1);
+        selectors[0] = RewardSweepWalkFacet.epochSweepExpiredEntry.selector;
     }
 
     /// #1434 P2-w4 — the remittance read surface (lens split). Mirrors

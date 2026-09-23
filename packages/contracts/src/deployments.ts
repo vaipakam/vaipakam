@@ -96,6 +96,12 @@ export interface DeploymentFacets {
   rewardEpochFacet?: HexAddress;
   /** #1566 transport epochs PR 3b-ii-A — the epochs' engine-inlining reads (dry run, domain needs, domain probe). */
   rewardEpochViewFacet?: HexAddress;
+  /** #1566 transport epochs 3b-ii-A2 (#2305) — the claim's entry walk, hosted; the staging machinery's home. */
+  rewardStagingFacet?: HexAddress;
+  /** #1566 transport epochs 3b-ii-A2 (#2305) — the claim walk's host; internal-only. */
+  rewardClaimWalkFacet?: HexAddress;
+  /** #1566 transport epochs 3b-ii-A2 (#2305) — the expiry sweep walk's host; internal-only. */
+  rewardSweepWalkFacet?: HexAddress;
   rewardReporterFacet?: HexAddress;
   riskFacet?: HexAddress;
   stakingRewardsFacet?: HexAddress;

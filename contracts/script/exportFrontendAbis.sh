@@ -299,6 +299,7 @@ FACETS=(
   "RewardIngressFacet"
   "RewardEpochFacet"
   "RewardEpochViewFacet"
+  "RewardStagingFacet"
   "RepatriationFacet"
   "RiskFacet"
   "RiskMatchLiquidationFacet"

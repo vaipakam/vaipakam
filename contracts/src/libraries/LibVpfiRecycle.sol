@@ -279,11 +279,35 @@ library LibVpfiRecycle {
         _credit(source, refId, amount, CreditOrigin.Unclassified);
     }
 
+    /// @notice 3b-ii-A2 (#2305) — {absorbTransportFunded} for epoch legs a
+    ///         staging record's batch pages already hold in `Resolving`: the
+    ///         same in-holder absorption, from the hold instead of from
+    ///         `Unclassified`, on the record's last page.
+    function absorbTransportFundedFromHold(RecycleSource source, uint256 refId, uint256 amount) internal {
+        if (amount == 0) return;
+        _credit(source, refId, amount, CreditOrigin.Resolving);
+    }
+
+    /// @notice 3b-ii-A2 (#2305) — the bucket net of what staging records have
+    ///         RESERVED of it: what a settlement may still count as recycled
+    ///         backing. A reservation is not a consumption — `consume` is
+    ///         called on the record's last page, when the reservation is
+    ///         released — so the two figures are kept apart and read together.
+    function bucketAvailable(LibVaipakam.Storage storage s) internal view returns (uint256) {
+        uint256 bucket = s.recycleBucket;
+        uint256 reserved = s.recycleBucketReserved;
+        return bucket > reserved ? bucket - reserved : 0;
+    }
+
     enum CreditOrigin {
         Diamond,
         LiveFresh,
         /// @dev 3b-ii-A — an epoch's value, moved in-holder from `Unclassified`.
-        Unclassified
+        Unclassified,
+        /// @dev 3b-ii-A2 (#2305) — an epoch's value a staging record's batch
+        ///      pages already moved into the `Resolving` hold, absorbed from
+        ///      there on the record's last page.
+        Resolving
     }
 
     /// @dev The delta check every non-reward inflow operation performs: the
@@ -343,7 +367,9 @@ library LibVpfiRecycle {
                 LibRewardCustody.callMove(
                     origin == CreditOrigin.LiveFresh
                         ? LibVaipakam.RewardCustodyRow.LiveFresh
-                        : LibVaipakam.RewardCustodyRow.Unclassified,
+                        : origin == CreditOrigin.Resolving
+                            ? LibVaipakam.RewardCustodyRow.Resolving
+                            : LibVaipakam.RewardCustodyRow.Unclassified,
                     LibVaipakam.RewardCustodyRow.Recycled,
                     amount
                 );
@@ -934,7 +960,12 @@ library LibVpfiRecycle {
      */
     function freshBackingRoom(LibVaipakam.Storage storage s) internal view returns (uint256) {
         if (LibRewardCustody.active(s)) {
-            return s.rewardCustodyRows[LibVaipakam.RewardCustodyRow.LiveFresh];
+            // Net of what staging records have reserved of the live row
+            // (3b-ii-A2, #2305): fresh is reserved by count, never held out
+            // of the row, so the room is the row less the count.
+            uint256 row = s.rewardCustodyRows[LibVaipakam.RewardCustodyRow.LiveFresh];
+            uint256 reserved = s.liveFreshReserved;
+            return row > reserved ? row - reserved : 0;
         }
         (, , uint256 unearmarked) = backingPosition(s);
         return unearmarked;
