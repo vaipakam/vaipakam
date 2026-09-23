@@ -251,6 +251,21 @@
             "name": "resolveCursor",
             "type": "uint256",
             "internalType": "uint256"
+          },
+          {
+            "name": "scanComplete",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "cappedOffFresh",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "cappedOffRecycled",
+            "type": "uint256",
+            "internalType": "uint256"
           }
         ]
       }

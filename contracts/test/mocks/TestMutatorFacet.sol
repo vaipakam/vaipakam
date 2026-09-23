@@ -2565,4 +2565,12 @@ contract TestMutatorFacet {
     function liveFreshReservedRaw() external view returns (uint256) {
         return LibVaipakam.storageSlot().liveFreshReserved;
     }
+
+    function rewardBudgetArmedFreshReservedRaw() external view returns (uint256) {
+        return LibVaipakam.storageSlot().rewardBudgetArmedFreshReserved;
+    }
+
+    function attributedTotalRaw() external view returns (uint256) {
+        return LibRewardCustody.attributedTotal(LibVaipakam.storageSlot());
+    }
 }

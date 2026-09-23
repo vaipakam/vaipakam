@@ -103,7 +103,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](226); // 3b-ii-A2 +4 raw reads; #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1
+        selectors = new bytes4[](228); // 3b-ii-A2 +6 raw reads; #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -517,6 +517,8 @@ contract HelperTest {
         selectors[n++] = TestMutatorFacet.rewardEntryClaimNextDayRaw.selector;
         selectors[n++] = TestMutatorFacet.interactionPoolReservedRaw.selector;
         selectors[n++] = TestMutatorFacet.liveFreshReservedRaw.selector;
+        selectors[n++] = TestMutatorFacet.rewardBudgetArmedFreshReservedRaw.selector;
+        selectors[n++] = TestMutatorFacet.attributedTotalRaw.selector;
         selectors[n++] = TestMutatorFacet.acknowledgeTransportBatchRaw.selector;
         selectors[n++] = TestMutatorFacet.releaseTransportBatchRaw.selector;
         // #951 v2 (Codex #959 bind-to-live) — setSaleListingCollateralRaw removed
@@ -2382,7 +2384,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](42);
+        selectors = new bytes4[](43);
         selectors[0] = RewardCustodyFacet.bindRewardCustodyHolder.selector;
         selectors[1] = RewardCustodyFacet.replaceRewardCustodyHolder.selector;
         selectors[2] = RewardCustodyFacet.rebaseArmedFreshPaid.selector;
@@ -2432,6 +2434,7 @@ contract HelperTest {
         selectors[39] = RewardCustodyFacet.custodyUnclassifiedReturn.selector;
         selectors[40] = RewardCustodyFacet.custodyReleaseUnclassifiedForReturn.selector;
         selectors[41] = RewardCustodyFacet.custodyDeliverClaim.selector; // 3b-ii-A
+        selectors[42] = RewardCustodyFacet.custodyDeliverClaimToVault.selector; // 3b-ii-A2 (#2305)
     }
 
     /// #1566 closure 2 cutover PR 2 — the legacy reconciliation epoch

@@ -1730,4 +1730,10 @@ interface IVaipakamErrors {
     /// @notice Only the record's claimant may set its delivery venue, and only
     ///         before the record is reserved.
     error StagingVenueNotSettable(bytes32 key);
+    /// @notice The record's day still has epochs no preparation has scanned;
+    ///         nothing is reserved from the live sources ahead of them.
+    error StagingScanIncomplete(bytes32 key);
+    /// @notice A delivery that may only reach the claimant's vault found none
+    ///         to credit; the record stays resolving until one can accept it.
+    error RewardCustodyVaultDeliveryFailed(address user);
 }

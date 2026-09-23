@@ -57,6 +57,9 @@ contract RewardEpochViewFacet {
         uint256 heldRecycled;
         uint256 batchCount;
         uint256 resolveCursor;
+        bool scanComplete;
+        uint256 cappedOffFresh;
+        uint256 cappedOffRecycled;
     }
 
     /// @notice The preview's dry run of `user`'s ShareOfPool days against the
@@ -133,6 +136,9 @@ contract RewardEpochViewFacet {
         v.heldRecycled = r.heldRecycled;
         v.batchCount = r.batchIds.length;
         v.resolveCursor = r.resolveCursor;
+        v.scanComplete = r.scanComplete;
+        v.cappedOffFresh = r.cappedOffFresh;
+        v.cappedOffRecycled = r.cappedOffRecycled;
     }
 
     /// @notice One page of the record's batches — each with the components it

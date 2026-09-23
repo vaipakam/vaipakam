@@ -8035,6 +8035,23 @@ library LibVaipakam {
         ///      and the last late-chain node seen.
         bytes32 continuationNode;
         bytes32 lateSeen;
+        /// @dev Whether a preparation reached the end of the day's list, and
+        ///      how many members the list had then: the reservation refuses a
+        ///      record whose day still has unscanned epochs — transport first
+        ///      is the rule staging exists to keep (Codex #2308 r1).
+        bool scanComplete;
+        uint256 listCountSeen;
+        /// @dev What the lifetime caps trimmed off the day at reservation —
+        ///      paid to no one, but its commitment retires at payout exactly
+        ///      as the ordinary claim retires it (Codex #2308 r1).
+        uint256 cappedOffFresh;
+        uint256 cappedOffRecycled;
+        /// @dev What the resolution may CONSUME of the staged components — the
+        ///      figures the reservation assigned; a staged amount beyond them
+        ///      is returned to its epoch by the page that reaches it, never
+        ///      consumed unpaid (Codex #2308 r1).
+        uint256 consumeFreshLeft;
+        uint256 consumeRecycledLeft;
     }
 
     /// @notice #1566 transport epochs PR 3b — a batch's PENDING REMAINDER:

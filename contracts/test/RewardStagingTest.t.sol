@@ -15,6 +15,9 @@ import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardStagingFacet} from "../src/facets/RewardStagingFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
+import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
+import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
+import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibRewardCustody} from "../src/libraries/LibRewardCustody.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
@@ -43,6 +46,8 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
     ///      short of the need, and one more stands past the cap.
     uint256 internal constant TINY = 0.005e18;
     uint256 internal constant WIDE = 65;
+    /// @dev The arrival time of each wide-day epoch, recorded as it is minted.
+    uint256[] internal arrivedAt;
 
     event StagingRecordOpened(bytes32 indexed key, address indexed user, uint8 side, uint64 day, bytes32 commitment);
     event TransportStaged(bytes32 indexed batchId, bytes32 indexed key, uint256 fresh, uint256 recycled);
@@ -149,15 +154,25 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         _epoch().materializeTransportBatchPage(h, _one(1));
     }
 
-    /// @dev `WIDE` attested fresh epochs, each `TINY`, all listing day 1, in
-    ///      arrival order. Returns their ids in that order.
-    function _wideDay(bool attested) internal returns (bytes32[] memory hs) {
+    /// @dev `WIDE` fresh epochs, each `TINY`, all listing day 1, ten seconds
+    ///      apart so the list is in their minting order (the times are computed
+    ///      explicitly: viaIR folds a re-read `block.timestamp` across the loop).
+    ///      The first `typed` are attested; the rest stay untyped, draw-only.
+    function _wideDayTyped(uint256 typed) internal returns (bytes32[] memory hs) {
         hs = new bytes32[](WIDE);
+        delete arrivedAt;
+        uint256 t0 = block.timestamp;
         for (uint256 i; i < WIDE; ++i) {
-            vm.warp(block.timestamp + 1);
+            uint256 ti = t0 + 10 * (i + 1);
+            vm.warp(ti);
+            arrivedAt.push(ti);
             hs[i] = _epochOf(TINY, 100 + i, keccak256(abi.encode("tiny", i)));
-            if (attested) _ingress().onRemitSplitAttested(CHAIN_BASE, REMITTER, 100 + i, TINY, 0);
+            if (i < typed) _ingress().onRemitSplitAttested(CHAIN_BASE, REMITTER, 100 + i, TINY, 0);
         }
+    }
+
+    function _wideDay(bool attested) internal returns (bytes32[] memory hs) {
+        return _wideDayTyped(attested ? WIDE : 0);
     }
 
     /// @dev Live fresh in custody plus a delivered ledger that can pay it.
@@ -203,6 +218,32 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
 
     function _cursor(uint256 d) internal view returns (uint256 c) {
         (, , , c) = _epoch().getTransportDayBatches(d, 0, 100);
+    }
+
+    function _preview() internal view returns (uint256 amount) {
+        (amount, , ) = InteractionRewardsLensFacet(address(diamond)).previewInteractionRewards(alice);
+    }
+
+    function _rowsSum() internal view returns (uint256 s) {
+        for (uint8 i; i <= uint8(LibVaipakam.RewardCustodyRow.Resolving); ++i) {
+            s += _row(LibVaipakam.RewardCustodyRow(i));
+        }
+    }
+
+    /// @dev The day's allocation as the ordinary settle path would read it now.
+    function _allocFresh(uint256 need) internal view returns (uint256 tf) {
+        LibRewardCustody.AllocRequest memory q;
+        q.dayId = 1;
+        q.needFresh = need;
+        q.domainFresh = type(uint256).max;
+        q.domainRecycled = type(uint256).max;
+        q.poolFresh = type(uint256).max;
+        q.deliveredCap = type(uint256).max;
+        q.ovIds = new bytes32[](0);
+        q.ovFresh = new uint256[](0);
+        q.ovRecycled = new uint256[](0);
+        LibRewardCustody.AllocResult memory r = _epoch().getTransportAllocationForDay(q);
+        return r.transportFresh;
     }
 
     /// @dev The batch identity with its staged terms, per epoch.
@@ -322,6 +363,123 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         _staging().reserveStagedDay(_key());
     }
 
+    function test_Reserve_RefusesWhileTheScanIsIncomplete() public {
+        _stagedScene(); // the window ended before the list did: 64 of 65 seen
+        _liveFresh(1e18); // live could pay the residual — but transport comes first
+        assertFalse(_rec().scanComplete);
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.StagingScanIncomplete.selector, _key()));
+        _staging().reserveStagedDay(_key());
+        _staging().prepareStagedDay(_key());
+        assertTrue(_rec().scanComplete, "the list is seen to its end");
+        vm.warp(block.timestamp + 10);
+        _epochOf(TINY, 600, keccak256("grew")); // the list grew since
+        _ingress().onRemitSplitAttested(CHAIN_BASE, REMITTER, 600, TINY, 0);
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.StagingScanIncomplete.selector, _key()));
+        _staging().reserveStagedDay(_key());
+        _staging().prepareStagedDay(_key());
+        _staging().reserveStagedDay(_key());
+        assertEq(_rec().phase, uint8(LibVaipakam.StagingPhase.Reserved));
+    }
+
+    function test_EverySettlementPath_DefersADayWithAStandingRecord() public {
+        // Two typed epochs among 65: the walk stages those two and leaves 62
+        // untyped, draw-only epochs live in the window. Then the day's cap
+        // falls to what that window covers — without the guard the primitive
+        // would price and settle the day for anyone who asked.
+        uint256 id = _scene();
+        _wideDayTyped(2);
+        assertEq(_claim(), 0);
+        assertEq(_rec().batchCount, 2, "the two typed epochs staged");
+        _mut().setDayUserSideCapRaw(1, 0.1e18);
+        _liveFresh(1e18);
+        assertEq(_preview(), 0, "the dry run defers on the record");
+        assertEq(_claim(), 0, "the claim defers on the record");
+        assertEq(_mut().rewardEntryClaimNextDayRaw(id), 0, "the day was not persisted past the record (unset reads as its start day)");
+        assertEq(_rec().phase, uint8(LibVaipakam.StagingPhase.Staging));
+    }
+
+    function test_ComponentRoom_IsNetOfWhatIsStaged() public {
+        _scene();
+        // 64 fresh epochs and, first by arrival, one attested half fresh, half
+        // recycled — the window stages its fresh half for a fresh-only day.
+        vm.warp(block.timestamp + 10);
+        bytes32 mixed = _epochOf(2 * TINY, 99, keccak256("mixed"));
+        _ingress().onRemitSplitAttested(CHAIN_BASE, REMITTER, 99, TINY, TINY);
+        _wideDay(true);
+        assertEq(_claim(), 0);
+        (uint256 sf, uint256 sr, ) = _staged(mixed);
+        assertEq(sf, TINY, "its fresh half staged");
+        assertEq(sr, 0);
+        assertEq(_balance(mixed), TINY, "its recycled half still held");
+        assertEq(_allocFresh(1e18), 0, "no fresh room is left in it for anyone else: the cap is net of the staged half");
+    }
+
+    function test_ALateEpoch_PastTheContinuation_IsStagedOnce() public {
+        (bytes32[] memory hs, ) = _stagedScene();
+        // Linked late, by arrival between the window's last epoch and the
+        // 65th: it sorts AFTER the continuation, so the list scan from there
+        // reaches it and the late chain must not feed it a second time.
+        uint256 t65 = arrivedAt[64];
+        vm.warp(t65 - 5);
+        bytes32 late = _epochOf(TINY, 700, keccak256("late"));
+        _ingress().onRemitSplitAttested(CHAIN_BASE, REMITTER, 700, TINY, 0);
+        vm.warp(t65 + 100);
+        (uint256 sf, ) = _staging().prepareStagedDay(_key());
+        assertEq(sf, 2 * TINY, "the late epoch and the 65th, each once");
+        assertEq(_rec().batchCount, WIDE + 1);
+        (uint256 lsf, , uint256 lrefs) = _staged(late);
+        assertEq(lsf, TINY);
+        assertEq(lrefs, 1);
+    }
+
+    function test_Resolution_ReturnsTheStagedExcess_TheRepriceDidNotAssign() public {
+        (bytes32[] memory hs, ) = _stagedScene();
+        _staging().prepareStagedDay(_key()); // 0.325 staged
+        _mut().setInteractionPoolPaidOut(LibVaipakam.VPFI_INTERACTION_POOL_CAP - 0.2e18); // the pool shrank
+        _liveFresh(1e18);
+        _staging().reserveStagedDay(_key());
+        RewardEpochViewFacet.StagingRecordView memory r = _rec();
+        assertEq(r.epochUserFresh, 0.2e18, "the reprice assigns what the pool still allows");
+        assertEq(r.cappedOffFresh, 0.2e18, "and records what the cap trimmed");
+        uint256 aliceBefore = vpfi.balanceOf(alice);
+        _staging().resolveStagedDayPage(_key());
+        _staging().resolveStagedDayPage(_key());
+        assertEq(_rec().phase, uint8(LibVaipakam.StagingPhase.None));
+        assertEq(vpfi.balanceOf(alice) - aliceBefore, 0.2e18, "paid what was assigned");
+        uint256 restored;
+        uint256 consumed;
+        for (uint256 i; i < WIDE; ++i) {
+            restored += _balance(hs[i]);
+            (uint256 lf, ) = _legs(hs[i]);
+            consumed += lf;
+        }
+        assertEq(consumed, 0.2e18, "consumed what was paid");
+        assertEq(restored, WIDE * TINY - 0.2e18, "the excess went back to its epochs");
+        assertEq(_mut().poolRemainingRaw(), 0, "the pool is exactly spent, none reserved");
+        _assertConserved(hs);
+    }
+
+    function test_ASanctionedClaimant_IsPaidToTheVaultOrNotAtAll() public {
+        _stagedScene();
+        _staging().prepareStagedDay(_key());
+        _liveFresh(1e18);
+        _staging().reserveStagedDay(_key());
+        _staging().resolveStagedDayPage(_key());
+        MockSanctionsList m = new MockSanctionsList();
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
+        m.setFlagged(alice, true);
+        ProfileFacet(address(diamond)).refreshSanctionsFlag(alice);
+        uint256 aliceBefore = vpfi.balanceOf(alice);
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.RewardCustodyVaultDeliveryFailed.selector, alice));
+        _staging().resolveStagedDayPage(_key());
+        assertEq(_rec().phase, uint8(LibVaipakam.StagingPhase.Resolving), "held, not paid to the wallet");
+        assertEq(vpfi.balanceOf(alice), aliceBefore);
+        m.setFlagged(alice, false);
+        ProfileFacet(address(diamond)).refreshSanctionsFlag(alice);
+        assertTrue(_staging().resolveStagedDayPage(_key()));
+        assertEq(vpfi.balanceOf(alice) - aliceBefore, NEED);
+    }
+
     function test_Reserve_HoldsTheResidualAndTheHeadroom_PerSource() public {
         _stagedScene();
         _staging().prepareStagedDay(_key());
@@ -330,6 +488,7 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         _staging().reserveStagedDay(_key());
         RewardEpochViewFacet.StagingRecordView memory r = _rec();
         assertEq(r.phase, uint8(LibVaipakam.StagingPhase.Reserved));
+        assertEq(_mut().rewardBudgetArmedFreshReservedRaw(), NEED - WIDE * TINY, "the delivered ledger holds the live fresh");
         assertEq(r.needUserFresh, NEED, "the day's need, priced");
         assertEq(r.epochUserFresh, WIDE * TINY, "what the epochs cover");
         assertEq(r.reservedLiveUserFresh, NEED - WIDE * TINY, "the residual, reserved from live fresh");
@@ -355,6 +514,7 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         assertEq(r.resolveCursor, 64);
         assertEq(r.heldEpoch, 64 * TINY, "the page's epoch legs are held");
         assertEq(_row(LibVaipakam.RewardCustodyRow.Resolving), 64 * TINY, "in the resolving row");
+        assertEq(_mut().attributedTotalRaw(), _rowsSum(), "and attributed, never sweepable");
         assertEq(unclassifiedBefore - _row(LibVaipakam.RewardCustodyRow.Unclassified), 64 * TINY, "out of the packets' row");
         (uint256 lf0, ) = _legs(hs[0]);
         (uint256 sf0, , uint256 refs0) = _staged(hs[0]);

@@ -1399,6 +1399,26 @@ contract RewardCustodyFacet is DiamondAccessControl {
     }
 
     /// @notice Diamond-internal: {LibRewardCustody.drawForTransport}.
+    /// @notice 3b-ii-A2 (#2305) — {custodyDeliverClaim}'s vault route with NO
+    ///         wallet fallback: a staged record's payout to a claimant flagged
+    ///         since it prepared goes to their vault or does not go, and the
+    ///         record — resolving, beyond any deadline — stays until it can.
+    function custodyDeliverClaimToVault(address user, uint256 fresh, uint256 recycled, uint256 epoch) external {
+        _requireDiamondInternal();
+        (, address token) = LibRewardCustody.boundHolderAndToken(LibVaipakam.storageSlot());
+        (bool ok, ) = address(this).call(
+            abi.encodeWithSignature(
+                "vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256,uint256)",
+                user,
+                token,
+                fresh,
+                recycled,
+                epoch
+            )
+        );
+        if (!ok) revert IVaipakamErrors.RewardCustodyVaultDeliveryFailed(user);
+    }
+
     function custodyDrawForTransport(uint8 source, uint256 fresh, uint256 recycled) external {
         _requireDiamondInternal();
         LibRewardCustody.drawForTransport(

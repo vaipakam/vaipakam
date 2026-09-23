@@ -3038,6 +3038,17 @@
   },
   {
     "type": "error",
+    "name": "RewardCustodyVaultDeliveryFailed",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "RewardDayNotElapsed",
     "inputs": []
   },
@@ -3305,6 +3316,17 @@
   {
     "type": "error",
     "name": "StagingRecordUnknown",
+    "inputs": [
+      {
+        "name": "key",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "StagingScanIncomplete",
     "inputs": [
       {
         "name": "key",

@@ -1863,19 +1863,18 @@ library LibInteractionRewards {
             uint256[] memory set = _entriesAtDay(s, work, d);
             if (set.length == 0) break;
 
+            (DayCharge memory charge, DaySlice[] memory slices) =
+                processUserSideDay(user, d, set, ctx.pool, _noDryRun());
             // A day with a standing staging record is that record's to settle
-            // (3b-ii-A2, #2305): the walk stops here, as it stops on a cap hit,
-            // and resumes past it once the record has paid the day.
-            if (s.stagingRecords[LibRewardCustody.stagingKey(user, side, d)].phase != LibVaipakam.StagingPhase.None) {
-                // Progress the claim keeps: the record's, resolved through
-                // its own entries, so the claim returns nothing paid rather
-                // than failing as an empty claim on a day that is in hand.
+            // (3b-ii-A2, #2305): the primitive priced nothing, the walk stops
+            // here as it stops on a cap hit, and the claim keeps this as
+            // progress — the record's, resolved through its own entries — so
+            // it returns nothing paid rather than failing as an empty claim.
+            if (charge.stagedElsewhere) {
                 ctx.capHit = true;
                 ctx.pruned = true;
                 break;
             }
-            (DayCharge memory charge, DaySlice[] memory slices) =
-                processUserSideDay(user, d, set, ctx.pool, _noDryRun());
             // Not advanced ⇒ a recycled-bucket shortfall, an unready RPN row,
             // or (#1434 P1-b) a MIRROR's DELIVERED-fresh shortfall — all
             // legitimately transient (#1351 2d-0: the bucket refills; the row
@@ -6193,6 +6192,13 @@ library LibInteractionRewards {
         ///      is one argument from the viaIR stack ceiling.
         uint256 deliveredCapForDay;
         bool advanced;
+        /// @dev 3b-ii-A2 (#2305) — the day is a standing staging record's to
+        ///      settle: priced by no one else, persisted by no one else. Every
+        ///      consumer of this primitive — the claim walk, both sweeps, the
+        ///      dry run and the executability read — sees it as a deferral,
+        ///      because the guard is HERE and not in any one walk (Codex #2308
+        ///      r1). Only the record's own re-pricing (`preparedOnly`) passes.
+        bool stagedElsewhere;
         /// @dev #1566 transport epochs PR 3b-ii-A — the two-leg `transportPaid`
         ///      per destination: what the day's epochs paid of the user's and
         ///      of the treasury's legs (`.armedFresh` / `.recycled`; `.total`
@@ -6903,6 +6909,18 @@ library LibInteractionRewards {
                 unchecked { ++j; }
             }
             unchecked { ++i; }
+        }
+
+        // A day with a standing staging record is that record's to settle
+        // (3b-ii-A2, #2305): every consumer defers here — the claim walk, the
+        // sweeps, the dry run — and only the record's own re-pricing passes.
+        // Behind the set validation, so a malformed set still reverts.
+        if (
+            !dry.preparedOnly
+                && s.stagingRecords[LibRewardCustody.stagingKey(user, side, d)].phase != LibVaipakam.StagingPhase.None
+        ) {
+            charge.stagedElsewhere = true;
+            return (charge, slices);
         }
 
         // `_rpnReady` also subsumes the `knownGlobalSet[d]` gate: the cursor

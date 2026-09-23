@@ -257,7 +257,9 @@ library LibRewardCustody {
     function attributedTotal(
         LibVaipakam.Storage storage s
     ) internal view returns (uint256 total) {
-        uint256 last = uint256(LibVaipakam.RewardCustodyRow.Restitution);
+        // Through the last row, `Resolving` included (3b-ii-A2, #2305): a hold
+        // between resolution pages is attributed, never sweepable.
+        uint256 last = uint256(LibVaipakam.RewardCustodyRow.Resolving);
         for (uint256 i = 0; i <= last; ++i) {
             total += s.rewardCustodyRows[LibVaipakam.RewardCustodyRow(i)];
         }
@@ -2462,8 +2464,12 @@ library LibRewardCustody {
         LibVaipakam.IngressPacket storage p = s.ingressPackets[id];
         if (!p.attested) return (bal, bal);
         (uint256 capF, uint256 capR) = _netCaps(p);
-        uint256 usedF = b.consumedFresh + ovF;
-        uint256 usedR = b.consumedRecycled + ovR;
+        // Net of what standing records have STAGED of each component as well
+        // as what draws consumed (3b-ii-A2, #2305; Codex #2308 r1): a staged
+        // leg is a claim on that component's cap, and two records reading a
+        // clear counter against one cap could otherwise both take it.
+        uint256 usedF = b.consumedFresh + b.stagedFresh + ovF;
+        uint256 usedR = b.consumedRecycled + b.stagedRecycled + ovR;
         fr = capF > usedF ? capF - usedF : 0;
         rr = capR > usedR ? capR - usedR : 0;
         if (fr > bal) fr = bal;
@@ -2666,13 +2672,26 @@ library LibRewardCustody {
         uint256[] memory keys = new uint256[](TRANSPORT_DRAW_SCAN_CAP);
         uint256 live;
         uint256 seen;
-        // The late chain first: epochs linked ahead of places already scanned.
-        bytes32 node = lateSeen == bytes32(0) ? s.transportDayLateHead[dayId] : s.transportDayLateNext[dayId][lateSeen];
-        while (node != bytes32(0) && seen < TRANSPORT_DRAW_SCAN_CAP) {
-            live = _planAdd(s, node, ids, bals, fRoom, rRoom, keys, live, plan);
-            plan.lastLate = node;
-            node = s.transportDayLateNext[dayId][node];
-            unchecked { ++seen; }
+        bytes32 node;
+        // The late chain first — but only the epochs that sort AHEAD of the
+        // continuation, which the list scan from it would never reach; one
+        // that sorts after it is reached by that scan, and feeding it twice
+        // would plan its balance twice (Codex #2308 r1). A record with no
+        // continuation scans the list from its start and needs no late
+        // chain: it marks the chain seen so a later resume does not replay
+        // links that scan already covered.
+        if (fromNode == bytes32(0)) {
+            plan.lastLate = s.transportDayLateTail[dayId];
+        } else {
+            node = lateSeen == bytes32(0) ? s.transportDayLateHead[dayId] : s.transportDayLateNext[dayId][lateSeen];
+            while (node != bytes32(0) && seen < TRANSPORT_DRAW_SCAN_CAP) {
+                if (_keyBefore(s, s.ingressPackets[node].arrivedAt, node, fromNode)) {
+                    live = _planAdd(s, node, ids, bals, fRoom, rRoom, keys, live, plan);
+                }
+                plan.lastLate = node;
+                node = s.transportDayLateNext[dayId][node];
+                unchecked { ++seen; }
+            }
         }
         // Then the list from the continuation, or from the day's cursor start.
         if (fromNode == bytes32(0)) {
@@ -2714,7 +2733,14 @@ library LibRewardCustody {
     )
         internal
         view
-        returns (bytes32[] memory ids, uint256[] memory fresh, uint256[] memory recycled, bytes32 lastNode, bytes32 lastLate)
+        returns (
+            bytes32[] memory ids,
+            uint256[] memory fresh,
+            uint256[] memory recycled,
+            bytes32 lastNode,
+            bytes32 lastLate,
+            bool complete
+        )
     {
         TransportDrawPlan memory plan = planTransportDrawForRecord(s, dayId, fromNode, lateSeen);
         if (plan.ids.length != 0) {
@@ -2725,6 +2751,7 @@ library LibRewardCustody {
         }
         lastNode = plan.lastNode;
         lastLate = plan.lastLate;
+        complete = !plan.capHit;
     }
 
     /// @dev One candidate into the record plan: live, fully indexed, stageable
@@ -2793,7 +2820,6 @@ library LibRewardCustody {
             r.openedAt = uint64(block.timestamp);
             r.commitment = commitment;
             r.entryIds = entryIds;
-            emit StagingRecordOpened(key, user, uint8(side), r.day, commitment);
         } else if (r.commitment != commitment) {
             revert IVaipakamErrors.StagingCommitmentMismatch(key, r.commitment, commitment);
         } else if (r.phase != LibVaipakam.StagingPhase.Staging) {
@@ -2808,12 +2834,22 @@ library LibRewardCustody {
             delete s.stagingRecords[key];
             return (key, 0);
         }
+        // Opened only once something was staged, so no indexer holds an
+        // opening for a record that never stood (Codex #2308 r1 P2).
+        if (opened) emit StagingRecordOpened(key, user, uint8(side), r.day, commitment);
         // The continuation starts past the furthest epoch the window offered:
         // the plan is sorted by the list's own key, so its last id is the
         // furthest live node the window scanned, and a resume never rescans
         // what this call staged. The dead tail of that window, if any, is
         // rescanned once, within one window's bound.
-        if (opened) r.continuationNode = ids[ids.length - 1];
+        if (opened) {
+            r.continuationNode = ids[ids.length - 1];
+            // The late chain is history to a record that opens now: every
+            // link before this moment is already in the list order the window
+            // scanned, ahead of the continuation or behind it. Only links
+            // made after this are the chain's business for this record.
+            r.lateSeen = s.transportDayLateTail[day];
+        }
         stagingDeadlineRefresh(s, key, r);
     }
 
@@ -3362,6 +3398,17 @@ library LibRewardCustody {
     /// @dev {RewardCustodyFacet.custodyDeliverClaim}: the claim's three legs to
     ///      the claimant's vault when asked and creditable, else to their
     ///      wallet. Returns whether the vault took it.
+    /// @dev 3b-ii-A2 (#2305) — {custodyDeliverClaimToVault}: the vault route
+    ///      with NO wallet fallback, for a claimant the sanctions path says
+    ///      may be paid into their vault and nowhere else.
+    function callDeliverClaimToVault(address user, uint256 fresh, uint256 recycled, uint256 epoch) internal {
+        _custody(
+            abi.encodeWithSignature(
+                "custodyDeliverClaimToVault(address,uint256,uint256,uint256)", user, fresh, recycled, epoch
+            )
+        );
+    }
+
     function callDeliverClaim(
         address user,
         uint256 fresh,

@@ -139,7 +139,9 @@ library LibRewardStaging {
         LibVaipakam.StagingRecord storage r = record(s, key);
         _requirePhase(key, r, LibVaipakam.StagingPhase.Staging);
         (uint256 askF, uint256 askR) = _ask(s, r);
-        if (askF + askR != 0) (stagedFresh, stagedRecycled) = _scanAndStage(s, key, r, askF, askR);
+        // Nothing left to ask for still scans to the end: the reservation
+        // needs the whole list seen, not merely the need met.
+        (stagedFresh, stagedRecycled) = _scanAndStage(s, key, r, askF, askR);
         LibRewardCustody.stagingDeadlineRefresh(s, key, r);
     }
 
@@ -164,10 +166,20 @@ library LibRewardStaging {
         uint256 askF,
         uint256 askR
     ) private returns (uint256 stagedFresh, uint256 stagedRecycled) {
-        (bytes32[] memory ids, uint256[] memory fresh, uint256[] memory recycled, bytes32 lastNode, bytes32 lastLate) =
-            LibRewardCustody.planTakesForRecord(s, r.day, r.continuationNode, r.lateSeen, askF, askR);
+        (
+            bytes32[] memory ids,
+            uint256[] memory fresh,
+            uint256[] memory recycled,
+            bytes32 lastNode,
+            bytes32 lastLate,
+            bool complete
+        ) = LibRewardCustody.planTakesForRecord(s, r.day, r.continuationNode, r.lateSeen, askF, askR);
         if (lastNode != bytes32(0)) r.continuationNode = lastNode;
         if (lastLate != bytes32(0)) r.lateSeen = lastLate;
+        // The scan reached the end of the day's list: the reservation may
+        // proceed as long as the list has not grown since.
+        r.scanComplete = complete;
+        if (complete) r.listCountSeen = s.transportBatchesByDay[r.day].length;
         if (ids.length == 0) return (0, 0);
         return LibRewardCustody.stageTakes(s, key, r, ids, fresh, recycled);
     }
@@ -188,6 +200,12 @@ library LibRewardStaging {
     function reserve(LibVaipakam.Storage storage s, bytes32 key) internal {
         LibVaipakam.StagingRecord storage r = record(s, key);
         _requirePhase(key, r, LibVaipakam.StagingPhase.Staging);
+        // Transport first: nothing is reserved from the live sources while
+        // the day's list still has epochs no preparation has scanned, or has
+        // grown since the last one did (Codex #2308 r1).
+        if (!r.scanComplete || s.transportBatchesByDay[r.day].length != r.listCountSeen) {
+            revert IVaipakamErrors.StagingScanIncomplete(key);
+        }
         (LibInteractionRewards.DayCharge memory charge, LibInteractionRewards.DaySlice[] memory slices) = _price(s, r);
         if (!charge.advanced) revert IVaipakamErrors.StagingNotCovered(key);
 
@@ -200,6 +218,14 @@ library LibRewardStaging {
         r.epochUserRecycled = charge.transportUser.recycled;
         r.epochTreasuryFresh = charge.transportTreasury.armedFresh;
         r.epochTreasuryRecycled = charge.transportTreasury.recycled;
+        // What the lifetime caps trimmed: paid to no one, its commitment
+        // retired at payout as the ordinary claim retires it.
+        r.cappedOffFresh = charge.cappedOff.armedFresh;
+        r.cappedOffRecycled = charge.cappedOff.recycled;
+        // What the resolution may consume of the staged components; the
+        // rest returns to its epochs page by page.
+        r.consumeFreshLeft = r.epochUserFresh + r.epochTreasuryFresh;
+        r.consumeRecycledLeft = r.epochUserRecycled + r.epochTreasuryRecycled;
 
         uint256 liveUserFresh = r.needUserFresh - r.epochUserFresh;
         uint256 liveTreasuryFresh = r.needTreasuryFresh - r.epochTreasuryFresh;
@@ -214,12 +240,17 @@ library LibRewardStaging {
         if (liveUserFresh + liveTreasuryFresh > LibVpfiRecycle.freshBackingRoom(s)) {
             revert IVaipakamErrors.StagingNotCovered(key);
         }
-        if (liveUserFresh > LibInteractionRewards.deliveredFreshBound(s)) revert IVaipakamErrors.StagingNotCovered(key);
+        // Both live fresh destinations charge the delivered ledger at payout
+        // — the user's through the delivery, the treasury's through the
+        // absorption — so both are reserved on it (Codex #2308 r1).
+        if (liveUserFresh + liveTreasuryFresh > LibInteractionRewards.deliveredFreshBound(s)) {
+            revert IVaipakamErrors.StagingNotCovered(key);
+        }
 
         // Reserve, per source, with the figure written on the record.
         s.interactionPoolReserved += freshSpend;
         s.liveFreshReserved += liveUserFresh + liveTreasuryFresh;
-        s.rewardBudgetArmedFreshReserved += liveUserFresh;
+        s.rewardBudgetArmedFreshReserved += liveUserFresh + liveTreasuryFresh;
         s.recycleBucketReserved += liveUserRecycled;
         LibRewardCustody.hold(
             s, LibVaipakam.RewardCustodyRow.Recycled, LibVaipakam.RewardCustodyRow.Resolving, liveUserRecycled, key
@@ -273,14 +304,25 @@ library LibRewardStaging {
             uint256 bf = r.batchFresh[i];
             uint256 br = r.batchRecycled[i];
             LibVaipakam.TransportBatch storage b = s.transportBatches[id];
+            // Consume only what the reservation assigned; a staged amount
+            // beyond it goes back to the epoch here, never consumed unpaid
+            // (Codex #2308 r1).
+            uint256 cf = bf > r.consumeFreshLeft ? r.consumeFreshLeft : bf;
+            uint256 cr = br > r.consumeRecycledLeft ? r.consumeRecycledLeft : br;
+            r.consumeFreshLeft -= cf;
+            r.consumeRecycledLeft -= cr;
             b.stagedFresh -= bf;
             b.stagedRecycled -= br;
-            b.consumedFresh += bf;
-            b.consumedRecycled += br;
-            LibRewardCustody.spendUntypedForDraw(s, id, bf + br);
+            b.consumedFresh += cf;
+            b.consumedRecycled += cr;
+            if (bf - cf + br - cr != 0) {
+                b.balance += bf - cf + br - cr;
+                emit StagingUnwoundBatch(id, key, bf - cf, br - cr);
+            }
+            if (cf + cr != 0) LibRewardCustody.spendUntypedForDraw(s, id, cf + cr);
             s.transportBatchReferences[id] -= 1;
-            held += bf + br;
-            emit StagingResolvedBatch(id, key, bf, br);
+            held += cf + cr;
+            emit StagingResolvedBatch(id, key, cf, cr);
             unchecked { ++i; }
         }
         r.resolveCursor = i;
@@ -322,7 +364,7 @@ library LibRewardStaging {
         // Reserved converts to paid, in the same page.
         s.interactionPoolReserved -= freshSpend;
         s.liveFreshReserved -= liveUserFresh + liveTreasuryFresh;
-        s.rewardBudgetArmedFreshReserved -= liveUserFresh;
+        s.rewardBudgetArmedFreshReserved -= liveUserFresh + liveTreasuryFresh;
         s.recycleBucketReserved -= liveUserRecycled;
         uint8 sideKey = uint8(r.side);
         uint256 n = r.entryIds.length;
@@ -338,27 +380,37 @@ library LibRewardStaging {
         // The A1 claim's settlement, for one day.
         LibInteractionRewards._persistDay(s, user, r.side, r.day, r.entryIds, slices);
         s.interactionPoolPaidOut += freshSpend;
-        LibInteractionRewards.consumeArmedFresh(freshSpend);
+        // The commitment retires by the full figure, the capped-off fresh
+        // included, as the ordinary claim retires it.
+        LibInteractionRewards.consumeArmedFresh(freshSpend + r.cappedOffFresh);
         if (liveUserRecycled != 0) LibVpfiRecycle.consume(liveUserRecycled, false, 0);
         LibInteractionRewards.chargeDeliveredFresh(s, liveUserFresh);
 
         LibVaipakam.RewardDelivery venue = r.venueSet ? r.venue : LibVaipakam.RewardDelivery.Default;
-        // A claimant flagged since preparation is paid into their vault — the
-        // close-out completes and the value is theirs, locked where the
-        // sanctions path keeps proceeds; nothing is refused mid-walk.
         bool toVault = venue == LibVaipakam.RewardDelivery.Vault
-            || (venue == LibVaipakam.RewardDelivery.Default && user.code.length == 0)
-            || LibVaipakam.isSanctionedAddress(user);
+            || (venue == LibVaipakam.RewardDelivery.Default && user.code.length == 0);
         uint256 userTotal = liveUserFresh + liveUserRecycled + r.epochUserFresh + r.epochUserRecycled;
+        bool vaulted;
         if (userTotal != 0) {
-            LibRewardCustody.callDeliverClaim(
-                user, liveUserFresh, liveUserRecycled, r.epochUserFresh + r.epochUserRecycled, toVault
-            );
+            if (LibVaipakam.isSanctionedAddress(user)) {
+                // A claimant flagged since preparation is paid into their
+                // vault and nowhere else: no wallet fallback (Codex #2308 r1).
+                // Without a vault to credit the page reverts, and the record
+                // — resolving, beyond any deadline — stays until one can.
+                LibRewardCustody.callDeliverClaimToVault(
+                    user, liveUserFresh, liveUserRecycled, r.epochUserFresh + r.epochUserRecycled
+                );
+                vaulted = true;
+            } else {
+                vaulted = LibRewardCustody.callDeliverClaim(
+                    user, liveUserFresh, liveUserRecycled, r.epochUserFresh + r.epochUserRecycled, toVault
+                );
+            }
         }
         LibRewardCustody.callSettleClaimLegs(
             liveTreasuryFresh,
             r.epochTreasuryFresh + r.epochTreasuryRecycled,
-            forfeitRecycled,
+            forfeitRecycled + r.cappedOffRecycled,
             r.epochUserRecycled,
             0
         );
@@ -369,7 +421,7 @@ library LibRewardStaging {
             liveUserRecycled + r.epochUserRecycled,
             liveTreasuryFresh + r.epochTreasuryFresh,
             forfeitRecycled + r.epochTreasuryRecycled,
-            uint8(toVault ? LibVaipakam.RewardDelivery.Vault : LibVaipakam.RewardDelivery.Wallet)
+            uint8(vaulted ? LibVaipakam.RewardDelivery.Vault : LibVaipakam.RewardDelivery.Wallet)
         );
         _close(s, key, r, true);
     }
@@ -416,7 +468,7 @@ library LibRewardStaging {
             if (r.reservedPoolCap != 0 || r.heldRecycled != 0 || r.reservedLiveUserFresh + r.reservedLiveTreasuryFresh != 0) {
                 s.interactionPoolReserved -= r.reservedPoolCap;
                 s.liveFreshReserved -= r.reservedLiveUserFresh + r.reservedLiveTreasuryFresh;
-                s.rewardBudgetArmedFreshReserved -= r.reservedLiveUserFresh;
+                s.rewardBudgetArmedFreshReserved -= r.reservedLiveUserFresh + r.reservedLiveTreasuryFresh;
                 s.recycleBucketReserved -= r.reservedLiveUserRecycled;
                 LibRewardCustody.releaseHold(
                     s, LibVaipakam.RewardCustodyRow.Resolving, LibVaipakam.RewardCustodyRow.Recycled, r.heldRecycled, key
