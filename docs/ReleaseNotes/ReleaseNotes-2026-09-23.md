@@ -1,3 +1,13 @@
+# Release Notes — 2026-09-23
+
+A change to how these notes are produced rather than to anything the platform
+does. The tool that assembles them used to publish a file it could not
+understand and then delete the original; it now stops and says so. The
+reasoning is worth reading for what it says about defaults: the previous
+behaviour was not a bug anyone had written, it was what happened when nothing
+had been decided, and the cost of leaving it undecided was paid in released
+documents nobody could correct afterwards.
+
 ## Thread — A fragment the assembler cannot read is now refused, not published (PR #2301)
 
 Release notes are built by folding one file per change into a dated
@@ -53,3 +63,4 @@ zero-width and the visible consequence is a section losing its heading
 entirely; another said the assembler publishes a fragment exactly as written,
 when it adjusts links that would otherwise stop working once the text moves
 up a directory.
+<!-- assembled-fragment: 2295-refuse-an-unreadable-opening-line.md sha256=6cb48746a95f74568fc213e849dddcf8dfc32ad3e538294159e79518cf6822c0 -->
