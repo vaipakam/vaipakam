@@ -1646,7 +1646,9 @@ remedy when one does not start. Apply this loop on every PR:
 > few minutes, post a trigger comment.** That is not a fallback for a rare
 > case; it is the documented remedy, and it worked on #2304 — a manual
 > request at 00:50:56Z started a review whose trigger column read `Manual
-> request`, a fourth value alongside `PR opened` and `New commits`.
+> request` — the third value observed, alongside `PR opened` and `New
+> commits`. Three observed, not three that exist; the set is not
+> documented anywhere we control.
 >
 > **The trigger string has a REQUIRED shape**, defined in
 > [`AGENTS.md`](AGENTS.md): `<at>codex review <mode> [<profile>]`, where
