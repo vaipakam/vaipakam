@@ -1379,6 +1379,24 @@ Two practical consequences:
   needs the guard, and check its headroom in the same change. #2260 tracks the
   remaining blocks.
 
+  **That is an owner decision (2026-09-23), not a working preference**, and it
+  settles the three questions #2260 had been holding open. Two sessions stopped
+  at them rather than guess, so they are recorded here in full:
+
+  - **Annotate on demand, never preemptively.** A bare block in a contract that
+    compiles today is LATENT, not a defect. The annotation goes in when that
+    contract actually needs the guard, and the change states the headroom it
+    spent.
+  - **Never annotate a widely-inlined `internal` library helper on its own
+    merits.** Inlining puts its cost in every caller, so annotating one is a
+    de-facto GLOBAL switch — it moves only as part of a decision about the
+    facets that inline it, never as a local cleanup.
+  - **Facet-splitting is OUT of scope.** Guaranteeing "no contract is ever
+    caught without a guard" would need the big facets split first, and that is
+    architecture — #1835 and #1780 were each forced by this same squeeze.
+    Folding it into a cleanup issue would bury a design decision inside a
+    chore.
+
   **A block of neither shape needs no annotation** — that is the
   storage-pointer idiom (`x.slot := position`), and naming the idiom is the
   claim; "touches no memory" is not, since an exported pointer needs no memory
