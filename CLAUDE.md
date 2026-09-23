@@ -1621,9 +1621,37 @@ historical breadcrumb.
 
 ## Codex PR-review policy (user directive 2026-07-05)
 
-Codex is **NOT auto-invoked** on PR open or on pushes to a PR. It runs
-ONLY when its trigger words appear in the PR description or a PR
-comment (e.g. an `@codex review` comment). Apply this loop on every PR:
+Codex **IS auto-invoked** on PR open and on every push to a PR. Trigger
+words in a comment are an ADDITIONAL way to start a review, not the only
+one. Apply this loop on every PR:
+
+> **Corrected 2026-09-23 (#2292).** This paragraph said the opposite —
+> "NOT auto-invoked on PR open or on pushes to a PR… ONLY when its trigger
+> words appear" — and both clauses were false. Measured on two PRs opened
+> that day, neither carrying a trigger phrase anywhere in its body or
+> comments: #2300 was reviewed **12 seconds** after opening, #2301 **13
+> seconds**. Codex's own summary comment states the rule, and is the better
+> source than this file: *"Reviews are triggered when you — Open a pull
+> request for review · Mark a draft as ready · Comment '@codex review'."*
+>
+> **The practical consequence is what made this worth correcting.** The
+> coding-PRs bullet below used to end "Re-trigger after every fix push",
+> and the 15-minute check-in Routines still say to re-trigger via an
+> `@codex review full` comment. Since the push has already started a review,
+> doing that begins a SECOND review of the same commit — extra rounds
+> against a cap, and a duplicate set of threads carrying identical findings
+> to resolve. **Push and wait.** Use a comment trigger only when a review
+> demonstrably did not start on its own, or to ask for a different kind of
+> review (`@codex security review`).
+>
+> **Counting rounds: read the trigger column, do not infer it.** The review
+> summary comment carries a table whose last column names what started each
+> run — `PR opened`, `New commits`, or a comment — alongside the commit and
+> the timestamps. That is the round marker. Do NOT count rounds by
+> clustering inline-comment timestamps: on #2290 that split one round into
+> two and produced a reported count of 13 where the truth was 12, and
+> tightening the clustering window is choosing a threshold rather than
+> reading what actually happened.
 
 > **Round caps — user directive 2026-09-13, verbatim:** "if the PR is docs
 > only don't go beyond 10 rounds, merge them after 10 rounds if there are
@@ -1708,7 +1736,9 @@ comment (e.g. an `@codex review` comment). Apply this loop on every PR:
   rounds of edges) and **#2149** (thirty findings across rounds 2–13,
   every one an edge of a speculative branch nothing had ever observed on
   that path; deleting the branch at round 13 is what reached a clean
-  round 21). Re-trigger after every fix push.
+  round 21). A fix push re-triggers the review by itself (#2292) — do not
+  also post a trigger comment, which starts a second review of the same
+  commit.
 - **Converged, operationally** (amendment 2026-07-05b): a round with
   ZERO P1/P2 findings (Codex's own severity badges). A P3-only round
   counts as clean — fix or defer P3s at the agent's judgment without
