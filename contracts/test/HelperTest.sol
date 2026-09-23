@@ -88,6 +88,7 @@ import {RewardEpochFacet} from "../src/facets/RewardEpochFacet.sol";
 import {RewardEpochViewFacet} from "../src/facets/RewardEpochViewFacet.sol";
 import {RewardStagingFacet} from "../src/facets/RewardStagingFacet.sol";
 import {RewardClaimWalkFacet} from "../src/facets/RewardClaimWalkFacet.sol";
+import {RewardStagingSettleFacet} from "../src/facets/RewardStagingSettleFacet.sol";
 import {RewardSweepWalkFacet} from "../src/facets/RewardSweepWalkFacet.sol";
 import {RewardCompensationDispatchFacet} from "../src/facets/RewardCompensationDispatchFacet.sol";
 import {RewardCommitmentFacet} from "../src/facets/RewardCommitmentFacet.sol";
@@ -103,7 +104,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](228); // 3b-ii-A2 +6 raw reads; #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1
+        selectors = new bytes4[](230); // 3b-ii-A2 +8 raw reads; #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -519,6 +520,8 @@ contract HelperTest {
         selectors[n++] = TestMutatorFacet.liveFreshReservedRaw.selector;
         selectors[n++] = TestMutatorFacet.rewardBudgetArmedFreshReservedRaw.selector;
         selectors[n++] = TestMutatorFacet.attributedTotalRaw.selector;
+        selectors[n++] = TestMutatorFacet.loanSideRewardReservedRaw.selector;
+        selectors[n++] = TestMutatorFacet.poolAvailableRaw.selector;
         selectors[n++] = TestMutatorFacet.acknowledgeTransportBatchRaw.selector;
         selectors[n++] = TestMutatorFacet.releaseTransportBatchRaw.selector;
         // #951 v2 (Codex #959 bind-to-live) — setSaleListingCollateralRaw removed
@@ -2535,12 +2538,22 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](5);
+        selectors = new bytes4[](2);
         selectors[0] = RewardStagingFacet.prepareStagedDay.selector;
         selectors[1] = RewardStagingFacet.reserveStagedDay.selector;
-        selectors[2] = RewardStagingFacet.resolveStagedDayPage.selector;
-        selectors[3] = RewardStagingFacet.unwindStagedDayPage.selector;
-        selectors[4] = RewardStagingFacet.setStagingVenue.selector;
+    }
+
+    /// 3b-ii-A2 (#2305) — the staging record's settlement half. Mirrors
+    /// `DeployDiamond._getRewardStagingSettleSelectors`.
+    function getRewardStagingSettleFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](3);
+        selectors[0] = RewardStagingSettleFacet.resolveStagedDayPage.selector;
+        selectors[1] = RewardStagingSettleFacet.unwindStagedDayPage.selector;
+        selectors[2] = RewardStagingSettleFacet.setStagingVenue.selector;
     }
 
     /// 3b-ii-A2 (#2305) — the claim walk's host. Mirrors

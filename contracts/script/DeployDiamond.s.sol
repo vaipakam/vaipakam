@@ -88,6 +88,7 @@ import {RewardEpochFacet} from "../src/facets/RewardEpochFacet.sol";
 import {RewardEpochViewFacet} from "../src/facets/RewardEpochViewFacet.sol";
 import {RewardStagingFacet} from "../src/facets/RewardStagingFacet.sol";
 import {RewardClaimWalkFacet} from "../src/facets/RewardClaimWalkFacet.sol";
+import {RewardStagingSettleFacet} from "../src/facets/RewardStagingSettleFacet.sol";
 import {RewardSweepWalkFacet} from "../src/facets/RewardSweepWalkFacet.sol";
 import {LibPausable} from "../src/libraries/LibPausable.sol";
 import {RewardCompensationDispatchFacet} from "../src/facets/RewardCompensationDispatchFacet.sol";
@@ -353,6 +354,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // 3b-ii-A2 (#2305) — the settle walks' hosts (one per walk), refreshed with their facades.
         RewardClaimWalkFacet rewardClaimWalkFacet = new RewardClaimWalkFacet();
         RewardSweepWalkFacet rewardSweepWalkFacet = new RewardSweepWalkFacet();
+        // 3b-ii-A2 (#2305) — the staging record's settlement half (resolve, unwind, venue).
+        RewardStagingSettleFacet rewardStagingSettleFacet = new RewardStagingSettleFacet();
         RewardCompensationDispatchFacet rewardCompensationDispatchFacet =
             new RewardCompensationDispatchFacet();
         RewardCommitmentFacet rewardCommitmentFacet = new RewardCommitmentFacet();
@@ -387,7 +390,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](85);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](86);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -468,6 +471,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         cuts[82] = _buildCut(address(rewardStagingFacet), _getRewardStagingSelectors());
         cuts[83] = _buildCut(address(rewardClaimWalkFacet), _getRewardClaimWalkSelectors());
         cuts[84] = _buildCut(address(rewardSweepWalkFacet), _getRewardSweepWalkSelectors());
+        cuts[85] = _buildCut(address(rewardStagingSettleFacet), _getRewardStagingSettleSelectors());
         cuts[26] = _buildCut(address(rewardReporterFacet), _getRewardReporterSelectors());
         cuts[27] = _buildCut(address(rewardAggregatorFacet), _getRewardAggregatorSelectors());
         cuts[28] = _buildCut(address(configFacet), _getConfigSelectors());
@@ -1136,6 +1140,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeFacet("rewardStagingFacet",      address(rewardStagingFacet));
         Deployments.writeFacet("rewardClaimWalkFacet",    address(rewardClaimWalkFacet));
         Deployments.writeFacet("rewardSweepWalkFacet",    address(rewardSweepWalkFacet));
+        Deployments.writeFacet("rewardStagingSettleFacet", address(rewardStagingSettleFacet));
         Deployments.writeFacet("repatriationFacet",       address(repatriationFacet));
         Deployments.writeFacet("configFacet",             address(configFacet));
         // #394 (Codex #647 round-8 P2) — persist the carved-out NumeraireConfigFacet
@@ -3122,12 +3127,21 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](5);
+        s = new bytes4[](2);
         s[0] = RewardStagingFacet.prepareStagedDay.selector;
         s[1] = RewardStagingFacet.reserveStagedDay.selector;
-        s[2] = RewardStagingFacet.resolveStagedDayPage.selector;
-        s[3] = RewardStagingFacet.unwindStagedDayPage.selector;
-        s[4] = RewardStagingFacet.setStagingVenue.selector;
+    }
+
+    /// @dev 3b-ii-A2 (#2305) — the staging record's settlement half.
+    function _getRewardStagingSettleSelectors()
+        internal
+        pure
+        returns (bytes4[] memory s)
+    {
+        s = new bytes4[](3);
+        s[0] = RewardStagingSettleFacet.resolveStagedDayPage.selector;
+        s[1] = RewardStagingSettleFacet.unwindStagedDayPage.selector;
+        s[2] = RewardStagingSettleFacet.setStagingVenue.selector;
     }
 
     /// @dev 3b-ii-A2 (#2305) — the claim's entry walk, hosted; gated to the Diamond.

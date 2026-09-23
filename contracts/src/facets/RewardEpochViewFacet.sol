@@ -60,6 +60,17 @@ contract RewardEpochViewFacet {
         bool scanComplete;
         uint256 cappedOffFresh;
         uint256 cappedOffRecycled;
+        bytes32 continuationNode;
+        bytes32 lateSeen;
+        uint256 lateGenSeen;
+        uint256 listCountSeen;
+        uint256 consumeFreshLeft;
+        uint256 consumeRecycledLeft;
+        uint64 challengeStart;
+        uint256 nonce;
+        bool wasReserved;
+        uint256 skippedCount;
+        bool untypedOverflow;
     }
 
     /// @notice The preview's dry run of `user`'s ShareOfPool days against the
@@ -139,6 +150,17 @@ contract RewardEpochViewFacet {
         v.scanComplete = r.scanComplete;
         v.cappedOffFresh = r.cappedOffFresh;
         v.cappedOffRecycled = r.cappedOffRecycled;
+        v.continuationNode = r.continuationNode;
+        v.lateSeen = r.lateSeen;
+        v.lateGenSeen = r.lateGenSeen;
+        v.listCountSeen = r.listCountSeen;
+        v.consumeFreshLeft = r.consumeFreshLeft;
+        v.consumeRecycledLeft = r.consumeRecycledLeft;
+        v.challengeStart = r.challengeStart;
+        v.nonce = r.nonce;
+        v.wasReserved = r.wasReserved;
+        v.skippedCount = r.skippedIds.length;
+        v.untypedOverflow = r.untypedOverflow;
     }
 
     /// @notice One page of the record's batches — each with the components it

@@ -166,16 +166,30 @@ library LibRewardStaging {
         uint256 askF,
         uint256 askR
     ) private returns (uint256 stagedFresh, uint256 stagedRecycled) {
+        // A late link that landed behind this record's place in the chain
+        // bumped the day's late generation: restart the late walk from the
+        // chain's head (Codex #2308 r2).
+        uint256 gen = s.transportDayLateGen[r.day];
+        if (gen != r.lateGenSeen) {
+            r.lateSeen = bytes32(0);
+            r.lateGenSeen = gen;
+        }
         (
             bytes32[] memory ids,
             uint256[] memory fresh,
             uint256[] memory recycled,
             bytes32 lastNode,
             bytes32 lastLate,
-            bool complete
-        ) = LibRewardCustody.planTakesForRecord(s, r.day, r.continuationNode, r.lateSeen, askF, askR);
+            bool complete,
+            bytes32[] memory skipped
+        ) = LibRewardCustody.planTakesForRecord(s, r.day, r.continuationNode, r.lateSeen, askF, askR, r.skippedIds);
         if (lastNode != bytes32(0)) r.continuationNode = lastNode;
         if (lastLate != bytes32(0)) r.lateSeen = lastLate;
+        // Epochs this scan passed over untyped are remembered for re-check.
+        for (uint256 k; k < skipped.length; ) {
+            LibRewardCustody.noteSkipped(s, key, r, skipped[k]);
+            unchecked { ++k; }
+        }
         // The scan reached the end of the day's list: the reservation may
         // proceed as long as the list has not grown since.
         r.scanComplete = complete;
@@ -204,6 +218,13 @@ library LibRewardStaging {
         // the day's list still has epochs no preparation has scanned, or has
         // grown since the last one did (Codex #2308 r1).
         if (!r.scanComplete || s.transportBatchesByDay[r.day].length != r.listCountSeen) {
+            revert IVaipakamErrors.StagingScanIncomplete(key);
+        }
+        // Nor while a late link landed behind the record's place, an epoch it
+        // passed over untyped has been attested since, or it passed more of
+        // them than it tracks (Codex #2308 r2).
+        if (r.untypedOverflow) revert IVaipakamErrors.StagingUntypedOverflow(key);
+        if (s.transportDayLateGen[r.day] != r.lateGenSeen || LibRewardCustody.anySkippedNowStageable(s, r)) {
             revert IVaipakamErrors.StagingScanIncomplete(key);
         }
         (LibInteractionRewards.DayCharge memory charge, LibInteractionRewards.DaySlice[] memory slices) = _price(s, r);
@@ -236,7 +257,7 @@ library LibRewardStaging {
         // the pool cap over the FULL fresh leg, the backing room over the
         // live fresh, the delivered headroom over the live user fresh. Short
         // on any: not covered, nothing reserved (a deferral, not a scaling).
-        if (freshSpend > LibInteractionRewards.poolRemaining()) revert IVaipakamErrors.StagingNotCovered(key);
+        if (freshSpend > LibInteractionRewards.poolAvailable()) revert IVaipakamErrors.StagingNotCovered(key);
         if (liveUserFresh + liveTreasuryFresh > LibVpfiRecycle.freshBackingRoom(s)) {
             revert IVaipakamErrors.StagingNotCovered(key);
         }
@@ -276,6 +297,7 @@ library LibRewardStaging {
             unchecked { ++i; }
         }
         r.phase = LibVaipakam.StagingPhase.Reserved;
+        r.wasReserved = true;
         emit StagingReserved(key, liveUserFresh, liveTreasuryFresh, liveUserRecycled, freshSpend);
     }
 
@@ -464,8 +486,10 @@ library LibRewardStaging {
         }
         r.resolveCursor = i;
         if (i == n) {
-            // The reservation, if one was taken, by its recorded provenance.
-            if (r.reservedPoolCap != 0 || r.heldRecycled != 0 || r.reservedLiveUserFresh + r.reservedLiveTreasuryFresh != 0) {
+            // The reservation, if one was taken, by its recorded provenance —
+            // judged by the fact of the reservation, never by which sources
+            // it happened to touch (Codex #2308 r2).
+            if (r.wasReserved) {
                 s.interactionPoolReserved -= r.reservedPoolCap;
                 s.liveFreshReserved -= r.reservedLiveUserFresh + r.reservedLiveTreasuryFresh;
                 s.rewardBudgetArmedFreshReserved -= r.reservedLiveUserFresh + r.reservedLiveTreasuryFresh;
@@ -482,6 +506,10 @@ library LibRewardStaging {
                     unchecked { ++j; }
                 }
             }
+            // A non-settlement release: the same obligation may not open a
+            // new record until the cooldown passes; the restored coverage is
+            // the window's meanwhile.
+            s.stagingCooldownUntil[key] = uint64(block.timestamp) + LibRewardCustody.STAGING_GRACE;
             _close(s, key, r, false);
             done = true;
         }

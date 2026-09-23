@@ -1312,6 +1312,22 @@
   },
   {
     "type": "error",
+    "name": "InteractionPoolReservedShortfall",
+    "inputs": [
+      {
+        "name": "needed",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "available",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "InteractionRewardBackingShort",
     "inputs": [
       {
@@ -3359,6 +3375,17 @@
   {
     "type": "error",
     "name": "StagingScanIncomplete",
+    "inputs": [
+      {
+        "name": "key",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "StagingUntypedOverflow",
     "inputs": [
       {
         "name": "key",

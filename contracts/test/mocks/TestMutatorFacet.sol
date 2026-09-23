@@ -2554,6 +2554,10 @@ contract TestMutatorFacet {
         return LibInteractionRewards.poolRemaining();
     }
 
+    function poolAvailableRaw() external view returns (uint256) {
+        return LibInteractionRewards.poolAvailable();
+    }
+
     function rewardEntryClaimNextDayRaw(uint256 id) external view returns (uint256) {
         return LibVaipakam.storageSlot().rewardEntryClaimNextDay[id];
     }
@@ -2572,5 +2576,9 @@ contract TestMutatorFacet {
 
     function attributedTotalRaw() external view returns (uint256) {
         return LibRewardCustody.attributedTotal(LibVaipakam.storageSlot());
+    }
+
+    function loanSideRewardReservedRaw(uint256 loanId, uint8 side) external view returns (uint256) {
+        return LibVaipakam.storageSlot().loanSideRewardReservedVpfi[loanId][side];
     }
 }

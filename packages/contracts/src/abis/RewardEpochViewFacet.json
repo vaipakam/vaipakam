@@ -266,6 +266,61 @@
             "name": "cappedOffRecycled",
             "type": "uint256",
             "internalType": "uint256"
+          },
+          {
+            "name": "continuationNode",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "lateSeen",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "lateGenSeen",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "listCountSeen",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "consumeFreshLeft",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "consumeRecycledLeft",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "challengeStart",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "nonce",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "wasReserved",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "skippedCount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "untypedOverflow",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       }

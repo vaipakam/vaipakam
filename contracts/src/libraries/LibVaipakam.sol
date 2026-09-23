@@ -7619,7 +7619,23 @@ library LibVaipakam {
         mapping(uint256 => bytes32) transportDayLateHead;
         mapping(uint256 => bytes32) transportDayLateTail;
         mapping(uint256 => mapping(bytes32 => bytes32)) transportDayLateNext;
+        mapping(uint256 => mapping(bytes32 => bytes32)) transportDayLatePrev;
         mapping(uint256 => uint256) transportDayLateCount;
+        /// @dev Bumped whenever a late link lands anywhere but the chain's
+        ///      tail — the chain is kept in the ledger's own order, so a link
+        ///      can land behind a record's place in it; the record then
+        ///      restarts its late walk.
+        mapping(uint256 => uint256) transportDayLateGen;
+        /// @dev Per obligation key: how many records have opened under it,
+        ///      so per-record lookups keyed by (key, nonce) never read a
+        ///      closed record's entries; and until when a new record may not
+        ///      open after a non-settlement release.
+        mapping(bytes32 => uint256) stagingNonce;
+        mapping(bytes32 => uint64) stagingCooldownUntil;
+        /// @dev Per (key, nonce): a batch's position in the record's list plus
+        ///      one, and whether it was passed over untyped — both O(1).
+        mapping(bytes32 => mapping(bytes32 => uint256)) stagingBatchIndexPlusOne;
+        mapping(bytes32 => mapping(bytes32 => bool)) stagingSkippedSeen;
         /// @dev Reserved, never paid: headroom a record holds until its last
         ///      page converts it to paid or its unwind releases it. Kept apart
         ///      from the paid counters so a reservation never reads as a
@@ -8052,6 +8068,17 @@ library LibVaipakam {
         ///      consumed unpaid (Codex #2308 r1).
         uint256 consumeFreshLeft;
         uint256 consumeRecycledLeft;
+        /// @dev Which opening under this key this record is; the late-chain
+        ///      generation it last walked from; whether it was reserved.
+        uint256 nonce;
+        uint256 lateGenSeen;
+        bool wasReserved;
+        /// @dev Epochs the record passed over untyped (at most one page); a
+        ///      preparation re-checks them first, so one attested since is
+        ///      staged before any live source is reserved. Past the page the
+        ///      record can only be unwound.
+        bytes32[] skippedIds;
+        bool untypedOverflow;
     }
 
     /// @notice #1566 transport epochs PR 3b — a batch's PENDING REMAINDER:

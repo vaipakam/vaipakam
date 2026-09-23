@@ -14,6 +14,7 @@ import {RewardCustodyFacet} from "../src/facets/RewardCustodyFacet.sol";
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardStagingFacet} from "../src/facets/RewardStagingFacet.sol";
+import {RewardStagingSettleFacet} from "../src/facets/RewardStagingSettleFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
@@ -89,6 +90,10 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
 
     function _staging() internal view returns (RewardStagingFacet) {
         return RewardStagingFacet(address(diamond));
+    }
+
+    function _settle() internal view returns (RewardStagingSettleFacet) {
+        return RewardStagingSettleFacet(address(diamond));
     }
 
     function _ingress() internal view returns (RewardIngressFacet) {
@@ -442,8 +447,8 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         assertEq(r.epochUserFresh, 0.2e18, "the reprice assigns what the pool still allows");
         assertEq(r.cappedOffFresh, 0.2e18, "and records what the cap trimmed");
         uint256 aliceBefore = vpfi.balanceOf(alice);
-        _staging().resolveStagedDayPage(_key());
-        _staging().resolveStagedDayPage(_key());
+        _settle().resolveStagedDayPage(_key());
+        _settle().resolveStagedDayPage(_key());
         assertEq(_rec().phase, uint8(LibVaipakam.StagingPhase.None));
         assertEq(vpfi.balanceOf(alice) - aliceBefore, 0.2e18, "paid what was assigned");
         uint256 restored;
@@ -455,7 +460,8 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         }
         assertEq(consumed, 0.2e18, "consumed what was paid");
         assertEq(restored, WIDE * TINY - 0.2e18, "the excess went back to its epochs");
-        assertEq(_mut().poolRemainingRaw(), 0, "the pool is exactly spent, none reserved");
+        assertEq(_mut().poolRemainingRaw(), 0, "the pool is exactly spent");
+        assertEq(_mut().interactionPoolReservedRaw(), 0, "none reserved");
         _assertConserved(hs);
     }
 
@@ -464,27 +470,121 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         _staging().prepareStagedDay(_key());
         _liveFresh(1e18);
         _staging().reserveStagedDay(_key());
-        _staging().resolveStagedDayPage(_key());
+        _settle().resolveStagedDayPage(_key());
         MockSanctionsList m = new MockSanctionsList();
         ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
         m.setFlagged(alice, true);
         ProfileFacet(address(diamond)).refreshSanctionsFlag(alice);
         uint256 aliceBefore = vpfi.balanceOf(alice);
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.RewardCustodyVaultDeliveryFailed.selector, alice));
-        _staging().resolveStagedDayPage(_key());
+        _settle().resolveStagedDayPage(_key());
         assertEq(_rec().phase, uint8(LibVaipakam.StagingPhase.Resolving), "held, not paid to the wallet");
         assertEq(vpfi.balanceOf(alice), aliceBefore);
         m.setFlagged(alice, false);
         ProfileFacet(address(diamond)).refreshSanctionsFlag(alice);
-        assertTrue(_staging().resolveStagedDayPage(_key()));
+        assertTrue(_settle().resolveStagedDayPage(_key()));
         assertEq(vpfi.balanceOf(alice) - aliceBefore, NEED);
+    }
+
+    function test_AReservation_BindsAOneCallClaimAsADeferral_NotATruncation() public {
+        _stagedScene();
+        _staging().prepareStagedDay(_key());
+        _liveFresh(1e18);
+        _staging().reserveStagedDay(_key()); // 0.4 of the pool cap reserved
+        // Bob's day is armed with no epochs; the pool has 0.5 left in hard
+        // terms and 0.1 available; his 0.4 fits the cap but not the room.
+        address bob = makeAddr("staging-bob");
+        _armedDay(2, NEED);
+        _mut().setFeeEntitlementRaw(
+            78,
+            LibVaipakam.FeeEntitlement({
+                borrowerMode: LibVaipakam.FeeEntitlementMode.None,
+                lenderMode: LibVaipakam.FeeEntitlementMode.None,
+                openDays: 1,
+                rewardHaircutBpsAtOpen: 0,
+                borrowerTariffPaid: 0,
+                lenderTariffPaid: 0,
+                cStarOpen: 0,
+                loanSideRewardCapOpen: type(uint128).max
+            })
+        );
+        uint256 bobEntry = _mut().pushRewardEntry(bob, 78, LibVaipakam.RewardSide.Lender, 1e18, 2);
+        _mut().closeRewardEntryRaw(bobEntry, 3);
+        _mut().userClaimFundingNeedRaw(bob);
+        _mut().setInteractionPoolPaidOut(LibVaipakam.VPFI_INTERACTION_POOL_CAP - 0.5e18);
+        assertEq(_mut().poolRemainingRaw(), 0.5e18);
+        assertEq(_mut().poolAvailableRaw(), 0.1e18);
+        vm.prank(bob);
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.InteractionPoolReservedShortfall.selector, NEED, 0.1e18));
+        RewardClaimFacet(address(diamond)).claimInteractionRewards();
+        assertEq(_mut().rewardEntryClaimNextDayRaw(bobEntry), 0, "nothing was written off");
+        // The reservation unwinds: the room is bob's, in full.
+        vm.warp(uint256(_rec().deadline) + 1);
+        _settle().unwindStagedDayPage(_key());
+        _settle().unwindStagedDayPage(_key());
+        uint256 bobBefore = vpfi.balanceOf(bob);
+        vm.prank(bob);
+        (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
+        assertEq(paid, NEED, "paid in full once the reservation released, not scaled");
+        assertEq(vpfi.balanceOf(bob) - bobBefore, NEED);
+    }
+
+    function test_ALateChainLongerThanAPage_KeepsTheScanIncomplete() public {
+        _stagedScene(); // the continuation stands at the window's last epoch
+        _staging().prepareStagedDay(_key()); // scan complete: 65 seen
+        assertTrue(_rec().scanComplete);
+        // Seventy epochs arrive out of order — older than everything the
+        // window saw — after the record's last scan: they link late, ahead
+        // of the continuation, more of them than one page walks.
+        uint256 t0 = arrivedAt[0];
+        for (uint256 i; i < 70; ++i) {
+            vm.warp(t0 - 1000 + i);
+            _epochOf(TINY, 800 + i, keccak256(abi.encode("older", i)));
+            _ingress().onRemitSplitAttested(CHAIN_BASE, REMITTER, 800 + i, TINY, 0);
+        }
+        vm.warp(arrivedAt[64] + 100);
+        _liveFresh(1e18);
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.StagingScanIncomplete.selector, _key()));
+        _staging().reserveStagedDay(_key()); // the list grew
+        _staging().prepareStagedDay(_key()); // one page of the late chain: 64 of 70
+        assertFalse(_rec().scanComplete, "six late epochs stand unvisited");
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.StagingScanIncomplete.selector, _key()));
+        _staging().reserveStagedDay(_key());
+        _staging().prepareStagedDay(_key()); // the rest
+        assertTrue(_rec().scanComplete);
+        _staging().reserveStagedDay(_key());
+        assertEq(_rec().phase, uint8(LibVaipakam.StagingPhase.Reserved));
+    }
+
+    function test_AnEpochAttestedAfterItWasSkipped_IsRevisited() public {
+        _scene();
+        _wideDayTyped(2); // the window: 2 typed staged, 62 untyped passed over
+        assertEq(_claim(), 0);
+        RewardEpochViewFacet.StagingRecordView memory r = _rec();
+        assertEq(r.batchCount, 2);
+        assertEq(r.skippedCount, 62, "the untyped epochs it passed over are remembered");
+        _staging().prepareStagedDay(_key()); // the 65th, untyped: 63 skipped, scan complete
+        assertTrue(_rec().scanComplete);
+        assertEq(_rec().skippedCount, 63);
+        // One of the skipped is attested now: no live source is reserved
+        // ahead of it, and the next preparation stages it.
+        _ingress().onRemitSplitAttested(CHAIN_BASE, REMITTER, 100 + 10, TINY, 0);
+        _liveFresh(1e18);
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.StagingScanIncomplete.selector, _key()));
+        _staging().reserveStagedDay(_key());
+        (uint256 sf, ) = _staging().prepareStagedDay(_key());
+        assertEq(sf, TINY, "the newly typed epoch staged");
+        assertEq(_rec().batchCount, 3);
+        assertEq(_rec().skippedCount, 62, "and forgotten as skipped");
+        _staging().reserveStagedDay(_key());
+        assertEq(_rec().phase, uint8(LibVaipakam.StagingPhase.Reserved));
     }
 
     function test_Reserve_HoldsTheResidualAndTheHeadroom_PerSource() public {
         _stagedScene();
         _staging().prepareStagedDay(_key());
         _liveFresh(1e18);
-        uint256 poolBefore = _mut().poolRemainingRaw();
+        uint256 poolBefore = _mut().poolAvailableRaw();
         _staging().reserveStagedDay(_key());
         RewardEpochViewFacet.StagingRecordView memory r = _rec();
         assertEq(r.phase, uint8(LibVaipakam.StagingPhase.Reserved));
@@ -493,7 +593,8 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         assertEq(r.epochUserFresh, WIDE * TINY, "what the epochs cover");
         assertEq(r.reservedLiveUserFresh, NEED - WIDE * TINY, "the residual, reserved from live fresh");
         assertEq(r.reservedPoolCap, NEED, "the pool cap over the full fresh leg");
-        assertEq(_mut().poolRemainingRaw(), poolBefore - NEED, "reserved reads as encumbered");
+        assertEq(_mut().poolAvailableRaw(), poolBefore - NEED, "reserved reads as encumbered to a settlement");
+        assertEq(_mut().poolRemainingRaw(), poolBefore, "and not as spent to the lifetime cap");
         assertEq(_row(LibVaipakam.RewardCustodyRow.Resolving), 0, "fresh is reserved by count, never held");
         assertEq(_mut().getArmedFreshPaidRaw(), 0, "nothing paid");
     }
@@ -508,13 +609,15 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         uint256 aliceBefore = vpfi.balanceOf(alice);
         uint256 unclassifiedBefore = _row(LibVaipakam.RewardCustodyRow.Unclassified);
 
-        assertFalse(_staging().resolveStagedDayPage(_key()), "page one: 64 of 65");
+        assertFalse(_settle().resolveStagedDayPage(_key()), "page one: 64 of 65");
         RewardEpochViewFacet.StagingRecordView memory r = _rec();
         assertEq(r.phase, uint8(LibVaipakam.StagingPhase.Resolving), "irrevocable from the first page");
         assertEq(r.resolveCursor, 64);
         assertEq(r.heldEpoch, 64 * TINY, "the page's epoch legs are held");
         assertEq(_row(LibVaipakam.RewardCustodyRow.Resolving), 64 * TINY, "in the resolving row");
         assertEq(_mut().attributedTotalRaw(), _rowsSum(), "and attributed, never sweepable");
+        (, , , , , , , , , , uint256 resolvingRow) = _custody().rewardCustodyLedger();
+        assertEq(resolvingRow, 64 * TINY, "and named in the ledger");
         assertEq(unclassifiedBefore - _row(LibVaipakam.RewardCustodyRow.Unclassified), 64 * TINY, "out of the packets' row");
         (uint256 lf0, ) = _legs(hs[0]);
         (uint256 sf0, , uint256 refs0) = _staged(hs[0]);
@@ -524,7 +627,7 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         assertEq(vpfi.balanceOf(alice), aliceBefore, "nothing paid between pages");
         _assertConserved(hs);
 
-        assertTrue(_staging().resolveStagedDayPage(_key()), "page two: the last, and the payout");
+        assertTrue(_settle().resolveStagedDayPage(_key()), "page two: the last, and the payout");
         assertEq(_rec().phase, uint8(LibVaipakam.StagingPhase.None), "closed");
         assertEq(_row(LibVaipakam.RewardCustodyRow.Resolving), 0, "the hold is empty");
         assertEq(vpfi.balanceOf(alice) - aliceBefore, NEED, "the day paid in full: epochs first, live the rest");
@@ -549,11 +652,11 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         _staging().prepareStagedDay(_key());
         uint64 deadline = _rec().deadline;
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.StagingNotExpired.selector, _key(), deadline));
-        _staging().unwindStagedDayPage(_key());
+        _settle().unwindStagedDayPage(_key());
         vm.warp(uint256(deadline) + 1);
-        assertFalse(_staging().unwindStagedDayPage(_key()), "page one returns 64");
+        assertFalse(_settle().unwindStagedDayPage(_key()), "page one returns 64");
         assertEq(_rec().phase, uint8(LibVaipakam.StagingPhase.Unwinding));
-        assertTrue(_staging().unwindStagedDayPage(_key()), "page two returns the last and closes");
+        assertTrue(_settle().unwindStagedDayPage(_key()), "page two returns the last and closes");
         assertEq(_rec().phase, uint8(LibVaipakam.StagingPhase.None));
         for (uint256 i; i < WIDE; ++i) {
             (uint256 sf, , uint256 refs) = _staged(hs[i]);
@@ -562,7 +665,15 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
             assertEq(refs, 0);
         }
         _assertConserved(hs);
-        assertEq(_claim(), 0, "the next claim stages the window again");
+        // A non-settlement release starts the obligation's cooldown: the
+        // next claim opens no record and defers as A1 did, the restored
+        // coverage being the window's meanwhile; past it, it stages again.
+        vm.prank(alice);
+        (bool ok, ) = address(diamond).call(abi.encodeWithSelector(RewardClaimFacet.claimInteractionRewards.selector));
+        ok; // deferred: no record either way
+        assertEq(_rec().phase, uint8(LibVaipakam.StagingPhase.None), "no record during the cooldown");
+        vm.warp(block.timestamp + 3 days + 1);
+        assertEq(_claim(), 0, "past the cooldown the claim stages the window again");
         assertEq(_rec().batchCount, 64);
     }
 
@@ -571,13 +682,15 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         _staging().prepareStagedDay(_key());
         _liveFresh(1e18);
         _staging().reserveStagedDay(_key());
-        uint256 poolBefore = _mut().poolRemainingRaw();
+        uint256 poolBefore = _mut().poolAvailableRaw();
+        assertEq(_mut().loanSideRewardReservedRaw(LOAN, uint8(LibVaipakam.RewardSide.Lender)), NEED, "the loan side is encumbered while reserved");
         vm.startPrank(alice);
-        _staging().unwindStagedDayPage(_key());
-        _staging().unwindStagedDayPage(_key());
+        _settle().unwindStagedDayPage(_key());
+        _settle().unwindStagedDayPage(_key());
         vm.stopPrank();
         assertEq(_rec().phase, uint8(LibVaipakam.StagingPhase.None));
-        assertEq(_mut().poolRemainingRaw(), poolBefore + NEED, "the pool reservation released");
+        assertEq(_mut().loanSideRewardReservedRaw(LOAN, uint8(LibVaipakam.RewardSide.Lender)), 0, "and released with the record");
+        assertEq(_mut().poolAvailableRaw(), poolBefore + NEED, "the pool reservation released");
         assertEq(_mut().liveFreshReservedRaw(), 0);
         assertEq(_mut().interactionPoolReservedRaw(), 0);
     }
@@ -587,13 +700,13 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         _staging().prepareStagedDay(_key());
         _liveFresh(1e18);
         _staging().reserveStagedDay(_key());
-        _staging().resolveStagedDayPage(_key());
+        _settle().resolveStagedDayPage(_key());
         vm.warp(block.timestamp + 365 days);
         vm.expectRevert(
             abi.encodeWithSelector(IVaipakamErrors.StagingPhaseInvalid.selector, _key(), uint8(LibVaipakam.StagingPhase.Resolving))
         );
-        _staging().unwindStagedDayPage(_key());
-        assertTrue(_staging().resolveStagedDayPage(_key()), "it only completes");
+        _settle().unwindStagedDayPage(_key());
+        assertTrue(_settle().resolveStagedDayPage(_key()), "it only completes");
     }
 
     // ───────────────────────────── venue ─────────────────────────────
@@ -601,9 +714,9 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
     function test_TheClaimant_BindsTheVenue_BeforeReservation() public {
         _stagedScene();
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.StagingVenueNotSettable.selector, _key()));
-        _staging().setStagingVenue(_key(), LibVaipakam.RewardDelivery.Wallet);
+        _settle().setStagingVenue(_key(), LibVaipakam.RewardDelivery.Wallet);
         vm.prank(alice);
-        _staging().setStagingVenue(_key(), LibVaipakam.RewardDelivery.Wallet);
+        _settle().setStagingVenue(_key(), LibVaipakam.RewardDelivery.Wallet);
         assertTrue(_rec().venueSet);
         assertEq(_rec().venue, uint8(LibVaipakam.RewardDelivery.Wallet));
         _staging().prepareStagedDay(_key());
@@ -611,6 +724,6 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         _staging().reserveStagedDay(_key());
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.StagingVenueNotSettable.selector, _key()));
-        _staging().setStagingVenue(_key(), LibVaipakam.RewardDelivery.Vault);
+        _settle().setStagingVenue(_key(), LibVaipakam.RewardDelivery.Vault);
     }
 }

@@ -452,8 +452,7 @@ contract ActivateRewardCustody is RewardCustodyCeremonyBase {
             "ActivateRewardCustody: the reward role is not the one the ceremony record names -- the record does not describe this activation"
         );
         (uint256 received, uint256 paid) = c.armedFreshLedger();
-        (bool activated, bool frozen, uint256 live, uint256 recycled, uint256 recovery, uint256 overage, , , , ) =
-            c.rewardCustodyLedger();
+        (bool activated, bool frozen, uint256 live, uint256 recycled, uint256 recovery, uint256 overage, , , , , ) = c.rewardCustodyLedger();
         // The one ledger fact a write-down leaves behind: `received` equals
         // `paid + live row` at the moment of activation. Checked for a
         // write-down record only while nothing has moved the ledger since

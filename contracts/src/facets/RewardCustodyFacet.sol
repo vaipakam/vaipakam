@@ -1596,7 +1596,8 @@ contract RewardCustodyFacet is DiamondAccessControl {
             uint256 pendingSurplus,
             uint256 intent,
             uint256 unclassified,
-            uint256 restitution
+            uint256 restitution,
+            uint256 resolving
         )
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
@@ -1610,6 +1611,8 @@ contract RewardCustodyFacet is DiamondAccessControl {
         intent = s.rewardCustodyRows[LibVaipakam.RewardCustodyRow.Intent];
         unclassified = s.rewardCustodyRows[LibVaipakam.RewardCustodyRow.Unclassified];
         restitution = s.rewardCustodyRows[LibVaipakam.RewardCustodyRow.Restitution];
+        // 3b-ii-A2 (#2305) — the hold between a staged record's pages.
+        resolving = s.rewardCustodyRows[LibVaipakam.RewardCustodyRow.Resolving];
     }
 
     /// @notice The delivered-fresh ledger's two counters, raw. The bound

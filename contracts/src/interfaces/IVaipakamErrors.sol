@@ -1736,4 +1736,12 @@ interface IVaipakamErrors {
     /// @notice A delivery that may only reach the claimant's vault found none
     ///         to credit; the record stays resolving until one can accept it.
     error RewardCustodyVaultDeliveryFailed(address user);
+    /// @notice The fresh this settlement would pay fits the lifetime pool but
+    ///         not what is left after standing staging reservations: a
+    ///         deferral, retryable once a reservation resolves or unwinds —
+    ///         never a truncation, which only the lifetime cap may cause.
+    error InteractionPoolReservedShortfall(uint256 needed, uint256 available);
+    /// @notice The record passed more untyped epochs than it tracks; it can
+    ///         only be unwound, and the day stays draw-only for the untyped.
+    error StagingUntypedOverflow(bytes32 key);
 }

@@ -4847,13 +4847,24 @@ library LibInteractionRewards {
         return need > pool ? pool : need;
     }
 
+    /// @notice 3b-ii-A2 (#2305) — {poolRemaining} net of what staging records
+    ///         have reserved: what a settlement may pay NOW. A spend that fits
+    ///         the hard figure but not this one is a DEFERRAL (retryable once
+    ///         a reservation resolves or unwinds), never a truncation — the
+    ///         lifetime cap alone truncates.
+    function poolAvailable() internal view returns (uint256) {
+        uint256 hard = poolRemaining();
+        uint256 reserved = LibVaipakam.storageSlot().interactionPoolReserved;
+        return hard > reserved ? hard - reserved : 0;
+    }
+
     function poolRemaining() internal view returns (uint256) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        // Net of what staging records have RESERVED of the pool (3b-ii-A2,
-        // #2305): reserved is not paid, and a reservation-only shortfall is a
-        // deferral to the settlement that meets it, never a truncation.
-        uint256 reserved =
-            s.interactionPoolPaidOut + s.rewardBudgetRemittedGlobal + s.interactionPoolReserved;
+        // The HARD figure — paid and remitted only. What staging records have
+        // RESERVED is a separate, recoverable term ({poolAvailable}): pricing
+        // and the lifetime truncation read this, so a reservation never reads
+        // as exhaustion; availability reads the other (Codex #2308 r2).
+        uint256 reserved = s.interactionPoolPaidOut + s.rewardBudgetRemittedGlobal;
         return
             LibVaipakam.VPFI_INTERACTION_POOL_CAP > reserved
                 ? LibVaipakam.VPFI_INTERACTION_POOL_CAP - reserved
@@ -5963,8 +5974,11 @@ library LibInteractionRewards {
         uint256 capEff = _loanSideRewardCapEff(s, loanId, rewardedDaysIncl);
         // `paidExtra` is the DryRun carry — what earlier previewed days of
         // this call would already have paid this loan-side (0 when settling).
+        // Plus what staging records have RESERVED of this loan side
+        // (3b-ii-A2, #2305; Codex #2308 r2): the day engine prices every
+        // ShareOfPool day through here, records included.
         uint256 paid =
-            s.loanSideRewardPaidVpfi[loanId][uint8(side)] + paidExtra;
+            s.loanSideRewardPaidVpfi[loanId][uint8(side)] + s.loanSideRewardReservedVpfi[loanId][uint8(side)] + paidExtra;
         return capEff > paid ? capEff - paid : 0;
     }
 

@@ -273,8 +273,7 @@ contract RewardClaimFacet is
         // #776 — reserve VPFI already remitted to mirrors: it funds mirror-side
         // claims and must not be re-lent to Base claimants (Base-only counter;
         // 0 on mirrors). Keeps the global 69M cap coherent across chains.
-        // Net of staging reservations too (3b-ii-A2, #2305), as `poolRemaining` is.
-        uint256 reserved = paidOut + s.rewardBudgetRemittedGlobal + s.interactionPoolReserved;
+        uint256 reserved = paidOut + s.rewardBudgetRemittedGlobal;
         uint256 remaining = LibVaipakam.VPFI_INTERACTION_POOL_CAP > reserved
             ? LibVaipakam.VPFI_INTERACTION_POOL_CAP - reserved
             : 0;
@@ -406,6 +405,16 @@ contract RewardClaimFacet is
         // subtractions are the guard that the walk bounded them.
         uint256 payableFresh =
             freshPending + freshTreasury - res.transport.userFresh - res.transport.treasuryFresh;
+        // A standing staging reservation binds as a DEFERRAL, never as the
+        // lifetime truncation above (3b-ii-A2, #2305; Codex #2308 r2): what
+        // fits the hard figure but not the available one waits for the
+        // reservation to resolve or unwind, and nothing is written off.
+        {
+            uint256 available = LibInteractionRewards.poolAvailable();
+            if (freshPending + freshTreasury > available) {
+                revert InteractionPoolReservedShortfall(freshPending + freshTreasury, available);
+            }
+        }
         if (payableFresh > backingRoom) {
             revert InteractionRewardBackingShort(payableFresh, backingRoom);
         }

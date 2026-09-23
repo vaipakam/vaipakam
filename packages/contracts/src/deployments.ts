@@ -102,6 +102,8 @@ export interface DeploymentFacets {
   rewardClaimWalkFacet?: HexAddress;
   /** #1566 transport epochs 3b-ii-A2 (#2305) — the expiry sweep walk's host; internal-only. */
   rewardSweepWalkFacet?: HexAddress;
+  /** #1566 transport epochs 3b-ii-A2 (#2305) — the staging record's settlement half (resolve, unwind, venue). */
+  rewardStagingSettleFacet?: HexAddress;
   rewardReporterFacet?: HexAddress;
   riskFacet?: HexAddress;
   stakingRewardsFacet?: HexAddress;

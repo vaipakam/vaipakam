@@ -3175,12 +3175,12 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
 
     function test_Ledger_ReportsActivationAndEveryRow() public {
         _becomeCanonical();
-        (bool activated0, bool frozen0, , , , , , , , ) = _custody().rewardCustodyLedger();
+        (bool activated0, bool frozen0, , , , , , , , , ) = _custody().rewardCustodyLedger();
         assertFalse(activated0, "inactive");
         assertFalse(frozen0, "unfrozen");
         activateRewardCustodyForTest(address(vpfi), 5e18);
         _mut().creditRecycleRaw(LibVpfiRecycle.RecycleSource.ForfeitedReward, 0, 2e18);
-        (bool activated, bool frozen, uint256 live, uint256 recycled, , , , , , ) = _custody().rewardCustodyLedger();
+        (bool activated, bool frozen, uint256 live, uint256 recycled, , , , , , , ) = _custody().rewardCustodyLedger();
         assertTrue(activated, "active");
         assertTrue(frozen, "frozen");
         assertEq(live, 3e18, "live");
