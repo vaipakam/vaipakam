@@ -7,6 +7,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {RewardCustodyFacet} from "../src/facets/RewardCustodyFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet.sol";
+import {RewardEpochViewFacet} from "../src/facets/RewardEpochViewFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
@@ -170,6 +171,20 @@ contract ActivateRewardCustody is RewardCustodyCeremonyBase {
             RewardCustodyFacet(diamond).armedFreshPaidRebased(),
             "ActivateRewardCustody: the paid-side rebase has not run on this chain -- run the facet refresh's migrations first"
         );
+        // 3b-ii-A2 (Codex #2308 r7, r9) — the activation refuses while a
+        // staging record is resolving, and a resolving record's pages cannot
+        // run under the manual pause this ceremony needs; read it here, before
+        // the pause, the approval and the row funding go out, so the operator
+        // never discovers it after a partly executed ceremony. Unpause, drive
+        // the record's remaining pages (permissionless; it only completes),
+        // re-establish the figures under a fresh pause, and rerun.
+        {
+            uint256 resolving = RewardEpochViewFacet(diamond).getStagingResolvingCount();
+            require(
+                resolving == 0,
+                "ActivateRewardCustody: a staging record is RESOLVING -- its consumed epoch value rests in the Diamond's balance under no attribution until its last page pays it, and the activation would strand it; unpause, drive the record's remaining pages (resolveStagedDayPage, permissionless), re-establish the figures under a fresh pause, then rerun"
+            );
+        }
         // Mirrors the contract's complete-cut gate BEFORE anything is sent
         // (Codex #2186 r4 P1): activation and the bootstrap writers refuse
         // unless the routing — every facet with its selectors — is the one a

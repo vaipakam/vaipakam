@@ -171,7 +171,15 @@ library LibRewardStaging {
     ) private view returns (uint256 askF, uint256 askR) {
         (LibInteractionRewards.DayCharge memory charge, ) = _price(s, r);
         if (charge.loanSideReserved) revert IVaipakamErrors.StagingNotCovered(key);
-        askF = charge.needFresh > r.stagedFresh ? charge.needFresh - r.stagedFresh : 0;
+        // The fresh need is bounded by the pool's HARD headroom — the
+        // lifetime cap trims terminally, so fresh past it can never be paid
+        // to this obligation and staging it would only reference epochs
+        // other days need (Codex #2308 r9). The scan still runs to the
+        // list's end on an ask of nothing: the reservation needs it whole.
+        uint256 needF = charge.needFresh;
+        uint256 hard = LibInteractionRewards.poolRemaining();
+        if (needF > hard) needF = hard;
+        askF = needF > r.stagedFresh ? needF - r.stagedFresh : 0;
         askR = charge.needRecycled > r.stagedRecycled ? charge.needRecycled - r.stagedRecycled : 0;
     }
 

@@ -282,6 +282,12 @@ contract InteractionRewardsLensFacet {
     ///                           is already net of it).
     /// @return liveFreshReserved Live fresh reserved by count on the row (the
     ///                           row itself is never reduced by a reservation).
+    /// @return liveFreshAvailable The live fresh a settlement may draw now —
+    ///                           the gates' room, net of `liveFreshReserved`:
+    ///                           the holder's row where custody is activated,
+    ///                           the un-earmarked Diamond balance otherwise
+    ///                           (Codex #2308 r9) — the figure behind
+    ///                           `InteractionRewardBackingShort`.
     /// @return bucketReserved    Recycled runway reserved from the bucket.
     /// @return bucketAvailable   The bucket less `bucketReserved` — what the
     ///                           claim walk draws against.
@@ -293,6 +299,7 @@ contract InteractionRewardsLensFacet {
             uint256 poolAvailable,
             uint256 armedFreshReserved,
             uint256 liveFreshReserved,
+            uint256 liveFreshAvailable,
             uint256 bucketReserved,
             uint256 bucketAvailable
         )
@@ -302,6 +309,7 @@ contract InteractionRewardsLensFacet {
         poolAvailable = LibInteractionRewards.poolAvailable();
         armedFreshReserved = s.rewardBudgetArmedFreshReserved;
         liveFreshReserved = s.liveFreshReserved;
+        liveFreshAvailable = LibVpfiRecycle.freshBackingRoom(s);
         bucketReserved = s.recycleBucketReserved;
         bucketAvailable = LibVpfiRecycle.bucketAvailable(s);
     }

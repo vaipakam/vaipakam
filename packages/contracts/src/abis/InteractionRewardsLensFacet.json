@@ -510,6 +510,11 @@
         "internalType": "uint256"
       },
       {
+        "name": "liveFreshAvailable",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
         "name": "bucketReserved",
         "type": "uint256",
         "internalType": "uint256"

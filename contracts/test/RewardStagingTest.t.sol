@@ -1035,11 +1035,13 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         _stagedAndScanned();
         _liveFresh(1e18);
         InteractionRewardsLensFacet lens = InteractionRewardsLensFacet(address(diamond));
-        (uint256 pr, uint256 pa, uint256 ar, uint256 lr, uint256 br, uint256 ba) = lens.getRewardReservations();
+        (uint256 pr, uint256 pa, uint256 ar, uint256 lr, uint256 la, uint256 br, uint256 ba) = lens.getRewardReservations();
         assertEq(pr + ar + lr + br, 0, "nothing reserved before the reservation");
         assertEq(pa, lens.getInteractionPoolRemaining(), "available equals the hard figure");
+        assertEq(la, _row(LibVaipakam.RewardCustodyRow.LiveFresh), "the live fresh available is the whole row before the reservation");
         _staging().reserveStagedDay(_key());
-        (pr, pa, ar, lr, br, ba) = lens.getRewardReservations();
+        (pr, pa, ar, lr, la, br, ba) = lens.getRewardReservations();
+        assertEq(la, _row(LibVaipakam.RewardCustodyRow.LiveFresh) - lr, "and the row less the reservation after it");
         uint256 live = NEED - WIDE * TINY;
         assertEq(pr, NEED, "the pool cap over the full fresh leg");
         assertEq(pa, lens.getInteractionPoolRemaining() - NEED, "available is the hard figure less the reservation");
@@ -1212,6 +1214,7 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         assertEq(_mut().stagingResolvingCountRaw(), 0, "reserved is not resolving");
         _settle().resolveStagedDayPage(_key());
         assertEq(_mut().stagingResolvingCountRaw(), 1, "counted from the first page");
+        assertEq(_view().getStagingResolvingCount(), 1, "and read by the ceremony's preflight");
         assertTrue(_settle().resolveStagedDayPage(_key()));
         assertEq(_mut().stagingResolvingCountRaw(), 0, "released with the payout");
     }
@@ -1227,6 +1230,9 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         emit StagingCooldownSet(_key(), until);
         assertTrue(_settle().unwindStagedDayPage(_key()));
         assertEq(_view().getStagingCooldown(alice, LibVaipakam.RewardSide.Lender, 1), until, "read back");
+        vm.warp(uint256(until));
+        assertEq(_view().getStagingCooldown(alice, LibVaipakam.RewardSide.Lender, 1), 0, "passed is none, as the claim path reads it");
+        vm.warp(uint256(until) - 1);
         vm.prank(alice);
         (bool ok, ) = address(diamond).call(abi.encodeWithSelector(RewardClaimFacet.claimInteractionRewards.selector));
         ok; // deferred either way: the cooldown is what says why
@@ -1299,5 +1305,22 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         (uint256 amount, uint256 fromDay, ) = lens.previewInteractionRewards(bob);
         assertEq(amount, 0, "a forfeit pays the user nothing");
         assertEq(fromDay, 1, "not deferred: the forfeit's fresh fits availability, counted once");
+    }
+
+    // ───────────────────────── round 9 ─────────────────────────
+
+    function test_AShrunkPool_StopsFurtherStaging_ButNotTheScan() public {
+        _stagedScene(); // 0.32 staged; the day's need 0.4
+        _mut().setInteractionPoolPaidOut(LibVaipakam.VPFI_INTERACTION_POOL_CAP - 0.2e18); // the pool can pay 0.2, ever
+        _staging().prepareStagedDay(_key()); // the window rescanned
+        (uint256 sf, ) = _staging().prepareStagedDay(_key()); // the 65th: stageable, but nothing is asked
+        assertEq(sf, 0, "no more is staged than the pool could ever pay");
+        assertEq(_rec().batchCount, 64, "the 65th is not referenced");
+        assertTrue(_rec().scanComplete, "yet the scan reached the list's end");
+        assertEq(_balance(_staged65()), TINY, "the 65th keeps its balance for the days that can use it");
+    }
+
+    function _staged65() internal view returns (bytes32) {
+        return keccak256(abi.encode(uint256(CHAIN_BASE), keccak256(abi.encode("tiny", uint256(100), uint256(64)))));
     }
 }

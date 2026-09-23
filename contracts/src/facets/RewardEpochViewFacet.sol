@@ -124,7 +124,19 @@ contract RewardEpochViewFacet {
     ///         and defers as before staging existed; zero when none stands
     ///         (Codex #2308 r7). The key is {LibRewardCustody.stagingKey}'s.
     function getStagingCooldown(address user, LibVaipakam.RewardSide side, uint256 day) external view returns (uint64 until) {
-        return LibVaipakam.storageSlot().stagingCooldownUntil[LibRewardCustody.stagingKey(user, side, day)];
+        until = LibVaipakam.storageSlot().stagingCooldownUntil[LibRewardCustody.stagingKey(user, side, day)];
+        // Passed is none: the claim path reads `block.timestamp < until`, and
+        // this reads the same lifecycle (Codex #2308 r9).
+        if (until <= block.timestamp) until = 0;
+    }
+
+    /// @notice How many staging records are resolving — the count reward
+    ///         custody's activation refuses on (Codex #2308 r7, r9): a
+    ///         resolving record's consumed epoch value rests in the Diamond's
+    ///         balance under no attribution until its last page pays it. The
+    ///         activation ceremony reads this before it sends anything.
+    function getStagingResolvingCount() external view returns (uint256) {
+        return LibVaipakam.storageSlot().stagingResolvingCount;
     }
 
     /// @notice The record under `key` — every scalar it carries. A key with
