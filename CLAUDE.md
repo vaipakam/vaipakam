@@ -1632,17 +1632,34 @@ one. Apply this loop on every PR:
 > comments: #2300 was reviewed **12 seconds** after opening, #2301 **13
 > seconds**. Codex's own summary comment states the rule, and is the better
 > source than this file: *"Reviews are triggered when you — Open a pull
-> request for review · Mark a draft as ready · Comment '@codex review'."*
+> request for review · Mark a draft as ready · Comment '<at>codex review'."*
+>
+> **WRITE THE TRIGGER PHRASE BROKEN, AS `<at>codex` — never as the live
+> token.** Codex reads a pull request's DESCRIPTION as a trigger surface,
+> not only its comments, so a PR that merely quotes the phrase invokes it.
+> This was learned on #2304, the PR carrying this very correction: its body
+> named the phrase three times, and instead of a review Codex ran an agent
+> task that reported editing `CLAUDE.md`, the PR template and
+> `ProjectProcedures.md` and committing `212d028`. **Nothing landed** — that
+> commit does not exist, no pull request was created, the branch never
+> moved — but no review ran either, and a PR with no review is not a PR that
+> converged. Two other PRs opened the same hour, neither naming the phrase,
+> were both reviewed within 13 seconds.
+>
+> So this document names the trigger with `<at>` standing in for the `@`.
+> It reads the same to a person and is inert to the scanner. Restoring the
+> literal character anywhere in this file, or writing it into a PR
+> description, re-arms the same trap.
 >
 > **The practical consequence is what made this worth correcting.** The
 > coding-PRs bullet below used to end "Re-trigger after every fix push",
 > and the 15-minute check-in Routines still say to re-trigger via an
-> `@codex review full` comment. Since the push has already started a review,
+> `<at>codex review full` comment. Since the push has already started a review,
 > doing that begins a SECOND review of the same commit — extra rounds
 > against a cap, and a duplicate set of threads carrying identical findings
 > to resolve. **Push and wait.** Use a comment trigger only when a review
 > demonstrably did not start on its own, or to ask for a different kind of
-> review (`@codex security review`).
+> review (`<at>codex security review`).
 >
 > **Counting rounds: read the trigger column, do not infer it.** The review
 > summary comment carries a table whose last column names what started each
