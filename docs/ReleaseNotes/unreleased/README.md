@@ -33,22 +33,28 @@ PRs landing the same day never append-conflict.
    more than it does:
 
    - It reads **one line**: the fragment's first line of content, after any
-     blank lines. Nothing below that line is examined — not a heading
-     further down the file, and not a title underlined with `=` or `-`
-     rather than prefixed with `#`.
-   - A fragment that **opens with `---` is refused outright**, before its
-     heading is looked at. In its own file that is front matter; once folded
-     into the dated note it is a thematic break, and the lines under it
-     become a heading nobody wrote. Open with the `##` heading itself.
-   - A fragment saved with a **byte-order mark** is *not* refused, and is
-     published as-is. Refusing it was tried and removed: the advice it gave
-     — re-save the file — changed the very line the duplicate guard matches
-     on, which twice cost a fragment. No fragment has ever been saved that
-     way. If one is, nothing looks wrong: the mark is zero-width, but it sits
-     before the `##`, so that line publishes as ordinary paragraph text and
-     the section arrives with no heading and no place in the outline. Save
-     without one — removing it after publication is the remediation that cost
-     those fragments.
+     blank lines. Nothing below that line is examined — a `#` heading
+     further down the file is never looked at.
+   - **That line must be a `#` heading, or the run stops.** This is an
+     allow-list, not a list of banned shapes: a title underlined with `=` or
+     `-` instead of prefixed, raw HTML such as `<h1>`, a list, a line of
+     prose, a fragment saved with a byte-order mark — none of these is an
+     ATX heading, so each is refused and named. You get a message; nothing is
+     published and nothing is deleted.
+
+     It reads as strict and costs nothing: **every fragment ever written in
+     this repository already opens with one**, without exception. (The count
+     lives with the rule, for the reason given in the last bullet below.) The
+     rule exists because the opposite default — publish what it cannot read —
+     was shown eleven separate times, by a test or during review, to publish
+     a mangled section and delete its source. None of those was a real
+     fragment; they did not have to be, since any one of them lands the first
+     time somebody saves a file a little differently.
+   - A fragment that **opens with `---`** is refused with its own message,
+     naming front matter. The verdict would be the same without it (a `---`
+     is not a heading); the separate message exists because an author who
+     wrote front matter should be told it becomes a thematic break once
+     folded, rather than just that the line is not a heading.
    - A heading with **no PR reference at all** is not refused. That is not an
      oversight — most fragments written so far carry none, as do most
      published section headings. The `(PR #<n>)` convention is the template's,

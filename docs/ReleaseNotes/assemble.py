@@ -81,6 +81,27 @@ MARKER_RE = re.compile(
 # a check that misses a shape does not merely fail to refuse it, it actively
 # permits it via the no-heading branch.
 HEADING_RE = re.compile(rb"^ {0,3}#{1,6}(?:[ \t]|$)")
+# The three line endings CommonMark recognises. `\r\n` must come first, or a
+# CRLF file splits into a trailing empty field per line.
+#
+# INVARIANT: NOTHING IN THIS FILE SPLITS LINES ANY OTHER WAY, and it is
+# pinned by `T217w` rather than left to memory (#2301 r3). Three consecutive
+# review rounds each found a different scan still on `\n` alone — the `---`
+# check, the markerless duplicate guard, then the two marker scans — because
+# a local `split(b"\n")` reads as obviously correct at every call site and is
+# wrong only in relation to the others. The failures were not cosmetic: one
+# appended a duplicate section and consumed the source, and one published an
+# embedded marker record that a later LF-normalisation would make
+# authoritative, clearing an unrelated fragment unread.
+LINE_END_RE = re.compile(rb"\r\n|\r|\n")
+# A BLANK LINE, as CommonMark defines one: empty, or spaces and tabs only.
+# NOT `bytes.strip()`, which also treats a vertical tab, a form feed and the
+# C0 file/group/record/unit separators as whitespace (#2301 r1). A fragment
+# opening with a lone `\x0b` and a heading under it was therefore skipped to
+# the heading and accepted — published with a stray control character above
+# its title, and in contradiction of the rule that the OPENING line must be
+# the heading. Narrowing this can only refuse more, never publish more.
+BLANK_RE = re.compile(rb"^[ \t]*$")
 # The PR NUMBER, and only it. `_TEMPLATE.md` ships the reference as the
 # literal `#NNNN`, and a present-but-unsubstituted one is the defect this
 # catches (#2288).
@@ -181,10 +202,11 @@ def first_heading(body: bytes) -> tuple[int, bytes] | None:
     happened while generating four findings, which is the pattern #2149
     records: an edge-producing speculative branch is removed, not refined.
 
-    The residual is stated plainly: a fragment whose title is underlined
-    rather than `#`-prefixed takes the no-heading allowance and is published
-    unexamined. That is one exotic shape, never once used, in exchange for
-    an entire class of misreading.
+    The residual is stated plainly, and #2295 changed what it costs: a
+    fragment whose title is underlined rather than `#`-prefixed is not
+    recognised here, and is therefore REFUSED by `check_heading_conformance`
+    rather than published unexamined. Not recognising a shape no longer means
+    blessing it — which is what makes reading one line in one form safe.
 
     Front matter is NOT skipped — it is refused, by `check_heading_conformance`
     and before this function is reached. An earlier revision skipped it, and
@@ -196,7 +218,8 @@ def first_heading(body: bytes) -> tuple[int, bytes] | None:
     GitHub but is not Markdown syntax and is not detected. Zero occurrences
     anywhere in `docs/ReleaseNotes`, checked; and recognising it properly
     means parsing HTML, which is the unbounded surface this function exists
-    to avoid.
+    to avoid. Since #2295 that fragment is refused rather than published, so
+    not detecting HTML is a message to its author, not a mangled note.
     """
     # NOTHING IS NORMALISED HERE, and that is the point (#2290 r12).
     #
@@ -234,12 +257,35 @@ def first_heading(body: bytes) -> tuple[int, bytes] | None:
     # something else mid-document, which is precisely why deciding on the
     # normalised form and publishing the raw form disagreed.
     #
-    # Audited against `build()` for this reason (#2290 r12): it appends the
-    # snapshot verbatim, so any transformation here that the published bytes
-    # do not also undergo is a divergence waiting to be found.
-    lines = [l[:-1] if l.endswith(b"\r") else l for l in body.split(b"\n")]
+    # Audited against `build()` for this reason (#2290 r12): any
+    # transformation here that the published bytes do not also undergo is a
+    # divergence waiting to be found.
+    #
+    # `build()` DOES apply one transformation, and an earlier revision of this
+    # comment said it "appends the snapshot verbatim", which is not true
+    # (#2299). It appends `rewrite_links(raw)` — `](../../` and `](./` become
+    # `](../`, because a path written from the fragment's own directory stops
+    # resolving one level up. That does not weaken the argument above, since
+    # neither substring can occur in an ATX marker and so neither can change
+    # whether a line is a heading. It is stated because "verbatim" is the kind
+    # of premise a later reader builds on, and something that compares a whole
+    # published SECTION — as the markerless duplicate guard may yet — must
+    # apply the same rewrite or it will not match its own output.
+    # SPLIT ON ALL THREE LINE ENDINGS, not just `\n` (#2295). CommonMark ends
+    # a line at `\r\n`, `\r` or `\n`, and splitting on `\n` alone made a
+    # CR-only file read as ONE line: `## Title (PR #4243)\r## Next\rbody`
+    # matched `HEADING_RE`, so the level was read correctly and then the
+    # PR-reference scan below ran over the WHOLE FILE instead of the heading.
+    # A `PR #<n>` anywhere in the body then refused the fragment for its prose.
+    #
+    # This is NOT the normalisation the note above forbids — it is the
+    # opposite. Splitting here makes the parser agree with the renderer about
+    # where the first line ends; the old behaviour disagreed with it. Nothing
+    # is rewritten, and the published bytes keep whatever endings the author
+    # saved.
+    lines = LINE_END_RE.split(body)
     i = 0
-    while i < len(lines) and not lines[i].strip():
+    while i < len(lines) and BLANK_RE.match(lines[i]):
         i += 1
     if i >= len(lines):
         return None
@@ -1086,7 +1132,7 @@ class Assembly:
         with open(snap, "rb") as fh:
             data = fh.read()
         prefix = os.fsencode(MARKER_PREFIX)
-        for raw in data.split(b"\n"):
+        for raw in LINE_END_RE.split(data):
             if not raw.startswith(prefix):
                 continue
             if b"\0" in raw:
@@ -1174,7 +1220,7 @@ class Assembly:
             )
             checked(f"scanning {base} for assembly markers", lambda: None)
             prefix = os.fsencode(MARKER_PREFIX)
-            for raw in data.split(b"\n"):
+            for raw in LINE_END_RE.split(data):
                 if not raw.startswith(prefix):
                     continue
                 if b"\0" in raw:
@@ -1491,9 +1537,22 @@ class Assembly:
     def check_heading_conformance(self) -> None:
         """Refuse a fragment whose OPENING LINE does not match the template.
 
-        Not "its first heading": a fragment that opens with prose and carries
-        a `#` heading further down is published unexamined, deliberately, and
-        that narrowing is what `first_heading` exists to state (#2290 r21).
+        Not "its first heading": the line examined is the fragment's first
+        line of content, and a `#` heading further down the file is never
+        looked at. That narrowing is what `first_heading` exists to state
+        (#2290 r21). Since #2295 the consequence has changed — a fragment
+        that opens with prose is REFUSED for opening with prose, rather than
+        published on the strength of a heading this check never read.
+
+        THE SHAPE OF THE RULE IS AN ALLOW-LIST, and that is the whole design
+        (#2295). Anything that is not recognised as an ATX heading on that
+        line is refused. The check therefore does not enumerate bad shapes —
+        it names one good one — so a shape nobody has anticipated is closed
+        in advance instead of being discovered in a published note. Eleven
+        shapes were SHOWN to take the allowance this replaced — each by a
+        test or a review reproduction, none of them ever written by an
+        author (#2301 r2). What was published, and what motivates the check,
+        is the separate matter of headings no check ever looked at.
 
         `_TEMPLATE.md` opens `## Thread — <short title> (PR #<n>)`. Two
         things about that line are load-bearing the moment the fragment is
@@ -1648,16 +1707,22 @@ class Assembly:
             # #2298 argues is the weaker one, because it couples a list of
             # remedies to a list of refusals.
             #
-            # A BOM-bearing fragment is therefore ALLOWED, exactly as it is on
-            # `main`, which has no heading check at all — so this is a strict
-            # non-regression. #2295 refuses it properly when it lands, as an
-            # unrecognised opening line, without ever asking for a re-save.
+            # A BOM-bearing fragment is now refused BY THE GENERAL RULE below
+            # (#2295) — as an unrecognised opening line, alongside every other
+            # shape that is not an ATX heading, rather than by a clause of its
+            # own. That is the difference that matters: the message names the
+            # line rather than the byte order mark, so it never tells an
+            # author to re-save the file, which is the edit that made the
+            # markerless duplicate guard lose a fragment twice.
+            # SPLIT THE SAME WAY `first_heading` DOES (#2295). These two scans
+            # both answer "what is the first line of content", and if they
+            # disagree about where a line ends, the `---` refusal below and the
+            # message printed for an unrecognised opener describe a different
+            # line from the one actually judged. They must also agree on what
+            # BLANK means, for the same reason (#2301 r1). `LINE_END_RE` and
+            # `BLANK_RE` are the single definitions, so they cannot drift.
             _first_content = next(
-                (
-                    ln[:-1] if ln.endswith(b"\r") else ln
-                    for ln in body.split(b"\n")
-                    if ln.strip()
-                ),
+                (ln for ln in LINE_END_RE.split(body) if not BLANK_RE.match(ln)),
                 None,
             )
             # `rstrip` of spaces and tabs ONLY (#2290 r14). `---   ` and
@@ -1666,6 +1731,14 @@ class Assembly:
             # Leading whitespace is deliberately NOT stripped: an indented
             # `---` is a thematic break rather than a fence, which is the r5
             # finding, and `.strip()` here would re-make that mistake.
+            #
+            # SINCE #2295 THIS CHANGES THE MESSAGE, NOT THE OUTCOME. `---` is
+            # not an ATX heading, so the general refusal below would catch it
+            # anyway; this clause survives because it is the one unrecognised
+            # shape whose CAUSE is worth naming — an author who wrote front
+            # matter needs to know it becomes a thematic break once folded,
+            # not merely that the line is not a heading. Deleting it would
+            # cost a diagnosis, not a refusal. Do not read it as a gate.
             if _first_content is not None and _first_content.rstrip(b" \t") == b"---":
                 bad.append(
                     f"{name}: opens with `---`, which is front matter in its own "
@@ -1675,28 +1748,66 @@ class Assembly:
                 continue
             found = first_heading(body)
             if found is None:
-                # An unrecognised opening line is ALLOWED, and that allowance
-                # is the amplifier behind every misrecognition finding on this
-                # change: some shape is not recognised as a heading, this
-                # returns None, and the fragment is PUBLISHED AND CONSUMED.
+                # AN UNRECOGNISED OPENING LINE IS REFUSED (#2295). It used to
+                # be ALLOWED, and that allowance was the amplifier behind
+                # every misrecognition finding on #2290: some shape was not
+                # recognised as a heading, this returned None, and the
+                # fragment was PUBLISHED AND CONSUMED. Eleven shapes were
+                # shown to reach that outcome across sixteen review rounds —
+                # an indented marker, a tab delimiter, a setext underline, a
+                # YAML fence, a list above a thematic break, four byte-order
+                # marks, a CR-only line ending, a heading inside a blockquote.
                 #
-                # INVERTING IT IS THE RIGHT FIX AND IS NOT MADE HERE — see
-                # the issue filed from #2290 r16. Measured: of the 759
-                # fragments ever committed, 759 open with an ATX heading and
-                # ZERO rely on this allowance, so refusing costs nothing real
-                # and turns an unknown shape into one message to the author
-                # rather than a mangled note and a deleted source.
+                # SHOWN, NOT OBSERVED, and the distinction is load-bearing
+                # (#2301 r2). Each was demonstrated by a test or reproduced
+                # during review; NONE was ever written by an author, because
+                # all 759 fragments in the archive open with an ATX heading.
+                # Writing these up as incidents would claim a history the
+                # repository's own evidence contradicts — and the argument
+                # does not need it. A defect that is certain to occur the
+                # first time somebody saves a file differently is worth
+                # closing on its own terms.
                 #
-                # It is not made here because it is a RE-CUT, not a patch:
-                # it fails 17 assertions across 13 cases, several of which
-                # exist specifically to pin this allowance and would have to
-                # be inverted rather than conformed. Attempting that on a
-                # change already past its review cap is how the r15 fix
-                # introduced the r16 regression.
+                # Recognising one more shape per round only moved the
+                # boundary. The input is author-written Markdown in arbitrary
+                # encodings: the set of things that are not an ATX heading is
+                # unbounded, so a rule that must ENUMERATE them can always be
+                # surprised — and a surprise here costs a release note and a
+                # source file, since the fragment is published mangled and
+                # then deleted. Refusing instead inverts the failure
+                # direction: an unanticipated shape now costs its author one
+                # message.
                 #
-                # Fixture cost is NOT the reason — that argument was made at
-                # r3 and correctly rejected. The reason is that the work is a
-                # separate deliberate change, and it is filed as one.
+                # THE INVERSION IS WHY THIS FUNCTION NEED NOT GROW. Every
+                # shape above is closed as a consequence rather than
+                # individually, including the two still open when #2290
+                # merged, and a twelfth nobody has thought of is closed in
+                # advance. That is the whole value: the check stops being a
+                # list of known-bad shapes and becomes one known-good one.
+                #
+                # It costs nothing measurable. Of the 759 distinct fragments
+                # ever committed to `unreleased/`, 759 open with an ATX
+                # heading and ZERO relied on the allowance — it existed for
+                # test fixtures and never once protected real work.
+                #
+                # Deliberately NOT a patch on #2290: it inverts six test
+                # cases that exist to PIN the allowance, which is a re-cut
+                # rather than a fix, and attempting it on a change already
+                # past its review cap is how that PR's round-15 fix
+                # introduced its round-16 regression. Fixture cost was never
+                # the argument — that reasoning was offered there at r3 and
+                # correctly rejected, since test churn is not a reason to
+                # weaken a production rule.
+                shown_open = (
+                    _first_content.decode("utf-8", errors="replace")
+                    if _first_content is not None
+                    else "(the file has no content)"
+                )
+                bad.append(
+                    f"{name}: its opening line is not a `#` heading  ->  open "
+                    f"with the heading itself, as "
+                    f"`## Thread — <title> (PR #<n>)`  ->  {shown_open}"
+                )
                 continue
             level, first = found
             shown = first.decode("utf-8", errors="replace")
@@ -1852,12 +1963,15 @@ class Assembly:
         )
         out_has_markers = any(
             MARKER_RE.match(line.decode("utf-8", errors="replace"))
-            for line in out_data.split(b"\n")
+            for line in LINE_END_RE.split(out_data)
             if line.startswith(MARKER_PREFIX.encode())
         )
-        normalised = b"\n".join(
-            ln[:-1] if ln.endswith(b"\r") else ln for ln in out_data.split(b"\n")
-        )
+        # ONE SPLIT, not a normalise-then-split (#2301 r2). This used to strip
+        # a trailing `\r` from each `\n`-delimited line and rejoin, which
+        # handled CRLF and left a lone CR sitting inside a line. `LINE_END_RE`
+        # already covers all three endings, so the rejoin bought nothing and
+        # gave the file a second, weaker idea of where a line ends.
+        out_lines_raw = LINE_END_RE.split(out_data)
 
         suspect = []
         for f in self.frags:
@@ -1916,9 +2030,23 @@ class Assembly:
             def _debom(b: bytes) -> bytes:
                 return b[3:] if b.startswith(b"\xef\xbb\xbf") else b
 
-            out_lines = [_debom(o) for o in normalised.split(b"\n")]
-            for ln in body.split(b"\n"):
-                line = _debom(ln[:-1] if ln.endswith(b"\r") else ln)
+            # SPLIT CR-AWARE ON BOTH SIDES (#2301 r2), and this guard is the
+            # reason the line definition is shared rather than local. Teaching
+            # `first_heading` about CR-only files while leaving this scan on
+            # `\n` alone made a CR-only fragment publishable whose heading this
+            # could no longer see: the whole file read as ONE line, matched
+            # nothing in the dated file, so the run appended a second copy and
+            # consumed the source. The parent commit had REFUSED that same
+            # fragment, so the gap turned a refusal into data loss. Reproduced
+            # before and after.
+            #
+            # A definition of "a line" that two scans hold separately is a
+            # divergence waiting to happen, and this is the second time it has
+            # happened here — the first was `first_heading` and the `---`
+            # check disagreeing about blankness.
+            out_lines = [_debom(o) for o in out_lines_raw]
+            for ln in LINE_END_RE.split(body):
+                line = _debom(ln)
                 if not HEADING_RE.match(line):
                     continue
                 if any(line == other for other in out_lines):
