@@ -1621,45 +1621,57 @@ historical breadcrumb.
 
 ## Codex PR-review policy (user directive 2026-07-05)
 
-Codex **IS auto-invoked** on PR open and on every push to a PR. Trigger
-words in a comment are an ADDITIONAL way to start a review, not the only
-one. Apply this loop on every PR:
+Codex **is normally auto-invoked** on PR open, and **usually** on a push to
+a PR. A trigger comment is an ADDITIONAL way to start a review, and the
+remedy when one does not start. Apply this loop on every PR:
 
-> **Corrected 2026-09-23 (#2292).** This paragraph said the opposite —
-> "NOT auto-invoked on PR open or on pushes to a PR… ONLY when its trigger
-> words appear" — and both clauses were false. Measured on two PRs opened
-> that day, neither carrying a trigger phrase anywhere in its body or
-> comments: #2300 was reviewed **12 seconds** after opening, #2301 **13
-> seconds**. Codex's own summary comment states the rule, and is the better
-> source than this file: *"Reviews are triggered when you — Open a pull
-> request for review · Mark a draft as ready · Comment '<at>codex review'."*
+> **Corrected 2026-09-23 (#2292, refined in #2304 review).** This paragraph
+> said Codex is "NOT auto-invoked on PR open or on pushes to a PR… ONLY
+> when its trigger words appear". The first clause is false and the second
+> is false: #2300 was reviewed **12 seconds** after opening and #2301 **13
+> seconds**, neither carrying a trigger phrase anywhere, and a later push to
+> #2301 started a review whose trigger column read `New commits`.
 >
-> **WRITE THE TRIGGER PHRASE BROKEN, AS `<at>codex` — never as the live
-> token.** Codex reads a pull request's DESCRIPTION as a trigger surface,
-> not only its comments, so a PR that merely quotes the phrase invokes it.
-> This was learned on #2304, the PR carrying this very correction: its body
-> named the phrase three times, and instead of a review Codex ran an agent
-> task that reported editing `CLAUDE.md`, the PR template and
-> `ProjectProcedures.md` and committing `212d028`. **Nothing landed** — that
-> commit does not exist, no pull request was created, the branch never
-> moved — but no review ran either, and a PR with no review is not a PR that
-> converged. Two other PRs opened the same hour, neither naming the phrase,
-> were both reviewed within 13 seconds.
+> **BUT DO NOT READ THAT AS "EVERY PUSH".** Codex's own list of triggers —
+> *"Open a pull request for review · Mark a draft as ready · Comment
+> '<at>codex review'"* — does not mention pushes at all, and #2304's push at
+> 00:40:38Z produced no review for the following ten minutes. Both are
+> observations; the rule behind them is not documented anywhere we control.
+> So:
 >
-> So this document names the trigger with `<at>` standing in for the `@`.
-> It reads the same to a person and is inert to the scanner. Restoring the
-> literal character anywhere in this file, or writing it into a PR
-> description, re-arms the same trap.
+> **After a fix push, wait for the review to appear rather than triggering
+> immediately** — a duplicate trigger costs a second review of the same
+> commit, which spends a round against the cap and produces a second set of
+> threads carrying identical findings. **If no review has started after a
+> few minutes, post a trigger comment.** That is not a fallback for a rare
+> case; it is the documented remedy, and it worked on #2304 — a manual
+> request at 00:50:56Z started a review whose trigger column read `Manual
+> request`, a fourth value alongside `PR opened` and `New commits`.
 >
-> **The practical consequence is what made this worth correcting.** The
-> coding-PRs bullet below used to end "Re-trigger after every fix push",
-> and the 15-minute check-in Routines still say to re-trigger via an
-> `<at>codex review full` comment. Since the push has already started a review,
-> doing that begins a SECOND review of the same commit — extra rounds
-> against a cap, and a duplicate set of threads carrying identical findings
-> to resolve. **Push and wait.** Use a comment trigger only when a review
-> demonstrably did not start on its own, or to ask for a different kind of
-> review (`<at>codex security review`).
+> **The trigger string has a REQUIRED shape**, defined in
+> [`AGENTS.md`](AGENTS.md): `<at>codex review <mode> [<profile>]`, where
+> `<mode>` is one of `normal`, `adversarial`, `full`, `full
+> security-critical`. An earlier revision of this paragraph wrote
+> "`<at>codex security review`" for a security pass, which is **not** that
+> shape — the canonical form is `<at>codex review full security-critical`.
+> That wrong example came from paraphrasing Codex's own blurb instead of
+> reading this repository's spec, which is the general lesson: `AGENTS.md`
+> defines the command surface, not this file and not the bot's summary.
+>
+> **Why this file writes the phrase as `<at>codex`.** #2304 opened with a
+> description naming the phrase three times and received an agent *task* —
+> a report of edits to `CLAUDE.md`, the PR template and
+> `ProjectProcedures.md`, and a commit `212d028` — instead of a review.
+> **Nothing landed**: that commit does not exist, no pull request was
+> created, the branch never moved. **The cause is UNKNOWN.** Opening the PR
+> was already an automatic trigger, so the quotation need not have caused
+> anything; and removing the phrase did not then produce a review, which is
+> evidence against the simple explanation. The `<at>` spelling is kept as a
+> cheap precaution in a document that has no need of a live token — it is
+> **not** a remedy, and no rule here forbids the literal elsewhere.
+> `.github/pull_request_template.md` injects it into every generated PR
+> body and is deliberately left alone: changing it on an unknown mechanism
+> would be a guess dressed as a fix.
 >
 > **Counting rounds: read the trigger column, do not infer it.** The review
 > summary comment carries a table whose last column names what started each
@@ -1753,9 +1765,10 @@ one. Apply this loop on every PR:
   rounds of edges) and **#2149** (thirty findings across rounds 2–13,
   every one an edge of a speculative branch nothing had ever observed on
   that path; deleting the branch at round 13 is what reached a clean
-  round 21). A fix push re-triggers the review by itself (#2292) — do not
-  also post a trigger comment, which starts a second review of the same
-  commit.
+  round 21). A fix push usually re-triggers the review by itself (#2292) —
+  wait for it rather than posting a trigger comment, which would start a
+  second review of the same commit. If none has appeared after a few
+  minutes, trigger explicitly; that happened on #2304.
 - **Converged, operationally** (amendment 2026-07-05b): a round with
   ZERO P1/P2 findings (Codex's own severity badges). A P3-only round
   counts as clean — fix or defer P3s at the agent's judgment without

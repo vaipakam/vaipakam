@@ -251,9 +251,19 @@ Sub-rules:
 - **Profile-less triggers** (`@codex review full` with no profile
   suffix): no caption needed — nothing project-specific to explain.
 
-After each fix iteration, **post a fresh trigger comment** to re-run
-Codex against the new commit. Codex's auto-review on push fires once
-on its own, but explicit triggers force a re-review.
+After each fix iteration, **wait for the push's own review** rather than
+posting a trigger comment (#2292). Codex's auto-review on push fires on
+its own, so an immediate explicit trigger starts a SECOND review of the
+same commit — spending a round against the cap and producing a duplicate
+set of threads carrying identical findings.
+
+**If no review has started after a few minutes, trigger explicitly.**
+That is the documented remedy rather than a rare exception: on #2304 a
+push produced no review for ten minutes, and a manual request started one
+whose trigger column read `Manual request`. Read that column to tell the
+cases apart — it names what started each run (`PR opened`, `New commits`,
+`Manual request`), so a round is read rather than inferred from comment
+timestamps.
 
 #### 3.2.1 What we know about AGENTS.md being honoured
 
