@@ -2317,9 +2317,12 @@ note is retained — but read the retention narrowly:
   reduction.
 - **Still open, and owned by implementation rather than by the owner:** the
   curve's arithmetic, the limiter's envelope, the fresh-storage and zero/dark
-  semantics of every divisor, the initial capacity for an unseen
-  `(role, address)`, and the cost units per role — the six-item checklist
-  under "What implementation must settle" later in this section, whose
+  semantics of every divisor, **what a dark role must still preserve**
+  (withdrawals callable and the free tier working, so disabling the feature
+  strands no escrowed VPFI and keeps the permissionless baseline), the initial
+  capacity for an unseen `(role, address)`, and the cost units per role — all
+  six items of the checklist under "What implementation must settle" later in
+  this section, whose
   numbers come back with their throughput meaning attached (see "NOT for the
   owner, deliberately").
 
