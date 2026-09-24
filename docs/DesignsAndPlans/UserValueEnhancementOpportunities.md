@@ -395,6 +395,16 @@ posture), S-2 rides E-2, R-1 is a contracts task on already-specified storage;
 S-4 is the one new design surface — it gets its own short design note and a
 legal glance before build.
 
+> **SUPERSEDED on the gate, 2026-09-24** — the glance landed and moved. It is
+> DISCHARGED for the no-yield refundable-deposit shape (owner, recorded in
+> [`VpfiServiceBondsDesign.md`](VpfiServiceBondsDesign.md)), which covers fork
+> A entirely and fork C's deposit half; what it does not reach is C's
+> NON-REFUNDABLE arming fee, a different legal shape. And the residue gates
+> **arming that fee, not building the mechanism**: C may be built, reviewed,
+> merged and deployed dark, and only a non-zero fee waits on the fee-shape
+> glance. Read the sequencing above as history; the bonds note carries the
+> live gate.
+
 ---
 
 ## 6. Platform ethos — permissionless fixed-rate lending across the whole token long tail

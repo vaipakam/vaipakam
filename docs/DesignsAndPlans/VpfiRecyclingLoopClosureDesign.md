@@ -492,6 +492,15 @@ the tariff, so launch absorption is never single-channel:
    already recommends) so the slash-absorption class isn't blocked on an
    unscheduled prerequisite.
 
+   > **SUPERSEDED on the gate, 2026-09-24.** The glance was taken and is
+   > DISCHARGED for the no-yield refundable-deposit shape; only fork C's
+   > NON-REFUNDABLE arming fee is outside it. That residue gates **arming the
+   > fee, not building the mechanism** — C ships dark and the fee stays at
+   > zero until the fee-shape glance is recorded. So the slash-absorption
+   > class is not behind a prerequisite any more. See
+   > [`VpfiServiceBondsDesign.md`](VpfiServiceBondsDesign.md)'s status header,
+   > which is the authoritative gate.
+
 With RL-1 filling vaults at the distribution end, these three plus the Full
 tariff give four independent absorption channels within one release cycle of
 each other — the flywheel stops depending on any single attach rate.
