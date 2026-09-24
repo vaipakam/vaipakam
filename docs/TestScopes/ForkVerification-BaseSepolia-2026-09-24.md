@@ -77,9 +77,17 @@ the treasury already paid — but `getLoanCollateralLien` still reports
 encumbered. `claimAsBorrower` is what releases the lien and returns the
 tokens.
 
-An interface that treats "Repaid" as "done" leaves the borrower's collateral
-locked with no prompt. Any status surface has to distinguish *repaid* from
-*repaid and claimed*.
+An interface that treats "Repaid" as "done" would leave the borrower's
+collateral locked with no prompt, so a status surface has to distinguish
+*repaid* from *repaid and claimed*.
+
+**The connected app already does.** Checked after this run rather than
+assumed: `apps/app` carries a Claims page and a `ClaimAllCard`, the
+close-early confirmation reads "Your collateral is ready — claim it below or
+from the Claim Center", and the push hints for `loan_repaid` /
+`loan_defaulted` / `internal_matched` all route to what is claimable. This
+paragraph records a real protocol shape a *new* surface has to honour — not
+a gap in the shipped one.
 
 The same shape applies on the lender side: a repay credits the lender's
 **vault**, and `claimAsLender` sweeps it to their wallet. The sweep creates
@@ -192,10 +200,23 @@ named, not a bug.
 
 It is still a transparency obligation. A borrower reading "close early" will
 reasonably expect a pro-rated interest saving, and on a full-term-interest
-offer there is none. **Any preclose quote surface must state that the full
-term's interest is due**, and should distinguish a full-term offer from one
-that accrues pro rata, before the borrower signs. This is exactly the class
-of unstated-unknown the project's fund-transparency rule exists to prevent.
+offer there is none. Any preclose quote surface must state that the full
+term's interest is due, and must distinguish a full-term offer from one that
+accrues pro rata, before the borrower signs.
+
+**The connected app already does, and does it more carefully than a
+straight disclosure would.** Checked after this run rather than assumed:
+`EarlyRepayOptionsCard` reads the loan's interest mode live and is
+deliberately **tri-state** — `closeEarlyCostFullTerm` ("Costs the full agreed
+term's interest even though you're closing early"),
+`closeEarlyCostProRata`, and a neutral `closeEarlyCostChecking` while the
+mode is unknown. It never falls back to the full-term default, because doing
+so would misprice a *pro-rata* loan's close. That tri-state was itself the
+product of a review round (Codex #1500 r2/r3).
+
+Recorded here because the underlying protocol behaviour is easy to
+misremember, and because any NEW surface that quotes an early payoff has to
+reproduce all three states — not because the shipped surface is missing it.
 
 ### 3.2 Partial repayment
 
@@ -382,8 +403,15 @@ two post-claim NFT readbacks (A2.16, written up in §1.4).
    §6), which also repairs the artifact drift in §5.
 2. **Re-seed the mock `tLIQ` pool with more depth** so HF liquidation is
    exercisable on the testnet through a collateral price move (§2.4).
-3. **State full-term interest in the preclose quote** on any surface that
-   offers an early close (§3.1).
-4. **Distinguish *repaid* from *repaid and claimed*** in position status, so a
-   borrower is prompted to release their own collateral (§1.3).
-5. **Refresh `deployment_source.json`**, which names a retired diamond (§5).
+3. **Refresh `deployment_source.json`**, which names a retired diamond (§5).
+
+Two items were on this list in the first revision of this document and have
+been **withdrawn**, because scouting `apps/app` afterwards found both already
+shipped — stating full-term interest in the preclose quote (§3.1, done
+tri-state via `EarlyRepayOptionsCard` + the three `closeEarlyCost*` strings)
+and distinguishing *repaid* from *repaid and claimed* (§1.3, done via the
+Claims page, `ClaimAllCard` and the close-early confirmation copy). They are
+recorded as withdrawn rather than deleted: a verification record that quietly
+drops a claim it made is harder to trust than one that says it was wrong.
+Both observations remain in their sections as protocol shapes a *new* surface
+must honour.

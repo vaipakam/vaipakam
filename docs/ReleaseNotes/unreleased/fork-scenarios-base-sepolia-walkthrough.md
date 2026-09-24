@@ -25,13 +25,22 @@ this testnet cannot be reached through a collateral price move, because the
 seeded pool sits so close to the liquidity-depth floor that any meaningful
 drawdown flips the asset illiquid and the protocol then correctly refuses to
 swap it. Closing a loan early under a full-term-interest offer saves the
-borrower nothing, which every preclose quote needs to say out loud. A
-repayment settles the money but leaves the collateral lien standing until the
-borrower separately claims it, so "Repaid" is not "done" and a status surface
-that treats it as such leaves collateral locked with no prompt. And with KYC
-enforcement armed — an industrial-fork knob that retail never turns on — the
-gate binds at accept rather than at offer creation, so a maker can post an
-offer that no taker is permitted to fill.
+borrower nothing, which every preclose quote has to say out loud. A repayment
+settles the money but leaves the collateral lien standing until the borrower
+separately claims it, so "Repaid" is not "done". And with KYC enforcement
+armed — an industrial-fork knob that retail never turns on — the gate binds at
+accept rather than at offer creation, so a maker can post an offer that no
+taker is permitted to fill.
+
+On the middle two, the connected app was checked afterwards rather than
+assumed, and already honours both: the early-repay card reads the loan's
+interest mode live and is deliberately tri-state, never defaulting to
+full-term wording on a loan that might accrue pro rata, and the Claims page,
+the claim-all card and the close-early confirmation all point the borrower at
+the collateral still waiting for them. They are written up as protocol shapes
+a new surface must reproduce, not as gaps in the shipped one — and the
+write-up records that correction rather than quietly dropping the two items
+it first listed as follow-ups.
 
 The run also found that the committed Base Sepolia deployment artifact no
 longer describes the live Diamond: its own facet count disagrees with the
