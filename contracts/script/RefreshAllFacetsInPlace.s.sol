@@ -2331,12 +2331,20 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     ///      (removing a live function would strand it) and that the list
     ///      names the legacy seed.
     function _retiredSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](1);
+        s = new bytes4[](2);
         // #1566 slice 4 PR A (Codex #2158 r29/r30 P1) — the legacy seed took
         // only the amount; it now carries the pause epoch too, so the old
         // selector must not survive routed to bytecode that checks neither
         // the manual pause, the epoch, nor the cap.
         s[0] = bytes4(keccak256("seedArmedFreshPaid(uint256)"));
+        // #1566 transport epochs 3b-ii-A (Codex #2296 items 2 and 4) — the
+        // pre-list catch-up link is gone with the read path it served, and a
+        // retired selector needs an explicit Remove leg: merely dropping it
+        // from the facet's cut list would leave its OLD route pointed at the
+        // stale implementation wherever it were routed. No chain routes it
+        // (none has the epoch facet at all), so this leg is a no-op today and
+        // is here so it cannot become one that matters.
+        s[1] = bytes4(keccak256("epochLinkTransportDayIndex(uint256,bytes32[])"));
         // The four-argument vault credit is NOT retired (Codex #2276 r3 P1,
         // r14 P2): it stays on the refreshed VaultFactoryFacet as a
         // compatibility entry, in the facet's own selector list, so every

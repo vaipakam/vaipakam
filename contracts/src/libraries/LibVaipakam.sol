@@ -7564,41 +7564,26 @@ library LibVaipakam {
         ///      NODE (zero = the head). A list inserts in constant work given
         ///      the predecessor, which is what bounds a late epoch's indexing;
         ///      an arrival-sorted ARRAY had to shift every newer entry, which
-        ///      no budget could bound for the day itself. The index cursor
-        ///      `transportDayCursor` above is the day's cursor as a POSITION
-        ///      in the ARRAY's order — the count of leading exhausted epochs —
-        ///      read while the day is read from the array; the list's own is
-        ///      `transportDayListCursor` below (Codex #2276 r11, r14 P2).
+        ///      no budget could bound for the day itself.
+        ///
+        ///      The LIST is a day's ONLY order and its only read source (Codex
+        ///      #2296 items 2 and 4): every member is linked as it is pushed,
+        ///      so the list holds every day whole from its first member, and
+        ///      `transportBatchesByDay` is the membership set alone. An earlier
+        ///      revision of this slice carried a second, ARRAY-ordered read
+        ///      path for days indexed before the list, with a catch-up link
+        ///      and a conversion; no chain ever held such a day, and the two
+        ///      sources were the root of four review rounds, so the path was
+        ///      removed rather than carried. `transportDayCursor` above is the
+        ///      day's cursor as a POSITION in the list's order — the count of
+        ///      leading exhausted epochs, exact because the cursor only
+        ///      advances (Codex #2276 r11) — and `transportDayCursorNode` the
+        ///      same cursor as the node it stands on.
         mapping(uint256 => bytes32) transportDayHead;
         mapping(uint256 => bytes32) transportDayTail;
         mapping(uint256 => mapping(bytes32 => bytes32)) transportDayNext;
         mapping(uint256 => mapping(bytes32 => bytes32)) transportDayPrev;
         mapping(uint256 => bytes32) transportDayCursorNode;
-        /// @dev How many of `transportBatchesByDay[d]`'s leading entries the
-        ///      day's list holds (Codex #2276 r8 P1). A day indexed before the
-        ///      list existed has a full array and an empty list, and is READ
-        ///      FROM THE ARRAY — its pre-list order and its array cursor
-        ///      `transportDayCursor` — until a permissionless, bounded link
-        ///      has caught the list up; then the list is the order. A day
-        ///      first indexed under the list links each entry as it is
-        ///      pushed, so its count always equals its length. No migration
-        ///      step is needed and no epoch is ever invisible.
-        mapping(uint256 => uint256) transportDayLinked;
-        /// @dev Whether a day whose list holds every member has had its
-        ///      consumption count carried over to the list's order (Codex
-        ///      #2276 r14 P2). A day indexed before the list keeps being read
-        ///      from the array — its array cursor exact — until a bounded
-        ///      conversion prune has run to a stop short of its bound; only
-        ///      then do reads switch, so the position the day reports is
-        ///      exact at the switch. A day first indexed under the list is
-        ///      converted from its first member.
-        mapping(uint256 => bool) transportDayConverted;
-        /// @dev The day's cursor as a POSITION in the LIST's order — the
-        ///      count of leading exhausted epochs — kept exact because the
-        ///      cursor only advances; `transportDayCursor` above is the same
-        ///      count in the ARRAY's order, read while the day is read from
-        ///      the array.
-        mapping(uint256 => uint256) transportDayListCursor;
     }
 
     /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss: the

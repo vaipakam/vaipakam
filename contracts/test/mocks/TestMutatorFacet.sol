@@ -2432,27 +2432,6 @@ contract TestMutatorFacet {
     ///         lifecycle the production facet refuses until 3b-ii. The library
     ///         functions are the 3b-ii implementation and stay tested through
     ///         these; nothing in production can reach them.
-    /// @notice 3b-ii-A test-only (Codex #2276 r8 P1) — make day `d` look as
-    ///         it did before the ordered list existed: the membership array
-    ///         kept, the list, its node cursor, its linked count and its array
-    ///         cursor cleared. What an in-place refresh from the pre-list
-    ///         layout leaves behind.
-    function resetTransportDayListRaw(uint256 d) external {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        bytes32[] storage arr = s.transportBatchesByDay[d];
-        for (uint256 i; i < arr.length; ++i) {
-            delete s.transportDayNext[d][arr[i]];
-            delete s.transportDayPrev[d][arr[i]];
-        }
-        delete s.transportDayHead[d];
-        delete s.transportDayTail[d];
-        delete s.transportDayCursorNode[d];
-        delete s.transportDayLinked[d];
-        delete s.transportDayConverted[d];
-        delete s.transportDayListCursor[d];
-        delete s.transportDayCursor[d];
-    }
-
     /// @notice 3b-ii-A test-only (Codex #2276 r9 P1) — classify a packet the
     ///         way a classification ran BEFORE the batch gate existed: the
     ///         same take, no gate. Stands a packet in the state an in-place

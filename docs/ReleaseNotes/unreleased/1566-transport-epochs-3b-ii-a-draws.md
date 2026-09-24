@@ -99,13 +99,13 @@ ledger's choice and not the indexer's; same-block arrivals in a fixed order by d
 linked into its place in constant work (a materializer may name the
 predecessor; without one the ledger searches back from the newest for a
 bounded number of steps and refuses beyond that), so indexing an epoch
-late never costs more than indexing it on time; a day indexed before the
-ordered list existed is read exactly as it was, from its membership in
-the order it was indexed, until a permissionless, bounded catch-up has
-linked its members and carried its record of consumption over to the
-linked order exactly, so nothing the day reports changes at the switch —
-so an in-place upgrade needs no migration step and no epoch is ever
-invisible —
+late never costs more than indexing it on time; every epoch is linked as
+it is indexed, so a day's order holds it whole from its first member and
+a day is read one way only — an earlier revision of this release carried a
+second, membership-ordered read path for days indexed before the order
+existed, with a catch-up step and a switch-over; no chain ever held such a
+day, and two read sources were the root of several review findings, so the
+path was removed rather than carried —
 so the **bounded window** a day is read through always holds its oldest
 epochs, and within the window they are spent in an order the ledger
 fixes rather than the order anyone indexed them: the epoch listing the
@@ -116,10 +116,14 @@ An epoch's flexible balance — what either leg may take — is held back
 from a leg only where a later epoch's capacity for the other leg could
 not otherwise be used, so the two legs are paid the most any assignment
 could pay them without a lower-priority epoch being spent ahead of a
-higher one, and coverage one leg's cap rejects
-is offered to the other leg; a day indexed before the ordered list
-existed and wider than one window defers, drawing nothing, until enough
-of its members are exhausted or the catch-up has linked it; an attested
+higher one. Where either leg could take a flexible unit and the day is
+covered the same amount either way, it goes to the leg whose next capacity
+in the window lies **latest**, so the nearer alternative is the one spent
+and the further epoch — which may be the only one funding another day — is
+left standing. Coverage one leg's cap rejects
+is offered to the other leg; a day wider than one window is read through
+that window and draws from it, rather than being refused outright, because
+the window is always a prefix of the day's one order; an attested
 epoch pays each leg only within that component's recorded cap, and the
 one unit a scaling residual can leave outside both caps is never drawn
 once the split is known — drawn before it was, it is recorded beyond

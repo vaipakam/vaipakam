@@ -247,6 +247,33 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         return (r.transportFresh, r.transportRecycled, r.capHit);
     }
 
+    /// @dev The per-epoch legs an allocation WOULD draw, for one epoch. The
+    ///      totals cannot discriminate here: two coverings of the same ask are
+    ///      equal in amount and differ only in which epochs they spend, so the
+    ///      assertion has to read the split's own output (Codex #2296 item 1).
+    function _plannedLegs(uint256 dayId, uint256 needF, uint256 needR, bytes32 id)
+        internal
+        view
+        returns (uint256 f, uint256 r)
+    {
+        LibRewardCustody.AllocRequest memory q;
+        q.dayId = dayId;
+        q.needFresh = needF;
+        q.needRecycled = needR;
+        q.domainFresh = type(uint256).max;
+        q.domainRecycled = type(uint256).max;
+        q.poolFresh = type(uint256).max;
+        q.ovIds = new bytes32[](0);
+        q.ovFresh = new uint256[](0);
+        q.ovRecycled = new uint256[](0);
+        LibRewardCustody.AllocResult memory a = _epoch().getTransportAllocationForDay(q);
+        for (uint256 i; i < a.planIds.length; ) {
+            if (a.planIds[i] == id) return (a.planFresh[i], a.planRecycled[i]);
+            unchecked { ++i; }
+        }
+        revert("fixture: the epoch is not in the day's plan");
+    }
+
     /// @dev The cursor's POSITION in the day's order — the count of leading
     ///      exhausted epochs — exact here because every day in this suite is
     ///      shorter than the hundred nodes the read walks.
@@ -896,88 +923,6 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
 
     // ─── round 8: days indexed before the list; residual-only epochs; the lens ──
 
-    /// @dev A day indexed before the ordered list existed — a full membership
-    ///      array and no list, what an in-place refresh leaves — is read from
-    ///      the array as it was (Codex #2276 r8 P1): coverage, the lens and
-    ///      the claim's draw all find the epoch; a new epoch joins the array
-    ///      and is found too; the permissionless link catches the list up, in
-    ///      arrival order, and reads the same members; linking again is a
-    ///      no-op.
-    function test_APreListDay_IsReadFromItsArray_UntilLinked() public {
-        _scene(NEED);
-        bytes32 h = _epochOf(10e18, _one(1), 1, keccak256("pre"));
-        _mut().resetTransportDayListRaw(1);
-        (uint256 linked, uint256 total, , ) = _epoch().getTransportDayIndex(1);
-        assertEq(linked, 0, "fixture: nothing linked");
-        assertEq(total, 1, "fixture: one member");
-        (uint256 avail, ) = _epoch().getTransportCoverageForDay(1);
-        assertEq(avail, 10e18, "coverage is read from the array");
-        (bytes32[] memory page, , , uint256 cursor) = _epoch().getTransportDayBatches(1, 0, 10);
-        assertEq(page[0], h, "the lens reads the array");
-        assertEq(cursor, 0);
-        assertEq(_claim(), NEED, "and the claim draws from it");
-        (uint256 lf, ) = _legs(h);
-        assertEq(lf, NEED);
-        vm.warp(vm.getBlockTimestamp() + 1 hours);
-        bytes32 h2 = _epochOf(1e18, _one(1), 2, keccak256("post"));
-        (linked, total, , ) = _epoch().getTransportDayIndex(1);
-        assertEq(linked, 0, "a new member joins the array only");
-        assertEq(total, 2);
-        (avail, ) = _epoch().getTransportCoverageForDay(1);
-        assertEq(avail, 10e18 - NEED + 1e18, "and is found there");
-        (linked, , ) = _epoch().epochLinkTransportDayIndex(1, new bytes32[](0));
-        assertEq(linked, 2, "the link caught the list up");
-        (bytes32[] memory order, , bytes32 next) = _epoch().getTransportDayBatchesFrom(1, bytes32(0), 10);
-        assertEq(order.length, 2, "the list holds every member");
-        assertEq(order[0], h, "in arrival order");
-        assertEq(order[1], h2);
-        assertEq(next, bytes32(0));
-        (avail, ) = _epoch().getTransportCoverageForDay(1);
-        assertEq(avail, 10e18 - NEED + 1e18, "the same coverage from the list");
-        (linked, , ) = _epoch().epochLinkTransportDayIndex(1, new bytes32[](0));
-        assertEq(linked, 2, "idempotent");
-    }
-
-    /// @dev A day indexed before the list prunes its ARRAY cursor by the same
-    ///      rule (Codex #2276 r8 P1): 64 exhausted husks ahead of a funded
-    ///      epoch, the list cleared — the first claim defers and prunes past
-    ///      them, the second pays. The link then catches the list up: one
-    ///      unhinted page, then the rest by hint; the cursor is derived over
-    ///      the order and the funded epoch keeps paying from the list.
-    function test_APreListDay_PrunesItsArrayCursor_AndLinksByPageAndHint() public {
-        _scene(NEED);
-        bytes32[] memory hs = new bytes32[](65);
-        for (uint256 i; i < 64; ++i) {
-            hs[i] = _epochOf(1, _one(1), 100 + i, keccak256(abi.encode("dust", i)));
-            _mut().parkTransportBatchRaw(hs[i]);
-            vm.warp(vm.getBlockTimestamp() + 1); // distinct arrivals: the array IS the order
-        }
-        vm.warp(vm.getBlockTimestamp() + 1 hours);
-        hs[64] = _epochOf(2 * NEED, _one(1), 300, keccak256("funded"));
-        _mut().resetTransportDayListRaw(1);
-        assertEq(_claim(), 0, "deferred on the array window");
-        assertEq(_cursor(1), 64, "the array cursor passed the husks");
-        assertEq(_claim(), NEED, "the next attempt pays from the array");
-        (uint256 linked, uint256 total, ) = _epoch().epochLinkTransportDayIndex(1, new bytes32[](0));
-        assertEq(linked, 32, "an unhinted call links one page");
-        assertEq(total, 65);
-        assertEq(_cursor(1), 64, "still read from the array");
-        // The rest by hint: each entry after its predecessor in the array.
-        bytes32[] memory hints = new bytes32[](40);
-        for (uint256 i; i < 33; ++i) hints[i] = hs[31 + i];
-        bool converted;
-        (linked, , converted) = _epoch().epochLinkTransportDayIndex(1, hints);
-        assertEq(linked, 65, "every member linked; surplus hints ignored");
-        assertFalse(converted, "one bounded prune passed a whole window: the day still reads from its array");
-        assertEq(_cursor(1), 64, "exact, from the array, until the conversion completes");
-        (, , converted) = _epoch().epochLinkTransportDayIndex(1, new bytes32[](0));
-        assertTrue(converted, "the next prune stopped short of its bound: the list is read now");
-        assertEq(_cursor(1), 64, "and the list's own count is the same exact figure");
-        (uint256 avail, bool capHit) = _epoch().getTransportCoverageForDay(1);
-        assertEq(avail, NEED, "what the funded epoch still holds");
-        assertFalse(capHit);
-    }
-
     /// @dev An attested epoch with no room left under either cap is exhausted
     ///      for the cursor even though a residual unit remains (Codex #2276 r8
     ///      P2), reached the way a real one is: a two-leg day, an epoch one
@@ -1058,61 +1003,6 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
 
     // ─── round 9: a wide pre-list day; the exact split; caps net of classification; the preview's prune ──
 
-    /// @dev A pre-list day wider than one window defers rather than read a
-    ///      window of its array (Codex #2276 r9 P1): 65 live members, the
-    ///      list cleared — coverage reports the cap hit and nothing; the claim
-    ///      defers; the link, page by page, ends it. Never linked partway.
-    function test_AWidePreListDay_DefersUntilLinked() public {
-        _scene(NEED);
-        for (uint256 i; i < 65; ++i) {
-            _epochOf(1e18, _one(1), 100 + i, keccak256(abi.encode("wide", i)));
-            vm.warp(vm.getBlockTimestamp() + 1);
-        }
-        _mut().resetTransportDayListRaw(1);
-        (uint256 avail, bool capHit) = _epoch().getTransportCoverageForDay(1);
-        assertEq(avail, 0, "a window of an unordered array is not read");
-        assertTrue(capHit, "the day is wider than one window");
-        assertEq(_preview(), 0, "deferred, nothing drawn");
-        // Nothing paid and no cursor moved: the empty claim reverts as ever.
-        vm.expectRevert(IVaipakamErrors.NoInteractionRewardsToClaim.selector);
-        _claim();
-        (uint256 linked, , ) = _epoch().epochLinkTransportDayIndex(1, new bytes32[](0));
-        assertEq(linked, 32);
-        assertEq(_preview(), 0, "still deferred: the list is not whole");
-        _epoch().epochLinkTransportDayIndex(1, new bytes32[](0));
-        (linked, , ) = _epoch().epochLinkTransportDayIndex(1, new bytes32[](0));
-        assertEq(linked, 65, "the list is whole");
-        (avail, capHit) = _epoch().getTransportCoverageForDay(1);
-        assertEq(avail, 64e18, "the oldest window of the order");
-        assertTrue(capHit);
-        assertEq(_claim(), NEED, "and the claim pays from it");
-    }
-
-    /// @dev The other way out of a wide pre-list day (Codex #2276 r9 P1): its
-    ///      array cursor passes exhausted members. One husk then 64 live
-    ///      members — the deferred claim's own prune passes the husk, the
-    ///      remaining 64 fit one window, and the array serves the next claim
-    ///      by the same rule the list would; the day was never linked.
-    function test_AWidePreListDay_NarrowsByItsArrayCursor() public {
-        _scene(NEED);
-        bytes32 husk = _epochOf(1, _one(1), 99, keccak256("husk"));
-        _mut().parkTransportBatchRaw(husk);
-        vm.warp(vm.getBlockTimestamp() + 1);
-        for (uint256 i; i < 64; ++i) {
-            _epochOf(1e18, _one(1), 100 + i, keccak256(abi.encode("live", i)));
-            vm.warp(vm.getBlockTimestamp() + 1);
-        }
-        _mut().resetTransportDayListRaw(1);
-        assertEq(_claim(), 0, "65 members from the array cursor: deferred");
-        assertEq(_cursor(1), 1, "the deferral's prune passed the husk");
-        (uint256 avail, bool capHit) = _epoch().getTransportCoverageForDay(1);
-        assertEq(avail, 64e18, "64 remain: the array holds every one");
-        assertFalse(capHit);
-        assertEq(_claim(), NEED, "served from the array");
-        (uint256 linked, , , ) = _epoch().getTransportDayIndex(1);
-        assertEq(linked, 0, "never linked");
-    }
-
     /// @dev The split spends in plan order, and holds an epoch's flexible
     ///      balance back only where a later epoch's capacity for the other
     ///      leg could not otherwise be used (Codex #2276 r12 P1), on Codex's
@@ -1131,6 +1021,100 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         (uint256 lf2, ) = _legs(two);
         assertEq(lf1, NEED, "the one-day epoch pays: the priority");
         assertEq(lf2, 0, "the two-day epoch is kept for its other day");
+    }
+
+    /// @dev A day's ORDER holds every member from the first, with no link step
+    ///      and no second read source (Codex #2296 items 2 and 4). Three
+    ///      epochs read back complete and in order the moment they are
+    ///      materialized; a day WIDER than one scan window draws from its
+    ///      window rather than being refused outright, which is what the
+    ///      retired array-ordered path could not do (a window of an array is
+    ///      not a prefix of the order, so such a day had to defer with nothing
+    ///      drawn); and the retired catch-up entry is not routed at all. The
+    ///      five pre-list cells this replaces built a day the ledger can no
+    ///      longer be in: an array holding members its order does not.
+    function test_ADaysOrder_HoldsEveryMember_WithNoLinkStep() public {
+        for (uint256 i; i < 3; ++i) {
+            _epochOf(1, _one(1), 71 + i, keccak256(abi.encode("ordered", i)));
+            vm.warp(vm.getBlockTimestamp() + 1);
+        }
+        (, uint64[] memory at, uint256 total, uint256 cursor) =
+            _epoch().getTransportDayBatches(1, 0, 10);
+        assertEq(total, 3, "three members in the day's membership set");
+        assertEq(cursor, 0, "nothing consumed");
+        // The ORDER's own length has to be WALKED. That view's page is sized
+        // from the membership count, so its length says nothing about how much
+        // the order holds -- asserting on it read as a check and was not one,
+        // which the link mutation below is what exposed.
+        (bytes32[] memory walk, , bytes32 next) = _epoch().getTransportDayBatchesFrom(1, bytes32(0), 10);
+        assertEq(walk.length, total, "and the order holds every one of them, with no link call");
+        assertEq(next, bytes32(0), "the walk ends at the last member");
+        assertTrue(at[0] < at[1] && at[1] < at[2], "in arrival order");
+        (uint256 count, bytes32 node) = _epoch().getTransportDayIndex(1);
+        assertEq(count, total, "the index view reports the same membership");
+        assertEq(node, bytes32(0), "and no cursor node yet");
+
+        // A day wider than one window: 65 epochs of one wei on day 2, asked
+        // for one. The window covers it; the retired path deferred with zero.
+        for (uint256 i; i < 65; ++i) {
+            _epochOf(1, _one(2), 200 + i, keccak256(abi.encode("wide", i)));
+        }
+        (uint256 tf, uint256 tr, bool capHit) =
+            _alloc(2, 1, 0, type(uint256).max, type(uint256).max, type(uint256).max, 0, 0);
+        assertEq(tf + tr, 1, "a wide day draws from its window");
+        assertTrue(capHit, "and still reports that more lies beyond it");
+
+        // The catch-up entry is retired, and the control proves the check can
+        // fail: a live epoch selector on the same Diamond answers.
+        (bool ok, bytes memory ret) = address(diamond).call(
+            abi.encodeWithSelector(
+                bytes4(keccak256("epochLinkTransportDayIndex(uint256,bytes32[])")),
+                uint256(1),
+                new bytes32[](0)
+            )
+        );
+        assertFalse(ok, "the retired catch-up entry is not routed");
+        assertEq(
+            bytes4(ret),
+            bytes4(keccak256("FunctionDoesNotExist()")),
+            "unrouted, not a body that reverts"
+        );
+        (ok, ) = address(diamond).call(
+            abi.encodeWithSelector(RewardEpochFacet.getTransportDayScanIds.selector, uint256(1))
+        );
+        assertTrue(ok, "control: a routed epoch selector answers");
+    }
+
+    /// @dev Where two coverings of the same ask are equal in amount, the split
+    ///      spends the EARLIER epochs (Codex #2276 r17 P1, arrested per #2296
+    ///      item 1), on Codex's shape: a flexible epoch, then a fresh-only
+    ///      one, then a recycled-only one, asked one of each leg. The retired
+    ///      fresh-first tie gave the flexible epoch's balance to fresh and so
+    ///      reached PAST the fresh-only epoch to the recycled-only one; now the
+    ///      flexible epoch pays recycled, the nearer fresh capacity is the one
+    ///      consumed, and the last epoch is left for the other day it may
+    ///      list. The coverage is the same either way, which is exactly why
+    ///      the totals cannot see the difference.
+    function test_TheSplit_SparesTheLaterEpoch_WhenEitherLegCouldPay() public {
+        bytes32 flex = _epochOf(1, _one(1), 41, keccak256("tie-flexible"));
+        vm.warp(vm.getBlockTimestamp() + 1);
+        bytes32 freshOnly = _epochOf(1, _one(1), 42, keccak256("tie-fresh-only"));
+        _attest(42, 1, 0);
+        vm.warp(vm.getBlockTimestamp() + 1);
+        bytes32 recycledOnly = _epochOf(1, _one(1), 43, keccak256("tie-recycled-only"));
+        _attest(43, 0, 1);
+        (uint256 tf, uint256 tr, ) =
+            _alloc(1, 1, 1, type(uint256).max, type(uint256).max, type(uint256).max, 0, 0);
+        assertEq(tf, 1, "the fresh leg is covered");
+        assertEq(tr, 1, "and the recycled leg: the tie never costs coverage");
+        (uint256 af, uint256 ar) = _plannedLegs(1, 1, 1, flex);
+        assertEq(af, 0, "the flexible epoch does not take the fresh leg");
+        assertEq(ar, 1, "it takes recycled: its fresh alternative is the nearer one");
+        (uint256 bf, uint256 br) = _plannedLegs(1, 1, 1, freshOnly);
+        assertEq(bf, 1, "so the nearer capacity is the one consumed");
+        assertEq(br, 0);
+        (uint256 cf, uint256 cr) = _plannedLegs(1, 1, 1, recycledOnly);
+        assertEq(cf + cr, 0, "and the later epoch is spared for its other day");
     }
 
     /// @dev The preview's overlay holds every draw of a chunk and grows as it
@@ -1301,7 +1285,7 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         _epoch().epochPruneTransportDayCursor(1);
         (, , , uint256 c4) = _epoch().getTransportDayBatches(1, 0, 0);
         assertEq(c4, total, "cursor == total reads the day exhausted, on an empty page");
-        (, , bytes32 node, ) = _epoch().getTransportDayIndex(1);
+        (, bytes32 node) = _epoch().getTransportDayIndex(1);
         assertEq(node, hs[2], "the node itself, from the day-index view");
     }
 
@@ -1453,44 +1437,6 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         // count starts at zero; a test is one transaction, so clear it.
         _mut().resetTransportDrawWritesRaw();
         assertEq(_claim(), NEED, "the next transaction pays the third day");
-    }
-
-    /// @dev A day indexed before the list switches to the list only once its
-    ///      consumption count has been carried over exactly (Codex #2276 r14
-    ///      P2): a hundred exhausted epochs, the array cursor at a hundred;
-    ///      the catch-up links every page, one bounded prune carries
-    ///      sixty-four over, the day still reads its array — cursor a hundred
-    ///      throughout — and the next call's prune completes the conversion
-    ///      with the same figure on the list.
-    function test_APreListDay_SwitchesToTheListOnlyWithAnExactCursor() public {
-        for (uint256 i; i < 100; ++i) {
-            bytes32 h = _epochOf(1, _one(1), 100 + i, keccak256(abi.encode("gone", i)));
-            _mut().parkTransportBatchRaw(h);
-            vm.warp(vm.getBlockTimestamp() + 1);
-        }
-        _mut().resetTransportDayListRaw(1);
-        _epoch().epochPruneTransportDayCursor(1);
-        assertEq(_cursor(1), 64, "the array prune: one window");
-        _epoch().epochPruneTransportDayCursor(1);
-        (, , uint256 total, uint256 cursor) = _epoch().getTransportDayBatches(1, 0, 0);
-        assertEq(cursor, total, "the array cursor: the day is exhausted");
-        bool converted;
-        uint256 linked;
-        for (uint256 i; i < 4; ++i) {
-            (linked, , converted) = _epoch().epochLinkTransportDayIndex(1, new bytes32[](0));
-            assertEq(_cursor(1), 100, "exact throughout the catch-up");
-        }
-        assertEq(linked, 100, "every member linked");
-        assertFalse(converted, "one bounded prune cannot carry a hundred over: still the array");
-        (, , , bool listed) = _epoch().getTransportDayIndex(1);
-        assertFalse(listed);
-        (, , converted) = _epoch().epochLinkTransportDayIndex(1, new bytes32[](0));
-        assertTrue(converted, "the next prune stops short of its bound: converted");
-        assertEq(_cursor(1), 100, "and the list's own count is the same exact figure");
-        (, , , listed) = _epoch().getTransportDayIndex(1);
-        assertTrue(listed);
-        (bytes32[] memory page, , ) = _epoch().getTransportDayBatchesFrom(1, bytes32(0), 3);
-        assertEq(page.length, 3, "the list is read now");
     }
 
     /// @dev An attestation that finds a classification already past its cap

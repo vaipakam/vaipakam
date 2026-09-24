@@ -1746,59 +1746,34 @@ library LibRewardCustody {
         // among the epochs after the cursor, and the cursor never moves back
         // (r11, r12).
         //
-        // A day indexed before the list existed holds its members in the
-        // array alone (Codex #2276 r8 P1): such a day is read from the array
-        // until {linkTransportDayIndex} has caught the list up, and a new
-        // member joins the ARRAY only, so the list stays a prefix of the array
-        // and the day never reads two partial sources.
+        // EVERY member is linked as it is pushed (Codex #2296 items 2 and
+        // 4), so a day's list holds it whole from its first member and there
+        // is no second read source to reconcile: the array is the membership
+        // set, the list is the order.
         uint64 arrived = s.ingressPackets[batchId].arrivedAt;
         bool hinted = hints.length != 0;
         for (uint256 i = done; i < end; ++i) {
             uint256 d = dayIds[i];
-            bool listed = transportDayListed(s, d);
             s.transportBatchesByDay[d].push(batchId);
-            if (listed) {
-                _linkIntoDay(s, d, batchId, arrived, hinted ? hints[i] : bytes32(0), hinted);
-                s.transportDayLinked[d] = s.transportBatchesByDay[d].length;
-                // A day born under the list has nothing to convert.
-                if (!s.transportDayConverted[d]) s.transportDayConverted[d] = true;
-            }
+            _linkIntoDay(s, d, batchId, arrived, hinted ? hints[i] : bytes32(0), hinted);
         }
         indexedDays = uint32(end);
         b.indexedDays = indexedDays;
         emit TransportBatchPageIndexed(batchId, indexedDays, b.dayCount);
     }
 
-    /// @dev Where a day's scan starts — after its cursor, on the list once it
-    ///      holds the day whole, else on the array from its array cursor —
-    ///      and how it steps: the ONE source every read of a day's epochs
-    ///      walks (the plan's skip and window, and {transportDayScanIds}).
+    /// @dev Where a day's scan starts: the first node AFTER its cursor in the
+    ///      day's order — the ONE source every read of a day's epochs walks
+    ///      (the plan's skip and window, and {transportDayScanIds}). There is
+    ///      no second source to choose between: the list holds every day whole
+    ///      (Codex #2296 items 2 and 4), and a scan steps with the list's own
+    ///      `transportDayNext`, so no step helper is needed either.
     function _scanStart(
         LibVaipakam.Storage storage s,
         uint256 dayId
-    ) private view returns (bool listed, uint256 pos, bytes32 node) {
-        listed = transportDayListed(s, dayId);
-        if (listed) {
-            bytes32 cur = s.transportDayCursorNode[dayId];
-            node = cur == bytes32(0) ? s.transportDayHead[dayId] : s.transportDayNext[dayId][cur];
-        } else {
-            bytes32[] storage arr = s.transportBatchesByDay[dayId];
-            pos = s.transportDayCursor[dayId];
-            node = pos < arr.length ? arr[pos] : bytes32(0);
-        }
-    }
-
-    function _scanNext(
-        LibVaipakam.Storage storage s,
-        uint256 dayId,
-        bool listed,
-        uint256 pos,
-        bytes32 node
-    ) private view returns (uint256, bytes32) {
-        if (listed) return (pos, s.transportDayNext[dayId][node]);
-        bytes32[] storage arr = s.transportBatchesByDay[dayId];
-        unchecked { ++pos; }
-        return (pos, pos < arr.length ? arr[pos] : bytes32(0));
+    ) private view returns (bytes32 node) {
+        bytes32 cur = s.transportDayCursorNode[dayId];
+        node = cur == bytes32(0) ? s.transportDayHead[dayId] : s.transportDayNext[dayId][cur];
     }
 
     /// @notice The batch ids a plan of `dayId` can look up in an overlay: the
@@ -1811,86 +1786,18 @@ library LibRewardCustody {
         LibVaipakam.Storage storage s,
         uint256 dayId
     ) internal view returns (bytes32[] memory ids) {
-        (bool listed, uint256 pos, bytes32 node) = _scanStart(s, dayId);
+        bytes32 node = _scanStart(s, dayId);
         bytes32[] memory buf = new bytes32[](2 * TRANSPORT_DRAW_SCAN_CAP);
         uint256 n;
         while (node != bytes32(0) && n < buf.length) {
             buf[n] = node;
             unchecked { ++n; }
-            (pos, node) = _scanNext(s, dayId, listed, pos, node);
+            node = s.transportDayNext[dayId][node];
         }
         assembly ("memory-safe") {
             mstore(buf, n)
         }
         ids = buf;
-    }
-
-    /// @dev Whether day `d`'s list holds every member of its array — false
-    ///      for a day indexed before the list existed until a link has caught
-    ///      it up (Codex #2276 r8 P1). While false the day is read from the
-    ///      array, as it was before the list.
-    function _dayLinked(LibVaipakam.Storage storage s, uint256 d) private view returns (bool) {
-        return s.transportDayLinked[d] == s.transportBatchesByDay[d].length;
-    }
-
-    /// @notice Whether day `d` is read from its LIST: the list holds every
-    ///         member AND the day's consumption count has been carried over
-    ///         to the list's order (Codex #2276 r14 P2) — or the day has no
-    ///         member yet and is born under the list. Until then the day is
-    ///         read from its array, whose cursor is exact.
-    function transportDayListed(LibVaipakam.Storage storage s, uint256 d) internal view returns (bool) {
-        if (!_dayLinked(s, d)) return false;
-        return s.transportDayConverted[d] || s.transportBatchesByDay[d].length == 0;
-    }
-
-    /// @notice Link the next entries of day `dayId`'s membership array into
-    ///         its ordered list — the catch-up for a day indexed before the
-    ///         list existed (Codex #2276 r8 P1). Permissionless, idempotent,
-    ///         and bounded: with no hints, up to `TRANSPORT_INDEX_PAGE`
-    ///         entries, each placed by the bounded walk back from the newest
-    ///         (which refuses past `TRANSPORT_INDEX_WALK_CAP`, exactly as an
-    ///         unhinted materialization does); with hints, exactly
-    ///         `hints.length` entries — clamped to what remains — each after
-    ///         its named predecessor (zero = at the head), verified.
-    /// @dev    Entries link in array order, so the list is always a PREFIX
-    ///         of the array and `transportDayLinked` its length. When the
-    ///         last entry links, the day's cursor is derived over the ORDER
-    ///         by the same prune every draw performs: the array cursor
-    ///         counted leading exhausted entries in array order, which is not
-    ///         a position in the list.
-    /// @return linked    How many entries the list now holds.
-    /// @return total     How many the array holds.
-    /// @return converted Whether the day now reads from its list.
-    function linkTransportDayIndex(
-        LibVaipakam.Storage storage s,
-        uint256 dayId,
-        bytes32[] memory hints
-    ) internal returns (uint256 linked, uint256 total, bool converted) {
-        bytes32[] storage arr = s.transportBatchesByDay[dayId];
-        total = arr.length;
-        linked = s.transportDayLinked[dayId];
-        if (linked < total) {
-            bool hinted = hints.length != 0;
-            uint256 to = linked + (hinted ? hints.length : TRANSPORT_INDEX_PAGE);
-            if (to > total) to = total;
-            for (uint256 i = linked; i < to; ++i) {
-                bytes32 id = arr[i];
-                _linkIntoDay(s, dayId, id, s.ingressPackets[id].arrivedAt, hinted ? hints[i - linked] : bytes32(0), hinted);
-            }
-            s.transportDayLinked[dayId] = to;
-            linked = to;
-        }
-        // The CONVERSION (Codex #2276 r14 P2): once the list holds every
-        // member, its consumption count is carried over by the ordinary
-        // bounded prune, one window per call, and the day switches to the
-        // list only when a prune stops short of its bound — until then the
-        // day keeps reading from its array, whose cursor is exact, so what
-        // it reports never changes at the switch. The array's count is not
-        // the list's: the two orders differ, so it cannot be copied over.
-        if (linked == total && !s.transportDayConverted[dayId]) {
-            if (_pruneList(s, dayId) < TRANSPORT_DRAW_SCAN_CAP) s.transportDayConverted[dayId] = true;
-        }
-        converted = s.transportDayConverted[dayId];
     }
 
     /// @dev Whether the day's cursor has passed `node` (Codex #2276 r12 P1).
@@ -2266,12 +2173,11 @@ library LibRewardCustody {
         uint256[] memory ovFresh,
         uint256[] memory ovRecycled
     ) internal view returns (TransportDrawPlan memory plan) {
-        // The window's source is the day's list once it holds every member,
-        // else the membership array from its array cursor — a day indexed
-        // before the list existed, read as it was (Codex #2276 r8 P1). One
-        // scan either way.
-        (bool listed, uint256 pos, bytes32 node) = _scanStart(s, dayId);
-        bytes32[] storage arr = s.transportBatchesByDay[dayId];
+        // The window's source is the day's ORDER from its cursor: the list,
+        // which holds every day whole (Codex #2296 items 2 and 4). One scan,
+        // one source, and so no case in which a window could be a prefix of
+        // one order and not of another.
+        bytes32 node = _scanStart(s, dayId);
         // A day this dry run has already settled had its cursor advanced by
         // the live draw's prune before the next side read it (Codex #2276 r9
         // P2): mirror that here — pass the leading epochs exhausted net of
@@ -2283,21 +2189,9 @@ library LibRewardCustody {
             while (settled != 0 && node != bytes32(0) && passed < TRANSPORT_DRAW_SCAN_CAP) {
                 (uint256 f, uint256 r) = overlayOf(ovIds, ovFresh, ovRecycled, node);
                 if (!_exhaustedNet(s, node, f, r)) break;
-                (pos, node) = _scanNext(s, dayId, listed, pos, node);
+                node = s.transportDayNext[dayId][node];
                 unchecked { ++passed; }
             }
-        }
-        // A day indexed before the list and wider than one window cannot be
-        // read from its array by the rule (Codex #2276 r9 P1): a window is a
-        // prefix of the ORDER, and the array is not one, so a window of it
-        // could hold a wide epoch and miss an older or narrower one behind
-        // it. Such a day defers — nothing is drawn, nothing falls to the
-        // shared sources — until its array cursor has passed enough exhausted
-        // members or the link has caught the list up; within one window the
-        // array holds every remaining member and the rule reads the same set.
-        if (!listed && arr.length - pos > TRANSPORT_DRAW_SCAN_CAP) {
-            plan.capHit = true;
-            return plan;
         }
         bytes32[] memory ids = new bytes32[](TRANSPORT_DRAW_SCAN_CAP);
         uint256[] memory bals = new uint256[](TRANSPORT_DRAW_SCAN_CAP);
@@ -2318,9 +2212,9 @@ library LibRewardCustody {
                     uint256 key = (uint256(b.dayCount) << 64) | uint256(s.ingressPackets[node].arrivedAt);
                     // The batch id is the final tie-break, so the plan's
                     // order is a function of the SET in the window and not
-                    // of the order it was scanned in (Codex #2276 r9 P1): a
-                    // day read from its array and the same day read from
-                    // its list plan identically.
+                    // of the order it was scanned in (Codex #2276 r9 P1) —
+                    // which is what let the pre-list read path be removed
+                    // without changing any plan (Codex #2296 items 2 and 4).
                     uint256 k = live;
                     while (k != 0 && (keys[k - 1] > key || (keys[k - 1] == key && ids[k - 1] > node))) {
                         ids[k] = ids[k - 1];
@@ -2343,7 +2237,7 @@ library LibRewardCustody {
                     unchecked { ++live; }
                 }
             }
-            (pos, node) = _scanNext(s, dayId, listed, pos, node);
+            node = s.transportDayNext[dayId][node];
             unchecked { ++seen; }
         }
         plan.capHit = node != bytes32(0);
@@ -2414,7 +2308,10 @@ library LibRewardCustody {
     ///         its exclusive capacities first (they cost the other leg
     ///         nothing), then its flexible remainder to the demand the LATER
     ///         epochs' exclusive capacities cannot meet — fresh first — and
-    ///         only then to the rest, fresh first. So an epoch's flexible
+    ///         only then to the rest, and the REST goes to the leg whose next
+    ///         capacity in the suffix comes LATEST rather than to fresh by
+    ///         default (#2296 item 1), so a flexible unit spends the nearer
+    ///         alternative and spares the further epoch. So an epoch's flexible
     ///         balance is held back from a leg exactly where a later epoch's
     ///         capacity for the other leg could not otherwise be used, which
     ///         is the reservation the cut bound on two sources requires; with
@@ -2435,14 +2332,26 @@ library LibRewardCustody {
         uint256 n = plan.ids.length;
         t.fresh = new uint256[](n);
         t.recycled = new uint256[](n);
-        // The exclusive capacities of the epochs AFTER each position.
+        // The exclusive capacities of the epochs AFTER each position, and
+        // WHERE each leg's next capacity lies: `nextCap[k]` packs the smallest
+        // index at or after k that could serve fresh (high half) and the same
+        // for recycled (low half), with `n` meaning none does. Packed into one
+        // array rather than two because this frame sits at the viaIR stack
+        // budget, and built in the same backward pass (Codex #2296 item 1).
         uint256[] memory sufF = new uint256[](n + 1);
         uint256[] memory sufR = new uint256[](n + 1);
+        uint256[] memory nextCap = new uint256[](n + 1);
+        nextCap[n] = (n << 128) | n;
         for (uint256 k = n; k > 0; ) {
             unchecked { --k; }
             (uint256 xF, uint256 xR) = _exclusive(plan, k);
             sufF[k] = sufF[k + 1] + xF;
             sufR[k] = sufR[k + 1] + xR;
+            uint256 ahead = nextCap[k + 1];
+            uint256 bal = plan.bals[k];
+            nextCap[k] =
+                ((plan.freshRoom[k] != 0 && bal != 0 ? k : ahead >> 128) << 128)
+                | (plan.recycledRoom[k] != 0 && bal != 0 ? k : ahead & type(uint128).max);
         }
         for (uint256 k; k < n && askFresh + askRecycled != 0; ) {
             (uint256 f, uint256 r) = _exclusive(plan, k);
@@ -2452,13 +2361,29 @@ library LibRewardCustody {
             uint256 roomF = plan.freshRoom[k] - f;
             uint256 roomR = plan.recycledRoom[k] - r;
             // The flexible remainder: first to what the later epochs'
-            // exclusive capacity cannot meet, then to the rest; fresh first.
+            // exclusive capacity cannot meet — the round-12 reservation,
+            // unchanged — and then the REST to the leg whose next capacity in
+            // the suffix comes LATEST, so the earliest later capacity is the
+            // one consumed and the later epoch is preserved (Codex #2276 r17
+            // P1, arrested per #2296 item 1). The retired rule spent the rest
+            // fresh-first, which on plan-ordered A = flexible 1, B = fresh-only
+            // 1, C = recycled-only 1 asked 1F/1R paid A to fresh and C to
+            // recycled, where A to recycled and B to fresh covers exactly as
+            // much and leaves C — which may list another day — untouched.
+            // A leg with no later capacity carries the sentinel `n`, the
+            // latest index of all, so it is served now: the reservation's own
+            // rule, reached by this one comparison.
             uint256 needF = askFresh - f > sufF[k + 1] ? askFresh - f - sufF[k + 1] : 0;
             uint256 pf = _min3(needF, left, roomF);
             uint256 needR = askRecycled - r > sufR[k + 1] ? askRecycled - r - sufR[k + 1] : 0;
             uint256 pr = _min3(needR, left - pf, roomR);
-            pf += _min3(askFresh - f - pf, left - pf - pr, roomF - pf);
-            pr += _min3(askRecycled - r - pr, left - pf - pr, roomR - pr);
+            if ((nextCap[k + 1] >> 128) >= (nextCap[k + 1] & type(uint128).max)) {
+                pf += _min3(askFresh - f - pf, left - pf - pr, roomF - pf);
+                pr += _min3(askRecycled - r - pr, left - pf - pr, roomR - pr);
+            } else {
+                pr += _min3(askRecycled - r - pr, left - pf - pr, roomR - pr);
+                pf += _min3(askFresh - f - pf, left - pf - pr, roomF - pf);
+            }
             f += pf;
             r += pr;
             t.fresh[k] = f;
@@ -2821,16 +2746,13 @@ library LibRewardCustody {
         return keccak256(abi.encode("vaipakam.transport.day-settled", dayId));
     }
 
+    /// @dev The day's prune: pass up to one window of leading exhausted nodes
+    ///      in the day's order, marking each, keeping the node cursor and its
+    ///      position. One implementation over one source (Codex #2296 items 2
+    ///      and 4) — the array-ordered twin this had, and the conversion that
+    ///      read its step count, are gone with the pre-list read path.
     function _pruneTransportDayCursor(LibVaipakam.Storage storage s, uint256 dayId) private returns (bool moved) {
-        if (!transportDayListed(s, dayId)) return _pruneArrayCursor(s, dayId);
-        return _pruneList(s, dayId) != 0;
-    }
-
-    /// @dev The list's prune: pass up to one window of leading exhausted
-    ///      nodes, marking each, keeping the node cursor and its position.
-    ///      Returns how many were passed — equal to the bound when there may
-    ///      be more (the conversion reads that).
-    function _pruneList(LibVaipakam.Storage storage s, uint256 dayId) private returns (uint256 steps) {
+        uint256 steps;
         bytes32 cur = s.transportDayCursorNode[dayId];
         bytes32 node = cur == bytes32(0) ? s.transportDayHead[dayId] : s.transportDayNext[dayId][cur];
         while (node != bytes32(0) && steps < TRANSPORT_DRAW_SCAN_CAP && _exhaustedForCursor(s, node)) {
@@ -2847,26 +2769,8 @@ library LibRewardCustody {
             // The position is kept beside the node (Codex #2276 r11 P2): the
             // cursor only advances, so the count of leading exhausted epochs
             // is exact for the cost of this write, and the lens reads it.
-            s.transportDayListCursor[dayId] += steps;
+            s.transportDayCursor[dayId] += steps;
             emit TransportDayCursorAdvanced(dayId, cur);
-        }
-    }
-
-    /// @dev The array cursor of a day the list does not yet hold whole (Codex
-    ///      #2276 r8 P1): the same rule over array positions, the event
-    ///      naming the last entry passed.
-    function _pruneArrayCursor(LibVaipakam.Storage storage s, uint256 dayId) private returns (bool moved) {
-        bytes32[] storage arr = s.transportBatchesByDay[dayId];
-        uint256 cursor = s.transportDayCursor[dayId];
-        uint256 i = cursor;
-        uint256 end = i + TRANSPORT_DRAW_SCAN_CAP;
-        if (end > arr.length) end = arr.length;
-        while (i < end && _exhaustedForCursor(s, arr[i])) {
-            unchecked { ++i; }
-        }
-        if (i != cursor) {
-            s.transportDayCursor[dayId] = i;
-            emit TransportDayCursorAdvanced(dayId, arr[i - 1]);
             moved = true;
         }
     }

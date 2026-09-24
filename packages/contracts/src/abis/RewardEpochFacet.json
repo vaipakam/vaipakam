@@ -67,40 +67,6 @@
   },
   {
     "type": "function",
-    "name": "epochLinkTransportDayIndex",
-    "inputs": [
-      {
-        "name": "dayId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "hints",
-        "type": "bytes32[]",
-        "internalType": "bytes32[]"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "linked",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "total",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "converted",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "epochPruneTransportDayCursor",
     "inputs": [
       {
@@ -445,11 +411,6 @@
     ],
     "outputs": [
       {
-        "name": "linked",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
         "name": "total",
         "type": "uint256",
         "internalType": "uint256"
@@ -458,11 +419,6 @@
         "name": "cursor",
         "type": "bytes32",
         "internalType": "bytes32"
-      },
-      {
-        "name": "converted",
-        "type": "bool",
-        "internalType": "bool"
       }
     ],
     "stateMutability": "view"
