@@ -1,0 +1,13 @@
+{
+  "name": "@vaipakam/fork-scenarios",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Advanced-user scenario driver against a local fork of a live Vaipakam deployment.",
+  "scripts": {
+    "scenarios": "node run-all.mjs"
+  },
+  "dependencies": {
+    "viem": "^2.56.8"
+  }
+}
