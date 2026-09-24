@@ -13,12 +13,12 @@ needs no Solidity compiler: it reads the committed per-facet ABIs, so the
 compiler stays the single source of truth for every decode while the driver
 itself is plain Node.
 
-The run now covers one hundred and eight scenarios across the whole advanced
+The run now covers one hundred and nineteen scenarios across the whole advanced
 surface — offer creation and escrow, accept and the loan-initiation fee,
 repayment and the treasury's interest cut, the borrower's collateral claim,
 time-based default, health-factor liquidation, preclose, partial repayment,
 lender exit by listing and by direct sale, releasing surplus collateral mid-loan, refinance,
-the offset and obligation-handover exits, periodic interest, and the sanctions, KYC and
+the offset and obligation-handover exits, periodic interest, NFT rental, and the sanctions, KYC and
 illiquid-asset gates. The
 fee and health-factor behaviour reconciles exactly against the specification,
 including the per-loan fee stamps that stop a governance retune re-pricing an
@@ -80,6 +80,15 @@ monthly cadence needs a principal of at least one hundred thousand in the
 numeraire — and it closes an unpaid period by selling just enough collateral,
 with a settler bonus and treasury fee, while the loan stays open. A period the
 borrower pays voluntarily is closed by that payment itself.
+
+NFT rental was checked against the functional specification rather than the
+code, and matched it point for point: the NFT sits in the lender's own vault
+throughout, the renter holds only the right to use it and never custody, rent
+is prepaid with a five-percent buffer, and an early close pays the lender
+exactly the days used while returning the unused rent and the whole buffer to
+the renter — conserving every unit across the rental's life. A rental reports
+no health factor, but through a different refusal than an illiquid-collateral
+loan does, so any surface showing health factor has to recognise both.
 
 On the middle two of the four findings, the connected app was checked afterwards rather than
 assumed, and already honours both: the early-repay card reads the loan's

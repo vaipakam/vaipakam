@@ -9,7 +9,7 @@ configuration — not the source tree's idea of them.
   84532 (Base Sepolia), forked at block 47,228,632.
 - **Driver** — [`contracts/script/fork-scenarios/`](../../contracts/script/fork-scenarios/README.md),
   committed with this document. `node run-all.mjs` reproduces every row.
-- **Result** — 108 scenarios: **103 PASS, 5 INFO, 0 FAIL.** The INFOs are
+- **Result** — 119 scenarios: **113 PASS, 6 INFO, 0 FAIL.** The INFOs are
   observations with no assertion behind them, not soft failures; each is
   written out below.
 - **Assets** — the deployment's own faucet mocks: `tLIQ` priced $2,000,
@@ -399,6 +399,41 @@ and put back afterwards (confirmed `false` after the run):
   itself. That is recorded as observed behaviour, not as a divergence — the
   natspec's path may cover repayments made before the boundary.
 
+## 3C. NFT rental, checked against the spec rather than the code
+
+The oracle for this section is `docs/FunctionalSpecs/ProjectDetailsREADME.md`
+— its ERC-721 rental model and its "NFT Rental Outcome" — and every point it
+states was observed:
+
+| The spec says | Observed |
+| --- | --- |
+| the NFT is held in a Vaipakam vault during the rental | listing moves it into the **lender's own vault**; it stays there throughout |
+| the renter gets only the ERC-4907 `user` right and never custody | `userOf` = renter, `ownerOf` = the lender's vault |
+| rent is prepaid, plus a buffer | 73.5 up front = 70 (7 days × 10) + 3.5 (5% buffer), into the **renter's own vault** |
+| on an early close the lender is owed the rent due | closed on day 3: **30** taken (3 × 10) — lender 29.4, treasury 0.6 (2%) |
+| the renter is owed the unused prepayment and the buffer | renter reclaimed **43.5** = 40 unused rent + the full 3.5 buffer |
+| the `user` right is revoked; the NFT stays in custody | `userOf` → zero address after the close, `ownerOf` unchanged |
+| after claims the positions settle | lender's claim returns the NFT to the lender's wallet |
+
+Across the rental's whole life the prepay token is **conserved to the wei**:
+the renter's net cost was exactly three days' rent, split lender/treasury,
+with nothing created or lost.
+
+Two further points:
+
+- **A rented NFT needs the renter's explicit acknowledgement.** Accepting
+  without naming the NFT in the acknowledgement is refused
+  (`IlliquidAssetNotAcknowledged`) — the same dual-consent gate as illiquid
+  collateral (§4.3), here applied to the *lent* asset.
+- **A rental has no health factor, and says so with a DIFFERENT error.**
+  `calculateHealthFactor` on a rental returns `InvalidLoan()`, where an
+  illiquid-collateral loan returns `IlliquidLoanNoRiskMath()`. Both are
+  honest refusals, but a surface rendering HF must handle both names — one
+  "not applicable" state reached by two refusals. This also resolves an
+  observation from the start of this session: an active loan that answered
+  `InvalidLoan()` with zero collateral was an NFT rental behaving correctly,
+  not a defect.
+
 ## 4. The three gates
 
 ### 4.1 Sanctions — the Tier-1 / Tier-2 split works exactly as documented
@@ -554,12 +589,14 @@ regenerated as `contracts/script/fork-scenarios/last-run.json` on every run
 | A7.* | `07-offset-and-handover.mjs` | the offset route's automatic completion, obligation handover |
 | A8.* | `08-lender-exit.mjs` | the lender's listed sale through to completion, and the direct sale |
 | A9.* | `09-periodic-interest.mjs` | periodic interest: the dormant posture, admission rules, both settlement paths |
+| A10.* | `10-nft-rental.mjs` | ERC-721 rental against the spec's custody-vs-use model, early close, claims |
 
 The `INFO` rows are: the live facet count (A1.6, an observation feeding §5),
 the depth-floor flip (A3.10, written up as a finding in §2.4), and the two
 post-claim NFT readbacks (A2.16, written up in §1.4), and the offset
 vehicle's offer type (A7.2b, written up in §3A.3; its mirror, the sale
-vehicle, is asserted as A8.1). A3.2 records this
+vehicle, is asserted as A8.1), and a rental's health-factor refusal (A10.5,
+written up in §3C). A3.2 records this
 deployment's effective grace window (3 days) rather than asserting it, since
 the window is per-deployment config — what the suite asserts there is the
 ORDERING A3.1 → A3.3, not that any particular day lands inside grace.
