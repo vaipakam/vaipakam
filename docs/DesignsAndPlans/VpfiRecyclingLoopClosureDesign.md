@@ -523,8 +523,9 @@ tariff were scheduled as four independent absorption channels within one
 release cycle of each other — the flywheel no longer depending on any single
 attach rate. **Count three, not four, until the arming fee is armed** (marker
 above, 2026-09-24): the bond channel's permanent absorption is the fee, the
-fee stays at zero until its own glance is recorded, and that glance has no
-schedule. A zero fee absorbs nothing, so planning that counts it is planning
+fee stays at zero until its own gate is satisfied on EITHER branch — the
+bounded legal glance or a recorded owner approval of the fee shape — and
+neither has a schedule. A zero fee absorbs nothing, so planning that counts it is planning
 against a channel that is shipped but inert.
 
 ### RL-6 — Legal evidence pack + copy rules — ADOPT (docs only)
