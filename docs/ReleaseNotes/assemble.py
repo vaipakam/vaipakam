@@ -1954,6 +1954,47 @@ class Assembly:
     # ── markerless duplicate-heading guard ───────────────────────────────
 
     def check_markerless_duplicates(self) -> None:
+        """A HEURISTIC over LEGACY files, and it is scoped as one (#2299).
+
+        The sound mechanism for "was this fragment already folded in?" is the
+        assembly marker: `build()` writes one per fragment carrying its
+        sha256, and where markers exist nothing has to be guessed. This exists
+        only because 61 of the 84 dated files predate markers, so for those
+        the file cannot answer the question about itself.
+
+        WHAT IT CANNOT DO, stated rather than implied. It does not survive an
+        EDIT to the published copy. Reword a published section and its pending
+        fragment stops matching, so a rerun appends a second copy and consumes
+        the source — the one outcome here that loses work rather than refusing.
+        That is #2298, and it is not a defect in this implementation: no
+        comparison of two texts can distinguish "not yet published" from
+        "published, then edited". Only a marker can, by recording what was
+        published. The residual is intrinsic, and it shrinks as files gain
+        markers.
+
+        ITS ENCODING LIMIT IS REAL AND NO LONGER LOSES WORK — measured, not
+        assumed (#2299). `HEADING_RE` is a byte pattern, so a UTF-16 heading
+        is invisible to it and such a fragment is NOT matched here. #2299 was
+        filed on the premise that this loses a fragment. It no longer can,
+        because `check_heading_conformance` refuses any fragment whose opening
+        line is not a recognisable ATX heading (#2295), so one this cannot
+        parse cannot be published either. Verified by disabling the alternative
+        and re-running: the fragment is refused, retained, and not duplicated.
+
+        THAT SAFETY DEPENDS ON THE ORDER OF TWO CHECKS, so do not reorder them
+        casually. This runs BEFORE `check_heading_conformance`; a fragment
+        this misses is caught there instead. Were conformance ever relaxed to
+        allow an unparseable opener, or moved after this, the miss would
+        become a data-loss path again and this guard would need an
+        encoding-agnostic arm.
+
+        An encoding-agnostic arm — comparing the fragment's whole published
+        text rather than a parsed heading — was built and REMOVED before
+        merge. It changed the refusal MESSAGE and never the outcome: every
+        case it was supposed to rescue was already refused by conformance, and
+        a mutation test showed disabling it turned nothing red. Do not
+        reintroduce it without first establishing a case it actually decides.
+        """
         if not os.path.isfile(self.out) or self.out_copy is None:
             return
         base = os.path.basename(self.out)
