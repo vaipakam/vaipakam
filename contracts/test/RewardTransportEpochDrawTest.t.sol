@@ -349,6 +349,26 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         assertEq(_balance(h), 10e18 - NEED, "and the rest stays for the later day");
     }
 
+    /// @dev A shared epoch is last-resort for EVERY day it lists, earlier as
+    ///      well as later (Codex #2276, the round after the tier landed). The
+    ///      tier first protected only LATER days, which let a batch listing
+    ///      days 1 and 2 be spent transport-first for day 2 while another
+    ///      claimant's day-1 obligation could still need it — a contested draw.
+    ///      With live funding able to pay each day, the allocator must draw the
+    ///      shared epoch for NEITHER day.
+    function test_ASharedEpoch_IsLastResort_ForEveryDayItLists() public {
+        _epochOf(NEED, _two(1, 2), 2, keccak256("shared-both-ways"));
+        (uint256 tf1, uint256 tr1, ) =
+            _alloc(1, NEED, 0, type(uint256).max, type(uint256).max, type(uint256).max, NEED, 0);
+        assertEq(tf1 + tr1, 0, "day 1: live can pay, so the shared epoch is spared");
+        (uint256 tf2, uint256 tr2, ) =
+            _alloc(2, NEED, 0, type(uint256).max, type(uint256).max, type(uint256).max, NEED, 0);
+        assertEq(tf2 + tr2, 0, "day 2 as well: an EARLIER listed day protects it too");
+        // Where nothing else can pay, it still pays the gap, for either day.
+        (tf2, , ) = _alloc(2, NEED, 0, type(uint256).max, type(uint256).max, type(uint256).max, 0, 0);
+        assertEq(tf2, NEED, "and it still funds the day when it is the only source");
+    }
+
     function test_AShortEpochPaysWhatItHolds_TheLedgerTheRest_AndIsRetired() public {
         _scene(NEED);
         _liveOf(1e18, _one(1), 1, keccak256("live"));

@@ -170,26 +170,28 @@ epoch paid retires its commitment the way a forfeit's does — without a
 bucket debit, since the bucket never paid it — so what the mirror reports
 as fundable is not depressed by obligations that have already ended.
 
-**An epoch that lists a later day is drawn last.** Transport-first applies
-only to an epoch whose listed days all lie at or before the day being paid.
-An epoch that also lists a LATER day is spent only for what that day's live
-delivery and bucket cannot cover, and is otherwise left whole for the later
-day. Without this, an early day would drain a shared epoch transport-first
-and leave the later day unfunded even though other funding had covered the
-early one. When nothing else can pay, the shared epoch still pays exactly
-the day's gap, so the rule protects the later day without ever refusing a
-day that only that epoch can fund.
+**An epoch shared with another day is drawn last.** Transport-first applies
+only to an epoch that lists the day being paid and no other. An epoch that
+also lists any OTHER day, earlier or later, is spent only for what the paid
+day's live delivery and bucket cannot cover, and is otherwise left whole for
+the other days. Without this, one day would drain a shared epoch
+transport-first and leave another day unfunded even though other funding had
+covered the first. When nothing else can pay, the shared epoch still pays
+exactly the day's gap, so the rule protects the other days without ever
+refusing a day that only that epoch can fund.
 
 This is deliberately broader than the design's own two rules, and the
 difference is recorded rather than hidden. The design draws an epoch last
 only when one of its listed days has not yet ARRIVED, and refuses outright
 a draw that another day's known unmet obligation is competing for. Neither
 condition can be checked yet: an epoch records how many days it lists but
-not which ones, and there is no per-day record of unmet obligations. "Lists
-a later day" covers both cases, and it errs in the safe direction: an epoch
-whose later day has already arrived is one the design would REFUSE, so
-drawing it last is more permissive than the design and far safer than the
-transport-first behaviour it replaces. The exact rules arrive with the
+not which ones, and there is no per-day record of unmet obligations. "Shared
+with another day" covers both cases, since each requires the epoch to list a
+second day, and it errs in the safe direction: where the other days have no
+outstanding claim, the design would draw the epoch transport-first, so
+drawing it last only changes which source pays first. An intermediate
+version of this change protected only LATER days, which left an earlier
+day's competing obligation exposed; it was replaced before release. The exact rules arrive with the
 contested-allocation machinery. An earlier draft of this note said the
 refusal was satisfied because "known" meant a staging reference and this
 release has none; that reading made the protection do nothing, and it was

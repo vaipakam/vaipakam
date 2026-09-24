@@ -1756,9 +1756,6 @@ library LibRewardCustody {
             uint256 d = dayIds[i];
             s.transportBatchesByDay[d].push(batchId);
             _linkIntoDay(s, d, batchId, arrived, hinted ? hints[i] : bytes32(0), hinted);
-            // The highest day this batch lists, for the arrival question the
-            // draw path asks (Codex #2276) — see {LibVaipakam.TransportBatch}.
-            if (d > b.maxListedDay) b.maxListedDay = uint64(d);
         }
         indexedDays = uint32(end);
         b.indexedDays = indexedDays;
@@ -2078,7 +2075,12 @@ library LibRewardCustody {
         ///      of every drawable epoch in the window.
         uint256 available;
         /// @dev How much of `available` sits in epochs drawn LAST: a batch that
-        ///      lists any day BEYOND the one being planned (Codex #2276).
+        ///      lists ANY day other than the one being planned, earlier or later
+        ///      (Codex #2276). An earlier revision protected only LATER days
+        ///      (`maxListedDay > dayId`) and called that a superset of both of
+        ///      the design's gates; it is not — a batch listing days 1 and 2,
+        ///      settled for day 2 while another claimant's day-1 obligation is
+        ///      unmet, is exactly a contested draw, and it went transport-first.
         ///
         ///      The design's own rule is narrower — it inverts transport-first
         ///      for a batch listing a day whose broadcast has NOT ARRIVED, and
@@ -2090,13 +2092,16 @@ library LibRewardCustody {
         ///      cumulative cursors are populated lazily, so they cannot serve as
         ///      an arrival frontier either.
         ///
-        ///      "Lists a day beyond this one" is a SUPERSET of both cases and
-        ///      needs only the highest day a batch lists. It is therefore sound
-        ///      in the safe direction: a later day that has in fact arrived makes
-        ///      the batch CONTESTED, which the design would REFUSE, so treating
-        ///      it as last-resort is more permissive than the design and far
-        ///      safer than the transport-first it replaces. The exact predicates
-        ///      arrive with 3c's machinery.
+        ///      "Lists any other day" IS a superset of both cases: an unarrived
+        ///      listed day and another day's competing obligation each require
+        ///      the batch to list a second day. It is the only sound test
+        ///      available locally, and it needs no stored field — `dayCount` is
+        ///      already on the batch. It errs safe: a multi-day batch whose other
+        ///      days have no outstanding claim is uncontested, and the design
+        ///      would draw it transport-first, so drawing it last is merely a
+        ///      funding-ORDER preference — live and the bucket pay first, and the
+        ///      batch still pays any gap, so no day is ever refused funding only
+        ///      it could give. The exact predicates arrive with 3c (#2318).
         ///
         ///      The design inverts transport-first for exactly those —
         ///      an arrived obligation may draw them only for what its other
@@ -2255,7 +2260,7 @@ library LibRewardCustody {
                     // what lets the single split serve both tiers without a
                     // per-epoch mask: the takes are spent in plan order, so the
                     // necessity tier is reached only once the rest is gone.
-                    bool nec = b.maxListedDay > dayId;
+                    bool nec = b.dayCount > 1;
                     uint256 key = (nec ? uint256(1) << 255 : 0)
                         | (uint256(b.dayCount) << 64)
                         | uint256(s.ingressPackets[node].arrivedAt);

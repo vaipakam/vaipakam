@@ -7891,27 +7891,6 @@ library LibVaipakam {
         ///      consumedRecycled + consumedBeyondCaps` holds, and the
         ///      close-out's disposition path is where the record is settled.
         uint256 consumedBeyondCaps;
-        /// @dev #1566 transport epochs PR 3b-ii-A, appended (Codex #2276) — the
-        ///      HIGHEST day id this batch lists, stamped as each page is
-        ///      materialized and never lowered.
-        ///
-        ///      It answers one question the draw path needs and could not
-        ///      otherwise ask: has every day this batch lists ARRIVED? A batch
-        ///      records `dayCount` but NOT which days, and the packet keeps only
-        ///      a `dayListHash` commitment, so the days are not enumerable from
-        ///      storage; the day index runs the other way. Against the
-        ///      CONTIGUOUS finalized frontier (the `cum*Cursor` pair, which halt
-        ///      at the first day without `knownGlobalSet`), one comparison
-        ///      answers it: every listed day is at or below this figure, so if
-        ///      this figure is within the frontier then all of them are. The
-        ///      highest day's own flag would NOT do — an earlier listed day
-        ///      could still be unset.
-        ///
-        ///      A lazily-lagging cursor makes the answer CONSERVATIVE (a batch
-        ///      whose days have in fact all arrived is treated as though one had
-        ///      not), which moves it to the necessity tier and is the safe
-        ///      direction.
-        uint64 maxListedDay;
     }
 
     /// @notice #1566 transport epochs PR 3b — a batch's PENDING REMAINDER:
