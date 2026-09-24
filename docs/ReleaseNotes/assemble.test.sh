@@ -4667,9 +4667,21 @@ check "and that it continues"      "$(says "$msg" 'not a refusal')"             
 # The r11 refusal named the byte-order mark and told the author to re-save the
 # file — and that edit is what made the markerless duplicate guard stop
 # recognising the already-published copy, losing a fragment twice. The general
-# rule names the LINE instead, so no remedy it suggests rewrites the evidence
-# another guard matches on. Same outcome for the author, reached without the
-# trap; and it covers UTF-16/32 for free, which the r11 clause never did.
+# rule names the LINE instead, so no remedy IT SUGGESTS rewrites the evidence
+# another guard matches on — which is what the `never says re-save` assertion
+# below pins, and it is the whole of the claim.
+#
+# IT IS NOT A CLAIM THAT THE TRAP IS OUT OF REACH (#2311 r3). An earlier
+# revision of this comment read "reached without the trap", which overstates
+# it by the distance between a message and an operator. For the UTF-16 case on
+# the next lines, re-saving as UTF-8 is the obvious reading of the refusal
+# even though the refusal never asks for it — and where the ALREADY-PUBLISHED
+# copy is the UTF-16 one, that re-save is exactly what stops the markerless
+# duplicate guard matching, so the next run appends a second copy and consumes
+# the source. "Covers UTF-16/32, which the r11 clause never did" is therefore
+# about the REFUSAL here, not about safety across the operator's remedy. That
+# two-run path is walked at `check_markerless_duplicates` and carried as
+# #2315; the assertions below deliberately test only the single run.
 case_start "T217m: a BOM-bearing fragment is refused for its opening line"
 W="$ROOT/t217m"; build "$W"
 printf '\xef\xbb\xbf## Thread — saved with a mark (PR #4249)\n' \

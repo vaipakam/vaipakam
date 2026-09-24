@@ -1711,9 +1711,21 @@ class Assembly:
             # (#2295) — as an unrecognised opening line, alongside every other
             # shape that is not an ATX heading, rather than by a clause of its
             # own. That is the difference that matters: the message names the
-            # line rather than the byte order mark, so it never tells an
+            # line rather than the byte order mark, so it never TELLS an
             # author to re-save the file, which is the edit that made the
             # markerless duplicate guard lose a fragment twice.
+            #
+            # THAT IS A CLAIM ABOUT THE MESSAGE, NOT ABOUT THE OPERATOR
+            # (#2311 r3). Not prescribing the destructive edit is not the same
+            # as putting it out of reach, and for a UTF-16 opener it is not
+            # out of reach at all: re-saving as UTF-8 is the obvious reading
+            # of "open with an ATX heading", and where the ALREADY-PUBLISHED
+            # copy is the UTF-16 one, that re-save is precisely what moves the
+            # two out of comparison — the next run matches nothing, appends a
+            # second copy and consumes the source. So this refusal does not
+            # survive its own remediation; what it stops doing is PRESCRIBING
+            # it. The two-run sequence is walked at
+            # `check_markerless_duplicates`, and closing it is #2315.
             # SPLIT THE SAME WAY `first_heading` DOES (#2295). These two scans
             # both answer "what is the first line of content", and if they
             # disagree about where a line ends, the `---` refusal below and the
@@ -2003,8 +2015,11 @@ class Assembly:
         loses work". That was wrong, and the counterexample is two runs rather
         than one — found in review and reproduced (#2311 r2). Take a legacy
         markerless dated file that ALREADY carries the fragment in UTF-16;
-        `build()` appends fragment bytes verbatim, so an interrupted
-        pre-marker run left exactly that, heading NUL-interleaved. Run one:
+        `build()` appends `rewrite_links(raw)`, and neither substitution it
+        makes (`](../../`, `](./`) can occur in NUL-interleaved text, so for
+        THIS fragment the published bytes are the fragment's own and an
+        interrupted pre-marker run left exactly that, heading
+        NUL-interleaved. Run one:
         this guard finds no heading to match, conformance refuses, and the
         operator is told to open with an ATX heading. They re-save the pending
         copy as UTF-8 — the obvious reading of that instruction. Run two:
@@ -2048,6 +2063,17 @@ class Assembly:
         original finding only ever exercised one run. Reintroducing the arm is
         still a behaviour change rather than a docstring one, so it is #2315
         — but it is now wanted, not warned against.
+
+        WHATEVER #2315 COMPARES, IT COMPARES AGAINST REWRITTEN BYTES (#2311
+        r3). `build()` publishes `rewrite_links(raw)`, so an arm comparing a
+        fragment's WHOLE text against the dated file must apply the same
+        substitution first, or every already-published fragment carrying a
+        `](../../` or `](./` link reads as unpublished — the guard failing to
+        match its own output, and appending a second copy for it. The
+        heading-anchored comparison shipped today is unaffected, since
+        neither substring can occur in an ATX marker; the constraint binds
+        exactly the whole-text shape #2315 is about. `first_heading` records
+        the same premise, and the same correction to it.
         """
         if not os.path.isfile(self.out) or self.out_copy is None:
             return
