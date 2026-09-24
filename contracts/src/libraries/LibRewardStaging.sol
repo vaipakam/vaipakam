@@ -404,6 +404,10 @@ library LibRewardStaging {
             b.consumedRecycled += cr;
             if (bf - cf + br - cr != 0) {
                 b.balance += bf - cf + br - cr;
+                // Back in its batch, so out of the staged earmark. The
+                // CONSUMED share stays earmarked: it is still owed to the
+                // claimant until the last page pays it (Codex #2308 r14).
+                LibRewardCustody.releaseStagedEarmark(s, bf - cf + br - cr);
                 emit StagingUnwoundBatch(id, key, bf - cf, br - cr);
             }
             if (cf + cr != 0) LibRewardCustody.spendUntypedForDraw(s, id, cf + cr);
@@ -441,6 +445,15 @@ library LibRewardStaging {
         uint256 liveUserRecycled = r.reservedLiveUserRecycled;
         uint256 forfeitRecycled = r.needTreasuryRecycled - r.epochTreasuryRecycled;
         uint256 freshSpend = r.reservedPoolCap;
+        // What the pages CONSUMED of the epochs is paid out below, so it
+        // leaves the staged earmark here and not a page earlier (Codex #2308
+        // r14): the budget the reservation assigned, less what the batches
+        // could not fill. Both terms are the record's own.
+        LibRewardCustody.releaseStagedEarmark(
+            s,
+            (r.epochUserFresh + r.epochTreasuryFresh - r.consumeFreshLeft)
+                + (r.epochUserRecycled + r.epochTreasuryRecycled - r.consumeRecycledLeft)
+        );
 
         // Holds back to their rows: the epoch legs to `Unclassified`, the live
         // recycled to `Recycled` — each an event naming the record.
@@ -561,6 +574,8 @@ library LibRewardStaging {
             b.stagedRecycled -= br;
             b.balance += bf + br;
             s.transportBatchReferences[id] -= 1;
+            // All of it returns to the batch, so all of it leaves the earmark.
+            LibRewardCustody.releaseStagedEarmark(s, bf + br);
             emit StagingUnwoundBatch(id, key, bf, br);
             r.stagedFresh -= bf;
             r.stagedRecycled -= br;

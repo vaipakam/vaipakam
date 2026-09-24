@@ -287,7 +287,17 @@ contract InteractionRewardsLensFacet {
     ///                           the holder's row where custody is activated,
     ///                           the un-earmarked Diamond balance otherwise
     ///                           (Codex #2308 r9) — the figure behind
-    ///                           `InteractionRewardBackingShort`.
+    ///                           `InteractionRewardBackingShort`. On the
+    ///                           INACTIVE path it is net of
+    ///                           `stagedEpochEarmark` as well, those tokens
+    ///                           resting in that same balance (r13, r14).
+    /// @return stagedEpochEarmark Epoch value in staged form, or consumed by a
+    ///                           record's pages and not yet paid out: debited
+    ///                           from its batches and owed to the record that
+    ///                           staged it. While custody is inactive it is an
+    ///                           earmark of the Diamond's balance and is
+    ///                           already subtracted from `liveFreshAvailable`
+    ///                           (Codex #2308 r14).
     /// @return bucketReserved    Recycled runway reserved from the bucket.
     /// @return bucketAvailable   The bucket less `bucketReserved` — what the
     ///                           claim walk draws against.
@@ -300,6 +310,7 @@ contract InteractionRewardsLensFacet {
             uint256 armedFreshReserved,
             uint256 liveFreshReserved,
             uint256 liveFreshAvailable,
+            uint256 stagedEpochEarmark,
             uint256 bucketReserved,
             uint256 bucketAvailable
         )
@@ -310,6 +321,7 @@ contract InteractionRewardsLensFacet {
         armedFreshReserved = s.rewardBudgetArmedFreshReserved;
         liveFreshReserved = s.liveFreshReserved;
         liveFreshAvailable = LibVpfiRecycle.freshBackingRoom(s);
+        stagedEpochEarmark = s.stagedEpochTotal;
         bucketReserved = s.recycleBucketReserved;
         bucketAvailable = LibVpfiRecycle.bucketAvailable(s);
     }

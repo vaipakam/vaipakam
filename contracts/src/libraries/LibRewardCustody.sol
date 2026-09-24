@@ -3159,8 +3159,13 @@ library LibRewardCustody {
     /// @notice A batch's staged components leave the record: consumed, or
     ///         returned to its balance. Clears the row and the record's index
     ///         of it, so the close has nothing unbounded left to delete
-    ///         (Codex #2308 r12, r13), and takes the value out of the staged
-    ///         earmark of the Diamond's balance (r13).
+    ///         (Codex #2308 r12, r13).
+    /// @dev    The staged EARMARK is not dropped here (Codex #2308 r14): what
+    ///         leaves the earmark is what leaves the record's claim on the
+    ///         Diamond's balance, and a resolution page's consumed share does
+    ///         not — it is still owed to the claimant until the last page pays
+    ///         it. The caller drops exactly what it returned, and {_pay} drops
+    ///         what it paid; {releaseStagedEarmark} is the one writer.
     function releaseStagedBatchAt(
         LibVaipakam.Storage storage s,
         bytes32 key,
@@ -3169,11 +3174,17 @@ library LibRewardCustody {
     ) internal {
         bytes32 nk = recordNonceKey(key, r.nonce);
         LibVaipakam.StagedBatch storage sb = s.stagingBatches[nk][index];
-        uint256 left = sb.fresh + sb.recycled;
-        uint256 total = s.stagedEpochTotal;
-        s.stagedEpochTotal = total > left ? total - left : 0;
         delete s.stagingBatchIndexPlusOne[nk][sb.id];
         delete s.stagingBatches[nk][index];
+    }
+
+    /// @notice `amount` of epoch value leaves the staged earmark of the
+    ///         Diamond's balance: returned to its batch, or paid out (Codex
+    ///         #2308 r13, r14). Saturating, as every ledger release here is.
+    function releaseStagedEarmark(LibVaipakam.Storage storage s, uint256 amount) internal {
+        if (amount == 0) return;
+        uint256 total = s.stagedEpochTotal;
+        s.stagedEpochTotal = total > amount ? total - amount : 0;
     }
 
     /// @dev One reference per (record, batch), found in O(1) through the

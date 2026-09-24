@@ -1048,12 +1048,13 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         _stagedAndScanned();
         _liveFresh(1e18);
         InteractionRewardsLensFacet lens = InteractionRewardsLensFacet(address(diamond));
-        (uint256 pr, uint256 pa, uint256 ar, uint256 lr, uint256 la, uint256 br, uint256 ba) = lens.getRewardReservations();
+        (uint256 pr, uint256 pa, uint256 ar, uint256 lr, uint256 la, uint256 se, uint256 br, uint256 ba) = lens.getRewardReservations();
         assertEq(pr + ar + lr + br, 0, "nothing reserved before the reservation");
         assertEq(pa, lens.getInteractionPoolRemaining(), "available equals the hard figure");
         assertEq(la, _row(LibVaipakam.RewardCustodyRow.LiveFresh), "the live fresh available is the whole row before the reservation");
+        assertEq(se, WIDE * TINY, "the staged epoch value is published as its own earmark");
         _staging().reserveStagedDay(_key());
-        (pr, pa, ar, lr, la, br, ba) = lens.getRewardReservations();
+        (pr, pa, ar, lr, la, se, br, ba) = lens.getRewardReservations();
         assertEq(la, _row(LibVaipakam.RewardCustodyRow.LiveFresh) - lr, "and the row less the reservation after it");
         uint256 live = NEED - WIDE * TINY;
         assertEq(pr, NEED, "the pool cap over the full fresh leg");
@@ -1449,7 +1450,7 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         uint256 stagedTotal = _rec().stagedFresh + _rec().stagedRecycled;
         _staging().reserveStagedDay(_key());
         InteractionRewardsLensFacet lens = InteractionRewardsLensFacet(address(diamond));
-        (uint256 pr, uint256 pa, uint256 ar, uint256 lr, uint256 la, uint256 br, uint256 ba) = lens.getRewardReservations();
+        (uint256 pr, uint256 pa, uint256 ar, uint256 lr, uint256 la, uint256 se, uint256 br, uint256 ba) = lens.getRewardReservations();
         assertEq(pa, poolHard - pr, "1: the interaction pool");
         assertEq(la, rowHard - lr, "2: the live fresh row");
         (, uint256 deliveredNow) = RewardRemittanceLensFacet(address(diamond)).getDeliveredFreshBound();
@@ -1457,17 +1458,52 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         assertEq(ba, _mut().getRecycleBucketRaw() - br, "4: the recycled runway");
         assertEq(lens.getLoanSideRewardReserved(LOAN, LibVaipakam.RewardSide.Lender), NEED, "5: the loan side");
         assertEq(_mut().stagedEpochTotalRaw(), stagedTotal, "6: the staged epoch value, earmarked out of the Diamond's balance");
+        assertEq(se, stagedTotal, "and published beside the five reservations");
         // And every one of them returns to its hard figure when the record
         // releases: one reservation, six sources, no residue.
         vm.warp(uint256(_rec().deadline) + 1);
         _settle().unwindStagedDayPage(_key());
         _settle().unwindStagedDayPage(_key());
-        (pr, pa, ar, lr, la, br, ba) = lens.getRewardReservations();
-        assertEq(pr + ar + lr + br, 0, "nothing reserved");
+        (pr, pa, ar, lr, la, se, br, ba) = lens.getRewardReservations();
+        assertEq(pr + ar + lr + br + se, 0, "nothing reserved, nothing earmarked");
         assertEq(pa, poolHard); assertEq(la, rowHard);
         (, deliveredNow) = RewardRemittanceLensFacet(address(diamond)).getDeliveredFreshBound();
         assertEq(deliveredNow, deliveredHard, "the delivered ledger is whole again");
         assertEq(lens.getLoanSideRewardReserved(LOAN, LibVaipakam.RewardSide.Lender), 0);
         assertEq(_mut().stagedEpochTotalRaw(), 0, "and the staged earmark is gone with the batches");
+    }
+
+    // ───────────────────────── round 14 ─────────────────────────
+
+    function test_TheConsumedEpochValue_StaysEarmarked_UntilTheLastPagePays() public {
+        (bytes32[] memory hs, ) = _stagedAndScanned();
+        _liveFresh(1e18);
+        _staging().reserveStagedDay(_key());
+        uint256 staged = WIDE * TINY;
+        assertEq(_mut().stagedEpochTotalRaw(), staged, "the whole staged amount is earmarked");
+        // Page one consumes sixty-four epochs and pays nothing: every wei of
+        // it is still owed to the claimant, so the earmark does not move.
+        assertFalse(_settle().resolveStagedDayPage(_key()));
+        assertEq(_mut().stagedEpochTotalRaw(), staged, "consumed is not released: the payout has not happened");
+        assertTrue(_settle().resolveStagedDayPage(_key()), "the last page pays");
+        assertEq(_mut().stagedEpochTotalRaw(), 0, "and the earmark goes with the payout");
+        _assertConserved(hs);
+    }
+
+    function test_TheReturnedExcess_LeavesTheEarmarkAtItsPage() public {
+        // The re-price assigns 0.2 of the 0.325 staged: the excess returns to
+        // its epochs page by page and leaves the earmark with them, while the
+        // consumed 0.2 stays earmarked until the payout.
+        (bytes32[] memory hs, ) = _stagedAndScanned();
+        _mut().setInteractionPoolPaidOut(LibVaipakam.VPFI_INTERACTION_POOL_CAP - 0.2e18);
+        _liveFresh(1e18);
+        _staging().reserveStagedDay(_key());
+        assertEq(_mut().stagedEpochTotalRaw(), WIDE * TINY);
+        assertFalse(_settle().resolveStagedDayPage(_key()));
+        // Forty of the sixty-four paid the budget; twenty-four went back.
+        assertEq(_mut().stagedEpochTotalRaw(), WIDE * TINY - 24 * TINY, "the page released exactly what it returned");
+        assertTrue(_settle().resolveStagedDayPage(_key()));
+        assertEq(_mut().stagedEpochTotalRaw(), 0, "the last page released the consumed share and the last epoch");
+        _assertConserved(hs);
     }
 }
