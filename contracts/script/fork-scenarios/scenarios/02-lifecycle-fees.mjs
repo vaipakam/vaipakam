@@ -8,7 +8,7 @@
  * repay leaves standing until the borrower claims.
  */
 import { DIAMOND, MOCKS, TREASURY, borrower, lender, parseUnits, pub, tx } from '../lib/chain.mjs';
-import { ABIS, approveDiamond, createOffer, acceptOffer, delta, mint, read, snapshot } from '../lib/flow.mjs';
+import { ABIS, approveDiamond, createOffer, acceptOffer, delta, mint, read, snapshot, vaultAddressFor } from '../lib/flow.mjs';
 import { f18 } from '../lib/chain.mjs';
 import { expectEq, record } from '../lib/report.mjs';
 
@@ -26,8 +26,8 @@ export async function run() {
   await mint(borrower, lending, '100000');
   await approveDiamond(borrower, lending);
 
-  const lenderVault = await read(ABIS.vaultFactory, 'getUserVaultAddress', [lender.address]);
-  const borrowerVault = await read(ABIS.vaultFactory, 'getUserVaultAddress', [borrower.address]);
+  const lenderVault = await vaultAddressFor(lender);
+  const borrowerVault = await vaultAddressFor(borrower);
   const tokens = { lending, collateral };
   const holders = {
     lenderEOA: lender.address, lenderVault,
@@ -39,7 +39,13 @@ export async function run() {
   const atStart = await snapshot(tokens, holders);
   const { offerId, offer } = await createOffer(lender, { amount: PRINCIPAL, collateralAmount: COLLATERAL });
   const afterCreate = await snapshot(tokens, holders);
-  record('A2.1', 'creating a lender offer moves the principal into the LENDER\'S OWN vault', 'PASS',
+  // Asserted, not merely printed: an unresolved vault address reads as a
+  // zero balance, and a hard-coded PASS here is what let that slide through
+  // to an accounting failure ten steps later.
+  const escrowed = afterCreate['lending.lenderVault'] - atStart['lending.lenderVault'];
+  const debited = atStart['lending.lenderEOA'] - afterCreate['lending.lenderEOA'];
+  record('A2.1', 'creating a lender offer moves the principal into the LENDER\'S OWN vault',
+    escrowed === PRINCIPAL && debited === PRINCIPAL ? 'PASS' : 'FAIL',
     `offerId=${offerId} deltas=${JSON.stringify(delta(atStart, afterCreate))}`);
 
   // --- accept: LIF + net delivery
@@ -49,7 +55,8 @@ export async function run() {
   const active = await read(ABIS.metrics, 'getUserActiveLoans', [borrower.address]);
   const loanId = active[active.length - 1];
   const loan = await read(ABIS.loan, 'getLoanDetails', [loanId]);
-  record('A2.2', 'accept initiates the loan', 'PASS',
+  record('A2.2', 'accept initiates the loan and drains the escrow',
+    afterCreate['lending.lenderVault'] - afterAccept['lending.lenderVault'] === PRINCIPAL ? 'PASS' : 'FAIL',
     `loanId=${loanId} gas=${accepted.gas} deltas=${JSON.stringify(delta(afterCreate, afterAccept))}`);
 
   expectEq('A2.3', 'treasury fee bps is STAMPED per loan (rev-8 freeze)', loan.treasuryFeeBpsAtInit, 200);

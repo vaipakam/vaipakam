@@ -54,7 +54,19 @@ all come from the deployment artifact for the selected slug, so the driver
 follows a redeploy without an edit.
 
 The driver leaves `last-run.json` beside itself — the full ledger, one row per
-scenario, with the verdict and the observed numbers.
+scenario, with the verdict and the observed numbers, plus any scenario file
+that aborted.
+
+Two things the driver handles for you, both of which silently cost a whole
+scenario file before they were fixed:
+
+- **It mines one block first.** On a fresh fork `latest` IS the fork block,
+  and a hardhat node refuses to execute `eth_call` there ("No known hardfork
+  for execution on historical block N"). `eth_getCode` still answers, so a
+  naive preflight passes and the first scenario dies on its first read.
+- **An aborted file is named in the summary**, not only in the scroll-back,
+  and it sets a non-zero exit. A file that aborts contributes no rows, so
+  without that the tally reads clean while a fifth of the suite never ran.
 
 ## It is not a member of the pnpm workspace
 
@@ -105,4 +117,13 @@ this harness and are worth keeping:
   treasury took 2% of the interest and nothing of the principal".
 - **Record an honest `INFO` rather than a flattering `PASS`.** An observation
   worth keeping that has no assertion behind it is an `INFO`; a mis-specified
-  expectation gets its expectation fixed, never its verdict.
+  expectation gets its expectation fixed, never its verdict. A hard-coded
+  `'PASS'` on a row that only prints deltas is the worst of both — it reads as
+  a check and is not one. That is how an unresolved vault address survived
+  ten steps before an accounting assertion caught it.
+- **Resolve a vault through `vaultAddressFor`, never `getUserVaultAddress`
+  directly.** The raw getter answers `address(0)` for a user who has no vault
+  yet, without reverting, and snapshotting the zero address yields a
+  perfectly plausible balance of zero for every token. The helper ensures,
+  re-reads and refuses a zero; `snapshot()` refuses one too, as an
+  independent second guard on the same failure.

@@ -4,9 +4,11 @@
  * Two things here are load-bearing and easy to get wrong by hand:
  *
  *  - The EIP-712 `AcceptTerms` struct is 34 fields and the ACCEPTOR signs it.
- *    Its `offerKey` is `keccak256(abi.encode(uint256 offerId))` on a direct
- *    accept — a zero key is accepted by the encoder and then refused on-chain
- *    as `OfferTermsMismatch(1)`, which reads like a terms bug rather than a
+ *    Its field list is DERIVED from the compiled ABI rather than transcribed
+ *    (see `ACCEPT_TERMS_FIELDS`), so it cannot drift. Its `offerKey` is
+ *    `keccak256(abi.encode(uint256 offerId))` on a direct accept — a zero key
+ *    is accepted by the encoder and then refused on-chain as
+ *    `OfferTermsMismatch(1)`, which reads like a terms bug rather than a
  *    missing key.
  *  - Expiries and deadlines are taken from the CHAIN's block timestamp, not
  *    from wall-clock time. Scenarios warp the fork weeks forward to reach the
@@ -107,19 +109,35 @@ export async function createOffer(creator, overrides = {}) {
   return { offerId: BigInt(sim.result), offer, gas: receipt.gasUsed };
 }
 
-const ACCEPT_TERMS_FIELDS = [
-  ['acceptor', 'address'], ['offerCreator', 'address'], ['offerKey', 'bytes32'], ['offerType', 'uint8'],
-  ['lendingAsset', 'address'], ['collateralAsset', 'address'], ['amount', 'uint256'], ['collateralAmount', 'uint256'],
-  ['interestRateBps', 'uint256'], ['durationDays', 'uint256'], ['tokenId', 'uint256'], ['collateralTokenId', 'uint256'],
-  ['quantity', 'uint256'], ['collateralQuantity', 'uint256'], ['assetType', 'uint8'], ['collateralAssetType', 'uint8'],
-  ['prepayAsset', 'address'], ['useFullTermInterest', 'bool'], ['allowsPartialRepay', 'bool'],
-  ['allowsPrepayListing', 'bool'], ['allowsParallelSale', 'bool'], ['refinanceTargetLoanId', 'uint256'],
-  ['linkedLoanId', 'uint256'], ['parallelSaleOrderHash', 'bytes32'], ['periodicInterestCadence', 'uint8'],
-  ['riskAndTermsConsent', 'bool'], ['acknowledgedIlliquidLendingAsset', 'address'],
-  ['acknowledgedIlliquidCollateralAsset', 'address'], ['nonce', 'uint256'], ['deadline', 'uint256'],
-  ['riskTermsHash', 'bytes32'], ['acceptorFull', 'bool'], ['acceptorMaxCStar', 'uint256'],
-  ['acceptorAllowFullDowngrade', 'bool'],
-].map(([name, type]) => ({ name, type }));
+/**
+ * The EIP-712 `AcceptTerms` field list, DERIVED from the compiled ABI rather
+ * than transcribed here.
+ *
+ * EIP-712 encodes a struct's members in DECLARATION order, and the ABI's
+ * tuple components are emitted in that same order by the compiler — so the
+ * `terms` parameter of `acceptOffer` already carries the exact names, types
+ * and order the signature needs. Reading them from there means a contract-
+ * side struct change reaches this harness through the ABI re-export, instead
+ * of silently producing `AcceptSignatureInvalid()` against a stale hand-
+ * written copy.
+ *
+ * What this does NOT guard: `LibAcceptTerms`'s typehash STRING is written by
+ * hand in Solidity, so it could in principle drift from the struct it
+ * describes. That is a contract-side concern and no amount of deriving here
+ * would catch it — checked by hand on 2026-09-24, the two agreed field for
+ * field. The domain name is likewise not in the ABI and stays literal below.
+ */
+const ACCEPT_TERMS_FIELDS = (() => {
+  const fn = ABIS.offerAccept.find((e) => e.type === 'function' && e.name === 'acceptOffer');
+  const terms = fn?.inputs?.find((i) => i.type === 'tuple' && /AcceptTerms$/.test(i.internalType ?? ''));
+  if (!terms?.components?.length) {
+    throw new Error(
+      "fork-scenarios: could not read acceptOffer's AcceptTerms tuple from OfferAcceptFacet.json — " +
+        're-export the ABIs (contracts/script/exportFrontendAbis.sh) before running scenarios',
+    );
+  }
+  return terms.components.map(({ name, type }) => ({ name, type }));
+})();
 
 const TYPES = { AcceptTerms: ACCEPT_TERMS_FIELDS };
 
@@ -203,12 +221,38 @@ export async function openLoan({ lender, borrower, ...overrides } = {}) {
   return { loanId: active[active.length - 1], offerId, offer, gas: accepted.gas };
 }
 
-/** Snapshot every (token, holder) balance so a scenario can account a flow to the wei. */
+/**
+ * The account's vault address, CREATING it if it does not exist yet.
+ *
+ * `getUserVaultAddress` answers `address(0)` for a user who has no vault —
+ * quietly, with no revert. Snapshotting that address then reports a balance
+ * of zero for every token, which looks exactly like a real reading, and the
+ * first thing to notice is an accounting assertion failing several steps
+ * later against a party that was never being watched. This helper is the one
+ * place that shape is handled: ensure, re-read, and refuse a zero.
+ */
+export async function vaultAddressFor(account) {
+  let address = await read(ABIS.vaultFactory, 'getUserVaultAddress', [account.address]);
+  if (address === ZERO) {
+    await tx(account, { address: DIAMOND, abi: ABIS.vaultFactory, functionName: 'getOrCreateUserVault', args: [account.address] }, 'getOrCreateUserVault');
+    address = await read(ABIS.vaultFactory, 'getUserVaultAddress', [account.address]);
+  }
+  if (address === ZERO) throw new Error(`no vault for ${account.address} even after getOrCreateUserVault`);
+  return address;
+}
+
+/**
+ * Snapshot every (token, holder) balance so a scenario can account a flow to
+ * the wei. A zero-address holder is REFUSED rather than reported as an empty
+ * balance — see `vaultAddressFor`; this is the second, independent guard on
+ * the same failure, because the symptom is a number rather than an error.
+ */
 export async function snapshot(tokens, holders) {
   const out = {};
   for (const [tokenName, token] of Object.entries(tokens)) {
     for (const [holderName, holder] of Object.entries(holders)) {
-      if (!holder) continue;
+      if (holder === undefined || holder === null) continue;
+      if (holder === ZERO) throw new Error(`snapshot: holder "${holderName}" is the zero address — an unresolved vault reads as an empty balance, not as an error`);
       out[`${tokenName}.${holderName}`] = await balanceOf(token, holder);
     }
   }

@@ -7,7 +7,7 @@
  * the liquidator's bonus, which comes off the top before the lender is paid.
  */
 import { DIAMOND, MOCKS, TREASURY, borrower, lender, outsider, parseUnits, pub, tx } from '../lib/chain.mjs';
-import { ABIS, delta, mint, openLoan, read, snapshot } from '../lib/flow.mjs';
+import { ABIS, delta, mint, openLoan, read, snapshot, vaultAddressFor } from '../lib/flow.mjs';
 import { f18 } from '../lib/chain.mjs';
 import { MOCK_ADAPTER_ABI, sendAsOwner, setFeedUsd, warpDays } from '../lib/impersonate.mjs';
 import { simulate } from '../lib/errors.mjs';
@@ -20,8 +20,8 @@ export async function run() {
   const collateral = MOCKS.liquidToken;
   const venue = MOCKS.mockSwapAdapter;
 
-  const lenderVault = await read(ABIS.vaultFactory, 'getUserVaultAddress', [lender.address]);
-  const borrowerVault = await read(ABIS.vaultFactory, 'getUserVaultAddress', [borrower.address]);
+  const lenderVault = await vaultAddressFor(lender);
+  const borrowerVault = await vaultAddressFor(borrower);
   const tokens = { lending, collateral };
   const holders = {
     lenderEOA: lender.address, lenderVault,

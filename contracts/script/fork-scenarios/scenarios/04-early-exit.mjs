@@ -8,7 +8,7 @@
  * has to say out loud.
  */
 import { DIAMOND, MOCKS, TREASURY, borrower, lender, outsider, parseUnits, tx } from '../lib/chain.mjs';
-import { ABIS, delta, openLoan, read, snapshot } from '../lib/flow.mjs';
+import { ABIS, delta, openLoan, read, snapshot, vaultAddressFor } from '../lib/flow.mjs';
 import { f18 } from '../lib/chain.mjs';
 import { warpDays } from '../lib/impersonate.mjs';
 import { simulate } from '../lib/errors.mjs';
@@ -17,8 +17,8 @@ import { expectEq, record } from '../lib/report.mjs';
 export async function run() {
   const lending = MOCKS.liquidToken2;
   const collateral = MOCKS.liquidToken;
-  const lenderVault = await read(ABIS.vaultFactory, 'getUserVaultAddress', [lender.address]);
-  const borrowerVault = await read(ABIS.vaultFactory, 'getUserVaultAddress', [borrower.address]);
+  const lenderVault = await vaultAddressFor(lender);
+  const borrowerVault = await vaultAddressFor(borrower);
   const tokens = { lending, collateral };
   const holders = {
     lenderEOA: lender.address, lenderVault,

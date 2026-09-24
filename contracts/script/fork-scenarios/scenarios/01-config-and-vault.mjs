@@ -6,7 +6,7 @@
  * later scenario relies on them.
  */
 import { DIAMOND, MOCKS, TREASURY, borrower, lender, pub } from '../lib/chain.mjs';
-import { ABIS, read } from '../lib/flow.mjs';
+import { ABIS, read, vaultAddressFor } from '../lib/flow.mjs';
 import { simulate } from '../lib/errors.mjs';
 import { expectEq, record } from '../lib/report.mjs';
 
@@ -25,12 +25,16 @@ export async function run() {
   record('A1.3', 'treasury is an EXTERNAL address, not the Diamond', TREASURY.toLowerCase() === DIAMOND.toLowerCase() ? 'FAIL' : 'PASS',
     `treasury=${TREASURY} diamond=${DIAMOND} — fees leave at once; the Diamond-custody claim paths are dark on this topology`);
 
-  // Per-user vault: created on demand, idempotent, real code.
-  const before = await read(ABIS.vaultFactory, 'getUserVaultAddress', [borrower.address]);
-  const vault = before;
+  // Per-user vault: created on demand, idempotent, real code. On a PRISTINE
+  // fork neither role has one yet and `getUserVaultAddress` answers
+  // `address(0)` without reverting, so this has to create before it reads.
+  const unset = await read(ABIS.vaultFactory, 'getUserVaultAddress', [borrower.address]);
+  const vault = await vaultAddressFor(borrower);
+  const again = await vaultAddressFor(borrower);
   const code = await pub.getBytecode({ address: vault });
-  record('A1.4', 'each user holds their own vault proxy', code ? 'PASS' : 'FAIL',
-    `borrowerVault=${vault} codeBytes=${code ? (code.length - 2) / 2 : 0}`);
+  record('A1.4', 'a vault is created on demand, is idempotent, and has code',
+    code && vault === again ? 'PASS' : 'FAIL',
+    `beforeCreate=${unset} vault=${vault} secondCall=${again} codeBytes=${code ? (code.length - 2) / 2 : 0}`);
 
   // The vault mutators are Diamond-internal. A direct user call must refuse.
   const direct = await simulate(
