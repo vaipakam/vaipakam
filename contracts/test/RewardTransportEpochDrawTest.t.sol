@@ -1117,6 +1117,37 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         assertEq(cf + cr, 0, "and the later epoch is spared for its other day");
     }
 
+    /// @dev The SECOND shape on the same decision (Codex #2276, the round
+    ///      after the tie landed): when both legs' next capacity is the SAME
+    ///      epoch, comparing only that index says nothing, and fresh-first
+    ///      drained a third epoch. Plan-ordered A = flexible 1, B = 2 with one
+    ///      unit of room per leg, C = recycled-only 1, asked 1F/2R. A to fresh
+    ///      leaves 2R, which B (one unit of recycled room) cannot meet alone,
+    ///      so C is opened; A to recycled leaves 1F/1R, which B covers exactly,
+    ///      and C — which may list another day — is left standing. Same
+    ///      coverage either way, so again the totals cannot see it.
+    function test_TheSplit_SparesTheLaterEpoch_WhenBothLegsShareTheNextOne() public {
+        bytes32 flex = _epochOf(1, _one(1), 81, keccak256("joint-flexible"));
+        vm.warp(vm.getBlockTimestamp() + 1);
+        bytes32 both = _epochOf(2, _one(1), 82, keccak256("joint-both"));
+        _attest(82, 1, 1);
+        vm.warp(vm.getBlockTimestamp() + 1);
+        bytes32 recycledOnly = _epochOf(1, _one(1), 83, keccak256("joint-recycled-only"));
+        _attest(83, 0, 1);
+        (uint256 tf, uint256 tr, ) =
+            _alloc(1, 1, 2, type(uint256).max, type(uint256).max, type(uint256).max, 0, 0);
+        assertEq(tf, 1, "the fresh leg is covered");
+        assertEq(tr, 2, "and both recycled units: the rule never costs coverage");
+        (uint256 af, uint256 ar) = _plannedLegs(1, 1, 2, flex);
+        assertEq(af, 0, "the flexible epoch does not take the fresh leg");
+        assertEq(ar, 1, "it takes recycled: that is the leg that must otherwise reach furthest");
+        (uint256 bf, uint256 br) = _plannedLegs(1, 1, 2, both);
+        assertEq(bf, 1, "so the shared next epoch pays BOTH its legs");
+        assertEq(br, 1, "rather than one of them");
+        (uint256 cf, uint256 cr) = _plannedLegs(1, 1, 2, recycledOnly);
+        assertEq(cf + cr, 0, "and the later epoch is spared for its other day");
+    }
+
     /// @dev The preview's overlay holds every draw of a chunk and grows as it
     ///      goes (Codex #2276 r12 P1): thirty two-day epochs worth one and a
     ///      half days, day one draws twenty, day two sees ten — the preview

@@ -117,10 +117,12 @@ from a leg only where a later epoch's capacity for the other leg could
 not otherwise be used, so the two legs are paid the most any assignment
 could pay them without a lower-priority epoch being spent ahead of a
 higher one. Where either leg could take a flexible unit and the day is
-covered the same amount either way, it goes to the leg whose next capacity
-in the window lies **latest**, so the nearer alternative is the one spent
-and the further epoch — which may be the only one funding another day — is
-left standing. Coverage one leg's cap rejects
+covered the same amount either way, it goes to the leg that would otherwise
+have to **reach furthest** into the window to be served, so the epochs
+actually opened are the earliest ones and the furthest — which may be the
+only one funding another day — is left standing. A leg the window cannot
+serve at all reaches past its end, the furthest there is, so it is served
+at once, which is the same rule as the reservation above. Coverage one leg's cap rejects
 is offered to the other leg; a day wider than one window is read through
 that window and draws from it, rather than being refused outright, because
 the window is always a prefix of the day's one order; an attested

@@ -2308,10 +2308,10 @@ library LibRewardCustody {
     ///         its exclusive capacities first (they cost the other leg
     ///         nothing), then its flexible remainder to the demand the LATER
     ///         epochs' exclusive capacities cannot meet — fresh first — and
-    ///         only then to the rest, and the REST goes to the leg whose next
-    ///         capacity in the suffix comes LATEST rather than to fresh by
-    ///         default (#2296 item 1), so a flexible unit spends the nearer
-    ///         alternative and spares the further epoch. So an epoch's flexible
+    ///         only then to the rest, and the REST goes to the leg that must
+    ///         otherwise REACH FURTHEST into the plan rather than to fresh by
+    ///         default, so the epochs opened are the earliest ones and the
+    ///         furthest is spared. So an epoch's flexible
     ///         balance is held back from a leg exactly where a later epoch's
     ///         capacity for the other leg could not otherwise be used, which
     ///         is the reservation the cut bound on two sources requires; with
@@ -2332,26 +2332,23 @@ library LibRewardCustody {
         uint256 n = plan.ids.length;
         t.fresh = new uint256[](n);
         t.recycled = new uint256[](n);
-        // The exclusive capacities of the epochs AFTER each position, and
-        // WHERE each leg's next capacity lies: `nextCap[k]` packs the smallest
-        // index at or after k that could serve fresh (high half) and the same
-        // for recycled (low half), with `n` meaning none does. Packed into one
-        // array rather than two because this frame sits at the viaIR stack
-        // budget, and built in the same backward pass (Codex #2296 item 1).
-        uint256[] memory sufF = new uint256[](n + 1);
-        uint256[] memory sufR = new uint256[](n + 1);
-        uint256[] memory nextCap = new uint256[](n + 1);
-        nextCap[n] = (n << 128) | n;
+        // The exclusive capacities of the epochs AFTER each position, as
+        // running suffix sums, PACKED one entry per position — fresh in the
+        // high 128 bits, recycled in the low. These carry both look-aheads the
+        // split needs: the round-12 reservation reads their TOTALS and {_reach}
+        // reads the same entries to find HOW FAR a leg must go.
+        //
+        // Packed rather than two arrays because this frame is at the viaIR
+        // stack budget and two array pointers do not both fit beside the reach
+        // comparison. A VPFI figure cannot approach 2^128 — the token's whole
+        // supply is orders of magnitude below it — so neither half can carry
+        // into the other.
+        uint256[] memory suf = new uint256[](n + 1);
         for (uint256 k = n; k > 0; ) {
             unchecked { --k; }
             (uint256 xF, uint256 xR) = _exclusive(plan, k);
-            sufF[k] = sufF[k + 1] + xF;
-            sufR[k] = sufR[k + 1] + xR;
-            uint256 ahead = nextCap[k + 1];
-            uint256 bal = plan.bals[k];
-            nextCap[k] =
-                ((plan.freshRoom[k] != 0 && bal != 0 ? k : ahead >> 128) << 128)
-                | (plan.recycledRoom[k] != 0 && bal != 0 ? k : ahead & type(uint128).max);
+            suf[k] =
+                (((suf[k + 1] >> 128) + xF) << 128) | ((suf[k + 1] & type(uint128).max) + xR);
         }
         for (uint256 k; k < n && askFresh + askRecycled != 0; ) {
             (uint256 f, uint256 r) = _exclusive(plan, k);
@@ -2362,22 +2359,43 @@ library LibRewardCustody {
             uint256 roomR = plan.recycledRoom[k] - r;
             // The flexible remainder: first to what the later epochs'
             // exclusive capacity cannot meet — the round-12 reservation,
-            // unchanged — and then the REST to the leg whose next capacity in
-            // the suffix comes LATEST, so the earliest later capacity is the
-            // one consumed and the later epoch is preserved (Codex #2276 r17
-            // P1, arrested per #2296 item 1). The retired rule spent the rest
-            // fresh-first, which on plan-ordered A = flexible 1, B = fresh-only
-            // 1, C = recycled-only 1 asked 1F/1R paid A to fresh and C to
-            // recycled, where A to recycled and B to fresh covers exactly as
-            // much and leaves C — which may list another day — untouched.
-            // A leg with no later capacity carries the sentinel `n`, the
-            // latest index of all, so it is served now: the reservation's own
-            // rule, reached by this one comparison.
-            uint256 needF = askFresh - f > sufF[k + 1] ? askFresh - f - sufF[k + 1] : 0;
-            uint256 pf = _min3(needF, left, roomF);
-            uint256 needR = askRecycled - r > sufR[k + 1] ? askRecycled - r - sufR[k + 1] : 0;
-            uint256 pr = _min3(needR, left - pf, roomR);
-            if ((nextCap[k + 1] >> 128) >= (nextCap[k + 1] & type(uint128).max)) {
+            // unchanged — and then the REST to the leg that must otherwise
+            // REACH FURTHEST into the plan, so the epochs actually opened are
+            // the earliest ones and the furthest is left standing.
+            //
+            // Two review rounds landed on this one decision, and the root was
+            // that the first fix measured the wrong endpoint: it compared where
+            // each leg's NEXT capacity lay, which is silent whenever both legs'
+            // next capacity is the same epoch. On A = flexible 1, B = 2 with one
+            // unit of room per leg, C = recycled-only 1, asked 1F/2R, both legs
+            // point at B, fresh won by default, and 2R then needed B AND C where
+            // 1F/1R needs only B. Reach answers both shapes with one rule: fresh
+            // reaches B, recycled must reach C, so recycled takes the unit —
+            // and on the earlier shape (B fresh-only, C recycled-only, 1F/1R)
+            // it gives the same answer the first fix did. A leg whose demand the
+            // suffix cannot meet at all reaches past the plan, the furthest
+            // there is, so it is served now: the reservation's own rule, reached
+            // by the same comparison.
+            //
+            // The two reservation figures are INLINED rather than named: this
+            // frame is at the viaIR stack budget, and naming them costs the two
+            // slots the reach comparison needs.
+            uint256 pf = _min3(
+                askFresh - f > (suf[k + 1] >> 128) ? askFresh - f - (suf[k + 1] >> 128) : 0,
+                left,
+                roomF
+            );
+            uint256 pr = _min3(
+                askRecycled - r > (suf[k + 1] & type(uint128).max)
+                    ? askRecycled - r - (suf[k + 1] & type(uint128).max)
+                    : 0,
+                left - pf,
+                roomR
+            );
+            if (
+                _reach(suf, k + 1, askFresh - f - pf, 128)
+                    >= _reach(suf, k + 1, askRecycled - r - pr, 0)
+            ) {
                 pf += _min3(askFresh - f - pf, left - pf - pr, roomF - pf);
                 pr += _min3(askRecycled - r - pr, left - pf - pr, roomR - pr);
             } else {
@@ -2408,6 +2426,42 @@ library LibRewardCustody {
         if (xF > fr) xF = fr;
         xR = bal > fr ? bal - fr : 0;
         if (xR > rr) xR = rr;
+    }
+
+    /// @dev How FAR one leg must reach to be served `demand` out of the epochs
+    ///      from `from` onward: the smallest index whose cumulative exclusive
+    ///      capacity for that leg meets the demand. `shift` selects the leg
+    ///      inside the packed suffix entries — 128 for fresh, 0 for recycled.
+    ///
+    ///      Cumulative capacity over `[from, m]` is the suffix sum at `from`
+    ///      less the one at `m + 1`, and those sums are non-increasing, so the
+    ///      index is found by BISECTION rather than by a walk.
+    ///
+    ///      Two boundary cases, both deliberate. A leg with NO outstanding
+    ///      demand reaches `from`, the nearest index there is, so it never wins
+    ///      the flexible unit from a leg that does have demand. A leg whose
+    ///      demand the whole suffix cannot meet reaches the sentinel one past
+    ///      the last epoch, the furthest there is, so it is served NOW — which
+    ///      is the reservation's own rule arrived at by the same comparison.
+    ///
+    ///      Lives in its own frame because the split's is at the viaIR stack
+    ///      budget.
+    function _reach(uint256[] memory suf, uint256 from, uint256 demand, uint256 shift)
+        private
+        pure
+        returns (uint256)
+    {
+        uint256 last = suf.length - 1;
+        if (demand == 0 || from >= last) return from;
+        uint256 base = (suf[from] >> shift) & type(uint128).max;
+        uint256 lo = from;
+        uint256 hi = last;
+        while (lo < hi) {
+            uint256 mid = (lo + hi) / 2;
+            if (base - ((suf[mid + 1] >> shift) & type(uint128).max) >= demand) hi = mid;
+            else lo = mid + 1;
+        }
+        return lo;
     }
 
     function _min3(uint256 a, uint256 b, uint256 c) private pure returns (uint256 m) {
