@@ -9,7 +9,7 @@ configuration — not the source tree's idea of them.
   84532 (Base Sepolia), forked at block 47,228,632.
 - **Driver** — [`contracts/script/fork-scenarios/`](../../contracts/script/fork-scenarios/README.md),
   committed with this document. `node run-all.mjs` reproduces every row.
-- **Result** — 87 scenarios: **82 PASS, 5 INFO, 0 FAIL.** The INFOs are
+- **Result** — 94 scenarios: **89 PASS, 5 INFO, 0 FAIL.** The INFOs are
   observations with no assertion behind them, not soft failures; each is
   written out below.
 - **Assets** — the deployment's own faucet mocks: `tLIQ` priced $2,000,
@@ -230,12 +230,35 @@ straight to the lender's **wallet**, while a **full** repay credits the
 lender's **vault**. Both are correct; a balance display that assumes one
 shape will be wrong about the other.
 
-### 3.3 Lender exit by listing
+### 3.3 Lender exit — listed and direct
 
 `createLoanSaleOffer` accepts a listing from the lender, **refuses a zero
 listing window** (`SaleListingWindowInvalid`) — so there are no perpetual
 sale listings — and refuses a third party attempting to list someone else's
 position (`KeeperAccessRequired`).
+
+Followed through to a sale (A8), both routes hand the lender side of a live
+loan to a new lender while the borrower's position runs on **unchanged** —
+same borrower, principal, rate, term and `Active` status:
+
+- **Listed.** Filling the listing completes the sale **in the same
+  transaction**, the same auto-link shape as the borrower's offset route
+  (§3A.3); `completeLoanSale` afterwards is refused with `SaleNotLinked()`.
+  The vehicle is the offset vehicle's mirror image: a **BORROWER-side offer
+  posted by the LENDER**. Classify the two by `offerType` alone and both land
+  under the wrong party. `createLoanSaleOffer` returns nothing, so the
+  vehicle's id is read from the `LoanSaleOfferLinked` event.
+- **Direct.** `sellLoanViaBuyOffer` sells straight into a buyer's standing
+  lender offer in one transaction, with no listing. A non-lender caller is
+  refused with `NotNFTOwner()` — the lender position NFT authorises, as the
+  borrower NFT does on the borrower side (§3A.1).
+
+On both, the buyer paid exactly the principal and the seller received it
+less a small treasury amount (≈1.7×10⁻⁵ tLIQ2 on a position held for
+seconds). **This run does not assert how that amount is composed** — it is
+consistent with a treasury cut on interest accrued to the sale, but the
+figure is too small here to distinguish that from other readings, and
+settling it needs a sale taken meaningfully into a loan's term.
 
 ---
 
@@ -481,11 +504,13 @@ regenerated as `contracts/script/fork-scenarios/last-run.json` on every run
 | A5.* | `05-gates.mjs` | sanctions, KYC, illiquid dual consent |
 | A6.* | `06-collateral-and-refinance.mjs` | surplus-collateral release, refinance consent + the four-NFT invariant |
 | A7.* | `07-offset-and-handover.mjs` | the offset route's automatic completion, obligation handover |
+| A8.* | `08-lender-exit.mjs` | the lender's listed sale through to completion, and the direct sale |
 
 The `INFO` rows are: the live facet count (A1.6, an observation feeding §5),
 the depth-floor flip (A3.10, written up as a finding in §2.4), and the two
 post-claim NFT readbacks (A2.16, written up in §1.4), and the offset
-vehicle's offer type (A7.2b, written up in §3A.3). A3.2 records this
+vehicle's offer type (A7.2b, written up in §3A.3; its mirror, the sale
+vehicle, is asserted as A8.1). A3.2 records this
 deployment's effective grace window (3 days) rather than asserting it, since
 the window is per-deployment config — what the suite asserts there is the
 ORDERING A3.1 → A3.3, not that any particular day lands inside grace.

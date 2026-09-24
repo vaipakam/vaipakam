@@ -51,6 +51,7 @@ export const ABIS = {
   config: abi('ConfigFacet'),
   offerCancel: abi('OfferCancelFacet'),
   earlyWithdrawal: abi('EarlyWithdrawalFacet'),
+  earlyWithdrawalDirect: abi('EarlyWithdrawalDirectFacet'),
   profile: abi('ProfileFacet'),
   admin: abi('AdminFacet'),
   oracle: abi('OracleFacet'),

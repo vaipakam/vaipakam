@@ -13,11 +13,11 @@ needs no Solidity compiler: it reads the committed per-facet ABIs, so the
 compiler stays the single source of truth for every decode while the driver
 itself is plain Node.
 
-The run now covers eighty-seven scenarios across the whole advanced
+The run now covers ninety-four scenarios across the whole advanced
 surface — offer creation and escrow, accept and the loan-initiation fee,
 repayment and the treasury's interest cut, the borrower's collateral claim,
 time-based default, health-factor liquidation, preclose, partial repayment,
-lender exit by listing, releasing surplus collateral mid-loan, refinance,
+lender exit by listing and by direct sale, releasing surplus collateral mid-loan, refinance,
 the offset and obligation-handover exits, and the sanctions, KYC and
 illiquid-asset gates. The
 fee and health-factor behaviour reconciles exactly against the specification,
@@ -64,7 +64,12 @@ a minute later. Obligation handover, by contrast, keeps the loan record and
 rewrites its borrower in place, with the lender and principal untouched and
 the exiting borrower paying only the interest accrued so far. Refinance ends
 one loan and starts another; handover mutates one. Any indexer has to model
-both shapes.
+both shapes. The lender's two exits mirror the borrower's: a listed sale
+completes itself the moment a buyer fills it, a direct sale settles in one
+transaction with no listing at all, and on both the borrower's position runs
+on unchanged. The sale vehicle is the offset vehicle's mirror image — a
+borrower-side offer posted by the lender — so neither can be classified by
+its type alone.
 
 On the middle two of the four findings, the connected app was checked afterwards rather than
 assumed, and already honours both: the early-repay card reads the loan's
