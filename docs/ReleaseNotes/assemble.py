@@ -1958,19 +1958,38 @@ class Assembly:
 
         The sound mechanism for "was this fragment already folded in?" is the
         assembly marker: `build()` writes one per fragment carrying its
-        sha256, and where markers exist nothing has to be guessed. This exists
-        only because 61 of the 84 dated files predate markers, so for those
-        the file cannot answer the question about itself.
+        sha256, so a file written WHOLLY in the marker era answers the
+        question about itself and nothing has to be guessed. This exists only
+        because 61 of the 84 dated files predate markers, so for those the
+        file cannot.
+
+        A MIXED FILE IS THE WEAK CASE, and it is marker PRESENCE rather than
+        marker COVERAGE that this reads. `out_has_markers` is an `any()` over
+        the whole file, and one marker anywhere downgrades the refusal below
+        to a note that appends regardless. Sound for a wholly-marked file:
+        there, a heading match carrying no marker of its own is a heading
+        that recurs, not an interrupted run. NOT sound for a legacy file that
+        has since taken one marked fragment — its older sections are still
+        markerless, a pending fragment matching one of those is exactly the
+        interrupted-run case, and that single newer marker suppresses the
+        refusal that would catch it. Every one of the 61 becomes that shape
+        on its next assembly. Filed as #2312 rather than patched here: the
+        predicate is whole-file where the question is per-section, and this
+        guard does not track where a marker's coverage begins or ends.
 
         WHAT IT CANNOT DO, stated rather than implied. It does not survive an
-        EDIT to the published copy. Reword a published section and its pending
-        fragment stops matching, so a rerun appends a second copy and consumes
-        the source — the one outcome here that loses work rather than refusing.
-        That is #2298, and it is not a defect in this implementation: no
-        comparison of two texts can distinguish "not yet published" from
-        "published, then edited". Only a marker can, by recording what was
-        published. The residual is intrinsic, and it shrinks as files gain
-        markers.
+        edit TO THE MATCHED HEADING — which is narrower than "an edit". The
+        scan compares the fragment's first ATX heading line, byte for byte,
+        against the published file's lines, so rewording a published
+        section's BODY changes nothing it looks at and the refusal still
+        stands. Retitle that section, or reformat the heading line itself,
+        and the pending fragment stops matching: a rerun appends a second
+        copy and consumes the source — the one outcome here that loses work
+        rather than refusing. That is #2298, and it is not a defect in this
+        implementation: no comparison of two texts can distinguish "not yet
+        published" from "published, then retitled". Only a marker can, by
+        recording what was published. The residual is intrinsic, and it
+        shrinks as files gain markers.
 
         ITS ENCODING LIMIT IS REAL AND NO LONGER LOSES WORK — measured, not
         assumed (#2299). `HEADING_RE` is a byte pattern, so a UTF-16 heading
@@ -1981,12 +2000,23 @@ class Assembly:
         parse cannot be published either. Verified by disabling the alternative
         and re-running: the fragment is refused, retained, and not duplicated.
 
-        THAT SAFETY DEPENDS ON THE ORDER OF TWO CHECKS, so do not reorder them
-        casually. This runs BEFORE `check_heading_conformance`; a fragment
-        this misses is caught there instead. Were conformance ever relaxed to
-        allow an unparseable opener, or moved after this, the miss would
-        become a data-loss path again and this guard would need an
+        THAT SAFETY RESTS ON CONFORMANCE EXISTING, NOT ON WHERE IT SITS.
+        `run()` calls this first and conformance immediately after, but
+        neither writes: both only refuse, and nothing is appended until
+        `build()`, which is after both. So a fragment this misses is caught
+        before any append wherever conformance runs, and the order is not
+        what carries this. What WOULD reopen the data-loss path is RELAXING
+        conformance to admit an opener it cannot parse — then a fragment this
+        misses reaches `build()` unrefused, and this guard would need an
         encoding-agnostic arm.
+
+        The order is nonetheless load-bearing, for a different reason and one
+        recorded at the call site (#2290 r16): it decides which question the
+        operator is asked FIRST, and asking the heading question first sends
+        them to a remediation — retitling `# Title` to `## Title` — that
+        destroys the very evidence this guard compares. So do not read the
+        sequence as this paragraph's invariant, and do not reorder on the
+        strength of this paragraph either.
 
         An encoding-agnostic arm — comparing the fragment's whole published
         text rather than a parsed heading — was built and REMOVED before
