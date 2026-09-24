@@ -714,17 +714,20 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         RewardEpochViewFacet.StagingRecordView memory r = _rec();
         assertEq(r.phase, uint8(LibVaipakam.StagingPhase.Resolving), "irrevocable from the first page");
         assertEq(r.resolveCursor, 64);
+        assertEq(r.batchCount, 1, "the page popped the batches it consumed: the close will delete nothing unbounded");
         assertEq(r.heldEpoch, 64 * TINY, "the page's epoch legs are held");
         assertEq(_row(LibVaipakam.RewardCustodyRow.Resolving), 64 * TINY, "in the resolving row");
         assertEq(_mut().attributedTotalRaw(), _rowsSum(), "and attributed, never sweepable");
         (, , , , , , , , , , uint256 resolvingRow) = _custody().rewardCustodyLedger();
         assertEq(resolvingRow, 64 * TINY, "and named in the ledger");
         assertEq(unclassifiedBefore - _row(LibVaipakam.RewardCustodyRow.Unclassified), 64 * TINY, "out of the packets' row");
-        (uint256 lf0, ) = _legs(hs[0]);
-        (uint256 sf0, , uint256 refs0) = _staged(hs[0]);
-        assertEq(lf0, TINY, "consumed");
+        (uint256 lf0, ) = _legs(hs[64]);
+        (uint256 sf0, , uint256 refs0) = _staged(hs[64]);
+        assertEq(lf0, TINY, "consumed: from the tail, the 65th first");
         assertEq(sf0, 0);
         assertEq(refs0, 0, "released");
+        (uint256 lfFirst, ) = _legs(hs[0]);
+        assertEq(lfFirst, 0, "the first staged is the last page's");
         assertEq(vpfi.balanceOf(alice), aliceBefore, "nothing paid between pages");
         _assertConserved(hs);
 
@@ -1353,5 +1356,44 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         assertEq(_mut().bucketFundableRaw(), 0, "exactly the reservation is left");
         _mut().setRecycleBucketReservedRaw(0);
         assertEq(_mut().bucketFundableRaw(), 0.4e18, "released, it is fundable again");
+    }
+
+    // ───────────────────────── round 12 ─────────────────────────
+
+    function test_AReservedLiveFreshRow_PausesTheExpiryClock() public {
+        // The live fresh row holds 0.1; alice's record reserves 0.075 of it by
+        // count, so the row reads 0.1 while the claim gate's room reads 0.025.
+        // Bob needs 0.05: within the row, past the room — his claim would
+        // refuse, so his clock must not run. Pool and delivered ledger ample.
+        _stagedAndScanned();
+        _liveFresh(0.1e18);
+        _staging().reserveStagedDay(_key());
+        _mut().setArmedFreshLedgerRaw(4000e18, 0);
+        assertEq(_row(LibVaipakam.RewardCustodyRow.LiveFresh), 0.1e18, "the row is never reduced by a reservation");
+        assertEq(_mut().liveFreshReservedRaw(), NEED - WIDE * TINY);
+        address bob = makeAddr("staging-bob");
+        _armedDay(2, 0.05e18);
+        _mut().setFeeEntitlementRaw(
+            78,
+            LibVaipakam.FeeEntitlement({
+                borrowerMode: LibVaipakam.FeeEntitlementMode.None,
+                lenderMode: LibVaipakam.FeeEntitlementMode.None,
+                openDays: 1,
+                rewardHaircutBpsAtOpen: 0,
+                borrowerTariffPaid: 0,
+                lenderTariffPaid: 0,
+                cStarOpen: 0,
+                loanSideRewardCapOpen: type(uint128).max
+            })
+        );
+        uint256 bobEntry = _mut().pushRewardEntry(bob, 78, LibVaipakam.RewardSide.Lender, 1e18, 2);
+        _mut().closeRewardEntryRaw(bobEntry, 3);
+        _mut().userClaimFundingNeedRaw(bob);
+        assertFalse(_mut().entryExecutableNowRaw(bobEntry), "the room, not the row, is what the clock reads");
+        // The reservation unwinds: the room is the row again, and bob's clock runs.
+        vm.warp(uint256(_rec().deadline) + 1);
+        _settle().unwindStagedDayPage(_key());
+        _settle().unwindStagedDayPage(_key());
+        assertTrue(_mut().entryExecutableNowRaw(bobEntry), "executable once the reservation released");
     }
 }

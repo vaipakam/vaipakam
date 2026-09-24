@@ -4525,7 +4525,11 @@ library LibInteractionRewards {
             _userFreshTotalCapped(s, user, need.liveArmed, need.userLegs, need.treasuryLegs);
         if (freshTotal > poolAvailable()) return false;
         if (LibRewardCustody.active(s)) {
-            return s.rewardCustodyRows[LibVaipakam.RewardCustodyRow.LiveFresh] >= freshTotal
+            // The fresh room is the claim gate's own ({LibVpfiRecycle.freshBackingRoom}:
+            // the row less what staging records have reserved by count, since a
+            // reservation never reduces the row itself — Codex #2308 r12); the
+            // recycled row is net already, a reservation of it being a HOLD.
+            return LibVpfiRecycle.freshBackingRoom(s) >= freshTotal
                 && s.rewardCustodyRows[LibVaipakam.RewardCustodyRow.Recycled] >= need.bucketRecycled;
         }
         return

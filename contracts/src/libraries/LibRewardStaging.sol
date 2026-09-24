@@ -356,9 +356,11 @@ library LibRewardStaging {
 
     /// @notice Permissionless: one page of resolution. The first page makes
     ///         the record irrevocable (`Resolving`); each page consumes up to
-    ///         `STAGING_PAGE` staged batches — leg counters, packet exit,
-    ///         references, and the epoch legs held into `Resolving` — and the
-    ///         page that consumes the last batch pays the day.
+    ///         `STAGING_PAGE` staged batches from the list's tail, popping each
+    ///         — leg counters, packet exit, references, and the epoch legs
+    ///         held into `Resolving` — and the page that consumes the last
+    ///         batch pays the day and closes a record whose arrays are then
+    ///         bounded (Codex #2308 r12).
     /// @return done Whether the record was paid and closed by this page.
     function resolvePage(LibVaipakam.Storage storage s, bytes32 key) internal returns (bool done) {
         LibVaipakam.StagingRecord storage r = record(s, key);
@@ -370,15 +372,20 @@ library LibRewardStaging {
         } else {
             _requirePhase(key, r, LibVaipakam.StagingPhase.Resolving);
         }
+        // From the list's TAIL, popping each batch as it is consumed (Codex
+        // #2308 r12): the batch arrays are the record's one unbounded state,
+        // and a close that deleted them whole could exceed a block on a
+        // mature day; popped page by page, the close deletes nothing
+        // unbounded. Each batch is independent, so the order is free.
         uint256 n = r.batchIds.length;
-        uint256 i = r.resolveCursor;
-        uint256 end = i + STAGING_PAGE;
-        if (end > n) end = n;
+        uint256 stop = n > STAGING_PAGE ? n - STAGING_PAGE : 0;
+        uint256 done_ = n - stop;
         uint256 held;
-        while (i < end) {
-            bytes32 id = r.batchIds[i];
-            uint256 bf = r.batchFresh[i];
-            uint256 br = r.batchRecycled[i];
+        while (n > stop) {
+            unchecked { --n; }
+            bytes32 id = r.batchIds[n];
+            uint256 bf = r.batchFresh[n];
+            uint256 br = r.batchRecycled[n];
             LibVaipakam.TransportBatch storage b = s.transportBatches[id];
             // Consume only what the reservation assigned; a staged amount
             // beyond it goes back to the epoch here, never consumed unpaid
@@ -399,16 +406,18 @@ library LibRewardStaging {
             s.transportBatchReferences[id] -= 1;
             held += cf + cr;
             emit StagingResolvedBatch(id, key, cf, cr);
-            unchecked { ++i; }
+            r.batchIds.pop();
+            r.batchFresh.pop();
+            r.batchRecycled.pop();
         }
-        r.resolveCursor = i;
+        r.resolveCursor += done_; // batches resolved so far — the view's progress figure
         if (held != 0 && LibRewardCustody.active(s)) {
             LibRewardCustody.hold(
                 s, LibVaipakam.RewardCustodyRow.Unclassified, LibVaipakam.RewardCustodyRow.Resolving, held, key
             );
             r.heldEpoch += held;
         }
-        if (i == n) {
+        if (n == 0) {
             _pay(s, key, r);
             done = true;
         }
@@ -528,24 +537,27 @@ library LibRewardStaging {
         } else {
             _requirePhase(key, r, LibVaipakam.StagingPhase.Unwinding);
         }
+        // From the tail, popping each (Codex #2308 r12) — as the resolution.
         uint256 n = r.batchIds.length;
-        uint256 i = r.resolveCursor;
-        uint256 end = i + STAGING_PAGE;
-        if (end > n) end = n;
-        while (i < end) {
-            bytes32 id = r.batchIds[i];
-            uint256 bf = r.batchFresh[i];
-            uint256 br = r.batchRecycled[i];
+        uint256 stop = n > STAGING_PAGE ? n - STAGING_PAGE : 0;
+        uint256 done_ = n - stop;
+        while (n > stop) {
+            unchecked { --n; }
+            bytes32 id = r.batchIds[n];
+            uint256 bf = r.batchFresh[n];
+            uint256 br = r.batchRecycled[n];
             LibVaipakam.TransportBatch storage b = s.transportBatches[id];
             b.stagedFresh -= bf;
             b.stagedRecycled -= br;
             b.balance += bf + br;
             s.transportBatchReferences[id] -= 1;
             emit StagingUnwoundBatch(id, key, bf, br);
-            unchecked { ++i; }
+            r.batchIds.pop();
+            r.batchFresh.pop();
+            r.batchRecycled.pop();
         }
-        r.resolveCursor = i;
-        if (i == n) {
+        r.resolveCursor += done_;
+        if (n == 0) {
             // The reservation, if one was taken, by its recorded provenance —
             // judged by the fact of the reservation, never by which sources
             // it happened to touch (Codex #2308 r2).
