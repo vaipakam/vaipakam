@@ -2328,6 +2328,22 @@
   },
   {
     "type": "error",
+    "name": "RecycleBucketReservedShortfall",
+    "inputs": [
+      {
+        "name": "needed",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "available",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "RecycleInflowUnverified",
     "inputs": [
       {

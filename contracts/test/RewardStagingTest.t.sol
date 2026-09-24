@@ -10,6 +10,7 @@ import {RewardEpochFacet} from "../src/facets/RewardEpochFacet.sol";
 import {RewardEpochViewFacet} from "../src/facets/RewardEpochViewFacet.sol";
 import {RewardIngressFacet} from "../src/facets/RewardIngressFacet.sol";
 import {RewardClaimFacet} from "../src/facets/RewardClaimFacet.sol";
+import {LibVpfiRecycle} from "../src/libraries/LibVpfiRecycle.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet.sol";
 import {RewardCustodyFacet} from "../src/facets/RewardCustodyFacet.sol";
@@ -1333,5 +1334,24 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
 
     function _staged65() internal view returns (bytes32) {
         return keccak256(abi.encode(uint256(CHAIN_BASE), keccak256(abi.encode("tiny", uint256(100), uint256(64)))));
+    }
+
+    // ───────────────────────── round 11 ─────────────────────────
+
+    function test_EveryBucketDebit_HonoursTheReservation() public {
+        // The bucket holds 1.0 with nothing committed; a staging reservation
+        // of 0.4 stands by count. What any non-settlement debit may take is
+        // 0.6, and a settlement may never consume below the reservation.
+        _mut().setRecycleBucketRaw(1e18);
+        _mut().setRecycleBucketReservedRaw(0.4e18);
+        assertEq(_mut().bucketFundableRaw(), 0.6e18, "fundable is the bucket less the reservation (nothing committed)");
+        vm.expectRevert(abi.encodeWithSelector(LibVpfiRecycle.RepatriationExceedsFundable.selector, 0.7e18, 0.6e18));
+        _mut().debitRepatriationSurplusRaw(0.7e18);
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.RecycleBucketReservedShortfall.selector, 0.7e18, 0.6e18));
+        _mut().consumeRecycleBucketRaw(0.7e18);
+        _mut().consumeRecycleBucketRaw(0.6e18);
+        assertEq(_mut().bucketFundableRaw(), 0, "exactly the reservation is left");
+        _mut().setRecycleBucketReservedRaw(0);
+        assertEq(_mut().bucketFundableRaw(), 0.4e18, "released, it is fundable again");
     }
 }

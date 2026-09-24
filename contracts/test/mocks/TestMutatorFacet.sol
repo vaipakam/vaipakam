@@ -2611,4 +2611,15 @@ contract TestMutatorFacet {
     function setStagingResolvingCountRaw(uint256 count) external {
         LibVaipakam.storageSlot().stagingResolvingCount = count;
     }
+
+    /// @dev 3b-ii-A2 test-only — the bucket's fundable figure and the two
+    ///      debits that read it, driven raw so a cell can put them against a
+    ///      staging reservation.
+    function bucketFundableRaw() external view returns (uint256) {
+        return LibVpfiRecycle.bucketFundable(LibVaipakam.storageSlot());
+    }
+
+    function consumeRecycleBucketRaw(uint256 amount) external {
+        LibVpfiRecycle.consume(amount, false, 0);
+    }
 }

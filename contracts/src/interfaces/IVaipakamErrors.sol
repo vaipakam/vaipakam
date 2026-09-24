@@ -479,6 +479,11 @@ interface IVaipakamErrors {
     error ReconciliationRecycledConsumedShort(uint256 requested, uint256 consumed);
     /// @notice Movable recycled custody is bounded by the UNCOMMITTED bucket.
     error ReconciliationExceedsUncommittedBucket(uint256 requested, uint256 uncommitted);
+    /// @notice 3b-ii-A2 (Codex #2308 r11) — a settlement's bucket consumption
+    ///         would eat what staging records have reserved: every settlement
+    ///         gate reads the bucket's availability, so this names an ungated
+    ///         over-consumption rather than stranding a resolving record.
+    error RecycleBucketReservedShortfall(uint256 needed, uint256 available);
     /// @notice Spent recycled credit moves to fresh only as far as
     ///         CONSUMPTION (attributed first in queue order) or an inherited
     ///         debit covers it; credit that left by surplus repatriation has

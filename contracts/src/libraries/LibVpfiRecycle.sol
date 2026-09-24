@@ -299,6 +299,23 @@ library LibVpfiRecycle {
         return bucket > reserved ? bucket - reserved : 0;
     }
 
+    /// @notice THE figure every NON-settlement debit of the bucket reads —
+    ///         the repatriation surplus, the fresh-to-recycled reattribution,
+    ///         the aggregator's remit-out (Codex #2308 r11): the bucket less
+    ///         what staging records have reserved of it, less the armed
+    ///         recycled commitment and the keeper budget. Three sites carried
+    ///         their own copy of the commitment subtraction and none knew the
+    ///         reservation; one figure, read by all, is what keeps a resolving
+    ///         record's recycled backing where its last page expects it —
+    ///         on an inactive-custody deployment that backing is reserved by
+    ///         count alone, and every mover of the bucket must honour the
+    ///         count.
+    function bucketFundable(LibVaipakam.Storage storage s) internal view returns (uint256) {
+        uint256 available = bucketAvailable(s);
+        uint256 committed = s.outstandingCommitRecycled + s.recycleKeeperBudget;
+        return available > committed ? available - committed : 0;
+    }
+
     enum CreditOrigin {
         Diamond,
         LiveFresh,
@@ -1195,8 +1212,7 @@ library LibVpfiRecycle {
             s.paidOutRecycled = consumed - amount;
         } else {
             uint256 bucket = s.recycleBucket;
-            uint256 reserved = s.outstandingCommitRecycled + s.recycleKeeperBudget;
-            uint256 uncommitted = bucket > reserved ? bucket - reserved : 0;
+            uint256 uncommitted = bucketFundable(s); // net of the staging reservation too (Codex #2308 r11)
             if (amount > uncommitted) {
                 revert IVaipakamErrors.ReconciliationExceedsUncommittedBucket(amount, uncommitted);
             }
@@ -1313,9 +1329,9 @@ library LibVpfiRecycle {
         address to
     ) internal {
         uint256 bucket = s.recycleBucket;
-        uint256 reserved = s.outstandingCommitRecycled +
-            s.recycleKeeperBudget;
-        uint256 fundable = bucket > reserved ? bucket - reserved : 0;
+        // Net of the staging reservation as of every other mover (Codex
+        // #2308 r11): {bucketFundable}.
+        uint256 fundable = bucketFundable(s);
         if (amount > fundable) {
             revert RepatriationExceedsFundable(amount, fundable);
         }
@@ -1358,6 +1374,14 @@ library LibVpfiRecycle {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256 bucket = s.recycleBucket;
         uint256 left = bucket > amount ? bucket - amount : 0;
+        // A settlement never eats what staging records have reserved (Codex
+        // #2308 r11): every settlement gate reads {bucketAvailable}, so this
+        // fires only on an ungated over-consumption, and names it rather
+        // than stranding a resolving record's last page. A record's own last
+        // page releases its reservation before it consumes.
+        if (left < s.recycleBucketReserved) {
+            revert IVaipakamErrors.RecycleBucketReservedShortfall(amount, bucketAvailable(s));
+        }
         s.recycleBucket = left;
         uint256 outstanding = s.outstandingCommitRecycled;
         // #1222 M3 B3 — record the ACTUAL decrement, not `amount`: the floor
