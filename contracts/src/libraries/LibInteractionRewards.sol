@@ -1576,7 +1576,8 @@ library LibInteractionRewards {
     function claimForUserEntries(
         address user,
         uint256 freshBudget,
-        uint256 windowFreshReserved
+        uint256 windowFreshReserved,
+        uint256 backingRoom
     ) internal returns (ClaimEntriesResult memory res) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256[] storage ids = s.userRewardEntryIds[user];
@@ -1611,7 +1612,7 @@ library LibInteractionRewards {
             (res.toUser.total - res.toUser.recycled) +
             (res.toTreasury.total - res.toTreasury.recycled);
         (EntrySplit memory wu, EntrySplit memory wt, bool walked) =
-            _walkShareOfPoolDays(s, user, freshBudget, legacyFresh, windowFreshReserved, res.transport);
+            _walkShareOfPoolDays(s, user, freshBudget, legacyFresh, windowFreshReserved, res.transport, backingRoom);
         _foldSplit(res.toUser, wu);
         _foldSplit(res.toTreasury, wt);
         res.advancedAnyDay = walked;
@@ -1630,13 +1631,47 @@ library LibInteractionRewards {
     ///      `loanSideRewardedDays`). Accumulating in memory across txs and
     ///      paying once at the end is explicitly forbidden by §F8 — it
     ///      double-pays.
+    /// @dev The delivered-fresh allowance the ARMED walk prices against: the
+    ///      delivered bound and the live BACKING room, whichever binds, net of
+    ///      what the preceding legacy legs have already committed.
+    ///
+    ///      Backing belongs here (Codex #2276). The claim's final gate requires
+    ///      every LIVE-paid fresh unit to fit `freshBackingRoom`, and the epoch
+    ///      allocator is what decides how much of a day is live-paid rather than
+    ///      epoch-paid. An allocator blind to that room can spend a flexible
+    ///      epoch on the recycled leg and leave live fresh the gate then
+    ///      refuses, reverting a claim a different leg assignment funds in full:
+    ///      day 1 needing 5F/5R with a flexible 5-token epoch, day 2 needing
+    ///      10R with a recycled-only 5-token epoch, bucket 10 and the live row
+    ///      empty is payable only if day 1's epoch goes to FRESH. Both sweep
+    ///      callers already carry backing inside their delivered allowance for
+    ///      this reason; this is the claim walk and its preview reading the same
+    ///      figure from ONE place, so the two cannot drift apart again.
+    ///
+    ///      The POOL cap is deliberately NOT folded in here — it travels
+    ///      separately as the walk's fresh budget. The three bounds have
+    ///      different recovery semantics (the pool cap only ever shrinks, the
+    ///      backing room recovers with any custody inflow), and collapsing them
+    ///      into one number once let a transient backing dip be attributed to
+    ///      the permanently-truncating fresh shortfall.
+    function _armedDeliveredAllowance(
+        LibVaipakam.Storage storage s,
+        uint256 reservedFresh,
+        uint256 backing
+    ) private view returns (uint256 allowance) {
+        allowance = deliveredFreshBound(s);
+        if (backing < allowance) allowance = backing;
+        allowance = allowance > reservedFresh ? allowance - reservedFresh : 0;
+    }
+
     function _walkShareOfPoolDays(
         LibVaipakam.Storage storage s,
         address user,
         uint256 freshBudget,
         uint256 legacyFreshReserved,
         uint256 windowFreshReserved,
-        TransportLegs memory tp
+        TransportLegs memory tp,
+        uint256 backingRoom
     )
         private
         returns (
@@ -1664,9 +1699,10 @@ library LibInteractionRewards {
         // reservation `freshLeft` makes against the 69M pool, for the same
         // reason. Saturating: a legacy slice already beyond the bound leaves
         // nothing for the walk, and the chokepoint refuses the claim.
-        uint256 deliveredLeft = deliveredFreshBound(s);
-        uint256 reserved = legacyFreshReserved + windowFreshReserved; // entry legs AND the window (r1 P1)
-        deliveredLeft = deliveredLeft > reserved ? deliveredLeft - reserved : 0;
+        // …and by the live BACKING room as well, through the one helper the
+        // preview also calls (Codex #2276): see {_armedDeliveredAllowance}.
+        uint256 deliveredLeft =
+            _armedDeliveredAllowance(s, legacyFreshReserved + windowFreshReserved, backingRoom);
         // 3b-ii-A — the allocation domain: this call's gross needs, read once.
         (uint256 domainFresh, uint256 domainRecycled) = LibRewardCustody.callDomainNeeds(user);
         WalkCtx memory ctx = WalkCtx({
@@ -2480,7 +2516,11 @@ library LibInteractionRewards {
         uint256 deliveredLeft = deliveredFreshBound(s);
         uint256 cappedLegacy = _cappedFreshNeed(legacyFresh + _userWindowFreshReserved(s, user));
         if (cappedLegacy > deliveredLeft) return 0;
-        deliveredLeft -= cappedLegacy;
+        // The early return above is the DELIVERED chokepoint's own test and
+        // stays on the delivered bound alone. What the armed dry run then
+        // prices against is the same allowance the claim's walk will see,
+        // backing included, from the one helper (Codex #2276).
+        deliveredLeft = _armedDeliveredAllowance(s, cappedLegacy, LibVpfiRecycle.freshBackingRoom(s));
         // Codex #1699 r14 P2 — the walk leg's fresh budget reserves the
         // PRECEDING legs, exactly as the live claim threads it: the facet
         // subtracts the window reward before `claimForUserEntries`, which

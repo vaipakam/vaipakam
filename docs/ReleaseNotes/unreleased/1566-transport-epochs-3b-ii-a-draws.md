@@ -170,11 +170,48 @@ epoch paid retires its commitment the way a forfeit's does — without a
 bucket debit, since the bucket never paid it — so what the mirror reports
 as fundable is not depressed by obligations that have already ended.
 
-What this release deliberately does not decide: an allocation the design
-calls **contested** — one where another obligation is known to be
-competing for the same epoch — is refused until the contested-allocation
-machinery lands, and "known" is read as the design defines it, through a
-staging reference, which this release has none of. The close-out of an
-epoch (parking its remainder, acknowledging it, the operator dispositions)
-stays unavailable to everyone, as the previous release left it, until the
-per-day obligation check that gates it lands.
+**An epoch that lists a later day is drawn last.** Transport-first applies
+only to an epoch whose listed days all lie at or before the day being paid.
+An epoch that also lists a LATER day is spent only for what that day's live
+delivery and bucket cannot cover, and is otherwise left whole for the later
+day. Without this, an early day would drain a shared epoch transport-first
+and leave the later day unfunded even though other funding had covered the
+early one. When nothing else can pay, the shared epoch still pays exactly
+the day's gap, so the rule protects the later day without ever refusing a
+day that only that epoch can fund.
+
+This is deliberately broader than the design's own two rules, and the
+difference is recorded rather than hidden. The design draws an epoch last
+only when one of its listed days has not yet ARRIVED, and refuses outright
+a draw that another day's known unmet obligation is competing for. Neither
+condition can be checked yet: an epoch records how many days it lists but
+not which ones, and there is no per-day record of unmet obligations. "Lists
+a later day" covers both cases, and it errs in the safe direction: an epoch
+whose later day has already arrived is one the design would REFUSE, so
+drawing it last is more permissive than the design and far safer than the
+transport-first behaviour it replaces. The exact rules arrive with the
+contested-allocation machinery. An earlier draft of this note said the
+refusal was satisfied because "known" meant a staging reference and this
+release has none; that reading made the protection do nothing, and it was
+wrong.
+
+**A claim now allocates against the live funding it will actually be
+checked against.** The claim chose which part of a day an epoch pays using
+the delivered ledger alone, while its final check requires every live-paid
+unit to be backed by tokens actually held. With the ledger showing funding
+the backing could not support, the allocator could spend an epoch on the
+recycled leg and leave the fresh leg to live funding that the final check
+then refused, reverting a claim that a different split funds in full. The
+claim and its preview now read the same live-backed figure the expiry and
+forfeit sweeps already used.
+
+**The reconciliation view says when an excess is not yet knowable.** For a
+recorded delivery whose split has not arrived, the view that reports how far
+a classification exceeds its attested caps now says so explicitly instead of
+reporting a zero, which reconciliation tooling would have read as "within
+its caps".
+
+What this release deliberately does not decide: the close-out of an epoch
+(parking its remainder, acknowledging it, the operator dispositions) stays
+unavailable to everyone, as the previous release left it, until the per-day
+obligation check that gates it lands.

@@ -319,6 +319,36 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         assertEq(_row(LibVaipakam.RewardCustodyRow.LiveFresh), liveBefore, "the live row untouched");
     }
 
+    /// @dev A batch listing a day BEYOND the one being planned is drawn LAST
+    ///      (Codex #2276, the necessity and contested gates): the design
+    ///      inverts transport-first for exactly these, because an early day
+    ///      draining a shared batch transport-first leaves the later day
+    ///      unfunded though other sources covered the early one. The same
+    ///      scene as the transport-first cell above, with the epoch listing
+    ///      days 1 AND 2: now live pays day 1 and the epoch is left whole.
+    function test_ASharedEpoch_IsDrawnLast_WhenLiveCanPay() public {
+        _scene(NEED);
+        _liveOf(1e18, _one(1), 1, keccak256("live"));
+        bytes32 h = _epochOf(10e18, _two(1, 2), 2, keccak256("shared"));
+        uint256 liveBefore = _row(LibVaipakam.RewardCustodyRow.LiveFresh);
+        assertEq(_claim(), NEED);
+        (uint256 lf, uint256 lr) = _legs(h);
+        assertEq(lf + lr, 0, "the shared epoch is spared for its later day");
+        assertEq(liveBefore - _row(LibVaipakam.RewardCustodyRow.LiveFresh), NEED, "live paid day 1");
+    }
+
+    /// @dev ...and drawn when it is the ONLY way to pay (necessity, not
+    ///      exclusion): no live delivery at all, so day 1 is funded from the
+    ///      shared epoch by the last pass, for exactly its gap.
+    function test_ASharedEpoch_StillPays_WhenNothingElseCan() public {
+        _scene(NEED);
+        bytes32 h = _epochOf(10e18, _two(1, 2), 2, keccak256("shared-only"));
+        assertEq(_claim(), NEED, "the day is paid from the shared epoch");
+        (uint256 lf, ) = _legs(h);
+        assertEq(lf, NEED, "for exactly the day's gap");
+        assertEq(_balance(h), 10e18 - NEED, "and the rest stays for the later day");
+    }
+
     function test_AShortEpochPaysWhatItHolds_TheLedgerTheRest_AndIsRetired() public {
         _scene(NEED);
         _liveOf(1e18, _one(1), 1, keccak256("live"));
@@ -1485,11 +1515,20 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         _mut().classifyPacketPreGateRaw(h, 0, 7e18);
         assertEq(_epoch().admitLegacyTransportBatch(h, d1), h);
         _epoch().materializeTransportBatchPage(h, d1);
+        // BEFORE the split is attested the excess is not knowable, and the lens
+        // must say so rather than report a zero that reads as "within caps"
+        // (Codex #2276) — this packet is about to be shown five over its cap.
+        (bool attBefore, uint256 preF, uint256 preR) =
+            RewardReconciliationFacet(address(diamond)).getPacketClassificationExcess(h);
+        assertFalse(attBefore, "before attestation the excess is not yet knowable");
+        assertEq(preF + preR, 0, "and no figure is offered in its place");
         RewardReporterFacet(address(diamond)).setRewardMessenger(address(this));
         vm.expectEmit(true, false, false, true);
         emit IngressPacketClassifiedBeyondCaps(h, 0, 5e18);
         _ingress().onRemitSplitAttested(CHAIN_BASE, REMITTER, 2, 8, 2); // caps 8e18 fresh / 2e18 recycled on 10e18
-        (uint256 exF, uint256 exR) = RewardReconciliationFacet(address(diamond)).getPacketClassificationExcess(h);
+        (bool att, uint256 exF, uint256 exR) =
+            RewardReconciliationFacet(address(diamond)).getPacketClassificationExcess(h);
+        assertTrue(att, "attested now, so a zero below is a real zero");
         assertEq(exF, 0);
         assertEq(exR, 5e18, "the recycled classification exceeds its cap by five: recorded");
         // An unrecorded hash is refused, never read as a packet within its caps (Codex #2276 r16 P2).
@@ -1653,6 +1692,71 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         assertEq(lf, 0, "and none of its fresh");
         assertEq(_mut().getArmedFreshPaidRaw() - paidBefore, 2 * dayF, "live paid both days' fresh");
         assertEq(_cfg().getRecycleBucket(), 0, "the bucket paid day 2's recycled");
+    }
+
+    /// @dev The claim's allocator must be told the LIVE BACKING room and not
+    ///      only the delivered bound (Codex #2276). Two days, because ONE
+    ///      cannot show this: the residual pass reads the DOMAIN deficits,
+    ///      which span every day of the call, while the coverage, the bucket
+    ///      and the epochs are PER DAY — so day 1's leg choice is made against
+    ///      a deficit day 2 contributes to, and day 1's own pass cannot see
+    ///      day 2's epoch. On one day the same pass always tops the other leg
+    ///      back up, or the mandatory draw eats the coverage and both branches
+    ///      defer; neither reverts a payable claim.
+    ///
+    ///      Day 1 needs both legs and lists a FLEXIBLE epoch worth its fresh
+    ///      leg; day 2 needs recycled only and lists a RECYCLED-ONLY epoch
+    ///      worth all of it; the bucket holds day 1's recycled leg exactly; the
+    ///      live custody row is EMPTY, so any live-paid fresh reverts the
+    ///      claim's backing gate.
+    ///
+    ///      Told only the bound, day 1 reads no fresh shortfall and the domain
+    ///      shows a large recycled deficit (day 2's whole leg), so day 1 spends
+    ///      its flexible epoch on RECYCLED, its fresh leg falls to live, and the
+    ///      gate reverts a claim both days' funding covers. Told the backing
+    ///      room, day 1's fresh shortfall is its whole leg, the epoch pays
+    ///      FRESH, the bucket pays day 1's recycled and day 2 pays from its own
+    ///      epoch.
+    function test_TheClaim_PassesBackingRoomIntoAllocation() public {
+        uint256 cap = 0.4e18;
+        // Day 2 carries NO schedule floor, so its whole cap is a recycled leg.
+        _mut().setDayPoolStampRaw(1, uint128(2e18), uint128(2e18));
+        _mut().setDayPoolStampRaw(2, uint128(0), uint128(2e18));
+        for (uint256 d = 1; d <= 2; ++d) {
+            _mut().setKnownGlobalDailyInterest(d, 1e18, 0, true);
+            _mut().setDayCapThreshold18(d, type(uint256).max);
+            _mut().setDayCapModeRaw(d, 1);
+            _mut().setDayUserSideCapRaw(d, cap);
+        }
+        _mut().setGovernorCommitArmedFromDayRaw(1);
+        _loanSideOpen(2);
+        _entry(1, 3);
+        _mut().setArmedFreshLedgerRaw(0, 0);
+        _mut().userClaimFundingNeedRaw(alice);
+        (uint256 needF, uint256 needR) = _epochView().getObligationDomainNeeds(alice);
+        // Day 1 owns all the fresh; the recycled spans both days.
+        uint256 day1R = needR - cap;
+        assertEq(needF, cap / 2, "fixture: day 1 is half fresh");
+        assertEq(day1R, cap / 2, "fixture: and half recycled");
+        assertEq(_row(LibVaipakam.RewardCustodyRow.LiveFresh), 0, "fixture: no live backing");
+        // Generous ledger: the delivered bound must never be what binds, so
+        // that the backing room is. Both the user and the treasury leg charge
+        // it, which is why a figure sized to one leg is not enough.
+        _mut().setArmedFreshLedgerRaw(100 * cap, 0);
+        _mut().setRecycleBucketRaw(day1R);
+        bytes32 flex = _epochOf(needF, _one(1), 11, keccak256("backing-day1-flexible"));
+        vm.warp(vm.getBlockTimestamp() + 1);
+        bytes32 recycledOnly = _epochOf(cap, _one(2), 12, keccak256("backing-day2-recycled"));
+        _attest(12, 0, cap);
+        uint256 paidBefore = _mut().getArmedFreshPaidRaw();
+        assertEq(_claim(), 2 * cap, "both days are funded and must pay");
+        assertEq(_mut().getArmedFreshPaidRaw() - paidBefore, 0, "and nothing was paid live");
+        (uint256 ff, uint256 fr) = _legs(flex);
+        assertEq(ff, needF, "day 1's flexible epoch paid the FRESH leg");
+        assertEq(fr, 0, "and none of the recycled");
+        (, uint256 rr) = _legs(recycledOnly);
+        assertEq(rr, cap, "day 2 paid from its own epoch");
+        assertEq(_cfg().getRecycleBucket(), 0, "and the bucket paid day 1's recycled");
     }
 
     function test_NoEpochs_TheReadsAnswerZero_WithoutAScan() public {

@@ -1756,6 +1756,9 @@ library LibRewardCustody {
             uint256 d = dayIds[i];
             s.transportBatchesByDay[d].push(batchId);
             _linkIntoDay(s, d, batchId, arrived, hinted ? hints[i] : bytes32(0), hinted);
+            // The highest day this batch lists, for the arrival question the
+            // draw path asks (Codex #2276) — see {LibVaipakam.TransportBatch}.
+            if (d > b.maxListedDay) b.maxListedDay = uint64(d);
         }
         indexedDays = uint32(end);
         b.indexedDays = indexedDays;
@@ -2074,6 +2077,42 @@ library LibRewardCustody {
         /// @dev The day's cursor-visible coverage: the summed effective balances
         ///      of every drawable epoch in the window.
         uint256 available;
+        /// @dev How much of `available` sits in epochs drawn LAST: a batch that
+        ///      lists any day BEYOND the one being planned (Codex #2276).
+        ///
+        ///      The design's own rule is narrower — it inverts transport-first
+        ///      for a batch listing a day whose broadcast has NOT ARRIVED, and
+        ///      refuses outright a draw contested by another day's known unmet
+        ///      obligation. Neither predicate is answerable here: a batch records
+        ///      `dayCount` but not WHICH days, the packet keeps only a
+        ///      `dayListHash`, and there is no per-day unmet-obligation figure in
+        ///      storage (the outstanding-commitment counters are global). The
+        ///      cumulative cursors are populated lazily, so they cannot serve as
+        ///      an arrival frontier either.
+        ///
+        ///      "Lists a day beyond this one" is a SUPERSET of both cases and
+        ///      needs only the highest day a batch lists. It is therefore sound
+        ///      in the safe direction: a later day that has in fact arrived makes
+        ///      the batch CONTESTED, which the design would REFUSE, so treating
+        ///      it as last-resort is more permissive than the design and far
+        ///      safer than the transport-first it replaces. The exact predicates
+        ///      arrive with 3c's machinery.
+        ///
+        ///      The design inverts transport-first for exactly those —
+        ///      an arrived obligation may draw them only for what its other
+        ///      sources cannot cover, because such a draw is invisible to the
+        ///      contested machinery and would settle over the late day's only
+        ///      backing. They also sort LAST in this plan, so the one split that
+        ///      realizes the takes reaches them only after every ordinary epoch,
+        ///      with no second split and no per-epoch tier mask.
+        uint256 availableNecessity;
+        /// @dev The index at which the necessity tier begins — the count of
+        ///      ordinary epochs. The split's look-ahead stops here, so a
+        ///      flexible unit in an ordinary epoch is never held back on the
+        ///      strength of a NECESSITY epoch's capacity for the other leg:
+        ///      that would route ordinary demand onto the tier the gate exists
+        ///      to protect, with the totals still looking correct.
+        uint256 necessityFrom;
         /// @dev The window ended before the index did: unseen epochs may hold
         ///      coverage this plan could not see.
         bool capHit;
@@ -2200,6 +2239,7 @@ library LibRewardCustody {
         uint256[] memory keys = new uint256[](TRANSPORT_DRAW_SCAN_CAP);
         uint256 live;
         uint256 seen;
+        uint256 necCount;
         while (node != bytes32(0) && seen < TRANSPORT_DRAW_SCAN_CAP) {
             LibVaipakam.TransportBatch storage b = s.transportBatches[node];
             uint256 bal = b.balance;
@@ -2208,8 +2248,21 @@ library LibRewardCustody {
                 bal = bal > ovF + ovR ? bal - (ovF + ovR) : 0;
                 if (bal != 0) {
                     (uint256 fr, uint256 rr) = _capRooms(s, node, b, bal, ovF, ovR);
-                    // dayCount in the high bits, arrival below: one ascending key.
-                    uint256 key = (uint256(b.dayCount) << 64) | uint256(s.ingressPackets[node].arrivedAt);
+                    // NECESSITY in the top bit, dayCount next, arrival below:
+                    // one ascending key, so a batch listing an unarrived day
+                    // sorts after every ordinary epoch however few days it
+                    // lists (Codex #2276). Putting the tier IN the order is
+                    // what lets the single split serve both tiers without a
+                    // per-epoch mask: the takes are spent in plan order, so the
+                    // necessity tier is reached only once the rest is gone.
+                    bool nec = b.maxListedDay > dayId;
+                    uint256 key = (nec ? uint256(1) << 255 : 0)
+                        | (uint256(b.dayCount) << 64)
+                        | uint256(s.ingressPackets[node].arrivedAt);
+                    if (nec) {
+                        plan.availableNecessity += fr + rr < bal ? fr + rr : bal;
+                        unchecked { ++necCount; }
+                    }
                     // The batch id is the final tie-break, so the plan's
                     // order is a function of the SET in the window and not
                     // of the order it was scanned in (Codex #2276 r9 P1) —
@@ -2251,6 +2304,7 @@ library LibRewardCustody {
         plan.bals = bals;
         plan.freshRoom = fRoom;
         plan.recycledRoom = rRoom;
+        plan.necessityFrom = live - necCount;
     }
 
     /// @dev An epoch's two leg rooms: the balance where its packet is
@@ -2346,7 +2400,14 @@ library LibRewardCustody {
         uint256[] memory suf = new uint256[](n + 1);
         for (uint256 k = n; k > 0; ) {
             unchecked { --k; }
-            (uint256 xF, uint256 xR) = _exclusive(plan, k);
+            // A NECESSITY epoch contributes NO look-ahead capacity (Codex
+            // #2276): the reservation and the reach rule must not hold an
+            // ordinary epoch's flexible unit back because a necessity epoch
+            // could serve the other leg later. That would hand ordinary demand
+            // to the tier the gate protects while the totals still balanced.
+            (uint256 xF, uint256 xR) = k < plan.necessityFrom
+                ? _exclusive(plan, k)
+                : (uint256(0), uint256(0));
             suf[k] =
                 (((suf[k + 1] >> 128) + xF) << 128) | ((suf[k + 1] & type(uint128).max) + xR);
         }
@@ -2536,8 +2597,11 @@ library LibRewardCustody {
         uint256 needFresh = q.needFresh > q.poolFresh ? q.poolFresh : q.needFresh;
         TransportDrawPlan memory plan = planTransportDraw(s, q.dayId, q.ovIds, q.ovFresh, q.ovRecycled);
         r.capHit = plan.capHit;
-        uint256 avail = plan.available;
-        if (avail == 0) return r;
+        // Transport-first applies to the ORDINARY tier only. The necessity
+        // tier is drawn AFTER live and the bucket, for the gap alone (Codex
+        // #2276).
+        if (plan.available == 0) return r;
+        uint256 avail = plan.available - plan.availableNecessity;
         uint256 liveF = q.poolFresh < q.deliveredCap ? q.poolFresh : q.deliveredCap;
         uint256 sF = needFresh > liveF ? needFresh - liveF : 0;
         uint256 sR = q.needRecycled > q.bucket ? q.needRecycled - q.bucket : 0;
@@ -2570,6 +2634,31 @@ library LibRewardCustody {
                 avail -= a;
                 tr += moreR < avail ? moreR : avail;
             }
+        }
+        // The NECESSITY tier, last and for the GAP only: what this day's own
+        // other eligible sources cannot cover once the ordinary tier, the live
+        // allowance and the bucket have been counted (Codex #2276 — the design
+        // inverts transport-first for exactly these batches, because such a
+        // draw is invisible to the contested machinery and would settle over
+        // the late day's only backing). Fresh first, as the day's own shortfall
+        // rule is. The plan sorts this tier last, so the single split reaches
+        // it only for what is added here.
+        if (plan.availableNecessity != 0) {
+            uint256 nec = plan.availableNecessity;
+            // Subtract, never add: `liveF` and the bucket arrive as
+            // `type(uint256).max` from the domain-needs probe, which prices
+            // against unbounded funding, and `tf + liveF` overflowed there.
+            // `tf <= needFresh` and `tr <= needRecycled` hold by construction
+            // (every draw above is bounded by its leg's remaining need), so
+            // the first subtraction in each is safe.
+            uint256 remF = needFresh - tf;
+            uint256 gapF = remF > liveF ? remF - liveF : 0;
+            uint256 takeF = gapF < nec ? gapF : nec;
+            tf += takeF;
+            nec -= takeF;
+            uint256 remR = q.needRecycled - tr;
+            uint256 gapR = remR > q.bucket ? remR - q.bucket : 0;
+            tr += gapR < nec ? gapR : nec;
         }
         // The rule's totals, then the ONE split that realizes them against
         // each epoch's rooms (Codex #2276 r4 P1): where an attested cap keeps

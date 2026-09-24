@@ -448,16 +448,36 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
     /// @notice By how much a classification `packetHash` carried BEFORE its
     ///         split was attested exceeds the attested cap of each component
     ///         (Codex #2276 r15 P1): a divergence the attestation recorded for
-    ///         the correction path, zero for every packet classified after, or
-    ///         within, its caps. Reverts {ReconciliationPacketUnknown} for a
-    ///         hash no packet was recorded under.
-    function getPacketClassificationExcess(bytes32 packetHash) external view returns (uint256 fresh, uint256 recycled) {
+    ///         the correction path.
+    /// @dev    Three states, and the return keeps them apart so a zero is never
+    ///         ambiguous:
+    ///
+    ///         - A hash no packet was recorded under REVERTS
+    ///           {ReconciliationPacketUnknown} (Codex #2276 r16 P2) — it names
+    ///           nothing, so there is nothing to answer.
+    ///         - A recorded packet whose split has NOT been attested returns
+    ///           `attested == false` and zeros (Codex #2276): with no component
+    ///           caps there is no excess to compute YET, and reporting a bare
+    ///           zero read as "within caps" to reconciliation tooling, which
+    ///           would then learn of an excess only when the delayed
+    ///           attestation landed. It is a real packet whose answer is not yet
+    ///           knowable — a different absence from an unknown hash, so it is
+    ///           flagged rather than refused, which also lets a reconciler
+    ///           SCAN packets without reverting on each unattested one.
+    ///         - An attested packet returns `attested == true` with its two
+    ///           recorded excesses; zero there genuinely means within its caps.
+    /// @return attested Whether the packet's split has been attested.
+    /// @return fresh    The fresh classification beyond the attested fresh cap.
+    /// @return recycled The recycled classification beyond the attested recycled cap.
+    function getPacketClassificationExcess(bytes32 packetHash)
+        external
+        view
+        returns (bool attested, uint256 fresh, uint256 recycled)
+    {
         LibVaipakam.IngressPacket storage p = LibVaipakam.storageSlot().ingressPackets[packetHash];
-        // An unrecorded hash is refused, as {getPacketReconciliation}'s
-        // existence rule refuses it (Codex #2276 r16 P2): a zero here means a
-        // recorded packet within its caps, never a hash nobody recorded.
         if (p.arrivedAt == 0) revert ReconciliationPacketUnknown(packetHash);
-        return (p.classifiedFreshBeyondCap, p.classifiedRecycledBeyondCap);
+        if (!p.attested) return (false, 0, 0);
+        return (true, p.classifiedFreshBeyondCap, p.classifiedRecycledBeyondCap);
     }
 
     /// @notice An imported envelope's record; `importedAt == 0` for an
