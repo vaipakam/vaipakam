@@ -495,8 +495,13 @@ the tariff, so launch absorption is never single-channel:
    > **SUPERSEDED on the BUILD gate, 2026-09-24 — the ACTIVATION gate
    > stands.** The glance was taken and is DISCHARGED for the no-yield
    > refundable-deposit shape, so the mechanism is no longer behind an
-   > unscheduled prerequisite and may be built, reviewed, merged and shipped
-   > dark. What is NOT discharged is fork C's NON-REFUNDABLE arming fee, a
+   > unscheduled prerequisite and may be built, reviewed and merged. SHIPPING
+   > is a separate gate the legal move does not answer: the bonds note requires
+   > #1566's delivered-custody holder with reward payouts debiting that holder
+   > EXCLUSIVELY first, because until then reward backing counts every VPFI
+   > outside the recycle bucket and a Diamond-held deposit is available to pay
+   > reward claimants. What is NOT discharged legally is fork C's
+   > NON-REFUNDABLE arming fee, a
    > separate legal shape, and the fee stays at zero until its own glance is
    > recorded — so the permanent-absorption channel this item was scheduling
    > cannot be counted as live until then.
@@ -512,8 +517,13 @@ the tariff, so launch absorption is never single-channel:
    > which is the authoritative gate.
 
 With RL-1 filling vaults at the distribution end, these three plus the Full
-tariff give four independent absorption channels within one release cycle of
-each other — the flywheel stops depending on any single attach rate.
+tariff were scheduled as four independent absorption channels within one
+release cycle of each other — the flywheel no longer depending on any single
+attach rate. **Count three, not four, until the arming fee is armed** (marker
+above, 2026-09-24): the bond channel's permanent absorption is the fee, the
+fee stays at zero until its own glance is recorded, and that glance has no
+schedule. A zero fee absorbs nothing, so planning that counts it is planning
+against a channel that is shipped but inert.
 
 ### RL-6 — Legal evidence pack + copy rules — ADOPT (docs only)
 
