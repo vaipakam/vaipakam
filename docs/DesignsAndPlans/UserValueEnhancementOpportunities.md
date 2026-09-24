@@ -316,8 +316,8 @@ reintroduces hold-to-earn.
 | **S-1 Fee payment in VPFI** | The borrower VPFI-LIF custody path (spec §6b) already deducts full LIF in VPFI into Diamond custody; notification fees are already VPFI-billed. Extend the same "pay protocol services in VPFI" pattern to other service fees. | Temporal (custody) + permanent (treasury share / forfeiture) | Mostly already specified; activation is gated on the peg posture — E-1 (lender-discount decoupling) creates hold-demand even while the peg is unset |
 | **S-2 Consumable perks priced in VPFI** | E-2's perks (priority solver routing, higher auto-lifecycle limits, listing visibility boosts, reduced notification pricing) purchased by *spending* VPFI, not just by holding it. | Permanent (spent to treasury) | Pure fee-for-service; near-zero legal surface |
 | **S-3 Hold-for-tier demand** | Fee-discount tiers with time-weighted accumulator + min-history gates (existing spec §6/6a). | Temporal (vaulted) | Already built; E-1 makes it live day-one |
-| **S-4 Service bonds (work-token)** | Solvers / matchers / keepers post a VPFI **security deposit** to access higher rate limits, priority match windows, or larger intent batches; slashed on misbehaviour (slash → treasury, recycled like any other treasury VPFI receipt). | Temporal (escrow) + permanent (slash) | A performance bond, not an investment: no yield is ever paid on the bond. Legal-glance required but the shape is a deposit, not a return |
-| **S-5 Recycle-first rule (supersedes an earlier burn proposal — owner decision 2026-07-13)** | 100% of the VPFI the treasury receives from fees / forfeitures / slashes routes to the reward-emissions and keeper-reward budgets (§5.2). **No burn.** | Permanent absorption into the reward loop | See "Why recycle instead of burn" below |
+| **S-4 Service bonds (work-token)** | Solvers / matchers / keepers post VPFI to access higher rate limits, priority match windows, or larger intent batches. **MECHANISM SUPERSEDED 2026-09-24** — review settled on a **non-slashable capacity deposit**: nothing is confiscated for misbehaviour, because no slash predicate cleared the objectivity bar. Both selectable forks are non-slashable — (A) a refundable deposit only; (C) a refundable deposit plus a separate non-refundable arming fee. See [`VpfiServiceBondsDesign.md`](VpfiServiceBondsDesign.md) §1.4. | Temporal (deposit held while active) + permanent (fork C's arming fee only — **no slash sink**) | NOT a performance bond, and that word must not be used for it: a deposit returned on exit, with no yield ever paid on it. The legal glance is discharged for the deposit shape; only a non-zero arming fee still waits on one |
+| **S-5 Recycle-first rule (supersedes an earlier burn proposal — owner decision 2026-07-13)** | 100% of the VPFI the treasury receives from fees and forfeitures — there are no slash receipts, per the superseded S-4 mechanism above — routes to the reward-emissions and keeper-reward budgets (§5.2). **No burn.** | Permanent absorption into the reward loop | See "Why recycle instead of burn" below |
 
 **Why recycle instead of burn (owner decision 2026-07-13).** An earlier draft
 proposed burning a slice of treasury VPFI receipts. The owner's challenge —
@@ -354,8 +354,8 @@ system into a loop:
 interaction rewards (emission)
         │ distributed to users
         ▼
-users SPEND (S-1/S-2), BOND (S-4), or HOLD (S-3)
-        │ treasury share / forfeitures / slashes
+users SPEND (S-1/S-2), DEPOSIT (S-4), or HOLD (S-3)
+        │ treasury share / forfeitures / fork C's arming fee
         ▼
 treasury VPFI receipts (100% recycled — S-5 rule)
         │
