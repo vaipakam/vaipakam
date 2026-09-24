@@ -492,12 +492,22 @@ the tariff, so launch absorption is never single-channel:
    already recommends) so the slash-absorption class isn't blocked on an
    unscheduled prerequisite.
 
-   > **SUPERSEDED on the gate, 2026-09-24.** The glance was taken and is
-   > DISCHARGED for the no-yield refundable-deposit shape; only fork C's
-   > NON-REFUNDABLE arming fee is outside it. That residue gates **arming the
-   > fee, not building the mechanism** — C ships dark and the fee stays at
-   > zero until the fee-shape glance is recorded. So the slash-absorption
-   > class is not behind a prerequisite any more. See
+   > **SUPERSEDED on the BUILD gate, 2026-09-24 — the ACTIVATION gate
+   > stands.** The glance was taken and is DISCHARGED for the no-yield
+   > refundable-deposit shape, so the mechanism is no longer behind an
+   > unscheduled prerequisite and may be built, reviewed, merged and shipped
+   > dark. What is NOT discharged is fork C's NON-REFUNDABLE arming fee, a
+   > separate legal shape, and the fee stays at zero until its own glance is
+   > recorded — so the permanent-absorption channel this item was scheduling
+   > cannot be counted as live until then.
+   >
+   > Two corrections to the sentence above while we are here. There is no
+   > **slash**-absorption class: slashing collapsed in the bonds note's own
+   > review, neither selectable fork carries it, and C's arming fee is the
+   > permanent path — read it as the **arming-fee** channel. And the
+   > prerequisite this item worried about was the glance being unscheduled,
+   > which is answered; the fee's activation gate is a different thing and is
+   > still ahead. See
    > [`VpfiServiceBondsDesign.md`](VpfiServiceBondsDesign.md)'s status header,
    > which is the authoritative gate.
 

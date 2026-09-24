@@ -2305,15 +2305,27 @@ This is the third revision in which a parameter was added to make a previous
 parameter safe. That is the signal to stop extending and check whether the
 mechanism is needed at all — it was not.
 
-**3. Capacity — RATIFIED BY THE OWNER, 2026-09-07 (the terms as proposed
-here; see the status header), and why the mechanism is not specified in
-this section.** Retained in its proposal voice below because the
-reasoning is what makes the terms readable, exactly as the owner-decisions
-section at the end of this note is retained; it is not an open question,
-and nothing in it waits on an answer. The ACTOR rules are
-design-structural (who a routed call charges — an identity boundary, not
-economics) and were fixed regardless of which capacity numbers were
-ratified.
+**3. Capacity — the POLICY terms are RATIFIED BY THE OWNER, 2026-09-07
+(the three below, as proposed here; see the status header); the ARITHMETIC
+is deliberately deferred to implementation, and this section says which is
+which.** Retained in its proposal voice because the reasoning is what makes
+the terms readable, exactly as the owner-decisions section at the end of this
+note is retained — but read the retention narrowly:
+
+- **Ratified, and nothing re-opens them:** the ceiling of 4x the free tier
+  per `(role, address)`, NO minimum bond, and the clamp on any capacity
+  reduction.
+- **Still open, and owned by implementation rather than by the owner:** the
+  curve's arithmetic, the limiter's envelope, the fresh-storage and zero/dark
+  semantics of every divisor, the initial capacity for an unseen
+  `(role, address)`, and the cost units per role — the six-item checklist
+  under "What implementation must settle" later in this section, whose
+  numbers come back with their throughput meaning attached (see "NOT for the
+  owner, deliberately").
+
+The ACTOR rules are design-structural (who a routed call charges — an
+identity boundary, not economics) and were fixed regardless of which capacity
+numbers were ratified.
 
 **The ratified terms:** a bond buys capacity
 *continuously and proportionally*, with **no minimum bond**, up to a ceiling
