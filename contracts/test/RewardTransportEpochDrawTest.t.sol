@@ -369,6 +369,43 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         assertEq(tf2, NEED, "and it still funds the day when it is the only source");
     }
 
+    /// @dev The ordinary tier is credited only with what it can pay on EACH
+    ///      leg, not its aggregate balance (Codex #2276). An ordinary epoch that
+    ///      can pay only recycled, a shared epoch that can pay only fresh, a
+    ///      fresh-only need that live funding covers. Credited with its
+    ///      aggregate, the ordinary tier was asked for fresh it cannot pay, and
+    ///      the split spilled that fresh into the shared epoch. Live must pay,
+    ///      and the shared epoch must be spared.
+    function test_TheOrdinaryTier_IsCreditedPerLeg_NotByItsAggregate() public {
+        _epochOf(5, _one(1), 91, keccak256("ord-recycled-only"));
+        _attest(91, 0, 5);
+        vm.warp(vm.getBlockTimestamp() + 1);
+        _epochOf(5, _two(1, 2), 92, keccak256("nec-fresh-only"));
+        _attest(92, 5, 0);
+        (uint256 tf, uint256 tr, ) =
+            _alloc(1, 5, 0, type(uint256).max, type(uint256).max, type(uint256).max, 5, 0);
+        assertEq(tf + tr, 0, "live pays the fresh leg; no epoch is drawn at all");
+    }
+
+    /// @dev ...and where the shared tier IS needed, its own leg restrictions
+    ///      shape how the ordinary tier is spent (Codex #2276, found locally).
+    ///      An ordinary epoch that can pay either leg, a shared epoch that can
+    ///      pay only fresh, a need for both legs and nothing else to pay it.
+    ///      Both legs are coverable: the ordinary epoch pays recycled and the
+    ///      shared epoch pays fresh. Hiding the shared tier from the split's
+    ///      look-ahead spent the ordinary epoch on fresh and left recycled
+    ///      unpaid.
+    function test_TheSharedTier_ShapesTheOrdinarySpend_WhenItIsNeeded() public {
+        _epochOf(5, _one(1), 93, keccak256("ord-flexible"));
+        vm.warp(vm.getBlockTimestamp() + 1);
+        _epochOf(5, _two(1, 2), 94, keccak256("nec-fresh-only-2"));
+        _attest(94, 5, 0);
+        (uint256 tf, uint256 tr, ) =
+            _alloc(1, 5, 5, type(uint256).max, type(uint256).max, type(uint256).max, 0, 0);
+        assertEq(tf, 5, "the fresh leg is paid, from the shared epoch");
+        assertEq(tr, 5, "and the recycled leg too, from the ordinary epoch");
+    }
+
     function test_AShortEpochPaysWhatItHolds_TheLedgerTheRest_AndIsRetired() public {
         _scene(NEED);
         _liveOf(1e18, _one(1), 1, keccak256("live"));

@@ -2111,13 +2111,19 @@ library LibRewardCustody {
         ///      realizes the takes reaches them only after every ordinary epoch,
         ///      with no second split and no per-epoch tier mask.
         uint256 availableNecessity;
-        /// @dev The index at which the necessity tier begins — the count of
-        ///      ordinary epochs. The split's look-ahead stops here, so a
-        ///      flexible unit in an ordinary epoch is never held back on the
-        ///      strength of a NECESSITY epoch's capacity for the other leg:
-        ///      that would route ordinary demand onto the tier the gate exists
-        ///      to protect, with the totals still looking correct.
-        uint256 necessityFrom;
+        /// @dev The ORDINARY tier's capacity PER LEG: the sum over ordinary
+        ///      epochs of what each could pay on that leg alone (Codex #2276).
+        ///      `available - availableNecessity` is the ordinary tier's JOINT
+        ///      capacity, and crediting the tier with that aggregate on either
+        ///      leg overstated it: a recycled-only epoch counted toward a fresh
+        ///      ask, the split could not realize it from the ordinary epochs,
+        ///      and the shortfall spilled into the necessity tier even where
+        ///      live funding could have paid. Bounding each ordinary draw by
+        ///      its own leg's figure, and both by the joint figure, is the
+        ///      exact feasibility test for two legs sharing balances, so the
+        ///      ordinary epochs can always realize what they are credited with.
+        uint256 ordinaryFresh;
+        uint256 ordinaryRecycled;
         /// @dev The window ended before the index did: unseen epochs may hold
         ///      coverage this plan could not see.
         bool capHit;
@@ -2244,7 +2250,6 @@ library LibRewardCustody {
         uint256[] memory keys = new uint256[](TRANSPORT_DRAW_SCAN_CAP);
         uint256 live;
         uint256 seen;
-        uint256 necCount;
         while (node != bytes32(0) && seen < TRANSPORT_DRAW_SCAN_CAP) {
             LibVaipakam.TransportBatch storage b = s.transportBatches[node];
             uint256 bal = b.balance;
@@ -2266,7 +2271,9 @@ library LibRewardCustody {
                         | uint256(s.ingressPackets[node].arrivedAt);
                     if (nec) {
                         plan.availableNecessity += fr + rr < bal ? fr + rr : bal;
-                        unchecked { ++necCount; }
+                    } else {
+                        plan.ordinaryFresh += fr < bal ? fr : bal;
+                        plan.ordinaryRecycled += rr < bal ? rr : bal;
                     }
                     // The batch id is the final tie-break, so the plan's
                     // order is a function of the SET in the window and not
@@ -2309,7 +2316,6 @@ library LibRewardCustody {
         plan.bals = bals;
         plan.freshRoom = fRoom;
         plan.recycledRoom = rRoom;
-        plan.necessityFrom = live - necCount;
     }
 
     /// @dev An epoch's two leg rooms: the balance where its packet is
@@ -2405,14 +2411,19 @@ library LibRewardCustody {
         uint256[] memory suf = new uint256[](n + 1);
         for (uint256 k = n; k > 0; ) {
             unchecked { --k; }
-            // A NECESSITY epoch contributes NO look-ahead capacity (Codex
-            // #2276): the reservation and the reach rule must not hold an
-            // ordinary epoch's flexible unit back because a necessity epoch
-            // could serve the other leg later. That would hand ordinary demand
-            // to the tier the gate protects while the totals still balanced.
-            (uint256 xF, uint256 xR) = k < plan.necessityFrom
-                ? _exclusive(plan, k)
-                : (uint256(0), uint256(0));
+            // Every epoch contributes its look-ahead capacity, the necessity
+            // tier included. An earlier revision zeroed that tier's capacity
+            // here, so an ordinary epoch's flexible unit would never be held
+            // back on its account. That was a patch for ordinary asks the
+            // ordinary tier could not realize alone. Once the allocator bounds
+            // them by that tier's per-leg capacity (`ordinaryFresh` /
+            // `ordinaryRecycled`), the patch only did harm: the ordinary
+            // epochs already cover their asks exactly, and the flexible choice
+            // only matters when the necessity tier is genuinely needed. There,
+            // hiding its leg restrictions made the split spend an ordinary
+            // flexible unit on the one leg the necessity epoch COULD serve,
+            // leaving the other uncovered (Codex #2276, found locally).
+            (uint256 xF, uint256 xR) = _exclusive(plan, k);
             suf[k] =
                 (((suf[k + 1] >> 128) + xF) << 128) | ((suf[k + 1] & type(uint128).max) + xR);
         }
@@ -2610,9 +2621,11 @@ library LibRewardCustody {
         uint256 liveF = q.poolFresh < q.deliveredCap ? q.poolFresh : q.deliveredCap;
         uint256 sF = needFresh > liveF ? needFresh - liveF : 0;
         uint256 sR = q.needRecycled > q.bucket ? q.needRecycled - q.bucket : 0;
-        uint256 tf = sF < avail ? sF : avail;
+        // Each leg bounded by the ordinary tier's capacity FOR THAT LEG as well
+        // as by the joint figure (Codex #2276): see `ordinaryFresh`.
+        uint256 tf = _min3(sF, avail, plan.ordinaryFresh);
         avail -= tf;
-        uint256 tr = sR < avail ? sR : avail;
+        uint256 tr = _min3(sR, avail, plan.ordinaryRecycled);
         avail -= tr;
         if (avail != 0) {
             uint256 domainFresh = q.domainFresh == type(uint256).max ? needFresh : q.domainFresh;
@@ -2629,15 +2642,15 @@ library LibRewardCustody {
             uint256 moreF = needFresh - tf;
             uint256 moreR = q.needRecycled - tr;
             if (dR > dF) {
-                uint256 a = moreR < avail ? moreR : avail;
+                uint256 a = _min3(moreR, avail, plan.ordinaryRecycled - tr);
                 tr += a;
                 avail -= a;
-                tf += moreF < avail ? moreF : avail;
+                tf += _min3(moreF, avail, plan.ordinaryFresh - tf);
             } else {
-                uint256 a = moreF < avail ? moreF : avail;
+                uint256 a = _min3(moreF, avail, plan.ordinaryFresh - tf);
                 tf += a;
                 avail -= a;
-                tr += moreR < avail ? moreR : avail;
+                tr += _min3(moreR, avail, plan.ordinaryRecycled - tr);
             }
         }
         // The NECESSITY tier, last and for the GAP only: what this day's own
