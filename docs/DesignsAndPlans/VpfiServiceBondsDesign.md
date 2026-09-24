@@ -2314,7 +2314,14 @@ note is retained — but read the retention narrowly:
 
 - **Ratified, and nothing re-opens them:** the ceiling of 4x the free tier
   per `(role, address)`, NO minimum bond, and the clamp on any capacity
-  reduction.
+  reduction — **together with the condition they were ratified under: the free
+  tier is sized per ACTION CLASS, not per role, and must accommodate at least
+  one action of every permissionless class.** That condition is not a detail of
+  the open cost-unit work and must not be read as one: size the floor per role,
+  or against only a role's cheapest class, and the more expensive classes
+  become bond-gated in practice while the text still claims a permissionless
+  baseline. No-minimum-bond is what preserves that baseline, and this is what
+  makes no-minimum-bond mean anything.
 - **Still open, and owned by implementation rather than by the owner:** the
   curve's arithmetic, the limiter's envelope, the fresh-storage and zero/dark
   semantics of every divisor, **what a dark role must still preserve**

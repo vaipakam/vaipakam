@@ -502,9 +502,11 @@ the tariff, so launch absorption is never single-channel:
    > outside the recycle bucket and a Diamond-held deposit is available to pay
    > reward claimants. What is NOT discharged legally is fork C's
    > NON-REFUNDABLE arming fee, a
-   > separate legal shape, and the fee stays at zero until its own glance is
-   > recorded — so the permanent-absorption channel this item was scheduling
-   > cannot be counted as live until then.
+   > separate legal shape. Its gate is a DISJUNCTION, and reading only the
+   > first half invents a blocker: the fee stays at zero until **either** its
+   > own bounded legal glance **or** an explicit recorded owner approval of the
+   > fee shape is on record. Until one of the two is, the permanent-absorption
+   > channel this item was scheduling cannot be counted as live.
    >
    > Two corrections to the sentence above while we are here. There is no
    > **slash**-absorption class: slashing collapsed in the bonds note's own
