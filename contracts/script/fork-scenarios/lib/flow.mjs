@@ -50,6 +50,8 @@ export const ABIS = {
   autoLifecycle: abi('AutoLifecycleFacet'),
   config: abi('ConfigFacet'),
   offerCancel: abi('OfferCancelFacet'),
+  numeraireConfig: abi('NumeraireConfigFacet'),
+  repayPeriodic: abi('RepayPeriodicFacet'),
   earlyWithdrawal: abi('EarlyWithdrawalFacet'),
   earlyWithdrawalDirect: abi('EarlyWithdrawalDirectFacet'),
   profile: abi('ProfileFacet'),

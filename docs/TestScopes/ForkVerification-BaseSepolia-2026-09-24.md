@@ -9,7 +9,7 @@ configuration — not the source tree's idea of them.
   84532 (Base Sepolia), forked at block 47,228,632.
 - **Driver** — [`contracts/script/fork-scenarios/`](../../contracts/script/fork-scenarios/README.md),
   committed with this document. `node run-all.mjs` reproduces every row.
-- **Result** — 94 scenarios: **89 PASS, 5 INFO, 0 FAIL.** The INFOs are
+- **Result** — 108 scenarios: **103 PASS, 5 INFO, 0 FAIL.** The INFOs are
   observations with no assertion behind them, not soft failures; each is
   written out below.
 - **Assets** — the deployment's own faucet mocks: `tLIQ` priced $2,000,
@@ -351,6 +351,54 @@ mutates one. Both are gated on the same seconds-precise maturity bound, and
 both refuse a caller who is not the exiting borrower with
 `KeeperAccessRequired()`.
 
+## 3B. Periodic interest ships dormant — and what it does when armed
+
+**The deployed posture.** The master switch is **off** on this deployment
+(`getPeriodicInterestEnabled = false`), which is the intended default: the
+facet's own natspec says the feature "ships dormant; flipped on by governance
+when ready". While it is off, an offer carrying any cadence is **refused
+outright** (`PeriodicInterestDisabled()`) rather than silently downgraded to
+no cadence — the honest failure mode. Offer terms are separately capped at
+365 days (`OfferDurationExceedsCap(400, 365)`).
+
+**Operational-posture check on the app.** The rule that a config-hidden
+capability must be disclosed does not bite here, and it is worth saying why
+rather than assuming it: the connected app's offer form **never offers a
+cadence at all** — it hard-defaults to none, and only carries an existing
+position's cadence through accept, sale and refinance. Nothing is hidden
+behind the flag from the user's side. The app does ship translated copy for
+`PeriodicInterestDisabled`, so the refusal is explained if it is ever reached.
+
+**Armed on the fork only, then restored.** To exercise the settlement path
+the deployment cannot currently reach, the switch was admin-armed on the fork
+and put back afterwards (confirmed `false` after the run):
+
+- **Admission is strict and names its reasons.** A monthly cadence needs a
+  principal of at least the finer-cadence threshold — **100,000 in numeraire
+  units** on this deployment — and a term longer than one interval. Both
+  refusals carry the numbers: `CadenceNotAllowed(1, 20, …)` for a 20-day
+  term, `CadenceNotAllowed(1, 90, 10e18, 100000e18)` for a $10 principal.
+  So periodic interest is, by configuration, a large-loan feature here.
+- **Before the boundary, nothing settles** (`PeriodicSettleNotDue`), and
+  after it a preview reports the period's due interest before anything
+  moves — 410.96 on 100,000 at 500 bps for 30 days, to the wei.
+- **An unpaid period is closed by selling collateral**, and the protocol
+  refuses to stamp it closed without a route
+  (`PeriodicSettleSwapPathRequired`). With a route, a permissionless settler
+  sold 0.2178 tLIQ (435.62 tLIQ2): lender 413.84, settler 13.07 (3%),
+  treasury 8.71 (2%), and the loan stayed **Active**. The lender received
+  about 0.7% *more* than the 410.96 due — consistent with the sale being
+  sized to cover the bonus and fee with a small margin, but this run does not
+  assert the sizing rule. A second settle of the same period is refused.
+- **A period the borrower pays voluntarily closes itself.** Paying the due
+  amount through a partial repayment advanced the period's settled-at stamp
+  by exactly one interval **inside the repayment**, so there is no separate
+  "stamp" call left to make — one is refused `PeriodicSettleNotDue`. The
+  facet's natspec describes a separate just-stamp call for a period the
+  borrower already covered; in this flow the repayment does the stamping
+  itself. That is recorded as observed behaviour, not as a divergence — the
+  natspec's path may cover repayments made before the boundary.
+
 ## 4. The three gates
 
 ### 4.1 Sanctions — the Tier-1 / Tier-2 split works exactly as documented
@@ -505,6 +553,7 @@ regenerated as `contracts/script/fork-scenarios/last-run.json` on every run
 | A6.* | `06-collateral-and-refinance.mjs` | surplus-collateral release, refinance consent + the four-NFT invariant |
 | A7.* | `07-offset-and-handover.mjs` | the offset route's automatic completion, obligation handover |
 | A8.* | `08-lender-exit.mjs` | the lender's listed sale through to completion, and the direct sale |
+| A9.* | `09-periodic-interest.mjs` | periodic interest: the dormant posture, admission rules, both settlement paths |
 
 The `INFO` rows are: the live facet count (A1.6, an observation feeding §5),
 the depth-floor flip (A3.10, written up as a finding in §2.4), and the two

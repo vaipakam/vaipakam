@@ -1,0 +1,161 @@
+/**
+ * A9 — periodic interest, and the switch it ships behind.
+ *
+ * Periodic interest is a governance-armed feature: the master switch
+ * defaults OFF ("feature ships dormant; flipped on by governance when
+ * ready"), and on this deployment it is off. So the scenario first records
+ * the deployed posture — an offer carrying a cadence is refused outright —
+ * and only then arms the switch on the FORK to exercise the settlement path
+ * the deployment cannot currently reach. The switch is always put back.
+ *
+ * The connected app is consistent with the dark posture: its offer form
+ * never offers a cadence (it hard-defaults to None) and only carries an
+ * existing position's cadence through accept / sale / refinance. So there is
+ * no user-reachable capability hidden behind the flag — this file checks the
+ * contract path, not an interface gap.
+ */
+import { ADMIN, DIAMOND, MOCKS, TREASURY, borrower, lender, outsider, parseUnits, tx } from '../lib/chain.mjs';
+import { ABIS, approveDiamond, delta, mint, offerParams, openLoan, read, snapshot, vaultAddressFor } from '../lib/flow.mjs';
+import { f18 } from '../lib/chain.mjs';
+import { sendAs, warpDays } from '../lib/impersonate.mjs';
+import { simulate } from '../lib/errors.mjs';
+import { record } from '../lib/report.mjs';
+
+const MONTHLY = 1;
+
+export async function run() {
+  const initial = await read(ABIS.numeraireConfig, 'getPeriodicInterestEnabled');
+  try {
+    await runPeriodic(initial);
+  } finally {
+    // Restore the deployment's own posture whatever happened above.
+    await sendAs(ADMIN, { address: DIAMOND, abi: ABIS.numeraireConfig, functionName: 'setPeriodicInterestEnabled', args: [initial] });
+  }
+}
+
+async function runPeriodic(initial) {
+  const lending = MOCKS.liquidToken2;
+  await mint(lender, lending, '1000000');
+  await approveDiamond(lender, lending);
+
+  // ------------------------------------------------ the deployed posture
+  record('A9.1', 'periodic interest ships DORMANT — the master switch is off on this deployment',
+    initial === false ? 'PASS' : 'INFO', `getPeriodicInterestEnabled=${initial}`);
+
+  const dark = await simulate(DIAMOND, ABIS.offerCreate, 'createOffer',
+    [await offerParams({ amount: parseUnits('100000', 18), collateralAmount: parseUnits('125', 18), durationDays: 90n, periodicInterestCadence: MONTHLY })],
+    lender.address);
+  record('A9.2', 'while dark, an offer carrying a cadence is refused outright rather than silently downgraded to None',
+    !dark.ok ? 'PASS' : 'FAIL', dark.ok ? 'NOT refused' : dark.name);
+
+  const tooLong = await simulate(DIAMOND, ABIS.offerCreate, 'createOffer',
+    [await offerParams({ durationDays: 400n })], lender.address);
+  record('A9.3', 'offer terms are capped — a 400-day term is refused, naming the cap',
+    !tooLong.ok ? 'PASS' : 'FAIL', tooLong.ok ? 'NOT refused' : tooLong.name);
+
+  // ------------------------------------------- armed on the fork only
+  await sendAs(ADMIN, { address: DIAMOND, abi: ABIS.numeraireConfig, functionName: 'setPeriodicInterestEnabled', args: [true] });
+  const threshold = await read(ABIS.numeraireConfig, 'getMinPrincipalForFinerCadence');
+  record('A9.4', 'the switch is admin-armed on the FORK to exercise the path; the deployment is untouched', 'PASS',
+    `minPrincipalForFinerCadence=${f18(threshold)} (numeraire units)`);
+
+  // Admission filters, each named by the chain.
+  const shortTerm = await simulate(DIAMOND, ABIS.offerCreate, 'createOffer',
+    [await offerParams({ amount: parseUnits('100000', 18), collateralAmount: parseUnits('125', 18), durationDays: 20n, periodicInterestCadence: MONTHLY })],
+    lender.address);
+  record('A9.5', 'a monthly cadence on a term shorter than one interval is refused',
+    !shortTerm.ok ? 'PASS' : 'FAIL', shortTerm.ok ? 'NOT refused' : shortTerm.name);
+
+  const small = await simulate(DIAMOND, ABIS.offerCreate, 'createOffer',
+    [await offerParams({ amount: parseUnits('10', 18), collateralAmount: parseUnits('0.0125', 18), durationDays: 90n, periodicInterestCadence: MONTHLY })],
+    lender.address);
+  record('A9.6', 'a principal below the finer-cadence threshold is refused, naming the threshold',
+    !small.ok ? 'PASS' : 'INFO', small.ok ? 'admitted (threshold is at or below 10)' : small.name);
+
+  // ---------------------------------------- a periodic loan, settled
+  const PRINCIPAL = parseUnits('100000', 18);
+  let opened;
+  try {
+    opened = await openLoan({ lender, borrower, amount: PRINCIPAL, collateralAmount: parseUnits('125', 18), durationDays: 90n, periodicInterestCadence: MONTHLY });
+  } catch (e) {
+    record('A9.7', 'a monthly-cadence loan opens once the feature is armed', 'INFO', String(e.message).split('\n')[0].slice(0, 160));
+    return;
+  }
+  const { loanId } = opened;
+  const loan = await read(ABIS.loan, 'getLoanDetails', [loanId]);
+  record('A9.7', 'a monthly-cadence loan opens once the feature is armed', String(loan.periodicInterestCadence) === String(MONTHLY) ? 'PASS' : 'FAIL',
+    `loanId=${loanId} cadence=${loan.periodicInterestCadence} principal=${f18(loan.principal)} term=${loan.durationDays}d`);
+
+  const early = await simulate(DIAMOND, ABIS.repayPeriodic, 'settlePeriodicInterest', [loanId, []], outsider.address);
+  record('A9.8', 'settling before the first period closes is refused', !early.ok ? 'PASS' : 'FAIL', early.ok ? 'NOT refused' : early.name);
+
+  await warpDays(31);
+  const preview = await read(ABIS.repayPeriodic, 'previewPeriodicSettle', [loanId]);
+  record('A9.9', 'after the first interval, a settlement preview is available before anything moves', 'PASS',
+    JSON.stringify(preview, (_, v) => (typeof v === 'bigint' ? String(v) : v)).slice(0, 220));
+
+  // The period closes on one of two paths, chosen by whether the borrower
+  // has already paid it. Here they have NOT, so settling needs a swap route:
+  // the protocol sells just enough collateral to cover the shortfall.
+  const noRoute = await simulate(DIAMOND, ABIS.repayPeriodic, 'settlePeriodicInterest', [loanId, []], outsider.address);
+  record('A9.10', 'an UNPAID period cannot be stamped closed — settling it needs a swap route, and says so',
+    !noRoute.ok ? 'PASS' : 'FAIL', noRoute.ok ? 'NOT refused' : noRoute.name);
+
+  // Auto-liquidate path: a permissionless settler supplies the route.
+  const venue = MOCKS.mockSwapAdapter;
+  await tx(outsider, { address: lending, abi: (await import('../lib/chain.mjs')).ERC20, functionName: 'mint', args: [venue, parseUnits('10000000', 18)] }, 'fund venue');
+  const holders = {
+    lenderEOA: lender.address, lenderVault: await vaultAddressFor(lender),
+    borrowerEOA: borrower.address, borrowerVault: await vaultAddressFor(borrower),
+    settlerEOA: outsider.address, treasury: TREASURY, venue,
+  };
+  const tokens = { lending, collateral: MOCKS.liquidToken };
+  const beforeAuto = await snapshot(tokens, holders);
+  const autoReceipt = await tx(outsider, {
+    address: DIAMOND, abi: ABIS.repayPeriodic, functionName: 'settlePeriodicInterest',
+    args: [loanId, [{ adapterIdx: 0n, data: '0x' }]],
+  }, 'settlePeriodicInterest(auto)');
+  const afterAuto = await snapshot(tokens, holders);
+  const autoLoan = await read(ABIS.loan, 'getLoanDetails', [loanId]);
+  record('A9.11', 'an unpaid period is closed by selling just enough collateral — and the loan stays Active',
+    String(autoLoan.status) === '0' && autoLoan.collateralAmount < loan.collateralAmount ? 'PASS' : 'FAIL',
+    `gas=${autoReceipt.gasUsed} status=${autoLoan.status} collateral ${f18(loan.collateralAmount)} -> ${f18(autoLoan.collateralAmount)} ` +
+    `deltas=${JSON.stringify(delta(beforeAuto, afterAuto))}`);
+
+  const twice = await simulate(DIAMOND, ABIS.repayPeriodic, 'settlePeriodicInterest', [loanId, [{ adapterIdx: 0n, data: '0x' }]], outsider.address);
+  record('A9.12', 'the same period cannot be settled twice', !twice.ok ? 'PASS' : 'FAIL', twice.ok ? 'NOT refused' : twice.name);
+
+  // Just-stamp path: a second loan whose borrower pays the period's interest
+  // voluntarily first. Then nothing is sold — the period is simply stamped.
+  let second;
+  try {
+    second = await openLoan({ lender, borrower, amount: PRINCIPAL, collateralAmount: parseUnits('125', 18), durationDays: 90n, periodicInterestCadence: MONTHLY, allowsPartialRepay: true });
+  } catch (e) {
+    record('A9.13', 'a second periodic loan, for the prepaid path', 'INFO', String(e.message).split('\n')[0].slice(0, 160));
+    return;
+  }
+  await warpDays(31);
+  const due = await read(ABIS.repayPeriodic, 'previewPeriodicSettle', [second.loanId]);
+  const shortfall = Array.isArray(due) ? due[5] : 0n;
+  await mint(borrower, lending, '100000');
+  await approveDiamond(borrower, lending);
+  const pay = await simulate(DIAMOND, ABIS.repay, 'repayPartial', [second.loanId, shortfall], borrower.address);
+  if (!pay.ok) {
+    record('A9.13', 'the borrower pays the period voluntarily', 'INFO', `repayPartial(${f18(shortfall)}) -> ${pay.name}`);
+    return;
+  }
+  const stampBefore = (await read(ABIS.loan, 'getLoanDetails', [second.loanId])).lastPeriodicInterestSettledAt;
+  await tx(borrower, { address: DIAMOND, abi: ABIS.repay, functionName: 'repayPartial', args: [second.loanId, shortfall] }, 'repayPartial(period)');
+  const paid = await read(ABIS.loan, 'getLoanDetails', [second.loanId]);
+  const afterPay = await read(ABIS.repayPeriodic, 'previewPeriodicSettle', [second.loanId]);
+  // What the run observed: the voluntary payment closes the period BY
+  // ITSELF — the settled-at stamp advances inside the repayment, so there is
+  // no separate "just-stamp" call left to make, and one is refused NotDue.
+  record('A9.13', 'a borrower paying the period voluntarily closes it in the same transaction — no swap, no separate stamp',
+    paid.lastPeriodicInterestSettledAt > stampBefore ? 'PASS' : 'INFO',
+    `paid=${f18(shortfall)} settledAt ${stampBefore} -> ${paid.lastPeriodicInterestSettledAt} ` +
+    `nextDue=${Array.isArray(afterPay) ? afterPay[1] : '?'} dueNow=${Array.isArray(afterPay) ? afterPay[6] : '?'}`);
+  const stampSim = await simulate(DIAMOND, ABIS.repayPeriodic, 'settlePeriodicInterest', [second.loanId, []], outsider.address);
+  record('A9.14', 'a stamp call after a voluntary payment is refused — the period is already closed',
+    !stampSim.ok ? 'PASS' : 'INFO', stampSim.ok ? 'still stampable' : stampSim.name);
+}

@@ -13,12 +13,12 @@ needs no Solidity compiler: it reads the committed per-facet ABIs, so the
 compiler stays the single source of truth for every decode while the driver
 itself is plain Node.
 
-The run now covers ninety-four scenarios across the whole advanced
+The run now covers one hundred and eight scenarios across the whole advanced
 surface — offer creation and escrow, accept and the loan-initiation fee,
 repayment and the treasury's interest cut, the borrower's collateral claim,
 time-based default, health-factor liquidation, preclose, partial repayment,
 lender exit by listing and by direct sale, releasing surplus collateral mid-loan, refinance,
-the offset and obligation-handover exits, and the sanctions, KYC and
+the offset and obligation-handover exits, periodic interest, and the sanctions, KYC and
 illiquid-asset gates. The
 fee and health-factor behaviour reconciles exactly against the specification,
 including the per-loan fee stamps that stop a governance retune re-pricing an
@@ -70,6 +70,16 @@ transaction with no listing at all, and on both the borrower's position runs
 on unchanged. The sale vehicle is the offset vehicle's mirror image — a
 borrower-side offer posted by the lender — so neither can be classified by
 its type alone.
+
+Periodic interest ships dormant on this deployment, which is its intended
+default, and while it is off an offer carrying a cadence is refused outright
+rather than quietly downgraded. The connected app never offers a cadence, so
+nothing is hidden from users behind the flag. Armed on the fork only and then
+restored, the feature proved strict about admission — on this deployment a
+monthly cadence needs a principal of at least one hundred thousand in the
+numeraire — and it closes an unpaid period by selling just enough collateral,
+with a settler bonus and treasury fee, while the loan stays open. A period the
+borrower pays voluntarily is closed by that payment itself.
 
 On the middle two of the four findings, the connected app was checked afterwards rather than
 assumed, and already honours both: the early-repay card reads the loan's
