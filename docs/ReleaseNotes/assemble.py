@@ -1991,24 +1991,43 @@ class Assembly:
         recording what was published. The residual is intrinsic, and it
         shrinks as files gain markers.
 
-        ITS ENCODING LIMIT IS REAL AND NO LONGER LOSES WORK — measured, not
-        assumed (#2299). `HEADING_RE` is a byte pattern, so a UTF-16 heading
-        is invisible to it and such a fragment is NOT matched here. #2299 was
-        filed on the premise that this loses a fragment. It no longer can,
-        because `check_heading_conformance` refuses any fragment whose opening
-        line is not a recognisable ATX heading (#2295), so one this cannot
-        parse cannot be published either. Verified by disabling the alternative
-        and re-running: the fragment is refused, retained, and not duplicated.
+        ITS ENCODING LIMIT IS REAL, AND CONFORMANCE POSTPONES IT RATHER THAN
+        CLOSING IT (#2315). `HEADING_RE` is a byte pattern, so a UTF-16
+        heading is invisible to it and such a fragment is NOT matched here.
+        Within a SINGLE run that costs nothing: `check_heading_conformance`
+        refuses any fragment whose opening line is not a recognisable ATX
+        heading (#2295), so one this cannot parse cannot be published either,
+        and the run ends refused, retained, not duplicated.
 
-        THAT SAFETY RESTS ON CONFORMANCE EXISTING, NOT ON WHERE IT SITS.
-        `run()` calls this first and conformance immediately after, but
-        neither writes: both only refuse, and nothing is appended until
-        `build()`, which is after both. So a fragment this misses is caught
-        before any append wherever conformance runs, and the order is not
-        what carries this. What WOULD reopen the data-loss path is RELAXING
-        conformance to admit an opener it cannot parse — then a fragment this
-        misses reaches `build()` unrefused, and this guard would need an
-        encoding-agnostic arm.
+        AN EARLIER REVISION STOPPED THERE AND CONCLUDED THE LIMIT "no longer
+        loses work". That was wrong, and the counterexample is two runs rather
+        than one — found in review and reproduced (#2311 r2). Take a legacy
+        markerless dated file that ALREADY carries the fragment in UTF-16;
+        `build()` appends fragment bytes verbatim, so an interrupted
+        pre-marker run left exactly that, heading NUL-interleaved. Run one:
+        this guard finds no heading to match, conformance refuses, and the
+        operator is told to open with an ATX heading. They re-save the pending
+        copy as UTF-8 — the obvious reading of that instruction. Run two:
+        conformance passes, the PUBLISHED heading is still NUL-interleaved, so
+        this guard still matches nothing. Second copy appended, source
+        consumed, exit 0.
+
+        So the refusal does not survive its own remediation, and that is the
+        #2298 class in its sharpest form: the remedy edits the very text this
+        guard compares — here the PENDING copy, while the published one keeps
+        the old encoding, so the operator doing exactly as instructed is what
+        moves the two out of comparison. No strictness in conformance reaches
+        it. Closing it needs this guard to decide the encoding question, which
+        is a behaviour change and is #2315.
+
+        WHAT CONFORMANCE DOES CARRY is the single-run half, and it rests on
+        conformance EXISTING rather than on where it sits. `run()` calls this
+        first and conformance immediately after, but neither writes: both only
+        refuse, and nothing is appended until `build()`, which is after both.
+        So a fragment this misses is refused before any append wherever
+        conformance runs. RELAXING conformance to admit an opener it cannot
+        parse would lose that half too — it is not, however, what opens the
+        two-run path above, which is open today.
 
         The order is nonetheless load-bearing, for a different reason and one
         recorded at the call site (#2290 r16): it decides which question the
@@ -2020,10 +2039,15 @@ class Assembly:
 
         An encoding-agnostic arm — comparing the fragment's whole published
         text rather than a parsed heading — was built and REMOVED before
-        merge. It changed the refusal MESSAGE and never the outcome: every
-        case it was supposed to rescue was already refused by conformance, and
-        a mutation test showed disabling it turned nothing red. Do not
-        reintroduce it without first establishing a case it actually decides.
+        merge, on the finding that it changed the refusal MESSAGE and never
+        the outcome, every case it was supposed to rescue being already
+        refused by conformance. THAT FINDING WAS INCOMPLETE, and this
+        paragraph used to set a bar it has since cleared: do not reintroduce
+        the arm without first establishing a case it actually decides. The
+        two-run path above IS such a case, and the mutation test behind the
+        original finding only ever exercised one run. Reintroducing the arm is
+        still a behaviour change rather than a docstring one, so it is #2315
+        — but it is now wanted, not warned against.
         """
         if not os.path.isfile(self.out) or self.out_copy is None:
             return
