@@ -21,6 +21,7 @@ import {
   parseUnits,
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
+import { nameRevert } from './selectors.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, '../../../..');
@@ -70,9 +71,26 @@ export const ERC20 = [
   { type: 'function', name: 'decimals', inputs: [], outputs: [{ type: 'uint8' }], stateMutability: 'view' },
 ];
 
-/** Send a transaction and fail loudly on a mined-but-reverted receipt. */
+/**
+ * Send a transaction and fail loudly — with the custom error NAMED.
+ *
+ * A reverted send comes back as raw hex unless it is decoded here; the
+ * simulate path has always named its refusals, and a scenario that aborts on
+ * `0x5c9e11e8` instead of `InvalidCaps()` cannot tell an expected refusal
+ * from a defect.
+ */
 export async function tx(account, params, label) {
-  const hash = await walletFor(account).writeContract({ ...params, account, chain: forkChain });
+  let hash;
+  try {
+    hash = await walletFor(account).writeContract({ ...params, account, chain: forkChain });
+  } catch (e) {
+    const named = nameRevert(e);
+    if (!named) throw e;
+    const wrapped = new Error(`${label}: reverted with ${named}`);
+    wrapped.cause = e;
+    wrapped.decoded = named;
+    throw wrapped;
+  }
   const receipt = await pub.waitForTransactionReceipt({ hash });
   if (receipt.status !== 'success') throw new Error(`${label}: mined but reverted`);
   return receipt;

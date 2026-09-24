@@ -1,54 +1,22 @@
 /**
- * Custom-error decoding for fork scenarios.
+ * Custom-error decoding for a SIMULATED call.
  *
  * The Diamond reverts with typed custom errors rather than strings, and a
- * bare `eth_call` failure surfaces only the 4-byte selector. This builds a
- * selector -> signature index from every committed facet ABI so a refusal
- * can be reported by NAME — which matters here, because several of the
+ * bare `eth_call` failure surfaces only the 4-byte selector. Several of the
  * behaviours under test ARE refusals (`IlliquidLoanNoRiskMath`,
- * `SanctionedAddress`, `NoEnabledSwapRoute`), and a scenario that cannot
- * name the refusal cannot tell an expected one from a defect.
+ * `SanctionedAddress`, `NoEnabledSwapRoute`), so a scenario that cannot name
+ * the refusal cannot tell an expected one from a defect.
+ *
+ * The selector table itself lives in `selectors.mjs`, because `chain.mjs`'s
+ * `tx()` needs the same lookup for a SENT transaction and cannot import this
+ * module without a cycle.
  */
-import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { encodeFunctionData, toFunctionSelector } from 'viem';
 import { RPC_URL } from './chain.mjs';
+import { encodeFunctionData } from 'viem';
+import { ERROR_INDEX, nameSelector } from './selectors.mjs';
 
-const ABI_DIR = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  '../../../../packages/contracts/src/abis',
-);
+export { ERROR_INDEX };
 
-/** selector -> `ErrorName(type,type)` across the whole exported surface. */
-export const ERROR_INDEX = (() => {
-  const index = {};
-  for (const file of fs.readdirSync(ABI_DIR).filter((f) => f.endsWith('.json'))) {
-    let parsed;
-    try {
-      parsed = JSON.parse(fs.readFileSync(path.join(ABI_DIR, file), 'utf8'));
-    } catch {
-      continue;
-    }
-    if (!Array.isArray(parsed)) continue;
-    for (const entry of parsed) {
-      if (entry.type !== 'error') continue;
-      const sig = `${entry.name}(${(entry.inputs ?? []).map((i) => i.type).join(',')})`;
-      try {
-        index[toFunctionSelector(sig)] = sig;
-      } catch {
-        /* unencodable signature — skip */
-      }
-    }
-  }
-  return index;
-})();
-
-/**
- * Simulate a call and report either its raw return data or the NAME of the
- * custom error it reverted with. Used as a pre-flight before every state
- * change so a scenario records *why* the protocol refused.
- */
 export async function simulate(to, abi, functionName, args, from) {
   const data = encodeFunctionData({ abi, functionName, args });
   const res = await fetch(RPC_URL, {
@@ -68,6 +36,8 @@ export async function simulate(to, abi, functionName, args, from) {
   return {
     ok: false,
     selector,
-    name: selector ? (ERROR_INDEX[selector] ?? `UNKNOWN ${selector}`) : String(json.error.message).slice(0, 160),
+    name: selector
+      ? (nameSelector(selector) ?? `UNKNOWN ${selector}`)
+      : String(json.error.message).slice(0, 160),
   };
 }

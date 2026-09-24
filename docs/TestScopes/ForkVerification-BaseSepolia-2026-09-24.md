@@ -9,7 +9,7 @@ configuration — not the source tree's idea of them.
   84532 (Base Sepolia), forked at block 47,228,632.
 - **Driver** — [`contracts/script/fork-scenarios/`](../../contracts/script/fork-scenarios/README.md),
   committed with this document. `node run-all.mjs` reproduces every row.
-- **Result** — 63 scenarios: **59 PASS, 4 INFO, 0 FAIL.** The four INFOs are
+- **Result** — 77 scenarios: **72 PASS, 5 INFO, 0 FAIL.** The INFOs are
   observations with no assertion behind them, not soft failures; each is
   written out below.
 - **Assets** — the deployment's own faucet mocks: `tLIQ` priced $2,000,
@@ -239,6 +239,50 @@ position (`KeeperAccessRequired`).
 
 ---
 
+## 3A. Two things that move funds on an OPEN position
+
+### 3A.1 Releasing surplus collateral — the boundary is the 1.5 floor
+
+On a loan opened at HF 4 (2.5 tLIQ against 1,000 tLIQ2), the protocol quotes
+**1.5625 tLIQ** as releasable, and releasing exactly that lands the position
+at **HF 1.5000** — the same floor that binds at initiation. So the surplus is
+defined as *everything down to the initiation floor*, not some softer margin.
+
+- One wei past the quote is refused with `HealthFactorTooLow()`. It is not
+  clamped to the maximum, which matters: a caller who miscalculates gets an
+  error rather than a silently different outcome.
+- A second quote afterwards reports **0**.
+- A third party attempting the release is refused with `NotNFTOwner()` —
+  worth noting because it names the authorisation model: the borrower
+  **position NFT** is what authorises, not the borrower address recorded on
+  the loan. A transferred position carries the right with it.
+
+### 3A.2 Refinance is a consent-gated, single-purpose path
+
+The CLAUDE.md invariant is confirmed exactly: a completed refinance leaves
+**two loan records and four distinct position NFTs, all four still
+resolving**. The original loan terminalizes to `Repaid`, the replacement is a
+separate record with the new rate and the new lender, and the old borrower
+token still answers `ownerOf` as a redeemable receipt on the original
+position. An indexer assuming one NFT per loan, or that a terminal loan's
+NFTs are gone, is wrong on both counts.
+
+What was not obvious until it was driven is **how much has to be true before
+a refinance-tagged offer can even be created**. It must be a Borrower offer,
+all-or-nothing fill, on the same lending / collateral / prepay assets, with
+`amount <= oldPrincipal <= amountMax` — and, the interesting one:
+
+> **The borrower must have consented in advance**, by enabling
+> auto-refinance caps on the loan. Without them, creating the offer is
+> refused with `RefinanceCapsRequired()`. With them, an offer above the
+> consented rate is refused with `RefinanceRateExceedsCap()`.
+
+So the terms a third party may move a borrower onto are bounded by something
+the borrower set first, not by the offer alone. Enabling the caps with no
+expiry is itself refused (`InvalidCaps()`), so the consent always carries a
+deadline — even though the downstream checker reads a zero expiry as "no
+cap". The setter is deliberately the stricter of the two.
+
 ## 4. The three gates
 
 ### 4.1 Sanctions — the Tier-1 / Tier-2 split works exactly as documented
@@ -390,10 +434,14 @@ regenerated as `contracts/script/fork-scenarios/last-run.json` on every run
 | A3.* | `03-forced-close.mjs` | time-based default, HF liquidation, depth-floor finding |
 | A4.* | `04-early-exit.mjs` | preclose, partial repay, lender sale listing |
 | A5.* | `05-gates.mjs` | sanctions, KYC, illiquid dual consent |
+| A6.* | `06-collateral-and-refinance.mjs` | surplus-collateral release, refinance consent + the four-NFT invariant |
 
-The four `INFO` rows are: the live facet count (A1.6, an observation feeding
-§5), the depth-floor flip (A3.10, written up as a finding in §2.4), and the
-two post-claim NFT readbacks (A2.16, written up in §1.4).
+The `INFO` rows are: the live facet count (A1.6, an observation feeding §5),
+the depth-floor flip (A3.10, written up as a finding in §2.4), and the two
+post-claim NFT readbacks (A2.16, written up in §1.4). A3.2 records this
+deployment's effective grace window (3 days) rather than asserting it, since
+the window is per-deployment config — what the suite asserts there is the
+ORDERING A3.1 → A3.3, not that any particular day lands inside grace.
 
 ---
 

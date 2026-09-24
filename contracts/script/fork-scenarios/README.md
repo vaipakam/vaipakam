@@ -110,7 +110,10 @@ this harness and are worth keeping:
 - **Simulate before you send.** `lib/errors.mjs`'s `simulate()` decodes the
   Diamond's custom errors by name. Several behaviours under test *are*
   refusals; a scenario that can only say "it reverted" cannot tell an
-  expected refusal from a defect.
+  expected refusal from a defect. `tx()` decodes a reverted SEND through the
+  same table (`lib/selectors.mjs`, which is separate precisely so both sides
+  can reach it without an import cycle), so a state change that refuses is
+  named too — it used to abort on raw hex.
 - **Account the money, don't assert a status code.** `snapshot()` / `delta()`
   over every party (both EOAs, both vaults, the Diamond, the treasury, the
   venue, the liquidator) is what turns "the repay succeeded" into "the

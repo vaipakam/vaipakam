@@ -35,8 +35,14 @@ export async function run() {
     (await read(ABIS.defaulted, 'isLoanDefaultable', [loanId])) === false ? 'PASS' : 'FAIL', `loanId=${loanId}`);
 
   await warpDays(8); // one day past a 7-day term
-  record('A3.2', 'one day past term, inside the grace window, is still not defaultable',
-    (await read(ABIS.defaulted, 'isLoanDefaultable', [loanId])) === false ? 'PASS' : 'INFO', '');
+  // The grace window is configurable per deployment (ConfigFacet's grace
+  // buckets), so this is recorded rather than asserted: what matters is the
+  // ORDERING A3.1 -> A3.3, not that one particular day lands inside grace.
+  const dayPast = await read(ABIS.defaulted, 'isLoanDefaultable', [loanId]);
+  const graceSeconds = await read(ABIS.config, 'getEffectiveGraceSeconds', [loanId]).catch(() => null);
+  record('A3.2', 'one day past a 7-day term, against this deployment\'s grace window',
+    dayPast === false ? 'PASS' : 'INFO',
+    `isLoanDefaultable=${dayPast}` + (graceSeconds === null ? '' : ` effectiveGrace=${graceSeconds}s (${Number(graceSeconds) / 86400}d)`));
 
   await warpDays(30);
   record('A3.3', 'past term AND grace, the loan becomes defaultable',

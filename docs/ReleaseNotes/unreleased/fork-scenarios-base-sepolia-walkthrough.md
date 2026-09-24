@@ -13,11 +13,12 @@ needs no Solidity compiler: it reads the committed per-facet ABIs, so the
 compiler stays the single source of truth for every decode while the driver
 itself is plain Node.
 
-The first full run covered sixty-three scenarios across the whole advanced
+The run now covers seventy-seven scenarios across the whole advanced
 surface — offer creation and escrow, accept and the loan-initiation fee,
 repayment and the treasury's interest cut, the borrower's collateral claim,
 time-based default, health-factor liquidation, preclose, partial repayment,
-lender exit by listing, and the sanctions, KYC and illiquid-asset gates. The
+lender exit by listing, releasing surplus collateral mid-loan, refinance, and
+the sanctions, KYC and illiquid-asset gates. The
 fee and health-factor behaviour reconciles exactly against the specification,
 including the per-loan fee stamps that stop a governance retune re-pricing an
 open loan. Four results are worth an operator's attention. A forced close on
@@ -32,7 +33,22 @@ armed — an industrial-fork knob that retail never turns on — the gate binds 
 accept rather than at offer creation, so a maker can post an offer that no
 taker is permitted to fill.
 
-On the middle two, the connected app was checked afterwards rather than
+Two paths that move funds on an open position, rather than closing one, were
+added after the first pass. Releasing surplus collateral turns out to be
+bounded exactly by the initiation health-factor floor — the protocol quotes
+everything down to it, refuses a single wei past rather than clamping, and
+authorises the release by the borrower's position NFT rather than by the
+address recorded on the loan, so a transferred position carries the right
+with it. Refinance confirmed its stated invariant: two loan records and four
+position NFTs, all four still resolving, with the old borrower token
+surviving as a receipt on the original position. What was not obvious until
+it was driven is how much consent a refinance needs first — the borrower has
+to have capped, in advance, the rate any refinance may carry, and that
+consent is itself required to carry a deadline. The terms a third party may
+move a borrower onto are bounded by something the borrower set, not by the
+offer alone.
+
+On the middle two of the four findings, the connected app was checked afterwards rather than
 assumed, and already honours both: the early-repay card reads the loan's
 interest mode live and is deliberately tri-state, never defaulting to
 full-term wording on a loan that might accrue pro rata, and the Claims page,
