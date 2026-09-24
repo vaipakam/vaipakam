@@ -400,10 +400,11 @@ two post-claim NFT readbacks (A2.16, written up in §1.4).
 ## 8. Follow-ups this run raises
 
 1. **Refresh Base Sepolia and re-export the ABIs + deployments** (operator —
-   §6), which also repairs the artifact drift in §5.
+   §6), which also repairs the artifact drift in §5 and the stale
+   `deployment_source.json` — tracked as **#2313**.
 2. **Re-seed the mock `tLIQ` pool with more depth** so HF liquidation is
-   exercisable on the testnet through a collateral price move (§2.4).
-3. **Refresh `deployment_source.json`**, which names a retired diamond (§5).
+   exercisable on the testnet through a collateral price move (§2.4) —
+   tracked as **#2314**.
 
 Two items were on this list in the first revision of this document and have
 been **withdrawn**, because scouting `apps/app` afterwards found both already
