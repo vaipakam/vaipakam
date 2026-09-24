@@ -13,12 +13,13 @@ needs no Solidity compiler: it reads the committed per-facet ABIs, so the
 compiler stays the single source of truth for every decode while the driver
 itself is plain Node.
 
-The run now covers seventy-seven scenarios across the whole advanced
+The run now covers eighty-seven scenarios across the whole advanced
 surface — offer creation and escrow, accept and the loan-initiation fee,
 repayment and the treasury's interest cut, the borrower's collateral claim,
 time-based default, health-factor liquidation, preclose, partial repayment,
-lender exit by listing, releasing surplus collateral mid-loan, refinance, and
-the sanctions, KYC and illiquid-asset gates. The
+lender exit by listing, releasing surplus collateral mid-loan, refinance,
+the offset and obligation-handover exits, and the sanctions, KYC and
+illiquid-asset gates. The
 fee and health-factor behaviour reconciles exactly against the specification,
 including the per-loan fee stamps that stop a governance retune re-pricing an
 open loan. Four results are worth an operator's attention. A forced close on
@@ -47,6 +48,23 @@ to have capped, in advance, the rate any refinance may carry, and that
 consent is itself required to carry a deadline. The terms a third party may
 move a borrower onto are bounded by something the borrower set, not by the
 offer alone.
+
+The two exits that hand a position to someone else were added last, and the
+offset one carries a trap worth stating plainly: its completion is automatic.
+Posting an offset offer leaves the original loan open, but a third party
+filling that offer closes it inside the same transaction, and calling the
+completion step afterwards is refused. A surface that shows "offset posted,
+now complete it" is waiting for something that already happened. Two further
+details are not obvious from the name — the vehicle is a lender-side offer
+posted by the borrower, so anything classifying offers by their type alone
+files it under the wrong party; and the rule that the replacement may not
+mature later than the original is enforced to the second, which is why a
+same-length replacement fits in the second the loan originated and is refused
+a minute later. Obligation handover, by contrast, keeps the loan record and
+rewrites its borrower in place, with the lender and principal untouched and
+the exiting borrower paying only the interest accrued so far. Refinance ends
+one loan and starts another; handover mutates one. Any indexer has to model
+both shapes.
 
 On the middle two of the four findings, the connected app was checked afterwards rather than
 assumed, and already honours both: the early-repay card reads the loan's

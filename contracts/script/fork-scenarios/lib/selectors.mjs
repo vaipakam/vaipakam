@@ -15,7 +15,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { toFunctionSelector } from 'viem';
+import { decodeAbiParameters, toFunctionSelector } from 'viem';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ABI_DIR = path.resolve(HERE, '../../../../packages/contracts/src/abis');
@@ -84,6 +84,29 @@ function fromSource(selector) {
     walk(SRC_DIR);
   }
   return sourceIndex[selector] ?? null;
+}
+
+/**
+ * Decode a custom error's ARGUMENTS as well as its name, where the payload
+ * carries them. `OfferTermsMismatch(uint8 field)` is the case that makes this
+ * worth having: the name alone says "some term disagreed", while the argument
+ * says WHICH, and the difference is a debugging session.
+ */
+export function describeRevertData(data) {
+  if (typeof data !== 'string' || !/^0x[0-9a-fA-F]{8,}$/.test(data)) return null;
+  const sig = nameSelector(data.slice(0, 10));
+  if (!sig) return null;
+  const types = sig.slice(sig.indexOf('(') + 1, -1);
+  if (!types) return sig;
+  try {
+    const values = decodeAbiParameters(
+      types.split(',').map((type) => ({ type })),
+      `0x${data.slice(10)}`,
+    );
+    return `${sig.slice(0, sig.indexOf('('))}(${values.map((v) => String(v)).join(', ')})`;
+  } catch {
+    return sig;
+  }
 }
 
 /** Name a 4-byte custom-error selector, or return null. */

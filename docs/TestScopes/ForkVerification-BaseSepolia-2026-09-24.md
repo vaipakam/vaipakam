@@ -9,7 +9,7 @@ configuration — not the source tree's idea of them.
   84532 (Base Sepolia), forked at block 47,228,632.
 - **Driver** — [`contracts/script/fork-scenarios/`](../../contracts/script/fork-scenarios/README.md),
   committed with this document. `node run-all.mjs` reproduces every row.
-- **Result** — 77 scenarios: **72 PASS, 5 INFO, 0 FAIL.** The INFOs are
+- **Result** — 87 scenarios: **82 PASS, 5 INFO, 0 FAIL.** The INFOs are
   observations with no assertion behind them, not soft failures; each is
   written out below.
 - **Assets** — the deployment's own faucet mocks: `tLIQ` priced $2,000,
@@ -283,6 +283,51 @@ expiry is itself refused (`InvalidCaps()`), so the consent always carries a
 deadline — even though the downstream checker reads a zero expiry as "no
 cap". The setter is deliberately the stricter of the two.
 
+### 3A.3 The offset route completes ITSELF
+
+`offsetWithNewOffer` posts a replacement offer and leaves the original loan
+**Active** — it is an offer, not a close. What matters is what happens when
+somebody fills it: accepting the offset offer **closes the original loan
+inside that same transaction**. `completeOffset` afterwards is refused with
+`LoanNotActive()`.
+
+A surface that shows "offset posted → now complete it" is waiting for a step
+that already happened. The facet has two completion entries for exactly this
+reason — an external one and an `address(this)`-gated one the accept path
+invokes — and only the second is ever used on this route.
+
+Two details the run turned up that are not obvious from the name:
+
+- **The vehicle is a LENDER-side offer posted by the BORROWER.** The offset
+  works by the exiting borrower standing on the other side of a replacement
+  loan. Anything that classifies offers by `offerType` alone will file this
+  one under the wrong party.
+- **The maturity bound is seconds-precise.** The replacement may not mature
+  later than the original: `now + newTerm <= startTime + oldTerm`. A
+  *same-length* replacement therefore only fits in the same second the loan
+  originated, and is refused a minute later. That is also why a
+  simulate-then-send pair can disagree on this call — the send lands a block
+  later than the simulation.
+
+The settlement reconciles: the borrower repays principal plus accrued
+interest, their escrowed offer principal is released, the original lender is
+made whole, the incoming party receives the net new principal and posts the
+collateral, and the treasury takes the LIF on the new loan.
+
+### 3A.4 Obligation handover keeps the loan; refinance replaces it
+
+`transferObligationViaOffer` hands a live loan to a replacement borrower who
+has a standing offer, and — unlike refinance — the **loan record survives**.
+Its `borrower` is rewritten in place, the lender and principal are untouched,
+the exiting borrower pays only the interest accrued so far and takes their
+collateral back, and the loan stays `Active`.
+
+So the two "move this position to someone else" paths differ in a way any
+indexer has to model: refinance ends one loan and starts another; handover
+mutates one. Both are gated on the same seconds-precise maturity bound, and
+both refuse a caller who is not the exiting borrower with
+`KeeperAccessRequired()`.
+
 ## 4. The three gates
 
 ### 4.1 Sanctions — the Tier-1 / Tier-2 split works exactly as documented
@@ -435,10 +480,12 @@ regenerated as `contracts/script/fork-scenarios/last-run.json` on every run
 | A4.* | `04-early-exit.mjs` | preclose, partial repay, lender sale listing |
 | A5.* | `05-gates.mjs` | sanctions, KYC, illiquid dual consent |
 | A6.* | `06-collateral-and-refinance.mjs` | surplus-collateral release, refinance consent + the four-NFT invariant |
+| A7.* | `07-offset-and-handover.mjs` | the offset route's automatic completion, obligation handover |
 
 The `INFO` rows are: the live facet count (A1.6, an observation feeding §5),
 the depth-floor flip (A3.10, written up as a finding in §2.4), and the two
-post-claim NFT readbacks (A2.16, written up in §1.4). A3.2 records this
+post-claim NFT readbacks (A2.16, written up in §1.4), and the offset
+vehicle's offer type (A7.2b, written up in §3A.3). A3.2 records this
 deployment's effective grace window (3 days) rather than asserting it, since
 the window is per-deployment config — what the suite asserts there is the
 ORDERING A3.1 → A3.3, not that any particular day lands inside grace.

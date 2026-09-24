@@ -49,6 +49,7 @@ export const ABIS = {
   refinance: abi('RefinanceFacet'),
   autoLifecycle: abi('AutoLifecycleFacet'),
   config: abi('ConfigFacet'),
+  offerCancel: abi('OfferCancelFacet'),
   earlyWithdrawal: abi('EarlyWithdrawalFacet'),
   profile: abi('ProfileFacet'),
   admin: abi('AdminFacet'),
@@ -186,6 +187,24 @@ export async function acceptTerms(offerId, offer, acceptor, creator, overrides =
     acceptorAllowFullDowngrade: false,
     ...overrides,
   };
+}
+
+/**
+ * Read an offer back from the chain and accept it.
+ *
+ * Use this for any offer this process did not construct — an offset vehicle,
+ * a sale listing, anything a facet created on a user's behalf. Rebuilding
+ * those terms by hand means guessing at fields the facet chose (the offset
+ * vehicle's `offerType` is the one that caught this), and the accept then
+ * fails `OfferTermsMismatch(n)` against a value that was always knowable.
+ */
+export async function acceptStoredOffer(offerId, acceptor, overrides = {}) {
+  const stored = await read(ABIS.offerCancel, 'getOffer', [offerId]);
+  // A vehicle offer (offset, loan sale) is LINKED to the loan it settles, and
+  // the signed terms must carry that link — otherwise the accept refuses
+  // `OfferTermsMismatch(24)` against a value the chain already knows.
+  const linkedLoanId = await read(ABIS.offerCancel, 'getOfferLinkedLoanId', [offerId]).catch(() => 0n);
+  return acceptOffer(offerId, stored, acceptor, { address: stored.creator }, { linkedLoanId, ...overrides });
 }
 
 export async function acceptOffer(offerId, offer, acceptor, creator, overrides = {}) {

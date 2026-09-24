@@ -13,7 +13,7 @@
  */
 import { RPC_URL } from './chain.mjs';
 import { encodeFunctionData } from 'viem';
-import { ERROR_INDEX, nameSelector } from './selectors.mjs';
+import { ERROR_INDEX, describeRevertData, nameSelector } from './selectors.mjs';
 
 export { ERROR_INDEX };
 
@@ -36,8 +36,10 @@ export async function simulate(to, abi, functionName, args, from) {
   return {
     ok: false,
     selector,
+    // Prefer the fully-decoded form — `OfferTermsMismatch(1)` names the
+    // field that disagreed, where the bare signature does not.
     name: selector
-      ? (nameSelector(selector) ?? `UNKNOWN ${selector}`)
+      ? (describeRevertData(payload) ?? nameSelector(selector) ?? `UNKNOWN ${selector}`)
       : String(json.error.message).slice(0, 160),
   };
 }
