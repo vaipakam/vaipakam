@@ -3515,10 +3515,10 @@
   },
   {
     "type": "error",
-    "name": "RewardCustodyActivationBlockedByResolvingRecords",
+    "name": "RewardCustodyActivationBlockedByStagedRecords",
     "inputs": [
       {
-        "name": "resolving",
+        "name": "encumbered",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -4077,6 +4077,17 @@
     "type": "error",
     "name": "RewardMigrationFailed",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RewardRoleChangeBlockedByStagedRecords",
+    "inputs": [
+      {
+        "name": "encumbered",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",

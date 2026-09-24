@@ -105,7 +105,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](237); // 3b-ii-A2 +11 raw reads +4 raw writes; #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1
+        selectors = new bytes4[](240); // 3b-ii-A2 +13 raw reads +5 raw writes; #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -526,8 +526,11 @@ contract HelperTest {
         selectors[n++] = TestMutatorFacet.entryExecutableNowRaw.selector;
         selectors[n++] = TestMutatorFacet.setRecycleBucketReservedRaw.selector;
         selectors[n++] = TestMutatorFacet.uncreditFreshInHolderRaw.selector;
-        selectors[n++] = TestMutatorFacet.stagingResolvingCountRaw.selector;
-        selectors[n++] = TestMutatorFacet.setStagingResolvingCountRaw.selector;
+        selectors[n++] = TestMutatorFacet.stagingEncumberedCountRaw.selector;
+        selectors[n++] = TestMutatorFacet.setStagingEncumberedCountRaw.selector;
+        selectors[n++] = TestMutatorFacet.stagedEpochTotalRaw.selector;
+        selectors[n++] = TestMutatorFacet.freshBackingRoomRaw.selector;
+        selectors[n++] = TestMutatorFacet.setStagedEpochTotalRaw.selector;
         selectors[n++] = TestMutatorFacet.bucketFundableRaw.selector;
         selectors[n++] = TestMutatorFacet.consumeRecycleBucketRaw.selector;
         selectors[n++] = TestMutatorFacet.acknowledgeTransportBatchRaw.selector;
@@ -2542,7 +2545,7 @@ contract HelperTest {
         selectors[5] = RewardEpochViewFacet.getStagingRecordEntries.selector;
         selectors[6] = RewardEpochViewFacet.getStagingRecordPending.selector;
         selectors[7] = RewardEpochViewFacet.getStagingCooldown.selector;
-        selectors[8] = RewardEpochViewFacet.getStagingResolvingCount.selector;
+        selectors[8] = RewardEpochViewFacet.getStagingEncumberedCount.selector;
     }
 
     /// 3b-ii-A2 (#2305) — the claim's entry walk, hosted. Mirrors

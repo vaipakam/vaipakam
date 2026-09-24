@@ -3111,6 +3111,11 @@ library LibRewardCustody {
                     b.balance -= bf + br;
                     b.stagedFresh += bf;
                     b.stagedRecycled += br;
+                    // The staged total is the SIXTH reserved source (Codex
+                    // #2308 r13): while custody is inactive these tokens rest
+                    // in the Diamond's balance, and no other claim may spend
+                    // them. {LibVpfiRecycle.freshBackingRoom} reads it.
+                    s.stagedEpochTotal += bf + br;
                     _reference(s, key, r, id, bf, br);
                     stagedFresh += bf;
                     stagedRecycled += br;
@@ -3139,6 +3144,38 @@ library LibRewardCustody {
         return keccak256(abi.encode(key, nonce));
     }
 
+    /// @notice One batch of a record's staged list, by insertion index — the
+    ///         order the plan staged it in, which is the order the resolution
+    ///         consumes (Codex #2308 r13).
+    function stagedBatchAt(
+        LibVaipakam.Storage storage s,
+        bytes32 key,
+        LibVaipakam.StagingRecord storage r,
+        uint256 index
+    ) internal view returns (LibVaipakam.StagedBatch storage) {
+        return s.stagingBatches[recordNonceKey(key, r.nonce)][index];
+    }
+
+    /// @notice A batch's staged components leave the record: consumed, or
+    ///         returned to its balance. Clears the row and the record's index
+    ///         of it, so the close has nothing unbounded left to delete
+    ///         (Codex #2308 r12, r13), and takes the value out of the staged
+    ///         earmark of the Diamond's balance (r13).
+    function releaseStagedBatchAt(
+        LibVaipakam.Storage storage s,
+        bytes32 key,
+        LibVaipakam.StagingRecord storage r,
+        uint256 index
+    ) internal {
+        bytes32 nk = recordNonceKey(key, r.nonce);
+        LibVaipakam.StagedBatch storage sb = s.stagingBatches[nk][index];
+        uint256 left = sb.fresh + sb.recycled;
+        uint256 total = s.stagedEpochTotal;
+        s.stagedEpochTotal = total > left ? total - left : 0;
+        delete s.stagingBatchIndexPlusOne[nk][sb.id];
+        delete s.stagingBatches[nk][index];
+    }
+
     /// @dev One reference per (record, batch), found in O(1) through the
     ///      record's own index (Codex #2308 r2): a batch staged twice by one
     ///      record across retries is one entry with merged components. A
@@ -3154,14 +3191,15 @@ library LibRewardCustody {
         bytes32 nk = recordNonceKey(key, r.nonce);
         uint256 at = s.stagingBatchIndexPlusOne[nk][id];
         if (at != 0) {
-            r.batchFresh[at - 1] += bf;
-            r.batchRecycled[at - 1] += br;
+            LibVaipakam.StagedBatch storage sb = s.stagingBatches[nk][at - 1];
+            sb.fresh += bf;
+            sb.recycled += br;
             return;
         }
-        r.batchIds.push(id);
-        r.batchFresh.push(bf);
-        r.batchRecycled.push(br);
-        s.stagingBatchIndexPlusOne[nk][id] = r.batchIds.length;
+        uint256 next = r.batchCount;
+        s.stagingBatches[nk][next] = LibVaipakam.StagedBatch({id: id, fresh: bf, recycled: br});
+        r.batchCount = next + 1;
+        s.stagingBatchIndexPlusOne[nk][id] = next + 1;
         s.transportBatchReferences[id] += 1;
         if (s.stagingSkippedSeen[nk][id]) _forgetSkipped(s, nk, r, id);
     }

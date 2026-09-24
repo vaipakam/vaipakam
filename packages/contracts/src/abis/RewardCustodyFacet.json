@@ -1799,10 +1799,10 @@
   },
   {
     "type": "error",
-    "name": "RewardCustodyActivationBlockedByResolvingRecords",
+    "name": "RewardCustodyActivationBlockedByStagedRecords",
     "inputs": [
       {
-        "name": "resolving",
+        "name": "encumbered",
         "type": "uint256",
         "internalType": "uint256"
       }

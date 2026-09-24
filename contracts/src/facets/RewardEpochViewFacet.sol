@@ -43,6 +43,9 @@ contract RewardEpochViewFacet {
         uint64 deadline;
         bytes32 commitment;
         uint256 entryCount;
+        /// @dev What the record STILL holds staged, by component: a
+        ///      resolution or unwind page takes its batches' components out of
+        ///      these as it processes them (Codex #2308 r13).
         uint256 stagedFresh;
         uint256 stagedRecycled;
         uint256 needUserFresh;
@@ -131,13 +134,15 @@ contract RewardEpochViewFacet {
         if (until <= block.timestamp) until = 0;
     }
 
-    /// @notice How many staging records are resolving — the count reward
-    ///         custody's activation refuses on (Codex #2308 r7, r9): a
-    ///         resolving record's consumed epoch value rests in the Diamond's
-    ///         balance under no attribution until its last page pays it. The
-    ///         activation ceremony reads this before it sends anything.
-    function getStagingResolvingCount() external view returns (uint256) {
-        return LibVaipakam.storageSlot().stagingResolvingCount;
+    /// @notice How many staging records hold a live RESERVATION — reserved or
+    ///         resolving — which is the count every POSTURE change refuses on
+    ///         (Codex #2308 r7, r9, r13): the reward-custody activation
+    ///         relocates the balance those reservations count against, and a
+    ///         reward-role change moves the delivered allowance they were taken
+    ///         against. The activation ceremony reads this before it sends
+    ///         anything; the role setters read it on chain.
+    function getStagingEncumberedCount() external view returns (uint256) {
+        return LibVaipakam.storageSlot().stagingEncumberedCount;
     }
 
     /// @notice The record under `key` — every scalar it carries. A key with
@@ -171,7 +176,7 @@ contract RewardEpochViewFacet {
         v.reservedPoolCap = r.reservedPoolCap;
         v.heldEpoch = r.heldEpoch;
         v.heldRecycled = r.heldRecycled;
-        v.batchCount = r.batchIds.length;
+        v.batchCount = r.batchCount;
         v.resolveCursor = r.resolveCursor;
         v.scanComplete = r.scanComplete;
         v.cappedOffFresh = r.cappedOffFresh;
@@ -192,14 +197,20 @@ contract RewardEpochViewFacet {
     }
 
     /// @notice One page of the record's batches — each with the components it
-    ///         gave — from `from`, at most `count`.
+    ///         STILL holds — from `from`, at most `count`, in the order the
+    ///         plan staged them, which is the order the resolution consumes.
+    ///         A batch the record has already resolved or unwound reads as
+    ///         zeros: its components left the record (Codex #2308 r13), and
+    ///         `resolveCursor` says how many have (`batchCount` stays the
+    ///         record's lifetime total).
     function getStagingRecordBatches(bytes32 key, uint256 from, uint256 count)
         external
         view
         returns (bytes32[] memory ids, uint256[] memory fresh, uint256[] memory recycled)
     {
-        LibVaipakam.StagingRecord storage r = LibVaipakam.storageSlot().stagingRecords[key];
-        uint256 n = r.batchIds.length;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.StagingRecord storage r = s.stagingRecords[key];
+        uint256 n = r.batchCount;
         if (from >= n) return (ids, fresh, recycled);
         uint256 end = from + count;
         if (end > n) end = n;
@@ -208,9 +219,10 @@ contract RewardEpochViewFacet {
         fresh = new uint256[](m);
         recycled = new uint256[](m);
         for (uint256 i; i < m; ) {
-            ids[i] = r.batchIds[from + i];
-            fresh[i] = r.batchFresh[from + i];
-            recycled[i] = r.batchRecycled[from + i];
+            LibVaipakam.StagedBatch storage sb = LibRewardCustody.stagedBatchAt(s, key, r, from + i);
+            ids[i] = sb.id;
+            fresh[i] = sb.fresh;
+            recycled[i] = sb.recycled;
             unchecked { ++i; }
         }
     }

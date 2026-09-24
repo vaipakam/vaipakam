@@ -349,6 +349,10 @@ library LibRewardStaging {
         }
         r.phase = LibVaipakam.StagingPhase.Reserved;
         r.wasReserved = true;
+        // Encumbered from here until the reservation is released (Codex #2308
+        // r7, r13): no posture change — the custody activation, a reward-role
+        // transition — may straddle it.
+        ++s.stagingEncumberedCount;
         emit StagingReserved(key, liveUserFresh, liveTreasuryFresh, liveUserRecycled, freshSpend);
     }
 
@@ -366,26 +370,26 @@ library LibRewardStaging {
         LibVaipakam.StagingRecord storage r = record(s, key);
         if (r.phase == LibVaipakam.StagingPhase.Reserved) {
             r.phase = LibVaipakam.StagingPhase.Resolving;
-            // Counted while resolving: custody activation refuses until the
-            // record's last page pays it (Codex #2308 r7).
-            ++s.stagingResolvingCount;
         } else {
             _requirePhase(key, r, LibVaipakam.StagingPhase.Resolving);
         }
-        // From the list's TAIL, popping each batch as it is consumed (Codex
-        // #2308 r12): the batch arrays are the record's one unbounded state,
-        // and a close that deleted them whole could exceed a block on a
-        // mature day; popped page by page, the close deletes nothing
-        // unbounded. Each batch is independent, so the order is free.
-        uint256 n = r.batchIds.length;
-        uint256 stop = n > STAGING_PAGE ? n - STAGING_PAGE : 0;
-        uint256 done_ = n - stop;
+        // In the order the plan STAGED them, from the record's cursor (Codex
+        // #2308 r12, r13): the consumption budget the reservation assigned can
+        // run out partway, and what it runs out on must be the epochs the plan
+        // ranked last — a reverse walk spent those and returned the ones the
+        // plan ranked first. The batches are not held in the record's struct
+        // (they are its one unbounded state), so each is released as it is
+        // processed and the close stays bounded either way.
+        uint256 n = r.batchCount;
+        uint256 i = r.resolveCursor;
+        uint256 end = i + STAGING_PAGE;
+        if (end > n) end = n;
         uint256 held;
-        while (n > stop) {
-            unchecked { --n; }
-            bytes32 id = r.batchIds[n];
-            uint256 bf = r.batchFresh[n];
-            uint256 br = r.batchRecycled[n];
+        while (i < end) {
+            LibVaipakam.StagedBatch storage sb = LibRewardCustody.stagedBatchAt(s, key, r, i);
+            bytes32 id = sb.id;
+            uint256 bf = sb.fresh;
+            uint256 br = sb.recycled;
             LibVaipakam.TransportBatch storage b = s.transportBatches[id];
             // Consume only what the reservation assigned; a staged amount
             // beyond it goes back to the epoch here, never consumed unpaid
@@ -406,18 +410,21 @@ library LibRewardStaging {
             s.transportBatchReferences[id] -= 1;
             held += cf + cr;
             emit StagingResolvedBatch(id, key, cf, cr);
-            r.batchIds.pop();
-            r.batchFresh.pop();
-            r.batchRecycled.pop();
+            // The record no longer holds this batch's components, and the
+            // Diamond's staged earmark no longer covers them (Codex #2308 r13).
+            r.stagedFresh -= bf;
+            r.stagedRecycled -= br;
+            LibRewardCustody.releaseStagedBatchAt(s, key, r, i);
+            unchecked { ++i; }
         }
-        r.resolveCursor += done_; // batches resolved so far — the view's progress figure
+        r.resolveCursor = i;
         if (held != 0 && LibRewardCustody.active(s)) {
             LibRewardCustody.hold(
                 s, LibVaipakam.RewardCustodyRow.Unclassified, LibVaipakam.RewardCustodyRow.Resolving, held, key
             );
             r.heldEpoch += held;
         }
-        if (n == 0) {
+        if (i == n) {
             _pay(s, key, r);
             done = true;
         }
@@ -447,6 +454,7 @@ library LibRewardStaging {
         r.heldRecycled = 0;
 
         // Reserved converts to paid, in the same page.
+        --s.stagingEncumberedCount;
         s.interactionPoolReserved -= freshSpend;
         s.liveFreshReserved -= liveUserFresh + liveTreasuryFresh;
         s.rewardBudgetArmedFreshReserved -= liveUserFresh + liveTreasuryFresh;
@@ -514,7 +522,7 @@ library LibRewardStaging {
             forfeitRecycled + r.epochTreasuryRecycled,
             uint8(vaulted ? LibVaipakam.RewardDelivery.Vault : LibVaipakam.RewardDelivery.Wallet)
         );
-        _close(s, key, r, true);
+        _close(s, key, true);
     }
 
     // ─────────────────────────────── unwind ───────────────────────────────
@@ -537,31 +545,35 @@ library LibRewardStaging {
         } else {
             _requirePhase(key, r, LibVaipakam.StagingPhase.Unwinding);
         }
-        // From the tail, popping each (Codex #2308 r12) — as the resolution.
-        uint256 n = r.batchIds.length;
-        uint256 stop = n > STAGING_PAGE ? n - STAGING_PAGE : 0;
-        uint256 done_ = n - stop;
-        while (n > stop) {
-            unchecked { --n; }
-            bytes32 id = r.batchIds[n];
-            uint256 bf = r.batchFresh[n];
-            uint256 br = r.batchRecycled[n];
+        // From the record's cursor, releasing each (Codex #2308 r12, r13) —
+        // as the resolution walks it.
+        uint256 n = r.batchCount;
+        uint256 i = r.resolveCursor;
+        uint256 end = i + STAGING_PAGE;
+        if (end > n) end = n;
+        while (i < end) {
+            LibVaipakam.StagedBatch storage sb = LibRewardCustody.stagedBatchAt(s, key, r, i);
+            bytes32 id = sb.id;
+            uint256 bf = sb.fresh;
+            uint256 br = sb.recycled;
             LibVaipakam.TransportBatch storage b = s.transportBatches[id];
             b.stagedFresh -= bf;
             b.stagedRecycled -= br;
             b.balance += bf + br;
             s.transportBatchReferences[id] -= 1;
             emit StagingUnwoundBatch(id, key, bf, br);
-            r.batchIds.pop();
-            r.batchFresh.pop();
-            r.batchRecycled.pop();
+            r.stagedFresh -= bf;
+            r.stagedRecycled -= br;
+            LibRewardCustody.releaseStagedBatchAt(s, key, r, i);
+            unchecked { ++i; }
         }
-        r.resolveCursor += done_;
-        if (n == 0) {
+        r.resolveCursor = i;
+        if (i == n) {
             // The reservation, if one was taken, by its recorded provenance —
             // judged by the fact of the reservation, never by which sources
             // it happened to touch (Codex #2308 r2).
             if (r.wasReserved) {
+                --s.stagingEncumberedCount;
                 s.interactionPoolReserved -= r.reservedPoolCap;
                 s.liveFreshReserved -= r.reservedLiveUserFresh + r.reservedLiveTreasuryFresh;
                 s.rewardBudgetArmedFreshReserved -= r.reservedLiveUserFresh + r.reservedLiveTreasuryFresh;
@@ -584,7 +596,7 @@ library LibRewardStaging {
             uint64 until = uint64(block.timestamp) + LibRewardCustody.STAGING_GRACE;
             s.stagingCooldownUntil[key] = until;
             emit StagingCooldownSet(key, until);
-            _close(s, key, r, false);
+            _close(s, key, false);
             done = true;
         }
     }
@@ -633,8 +645,12 @@ library LibRewardStaging {
         SafeERC20.safeTransfer(IERC20(vpfi), user, amount);
     }
 
-    function _close(LibVaipakam.Storage storage s, bytes32 key, LibVaipakam.StagingRecord storage r, bool paid) private {
-        if (r.phase == LibVaipakam.StagingPhase.Resolving) --s.stagingResolvingCount;
+    /// @dev The close is BOUNDED (Codex #2308 r12, r13): the record's staged
+    ///      batches are not in the struct — the pages released each as they
+    ///      processed it — so this deletes the day's entry set, its slices and
+    ///      the pending page of at most one window, and nothing that grew
+    ///      across calls.
+    function _close(LibVaipakam.Storage storage s, bytes32 key, bool paid) private {
         emit StagingRecordClosed(key, paid);
         delete s.stagingRecords[key];
     }

@@ -179,10 +179,10 @@ contract ActivateRewardCustody is RewardCustodyCeremonyBase {
         // the record's remaining pages (permissionless; it only completes),
         // re-establish the figures under a fresh pause, and rerun.
         {
-            uint256 resolving = RewardEpochViewFacet(diamond).getStagingResolvingCount();
+            uint256 encumbered = RewardEpochViewFacet(diamond).getStagingEncumberedCount();
             require(
-                resolving == 0,
-                "ActivateRewardCustody: a staging record is RESOLVING -- its consumed epoch value rests in the Diamond's balance under no attribution until its last page pays it, and the activation would strand it; unpause, drive the record's remaining pages (resolveStagedDayPage, permissionless), re-establish the figures under a fresh pause, then rerun"
+                encumbered == 0,
+                "ActivateRewardCustody: a staging record holds a RESERVATION (reserved or resolving) -- its reservations count against this balance and a resolving record's consumed epoch value rests here under no attribution until its last page pays it, so the activation would strand it; unpause, settle the records (resolveStagedDayPage) or unwind them (unwindStagedDayPage) -- both permissionless -- re-establish the figures under a fresh pause, then rerun"
             );
         }
         // Mirrors the contract's complete-cut gate BEFORE anything is sent

@@ -7652,7 +7652,34 @@ library LibVaipakam {
         ///      attribution and would strand it, so activation refuses while
         ///      this is non-zero; a resolving record only completes, by
         ///      permissionless pages, so the refusal is never permanent.
-        uint256 stagingResolvingCount;
+        /// @dev 3b-ii-A2 (Codex #2308 r7, r13) — records holding a live
+        ///      RESERVATION (`Reserved` or `Resolving`). A global posture
+        ///      change cannot straddle one: the reward-custody activation
+        ///      relocates the balance a reservation counts against, and a
+        ///      reward-ROLE change moves the delivered allowance a reservation
+        ///      was taken against, so both refuse while this is non-zero. One
+        ///      counter, every posture gate.
+        uint256 stagingEncumberedCount;
+        /// @dev 3b-ii-A2 (Codex #2308 r13) — VPFI in STAGED form across every
+        ///      batch: debited from the batches' balances and credited to no
+        ///      one until a record resolves or unwinds. While reward custody is
+        ///      inactive those tokens rest in the Diamond's own balance, so
+        ///      this is an EARMARK of it — the sixth reserved source, and the
+        ///      one {LibVpfiRecycle.freshBackingRoom} subtracts on that path.
+        uint256 stagedEpochTotal;
+        /// @dev 3b-ii-A2 (Codex #2308 r13) — the record's staged batches, by
+        ///      `recordNonceKey(key, nonce)` and insertion index. Outside the
+        ///      record struct so closing one is bounded; the nonce makes a
+        ///      re-opened record's namespace fresh without any clearing.
+        mapping(bytes32 => mapping(uint256 => StagedBatch)) stagingBatches;
+    }
+
+    /// @notice 3b-ii-A2 (#2305) — one batch a staging record staged from, with
+    ///         the components it gave.
+    struct StagedBatch {
+        bytes32 id;
+        uint256 fresh;
+        uint256 recycled;
     }
 
     /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss: the
@@ -8050,10 +8077,16 @@ library LibVaipakam {
         ///      reservation moved there.
         uint256 heldEpoch;
         uint256 heldRecycled;
-        /// @dev The batches staged from, with the components each gave.
-        bytes32[] batchIds;
-        uint256[] batchFresh;
-        uint256[] batchRecycled;
+        /// @dev How many batches the record has staged from, and how many of
+        ///      them its resolution or unwind has processed. The batches
+        ///      THEMSELVES are not held here (Codex #2308 r12, r13): they are
+        ///      the record's one UNBOUNDED state, accumulated across many
+        ///      preparations, and a struct that held them could not be closed
+        ///      in one transaction on a mature day. They live in
+        ///      `stagingBatches`, keyed by the record's nonce, so the close
+        ///      deletes only bounded fields and the pages still walk them in
+        ///      the order the plan staged them.
+        uint256 batchCount;
         uint256 resolveCursor;
         /// @dev Where the day's scan resumes: the last list node scanned,
         ///      and the last late-chain node seen.

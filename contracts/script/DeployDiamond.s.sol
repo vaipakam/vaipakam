@@ -3128,7 +3128,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[5] = RewardEpochViewFacet.getStagingRecordEntries.selector;
         s[6] = RewardEpochViewFacet.getStagingRecordPending.selector;
         s[7] = RewardEpochViewFacet.getStagingCooldown.selector;
-        s[8] = RewardEpochViewFacet.getStagingResolvingCount.selector;
+        s[8] = RewardEpochViewFacet.getStagingEncumberedCount.selector;
     }
 
     /// @dev 3b-ii-A2 (#2305) — the claim's entry walk, hosted apart from the

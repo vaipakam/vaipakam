@@ -988,9 +988,18 @@ library LibVpfiRecycle {
         // room the gates read must already exclude it — the same subtraction
         // the activated branch makes on the row. {backingPosition} keeps its
         // published meaning; this is the gates' room.
+        // Net of BOTH earmarks this balance carries for staging (3b-ii-A2;
+        // Codex #2308 r5, r13): the live fresh reserved by count, and the
+        // value in STAGED form — debited from its batches, resting here,
+        // spoken for by the records that staged it until they resolve or
+        // unwind. Both are protocol-maintained ledgers with a single writer
+        // set, which is the class {backingPosition}'s own note admits (the
+        // bucket and the recovery reservation are the precedents); the ban
+        // there is on enumerating REMEMBERED balance owners, and neither of
+        // these is remembered.
         (, , uint256 unearmarked) = backingPosition(s);
-        uint256 reservedLive = s.liveFreshReserved;
-        return unearmarked > reservedLive ? unearmarked - reservedLive : 0;
+        uint256 staged = s.liveFreshReserved + s.stagedEpochTotal;
+        return unearmarked > staged ? unearmarked - staged : 0;
     }
 
     /**

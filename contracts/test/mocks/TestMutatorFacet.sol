@@ -2604,12 +2604,27 @@ contract TestMutatorFacet {
 
     /// @dev 3b-ii-A2 test-only — the count of resolving staging records the
     ///      custody activation refuses on, read and written raw.
-    function stagingResolvingCountRaw() external view returns (uint256) {
-        return LibVaipakam.storageSlot().stagingResolvingCount;
+    function stagingEncumberedCountRaw() external view returns (uint256) {
+        return LibVaipakam.storageSlot().stagingEncumberedCount;
     }
 
-    function setStagingResolvingCountRaw(uint256 count) external {
-        LibVaipakam.storageSlot().stagingResolvingCount = count;
+    function setStagingEncumberedCountRaw(uint256 count) external {
+        LibVaipakam.storageSlot().stagingEncumberedCount = count;
+    }
+
+    /// @dev 3b-ii-A2 test-only — VPFI in staged form across every batch: the
+    ///      sixth reserved source, read raw so a cell can put the Diamond's
+    ///      backing room against it.
+    function stagedEpochTotalRaw() external view returns (uint256) {
+        return LibVaipakam.storageSlot().stagedEpochTotal;
+    }
+
+    function freshBackingRoomRaw() external view returns (uint256) {
+        return LibVpfiRecycle.freshBackingRoom(LibVaipakam.storageSlot());
+    }
+
+    function setStagedEpochTotalRaw(uint256 amount) external {
+        LibVaipakam.storageSlot().stagedEpochTotal = amount;
     }
 
     /// @dev 3b-ii-A2 test-only — the bucket's fundable figure and the two

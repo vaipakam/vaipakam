@@ -320,13 +320,20 @@ interface IVaipakamErrors {
     /// @param unattributed The remainder no row describes (held minus
     ///                     attributed) at the time of the call.
     error RewardCustodyExceedsUnattributed(uint256 requested, uint256 unattributed);
-    /// @notice 3b-ii-A2 (Codex #2308 r7) — custody cannot be activated while a
-    ///         staging record is resolving: its consumed epoch value rests in
-    ///         the Diamond's balance under no attribution until its last page
-    ///         pays it, and the activation's relocation would strand it.
-    ///         Drive the record's remaining pages first — they are
-    ///         permissionless and a resolving record only completes.
-    error RewardCustodyActivationBlockedByResolvingRecords(uint256 resolving);
+    /// @notice 3b-ii-A2 (Codex #2308 r7, r13) — custody cannot be activated
+    ///         while any staging record holds a RESERVATION. A resolving
+    ///         record's consumed epoch value rests in the Diamond's balance
+    ///         under no attribution until its last page pays it; a reserved
+    ///         record's reservations count against that same balance. Settle
+    ///         the records or unwind them first — both are permissionless, and
+    ///         a resolving record only completes.
+    error RewardCustodyActivationBlockedByStagedRecords(uint256 encumbered);
+    /// @notice 3b-ii-A2 (Codex #2308 r13) — a reward-ROLE change cannot
+    ///         straddle a staging reservation: the role decides the delivered
+    ///         allowance a reserved record's payout charges, so a transition
+    ///         under one would leave a resolving record unable to pay and
+    ///         unable to unwind. Settle or unwind the records first.
+    error RewardRoleChangeBlockedByStagedRecords(uint256 encumbered);
     /// @notice #1566 slice 4 PR A (Codex #2158 r27 P1) — the rebase was called
     ///         with a pause epoch that is not the live one: the figure was
     ///         established under a different pause (or none), and a payout in
