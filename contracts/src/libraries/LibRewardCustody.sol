@@ -3145,11 +3145,10 @@ library LibRewardCustody {
         {
             uint256 exF = p.classifiedFresh > freshAttested ? p.classifiedFresh - freshAttested : 0;
             uint256 exR = p.classifiedRecycled > recycledAttested ? p.classifiedRecycled - recycledAttested : 0;
-            if (exF + exR != 0) {
-                p.classifiedFreshBeyondCap = exF;
-                p.classifiedRecycledBeyondCap = exR;
-                emit IngressPacketClassifiedBeyondCaps(h, exF, exR);
-            }
+            // The event is the historical record of what THIS attestation
+            // observed; the current excess is derived on read, not stored, so
+            // a later correction cannot leave a stale copy behind (Codex #2276).
+            if (exF + exR != 0) emit IngressPacketClassifiedBeyondCaps(h, exF, exR);
         }
         // RECONCILE FIRST (the 3b scope's rule; Codex #2276 r4 P1): a draw
         // that preceded this attestation typed its legs with nothing known to

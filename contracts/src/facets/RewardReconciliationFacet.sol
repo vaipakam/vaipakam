@@ -465,7 +465,10 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
     ///           flagged rather than refused, which also lets a reconciler
     ///           SCAN packets without reverting on each unattested one.
     ///         - An attested packet returns `attested == true` with its two
-    ///           recorded excesses; zero there genuinely means within its caps.
+    ///           CURRENT excesses, derived from its classifications as they
+    ///           stand now — so a correction that brings a component back
+    ///           within its cap reads as zero at once; zero there genuinely
+    ///           means within its caps.
     /// @return attested Whether the packet's split has been attested.
     /// @return fresh    The fresh classification beyond the attested fresh cap.
     /// @return recycled The recycled classification beyond the attested recycled cap.
@@ -477,7 +480,17 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
         LibVaipakam.IngressPacket storage p = LibVaipakam.storageSlot().ingressPackets[packetHash];
         if (p.arrivedAt == 0) revert ReconciliationPacketUnknown(packetHash);
         if (!p.attested) return (false, 0, 0);
-        return (true, p.classifiedFreshBeyondCap, p.classifiedRecycledBeyondCap);
+        // DERIVED from the packet's CURRENT classifications and its attested
+        // caps, never read from a figure frozen at attestation (Codex #2276):
+        // the correction path moves `classifiedFresh` / `classifiedRecycled`,
+        // and a stored copy of the excess kept reporting a corrected packet
+        // as still over its caps. This is the same arithmetic the attestation
+        // uses to decide whether to emit {IngressPacketClassifiedBeyondCaps},
+        // and the live caps that block further classification ({_netCaps}) are
+        // derived the same way, so the view and the gate cannot disagree.
+        fresh = p.classifiedFresh > p.freshAttested ? p.classifiedFresh - p.freshAttested : 0;
+        recycled = p.classifiedRecycled > p.recycledAttested ? p.classifiedRecycled - p.recycledAttested : 0;
+        return (true, fresh, recycled);
     }
 
     /// @notice An imported envelope's record; `importedAt == 0` for an

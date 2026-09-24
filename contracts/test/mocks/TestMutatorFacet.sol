@@ -2436,6 +2436,18 @@ contract TestMutatorFacet {
     ///         way a classification ran BEFORE the batch gate existed: the
     ///         same take, no gate. Stands a packet in the state an in-place
     ///         refresh can find it in: classified value recorded, no epoch yet.
+    /// @notice 3b-ii-A test-only (Codex #2276) — SET a packet's two classified
+    ///         figures, standing in for the correction path moving attribution
+    ///         between components. The real path needs a reconciliation-log
+    ///         entry and settled queues this suite does not build, and its own
+    ///         suites cover it; what this lets a test check is that a view which
+    ///         claims to follow the CURRENT classifications does.
+    function setPacketClassifiedRaw(bytes32 packetHash, uint256 fresh, uint256 recycled) external {
+        LibVaipakam.IngressPacket storage p = LibVaipakam.storageSlot().ingressPackets[packetHash];
+        p.classifiedFresh = fresh;
+        p.classifiedRecycled = recycled;
+    }
+
     function classifyPacketPreGateRaw(bytes32 packetHash, uint256 freshShare, uint256 recycledShare) external {
         LibRewardCustody.takeFromUnclassified(LibVaipakam.storageSlot(), packetHash, freshShare, recycledShare);
     }

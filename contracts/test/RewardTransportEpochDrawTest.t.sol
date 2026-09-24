@@ -1551,6 +1551,17 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         assertTrue(att, "attested now, so a zero below is a real zero");
         assertEq(exF, 0);
         assertEq(exR, 5e18, "the recycled classification exceeds its cap by five: recorded");
+        // A CORRECTION moves the five back to fresh (0F/7R -> 5F/2R against caps
+        // 8F/2R). The view must follow the current classifications: both
+        // components are now within their caps, so it reports no excess at all
+        // (Codex #2276 — a figure frozen at attestation kept reporting five).
+        _mut().setPacketClassifiedRaw(h, 5e18, 2e18);
+        (att, exF, exR) = RewardReconciliationFacet(address(diamond)).getPacketClassificationExcess(h);
+        assertTrue(att);
+        assertEq(exF + exR, 0, "after the correction the packet is within both caps");
+        // Put the classification back, so the allocation checks below see the
+        // state they were written against.
+        _mut().setPacketClassifiedRaw(h, 0, 7e18);
         // An unrecorded hash is refused, never read as a packet within its caps (Codex #2276 r16 P2).
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.ReconciliationPacketUnknown.selector, keccak256("nobody")));
         RewardReconciliationFacet(address(diamond)).getPacketClassificationExcess(keccak256("nobody"));
