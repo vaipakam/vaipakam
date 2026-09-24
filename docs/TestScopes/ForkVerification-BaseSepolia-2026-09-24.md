@@ -9,7 +9,7 @@ configuration — not the source tree's idea of them.
   84532 (Base Sepolia), forked at block 47,228,632.
 - **Driver** — [`contracts/script/fork-scenarios/`](../../contracts/script/fork-scenarios/README.md),
   committed with this document. `node run-all.mjs` reproduces every row.
-- **Result** — 119 scenarios: **113 PASS, 6 INFO, 0 FAIL.** The INFOs are
+- **Result** — 129 scenarios: **123 PASS, 6 INFO, 0 FAIL.** The INFOs are
   observations with no assertion behind them, not soft failures; each is
   written out below.
 - **Assets** — the deployment's own faucet mocks: `tLIQ` priced $2,000,
@@ -434,6 +434,44 @@ Two further points:
   `InvalidLoan()` with zero collateral was an NFT rental behaving correctly,
   not a defect.
 
+## 3D. Swap-to-repay — and a candidate divergence on the cap
+
+Swap-to-repay lets a borrower settle without holding the principal asset:
+collateral is sold for principal and applied to the repayment in one
+transaction. Checked against the spec's swap-to-repay bullets:
+
+- **Authority follows the borrower-position NFT** — a third party is refused
+  `NotNFTOwner()`, as the spec requires.
+- **A cap above the collateral held is refused** (`InvalidAmount()`), and
+  with no swap route the call is refused rather than attempted
+  (`NoEnabledSwapRoute`).
+- **Full mode closes the loan in one transaction**, and the sale is
+  accounted to the wei: proceeds = the debt (lender + treasury) + a surplus
+  paid to the borrower's **wallet** as the principal asset, exactly as the
+  spec says surplus should travel. Unsold collateral stays pledged and
+  becomes borrower-claimable.
+- **Partial mode needs the offer's partial-repay opt-in** (refused
+  `PartialRepayNotAllowed()` without it) and **never leaves the position
+  less healthy**: 0.1 collateral sold, principal 1,000 → 800, HF 2.0 → 2.3.
+
+**The candidate divergence.** The sale is **exact-in on the caller's cap**:
+`maxCollateralIn` is the amount sold, not an upper bound on it. A 0.6 cap
+sold all 0.6 and returned 199.04 of surplus; the full 1.25 cap sold
+everything and returned 1,499.04. The spec frames surplus as arising from a
+*favourable quote* on a sale sized to the debt, and the natspec calls the
+parameter an "upper bound" — both read as "sell up to this much". So an
+over-sized cap converts collateral into the principal asset well beyond what
+the repayment needs.
+
+No value is lost beyond slippage, and **no shipped surface drives this path**
+(`apps/app` does not call it; only the indexer observes its events), so there
+is no current user exposure. It is recorded in
+[`_CodeVsDocsAudit.md`](../FunctionalSpecs/_CodeVsDocsAudit.md) as pending
+triage and filed as **#2317** for an owner intent-decision — fix the code to
+sell only what is needed, or document the cap as the exact sale size and
+require surfaces to size it. It is deliberately **not** resolved by
+rewording the spec to match the code.
+
 ## 4. The three gates
 
 ### 4.1 Sanctions — the Tier-1 / Tier-2 split works exactly as documented
@@ -590,6 +628,7 @@ regenerated as `contracts/script/fork-scenarios/last-run.json` on every run
 | A8.* | `08-lender-exit.mjs` | the lender's listed sale through to completion, and the direct sale |
 | A9.* | `09-periodic-interest.mjs` | periodic interest: the dormant posture, admission rules, both settlement paths |
 | A10.* | `10-nft-rental.mjs` | ERC-721 rental against the spec's custody-vs-use model, early close, claims |
+| A11.* | `11-swap-to-repay.mjs` | repaying from collateral: authority, the cap, full and partial modes |
 
 The `INFO` rows are: the live facet count (A1.6, an observation feeding §5),
 the depth-floor flip (A3.10, written up as a finding in §2.4), and the two
@@ -611,6 +650,9 @@ ORDERING A3.1 → A3.3, not that any particular day lands inside grace.
 2. **Re-seed the mock `tLIQ` pool with more depth** so HF liquidation is
    exercisable on the testnet through a collateral price move (§2.4) —
    tracked as **#2314**.
+3. **Decide the swap-to-repay cap semantics** — exact-in on
+   `maxCollateralIn`, where the spec and natspec read it as an upper bound
+   (§3D) — tracked as **#2317**, recorded in `_CodeVsDocsAudit.md`.
 
 Two items were on this list in the first revision of this document and have
 been **withdrawn**, because scouting `apps/app` afterwards found both already

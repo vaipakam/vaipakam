@@ -52,6 +52,7 @@ export const ABIS = {
   offerCancel: abi('OfferCancelFacet'),
   numeraireConfig: abi('NumeraireConfigFacet'),
   repayPeriodic: abi('RepayPeriodicFacet'),
+  swapToRepay: abi('SwapToRepayFacet'),
   earlyWithdrawal: abi('EarlyWithdrawalFacet'),
   earlyWithdrawalDirect: abi('EarlyWithdrawalDirectFacet'),
   profile: abi('ProfileFacet'),
