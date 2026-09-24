@@ -268,9 +268,19 @@ def first_heading(body: bytes) -> tuple[int, bytes] | None:
     # resolving one level up. That does not weaken the argument above, since
     # neither substring can occur in an ATX marker and so neither can change
     # whether a line is a heading. It is stated because "verbatim" is the kind
-    # of premise a later reader builds on, and something that compares a whole
-    # published SECTION — as the markerless duplicate guard may yet — must
-    # apply the same rewrite or it will not match its own output.
+    # of premise a later reader builds on.
+    #
+    # IT WAS BUILT ON, AND THAT IS WHY THE NEXT PARAGRAPH EXISTS.
+    #
+    # THAT EXEMPTION IS ABOUT HEADING-NESS AND NOTHING ELSE (#2311 r4). It
+    # holds because `HEADING_RE` reads only the marker; it says nothing about
+    # two heading LINES comparing equal, which reads everything after the
+    # marker too. `## [Title](./x)` is a heading by this test and is
+    # published as `## [Title](../x)`. The markerless duplicate guard
+    # borrowed this sentence for exactly that comparison, matched nothing,
+    # and appended a second copy while consuming the source. Do not carry it
+    # across again: anything comparing published BYTES applies
+    # `rewrite_links` first, as that guard now does.
     # SPLIT ON ALL THREE LINE ENDINGS, not just `\n` (#2295). CommonMark ends
     # a line at `\r\n`, `\r` or `\n`, and splitting on `\n` alone made a
     # CR-only file read as ONE line: `## Title (PR #4243)\r## Next\rbody`
@@ -2064,16 +2074,33 @@ class Assembly:
         still a behaviour change rather than a docstring one, so it is #2315
         — but it is now wanted, not warned against.
 
-        WHATEVER #2315 COMPARES, IT COMPARES AGAINST REWRITTEN BYTES (#2311
-        r3). `build()` publishes `rewrite_links(raw)`, so an arm comparing a
-        fragment's WHOLE text against the dated file must apply the same
-        substitution first, or every already-published fragment carrying a
-        `](../../` or `](./` link reads as unpublished — the guard failing to
-        match its own output, and appending a second copy for it. The
-        heading-anchored comparison shipped today is unaffected, since
-        neither substring can occur in an ATX marker; the constraint binds
-        exactly the whole-text shape #2315 is about. `first_heading` records
-        the same premise, and the same correction to it.
+        IT COMPARES THE PUBLISHED FORM, AND THAT IS NOW STRUCTURAL RATHER
+        THAN REMEMBERED (#2311 r4). `build()` appends `rewrite_links(raw)`,
+        so the fragment is converted to that form here before any comparison
+        is made. An earlier revision instead carried the constraint as a note
+        to whoever writes #2315's whole-text arm, and exempted the
+        heading-anchored comparison shipped alongside it — "unaffected, since
+        neither substring can occur in an ATX marker".
+
+        THAT EXEMPTION WAS FALSE, and the way it was reached is the part
+        worth keeping. The sentence is true where `first_heading` makes it:
+        there the question is whether a line IS a heading, `HEADING_RE` reads
+        only the marker, and no `](./` can occur inside `#{1,6}` plus a
+        space. It was then reused for a different question — whether two
+        heading LINES compare equal — which reads the whole line, everything
+        after the marker included. `## [Title](./x)` is a heading by that
+        first test and is published as `## [Title](../x)`, so the guard
+        matched nothing, appended a second copy and consumed the source.
+        Reproduced before the fix and refused after.
+
+        So the correction is not "narrow the claim" but "stop needing it".
+        Nothing here now reasons about which substrings can appear where;
+        both sides are put in the same form and compared. The general shape
+        — a premise carried from the question it was established for to a
+        neighbouring one it does not answer — is what produced three of this
+        PR's four rounds, and the defence against it is to make the two
+        sides identical by construction rather than to argue that a
+        difference cannot arise.
         """
         if not os.path.isfile(self.out) or self.out_copy is None:
             return
@@ -2165,8 +2192,26 @@ class Assembly:
             # divergence waiting to happen, and this is the second time it has
             # happened here — the first was `first_heading` and the `---`
             # check disagreeing about blankness.
+            # COMPARE WHAT `build()` PUBLISHES, NOT WHAT THE FRAGMENT HOLDS
+            # (#2311 r4). `build()` appends `rewrite_links(raw)`, so the two
+            # sides of this comparison were never the same form: the pending
+            # fragment's own bytes on the left, already-rewritten bytes on the
+            # right. A heading carrying a relative link — `## [Title](./x)`,
+            # which `HEADING_RE` accepts — is published as `## [Title](../x)`,
+            # the scan below matched nothing, and the run appended a second
+            # copy and consumed the source. Reproduced, and refused after.
+            #
+            # Applied ONCE to the whole fragment rather than to the matched
+            # line, because that is exactly the call `build()` makes. A
+            # per-line rewrite would be equivalent today and would have to be
+            # re-argued the moment anything else compares a second line.
+            #
+            # This is also where the #2315 constraint stops being something a
+            # later reader has to remember: whatever that arm compares, it
+            # compares the published form, because the fragment is converted
+            # to it here before anything looks at it.
             out_lines = [_debom(o) for o in out_lines_raw]
-            for ln in LINE_END_RE.split(body):
+            for ln in LINE_END_RE.split(self.rewrite_links(body)):
                 line = _debom(ln)
                 if not HEADING_RE.match(line):
                     continue

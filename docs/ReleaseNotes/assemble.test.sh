@@ -4700,6 +4700,46 @@ msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates 2>
 check "the run refuses"      "$?"              "1"
 check "nothing was consumed" "$(pending "$W")" "3"
 
+# ── The duplicate guard compares the PUBLISHED form (#2311 r4) ────────────
+# `build()` appends `rewrite_links(raw)`, so a heading carrying a relative
+# link is published with that link rewritten. The guard compared the pending
+# fragment's own bytes against it, so `## … [the note](./x)` never matched
+# the published `## … [the note](../x)`: the run appended a second copy and
+# consumed the source — the one outcome in this script that loses work
+# rather than refusing. Reproduced before the fix.
+#
+# The exemption that hid it — "neither substring can occur in an ATX marker"
+# — is true of `first_heading`, which reads only the marker, and false here,
+# where the whole line is compared. Both sub-cases below share one fixture
+# shape and differ only in whether the heading carries a link, so a
+# regression in the rewrite shows up as the first one passing and the
+# second failing.
+case_start "T217m4: a heading with a relative link still stops a markerless run"
+W="$ROOT/t217m4"; build "$W"
+out="$W/docs/ReleaseNotes"
+printf '## Thread — see [the note](./x) (PR #4251)\n\nBody.\n' \
+  > "$W/docs/ReleaseNotes/unreleased/0003-link.md"
+# The legacy markerless file holds it as `build()` would have written it.
+printf '# Release Notes — 2026-08-17\n\n## Thread — see [the note](../x) (PR #4251)\n\nBody.\n' \
+  > "$out/ReleaseNotes-2026-08-17.md"
+msg="$(bash "$out/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
+check "the run refuses"        "$?"                              "1"
+check "naming the fragment"    "$(says "$msg" '0003-link.md')"   "1"
+check "nothing was consumed"   "$(pending "$W")"                 "3"
+check "and it is not doubled"  \
+  "$(count_in 'Thread — see' "$out/ReleaseNotes-2026-08-17.md")"  "1"
+# The control: the same fixture with a link-free heading was ALREADY refused,
+# which is what localises the defect to the rewrite rather than to the guard.
+W="$ROOT/t217m4b"; build "$W"
+out="$W/docs/ReleaseNotes"
+printf '## Thread — see the note (PR #4251)\n\nBody.\n' \
+  > "$W/docs/ReleaseNotes/unreleased/0003-plain.md"
+printf '# Release Notes — 2026-08-17\n\n## Thread — see the note (PR #4251)\n\nBody.\n' \
+  > "$out/ReleaseNotes-2026-08-17.md"
+msg="$(bash "$out/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
+check "the run refuses"      "$?"              "1"
+check "nothing was consumed" "$(pending "$W")" "3"
+
 # ── The front-matter refusal is not escaped by trailing whitespace (r14) ───
 # `---   ` and `---\t` are valid YAML delimiters. An exact comparison let
 # either past the refusal and on to the no-heading allowance, publishing the
