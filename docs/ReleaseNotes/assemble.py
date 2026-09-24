@@ -268,9 +268,19 @@ def first_heading(body: bytes) -> tuple[int, bytes] | None:
     # resolving one level up. That does not weaken the argument above, since
     # neither substring can occur in an ATX marker and so neither can change
     # whether a line is a heading. It is stated because "verbatim" is the kind
-    # of premise a later reader builds on, and something that compares a whole
-    # published SECTION — as the markerless duplicate guard may yet — must
-    # apply the same rewrite or it will not match its own output.
+    # of premise a later reader builds on.
+    #
+    # IT WAS BUILT ON, AND THAT IS WHY THE NEXT PARAGRAPH EXISTS.
+    #
+    # THAT EXEMPTION IS ABOUT HEADING-NESS AND NOTHING ELSE (#2311 r4). It
+    # holds because `HEADING_RE` reads only the marker; it says nothing about
+    # two heading LINES comparing equal, which reads everything after the
+    # marker too. `## [Title](./x)` is a heading by this test and is
+    # published as `## [Title](../x)`. The markerless duplicate guard
+    # borrowed this sentence for exactly that comparison, matched nothing,
+    # and appended a second copy while consuming the source. Do not carry it
+    # across again: anything comparing published BYTES applies
+    # `rewrite_links` first, as that guard now does.
     # SPLIT ON ALL THREE LINE ENDINGS, not just `\n` (#2295). CommonMark ends
     # a line at `\r\n`, `\r` or `\n`, and splitting on `\n` alone made a
     # CR-only file read as ONE line: `## Title (PR #4243)\r## Next\rbody`
@@ -1711,9 +1721,21 @@ class Assembly:
             # (#2295) — as an unrecognised opening line, alongside every other
             # shape that is not an ATX heading, rather than by a clause of its
             # own. That is the difference that matters: the message names the
-            # line rather than the byte order mark, so it never tells an
+            # line rather than the byte order mark, so it never TELLS an
             # author to re-save the file, which is the edit that made the
             # markerless duplicate guard lose a fragment twice.
+            #
+            # THAT IS A CLAIM ABOUT THE MESSAGE, NOT ABOUT THE OPERATOR
+            # (#2311 r3). Not prescribing the destructive edit is not the same
+            # as putting it out of reach, and for a UTF-16 opener it is not
+            # out of reach at all: re-saving as UTF-8 is the obvious reading
+            # of "open with an ATX heading", and where the ALREADY-PUBLISHED
+            # copy is the UTF-16 one, that re-save is precisely what moves the
+            # two out of comparison — the next run matches nothing, appends a
+            # second copy and consumes the source. So this refusal does not
+            # survive its own remediation; what it stops doing is PRESCRIBING
+            # it. The two-run sequence is walked at
+            # `check_markerless_duplicates`, and closing it is #2315.
             # SPLIT THE SAME WAY `first_heading` DOES (#2295). These two scans
             # both answer "what is the first line of content", and if they
             # disagree about where a line ends, the `---` refusal below and the
@@ -1954,6 +1976,132 @@ class Assembly:
     # ── markerless duplicate-heading guard ───────────────────────────────
 
     def check_markerless_duplicates(self) -> None:
+        """A HEURISTIC over LEGACY files, and it is scoped as one (#2299).
+
+        The sound mechanism for "was this fragment already folded in?" is the
+        assembly marker: `build()` writes one per fragment carrying its
+        sha256, so a file written WHOLLY in the marker era answers the
+        question about itself and nothing has to be guessed. This exists only
+        because 61 of the 84 dated files predate markers, so for those the
+        file cannot.
+
+        A MIXED FILE IS THE WEAK CASE, and it is marker PRESENCE rather than
+        marker COVERAGE that this reads. `out_has_markers` is an `any()` over
+        the whole file, and one marker anywhere downgrades the refusal below
+        to a note that appends regardless. Sound for a wholly-marked file:
+        there, a heading match carrying no marker of its own is a heading
+        that recurs, not an interrupted run. NOT sound for a legacy file that
+        has since taken one marked fragment — its older sections are still
+        markerless, a pending fragment matching one of those is exactly the
+        interrupted-run case, and that single newer marker suppresses the
+        refusal that would catch it. Every one of the 61 becomes that shape
+        on its next assembly. Filed as #2312 rather than patched here: the
+        predicate is whole-file where the question is per-section, and this
+        guard does not track where a marker's coverage begins or ends.
+
+        WHAT IT CANNOT DO, stated rather than implied. It does not survive an
+        edit TO THE MATCHED HEADING — which is narrower than "an edit". The
+        scan compares the fragment's first ATX heading line, byte for byte,
+        against the published file's lines, so rewording a published
+        section's BODY changes nothing it looks at and the refusal still
+        stands. Retitle that section, or reformat the heading line itself,
+        and the pending fragment stops matching: a rerun appends a second
+        copy and consumes the source — the one outcome here that loses work
+        rather than refusing. That is #2298, and it is not a defect in this
+        implementation: no comparison of two texts can distinguish "not yet
+        published" from "published, then retitled". Only a marker can, by
+        recording what was published. The residual is intrinsic, and it
+        shrinks as files gain markers.
+
+        ITS ENCODING LIMIT IS REAL, AND CONFORMANCE POSTPONES IT RATHER THAN
+        CLOSING IT (#2315). `HEADING_RE` is a byte pattern, so a UTF-16
+        heading is invisible to it and such a fragment is NOT matched here.
+        Within a SINGLE run that costs nothing: `check_heading_conformance`
+        refuses any fragment whose opening line is not a recognisable ATX
+        heading (#2295), so one this cannot parse cannot be published either,
+        and the run ends refused, retained, not duplicated.
+
+        AN EARLIER REVISION STOPPED THERE AND CONCLUDED THE LIMIT "no longer
+        loses work". That was wrong, and the counterexample is two runs rather
+        than one — found in review and reproduced (#2311 r2). Take a legacy
+        markerless dated file that ALREADY carries the fragment in UTF-16;
+        `build()` appends `rewrite_links(raw)`, and neither substitution it
+        makes (`](../../`, `](./`) can occur in NUL-interleaved text, so for
+        THIS fragment the published bytes are the fragment's own and an
+        interrupted pre-marker run left exactly that, heading
+        NUL-interleaved. Run one:
+        this guard finds no heading to match, conformance refuses, and the
+        operator is told to open with an ATX heading. They re-save the pending
+        copy as UTF-8 — the obvious reading of that instruction. Run two:
+        conformance passes, the PUBLISHED heading is still NUL-interleaved, so
+        this guard still matches nothing. Second copy appended, source
+        consumed, exit 0.
+
+        So the refusal does not survive its own remediation, and that is the
+        #2298 class in its sharpest form: the remedy edits the very text this
+        guard compares — here the PENDING copy, while the published one keeps
+        the old encoding, so the operator doing exactly as instructed is what
+        moves the two out of comparison. No strictness in conformance reaches
+        it. Closing it needs this guard to decide the encoding question, which
+        is a behaviour change and is #2315.
+
+        WHAT CONFORMANCE DOES CARRY is the single-run half, and it rests on
+        conformance EXISTING rather than on where it sits. `run()` calls this
+        first and conformance immediately after, but neither writes: both only
+        refuse, and nothing is appended until `build()`, which is after both.
+        So a fragment this misses is refused before any append wherever
+        conformance runs. RELAXING conformance to admit an opener it cannot
+        parse would lose that half too — it is not, however, what opens the
+        two-run path above, which is open today.
+
+        The order is nonetheless load-bearing, for a different reason and one
+        recorded at the call site (#2290 r16): it decides which question the
+        operator is asked FIRST, and asking the heading question first sends
+        them to a remediation — retitling `# Title` to `## Title` — that
+        destroys the very evidence this guard compares. So do not read the
+        sequence as this paragraph's invariant, and do not reorder on the
+        strength of this paragraph either.
+
+        An encoding-agnostic arm — comparing the fragment's whole published
+        text rather than a parsed heading — was built and REMOVED before
+        merge, on the finding that it changed the refusal MESSAGE and never
+        the outcome, every case it was supposed to rescue being already
+        refused by conformance. THAT FINDING WAS INCOMPLETE, and this
+        paragraph used to set a bar it has since cleared: do not reintroduce
+        the arm without first establishing a case it actually decides. The
+        two-run path above IS such a case, and the mutation test behind the
+        original finding only ever exercised one run. Reintroducing the arm is
+        still a behaviour change rather than a docstring one, so it is #2315
+        — but it is now wanted, not warned against.
+
+        IT COMPARES THE PUBLISHED FORM, AND THAT IS NOW STRUCTURAL RATHER
+        THAN REMEMBERED (#2311 r4). `build()` appends `rewrite_links(raw)`,
+        so the fragment is converted to that form here before any comparison
+        is made. An earlier revision instead carried the constraint as a note
+        to whoever writes #2315's whole-text arm, and exempted the
+        heading-anchored comparison shipped alongside it — "unaffected, since
+        neither substring can occur in an ATX marker".
+
+        THAT EXEMPTION WAS FALSE, and the way it was reached is the part
+        worth keeping. The sentence is true where `first_heading` makes it:
+        there the question is whether a line IS a heading, `HEADING_RE` reads
+        only the marker, and no `](./` can occur inside `#{1,6}` plus a
+        space. It was then reused for a different question — whether two
+        heading LINES compare equal — which reads the whole line, everything
+        after the marker included. `## [Title](./x)` is a heading by that
+        first test and is published as `## [Title](../x)`, so the guard
+        matched nothing, appended a second copy and consumed the source.
+        Reproduced before the fix and refused after.
+
+        So the correction is not "narrow the claim" but "stop needing it".
+        Nothing here now reasons about which substrings can appear where;
+        both sides are put in the same form and compared. The general shape
+        — a premise carried from the question it was established for to a
+        neighbouring one it does not answer — is what produced three of this
+        PR's four rounds, and the defence against it is to make the two
+        sides identical by construction rather than to argue that a
+        difference cannot arise.
+        """
         if not os.path.isfile(self.out) or self.out_copy is None:
             return
         base = os.path.basename(self.out)
@@ -2044,8 +2192,26 @@ class Assembly:
             # divergence waiting to happen, and this is the second time it has
             # happened here — the first was `first_heading` and the `---`
             # check disagreeing about blankness.
+            # COMPARE WHAT `build()` PUBLISHES, NOT WHAT THE FRAGMENT HOLDS
+            # (#2311 r4). `build()` appends `rewrite_links(raw)`, so the two
+            # sides of this comparison were never the same form: the pending
+            # fragment's own bytes on the left, already-rewritten bytes on the
+            # right. A heading carrying a relative link — `## [Title](./x)`,
+            # which `HEADING_RE` accepts — is published as `## [Title](../x)`,
+            # the scan below matched nothing, and the run appended a second
+            # copy and consumed the source. Reproduced, and refused after.
+            #
+            # Applied ONCE to the whole fragment rather than to the matched
+            # line, because that is exactly the call `build()` makes. A
+            # per-line rewrite would be equivalent today and would have to be
+            # re-argued the moment anything else compares a second line.
+            #
+            # This is also where the #2315 constraint stops being something a
+            # later reader has to remember: whatever that arm compares, it
+            # compares the published form, because the fragment is converted
+            # to it here before anything looks at it.
             out_lines = [_debom(o) for o in out_lines_raw]
-            for ln in LINE_END_RE.split(body):
+            for ln in LINE_END_RE.split(self.rewrite_links(body)):
                 line = _debom(ln)
                 if not HEADING_RE.match(line):
                     continue

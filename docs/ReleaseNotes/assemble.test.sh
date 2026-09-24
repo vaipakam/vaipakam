@@ -4667,9 +4667,21 @@ check "and that it continues"      "$(says "$msg" 'not a refusal')"             
 # The r11 refusal named the byte-order mark and told the author to re-save the
 # file — and that edit is what made the markerless duplicate guard stop
 # recognising the already-published copy, losing a fragment twice. The general
-# rule names the LINE instead, so no remedy it suggests rewrites the evidence
-# another guard matches on. Same outcome for the author, reached without the
-# trap; and it covers UTF-16/32 for free, which the r11 clause never did.
+# rule names the LINE instead, so no remedy IT SUGGESTS rewrites the evidence
+# another guard matches on — which is what the `never says re-save` assertion
+# below pins, and it is the whole of the claim.
+#
+# IT IS NOT A CLAIM THAT THE TRAP IS OUT OF REACH (#2311 r3). An earlier
+# revision of this comment read "reached without the trap", which overstates
+# it by the distance between a message and an operator. For the UTF-16 case on
+# the next lines, re-saving as UTF-8 is the obvious reading of the refusal
+# even though the refusal never asks for it — and where the ALREADY-PUBLISHED
+# copy is the UTF-16 one, that re-save is exactly what stops the markerless
+# duplicate guard matching, so the next run appends a second copy and consumes
+# the source. "Covers UTF-16/32, which the r11 clause never did" is therefore
+# about the REFUSAL here, not about safety across the operator's remedy. That
+# two-run path is walked at `check_markerless_duplicates` and carried as
+# #2315; the assertions below deliberately test only the single run.
 case_start "T217m: a BOM-bearing fragment is refused for its opening line"
 W="$ROOT/t217m"; build "$W"
 printf '\xef\xbb\xbf## Thread — saved with a mark (PR #4249)\n' \
@@ -4685,6 +4697,46 @@ W="$ROOT/t217m2"; build "$W"
 printf '\xff\xfe## Thread — saved as UTF-16 LE (PR #4250)\n' \
   > "$W/docs/ReleaseNotes/unreleased/0003-bom16.md"
 msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
+check "the run refuses"      "$?"              "1"
+check "nothing was consumed" "$(pending "$W")" "3"
+
+# ── The duplicate guard compares the PUBLISHED form (#2311 r4) ────────────
+# `build()` appends `rewrite_links(raw)`, so a heading carrying a relative
+# link is published with that link rewritten. The guard compared the pending
+# fragment's own bytes against it, so `## … [the note](./x)` never matched
+# the published `## … [the note](../x)`: the run appended a second copy and
+# consumed the source — the one outcome in this script that loses work
+# rather than refusing. Reproduced before the fix.
+#
+# The exemption that hid it — "neither substring can occur in an ATX marker"
+# — is true of `first_heading`, which reads only the marker, and false here,
+# where the whole line is compared. Both sub-cases below share one fixture
+# shape and differ only in whether the heading carries a link, so a
+# regression in the rewrite shows up as the first one passing and the
+# second failing.
+case_start "T217m4: a heading with a relative link still stops a markerless run"
+W="$ROOT/t217m4"; build "$W"
+out="$W/docs/ReleaseNotes"
+printf '## Thread — see [the note](./x) (PR #4251)\n\nBody.\n' \
+  > "$W/docs/ReleaseNotes/unreleased/0003-link.md"
+# The legacy markerless file holds it as `build()` would have written it.
+printf '# Release Notes — 2026-08-17\n\n## Thread — see [the note](../x) (PR #4251)\n\nBody.\n' \
+  > "$out/ReleaseNotes-2026-08-17.md"
+msg="$(bash "$out/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
+check "the run refuses"        "$?"                              "1"
+check "naming the fragment"    "$(says "$msg" '0003-link.md')"   "1"
+check "nothing was consumed"   "$(pending "$W")"                 "3"
+check "and it is not doubled"  \
+  "$(count_in 'Thread — see' "$out/ReleaseNotes-2026-08-17.md")"  "1"
+# The control: the same fixture with a link-free heading was ALREADY refused,
+# which is what localises the defect to the rewrite rather than to the guard.
+W="$ROOT/t217m4b"; build "$W"
+out="$W/docs/ReleaseNotes"
+printf '## Thread — see the note (PR #4251)\n\nBody.\n' \
+  > "$W/docs/ReleaseNotes/unreleased/0003-plain.md"
+printf '# Release Notes — 2026-08-17\n\n## Thread — see the note (PR #4251)\n\nBody.\n' \
+  > "$out/ReleaseNotes-2026-08-17.md"
+msg="$(bash "$out/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
 check "the run refuses"      "$?"              "1"
 check "nothing was consumed" "$(pending "$W")" "3"
 
