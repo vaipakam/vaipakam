@@ -8,21 +8,24 @@
 import { DIAMOND, MOCKS, TREASURY, borrower, lender, pub } from '../lib/chain.mjs';
 import { ABIS, read, vaultAddressFor } from '../lib/flow.mjs';
 import { simulate } from '../lib/errors.mjs';
-import { expectEq, record } from '../lib/report.mjs';
+import { check, expectEq, observe } from '../lib/report.mjs';
 
 export async function run() {
   const minHf = await read(ABIS.risk, 'getMinHealthFactor');
   expectEq('A1.1', 'MIN_HEALTH_FACTOR reads back at 1.5e18', minHf, 1_500_000_000_000_000_000n);
 
+  // The deployment's OPERATIONAL posture is configuration, not a protocol
+  // property: the retail deploy is meant to wire a sanctions oracle once one
+  // exists on-chain, and this testnet has not. So it is observed, with the
+  // values, rather than certified — a later deploy that wires the oracle must
+  // not keep reporting a green "unset".
   const oracle = await read(ABIS.profile, 'getSanctionsOracle');
-  record(
-    'A1.2',
-    'retail posture: sanctions oracle unset, KYC enforcement dormant',
-    'PASS',
-    `sanctionsOracle=${oracle} isKYCVerified(any)=${await read(ABIS.profile, 'isKYCVerified', [borrower.address])}`,
-  );
+  const kycShortCircuits = await read(ABIS.profile, 'isKYCVerified', [borrower.address]);
+  observe('A1.2', 'operational posture: sanctions oracle and KYC enforcement',
+    `sanctionsOracle=${oracle}${/^0x0{40}$/i.test(oracle) ? ' (unset)' : ''} ` +
+    `isKYCVerified(fresh wallet)=${kycShortCircuits}${kycShortCircuits ? ' (enforcement dormant)' : ' (enforcement ARMED)'}`);
 
-  record('A1.3', 'treasury is an EXTERNAL address, not the Diamond', TREASURY.toLowerCase() === DIAMOND.toLowerCase() ? 'FAIL' : 'PASS',
+  check('A1.3', 'treasury is an EXTERNAL address, not the Diamond', TREASURY.toLowerCase() !== DIAMOND.toLowerCase(),
     `treasury=${TREASURY} diamond=${DIAMOND} — fees leave at once; the Diamond-custody claim paths are dark on this topology`);
 
   // Per-user vault: created on demand, idempotent, real code. On a PRISTINE
@@ -32,8 +35,8 @@ export async function run() {
   const vault = await vaultAddressFor(borrower);
   const again = await vaultAddressFor(borrower);
   const code = await pub.getBytecode({ address: vault });
-  record('A1.4', 'a vault is created on demand, is idempotent, and has code',
-    code && vault === again ? 'PASS' : 'FAIL',
+  check('A1.4', 'a vault is created on demand, is idempotent, and has code',
+    Boolean(code) && code !== '0x' && vault === again,
     `beforeCreate=${unset} vault=${vault} secondCall=${again} codeBytes=${code ? (code.length - 2) / 2 : 0}`);
 
   // The vault mutators are Diamond-internal. A direct user call must refuse.
@@ -41,11 +44,11 @@ export async function run() {
     DIAMOND, ABIS.vaultFactory, 'vaultDepositERC20',
     [borrower.address, MOCKS.liquidToken, 1n], borrower.address,
   );
-  record('A1.5', 'vault mutators are Diamond-internal — a direct user call is refused',
-    direct.ok ? 'FAIL' : 'PASS', direct.ok ? 'NOT refused' : direct.name);
+  check('A1.5', 'vault mutators are Diamond-internal — a direct user call is refused',
+    !direct.ok, direct.ok ? 'NOT refused' : direct.name);
 
   // The Diamond's own routing table, against what the artifact claims.
   const live = await read(ABIS.loupe, 'facetAddresses');
-  record('A1.6', 'live facet count from the Diamond loupe', 'INFO',
+  observe('A1.6', 'live facet count from the Diamond loupe',
     `facetAddresses()=${live.length} (diamondCutFacet is installed by the constructor and sits outside this enumeration)`);
 }

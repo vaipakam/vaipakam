@@ -233,17 +233,34 @@ export async function acceptOffer(offerId, offer, acceptor, creator, overrides =
  * Seed both roles, create a lender offer and accept it.
  * Returns `{ loanId, offerId, offer }`.
  */
-export async function openLoan({ lender, borrower, ...overrides } = {}) {
+/**
+ * Open an ordinary liquid/liquid loan.
+ *
+ * By default the borrower is also funded AND approved in the lending asset,
+ * so a later scenario can repay. `borrowerCanRepayFromWallet: false` leaves
+ * the Diamond with NO allowance over the borrower's lending asset once the
+ * loan is open — for a scenario that claims repayment happens from
+ * collateral alone, where a wallet the protocol could quietly debit would
+ * let a broken implementation pass.
+ */
+export async function openLoan({ lender, borrower, borrowerCanRepayFromWallet = true, ...overrides } = {}) {
   const { liquidToken: collateral, liquidToken2: lending } = MOCKS;
   await mint(lender, lending, '100000');
   await approveDiamond(lender, lending);
   await mint(borrower, collateral, '100000');
   await approveDiamond(borrower, collateral);
-  await mint(borrower, lending, '100000');
-  await approveDiamond(borrower, lending);
+  if (borrowerCanRepayFromWallet) {
+    await mint(borrower, lending, '100000');
+    await approveDiamond(borrower, lending);
+  }
   const { offerId, offer } = await createOffer(lender, overrides);
   const accepted = await acceptOffer(offerId, offer, borrower, lender);
   if (!accepted.ok) throw new Error(`accept failed: ${accepted.reason}`);
+  if (!borrowerCanRepayFromWallet) {
+    await tx(borrower, { address: lending, abi: ERC20, functionName: 'approve', args: [DIAMOND, 0n] }, 'revoke lending allowance');
+    const left = await pub.readContract({ address: lending, abi: [{ type: 'function', name: 'allowance', inputs: [{ type: 'address' }, { type: 'address' }], outputs: [{ type: 'uint256' }], stateMutability: 'view' }], functionName: 'allowance', args: [borrower.address, DIAMOND] });
+    if (left !== 0n) throw new Error(`openLoan: the Diamond still holds a ${left} lending allowance from the borrower`);
+  }
   const active = await read(ABIS.metrics, 'getUserActiveLoans', [borrower.address]);
   return { loanId: active[active.length - 1], offerId, offer, gas: accepted.gas };
 }

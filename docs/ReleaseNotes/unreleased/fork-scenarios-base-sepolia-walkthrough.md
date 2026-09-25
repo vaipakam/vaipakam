@@ -144,6 +144,18 @@ happened. And Anvil's gas estimate for a call that closes a loan comes back
 just short, because clearing that much storage earns a refund that hides the
 peak; the driver adds a margin, as wallets do, and names a gas shortfall as
 such when one still happens. Whether a production node's estimate has the
-same shortfall was not tested, and the write-up says so. With those fixed,
-the re-run reproduced every verdict of the first run, the only change being
-the swap-to-repay check whose expectation was deliberately corrected.
+same shortfall was not tested, and the write-up says so.
+
+Review of the walkthrough then found the ledger itself too forgiving: some
+rows printed a figure under a pass that nothing had checked, and others
+recorded a regression as a mere observation. The fix went into the ledger's
+structure rather than into individual rows. A row is now either an assertion
+— which can only pass or fail, and needs a real condition — or an
+observation, and there is no longer any way to write a verdict by hand. Every
+formerly unchecked pass was given an exact expectation, and all of them hold
+on the live deployment. Four rows that had been certifying a deployment's
+configured value now record it as an observation instead, so a later change
+of configuration can never be reported as a green "unchanged". The re-run
+records one hundred and eighteen passes, ten observations and one failure —
+the swap-to-repay check whose expectation was deliberately corrected — with
+no scenario file aborted.

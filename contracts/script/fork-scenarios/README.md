@@ -37,8 +37,8 @@ anvil --fork-url "$BASE_SEPOLIA_RPC_URL" --chain-id 84532
 #    did NOT reproduce the EIP-7702 delegations on the real chain (see below),
 #    so it can pass what the live chain would refuse.
 
-# 2. install viem for the driver, once
-cd contracts/script/fork-scenarios && npm install
+# 2. install the pinned dependency graph for the driver, once
+cd contracts/script/fork-scenarios && npm ci
 
 # 3. drive
 node run-all.mjs            # everything, in order
@@ -100,7 +100,11 @@ scenario file, or a whole run, before it was fixed:
 `contracts/` is deliberately outside the workspace (it is a Foundry project),
 and this driver lives under it because it belongs to the contracts' test
 surface rather than to any app. It therefore carries its own tiny
-`package.json` and needs its own `npm install`. It imports the ABIs by
+`package.json` and needs its own install — `npm ci`, against the committed
+`package-lock.json`, so every machine resolves the same viem and the same
+transitives (an unpinned `^` range would let a viem release change the
+harness's gas estimation, ABI decoding or error names with no repository
+diff). It imports the ABIs by
 relative path from `packages/contracts/src/abis`, which keeps the compiler as
 the single source of truth for every decode — the same rule the Workers
 follow.
@@ -147,12 +151,19 @@ this harness and are worth keeping:
   over every party (both EOAs, both vaults, the Diamond, the treasury, the
   venue, the liquidator) is what turns "the repay succeeded" into "the
   treasury took 2% of the interest and nothing of the principal".
-- **Record an honest `INFO` rather than a flattering `PASS`.** An observation
-  worth keeping that has no assertion behind it is an `INFO`; a mis-specified
-  expectation gets its expectation fixed, never its verdict. A hard-coded
-  `'PASS'` on a row that only prints deltas is the worst of both — it reads as
-  a check and is not one. That is how an unresolved vault address survived
-  ten steps before an accounting assertion caught it.
+- **Assert, observe, or abort — the ledger API allows nothing else.**
+  `check(id, name, ok)` (and `expectEq`) is an assertion and can only be
+  PASS or FAIL; `observe(id, name, detail)` is an observation and is always
+  INFO; `cannotContinue(step, why)` throws, and the runner names the file as
+  ABORTED and exits non-zero. There is no way to write a verdict string. The
+  first version took one, and grew two quiet failure shapes: rows that
+  printed a number under a hard-coded `'PASS'`, and rows whose FAILURE branch
+  was `'INFO'` — so a regression on either read as green. Use `observe` only
+  for something with no expectation worth failing on — a deployment's
+  configured value, a shape worth writing down — and give every `check` a
+  condition that would actually be false if the behaviour regressed: an exact
+  expected value, the refusal's NAME rather than "it reverted", both sides of
+  a transfer rather than one.
 - **Resolve a vault through `vaultAddressFor`, never `getUserVaultAddress`
   directly.** The raw getter answers `address(0)` for a user who has no vault
   yet, without reverting, and snapshotting the zero address yields a

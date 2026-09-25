@@ -14,7 +14,7 @@ import { ABIS, approveDiamond, acceptOffer, acceptStoredOffer, createOffer, delt
 import { chainNow, f18 } from '../lib/chain.mjs';
 import { warpDays } from '../lib/impersonate.mjs';
 import { simulate } from '../lib/errors.mjs';
-import { expectEq, record } from '../lib/report.mjs';
+import { cannotContinue, check, expectEq, observe } from '../lib/report.mjs';
 
 export async function run() {
   const lending = MOCKS.liquidToken2;
@@ -41,8 +41,8 @@ export async function run() {
 
     const impostor = await simulate(DIAMOND, ABIS.preclose, 'offsetWithNewOffer',
       [loanId, 400n, 7n, collateral, parseUnits('1.25', 18), true, lending], outsider.address);
-    record('A7.1', 'only the borrower can offset their own loan',
-      !impostor.ok ? 'PASS' : 'FAIL', impostor.ok ? 'NOT refused' : impostor.name);
+    check('A7.1', 'only the borrower can offset their own loan',
+      !impostor.ok, impostor.ok ? 'NOT refused' : impostor.name);
 
     // The replacement's maturity must not pass the ORIGINAL loan's, and the
     // bound is seconds-precise: `now + newTerm <= startTime + oldTerm`. A
@@ -52,25 +52,22 @@ export async function run() {
     await warpDays(1 / 1440); // one minute, so the comparison is not same-second
     const sameTerm = await simulate(DIAMOND, ABIS.preclose, 'offsetWithNewOffer',
       [loanId, 400n, 7n, collateral, parseUnits('1.25', 18), true, lending], borrower.address);
-    record('A7.2a', 'a same-length replacement is refused once any time has passed — the maturity bound is seconds-precise',
-      !sameTerm.ok ? 'PASS' : 'FAIL',
+    check('A7.2a', 'a same-length replacement is refused once any time has passed — the maturity bound is seconds-precise',
+      !sameTerm.ok,
       sameTerm.ok ? 'NOT refused a minute after origination' : sameTerm.name);
 
     const OFFSET_DAYS = 6n;
     const sim = await simulate(DIAMOND, ABIS.preclose, 'offsetWithNewOffer',
       [loanId, 400n, OFFSET_DAYS, collateral, parseUnits('1.25', 18), true, lending], borrower.address);
-    if (!sim.ok) {
-      record('A7.2', 'the borrower posts an offset offer against an open loan', 'INFO', sim.name);
-      return;
-    }
+    if (!sim.ok) cannotContinue('A7.2 offset offer', sim.name);
     const posted = await tx(borrower, {
       address: DIAMOND, abi: ABIS.preclose, functionName: 'offsetWithNewOffer',
       args: [loanId, 400n, OFFSET_DAYS, collateral, parseUnits('1.25', 18), true, lending],
     }, 'offsetWithNewOffer');
     const offsetOfferId = BigInt(sim.result);
     const stillOpen = await read(ABIS.loan, 'getLoanDetails', [loanId]);
-    record('A7.2', 'posting an offset offer leaves the original loan Active — it is an OFFER, not a close',
-      String(stillOpen.status) === '0' ? 'PASS' : 'FAIL',
+    check('A7.2', 'posting an offset offer leaves the original loan Active — it is an OFFER, not a close',
+      String(stillOpen.status) === '0',
       `loanId=${loanId} offsetOfferId=${offsetOfferId} status=${stillOpen.status} gas=${posted.gasUsed}`);
 
     // The offset vehicle is created BY the facet, not by this harness, so its
@@ -80,25 +77,22 @@ export async function run() {
     // other side of a replacement loan, which is not what "offset" suggests
     // on its own.
     const vehicle = await read(ABIS.offerCancel, 'getOffer', [offsetOfferId]);
-    record('A7.2b', 'the offset vehicle is a LENDER-side offer posted by the borrower', 'INFO',
+    observe('A7.2b', 'the offset vehicle is a LENDER-side offer posted by the borrower',
       `offerType=${vehicle.offerType} creator=${vehicle.creator.slice(0, 10)} ` +
       `amount=${f18(vehicle.amount)} rate=${vehicle.interestRateBps}bps term=${vehicle.durationDays}d`);
 
     const before = await snapshot(tokens, holders);
     const accepted = await acceptStoredOffer(offsetOfferId, outsider);
-    if (!accepted.ok) {
-      record('A7.3', 'a third party accepts the offset offer', 'INFO', accepted.reason);
-      return;
-    }
+    if (!accepted.ok) cannotContinue('A7.3 offset fill', accepted.reason);
     const after = await snapshot(tokens, holders);
     const settled = await read(ABIS.loan, 'getLoanDetails', [loanId]);
-    record('A7.3', 'accepting the offset offer CLOSES the original loan automatically — no manual second step',
-      String(settled.status) !== '0' ? 'PASS' : 'FAIL',
+    check('A7.3', 'accepting the offset offer CLOSES the original loan automatically — no manual second step',
+      String(settled.status) !== '0',
       `gas=${accepted.gas} originalStatus=${settled.status} deltas=${JSON.stringify(delta(before, after))}`);
 
     const late = await simulate(DIAMOND, ABIS.preclose, 'completeOffset', [loanId], borrower.address);
-    record('A7.4', 'calling completeOffset afterwards is refused — the auto-link already ran',
-      !late.ok ? 'PASS' : 'INFO', late.ok ? 'still callable' : late.name);
+    check('A7.4', 'calling completeOffset afterwards is refused — the auto-link already ran',
+      !late.ok, late.ok ? 'still callable' : late.name);
   }
 
   // ------------------------------------------------- obligation handover
@@ -121,20 +115,19 @@ export async function run() {
       // maturity, so a same-length term cannot fit once the loan is running.
       durationDays: loan.durationDays - 1n,
     });
-    record('A7.5', 'a replacement borrower can post a standing borrow offer', 'PASS',
+    const standing = await read(ABIS.offerCancel, 'getOffer', [replacement.offerId]);
+    check('A7.5', 'a replacement borrower can post a standing borrow offer',
+      standing.creator.toLowerCase() === outsider.address.toLowerCase() && String(standing.offerType) === '1',
       `loanId=${loanId} offerId=${replacement.offerId}`);
 
     const notBorrower = await simulate(DIAMOND, ABIS.preclose, 'transferObligationViaOffer',
       [loanId, replacement.offerId], outsider.address);
-    record('A7.6', 'only the exiting borrower can hand over their own obligation',
-      !notBorrower.ok ? 'PASS' : 'FAIL', notBorrower.ok ? 'NOT refused' : notBorrower.name);
+    check('A7.6', 'only the exiting borrower can hand over their own obligation',
+      !notBorrower.ok, notBorrower.ok ? 'NOT refused' : notBorrower.name);
 
     const handover = await simulate(DIAMOND, ABIS.preclose, 'transferObligationViaOffer',
       [loanId, replacement.offerId], borrower.address);
-    if (!handover.ok) {
-      record('A7.7', 'the borrower hands the obligation to the replacement', 'INFO', handover.name);
-      return;
-    }
+    if (!handover.ok) cannotContinue('A7.7 handover', handover.name);
     const before = await snapshot(tokens, holders);
     const receipt = await tx(borrower, {
       address: DIAMOND, abi: ABIS.preclose, functionName: 'transferObligationViaOffer',
@@ -142,8 +135,8 @@ export async function run() {
     }, 'transferObligationViaOffer');
     const after = await snapshot(tokens, holders);
     const moved = await read(ABIS.loan, 'getLoanDetails', [loanId]);
-    record('A7.7', 'the handover rewrites the loan\'s borrower in place — the loan itself survives',
-      moved.borrower.toLowerCase() === outsider.address.toLowerCase() ? 'PASS' : 'INFO',
+    check('A7.7', 'the handover rewrites the loan\'s borrower in place — the loan itself survives',
+      moved.borrower.toLowerCase() === outsider.address.toLowerCase() && String(moved.status) === '0',
       `gas=${receipt.gasUsed} status=${moved.status} borrower ${borrower.address.slice(0, 10)} -> ${moved.borrower.slice(0, 10)} ` +
       `deltas=${JSON.stringify(delta(before, after))}`);
     expectEq('A7.8', 'the lender is untouched by a handover — same lender, same principal',

@@ -18,7 +18,7 @@ import { ABIS, acceptStoredOffer, approveDiamond, createOffer, delta, mint, open
 import { f18 } from '../lib/chain.mjs';
 import { simulate } from '../lib/errors.mjs';
 import { parseEventLogs } from 'viem';
-import { record } from '../lib/report.mjs';
+import { cannotContinue, check } from '../lib/report.mjs';
 
 export async function run() {
   const lending = MOCKS.liquidToken2;
@@ -40,9 +40,8 @@ export async function run() {
 
     const listing = await simulate(DIAMOND, ABIS.earlyWithdrawal, 'createLoanSaleOffer',
       [loanId, 500n, true, BigInt(3 * 86_400)], lender.address);
-    if (!listing.ok) {
-      record('A8.1', 'the lender lists the position', 'INFO', listing.name);
-    } else {
+    if (!listing.ok) cannotContinue('A8.1 listing', listing.name);
+    {
       const listed = await tx(lender, {
         address: DIAMOND, abi: ABIS.earlyWithdrawal, functionName: 'createLoanSaleOffer',
         args: [loanId, 500n, true, BigInt(3 * 86_400)],
@@ -53,29 +52,29 @@ export async function run() {
       const saleOfferId = link.args.saleOfferId;
       const vehicle = await read(ABIS.offerCancel, 'getOffer', [saleOfferId]);
       const linked = await read(ABIS.offerCancel, 'getOfferLinkedLoanId', [saleOfferId]);
-      record('A8.1', 'listing posts a vehicle offer linked to the loan, and leaves the loan untouched',
-        String(linked) === String(loanId) ? 'PASS' : 'FAIL',
+      const unchanged = await read(ABIS.loan, 'getLoanDetails', [loanId]);
+      check('A8.1', 'listing posts a vehicle offer linked to the loan, and leaves the loan untouched',
+        String(linked) === String(loanId) && unchanged.lender === before.lender && String(unchanged.status) === '0',
         `saleOfferId=${saleOfferId} linkedLoanId=${linked} offerType=${vehicle.offerType} ` +
         `creator=${vehicle.creator.slice(0, 10)} expiresAt=${vehicle.expiresAt}`);
 
       const pre = await snapshot(tokens, holders);
       const bought = await acceptStoredOffer(saleOfferId, outsider);
-      if (!bought.ok) {
-        record('A8.2', 'a buyer fills the listed sale', 'INFO', bought.reason);
-      } else {
+      if (!bought.ok) cannotContinue('A8.2 buyer fill', bought.reason);
+      {
         const post = await snapshot(tokens, holders);
         const after = await read(ABIS.loan, 'getLoanDetails', [loanId]);
-        record('A8.2', 'filling the listing hands the lender side to the buyer — in the same transaction',
-          after.lender.toLowerCase() === outsider.address.toLowerCase() ? 'PASS' : 'INFO',
+        check('A8.2', 'filling the listing hands the lender side to the buyer — in the same transaction',
+          after.lender.toLowerCase() === outsider.address.toLowerCase(),
           `gas=${bought.gas} lender ${before.lender.slice(0, 10)} -> ${after.lender.slice(0, 10)} ` +
           `status=${after.status} deltas=${JSON.stringify(delta(pre, post))}`);
-        record('A8.3', 'the borrower\'s side runs on unchanged — same borrower, principal, rate and term',
+        check('A8.3', 'the borrower\'s side runs on unchanged — same borrower, principal, rate and term',
           after.borrower === before.borrower && after.principal === before.principal &&
-          after.interestRateBps === before.interestRateBps && String(after.status) === '0' ? 'PASS' : 'FAIL',
+          after.interestRateBps === before.interestRateBps && after.durationDays === before.durationDays && String(after.status) === '0',
           `borrower=${after.borrower.slice(0, 10)} principal=${f18(after.principal)} rate=${after.interestRateBps}bps status=${after.status}`);
         const late = await simulate(DIAMOND, ABIS.earlyWithdrawal, 'completeLoanSale', [loanId], lender.address);
-        record('A8.4', 'completeLoanSale afterwards is refused — the fill already completed it',
-          !late.ok ? 'PASS' : 'INFO', late.ok ? 'still callable' : late.name);
+        check('A8.4', 'completeLoanSale afterwards is refused — the fill already completed it',
+          !late.ok, late.ok ? 'still callable' : late.name);
       }
     }
   }
@@ -94,20 +93,19 @@ export async function run() {
       collateralAmountMax: before.collateralAmount,
       durationDays: before.durationDays,
     });
-    record('A8.5', 'a buyer posts a standing lender offer matching the loan', 'PASS',
+    const standing = await read(ABIS.offerCancel, 'getOffer', [buy.offerId]);
+    check('A8.5', 'a buyer posts a standing lender offer matching the loan',
+      standing.creator.toLowerCase() === outsider.address.toLowerCase() && String(standing.offerType) === '0' && standing.amount === before.principal,
       `loanId=${loanId} buyOfferId=${buy.offerId}`);
 
     const notLender = await simulate(DIAMOND, ABIS.earlyWithdrawalDirect, 'sellLoanViaBuyOffer',
       [loanId, buy.offerId], outsider.address);
-    record('A8.6', 'only the current lender can sell the position',
-      !notLender.ok ? 'PASS' : 'FAIL', notLender.ok ? 'NOT refused' : notLender.name);
+    check('A8.6', 'only the current lender can sell the position',
+      !notLender.ok, notLender.ok ? 'NOT refused' : notLender.name);
 
     const sim = await simulate(DIAMOND, ABIS.earlyWithdrawalDirect, 'sellLoanViaBuyOffer',
       [loanId, buy.offerId], lender.address);
-    if (!sim.ok) {
-      record('A8.7', 'the lender sells directly into the standing offer', 'INFO', sim.name);
-      return;
-    }
+    if (!sim.ok) cannotContinue('A8.7 direct sale', sim.name);
     const pre = await snapshot(tokens, holders);
     const receipt = await tx(lender, {
       address: DIAMOND, abi: ABIS.earlyWithdrawalDirect, functionName: 'sellLoanViaBuyOffer',
@@ -115,8 +113,8 @@ export async function run() {
     }, 'sellLoanViaBuyOffer');
     const post = await snapshot(tokens, holders);
     const after = await read(ABIS.loan, 'getLoanDetails', [loanId]);
-    record('A8.7', 'a direct sale hands the lender side over in ONE transaction, with no listing',
-      after.lender.toLowerCase() === outsider.address.toLowerCase() ? 'PASS' : 'INFO',
+    check('A8.7', 'a direct sale hands the lender side over in ONE transaction, with no listing',
+      after.lender.toLowerCase() === outsider.address.toLowerCase() && after.borrower === before.borrower && String(after.status) === '0',
       `gas=${receipt.gasUsed} lender ${before.lender.slice(0, 10)} -> ${after.lender.slice(0, 10)} ` +
       `status=${after.status} deltas=${JSON.stringify(delta(pre, post))}`);
   }

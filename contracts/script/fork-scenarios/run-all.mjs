@@ -25,6 +25,20 @@ const files = fs
   .sort()
   .filter((f) => wanted.length === 0 || wanted.some((w) => f.startsWith(w)));
 
+// A mistyped subset (`node run-all.mjs 12`) would otherwise select nothing
+// and write a zero-row ledger with a clean exit — a green run that ran no
+// scenario. Refuse it, naming what exists.
+if (files.length === 0) {
+  console.error(`No scenario file matches ${JSON.stringify(wanted)}. Available: ${
+    fs.readdirSync(path.join(HERE, 'scenarios')).filter((f) => f.endsWith('.mjs')).sort().join(', ')}`);
+  process.exit(1);
+}
+const unmatched = wanted.filter((w) => !files.some((f) => f.startsWith(w)));
+if (unmatched.length) {
+  console.error(`Subset selector(s) ${JSON.stringify(unmatched)} match no scenario file.`);
+  process.exit(1);
+}
+
 const code = await pub.getBytecode({ address: DIAMOND }).catch(() => null);
 if (!code) {
   console.error(
@@ -61,8 +75,12 @@ for (const file of files) {
   console.log(`--- ${file}`);
   const snap = await rpc('evm_snapshot');
   if (snap.error || !snap.result) throw new Error(`fork node refused evm_snapshot: ${snap.error?.message ?? 'no id'}`);
-  const mod = await import(path.join(HERE, 'scenarios', file));
   try {
+    // The import is INSIDE the guarded block: a module that fails to load (a
+    // missing ABI, a top-level error, a syntax error) is an aborted file like
+    // any other — named, reverted, and counted — not a crash that skips the
+    // summary and the ledger.
+    const mod = await import(path.join(HERE, 'scenarios', file));
     await mod.run();
   } catch (e) {
     const why = String(e.details ?? e.shortMessage ?? e.message).split('\n')[0];

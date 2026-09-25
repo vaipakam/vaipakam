@@ -9,17 +9,21 @@ configuration — not the source tree's idea of them.
   84532 (Base Sepolia), forked at block 47,228,632.
 - **Driver** — [`contracts/script/fork-scenarios/`](../../contracts/script/fork-scenarios/README.md),
   committed with this document. `node run-all.mjs` reproduces every row.
-- **Result** — 129 scenarios: **122 PASS, 6 INFO, 1 FAIL.** The INFOs are
-  observations with no assertion behind them, not soft failures; each is
-  written out below. The one FAIL is **A11.5**, and it is deliberate: after
+- **Result** — 129 scenarios: **118 PASS, 10 INFO, 1 FAIL**, no aborted
+  file. The INFOs are observations with no assertion behind them, not soft
+  failures — the ledger's API makes a row either an assertion (PASS/FAIL
+  only) or an observation (INFO only), so no failure can land as INFO; each
+  is listed in §7. The one FAIL is **A11.5**, and it is deliberate: after
   the owner's #2317 decision (§3D) that row asserts the SPEC — sell only what
   the debt needs — and the live bytecode sells the whole cap. It turns green
   when the #2317 fix is deployed.
 - **Node** — the figures above are from a re-run on **Anvil** (2026-09-25,
-  forked at block 47,272,642). The first run used a hardhat fork node and
-  reported 123 / 6 / 0; the difference is exactly the A11.5 oracle change
-  above. The re-run also found three defects in the HARNESS that the hardhat
-  node had hidden — see [§0](#0-re-run-on-anvil-and-three-harness-defects-it-exposed).
+  forked at block 47,274,237). The first run used a hardhat fork node and
+  reported 123 / 6 / 0. The differences are the A11.5 oracle change above,
+  and four rows that recorded a deployment's CONFIGURED value as a PASS and
+  now observe it instead (§7). The re-run also found three defects in the
+  HARNESS that the hardhat node had hidden — see
+  [§0](#0-re-run-on-anvil-and-three-harness-defects-it-exposed).
 - **Assets** — the deployment's own faucet mocks: `tLIQ` priced $2,000,
   `tLIQ2` priced $1.00, plus `illiquidToken` (unpriced).
 
@@ -72,10 +76,22 @@ scenario:
    a margin. Whether a real Base Sepolia node's estimate for the same call
    clears the sentry is **unverified**.
 
-With those fixed, the Anvil run ran all 129 rows with no aborts and
-reproduced the first run's verdicts: the same six rows are INFO, and every
-row that passed before passes again except A11.5, whose oracle changed on
-purpose. Figures that depend on ELAPSED time — accrued interest, and so the
+With those fixed, the Anvil run ran all 129 rows with no aborts. Every row
+that passed in the first run passes again — most now against a STRICTER
+condition — except A11.5, whose oracle changed on purpose, and four
+configuration rows that are now observations rather than passes.
+
+The review of this document then found the ledger itself too lenient, in two
+shapes: rows that printed a number under a hard-coded PASS (the forced-close
+bonus, the claims after a default, the listing and refinance steps), and rows
+whose failure branch was INFO rather than FAIL (the handover, both lender
+sales, the rental custody checks), so a regression on either read as green.
+The fix is in the ledger's API, not row by row: a row is now `check`
+(PASS/FAIL, needs a condition), `observe` (INFO, no assertion) or an abort,
+and there is no way left to write a verdict string. Every former
+unconditional PASS was given a real condition — an exact expected value, the
+refusal's name, both sides of a transfer — and all of them hold on the live
+bytecode. Figures that depend on ELAPSED time — accrued interest, and so the
 forced-close splits in §2.1 — differ from the first run's in the sixth
 decimal, because the time warps land on different seconds; every fee rate,
 cap, ratio and fixed-amount figure is identical.
@@ -695,18 +711,29 @@ regenerated as `contracts/script/fork-scenarios/last-run.json` on every run
 | A10.* | `10-nft-rental.mjs` | ERC-721 rental against the spec's custody-vs-use model, early close, claims |
 | A11.* | `11-swap-to-repay.mjs` | repaying from collateral: authority, the cap, full and partial modes |
 
-The `INFO` rows are: the live facet count (A1.6, an observation feeding §5),
-the depth-floor flip (A3.10, written up as a finding in §2.4), and the two
-post-claim NFT readbacks (A2.16, written up in §1.4), and the offset
-vehicle's offer type (A7.2b, written up in §3A.3; its mirror, the sale
-vehicle, is asserted as A8.1), and a rental's health-factor refusal (A10.5,
-written up in §3C). A3.2 records this
-deployment's effective grace window — **1 day for a 7-day loan** — rather
-than asserting it, since the window is per-deployment config. (The first
-revision of this document said 3 days; the chain answers 86,400 s, and the
-probe now warps HALF a day past term, because a full day lands exactly on a
-1-day boundary and flips with the second the warp lands on) — what the suite asserts there is the
-ORDERING A3.1 → A3.3, not that any particular day lands inside grace.
+The ten `INFO` rows, each an observation with no assertion behind it:
+
+- **Deployment configuration** — the sanctions oracle and KYC posture (A1.2,
+  A5.1) and the periodic-interest switch (A9.1). These are values an
+  operator or governance sets, so a later deploy that wires the oracle or
+  arms the feature must not keep reporting a green "unset". (The first run
+  recorded them as PASS.)
+- **The live facet count** (A1.6), an observation feeding §5.
+- **Findings written up rather than certified** — the depth-floor flip
+  (A3.10, §2.4) and where the KYC gate binds (A5.9, §4.2; the first run
+  recorded it as PASS, which would have certified a behaviour this document
+  calls a finding).
+- **Shapes worth writing down** — the two post-claim NFT readbacks (A2.16,
+  §1.4), the offset vehicle's offer type (A7.2b, §3A.3; its mirror, the sale
+  vehicle, is asserted as A8.1), and a rental's health-factor refusal
+  (A10.5, §3C).
+
+A3.2 asserts RELATIVE to what the chain reports: it reads this deployment's
+effective grace window — **1 day for a 7-day loan** — and requires the loan
+not to be defaultable half a day past term. (The first revision of this
+document said 3 days; the chain answers 86,400 s. The probe warps HALF a day,
+because a full day lands exactly on a 1-day boundary and flipped with the
+second the warp landed on.)
 
 ---
 
