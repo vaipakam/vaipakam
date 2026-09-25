@@ -234,6 +234,24 @@ def first_heading(body: bytes) -> tuple[int, bytes] | None:
     rather than published unexamined. Not recognising a shape no longer means
     blessing it — which is what makes reading one line in one form safe.
 
+    IT NORMALISES ONLY WHAT CANNOT CHANGE HOW THE PUBLISHED BYTES RENDER (#2290
+    r12). `build()` appends the fragment's raw bytes — through
+    `rewrite_links`, whose two substitutions cannot touch an ATX marker —
+    so any transformation made here and not there decides about one
+    document while publishing another. Skipping leading blank lines passes:
+    a heading after blank lines is still a heading. So does splitting on
+    all three CommonMark line endings (#2295), which makes this agree with
+    the renderer about where the first line ends rather than rewriting
+    anything; splitting on `\\n` alone once read a CR-only file as one line
+    and ran the PR-reference check over its whole body. A leading BOM and a
+    front-matter fence both FAIL the rule, which is why each used to be
+    normalised here and no longer is: `BOM + ## Heading` renders
+    mid-document as a paragraph, and `---` / `title: x` / `---` as a
+    thematic break over a setext heading. Both are refused instead. Whether
+    two heading LINES match is a different question from whether a line IS
+    a heading; the duplicate guard, which asks the first, records why it
+    compares the published form.
+
     Front matter is NOT skipped — it is refused, by `check_heading_conformance`
     and before this function is reached. An earlier revision skipped it, and
     this paragraph still described that after the behaviour changed (#2290
@@ -247,78 +265,10 @@ def first_heading(body: bytes) -> tuple[int, bytes] | None:
     to avoid. Since #2295 that fragment is refused rather than published, so
     not detecting HTML is a message to its author, not a mangled note.
     """
-    # NOTHING IS NORMALISED HERE, and that is the point (#2290 r12).
-    #
-    # Two earlier revisions did normalise: a leading UTF-8 BOM was stripped,
-    # and YAML front matter was skipped, before looking for the heading. Both
-    # were wrong in the same structural way — `build()` appends the fragment's
-    # RAW bytes after the release title, so the check was deciding about one
-    # document and the assembler publishing another:
-    #
-    #   - `BOM + ## Heading` passed, and published mid-document the U+FEFF is
-    #     an ordinary zero-width character, so the line renders as a PARAGRAPH
-    #     rather than a section. The check blessed a fragment it had made
-    #     unpublishable.
-    #   - `---` / `title: x` / `---` passed, and published after the title the
-    #     opening `---` is a thematic break and `title: x` over `---` is a
-    #     SETEXT heading. The fragment gained a section nobody wrote.
-    #
-    # Both shapes are refused by `check_heading_conformance` instead, which is
-    # why this function can read one line and trust it. Zero of the 759
-    # fragments ever committed begin with either, so the refusal costs nothing
-    # and the normalisation was guarding a case that has never occurred —
-    # #2149's pattern for the third time on this change.
-    #
-    # TWO NORMALISATIONS DO SURVIVE BELOW, and the rule separating them from
-    # the two above is worth stating, because "it normalises" is not by itself
-    # the defect:
-    #
-    #   NORMALISE ONLY WHAT CANNOT CHANGE HOW THE PUBLISHED BYTES RENDER.
-    #
-    # Leading blank lines are skipped, and a trailing `\r` is stripped, purely
-    # so the line can be MATCHED. Neither changes what the fragment renders as
-    # once folded: blank lines before a heading leave it a heading, and CRLF
-    # is an ordinary line ending. A BOM and a front-matter fence both fail
-    # that test — each renders as one thing at the top of its own file and as
-    # something else mid-document, which is precisely why deciding on the
-    # normalised form and publishing the raw form disagreed.
-    #
-    # Audited against `build()` for this reason (#2290 r12): any
-    # transformation here that the published bytes do not also undergo is a
-    # divergence waiting to be found.
-    #
-    # `build()` DOES apply one transformation, and an earlier revision of this
-    # comment said it "appends the snapshot verbatim", which is not true
-    # (#2299). It appends `rewrite_links(raw)` — `](../../` and `](./` become
-    # `](../`, because a path written from the fragment's own directory stops
-    # resolving one level up. That does not weaken the argument above, since
-    # neither substring can occur in an ATX marker and so neither can change
-    # whether a line is a heading. It is stated because "verbatim" is the kind
-    # of premise a later reader builds on.
-    #
-    # IT WAS BUILT ON, AND THAT IS WHY THE NEXT PARAGRAPH EXISTS.
-    #
-    # THAT EXEMPTION IS ABOUT HEADING-NESS AND NOTHING ELSE (#2311 r4). It
-    # holds because `HEADING_RE` reads only the marker; it says nothing about
-    # two heading LINES comparing equal, which reads everything after the
-    # marker too. `## [Title](./x)` is a heading by this test and is
-    # published as `## [Title](../x)`. The markerless duplicate guard
-    # borrowed this sentence for exactly that comparison, matched nothing,
-    # and appended a second copy while consuming the source. Do not carry it
-    # across again: anything comparing published BYTES applies
-    # `rewrite_links` first, as that guard now does.
-    # SPLIT ON ALL THREE LINE ENDINGS, not just `\n` (#2295). CommonMark ends
-    # a line at `\r\n`, `\r` or `\n`, and splitting on `\n` alone made a
-    # CR-only file read as ONE line: `## Title (PR #4243)\r## Next\rbody`
-    # matched `HEADING_RE`, so the level was read correctly and then the
-    # PR-reference scan below ran over the WHOLE FILE instead of the heading.
-    # A `PR #<n>` anywhere in the body then refused the fragment for its prose.
-    #
-    # This is NOT the normalisation the note above forbids — it is the
-    # opposite. Splitting here makes the parser agree with the renderer about
-    # where the first line ends; the old behaviour disagreed with it. Nothing
-    # is rewritten, and the published bytes keep whatever endings the author
-    # saved.
+    # Only what cannot change how the published bytes render is normalised:
+    # leading blank lines are skipped and the line is split with the shared
+    # `LINE_END_RE`. The rule, and why a BOM and front matter fail it, is in
+    # the docstring.
     lines = LINE_END_RE.split(body)
     i = 0
     while i < len(lines) and BLANK_RE.match(lines[i]):
@@ -2050,10 +2000,46 @@ class Assembly:
         Nothing here now reasons about which substrings can appear where;
         both sides are put in the same form and compared. The general shape
         — a premise carried from the question it was established for to a
-        neighbouring one it does not answer — is what produced three of this
-        PR's four rounds, and the defence against it is to make the two
+        neighbouring one it does not answer — is what produced three of
+        #2311's four rounds, and the defence against it is to make the two
         sides identical by construction rather than to argue that a
         difference cannot arise.
+
+        IT FINDS THE FRAGMENT'S FIRST HEADING WHEREVER IT IS — its own scan,
+        not `first_heading` (#2290 r12). The two ask different questions.
+        Conformance judges the line a fragment OPENS with; this asks whether
+        the fragment's text already sits in a markerless dated file, and a
+        legacy interrupted run wrote the whole body. Using the opening-only
+        parser returned None for a fragment that opens with prose, so the
+        guard matched nothing and the run appended a second copy and consumed
+        the source — reproduced before the fix. (An earlier revision shared
+        `first_heading` on purpose, because a SEPARATE scan had drifted from
+        it (#2290 r5); that was right while the two consumers differed by
+        accident, and wrong once they asked different things.) The comparison
+        is still a whole ATX line, which is exact: r6 showed a two-line
+        construct compared by its text alone refusing a fragment because the
+        dated file held that sentence as prose.
+
+        BOTH SIDES ARE READ THE SAME WAY, and each rule below exists because
+        one side once was not:
+
+          - A LEADING UTF-8 BOM IS STRIPPED from each line on both sides
+            (#2290 r20). A BOM-bearing fragment folded into a legacy file sits
+            there as `<BOM>## Title`, which `HEADING_RE` cannot match; and an
+            operator removing the mark by hand from the pending copy would
+            otherwise leave `## Title` facing `<BOM>## Title` — the #2298
+            class, where the remedy edits the very text compared. A UTF-16 or
+            UTF-32 section is out of its reach, since its heading bytes are
+            NUL-interleaved; `unreadable_at` catches that file first —
+            refusing it when unmarked, naming it in a note otherwise (#2315).
+          - LINES ARE SPLIT WITH `LINE_END_RE` ON BOTH SIDES, once (#2301 r2).
+            Teaching `first_heading` about CR-only files while this scan
+            still split on `\\n` made a CR-only fragment publishable whose
+            heading this could not see: the whole file was one line,
+            nothing matched, and a fragment the parent commit had refused
+            was appended twice and consumed. A definition of "a line" held
+            separately by two scans is a divergence waiting to happen,
+            which is why it is shared.
         """
         # NOTHING PENDING, NOTHING TO ASK. The loop below was a no-op then;
         # the readability refusal after it would not be, and must not stop a
@@ -2070,14 +2056,9 @@ class Assembly:
             for line in LINE_END_RE.split(out_data)
             if line.startswith(MARKER_PREFIX.encode())
         )
-        # A FILE THIS CANNOT READ IS REFUSED, NOT COMPARED (#2315). The scan
-        # below compares bytes, so on a file holding a section in another
-        # encoding it can only ever report "no match" — and that is the
-        # answer that appends a second copy and consumes the source. Asked
-        # BEFORE any fragment is looked at, because the answer does not
-        # depend on the fragment: it is the published side that cannot be
-        # read, and no edit to a pending copy changes that. Same gating as
-        # the heading refusal: a note on a marked file (#2312) or under
+        # An unreadable file is refused before any fragment is examined —
+        # see the docstring's ENCODING paragraphs. Gated like the heading
+        # refusal below: a note on a marked file (#2312) or under
         # `--force-append`, where the operator has already read the file.
         bad = unreadable_at(out_data)
         if bad is not None:
@@ -2097,11 +2078,7 @@ class Assembly:
             err(f"Note: {base} cannot be read as UTF-8 text (byte {at}: {why});")
             err("any section of it in another encoding was not checked for a pending fragment.")
             err("")
-        # ONE SPLIT, not a normalise-then-split (#2301 r2). This used to strip
-        # a trailing `\r` from each `\n`-delimited line and rejoin, which
-        # handled CRLF and left a lone CR sitting inside a line. `LINE_END_RE`
-        # already covers all three endings, so the rejoin bought nothing and
-        # gave the file a second, weaker idea of where a line ends.
+        # One split with the shared `LINE_END_RE` — see the docstring.
         out_lines_raw = LINE_END_RE.split(out_data)
 
         suspect = []
@@ -2111,84 +2088,11 @@ class Assembly:
                 lambda p=self.frag_snap[f]: open(p, "rb").read(),
             )
             checked(f"checking {base} for a repeated heading", lambda: None)
-            # The SAME parser the conformance check uses (#2290 r5). This used
-            # to run its own `HEADING_RE` scan, and the two drifted the moment
-            # `first_heading` learned a form this did not: a fragment already
-            # folded into a markerless dated file went unrecognised here, and
-            # would have been appended a second time and then CONSUMED — the
-            # one outcome in this script that loses work rather than refusing.
-            # Two ways of deciding what a fragment's heading is, disagreeing.
-            #
-            # One parser matters more now, not less. Comparing a whole ATX
-            # line is exact; r6 showed the alternative, where a two-line
-            # construct compared by its text alone refuses a fragment because
-            # the dated file happens to contain that sentence as prose.
-            # ITS OWN SCAN, and NOT `first_heading` (#2290 r12). Sharing the
-            # parser was right when the two consumers differed by accident;
-            # it is wrong now that they ask genuinely different questions.
-            #
-            # `check_heading_conformance` judges the line a fragment OPENS
-            # with — a fragment whose heading is further down is allowed, and
-            # deliberately unexamined. This guard asks something else: does
-            # this fragment's text already sit in a markerless dated file?
-            # For that, the heading has to be found WHEREVER it is, because a
-            # legacy interrupted run wrote the fragment's whole body.
-            #
-            # Using the opening-only parser here returned None for a fragment
-            # that opens with prose, so the guard saw nothing to match, the
-            # run appended the fragment a SECOND time and then consumed the
-            # pending source — two copies and exit 0. That is the one outcome
-            # in this script that loses work rather than refusing, and it was
-            # reproduced before this fix.
-            # A LEADING UTF-8 BOM IS STRIPPED FROM BOTH SIDES (#2290 r20).
-            # A BOM-bearing fragment already folded into a legacy markerless
-            # file sits there as `<BOM>## Title`; without this, `HEADING_RE`
-            # matches neither side and the guard says nothing, so the rerun
-            # appends a second copy and consumes the source. Reproduced.
-            # It also survives an operator removing the mark by hand, which
-            # would otherwise leave the fragment reading `## Title` against a
-            # published `<BOM>## Title` — the class where the remedy edits the
-            # very text this guard compares (#2298), filed rather than patched
-            # in each path.
-            #
-            # WHAT THIS DOES NOT REACH: a published section in UTF-16 or
-            # UTF-32, whose heading bytes are NUL-interleaved, so no BOM strip
-            # makes `HEADING_RE` match them. That file never reaches this scan
-            # unrefused — `unreadable_at` stops it above (#2315).
+            # Both sides: BOM-stripped, split with `LINE_END_RE`, and the
+            # fragment rewritten to its published form — see the docstring.
             def _debom(b: bytes) -> bytes:
                 return b[3:] if b.startswith(b"\xef\xbb\xbf") else b
 
-            # SPLIT CR-AWARE ON BOTH SIDES (#2301 r2), and this guard is the
-            # reason the line definition is shared rather than local. Teaching
-            # `first_heading` about CR-only files while leaving this scan on
-            # `\n` alone made a CR-only fragment publishable whose heading this
-            # could no longer see: the whole file read as ONE line, matched
-            # nothing in the dated file, so the run appended a second copy and
-            # consumed the source. The parent commit had REFUSED that same
-            # fragment, so the gap turned a refusal into data loss. Reproduced
-            # before and after.
-            #
-            # A definition of "a line" that two scans hold separately is a
-            # divergence waiting to happen, and this is the second time it has
-            # happened here — the first was `first_heading` and the `---`
-            # check disagreeing about blankness.
-            # COMPARE WHAT `build()` PUBLISHES, NOT WHAT THE FRAGMENT HOLDS
-            # (#2311 r4). `build()` appends `rewrite_links(raw)`, so the two
-            # sides of this comparison were never the same form: the pending
-            # fragment's own bytes on the left, already-rewritten bytes on the
-            # right. A heading carrying a relative link — `## [Title](./x)`,
-            # which `HEADING_RE` accepts — is published as `## [Title](../x)`,
-            # the scan below matched nothing, and the run appended a second
-            # copy and consumed the source. Reproduced, and refused after.
-            #
-            # Applied ONCE to the whole fragment rather than to the matched
-            # line, because that is exactly the call `build()` makes. A
-            # per-line rewrite would be equivalent today and would have to be
-            # re-argued the moment anything else compares a second line.
-            #
-            # Any later comparison added here inherits the published form for
-            # free, because the fragment is converted to it before anything
-            # looks at it.
             out_lines = [_debom(o) for o in out_lines_raw]
             for ln in LINE_END_RE.split(self.rewrite_links(body)):
                 line = _debom(ln)
