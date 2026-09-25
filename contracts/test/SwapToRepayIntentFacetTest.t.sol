@@ -144,6 +144,18 @@ contract SwapToRepayIntentFacetTest is SetupTest {
         SwapToRepayIntentFacet(address(diamond)).commitSwapToRepayIntent(LOAN_ID, params);
     }
 
+    /// @dev #2322 — the preview refuses on the deployment's master switch
+    ///      exactly as the commit does, so it never quotes a lot for a
+    ///      capability this deployment has turned off.
+    function test_Preview_RevertWhen_MasterSwitchOff() public {
+        _armHappyCommit(); // prices + allowlists, so the switch is the only gate left
+        (uint256 lot,) = SwapToRepayIntentFacet(address(diamond)).previewSwapToRepayIntentLot(LOAN_ID);
+        assertGt(lot, 0, "precondition: the preview quotes while the switch is on");
+        IntentConfigFacet(address(diamond)).setIntentSwapToRepayEnabled(false);
+        vm.expectRevert(SwapToRepayIntentFacet.IntentSurfaceDisabled.selector);
+        SwapToRepayIntentFacet(address(diamond)).previewSwapToRepayIntentLot(LOAN_ID);
+    }
+
     function test_Commit_RevertWhen_PrincipalTokenNotAllowed() public {
         IntentConfigFacet(address(diamond)).setIntentAllowedPrincipalToken(
             address(principalAsset), false

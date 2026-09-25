@@ -40,7 +40,9 @@ through the ordinary claim, and it stays pledged until they do. A cancelled
 or expired auction returns the lot and leaves the loan exactly as it was.
 When even the whole collateral, at the worst case, cannot cover the debt
 and buffer, the commit is refused before anything moves. A new read-only
-preview shows the lot and the least principal a commit accepts. The
+preview shows the lot and the least principal a commit accepts. Like the
+commit, it refuses while a deployment has the auction form switched off,
+so it never quotes a capability that deployment does not offer. The
 committed order is the one to post to the resolver network, because
 interest and prices can move between the preview and the commit.
 

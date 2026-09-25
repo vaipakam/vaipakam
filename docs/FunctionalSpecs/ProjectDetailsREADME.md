@@ -1444,7 +1444,10 @@ considers it finished.
   moves. The protocol exposes a read-only preview of the lot and of the
   least principal a commit accepts, so a borrower can see both before
   committing; the lot actually taken is the one the committed order
-  reports, since interest and prices can move in between.
+  reports, since interest and prices can move in between. The auction
+  form sits behind a deployment-level switch; while a deployment has it
+  off, the preview refuses exactly as a commit would, so it never quotes
+  a lot for a capability that deployment does not offer.
 - Full-mode swap-to-repay is a **must-complete close-out**: it is never
   blocked by the sanctions screen, so an honest counterparty can always
   be made whole. A flagged party's proceeds are instead **frozen at the

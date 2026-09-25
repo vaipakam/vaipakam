@@ -335,7 +335,9 @@ Phase 1 surface — three external entry points:
      when collateral granularity makes the smallest covering lot worth
      more. Clients should read both figures from
      `previewSwapToRepayIntentLot(loanId) -> (lot, minTakerAmount)`
-     rather than recompute `required`. The original text said "the floor
+     rather than recompute `required`. The preview reverts
+     `IntentSurfaceDisabled` while `cfgIntentSwapToRepayEnabled` is off,
+     as the commit does, so a disabled deployment never gets a quote. The original text said "the floor
      check has no opinion on `makerAmount`"; since #2322 the two are
      linked through the lot.
   8. Pull the **lot** — the debt-sized amount step 7 computed (#2322),

@@ -1095,9 +1095,13 @@ contract SwapToRepayIntentFacet is
     ///         with accrued interest, late fees and oracle updates, so the lot
     ///         the commit actually takes is the one {getIntentCommit} reports
     ///         afterwards, and that — not this preview — is what the order
-    ///         posted to the resolver network must carry. Checks only the loan
-    ///         shape and grace window the numbers need; it does not apply the
-    ///         commit's authority, HF, deadline or allowlist gates.
+    ///         posted to the resolver network must carry. Refuses with
+    ///         {IntentSurfaceDisabled} when the deployment's master switch
+    ///         (`getIntentSwapToRepayEnabled`) is off, as the commit does, so
+    ///         it never quotes a capability this deployment has turned off.
+    ///         Beyond that it checks only the loan shape and grace window the
+    ///         numbers need; it does not apply the commit's authority, HF,
+    ///         deadline or allowlist gates.
     /// @param  loanId         The loan to quote.
     /// @return lot            Collateral the commit would take into custody.
     /// @return minTakerAmount The least `takerAmount` the commit accepts: the
@@ -1110,7 +1114,9 @@ contract SwapToRepayIntentFacet is
         view
         returns (uint256 lot, uint256 minTakerAmount)
     {
-        LibVaipakam.Loan storage loan = LibVaipakam.storageSlot().loans[loanId];
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (!s.cfgIntentSwapToRepayEnabled) revert IntentSurfaceDisabled();
+        LibVaipakam.Loan storage loan = s.loans[loanId];
         if (loan.status != LibVaipakam.LoanStatus.Active)
             revert IVaipakamErrors.InvalidLoanStatus();
         if (
