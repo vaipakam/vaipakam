@@ -1,4 +1,4 @@
-## An older dated file the assembler cannot read is now refused rather than guessed at (PR #NNNN)
+## An older dated file the assembler cannot read is now refused rather than guessed at (PR #2321)
 
 Folding release-note fragments into a dated file has a check for one accident:
 an older run that was interrupted after publishing a fragment but before
