@@ -765,13 +765,13 @@ contract RewardTransportEpochTest is SetupTest, IVaipakamErrors {
     /// a silent one.
     function test_Legs_ReadZeroUntilTheDrawsLand() public {
         bytes32 h = _untyped(10e18, 2, 12, keccak256("l1"));
-        (uint256 consumedFresh, uint256 consumedRecycled, ) = _epoch().getTransportBatchLegs(h);
+        (uint256 consumedFresh, uint256 consumedRecycled) = _epoch().getTransportBatchLegs(h);
         assertEq(consumedFresh, 0, "no fresh leg has been drawn");
         assertEq(consumedRecycled, 0, "nor a recycled one");
 
         _mut().parkTransportBatchRaw(h);
         _mut().acknowledgeTransportBatchRaw(h);
-        (consumedFresh, consumedRecycled, ) = _epoch().getTransportBatchLegs(h);
+        (consumedFresh, consumedRecycled) = _epoch().getTransportBatchLegs(h);
         assertEq(consumedFresh, 0, "and releasing draws nothing either");
         assertEq(consumedRecycled, 0, "on either leg");
     }
@@ -790,7 +790,7 @@ contract RewardTransportEpochTest is SetupTest, IVaipakamErrors {
         bytes32 nobody = keccak256("no delivery opened this");
 
         // The known batch: zeros, and they are an ANSWER.
-        (uint256 consumedFresh, uint256 consumedRecycled, ) = _epoch().getTransportBatchLegs(h);
+        (uint256 consumedFresh, uint256 consumedRecycled) = _epoch().getTransportBatchLegs(h);
         assertEq(consumedFresh + consumedRecycled, 0, "a known batch has drawn nothing yet");
         (uint256 parked, , , bool acknowledged, uint256 debited) = _epoch().getTransportRemainder(h);
         assertEq(parked, 0, "and has parked nothing yet");

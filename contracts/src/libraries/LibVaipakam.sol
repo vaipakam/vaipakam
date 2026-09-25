@@ -7792,12 +7792,10 @@ library LibVaipakam {
         ///      obligations: the packet-level EXIT a draw records beside its
         ///      step-down of `unclassified`, so the packet's own identity
         ///      holds after every draw exactly as its epoch's does (Codex
-        ///      #2274 r8 P1). Equals the epoch's two consumed legs together
-        ///      with what a late attestation recorded beyond both caps
-        ///      (`consumedFresh + consumedRecycled + consumedBeyondCaps`,
-        ///      Codex #2276 r11 P2): the attestation retypes legs and moves
-        ///      a scaling residual between the three, and none of that is a
-        ///      packet exit.
+        ///      #2274 r8 P1). Equals the epoch's two consumed legs
+        ///      (`consumedFresh + consumedRecycled`): a leg is typed ONCE, by
+        ///      the attested caps it is drawn under, and never retyped
+        ///      (Codex #2276 r26 P1) — an unattested epoch is not drawn.
         uint256 drawn;
     }
 
@@ -7869,16 +7867,6 @@ library LibVaipakam {
         bool released;
         uint256 consumedFresh;
         uint256 consumedRecycled;
-        /// @dev #1566 transport epochs PR 3b-ii-A, appended (Codex #2276 r6).
-        ///      What the epoch's draws spent that an attestation, arriving
-        ///      after them, showed to lie OUTSIDE both of the packet's recorded
-        ///      component caps — the scaling residual the two floored figures
-        ///      leave, at most one unit. Neither leg may carry it (each leg
-        ///      stays within its cap), and it is not lost: the identity
-        ///      `admitted == balance + parked + debited + consumedFresh +
-        ///      consumedRecycled + consumedBeyondCaps` holds, and the
-        ///      close-out's disposition path is where the record is settled.
-        uint256 consumedBeyondCaps;
     }
 
     /// @notice #1566 transport epochs PR 3b — a batch's PENDING REMAINDER:

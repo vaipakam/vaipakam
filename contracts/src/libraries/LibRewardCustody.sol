@@ -1031,15 +1031,6 @@ library LibRewardCustody {
     /// @notice #1566 transport epochs PR 3b-ii-A — a day's consumption cursor
     ///         moved past exhausted epochs at the front of its index.
     event TransportDayCursorAdvanced(uint256 indexed dayId, bytes32 cursor);
-    /// @dev A split attested after draws re-typed the legs already drawn so the
-    ///      attested component caps hold (Codex #2276 r4): the epoch's total is
-    ///      unchanged, one leg fell and the other rose by the same amount.
-    event TransportLegsRetyped(bytes32 indexed batchId, uint256 freshToRecycled, uint256 recycledToFresh);
-    /// @dev A split attested after draws showed `amount` of what was drawn to
-    ///      lie outside BOTH recorded component caps (the scaling residual);
-    ///      recorded on the batch for the close-out's disposition path rather
-    ///      than carried by a leg past its cap (Codex #2276 r6).
-    event TransportLegsBeyondCaps(bytes32 indexed batchId, uint256 amount);
     /// @notice A packet's split was attested and a classification it already
     ///         carried exceeds a component's recorded cap by these amounts
     ///         (Codex #2276 r15 P1) — a divergence recorded for the
@@ -2065,65 +2056,50 @@ library LibRewardCustody {
         bytes32[] ids;
         /// @dev Each drawable epoch's effective balance (net of the overlay)
         ///      and the ROOM each of its packet's two attested component caps
-        ///      leaves it — the balance itself where the packet is unattested
-        ///      (Codex #2276 r4 P1: a cap covers classification PLUS the
-        ///      transport leg, so a known cap bounds a draw's leg).
+        ///      leaves it (Codex #2276 r4 P1: a cap covers classification PLUS
+        ///      the transport leg, so a known cap bounds a draw's leg). Only an
+        ///      ATTESTED epoch is drawable (Codex #2276 r26 P1), so every room
+        ///      is a cap net of what is already classified and drawn.
         uint256[] bals;
         uint256[] freshRoom;
         uint256[] recycledRoom;
         /// @dev The day's cursor-visible coverage: the summed effective balances
-        ///      of every drawable epoch in the window.
+        ///      of every drawable epoch in the window, each counted only for
+        ///      what it can pay through at least one leg.
         uint256 available;
-        /// @dev How much of `available` sits in epochs drawn LAST: a batch that
-        ///      lists ANY day other than the one being planned, earlier or later
-        ///      (Codex #2276). An earlier revision protected only LATER days
-        ///      (`maxListedDay > dayId`) and called that a superset of both of
-        ///      the design's gates; it is not — a batch listing days 1 and 2,
-        ///      settled for day 2 while another claimant's day-1 obligation is
-        ///      unmet, is exactly a contested draw, and it went transport-first.
-        ///
-        ///      The design's own rule is narrower — it inverts transport-first
-        ///      for a batch listing a day whose broadcast has NOT ARRIVED, and
-        ///      refuses outright a draw contested by another day's known unmet
-        ///      obligation. Neither predicate is answerable here: a batch records
-        ///      `dayCount` but not WHICH days, the packet keeps only a
-        ///      `dayListHash`, and there is no per-day unmet-obligation figure in
-        ///      storage (the outstanding-commitment counters are global). The
-        ///      cumulative cursors are populated lazily, so they cannot serve as
-        ///      an arrival frontier either.
-        ///
-        ///      "Lists any other day" IS a superset of both cases: an unarrived
-        ///      listed day and another day's competing obligation each require
-        ///      the batch to list a second day. It is the only sound test
-        ///      available locally, and it needs no stored field — `dayCount` is
-        ///      already on the batch. It errs safe: a multi-day batch whose other
-        ///      days have no outstanding claim is uncontested, and the design
-        ///      would draw it transport-first, so drawing it last is merely a
-        ///      funding-ORDER preference — live and the bucket pay first, and the
-        ///      batch still pays any gap, so no day is ever refused funding only
-        ///      it could give. The exact predicates arrive with 3c (#2318).
-        ///
-        ///      The design inverts transport-first for exactly those —
-        ///      an arrived obligation may draw them only for what its other
-        ///      sources cannot cover, because such a draw is invisible to the
-        ///      contested machinery and would settle over the late day's only
-        ///      backing. They also sort LAST in this plan, so the one split that
-        ///      realizes the takes reaches them only after every ordinary epoch,
-        ///      with no second split and no per-epoch tier mask.
-        uint256 availableNecessity;
-        /// @dev The ORDINARY tier's capacity PER LEG: the sum over ordinary
-        ///      epochs of what each could pay on that leg alone (Codex #2276).
-        ///      `available - availableNecessity` is the ordinary tier's JOINT
-        ///      capacity, and crediting the tier with that aggregate on either
-        ///      leg overstated it: a recycled-only epoch counted toward a fresh
-        ///      ask, the split could not realize it from the ordinary epochs,
-        ///      and the shortfall spilled into the necessity tier even where
-        ///      live funding could have paid. Bounding each ordinary draw by
-        ///      its own leg's figure, and both by the joint figure, is the
-        ///      exact feasibility test for two legs sharing balances, so the
-        ///      ordinary epochs can always realize what they are credited with.
+        /// @dev The plan's capacity PER LEG: the sum over its epochs of what
+        ///      each could pay on that leg alone (Codex #2276). `available` is
+        ///      the JOINT capacity, and crediting it on either leg overstated
+        ///      it — a recycled-only epoch counted toward a fresh ask. Bounding
+        ///      each leg by its own figure, and both by the joint figure, is the
+        ///      exact feasibility test for two legs sharing balances.
         uint256 ordinaryFresh;
         uint256 ordinaryRecycled;
+        /// @dev What the window held that the plan WITHHELD, by named reason
+        ///      (Codex #2276 r26 P1, both):
+        ///
+        ///      - `withheldShared` — epochs listing more than one day. A draw
+        ///        on such an epoch is contested whenever another listed day
+        ///        carries a known unmet obligation, and the spec refuses a
+        ///        contested draw until the contested-allocation machinery
+        ///        lands (3c, #2318). Neither the listed days nor a per-day
+        ///        unmet-obligation figure is readable here, so the plan cannot
+        ///        tell a contested draw from an uncontested one and withholds
+        ///        every shared epoch. That errs toward the obligation not yet
+        ///        claimed: nothing is spent, the balance stays whole for 3c's
+        ///        matching, and a day it would have paid defers.
+        ///      - `withheldUnattested` — epochs whose packet's split is not yet
+        ///        attested. A leg is typed once, by the caps it is drawn under;
+        ///        drawing before the caps are known typed legs that a later
+        ///        attestation had to retype AFTER settlement had already acted
+        ///        on them (the bucket, the recycled commitment, live fresh),
+        ///        leaving the epoch and the custody ledgers disagreeing. The
+        ///        epoch becomes drawable when its attestation lands.
+        ///
+        ///      A withheld epoch still occupies its window slot: the scan stays
+        ///      bounded, and the day's cursor passes only exhausted epochs.
+        uint256 withheldShared;
+        uint256 withheldUnattested;
         /// @dev The window ended before the index did: unseen epochs may hold
         ///      coverage this plan could not see.
         bool capHit;
@@ -2206,9 +2182,8 @@ library LibRewardCustody {
     ///         its packet's cap still leaves — the cap net of what is
     ///         classified and what its own draws already took — and
     ///         {splitTransportTakes} never assigns a leg past it. An
-    ///         unattested packet's rooms are its balance: nothing is known
-    ///         to bound them, and a split attested later re-types what was
-    ///         drawn ({attestPacketSplit}).
+    ///         epoch whose packet is unattested, or that lists more than one
+    ///         day, is WITHHELD and counted by reason (see `withheldShared`).
     ///
     ///         `ovIds` / `ovFresh` / `ovRecycled` is the preview's overlay
     ///         (Codex #2276 r1 P2, typed since r4): each batch's balance and
@@ -2256,25 +2231,18 @@ library LibRewardCustody {
             if (bal != 0 && b.indexedDays == b.dayCount) {
                 (uint256 ovF, uint256 ovR) = overlayOf(ovIds, ovFresh, ovRecycled, node);
                 bal = bal > ovF + ovR ? bal - (ovF + ovR) : 0;
-                if (bal != 0) {
+                if (bal == 0) {
+                    // Exhausted net of the overlay: nothing to plan or withhold.
+                } else if (b.dayCount > 1) {
+                    plan.withheldShared += bal;
+                } else if (!s.ingressPackets[node].attested) {
+                    plan.withheldUnattested += bal;
+                } else {
                     (uint256 fr, uint256 rr) = _capRooms(s, node, b, bal, ovF, ovR);
-                    // NECESSITY in the top bit, dayCount next, arrival below:
-                    // one ascending key, so a batch listing an unarrived day
-                    // sorts after every ordinary epoch however few days it
-                    // lists (Codex #2276). Putting the tier IN the order is
-                    // what lets the single split serve both tiers without a
-                    // per-epoch mask: the takes are spent in plan order, so the
-                    // necessity tier is reached only once the rest is gone.
-                    bool nec = b.dayCount > 1;
-                    uint256 key = (nec ? uint256(1) << 255 : 0)
-                        | (uint256(b.dayCount) << 64)
-                        | uint256(s.ingressPackets[node].arrivedAt);
-                    if (nec) {
-                        plan.availableNecessity += fr + rr < bal ? fr + rr : bal;
-                    } else {
-                        plan.ordinaryFresh += fr < bal ? fr : bal;
-                        plan.ordinaryRecycled += rr < bal ? rr : bal;
-                    }
+                    // Arrival order: every planned epoch lists this one day.
+                    uint256 key = uint256(s.ingressPackets[node].arrivedAt);
+                    plan.ordinaryFresh += fr < bal ? fr : bal;
+                    plan.ordinaryRecycled += rr < bal ? rr : bal;
                     // The batch id is the final tie-break, so the plan's
                     // order is a function of the SET in the window and not
                     // of the order it was scanned in (Codex #2276 r9 P1) —
@@ -2318,8 +2286,8 @@ library LibRewardCustody {
         plan.recycledRoom = rRoom;
     }
 
-    /// @dev An epoch's two leg rooms: the balance where its packet is
-    ///      unattested; where attested, each component's RECORDED cap net of
+    /// @dev An ATTESTED epoch's two leg rooms (only an attested epoch is
+    ///      planned — Codex #2276 r26 P1): each component's RECORDED cap net of
     ///      the packet's classification of that component, the epoch's own
     ///      draws of it, and the overlay's planned draws of it — never above
     ///      the balance. The two attested figures are floored independently
@@ -2338,9 +2306,7 @@ library LibRewardCustody {
         uint256 ovF,
         uint256 ovR
     ) private view returns (uint256 fr, uint256 rr) {
-        LibVaipakam.IngressPacket storage p = s.ingressPackets[id];
-        if (!p.attested) return (bal, bal);
-        (uint256 capF, uint256 capR) = _netCaps(p);
+        (uint256 capF, uint256 capR) = _netCaps(s.ingressPackets[id]);
         uint256 usedF = b.consumedFresh + ovF;
         uint256 usedR = b.consumedRecycled + ovR;
         fr = capF > usedF ? capF - usedF : 0;
@@ -2352,9 +2318,8 @@ library LibRewardCustody {
     /// @dev An attested packet's two caps NET of the classification the packet
     ///      already carries — a packet that landed before the ledger may have
     ///      been classified before the batch gate existed (Codex #2276 r9
-    ///      P1) — the ONE figure the rooms and the late-attestation reconcile
-    ///      both read, so what a leg may still draw and what a leg is retyped
-    ///      against are the same number.
+    ///      P1) — the figure the rooms read, so a leg is only ever drawn within
+    ///      what the caps leave after classification.
     function _netCaps(LibVaipakam.IngressPacket storage p) private view returns (uint256 capF, uint256 capR) {
         capF = p.freshAttested > p.classifiedFresh ? p.freshAttested - p.classifiedFresh : 0;
         capR = p.recycledAttested > p.classifiedRecycled ? p.recycledAttested - p.classifiedRecycled : 0;
@@ -2507,17 +2472,22 @@ library LibRewardCustody {
     }
 
     /// @notice What `dayId`'s epochs can fund right now, within one scan
-    ///         window, and whether the window ended before the index did.
+    ///         window, whether the window ended before the index did, and what
+    ///         it withheld by reason.
     /// @dev    The plan's read half with nothing asked: a keeper's and a test's
     ///         view of a day. Zero, with no scan, on a day no epoch lists.
     function transportCoverageForDay(
         LibVaipakam.Storage storage s,
         uint256 dayId
-    ) internal view returns (uint256 available, bool capHit) {
-        if (s.transportBatchesByDay[dayId].length == 0) return (0, false);
+    )
+        internal
+        view
+        returns (uint256 available, bool capHit, uint256 withheldShared, uint256 withheldUnattested)
+    {
+        if (s.transportBatchesByDay[dayId].length == 0) return (0, false, 0, 0);
         TransportDrawPlan memory plan =
             planTransportDraw(s, dayId, new bytes32[](0), new uint256[](0), new uint256[](0));
-        return (plan.available, plan.capHit);
+        return (plan.available, plan.capHit, plan.withheldShared, plan.withheldUnattested);
     }
 
     /// @notice §5c's split of `dayId`'s cursor-visible epoch coverage across
@@ -2547,11 +2517,8 @@ library LibRewardCustody {
         uint256 needFresh = q.needFresh > q.poolFresh ? q.poolFresh : q.needFresh;
         TransportDrawPlan memory plan = planTransportDraw(s, q.dayId, q.ovIds, q.ovFresh, q.ovRecycled);
         r.capHit = plan.capHit;
-        // Transport-first applies to the ORDINARY tier only. The necessity
-        // tier is drawn AFTER live and the bucket, for the gap alone (Codex
-        // #2276).
         if (plan.available == 0) return r;
-        uint256 avail = plan.available - plan.availableNecessity;
+        uint256 avail = plan.available;
         uint256 liveF = q.poolFresh < q.deliveredCap ? q.poolFresh : q.deliveredCap;
         uint256 sF = needFresh > liveF ? needFresh - liveF : 0;
         uint256 sR = q.needRecycled > q.bucket ? q.needRecycled - q.bucket : 0;
@@ -2586,31 +2553,6 @@ library LibRewardCustody {
                 avail -= a;
                 tr += _min3(moreR, avail, plan.ordinaryRecycled - tr);
             }
-        }
-        // The NECESSITY tier, last and for the GAP only: what this day's own
-        // other eligible sources cannot cover once the ordinary tier, the live
-        // allowance and the bucket have been counted (Codex #2276 — the design
-        // inverts transport-first for exactly these batches, because such a
-        // draw is invisible to the contested machinery and would settle over
-        // the late day's only backing). Fresh first, as the day's own shortfall
-        // rule is. The plan sorts this tier last, so the single split reaches
-        // it only for what is added here.
-        if (plan.availableNecessity != 0) {
-            uint256 nec = plan.availableNecessity;
-            // Subtract, never add: `liveF` and the bucket arrive as
-            // `type(uint256).max` from the domain-needs probe, which prices
-            // against unbounded funding, and `tf + liveF` overflowed there.
-            // `tf <= needFresh` and `tr <= needRecycled` hold by construction
-            // (every draw above is bounded by its leg's remaining need), so
-            // the first subtraction in each is safe.
-            uint256 remF = needFresh - tf;
-            uint256 gapF = remF > liveF ? remF - liveF : 0;
-            uint256 takeF = gapF < nec ? gapF : nec;
-            tf += takeF;
-            nec -= takeF;
-            uint256 remR = q.needRecycled - tr;
-            uint256 gapR = remR > q.bucket ? remR - q.bucket : 0;
-            tr += gapR < nec ? gapR : nec;
         }
         // The rule's totals, then the ONE split that realizes them against
         // each epoch's rooms (Codex #2276 r4 P1): where an attested cap keeps
@@ -3104,82 +3046,27 @@ library LibRewardCustody {
             // a later correction cannot leave a stale copy behind (Codex #2276).
             if (exF + exR != 0) emit IngressPacketClassifiedBeyondCaps(h, exF, exR);
         }
-        // RECONCILE FIRST (the 3b scope's rule; Codex #2276 r4 P1): a draw
-        // that preceded this attestation typed its legs with nothing known to
-        // bound them. Now that the caps are known, a leg past its cap is
-        // re-typed into the other — the epoch's total and every settled
-        // obligation unchanged — so the TRANSPORT LEGS never exceed the caps
-        // net of the classification the packet already carries (a
-        // classification that itself exceeds a cap is recorded as a
-        // divergence above, never satisfied), and the classification allowance
-        // {authenticatedFresh} derives is the cap net of the packet's REAL
-        // fresh use. Each cap is read NET of the classification the packet
-        // already carries (Codex #2276 r9 P1): a packet that landed before
-        // the ledger may have been classified before the batch gate existed,
-        // and a leg compared against the gross cap would let classification
-        // plus transport exceed it together. Both caps are the source's
-        // RECORDED figures (Codex #2276 r6 P1): they are floored
-        // independently and can sum to a unit less than what landed, so what
-        // was drawn can exceed both together by that residual; the residual
-        // is moved to `consumedBeyondCaps` — outside both legs, inside the
-        // epoch's identity — for the close-out's disposition path.
-        reconcileTransportLegs(s, p);
+        // Nothing to reconcile (Codex #2276 r26 P1): an epoch is drawn only
+        // once its packet is attested, so no leg exists yet for these caps to
+        // retype. A leg is typed once, by the caps it is drawn under, and the
+        // custody ledgers settlement moved for it never need revisiting.
     }
 
-    /// @notice Retype the transport legs a packet's batch has already drawn so
-    ///         they fit the packet's caps NET of its current classification.
-    /// @dev    The ONE reconcile, run wherever the net caps can move (Codex
-    ///         #2276): at attestation, when the caps first become known, and at
-    ///         every classification correction, which moves `classifiedFresh` /
-    ///         `classifiedRecycled` and so moves the net caps under legs already
-    ///         drawn. Before this was shared, only attestation ran it, and a
-    ///         correction could leave classification plus transport consuming
-    ///         past a cap — caps 5F/5R, 5F classified then 5 drawn recycled, a
-    ///         fresh-to-recycled correction to 0F/5R made the net caps 5F/0R
-    ///         while the batch still held 5 recycled: 10R against a 5R cap, with
-    ///         no attestation able to run again. Retyping keeps the epoch's
-    ///         total and every settled obligation unchanged; a leg past its cap
-    ///         moves to the other leg's room, and anything left over that fits
-    ///         neither is recorded beyond both caps for the close-out. Every
-    ///         move is evented.
-    function reconcileTransportLegs(
-        LibVaipakam.Storage storage s,
-        LibVaipakam.IngressPacket storage p
-    ) internal {
-        if (p.batchId != bytes32(0)) {
-            LibVaipakam.TransportBatch storage b = s.transportBatches[p.batchId];
-            (uint256 capF, uint256 capR) = _netCaps(p);
-            uint256 toR;
-            uint256 toF;
-            if (b.consumedFresh > capF) {
-                toR = b.consumedFresh - capF;
-                b.consumedFresh = capF;
-                b.consumedRecycled += toR;
-            }
-            if (b.consumedRecycled > capR) {
-                uint256 y = b.consumedRecycled - capR;
-                b.consumedRecycled = capR;
-                uint256 room = capF - b.consumedFresh;
-                toF = y < room ? y : room;
-                b.consumedFresh += toF;
-                if (y > toF) {
-                    b.consumedBeyondCaps += y - toF;
-                    emit TransportLegsBeyondCaps(p.batchId, y - toF);
-                }
-            }
-            if (toR + toF != 0) emit TransportLegsRetyped(p.batchId, toR, toF);
-        }
-    }
-
-    /// @notice Move `amount` of a packet's classification between components,
-    ///         and — once its caps are attested — reconcile the transport legs
-    ///         already drawn against the caps that move with it.
+    /// @notice Move `amount` of a packet's classification between components.
     /// @dev    The correction path's single write to a packet's classification
-    ///         (Codex #2276), so the reconcile cannot be skipped by a caller
-    ///         that moves the counters itself. Before attestation there are no
-    ///         caps to reconcile against — `_netCaps` would read zero and push
-    ///         every drawn leg beyond both — so the reconcile waits for the
-    ///         attestation, which runs it.
+    ///         (Codex #2276). It never retypes a transport leg (Codex #2276 r26
+    ///         P1): a drawn leg was settled — its bucket debit, its recycled
+    ///         release, its live-fresh charge — and moving the leg without
+    ///         reversing those left the epoch and the custody ledgers telling
+    ///         different stories. The fresh direction is already bounded by the
+    ///         evidence NET of the fresh the epoch drew ({authenticatedFresh}),
+    ///         so fresh classification plus the fresh leg never exceeds the fresh
+    ///         cap. A recycled correction that takes classification plus the
+    ///         recycled leg past the recycled cap is RECORDED, not undone: the
+    ///         caps net of classification saturate at zero, so no further draw
+    ///         of that component is admitted, and the excess reads on
+    ///         {RewardReconciliationFacet.getPacketClassificationExcess} — the
+    ///         same treatment as a classification that predates its attestation.
     function moveClassification(
         LibVaipakam.Storage storage s,
         bytes32 key,
@@ -3194,7 +3081,6 @@ library LibRewardCustody {
             p.classifiedRecycled -= amount;
             p.classifiedFresh += amount;
         }
-        if (p.attested) reconcileTransportLegs(s, p);
     }
 
     /// @notice Record a packet as it LANDED (one record per stamp; a second

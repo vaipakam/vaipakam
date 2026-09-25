@@ -3027,7 +3027,21 @@ library LibInteractionRewards {
     /// @dev    The same dry run the preview walks, with every budget unbounded
     ///         so nothing trims or defers and the day charges are the raw
     ///         needs, over the same chunk (`MAX_INTERACTION_CLAIM_DAYS`) the
-    ///         settle walk covers. Hosted on the epoch facet
+    ///         settle walk covers.
+    ///
+    ///         GROSS by design, not by approximation (Codex #2276 r26 P1). The
+    ///         days a FUNDED claim settles depend on which leg each epoch's
+    ///         residual coverage took — that choice decides what live funding
+    ///         and the bucket keep for the later days — and the residual leg
+    ///         is chosen by THIS domain. A funded domain is therefore a fixed
+    ///         point of the choice it is meant to guide: no single pass
+    ///         computes it, and a probe run under the claim's own bounds would
+    ///         still diverge from the claim through its own tie choices. The
+    ///         domain is used for one thing only — which leg an epoch's
+    ///         coverage BEYOND the day's own shortfalls pays — so it decides
+    ///         which shared source pays an obligation in this call, never
+    ///         whether value is paid, moved or lost: a day it leaves short
+    ///         defers whole and is priced again by the next call. Hosted on the epoch facet
     ///         ({RewardEpochFacet.getObligationDomainNeeds}) and reached by the
     ///         walks through {LibRewardCustody.callDomainNeeds}, which skips
     ///         the call on a chain with no epochs. Design §5d, the 3b-ii-A
@@ -3072,9 +3086,13 @@ library LibInteractionRewards {
     ///      per-day short-circuit reads for every day it prices, so on a
     ///      chain with no epochs the probe costs the enumeration and
     ///      nothing the call would not have paid. A superset of the days the
-    ///      pass reaches (a day the pass would stop on is enumerated past),
-    ///      which only ever runs the pass where it is not needed, never
-    ///      skips it where it is. Derived from the ledger, not from a
+    ///      pass reaches, which only ever runs the pass where it is not
+    ///      needed, never skips it where it is — and a superset only because
+    ///      EACH SIDE is enumerated with the whole chunk (Codex #2276 r26 P1):
+    ///      a side that defers on its first day spends none of the claim's
+    ///      day allowance, so the next side can reach a full chunk of days a
+    ///      shared countdown never looked at. A day the pass would stop on is
+    ///      enumerated past, for the same reason. Derived from the ledger, not from a
     ///      counter: exact over epochs that predate this release, on an
     ///      in-place upgrade, with nothing to backfill (Codex #2276 r2 P1).
     ///      Its own view ({RewardEpochViewFacet.getObligationDomainListsAnEpoch})
@@ -3082,8 +3100,8 @@ library LibInteractionRewards {
     function chunkListsAnEpochView(address user) internal view returns (bool) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (s.governorCommitArmedFromDay == 0) return false;
-        uint256 daysLeft = LibVaipakam.MAX_INTERACTION_CLAIM_DAYS;
-        for (uint8 sideIdx; sideIdx < 2 && daysLeft != 0; ) {
+        for (uint8 sideIdx; sideIdx < 2; ) {
+            uint256 daysLeft = LibVaipakam.MAX_INTERACTION_CLAIM_DAYS;
             LibVaipakam.RewardSide side = sideIdx == 0
                 ? LibVaipakam.RewardSide.Lender
                 : LibVaipakam.RewardSide.Borrower;

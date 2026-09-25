@@ -2467,6 +2467,22 @@ contract TestMutatorFacet {
         b.consumedRecycled = recycled;
     }
 
+    /// @notice 3b-ii-A test-only (Codex #2276 r26) — attest a packet's caps
+    ///         DIRECTLY, without the floor that makes an attestation's two caps
+    ///         partition what landed. With caps each equal to the balance, both
+    ///         leg rooms are the whole balance: the FLEXIBLE epoch the
+    ///         allocation's residual-leg rule and the split's reservation are
+    ///         defined for. Ingress cannot produce it in 3b-ii-A (an attested
+    ///         epoch's rooms sum to its balance), so the rule cells build it
+    ///         here rather than lose coverage of a rule a later balance move
+    ///         can reach.
+    function setPacketAttestedCapsRaw(bytes32 packetHash, uint256 fresh, uint256 recycled) external {
+        LibVaipakam.IngressPacket storage p = LibVaipakam.storageSlot().ingressPackets[packetHash];
+        p.freshAttested = fresh;
+        p.recycledAttested = recycled;
+        p.attested = true;
+    }
+
     function classifyPacketPreGateRaw(bytes32 packetHash, uint256 freshShare, uint256 recycledShare) external {
         LibRewardCustody.takeFromUnclassified(LibVaipakam.storageSlot(), packetHash, freshShare, recycledShare);
     }

@@ -176,13 +176,49 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
     }
 
     /// @dev An old-wire (untyped) delivery: opens an epoch, then indexes it.
-    function _epochOf(uint256 amount, uint256[] memory dayIds, uint256 remitId, bytes32 id)
+    ///      Its split is NOT attested, so no draw may take it yet (Codex #2276
+    ///      r26 P1) — the cells that attest a split of their own start here.
+    function _epochRaw(uint256 amount, uint256[] memory dayIds, uint256 remitId, bytes32 id)
         internal
         returns (bytes32 h)
     {
         _ingress().onRewardBudgetReceived(address(vpfi), amount, dayIds, CHAIN_BASE, remitId, REMITTER, 0, 0, id, false);
         h = keccak256(abi.encode(uint256(CHAIN_BASE), id));
         _epoch().materializeTransportBatchPage(h, dayIds);
+    }
+
+    /// @dev A DRAWABLE epoch: the raw delivery attested wholly fresh — the
+    ///      standard scene's day is fresh-only.
+    function _epochOf(uint256 amount, uint256[] memory dayIds, uint256 remitId, bytes32 id)
+        internal
+        returns (bytes32 h)
+    {
+        h = _epochRaw(amount, dayIds, remitId, id);
+        _attest(remitId, 1, 0);
+    }
+
+    /// @dev A FLEXIBLE epoch: both leg rooms the whole balance, through the
+    ///      raw caps mutator — the state the residual-leg rule and the split's
+    ///      reservation are defined for (see {setPacketAttestedCapsRaw}).
+    function _epochFlex(uint256 amount, uint256[] memory dayIds, uint256 remitId, bytes32 id)
+        internal
+        returns (bytes32 h)
+    {
+        h = _epochRaw(amount, dayIds, remitId, id);
+        _mut().setPacketAttestedCapsRaw(h, amount, amount);
+    }
+
+    /// @dev A DRAWABLE epoch attested with the split `fresh`:`recycled`.
+    function _epochSplit(
+        uint256 amount,
+        uint256[] memory dayIds,
+        uint256 remitId,
+        bytes32 id,
+        uint256 fresh,
+        uint256 recycled
+    ) internal returns (bytes32 h) {
+        h = _epochRaw(amount, dayIds, remitId, id);
+        _attest(remitId, fresh, recycled);
     }
 
     /// @dev A typed (d5) delivery that is wholly fresh: credits the live row
@@ -207,11 +243,7 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
     }
 
     function _legs(bytes32 h) internal view returns (uint256 f, uint256 r) {
-        (f, r, ) = _epoch().getTransportBatchLegs(h);
-    }
-
-    function _beyond(bytes32 h) internal view returns (uint256 b) {
-        (, , b) = _epoch().getTransportBatchLegs(h);
+        (f, r) = _epoch().getTransportBatchLegs(h);
     }
 
     function _balance(bytes32 h) internal view returns (uint256 b) {
@@ -319,56 +351,6 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         assertEq(_row(LibVaipakam.RewardCustodyRow.LiveFresh), liveBefore, "the live row untouched");
     }
 
-    /// @dev A batch listing a day BEYOND the one being planned is drawn LAST
-    ///      (Codex #2276, the necessity and contested gates): the design
-    ///      inverts transport-first for exactly these, because an early day
-    ///      draining a shared batch transport-first leaves the later day
-    ///      unfunded though other sources covered the early one. The same
-    ///      scene as the transport-first cell above, with the epoch listing
-    ///      days 1 AND 2: now live pays day 1 and the epoch is left whole.
-    function test_ASharedEpoch_IsDrawnLast_WhenLiveCanPay() public {
-        _scene(NEED);
-        _liveOf(1e18, _one(1), 1, keccak256("live"));
-        bytes32 h = _epochOf(10e18, _two(1, 2), 2, keccak256("shared"));
-        uint256 liveBefore = _row(LibVaipakam.RewardCustodyRow.LiveFresh);
-        assertEq(_claim(), NEED);
-        (uint256 lf, uint256 lr) = _legs(h);
-        assertEq(lf + lr, 0, "the shared epoch is spared for its later day");
-        assertEq(liveBefore - _row(LibVaipakam.RewardCustodyRow.LiveFresh), NEED, "live paid day 1");
-    }
-
-    /// @dev ...and drawn when it is the ONLY way to pay (necessity, not
-    ///      exclusion): no live delivery at all, so day 1 is funded from the
-    ///      shared epoch by the last pass, for exactly its gap.
-    function test_ASharedEpoch_StillPays_WhenNothingElseCan() public {
-        _scene(NEED);
-        bytes32 h = _epochOf(10e18, _two(1, 2), 2, keccak256("shared-only"));
-        assertEq(_claim(), NEED, "the day is paid from the shared epoch");
-        (uint256 lf, ) = _legs(h);
-        assertEq(lf, NEED, "for exactly the day's gap");
-        assertEq(_balance(h), 10e18 - NEED, "and the rest stays for the later day");
-    }
-
-    /// @dev A shared epoch is last-resort for EVERY day it lists, earlier as
-    ///      well as later (Codex #2276, the round after the tier landed). The
-    ///      tier first protected only LATER days, which let a batch listing
-    ///      days 1 and 2 be spent transport-first for day 2 while another
-    ///      claimant's day-1 obligation could still need it — a contested draw.
-    ///      With live funding able to pay each day, the allocator must draw the
-    ///      shared epoch for NEITHER day.
-    function test_ASharedEpoch_IsLastResort_ForEveryDayItLists() public {
-        _epochOf(NEED, _two(1, 2), 2, keccak256("shared-both-ways"));
-        (uint256 tf1, uint256 tr1, ) =
-            _alloc(1, NEED, 0, type(uint256).max, type(uint256).max, type(uint256).max, NEED, 0);
-        assertEq(tf1 + tr1, 0, "day 1: live can pay, so the shared epoch is spared");
-        (uint256 tf2, uint256 tr2, ) =
-            _alloc(2, NEED, 0, type(uint256).max, type(uint256).max, type(uint256).max, NEED, 0);
-        assertEq(tf2 + tr2, 0, "day 2 as well: an EARLIER listed day protects it too");
-        // Where nothing else can pay, it still pays the gap, for either day.
-        (tf2, , ) = _alloc(2, NEED, 0, type(uint256).max, type(uint256).max, type(uint256).max, 0, 0);
-        assertEq(tf2, NEED, "and it still funds the day when it is the only source");
-    }
-
     /// @dev The ordinary tier is credited only with what it can pay on EACH
     ///      leg, not its aggregate balance (Codex #2276). An ordinary epoch that
     ///      can pay only recycled, a shared epoch that can pay only fresh, a
@@ -377,7 +359,7 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
     ///      the split spilled that fresh into the shared epoch. Live must pay,
     ///      and the shared epoch must be spared.
     function test_TheOrdinaryTier_IsCreditedPerLeg_NotByItsAggregate() public {
-        _epochOf(5, _one(1), 91, keccak256("ord-recycled-only"));
+        _epochRaw(5, _one(1), 91, keccak256("ord-recycled-only"));
         _attest(91, 0, 5);
         vm.warp(vm.getBlockTimestamp() + 1);
         _epochOf(5, _two(1, 2), 92, keccak256("nec-fresh-only"));
@@ -385,25 +367,6 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         (uint256 tf, uint256 tr, ) =
             _alloc(1, 5, 0, type(uint256).max, type(uint256).max, type(uint256).max, 5, 0);
         assertEq(tf + tr, 0, "live pays the fresh leg; no epoch is drawn at all");
-    }
-
-    /// @dev ...and where the shared tier IS needed, its own leg restrictions
-    ///      shape how the ordinary tier is spent (Codex #2276, found locally).
-    ///      An ordinary epoch that can pay either leg, a shared epoch that can
-    ///      pay only fresh, a need for both legs and nothing else to pay it.
-    ///      Both legs are coverable: the ordinary epoch pays recycled and the
-    ///      shared epoch pays fresh. Hiding the shared tier from the split's
-    ///      look-ahead spent the ordinary epoch on fresh and left recycled
-    ///      unpaid.
-    function test_TheSharedTier_ShapesTheOrdinarySpend_WhenItIsNeeded() public {
-        _epochOf(5, _one(1), 93, keccak256("ord-flexible"));
-        vm.warp(vm.getBlockTimestamp() + 1);
-        _epochOf(5, _two(1, 2), 94, keccak256("nec-fresh-only-2"));
-        _attest(94, 5, 0);
-        (uint256 tf, uint256 tr, ) =
-            _alloc(1, 5, 5, type(uint256).max, type(uint256).max, type(uint256).max, 0, 0);
-        assertEq(tf, 5, "the fresh leg is paid, from the shared epoch");
-        assertEq(tr, 5, "and the recycled leg too, from the ordinary epoch");
     }
 
     /// @dev The split is EXACT, not greedy (Codex #2276, the fourth finding on
@@ -415,12 +378,12 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
     ///      which may be another day's only backing, untouched. The backward
     ///      walk makes each epoch supply only what the epochs before it cannot.
     function test_TheSplit_IsExact_AndSparesTheLatestEpoch() public {
-        bytes32 a = _epochOf(2, _one(1), 101, keccak256("exact-A"));
+        bytes32 a = _epochFlex(2, _one(1), 101, keccak256("exact-A"));
         vm.warp(vm.getBlockTimestamp() + 1);
-        bytes32 b = _epochOf(1, _one(1), 102, keccak256("exact-B"));
+        bytes32 b = _epochRaw(1, _one(1), 102, keccak256("exact-B"));
         _attest(102, 1, 0);
         vm.warp(vm.getBlockTimestamp() + 1);
-        bytes32 c = _epochOf(2, _one(1), 103, keccak256("exact-C"));
+        bytes32 c = _epochRaw(2, _one(1), 103, keccak256("exact-C"));
         _attest(103, 1, 1);
         (uint256 af, uint256 ar) = _plannedLegs(1, 2, 1, a);
         (uint256 bf, uint256 br) = _plannedLegs(1, 2, 1, b);
@@ -431,36 +394,6 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         assertEq(ar, 1, "and one recycled");
         assertEq(bf + br, 1, "B pays its one fresh");
         assertEq(cf + cr, 0, "and C, the latest, is spared entirely");
-    }
-
-    /// @dev A classification CORRECTION reconciles the transport legs already
-    ///      drawn, as attestation does (Codex #2276). Codex's shape: a ten-token
-    ///      rollout packet attested 5F/5R, five classified fresh before
-    ///      admission, the remaining five drawn recycled. A correction then
-    ///      moves the five fresh to recycled, so the net caps become 5F/0R
-    ///      while the batch still holds five recycled — ten recycled against a
-    ///      five-recycled cap. The drawn leg must be retyped to fresh.
-    function test_AClassificationCorrection_ReconcilesTheDrawnLegs() public {
-        uint256[] memory d1 = _one(1);
-        _ingress().onRewardBudgetReceived(address(vpfi), 10e18, d1, CHAIN_BASE, 3, REMITTER, 0, 0, keccak256("corr"), false);
-        bytes32 h = keccak256(abi.encode(uint256(CHAIN_BASE), keccak256("corr")));
-        _mut().unadmitTransportBatchRaw(h);
-        _mut().classifyPacketPreGateRaw(h, 5e18, 0);
-        assertEq(_epoch().admitLegacyTransportBatch(h, d1), h);
-        _epoch().materializeTransportBatchPage(h, d1);
-        _mut().setTransportBatchConsumedRaw(h, 0, 5e18);
-        _attest(3, 1, 1); // caps 5e18 fresh / 5e18 recycled on 10e18
-        (uint256 lf, uint256 lr) = _legs(h);
-        assertEq(lf, 0, "fixture: nothing to retype at attestation");
-        assertEq(lr, 5e18, "fixture: five drawn recycled, within the recycled cap");
-        _mut().moveClassificationRaw(h, 5e18, true); // the correction: 5F -> 5R
-        (lf, lr) = _legs(h);
-        assertEq(lr, 0, "the recycled cap is now spent by classification");
-        assertEq(lf, 5e18, "so the drawn leg is retyped fresh, within the fresh cap");
-        (bool att, uint256 exF, uint256 exR) =
-            RewardReconciliationFacet(address(diamond)).getPacketClassificationExcess(h);
-        assertTrue(att);
-        assertEq(exF + exR, 0, "and nothing is left beyond either cap");
     }
 
     /// @dev ...and a GENUINE shortage stays visible (Codex #2276). The same two
@@ -490,7 +423,7 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         assertEq(_row(LibVaipakam.RewardCustodyRow.LiveFresh), 0, "fixture: no live backing");
         _mut().setArmedFreshLedgerRaw(100 * cap, 0);
         _mut().setRecycleBucketRaw(needR - cap);
-        _epochOf(cap, _one(2), 12, keccak256("shortage-day2-recycled"));
+        _epochRaw(cap, _one(2), 12, keccak256("shortage-day2-recycled"));
         _attest(12, 0, cap);
         (, , , , , , uint256 liveArmed) =
             InteractionRewardsLensFacet(address(diamond)).getUserArmedFreshNeedWithLegs(alice);
@@ -527,13 +460,19 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         _mut().userClaimFundingNeedRaw(alice);
         assertEq(_row(LibVaipakam.RewardCustodyRow.LiveFresh), 0, "fixture: no live backing");
         for (uint256 d = 31; d <= 60; ++d) {
-            _epochOf(cap, _one(d), 300 + d, keccak256(abi.encode("borrower-day", d)));
+            _epochRaw(cap, _one(d), 300 + d, keccak256(abi.encode("borrower-day", d)));
             _attest(300 + d, 1, 0); // fresh-only
         }
         (uint256 armed, , , , , , uint256 liveArmed) =
             InteractionRewardsLensFacet(address(diamond)).getUserArmedFreshNeedWithLegs(alice);
         assertEq(armed, 30 * cap, "fixture: the unbounded walk spends the day limit on the lender side");
         assertEq(liveArmed, 30 * cap, "the blocked lender days still read as needing live funding");
+        // The reach probe gives EACH side the whole chunk (Codex #2276 r26
+        // P1): a lender side deferring on its first day leaves the borrower
+        // side all thirty days, and only borrower days list epochs here — a
+        // countdown shared across the sides spent itself on the lender days
+        // and reported no epoch in reach.
+        assertTrue(_epochView().getObligationDomainListsAnEpoch(alice), "the probe reaches the borrower side's epochs");
     }
 
     function test_AShortEpochPaysWhatItHolds_TheLedgerTheRest_AndIsRetired() public {
@@ -684,7 +623,7 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         for (uint256 i; i < 65; ++i) {
             _epochOf(1, _one(1), 100 + i, keccak256(abi.encode("tiny", i)));
         }
-        (uint256 avail, bool capHit) = _epoch().getTransportCoverageForDay(1);
+        (uint256 avail, bool capHit, , ) = _epoch().getTransportCoverageForDay(1);
         assertEq(avail, 64, "one window");
         assertTrue(capHit, "and more beyond it");
         assertEq(_preview(), 0, "the preview defers");
@@ -695,22 +634,23 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         assertEq(_cursor(1), 0, "nothing exhausted, nothing pruned");
     }
 
-    function test_Prune_MovesPastEpochsAnotherDayExhausted() public {
-        _armedDay(1, NEED);
-        _armedDay(2, 0.3e18);
-        _mut().setGovernorCommitArmedFromDayRaw(1);
-        _loanSideOpen(1);
-        _entry(2, 3); // the claimant's obligation is on day 2 only
-        _mut().setArmedFreshLedgerRaw(0, 0);
+    /// @dev The standalone prune passes husks at the front of a day's index
+    ///      that no claim of that day drew (a shared epoch is withheld from
+    ///      every day, so another day cannot exhaust one — Codex #2276 r26 —
+    ///      and parking is what empties them here): an exhausted husk is
+    ///      neither drawable nor withheld, and the prune is idempotent.
+    function test_Prune_MovesPastExhaustedHusks() public {
         bytes32 a = _epochOf(0.1e18, _two(1, 2), 1, keccak256("a"));
         bytes32 b = _epochOf(0.1e18, _two(1, 2), 2, keccak256("b"));
         bytes32 c = _epochOf(0.1e18, _two(1, 2), 3, keccak256("c"));
-        assertEq(_claim(), 0.3e18, "day 2 drained all three");
+        _mut().parkTransportBatchRaw(a);
+        _mut().parkTransportBatchRaw(b);
+        _mut().parkTransportBatchRaw(c);
         assertEq(_balance(a) + _balance(b) + _balance(c), 0);
-        assertEq(_cursor(2), 3, "day 2's cursor passed them as it drew");
         assertEq(_cursor(1), 0, "day 1's index still lists the husks");
-        (uint256 avail, bool capHit) = _epoch().getTransportCoverageForDay(1);
+        (uint256 avail, bool capHit, uint256 wShared, ) = _epoch().getTransportCoverageForDay(1);
         assertEq(avail, 0);
+        assertEq(wShared, 0, "an exhausted husk is not withheld");
         assertFalse(capHit);
         _epoch().epochPruneTransportDayCursor(1);
         assertEq(_cursor(1), 3, "pruned");
@@ -749,7 +689,7 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         (uint256 needF, uint256 needR) = _epochView().getObligationDomainNeeds(alice);
         assertGt(needR, 0, "fixture: a recycled leg");
         _liveOf(needF, _one(1), 1, keccak256("live"));
-        bytes32 h = _epochOf(needR, _one(1), 2, keccak256("e"));
+        bytes32 h = _epochFlex(needR, _one(1), 2, keccak256("e"));
         _mut().setOutstandingCommitRaw(0, needR); // the commitment behind the recycled leg
         uint256 bucketBefore = _cfg().getRecycleBucket();
         assertEq(_claim(), NEED);
@@ -759,22 +699,24 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         assertEq(_cfg().getRecycleBucket(), bucketBefore, "without a bucket debit");
     }
 
-    /// @dev An epoch whose membership is still being written in pages is
-    ///      invisible to every day until its last page lands (Codex #2276 r1
-    ///      P1): a 40-day delivery indexes 32 days per call, and day 1 reads
-    ///      no coverage from it until the second page.
+    /// @dev An epoch is invisible to a day until it is indexed whole: day 1
+    ///      sees nothing of a half-indexed 40-day epoch — not even as withheld
+    ///      — and once whole it is counted, as WITHHELD for listing more than
+    ///      one day (Codex #2276 r26 P1).
     function test_AnIncompletelyIndexedEpoch_IsInvisibleUntilWhole() public {
         uint256[] memory days_ = new uint256[](40);
         for (uint256 i; i < 40; ++i) days_[i] = i + 1;
         bytes32 id = keccak256("wide");
         _ingress().onRewardBudgetReceived(address(vpfi), 10e18, days_, CHAIN_BASE, 1, REMITTER, 0, 0, id, false);
         bytes32 h = keccak256(abi.encode(uint256(CHAIN_BASE), id));
+        _attest(1, 1, 0);
         assertEq(_epoch().materializeTransportBatchPage(h, days_), 32, "first page");
-        (uint256 avail, ) = _epoch().getTransportCoverageForDay(1);
-        assertEq(avail, 0, "day 1 sees nothing of a half-indexed epoch");
+        (uint256 avail, , uint256 wShared, ) = _epoch().getTransportCoverageForDay(1);
+        assertEq(avail + wShared, 0, "day 1 sees nothing of a half-indexed epoch");
         assertEq(_epoch().materializeTransportBatchPage(h, days_), 40, "second page: whole");
-        (avail, ) = _epoch().getTransportCoverageForDay(1);
-        assertEq(avail, 10e18, "and now the whole balance");
+        (avail, , wShared, ) = _epoch().getTransportCoverageForDay(1);
+        assertEq(avail, 0, "a shared epoch is never drawable");
+        assertEq(wShared, 10e18, "but whole, it is counted as withheld");
     }
 
     /// @dev The executability gates net the recycled upper bound by what the
@@ -792,7 +734,7 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         assertGt(needR, 0, "fixture: a recycled leg");
         assertEq(_cfg().getRecycleBucket(), 0, "fixture: the bucket is empty");
         _liveOf(needF, _one(1), 1, keccak256("live"));
-        bytes32 h = _epochOf(needR, _one(1), 2, keccak256("e"));
+        bytes32 h = _epochFlex(needR, _one(1), 2, keccak256("e"));
         _cfg().setRewardClaimHorizonDays(180);
         uint256 bucketBefore = _cfg().getRecycleBucket();
         uint256[] memory ids = new uint256[](1);
@@ -821,21 +763,6 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         assertEq(_cfg().getRecycleBucket() - bucketBefore, needF, "the epoch-paid fresh recycled in place; the release moved nothing");
     }
 
-    /// @dev Within one preview an epoch listing two days is not counted for
-    ///      both (Codex #2276 r1 P2): one epoch worth one day lists days 1 and
-    ///      2; the preview reports one day, and the claim pays one day.
-    function test_ThePreview_DoesNotCountAnEpochTwice() public {
-        _armedDay(1, NEED);
-        _armedDay(2, NEED);
-        _mut().setGovernorCommitArmedFromDayRaw(1);
-        _loanSideOpen(2);
-        _entry(1, 3);
-        _mut().setArmedFreshLedgerRaw(0, 0);
-        _mut().userClaimFundingNeedRaw(alice);
-        _epochOf(NEED, _two(1, 2), 1, keccak256("one-day-worth"));
-        assertEq(_preview(), NEED, "one day, not two");
-        assertEq(_claim(), NEED, "and the claim agrees");
-    }
 
     /// @dev The draws need no migration on an in-place upgrade (Codex #2276
     ///      r1 P1): with the appended admission counter forced to zero over a
@@ -901,7 +828,7 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
     ///      11-token epoch on day A. Mandatory: 5F. Net deficits 1F vs 5R, so
     ///      the rest goes recycled first: 6F/5R, and both days settle.
     function test_TheResidualLeg_IsChosenNetOfTheMandatoryDraws() public {
-        _epochOf(11e18, _one(1), 1, keccak256("eleven"));
+        _epochFlex(11e18, _one(1), 1, keccak256("eleven"));
         (uint256 tf, uint256 tr, ) = _alloc(1, 10e18, 5e18, 11e18, 10e18, type(uint256).max, 5e18, 5e18);
         assertEq(tf, 6e18, "fresh: the mandatory 5 and one more");
         assertEq(tr, 5e18, "recycled: the whole leg, the greater net deficit");
@@ -916,7 +843,7 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
     ///      component's remaining cap (Codex #2276 r4 P1): 4F/6R of 10, a day
     ///      asking 6F gets 4F from the epoch, and asking 6F/3R gets 4F/3R.
     function test_AnAttestedEpoch_PaysEachLegWithinItsRoom() public {
-        _epochOf(10e18, _one(1), 7, keccak256("attested"));
+        _epochRaw(10e18, _one(1), 7, keccak256("attested"));
         _attest(7, 4e18, 6e18);
         (uint256 tf, uint256 tr, ) = _alloc(1, 6e18, 0, type(uint256).max, type(uint256).max, type(uint256).max, 0, 0);
         assertEq(tf, 4e18, "fresh capped at the attested fresh");
@@ -926,22 +853,77 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         assertEq(tr, 3e18, "recycled within its own room");
     }
 
-    /// @dev A split attested AFTER a draw re-types the legs already drawn so
-    ///      the caps hold (Codex #2276 r4 P1): a fresh-only day drew 0.4 fresh
-    ///      from an unattested epoch; the attestation says 0.1F/9.9R; the legs
-    ///      become 0.1F/0.3R, the epoch's total unchanged.
-    function test_ALateAttestation_RetypesTheLegsAlreadyDrawn() public {
+    /// @dev An epoch whose split is not attested is WITHHELD, by name, and
+    ///      drawn only once its attestation lands (Codex #2276 r26 P1): a leg
+    ///      is typed once, by the caps it is drawn under, so nothing drawn is
+    ///      ever retyped under settled custody.
+    function test_AnUnattestedEpoch_IsWithheld_UntilItsSplitIsAttested() public {
         _scene(NEED);
-        bytes32 h = _epochOf(10e18, _one(1), 9, keccak256("late"));
-        assertEq(_claim(), NEED);
+        bytes32 h = _epochRaw(10e18, _one(1), 9, keccak256("unattested"));
+        (uint256 avail, , uint256 wShared, uint256 wUnattested) = _epoch().getTransportCoverageForDay(1);
+        assertEq(avail, 0, "nothing is drawable");
+        assertEq(wShared, 0);
+        assertEq(wUnattested, 10e18, "withheld for its attestation");
+        assertEq(_preview(), 0, "the preview prices nothing");
+        vm.expectRevert(IVaipakamErrors.NoInteractionRewardsToClaim.selector);
+        _claim();
+        assertEq(_balance(h), 10e18, "the claim took nothing from it");
         (uint256 lf, uint256 lr) = _legs(h);
-        assertEq(lf, NEED, "drawn fresh, nothing known to bound it");
-        assertEq(lr, 0);
-        _attest(9, 0.1e18, 9.9e18);
-        (lf, lr) = _legs(h);
-        assertEq(lf, 0.1e18, "the fresh leg now fits the attested fresh");
-        assertEq(lr, 0.3e18, "the excess re-typed recycled");
-        assertEq(_balance(h) + lf + lr, 10e18, "the epoch's identity holds");
+        assertEq(lf + lr, 0, "and typed no leg");
+
+        _attest(9, 1, 1);
+        (avail, , , wUnattested) = _epoch().getTransportCoverageForDay(1);
+        assertEq(wUnattested, 0, "attested: no longer withheld");
+        assertEq(avail, 10e18, "both rooms now drawable");
+        assertEq(_claim(), NEED, "the deferred day is paid from the epoch");
+        (lf, ) = _legs(h);
+        assertEq(lf, NEED, "on the fresh leg its attested room allows");
+    }
+
+    /// @dev An epoch listing more than one day is WITHHELD, by name, until
+    ///      the contested-allocation machinery lands (Codex #2276 r26 P1): a
+    ///      draw on it for one day is contested whenever another listed day
+    ///      carries an unmet obligation, which nothing here can rule out.
+    function test_ASharedEpoch_IsWithheld_EvenWhenAttested() public {
+        _scene(NEED);
+        bytes32 h = _epochOf(10e18, _two(1, 2), 11, keccak256("shared"));
+        (uint256 avail, , uint256 wShared, uint256 wUnattested) = _epoch().getTransportCoverageForDay(1);
+        assertEq(avail, 0, "nothing is drawable");
+        assertEq(wShared, 10e18, "withheld as shared");
+        assertEq(wUnattested, 0, "and not for want of an attestation");
+        vm.expectRevert(IVaipakamErrors.NoInteractionRewardsToClaim.selector);
+        _claim();
+        assertEq(_balance(h), 10e18, "the claim took nothing from it");
+        (uint256 lf, uint256 lr) = _legs(h);
+        assertEq(lf + lr, 0, "and typed no leg");
+    }
+
+    /// @dev A classification correction never retypes a drawn leg (Codex
+    ///      #2276 r26 P1): the leg was settled against custody. A recycled
+    ///      correction that takes classification plus the recycled leg past
+    ///      the recycled cap is RECORDED on the divergence view, and the
+    ///      saturated room admits no further recycled draw.
+    function test_AClassificationCorrection_NeverRetypesADrawnLeg() public {
+        uint256[] memory d1 = _one(1);
+        _ingress().onRewardBudgetReceived(address(vpfi), 10e18, d1, CHAIN_BASE, 3, REMITTER, 0, 0, keccak256("corr"), false);
+        bytes32 h = keccak256(abi.encode(uint256(CHAIN_BASE), keccak256("corr")));
+        _mut().unadmitTransportBatchRaw(h);
+        _mut().classifyPacketPreGateRaw(h, 5e18, 0);
+        assertEq(_epoch().admitLegacyTransportBatch(h, d1), h);
+        _epoch().materializeTransportBatchPage(h, d1);
+        _attest(3, 1, 1); // caps 5e18 fresh / 5e18 recycled on 10e18
+        _mut().setTransportBatchConsumedRaw(h, 0, 5e18); // five drawn recycled, within its cap
+        _mut().moveClassificationRaw(h, 5e18, true); // the correction: 5F -> 5R
+        (uint256 lf, uint256 lr) = _legs(h);
+        assertEq(lf, 0, "the drawn legs stand as settled");
+        assertEq(lr, 5e18, "no leg is retyped");
+        (bool att, uint256 exF, uint256 exR) =
+            RewardReconciliationFacet(address(diamond)).getPacketClassificationExcess(h);
+        assertTrue(att);
+        assertEq(exF, 0, "fresh within its cap");
+        assertEq(exR, 5e18, "classification plus the recycled leg past the cap, recorded");
+        (, uint256 tr, ) = _alloc(1, 0, 5e18, type(uint256).max, type(uint256).max, type(uint256).max, 0, 0);
+        assertEq(tr, 0, "and no further recycled draw is admitted");
     }
 
     /// @dev A cap-hit deferral's prune is progress the claim keeps even when
@@ -987,34 +969,13 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
     ///      one, a 5F/5R ask — the fresh-only epoch pays fresh, the flexible
     ///      one recycled, and both legs are covered.
     function test_TheSplit_ServesEachLegFromTheLeastFlexibleEpoch() public {
-        _epochOf(5e18, _one(1), 41, keccak256("flexible"));
+        _epochFlex(5e18, _one(1), 41, keccak256("flexible"));
         vm.warp(vm.getBlockTimestamp() + 1 hours);
-        _epochOf(5e18, _one(1), 42, keccak256("fresh-only"));
+        _epochRaw(5e18, _one(1), 42, keccak256("fresh-only"));
         _attest(42, 5e18, 0);
         (uint256 tf, uint256 tr, ) = _alloc(1, 5e18, 5e18, type(uint256).max, type(uint256).max, type(uint256).max, 0, 0);
         assertEq(tf, 5e18, "fresh from the epoch that can serve nothing else");
         assertEq(tr, 5e18, "recycled from the flexible one");
-    }
-
-    /// @dev A scaling residual is never carried by a leg past its recorded
-    ///      cap (Codex #2276 r5 P2, r6 P1): a 1F/2R split lands on 1e18 and
-    ///      floors to F + R = 1e18 - 1 wei; an epoch that drew the whole 1e18
-    ///      fresh before the split was known re-types to exactly F fresh and
-    ///      R recycled, and the residual wei is recorded beyond both caps for
-    ///      the close-out's disposition path — the identity still holds.
-    function test_ALateAttestation_KeepsBothLegsWithinTheRecordedCaps() public {
-        _scene(1e18);
-        bytes32 h = _epochOf(1e18, _one(1), 21, keccak256("dust"));
-        assertEq(_claim(), 1e18, "the whole epoch drawn fresh");
-        _attest(21, 1, 2);
-        uint256 f = uint256(1e18) / 3;
-        uint256 r = uint256(2e18) / 3;
-        assertEq(f + r, 1e18 - 1, "fixture: the floors leave one wei");
-        (uint256 lf, uint256 lr) = _legs(h);
-        assertEq(lf, f, "the fresh leg is the recorded fresh cap");
-        assertEq(lr, r, "the recycled leg is the recorded recycled cap");
-        assertEq(_beyond(h), 1, "the residual wei is recorded beyond both caps");
-        assertEq(lf + lr + _beyond(h), 1e18, "the identity holds");
     }
 
     /// @dev Coverage a leg's cap rejects goes to the other leg (Codex #2276
@@ -1023,7 +984,7 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
     ///      pay none of it, and the allocation offers the coverage to recycled
     ///      instead of leaving the epoch untouched.
     function test_CapRejectedCoverage_GoesToTheOtherLeg() public {
-        _epochOf(5e18, _one(1), 51, keccak256("recycled-only"));
+        _epochRaw(5e18, _one(1), 51, keccak256("recycled-only"));
         _attest(51, 0, 5e18);
         (uint256 tf, uint256 tr, ) = _alloc(1, 5e18, 5e18, type(uint256).max, type(uint256).max, type(uint256).max, 5e18, 5e18);
         assertEq(tf, 0, "the epoch cannot pay fresh");
@@ -1100,9 +1061,9 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
     ///      wei records 0 fresh room and 1 recycled room, and the day can fund
     ///      1, not 2.
     function test_TheCoverage_CountsOnlyWhatIsDrawable() public {
-        _epochOf(2, _one(1), 90, keccak256("two-wei"));
+        _epochRaw(2, _one(1), 90, keccak256("two-wei"));
         _attest(90, 1, 2);
-        (uint256 avail, ) = _epoch().getTransportCoverageForDay(1);
+        (uint256 avail, , , ) = _epoch().getTransportCoverageForDay(1);
         assertEq(avail, 1, "the residual wei is reserved for the disposition path");
     }
 
@@ -1155,7 +1116,7 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         _mut().userClaimFundingNeedRaw(alice);
         (uint256 needF, uint256 needR) = _epochView().getObligationDomainNeeds(alice);
         assertGt(needR, 0, "fixture: a recycled leg");
-        bytes32 h = _epochOf(needF + needR + 1, _one(1), 2, keccak256("e"));
+        bytes32 h = _epochRaw(needF + needR + 1, _one(1), 2, keccak256("e"));
         _attest(2, needF, needR);
         _mut().setOutstandingCommitRaw(0, needR);
         assertEq(_claim(), NEED);
@@ -1163,7 +1124,7 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         assertEq(lf, needF, "both rooms drained");
         assertEq(lr, needR);
         assertEq(_balance(h), 1, "the residual wei remains");
-        (uint256 avail, ) = _epoch().getTransportCoverageForDay(1);
+        (uint256 avail, , , ) = _epoch().getTransportCoverageForDay(1);
         assertEq(avail, 0, "and is not coverage");
         assertEq(_cursor(1), 1, "the draw's own prune passed the epoch");
         _epoch().epochPruneTransportDayCursor(1);
@@ -1178,12 +1139,12 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
     function test_ResidualOnlyEpochs_DoNotHoldTheWindow() public {
         _scene(NEED);
         for (uint256 i; i < 64; ++i) {
-            _epochOf(1, _one(1), 600 + i, keccak256(abi.encode("residual", i)));
+            _epochRaw(1, _one(1), 600 + i, keccak256(abi.encode("residual", i)));
             _attest(600 + i, 1, 1); // one wei at 1:1 floors to 0 fresh / 0 recycled
         }
         vm.warp(vm.getBlockTimestamp() + 1 hours);
         _epochOf(NEED, _one(1), 700, keccak256("funded"));
-        (uint256 avail, bool capHit) = _epoch().getTransportCoverageForDay(1);
+        (uint256 avail, bool capHit, , ) = _epoch().getTransportCoverageForDay(1);
         assertEq(avail, 0, "the residuals fund nothing");
         assertTrue(capHit, "and fill the window");
         assertEq(_claim(), 0, "deferred on the window");
@@ -1313,12 +1274,12 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
     ///      list. The coverage is the same either way, which is exactly why
     ///      the totals cannot see the difference.
     function test_TheSplit_SparesTheLaterEpoch_WhenEitherLegCouldPay() public {
-        bytes32 flex = _epochOf(1, _one(1), 41, keccak256("tie-flexible"));
+        bytes32 flex = _epochFlex(1, _one(1), 41, keccak256("tie-flexible"));
         vm.warp(vm.getBlockTimestamp() + 1);
-        bytes32 freshOnly = _epochOf(1, _one(1), 42, keccak256("tie-fresh-only"));
+        bytes32 freshOnly = _epochRaw(1, _one(1), 42, keccak256("tie-fresh-only"));
         _attest(42, 1, 0);
         vm.warp(vm.getBlockTimestamp() + 1);
-        bytes32 recycledOnly = _epochOf(1, _one(1), 43, keccak256("tie-recycled-only"));
+        bytes32 recycledOnly = _epochRaw(1, _one(1), 43, keccak256("tie-recycled-only"));
         _attest(43, 0, 1);
         (uint256 tf, uint256 tr, ) =
             _alloc(1, 1, 1, type(uint256).max, type(uint256).max, type(uint256).max, 0, 0);
@@ -1344,12 +1305,12 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
     ///      and C — which may list another day — is left standing. Same
     ///      coverage either way, so again the totals cannot see it.
     function test_TheSplit_SparesTheLaterEpoch_WhenBothLegsShareTheNextOne() public {
-        bytes32 flex = _epochOf(1, _one(1), 81, keccak256("joint-flexible"));
+        bytes32 flex = _epochFlex(1, _one(1), 81, keccak256("joint-flexible"));
         vm.warp(vm.getBlockTimestamp() + 1);
-        bytes32 both = _epochOf(2, _one(1), 82, keccak256("joint-both"));
+        bytes32 both = _epochRaw(2, _one(1), 82, keccak256("joint-both"));
         _attest(82, 1, 1);
         vm.warp(vm.getBlockTimestamp() + 1);
-        bytes32 recycledOnly = _epochOf(1, _one(1), 83, keccak256("joint-recycled-only"));
+        bytes32 recycledOnly = _epochRaw(1, _one(1), 83, keccak256("joint-recycled-only"));
         _attest(83, 0, 1);
         (uint256 tf, uint256 tr, ) =
             _alloc(1, 1, 2, type(uint256).max, type(uint256).max, type(uint256).max, 0, 0);
@@ -1366,22 +1327,28 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
     }
 
     /// @dev The preview's overlay holds every draw of a chunk and grows as it
-    ///      goes (Codex #2276 r12 P1): thirty two-day epochs worth one and a
-    ///      half days, day one draws twenty, day two sees ten — the preview
-    ///      and the claim both pay one day.
+    ///      goes (Codex #2276 r12 P1): thirty single-day epochs worth one and a
+    ///      half sides of day 1, which the claimant covers on BOTH sides. The
+    ///      lender side draws twenty, the borrower side sees ten and defers —
+    ///      the preview and the claim both pay one side.
     function test_ThePreview_OverlayScalesAcrossAChunk() public {
-        _armedDay(1, NEED);
-        _armedDay(2, NEED);
+        _mut().setDayPoolStampRaw(1, uint128(2e18), 0);
+        _mut().setKnownGlobalDailyInterest(1, 1e18, 1e18, true);
+        _mut().setDayCapThreshold18(1, type(uint256).max);
+        _mut().setDayCapModeRaw(1, 1);
+        _mut().setDayUserSideCapRaw(1, NEED);
         _mut().setGovernorCommitArmedFromDayRaw(1);
-        _loanSideOpen(2);
-        _entry(1, 3);
+        _loanSideOpen(1);
+        _entry(1, 2);
+        uint256 b = _mut().pushRewardEntry(alice, LOAN, LibVaipakam.RewardSide.Borrower, 1e18, 1);
+        _mut().closeRewardEntryRaw(b, 2);
         _mut().setArmedFreshLedgerRaw(0, 0);
         _mut().userClaimFundingNeedRaw(alice);
         for (uint256 i; i < 30; ++i) {
-            _epochOf(NEED / 20, _two(1, 2), 100 + i, keccak256(abi.encode("slice", i)));
+            _epochOf(NEED / 20, _one(1), 100 + i, keccak256(abi.encode("slice", i)));
             vm.warp(vm.getBlockTimestamp() + 1);
         }
-        assertEq(_preview(), NEED, "one day, not two: every draw of day one is remembered");
+        assertEq(_preview(), NEED, "one side, not two: every draw of the first side is remembered");
         assertEq(_claim(), NEED, "and the claim agrees");
     }
 
@@ -1392,52 +1359,13 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
     ///      1F and 1R and the flexible one the last 1R — 1F/2R, where ordering
     ///      by raw room paid 1F/1R.
     function test_TheSplit_TakesExclusiveCapacityFirst() public {
-        _epochOf(1, _one(1), 31, keccak256("flexible"));
+        _epochFlex(1, _one(1), 31, keccak256("flexible"));
         vm.warp(vm.getBlockTimestamp() + 1);
-        _epochOf(2, _one(1), 32, keccak256("exclusive"));
+        _epochRaw(2, _one(1), 32, keccak256("exclusive"));
         _attest(32, 1, 1);
         (uint256 tf, uint256 tr, ) = _alloc(1, 1, 2, type(uint256).max, type(uint256).max, type(uint256).max, 0, 0);
         assertEq(tf, 1, "fresh from the exclusive epoch");
         assertEq(tr, 2, "recycled from both");
-    }
-
-    /// @dev A late attestation reconciles against each cap NET of the
-    ///      classification the packet already carries (Codex #2276 r9 P1), on
-    ///      Codex's shape: a packet classified for half its value before the
-    ///      batch gate existed, admitted for the rest, drawn recycled while
-    ///      unattested, then attested 1:1 — the recycled cap is spent by the
-    ///      classification, so the leg is retyped fresh; the identity holds.
-    function test_ALateAttestation_ReconcilesNetOfPriorClassification() public {
-        _twoLegDay(1, NEED);
-        _mut().setGovernorCommitArmedFromDayRaw(1);
-        _loanSideOpen(1);
-        _entry(1, 2);
-        _mut().setArmedFreshLedgerRaw(0, 0);
-        _mut().userClaimFundingNeedRaw(alice);
-        (uint256 needF, uint256 needR) = _epochView().getObligationDomainNeeds(alice);
-        assertGt(needR, 0, "fixture: a recycled leg");
-        _liveOf(needF, _one(1), 1, keccak256("live"));
-        // A packet that landed before the ledger: delivered, its epoch
-        // removed, half of it classified recycled as a pre-gate classification
-        // did, then admitted for what it still holds.
-        uint256[] memory d1 = _one(1);
-        _ingress().onRewardBudgetReceived(address(vpfi), 2 * needR, d1, CHAIN_BASE, 2, REMITTER, 0, 0, keccak256("pre"), false);
-        bytes32 h = keccak256(abi.encode(uint256(CHAIN_BASE), keccak256("pre")));
-        _mut().unadmitTransportBatchRaw(h);
-        _mut().classifyPacketPreGateRaw(h, 0, needR);
-        assertEq(_epoch().admitLegacyTransportBatch(h, d1), h);
-        _epoch().materializeTransportBatchPage(h, d1);
-        assertEq(_balance(h), needR, "fixture: the unclassified half is the epoch");
-        _mut().setOutstandingCommitRaw(0, needR);
-        assertEq(_claim(), NEED);
-        (uint256 lf, uint256 lr) = _legs(h);
-        assertEq(lr, needR, "drawn recycled, nothing known to bound it");
-        assertEq(lf, 0);
-        _attest(2, 1, 1); // caps needR fresh / needR recycled on 2 * needR
-        (lf, lr) = _legs(h);
-        assertEq(lr, 0, "the recycled cap was spent by the classification");
-        assertEq(lf, needR, "so the leg is retyped fresh, within the fresh cap");
-        assertEq(_balance(h) + lf + lr + _beyond(h), needR, "the epoch's identity holds");
     }
 
     /// @dev The preview simulates the prune a successful draw performs, across
@@ -1501,7 +1429,7 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
             _mut().parkTransportBatchRaw(h);
         }
         vm.warp(vm.getBlockTimestamp() + 1 hours);
-        _epochOf(needR, _one(1), 500, keccak256("funded"));
+        _epochSplit(needR, _one(1), 500, keccak256("funded"), 0, 1);
         assertEq(_preview(), 0, "the preview rescans the husks on the second side, as the claim will");
         assertEq(_claim(), 0, "deferred on the window; the prune is kept");
         assertEq(_cursor(1), 64, "the husks are passed");
@@ -1555,12 +1483,13 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         bytes32 late = keccak256(abi.encode(uint256(CHAIN_BASE), keccak256("late")));
         _mut().setPacketArrivedAtRaw(late, 2); // landed long before e1; written down now
         _epoch().materializeTransportBatchPage(late, d1);
+        _attest(3, 1, 0);
         (bytes32[] memory order, , , uint256 cursor) = _epoch().getTransportDayBatches(1, 0, 10);
         assertEq(cursor, 1, "the cursor did not move back");
         assertEq(order[0], e1);
         assertEq(order[1], late, "the first place of the window");
         assertEq(order[2], e2);
-        (uint256 avail, ) = _epoch().getTransportCoverageForDay(1);
+        (uint256 avail, , , ) = _epoch().getTransportCoverageForDay(1);
         assertEq(avail, 2 * NEED, "visible and counted");
         _ingress().onRewardBudgetReceived(address(vpfi), NEED, d1, CHAIN_BASE, 4, REMITTER, 0, 0, keccak256("older"), false);
         bytes32 older = keccak256(abi.encode(uint256(CHAIN_BASE), keccak256("older")));
@@ -1775,11 +1704,12 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         assertEq(lf + lr, drawn, "and equals the epoch's two legs");
     }
 
-    /// @dev The order is the ledger's, not the indexer's (Codex #2276 r1 P1):
-    ///      X lists days 1 and 2, Y lists day 1 only, and X was indexed
-    ///      first. Day 1 spends Y — the fewest listed days first — and keeps
-    ///      X for day 2, which only X can fund.
-    function test_FewestListedDaysFirst_KeepsTheWiderEpochForTheDayOnlyItFunds() public {
+    /// @dev A wider epoch is withheld while a single-day one pays (Codex
+    ///      #2276 r26 P1): X lists days 1 and 2, Y lists day 1 only, X indexed
+    ///      first. Day 1 spends Y; X is drawn for neither day — a draw on it is
+    ///      contested whenever the other listed day carries an unmet
+    ///      obligation — so day 2, which only X could fund, defers.
+    function test_AWiderEpoch_IsWithheld_WhileTheSingleDayEpochPays() public {
         _armedDay(1, NEED);
         _armedDay(2, NEED);
         _mut().setGovernorCommitArmedFromDayRaw(1);
@@ -1789,17 +1719,19 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         _mut().userClaimFundingNeedRaw(alice);
         bytes32 x = _epochOf(NEED, _two(1, 2), 1, keccak256("x")); // indexed first
         bytes32 y = _epochOf(NEED, _one(1), 2, keccak256("y"));
-        assertEq(_claim(), 2 * NEED, "both days settle");
-        (uint256 xf, ) = _legs(x);
+        assertEq(_preview(), NEED, "the preview pays day 1 only");
+        assertEq(_claim(), NEED, "and so does the claim");
+        (uint256 xf, uint256 xr) = _legs(x);
         (uint256 yf, ) = _legs(y);
         assertEq(yf, NEED, "day 1 spent Y");
-        assertEq(xf, NEED, "day 2 spent X");
+        assertEq(xf + xr, 0, "X was drawn for neither day");
+        assertEq(_balance(x), NEED, "and stands whole for the contested machinery");
     }
 
     // ─── the allocation rule, on the design's own cases ─────────────────────
 
     function test_TheAllocationRule_FromTheDesignsOwnCases() public {
-        _epochOf(5, _one(1), 1, keccak256("five"));
+        _epochFlex(5, _one(1), 1, keccak256("five"));
         // 5 fresh / 5 recycled, 5 live fresh, an empty bucket, a 5-token epoch:
         // fully backed ONLY if live pays fresh and the epoch pays recycled.
         uint256 MAX = type(uint256).max; // "the day is the domain"
@@ -1812,7 +1744,7 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         assertEq(tf, 5);
         assertEq(tr, 0);
         // Both legs typed-covered: transport is still drawn first, in order.
-        _epochOf(5, _one(1), 2, keccak256("five-more"));
+        _epochFlex(5, _one(1), 2, keccak256("five-more"));
         (tf, tr, ) = _alloc(1, 5, 5, MAX, MAX, 100, 5, 5);
         assertEq(tf, 5);
         assertEq(tr, 5);
@@ -1829,7 +1761,7 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
     ///      the DOMAIN (A and B together) the recycled deficit is 5 and the
     ///      fresh deficit 0, so the batch relieves recycled.
     function test_TheAllocationRule_RelievesTheGreaterDomainDeficit() public {
-        _epochOf(5, _one(1), 1, keccak256("five"));
+        _epochFlex(5, _one(1), 1, keccak256("five"));
         (uint256 tf, uint256 tr, ) = _alloc(1, 5, 5, 5, 10, 100, 5, 5);
         assertEq(tf, 0, "fresh is covered domain-wide by live");
         assertEq(tr, 5, "the batch relieves the domain's recycled deficit");
@@ -1882,7 +1814,7 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         assertEq(_cfg().getRecycleBucket(), dayR, "fixture: one day's recycled in the bucket");
         assertEq(_row(LibVaipakam.RewardCustodyRow.LiveFresh), needF, "fixture: live covers both days' fresh exactly");
         uint256 paidBefore = _mut().getArmedFreshPaidRaw();
-        bytes32 h = _epochOf(dayR, _one(1), 2, keccak256("e"));
+        bytes32 h = _epochFlex(dayR, _one(1), 2, keccak256("e"));
         assertEq(_preview(), 2 * cap, "the preview settles both days");
         assertEq(_claim(), 2 * cap, "and so does the claim");
         (uint256 lf, uint256 lr) = _legs(h);
@@ -1944,7 +1876,7 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         _mut().setRecycleBucketRaw(day1R);
         bytes32 flex = _epochOf(needF, _one(1), 11, keccak256("backing-day1-flexible"));
         vm.warp(vm.getBlockTimestamp() + 1);
-        bytes32 recycledOnly = _epochOf(cap, _one(2), 12, keccak256("backing-day2-recycled"));
+        bytes32 recycledOnly = _epochRaw(cap, _one(2), 12, keccak256("backing-day2-recycled"));
         _attest(12, 0, cap);
         // The executability reading must price the claim's OWN allocation
         // (Codex #2276): the claim spends day 1's flexible epoch on fresh and
@@ -1965,7 +1897,7 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
     }
 
     function test_NoEpochs_TheReadsAnswerZero_WithoutAScan() public {
-        (uint256 avail, bool capHit) = _epoch().getTransportCoverageForDay(1);
+        (uint256 avail, bool capHit, , ) = _epoch().getTransportCoverageForDay(1);
         assertEq(avail, 0);
         assertFalse(capHit);
         (uint256 tf, uint256 tr, ) =

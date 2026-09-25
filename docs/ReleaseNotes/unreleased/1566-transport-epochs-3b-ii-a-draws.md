@@ -37,7 +37,20 @@ deficit against the shared sources over the **allocation domain**, fresh
 first on ties. The domain is the days one settlement call prices for one
 claimant — a single day for a forfeit or expiry sweep — and its needs are
 totalled once per call and worked down as days settle; nothing is carried
-across calls. Two of the design's own cases are the reason. Five fresh and
+across calls. The domain is deliberately the GROSS needs — what the call
+would price if every day settled — not the days a funded call ends up
+settling: those depend on which leg each epoch's leftover coverage took,
+which is the very choice the domain guides, so a funded domain would be a
+fixed point with no single-pass answer. The choice only decides which shared
+source pays an obligation in the call — never whether value is paid, moved or
+lost — and a day it leaves short defers whole to the next call. Since an
+epoch is drawn only once attested, and an attested epoch's two component
+rooms together never exceed its balance, the choice has nothing to decide for
+any epoch ingress creates today; it is kept for an epoch whose rooms together
+exceed what it holds. The same pass's quick check for whether any reachable
+day lists an epoch now gives each side the whole day allowance, since a side
+that defers on its first day leaves the next side all of it. Two of the
+design's own cases are the reason. Five fresh and
 five recycled, with five of live fresh, an empty bucket and a five-token
 epoch, is fully payable only if live pays the fresh and the epoch pays the
 recycled — a blind fresh-first rule would refuse a claim the funding fully
@@ -67,16 +80,26 @@ before, and a shortfall of it still defers.
 Every draw is recorded on the epoch as a fresh leg and a recycled leg, so
 the ledger's conservation identity — what was admitted equals what is
 held, plus what was parked, plus what left by classification, plus what
-the legs paid, plus what a late attestation showed to lie outside both
-caps — holds after every draw, and a delivery's attested fresh cap is
-netted by the fresh leg its epoch has already paid. Where a delivery's split is attested, its epoch pays each leg only
-within that component's remaining cap; where the split arrives after
-draws, the legs already drawn are re-typed so the caps hold, the epoch's
-total unchanged, each cap read net of the classification the delivery
-already carried; a classification recorded before the split that already
-exceeds a cap is not undone by the attestation — it is recorded as a
-divergence for the correction path, and no further draw or
-classification of that component is admitted meanwhile. A deferred settlement's cursor move is progress the
+the legs paid — holds after every draw, and a delivery's attested fresh cap
+is netted by the fresh leg its epoch has already paid.
+
+**An epoch is drawn only once its split is attested.** Until the source
+chain's attestation of a delivery's fresh/recycled split lands, its epoch is
+withheld from every day's draws and reported as withheld for that reason.
+A leg is typed once, by the caps it is drawn under, and never retyped. An
+earlier version drew an unattested epoch and retyped its legs when the split
+arrived — but by then the claim had already charged the bucket, released the
+recycled commitment and charged live funding for the legs as first typed, so
+the retyped epoch and those ledgers told different stories. Once attested, the
+epoch pays each leg only within that component's remaining cap, each cap read
+net of the classification the delivery already carried; a classification
+recorded before the split that already exceeds a cap is not undone by the
+attestation — it is recorded as a divergence for the correction path, and no
+further draw or classification of that component is admitted meanwhile. A
+later classification correction moves no drawn leg either: where it takes a
+component's classification plus that component's drawn leg past the cap, the
+excess is reported on the same divergence view and no further draw of that
+component is admitted. A deferred settlement's cursor move is progress the
 claim keeps even when it paid nothing, so a retry never scans the same
 exhausted window twice, and such a deferral ends that call's settlement on
 every side, so the preview — which cannot move the cursor — describes what
@@ -170,32 +193,18 @@ epoch paid retires its commitment the way a forfeit's does — without a
 bucket debit, since the bucket never paid it — so what the mirror reports
 as fundable is not depressed by obligations that have already ended.
 
-**An epoch shared with another day is drawn last.** Transport-first applies
-only to an epoch that lists the day being paid and no other. An epoch that
-also lists any OTHER day, earlier or later, is spent only for what the paid
-day's live delivery and bucket cannot cover, and is otherwise left whole for
-the other days. Without this, one day would drain a shared epoch
-transport-first and leave another day unfunded even though other funding had
-covered the first. When nothing else can pay, the shared epoch still pays
-exactly the day's gap, so the rule protects the other days without ever
-refusing a day that only that epoch can fund.
-
-This is deliberately broader than the design's own two rules, and the
-difference is recorded rather than hidden. The design draws an epoch last
-only when one of its listed days has not yet ARRIVED, and refuses outright
-a draw that another day's known unmet obligation is competing for. Neither
-condition can be checked yet: an epoch records how many days it lists but
-not which ones, and there is no per-day record of unmet obligations. "Shared
-with another day" covers both cases, since each requires the epoch to list a
-second day, and it errs in the safe direction: where the other days have no
-outstanding claim, the design would draw the epoch transport-first, so
-drawing it last only changes which source pays first. An intermediate
-version of this change protected only LATER days, which left an earlier
-day's competing obligation exposed; it was replaced before release. The exact rules arrive with the
-contested-allocation machinery. An earlier draft of this note said the
-refusal was satisfied because "known" meant a staging reference and this
-release has none; that reading made the protection do nothing, and it was
-wrong.
+**An epoch listing more than one day is withheld until contested
+allocation lands.** The design refuses a draw that another day's known unmet
+obligation is competing for, and draws an epoch listing a not-yet-arrived day
+only for a day's gap. Neither condition can be checked yet: an epoch records
+how many days it lists but not which ones, and there is no per-day record of
+unmet obligations. So every epoch listing more than one day is withheld from
+every day's draws, reported as withheld for that reason, and kept whole for
+the contested-allocation machinery, which settles it. An intermediate version
+of this change drew such epochs last, for a day's gap only; that still let an
+underfunded day drain an epoch another day's unmet obligation was counting
+on, which is exactly the contested draw the design refuses. A day that only a
+shared epoch could fund defers until then; nothing is spent or lost.
 
 **A claim now allocates against the live funding it will actually be
 checked against.** The claim chose which part of a day an epoch pays using

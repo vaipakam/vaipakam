@@ -100,7 +100,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](224); // #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1, then -1 with the pre-list scene (Codex #2296 items 2 and 4)
+        selectors = new bytes4[](225); // #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1, then -1 with the pre-list scene (Codex #2296 items 2 and 4); r26 +1 flexible caps
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -510,6 +510,7 @@ contract HelperTest {
         selectors[n++] = TestMutatorFacet.setPacketClassifiedRaw.selector; // 3b-ii-A: a correction's effect on the classified figures // 3b-ii-A r9: a pre-gate classification
         selectors[n++] = TestMutatorFacet.moveClassificationRaw.selector; // 3b-ii-A: the production move-and-reconcile
         selectors[n++] = TestMutatorFacet.setTransportBatchConsumedRaw.selector; // 3b-ii-A: a batch's drawn legs
+        selectors[n++] = TestMutatorFacet.setPacketAttestedCapsRaw.selector; // 3b-ii-A r26: a flexible epoch
         selectors[n++] = TestMutatorFacet.resetTransportDrawWritesRaw.selector; // 3b-ii-A r14: a new transaction's empty transient count
         selectors[n++] = TestMutatorFacet.acknowledgeTransportBatchRaw.selector;
         selectors[n++] = TestMutatorFacet.releaseTransportBatchRaw.selector;

@@ -323,14 +323,11 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
     function getTransportBatchLegs(bytes32 batchId)
         external
         view
-        returns (uint256 consumedFresh, uint256 consumedRecycled, uint256 consumedBeyondCaps)
+        returns (uint256 consumedFresh, uint256 consumedRecycled)
     {
         LibVaipakam.TransportBatch storage b = LibVaipakam.storageSlot().transportBatches[batchId];
         if (!LibRewardCustody.transportBatchExists(b)) revert TransportBatchUnknown(batchId);
-        // The third figure (Codex #2276 r6): what a late attestation showed to
-        // lie outside both recorded caps — in the epoch's identity, in neither
-        // leg, for the close-out's disposition path.
-        return (b.consumedFresh, b.consumedRecycled, b.consumedBeyondCaps);
+        return (b.consumedFresh, b.consumedRecycled);
     }
 
     /// @notice A batch's parked remainder, and what has left it.
@@ -576,12 +573,17 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
     // ─── Transport epochs PR 3b-ii-A: the draws ─────────────────────────────
 
     /// @notice What `dayId`'s epochs can fund right now, within one scan
-    ///         window, and whether the window ended before the index did.
-    /// @dev    The read every armed-day settlement and preview makes, through
-    ///         {LibRewardCustody.callTransportCoverageForDay}; see
-    ///         {LibRewardCustody.transportCoverageForDay} for what the two
-    ///         figures mean and why a cap hit defers a day.
-    function getTransportCoverageForDay(uint256 dayId) external view returns (uint256 available, bool capHit) {
+    ///         window; whether the window ended before the index did; and what
+    ///         the window held that no draw may take yet, by named reason.
+    /// @dev    See {LibRewardCustody.TransportDrawPlan} for the two withheld
+    ///         figures (Codex #2276 r26): `withheldShared` waits for the
+    ///         contested-allocation machinery, `withheldUnattested` for its
+    ///         packet's split attestation.
+    function getTransportCoverageForDay(uint256 dayId)
+        external
+        view
+        returns (uint256 available, bool capHit, uint256 withheldShared, uint256 withheldUnattested)
+    {
         return LibRewardCustody.transportCoverageForDay(LibVaipakam.storageSlot(), dayId);
     }
 

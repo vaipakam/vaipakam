@@ -445,10 +445,12 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
         return _envelope(LibVaipakam.storageSlot());
     }
 
-    /// @notice By how much a classification `packetHash` carried BEFORE its
-    ///         split was attested exceeds the attested cap of each component
-    ///         (Codex #2276 r15 P1): a divergence the attestation recorded for
-    ///         the correction path.
+    /// @notice By how much `packetHash`'s classification PLUS what its epoch
+    ///         drew of each component exceeds that component's attested cap: a
+    ///         divergence recorded for the correction path — a classification
+    ///         that predates the attestation (Codex #2276 r15 P1), or a
+    ///         recycled correction made after draws, which moves no drawn leg
+    ///         (Codex #2276 r26 P1).
     /// @dev    Three states, and the return keeps them apart so a zero is never
     ///         ambiguous:
     ///
@@ -470,8 +472,8 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
     ///           within its cap reads as zero at once; zero there genuinely
     ///           means within its caps.
     /// @return attested Whether the packet's split has been attested.
-    /// @return fresh    The fresh classification beyond the attested fresh cap.
-    /// @return recycled The recycled classification beyond the attested recycled cap.
+    /// @return fresh    Fresh classification plus the fresh leg, beyond the fresh cap.
+    /// @return recycled Recycled classification plus the recycled leg, beyond the recycled cap.
     function getPacketClassificationExcess(bytes32 packetHash)
         external
         view
@@ -488,8 +490,15 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
         // uses to decide whether to emit {IngressPacketClassifiedBeyondCaps},
         // and the live caps that block further classification ({_netCaps}) are
         // derived the same way, so the view and the gate cannot disagree.
-        fresh = p.classifiedFresh > p.freshAttested ? p.classifiedFresh - p.freshAttested : 0;
-        recycled = p.classifiedRecycled > p.recycledAttested ? p.classifiedRecycled - p.recycledAttested : 0;
+        uint256 usedF = p.classifiedFresh;
+        uint256 usedR = p.classifiedRecycled;
+        if (p.batchId != bytes32(0)) {
+            LibVaipakam.TransportBatch storage b = LibVaipakam.storageSlot().transportBatches[p.batchId];
+            usedF += b.consumedFresh;
+            usedR += b.consumedRecycled;
+        }
+        fresh = usedF > p.freshAttested ? usedF - p.freshAttested : 0;
+        recycled = usedR > p.recycledAttested ? usedR - p.recycledAttested : 0;
         return (true, fresh, recycled);
     }
 
@@ -902,9 +911,8 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
         bool freshToRecycled
     ) private {
         if (e.envelope) return;
-        // Through the one library write, which also reconciles the transport
-        // legs already drawn against the caps this correction moves (Codex
-        // #2276) — see {LibRewardCustody.moveClassification}.
+        // Through the one library write, which never retypes a drawn leg
+        // (Codex #2276 r26) — see {LibRewardCustody.moveClassification}.
         LibRewardCustody.moveClassification(s, e.key, amount, freshToRecycled);
     }
 
