@@ -1015,8 +1015,10 @@ contract SwapToRepayIntentFacet is
             delete s.intentExtensionBytes[extensionHash];
         }
         delete s.intentCommits[loanId];
-        // #2322 — release the borrower-position lock the commit took.
-        LibERC721._unlock(loan.borrowerTokenId);
+        // #2322 — release the borrower-position lock the commit took. Reason-
+        // checked: a commit made before the lock existed never took it, and
+        // must not clear another flow's lock (e.g. a live prepay listing's).
+        LibERC721._unlockIfHeldBy(loan.borrowerTokenId, LibERC721.LockReason.SwapToRepayIntent);
 
         // #594 — every teardown (borrower cancel, permissionless cancel,
         // force-cancel via HF / past-default) returns the custodial collateral

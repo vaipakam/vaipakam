@@ -185,8 +185,9 @@ library LibSwapToRepayIntentSettlement {
         delete s.intentCommits[loanId];
         // #2322 — release the borrower-position lock the commit took. The
         // holder was fixed for the whole auction, so the claim recorded above
-        // and the remainder in the vault belong to the same holder.
-        LibERC721._unlock(loan.borrowerTokenId);
+        // and the remainder in the vault belong to the same holder. Reason-
+        // checked, so a pre-lock commit cannot clear another flow's lock.
+        LibERC721._unlockIfHeldBy(loan.borrowerTokenId, LibERC721.LockReason.SwapToRepayIntent);
         // T-087 Sub 3.B — clear the kind discriminator stamped at
         // commit time so a stale orderHash can't be replayed against
         // a different kind.

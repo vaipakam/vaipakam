@@ -29,7 +29,9 @@ debt needs all of it. So that this remainder cannot end up
 anchored to someone who no longer holds the position, the borrower position
 is locked while the auction is live. This uses the same transfer lock the
 early-close and loan-sale flows use, and it is released when the auction
-settles or is cancelled. The app's NFT verifier now names this lock ("locked
+settles or is cancelled. The release only clears the auction's own lock: an
+auction committed before this change never took one, and settling it must
+not clear a lock another flow holds, such as a live collateral listing's. The app's NFT verifier now names this lock ("locked
 for a repay-from-collateral auction") instead of calling it an unrecognised
 reason. The agent's queued-order notes now say that only the auction lot
 is in protocol custody, and that any collateral the lot does not include

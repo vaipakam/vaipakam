@@ -199,6 +199,17 @@ library LibERC721 {
         delete es.tokenApprovals[tokenId];
     }
 
+    /// @dev Release the lock only if `reason` is the one holding it (#2322,
+    ///      Codex #2341 r11). A flow that tears down state it may not have
+    ///      locked — a commit made before that flow started locking, still live
+    ///      across an in-place facet refresh — must not clear a DIFFERENT flow's
+    ///      lock, or it would leave that flow's position transferable under a
+    ///      live order. A no-op when the token is unlocked or held by another
+    ///      reason.
+    function _unlockIfHeldBy(uint256 tokenId, LockReason reason) internal {
+        if (_storage().locks[tokenId] == reason) _unlock(tokenId);
+    }
+
     function _unlock(uint256 tokenId) internal {
         ERC721Storage storage es = _storage();
         // For ANY transition out of locked state (counted or legacy),

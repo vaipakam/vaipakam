@@ -419,6 +419,66 @@ contract SwapToRepayIntentFacetTest is SetupTest {
         return VaipakamNFTFacet(address(diamond)).positionLock(LOAN_ID * 2);
     }
 
+    /// @dev Rewrite the borrower position's stored lock reason in place. The
+    ///      `locks` mapping's slot is found by scanning the ERC-7201 namespace
+    ///      for the entry currently holding the live reason (asserted unique),
+    ///      so the helper does not hard-code the struct's field offset.
+    function _overwriteBorrowerLock(LibERC721.LockReason to) internal {
+        bytes32 base = 0xffc14e8dfa13b7ea215d815404bdf757f7212df791bac9ce070c8e8dcd574f00;
+        uint256 current = uint256(_borrowerLock());
+        require(current != 0, "helper needs a live lock to locate the slot");
+        bytes32 found;
+        uint256 hits;
+        for (uint256 i; i < 64; ++i) {
+            bytes32 slot = keccak256(abi.encode(LOAN_ID * 2, uint256(base) + i));
+            if (uint256(vm.load(address(diamond), slot)) == current) { found = slot; ++hits; }
+        }
+        require(hits == 1, "lock slot not uniquely located");
+        vm.store(address(diamond), found, bytes32(uint256(to)));
+        assertEq(uint256(_borrowerLock()), uint256(to), "lock rewritten");
+    }
+
+    /// @dev Codex #2341 r11 — a commit made before the intent flow took its
+    ///      own lock can still be live across an in-place facet refresh, and it
+    ///      could coexist with another flow's lock (a prepay listing's). Its
+    ///      teardown must leave that lock alone. Modelled by rewriting the
+    ///      commit's lock to `PrepayCollateralListing`, as if another flow held
+    ///      the position when the pre-lock commit was made.
+    function test_Cancel_PreLockCommit_LeavesAnotherFlowsLockInPlace() public {
+        SwapToRepayIntentFacet.FusionOrderParams memory params = _armHappyCommit();
+        vm.prank(borrowerEoa);
+        SwapToRepayIntentFacet(address(diamond)).commitSwapToRepayIntent(LOAN_ID, params);
+        _overwriteBorrowerLock(LibERC721.LockReason.PrepayCollateralListing);
+
+        vm.warp(params.deadline + 1);
+        vm.prank(borrowerEoa);
+        SwapToRepayIntentFacet(address(diamond)).cancelSwapToRepayIntent(LOAN_ID);
+        assertEq(uint256(_borrowerLock()), uint256(LibERC721.LockReason.PrepayCollateralListing), "the listing keeps its lock");
+    }
+
+    /// @dev Same cohort, settled by a fill instead of a cancel.
+    function test_Fill_PreLockCommit_LeavesAnotherFlowsLockInPlace() public {
+        SwapToRepayIntentFacet.FusionOrderParams memory params = _armHappyCommit();
+        vm.recordLogs();
+        vm.prank(borrowerEoa);
+        SwapToRepayIntentFacet(address(diamond)).commitSwapToRepayIntent(LOAN_ID, params);
+        bytes32 orderHash = _committedOrderHash();
+        uint256 lot = SwapToRepayIntentFacet(address(diamond)).getIntentCommit(LOAN_ID).makerAmount;
+        _overwriteBorrowerLock(LibERC721.LockReason.PrepayCollateralListing);
+
+        IOrderMixin.Order memory o;
+        vm.prank(address(fusionLOP));
+        IntentDispatchFacet(address(diamond)).preInteraction(o, "", orderHash, address(0), 0, 0, 0, "");
+        principalAsset.mint(address(diamond), params.takerAmount);
+        vm.prank(address(diamond));
+        collateralAsset.transfer(address(0xF111), lot);
+        vm.prank(address(fusionLOP));
+        IntentDispatchFacet(address(diamond)).postInteraction(o, "", orderHash, address(0), lot, params.takerAmount, 0, "");
+
+        assertEq(uint256(LoanFacet(address(diamond)).getLoanDetails(LOAN_ID).status), uint256(LibVaipakam.LoanStatus.Repaid), "precondition: the fill settled");
+        assertEq(uint256(_borrowerLock()), uint256(LibERC721.LockReason.PrepayCollateralListing), "the listing keeps its lock");
+    }
+
     /// @dev The borrower position is locked for the life of the commit, so the
     ///      holder the commit consolidated to — whose vault keeps the untaken
     ///      remainder, liened — cannot change before settlement. A cancel
