@@ -1,2 +1,6 @@
 node_modules/
 last-run.json
+# The repo root ignores package-lock.json (the workspace is pnpm). This
+# driver is outside the workspace and installs with `npm ci`, so its lockfile
+# IS the pinned dependency graph and is committed.
+!package-lock.json
