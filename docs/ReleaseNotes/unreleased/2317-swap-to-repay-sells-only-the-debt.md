@@ -26,8 +26,12 @@ themselves. The partial mode is unchanged — there the borrower chooses how
 much to sell, by design.
 
 Nothing about the settlement waterfall, the sanctions freeze or the claim
-path changed. The fork walkthrough's check for this behaviour, which fails
-against the currently deployed bytecode, turns green once this ships. The
+path changed. The fork walkthrough's check for this behaviour fails
+against the currently deployed bytecode. With the corrected close-out swapped
+into a local fork of the live Base Sepolia deployment, it passes, along with
+every other repay-from-collateral check. On the walkthrough's loan the sale
+fell from the whole allowance to the collateral the debt needed, and the rest
+stayed pledged until the borrower's claim released it. The
 resolver-filled intent path still commits the whole collateral to its
 auction; the specification's rule — unused collateral stays pledged and
 claimable — applies to it too, so it is to be sized to the debt as well. That
