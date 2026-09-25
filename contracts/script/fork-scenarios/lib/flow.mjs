@@ -312,3 +312,31 @@ export function delta(before, after) {
   }
   return out;
 }
+
+/** `LibVaipakam.LoanStatus`, so rows compare against the exact state. */
+export const STATUS = { Active: 0, Repaid: 1, Defaulted: 2, Settled: 3 };
+
+/**
+ * The spec's dynamic keeper incentive for a collateral sale: the configured
+ * max-liquidation-slippage budget minus the slippage realized against the
+ * oracle value of what was sold, capped by the global incentive cap and the
+ * collateral's per-asset cap (0 = none). Returns bps.
+ */
+export async function dynamicIncentiveBps(collateralAsset, principalAsset, soldCollateral, proceeds) {
+  const [, maxSlippageBps, maxIncentiveBps] = await read(ABIS.config, 'getLiquidationConfig');
+  const risk = await read(ABIS.config, 'getAssetRiskParams', [collateralAsset]);
+  const [colPrice, colDec] = await read(ABIS.oracle, 'getAssetPrice', [collateralAsset]);
+  const [prinPrice, prinDec] = await read(ABIS.oracle, 'getAssetPrice', [principalAsset]);
+  // Both faucet tokens carry 18 decimals; the feeds carry their own.
+  const expected = (soldCollateral * colPrice * 10n ** BigInt(prinDec)) / (prinPrice * 10n ** BigInt(colDec));
+  let realized = 0n;
+  if (proceeds < expected && expected !== 0n) {
+    realized = ((expected - proceeds) * 10_000n) / expected;
+    if (realized > maxSlippageBps) realized = maxSlippageBps;
+  }
+  let bps = maxSlippageBps - realized;
+  if (bps > maxIncentiveBps) bps = maxIncentiveBps;
+  const assetCap = BigInt(risk.liqBonusBps ?? 0);
+  if (assetCap !== 0n && bps > assetCap) bps = assetCap;
+  return bps;
+}

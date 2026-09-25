@@ -10,7 +10,7 @@
  * start it.
  */
 import { DIAMOND, ERC20, MOCKS, TREASURY, borrower, lender, outsider, parseUnits, pub, tx } from '../lib/chain.mjs';
-import { ABIS, delta, openLoan, read, snapshot, vaultAddressFor } from '../lib/flow.mjs';
+import { ABIS, STATUS, delta, openLoan, read, snapshot, vaultAddressFor } from '../lib/flow.mjs';
 import { f18 } from '../lib/chain.mjs';
 import { simulate } from '../lib/errors.mjs';
 import { cannotContinue, check, expectEq } from '../lib/report.mjs';
@@ -61,7 +61,7 @@ export async function run() {
     const closed = await read(ABIS.loan, 'getLoanDetails', [loanId]);
     const d = delta(before, after);
     check('A11.4', 'a full swap-to-repay closes the loan in ONE transaction, from collateral alone — the borrower\'s wallet is never debited',
-      String(closed.status) !== '0' && after['lending.borrowerEOA'] >= before['lending.borrowerEOA'],
+      String(closed.status) === String(STATUS.Repaid) && after['lending.borrowerEOA'] >= before['lending.borrowerEOA'],
       `gas=${receipt.gasUsed} status=${closed.status} deltas=${JSON.stringify(d)}`);
 
     // The oracle is the spec, per the owner's #2317 decision (2026-09-25):

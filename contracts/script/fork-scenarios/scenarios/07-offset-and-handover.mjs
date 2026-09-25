@@ -9,12 +9,12 @@
  * the original loan inside that same transaction, so a surface that waits
  * for a manual second step is waiting for something that already happened.
  */
-import { DIAMOND, MOCKS, TREASURY, borrower, lender, outsider, parseUnits, tx } from '../lib/chain.mjs';
-import { ABIS, approveDiamond, acceptOffer, acceptStoredOffer, createOffer, delta, mint, openLoan, read, snapshot, vaultAddressFor } from '../lib/flow.mjs';
+import { DIAMOND, MOCKS, TREASURY, borrower, lender, outsider, parseUnits, pub, tx } from '../lib/chain.mjs';
+import { ABIS, STATUS, approveDiamond, acceptOffer, acceptStoredOffer, createOffer, delta, mint, openLoan, read, snapshot, vaultAddressFor } from '../lib/flow.mjs';
 import { chainNow, f18 } from '../lib/chain.mjs';
 import { warpDays } from '../lib/impersonate.mjs';
 import { simulate } from '../lib/errors.mjs';
-import { cannotContinue, check, expectEq, observe } from '../lib/report.mjs';
+import { cannotContinue, check, expectEq, expectLedger, observe } from '../lib/report.mjs';
 
 export async function run() {
   const lending = MOCKS.liquidToken2;
@@ -87,7 +87,7 @@ export async function run() {
     const after = await snapshot(tokens, holders);
     const settled = await read(ABIS.loan, 'getLoanDetails', [loanId]);
     check('A7.3', 'accepting the offset offer CLOSES the original loan automatically — no manual second step',
-      String(settled.status) !== '0',
+      String(settled.status) === String(STATUS.Repaid),
       `gas=${accepted.gas} originalStatus=${settled.status} deltas=${JSON.stringify(delta(before, after))}`);
 
     const late = await simulate(DIAMOND, ABIS.preclose, 'completeOffset', [loanId], borrower.address);
@@ -136,9 +136,35 @@ export async function run() {
     const after = await snapshot(tokens, holders);
     const moved = await read(ABIS.loan, 'getLoanDetails', [loanId]);
     check('A7.7', 'the handover rewrites the loan\'s borrower in place — the loan itself survives',
-      moved.borrower.toLowerCase() === outsider.address.toLowerCase() && String(moved.status) === '0',
-      `gas=${receipt.gasUsed} status=${moved.status} borrower ${borrower.address.slice(0, 10)} -> ${moved.borrower.slice(0, 10)} ` +
-      `deltas=${JSON.stringify(delta(before, after))}`);
+      moved.borrower.toLowerCase() === outsider.address.toLowerCase() && String(moved.status) === String(STATUS.Active),
+      `gas=${receipt.gasUsed} status=${moved.status} borrower ${borrower.address.slice(0, 10)} -> ${moved.borrower.slice(0, 10)}`);
+
+    // The money, from the spec's "Economic Protection for the Original
+    // Lender": the exiting borrower pays the interest accrued to the transfer
+    // SECOND plus any shortfall between the original remaining interest and
+    // the replacement's (max(0, orig − new)); those funds are held for the
+    // lender. The treasury takes its fee on the ACCRUED interest only — the
+    // shortfall is a lender top-up. The exiting borrower's own collateral is
+    // released back to them; the replacement's was escrowed when they posted.
+    const at = BigInt((await pub.getBlock({ blockNumber: receipt.blockNumber })).timestamp);
+    const YEAR_BPS = 365n * 86_400n * 10_000n;
+    const elapsed = at - BigInt(loan.startTime);
+    const totalSecs = BigInt(loan.durationDays) * 86_400n;
+    const remaining = totalSecs > elapsed ? totalSecs - elapsed : 0n;
+    const rate = BigInt(loan.interestRateBps);
+    const accrued = (loan.principal * rate * elapsed) / YEAR_BPS;
+    const origRemaining = (loan.principal * rate * remaining) / YEAR_BPS;
+    const newRemaining = (loan.principal * BigInt(standing.interestRateBps) * BigInt(standing.durationDays) * 86_400n) / YEAR_BPS;
+    const shortfall = origRemaining > newRemaining ? origRemaining - newRemaining : 0n;
+    const toTreasury = (accrued * BigInt(loan.treasuryFeeBpsAtInit)) / 10_000n;
+    expectLedger('A7.7b', 'the exiting borrower pays accrued interest plus the lender-protection shortfall, held for the lender; the treasury cut is on the accrued part only',
+      before, after, {
+        'lending.borrowerEOA': -(accrued + shortfall),
+        'lending.lenderVault': accrued - toTreasury + shortfall,
+        'lending.treasury': toTreasury,
+        'collateral.borrowerVault': -loan.collateralAmount,
+        'collateral.borrowerEOA': loan.collateralAmount,
+      }, `elapsed=${elapsed}s accrued=${f18(accrued)} shortfall=${f18(shortfall)}`);
     expectEq('A7.8', 'the lender is untouched by a handover — same lender, same principal',
       `${moved.lender}/${moved.principal}`, `${loan.lender}/${loan.principal}`);
   }

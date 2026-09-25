@@ -9,7 +9,7 @@ configuration — not the source tree's idea of them.
   84532 (Base Sepolia), forked at block 47,228,632.
 - **Driver** — [`contracts/script/fork-scenarios/`](../../contracts/script/fork-scenarios/README.md),
   committed with this document. `node run-all.mjs` reproduces every row.
-- **Result** — 130 scenarios: **119 PASS, 10 INFO, 1 FAIL**, no aborted
+- **Result** — 135 scenarios: **122 PASS, 12 INFO, 1 FAIL**, no aborted
   file. The INFOs are observations with no assertion behind them, not soft
   failures — the ledger's API makes a row either an assertion (PASS/FAIL
   only) or an observation (INFO only), so no failure can land as INFO; each
@@ -18,10 +18,12 @@ configuration — not the source tree's idea of them.
   the debt needs — and the live bytecode sells the whole cap. It turns green
   when the #2317 fix is deployed.
 - **Node** — the figures above are from a re-run on **Anvil** (2026-09-25,
-  forked at block 47,274,660). The first run used a hardhat fork node and
+  forked at block 47,275,089). The first run used a hardhat fork node and
   reported 129 rows, 123 / 6 / 0. The differences are the A11.5 oracle
-  change above, one new row (A3.13, the collateral-drawdown liquidation §2.4
-  now drives), and four rows that recorded a deployment's CONFIGURED value as a PASS and
+  change above; new rows — A3.13 (the collateral-drawdown liquidation §2.4
+  now drives), exact settlement ledgers for the handover and both lender
+  sales (A7.7b, A8.2b, A8.7b), and two new observations (A1.3b, A9.11b); and
+  four rows that recorded a deployment's CONFIGURED value as a PASS and
   now observe it instead (§7). The re-run also found three defects in the
   HARNESS that the hardhat node had hidden — see
   [§0](#0-re-run-on-anvil-and-three-harness-defects-it-exposed).
@@ -92,7 +94,24 @@ The fix is in the ledger's API, not row by row: a row is now `check`
 and there is no way left to write a verdict string. Every former
 unconditional PASS was given a real condition — an exact expected value, the
 refusal's name, both sides of a transfer — and all of them hold on the live
-bytecode. Figures that depend on ELAPSED time — accrued interest, and so the
+bytecode.
+
+A second review pass then asked the same of the fund-moving rows that still
+asserted only a state rewrite ("the lender changed", "collateral went
+down"). Those now assert an EXACT ledger — every watched balance change
+against a map computed from the spec's formula, so an unexpected movement
+fails as surely as a wrong amount: the obligation handover (accrued interest
+to the second plus the lender-protection shortfall, treasury cut on the
+accrued part only), both lender sales (the buyer pays exactly the principal;
+the seller forfeits the interest accrued to the fill, which goes to the
+treasury), and the periodic auto-settlement (the settler's dynamic incentive
+and the treasury's handling charge on the proceeds, the lender covered, every
+unit accounted). The time-based default's keeper bonus is now checked against
+the dynamic incentive the spec describes rather than the loan's stamped
+fallback split, which only coincides with it on this deployment. Every
+terminal status is compared exactly (Repaid, Defaulted), and the treasury is
+read from the live Diamond rather than the artifact. All hold on the live
+bytecode, to the wei. Figures that depend on ELAPSED time — accrued interest, and so the
 forced-close splits in §2.1 — differ from the first run's in the sixth
 decimal, because the time warps land on different seconds; every fee rate,
 cap, ratio and fixed-amount figure is identical.
@@ -705,7 +724,7 @@ replace.
 
 ## 7. Ledger
 
-The full 130-row ledger, with per-scenario verdicts and observed numbers, is
+The full 135-row ledger, with per-scenario verdicts and observed numbers, is
 regenerated as `contracts/script/fork-scenarios/last-run.json` on every run
 (untracked). Scenario ids map to the driver's files:
 
@@ -730,11 +749,18 @@ The ten `INFO` rows, each an observation with no assertion behind it:
   operator or governance sets, so a later deploy that wires the oracle or
   arms the feature must not keep reporting a green "unset". (The first run
   recorded them as PASS.)
-- **The live facet count** (A1.6), an observation feeding §5.
+- **The live facet count** (A1.6), an observation feeding §5, and **the
+  artifact's treasury against the live one** (A1.3b — they match today; the
+  driver reads the live value, because the treasury is mutable).
 - **Findings written up rather than certified** — the feed-only reprice
   flip (A3.10, §2.4) and where the KYC gate binds (A5.9, §4.2; the first run
   recorded it as PASS, which would have certified a behaviour this document
   calls a finding).
+- **Something the spec does not pin down** — how much the lender receives
+  above the period's shortfall after a periodic auto-settlement (A9.11b:
+  2.88 on a 410.96 period). The spec says the sale covers "the shortfall plus
+  configured buffers" and does not say who keeps the buffer, so the amount is
+  surfaced for an owner reading rather than certified.
 - **Shapes worth writing down** — the two post-claim NFT readbacks (A2.16,
   §1.4), the offset vehicle's offer type (A7.2b, §3A.3; its mirror, the sale
   vehicle, is asserted as A8.1), and a rental's health-factor refusal

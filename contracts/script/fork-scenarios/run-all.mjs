@@ -14,7 +14,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CHAIN_SLUG, DIAMOND, RPC_URL, fundActors, pub, rpc } from './lib/chain.mjs';
-import { ledger, summarise } from './lib/report.mjs';
+import { ledger, mark, summarise, takeSince } from './lib/report.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const wanted = process.argv.slice(2);
@@ -75,6 +75,7 @@ for (const file of files) {
   console.log(`--- ${file}`);
   const snap = await rpc('evm_snapshot');
   if (snap.error || !snap.result) throw new Error(`fork node refused evm_snapshot: ${snap.error?.message ?? 'no id'}`);
+  const firstRow = mark();
   try {
     // The import is INSIDE the guarded block: a module that fails to load (a
     // missing ABI, a top-level error, a syntax error) is an aborted file like
@@ -84,8 +85,11 @@ for (const file of files) {
     await mod.run();
   } catch (e) {
     const why = String(e.details ?? e.shortMessage ?? e.message).split('\n')[0];
-    console.error(`  ${file} ABORTED: ${why}`);
-    aborted.push({ file, why });
+    // Rows the file recorded before it aborted describe chain state that the
+    // revert below erases; they leave the verdict and are kept for diagnosis.
+    const partialRows = takeSince(firstRow);
+    console.error(`  ${file} ABORTED: ${why}${partialRows.length ? ` (${partialRows.length} partial row(s) set aside)` : ''}`);
+    aborted.push({ file, why, partialRows });
     process.exitCode = 1;
   } finally {
     const back = await rpc('evm_revert', [snap.result]);

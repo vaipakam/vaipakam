@@ -13,7 +13,7 @@ needs no Solidity compiler: it reads the committed per-facet ABIs, so the
 compiler stays the single source of truth for every decode while the driver
 itself is plain Node.
 
-The run now covers one hundred and thirty scenarios across the whole advanced
+The run now covers one hundred and thirty-five scenarios across the whole advanced
 surface — offer creation and escrow, accept and the loan-initiation fee,
 repayment and the treasury's interest cut, the borrower's collateral claim,
 time-based default, health-factor liquidation, preclose, partial repayment,
@@ -159,7 +159,15 @@ observation, and there is no longer any way to write a verdict by hand. Every
 formerly unchecked pass was given an exact expectation, and all of them hold
 on the live deployment. Four rows that had been certifying a deployment's
 configured value now record it as an observation instead, so a later change
-of configuration can never be reported as a green "unchanged". The re-run
-records one hundred and nineteen passes, ten observations and one failure —
+of configuration can never be reported as a green "unchanged". The steps that
+move money on an open position — the obligation handover, both kinds of
+lender sale, and the periodic interest settlement — now check every balance
+change against the amount the specification's own formula gives, so an
+unexpected transfer fails as surely as a wrong one; all of them reconcile to
+the smallest unit. One thing the specification leaves open is surfaced
+rather than certified: after an automatic periodic settlement the lender
+receives slightly more than the period's shortfall, because the collateral
+sale is sized with a buffer and the specification does not say who keeps it. The re-run
+records one hundred and twenty-two passes, twelve observations and one failure —
 the swap-to-repay check whose expectation was deliberately corrected — with
 no scenario file aborted.

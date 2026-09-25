@@ -37,6 +37,26 @@ export function expectEq(id, name, got, want, note = '') {
   return check(id, name, String(got) === String(want), `got=${got} want=${want}${note ? ` (${note})` : ''}`);
 }
 
+/**
+ * Assert an EXACT ledger: every watched balance change equals the expected
+ * map (keys `token.holder`, values in base units, absent = 0), so an
+ * unexpected movement fails as surely as a wrong amount. A fund-moving step
+ * asserted any looser than this — "the loan's lender changed", "collateral
+ * went down" — certifies the state rewrite while the money could be wrong.
+ */
+export function expectLedger(id, name, before, after, expected, note = '') {
+  const watched = new Set([...Object.keys(before), ...Object.keys(after)]);
+  const wrong = [];
+  for (const k of watched) {
+    const got = (after[k] ?? 0n) - (before[k] ?? 0n);
+    const want = expected[k] ?? 0n;
+    if (got !== want) wrong.push(`${k}: got ${got} want ${want}`);
+  }
+  for (const k of Object.keys(expected)) if (!watched.has(k)) wrong.push(`${k}: expected a movement on an unwatched balance`);
+  const shown = Object.entries(expected).filter(([, v]) => v !== 0n).map(([k, v]) => `${k}=${v}`).join(' ');
+  return check(id, name, wrong.length === 0, (wrong.length ? `MISMATCH ${wrong.join('; ')}` : `exact: ${shown}`) + (note ? ` (${note})` : ''));
+}
+
 /** Record an observation with no assertion behind it; always INFO. */
 export function observe(id, name, detail = '') {
   return push(id, name, 'INFO', detail);
@@ -48,6 +68,17 @@ export function cannotContinue(step, why) {
 }
 
 export const ledger = () => rows.slice();
+
+/** Ledger position, so the runner can set aside rows from a file that aborts. */
+export const mark = () => rows.length;
+
+/**
+ * Remove and return every row recorded since `at`. The runner does this for
+ * an ABORTED file: the chain is reverted to before the file, so its rows
+ * describe state that no longer exists and must not count in the verdict.
+ * They are kept in `last-run.json` under the aborted file, for diagnosis.
+ */
+export const takeSince = (at) => rows.splice(at);
 
 export function summarise() {
   const counts = rows.reduce((acc, r) => ({ ...acc, [r.status]: (acc[r.status] ?? 0) + 1 }), {});

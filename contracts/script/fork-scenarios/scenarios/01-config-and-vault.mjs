@@ -5,7 +5,7 @@
  * and health-factor knobs read back at their documented values) before any
  * later scenario relies on them.
  */
-import { DIAMOND, MOCKS, TREASURY, borrower, lender, pub } from '../lib/chain.mjs';
+import { ARTIFACT_TREASURY, DIAMOND, MOCKS, TREASURY, borrower, lender, pub } from '../lib/chain.mjs';
 import { ABIS, read, vaultAddressFor } from '../lib/flow.mjs';
 import { simulate } from '../lib/errors.mjs';
 import { check, expectEq, observe } from '../lib/report.mjs';
@@ -26,7 +26,12 @@ export async function run() {
     `isKYCVerified(fresh wallet)=${kycShortCircuits}${kycShortCircuits ? ' (enforcement dormant)' : ' (enforcement ARMED)'}`);
 
   check('A1.3', 'treasury is an EXTERNAL address, not the Diamond', TREASURY.toLowerCase() !== DIAMOND.toLowerCase(),
-    `treasury=${TREASURY} diamond=${DIAMOND} — fees leave at once; the Diamond-custody claim paths are dark on this topology`);
+    `treasury(live getTreasury)=${TREASURY} diamond=${DIAMOND} — fees leave at once; the Diamond-custody claim paths are dark on this topology`);
+  // The treasury is mutable; the artifact records only its deploy-time value.
+  // Every accounting row uses the LIVE value, so a drifted artifact is shown,
+  // not silently trusted.
+  observe('A1.3b', 'the deployment artifact\'s treasury against the live one',
+    ARTIFACT_TREASURY.toLowerCase() === TREASURY.toLowerCase() ? `match (${TREASURY})` : `DRIFT: artifact=${ARTIFACT_TREASURY} live=${TREASURY}`);
 
   // Per-user vault: created on demand, idempotent, real code. On a PRISTINE
   // fork neither role has one yet and `getUserVaultAddress` answers

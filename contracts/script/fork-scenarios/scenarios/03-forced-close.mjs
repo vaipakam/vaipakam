@@ -7,7 +7,7 @@
  * the liquidator's bonus, which comes off the top before the lender is paid.
  */
 import { DIAMOND, MOCKS, TREASURY, borrower, lender, outsider, parseUnits, pub, tx } from '../lib/chain.mjs';
-import { ABIS, delta, mint, openLoan, read, snapshot, vaultAddressFor } from '../lib/flow.mjs';
+import { ABIS, STATUS, delta, dynamicIncentiveBps, mint, openLoan, read, snapshot, vaultAddressFor } from '../lib/flow.mjs';
 import { f18 } from '../lib/chain.mjs';
 import { MOCK_ADAPTER_ABI, repriceFaucetAsset, sendAsOwner, setFeedUsd, warpDays } from '../lib/impersonate.mjs';
 import { simulate } from '../lib/errors.mjs';
@@ -74,12 +74,18 @@ export async function run() {
   const landed = ['lenderVault', 'borrowerVault', 'treasury', 'liquidator']
     .reduce((acc, k) => acc + (afterDefault[`lending.${k}`] - beforeDefault[`lending.${k}`]), 0n);
   check('A3.5', 'triggerDefault is permissionless — an unrelated third party closes the position, and every unit of the sale is accounted',
-    String(defaulted.status) === '2' && proceeds > 0n && landed === proceeds,
+    String(defaulted.status) === String(STATUS.Defaulted) && proceeds > 0n && landed === proceeds,
     `caller=outsider gas=${defaultReceipt.gasUsed} status=${defaulted.status} proceeds=${f18(proceeds)} deltas=${JSON.stringify(d)}`);
 
+  // The spec's DYNAMIC keeper incentive (shared by the HF and time-based
+  // paths): the max-liquidation-slippage budget minus the slippage actually
+  // realized against the oracle, capped by the global incentive cap and any
+  // per-asset cap — taken off the top of the proceeds. Not the loan's stamped
+  // fallback split, which merely happens to be the same 300 bps here.
+  const sold = beforeDefault['collateral.borrowerVault'] - afterDefault['collateral.borrowerVault'];
   const bonus = afterDefault['lending.liquidator'] - beforeDefault['lending.liquidator'];
-  const bonusBps = BigInt(defaulted.fallbackLenderBonusBpsAtInit);
-  expectEq('A3.6', 'the caller earns the stamped forced-close bonus, taken off the top of the proceeds',
+  const bonusBps = await dynamicIncentiveBps(collateral, lending, sold, proceeds);
+  expectEq('A3.6', 'the caller earns the dynamic keeper incentive, taken off the top of the proceeds',
     bonus, (proceeds * bonusBps) / 10_000n, `${bonusBps}bps of ${f18(proceeds)} of swap proceeds`);
 
   // Each side's claim must move exactly the share the default credited to
@@ -135,8 +141,8 @@ export async function run() {
   const liqProceeds = beforeLiq['lending.venue'] - afterLiq['lending.venue'];
   const liqLanded = ['lenderVault', 'borrowerVault', 'treasury', 'liquidator']
     .reduce((acc, k) => acc + (afterLiq[`lending.${k}`] - beforeLiq[`lending.${k}`]), 0n);
-  check('A3.12', 'HF<1 liquidation is permissionless and settles from the swap proceeds, every unit accounted',
-    String(liquidated.status) !== '0' && liqProceeds > 0n && liqLanded === liqProceeds,
+  check('A3.12', 'HF<1 liquidation is permissionless, ends the loan Defaulted, and settles from the swap proceeds, every unit accounted',
+    String(liquidated.status) === String(STATUS.Defaulted) && liqProceeds > 0n && liqLanded === liqProceeds,
     `caller=outsider gas=${liqReceipt.gasUsed} status=${liquidated.status} proceeds=${f18(liqProceeds)} deltas=${JSON.stringify(delta(beforeLiq, afterLiq))}`);
 
   // leave the fork on the deployment's seeded prices
@@ -166,7 +172,7 @@ export async function run() {
   const crashLanded = ['lenderVault', 'borrowerVault', 'treasury', 'liquidator']
     .reduce((acc, k) => acc + (afterCrash[`lending.${k}`] - beforeCrash[`lending.${k}`]), 0n);
   check('A3.13', 'a 55% collateral drawdown with the pool following its feed keeps the asset routable, and HF<1 liquidation settles from the collateral side',
-    Number(stillRoutable) === 0 && crashHf < 1_000_000_000_000_000_000n && String(crashed.status) !== '0' &&
+    Number(stillRoutable) === 0 && crashHf < 1_000_000_000_000_000_000n && String(crashed.status) === String(STATUS.Defaulted) &&
     crashProceeds > 0n && crashLanded === crashProceeds,
     `tLIQ $2,000 -> $900 (feed + pool spot) checkLiquidity=${stillRoutable} HF=${f18(crashHf)} gas=${crashReceipt.gasUsed} ` +
     `status=${crashed.status} proceeds=${f18(crashProceeds)} deltas=${JSON.stringify(delta(beforeCrash, afterCrash))}`);

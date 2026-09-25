@@ -8,7 +8,7 @@
  * has to say out loud.
  */
 import { DIAMOND, MOCKS, TREASURY, borrower, lender, outsider, parseUnits, tx } from '../lib/chain.mjs';
-import { ABIS, delta, openLoan, read, snapshot, vaultAddressFor } from '../lib/flow.mjs';
+import { ABIS, STATUS, delta, openLoan, read, snapshot, vaultAddressFor } from '../lib/flow.mjs';
 import { parseEventLogs } from 'viem';
 import { f18 } from '../lib/chain.mjs';
 import { warpDays } from '../lib/impersonate.mjs';
@@ -38,7 +38,7 @@ export async function run() {
     const after = await snapshot(tokens, holders);
     const closed = await read(ABIS.loan, 'getLoanDetails', [loanId]);
     const paid = before['lending.borrowerEOA'] - after['lending.borrowerEOA'];
-    check('A4.1', 'precloseDirect closes an open loan on day 1 of a 7-day term', String(closed.status) !== '0',
+    check('A4.1', 'precloseDirect closes an open loan on day 1 of a 7-day term, ending it Repaid', String(closed.status) === String(STATUS.Repaid),
       `loanId=${loanId} gas=${receipt.gasUsed} status=${closed.status} deltas=${JSON.stringify(delta(before, after))}`);
     expectEq('A4.2', 'under a full-term-interest offer an early exit pays the FULL term\'s interest',
       paid, payoff, 'no early-exit interest saving — a payoff quote must say so');

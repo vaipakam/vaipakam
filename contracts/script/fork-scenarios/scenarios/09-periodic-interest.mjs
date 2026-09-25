@@ -20,6 +20,7 @@ import { f18 } from '../lib/chain.mjs';
 import { sendAs, warpDays } from '../lib/impersonate.mjs';
 import { simulate } from '../lib/errors.mjs';
 import { check, observe } from '../lib/report.mjs';
+import { dynamicIncentiveBps } from '../lib/flow.mjs';
 
 const MONTHLY = 1;
 
@@ -124,10 +125,31 @@ async function runPeriodic(initial) {
   }, 'settlePeriodicInterest(auto)');
   const afterAuto = await snapshot(tokens, holders);
   const autoLoan = await read(ABIS.loan, 'getLoanDetails', [loanId]);
-  check('A9.11', 'an unpaid period is closed by selling just enough collateral — and the loan stays Active',
-    String(autoLoan.status) === '0' && autoLoan.collateralAmount < loan.collateralAmount,
-    `gas=${autoReceipt.gasUsed} status=${autoLoan.status} collateral ${f18(loan.collateralAmount)} -> ${f18(autoLoan.collateralAmount)} ` +
-    `deltas=${JSON.stringify(delta(beforeAuto, afterAuto))}`);
+  // Spec (periodic settlement reuses the liquidation policy): sell enough
+  // collateral to cover the shortfall plus configured buffers; the settler
+  // earns the dynamic incentive and the treasury the handling charge, both on
+  // the proceeds; the rest reaches the lender, which must cover the period.
+  const shortfallDue = preview[5];
+  const sold = beforeAuto['collateral.borrowerVault'] - afterAuto['collateral.borrowerVault'];
+  const proceeds = beforeAuto['lending.venue'] - afterAuto['lending.venue'];
+  const toSettler = afterAuto['lending.settlerEOA'] - beforeAuto['lending.settlerEOA'];
+  const toTreasury = afterAuto['lending.treasury'] - beforeAuto['lending.treasury'];
+  const toLender = afterAuto['lending.lenderEOA'] - beforeAuto['lending.lenderEOA'] + (afterAuto['lending.lenderVault'] - beforeAuto['lending.lenderVault']);
+  const [handlingFeeBps] = await read(ABIS.config, 'getLiquidationConfig');
+  const settlerBps = await dynamicIncentiveBps(MOCKS.liquidToken, lending, sold, proceeds);
+  check('A9.11', 'an unpaid period is closed by selling collateral: the loan stays Active, the settler earns the dynamic incentive and the treasury its handling charge on the proceeds, the lender is covered, and every unit is accounted',
+    String(autoLoan.status) === '0' &&
+    loan.collateralAmount - autoLoan.collateralAmount === sold &&
+    toSettler === (proceeds * settlerBps) / 10_000n &&
+    toTreasury === (proceeds * handlingFeeBps) / 10_000n &&
+    toLender >= shortfallDue &&
+    toSettler + toTreasury + toLender === proceeds,
+    `gas=${autoReceipt.gasUsed} sold=${f18(sold)} proceeds=${f18(proceeds)} settler=${f18(toSettler)} (${settlerBps}bps) ` +
+    `treasury=${f18(toTreasury)} (${handlingFeeBps}bps) lender=${f18(toLender)} shortfall=${f18(shortfallDue)}`);
+  // What the spec does NOT pin down is where the sizing buffer ends up once
+  // the period is covered. Surfaced, not certified.
+  observe('A9.11b', 'after an auto-settled period, the lender receives this much above the period\'s shortfall (the sale\'s sizing buffer)',
+    `excess=${f18(toLender - shortfallDue)} of proceeds=${f18(proceeds)} — the spec says "shortfall plus configured buffers" and does not say who keeps the buffer`);
 
   const twice = await simulate(DIAMOND, ABIS.repayPeriodic, 'settlePeriodicInterest', [loanId, [{ adapterIdx: 0n, data: '0x' }]], outsider.address);
   check('A9.12', 'the same period cannot be settled twice', !twice.ok, twice.ok ? 'NOT refused' : twice.name);

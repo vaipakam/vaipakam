@@ -13,12 +13,22 @@
  *    offer in one transaction, split into its own facet (#1780) and worth
  *    exercising for that reason alone.
  */
-import { DIAMOND, MOCKS, TREASURY, borrower, lender, outsider, parseUnits, tx } from '../lib/chain.mjs';
+import { DIAMOND, MOCKS, TREASURY, borrower, lender, outsider, parseUnits, pub, tx } from '../lib/chain.mjs';
 import { ABIS, acceptStoredOffer, approveDiamond, createOffer, delta, mint, openLoan, read, snapshot, vaultAddressFor } from '../lib/flow.mjs';
 import { f18 } from '../lib/chain.mjs';
 import { simulate } from '../lib/errors.mjs';
 import { parseEventLogs } from 'viem';
-import { cannotContinue, check } from '../lib/report.mjs';
+import { cannotContinue, check, expectLedger } from '../lib/report.mjs';
+
+// Spec, "Sell the Loan to Another Lender" → Accrued Interest: the new lender
+// pays EXACTLY the outstanding principal; interest accrued up to the sale is
+// forfeited by the seller and routed to the treasury (on a fresh loan none of
+// it has been paid, so all of it is forfeitable). Accrual is per second.
+const YEAR_BPS = 365n * 86_400n * 10_000n;
+async function forfeitedAtSale(loan, receipt) {
+  const at = BigInt((await pub.getBlock({ blockNumber: receipt.blockNumber })).timestamp);
+  return (loan.principal * BigInt(loan.interestRateBps) * (at - BigInt(loan.startTime))) / YEAR_BPS;
+}
 
 export async function run() {
   const lending = MOCKS.liquidToken2;
@@ -66,8 +76,14 @@ export async function run() {
         const after = await read(ABIS.loan, 'getLoanDetails', [loanId]);
         check('A8.2', 'filling the listing hands the lender side to the buyer — in the same transaction',
           after.lender.toLowerCase() === outsider.address.toLowerCase(),
-          `gas=${bought.gas} lender ${before.lender.slice(0, 10)} -> ${after.lender.slice(0, 10)} ` +
-          `status=${after.status} deltas=${JSON.stringify(delta(pre, post))}`);
+          `gas=${bought.gas} lender ${before.lender.slice(0, 10)} -> ${after.lender.slice(0, 10)} status=${after.status}`);
+        const forfeited = await forfeitedAtSale(before, bought.receipt);
+        expectLedger('A8.2b', 'the listed sale settles exactly: the buyer pays the principal, the seller receives it net of the accrued interest they forfeit, which goes to the treasury',
+          pre, post, {
+            'lending.buyerEOA': -before.principal,
+            'lending.lenderEOA': before.principal - forfeited,
+            'lending.treasury': forfeited,
+          }, `forfeited=${f18(forfeited)}`);
         check('A8.3', 'the borrower\'s side runs on unchanged — same borrower, principal, rate and term',
           after.borrower === before.borrower && after.principal === before.principal &&
           after.interestRateBps === before.interestRateBps && after.durationDays === before.durationDays && String(after.status) === '0',
@@ -115,7 +131,15 @@ export async function run() {
     const after = await read(ABIS.loan, 'getLoanDetails', [loanId]);
     check('A8.7', 'a direct sale hands the lender side over in ONE transaction, with no listing',
       after.lender.toLowerCase() === outsider.address.toLowerCase() && after.borrower === before.borrower && String(after.status) === '0',
-      `gas=${receipt.gasUsed} lender ${before.lender.slice(0, 10)} -> ${after.lender.slice(0, 10)} ` +
-      `status=${after.status} deltas=${JSON.stringify(delta(pre, post))}`);
+      `gas=${receipt.gasUsed} lender ${before.lender.slice(0, 10)} -> ${after.lender.slice(0, 10)} status=${after.status}`);
+    // The buyer's principal was escrowed in their vault when they posted the
+    // standing offer, so the direct sale draws it from there.
+    const forfeited = await forfeitedAtSale(before, receipt);
+    expectLedger('A8.7b', 'the direct sale settles exactly: the principal leaves the buyer\'s escrow, the seller receives it net of the forfeited accrued interest, which goes to the treasury',
+      pre, post, {
+        'lending.buyerVault': -before.principal,
+        'lending.lenderEOA': before.principal - forfeited,
+        'lending.treasury': forfeited,
+      }, `forfeited=${f18(forfeited)}`);
   }
 }

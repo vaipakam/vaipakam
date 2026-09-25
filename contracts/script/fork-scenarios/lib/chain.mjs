@@ -38,7 +38,10 @@ export const abi = (name) => JSON.parse(fs.readFileSync(path.join(ABI_DIR, `${na
 export const deployment = JSON.parse(fs.readFileSync(ARTIFACT, 'utf8'));
 export const DIAMOND = deployment.diamond;
 export const MOCKS = deployment.testnetMocks ?? {};
-export const TREASURY = deployment.treasury;
+// The treasury is MUTABLE (`AdminFacet.setTreasury`), so the artifact's value
+// is only what it was at deploy. Every accounting row reads the fee recipient
+// the fork's Diamond reports NOW; the artifact value is kept for comparison.
+export const ARTIFACT_TREASURY = deployment.treasury;
 export const ADMIN = deployment.admin;
 
 export const forkChain = defineChain({
@@ -49,6 +52,14 @@ export const forkChain = defineChain({
 });
 
 export const pub = createPublicClient({ chain: forkChain, transport: http(RPC_URL) });
+
+export const TREASURY = await pub.readContract({
+  address: DIAMOND,
+  abi: [{ type: 'function', name: 'getTreasury', inputs: [], outputs: [{ type: 'address' }], stateMutability: 'view' }],
+  functionName: 'getTreasury',
+}).catch((e) => {
+  throw new Error(`cannot read the live treasury from ${DIAMOND} on ${RPC_URL} — is the fork node running? (${String(e.shortMessage ?? e.message).split('\n')[0]})`);
+});
 
 // Fresh keys every run, NOT the published test-mnemonic accounts a fork node
 // pre-funds. A fork carries the REAL chain's state for every address it
