@@ -1003,11 +1003,18 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
     ///         path (`_fullSettlementPlan` + `_sizeFullSale`), so the figure
     ///         a caller quotes against is the figure the close-out sells.
     ///         Callers routing through an aggregator whose calldata fixes the
-    ///         sell amount (0x / 1inch) must quote for `collateralToSell`.
-    ///         The figure moves with accrued interest, late fees and oracle
-    ///         updates, so a quote built for it can go stale by the time the
-    ///         transaction lands; the aggregator leg then fails and the
-    ///         try-list fails over, or the caller re-quotes.
+    ///         sell amount (0x / 1inch) should quote for `collateralToSell` or
+    ///         slightly under it. The sized amount is the most any route is
+    ///         authorised to sell: the adapter approves exactly that. The
+    ///         figure moves with accrued interest, late fees and oracle
+    ///         updates, so a quote built for it can drift by the time the
+    ///         transaction lands. A route that sells LESS is accepted only if
+    ///         its proceeds still clear `minPrincipalOut` (the floor for the
+    ///         sized amount, which covers the debt); the collateral it did
+    ///         not sell is refunded and stays pledged. A route that would
+    ///         sell MORE fails on the short approval and the try-list fails
+    ///         over. A quote for the whole bound — the pre-#2317 exact-in
+    ///         shape — therefore fails on every such route.
     ///         Applies the same pre-flight gates that decide the NUMBERS
     ///         (status, loan shape, bound, grace) and reverts with the same
     ///         errors; it does not check caller authority, sanctions or live
@@ -1061,8 +1068,10 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         );
     }
 
-    /// @dev #2317 — the least collateral whose slippage-capped oracle floor
-    ///      covers `required`, bounded by `maxIn`, together with that floor.
+    /// @dev #2317 — the least collateral, up to rounding worth at most a few
+    ///      base units of the principal asset, whose slippage-capped oracle
+    ///      floor covers `required`, bounded by `maxIn`, together with that
+    ///      floor.
     ///
     ///      `floor(x) = expectedSwapOutput(x) × (BPS − cap) / BPS` is linear
     ///      in `x` up to two floored divisions, so the ceiling of
