@@ -66,7 +66,7 @@ library FacetSelectors {
     ///         `getDiamondAddress` and `vaultSetNFTUser1155` (the exact drift
     ///         #778 warns about). The parity test keeps this list == the ABI.
     function vaultFactory() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](33);
+        s = new bytes4[](34);
         s[0] = VaultFactoryFacet.initializeVaultImplementation.selector;
         s[1] = VaultFactoryFacet.getOrCreateUserVault.selector;
         s[2] = VaultFactoryFacet.upgradeVaultImplementation.selector;
@@ -102,7 +102,9 @@ library FacetSelectors {
         // claim-to-vault delivery).
         s[31] = VaultFactoryFacet.vaultCreditFromDiamondERC20.selector;
         // #1566 slice 4 PR B — the holder-sourced reward payout into a vault.
-        s[32] = VaultFactoryFacet.vaultCreditFromRewardCustodyERC20.selector;
+        s[32] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256,uint256)"));
+        // The four-argument credit stays as a compatibility entry (Codex #2276 r14 P2).
+        s[33] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256)"));
     }
 
     /// @notice Full external selector surface of {ProfileFacet} (31).

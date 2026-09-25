@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {LibVpfiRecycle} from "../libraries/LibVpfiRecycle.sol";
+import {LibRewardCustody} from "../libraries/LibRewardCustody.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
@@ -88,15 +89,23 @@ contract InteractionRewardsFacet is
         // truncates only against the monotone 69M cap.
         uint256 paidOut = s.interactionPoolPaidOut;
         uint256 headroom;
-        bool freshRecoverable;
+        uint256 backingCap;
         {
             uint256 reserved = paidOut + s.rewardBudgetRemittedGlobal;
             headroom = LibVaipakam.VPFI_INTERACTION_POOL_CAP > reserved
                 ? LibVaipakam.VPFI_INTERACTION_POOL_CAP - reserved
                 : 0;
             uint256 backingRoom = LibVpfiRecycle.freshBackingRoom(s);
-            freshRecoverable = backingRoom < headroom;
-            if (backingRoom < headroom) headroom = backingRoom;
+            // The two bounds reach the engine separately (the pool cap as
+            // `headroom`, backing in the delivered allowance), so no per-batch
+            // flag says which is binding — see the expiry sweep's note
+            // (Codex #2276 r2 P2).
+            // 3b-ii-A — backing bounds the LIVE-paid fresh only, so it rides
+            // the delivered term below rather than the pool budget: an
+            // epoch-paid forfeit is backed by the epoch's own custody and
+            // must be able to settle while the live row is empty. A backing
+            // shortfall still DEFERS, now as a delivered-caused one.
+            backingCap = backingRoom;
         }
         // #1566 closure 3 — ask the bound, do not re-derive it from the role.
         // This ternary was exactly equivalent to calling `deliveredFreshBound`
@@ -106,6 +115,9 @@ contract InteractionRewardsFacet is
         // which is the fail-OPEN half of the defect. One implementation of the
         // rule, so a role added later cannot be honoured here and missed there.
         uint256 allowance = LibInteractionRewards.deliveredFreshBound(s);
+        if (backingCap < allowance) allowance = backingCap;
+        // 3b-ii-A — the epoch-paid legs the sweep draws, absorbed net below.
+        LibInteractionRewards.TransportLegs memory tp;
 
         (
             uint256 freshCredited,
@@ -117,7 +129,7 @@ contract InteractionRewardsFacet is
                with the fresh share that actually moves, so this facet has no
                use for it */
         ) = LibInteractionRewards.sweepForfeitedByLoanId(
-            loanId, headroom, allowance, freshRecoverable
+            loanId, headroom, allowance, tp
         );
         // r18 P2 — NO unconditional exhaustion revert: a zero-liability
         // forfeit (dust cap, zero-flooring days) must still retire at pool
@@ -142,20 +154,22 @@ contract InteractionRewardsFacet is
         // FRESH share stays in Diamond custody and credits the recycle
         // bucket (genuine absorption); the RECYCLED share never left the
         // bucket, so its commitment releases with ZERO new credit.
-        if (freshCredited > 0) {
-            LibVpfiRecycle.absorbRewardFresh(
-                LibVpfiRecycle.RecycleSource.ForfeitedReward,
-                loanId,
-                freshCredited
-            );
-        }
-        if (recycledReleased > 0) {
-            LibVpfiRecycle.releaseCommitment(
-                LibVpfiRecycle.RecycleSource.ForfeitedReward,
-                loanId,
-                recycledReleased
-            );
-        }
+        // 3b-ii-A — the LIVE-funded fresh absorbs as before; the epoch-funded
+        // legs recycle in place from the epochs' custody (§5c); the recycled
+        // commitment releases. A sweep's set is one forfeited entry, so every
+        // leg it drew is treasury's — the user legs are folded in so a set
+        // that ever carried them would be absorbed rather than dropped. The
+        // three operations are hosted on the epoch facet
+        // ({epochSettleClaimLegs}): this facet sits within 100 bytes of
+        // EIP-170 with them inlined.
+        uint256 epochFresh = tp.treasuryFresh + tp.userFresh;
+        LibRewardCustody.callSettleClaimLegs(
+            freshCredited > epochFresh ? freshCredited - epochFresh : 0,
+            epochFresh + tp.treasuryRecycled + tp.userRecycled,
+            recycledReleased,
+            0,
+            loanId
+        );
     }
 
 

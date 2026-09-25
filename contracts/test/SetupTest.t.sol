@@ -151,6 +151,7 @@ import {RewardCustodyFacet} from "../src/facets/RewardCustodyFacet.sol";
 import {RewardReconciliationFacet} from "../src/facets/RewardReconciliationFacet.sol";
 import {RewardIngressFacet} from "../src/facets/RewardIngressFacet.sol";
 import {RewardEpochFacet} from "../src/facets/RewardEpochFacet.sol";
+import {RewardEpochViewFacet} from "../src/facets/RewardEpochViewFacet.sol";
 import {RewardCompensationDispatchFacet} from "../src/facets/RewardCompensationDispatchFacet.sol";
 import {RewardCommitmentFacet} from "../src/facets/RewardCommitmentFacet.sol";
 import {RepatriationFacet} from "../src/facets/RepatriationFacet.sol";
@@ -344,6 +345,7 @@ contract SetupTest is Test {
     RewardReconciliationFacet rewardReconciliationFacet;
     RewardIngressFacet rewardIngressFacet;
     RewardEpochFacet rewardEpochFacet;
+    RewardEpochViewFacet rewardEpochViewFacet;
     RewardCompensationDispatchFacet rewardCompensationDispatchFacet;
     RewardCommitmentFacet rewardCommitmentFacet;
     RepatriationFacet repatriationFacet;
@@ -468,6 +470,7 @@ contract SetupTest is Test {
         rewardReconciliationFacet = new RewardReconciliationFacet();
         rewardIngressFacet = new RewardIngressFacet();
         rewardEpochFacet = new RewardEpochFacet();
+        rewardEpochViewFacet = new RewardEpochViewFacet();
         rewardCompensationDispatchFacet = new RewardCompensationDispatchFacet();
         rewardCommitmentFacet = new RewardCommitmentFacet();
         repatriationFacet = new RepatriationFacet();
@@ -500,7 +503,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](82);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](83);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -801,6 +804,12 @@ contract SetupTest is Test {
             facetAddress: address(rewardEpochFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getRewardEpochFacetSelectors()
+        });
+        // 3b-ii-A (Codex #2276 r2) — the epochs' engine-inlining reads (slot 82).
+        cuts[82] = IDiamondCut.FacetCut({
+            facetAddress: address(rewardEpochViewFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getRewardEpochViewFacetSelectors()
         });
         // #1306 follow-up — read-only lens facet (view/getter surface split
         // off InteractionRewardsFacet for EIP-170 headroom; shared storage).

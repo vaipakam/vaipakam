@@ -85,6 +85,7 @@ import {RewardCustodyFacet} from "../src/facets/RewardCustodyFacet.sol";
 import {RewardReconciliationFacet} from "../src/facets/RewardReconciliationFacet.sol";
 import {RewardIngressFacet} from "../src/facets/RewardIngressFacet.sol";
 import {RewardEpochFacet} from "../src/facets/RewardEpochFacet.sol";
+import {RewardEpochViewFacet} from "../src/facets/RewardEpochViewFacet.sol";
 import {RewardCompensationDispatchFacet} from "../src/facets/RewardCompensationDispatchFacet.sol";
 import {RewardCommitmentFacet} from "../src/facets/RewardCommitmentFacet.sol";
 import {RepatriationFacet} from "../src/facets/RepatriationFacet.sol";
@@ -99,7 +100,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](219); // #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3
+        selectors = new bytes4[](225); // #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1, then -1 with the pre-list scene (Codex #2296 items 2 and 4); r26 +1 flexible caps
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -505,6 +506,12 @@ contract HelperTest {
         selectors[n++] = TestMutatorFacet.setPacketArrivedAtRaw.selector;
         selectors[n++] = TestMutatorFacet.setPacketDayListRaw.selector;
         selectors[n++] = TestMutatorFacet.parkTransportBatchRaw.selector;
+        selectors[n++] = TestMutatorFacet.classifyPacketPreGateRaw.selector;
+        selectors[n++] = TestMutatorFacet.setPacketClassifiedRaw.selector; // 3b-ii-A: a correction's effect on the classified figures // 3b-ii-A r9: a pre-gate classification
+        selectors[n++] = TestMutatorFacet.moveClassificationRaw.selector; // 3b-ii-A: the production move-and-reconcile
+        selectors[n++] = TestMutatorFacet.setTransportBatchConsumedRaw.selector; // 3b-ii-A: a batch's drawn legs
+        selectors[n++] = TestMutatorFacet.setPacketAttestedCapsRaw.selector; // 3b-ii-A r26: a flexible epoch
+        selectors[n++] = TestMutatorFacet.resetTransportDrawWritesRaw.selector; // 3b-ii-A r14: a new transaction's empty transient count
         selectors[n++] = TestMutatorFacet.acknowledgeTransportBatchRaw.selector;
         selectors[n++] = TestMutatorFacet.releaseTransportBatchRaw.selector;
         // #951 v2 (Codex #959 bind-to-live) — setSaleListingCollateralRaw removed
@@ -888,7 +895,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](31);
+        selectors = new bytes4[](32);
         selectors[0] = VaultFactoryFacet
             .initializeVaultImplementation
             .selector;
@@ -928,7 +935,9 @@ contract HelperTest {
         // RL-1 — Diamond-funded vault credit primitive (reward
         // claim-to-vault delivery).
         selectors[29] = VaultFactoryFacet.vaultCreditFromDiamondERC20.selector;
-        selectors[30] = VaultFactoryFacet.vaultCreditFromRewardCustodyERC20.selector;
+        selectors[30] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256,uint256)"));
+        // The four-argument credit stays as a compatibility entry (Codex #2276 r14 P2).
+        selectors[31] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256)"));
         return selectors;
     }
 
@@ -2368,7 +2377,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](41);
+        selectors = new bytes4[](42);
         selectors[0] = RewardCustodyFacet.bindRewardCustodyHolder.selector;
         selectors[1] = RewardCustodyFacet.replaceRewardCustodyHolder.selector;
         selectors[2] = RewardCustodyFacet.rebaseArmedFreshPaid.selector;
@@ -2417,6 +2426,7 @@ contract HelperTest {
         selectors[38] = RewardCustodyFacet.custodyUnclassifiedIngress.selector;
         selectors[39] = RewardCustodyFacet.custodyUnclassifiedReturn.selector;
         selectors[40] = RewardCustodyFacet.custodyReleaseUnclassifiedForReturn.selector;
+        selectors[41] = RewardCustodyFacet.custodyDeliverClaim.selector; // 3b-ii-A
     }
 
     /// #1566 closure 2 cutover PR 2 — the legacy reconciliation epoch
@@ -2426,13 +2436,14 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](18);
+        selectors = new bytes4[](19);
         selectors[0] = RewardReconciliationFacet.classifyLegacyPacket.selector;
         selectors[1] = RewardReconciliationFacet.reclassifyReconciliationEntry.selector;
         selectors[2] = RewardReconciliationFacet.importLegacyEnvelope.selector;
         selectors[3] = RewardReconciliationFacet.previewLegacyEnvelope.selector;
         selectors[4] = RewardReconciliationFacet.getLegacyEnvelope.selector;
         selectors[5] = RewardReconciliationFacet.getPacketReconciliation.selector;
+        selectors[18] = RewardReconciliationFacet.getPacketClassificationExcess.selector; // 3b-ii-A r15
         selectors[6] = RewardReconciliationFacet.getReconciliationEntry.selector;
         selectors[7] = RewardReconciliationFacet.getReconciliationEntrySpent.selector;
         selectors[8] = RewardReconciliationFacet.getFreshQueueState.selector;
@@ -2471,7 +2482,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](8);
+        selectors = new bytes4[](17);
         selectors[0] = RewardEpochFacet.materializeTransportBatchPage.selector;
         selectors[1] = RewardEpochFacet.parkTransportBatchRemainder.selector;
         selectors[2] = RewardEpochFacet.acknowledgeTransportBatchRemainder.selector;
@@ -2480,6 +2491,29 @@ contract HelperTest {
         selectors[5] = RewardEpochFacet.getTransportRemainder.selector;
         selectors[6] = RewardEpochFacet.getTransportDayBatches.selector;
         selectors[7] = RewardEpochFacet.admitLegacyTransportBatch.selector;
+        // 3b-ii-A — the draws (mirrors `DeployDiamond._getRewardEpochSelectors`).
+        selectors[8] = RewardEpochFacet.getTransportCoverageForDay.selector;
+        selectors[9] = RewardEpochFacet.epochDrawForDay.selector;
+        selectors[10] = RewardEpochFacet.epochPruneTransportDayCursor.selector;
+        selectors[11] = RewardEpochFacet.getTransportAllocationForDay.selector;
+        selectors[12] = RewardEpochFacet.epochSettleClaimLegs.selector;
+        selectors[13] = RewardEpochFacet.materializeTransportBatchPageHinted.selector;
+        selectors[14] = RewardEpochFacet.getTransportDayBatchesFrom.selector;
+        selectors[15] = RewardEpochFacet.getTransportDayIndex.selector;
+        selectors[16] = RewardEpochFacet.getTransportDayScanIds.selector;
+    }
+
+    /// 3b-ii-A (Codex #2276 r2) — the epochs' engine-inlining reads. Mirrors
+    /// `DeployDiamond._getRewardEpochViewSelectors`.
+    function getRewardEpochViewFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](3);
+        selectors[0] = RewardEpochViewFacet.getDryRunShareOfPoolDays.selector;
+        selectors[1] = RewardEpochViewFacet.getObligationDomainNeeds.selector;
+        selectors[2] = RewardEpochViewFacet.getObligationDomainListsAnEpoch.selector;
     }
 
     /// #1434 P2-w4 — the remittance read surface (lens split). Mirrors
@@ -2666,7 +2700,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](33);
+        selectors = new bytes4[](34);
         selectors[0] = VaultFactoryFacet.initializeVaultImplementation.selector;
         selectors[1] = VaultFactoryFacet.getOrCreateUserVault.selector;
         selectors[2] = VaultFactoryFacet.upgradeVaultImplementation.selector;
@@ -2703,7 +2737,9 @@ contract HelperTest {
         // RL-1 — Diamond-funded vault credit primitive (reward
         // claim-to-vault delivery).
         selectors[31] = VaultFactoryFacet.vaultCreditFromDiamondERC20.selector;
-        selectors[32] = VaultFactoryFacet.vaultCreditFromRewardCustodyERC20.selector;
+        selectors[32] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256,uint256)"));
+        // The four-argument credit stays as a compatibility entry (Codex #2276 r14 P2).
+        selectors[33] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256)"));
         return selectors;
     }
 

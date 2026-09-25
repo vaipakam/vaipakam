@@ -268,6 +268,13 @@ contract RedeployFacets is Script {
             _partitionByRouting(diamond, FacetSelectors.vaipakamNFT());
         (bytes4[] memory vfToAdd, bytes4[] memory vfToReplace) =
             _partitionByRouting(diamond, FacetSelectors.vaultFactory());
+        // #1566 transport epochs 3b-ii-A (Codex #2276 r13 P2, r14 P2) — the
+        // four-argument vault credit is NOT removed: it stays on the refreshed
+        // VaultFactoryFacet as a compatibility entry inside
+        // `FacetSelectors.vaultFactory()`, so this Replace re-routes it and a
+        // RewardClaimFacet from before the epoch leg keeps delivering to the
+        // vault. Removing it without cutting every caller atomically left
+        // such a caller's self-call failing into wallet delivery.
         // #1649 — the sale classifier's host. On a pre-#1503 diamond the seven
         // older preview selectors are routed (Replace) and `saleAdmission` is
         // not (Add); on a current one all eight are routed. The partition makes

@@ -1357,6 +1357,47 @@ contract RewardCustodyFacet is DiamondAccessControl {
         LibRewardCustody.releaseMeasured(token, holder, to, fresh + recycled);
     }
 
+    /// @notice Diamond-internal: deliver a claim from custody — the live-fresh
+    ///         and recycled legs from their rows and, since 3b-ii-A, the
+    ///         epoch-paid leg from `Unclassified` — to the claimant's vault
+    ///         when asked and creditable, else to their wallet. Exactly one
+    ///         destination is paid: a vault credit that fails rolls its own
+    ///         frame back before the wallet release runs.
+    /// @dev    Hosted here rather than inlined into `RewardClaimFacet`, which
+    ///         went over EIP-170 with the third leg inlined (3b-ii-A); this
+    ///         facet owns the row primitives it composes. `custodyPayoutToWallet`
+    ///         stays as the two-leg primitive.
+    /// @return vaulted True when the vault took the delivery.
+    function custodyDeliverClaim(
+        address user,
+        uint256 fresh,
+        uint256 recycled,
+        uint256 epoch,
+        bool toVault
+    ) external returns (bool vaulted) {
+        _requireDiamondInternal();
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        (address holder, address token) = LibRewardCustody.boundHolderAndToken(s);
+        if (toVault) {
+            // slither-disable-next-line low-level-calls
+            (bool ok, ) = address(this).call(
+                abi.encodeWithSignature(
+                    "vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256,uint256)",
+                    user,
+                    token,
+                    fresh,
+                    recycled,
+                    epoch
+                )
+            );
+            if (ok) return true;
+        }
+        LibRewardCustody.debit(s, LibVaipakam.RewardCustodyRow.LiveFresh, fresh, user);
+        LibRewardCustody.debit(s, LibVaipakam.RewardCustodyRow.Recycled, recycled, user);
+        LibRewardCustody.debit(s, LibVaipakam.RewardCustodyRow.Unclassified, epoch, user);
+        LibRewardCustody.releaseMeasured(token, holder, user, fresh + recycled + epoch);
+    }
+
     /// @notice Diamond-internal: {LibRewardCustody.drawForTransport}.
     function custodyDrawForTransport(uint8 source, uint256 fresh, uint256 recycled) external {
         _requireDiamondInternal();

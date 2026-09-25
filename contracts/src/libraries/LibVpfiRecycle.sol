@@ -121,7 +121,11 @@ library LibVpfiRecycle {
         // envelope, classified by the reconciliation epoch. Relocated custody
         // like {RemittedCustodyRelocation} — Base-funded tokens whose typing
         // arrived late — never absorption; the same exclusions apply.
-        LegacyReconciliation
+        LegacyReconciliation,
+        /// @dev #1566 transport epochs PR 3b-ii-A — release-only class: the
+        ///      recycled leg of a USER claim an epoch paid, whose commitment
+        ///      retires without a bucket debit (the bucket never paid it).
+        TransportPaidClaim
     }
 
     /// @notice Emitted once per recycle-bucket credit — the on-chain feed
@@ -256,9 +260,30 @@ library LibVpfiRecycle {
     ///         LIVE-FRESH row (a reward absorption) and so re-attributed in
     ///         place. Deciding it per operation is what keeps a credit from
     ///         ever describing custody that is somewhere else.
+    /**
+     * @notice #1566 transport epochs PR 3b-ii-A — absorb a TRANSPORT-FUNDED
+     *         forfeit or expiry: the epoch-paid legs of an obligation that
+     *         ended in treasury's favour. There is no claimant to transfer
+     *         to, so the value recycles in place — an in-holder move from the
+     *         `Unclassified` row, where an epoch's value rests, into
+     *         `Recycled`, with the bucket credited — and it reaches NO
+     *         delivered-ledger charge, because that ledger never received it
+     *         (design §5c: the absorption analogue of the fresh→recycled
+     *         rule). Both legs absorb alike: an epoch-paid RECYCLED leg was
+     *         never in the bucket, unlike a live-funded forfeit's recycled
+     *         share, which only releases its commitment.
+     * @param  amount Both epoch-paid legs together.
+     */
+    function absorbTransportFunded(RecycleSource source, uint256 refId, uint256 amount) internal {
+        if (amount == 0) return;
+        _credit(source, refId, amount, CreditOrigin.Unclassified);
+    }
+
     enum CreditOrigin {
         Diamond,
-        LiveFresh
+        LiveFresh,
+        /// @dev 3b-ii-A — an epoch's value, moved in-holder from `Unclassified`.
+        Unclassified
     }
 
     /// @dev The delta check every non-reward inflow operation performs: the
@@ -307,12 +332,21 @@ library LibVpfiRecycle {
         // cannot cover it), never by a bare balance read. Otherwise today's
         // Diamond-balance assertion.
         if (LibRewardCustody.active(s)) {
-            if (origin == CreditOrigin.LiveFresh) {
-                LibRewardCustody.callMove(
-                    LibVaipakam.RewardCustodyRow.LiveFresh, LibVaipakam.RewardCustodyRow.Recycled, amount
-                );
-            } else {
+            if (origin == CreditOrigin.Diamond) {
                 LibRewardCustody.callRelocateToHolder(LibVaipakam.RewardCustodyRow.Recycled, amount);
+            } else {
+                // An in-holder move into the recycled row from the row the
+                // value rests in: live-fresh for an ordinary absorption,
+                // `Unclassified` for an epoch-paid one (3b-ii-A) — the same
+                // generic primitive, so the second origin costs no facet a
+                // second encode (this function is inlined into fourteen).
+                LibRewardCustody.callMove(
+                    origin == CreditOrigin.LiveFresh
+                        ? LibVaipakam.RewardCustodyRow.LiveFresh
+                        : LibVaipakam.RewardCustodyRow.Unclassified,
+                    LibVaipakam.RewardCustodyRow.Recycled,
+                    amount
+                );
             }
         } else {
             uint256 bal = IERC20(s.vpfiToken).balanceOf(address(this));

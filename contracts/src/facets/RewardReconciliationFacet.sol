@@ -445,6 +445,63 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
         return _envelope(LibVaipakam.storageSlot());
     }
 
+    /// @notice By how much `packetHash`'s classification PLUS what its epoch
+    ///         drew of each component exceeds that component's attested cap: a
+    ///         divergence recorded for the correction path — a classification
+    ///         that predates the attestation (Codex #2276 r15 P1), or a
+    ///         recycled correction made after draws, which moves no drawn leg
+    ///         (Codex #2276 r26 P1).
+    /// @dev    Three states, and the return keeps them apart so a zero is never
+    ///         ambiguous:
+    ///
+    ///         - A hash no packet was recorded under REVERTS
+    ///           {ReconciliationPacketUnknown} (Codex #2276 r16 P2) — it names
+    ///           nothing, so there is nothing to answer.
+    ///         - A recorded packet whose split has NOT been attested returns
+    ///           `attested == false` and zeros (Codex #2276): with no component
+    ///           caps there is no excess to compute YET, and reporting a bare
+    ///           zero read as "within caps" to reconciliation tooling, which
+    ///           would then learn of an excess only when the delayed
+    ///           attestation landed. It is a real packet whose answer is not yet
+    ///           knowable — a different absence from an unknown hash, so it is
+    ///           flagged rather than refused, which also lets a reconciler
+    ///           SCAN packets without reverting on each unattested one.
+    ///         - An attested packet returns `attested == true` with its two
+    ///           CURRENT excesses, derived from its classifications as they
+    ///           stand now — so a correction that brings a component back
+    ///           within its cap reads as zero at once; zero there genuinely
+    ///           means within its caps.
+    /// @return attested Whether the packet's split has been attested.
+    /// @return fresh    Fresh classification plus the fresh leg, beyond the fresh cap.
+    /// @return recycled Recycled classification plus the recycled leg, beyond the recycled cap.
+    function getPacketClassificationExcess(bytes32 packetHash)
+        external
+        view
+        returns (bool attested, uint256 fresh, uint256 recycled)
+    {
+        LibVaipakam.IngressPacket storage p = LibVaipakam.storageSlot().ingressPackets[packetHash];
+        if (p.arrivedAt == 0) revert ReconciliationPacketUnknown(packetHash);
+        if (!p.attested) return (false, 0, 0);
+        // DERIVED from the packet's CURRENT classifications and its attested
+        // caps, never read from a figure frozen at attestation (Codex #2276):
+        // the correction path moves `classifiedFresh` / `classifiedRecycled`,
+        // and a stored copy of the excess kept reporting a corrected packet
+        // as still over its caps. This is the same arithmetic the attestation
+        // uses to decide whether to emit {IngressPacketClassifiedBeyondCaps},
+        // and the live caps that block further classification ({_netCaps}) are
+        // derived the same way, so the view and the gate cannot disagree.
+        uint256 usedF = p.classifiedFresh;
+        uint256 usedR = p.classifiedRecycled;
+        if (p.batchId != bytes32(0)) {
+            LibVaipakam.TransportBatch storage b = LibVaipakam.storageSlot().transportBatches[p.batchId];
+            usedF += b.consumedFresh;
+            usedR += b.consumedRecycled;
+        }
+        fresh = usedF > p.freshAttested ? usedF - p.freshAttested : 0;
+        recycled = usedR > p.recycledAttested ? usedR - p.recycledAttested : 0;
+        return (true, fresh, recycled);
+    }
+
     /// @notice An imported envelope's record; `importedAt == 0` for an
     ///         unknown snapshot id.
     function getLegacyEnvelope(bytes32 snapshotId) external view returns (LibVaipakam.LegacyEnvelope memory) {
@@ -455,9 +512,10 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
     ///         (`arrivedAt == 0` is an UNRECORDED hash — never a recorded
     ///         packet with nothing to reconcile; Codex #2206 r4), what it
     ///         put into the row, what it still holds there, its exits by
-    ///         kind, and its authenticated fresh figure (the bound on its
-    ///         fresh side). Identity: `unclassified + classifiedFresh +
-    ///         classifiedRecycled + disposed == protectedCumulative`.
+    ///         kind, its authenticated fresh figure (the bound on its
+    ///         fresh side), and what the day draws have spent of it (3b-ii-A,
+    ///         appended). Identity: `unclassified + classifiedFresh +
+    ///         classifiedRecycled + disposed + drawn == protectedCumulative`.
     function getPacketReconciliation(
         bytes32 packetHash
     )
@@ -470,7 +528,8 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
             uint256 classifiedFresh,
             uint256 classifiedRecycled,
             uint256 disposed,
-            uint256 freshAuthenticated
+            uint256 freshAuthenticated,
+            uint256 drawn
         )
     {
         LibVaipakam.IngressPacket storage p = LibVaipakam.storageSlot().ingressPackets[packetHash];
@@ -481,7 +540,8 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
             p.classifiedFresh,
             p.classifiedRecycled,
             p.disposed,
-            LibRewardCustody.authenticatedFresh(p)
+            LibRewardCustody.authenticatedFresh(p),
+            p.drawn
         );
     }
 
@@ -851,14 +911,9 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
         bool freshToRecycled
     ) private {
         if (e.envelope) return;
-        LibVaipakam.IngressPacket storage p = s.ingressPackets[e.key];
-        if (freshToRecycled) {
-            p.classifiedFresh -= amount;
-            p.classifiedRecycled += amount;
-        } else {
-            p.classifiedRecycled -= amount;
-            p.classifiedFresh += amount;
-        }
+        // Through the one library write, which never retypes a drawn leg
+        // (Codex #2276 r26) — see {LibRewardCustody.moveClassification}.
+        LibRewardCustody.moveClassification(s, e.key, amount, freshToRecycled);
     }
 
     /// @dev An entry's figures, per side, from its own records.

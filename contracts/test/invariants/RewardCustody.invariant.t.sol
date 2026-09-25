@@ -158,14 +158,16 @@ contract RewardCustodyInvariant is SetupTest {
     /// #1566 closure 2 cutover PR 2 — every packet's identity holds under
     /// every interleaving of protection, classification, reclassification
     /// and the other flows: `unclassified + classifiedFresh +
-    /// classifiedRecycled + disposed == protectedCumulative`.
+    /// classifiedRecycled + disposed + drawn == protectedCumulative` (the
+    /// `drawn` exit is 3b-ii-A's; this handler never draws, so the term is
+    /// zero here and the draw suite's identity cell is where it is exercised).
     function invariant_PacketIdentityHolds() public view {
         RewardReconciliationFacet recon = RewardReconciliationFacet(address(diamond));
         uint256 n = handler.packets();
         for (uint256 i = 0; i < n; ++i) {
-            (, uint256 protectedIn, uint256 unclassified, uint256 cf, uint256 cr, uint256 disposed, ) =
+            (, uint256 protectedIn, uint256 unclassified, uint256 cf, uint256 cr, uint256 disposed, , uint256 drawn) =
                 recon.getPacketReconciliation(handler.packetAt(i));
-            assertEq(unclassified + cf + cr + disposed, protectedIn, "packet identity");
+            assertEq(unclassified + cf + cr + disposed + drawn, protectedIn, "packet identity");
         }
     }
 
@@ -260,6 +262,43 @@ contract RewardCustodyInvariant is SetupTest {
             );
             assertEq(legFresh + legRecycled, 0, "no draw exists until PR 3b-ii");
         }
+    }
+
+    /// #1566 transport epochs 3b-ii-A — the day's ordered list holds every
+    /// member the handler indexed, in (arrival, batch id) order: the node
+    /// pages walk exactly as many as the day has ever listed, each ordered
+    /// after the last — except that the order may restart right after the
+    /// cursor, where a late epoch older than the passed prefix takes the first
+    /// place of the window (Codex #2276 r11). The handler's untyped deliveries
+    /// all list day 1.
+    ///
+    /// There is no longer a "how much is linked" figure to compare (Codex
+    /// #2296 items 2 and 4): every member is linked as it is pushed, so the
+    /// count the walk reaches IS the membership, and this walk is what proves
+    /// it rather than a flag the ledger sets about itself.
+    function invariant_DayIndexIsLinkedAndOrdered() public view {
+        RewardEpochFacet ep = RewardEpochFacet(address(diamond));
+        (uint256 total, bytes32 cursorNode) = ep.getTransportDayIndex(1);
+        bytes32 from;
+        uint256 seen;
+        uint64 lastAt;
+        bytes32 last;
+        while (true) {
+            (bytes32[] memory page, uint64[] memory at, bytes32 next) = ep.getTransportDayBatchesFrom(1, from, 16);
+            for (uint256 i = 0; i < page.length; ++i) {
+                if (last != bytes32(0) && last == cursorNode) {
+                    lastAt = 0;
+                    last = bytes32(0);
+                }
+                assertTrue(at[i] > lastAt || (at[i] == lastAt && page[i] > last), "in (arrival, batch id) order");
+                lastAt = at[i];
+                last = page[i];
+                ++seen;
+            }
+            if (page.length == 0 || next == bytes32(0)) break;
+            from = next;
+        }
+        assertEq(seen, total, "and no more");
     }
 
     /// #1566 closure 2 cutover PR 2 (Codex #2206 r4) — the recorded spent
@@ -432,7 +471,7 @@ contract RewardCustodyInvariant is SetupTest {
         RewardReconciliationFacet recon = RewardReconciliationFacet(address(diamond));
         handler.untypedIngress(7);
         bytes32 h = handler.packetAt(0);
-        (, , uint256 remainder, , , , ) = recon.getPacketReconciliation(h);
+        (, , uint256 remainder, , , , , ) = recon.getPacketReconciliation(h);
         // The whole remainder evidenced, so whichever way the handler splits
         // its entry, one direction of a later correction is always open.
         TestMutatorFacet(address(diamond)).setPacketFreshAuthenticatedRaw(h, remainder);
@@ -638,7 +677,7 @@ contract RewardCustodyHandler is Test {
         if (packetHashes.length == 0) return;
         bytes32 h = packetHashes[seed % packetHashes.length];
         RewardReconciliationFacet recon = RewardReconciliationFacet(diamond);
-        (, , uint256 remainder, uint256 cf, uint256 cr, , uint256 authenticated) = recon.getPacketReconciliation(h);
+        (, , uint256 remainder, uint256 cf, uint256 cr, , uint256 authenticated, ) = recon.getPacketReconciliation(h);
         if (remainder == 0) return;
         if (authenticated == 0) {
             authenticated = bound(uint256(keccak256(abi.encode(seed, "evidence"))), 0, remainder + cf + cr);

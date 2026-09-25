@@ -568,15 +568,48 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
         address user,
         address token,
         uint256 fresh,
+        uint256 recycled,
+        uint256 epoch
+    ) external onlyDiamondInternal {
+        _vaultCreditFromRewardCustody(user, token, fresh, recycled, epoch);
+    }
+
+    /// @notice The four-argument vault credit the custody cutover shipped,
+    ///         kept as a COMPATIBILITY entry (Codex #2276 r3 P1, r14 P2): on
+    ///         a Diamond refreshed one facet at a time, a settle facet from
+    ///         before the epoch leg still reaches the credit through this
+    ///         signature, and it must land in the refreshed implementation —
+    ///         with no epoch leg, since such a caller has none — rather than
+    ///         in the previous one, or fall to wallet delivery once the route
+    ///         is gone. Part of the facet's surface, so every refresh routes
+    ///         it here; retiring it would need every caller cut atomically.
+    // forge-lint: disable-next-line(mixed-case-function)
+    function vaultCreditFromRewardCustodyERC20(
+        address user,
+        address token,
+        uint256 fresh,
         uint256 recycled
     ) external onlyDiamondInternal {
+        _vaultCreditFromRewardCustody(user, token, fresh, recycled, 0);
+    }
+
+    function _vaultCreditFromRewardCustody(
+        address user,
+        address token,
+        uint256 fresh,
+        uint256 recycled,
+        uint256 epoch
+    ) private {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         address proxy = _creditableVault(s, user);
         (address holder, address vpfi) = LibRewardCustody.boundHolderAndToken(s);
         if (token != vpfi) revert IVaipakamErrors.RewardCustodyPayoutTokenMismatch(vpfi, token);
         LibRewardCustody.debit(s, LibVaipakam.RewardCustodyRow.LiveFresh, fresh, proxy);
         LibRewardCustody.debit(s, LibVaipakam.RewardCustodyRow.Recycled, recycled, proxy);
-        uint256 amount = fresh + recycled;
+        // #1566 transport epochs PR 3b-ii-A — the claim's epoch-paid legs,
+        // released from the `Unclassified` row where an epoch's value rests.
+        LibRewardCustody.debit(s, LibVaipakam.RewardCustodyRow.Unclassified, epoch, proxy);
+        uint256 amount = fresh + recycled + epoch;
         LibRewardCustody.releaseMeasured(vpfi, holder, proxy, amount);
         _recordVaultCredit(s, user, token, proxy, amount);
     }

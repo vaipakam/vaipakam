@@ -460,6 +460,21 @@ contract RefreshScriptFacetParityTest is Test, DiamondFacetNames {
             if (retired[i] == bytes4(keccak256("seedArmedFreshPaid(uint256)"))) namesLegacySeed = true;
         }
         assertTrue(namesLegacySeed, "the legacy seedArmedFreshPaid(uint256) selector is not retired");
+        // 3b-ii-A (Codex #2276 r3 P1, r14 P2) — the four-argument vault credit
+        // is NOT retired: it is a compatibility entry on the refreshed
+        // VaultFactoryFacet, routed by the deploy to the SAME facet as its
+        // five-argument successor, so a settle facet from before the epoch
+        // leg keeps delivering to the vault after a facet-by-facet refresh —
+        // and the retired list must not name it, or the refresh would remove
+        // a live route.
+        bytes4 fourArg = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256)"));
+        bytes4 fiveArg = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256,uint256)"));
+        for (uint256 i; i < retired.length; ++i) {
+            assertTrue(retired[i] != fourArg, "the four-argument vault credit is a live compatibility entry, not a retired selector");
+        }
+        address vaultFacet = IDiamondLoupe(diamond).facetAddress(fiveArg);
+        assertTrue(vaultFacet != address(0), "the five-argument vault credit is not routed");
+        assertEq(IDiamondLoupe(diamond).facetAddress(fourArg), vaultFacet, "the four-argument vault credit is not routed to the same facet");
         assertTrue(
             IDiamondLoupe(diamond).facetAddress(bytes4(keccak256("seedArmedFreshPaid(uint256,uint64)"))) != address(0),
             "the epoch-bound seed is not routed"

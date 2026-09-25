@@ -1233,7 +1233,10 @@ contract TestMutatorFacet {
                 // those cases into defers. Delivered-bound behaviour is
                 // covered through the real walk instead, where the bound is
                 // read from storage.
-                deliveredFresh: type(uint256).max
+                deliveredFresh: type(uint256).max,
+                // 3b-ii-A — the direct primitive harness prices one day: the day is the domain.
+                domainFresh: type(uint256).max,
+                domainRecycled: type(uint256).max
             }),
             LibInteractionRewards._noDryRun()
         );
@@ -2429,6 +2432,73 @@ contract TestMutatorFacet {
     ///         lifecycle the production facet refuses until 3b-ii. The library
     ///         functions are the 3b-ii implementation and stay tested through
     ///         these; nothing in production can reach them.
+    /// @notice 3b-ii-A test-only (Codex #2276 r9 P1) — classify a packet the
+    ///         way a classification ran BEFORE the batch gate existed: the
+    ///         same take, no gate. Stands a packet in the state an in-place
+    ///         refresh can find it in: classified value recorded, no epoch yet.
+    /// @notice 3b-ii-A test-only (Codex #2276) — SET a packet's two classified
+    ///         figures, standing in for the correction path moving attribution
+    ///         between components. The real path needs a reconciliation-log
+    ///         entry and settled queues this suite does not build, and its own
+    ///         suites cover it; what this lets a test check is that a view which
+    ///         claims to follow the CURRENT classifications does.
+    function setPacketClassifiedRaw(bytes32 packetHash, uint256 fresh, uint256 recycled) external {
+        LibVaipakam.IngressPacket storage p = LibVaipakam.storageSlot().ingressPackets[packetHash];
+        p.classifiedFresh = fresh;
+        p.classifiedRecycled = recycled;
+    }
+
+    /// @notice 3b-ii-A test-only (Codex #2276) — a classification correction
+    ///         through the SAME library write the correction path uses
+    ///         ({LibRewardCustody.moveClassification}), so a test exercises the
+    ///         production move-and-reconcile rather than a copy of it. The real
+    ///         entry needs a reconciliation-log entry and settled queues this
+    ///         suite does not build.
+    function moveClassificationRaw(bytes32 packetHash, uint256 amount, bool freshToRecycled) external {
+        LibRewardCustody.moveClassification(LibVaipakam.storageSlot(), packetHash, amount, freshToRecycled);
+    }
+
+    /// @notice 3b-ii-A test-only (Codex #2276) — set what a batch's draws
+    ///         have consumed per leg, standing in for draws a test does not
+    ///         want to route through a claim.
+    function setTransportBatchConsumedRaw(bytes32 batchId, uint256 fresh, uint256 recycled) external {
+        LibVaipakam.TransportBatch storage b = LibVaipakam.storageSlot().transportBatches[batchId];
+        b.consumedFresh = fresh;
+        b.consumedRecycled = recycled;
+    }
+
+    /// @notice 3b-ii-A test-only (Codex #2276 r26) — attest a packet's caps
+    ///         DIRECTLY, without the floor that makes an attestation's two caps
+    ///         partition what landed. With caps each equal to the balance, both
+    ///         leg rooms are the whole balance: the FLEXIBLE epoch the
+    ///         allocation's residual-leg rule and the split's reservation are
+    ///         defined for. Ingress cannot produce it in 3b-ii-A (an attested
+    ///         epoch's rooms sum to its balance), so the rule cells build it
+    ///         here rather than lose coverage of a rule a later balance move
+    ///         can reach.
+    function setPacketAttestedCapsRaw(bytes32 packetHash, uint256 fresh, uint256 recycled) external {
+        LibVaipakam.IngressPacket storage p = LibVaipakam.storageSlot().ingressPackets[packetHash];
+        p.freshAttested = fresh;
+        p.recycledAttested = recycled;
+        p.attested = true;
+    }
+
+    function classifyPacketPreGateRaw(bytes32 packetHash, uint256 freshShare, uint256 recycledShare) external {
+        LibRewardCustody.takeFromUnclassified(LibVaipakam.storageSlot(), packetHash, freshShare, recycledShare);
+    }
+
+    /// @notice 3b-ii-A test-only (Codex #2276 r14 P1) — clear the epoch
+    ///         facet's TRANSIENT count of epochs drawn this transaction. On
+    ///         chain every claim is its own transaction and starts at zero; a
+    ///         Foundry test is one transaction, so a second claim in the same
+    ///         test would otherwise read the first claim's count.
+    function resetTransportDrawWritesRaw() external {
+        bytes32 slot = LibRewardCustody.TRANSPORT_WRITES_TSLOT;
+        assembly ("memory-safe") {
+            tstore(slot, 0)
+        }
+    }
+
     function parkTransportBatchRaw(bytes32 batchId) external returns (uint256) {
         return LibRewardCustody.parkTransportRemainder(LibVaipakam.storageSlot(), batchId);
     }

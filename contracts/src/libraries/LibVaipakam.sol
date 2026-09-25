@@ -7553,6 +7553,37 @@ library LibVaipakam {
         mapping(uint256 => bytes32[]) transportBatchesByDay;
         mapping(uint256 => uint256) transportDayCursor;
         mapping(bytes32 => TransportRemainder) transportRemainders;
+        /// @dev #1566 transport epochs PR 3b-ii-A (Codex #2276 r7), appended —
+        ///      each day's epochs as an ORDERED LIST by (arrival, batch id),
+        ///      kept beside the membership array `transportBatchesByDay`:
+        ///      `transportDayHead` / `transportDayTail` are its ends,
+        ///      `transportDayNext` / `transportDayPrev` its links (a passed
+        ///      node's `prev` is `LibRewardCustody.TRANSPORT_PASSED`: never
+        ///      followed, it marks the node as behind the window), and
+        ///      `transportDayCursorNode` the day's consumption cursor as a
+        ///      NODE (zero = the head). A list inserts in constant work given
+        ///      the predecessor, which is what bounds a late epoch's indexing;
+        ///      an arrival-sorted ARRAY had to shift every newer entry, which
+        ///      no budget could bound for the day itself.
+        ///
+        ///      The LIST is a day's ONLY order and its only read source (Codex
+        ///      #2296 items 2 and 4): every member is linked as it is pushed,
+        ///      so the list holds every day whole from its first member, and
+        ///      `transportBatchesByDay` is the membership set alone. An earlier
+        ///      revision of this slice carried a second, ARRAY-ordered read
+        ///      path for days indexed before the list, with a catch-up link
+        ///      and a conversion; no chain ever held such a day, and the two
+        ///      sources were the root of four review rounds, so the path was
+        ///      removed rather than carried. `transportDayCursor` above is the
+        ///      day's cursor as a POSITION in the list's order — the count of
+        ///      leading exhausted epochs, exact because the cursor only
+        ///      advances (Codex #2276 r11) — and `transportDayCursorNode` the
+        ///      same cursor as the node it stands on.
+        mapping(uint256 => bytes32) transportDayHead;
+        mapping(uint256 => bytes32) transportDayTail;
+        mapping(uint256 => mapping(bytes32 => bytes32)) transportDayNext;
+        mapping(uint256 => mapping(bytes32 => bytes32)) transportDayPrev;
+        mapping(uint256 => bytes32) transportDayCursorNode;
     }
 
     /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss: the
@@ -7661,7 +7692,8 @@ library LibVaipakam {
         ///      component (the total is derived, never kept alone — design
         ///      §5c); `disposed` its NON-classification exits (the R4 return).
         ///      Identity: `unclassified + classifiedFresh + classifiedRecycled
-        ///      + disposed == protectedCumulative`. `freshAuthenticated` is
+        ///      + disposed + drawn == protectedCumulative` (`drawn` is the
+        ///      3b-ii-A field appended below). `freshAuthenticated` is
         ///      the EVIDENCE bounding the packet's fresh side (design §5c: a
         ///      fresh share requires authenticated source evidence; absent
         ///      it, value classifies recycled or stays): what the source
@@ -7755,6 +7787,16 @@ library LibVaipakam {
         ///      `authenticatedFresh`, and `RewardReconciliationFacet` has
         ///      under 2 KB of EIP-170 headroom left.
         bytes32 batchId;
+        /// @dev #1566 transport epochs PR 3b-ii-A, appended — what the day
+        ///      draws have spent of this packet's untyped remainder on
+        ///      obligations: the packet-level EXIT a draw records beside its
+        ///      step-down of `unclassified`, so the packet's own identity
+        ///      holds after every draw exactly as its epoch's does (Codex
+        ///      #2274 r8 P1). Equals the epoch's two consumed legs
+        ///      (`consumedFresh + consumedRecycled`): a leg is typed ONCE, by
+        ///      the attested caps it is drawn under, and never retyped
+        ///      (Codex #2276 r26 P1) — an unattested epoch is not drawn.
+        uint256 drawn;
     }
 
     /// @notice #1566 transport epochs PR 3b — the TRANSPORT EPOCH of one

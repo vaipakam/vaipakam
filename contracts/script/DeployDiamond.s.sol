@@ -85,6 +85,7 @@ import {RewardCustodyFacet} from "../src/facets/RewardCustodyFacet.sol";
 import {RewardReconciliationFacet} from "../src/facets/RewardReconciliationFacet.sol";
 import {RewardIngressFacet} from "../src/facets/RewardIngressFacet.sol";
 import {RewardEpochFacet} from "../src/facets/RewardEpochFacet.sol";
+import {RewardEpochViewFacet} from "../src/facets/RewardEpochViewFacet.sol";
 import {LibPausable} from "../src/libraries/LibPausable.sol";
 import {RewardCompensationDispatchFacet} from "../src/facets/RewardCompensationDispatchFacet.sol";
 import {RewardCommitmentFacet} from "../src/facets/RewardCommitmentFacet.sol";
@@ -347,6 +348,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // #1566 transport epochs PR 3a — the mirror-side ingress half of the remittance facet.
         RewardIngressFacet rewardIngressFacet = new RewardIngressFacet();
         RewardEpochFacet rewardEpochFacet = new RewardEpochFacet();
+        // 3b-ii-A (Codex #2276 r2) — the epochs' engine-inlining reads, hosted apart.
+        RewardEpochViewFacet rewardEpochViewFacet = new RewardEpochViewFacet();
         RewardCompensationDispatchFacet rewardCompensationDispatchFacet =
             new RewardCompensationDispatchFacet();
         RewardCommitmentFacet rewardCommitmentFacet = new RewardCommitmentFacet();
@@ -381,7 +384,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](81);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](82);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -458,6 +461,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // (split out of the remittance facet; refreshed together with it).
         cuts[79] = _buildCut(address(rewardIngressFacet), _getRewardIngressSelectors());
         cuts[80] = _buildCut(address(rewardEpochFacet), _getRewardEpochSelectors());
+        cuts[81] = _buildCut(address(rewardEpochViewFacet), _getRewardEpochViewSelectors());
         cuts[26] = _buildCut(address(rewardReporterFacet), _getRewardReporterSelectors());
         cuts[27] = _buildCut(address(rewardAggregatorFacet), _getRewardAggregatorSelectors());
         cuts[28] = _buildCut(address(configFacet), _getConfigSelectors());
@@ -1122,6 +1126,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeFacet("rewardReconciliationFacet", address(rewardReconciliationFacet));
         Deployments.writeFacet("rewardIngressFacet",      address(rewardIngressFacet));
         Deployments.writeFacet("rewardEpochFacet",        address(rewardEpochFacet));
+        Deployments.writeFacet("rewardEpochViewFacet",    address(rewardEpochViewFacet));
         Deployments.writeFacet("repatriationFacet",       address(repatriationFacet));
         Deployments.writeFacet("configFacet",             address(configFacet));
         // #394 (Codex #647 round-8 P2) — persist the carved-out NumeraireConfigFacet
@@ -1510,7 +1515,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getVaultFactorySelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](33);
+        s = new bytes4[](34);
         s[0] = VaultFactoryFacet.initializeVaultImplementation.selector;
         s[1] = VaultFactoryFacet.getOrCreateUserVault.selector;
         s[2] = VaultFactoryFacet.upgradeVaultImplementation.selector;
@@ -1552,7 +1557,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // claim-to-vault delivery).
         s[31] = VaultFactoryFacet.vaultCreditFromDiamondERC20.selector;
         // #1566 slice 4 PR B — the holder-sourced reward payout into a vault.
-        s[32] = VaultFactoryFacet.vaultCreditFromRewardCustodyERC20.selector;
+        s[32] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256,uint256)"));
+        // The four-argument credit stays as a compatibility entry (Codex #2276 r14 P2).
+        s[33] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256)"));
     }
 
     /// @dev Issue #67 — `OfferFacet` was split into `OfferCreateFacet`
@@ -3052,13 +3059,15 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
     /// #1566 transport epochs PR 3b — the transport epochs' post-ingress
     /// lifecycle: paged indexing, the parked remainder and its acknowledgment,
-    /// and the ledger's reads.
+    /// and the ledger's reads. PR 3b-ii-A adds the DRAWS: the per-day coverage
+    /// read, the Diamond-internal draw and the two custody moves the settle
+    /// paths reach through it, and the permissionless cursor prune.
     function _getRewardEpochSelectors()
         internal
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](8);
+        s = new bytes4[](17);
         s[0] = RewardEpochFacet.materializeTransportBatchPage.selector;
         s[1] = RewardEpochFacet.parkTransportBatchRemainder.selector;
         s[2] = RewardEpochFacet.acknowledgeTransportBatchRemainder.selector;
@@ -3067,6 +3076,28 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[5] = RewardEpochFacet.getTransportRemainder.selector;
         s[6] = RewardEpochFacet.getTransportDayBatches.selector;
         s[7] = RewardEpochFacet.admitLegacyTransportBatch.selector;
+        s[8] = RewardEpochFacet.getTransportCoverageForDay.selector;
+        s[9] = RewardEpochFacet.epochDrawForDay.selector;
+        s[10] = RewardEpochFacet.epochPruneTransportDayCursor.selector;
+        s[11] = RewardEpochFacet.getTransportAllocationForDay.selector;
+        s[12] = RewardEpochFacet.epochSettleClaimLegs.selector;
+        s[13] = RewardEpochFacet.materializeTransportBatchPageHinted.selector;
+        s[14] = RewardEpochFacet.getTransportDayBatchesFrom.selector;
+        s[15] = RewardEpochFacet.getTransportDayIndex.selector;
+        s[16] = RewardEpochFacet.getTransportDayScanIds.selector;
+    }
+
+    /// @dev 3b-ii-A (Codex #2276 r2) — the epochs' engine-inlining reads:
+    ///      the claim's dry run, the domain needs and the domain probe.
+    function _getRewardEpochViewSelectors()
+        internal
+        pure
+        returns (bytes4[] memory s)
+    {
+        s = new bytes4[](3);
+        s[0] = RewardEpochViewFacet.getDryRunShareOfPoolDays.selector;
+        s[1] = RewardEpochViewFacet.getObligationDomainNeeds.selector;
+        s[2] = RewardEpochViewFacet.getObligationDomainListsAnEpoch.selector;
     }
 
     /// #1434 P2-w4 — the compensation dispatch pair.
@@ -3123,7 +3154,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](41);
+        s = new bytes4[](42);
         s[0] = RewardCustodyFacet.bindRewardCustodyHolder.selector;
         s[1] = RewardCustodyFacet.replaceRewardCustodyHolder.selector;
         s[2] = RewardCustodyFacet.rebaseArmedFreshPaid.selector;
@@ -3172,6 +3203,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[38] = RewardCustodyFacet.custodyUnclassifiedIngress.selector;
         s[39] = RewardCustodyFacet.custodyUnclassifiedReturn.selector;
         s[40] = RewardCustodyFacet.custodyReleaseUnclassifiedForReturn.selector;
+        s[41] = RewardCustodyFacet.custodyDeliverClaim.selector; // 3b-ii-A
     }
 
     /// #1566 closure 2 cutover PR 2 — the legacy reconciliation epoch.
@@ -3180,13 +3212,14 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](18);
+        s = new bytes4[](19);
         s[0] = RewardReconciliationFacet.classifyLegacyPacket.selector;
         s[1] = RewardReconciliationFacet.reclassifyReconciliationEntry.selector;
         s[2] = RewardReconciliationFacet.importLegacyEnvelope.selector;
         s[3] = RewardReconciliationFacet.previewLegacyEnvelope.selector;
         s[4] = RewardReconciliationFacet.getLegacyEnvelope.selector;
         s[5] = RewardReconciliationFacet.getPacketReconciliation.selector;
+        s[18] = RewardReconciliationFacet.getPacketClassificationExcess.selector; // 3b-ii-A r15
         s[6] = RewardReconciliationFacet.getReconciliationEntry.selector;
         s[7] = RewardReconciliationFacet.getReconciliationEntrySpent.selector;
         s[8] = RewardReconciliationFacet.getFreshQueueState.selector;
