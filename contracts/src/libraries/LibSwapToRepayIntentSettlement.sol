@@ -336,24 +336,31 @@ library LibSwapToRepayIntentSettlement {
             bytes4(0)
         );
 
-        // #569 Gap B (round-6 P1) — RE-LIEN the residual rather than
-        // tombstoning. `commitSwapToRepayIntent` decremented the lien to
-        // zero when it pulled the collateral into custody; on a partial
-        // fill (`makingAmount < custodialCollateral`) the residual was
-        // pushed BACK into loan.borrower's vault above and recorded as the
-        // borrower claim. This is the custody RETURN leg, so the residual
-        // must be re-encumbered to stay protected through the Repaid→claim
-        // window (released atomically by `claimAsBorrower`, with the burn
-        // backstop as the structural guarantee). A bare release here would
-        // let a transferred-away stored borrower drain the residual (VPFI
-        // via withdrawVPFIFromVault) before the rightful holder claims. On
-        // a full fill (residual 0) tombstone the now-zeroed row.
-        // `residual` recomputed here as `loan.collateralAmount - consumed`
-        // (identical to the borrower-claim amount recorded above; the fill
-        // residual lives in the earlier `_runFill` scope, not here).
-        uint256 intentResidual = loan.collateralAmount - consumed;
-        if (intentResidual > 0) {
-            LibEncumbrance.incrementCollateralLien(loanId, intentResidual);
+        // #569 Gap B (round-6 P1) — RE-LIEN rather than tombstone. The
+        // borrower's collateral claim recorded above is
+        // `loan.collateralAmount - consumed`, and those tokens all sit in
+        // loan.borrower's vault: the part the commit never took (#2322 —
+        // the commit pulls only the debt-sized lot, so the rest stayed in
+        // the vault, still liened) plus the fill residual pushed back above.
+        // That claim must stay encumbered through the Repaid→claim window
+        // (released atomically by `claimAsBorrower`, with the burn backstop
+        // as the structural guarantee); a bare release would let a
+        // transferred-away stored borrower drain it (VPFI via
+        // withdrawVPFIFromVault) before the rightful holder claims.
+        //
+        // So the lien is set to EXACTLY the claim: topped up by the
+        // difference between the claim and what is still liened, not by the
+        // whole claim on top of it (which double-counted the untouched part
+        // once the commit stopped zeroing the lien). A zero claim — the whole
+        // collateral consumed — tombstones the now-empty row.
+        uint256 claimedCollateral = loan.collateralAmount - consumed;
+        if (claimedCollateral > 0) {
+            uint256 stillLiened = s.loanCollateralLien[loanId].released
+                ? 0
+                : s.loanCollateralLien[loanId].amount;
+            if (claimedCollateral > stillLiened) {
+                LibEncumbrance.incrementCollateralLien(loanId, claimedCollateral - stillLiened);
+            }
         } else {
             LibEncumbrance.releaseCollateralLien(loanId);
         }

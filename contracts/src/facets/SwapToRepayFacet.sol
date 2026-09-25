@@ -27,7 +27,7 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {RiskFacet} from "./RiskFacet.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
-import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
+import {LibSwapToRepaySizing} from "../libraries/LibSwapToRepaySizing.sol";
 
 /**
  * @title SwapToRepayFacet
@@ -1068,45 +1068,19 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         );
     }
 
-    /// @dev #2317 — the least collateral, up to rounding worth at most a few
-    ///      base units of the principal asset, whose slippage-capped oracle
-    ///      floor covers `required`, bounded by `maxIn`, together with that
-    ///      floor.
-    ///
-    ///      `floor(x) = expectedSwapOutput(x) × (BPS − cap) / BPS` is linear
-    ///      in `x` up to two floored divisions, so the ceiling of
-    ///      `required × maxIn / floor(maxIn)` is exact in real arithmetic and
-    ///      at most a few units short after rounding. The short case steps up
-    ///      by the ceiling of the remaining deficit, and falls back to `maxIn`
-    ///      — whose floor is already known to cover `required` — so the
-    ///      result ALWAYS clears `required` and never exceeds `maxIn`.
+    /// @dev #2317 — size the sale to the debt through the shared rule
+    ///      {LibSwapToRepaySizing.sizeSale} (the intent path sizes through the
+    ///      same rule, #2322), refusing with `SwapBoundsInsufficient` when even
+    ///      `maxIn` cannot cover `required` at the slippage floor.
     function _sizeFullSale(
         address collateralAsset,
         address principalAsset,
         uint256 required,
         uint256 maxIn
     ) private view returns (uint256 sell, uint256 floor) {
-        uint256 floorAtMax = _slippageFloor(collateralAsset, principalAsset, maxIn);
-        if (floorAtMax < required) revert SwapBoundsInsufficient();
-        sell = Math.mulDiv(required, maxIn, floorAtMax, Math.Rounding.Ceil);
-        floor = _slippageFloor(collateralAsset, principalAsset, sell);
-        for (uint256 i; i < 2 && floor < required; ++i) {
-            sell += Math.mulDiv(required - floor, maxIn, floorAtMax, Math.Rounding.Ceil);
-            if (sell >= maxIn) break;
-            floor = _slippageFloor(collateralAsset, principalAsset, sell);
-        }
-        if (sell >= maxIn || floor < required) return (maxIn, floorAtMax);
-    }
-
-    /// @dev Slippage-capped oracle floor for selling `amount` collateral.
-    function _slippageFloor(address collateralAsset, address principalAsset, uint256 amount)
-        private
-        view
-        returns (uint256)
-    {
-        return (LibFallback.expectedSwapOutput(address(this), collateralAsset, principalAsset, amount) *
-            (LibVaipakam.BASIS_POINTS - LibVaipakam.cfgMaxSwapToRepaySlippageBps())) /
-            LibVaipakam.BASIS_POINTS;
+        bool covers;
+        (covers, sell, floor) = LibSwapToRepaySizing.sizeSale(collateralAsset, principalAsset, required, maxIn);
+        if (!covers) revert SwapBoundsInsufficient();
     }
 
     /// @dev #407 PR 4 round-1 Codex P1 #3 (2026-06-12) — consolidated

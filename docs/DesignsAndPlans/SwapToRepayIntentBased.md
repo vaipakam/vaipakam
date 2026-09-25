@@ -1211,6 +1211,21 @@ the borrower committed an unfillable intent to stall, the borrower
 is the one waiting; their stall hurts them, not the lender. The
 intent expires in 5 minutes; the cancel-grace closes in 24h.
 
+> **#2322 (2026-09-25) — the custodial amount is the debt-sized LOT, not
+> `loan.collateralAmount`.** Everything below that equates
+> `custodialCollateral` with `loan.collateralAmount` (the step-8 pull, the
+> round-6 received-equals-requested guard, `makerAmount`) now reads "the
+> lot": the commit pulls only the least collateral whose slippage-capped
+> oracle value covers the order's minimum taker amount, and decrements the
+> lien by that lot alone, so the rest of the collateral stays in the vault
+> and stays liened through the auction. The claim formula below is
+> unchanged — `claim = loan.collateralAmount - consumed` — and is still
+> exactly what the vault holds: the part never taken plus the fill
+> residual. What changed with it is the post-fill lien: it is set to
+> EXACTLY that claim (topped up by the difference from what is still
+> liened), because re-liening the whole claim on top of the never-unliened
+> part would count that part twice.
+
 ### 5.9 Partial fills + residual custodial collateral
 
 Fusion orders typically fill the full maker amount, but partial

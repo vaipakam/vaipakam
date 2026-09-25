@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
+import {Vm} from "forge-std/Vm.sol";
 import {SwapToRepayIntentFacet} from "../src/facets/SwapToRepayIntentFacet.sol";
 import {IntentDispatchFacet} from "../src/facets/IntentDispatchFacet.sol";
 import {IntentConfigFacet} from "../src/facets/IntentConfigFacet.sol";
@@ -11,6 +12,12 @@ import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IOrderMixin} from "@1inch/limit-order-protocol/contracts/interfaces/IOrderMixin.sol";
+import {OracleFacet} from "../src/facets/OracleFacet.sol";
+import {RiskFacet} from "../src/facets/RiskFacet.sol";
+import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
+import {LoanFacet} from "../src/facets/LoanFacet.sol";
+import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 
 /**
  * @title SwapToRepayIntentFacetTest
@@ -284,6 +291,130 @@ contract SwapToRepayIntentFacetTest is SetupTest {
     // ══════════════════════════════════════════════════════════════
     //  Setup helper (mirrors v1 SwapToRepayFacetTest pattern)
     // ══════════════════════════════════════════════════════════════
+
+    // ══════════════════════════════════════════════════════════════
+    //  #2322 — the auction lot is sized to what the order asks; the rest
+    //  of the collateral stays in the vault, pledged
+    // ══════════════════════════════════════════════════════════════
+
+    /// @dev Everything a successful commit needs beyond `setUp`: 1:1 oracle
+    ///      prices (8-decimal feeds), a healthy HF, the loan's collateral
+    ///      lien as loan initiation would have written it, and params
+    ///      carrying the canonical extension the commit gate requires.
+    function _armHappyCommit()
+        internal
+        returns (SwapToRepayIntentFacet.FusionOrderParams memory params)
+    {
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, address(principalAsset)), abi.encode(uint256(1e8), uint8(8)));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, address(collateralAsset)), abi.encode(uint256(1e8), uint8(8)));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, LOAN_ID), abi.encode(uint256(2e18)));
+        TestMutatorFacet(address(diamond)).setLoanCollateralLienRaw(
+            LOAN_ID, borrowerEoa, address(collateralAsset), 0, LOAN_COLLATERAL, LibVaipakam.AssetType.ERC20
+        );
+        params = _validParams();
+        params.extension = SwapToRepayIntentFacet(address(diamond)).canonicalExtension();
+        params.salt = uint256(uint160(uint256(keccak256(params.extension))));
+    }
+
+    function _lien() internal view returns (uint256 amount) {
+        (amount, ) = TestMutatorFacet(address(diamond)).getLoanCollateralLienAmount(LOAN_ID);
+    }
+
+    /// @dev The worst-case (slippage-capped) value of `amount` collateral at
+    ///      the 1:1 test oracle — restated, not read from the code under test.
+    function _floorAtParity(uint256 amount) internal view returns (uint256) {
+        return (amount * (10_000 - ConfigFacet(address(diamond)).getMaxSwapToRepaySlippageBps())) / 10_000;
+    }
+
+    /// @dev The commit puts up only the lot the order needs — the least
+    ///      collateral whose slippage-capped oracle value covers the order's
+    ///      minimum taker amount — not the loan's whole collateral. The rest
+    ///      never leaves the vault and stays liened for the whole auction.
+    function test_Commit_SizesTheLotToWhatTheOrderAsks() public {
+        SwapToRepayIntentFacet.FusionOrderParams memory params = _armHappyCommit();
+        uint256 lot = SwapToRepayIntentFacet(address(diamond)).previewSwapToRepayIntentLot(LOAN_ID, params.takerAmount);
+
+        assertGe(_floorAtParity(lot), params.takerAmount, "the lot is worth what the order asks, at the worst case");
+        assertLt(_floorAtParity(lot - 1), params.takerAmount, "and no more than it needs");
+        assertLt(lot, LOAN_COLLATERAL, "the lot is not the whole collateral");
+
+        vm.prank(borrowerEoa);
+        SwapToRepayIntentFacet(address(diamond)).commitSwapToRepayIntent(LOAN_ID, params);
+
+        assertEq(SwapToRepayIntentFacet(address(diamond)).getIntentCommit(LOAN_ID).makerAmount, lot, "the order carries the lot");
+        assertEq(collateralAsset.balanceOf(address(diamond)), lot, "only the lot is in Diamond custody");
+        assertEq(collateralAsset.balanceOf(borrowerVault), LOAN_COLLATERAL - lot, "the rest stays in the vault");
+        assertEq(_lien(), LOAN_COLLATERAL - lot, "and stays pledged");
+    }
+
+    /// @dev A fill closes the loan and leaves the borrower's collateral
+    ///      claim — the part the commit never took plus any fill residual —
+    ///      in the vault, liened by EXACTLY the claim (not the claim on top
+    ///      of the part that was never unliened).
+    function test_Fill_LeavesTheUntakenCollateralClaimableAndLienedExactlyOnce() public {
+        SwapToRepayIntentFacet.FusionOrderParams memory params = _armHappyCommit();
+        vm.recordLogs();
+        vm.prank(borrowerEoa);
+        SwapToRepayIntentFacet(address(diamond)).commitSwapToRepayIntent(LOAN_ID, params);
+        bytes32 orderHash = _committedOrderHash();
+        uint256 lot = SwapToRepayIntentFacet(address(diamond)).getIntentCommit(LOAN_ID).makerAmount;
+
+        // Fusion's fill, as the pinned LOP runs it: preInteraction snapshots
+        // the principal baseline, the resolver delivers the taking amount and
+        // takes the lot, postInteraction settles.
+        IOrderMixin.Order memory o;
+        vm.prank(address(fusionLOP));
+        IntentDispatchFacet(address(diamond)).preInteraction(o, "", orderHash, address(0), 0, 0, 0, "");
+        principalAsset.mint(address(diamond), params.takerAmount);
+        vm.prank(address(diamond));
+        collateralAsset.transfer(address(0xF111), lot);
+        vm.prank(address(fusionLOP));
+        IntentDispatchFacet(address(diamond)).postInteraction(o, "", orderHash, address(0), lot, params.takerAmount, 0, "");
+
+        assertEq(uint256(LoanFacet(address(diamond)).getLoanDetails(LOAN_ID).status), uint256(LibVaipakam.LoanStatus.Repaid), "the fill closes the loan");
+        (, uint256 claimAmt, , , , , , ) = ClaimFacet(address(diamond)).getClaimable(LOAN_ID, false);
+        assertEq(claimAmt, LOAN_COLLATERAL - lot, "the borrower can claim every unit the fill did not take");
+        assertEq(collateralAsset.balanceOf(borrowerVault), LOAN_COLLATERAL - lot, "and it is all in the vault");
+        assertEq(_lien(), LOAN_COLLATERAL - lot, "liened exactly once, for exactly the claim");
+    }
+
+    /// @dev A cancel returns the lot and restores the lien to the whole
+    ///      collateral — the loan is back exactly as it was before the commit.
+    function test_Cancel_RestoresTheWholeCollateralAndLien() public {
+        SwapToRepayIntentFacet.FusionOrderParams memory params = _armHappyCommit();
+        vm.prank(borrowerEoa);
+        SwapToRepayIntentFacet(address(diamond)).commitSwapToRepayIntent(LOAN_ID, params);
+        vm.warp(params.deadline + 1);
+        vm.prank(borrowerEoa);
+        SwapToRepayIntentFacet(address(diamond)).cancelSwapToRepayIntent(LOAN_ID);
+
+        assertEq(collateralAsset.balanceOf(borrowerVault), LOAN_COLLATERAL, "the whole collateral is back in the vault");
+        assertEq(_lien(), LOAN_COLLATERAL, "and the whole of it is pledged again");
+        assertEq(collateralAsset.balanceOf(address(diamond)), 0, "nothing left in custody");
+    }
+
+    /// @dev An order asking more than the whole collateral is worth at the
+    ///      slippage floor cannot be backed by any lot, so it is refused before
+    ///      anything moves.
+    function test_Commit_RevertWhen_TakerAmountAboveWholeCollateralFloor() public {
+        SwapToRepayIntentFacet.FusionOrderParams memory params = _armHappyCommit();
+        params.takerAmount = _floorAtParity(LOAN_COLLATERAL) + 1;
+        vm.prank(borrowerEoa);
+        vm.expectRevert(abi.encodeWithSelector(SwapToRepayIntentFacet.IntentTakerAmountAboveCollateralFloor.selector, params.takerAmount));
+        SwapToRepayIntentFacet(address(diamond)).commitSwapToRepayIntent(LOAN_ID, params);
+    }
+
+    /// @dev The committed order's hash, read from the commit event's second
+    ///      topic (`orderHash` is indexed). Requires `vm.recordLogs()` before
+    ///      the commit.
+    function _committedOrderHash() internal returns (bytes32) {
+        bytes32 sig = SwapToRepayIntentFacet.SwapToRepayIntentCommitted.selector;
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].topics.length > 1 && logs[i].topics[0] == sig) return logs[i].topics[2];
+        }
+        revert("no SwapToRepayIntentCommitted event");
+    }
 
     function _scaffoldLoan(uint256 loanId) internal {
         TestMutatorFacet(address(diamond)).mintNFTRaw(

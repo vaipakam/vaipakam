@@ -27,6 +27,7 @@ import {MakerTraits} from "@1inch/limit-order-protocol/contracts/libraries/Maker
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {RiskFacet} from "./RiskFacet.sol";
+import {LibSwapToRepaySizing} from "../libraries/LibSwapToRepaySizing.sol";
 
 /**
  * @title SwapToRepayIntentFacet
@@ -126,7 +127,7 @@ contract SwapToRepayIntentFacet is
         address receiver;       // == address(this)
         address makerAsset;     // loan.collateralAsset
         address takerAsset;     // loan.principalAsset
-        uint256 makerAmount;    // commit.makerAmount (== custodial == loan.collateralAmount)
+        uint256 makerAmount;    // commit.makerAmount (== custodial; #2322 — the debt-sized lot, <= loan.collateralAmount)
         uint256 takerAmount;
         uint64  deadline;
         uint256 salt;
@@ -233,7 +234,12 @@ contract SwapToRepayIntentFacet is
     ///      allowPartialFills / allowMultipleFills / expiration).
     /// @param reasonHash short identifier of which bit failed.
     error IntentMakerTraitsMismatch(bytes32 reasonHash);
-    /// @dev Codex round-6 P1 #4 — `received != loan.collateralAmount`
+    /// @dev #2322 — the order's minimum taker amount exceeds the
+    ///      slippage-capped oracle value of the loan's WHOLE collateral, so
+    ///      no lot the commit could put up would be worth what the order asks.
+    error IntentTakerAmountAboveCollateralFloor(uint256 takerAmount);
+    /// @dev Codex round-6 P1 #4 — `received != committed lot` (#2322: the
+    ///      debt-sized lot, formerly `loan.collateralAmount`)
     ///      on the vault withdraw means the collateral token is
     ///      fee-on-transfer / rebasing (defense-in-depth alongside
     ///      the admin allowlist).
@@ -520,36 +526,51 @@ contract SwapToRepayIntentFacet is
         if (params.takerAmount < minOut)
             revert IntentMinOutputBelowFloor(params.takerAmount, minOut);
 
-        // ── §5.1 step 8: pull collateral + reject fee-on-transfer ───
+        // ── §5.1 step 7b: size the auction lot to the debt (#2322) ──
+        // The spec's full-close rule, shared with `swapToRepayFull`
+        // through {LibSwapToRepaySizing}: the borrower's figure is an
+        // upper bound, never the amount sold, and collateral the debt
+        // does not need stays pledged. Here the bound is the loan's
+        // whole collateral and the target is the order's minimum taker
+        // amount (itself >= the live settlement floor + buffer): the lot
+        // is the least collateral whose slippage-capped oracle value
+        // covers what the order asks, so a resolver can fill it at the
+        // auction's floor without the order giving away collateral the
+        // repayment never needed. The remainder never leaves the vault
+        // and stays liened throughout the auction.
+        uint256 lot = _sizeCommitLot(loan, params.takerAmount);
+
+        // ── §5.1 step 8: pull the lot + reject fee-on-transfer ──────
         // Balance-delta accounting AND require received == requested
         // (Codex round-4 P1 #5 + round-6 P1 #4): fee-on-transfer
         // collateral is rejected outright since cancel + claim-
-        // record paths would otherwise drift away from
-        // `loan.collateralAmount`.
+        // record paths would otherwise drift away from the lot.
         IERC20 collateralToken = IERC20(loan.collateralAsset);
         uint256 balanceBefore = collateralToken.balanceOf(address(this));
-        // #569 §4.4 (2026-06-13) — temporary-custody decrement. The
-        // full collateral is pulled into Diamond custody while the loan
-        // stays Active (the intent may later fill → close, or be
-        // cancelled → collateral restored to the vault). Drop the lien
-        // to zero BEFORE the withdraw so the chokepoint guard passes;
-        // `_teardownCommit` re-increments it when the collateral returns
-        // to the vault, and the fill-settlement path releases it on
-        // close. Revert-safe: a failed withdraw rolls back the decrement.
+        // #569 §4.4 (2026-06-13) — temporary-custody decrement. The lot is
+        // pulled into Diamond custody while the loan stays Active (the
+        // intent may later fill → close, or be cancelled → lot restored to
+        // the vault). Decrement the lien by the LOT (#2322 — formerly the
+        // whole collateral) BEFORE the withdraw so the chokepoint guard
+        // passes; the rest of the collateral stays in the vault, liened.
+        // `_teardownCommit` re-increments by the lot when it returns, and
+        // the fill settlement sets the lien to the borrower's collateral
+        // claim on close. Revert-safe: a failed withdraw rolls back the
+        // decrement.
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
                 EncumbranceMutateFacet.decrementCollateralLien.selector,
                 loanId,
-                loan.collateralAmount
+                lot
             ),
             bytes4(0)
         );
         VaultFactoryFacet(address(this)).vaultWithdrawERC20(
-            loan.borrower, loan.collateralAsset, address(this), loan.collateralAmount
+            loan.borrower, loan.collateralAsset, address(this), lot
         );
         uint256 received = collateralToken.balanceOf(address(this)) - balanceBefore;
-        if (received != loan.collateralAmount)
-            revert IntentCollateralFeeOnTransferUnsupported(received, loan.collateralAmount);
+        if (received != lot)
+            revert IntentCollateralFeeOnTransferUnsupported(received, lot);
         uint256 custodialCollateral = received;
 
         // #594 Codex #657 round-4 — the pre-commit consolidation checkpointed
@@ -1032,5 +1053,58 @@ contract SwapToRepayIntentFacet is
         order.salt        = commit.salt;
         order.makerTraits = commit.makerTraits;
         order.extension   = s.intentExtensionBytes[commit.extensionHash];
+    }
+
+    /// @notice #2322 — how much collateral {commitSwapToRepayIntent} would
+    ///         put up as the auction lot for an order asking `takerAmount`,
+    ///         at current oracle prices.
+    /// @dev    Shares the commit's sizing ({_sizeCommitLot} →
+    ///         {LibSwapToRepaySizing.sizeSale}), so the borrower can see the
+    ///         lot before committing; the rest of the collateral stays in the
+    ///         vault, pledged, and is released by the borrower's claim after
+    ///         the fill. The figure moves with oracle updates, so the lot the
+    ///         commit actually takes is the one {getIntentCommit} reports
+    ///         afterwards, and that — not this preview — is what the order
+    ///         posted to the resolver network must carry. It checks only the
+    ///         loan shape the sizing needs; it does not apply the commit's
+    ///         authority, HF, deadline, allowlist or minimum-output gates.
+    /// @param  loanId      The loan to quote.
+    /// @param  takerAmount The order's minimum taker amount, as it would be
+    ///                     passed in `FusionOrderParams.takerAmount`.
+    /// @return lot         Collateral the commit would take into custody.
+    function previewSwapToRepayIntentLot(uint256 loanId, uint256 takerAmount)
+        external
+        view
+        returns (uint256 lot)
+    {
+        LibVaipakam.Loan storage loan = LibVaipakam.storageSlot().loans[loanId];
+        if (loan.status != LibVaipakam.LoanStatus.Active)
+            revert IVaipakamErrors.InvalidLoanStatus();
+        if (
+            loan.assetType != LibVaipakam.AssetType.ERC20 ||
+            loan.collateralAssetType != LibVaipakam.AssetType.ERC20 ||
+            loan.collateralLiquidity != LibVaipakam.LiquidityStatus.Liquid ||
+            loan.principalLiquidity != LibVaipakam.LiquidityStatus.Liquid
+        ) revert UnsupportedLoanShape();
+        lot = _sizeCommitLot(loan, takerAmount);
+    }
+
+    /// @dev #2322 — the auction lot: the least collateral whose
+    ///      slippage-capped oracle value covers `takerAmount`, bounded by the
+    ///      loan's whole collateral, through the rule `swapToRepayFull` also
+    ///      uses. Refuses when even the whole collateral cannot cover it.
+    function _sizeCommitLot(LibVaipakam.Loan storage loan, uint256 takerAmount)
+        private
+        view
+        returns (uint256 lot)
+    {
+        bool covers;
+        (covers, lot, ) = LibSwapToRepaySizing.sizeSale(
+            loan.collateralAsset,
+            loan.principalAsset,
+            takerAmount,
+            loan.collateralAmount
+        );
+        if (!covers) revert IntentTakerAmountAboveCollateralFloor(takerAmount);
     }
 }

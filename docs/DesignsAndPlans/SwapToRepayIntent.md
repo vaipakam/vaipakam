@@ -116,7 +116,17 @@ borrower-supplied order must:
 - Place the diamond as the maker and the receiver.
 - Place the loan's collateral asset as the maker asset and the loan's
   principal asset as the taker asset.
-- Place the loan's full collateral amount as the maker amount.
+- Place the debt-sized **lot** as the maker amount — SUPERSEDED by #2322
+  (2026-09-25), which replaces the original "the loan's full collateral
+  amount". The lot is the least collateral whose worst-case value under
+  the borrower-facing swap-to-repay slippage cap covers the order's
+  minimum taker amount, computed by the same rule the direct full close
+  uses (#2317); the protocol computes it at commit and the committed
+  order reports it, so the client posts the order it reads back. The
+  rest of the collateral stays in the borrower's vault, pledged, and is
+  released by the ordinary claim after a fill. An order no lot can back
+  (asking more than the whole collateral is worth at that floor) is
+  refused.
 - Place a taker amount at or above the protocol's **live settlement
   floor** plus the configured buffer.
 - Disable partial fills and disable multiple fills (a v1.1 intent fills

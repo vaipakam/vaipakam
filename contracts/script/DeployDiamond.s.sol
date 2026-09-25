@@ -1751,11 +1751,12 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///   • 2 Fusion `LimitOrderProtocol` callbacks (pre/postInteraction)
     ///   • 1 ERC-1271 binding check (`isValidSignature`)
     ///   • 1 read-back view for the dapp's commit-then-post pattern.
+    ///   • 1 preview of the debt-sized auction lot (#2322).
     function _getSwapToRepayIntentFacetSelectors() internal pure returns (bytes4[] memory s) {
         // T-087 Sub 3.B — preInteraction / postInteraction /
         // isValidSignature moved to the new IntentDispatchFacet; this
         // facet now owns 8 selectors instead of 11.
-        s = new bytes4[](8);
+        s = new bytes4[](9);
         s[0] = SwapToRepayIntentFacet.commitSwapToRepayIntent.selector;
         s[1] = SwapToRepayIntentFacet.cancelSwapToRepayIntent.selector;
         s[2] = SwapToRepayIntentFacet.cancelExpiredIntent.selector;
@@ -1766,6 +1767,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[6] = SwapToRepayIntentFacet.forceCancelIntentIfPastDefaultOrRevert.selector;
         // Dapp read surface for the canonical extension bytes.
         s[7] = SwapToRepayIntentFacet.canonicalExtension.selector;
+        // #2322 — read-only preview of the debt-sized auction lot.
+        s[8] = SwapToRepayIntentFacet.previewSwapToRepayIntentLot.selector;
     }
 
     /// @notice T-087 Sub 3.B — the three 1inch LOP v4 callbacks
