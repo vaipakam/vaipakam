@@ -627,9 +627,13 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         assertEq(avail, 64, "one window");
         assertTrue(capHit, "and more beyond it");
         assertEq(_preview(), 0, "the preview defers");
+        // The window's attested epochs are STAGED for the day (3b-ii-A2)
+        // rather than drawn: nothing is paid now, and the ledger is not pulled.
+        uint256 before = vpfi.balanceOf(alice);
         vm.prank(alice);
-        vm.expectRevert(IVaipakamErrors.NoInteractionRewardsToClaim.selector);
-        RewardClaimFacet(address(diamond)).claimInteractionRewards();
+        (bool ok, ) = address(diamond).call(abi.encodeWithSelector(RewardClaimFacet.claimInteractionRewards.selector));
+        ok; // staging is persisted progress; a deferral with nothing staged reverts — either way nothing is paid
+        assertEq(vpfi.balanceOf(alice), before, "nothing paid");
         assertEq(_mut().getArmedFreshPaidRaw(), 0, "the ledger was not pulled");
         assertEq(_cursor(1), 0, "nothing exhausted, nothing pruned");
     }
@@ -1049,13 +1053,13 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.TransportIndexWalkExceeded.selector, hOld, 1));
         _epoch().materializeTransportBatchPage(hOld, d1);
         bytes32[] memory hints = new bytes32[](1); // zero: at the head
-        assertEq(_epoch().materializeTransportBatchPageHinted(hOld, d1, hints), 1, "linked with the hint");
+        assertEq(_epoch().materializeTransportBatchPageHinted(hOld, d1, hints, new bytes32[](0)), 1, "linked with the hint");
         (bytes32[] memory page, , uint256 total, ) = _epoch().getTransportDayBatches(1, 0, 1);
         assertEq(total, 131);
         assertEq(page[0], hOld, "at the front");
         bytes32 wrong = page[0];
         vm.expectRevert();
-        _epoch().materializeTransportBatchPageHinted(hOld, d1, _hintOf(wrong)); // already listed: idempotent, refused as whole
+        _epoch().materializeTransportBatchPageHinted(hOld, d1, _hintOf(wrong), new bytes32[](0)); // already listed: idempotent, refused as whole
     }
 
     function _hintOf(bytes32 h) internal pure returns (bytes32[] memory a) {
@@ -1503,9 +1507,9 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         _mut().setPacketArrivedAtRaw(older, 1);
         bytes32[] memory hints = new bytes32[](1); // zero: at the head — inside the passed prefix
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.TransportIndexHintInvalid.selector, older, 1, bytes32(0)));
-        _epoch().materializeTransportBatchPageHinted(older, d1, hints);
+        _epoch().materializeTransportBatchPageHinted(older, d1, hints, new bytes32[](0));
         hints[0] = e1; // the cursor may precede an epoch older than itself
-        assertEq(_epoch().materializeTransportBatchPageHinted(older, d1, hints), 1);
+        assertEq(_epoch().materializeTransportBatchPageHinted(older, d1, hints, new bytes32[](0)), 1);
         (order, , , cursor) = _epoch().getTransportDayBatches(1, 0, 10);
         assertEq(cursor, 1, "still");
         assertEq(order[1], older, "the older late epoch leads the window, by key");
@@ -1544,12 +1548,12 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         bytes32[] memory hints = new bytes32[](1);
         hints[0] = e0; // passed, and not the cursor
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.TransportIndexHintInvalid.selector, hs[2], 1, e0));
-        _epoch().materializeTransportBatchPageHinted(hs[2], d1, hints);
+        _epoch().materializeTransportBatchPageHinted(hs[2], d1, hints, new bytes32[](0));
         hints[0] = bytes32(0); // the head: behind the window
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.TransportIndexHintInvalid.selector, hs[2], 1, bytes32(0)));
-        _epoch().materializeTransportBatchPageHinted(hs[2], d1, hints);
+        _epoch().materializeTransportBatchPageHinted(hs[2], d1, hints, new bytes32[](0));
         hints[0] = hs[1]; // arrival 1: the epoch before arrival 25
-        assertEq(_epoch().materializeTransportBatchPageHinted(hs[2], d1, hints), 1);
+        assertEq(_epoch().materializeTransportBatchPageHinted(hs[2], d1, hints, new bytes32[](0)), 1);
         (order, , , cursor) = _epoch().getTransportDayBatches(1, 0, 10);
         assertEq(cursor, 2);
         assertEq(order[2], hs[1]);

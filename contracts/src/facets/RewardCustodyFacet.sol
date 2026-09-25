@@ -861,6 +861,15 @@ contract RewardCustodyFacet is DiamondAccessControl {
         LibPausable.requireManuallyPaused();
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (s.rewardCustodyActivated) revert IVaipakamErrors.RewardCustodyAlreadyActivated();
+        // Nothing in flight may straddle the cutover (3b-ii-A2; Codex #2308
+        // r7, r13): a resolving record's consumed epoch value rests in this
+        // balance under no attribution until its last page pays it, and a
+        // reserved record's reservations were taken against this balance. One
+        // counter, read by every posture gate — the reward-ROLE change reads
+        // it too.
+        if (s.stagingEncumberedCount != 0) {
+            revert IVaipakamErrors.RewardCustodyActivationBlockedByStagedRecords(s.stagingEncumberedCount);
+        }
         uint64 liveEpoch = LibPausable.pauseTransitions();
         if (pauseEpoch != liveEpoch) {
             revert IVaipakamErrors.RewardCustodyActivationStalePauseEpoch(pauseEpoch, liveEpoch);
@@ -1399,6 +1408,26 @@ contract RewardCustodyFacet is DiamondAccessControl {
     }
 
     /// @notice Diamond-internal: {LibRewardCustody.drawForTransport}.
+    /// @notice 3b-ii-A2 (#2305) — {custodyDeliverClaim}'s vault route with NO
+    ///         wallet fallback: a staged record's payout to a claimant flagged
+    ///         since it prepared goes to their vault or does not go, and the
+    ///         record — resolving, beyond any deadline — stays until it can.
+    function custodyDeliverClaimToVault(address user, uint256 fresh, uint256 recycled, uint256 epoch) external {
+        _requireDiamondInternal();
+        (, address token) = LibRewardCustody.boundHolderAndToken(LibVaipakam.storageSlot());
+        (bool ok, ) = address(this).call(
+            abi.encodeWithSignature(
+                "vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256,uint256)",
+                user,
+                token,
+                fresh,
+                recycled,
+                epoch
+            )
+        );
+        if (!ok) revert IVaipakamErrors.RewardCustodyVaultDeliveryFailed(user);
+    }
+
     function custodyDrawForTransport(uint8 source, uint256 fresh, uint256 recycled) external {
         _requireDiamondInternal();
         LibRewardCustody.drawForTransport(
@@ -1576,7 +1605,8 @@ contract RewardCustodyFacet is DiamondAccessControl {
             uint256 pendingSurplus,
             uint256 intent,
             uint256 unclassified,
-            uint256 restitution
+            uint256 restitution,
+            uint256 resolving
         )
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
@@ -1590,6 +1620,8 @@ contract RewardCustodyFacet is DiamondAccessControl {
         intent = s.rewardCustodyRows[LibVaipakam.RewardCustodyRow.Intent];
         unclassified = s.rewardCustodyRows[LibVaipakam.RewardCustodyRow.Unclassified];
         restitution = s.rewardCustodyRows[LibVaipakam.RewardCustodyRow.Restitution];
+        // 3b-ii-A2 (#2305) — the hold between a staged record's pages.
+        resolving = s.rewardCustodyRows[LibVaipakam.RewardCustodyRow.Resolving];
     }
 
     /// @notice The delivered-fresh ledger's two counters, raw. The bound

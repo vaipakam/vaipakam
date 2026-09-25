@@ -2573,4 +2573,94 @@ contract TestMutatorFacet {
         p.dayListHash = dayListHash;
         p.dayCount = dayCount;
     }
+
+    // ───────── 3b-ii-A2 (#2305) — raw reads for the staging cells ─────────
+
+    function poolRemainingRaw() external view returns (uint256) {
+        return LibInteractionRewards.poolRemaining();
+    }
+
+    function poolAvailableRaw() external view returns (uint256) {
+        return LibInteractionRewards.poolAvailable();
+    }
+
+    function rewardEntryClaimNextDayRaw(uint256 id) external view returns (uint256) {
+        return LibVaipakam.storageSlot().rewardEntryClaimNextDay[id];
+    }
+
+    function interactionPoolReservedRaw() external view returns (uint256) {
+        return LibVaipakam.storageSlot().interactionPoolReserved;
+    }
+
+    function liveFreshReservedRaw() external view returns (uint256) {
+        return LibVaipakam.storageSlot().liveFreshReserved;
+    }
+
+    function rewardBudgetArmedFreshReservedRaw() external view returns (uint256) {
+        return LibVaipakam.storageSlot().rewardBudgetArmedFreshReserved;
+    }
+
+    function attributedTotalRaw() external view returns (uint256) {
+        return LibRewardCustody.attributedTotal(LibVaipakam.storageSlot());
+    }
+
+    function loanSideRewardReservedRaw(uint256 loanId, uint8 side) external view returns (uint256) {
+        return LibVaipakam.storageSlot().loanSideRewardReservedVpfi[loanId][side];
+    }
+
+    /// @dev The authoritative executable-now predicate the expiry clock reads,
+    ///      exposed raw so a cell can observe it without driving the sweep.
+    function entryExecutableNowRaw(uint256 id) external view returns (bool) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        return LibInteractionRewards._entryExecutableNow(s, id, s.rewardEntries[id]);
+    }
+
+    /// @dev 3b-ii-A2 test-only — a raw write of what staging records have
+    ///      reserved of the recycle bucket, so a cell can put the clocks'
+    ///      predicate against a reservation without a mixed-composition day.
+    function setRecycleBucketReservedRaw(uint256 amount) external {
+        LibVaipakam.storageSlot().recycleBucketReserved = amount;
+    }
+
+    /// @dev 3b-ii-A2 test-only — drive the compensation demotion's uncredit
+    ///      directly, so a cell can put it against a record's reservation.
+    function uncreditFreshInHolderRaw(uint256 amount) external returns (uint256 moved) {
+        return LibRewardCustody.uncreditFreshInHolder(LibVaipakam.storageSlot(), amount);
+    }
+
+    /// @dev 3b-ii-A2 test-only — the count of resolving staging records the
+    ///      custody activation refuses on, read and written raw.
+    function stagingEncumberedCountRaw() external view returns (uint256) {
+        return LibVaipakam.storageSlot().stagingEncumberedCount;
+    }
+
+    function setStagingEncumberedCountRaw(uint256 count) external {
+        LibVaipakam.storageSlot().stagingEncumberedCount = count;
+    }
+
+    /// @dev 3b-ii-A2 test-only — VPFI in staged form across every batch: the
+    ///      sixth reserved source, read raw so a cell can put the Diamond's
+    ///      backing room against it.
+    function stagedEpochTotalRaw() external view returns (uint256) {
+        return LibVaipakam.storageSlot().stagedEpochTotal;
+    }
+
+    function freshBackingRoomRaw() external view returns (uint256) {
+        return LibVpfiRecycle.freshBackingRoom(LibVaipakam.storageSlot());
+    }
+
+    function setStagedEpochTotalRaw(uint256 amount) external {
+        LibVaipakam.storageSlot().stagedEpochTotal = amount;
+    }
+
+    /// @dev 3b-ii-A2 test-only — the bucket's fundable figure and the two
+    ///      debits that read it, driven raw so a cell can put them against a
+    ///      staging reservation.
+    function bucketFundableRaw() external view returns (uint256) {
+        return LibVpfiRecycle.bucketFundable(LibVaipakam.storageSlot());
+    }
+
+    function consumeRecycleBucketRaw(uint256 amount) external {
+        LibVpfiRecycle.consume(amount, false, 0);
+    }
 }

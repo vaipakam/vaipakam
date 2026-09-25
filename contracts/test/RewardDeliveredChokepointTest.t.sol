@@ -464,4 +464,20 @@ contract RewardDeliveredChokepointTest is SetupTest, IVaipakamErrors {
         vm.expectRevert(bytes("creditRecycleRaw: no door exists for this source (#1566 closure 2)"));
         _mut().creditRecycleRaw(LibVpfiRecycle.RecycleSource.MatcherRemainder, 0, 1);
     }
+
+    /// @dev 3b-ii-A2 (Codex #2308 r13) — value in STAGED form rests in the
+    ///      Diamond's own balance while reward custody is inactive, so it is an
+    ///      earmark of it and no other claim's backing. The counter is written
+    ///      raw here; its maintenance by staging and by the resolution pages is
+    ///      the staging suite's to prove.
+    function test_StagedEpochValue_IsNotFreeDiamondBacking() public {
+        uint256 room = _mut().freshBackingRoomRaw();
+        assertGt(room, 1e18, "the seeded Diamond backs the gates");
+        _mut().setStagedEpochTotalRaw(1e18);
+        assertEq(_mut().freshBackingRoomRaw(), room - 1e18, "staged value is not free backing");
+        _mut().setStagedEpochTotalRaw(room + 1e18);
+        assertEq(_mut().freshBackingRoomRaw(), 0, "and the room floors rather than underflowing");
+        _mut().setStagedEpochTotalRaw(0);
+        assertEq(_mut().freshBackingRoomRaw(), room, "released with the record");
+    }
 }

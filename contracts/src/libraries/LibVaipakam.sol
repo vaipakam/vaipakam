@@ -928,6 +928,13 @@ library LibVaipakam {
      *         - `Restitution`    — the deficit-covering portion of an
      *           ingress on a chain whose paid side exceeds its received
      *           side (the §5c deficit split).
+     *         - `Resolving`      — 3b-ii-A2 (#2305): a staged obligation's
+     *           HOLD between the pages of its resolution — the epoch legs
+     *           its batch pages have consumed and the live recycled residual
+     *           its reservation took, held against the record until its last
+     *           page pays them out or its unwind returns them. Never a
+     *           payout row: what enters it leaves only to a destination the
+     *           record names or back to the row it came from.
      *
      *         Retired-ERA rows (one per era) are a separate, era-keyed
      *         mapping that lands with the era registry (slice 4 PR C).
@@ -940,7 +947,8 @@ library LibVaipakam {
         PendingSurplus,
         Intent,
         Unclassified,
-        Restitution
+        Restitution,
+        Resolving
     }
 
     /**
@@ -7584,6 +7592,87 @@ library LibVaipakam {
         mapping(uint256 => mapping(bytes32 => bytes32)) transportDayNext;
         mapping(uint256 => mapping(bytes32 => bytes32)) transportDayPrev;
         mapping(uint256 => bytes32) transportDayCursorNode;
+        // ───────── 3b-ii-A2 (#2305) — staging (append-only) ─────────
+        /// @dev One record per obligation-day; key = keccak256(abi.encode(user, side, day)).
+        mapping(bytes32 => StagingRecord) stagingRecords;
+        /// @dev Standing staging records per batch. A referenced batch is
+        ///      neither parked, retired nor passed by any day's cursor.
+        mapping(bytes32 => uint256) transportBatchReferences;
+        /// @dev Per day, every epoch linked anywhere but at the list's tail,
+        ///      in arrival order — what a record's resume walks first, so an
+        ///      epoch that sorted ahead of its continuation is never skipped.
+        mapping(uint256 => bytes32) transportDayLateHead;
+        mapping(uint256 => bytes32) transportDayLateTail;
+        mapping(uint256 => mapping(bytes32 => bytes32)) transportDayLateNext;
+        mapping(uint256 => mapping(bytes32 => bytes32)) transportDayLatePrev;
+        mapping(uint256 => uint256) transportDayLateCount;
+        /// @dev Bumped whenever a late link lands anywhere but the chain's
+        ///      tail — the chain is kept in the ledger's own order, so a link
+        ///      can land behind a record's place in it; the record then
+        ///      restarts its late walk.
+        mapping(uint256 => uint256) transportDayLateGen;
+        /// @dev Per obligation key: how many records have opened under it,
+        ///      so per-record lookups keyed by (key, nonce) never read a
+        ///      closed record's entries; and until when a new record may not
+        ///      open after a non-settlement release.
+        mapping(bytes32 => uint256) stagingNonce;
+        mapping(bytes32 => uint64) stagingCooldownUntil;
+        /// @dev Per (key, nonce): a batch's position in the record's list plus
+        ///      one, and whether it was passed over untyped — both O(1).
+        mapping(bytes32 => mapping(bytes32 => uint256)) stagingBatchIndexPlusOne;
+        mapping(bytes32 => mapping(bytes32 => bool)) stagingSkippedSeen;
+        /// @dev Reserved, never paid: headroom a record holds until its last
+        ///      page converts it to paid or its unwind releases it. Kept apart
+        ///      from the paid counters so a reservation never reads as a
+        ///      payout to a concurrent one-call settlement.
+        uint256 interactionPoolReserved;
+        uint256 rewardBudgetArmedFreshReserved;
+        uint256 liveFreshReserved;
+        uint256 recycleBucketReserved;
+        mapping(uint256 => mapping(uint8 => uint256)) loanSideRewardReservedVpfi;
+        /// @dev 3b-ii-A2 (Codex #2308 r7) — records in `Resolving`: a page of
+        ///      such a record has consumed epoch value that, while custody is
+        ///      inactive, rests in the Diamond's balance under no attribution
+        ///      until the last page pays it. Custody activation relocates by
+        ///      attribution and would strand it, so activation refuses while
+        ///      this is non-zero; a resolving record only completes, by
+        ///      permissionless pages, so the refusal is never permanent.
+        /// @dev 3b-ii-A2 (Codex #2308 r7, r13) — records holding a live
+        ///      RESERVATION (`Reserved` or `Resolving`). A global posture
+        ///      change cannot straddle one: the reward-custody activation
+        ///      relocates the balance a reservation counts against, and a
+        ///      reward-ROLE change moves the delivered allowance a reservation
+        ///      was taken against, so both refuse while this is non-zero. One
+        ///      counter, every posture gate.
+        uint256 stagingEncumberedCount;
+        /// @dev 3b-ii-A2 (Codex #2308 r13) — VPFI in STAGED form across every
+        ///      batch: debited from the batches' balances and credited to no
+        ///      one until a record resolves or unwinds. While reward custody is
+        ///      inactive those tokens rest in the Diamond's own balance, so
+        ///      this is an EARMARK of it — the sixth reserved source, and the
+        ///      one {LibVpfiRecycle.freshBackingRoom} subtracts on that path.
+        uint256 stagedEpochTotal;
+        /// @dev 3b-ii-A2 (Codex #2308 r13) — the record's staged batches, by
+        ///      `recordNonceKey(key, nonce)` and insertion index. Outside the
+        ///      record struct so closing one is bounded; the nonce makes a
+        ///      re-opened record's namespace fresh without any clearing.
+        mapping(bytes32 => mapping(uint256 => StagedBatch)) stagingBatches;
+        /// @dev 3b-ii-A2 (Codex #2308 r15) — per day, every batch whose
+        ///      balance a record RESTORED (an unwind, or a resolution's
+        ///      unconsumed excess), in the order restored. The day's third
+        ///      growth signal beside its list and its late chain: a standing
+        ///      record reads it from where it last read, re-offers what it
+        ///      finds, and reserves nothing while an entry is unread, so a
+        ///      restored epoch is never skipped for live funding.
+        mapping(uint256 => bytes32[]) transportDayRestored;
+    }
+
+    /// @notice 3b-ii-A2 (#2305) — one batch a staging record staged from, with
+    ///         the components it gave.
+    struct StagedBatch {
+        bytes32 id;
+        uint256 fresh;
+        uint256 recycled;
     }
 
     /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss: the
@@ -7867,6 +7956,154 @@ library LibVaipakam {
         bool released;
         uint256 consumedFresh;
         uint256 consumedRecycled;
+        /// @dev 3b-ii-A2 (#2305), appended — the batch's STAGED components:
+        ///      debited from `balance` by a standing staging record, credited
+        ///      to no one until that record resolves (consumed) or unwinds
+        ///      (restored). Kept per component because a capacity read is net
+        ///      of consumed AND staged per leg — two stagers reading a clear
+        ///      `consumedFresh` against one fresh cap could otherwise both take
+        ///      it. The identity gains both terms: `admitted == balance +
+        ///      parked + debited + consumedFresh + consumedRecycled +
+        ///      stagedFresh + stagedRecycled`.
+        uint256 stagedFresh;
+        uint256 stagedRecycled;
+    }
+
+    /// @notice 3b-ii-A2 (#2305) — the operation a staging record commits to.
+    ///         A sweep of one entry and a claim over several are different
+    ///         obligations on the same day; the record carries which.
+    enum StagingOp {
+        None,
+        Claim,
+        Forfeit,
+        Expiry
+    }
+
+    /// @notice 3b-ii-A2 (#2305) — where a staging record stands. `Staging`:
+    ///         batches staged, nothing reserved, unwindable. `Reserved`: the
+    ///         residual legs and the cap headroom are held too, still
+    ///         unwindable. `Resolving`: its first irreversible batch page has
+    ///         run; beyond any deadline, it only completes. `Unwinding`: its
+    ///         pages are returning what it held. `None` is no record.
+    enum StagingPhase {
+        None,
+        Staging,
+        Reserved,
+        Resolving,
+        Unwinding
+    }
+
+    /// @notice 3b-ii-A2 (#2305) — ONE staging record per settlement
+    ///         obligation-day (claimant, side, day), the A2 design's unit.
+    /// @dev Staging never settles: what a record holds is debited from its
+    ///      batches and the live sources and credited to no one until the
+    ///      record's last page. Every figure a page needs to reverse the
+    ///      record — which batch, which leg, which live source — is written
+    ///      here when it is taken, so the unwind returns exactly what was
+    ///      held and never recomputes a split whose ledgers may have moved.
+    struct StagingRecord {
+        address user;
+        RewardSide side;
+        StagingOp op;
+        StagingPhase phase;
+        RewardDelivery venue;
+        bool venueSet;
+        uint64 day;
+        uint64 openedAt;
+        uint64 deadline;
+        uint64 challengeStart;
+        /// @dev keccak256(abi.encode(entryIds, op)) — the commitment a
+        ///      resume must match; a different set or operation is refused.
+        bytes32 commitment;
+        uint256[] entryIds;
+        /// @dev The day's priced need at its last pricing, by destination
+        ///      and by source — the four figures the resolution pays.
+        uint256 needUserFresh;
+        uint256 needUserRecycled;
+        uint256 needTreasuryFresh;
+        uint256 needTreasuryRecycled;
+        /// @dev Per committed entry, its priced slice and whether the
+        ///      loan-side cap counts it (what `_persistDay` writes).
+        uint256[] sliceAmounts;
+        bool[] sliceChargeable;
+        /// @dev Staged transport by component while the record stages; the
+        ///      four destination figures the epochs cover are fixed when the
+        ///      record is reserved, by the same user-first rule the day
+        ///      primitive applies.
+        uint256 stagedFresh;
+        uint256 stagedRecycled;
+        uint256 epochUserFresh;
+        uint256 epochUserRecycled;
+        uint256 epochTreasuryFresh;
+        uint256 epochTreasuryRecycled;
+        /// @dev The reservation, per live source (provenance for the unwind).
+        uint256 reservedLiveUserFresh;
+        uint256 reservedLiveTreasuryFresh;
+        uint256 reservedLiveUserRecycled;
+        uint256 reservedPoolCap;
+        /// @dev What the `Resolving` row holds for this record: the epoch
+        ///      legs its batch pages moved there, and the live recycled its
+        ///      reservation moved there.
+        uint256 heldEpoch;
+        uint256 heldRecycled;
+        /// @dev How many batches the record has staged from, and how many of
+        ///      them its resolution or unwind has processed. The batches
+        ///      THEMSELVES are not held here (Codex #2308 r12, r13): they are
+        ///      the record's one UNBOUNDED state, accumulated across many
+        ///      preparations, and a struct that held them could not be closed
+        ///      in one transaction on a mature day. They live in
+        ///      `stagingBatches`, keyed by the record's nonce, so the close
+        ///      deletes only bounded fields and the pages still walk them in
+        ///      the order the plan staged them.
+        uint256 batchCount;
+        uint256 resolveCursor;
+        /// @dev Where the day's scan resumes: the last list node scanned,
+        ///      and the last late-chain node seen.
+        bytes32 continuationNode;
+        bytes32 lateSeen;
+        /// @dev Whether a preparation reached the end of the day's list, and
+        ///      how many members the list had then: the reservation refuses a
+        ///      record whose day still has unscanned epochs — transport first
+        ///      is the rule staging exists to keep (Codex #2308 r1).
+        bool scanComplete;
+        uint256 listCountSeen;
+        /// @dev What the lifetime caps trimmed off the day at reservation —
+        ///      paid to no one, but its commitment retires at payout exactly
+        ///      as the ordinary claim retires it (Codex #2308 r1).
+        uint256 cappedOffFresh;
+        uint256 cappedOffRecycled;
+        /// @dev What the resolution may CONSUME of the staged components — the
+        ///      figures the reservation assigned; a staged amount beyond them
+        ///      is returned to its epoch by the page that reaches it, never
+        ///      consumed unpaid (Codex #2308 r1).
+        uint256 consumeFreshLeft;
+        uint256 consumeRecycledLeft;
+        /// @dev Which opening under this key this record is; the late-chain
+        ///      generation it last walked from; whether it was reserved.
+        uint256 nonce;
+        uint256 lateGenSeen;
+        bool wasReserved;
+        /// @dev Epochs the record passed over PENDING — untyped, or not yet
+        ///      whole (at most one page); a preparation re-checks them first,
+        ///      so one stageable since is staged before any live source is
+        ///      reserved. Past the page the record can only be unwound.
+        bytes32[] skippedIds;
+        bool pendingOverflow;
+        /// @dev The late-link count the deadline's chain work is measured
+        ///      from: the day's count when the record opened, so the deadline
+        ///      counts links made since and never the day's history.
+        uint256 lateWorkBase;
+        /// @dev The late work RESTORED by restarts: every generation move
+        ///      re-walks the chain from its head, so each adds the chain's
+        ///      count at that moment here, and the deadline counts every
+        ///      restart's pages, not only the first's (Codex #2308 r5, r10).
+        uint256 lateWorkRestored;
+        /// @dev How far into the day's restore log (`transportDayRestored`)
+        ///      this record has read (Codex #2308 r15): set to the log's
+        ///      length when the record opens — its own first scan covers
+        ///      every earlier restoration — and advanced as preparations
+        ///      re-offer what was restored since.
+        uint256 restoredSeen;
     }
 
     /// @notice #1566 transport epochs PR 3b — a batch's PENDING REMAINDER:

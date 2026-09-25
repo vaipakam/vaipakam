@@ -320,6 +320,20 @@ interface IVaipakamErrors {
     /// @param unattributed The remainder no row describes (held minus
     ///                     attributed) at the time of the call.
     error RewardCustodyExceedsUnattributed(uint256 requested, uint256 unattributed);
+    /// @notice 3b-ii-A2 (Codex #2308 r7, r13) — custody cannot be activated
+    ///         while any staging record holds a RESERVATION. A resolving
+    ///         record's consumed epoch value rests in the Diamond's balance
+    ///         under no attribution until its last page pays it; a reserved
+    ///         record's reservations count against that same balance. Settle
+    ///         the records or unwind them first — both are permissionless, and
+    ///         a resolving record only completes.
+    error RewardCustodyActivationBlockedByStagedRecords(uint256 encumbered);
+    /// @notice 3b-ii-A2 (Codex #2308 r13) — a reward-ROLE change cannot
+    ///         straddle a staging reservation: the role decides the delivered
+    ///         allowance a reserved record's payout charges, so a transition
+    ///         under one would leave a resolving record unable to pay and
+    ///         unable to unwind. Settle or unwind the records first.
+    error RewardRoleChangeBlockedByStagedRecords(uint256 encumbered);
     /// @notice #1566 slice 4 PR A (Codex #2158 r27 P1) — the rebase was called
     ///         with a pause epoch that is not the live one: the figure was
     ///         established under a different pause (or none), and a payout in
@@ -472,6 +486,11 @@ interface IVaipakamErrors {
     error ReconciliationRecycledConsumedShort(uint256 requested, uint256 consumed);
     /// @notice Movable recycled custody is bounded by the UNCOMMITTED bucket.
     error ReconciliationExceedsUncommittedBucket(uint256 requested, uint256 uncommitted);
+    /// @notice 3b-ii-A2 (Codex #2308 r11) — a settlement's bucket consumption
+    ///         would eat what staging records have reserved: every settlement
+    ///         gate reads the bucket's availability, so this names an ungated
+    ///         over-consumption rather than stranding a resolving record.
+    error RecycleBucketReservedShortfall(uint256 needed, uint256 available);
     /// @notice Spent recycled credit moves to fresh only as far as
     ///         CONSUMPTION (attributed first in queue order) or an inherited
     ///         debit covers it; credit that left by surplus repatriation has
@@ -1709,4 +1728,46 @@ interface IVaipakamErrors {
     ///         by less than the amount between the caller's snapshot and the
     ///         credit. The tag is derived from the operation, never chosen.
     error RecycleInflowUnverified(uint8 source, uint256 expected, uint256 delta);
+
+    // ───────── 3b-ii-A2 (#2305) — staging ─────────
+    /// @notice No staging record stands under this key.
+    error StagingRecordUnknown(bytes32 key);
+    /// @notice The record is not in a phase this operation may act on.
+    error StagingPhaseInvalid(bytes32 key, uint8 phase);
+    /// @notice The caller's entry set or operation differs from the record's commitment.
+    error StagingCommitmentMismatch(bytes32 key, bytes32 expected, bytes32 given);
+    /// @notice A batch with standing staging references cannot be parked or retired.
+    error TransportBatchReferenced(bytes32 batchId, uint256 references);
+    /// @notice The record's deadline has not passed and the caller is not its claimant.
+    error StagingNotExpired(bytes32 key, uint64 deadline);
+    /// @notice The day cannot be covered as priced — staged transport plus what
+    ///         the live sources can bear falls short — so nothing is reserved.
+    error StagingNotCovered(bytes32 key);
+    /// @notice A hold may not be taken out of the live fresh row (its era
+    ///         queue records every debit as spend); fresh is reserved by count.
+    error RewardCustodyHoldSourceInvalid(uint8 row);
+    /// @notice Only the record's claimant may set its delivery venue, and only
+    ///         before the record is reserved.
+    error StagingVenueNotSettable(bytes32 key);
+    /// @notice The record's day still has epochs no preparation has scanned;
+    ///         nothing is reserved from the live sources ahead of them.
+    error StagingScanIncomplete(bytes32 key);
+    /// @notice A delivery that may only reach the claimant's vault found none
+    ///         to credit; the record stays resolving until one can accept it.
+    error RewardCustodyVaultDeliveryFailed(address user);
+    /// @notice The fresh this settlement would pay fits the lifetime pool but
+    ///         not what is left after standing staging reservations: a
+    ///         deferral, retryable once a reservation resolves or unwinds —
+    ///         never a truncation, which only the lifetime cap may cause.
+    error InteractionPoolReservedShortfall(uint256 needed, uint256 available);
+    /// @notice The record passed more pending epochs — untyped, or not yet
+    ///         whole — than it tracks; it can only be unwound, and the day
+    ///         stays draw-only for them.
+    error StagingPendingOverflow(bytes32 key);
+    /// @notice The reward this settlement would pay a loan side fits the
+    ///         side's lifetime cap but not what is left of it after standing
+    ///         staging reservations: a deferral, retryable once a reservation
+    ///         resolves or unwinds — never a trim, which only the lifetime
+    ///         cap may cause (3b-ii-A2; Codex #2308 r4).
+    error LoanSideReservedShortfall(uint256 loanId, uint8 side, uint256 needed, uint256 available);
 }

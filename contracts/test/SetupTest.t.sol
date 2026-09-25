@@ -152,6 +152,11 @@ import {RewardReconciliationFacet} from "../src/facets/RewardReconciliationFacet
 import {RewardIngressFacet} from "../src/facets/RewardIngressFacet.sol";
 import {RewardEpochFacet} from "../src/facets/RewardEpochFacet.sol";
 import {RewardEpochViewFacet} from "../src/facets/RewardEpochViewFacet.sol";
+import {RewardStagingFacet} from "../src/facets/RewardStagingFacet.sol";
+import {RewardClaimWalkFacet} from "../src/facets/RewardClaimWalkFacet.sol";
+import {RewardStagingSettleFacet} from "../src/facets/RewardStagingSettleFacet.sol";
+import {RewardSweepWalkFacet} from "../src/facets/RewardSweepWalkFacet.sol";
+import {RewardForfeitWalkFacet} from "../src/facets/RewardForfeitWalkFacet.sol";
 import {RewardCompensationDispatchFacet} from "../src/facets/RewardCompensationDispatchFacet.sol";
 import {RewardCommitmentFacet} from "../src/facets/RewardCommitmentFacet.sol";
 import {RepatriationFacet} from "../src/facets/RepatriationFacet.sol";
@@ -346,6 +351,11 @@ contract SetupTest is Test {
     RewardIngressFacet rewardIngressFacet;
     RewardEpochFacet rewardEpochFacet;
     RewardEpochViewFacet rewardEpochViewFacet;
+    RewardStagingFacet rewardStagingFacet;
+    RewardClaimWalkFacet rewardClaimWalkFacet;
+    RewardSweepWalkFacet rewardSweepWalkFacet;
+    RewardForfeitWalkFacet rewardForfeitWalkFacet;
+    RewardStagingSettleFacet rewardStagingSettleFacet;
     RewardCompensationDispatchFacet rewardCompensationDispatchFacet;
     RewardCommitmentFacet rewardCommitmentFacet;
     RepatriationFacet repatriationFacet;
@@ -471,6 +481,11 @@ contract SetupTest is Test {
         rewardIngressFacet = new RewardIngressFacet();
         rewardEpochFacet = new RewardEpochFacet();
         rewardEpochViewFacet = new RewardEpochViewFacet();
+        rewardStagingFacet = new RewardStagingFacet();
+        rewardClaimWalkFacet = new RewardClaimWalkFacet();
+        rewardSweepWalkFacet = new RewardSweepWalkFacet();
+        rewardForfeitWalkFacet = new RewardForfeitWalkFacet();
+        rewardStagingSettleFacet = new RewardStagingSettleFacet();
         rewardCompensationDispatchFacet = new RewardCompensationDispatchFacet();
         rewardCommitmentFacet = new RewardCommitmentFacet();
         repatriationFacet = new RepatriationFacet();
@@ -503,7 +518,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](83);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](88);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -810,6 +825,35 @@ contract SetupTest is Test {
             facetAddress: address(rewardEpochViewFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getRewardEpochViewFacetSelectors()
+        });
+        // 3b-ii-A2 (#2305) — the claim's entry walk, hosted (slot 83).
+        cuts[83] = IDiamondCut.FacetCut({
+            facetAddress: address(rewardStagingFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getRewardStagingFacetSelectors()
+        });
+        // 3b-ii-A2 (#2305) — the settle walks' hosts (slots 84, 85).
+        cuts[84] = IDiamondCut.FacetCut({
+            facetAddress: address(rewardClaimWalkFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getRewardClaimWalkFacetSelectors()
+        });
+        cuts[85] = IDiamondCut.FacetCut({
+            facetAddress: address(rewardSweepWalkFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getRewardSweepWalkFacetSelectors()
+        });
+        // 3b-ii-A2 (#2305) — the staging record's settlement half (slot 86).
+        cuts[86] = IDiamondCut.FacetCut({
+            facetAddress: address(rewardStagingSettleFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getRewardStagingSettleFacetSelectors()
+        });
+        // 3b-ii-A2 (#2305; Codex #2308 r4) — the forfeit sweep walk's host (slot 87).
+        cuts[87] = IDiamondCut.FacetCut({
+            facetAddress: address(rewardForfeitWalkFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getRewardForfeitWalkFacetSelectors()
         });
         // #1306 follow-up — read-only lens facet (view/getter surface split
         // off InteractionRewardsFacet for EIP-170 headroom; shared storage).

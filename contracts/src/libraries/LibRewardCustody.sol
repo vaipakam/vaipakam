@@ -62,6 +62,16 @@ library LibRewardCustody {
     ///               emitted alongside).
     /// @custom:event-category state-change/reward-custody
     event RewardCustodyRowCredited(uint8 indexed row, uint256 amount, uint8 origin);
+    /// @notice 3b-ii-A2 (#2305) — an in-holder HOLD: `amount` moved from `from`
+    ///         into `to` against staging record `key`, credited to no one. Not a
+    ///         payout, so the era queue is not told; a hold out of the live
+    ///         fresh row is refused for exactly that reason.
+    /// @custom:event-category state-change/reward-custody
+    event RewardCustodyRowHeld(uint8 indexed from, uint8 indexed to, uint256 amount, bytes32 indexed key);
+    /// @notice 3b-ii-A2 (#2305) — a hold returned: `amount` moved back from `from`
+    ///         into `to`, the row it came from, for staging record `key`.
+    /// @custom:event-category state-change/reward-custody
+    event RewardCustodyRowHoldReleased(uint8 indexed from, uint8 indexed to, uint256 amount, bytes32 indexed key);
 
     /// @notice An attribution row was debited.
     /// @param row    The {LibVaipakam.RewardCustodyRow} ordinal.
@@ -143,7 +153,11 @@ library LibRewardCustody {
     ///      epoch while the stale classifier had neither the gate nor the
     ///      debit, so two records would claim one sum. The bump is what makes
     ///      that cut refuse to certify.
-    uint32 internal constant CUTOVER_VERSION = 2;
+    /// @dev 3 since 3b-ii-A2 (#2305): a new holder-debiting settlement seam
+    ///      (the staged record's pages), a vault-only delivery entry on the
+    ///      custody facet, and the `Resolving` row in the attributed total —
+    ///      an activation must see a custody cut that carries all three.
+    uint32 internal constant CUTOVER_VERSION = 3;
 
     /// @notice A complete facet cut recorded the custody protocol version and
     ///         the routing it installed.
@@ -247,7 +261,9 @@ library LibRewardCustody {
     function attributedTotal(
         LibVaipakam.Storage storage s
     ) internal view returns (uint256 total) {
-        uint256 last = uint256(LibVaipakam.RewardCustodyRow.Restitution);
+        // Through the last row, `Resolving` included (3b-ii-A2, #2305): a hold
+        // between resolution pages is attributed, never sweepable.
+        uint256 last = uint256(LibVaipakam.RewardCustodyRow.Resolving);
         for (uint256 i = 0; i <= last; ++i) {
             total += s.rewardCustodyRows[LibVaipakam.RewardCustodyRow(i)];
         }
@@ -367,6 +383,42 @@ library LibRewardCustody {
         );
         emit RewardCustodyRowDebited(uint8(from), amount, address(0));
         credit(s, to, amount, 1);
+    }
+
+    /// @notice 3b-ii-A2 (#2305) — HOLD `amount` of row `from` in row `to`
+    ///         against staging record `key`: an in-holder move that pays no
+    ///         one and tells the era queue nothing. The live fresh row is
+    ///         refused as a source — every debit of it is a spend to its era
+    ///         queue, so fresh is reserved by count, never held.
+    function hold(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.RewardCustodyRow from,
+        LibVaipakam.RewardCustodyRow to,
+        uint256 amount,
+        bytes32 key
+    ) internal {
+        if (amount == 0) return;
+        if (from == LibVaipakam.RewardCustodyRow.LiveFresh) {
+            revert IVaipakamErrors.RewardCustodyHoldSourceInvalid(uint8(from));
+        }
+        _debitRow(s, from, amount);
+        s.rewardCustodyRows[to] += amount;
+        emit RewardCustodyRowHeld(uint8(from), uint8(to), amount, key);
+    }
+
+    /// @notice 3b-ii-A2 (#2305) — return a hold: `amount` back from `from`
+    ///         into `to`, the row it was held out of, for record `key`.
+    function releaseHold(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.RewardCustodyRow from,
+        LibVaipakam.RewardCustodyRow to,
+        uint256 amount,
+        bytes32 key
+    ) internal {
+        if (amount == 0) return;
+        _debitRow(s, from, amount);
+        s.rewardCustodyRows[to] += amount;
+        emit RewardCustodyRowHoldReleased(uint8(from), uint8(to), amount, key);
     }
 
     function _debitRow(
@@ -923,15 +975,55 @@ library LibRewardCustody {
      *         quarantine reservation was still Diamond-side.
      * @return moved What the holder re-attributed into `Unclassified`.
      */
+    /// @notice The live fresh row less what staging records have reserved of
+    ///         it (3b-ii-A2, #2305) — THE figure every mover of the row reads:
+    ///         the claim gate's room ({LibVpfiRecycle.freshBackingRoom}), the
+    ///         compensation demotion and the fresh-to-recycled correction
+    ///         (Codex #2308 r5). Fresh is reserved by count, never held out of
+    ///         the row, so the row alone overstates what may leave it.
+    function liveFreshUnreserved(LibVaipakam.Storage storage s) internal view returns (uint256) {
+        uint256 row = s.rewardCustodyRows[LibVaipakam.RewardCustodyRow.LiveFresh];
+        uint256 reserved = s.liveFreshReserved;
+        return row > reserved ? row - reserved : 0;
+    }
+
+    /// @notice What a demotion or a correction may still UNCREDIT from the
+    ///         delivered fresh ledger without leaving a standing reservation
+    ///         unable to charge it (3b-ii-A2, #2305; Codex #2308 r5). While a
+    ///         staging reservation stands, the ledger may not fall below
+    ///         `paid + reserved`: a resolving record's last page charges
+    ///         exactly its reserved figure, and the reservation was taken
+    ///         against a bound that held. With none standing, the whole of
+    ///         `received` may be uncredited, as before — a DEFICIT (paid
+    ///         beyond received) is a modelled state the restitution machinery
+    ///         exists for, and a reservation cannot be taken into one, since
+    ///         the bound it needs is then zero. The role-gated bound the gates
+    ///         read is {LibInteractionRewards.deliveredFreshBound}.
+    function deliveredFreshUncreditable(LibVaipakam.Storage storage s) internal view returns (uint256) {
+        uint256 received = s.rewardBudgetArmedFreshReceived;
+        uint256 reserved = s.rewardBudgetArmedFreshReserved;
+        if (reserved == 0) return received;
+        uint256 floor = s.rewardBudgetArmedFreshPaid + reserved;
+        return received > floor ? received - floor : 0;
+    }
+
     function uncreditFreshInHolder(
         LibVaipakam.Storage storage s,
         uint256 amount
     ) internal returns (uint256 moved) {
         if (amount == 0) return 0;
-        uint256 received = s.rewardBudgetArmedFreshReceived;
-        s.rewardBudgetArmedFreshReceived = received > amount ? received - amount : 0;
-        uint256 live = s.rewardCustodyRows[LibVaipakam.RewardCustodyRow.LiveFresh];
-        uint256 fromLive = amount < live ? amount : live;
+        // What staging records have RESERVED of the live fresh — on the row
+        // and on the delivered ledger — is unavailable to this demotion
+        // (3b-ii-A2, #2305; Codex #2308 r5): a resolving record is irrevocable,
+        // and its last page charges the ledger and debits the row by exactly
+        // the reserved figures. Each bound reads the one figure its source
+        // keeps; the ledger's keeps the deficit model where no reservation
+        // stands ({deliveredFreshUncreditable}).
+        uint256 cut = deliveredFreshUncreditable(s);
+        if (cut > amount) cut = amount;
+        s.rewardBudgetArmedFreshReceived -= cut;
+        uint256 fromLive = liveFreshUnreserved(s);
+        if (fromLive > amount) fromLive = amount;
         move(s, LibVaipakam.RewardCustodyRow.LiveFresh, LibVaipakam.RewardCustodyRow.Unclassified, fromLive);
         uint256 rest = amount - fromLive;
         uint256 restitution = s.rewardCustodyRows[LibVaipakam.RewardCustodyRow.Restitution];
@@ -1031,6 +1123,24 @@ library LibRewardCustody {
     /// @notice #1566 transport epochs PR 3b-ii-A — a day's consumption cursor
     ///         moved past exhausted epochs at the front of its index.
     event TransportDayCursorAdvanced(uint256 indexed dayId, bytes32 cursor);
+    /// @notice 3b-ii-A2 (#2305) — a staging record opened for (`user`, `side`,
+    ///         `day`) under `key`, committed to `commitment`.
+    /// @custom:event-category state-change/reward-staging
+    event StagingRecordOpened(bytes32 indexed key, address indexed user, uint8 side, uint64 day, bytes32 commitment);
+    /// @notice 3b-ii-A2 (#2305) — `fresh` / `recycled` of `batchId` moved from
+    ///         its balance into staged form for record `key`: debited from
+    ///         the batch, credited to no one.
+    /// @custom:event-category state-change/reward-staging
+    event TransportStaged(bytes32 indexed batchId, bytes32 indexed key, uint256 fresh, uint256 recycled);
+    /// @notice 3b-ii-A2 (#2305) — record `key`'s deadline moved: only upward,
+    ///         only while unexpired, only as the day's list grew.
+    /// @custom:event-category state-change/reward-staging
+    event StagingDeadlineSet(bytes32 indexed key, uint64 deadline);
+    /// @notice 3b-ii-A2 (Codex #2308 r15) — `batchId`'s balance was restored
+    ///         on `dayId` by a record's unwind or a resolution's excess, and
+    ///         logged for every standing record of that day to re-offer.
+    /// @custom:event-category state-change/reward-staging
+    event TransportDayRestored(uint256 indexed dayId, bytes32 indexed batchId);
     /// @notice A packet's split was attested and a classification it already
     ///         carried exceeds a component's recorded cap by these amounts
     ///         (Codex #2276 r15 P1) — a divergence recorded for the
@@ -1703,7 +1813,8 @@ library LibRewardCustody {
         LibVaipakam.Storage storage s,
         bytes32 batchId,
         uint256[] calldata dayIds,
-        bytes32[] memory hints
+        bytes32[] memory hints,
+        bytes32[] memory lateHints
     ) internal returns (uint32 indexedDays) {
         LibVaipakam.TransportBatch storage b = s.transportBatches[batchId];
         if (!transportBatchExists(b)) revert IVaipakamErrors.TransportBatchUnknown(batchId);
@@ -1722,7 +1833,9 @@ library LibRewardCustody {
         // from the day's cursor, a window is a prefix of the order, and a
         // prefix of a caller-ordered index was the caller's choice. A list
         // inserts in CONSTANT work given the predecessor — a materializer
-        // may name it (`hints`, aligned with `dayIds`; zero = at the head) —
+        // may name it (`hints`, aligned with `dayIds`; zero = at the head),
+        // and for a link that lands anywhere but the tail its predecessor in
+        // the day's LATE chain too (`lateHints`, likewise; Codex #2308 r4) —
         // and without one the ledger walks back from the newest for at most
         // `TRANSPORT_INDEX_WALK_CAP` steps, one read each, and refuses past
         // that rather than taking on unbounded work (r7 P2: an arrival-sorted
@@ -1742,11 +1855,15 @@ library LibRewardCustody {
         // is no second read source to reconcile: the array is the membership
         // set, the list is the order.
         uint64 arrived = s.ingressPackets[batchId].arrivedAt;
-        bool hinted = hints.length != 0;
+        LinkHint memory h;
+        h.hinted = hints.length != 0;
+        h.lateHinted = lateHints.length != 0;
         for (uint256 i = done; i < end; ++i) {
             uint256 d = dayIds[i];
             s.transportBatchesByDay[d].push(batchId);
-            _linkIntoDay(s, d, batchId, arrived, hinted ? hints[i] : bytes32(0), hinted);
+            if (h.hinted) h.prev = hints[i];
+            if (h.lateHinted) h.latePrev = lateHints[i];
+            _linkIntoDay(s, d, batchId, arrived, h);
         }
         indexedDays = uint32(end);
         b.indexedDays = indexedDays;
@@ -1807,18 +1924,32 @@ library LibRewardCustody {
         return aAt < bAt || (aAt == bAt && a < b);
     }
 
+    /// @dev The materializer's optional predecessors for one link: in the
+    ///      day's list and, should the link land late, in the day's late
+    ///      chain (Codex #2308 r4: a late chain deeper than the bounded walk
+    ///      needs its own verified hint, or a valid hinted materialization
+    ///      could never complete and the batch's protected funds never
+    ///      become usable). Each is verified in constant work; the late one
+    ///      is read only for a link that lands anywhere but the list's tail.
+    struct LinkHint {
+        bytes32 prev;
+        bool hinted;
+        bytes32 latePrev;
+        bool lateHinted;
+    }
+
     /// @dev Link `id` into day `d`'s ordered list at its place by (arrival,
-    ///      batch id) — after `hint` when `hinted` (verified, constant work),
-    ///      else after the newest node older than it, found by a bounded walk
-    ///      back from the tail. Idempotent: a batch already in the list is
-    ///      left where it is.
+    ///      batch id) — after `h.prev` when `h.hinted` (verified, constant
+    ///      work), else after the newest node older than it, found by a
+    ///      bounded walk back from the tail; and, when the place is not the
+    ///      tail, into the day's late chain the same way after `h.latePrev`.
+    ///      Idempotent: a batch already in the list is left where it is.
     function _linkIntoDay(
         LibVaipakam.Storage storage s,
         uint256 d,
         bytes32 id,
         uint64 arrived,
-        bytes32 hint,
-        bool hinted
+        LinkHint memory h
     ) private {
         bytes32 head = s.transportDayHead[d];
         if (head == id || s.transportDayPrev[d][id] != bytes32(0)) return; // already listed
@@ -1839,23 +1970,23 @@ library LibRewardCustody {
         // refused in one read when it points behind the window.
         bytes32 prev;
         bytes32 cur = s.transportDayCursorNode[d];
-        if (hinted) {
-            prev = hint;
+        if (h.hinted) {
+            prev = h.prev;
             if (prev == bytes32(0)) {
                 // The head's place is behind the window once anything is passed.
-                if (cur != bytes32(0)) revert IVaipakamErrors.TransportIndexHintInvalid(id, d, hint);
+                if (cur != bytes32(0)) revert IVaipakamErrors.TransportIndexHintInvalid(id, d, h.prev);
             } else {
                 bool inList = prev == head || s.transportDayPrev[d][prev] != bytes32(0);
-                if (!inList) revert IVaipakamErrors.TransportIndexHintInvalid(id, d, hint);
+                if (!inList) revert IVaipakamErrors.TransportIndexHintInvalid(id, d, h.prev);
                 if (prev == cur) {
                     // The cursor may precede an epoch older than itself.
                 } else if (_passed(s, d, prev) || !_keyBefore(s, s.ingressPackets[prev].arrivedAt, prev, id)) {
-                    revert IVaipakamErrors.TransportIndexHintInvalid(id, d, hint);
+                    revert IVaipakamErrors.TransportIndexHintInvalid(id, d, h.prev);
                 }
             }
             bytes32 succ = prev == bytes32(0) ? head : s.transportDayNext[d][prev];
             if (succ != bytes32(0) && !_keyBefore(s, arrived, id, succ)) {
-                revert IVaipakamErrors.TransportIndexHintInvalid(id, d, hint);
+                revert IVaipakamErrors.TransportIndexHintInvalid(id, d, h.prev);
             }
         } else {
             // Back from the newest, stopping at the first node not after this
@@ -1875,6 +2006,62 @@ library LibRewardCustody {
         else s.transportDayNext[d][prev] = id;
         if (nxt == bytes32(0)) s.transportDayTail[d] = id;
         else s.transportDayPrev[d][nxt] = id;
+        // A LATE link (3b-ii-A2, #2305): anywhere but the tail means the
+        // epoch sorted ahead of members already listed, so a staging record
+        // whose continuation stands past this place would never scan it.
+        // The day keeps every such link in arrival order; a record's resume
+        // walks the ones it has not seen before it continues.
+        if (nxt != bytes32(0)) _linkLate(s, d, id, arrived, h);
+    }
+
+    /// @dev The late chain is kept in the LIST's own order — oldest arrival,
+    ///      batch id on a tie — so a record's two scans, the chain past what
+    ///      it has seen and the list past its continuation, are one order
+    ///      read in two places (Codex #2308 r2: link order would let an
+    ///      indexer decide which links a record's page takes). PRIORITY —
+    ///      fewest listed days first — is the plan's, applied within a page
+    ///      exactly as the draw applies it within a window (Codex #2276 r1,
+    ///      r5, r12); neither the list nor the chain is kept in it, and an
+    ///      earlier revision of this note claimed the chain was (Codex #2308
+    ///      r4). Placed after a verified late predecessor when the
+    ///      materializer names one, else by the same bounded back-walk the
+    ///      list uses. A link that lands anywhere but the chain's tail bumps
+    ///      the day's late generation, and a record whose last walk predates
+    ///      it restarts from the chain's head.
+    function _linkLate(LibVaipakam.Storage storage s, uint256 d, bytes32 id, uint64 arrived, LinkHint memory h) private {
+        bytes32 behind;
+        if (h.lateHinted) {
+            // Verified as the list's hint is: in the chain, older than this
+            // link, and with nothing between them — or the chain's head.
+            behind = h.latePrev;
+            if (behind != bytes32(0)) {
+                bool inChain = behind == s.transportDayLateHead[d] || s.transportDayLatePrev[d][behind] != bytes32(0);
+                if (!inChain || !_keyBefore(s, s.ingressPackets[behind].arrivedAt, behind, id)) {
+                    revert IVaipakamErrors.TransportIndexHintInvalid(id, d, behind);
+                }
+            }
+        } else {
+            behind = s.transportDayLateTail[d];
+            uint256 steps;
+            while (behind != bytes32(0) && _keyBefore(s, arrived, id, behind)) {
+                if (++steps > TRANSPORT_INDEX_WALK_CAP) revert IVaipakamErrors.TransportIndexWalkExceeded(id, d);
+                behind = s.transportDayLatePrev[d][behind];
+            }
+        }
+        bytes32 ahead = behind == bytes32(0) ? s.transportDayLateHead[d] : s.transportDayLateNext[d][behind];
+        if (h.lateHinted && ahead != bytes32(0) && !_keyBefore(s, arrived, id, ahead)) {
+            revert IVaipakamErrors.TransportIndexHintInvalid(id, d, h.latePrev);
+        }
+        s.transportDayLatePrev[d][id] = behind;
+        s.transportDayLateNext[d][id] = ahead;
+        if (behind == bytes32(0)) s.transportDayLateHead[d] = id;
+        else s.transportDayLateNext[d][behind] = id;
+        if (ahead == bytes32(0)) s.transportDayLateTail[d] = id;
+        else {
+            s.transportDayLatePrev[d][ahead] = id;
+            unchecked { ++s.transportDayLateGen[d]; }
+        }
+        unchecked { ++s.transportDayLateCount[d]; }
     }
 
     /// @notice #1566 transport epochs PR 3b — PARK what this batch's
@@ -1911,6 +2098,10 @@ library LibRewardCustody {
         if (b.indexedDays < b.dayCount) {
             revert IVaipakamErrors.TransportBatchNotFullyIndexed(batchId, b.indexedDays, b.dayCount);
         }
+        // A referenced batch cannot be parked (3b-ii-A2, #2305): its staged
+        // components are a standing record's, and parking would strand both.
+        uint256 refs = s.transportBatchReferences[batchId];
+        if (refs != 0) revert IVaipakamErrors.TransportBatchReferenced(batchId, refs);
         LibVaipakam.TransportRemainder storage rem = s.transportRemainders[batchId];
         if (rem.batchId != bytes32(0)) revert IVaipakamErrors.TransportRemainderAlreadyParked(batchId);
         LibVaipakam.IngressPacket storage p = s.ingressPackets[batchId];
@@ -2054,6 +2245,15 @@ library LibRewardCustody {
     ///         window held.
     struct TransportDrawPlan {
         bytes32[] ids;
+        /// @dev 3b-ii-A2 (#2305) — set by {planTransportDrawForRecord} only:
+        ///      where the list scan and the late-chain scan stopped, carried
+        ///      in memory so the split's wide frame holds no extra slots.
+        bytes32 lastNode;
+        bytes32 lastLate;
+        /// @dev 3b-ii-A2 (#2305) — set by {planTransportDrawForRecord} only:
+        ///      the live, fully indexed epochs it passed over UNTYPED, for the
+        ///      record to remember and re-check.
+        bytes32[] skipped;
         /// @dev Each drawable epoch's effective balance (net of the overlay)
         ///      and the ROOM each of its packet's two attested component caps
         ///      leaves it (Codex #2276 r4 P1: a cap covers classification PLUS
@@ -2312,8 +2512,12 @@ library LibRewardCustody {
         uint256 ovR
     ) private view returns (uint256 fr, uint256 rr) {
         (uint256 capF, uint256 capR) = _netCaps(s.ingressPackets[id]);
-        uint256 usedF = b.consumedFresh + ovF;
-        uint256 usedR = b.consumedRecycled + ovR;
+        // Net of what standing records have STAGED of each component as well
+        // as what draws consumed (3b-ii-A2, #2305; Codex #2308 r1): a staged
+        // leg is a claim on that component's cap, and two records reading a
+        // clear counter against one cap could otherwise both take it.
+        uint256 usedF = b.consumedFresh + b.stagedFresh + ovF;
+        uint256 usedR = b.consumedRecycled + b.stagedRecycled + ovR;
         fr = capF > usedF ? capF - usedF : 0;
         rr = capR > usedR ? capR - usedR : 0;
         if (fr > bal) fr = bal;
@@ -2481,6 +2685,601 @@ library LibRewardCustody {
     ///         it withheld by reason.
     /// @dev    The plan's read half with nothing asked: a keeper's and a test's
     ///         view of a day. Zero, with no scan, on a day no epoch lists.
+    // ───────────────────────── 3b-ii-A2 (#2305) — staging ─────────────────────────
+
+    /// @dev The retry cadence a record's deadline is sized in — one page of
+    ///      scanning per cadence — plus a fixed grace, from its opening.
+    uint64 internal constant STAGING_RETRY_CADENCE = 1 days;
+    uint64 internal constant STAGING_GRACE = 3 days;
+
+    /// @notice A record's deadline, derived from the WORK its day needs:
+    ///         opening + cadence × the pages the day's list needs + grace.
+    /// @dev Moves only UPWARD, and only while the record is unexpired (Codex
+    ///      #2297 post-merge item 7: a passed deadline is terminal — later
+    ///      list growth belongs to the next obligation, never to a revived
+    ///      lease). Never by the stager's own action: the page count is the
+    ///      day index's, not the caller's. Set when the record opens and
+    ///      re-read on every preparation.
+    function stagingDeadlineRefresh(
+        LibVaipakam.Storage storage s,
+        bytes32 key,
+        LibVaipakam.StagingRecord storage r
+    ) internal {
+        uint64 current = r.deadline;
+        if (current != 0 && block.timestamp >= current) return; // expired: terminal
+        // The work LEFT, not the day's history (Codex #2308 r3): the members
+        // the day's cursor has not passed, plus the late links made since the
+        // record opened, plus the late work every restart restored — each
+        // generation move re-walks the whole chain and adds its count (Codex
+        // #2308 r5, r10) — so a mature day with thousands of exhausted
+        // members and one window left needs one page, and its lease says so,
+        // while every restart's pages are counted too.
+        uint256 len = s.transportBatchesByDay[r.day].length;
+        uint256 passed = s.transportDayCursor[r.day];
+        uint256 members = len > passed ? len - passed : 0;
+        uint256 lateNow = s.transportDayLateCount[r.day];
+        members += lateNow > r.lateWorkBase ? lateNow - r.lateWorkBase : 0;
+        members += r.lateWorkRestored;
+        // …plus the restored epochs it has yet to re-offer (Codex #2308 r15).
+        uint256 restoredNow = s.transportDayRestored[r.day].length;
+        members += restoredNow > r.restoredSeen ? restoredNow - r.restoredSeen : 0;
+        uint256 pages = (members + TRANSPORT_DRAW_SCAN_CAP - 1) / TRANSPORT_DRAW_SCAN_CAP;
+        if (pages == 0) pages = 1;
+        uint64 next = r.openedAt + uint64(pages) * STAGING_RETRY_CADENCE + STAGING_GRACE;
+        if (next > current) {
+            r.deadline = next;
+            emit StagingDeadlineSet(key, next);
+        }
+    }
+
+    function stagingKey(address user, LibVaipakam.RewardSide side, uint256 day) internal pure returns (bytes32) {
+        return keccak256(abi.encode(user, side, day));
+    }
+
+    function stagingCommitment(uint256[] memory entryIds, LibVaipakam.StagingOp op) internal pure returns (bytes32) {
+        return keccak256(abi.encode(entryIds, op));
+    }
+
+    /// @dev Staging takes exactly what a draw may take: an ATTESTED packet's
+    ///      batch whose index is whole and that lists ONE day. An unattested
+    ///      batch is neither drawn nor staged (Codex #2276 r26 — a leg is typed
+    ///      once, by the caps it is drawn under); a batch whose later pages
+    ///      are unindexed would expose its balance to its first page's days
+    ///      before those days were indexed (Codex #2276 r1). Either state is
+    ///      PENDING to a record — remembered and re-checked, never passed
+    ///      (Codex #2308 r4). A batch listing more than one day is WITHHELD
+    ///      until the contested-allocation machinery (3c): staging from it is
+    ///      the contested draw the plan refuses, so it is never staged — and
+    ///      never pending either ({_pendingCandidate}), since nothing before
+    ///      3c makes it stageable.
+    function stageable(LibVaipakam.Storage storage s, bytes32 batchId) internal view returns (bool) {
+        LibVaipakam.TransportBatch storage b = s.transportBatches[batchId];
+        return s.ingressPackets[batchId].attested && b.indexedDays == b.dayCount && b.dayCount == 1;
+    }
+
+    /// @notice The plan for a RECORD's resume: the day's late chain past what
+    ///         the record has seen, then the list from its continuation (the
+    ///         day's cursor start when it has none), one window in all, only
+    ///         stageable batches, no overlay. Returns where both scans stopped
+    ///         so the record never rescans what it staged. Reads the LIST
+    ///         only: a record is opened only for a listed day
+    ///         ({stageDayFromPlan}), and listing is permanent.
+    function planTransportDrawForRecord(
+        LibVaipakam.Storage storage s,
+        uint256 dayId,
+        bytes32 fromNode,
+        bytes32 lateSeen,
+        bytes32[] memory extraIds
+    ) internal view returns (TransportDrawPlan memory plan) {
+        uint256 cap = TRANSPORT_DRAW_SCAN_CAP + extraIds.length;
+        bytes32[] memory ids = new bytes32[](cap);
+        uint256[] memory bals = new uint256[](cap);
+        uint256[] memory fRoom = new uint256[](cap);
+        uint256[] memory rRoom = new uint256[](cap);
+        uint256[] memory keys = new uint256[](cap);
+        bytes32[] memory skipped = new bytes32[](cap);
+        uint256 nSkipped;
+        uint256 live;
+        uint256 seen;
+        bytes32 node;
+        // The record's own re-checks first: epochs it passed over PENDING —
+        // untyped, or not yet whole — that may be stageable since (at most
+        // one page, not counted against the window — {_planAdd} skips one
+        // still pending).
+        for (uint256 k; k < extraIds.length; ) {
+            live = _planAdd(s, extraIds[k], ids, bals, fRoom, rRoom, keys, live, plan);
+            unchecked { ++k; }
+        }
+        // The late chain first — but only the epochs that sort AHEAD of the
+        // continuation, which the list scan from it would never reach; one
+        // that sorts after it is reached by that scan, and feeding it twice
+        // would plan its balance twice (Codex #2308 r1). A record with no
+        // continuation scans the list from its start and needs no late
+        // chain: it marks the chain seen so a later resume does not replay
+        // links that scan already covered.
+        if (fromNode == bytes32(0)) {
+            plan.lastLate = s.transportDayLateTail[dayId];
+        } else {
+            node = lateSeen == bytes32(0) ? s.transportDayLateHead[dayId] : s.transportDayLateNext[dayId][lateSeen];
+            while (node != bytes32(0) && seen < TRANSPORT_DRAW_SCAN_CAP) {
+                // One candidate once (Codex #2308 r5): an epoch the record's
+                // re-checks already offered is passed here, not planned twice
+                // — a restarted chain walk meets the re-checked epochs again.
+                if (_keyBefore(s, s.ingressPackets[node].arrivedAt, node, fromNode) && !_among(extraIds, node)) {
+                    if (_pendingCandidate(s, node)) skipped[nSkipped++] = node;
+                    else live = _planAdd(s, node, ids, bals, fRoom, rRoom, keys, live, plan);
+                }
+                plan.lastLate = node;
+                node = s.transportDayLateNext[dayId][node];
+                unchecked { ++seen; }
+            }
+            // A late chain longer than the window leaves nodes unvisited: the
+            // scan is not complete, whatever the list says (Codex #2308 r2).
+            if (node != bytes32(0)) plan.capHit = true;
+        }
+        // Then the list from the continuation, or from the day's cursor start.
+        if (fromNode == bytes32(0)) {
+            bytes32 cur = s.transportDayCursorNode[dayId];
+            node = cur == bytes32(0) ? s.transportDayHead[dayId] : s.transportDayNext[dayId][cur];
+        } else {
+            node = s.transportDayNext[dayId][fromNode];
+        }
+        while (node != bytes32(0) && seen < TRANSPORT_DRAW_SCAN_CAP) {
+            if (!_among(extraIds, node)) {
+                if (_pendingCandidate(s, node)) skipped[nSkipped++] = node;
+                else live = _planAdd(s, node, ids, bals, fRoom, rRoom, keys, live, plan);
+            }
+            plan.lastNode = node;
+            node = s.transportDayNext[dayId][node];
+            unchecked { ++seen; }
+        }
+        if (node != bytes32(0)) plan.capHit = true;
+        assembly ("memory-safe") {
+            mstore(ids, live)
+            mstore(bals, live)
+            mstore(fRoom, live)
+            mstore(rRoom, live)
+            mstore(skipped, nSkipped)
+        }
+        plan.skipped = skipped;
+        plan.ids = ids;
+        plan.bals = bals;
+        plan.freshRoom = fRoom;
+        plan.recycledRoom = rRoom;
+    }
+
+    /// @notice The takes for a record's resume: {planTransportDrawForRecord}
+    ///         split for the ask, in one frame that holds no record pointer —
+    ///         the split's own frame is wide, and a caller holding the key and
+    ///         the record beside it is what pushed viaIR past the stack.
+    function planTakesForRecord(
+        LibVaipakam.Storage storage s,
+        uint256 dayId,
+        bytes32 fromNode,
+        bytes32 lateSeen,
+        uint256 askF,
+        uint256 askR,
+        bytes32[] memory extraIds
+    )
+        internal
+        view
+        returns (
+            bytes32[] memory ids,
+            uint256[] memory fresh,
+            uint256[] memory recycled,
+            bytes32 lastNode,
+            bytes32 lastLate,
+            bool complete,
+            bytes32[] memory skipped
+        )
+    {
+        TransportDrawPlan memory plan = planTransportDrawForRecord(s, dayId, fromNode, lateSeen, extraIds);
+        if (plan.ids.length != 0) {
+            TransportTakes memory t = splitTransportTakes(plan, askF, askR);
+            ids = plan.ids;
+            fresh = t.fresh;
+            recycled = t.recycled;
+        }
+        lastNode = plan.lastNode;
+        lastLate = plan.lastLate;
+        complete = !plan.capHit;
+        skipped = plan.skipped;
+    }
+
+    /// @notice Remember an epoch the record's own scan passed over pending.
+    function noteSkipped(LibVaipakam.Storage storage s, bytes32 key, LibVaipakam.StagingRecord storage r, bytes32 id) internal {
+        _noteSkipped(s, key, r, id);
+    }
+
+    /// @notice Record that `batchId`'s balance was RESTORED on `dayId` — by a
+    ///         record's unwind, or by a resolution returning what it staged
+    ///         beyond its assignment (Codex #2308 r15).
+    /// @dev    The ONE entry every restoration goes through. A standing record
+    ///         that already scanned the batch saw it drained by the staging now
+    ///         being returned, and neither the day's list length nor its late
+    ///         generation moves on a restoration, so without this the record
+    ///         could reserve live funding past a higher-priority epoch that is
+    ///         whole again. The log is append-only and read by each record from
+    ///         its own position, exactly as the list's growth is.
+    function offerRestored(LibVaipakam.Storage storage s, uint256 dayId, bytes32 batchId) internal {
+        s.transportDayRestored[dayId].push(batchId);
+        emit TransportDayRestored(dayId, batchId);
+    }
+
+    /// @notice A preparation's re-check page (Codex #2308 r2, r4, r15): the
+    ///         epochs the record passed over pending, then — up to one window —
+    ///         the restorations logged for its day since it last read, each id
+    ///         once. Advances the record's read position past what it returns,
+    ///         which the preparation now offers to the plan.
+    function recheckPage(LibVaipakam.Storage storage s, LibVaipakam.StagingRecord storage r)
+        internal
+        returns (bytes32[] memory out)
+    {
+        bytes32[] storage log = s.transportDayRestored[r.day];
+        uint256 from = r.restoredSeen;
+        uint256 to = log.length;
+        if (to > from + TRANSPORT_DRAW_SCAN_CAP) to = from + TRANSPORT_DRAW_SCAN_CAP;
+        uint256 nSkip = r.skippedIds.length;
+        out = new bytes32[](nSkip + (to > from ? to - from : 0));
+        uint256 n;
+        for (uint256 i; i < nSkip; ) {
+            out[n++] = r.skippedIds[i];
+            unchecked { ++i; }
+        }
+        for (uint256 i = from; i < to; ) {
+            bytes32 id = log[i];
+            if (!_amongFirst(out, n, id)) out[n++] = id;
+            unchecked { ++i; }
+        }
+        assembly ("memory-safe") {
+            mstore(out, n)
+        }
+        r.restoredSeen = to;
+    }
+
+    function _amongFirst(bytes32[] memory ids, uint256 n, bytes32 node) private pure returns (bool) {
+        for (uint256 k; k < n; ) {
+            if (ids[k] == node) return true;
+            unchecked { ++k; }
+        }
+        return false;
+    }
+
+    /// @dev Whether `node` is among `ids` — the record's re-check page, at most
+    ///      one window of them, so the scan stays bounded.
+    function _among(bytes32[] memory ids, bytes32 node) private pure returns (bool) {
+        uint256 n = ids.length;
+        for (uint256 k; k < n; ) {
+            if (ids[k] == node) return true;
+            unchecked { ++k; }
+        }
+        return false;
+    }
+
+    /// @dev A live epoch the record cannot stage from YET — its packet awaits
+    ///      its split, or its membership its last page. Remembered by the
+    ///      record and re-checked, never planned: a candidate a scan passed
+    ///      without disposing of would be lost to the record, since neither
+    ///      an attestation nor a completing page changes the list's length or
+    ///      its late generation (Codex #2308 r2, r4). A SHARED epoch is not
+    ///      pending (Codex #2276 r26): it is withheld until 3c, so the scan
+    ///      passes it as it passes an exhausted one, and a day holding many
+    ///      of them never fills the record's page of pending re-checks.
+    function _pendingCandidate(LibVaipakam.Storage storage s, bytes32 node) private view returns (bool) {
+        LibVaipakam.TransportBatch storage b = s.transportBatches[node];
+        return b.balance != 0 && b.dayCount == 1 && !stageable(s, node);
+    }
+
+    /// @dev One candidate into the record plan: live and stageable (attested,
+    ///      whole, one day), rooms from its caps, sorted by the plan's key
+    ///      exactly as {planTransportDraw} sorts — oldest arrival, batch id
+    ///      last.
+    function _planAdd(
+        LibVaipakam.Storage storage s,
+        bytes32 node,
+        bytes32[] memory ids,
+        uint256[] memory bals,
+        uint256[] memory fRoom,
+        uint256[] memory rRoom,
+        uint256[] memory keys,
+        uint256 live,
+        TransportDrawPlan memory plan
+    ) private view returns (uint256) {
+        LibVaipakam.TransportBatch storage b = s.transportBatches[node];
+        uint256 bal = b.balance;
+        if (bal == 0 || !stageable(s, node)) return live;
+        (uint256 fr, uint256 rr) = _capRooms(s, node, b, bal, 0, 0);
+        uint256 key = uint256(s.ingressPackets[node].arrivedAt);
+        uint256 k = live;
+        while (k != 0 && (keys[k - 1] > key || (keys[k - 1] == key && ids[k - 1] > node))) {
+            ids[k] = ids[k - 1];
+            bals[k] = bals[k - 1];
+            fRoom[k] = fRoom[k - 1];
+            rRoom[k] = rRoom[k - 1];
+            keys[k] = keys[k - 1];
+            unchecked { --k; }
+        }
+        ids[k] = node;
+        bals[k] = bal;
+        fRoom[k] = fr;
+        rRoom[k] = rr;
+        keys[k] = key;
+        plan.available += fr + rr < bal ? fr + rr : bal;
+        unchecked { return live + 1; }
+    }
+
+    /// @notice Open a record for a claim day the walk could not settle, or
+    ///         extend the standing one, and stage the plan's legs into it.
+    ///         Called by the claim's entry walk on a cap-hit deferral — on the
+    ///         host, never inlined into a settle facet.
+    function stageDayFromPlan(
+        LibVaipakam.Storage storage s,
+        address user,
+        LibVaipakam.RewardSide side,
+        uint256 day,
+        uint256[] memory entryIds,
+        bytes32[] memory ids,
+        uint256[] memory fresh,
+        uint256[] memory recycled,
+        LibVaipakam.RewardDelivery deliverTo
+    ) internal returns (bytes32 key, uint256 staged) {
+        key = stagingKey(user, side, day);
+        LibVaipakam.StagingRecord storage r = s.stagingRecords[key];
+        bytes32 commitment = stagingCommitment(entryIds, LibVaipakam.StagingOp.Claim);
+        bool opened;
+        if (r.phase == LibVaipakam.StagingPhase.None) {
+            // After a non-settlement release the same obligation may not open
+            // a record again until the cooldown has passed (Codex #2308 r2):
+            // the restored coverage is the window's, directly consumable by
+            // every other obligation meanwhile. The batch-keyed window and
+            // priority mode of the design are A2-ii's (#2305).
+            // The cooldown is published: set with `StagingCooldownSet` at the
+            // release and read back through the epoch view's
+            // `getStagingCooldown`, so this silent deferral is never a state a
+            // client cannot name (Codex #2308 r7).
+            if (block.timestamp < s.stagingCooldownUntil[key]) return (key, 0);
+            opened = true;
+            r.nonce = ++s.stagingNonce[key];
+            r.user = user;
+            r.side = side;
+            r.op = LibVaipakam.StagingOp.Claim;
+            r.phase = LibVaipakam.StagingPhase.Staging;
+            r.day = SafeCast.toUint64(day);
+            r.openedAt = uint64(block.timestamp);
+            r.commitment = commitment;
+            r.entryIds = entryIds;
+        } else if (r.commitment != commitment) {
+            revert IVaipakamErrors.StagingCommitmentMismatch(key, r.commitment, commitment);
+        } else if (r.phase != LibVaipakam.StagingPhase.Staging) {
+            revert IVaipakamErrors.StagingPhaseInvalid(key, uint8(r.phase));
+        }
+        (uint256 sf, uint256 sr) = stageTakes(s, key, r, ids, fresh, recycled);
+        staged = sf + sr;
+        // A window with nothing stageable in it opens no record: an empty
+        // record would hold nothing, reference nothing, and only stop the
+        // walk on a day it could not help.
+        if (staged == 0 && opened) {
+            delete s.stagingRecords[key];
+            return (key, 0);
+        }
+        // Opened only once something was staged, so no indexer holds an
+        // opening for a record that never stood (Codex #2308 r1 P2).
+        if (opened) emit StagingRecordOpened(key, user, uint8(side), r.day, commitment);
+        // The venue the claimant named on THIS claim binds the record (Codex
+        // #2308 r6): the staged part is delivered where the paid part was.
+        // `Default` names nothing, and the record resolves the claimant's
+        // default at payout as before; the claimant may still re-bind while
+        // the record stages ({LibRewardStaging.setVenue}).
+        if (deliverTo != LibVaipakam.RewardDelivery.Default) bindStagingVenue(key, r, deliverTo);
+        // The walk records NO scan position (Codex #2308 r4): the day
+        // primitive's plan is sorted by priority, not by the list, and it is
+        // blind to the epochs its window passed that were not yet whole, so
+        // no continuation derived from it disposes of every candidate the
+        // window saw — and an epoch passed undisposed is lost to the record,
+        // since neither an attestation nor a completing page moves the list's
+        // length or its late generation. The record's own scanner is the only
+        // one that advances the continuation: its first preparation rescans
+        // the window from the day's cursor — one page, over epochs whose
+        // balance the staging already moved — and notes every pending epoch
+        // it passes. One page is the price of one scanner.
+        if (opened) {
+            // The late chain is history to a record that opens now: every
+            // link before this moment is in the list order that first
+            // preparation scans from the day's cursor. Only links made after
+            // this are the chain's business for this record.
+            r.lateSeen = s.transportDayLateTail[day];
+            r.lateGenSeen = s.transportDayLateGen[day];
+            r.lateWorkBase = s.transportDayLateCount[day];
+            // Likewise the restore log: what was restored before now is in
+            // the balances that first scan reads (Codex #2308 r15).
+            r.restoredSeen = s.transportDayRestored[day].length;
+        }
+        stagingDeadlineRefresh(s, key, r);
+    }
+
+    /// @notice Move the takes into staged form for `key`: each stageable
+    ///         batch's balance falls by its take, its staged components rise,
+    ///         the record references it (once) and records the components it
+    ///         gave. An unstageable batch in the plan is skipped, and NOT
+    ///         noted — the day primitive's window may hold untyped epochs a
+    ///         draw could have taken from; a stage may not, and the record's
+    ///         own scan, which starts from the day's cursor, is what
+    ///         remembers such an epoch (Codex #2308 r4: a note made here
+    ///         only for a take missed the untyped epoch the split assigned
+    ///         nothing).
+    function stageTakes(
+        LibVaipakam.Storage storage s,
+        bytes32 key,
+        LibVaipakam.StagingRecord storage r,
+        bytes32[] memory ids,
+        uint256[] memory fresh,
+        uint256[] memory recycled
+    ) internal returns (uint256 stagedFresh, uint256 stagedRecycled) {
+        uint256 n = ids.length;
+        for (uint256 k; k < n; ) {
+            uint256 bf = fresh[k];
+            uint256 br = recycled[k];
+            if (bf + br != 0) {
+                bytes32 id = ids[k];
+                if (stageable(s, id)) {
+                    LibVaipakam.TransportBatch storage b = s.transportBatches[id];
+                    b.balance -= bf + br;
+                    b.stagedFresh += bf;
+                    b.stagedRecycled += br;
+                    // The staged total is the SIXTH reserved source (Codex
+                    // #2308 r13): while custody is inactive these tokens rest
+                    // in the Diamond's balance, and no other claim may spend
+                    // them. {LibVpfiRecycle.freshBackingRoom} reads it.
+                    s.stagedEpochTotal += bf + br;
+                    _reference(s, key, r, id, bf, br);
+                    stagedFresh += bf;
+                    stagedRecycled += br;
+                    emit TransportStaged(id, key, bf, br);
+                }
+            }
+            unchecked { ++k; }
+        }
+        r.stagedFresh += stagedFresh;
+        r.stagedRecycled += stagedRecycled;
+    }
+
+    /// @notice The record's delivery venue set — by the claimant's explicit
+    ///         claim at opening, or by the claimant later while the record
+    ///         stages; ONE writer, one event (Codex #2308 r6).
+    /// @custom:event-category state-change/reward-staging
+    event StagingVenueSet(bytes32 indexed key, uint8 venue);
+
+    function bindStagingVenue(bytes32 key, LibVaipakam.StagingRecord storage r, LibVaipakam.RewardDelivery venue) internal {
+        r.venue = venue;
+        r.venueSet = true;
+        emit StagingVenueSet(key, uint8(venue));
+    }
+
+    function recordNonceKey(bytes32 key, uint256 nonce) internal pure returns (bytes32) {
+        return keccak256(abi.encode(key, nonce));
+    }
+
+    /// @notice One batch of a record's staged list, by insertion index — the
+    ///         order the plan staged it in, which is the order the resolution
+    ///         consumes (Codex #2308 r13).
+    function stagedBatchAt(
+        LibVaipakam.Storage storage s,
+        bytes32 key,
+        LibVaipakam.StagingRecord storage r,
+        uint256 index
+    ) internal view returns (LibVaipakam.StagedBatch storage) {
+        return s.stagingBatches[recordNonceKey(key, r.nonce)][index];
+    }
+
+    /// @notice A batch's staged components leave the record: consumed, or
+    ///         returned to its balance. Clears the row and the record's index
+    ///         of it, so the close has nothing unbounded left to delete
+    ///         (Codex #2308 r12, r13).
+    /// @dev    The staged EARMARK is not dropped here (Codex #2308 r14): what
+    ///         leaves the earmark is what leaves the record's claim on the
+    ///         Diamond's balance, and a resolution page's consumed share does
+    ///         not — it is still owed to the claimant until the last page pays
+    ///         it. The caller drops exactly what it returned, and {_pay} drops
+    ///         what it paid; {releaseStagedEarmark} is the one writer.
+    function releaseStagedBatchAt(
+        LibVaipakam.Storage storage s,
+        bytes32 key,
+        LibVaipakam.StagingRecord storage r,
+        uint256 index
+    ) internal {
+        bytes32 nk = recordNonceKey(key, r.nonce);
+        LibVaipakam.StagedBatch storage sb = s.stagingBatches[nk][index];
+        delete s.stagingBatchIndexPlusOne[nk][sb.id];
+        delete s.stagingBatches[nk][index];
+    }
+
+    /// @notice `amount` of epoch value leaves the staged earmark of the
+    ///         Diamond's balance: returned to its batch, or paid out (Codex
+    ///         #2308 r13, r14). Saturating, as every ledger release here is.
+    function releaseStagedEarmark(LibVaipakam.Storage storage s, uint256 amount) internal {
+        if (amount == 0) return;
+        uint256 total = s.stagedEpochTotal;
+        s.stagedEpochTotal = total > amount ? total - amount : 0;
+    }
+
+    /// @dev One reference per (record, batch), found in O(1) through the
+    ///      record's own index (Codex #2308 r2): a batch staged twice by one
+    ///      record across retries is one entry with merged components. A
+    ///      batch the record had passed over untyped leaves that list here.
+    function _reference(
+        LibVaipakam.Storage storage s,
+        bytes32 key,
+        LibVaipakam.StagingRecord storage r,
+        bytes32 id,
+        uint256 bf,
+        uint256 br
+    ) private {
+        bytes32 nk = recordNonceKey(key, r.nonce);
+        uint256 at = s.stagingBatchIndexPlusOne[nk][id];
+        if (at != 0) {
+            LibVaipakam.StagedBatch storage sb = s.stagingBatches[nk][at - 1];
+            sb.fresh += bf;
+            sb.recycled += br;
+            return;
+        }
+        uint256 next = r.batchCount;
+        s.stagingBatches[nk][next] = LibVaipakam.StagedBatch({id: id, fresh: bf, recycled: br});
+        r.batchCount = next + 1;
+        s.stagingBatchIndexPlusOne[nk][id] = next + 1;
+        s.transportBatchReferences[id] += 1;
+        if (s.stagingSkippedSeen[nk][id]) _forgetSkipped(s, nk, r, id);
+    }
+
+    /// @dev An epoch the record passed over PENDING — untyped, or not yet
+    ///      whole — is remembered, at most one page of them, so a preparation
+    ///      re-checks it first and an attestation or a completing page
+    ///      arriving after the skip is never lost to the record (Codex #2308
+    ///      r2, r4). Past the page the record can only be unwound: such a day
+    ///      is pending-dominated and stays draw-only.
+    function _noteSkipped(LibVaipakam.Storage storage s, bytes32 key, LibVaipakam.StagingRecord storage r, bytes32 id) private {
+        bytes32 nk = recordNonceKey(key, r.nonce);
+        if (s.stagingSkippedSeen[nk][id]) return;
+        if (r.skippedIds.length >= TRANSPORT_DRAW_SCAN_CAP) {
+            r.pendingOverflow = true;
+            return;
+        }
+        s.stagingSkippedSeen[nk][id] = true;
+        r.skippedIds.push(id);
+    }
+
+    function _forgetSkipped(LibVaipakam.Storage storage s, bytes32 nk, LibVaipakam.StagingRecord storage r, bytes32 id) private {
+        uint256 n = r.skippedIds.length;
+        for (uint256 i; i < n; ) {
+            if (r.skippedIds[i] == id) {
+                r.skippedIds[i] = r.skippedIds[n - 1];
+                r.skippedIds.pop();
+                break;
+            }
+            unchecked { ++i; }
+        }
+        s.stagingSkippedSeen[nk][id] = false;
+    }
+
+    /// @notice Forget an epoch the record passed over pending once it has been
+    ///         re-checked STAGEABLE: it was offered to the plan, and whether it
+    ///         contributed or could not — exhausted, no room, nothing asked —
+    ///         it needs no further revisit (Codex #2308 r3).
+    function forgetSkippedIfStageable(LibVaipakam.Storage storage s, bytes32 key, LibVaipakam.StagingRecord storage r, bytes32 id) internal {
+        bytes32 nk = recordNonceKey(key, r.nonce);
+        if (s.stagingSkippedSeen[nk][id] && stageable(s, id)) _forgetSkipped(s, nk, r, id);
+    }
+
+    /// @notice Whether any epoch the record passed over pending is stageable
+    ///         now — what the reservation must not walk past.
+    function anySkippedNowStageable(LibVaipakam.Storage storage s, LibVaipakam.StagingRecord storage r) internal view returns (bool) {
+        uint256 n = r.skippedIds.length;
+        for (uint256 i; i < n; ) {
+            if (stageable(s, r.skippedIds[i])) return true;
+            unchecked { ++i; }
+        }
+        return false;
+    }
+
     function transportCoverageForDay(
         LibVaipakam.Storage storage s,
         uint256 dayId
@@ -2661,7 +3460,7 @@ library LibRewardCustody {
                     b.balance -= bf + br;
                     b.consumedFresh += bf;
                     b.consumedRecycled += br;
-                    _spendUntypedForDraw(s, batchId, bf + br);
+                    spendUntypedForDraw(s, batchId, bf + br);
                     emit TransportDrawn(batchId, dayId, bf, br);
                     unchecked { ++written; }
                 }
@@ -2687,7 +3486,7 @@ library LibRewardCustody {
     ///      remainder this value leaves. Steps the same figures down that a
     ///      classification's take does, through the same function, and none
     ///      of the classified ones.
-    function _spendUntypedForDraw(LibVaipakam.Storage storage s, bytes32 batchId, uint256 amount) private {
+    function spendUntypedForDraw(LibVaipakam.Storage storage s, bytes32 batchId, uint256 amount) internal {
         LibVaipakam.IngressPacket storage p = s.ingressPackets[batchId];
         uint256 have = p.unclassified;
         if (amount > have) {
@@ -2746,6 +3545,10 @@ library LibRewardCustody {
         uint256 ovF,
         uint256 ovR
     ) private view returns (bool) {
+        // A referenced batch is never exhausted for a cursor (3b-ii-A2,
+        // #2305): a standing record may unwind into it, and a cursor that had
+        // passed it would never revisit what the unwind restored.
+        if (s.transportBatchReferences[id] != 0) return false;
         LibVaipakam.TransportBatch storage b = s.transportBatches[id];
         uint256 bal = b.balance;
         bal = bal > ovF + ovR ? bal - (ovF + ovR) : 0;
@@ -2953,6 +3756,17 @@ library LibRewardCustody {
     /// @dev {RewardCustodyFacet.custodyDeliverClaim}: the claim's three legs to
     ///      the claimant's vault when asked and creditable, else to their
     ///      wallet. Returns whether the vault took it.
+    /// @dev 3b-ii-A2 (#2305) — {custodyDeliverClaimToVault}: the vault route
+    ///      with NO wallet fallback, for a claimant the sanctions path says
+    ///      may be paid into their vault and nowhere else.
+    function callDeliverClaimToVault(address user, uint256 fresh, uint256 recycled, uint256 epoch) internal {
+        _custody(
+            abi.encodeWithSignature(
+                "custodyDeliverClaimToVault(address,uint256,uint256,uint256)", user, fresh, recycled, epoch
+            )
+        );
+    }
+
     function callDeliverClaim(
         address user,
         uint256 fresh,
@@ -3367,10 +4181,15 @@ library LibRewardCustody {
         uint256 live = s.rewardCustodyRows[LibVaipakam.RewardCustodyRow.LiveFresh];
         uint256 reserved = s.outstandingCommitFresh;
         uint256 uncommitted = live > reserved ? live - reserved : 0;
+        // And never what staging records have reserved of the row, nor of
+        // the delivered ledger (3b-ii-A2, #2305; Codex #2308 r5): the
+        // narrower of the two bounds on each.
+        uint256 unreserved = liveFreshUnreserved(s);
+        if (unreserved < uncommitted) uncommitted = unreserved;
         if (amount > uncommitted) revert IVaipakamErrors.ReconciliationExceedsUncommittedLive(amount, uncommitted);
-        uint256 received = s.rewardBudgetArmedFreshReceived;
+        uint256 received = deliveredFreshUncreditable(s);
         if (amount > received) revert IVaipakamErrors.ReconciliationReceivedShort(amount, received);
-        s.rewardBudgetArmedFreshReceived = received - amount;
+        s.rewardBudgetArmedFreshReceived -= amount;
         move(s, LibVaipakam.RewardCustodyRow.LiveFresh, to, amount);
     }
 

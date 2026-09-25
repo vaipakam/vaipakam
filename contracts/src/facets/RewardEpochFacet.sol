@@ -114,6 +114,7 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
             LibVaipakam.storageSlot(),
             batchId,
             dayIds,
+            new bytes32[](0),
             new bytes32[](0)
         );
     }
@@ -124,13 +125,21 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
     ///         head; verified on chain, so a wrong hint is refused and never
     ///         mis-orders. Needed only for an epoch indexed after more newer
     ///         epochs on a day than the unhinted entry's bounded walk covers.
+    ///         `lateHints` — empty, or aligned with `dayIds` — names the same
+    ///         for the day's LATE chain, which a link that lands anywhere but
+    ///         the list's tail joins (Codex #2308 r4): needed only when more
+    ///         late links stand newer than this one than that bounded walk
+    ///         covers; ignored for a link at the tail; verified the same way.
     function materializeTransportBatchPageHinted(
         bytes32 batchId,
         uint256[] calldata dayIds,
-        bytes32[] calldata hints
+        bytes32[] calldata hints,
+        bytes32[] calldata lateHints
     ) external nonReentrant returns (uint32 indexedDays) {
-        if (hints.length != dayIds.length) revert TransportDayListMismatch(batchId, bytes32(0), bytes32(0));
-        return LibRewardCustody.materializeTransportBatchPage(LibVaipakam.storageSlot(), batchId, dayIds, hints);
+        if (hints.length != dayIds.length || (lateHints.length != 0 && lateHints.length != dayIds.length)) {
+            revert TransportDayListMismatch(batchId, bytes32(0), bytes32(0));
+        }
+        return LibRewardCustody.materializeTransportBatchPage(LibVaipakam.storageSlot(), batchId, dayIds, hints, lateHints);
     }
 
     /// @notice PARK what a batch's obligations left, under the batch's own key.
@@ -242,6 +251,19 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
         // stranger and the admin both learn the release does not exist yet,
         // rather than one of them learning they lack a role for it.
         revert TransportReleaseNotYetAvailable(batchId);
+    }
+
+    /// @notice 3b-ii-A2 (#2305) — a batch's STAGED components and the count of
+    ///         staging records referencing it: the terms the conservation
+    ///         identity gained, read beside {getTransportBatch}'s.
+    function getTransportBatchStaged(bytes32 batchId)
+        external
+        view
+        returns (uint256 stagedFresh, uint256 stagedRecycled, uint256 references)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.TransportBatch storage b = s.transportBatches[batchId];
+        return (b.stagedFresh, b.stagedRecycled, s.transportBatchReferences[batchId]);
     }
 
     /// @notice A transport epoch as recorded.

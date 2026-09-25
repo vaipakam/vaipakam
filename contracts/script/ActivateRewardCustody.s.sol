@@ -7,6 +7,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {RewardCustodyFacet} from "../src/facets/RewardCustodyFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet.sol";
+import {RewardEpochViewFacet} from "../src/facets/RewardEpochViewFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
@@ -170,6 +171,20 @@ contract ActivateRewardCustody is RewardCustodyCeremonyBase {
             RewardCustodyFacet(diamond).armedFreshPaidRebased(),
             "ActivateRewardCustody: the paid-side rebase has not run on this chain -- run the facet refresh's migrations first"
         );
+        // 3b-ii-A2 (Codex #2308 r7, r9) — the activation refuses while a
+        // staging record is resolving, and a resolving record's pages cannot
+        // run under the manual pause this ceremony needs; read it here, before
+        // the pause, the approval and the row funding go out, so the operator
+        // never discovers it after a partly executed ceremony. Unpause, drive
+        // the record's remaining pages (permissionless; it only completes),
+        // re-establish the figures under a fresh pause, and rerun.
+        {
+            uint256 encumbered = RewardEpochViewFacet(diamond).getStagingEncumberedCount();
+            require(
+                encumbered == 0,
+                "ActivateRewardCustody: a staging record holds a RESERVATION (reserved or resolving) -- its reservations count against this balance and a resolving record's consumed epoch value rests here under no attribution until its last page pays it, so the activation would strand it; unpause, settle the records (resolveStagedDayPage) or unwind them (unwindStagedDayPage) -- both permissionless -- re-establish the figures under a fresh pause, then rerun"
+            );
+        }
         // Mirrors the contract's complete-cut gate BEFORE anything is sent
         // (Codex #2186 r4 P1): activation and the bootstrap writers refuse
         // unless the routing — every facet with its selectors — is the one a
@@ -452,8 +467,7 @@ contract ActivateRewardCustody is RewardCustodyCeremonyBase {
             "ActivateRewardCustody: the reward role is not the one the ceremony record names -- the record does not describe this activation"
         );
         (uint256 received, uint256 paid) = c.armedFreshLedger();
-        (bool activated, bool frozen, uint256 live, uint256 recycled, uint256 recovery, uint256 overage, , , , ) =
-            c.rewardCustodyLedger();
+        (bool activated, bool frozen, uint256 live, uint256 recycled, uint256 recovery, uint256 overage, , , , , ) = c.rewardCustodyLedger();
         // The one ledger fact a write-down leaves behind: `received` equals
         // `paid + live row` at the moment of activation. Checked for a
         // write-down record only while nothing has moved the ledger since

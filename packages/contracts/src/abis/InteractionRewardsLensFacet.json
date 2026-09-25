@@ -257,6 +257,30 @@
   },
   {
     "type": "function",
+    "name": "getLoanSideRewardReserved",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "side",
+        "type": "uint8",
+        "internalType": "enum LibVaipakam.RewardSide"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getRecycleBackingSnapshot",
     "inputs": [],
     "outputs": [
@@ -456,6 +480,54 @@
         "name": "expiresAt",
         "type": "uint64",
         "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getRewardReservations",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "poolReserved",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "poolAvailable",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "armedFreshReserved",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "liveFreshReserved",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "liveFreshAvailable",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "stagedEpochEarmark",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "bucketReserved",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "bucketAvailable",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"

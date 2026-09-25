@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity 0.8.29;
 
+import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibRewardCustody} from "../libraries/LibRewardCustody.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 
 /**
@@ -22,6 +24,70 @@ import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
  *         writes, and every caller is a preview or a gate.
  */
 contract RewardEpochViewFacet {
+    // ───────────── 3b-ii-A2 (#2305) — the staging records' reads ─────────────
+
+    /// @notice A lean view of a record — the scalars; its arrays are paged:
+    ///         the batches through {getStagingRecordBatches}, the committed
+    ///         entries with their reserved slices through
+    ///         {getStagingRecordEntries}, and the epochs it passed over pending
+    ///         through {getStagingRecordPending} (Codex #2308 r6).
+    struct StagingRecordView {
+        address user;
+        uint8 side;
+        uint8 op;
+        uint8 phase;
+        uint8 venue;
+        bool venueSet;
+        uint64 day;
+        uint64 openedAt;
+        uint64 deadline;
+        bytes32 commitment;
+        uint256 entryCount;
+        /// @dev What the record STILL holds staged, by component: a
+        ///      resolution or unwind page takes its batches' components out of
+        ///      these as it processes them (Codex #2308 r13).
+        uint256 stagedFresh;
+        uint256 stagedRecycled;
+        uint256 needUserFresh;
+        uint256 needUserRecycled;
+        uint256 needTreasuryFresh;
+        uint256 needTreasuryRecycled;
+        uint256 epochUserFresh;
+        uint256 epochUserRecycled;
+        uint256 epochTreasuryFresh;
+        uint256 epochTreasuryRecycled;
+        uint256 reservedLiveUserFresh;
+        uint256 reservedLiveTreasuryFresh;
+        uint256 reservedLiveUserRecycled;
+        uint256 reservedPoolCap;
+        uint256 heldEpoch;
+        uint256 heldRecycled;
+        uint256 batchCount;
+        uint256 resolveCursor;
+        bool scanComplete;
+        uint256 cappedOffFresh;
+        uint256 cappedOffRecycled;
+        bytes32 continuationNode;
+        bytes32 lateSeen;
+        uint256 lateGenSeen;
+        uint256 listCountSeen;
+        uint256 consumeFreshLeft;
+        uint256 consumeRecycledLeft;
+        uint64 challengeStart;
+        uint256 nonce;
+        bool wasReserved;
+        uint256 skippedCount;
+        bool pendingOverflow;
+        uint256 lateWorkBase;
+        uint256 lateWorkRestored;
+        /// @dev The day's restore log (Codex #2308 r15, r16): how far this
+        ///      record has read it, and how long it is now. While the two
+        ///      differ the reservation refuses `StagingScanIncomplete`, and
+        ///      each preparation re-offers up to one window of the difference.
+        uint256 restoredSeen;
+        uint256 restoredLogLength;
+    }
+
     /// @notice The preview's dry run of `user`'s ShareOfPool days against the
     ///         given delivered cap and fresh budget — what a claim would pay,
     ///         the full capped armed fresh it would charge, the part of it the
@@ -69,5 +135,160 @@ contract RewardEpochViewFacet {
     ///         zero over epochs that predate the release).
     function getObligationDomainListsAnEpoch(address user) external view returns (bool) {
         return LibInteractionRewards.chunkListsAnEpochView(user);
+    }
+    /// @notice The cooldown a non-settlement release put on `(user, side,
+    ///         day)`: until this timestamp a claim on the day opens no record
+    ///         and defers as before staging existed; zero when none stands
+    ///         (Codex #2308 r7). The key is {LibRewardCustody.stagingKey}'s.
+    function getStagingCooldown(address user, LibVaipakam.RewardSide side, uint256 day) external view returns (uint64 until) {
+        until = LibVaipakam.storageSlot().stagingCooldownUntil[LibRewardCustody.stagingKey(user, side, day)];
+        // Passed is none: the claim path reads `block.timestamp < until`, and
+        // this reads the same lifecycle (Codex #2308 r9).
+        if (until <= block.timestamp) until = 0;
+    }
+
+    /// @notice How many staging records hold a live RESERVATION — reserved or
+    ///         resolving — which is the count every POSTURE change refuses on
+    ///         (Codex #2308 r7, r9, r13): the reward-custody activation
+    ///         relocates the balance those reservations count against, and a
+    ///         reward-role change moves the delivered allowance they were taken
+    ///         against. The activation ceremony reads this before it sends
+    ///         anything; the role setters read it on chain.
+    function getStagingEncumberedCount() external view returns (uint256) {
+        return LibVaipakam.storageSlot().stagingEncumberedCount;
+    }
+
+    /// @notice The record under `key` — every scalar it carries. A key with
+    ///         no record reads as phase `None` with zeros, never reverts.
+    function getStagingRecord(bytes32 key) external view returns (StagingRecordView memory v) {
+        LibVaipakam.StagingRecord storage r = LibVaipakam.storageSlot().stagingRecords[key];
+        v.user = r.user;
+        v.side = uint8(r.side);
+        v.op = uint8(r.op);
+        v.phase = uint8(r.phase);
+        v.venue = uint8(r.venue);
+        v.venueSet = r.venueSet;
+        v.day = r.day;
+        v.openedAt = r.openedAt;
+        v.deadline = r.deadline;
+        v.commitment = r.commitment;
+        v.entryCount = r.entryIds.length;
+        v.stagedFresh = r.stagedFresh;
+        v.stagedRecycled = r.stagedRecycled;
+        v.needUserFresh = r.needUserFresh;
+        v.needUserRecycled = r.needUserRecycled;
+        v.needTreasuryFresh = r.needTreasuryFresh;
+        v.needTreasuryRecycled = r.needTreasuryRecycled;
+        v.epochUserFresh = r.epochUserFresh;
+        v.epochUserRecycled = r.epochUserRecycled;
+        v.epochTreasuryFresh = r.epochTreasuryFresh;
+        v.epochTreasuryRecycled = r.epochTreasuryRecycled;
+        v.reservedLiveUserFresh = r.reservedLiveUserFresh;
+        v.reservedLiveTreasuryFresh = r.reservedLiveTreasuryFresh;
+        v.reservedLiveUserRecycled = r.reservedLiveUserRecycled;
+        v.reservedPoolCap = r.reservedPoolCap;
+        v.heldEpoch = r.heldEpoch;
+        v.heldRecycled = r.heldRecycled;
+        v.batchCount = r.batchCount;
+        v.resolveCursor = r.resolveCursor;
+        v.scanComplete = r.scanComplete;
+        v.cappedOffFresh = r.cappedOffFresh;
+        v.cappedOffRecycled = r.cappedOffRecycled;
+        v.continuationNode = r.continuationNode;
+        v.lateSeen = r.lateSeen;
+        v.lateGenSeen = r.lateGenSeen;
+        v.listCountSeen = r.listCountSeen;
+        v.consumeFreshLeft = r.consumeFreshLeft;
+        v.consumeRecycledLeft = r.consumeRecycledLeft;
+        v.challengeStart = r.challengeStart;
+        v.nonce = r.nonce;
+        v.wasReserved = r.wasReserved;
+        v.skippedCount = r.skippedIds.length;
+        v.pendingOverflow = r.pendingOverflow;
+        v.lateWorkBase = r.lateWorkBase;
+        v.lateWorkRestored = r.lateWorkRestored;
+        v.restoredSeen = r.restoredSeen;
+        v.restoredLogLength = LibVaipakam.storageSlot().transportDayRestored[r.day].length;
+    }
+
+    /// @notice One page of the record's batches — each with the components it
+    ///         STILL holds — from `from`, at most `count`, in the order the
+    ///         plan staged them, which is the order the resolution consumes.
+    ///         A batch the record has already resolved or unwound reads as
+    ///         zeros: its components left the record (Codex #2308 r13), and
+    ///         `resolveCursor` says how many have (`batchCount` stays the
+    ///         record's lifetime total).
+    function getStagingRecordBatches(bytes32 key, uint256 from, uint256 count)
+        external
+        view
+        returns (bytes32[] memory ids, uint256[] memory fresh, uint256[] memory recycled)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.StagingRecord storage r = s.stagingRecords[key];
+        uint256 n = r.batchCount;
+        if (from >= n) return (ids, fresh, recycled);
+        uint256 end = from + count;
+        if (end > n) end = n;
+        uint256 m = end - from;
+        ids = new bytes32[](m);
+        fresh = new uint256[](m);
+        recycled = new uint256[](m);
+        for (uint256 i; i < m; ) {
+            LibVaipakam.StagedBatch storage sb = LibRewardCustody.stagedBatchAt(s, key, r, from + i);
+            ids[i] = sb.id;
+            fresh[i] = sb.fresh;
+            recycled[i] = sb.recycled;
+            unchecked { ++i; }
+        }
+    }
+
+    /// @notice One page of the record's committed entries, from `from`, at
+    ///         most `count`, each with the slice the reservation fixed for it
+    ///         and whether that slice is charged to its loan side — the
+    ///         figures {reserveStagedDay} wrote and the last page persists,
+    ///         so a reader can substantiate a loan side's reserved figure
+    ///         entry by entry (Codex #2308 r6). Before the reservation the
+    ///         slices are empty and read as zero.
+    function getStagingRecordEntries(bytes32 key, uint256 from, uint256 count)
+        external
+        view
+        returns (uint256[] memory entryIds, uint256[] memory sliceAmounts, bool[] memory sliceChargeable)
+    {
+        LibVaipakam.StagingRecord storage r = LibVaipakam.storageSlot().stagingRecords[key];
+        uint256 n = r.entryIds.length;
+        if (from >= n) return (entryIds, sliceAmounts, sliceChargeable);
+        uint256 end = from + count;
+        if (end > n) end = n;
+        uint256 m = end - from;
+        bool sliced = r.sliceAmounts.length == n;
+        entryIds = new uint256[](m);
+        sliceAmounts = new uint256[](m);
+        sliceChargeable = new bool[](m);
+        for (uint256 i; i < m; ) {
+            entryIds[i] = r.entryIds[from + i];
+            if (sliced) {
+                sliceAmounts[i] = r.sliceAmounts[from + i];
+                sliceChargeable[i] = r.sliceChargeable[from + i];
+            }
+            unchecked { ++i; }
+        }
+    }
+
+    /// @notice One page of the epochs the record passed over PENDING —
+    ///         untyped, or not yet whole — from `from`, at most `count`: the
+    ///         re-check page a preparation offers first, and what blocks the
+    ///         reservation once one becomes stageable (Codex #2308 r6).
+    function getStagingRecordPending(bytes32 key, uint256 from, uint256 count) external view returns (bytes32[] memory ids) {
+        LibVaipakam.StagingRecord storage r = LibVaipakam.storageSlot().stagingRecords[key];
+        uint256 n = r.skippedIds.length;
+        if (from >= n) return ids;
+        uint256 end = from + count;
+        if (end > n) end = n;
+        uint256 m = end - from;
+        ids = new bytes32[](m);
+        for (uint256 i; i < m; ) {
+            ids[i] = r.skippedIds[from + i];
+            unchecked { ++i; }
+        }
     }
 }

@@ -69,7 +69,7 @@ abstract contract DiamondFacetNames {
     ///      cluster split off `RewardAggregatorFacet`, which had 32 bytes
     ///      of EIP-170 headroom — far less than one cross-facet call, the
     ///      same condition as #1780 at 30 and #1835 at 164).
-    function cutFacetNames() internal pure returns (string[82] memory) {
+    function cutFacetNames() internal pure returns (string[87] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -164,6 +164,14 @@ abstract contract DiamondFacetNames {
             "RewardEpochFacet",
             // 3b-ii-A (Codex #2276 r2) — the epochs' engine-inlining reads.
             "RewardEpochViewFacet",
+            // 3b-ii-A2 (#2305) — the claim's entry walk, hosted; the staging machinery's home.
+            "RewardStagingFacet",
+            // 3b-ii-A2 (#2305) — the settle walks' hosts, one per walk.
+            "RewardClaimWalkFacet",
+            "RewardSweepWalkFacet",
+            "RewardForfeitWalkFacet",
+            // 3b-ii-A2 (#2305) — the staging record's settlement half.
+            "RewardStagingSettleFacet",
             "RiskFacet",
             "RiskMatchLiquidationFacet",
             "RiskSplitLiquidationFacet",
