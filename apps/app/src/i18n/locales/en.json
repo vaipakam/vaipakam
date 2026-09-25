@@ -871,6 +871,7 @@
       "lockPrecloseOffset": "Locked for a preclose-by-offset — it can’t be transferred until that completes or is cancelled.",
       "lockSale": "Locked for a position sale listing — it can’t be transferred until the sale completes or the listing is cancelled.",
       "lockPrepayListing": "Locked for a collateral listing — it can’t be transferred while that listing stands.",
+      "lockSwapToRepayIntent": "Locked for a repay-from-collateral auction — part of the loan’s collateral is committed to a live order to repay the loan, and the rest stays pledged. It can’t be transferred until the auction settles or is cancelled.",
       "sanctionsLabel": "Compliance status",
       "sanctionsFlagged": "The current holder is compliance-flagged: this NFT cannot be transferred in or out of their wallet, and its claims stay frozen until the flag clears. Do not buy this token expecting delivery.",
       "sanctionsUnknown": "We couldn’t check the holder’s compliance status right now — a flagged holder would mean the token can’t be transferred, so re-check before relying on it.",

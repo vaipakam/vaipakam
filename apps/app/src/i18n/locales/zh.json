@@ -853,6 +853,7 @@
       "lockPrecloseOffset": "因 offset 提前关闭而锁定 — 在完成或取消前无法转账。",
       "lockSale": "因持仓销售 listing 而锁定 — 在销售完成或 listing 取消前无法转账。",
       "lockPrepayListing": "因抵押品 listing 而锁定 — listing 存续期间无法转账。",
+      "lockSwapToRepayIntent": "因抵押品还款拍卖而锁定 — 贷款的部分抵押品已投入一笔用于还款的有效订单，其余仍处于质押状态。在拍卖结算或取消之前无法转账。",
       "sanctionsLabel": "合规状态",
       "sanctionsFlagged": "当前持有者有合规标记：此 NFT 不能转入或转出其钱包，且其领取权在标记清除前冻结。不要购买此 token 并期待交付。",
       "sanctionsUnknown": "当前无法检查持有者的合规状态 — 如果持有者被标记，token 将无法转账，因此依赖前请重新检查。",

@@ -853,6 +853,7 @@
       "lockPrecloseOffset": "Gesperrt für ein vorzeitiges Schließen per Verrechnung — er kann nicht übertragen werden, bis dieses abgeschlossen oder storniert ist.",
       "lockSale": "Gesperrt für ein Positionsverkaufs-Inserat — er kann nicht übertragen werden, bis der Verkauf abgeschlossen oder das Inserat storniert ist.",
       "lockPrepayListing": "Gesperrt für ein Sicherheiten-Inserat — er kann nicht übertragen werden, solange dieses Inserat besteht.",
+      "lockSwapToRepayIntent": "Gesperrt für eine Rückzahlungsauktion aus Sicherheiten — ein Teil der Sicherheiten des Kredits ist in einer aktiven Order zur Rückzahlung gebunden, der Rest bleibt verpfändet. Er kann nicht übertragen werden, bis die Auktion abgewickelt oder storniert ist.",
       "sanctionsLabel": "Compliance-Status",
       "sanctionsFlagged": "Der aktuelle Halter ist compliance-markiert: Dieses NFT kann weder in seine Wallet hinein noch aus ihr heraus übertragen werden, und seine Auszahlungsansprüche bleiben eingefroren, bis die Markierung aufgehoben wird. Kaufen Sie diesen Token nicht in der Erwartung, ihn geliefert zu bekommen.",
       "sanctionsUnknown": "Wir konnten den Compliance-Status des Halters gerade nicht prüfen — bei einem markierten Halter ließe sich der Token nicht übertragen. Prüfen Sie also erneut, bevor Sie sich darauf verlassen.",
