@@ -21,5 +21,5 @@ here uses, is printed as before.
 
 Anything quoted from a fragment — a line, or a list of the references it
 refused — is also cut off after 160 characters as a whole, with a note of how
-much was left out, so no author text can bury the message around it. Closes
-#2302.
+much was left out, so a long line or reference list cannot bury the message
+around it. Closes #2302.
