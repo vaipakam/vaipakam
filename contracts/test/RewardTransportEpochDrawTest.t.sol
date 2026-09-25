@@ -463,6 +463,40 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         assertEq(exF + exR, 0, "and nothing is left beyond either cap");
     }
 
+    /// @dev ...and a GENUINE shortage stays visible (Codex #2276). The same two
+    ///      days with day 1's flexible epoch removed: day 1's fresh leg can only
+    ///      be paid live, and there is no live backing. The claim's own bounded
+    ///      walk defers that day, so it pays less than is owed and its figures
+    ///      are not adopted; the reading must still show the live fresh needed,
+    ///      which is what keeps the expiry clock paused while the claimant
+    ///      cannot be paid. Adopting the bounded figures unconditionally would
+    ///      report zero here and let the clock run through the shortage.
+    function test_TheExecutabilityReading_KeepsAGenuineShortageVisible() public {
+        uint256 cap = 0.4e18;
+        _mut().setDayPoolStampRaw(1, uint128(2e18), uint128(2e18));
+        _mut().setDayPoolStampRaw(2, uint128(0), uint128(2e18));
+        for (uint256 d = 1; d <= 2; ++d) {
+            _mut().setKnownGlobalDailyInterest(d, 1e18, 0, true);
+            _mut().setDayCapThreshold18(d, type(uint256).max);
+            _mut().setDayCapModeRaw(d, 1);
+            _mut().setDayUserSideCapRaw(d, cap);
+        }
+        _mut().setGovernorCommitArmedFromDayRaw(1);
+        _loanSideOpen(2);
+        _entry(1, 3);
+        _mut().setArmedFreshLedgerRaw(0, 0);
+        _mut().userClaimFundingNeedRaw(alice);
+        (uint256 needF, uint256 needR) = _epochView().getObligationDomainNeeds(alice);
+        assertEq(_row(LibVaipakam.RewardCustodyRow.LiveFresh), 0, "fixture: no live backing");
+        _mut().setArmedFreshLedgerRaw(100 * cap, 0);
+        _mut().setRecycleBucketRaw(needR - cap);
+        _epochOf(cap, _one(2), 12, keccak256("shortage-day2-recycled"));
+        _attest(12, 0, cap);
+        (, , , , , , uint256 liveArmed) =
+            InteractionRewardsLensFacet(address(diamond)).getUserArmedFreshNeedWithLegs(alice);
+        assertEq(liveArmed, needF, "day 1's fresh leg still reads as needing live funding");
+    }
+
     function test_AShortEpochPaysWhatItHolds_TheLedgerTheRest_AndIsRetired() public {
         _scene(NEED);
         _liveOf(1e18, _one(1), 1, keccak256("live"));
@@ -1873,6 +1907,13 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         vm.warp(vm.getBlockTimestamp() + 1);
         bytes32 recycledOnly = _epochOf(cap, _one(2), 12, keccak256("backing-day2-recycled"));
         _attest(12, 0, cap);
+        // The executability reading must price the claim's OWN allocation
+        // (Codex #2276): the claim spends day 1's flexible epoch on fresh and
+        // needs no live fresh at all, so the expiry predicate must not read a
+        // live shortfall here and pause the clock for an executable claim.
+        (, , , , , , uint256 liveArmed) =
+            InteractionRewardsLensFacet(address(diamond)).getUserArmedFreshNeedWithLegs(alice);
+        assertEq(liveArmed, 0, "the executability reading agrees: no live fresh is needed");
         uint256 paidBefore = _mut().getArmedFreshPaidRaw();
         assertEq(_claim(), 2 * cap, "both days are funded and must pay");
         assertEq(_mut().getArmedFreshPaidRaw() - paidBefore, 0, "and nothing was paid live");

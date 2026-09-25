@@ -2362,11 +2362,40 @@ library LibInteractionRewards {
         // day (r8: the walk's first day draws the bucket even where the
         // window-capped split reads zero) — the two properties the bound was
         // kept for, without the slack.
-        (, need.armed, need.liveArmed, need.bucketRecycled, need.capHit) = LibRewardCustody.callDryRunShareOfPoolDays(
-            user,
-            type(uint256).max,
-            _userWalkFreshBudget(s, user, need.userLegs + need.treasuryLegs)
-        );
+        uint256 budget = _userWalkFreshBudget(s, user, need.userLegs + need.treasuryLegs);
+        (, need.armed, need.liveArmed, need.bucketRecycled, need.capHit) =
+            LibRewardCustody.callDryRunShareOfPoolDays(user, type(uint256).max, budget);
+        // The unbounded measurement above is deliberate and stays (#1699 r14:
+        // bounding the need by the allowance it is compared to is circular).
+        // But its ALLOCATION can differ from the claim's (Codex #2276): with
+        // live looking unlimited, the epoch allocator may spend a flexible
+        // epoch on recycled and leave fresh to live, where the claim — whose
+        // walk is bounded by the live BACKING — spends that epoch on fresh and
+        // needs no live at all. The predicate then read a shortfall the claim
+        // does not have and kept the expiry clock paused for an executable
+        // claim.
+        //
+        // So where the unbounded figure asks more live fresh than the claim's
+        // own allowance holds, re-run the walk bounded EXACTLY as the claim is,
+        // and adopt its live and bucket figures ONLY if it pays everything the
+        // unbounded walk says is owed. That condition is what keeps this
+        // non-circular: a bounded walk that DEFERS a day pays less than is
+        // owed, so the unbounded figures stand and the shortfall stays visible.
+        // Adopting the bounded figures unconditionally — the one-line version
+        // of this fix — would hide exactly that shortfall, run the clock while
+        // the claimant cannot be paid, and let an entitlement expire through no
+        // fault of its holder. The re-run is skipped whenever the unbounded
+        // figure already fits, which is the common case.
+        uint256 allowance =
+            _armedDeliveredAllowance(s, need.legacyFresh, LibVpfiRecycle.freshBackingRoom(s));
+        if (need.liveArmed > allowance) {
+            (, uint256 armedB, uint256 liveB, uint256 bucketB, ) =
+                LibRewardCustody.callDryRunShareOfPoolDays(user, allowance, budget);
+            if (armedB == need.armed) {
+                need.liveArmed = liveB;
+                need.bucketRecycled = bucketB;
+            }
+        }
     }
 
     function _userArmedFreshNeedWithLegs(
