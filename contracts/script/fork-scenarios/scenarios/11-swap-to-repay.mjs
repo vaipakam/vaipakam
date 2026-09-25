@@ -46,10 +46,6 @@ export async function run() {
     const noRoute = await simulate(DIAMOND, ABIS.swapToRepay, 'swapToRepayFull', [loanId, [], loan.collateralAmount], borrower.address);
     expectRefusal('A11.3', 'with no swap route, the repayment is refused rather than attempted', noRoute, 'NoEnabledSwapRoute');
 
-    // A TIGHT cap: 0.6 collateral ($1,200) against ≈$1,001 of debt. The cap
-    // is what the caller lets the protocol take, so this is the case that
-    // shows whether it sells the cap or only what the debt needs.
-    const CAP = parseUnits('0.6', 18);
     // The debt, fixed before the sale from the payoff quote (principal + the
     // term's interest; no late fee in term) and split by the loan's stamped
     // treasury fee — independent of how much collateral the sale takes.
@@ -57,6 +53,23 @@ export async function run() {
     const payoff = Array.isArray(quoted) ? quoted[0] : quoted;
     const interestDue = payoff - loan.principal;
     const interestCut = (interestDue * BigInt(loan.treasuryFeeBpsAtInit)) / 10_000n;
+    // "Only what the debt needs", computed INDEPENDENTLY from live prices: the
+    // least collateral whose worst-case proceeds — the oracle value less the
+    // borrower-facing swap-to-repay slippage cap — cover the payoff.
+    const [cP, cD] = await read(ABIS.oracle, 'getAssetPrice', [collateral]);
+    const [pP, pD] = await read(ABIS.oracle, 'getAssetPrice', [lending]);
+    const slipBps = BigInt(await read(ABIS.config, 'getMaxSwapToRepaySlippageBps'));
+    const num = payoff * pP * 10n ** BigInt(cD) * 10_000n;
+    const den = cP * 10n ** BigInt(pD) * (10_000n - slipBps);
+    const debtSized = (num + den - 1n) / den;
+    // The cap is DERIVED too: midway between what the debt needs and all the
+    // collateral — generous enough that "sell the cap" and "sell only what the
+    // debt needs" differ, covering the debt at the worst case the slippage cap
+    // allows under whatever the live prices are. A deployment whose collateral
+    // cannot cover the debt at that worst case does not run this probe.
+    requireEnvelope('swap-to-repay coverage', debtSized < loan.collateralAmount,
+      `the payoff needs ${f18(debtSized)} collateral at the worst case, more than the ${f18(loan.collateralAmount)} pledged`);
+    const CAP = (debtSized + loan.collateralAmount) / 2n;
     const fullPos = await positionOf(loanId);
     const before = await snapshot(tokens, holders);
     const sim = await simulate(DIAMOND, ABIS.swapToRepay, 'swapToRepayFull', [loanId, TRY_LIST, CAP], borrower.address);
@@ -82,12 +95,6 @@ export async function run() {
     // is not that. The tolerance covers only the integer rounding of the
     // oracle conversion (a few wei in 1e18).
     const sold = before['collateral.borrowerVault'] - after['collateral.borrowerVault'];
-    const [cP, cD] = await read(ABIS.oracle, 'getAssetPrice', [collateral]);
-    const [pP, pD] = await read(ABIS.oracle, 'getAssetPrice', [lending]);
-    const slipBps = BigInt(await read(ABIS.config, 'getMaxSwapToRepaySlippageBps'));
-    const num = payoff * pP * 10n ** BigInt(cD) * 10_000n;
-    const den = cP * 10n ** BigInt(pD) * (10_000n - slipBps);
-    const debtSized = (num + den - 1n) / den;
     const tolerance = debtSized / 1_000_000_000_000n + 10n;
     const off = sold > debtSized ? sold - debtSized : debtSized - sold;
     check('A11.5', 'the protocol sells only what the debt needs — the least collateral whose slippage-capped oracle floor covers the payoff; the cap is an upper bound, not the sale size (#2317)',

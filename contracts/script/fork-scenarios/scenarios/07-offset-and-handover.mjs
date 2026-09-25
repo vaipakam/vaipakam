@@ -10,7 +10,7 @@
  * for a manual second step is waiting for something that already happened.
  */
 import { DIAMOND, MOCKS, TREASURY, borrower, lender, outsider, parseUnits, pub, tx } from '../lib/chain.mjs';
-import { ABIS, ANY, STATUS, approveDiamond, acceptOffer, acceptStoredOffer, claimAndExpect, createOffer, creationFields, delta, expectPosition, liveStamps, mint, openLoan, positionOf, read, snapshot, termsFromOffer, vaultAddressFor, lifSplit, liveFees } from '../lib/flow.mjs';
+import { ABIS, ANY, STATUS, approveDiamond, acceptOffer, acceptStoredOffer, claimAndExpect, createOffer, creationFields, delta, expectPosition, positionNftOwner, liveStamps, mint, openLoan, positionOf, read, snapshot, termsFromOffer, vaultAddressFor, lifSplit, liveFees } from '../lib/flow.mjs';
 import { chainNow, f18 } from '../lib/chain.mjs';
 import { warpDays } from '../lib/impersonate.mjs';
 import { simulate } from '../lib/errors.mjs';
@@ -167,16 +167,12 @@ export async function run() {
     // The original collateral stayed put through the offset, released to the
     // borrower's claim. Exercised, not just stated: a completion that settled
     // the money but never recorded the claim would otherwise stay green.
-    const beforeClaim = await snapshot(tokens, holders);
-    const claimed = await tx(borrower, { address: DIAMOND, abi: ABIS.claim, functionName: 'claimAsBorrower', args: [loanId] }, 'claimAsBorrower(offset)');
-    const afterClaim = await snapshot(tokens, holders);
-    const lien = await read(ABIS.metrics, 'getLoanCollateralLien', [loanId]);
-    expectLedger('A7.4b', 'after the offset the original borrower claims exactly their original collateral, vault → wallet',
-      beforeClaim, afterClaim, {
-        'collateral.borrowerVault': -origLoan.collateralAmount,
-        'collateral.borrowerEOA': origLoan.collateralAmount,
-      }, `gas=${claimed.gasUsed}`);
-    check('A7.4c', 'the claim releases the original loan\'s collateral lien', lien.released === true, `lien.released=${lien.released}`);
+    const offsetClaimPos = await claimAndExpect({
+      id: 'A7.4b', who: 'original borrower', account: borrower, fn: 'claimAsBorrower', loanId, tokens, holders,
+      before: await positionOf(loanId),
+      moves: { 'collateral.borrowerVault': -origLoan.collateralAmount, 'collateral.borrowerEOA': origLoan.collateralAmount },
+      changes: { borrowerNftOwner: null, lienReleased: true, lienAmount: 0n },
+    });
 
     // The offset parked the original lender's payoff — principal + accrued
     // interest net of the treasury fee, plus the protection shortfall — for
@@ -184,7 +180,7 @@ export async function run() {
     // with both sides claimed the original loan settles.
     await claimAndExpect({
       id: 'A7.4d', who: 'original lender', account: lender, fn: 'claimAsLender', loanId, tokens, holders,
-      before: await positionOf(loanId),
+      before: offsetClaimPos,
       moves: { 'lending.lenderVault': -(origLoan.principal + oAccrued - oCut + oShortfall), 'lending.lenderEOA': origLoan.principal + oAccrued - oCut + oShortfall },
       changes: { lenderNftOwner: null, status: STATUS.Settled },
     });
@@ -242,11 +238,8 @@ export async function run() {
     // Borrower-side authority resolves through `ownerOf(borrowerTokenId)`, not
     // the cached `borrower` field, so the handover is only complete if the
     // replacement borrower HOLDS the borrower position NFT the loan now names.
-    const ownerOrNull = async (tokenId) => {
-      try { return await pub.readContract({ address: DIAMOND, abi: ABIS.nft, functionName: 'ownerOf', args: [tokenId] }); } catch { return null; }
-    };
-    const newHolder = await ownerOrNull(moved.borrowerTokenId);
-    const oldHolder = moved.borrowerTokenId === loan.borrowerTokenId ? newHolder : await ownerOrNull(loan.borrowerTokenId);
+    const newHolder = await positionNftOwner(moved.borrowerTokenId);
+    const oldHolder = await positionNftOwner(loan.borrowerTokenId);
     check('A7.7', 'the handover rewrites the loan\'s borrower in place — the loan survives, and the replacement borrower holds the borrower position NFT it names',
       moved.borrower.toLowerCase() === outsider.address.toLowerCase() && String(moved.status) === String(STATUS.Active) &&
       newHolder !== null && newHolder.toLowerCase() === outsider.address.toLowerCase(),
@@ -254,10 +247,12 @@ export async function run() {
       `borrowerTokenId ${loan.borrowerTokenId} -> ${moved.borrowerTokenId} ownerOf(new)=${newHolder} ownerOf(old)=${oldHolder ?? 'does not resolve'}`);
     // And the exiting borrower keeps no authority over the continuing loan:
     // whatever became of the old token, it is not theirs to act with.
-    check('A7.7c', 'the exiting borrower no longer holds any borrower position NFT for the continuing loan',
-      (newHolder === null || newHolder.toLowerCase() !== borrower.address.toLowerCase()) &&
-      (oldHolder === null || oldHolder.toLowerCase() !== borrower.address.toLowerCase()),
-      `ownerOf(old ${loan.borrowerTokenId})=${oldHolder ?? 'does not resolve'}`);
+    // Spec: the handover retires the exiting borrower's receipt — a DISTINCT
+    // token is minted for the replacement and the superseded one stops
+    // resolving — so the exiting borrower keeps no authority over the loan.
+    check('A7.7c', 'the handover retires the exiting borrower\'s token and mints the replacement a distinct one',
+      moved.borrowerTokenId !== loan.borrowerTokenId && oldHolder === null,
+      `borrowerTokenId ${loan.borrowerTokenId} -> ${moved.borrowerTokenId}; ownerOf(old)=${oldHolder ?? 'does not resolve'}`);
 
     // The money, from the spec's "Economic Protection for the Original
     // Lender": the exiting borrower pays the interest accrued to the transfer

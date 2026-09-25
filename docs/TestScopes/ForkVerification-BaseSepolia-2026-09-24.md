@@ -17,7 +17,7 @@ configuration — not the source tree's idea of them.
   ledger now records as `forkBlock`. Figures that depend on elapsed time can
   still differ in the last decimals, since the warps land on different
   seconds.
-- **Result** — 214 scenarios: **202 PASS, 11 INFO, 1 FAIL**, no aborted
+- **Result** — 215 scenarios: **204 PASS, 10 INFO, 1 FAIL**, no aborted
   file. The INFOs are observations with no assertion behind them, not soft
   failures — the ledger's API makes a row either an assertion (PASS/FAIL
   only) or an observation (INFO only), so no failure can land as INFO; each
@@ -403,6 +403,7 @@ because the remedy it prescribed would not have worked. Re-tested on Anvil:
 | --- | --- |
 | feed only, $2,000 → $1,960 (−2%) | Liquid |
 | feed only, → $1,940 (−3%) | **Illiquid** |
+| feed only, one point past the LIVE band (A3.10, asserted) | **Illiquid** — the band is read from the chain (300 bps here), so the probe moves to $1,920 |
 | feed only, → $1,600 / $1,100 | Illiquid |
 | feed **and pool spot together**, → $1,600, $1,200, $1,000, $900 | **Liquid** at every step |
 
@@ -725,9 +726,11 @@ transaction. Checked against the spec's swap-to-repay bullets:
   less healthy**: 0.1 collateral sold, principal 1,000 → 800, HF 2.0 → 2.3.
 
 **The divergence.** The sale is **exact-in on the caller's cap**:
-`maxCollateralIn` is the amount sold, not an upper bound on it. A 0.6 cap
-sold all 0.6 and returned 199.04 of surplus; the full 1.25 cap sold
-everything and returned 1,499.04. The spec frames surplus as arising from a
+`maxCollateralIn` is the amount sold, not an upper bound on it. With a cap
+of 0.883 — derived, midway between the 0.516 the debt needs at the worst
+case and the 1.25 pledged — all 0.883 was sold and 765.00 returned as
+surplus; a full 1.25 cap sold everything (the first run measured 1,499.04
+returned). The spec frames surplus as arising from a
 *favourable quote* on a sale sized to the debt, and the natspec calls the
 parameter an "upper bound" — both read as "sell up to this much". So an
 over-sized cap converts collateral into the principal asset well beyond what
@@ -891,7 +894,7 @@ replace.
 
 ## 7. Ledger
 
-The full 214-row ledger, with per-scenario verdicts and observed numbers, is
+The full 215-row ledger, with per-scenario verdicts and observed numbers, is
 regenerated as `contracts/script/fork-scenarios/last-run.json` on every run
 (untracked). Scenario ids map to the driver's files:
 
@@ -909,7 +912,7 @@ regenerated as `contracts/script/fork-scenarios/last-run.json` on every run
 | A10.* | `10-nft-rental.mjs` | ERC-721 rental against the spec's custody-vs-use model, early close, claims |
 | A11.* | `11-swap-to-repay.mjs` | repaying from collateral: authority, the cap, full and partial modes |
 
-The eleven `INFO` rows, each an observation with no assertion behind it:
+The ten `INFO` rows, each an observation with no assertion behind it:
 
 - **Deployment configuration** — the sanctions oracle and KYC posture (A1.2,
   A5.1), the treasury topology (A1.3 — it was an assertion that the treasury
@@ -922,11 +925,12 @@ The eleven `INFO` rows, each an observation with no assertion behind it:
 - **The live facet count** (A1.6), an observation feeding §5, and **the
   artifact's treasury and admin against the live ones** (A1.3b, A1.3c — both
   match today; the driver reads the live values, because both are mutable).
-- **Findings written up rather than certified** — the feed-only reprice
-  flip (A3.10, §2.4) and that offer CREATION is not KYC-gated (A5.9b, §4.2;
-  the first run recorded it as PASS, which would have certified a behaviour
-  this document calls a finding — the accept-side refusal beside it is
-  asserted, A5.9).
+- **A finding written up rather than certified** — that offer CREATION is
+  not KYC-gated (A5.9b, §4.2; the first run recorded it as PASS, which would
+  have certified a behaviour this document calls a finding — the accept-side
+  refusal beside it is asserted, A5.9). The feed-only reprice flip (A3.10,
+  §2.4) was an observation until its probe was derived from the live
+  consistency band; it is now asserted.
 - **Something the spec does not pin down** — how much the lender receives
   above the period's shortfall after a periodic auto-settlement (A9.11b:
   2.88 on a 410.96 period). The spec says the sale covers "the shortfall plus

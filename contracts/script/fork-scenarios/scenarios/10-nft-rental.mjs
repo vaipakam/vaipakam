@@ -172,15 +172,22 @@ export async function run() {
     const after = await snapshot(tokens, holders);
     expectLedger(`A10.7.${who}`, `after the early close the ${who} claims exactly their share from their vault to their wallet`,
       before, after, { [`prepay.${side}Vault`]: -owed, [`prepay.${side}EOA`]: owed }, `gas=${r.gasUsed} owed=${f18(owed)}`);
+    // The lender's claim is what returns the rented NFT — checked right after
+    // THAT claim, so a later claim cannot be the one that moved it.
+    if (who === 'lender') {
+      const afterLenderClaim = await pub.readContract({ address: nft, abi: NFT, functionName: 'ownerOf', args: [tokenId] });
+      check('A10.8', 'the lender\'s claim itself returns the NFT to the lender\'s wallet',
+        afterLenderClaim.toLowerCase() === lender.address.toLowerCase(), `ownerOf after the lender's claim=${afterLenderClaim}`);
+    }
     const last = side === 'borrower';
     await expectPosition(`A10.7.${who}.pos`, `after the ${who}'s claim the rental position changes exactly: their NFT burned${last ? ', and with both sides claimed the rental Settled' : ''}`,
       loanId, rentalPos, { [`${side}NftOwner`]: null, ...(last ? { status: STATUS.Settled } : {}) });
     rentalPos = await positionOf(loanId);
   }
   const finalOwner = await pub.readContract({ address: nft, abi: NFT, functionName: 'ownerOf', args: [tokenId] });
-  check('A10.8', 'after the lender\'s claim the NFT is back in the lender\'s wallet',
+  check('A10.8b', 'and the renter\'s claim leaves it there',
     finalOwner.toLowerCase() === lender.address.toLowerCase(),
-    `ownerOf=${finalOwner}`);
+    `ownerOf after both claims=${finalOwner}`);
 
   // Conservation: across the whole rental, the prepay token moved only
   // between the parties and the treasury — nothing created or lost.

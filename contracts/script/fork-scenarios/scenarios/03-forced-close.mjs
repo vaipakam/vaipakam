@@ -203,11 +203,17 @@ export async function run() {
   // band leaves no consistent pool and the asset reads Illiquid. It is not a
   // depth limit (#2314 first said it was); A3.13 moves the pool with the
   // feed and the route stays open.
-  await setFeedUsd(MOCKS.liquidTokenUsdFeed, 1940);
+  // The band is governance-set, so the move is DERIVED from the live value:
+  // one percentage point past it, measured from the seeded price.
+  const [, , , consistencyBps] = await read(ABIS.config, 'getDepthTierConfigBundle');
+  const seeded = 2000;
+  const feedOnly = seeded * (1 - (Number(consistencyBps) + 100) / 10_000);
+  await setFeedUsd(MOCKS.liquidTokenUsdFeed, feedOnly);
   const depthAfterCrash = await read(ABIS.oracle, 'checkLiquidity', [collateral]);
-  observe('A3.10', 'a FEED-ONLY reprice past the pool-consistency band flips the asset Illiquid (the mock pool\'s spot does not follow the feed)',
-    `checkLiquidity(collateral) after a feed-only 3% move to $1,940 = ${depthAfterCrash} (0=Liquid, 1=Illiquid) — while Illiquid, the HF-swap route refuses`);
-  await setFeedUsd(MOCKS.liquidTokenUsdFeed, 2000);
+  check('A3.10', 'a FEED-ONLY reprice past the live pool-consistency band flips the asset Illiquid (the mock pool\'s spot does not follow the feed)',
+    Number(depthAfterCrash) === 1,
+    `checkLiquidity(collateral) after a feed-only move to $${feedOnly} (${Number(consistencyBps) + 100}bps, band ${consistencyBps}bps) = ${depthAfterCrash} (0=Liquid, 1=Illiquid) — while Illiquid, the HF-swap route refuses`);
+  await setFeedUsd(MOCKS.liquidTokenUsdFeed, seeded);
 
   await setFeedUsd(MOCKS.liquidTokenUsdFeed, 2000);
   await setFeedUsd(MOCKS.liquidToken2UsdFeed, 2.5);
