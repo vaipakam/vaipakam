@@ -424,6 +424,42 @@ contract SwapToRepayIntentFacetTest is SetupTest {
         assertEq(uint256(_borrowerLock()), uint256(LibERC721.LockReason.None), "released on cancel");
     }
 
+    /// @dev Codex #2341 r3 — with coarse collateral the smallest lot that
+    ///      covers the debt can be worth far more than the debt. Here one unit
+    ///      of a 0-decimal, $2,000 collateral is the least lot covering a
+    ///      ~$1,020 debt floor, and its own worst-case value is $1,940: the
+    ///      commit must refuse an ask at the debt floor (which would sell that
+    ///      unit ~$920 below the cap's worst case) and accept the lot's floor.
+    function test_Commit_CoarseLot_MinimumAskIsTheLotsOwnFloor() public {
+        SwapToRepayIntentFacet.FusionOrderParams memory params = _armHappyCommit();
+        // Re-seat the loan on a 0-decimal collateral priced at $2,000, two units.
+        ERC20Mock coarse = new ERC20Mock("Coarse", "CRS", 0);
+        coarse.mint(borrowerVault, 2);
+        TestMutatorFacet(address(diamond)).setProtocolTrackedVaultBalanceRaw(borrowerEoa, address(coarse), 2);
+        IntentConfigFacet(address(diamond)).setIntentAllowedCollateralToken(address(coarse), true);
+        LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(LOAN_ID);
+        l.collateralAsset = address(coarse);
+        l.collateralAmount = 2;
+        TestMutatorFacet(address(diamond)).setLoan(LOAN_ID, l);
+        TestMutatorFacet(address(diamond)).setLoanCollateralLienRaw(LOAN_ID, borrowerEoa, address(coarse), 0, 2, LibVaipakam.AssetType.ERC20);
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, address(coarse)), abi.encode(uint256(2_000e8), uint8(8)));
+
+        (uint256 lot, uint256 minTaker) = SwapToRepayIntentFacet(address(diamond)).previewSwapToRepayIntentLot(LOAN_ID);
+        assertEq(lot, 1, "one unit is the least lot that covers the debt");
+        uint256 unitFloor = _floorAtParity(2_000e18);
+        assertEq(minTaker, unitFloor, "the minimum ask is that unit's worst-case value, not the debt floor");
+
+        params.takerAmount = 1_100e18; // above the debt floor, below the unit's floor
+        vm.prank(borrowerEoa);
+        vm.expectRevert(abi.encodeWithSelector(SwapToRepayIntentFacet.IntentMinOutputBelowFloor.selector, uint256(1_100e18), unitFloor));
+        SwapToRepayIntentFacet(address(diamond)).commitSwapToRepayIntent(LOAN_ID, params);
+
+        params.takerAmount = unitFloor;
+        vm.prank(borrowerEoa);
+        SwapToRepayIntentFacet(address(diamond)).commitSwapToRepayIntent(LOAN_ID, params);
+        assertEq(SwapToRepayIntentFacet(address(diamond)).getIntentCommit(LOAN_ID).makerAmount, 1, "the one-unit lot is committed at its floor");
+    }
+
     /// @dev A cancel returns the lot and restores the lien to the whole
     ///      collateral — the loan is back exactly as it was before the commit.
     function test_Cancel_RestoresTheWholeCollateralAndLien() public {

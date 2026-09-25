@@ -528,8 +528,6 @@ contract SwapToRepayIntentFacet is
         // ── §5.1 step 7: minOutput floor (Codex round-10 P1 #5 +
         //    round-11 P1 #3 — must add late fee on top of getPrepayContext) ─
         uint256 minOut = _commitMinOut(loanId, endTime);
-        if (params.takerAmount < minOut)
-            revert IntentMinOutputBelowFloor(params.takerAmount, minOut);
 
         // ── §5.1 step 7b: size the auction lot to the debt (#2322) ──
         // The spec's full-close rule, shared with `swapToRepayFull`
@@ -547,7 +545,19 @@ contract SwapToRepayIntentFacet is
         // raises above the debt is the borrower's surplus principal —
         // the same shape as the direct close. The remainder never leaves
         // the vault and stays liened throughout the auction.
-        uint256 lot = _sizeCommitLot(loan, minOut);
+        //
+        // The least ask the commit accepts is the LOT's own slippage
+        // floor, not `minOut` (Codex #2341 r3). Sizing guarantees that
+        // floor covers `minOut`, but collateral granularity can make it
+        // far larger — a coarse-decimal, high-value token whose smallest
+        // covering lot is worth much more than the debt. Accepting
+        // `minOut` there would let a resolver buy the lot below the worst
+        // case the slippage cap allows; requiring the lot's floor keeps
+        // "asking the minimum accepts the cap's worst case" true for every
+        // lot, as the direct close's `minPrincipalOut` does.
+        (uint256 lot, uint256 minTaker) = _sizeCommitLot(loan, minOut);
+        if (params.takerAmount < minTaker)
+            revert IntentMinOutputBelowFloor(params.takerAmount, minTaker);
 
         // ── §5.1 step 8: pull the lot + reject fee-on-transfer ──────
         // Balance-delta accounting AND require received == requested
@@ -1086,8 +1096,11 @@ contract SwapToRepayIntentFacet is
     ///         commit's authority, HF, deadline or allowlist gates.
     /// @param  loanId         The loan to quote.
     /// @return lot            Collateral the commit would take into custody.
-    /// @return minTakerAmount The least `takerAmount` the commit accepts
-    ///                        (the debt floor plus the auction buffer).
+    /// @return minTakerAmount The least `takerAmount` the commit accepts: the
+    ///                        lot's own slippage-capped floor, which covers
+    ///                        the debt floor plus the auction buffer and can
+    ///                        exceed it when collateral granularity makes the
+    ///                        smallest covering lot worth more.
     function previewSwapToRepayIntentLot(uint256 loanId)
         external
         view
@@ -1105,8 +1118,7 @@ contract SwapToRepayIntentFacet is
         uint256 endTime = uint256(loan.startTime) + uint256(loan.durationDays) * LibVaipakam.ONE_DAY;
         if (block.timestamp > endTime + LibVaipakam.gracePeriod(loan.durationDays))
             revert RepaymentPastGracePeriod();
-        minTakerAmount = _commitMinOut(loanId, endTime);
-        lot = _sizeCommitLot(loan, minTakerAmount);
+        (lot, minTakerAmount) = _sizeCommitLot(loan, _commitMinOut(loanId, endTime));
     }
 
     /// @dev §5.1 step 7 — the least `takerAmount` a commit accepts: the live
@@ -1125,15 +1137,17 @@ contract SwapToRepayIntentFacet is
     /// @dev #2322 — the auction lot: the least collateral whose
     ///      slippage-capped oracle value covers `minOut` (the debt floor plus
     ///      the auction buffer), bounded by the loan's whole collateral,
-    ///      through the rule `swapToRepayFull` also uses. Refuses when even
-    ///      the whole collateral cannot cover it.
+    ///      through the rule `swapToRepayFull` also uses, together with that
+    ///      lot's own slippage floor — the least `takerAmount` the commit
+    ///      accepts (always `>= minOut`). Refuses when even the whole
+    ///      collateral cannot cover `minOut`.
     function _sizeCommitLot(LibVaipakam.Loan storage loan, uint256 minOut)
         private
         view
-        returns (uint256 lot)
+        returns (uint256 lot, uint256 minTaker)
     {
         bool covers;
-        (covers, lot, ) = LibSwapToRepaySizing.sizeSale(
+        (covers, lot, minTaker) = LibSwapToRepaySizing.sizeSale(
             loan.collateralAsset,
             loan.principalAsset,
             minOut,

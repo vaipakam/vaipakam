@@ -14,8 +14,11 @@ same borrower-facing slippage allowance the direct form uses, covers the
 debt plus the auction's safety buffer. Both forms size the sale through one
 shared rule, so they cannot drift apart. The order is a fixed-price order,
 and the borrower sets its price by how much principal they ask for that lot:
-- Asking the minimum the commit allows accepts the worst case the slippage
-  allowance permits, and a resolver keeps that discount.
+- The least the borrower may ask is the lot's own worst-case value. When
+  the collateral comes in coarse units that value can be well above the
+  debt, and the minimum follows the lot rather than the debt, so no lot is
+  ever sold below the worst case. Asking that minimum accepts the worst case
+  the slippage allowance permits, and a resolver keeps that discount.
 - Asking more prices the lot higher.
 - Whatever a fill raises above the debt is paid to the borrower as surplus,
   exactly as in the direct form.

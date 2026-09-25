@@ -1422,8 +1422,11 @@ considers it finished.
   borrower-facing slippage cap covers the debt plus the auction's safety
   buffer, never the loan's whole collateral. The order is a fixed-price
   order, so the borrower sets its price by how much principal they ask
-  for that lot: asking the minimum accepts the worst case the slippage
-  cap allows, which a resolver keeps; asking more prices the lot higher;
+  for that lot: the least they may ask is the lot's own worst-case value
+  under the slippage cap — which can exceed the debt when the collateral
+  comes in coarse units, so that no lot is ever sold below that worst
+  case — and asking that minimum accepts the worst case, which a resolver
+  keeps; asking more prices the lot higher;
   and whatever a fill raises above the debt is paid to the borrower as
   surplus principal, as on the direct path. The rest of the collateral
   stays in the borrower's vault, pledged, for the whole auction; the
