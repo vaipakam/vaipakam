@@ -19,7 +19,10 @@ for this fragment's own name? If it does, the match is the known case of a
 fragment edited after an interrupted run, and it is appended with a note as
 before. If it does not, the run stops and asks, whatever other markers the
 file carries. The same rule now governs the refusal for a dated file that
-cannot be read as plain text.
+cannot be read as plain text, and that check no longer counts the markers
+themselves: a marker records a fragment's file name exactly as the filesystem
+gave it, which need not be plain text, and one such name used to make a whole
+file look unreadable.
 
 The cost is a refusal when two different fragments in one day's file share a
 title exactly. In every dated file in the repository, the only repeated

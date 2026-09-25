@@ -104,6 +104,29 @@ LINE_END_RE = re.compile(rb"\r\n|\r|\n")
 BLANK_RE = re.compile(rb"^[ \t]*$")
 
 
+def without_markers(data: bytes) -> bytes:
+    """`data` with each well-formed assembly-marker line blanked, same length.
+
+    A marker is this script's own record, not section text, and it carries
+    the fragment's file name as the filesystem gave it — which may be any
+    bytes (T107). So `unreadable_at` must not judge a file by its markers
+    (#2328 r1): a non-UTF-8 name in one would otherwise make every other
+    pending fragment look unanswerable. Blanked with spaces rather than
+    removed, so an offset reported afterwards is still an offset into the
+    file.
+    """
+    out = bytearray(data)
+    prefix = os.fsencode(MARKER_PREFIX)
+    start = 0
+    ends = [(m.start(), m.end()) for m in LINE_END_RE.finditer(data)]
+    for line_end, next_start in ends + [(len(data), len(data))]:
+        line = data[start:line_end]
+        if line.startswith(prefix) and MARKER_RE.match(os.fsdecode(line)):
+            out[start:line_end] = b" " * (line_end - start)
+        start = next_start
+    return bytes(out)
+
+
 def unreadable_at(data: bytes):
     """Where `data` stops being text a byte comparison can speak for (#2315).
 
@@ -547,6 +570,7 @@ class Assembly:
         self.out = os.path.join(directory, f"ReleaseNotes-{date}.md")
 
         self.lock_held = False
+        self.marker_seen: dict[tuple[str, str, str], bool] = {}
         self.workdir: str | None = None
         self.work: str | None = None
         self.snap: str | None = None
@@ -1968,6 +1992,10 @@ class Assembly:
         answered honestly as "cannot tell". It survives the author's re-save
         because it reads only the published side, which the re-save does not
         touch; all 86 dated files pass it, so it refuses nothing real today.
+        Marker lines are blanked before it looks (`without_markers`): a
+        marker is this script's own record and carries a fragment's file name
+        as the filesystem gave it, so a non-UTF-8 name there must not make
+        the file read as unreadable (#2328 r1).
 
         WHAT CONFORMANCE DOES CARRY is the single-run half, and it rests on
         conformance EXISTING rather than on where it sits. `run()` calls this
@@ -2062,19 +2090,17 @@ class Assembly:
         )
         # The fragments THIS file records, by name — the per-fragment
         # question the docstring's MARKER COVERAGE paragraph explains (#2312).
-        marked_here = set()
-        for line in LINE_END_RE.split(out_data):
-            if line.startswith(MARKER_PREFIX.encode()):
-                m = MARKER_RE.match(line.decode("utf-8", errors="replace"))
-                if m:
-                    marked_here.add(m.group(1))
+        # Taken from `scan_markers`, which read this same copy: a second
+        # parse here decoded names differently and missed a non-UTF-8 one
+        # (#2328 r1).
+        marked_here = {name for (_, name, dated) in self.marker_seen if dated == self.out}
         unmarked = [self.frag_name[f] for f in self.frags if self.frag_name[f] not in marked_here]
         # An unreadable file is refused before any fragment is examined —
         # see the docstring's ENCODING paragraphs. Gated like the heading
         # refusal below: only for pending fragments this file records no
         # marker for, and not under `--force-append`, where the operator has
         # already read the file.
-        bad = unreadable_at(out_data)
+        bad = unreadable_at(without_markers(out_data))
         if bad is not None:
             at, why = bad
             if unmarked and not self.force:
@@ -2495,6 +2521,9 @@ class Assembly:
                 raise SystemExit(1)
 
         marker_seen, marker_where = self.scan_markers()
+        # Kept for the duplicate guard, which asks which fragment NAMES this
+        # file records (#2312) — from the one parse, not a second one.
+        self.marker_seen = marker_seen
         already, pending = self.classify(marker_seen, marker_where)
 
         # BEFORE the recovery clear, not merely before the append (#2290 r1).

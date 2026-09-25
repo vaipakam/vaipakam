@@ -4912,6 +4912,41 @@ check "a recurring title is refused"    "$?"                                "1"
 msg="$(bash "$out/assemble.sh" 2026-08-17 --allow-mixed-dates --force-append 2>&1)"
 check "and --force-append proceeds"     "$?"                                "0"
 
+# A marker whose fragment NAME is not UTF-8 (T107 supports such names) must
+# neither miss its own fragment nor make the file look unreadable (#2328 r1).
+# The guard used to re-parse marker lines with `errors="replace"`, so the
+# name never matched, and the marker's raw byte made `unreadable_at` refuse
+# every pending fragment. It now reuses `scan_markers`' names, and judges
+# readability with well-formed marker lines blanked.
+case_start "T217y3: a non-UTF-8 fragment name in a marker is not an unreadable file"
+W="$ROOT/t217y3"; build "$W"
+out="$W/docs/ReleaseNotes"
+rm "$W/docs/ReleaseNotes/unreleased/"*.md 2>/dev/null || true
+printf '# unreleased\n' > "$W/docs/ReleaseNotes/unreleased/README.md"
+printf '## template\n'  > "$W/docs/ReleaseNotes/unreleased/_TEMPLATE.md"
+odd="$(printf '0005-od\xffd.md')"
+printf '## Thread — odd name (PR #4280)\n\nFirst text.\n' > "$W/docs/ReleaseNotes/unreleased/$odd"
+utf8=""
+for cand in C.utf8 C.UTF-8 en_US.utf8; do
+  if locale -a 2>/dev/null | grep -qxF "$cand"; then utf8="$cand"; break; fi
+done
+if [ -z "$utf8" ]; then
+  skip "no UTF-8 locale installed"
+else
+  LC_ALL=$utf8 bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+  # The documented edit-after-interrupted-run case, under that odd name.
+  printf '## Thread — odd name (PR #4280)\n\nEdited text.\n' > "$W/docs/ReleaseNotes/unreleased/$odd"
+  msg="$(LC_ALL=$utf8 bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+  check "its own marker is recognised"  "$?"                                   "0"
+  check "not called unreadable"         "$(says "$msg" 'cannot be read as')" "0"
+  check "the edit is appended with a note" \
+    "$(says "$msg" 'already contains these headings')"                         "1"
+  # And an unrelated fragment is not refused because of that marker's byte.
+  printf '## Thread — unrelated (PR #4281)\n\nBody.\n' > "$W/docs/ReleaseNotes/unreleased/0006-new.md"
+  msg="$(LC_ALL=$utf8 bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+  check "an unrelated fragment assembles" "$?"                                 "0"
+fi
+
 # ── The front-matter refusal is not escaped by trailing whitespace (r14) ───
 # `---   ` and `---\t` are valid YAML delimiters. An exact comparison let
 # either past the refusal and on to the no-heading allowance, publishing the
