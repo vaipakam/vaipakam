@@ -497,6 +497,45 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         assertEq(liveArmed, needF, "day 1's fresh leg still reads as needing live funding");
     }
 
+    /// @dev The completion test is a MARKER, not a comparison of totals
+    ///      (Codex #2276). One claimant, two sides on different days: lender
+    ///      days 1..30 payable only from live funding, borrower days 31..60
+    ///      each funded by its own fresh-only epoch, no live backing at all.
+    ///      Unbounded, the walk spends the whole 30-day limit on the lender
+    ///      side. Bounded as the claim is, it defers lender day 1 and settles
+    ///      the 30 borrower days instead — the SAME armed total. An equality
+    ///      test read that as "pays everything" and adopted the bounded run's
+    ///      zero live need, reporting a blocked lender entry as executable and
+    ///      letting its expiry clock run. The deferral itself must decide.
+    function test_TheExecutabilityReading_UsesADeferralMarker_NotEqualTotals() public {
+        uint256 cap = 0.1e18;
+        for (uint256 d = 1; d <= 60; ++d) {
+            _mut().setDayPoolStampRaw(d, uint128(2e18), 0);
+            if (d <= 30) _mut().setKnownGlobalDailyInterest(d, 1e18, 0, true);
+            else _mut().setKnownGlobalDailyInterest(d, 0, 1e18, true);
+            _mut().setDayCapThreshold18(d, type(uint256).max);
+            _mut().setDayCapModeRaw(d, 1);
+            _mut().setDayUserSideCapRaw(d, cap);
+        }
+        _mut().setGovernorCommitArmedFromDayRaw(1);
+        _loanSideOpen(60);
+        uint256 l = _mut().pushRewardEntry(alice, LOAN, LibVaipakam.RewardSide.Lender, 1e18, 1);
+        _mut().closeRewardEntryRaw(l, 31);
+        uint256 b = _mut().pushRewardEntry(alice, LOAN, LibVaipakam.RewardSide.Borrower, 1e18, 31);
+        _mut().closeRewardEntryRaw(b, 61);
+        _mut().setArmedFreshLedgerRaw(1000e18, 0);
+        _mut().userClaimFundingNeedRaw(alice);
+        assertEq(_row(LibVaipakam.RewardCustodyRow.LiveFresh), 0, "fixture: no live backing");
+        for (uint256 d = 31; d <= 60; ++d) {
+            _epochOf(cap, _one(d), 300 + d, keccak256(abi.encode("borrower-day", d)));
+            _attest(300 + d, 1, 0); // fresh-only
+        }
+        (uint256 armed, , , , , , uint256 liveArmed) =
+            InteractionRewardsLensFacet(address(diamond)).getUserArmedFreshNeedWithLegs(alice);
+        assertEq(armed, 30 * cap, "fixture: the unbounded walk spends the day limit on the lender side");
+        assertEq(liveArmed, 30 * cap, "the blocked lender days still read as needing live funding");
+    }
+
     function test_AShortEpochPaysWhatItHolds_TheLedgerTheRest_AndIsRetired() public {
         _scene(NEED);
         _liveOf(1e18, _one(1), 1, keccak256("live"));

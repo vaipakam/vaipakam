@@ -36,7 +36,14 @@ contract RewardEpochViewFacet {
     )
         external
         view
-        returns (uint256 userTotal, uint256 armedTotal, uint256 liveArmed, uint256 bucketRecycled, bool capHit)
+        returns (
+            uint256 userTotal,
+            uint256 armedTotal,
+            uint256 liveArmed,
+            uint256 bucketRecycled,
+            bool capHit,
+            bool deferred
+        )
     {
         return LibInteractionRewards.dryRunShareOfPoolDaysView(user, deliveredCap, freshBudget);
     }

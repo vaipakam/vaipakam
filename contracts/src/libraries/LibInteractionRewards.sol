@@ -2363,7 +2363,7 @@ library LibInteractionRewards {
         // window-capped split reads zero) — the two properties the bound was
         // kept for, without the slack.
         uint256 budget = _userWalkFreshBudget(s, user, need.userLegs + need.treasuryLegs);
-        (, need.armed, need.liveArmed, need.bucketRecycled, need.capHit) =
+        (, need.armed, need.liveArmed, need.bucketRecycled, need.capHit, ) =
             LibRewardCustody.callDryRunShareOfPoolDays(user, type(uint256).max, budget);
         // The unbounded measurement above is deliberate and stays (#1699 r14:
         // bounding the need by the allowance it is compared to is circular).
@@ -2377,10 +2377,13 @@ library LibInteractionRewards {
         //
         // So where the unbounded figure asks more live fresh than the claim's
         // own allowance holds, re-run the walk bounded EXACTLY as the claim is,
-        // and adopt its live and bucket figures ONLY if it pays everything the
-        // unbounded walk says is owed. That condition is what keeps this
-        // non-circular: a bounded walk that DEFERS a day pays less than is
-        // owed, so the unbounded figures stand and the shortfall stays visible.
+        // and adopt its live and bucket figures ONLY if it DEFERRED NOTHING.
+        // That condition is what keeps this non-circular: a bounded walk that
+        // defers a day cannot pay that obligation, so the unbounded figures
+        // stand and the shortfall stays visible. It is an explicit marker, not
+        // a comparison of totals (Codex #2276): with the shared day limit a
+        // bounded run can defer one side and settle the other for the SAME
+        // armed total, and an equality test read that as paying everything.
         // Adopting the bounded figures unconditionally — the one-line version
         // of this fix — would hide exactly that shortfall, run the clock while
         // the claimant cannot be paid, and let an entitlement expire through no
@@ -2389,9 +2392,9 @@ library LibInteractionRewards {
         uint256 allowance =
             _armedDeliveredAllowance(s, need.legacyFresh, LibVpfiRecycle.freshBackingRoom(s));
         if (need.liveArmed > allowance) {
-            (, uint256 armedB, uint256 liveB, uint256 bucketB, ) =
+            (, , uint256 liveB, uint256 bucketB, , bool deferredB) =
                 LibRewardCustody.callDryRunShareOfPoolDays(user, allowance, budget);
-            if (armedB == need.armed) {
+            if (!deferredB) {
                 need.liveArmed = liveB;
                 need.bucketRecycled = bucketB;
             }
@@ -2557,7 +2560,7 @@ library LibInteractionRewards {
         // from the full `poolRemaining()` previewed 0.8 for a claim that
         // pays 0.5, and — worse — let the armed-need figure demand
         // delivered allowance for headroom the earlier legs consume.
-        (uint256 dryTotal, , , , ) = LibRewardCustody.callDryRunShareOfPoolDays(
+        (uint256 dryTotal, , , , , ) = LibRewardCustody.callDryRunShareOfPoolDays(
             user,
             deliveredLeft,
             _userWalkFreshBudget(s, user, userTotal + treasuryLegs)
@@ -2761,10 +2764,17 @@ library LibInteractionRewards {
     )
         internal
         view
-        returns (uint256 userTotal, uint256 armedTotal, uint256 liveArmed, uint256 bucketRecycled, bool capHit)
+        returns (
+            uint256 userTotal,
+            uint256 armedTotal,
+            uint256 liveArmed,
+            uint256 bucketRecycled,
+            bool capHit,
+            bool deferred
+        )
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        if (s.governorCommitArmedFromDay == 0) return (0, 0, 0, 0, false);
+        if (s.governorCommitArmedFromDay == 0) return (0, 0, 0, 0, false, false);
         uint256 daysLeft = LibVaipakam.MAX_INTERACTION_CLAIM_DAYS;
         // Codex #1410 r2 — the RECYCLED budget is the REAL bucket, shared
         // across both sides and depleted per day exactly as the live walk's
@@ -2836,6 +2846,7 @@ library LibInteractionRewards {
         liveArmed = acc.liveArmed;
         bucketRecycled = acc.bucketRecycled;
         capHit = acc.capHit;
+        deferred = acc.deferred;
     }
 
     /// @dev One side of the DryRun: simulate the day loop over `work` with
@@ -3141,7 +3152,10 @@ library LibInteractionRewards {
             // is flagged instead: no figure says the claim would not pay it.
             acc.bucketRecycled += charge.bucketRecycled;
             if (charge.transportCapHit) acc.capHit = true;
-            if (!charge.advanced) break;
+            if (!charge.advanced) {
+                acc.deferred = true;
+                break;
+            }
 
             // The same draw the settle walk deducts.
             pool.recycled -= charge.bucketRecycled;
@@ -6257,6 +6271,13 @@ library LibInteractionRewards {
         uint256 recycled;
         uint256 bucketRecycled;
         bool capHit;
+        /// @dev Whether ANY day of the run failed to advance — a funding
+        ///      deferral (delivered, backing or bucket shortfall) or a
+        ///      scan-window cap hit (Codex #2276). The UNAMBIGUOUS completion
+        ///      marker: a run's fungible totals cannot identify WHICH
+        ///      obligations it settled — with the shared day limit, a run that
+        ///      defers one side can settle the other for the same total.
+        bool deferred;
         /// @dev The armed fresh the LIVE delivery must fund — `armedTotal`
         ///      net of the epoch-paid fresh — for the delivered and backing
         ///      gates; `armedTotal` itself stays the full capped figure the

@@ -2917,15 +2917,22 @@ library LibRewardCustody {
     )
         internal
         view
-        returns (uint256 userTotal, uint256 armedTotal, uint256 liveArmed, uint256 bucketRecycled, bool capHit)
+        returns (
+            uint256 userTotal,
+            uint256 armedTotal,
+            uint256 liveArmed,
+            uint256 bucketRecycled,
+            bool capHit,
+            bool deferred
+        )
     {
         bytes memory ret = _selfStatic(
             abi.encodeWithSignature(
                 "getDryRunShareOfPoolDays(address,uint256,uint256)", user, deliveredCap, freshBudget
             )
         );
-        (userTotal, armedTotal, liveArmed, bucketRecycled, capHit) =
-            abi.decode(ret, (uint256, uint256, uint256, uint256, bool));
+        (userTotal, armedTotal, liveArmed, bucketRecycled, capHit, deferred) =
+            abi.decode(ret, (uint256, uint256, uint256, uint256, bool, bool));
     }
 
     /// @dev The allocation DOMAIN's gross needs for `user`'s next claim call,
