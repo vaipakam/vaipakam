@@ -102,6 +102,32 @@ LINE_END_RE = re.compile(rb"\r\n|\r|\n")
 # its title, and in contradiction of the rule that the OPENING line must be
 # the heading. Narrowing this can only refuse more, never publish more.
 BLANK_RE = re.compile(rb"^[ \t]*$")
+
+
+def unreadable_at(data: bytes):
+    """Where `data` stops being text a byte comparison can speak for (#2315).
+
+    Returns `(offset, reason)` for the first such byte, or None. Two arms,
+    each with a shape only it catches: bytes that are not UTF-8 at all (a
+    UTF-16 BOM, a legacy single-byte `é`), and a NUL, which is valid UTF-8
+    but is how UTF-16 or UTF-32 WITHOUT a BOM stores plain ASCII. No release
+    note has a use for either, and all 86 dated files carry neither.
+
+    This decides whether a comparison can be TRUSTED, not what the bytes
+    say. Guessing the other encoding means splitting one file into regions
+    of different encodings, and that is inference with no ground truth;
+    saying the question cannot be answered is exact.
+    """
+    try:
+        data.decode("utf-8")
+    except UnicodeDecodeError as e:
+        return e.start, "not valid UTF-8"
+    nul = data.find(b"\x00")
+    if nul != -1:
+        return nul, "a NUL byte"
+    return None
+
+
 # The PR NUMBER, and only it. `_TEMPLATE.md` ships the reference as the
 # literal `#NNNN`, and a present-but-unsubstituted one is the defect this
 # catches (#2288).
@@ -1731,11 +1757,12 @@ class Assembly:
             # out of reach at all: re-saving as UTF-8 is the obvious reading
             # of "open with an ATX heading", and where the ALREADY-PUBLISHED
             # copy is the UTF-16 one, that re-save is precisely what moves the
-            # two out of comparison — the next run matches nothing, appends a
-            # second copy and consumes the source. So this refusal does not
-            # survive its own remediation; what it stops doing is PRESCRIBING
-            # it. The two-run sequence is walked at
-            # `check_markerless_duplicates`, and closing it is #2315.
+            # two out of comparison — before #2315, the next run matched
+            # nothing, appended a second copy and consumed the source. So
+            # this refusal does not survive its own remediation; what it stops
+            # doing is PRESCRIBING it. What does survive it is the duplicate
+            # guard's readability refusal, which reads only the published
+            # side (#2315).
             # SPLIT THE SAME WAY `first_heading` DOES (#2295). These two scans
             # both answer "what is the first line of content", and if they
             # disagree about where a line ends, the `---` refusal below and the
@@ -2013,37 +2040,31 @@ class Assembly:
         recording what was published. The residual is intrinsic, and it
         shrinks as files gain markers.
 
-        ITS ENCODING LIMIT IS REAL, AND CONFORMANCE POSTPONES IT RATHER THAN
-        CLOSING IT (#2315). `HEADING_RE` is a byte pattern, so a UTF-16
-        heading is invisible to it and such a fragment is NOT matched here.
-        Within a SINGLE run that costs nothing: `check_heading_conformance`
-        refuses any fragment whose opening line is not a recognisable ATX
-        heading (#2295), so one this cannot parse cannot be published either,
-        and the run ends refused, retained, not duplicated.
+        ITS ENCODING LIMIT IS CLOSED BY REFUSING, NOT BY DECODING (#2315).
+        `HEADING_RE` is a byte pattern, and a legacy interrupted run appended
+        fragment bytes verbatim, so a fragment saved in UTF-16 sits in the
+        dated file in UTF-16 and no byte comparison can see it. One run was
+        always safe — conformance refuses the unreadable pending copy (#2295).
+        Two were not: the author re-saves the pending copy as UTF-8, the
+        published copy keeps its encoding, this guard matched nothing, and the
+        second run appended a duplicate and consumed the source. An earlier
+        revision of this docstring stopped at one run and said the limit "no
+        longer loses work" (#2311 r2). It was wrong, and so was the finding it
+        leaned on, that an encoding-agnostic arm "changed the message, never
+        the outcome" — both were tested across one run only.
 
-        AN EARLIER REVISION STOPPED THERE AND CONCLUDED THE LIMIT "no longer
-        loses work". That was wrong, and the counterexample is two runs rather
-        than one — found in review and reproduced (#2311 r2). Take a legacy
-        markerless dated file that ALREADY carries the fragment in UTF-16;
-        `build()` appends `rewrite_links(raw)`, and neither substitution it
-        makes (`](../../`, `](./`) can occur in NUL-interleaved text, so for
-        THIS fragment the published bytes are the fragment's own and an
-        interrupted pre-marker run left exactly that, heading
-        NUL-interleaved. Run one:
-        this guard finds no heading to match, conformance refuses, and the
-        operator is told to open with an ATX heading. They re-save the pending
-        copy as UTF-8 — the obvious reading of that instruction. Run two:
-        conformance passes, the PUBLISHED heading is still NUL-interleaved, so
-        this guard still matches nothing. Second copy appended, source
-        consumed, exit 0.
-
-        So the refusal does not survive its own remediation, and that is the
-        #2298 class in its sharpest form: the remedy edits the very text this
-        guard compares — here the PENDING copy, while the published one keeps
-        the old encoding, so the operator doing exactly as instructed is what
-        moves the two out of comparison. No strictness in conformance reaches
-        it. Closing it needs this guard to decide the encoding question, which
-        is a behaviour change and is #2315.
+        The fix does not decode. Doing so means deciding which regions of one
+        file are in which encoding, which is inference with no ground truth,
+        and a legacy single-byte `é` reaches the same loss too — by a less
+        likely route, since its first rerun is refused as a duplicate with
+        instructions that do not suggest re-saving. Instead
+        `unreadable_at` asks whether the PUBLISHED file is text a byte
+        comparison can speak for, and a markerless file that is not is
+        refused before any fragment is examined. That is the same question
+        this guard already refuses on — "is this fragment already in it?" —
+        answered honestly as "cannot tell". It survives the author's re-save
+        because it reads only the published side, which the re-save does not
+        touch; all 86 dated files pass it, so it refuses nothing real today.
 
         WHAT CONFORMANCE DOES CARRY is the single-run half, and it rests on
         conformance EXISTING rather than on where it sits. `run()` calls this
@@ -2051,8 +2072,8 @@ class Assembly:
         refuse, and nothing is appended until `build()`, which is after both.
         So a fragment this misses is refused before any append wherever
         conformance runs. RELAXING conformance to admit an opener it cannot
-        parse would lose that half too — it is not, however, what opens the
-        two-run path above, which is open today.
+        parse would lose that half too. The two-run half is carried by
+        `unreadable_at`, above, and not by conformance at all.
 
         The order is nonetheless load-bearing, for a different reason and one
         recorded at the call site (#2290 r16): it decides which question the
@@ -2061,18 +2082,6 @@ class Assembly:
         destroys the very evidence this guard compares. So do not read the
         sequence as this paragraph's invariant, and do not reorder on the
         strength of this paragraph either.
-
-        An encoding-agnostic arm — comparing the fragment's whole published
-        text rather than a parsed heading — was built and REMOVED before
-        merge, on the finding that it changed the refusal MESSAGE and never
-        the outcome, every case it was supposed to rescue being already
-        refused by conformance. THAT FINDING WAS INCOMPLETE, and this
-        paragraph used to set a bar it has since cleared: do not reintroduce
-        the arm without first establishing a case it actually decides. The
-        two-run path above IS such a case, and the mutation test behind the
-        original finding only ever exercised one run. Reintroducing the arm is
-        still a behaviour change rather than a docstring one, so it is #2315
-        — but it is now wanted, not warned against.
 
         IT COMPARES THE PUBLISHED FORM, AND THAT IS NOW STRUCTURAL RATHER
         THAN REMEMBERED (#2311 r4). `build()` appends `rewrite_links(raw)`,
@@ -2102,7 +2111,10 @@ class Assembly:
         sides identical by construction rather than to argue that a
         difference cannot arise.
         """
-        if not os.path.isfile(self.out) or self.out_copy is None:
+        # NOTHING PENDING, NOTHING TO ASK. The loop below was a no-op then;
+        # the readability refusal after it would not be, and must not stop a
+        # run that has no fragment the answer could matter to.
+        if not self.frags or not os.path.isfile(self.out) or self.out_copy is None:
             return
         base = os.path.basename(self.out)
         out_data = checked(
@@ -2114,6 +2126,33 @@ class Assembly:
             for line in LINE_END_RE.split(out_data)
             if line.startswith(MARKER_PREFIX.encode())
         )
+        # A FILE THIS CANNOT READ IS REFUSED, NOT COMPARED (#2315). The scan
+        # below compares bytes, so on a file holding a section in another
+        # encoding it can only ever report "no match" — and that is the
+        # answer that appends a second copy and consumes the source. Asked
+        # BEFORE any fragment is looked at, because the answer does not
+        # depend on the fragment: it is the published side that cannot be
+        # read, and no edit to a pending copy changes that. Same gating as
+        # the heading refusal: a note on a marked file (#2312) or under
+        # `--force-append`, where the operator has already read the file.
+        bad = unreadable_at(out_data)
+        if bad is not None:
+            at, why = bad
+            if not out_has_markers and not self.force:
+                err(f"Error: {base} carries no assembly markers at all, and cannot be read as")
+                err(f"UTF-8 text (byte {at}: {why}). An older version of this script")
+                err("appended fragments exactly as saved, so a section in another encoding")
+                err("may already hold a fragment about to be appended — and comparing")
+                err("against text it cannot read, this check would miss it every time.")
+                err("")
+                err(f"Read {base} and then either:")
+                err("  - a pending fragment is already there -> delete it by hand")
+                err("  - none is                             -> re-run with --force-append")
+                err(f"Converting {base} to UTF-8 also lets this check run.")
+                self.refuse_reporting_consumed()
+            err(f"Note: {base} cannot be read as UTF-8 text (byte {at}: {why});")
+            err("any section of it in another encoding was not checked for a pending fragment.")
+            err("")
         # ONE SPLIT, not a normalise-then-split (#2301 r2). This used to strip
         # a trailing `\r` from each `\n`-delimited line and rejoin, which
         # handled CRLF and left a lone CR sitting inside a line. `LINE_END_RE`
@@ -2168,13 +2207,10 @@ class Assembly:
             # very text this guard compares (#2298), filed rather than patched
             # in each path.
             #
-            # WHAT THIS DOES NOT REACH, stated rather than implied: a fragment
-            # in UTF-16 or UTF-32. Stripping its BOM would not help — the
-            # heading's own bytes are NUL-interleaved, so `HEADING_RE` cannot
-            # match them, and closing it needs decoding rather than a longer
-            # list of signatures. That hole is PRE-EXISTING: `main`'s guard
-            # strips no BOM at all, so it misses UTF-8 too. This narrows the
-            # guard's blind spot and widens nothing (#2290 r22, deferred).
+            # WHAT THIS DOES NOT REACH: a published section in UTF-16 or
+            # UTF-32, whose heading bytes are NUL-interleaved, so no BOM strip
+            # makes `HEADING_RE` match them. That file never reaches this scan
+            # unrefused — `unreadable_at` stops it above (#2315).
             def _debom(b: bytes) -> bytes:
                 return b[3:] if b.startswith(b"\xef\xbb\xbf") else b
 
@@ -2206,10 +2242,9 @@ class Assembly:
             # per-line rewrite would be equivalent today and would have to be
             # re-argued the moment anything else compares a second line.
             #
-            # This is also where the #2315 constraint stops being something a
-            # later reader has to remember: whatever that arm compares, it
-            # compares the published form, because the fragment is converted
-            # to it here before anything looks at it.
+            # Any later comparison added here inherits the published form for
+            # free, because the fragment is converted to it before anything
+            # looks at it.
             out_lines = [_debom(o) for o in out_lines_raw]
             for ln in LINE_END_RE.split(self.rewrite_links(body)):
                 line = _debom(ln)

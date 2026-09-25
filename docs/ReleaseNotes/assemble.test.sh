@@ -4677,11 +4677,10 @@ check "and that it continues"      "$(says "$msg" 'not a refusal')"             
 # the next lines, re-saving as UTF-8 is the obvious reading of the refusal
 # even though the refusal never asks for it — and where the ALREADY-PUBLISHED
 # copy is the UTF-16 one, that re-save is exactly what stops the markerless
-# duplicate guard matching, so the next run appends a second copy and consumes
-# the source. "Covers UTF-16/32, which the r11 clause never did" is therefore
-# about the REFUSAL here, not about safety across the operator's remedy. That
-# two-run path is walked at `check_markerless_duplicates` and carried as
-# #2315; the assertions below deliberately test only the single run.
+# duplicate guard matching, so the next run appended a second copy and
+# consumed the source until #2315. "Covers UTF-16/32, which the r11 clause never did" is therefore
+# about the REFUSAL here, not about safety across the operator's remedy. The
+# assertions below test only the single run; the two-run path is T217m5's.
 case_start "T217m: a BOM-bearing fragment is refused for its opening line"
 W="$ROOT/t217m"; build "$W"
 printf '\xef\xbb\xbf## Thread — saved with a mark (PR #4249)\n' \
@@ -4739,6 +4738,81 @@ printf '# Release Notes — 2026-08-17\n\n## Thread — see the note (PR #4251)\
 msg="$(bash "$out/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
 check "the run refuses"      "$?"              "1"
 check "nothing was consumed" "$(pending "$W")" "3"
+
+# ── A markerless file the guard cannot READ is refused, not compared (#2315) ─
+# The duplicate guard compares heading lines as bytes, so it can answer only
+# for a dated file whose text is in the encoding the pending fragment is
+# compared in. A legacy interrupted run appended fragment bytes verbatim, so a
+# fragment saved in another encoding sits in the published file in THAT
+# encoding. Every case below is TWO runs, because one run was always safe —
+# conformance refuses the unreadable pending copy — and the loss is in what
+# follows: the author re-saves the pending copy as UTF-8, the published copy
+# keeps its old encoding, the guard matches nothing, and the second run
+# appended a duplicate and consumed the source. Reproduced on `main` for all
+# three before the fix.
+#
+# Three fixtures because the rule has two arms and each needs its own
+# evidence: UTF-16 with a BOM (invalid UTF-8 AND NUL-bearing), UTF-16 without
+# one (valid UTF-8, caught only by the NUL arm), and a legacy single-byte
+# encoding (no NUL, caught only by the UTF-8 arm).
+enc() {  # enc <codec> <text> -> the text's bytes in that codec
+  python3 -c 'import sys; sys.stdout.buffer.write(sys.argv[2].encode(sys.argv[1]))' "$1" "$2"
+}
+two_runs() {  # two_runs <dir> <codec> <heading>
+  local w="$1" codec="$2" head="$3" o
+  o="$w/docs/ReleaseNotes"
+  { printf '# Release Notes — 2026-08-17\n\n'
+    enc "$codec" "$head"$'\n\nBody.\n'
+    printf '\n'; } > "$o/ReleaseNotes-2026-08-17.md"
+  enc "$codec" "$head"$'\n\nBody.\n' > "$o/unreleased/0003-enc.md"
+  msg="$(bash "$o/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
+  check "run one refuses"            "$?"              "1"
+  check "run one consumes nothing"   "$(pending "$w")" "3"
+  # The author's obvious remedy, whatever run one's message said.
+  printf '%s\n\nBody.\n' "$head" > "$o/unreleased/0003-enc.md"
+  msg="$(bash "$o/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
+  check "run two refuses"            "$?"                                    "1"
+  check "for the unreadable file"    "$(says "$msg" 'cannot be read as')"    "1"
+  check "run two consumes nothing"   "$(pending "$w")"                        "3"
+  # A whole-line FIXED-string count: the heading carries `(PR #…)`, which an
+  # ERE reads as a group, so `count_in` would match nothing and pass either way.
+  check "and appends no UTF-8 copy"  \
+    "$(grep -cxF -- "$head" "$o/ReleaseNotes-2026-08-17.md" || true)"        "0"
+}
+case_start "T217m5: an unreadable markerless file survives the author's re-save"
+W="$ROOT/t217m5"; build "$W"
+two_runs "$W" utf-16 '## Thread — folded in as UTF-16 (PR #4252)'
+W="$ROOT/t217m5b"; build "$W"
+two_runs "$W" utf-16-le '## Thread — folded in as bare UTF-16 (PR #4252)'
+W="$ROOT/t217m5c"; build "$W"
+two_runs "$W" cp1252 '## Thread — folded in as café (PR #4252)'
+# The refusal is an operator decision point, not a dead end: having read the
+# file, `--force-append` proceeds as it does for a matched heading.
+out="$W/docs/ReleaseNotes"
+msg="$(bash "$out/assemble.sh" 2026-08-17 --allow-mixed-dates --force-append 2>&1)"
+check "--force-append proceeds"     "$?"                                "0"
+check "and still says so"           "$(says "$msg" 'cannot be read as')" "1"
+# The control: a readable markerless file is compared, not refused.
+W="$ROOT/t217m5d"; build "$W"
+out="$W/docs/ReleaseNotes"
+printf '# Release Notes — 2026-08-17\n\n## Thread — another change (PR #4253)\n\nBody.\n' \
+  > "$out/ReleaseNotes-2026-08-17.md"
+printf '## Thread — a new one (PR #4254)\n\nBody.\n' > "$out/unreleased/0003-new.md"
+msg="$(bash "$out/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
+check "a readable file assembles"   "$?"                                 "0"
+check "without the unreadable note" "$(says "$msg" 'cannot be read as')" "0"
+# A MARKED file is noted, not refused — the same gating the heading refusal
+# has, and the same weakness (#2312). Pinned for the NOTE: whatever #2312
+# decides about the verdict, an unread region must not pass unmentioned.
+W="$ROOT/t217m5e"; build "$W"
+out="$W/docs/ReleaseNotes"
+{ printf '# Release Notes — 2026-08-17\n\n## Thread — marked (PR #4255)\n\nBody.\n'
+  printf '<!-- assembled-fragment: 0009-old.md sha256=%064d -->\n\n' 0
+  enc utf-16 $'## Thread — legacy UTF-16 (PR #4256)\n'; } > "$out/ReleaseNotes-2026-08-17.md"
+printf '## Thread — a new one (PR #4257)\n\nBody.\n' > "$out/unreleased/0003-new.md"
+msg="$(bash "$out/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
+check "a marked file is not refused" "$?"                                 "0"
+check "but the unread part is named" "$(says "$msg" 'cannot be read as')" "1"
 
 # ── The front-matter refusal is not escaped by trailing whitespace (r14) ───
 # `---   ` and `---\t` are valid YAML delimiters. An exact comparison let
