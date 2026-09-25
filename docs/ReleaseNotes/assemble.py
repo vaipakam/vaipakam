@@ -1942,7 +1942,8 @@ class Assembly:
         out publishing the recorded text a second time, which is the one
         thing a refusal here exists to prevent. The note tells the operator
         to look for a superseded copy, which is the right action under
-        either reading.
+        either reading, and it is keyed on the marker rather than on the
+        heading scan, since an edit may retitle the fragment (#2328 r3).
 
         This used to be a whole-file `any()`: one marker anywhere downgraded
         every refusal to a note. That was sound for a file written wholly in
@@ -2170,13 +2171,27 @@ class Assembly:
             err("  - it is a new section  -> re-run with --force-append")
             self.refuse_reporting_consumed()
 
-        if suspect:
-            err(f"Note: {os.path.basename(self.out)} already contains these headings; appending anyway")
-            err("(an earlier text of each is recorded here under the same name, or")
-            err("--force-append was given):")
-            for s in suspect:
+        # THE SAME-NAME NOTE IS KEYED ON THE MARKER, NOT ON THE HEADING
+        # (#2328 r3). A pending fragment this file records under the same
+        # name differs from what was recorded — `classify` would have cleared
+        # it otherwise — and that ambiguity holds whether or not its heading
+        # still matches, since an edit may retitle it. So every such fragment
+        # is named, whatever the scan above found.
+        same_name = [self.frag_name[f] for f in self.frags if self.frag_name[f] in marked_here]
+        if same_name:
+            err(f"Note: {base} records an earlier text under the same name for these")
+            err("fragments, and the pending text differs, so it is appended as well:")
+            for s in same_name:
+                err(f"  {s}" + ("   (its heading is already there)" if s in suspect else ""))
+            err("That is either an edit made after an interrupted run or a new fragment")
+            err("reusing an old file name. Check for a superseded copy while reviewing.")
+            err("")
+        forced = [s for s in suspect if s not in marked_here]
+        if forced:
+            err(f"Note: {base} already contains these headings; appending anyway, as")
+            err("--force-append was given:")
+            for s in forced:
                 err(f"  {s}")
-            err("Check for a superseded copy of that section while reviewing.")
             err("")
 
     # ── building the replacement ─────────────────────────────────────────

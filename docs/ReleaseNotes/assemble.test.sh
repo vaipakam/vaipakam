@@ -774,7 +774,7 @@ check "the edit is appended, not discarded" \
   "$(says "$(cat "$out/ReleaseNotes-2026-08-16.md")" 'Rewritten after the interruption')" "1"
 check "the fragment is consumed"  "$(pending "$W")" "1"
 check "and the repeated heading is flagged" \
-  "$(says "$msg" 'already contains these headings')" "1"
+  "$(says "$msg" 'its heading is already there')" "1"
 
 case_start "T14b: a REUSED basename with different content is treated as new"
 W="$ROOT/t14b"; build "$W"
@@ -4940,12 +4940,30 @@ else
   check "its own marker is recognised"  "$?"                                   "0"
   check "not called unreadable"         "$(says "$msg" 'cannot be read as')" "0"
   check "the edit is appended with a note" \
-    "$(says "$msg" 'already contains these headings')"                         "1"
+    "$(says "$msg" 'records an earlier text under the same name')"             "1"
   # And an unrelated fragment is not refused because of that marker's byte.
   printf '## Thread — unrelated (PR #4281)\n\nBody.\n' > "$W/docs/ReleaseNotes/unreleased/0006-new.md"
   msg="$(LC_ALL=$utf8 bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
   check "an unrelated fragment assembles" "$?"                                 "0"
 fi
+
+# The same-name note is keyed on the MARKER, not the heading (#2328 r3). An
+# edit made after an interrupted run may retitle the fragment; its heading
+# then matches nothing, and the run used to append the new section beside the
+# old one without a word.
+case_start "T217y4: a same-name edit that changes its heading is still noted"
+W="$ROOT/t217y4"; build "$W"
+out="$W/docs/ReleaseNotes"
+bash "$out/assemble.sh" 2026-08-16 >/dev/null 2>&1
+printf '## 0001-a, retitled\nRewritten after the interruption.\n' \
+  > "$W/docs/ReleaseNotes/unreleased/0001-a.md"
+git -C "$W" add -A
+GIT_AUTHOR_DATE='2026-08-16T23:00:00Z' GIT_COMMITTER_DATE='2026-08-16T23:00:00Z' \
+  git -C "$W" commit -q -m retitled
+msg="$(bash "$out/assemble.sh" 2026-08-16 2>&1)"
+check "the retitled edit is appended"   "$?"                                              "0"
+check "and it is noted" "$(says "$msg" 'records an earlier text under the same name')"    "1"
+check "naming the fragment"             "$(says "$msg" '0001-a.md')"                      "1"
 
 # ── The front-matter refusal is not escaped by trailing whitespace (r14) ───
 # `---   ` and `---\t` are valid YAML delimiters. An exact comparison let
