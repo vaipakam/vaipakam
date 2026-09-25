@@ -6,10 +6,13 @@
  * own address source.
  */
 import {
+  BaseError,
   createPublicClient,
   createWalletClient,
+  decodeErrorResult,
   http,
   type Account,
+  type Hex,
   type PublicClient,
   type WalletClient,
   type Chain,
@@ -81,6 +84,12 @@ export function walletFor(account: Account): WalletClient {
  * Use this instead of a bare `waitForTransactionReceipt` for every write. If a
  * test genuinely EXPECTS a revert, call `waitForTransactionReceipt` directly
  * and assert on `status` there, so the expectation is visible at the call site.
+ *
+ * THE MESSAGE NAMES THE REVERT, not only the fact of it (#2334). A receipt
+ * carries no revert data, and the fork is discarded with the job, so without
+ * this the cause of a reverted setup write is unrecoverable afterwards —
+ * which is exactly what happened when `26-sale-listing-hold` flaked on live
+ * forked state. See `revertReason` for how, and for what it cannot promise.
  */
 export async function confirm(
   hash: `0x${string}`,
@@ -88,14 +97,79 @@ export async function confirm(
 ): Promise<TransactionReceipt> {
   const receipt = await pub.waitForTransactionReceipt({ hash });
   if (receipt.status !== 'success') {
+    const reason = await revertReason(hash, receipt.blockNumber);
     throw new Error(
       `${label} REVERTED (tx ${hash}, block ${receipt.blockNumber}). ` +
         `The transaction was mined, so nothing here timed out — its effect ` +
         `simply did not happen, and every assertion after this point would ` +
-        `have been testing a state that was never reached.`,
+        `have been testing a state that was never reached. ` +
+        `Revert reason: ${reason}`,
     );
   }
   return receipt;
+}
+
+/**
+ * Why a mined transaction reverted, as a sentence for an error message.
+ *
+ * Replays the transaction with `eth_call` against the state at the END OF
+ * THE PREVIOUS BLOCK and decodes the revert data against the Diamond's merged
+ * ABI, so a custom error reads as `Name(args)` rather than as a selector.
+ * On anvil's automine each transaction gets its own block, so that state is
+ * the one the transaction actually ran against; if another transaction had
+ * shared the block, the replay would miss its effects, and a replay that does
+ * not revert says so rather than guessing.
+ *
+ * BEST-EFFORT, AND NEVER THE CAUSE OF A FAILURE. Every path returns a string:
+ * a lookup that itself fails is reported as unavailable, so the caller still
+ * throws the original revert with its label and hash.
+ */
+async function revertReason(hash: Hex, blockNumber: bigint): Promise<string> {
+  let tx;
+  try {
+    tx = await pub.getTransaction({ hash });
+  } catch (err) {
+    return `unavailable — the transaction could not be fetched (${shortMessage(err)})`;
+  }
+  try {
+    await pub.call({
+      account: tx.from,
+      to: tx.to ?? undefined,
+      data: tx.input,
+      value: tx.value,
+      gas: tx.gas,
+      blockNumber: blockNumber - 1n,
+    });
+    return (
+      'unavailable — replaying it against the previous block did not revert, ' +
+      'so the cause was state that changed within its own block'
+    );
+  } catch (err) {
+    const data = revertData(err);
+    if (!data) return `unavailable — the replay failed without revert data (${shortMessage(err)})`;
+    try {
+      const decoded = decodeErrorResult({ abi: DIAMOND_ABI_VIEM, data });
+      const args = (decoded.args ?? []).map((a) =>
+        typeof a === 'bigint' ? a.toString() : JSON.stringify(a),
+      );
+      return `${decoded.errorName}(${args.join(', ')})`;
+    } catch {
+      return `undecoded revert data ${data}`;
+    }
+  }
+}
+
+/** The raw revert bytes a failed `eth_call` carried, if any. */
+function revertData(err: unknown): Hex | undefined {
+  if (!(err instanceof BaseError)) return undefined;
+  const found = err.walk((e) => typeof (e as { data?: unknown }).data === 'string');
+  const data = (found as { data?: unknown } | null)?.data;
+  return typeof data === 'string' && data.startsWith('0x') ? (data as Hex) : undefined;
+}
+
+function shortMessage(err: unknown): string {
+  if (err instanceof BaseError) return err.shortMessage;
+  return err instanceof Error ? err.message : String(err);
 }
 
 export const ERC20_MIN_ABI = [
