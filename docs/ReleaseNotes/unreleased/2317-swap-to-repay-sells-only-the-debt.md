@@ -37,8 +37,8 @@ into a local fork of the live Base Sepolia deployment, it passes, along with
 every other repay-from-collateral check. On the walkthrough's loan the sale
 fell from the whole allowance to the collateral the debt needed, and the rest
 stayed pledged until the borrower's claim released it. The
-resolver-filled intent path still commits the whole collateral to its
-auction; the specification's rule — unused collateral stays pledged and
-claimable — applies to it too, so it is to be sized to the debt as well. That
-is a separate change, tracked in #2322, and is not part of this one.
+resolver-filled intent path committed the whole collateral to its auction
+when this change landed. The specification's rule, that unused collateral
+stays pledged and claimable, applies there too. It is sized by the same
+rule in a separate change (#2322), not in this one.
 Closes #2317.

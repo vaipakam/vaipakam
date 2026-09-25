@@ -589,10 +589,12 @@ address itself, NOT a separate `ALLOWANCE_TARGET` like 0x v2 uses) to the new
      the vault deposit AND relied on the canonical waterfall's
      claim-record. But `ClaimFacet.claimAsBorrower` pays ERC20
      borrower claims by WITHDRAWING `claim.amount` FROM
-     `loan.borrower`'s vault. After step 8 of commit moved the full
-     `loan.collateralAmount` into diamond custody and the swap
-     consumed only `consumed`, the residual is in DIAMOND custody
-     — NOT the vault. Recording a claim without the underlying
+     `loan.borrower`'s vault. After step 8 of commit moved the
+     custodial amount into diamond custody (the debt-sized lot since
+     #2322 — the rest of the collateral never left the vault — and the
+     whole `loan.collateralAmount` before it) and the swap consumed
+     only `consumed`, the fill residual is in DIAMOND custody — NOT the
+     vault. Recording a claim without the underlying
      tokens in the vault would make `claimAsBorrower` revert at
      withdraw time.
 
@@ -689,7 +691,7 @@ struct SwapToRepayIntentCommit {
     //    the hash):
     bytes32 orderHash;            // Fusion order hash — primary key for ERC-1271 + postInteraction lookup
     uint64  deadline;
-    uint256 makerAmount;          // == custodialCollateral after step 8 invariant guard (== loan.collateralAmount post-round-6)
+    uint256 makerAmount;          // == custodialCollateral after step 8 invariant guard == the debt-sized LOT (#2322; was == loan.collateralAmount post-round-6)
     uint256 takerAmount;          // §5.4 floor enforced at commit + postInteraction
     uint256 salt;                 // borrower-supplied; must round-trip
     uint256 makerTraits;          // Fusion's packed traits bitfield (allowPartialFills, allowMultipleFills, etc.)
