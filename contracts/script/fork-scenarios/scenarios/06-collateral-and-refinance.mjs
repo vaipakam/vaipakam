@@ -130,6 +130,7 @@ export async function run() {
     await approveDiamond(outsider, lending);
     // Admitted by A6.6c's simulation, so a failure to post here is a broken
     // flow, not an observation — `createOffer` throws and the file aborts.
+    const beforeRefiPost = await snapshot(tokens, holders);
     const posted = await createOffer(borrower, {
       offerType: 1,
       interestRateBps: 300n,
@@ -138,6 +139,10 @@ export async function run() {
       fillMode: 1,
     });
     const tagged = await read(ABIS.offerCancel, 'getOffer', [posted.offerId]);
+    // A refinance offer CARRIES the loan's existing collateral over, so
+    // posting it escrows nothing new.
+    expectLedger('A6.6e', 'posting the refinance offer moves no funds — the existing collateral carries over',
+      beforeRefiPost, await snapshot(tokens, holders), {});
     check('A6.6', 'the borrower can post a refinance-tagged borrow offer at better terms',
       String(tagged.interestRateBps) === '300' && String(tagged.offerType) === '1',
       `oldLoanId=${oldLoanId} offerId=${posted.offerId} rate ${oldLoan.interestRateBps}bps -> ${tagged.interestRateBps}bps`);

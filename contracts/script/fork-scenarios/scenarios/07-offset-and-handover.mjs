@@ -57,6 +57,7 @@ export async function run() {
     const sim = await simulate(DIAMOND, ABIS.preclose, 'offsetWithNewOffer',
       [loanId, 400n, OFFSET_DAYS, collateral, parseUnits('1.25', 18), true, lending], borrower.address);
     if (!sim.ok) cannotContinue('A7.2 offset offer', sim.name);
+    const beforeOffsetPost = await snapshot(tokens, holders);
     const posted = await tx(borrower, {
       address: DIAMOND, abi: ABIS.preclose, functionName: 'offsetWithNewOffer',
       args: [loanId, 400n, OFFSET_DAYS, collateral, parseUnits('1.25', 18), true, lending],
@@ -74,6 +75,14 @@ export async function run() {
     // other side of a replacement loan, which is not what "offset" suggests
     // on its own.
     const vehicle = await read(ABIS.offerCancel, 'getOffer', [offsetOfferId]);
+    // The vehicle is a LENDER offer, so posting it escrows its principal —
+    // from the exiting borrower's wallet into their own vault — and moves
+    // nothing else.
+    expectLedger('A7.2c', 'posting the offset offer escrows exactly its principal, borrower wallet → borrower vault',
+      beforeOffsetPost, await snapshot(tokens, holders), {
+        'lending.borrowerEOA': -vehicle.amount,
+        'lending.borrowerVault': vehicle.amount,
+      });
     observe('A7.2b', 'the offset vehicle is a LENDER-side offer posted by the borrower',
       `offerType=${vehicle.offerType} creator=${vehicle.creator.slice(0, 10)} ` +
       `amount=${f18(vehicle.amount)} rate=${vehicle.interestRateBps}bps term=${vehicle.durationDays}d`);

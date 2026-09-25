@@ -140,6 +140,9 @@ async function runPeriodic(initial) {
     lenderEOA: lender.address, lenderVault: await vaultAddressFor(lender),
     borrowerEOA: borrower.address, borrowerVault: await vaultAddressFor(borrower),
     settlerEOA: outsider.address, treasury: TREASURY, venue,
+    // The swap proceeds transit the Diamond, so it is watched too: nothing
+    // may be left in it, or paid out of a balance it already held.
+    diamond: DIAMOND,
   };
   const tokens = { lending, collateral: MOCKS.liquidToken };
   const autoPos = await positionOf(loanId);

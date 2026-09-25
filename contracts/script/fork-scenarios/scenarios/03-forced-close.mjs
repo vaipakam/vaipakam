@@ -26,6 +26,11 @@ async function expectForcedClose(id, name, loan, receipt, before, after, collate
   const start = BigInt(loan.interestAccrualStart || loan.startTime);
   const endTime = BigInt(loan.startTime) + BigInt(loan.durationDays) * 86_400n;
   const sold = before['collateral.borrowerVault'] - after['collateral.borrowerVault'];
+  // A forced close sells the WHOLE pledged collateral: checked before `sold`
+  // feeds the waterfall, so a partial withdrawal cannot become the baseline
+  // every other expectation is derived from.
+  check(`${id}.sold`, 'the forced close sells the whole pledged collateral', sold === loan.collateralAmount,
+    `sold=${f18(sold)} pledged=${f18(loan.collateralAmount)}`);
   const proceeds = before['lending.venue'] - after['lending.venue'];
   const [handlingBps] = await read(ABIS.config, 'getLiquidationConfig');
   const incentiveBps = await dynamicIncentiveBps(collateral, lending, sold, proceeds);

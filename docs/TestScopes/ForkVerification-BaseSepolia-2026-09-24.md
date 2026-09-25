@@ -6,7 +6,8 @@ what is under test is the deployed bytecode and the deployment's own
 configuration — not the source tree's idea of them.
 
 - **Target** — Diamond `0xd89fd7F787e4415460b23891E97570a4881fb995`, chain
-  84532 (Base Sepolia), forked at block 47,228,632.
+  84532 (Base Sepolia). The ledger below is from a fork at block
+  **47,276,672**; the first, superseded run forked at 47,228,632.
 - **Driver** — [`contracts/script/fork-scenarios/`](../../contracts/script/fork-scenarios/README.md),
   committed with this document. `node run-all.mjs` against a fresh fork
   re-verifies the deployment **as it is at that moment**; configuration can
@@ -16,7 +17,7 @@ configuration — not the source tree's idea of them.
   ledger now records as `forkBlock`. Figures that depend on elapsed time can
   still differ in the last decimals, since the warps land on different
   seconds.
-- **Result** — 196 scenarios: **184 PASS, 11 INFO, 1 FAIL**, no aborted
+- **Result** — 207 scenarios: **195 PASS, 11 INFO, 1 FAIL**, no aborted
   file. The INFOs are observations with no assertion behind them, not soft
   failures — the ledger's API makes a row either an assertion (PASS/FAIL
   only) or an observation (INFO only), so no failure can land as INFO; each
@@ -202,7 +203,22 @@ the borrower after an underwater liquidation — the other side's claim is the
 last and settles the loan. A forced close sells the whole collateral and releases the lien; the
 loan record keeps its original collateral figure as a term. The swap-to-repay
 row now checks the sale against an independently computed debt-sized amount
-(within oracle-rounding wei), not merely "below the cap". The stamps are themselves asserted equal to
+(within oracle-rounding wei), not merely "below the cap".
+
+**The scope is now declared rather than open-ended.** Each review round kept
+finding one more invariant a regression could break while the rows stayed
+green — which is a question with no natural end. So what a run certifies is
+stated in the driver README ("What a run verifies"): an exact token ledger
+over every holder the funds pass through (every offer posting and listing
+included — A6.6e, A7.2c, A8.1b, A8.5b, A4.11b), the whole position after
+every step, refusals by name, and no configurable number written in; forced
+closes are checked to sell the whole collateral, and every claim — preclose's
+too (A4.3/A4.3b) — goes through the one claim assertion. Four checks beyond
+that scope are recorded as follow-ups in **#2332** rather than widening this
+document: position-NFT metadata and the reverse index, position locks while a
+sale or offset link is live, the size of a periodic settlement's sale (the
+spec does not define its buffer — an owner question), and whether interest a
+periodic settlement booked is credited when the loan later closes. The stamps are themselves asserted equal to
 the live configuration at origination (A2.3–A2.5), and the admission floor
 against the spec's governed range [1.2, 2.0] (A1.1).
 
@@ -870,7 +886,7 @@ replace.
 
 ## 7. Ledger
 
-The full 196-row ledger, with per-scenario verdicts and observed numbers, is
+The full 207-row ledger, with per-scenario verdicts and observed numbers, is
 regenerated as `contracts/script/fork-scenarios/last-run.json` on every run
 (untracked). Scenario ids map to the driver's files:
 

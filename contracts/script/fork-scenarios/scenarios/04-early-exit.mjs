@@ -8,7 +8,7 @@
  * has to say out loud.
  */
 import { DIAMOND, MOCKS, TREASURY, borrower, lender, outsider, parseUnits, pub, tx } from '../lib/chain.mjs';
-import { ABIS, STATUS, delta, expectPosition, openLoan, positionOf, read, snapshot, vaultAddressFor } from '../lib/flow.mjs';
+import { ABIS, STATUS, claimAndExpect, delta, expectPosition, openLoan, positionOf, read, snapshot, vaultAddressFor } from '../lib/flow.mjs';
 import { parseEventLogs } from 'viem';
 import { f18 } from '../lib/chain.mjs';
 import { warpDays } from '../lib/impersonate.mjs';
@@ -53,11 +53,20 @@ export async function run() {
       });
     await expectPosition('A4.2c', 'the preclose changes ONLY the status to Repaid — both NFTs, terms and the whole lien as they were',
       loanId, prePos, { status: STATUS.Repaid });
-    const beforeClaim = await snapshot(tokens, holders);
-    await tx(borrower, { address: DIAMOND, abi: ABIS.claim, functionName: 'claimAsBorrower', args: [loanId] }, 'claimAsBorrower');
-    const afterClaim = await snapshot(tokens, holders);
-    expectLedger('A4.3', 'the borrower reclaims exactly the whole collateral after a preclose, vault → wallet',
-      beforeClaim, afterClaim, { 'collateral.borrowerVault': -closed.collateralAmount, 'collateral.borrowerEOA': closed.collateralAmount });
+    // PrecloseFacet writes its own claim records, so both claims are
+    // exercised here: the borrower's collateral, then the lender's payoff;
+    // with both claimed the loan settles.
+    let prePosAfter = await positionOf(loanId);
+    prePosAfter = await claimAndExpect({
+      id: 'A4.3', who: 'borrower', account: borrower, fn: 'claimAsBorrower', loanId, tokens, holders, before: prePosAfter,
+      moves: { 'collateral.borrowerVault': -closed.collateralAmount, 'collateral.borrowerEOA': closed.collateralAmount },
+      changes: { borrowerNftOwner: null, lienReleased: true, lienAmount: 0n },
+    });
+    await claimAndExpect({
+      id: 'A4.3b', who: 'lender', account: lender, fn: 'claimAsLender', loanId, tokens, holders, before: prePosAfter,
+      moves: { 'lending.lenderVault': -(payoff - preCut), 'lending.lenderEOA': payoff - preCut },
+      changes: { lenderNftOwner: null, status: STATUS.Settled },
+    });
   }
 
   // -------------------------------------------------------- partial repay
@@ -142,7 +151,12 @@ export async function run() {
     expectRefusal('A4.10', 'a third party cannot list someone else\'s position', impostor, 'KeeperAccessRequired');
 
     if (ok.ok) {
+      const beforeList = await snapshot(tokens, holders);
       const receipt = await tx(lender, { address: DIAMOND, abi: ABIS.earlyWithdrawal, functionName: 'createLoanSaleOffer', args: [loanId, 600n, true, BigInt(3 * 86_400)] }, 'createLoanSaleOffer');
+      const afterList = await snapshot(tokens, holders);
+      // A listing is an offer for the lender's POSITION, not a transfer: it
+      // escrows nothing (the buyer pays at the fill).
+      expectLedger('A4.11b', 'listing the position moves no funds', beforeList, afterList, {});
       const [link] = parseEventLogs({ abi: ABIS.earlyWithdrawal, eventName: 'LoanSaleOfferLinked', logs: receipt.logs });
       const linked = link ? await read(ABIS.offerCancel, 'getOfferLinkedLoanId', [link.args.saleOfferId]) : null;
       check('A4.11', 'the sale listing lands on-chain as an offer linked to the loan',

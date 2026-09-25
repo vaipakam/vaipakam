@@ -61,12 +61,14 @@ export async function run() {
       [loanId, 500n, true, BigInt(3 * 86_400)], lender.address);
     if (!listing.ok) cannotContinue('A8.1 listing', listing.name);
     {
+      const beforeList = await snapshot(tokens, holders);
       const listed = await tx(lender, {
         address: DIAMOND, abi: ABIS.earlyWithdrawal, functionName: 'createLoanSaleOffer',
         args: [loanId, 500n, true, BigInt(3 * 86_400)],
       }, 'createLoanSaleOffer');
       // `createLoanSaleOffer` returns nothing, so the vehicle's id comes from
       // the `LoanSaleOfferLinked` event rather than from a return value.
+      expectLedger('A8.1b', 'listing the position moves no funds — the buyer pays at the fill', beforeList, await snapshot(tokens, holders), {});
       const [link] = parseEventLogs({ abi: ABIS.earlyWithdrawal, eventName: 'LoanSaleOfferLinked', logs: listed.logs });
       const saleOfferId = link.args.saleOfferId;
       const vehicle = await read(ABIS.offerCancel, 'getOffer', [saleOfferId]);
@@ -114,6 +116,7 @@ export async function run() {
 
     // The buyer's standing lender offer, on the loan's shape. The direct
     // route sells INTO it without the lender ever listing.
+    const beforeBuy = await snapshot(tokens, holders);
     const buy = await createOffer(outsider, {
       amount: before.principal,
       amountMax: before.principal,
@@ -122,6 +125,8 @@ export async function run() {
       durationDays: before.durationDays,
     });
     const standing = await read(ABIS.offerCancel, 'getOffer', [buy.offerId]);
+    expectLedger('A8.5b', 'the buyer\'s standing lender offer escrows exactly its principal, buyer wallet → buyer vault',
+      beforeBuy, await snapshot(tokens, holders), { 'lending.buyerEOA': -standing.amount, 'lending.buyerVault': standing.amount });
     check('A8.5', 'a buyer posts a standing lender offer matching the loan',
       standing.creator.toLowerCase() === outsider.address.toLowerCase() && String(standing.offerType) === '0' && standing.amount === before.principal,
       `loanId=${loanId} buyOfferId=${buy.offerId}`);

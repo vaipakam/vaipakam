@@ -13,7 +13,7 @@ needs no Solidity compiler: it reads the committed per-facet ABIs, so the
 compiler stays the single source of truth for every decode while the driver
 itself is plain Node.
 
-The run now covers one hundred and ninety-six scenarios across the whole advanced
+The run now covers two hundred and seven scenarios across the whole advanced
 surface — offer creation and escrow, accept and the loan-initiation fee,
 repayment and the treasury's interest cut, the borrower's collateral claim,
 time-based default, health-factor liquidation, preclose, partial repayment,
@@ -195,8 +195,9 @@ deployment, or declares the configuration it was written for and stops,
 naming the setting, on a deployment outside it, instead of reporting a
 protocol failure. After every step the whole position is checked — every field
 of the loan record, both position NFTs and their holders, and the collateral
-lien — not just the field the step is named for. The re-run records one
-hundred and eighty-four passes,
+lien — not just the field the step is named for. What a run verifies is
+declared in the driver's README, and four checks beyond it are tracked as a
+follow-up (#2332). The re-run records one hundred and ninety-five passes,
 eleven observations and one failure —
 the swap-to-repay check whose expectation was deliberately corrected — with
 no scenario file aborted.

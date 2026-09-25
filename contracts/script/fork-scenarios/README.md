@@ -148,6 +148,34 @@ each file starts from the same chain state whether it runs alone, in a
 subset, or after a predecessor that aborted. A file that runs on a node
 without `evm_snapshot` support is refused rather than run unisolated.
 
+## What a run verifies — and what it does not
+
+The scope is DECLARED, not open-ended. "Is the verification complete?" has no
+natural end — there is always one more invariant a regression could break —
+so a run certifies exactly this, for every step a row is written about:
+
+1. **An exact token ledger** over every holder the funds pass through (both
+   parties' wallets and vaults, the Diamond, the treasury, the venue, any
+   third party): every watched balance change equals the spec-derived map.
+2. **The whole position**: every field `getLoanDetails` returns, both
+   position-NFT holders, and every field of the collateral lien — each
+   changed to the stated value or exactly as it was (`expectPosition`), and
+   every claim through `claimAndExpect`.
+3. **Refusals by name**, with the probe set up so only the guard under test
+   can refuse.
+4. **No configurable number written in**: read from the chain or derived
+   from a spec formula; a chosen input is derived or declared as an envelope.
+
+Fixture steps a scenario only sets up with (`openLoan`, gate-probe offers)
+are asserted once, in A2, not at every use.
+
+**Not verified, and tracked in #2332**: position-NFT metadata and the
+reverse position index; position locks while a sale or offset link is live;
+the SIZE of a periodic auto-settlement's collateral sale (the spec does not
+define its buffer — an owner question); and whether interest booked by a
+periodic settlement is credited when that loan later closes. A finding in one
+of those is a follow-up for #2332, not a gap in what a run claims.
+
 ## Adding a scenario
 
 Drop an `NN-name.mjs` under `scenarios/` exporting `async function run()`, and
