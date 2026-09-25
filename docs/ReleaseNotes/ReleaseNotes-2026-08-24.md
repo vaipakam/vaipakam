@@ -7,7 +7,7 @@ the direct (one-transaction) sale route up to the listed route's rule for who
 the sale is screened against — the loan's live borrower, never a stale record,
 and never the borrower buying their own debt's lender side.
 
-### A position sale now checks the fee rate the buyer inherits
+## A position sale now checks the fee rate the buyer inherits
 
 A loan keeps the treasury-fee rate it was created under for its whole life, and
 settles at that rate no matter what governance does later. That rule is
@@ -34,7 +34,7 @@ change can now leave a position temporarily unsellable while it remains
 perfectly valid to hold, repay, or liquidate.
 <!-- assembled-fragment: 1918-sale-inherited-fee.md sha256=af37863362fad19cc3e3f0a50ecff1f73ae52d3e49ef76c3ad36c7c2578a14df -->
 
-### A direct position sale now screens the loan's current borrower, not a stale record
+## A direct position sale now screens the loan's current borrower, not a stale record
 
 When a lender sells an active loan straight into a standing buy offer (the
 one-transaction "direct" route), the platform checks the incoming lender against

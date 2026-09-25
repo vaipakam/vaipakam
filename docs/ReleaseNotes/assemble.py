@@ -1676,10 +1676,11 @@ class Assembly:
         which is false (#2290 r10). In the assembled file it becomes a CHILD
         of the nearest preceding `##`, which belongs to the fragment folded
         before it, so outlines and screen-reader navigation attribute the
-        change to a different change. Two fragments in
-        `ReleaseNotes-2026-08-25.md` sit under `## What it does not change` for
-        exactly this reason, each presented as something an unrelated change
-        does NOT do.
+        change to a different change. Before this check existed it had happened
+        46 times in published notes (#2330): 34 fragment titles filed under
+        another change's section — thirteen unrelated UX batches under one RPC
+        change — and 12 hanging off the release title, skipping a level. All
+        46 were promoted to `##`, so none remains to cite.
 
         So the three outcomes are distinct on purpose: level 1 is REFUSED
         (a second document title, unrecoverable once folded), level 3+ is
@@ -1885,9 +1886,6 @@ class Assembly:
                 err("ahead of yours: another change's ## section, another fragment's")
                 err("own ### subheading, or — if nothing else is shallower — the")
                 err("release title itself, which leaves your heading skipping a level.")
-                err("")
-                err("Two published sections were absorbed under another change, and")
-                err("one hangs off the title.")
                 err("")
                 err("WHICH of those you get is not stated here, on purpose. It depends")
                 err("on the fold order and on the levels of every fragment ahead of")

@@ -282,7 +282,7 @@ was missing when this problem went unnoticed.
 Part of #1896, which stays open for the underlying work.
 <!-- assembled-fragment: 1896-keeper-unscheduled.md sha256=34d51242d10f43df6d8f63e59af25b33064894806e92d2a57c8c3c3b97729df7 -->
 
-### A seller can now hold a direct position sale to the economics they reviewed
+## A seller can now hold a direct position sale to the economics they reviewed
 
 Selling a loan position straight into a standing buy offer settles in one
 transaction, at figures the contract recomputes from live state at the moment it
@@ -321,7 +321,7 @@ Closes #1922 (#1503 item 6) — the last of the four remaining lender-sale items
 instrument.
 <!-- assembled-fragment: 1922-direct-sale-seller-bound.md sha256=bf99069cb08c6bcf4b52af8516f9aa6f153ee5fad4d578e14f61e0ab0340f3e0 -->
 
-### A direct position sale must now fit what the buyer authored — on both size and term
+## A direct position sale must now fit what the buyer authored — on both size and term
 
 When a lender sells an active loan straight into a standing buy offer, the buyer
 steps into the loan as it stands. Two of the checks on that step were loose, and
