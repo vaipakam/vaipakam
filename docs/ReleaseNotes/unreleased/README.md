@@ -18,92 +18,40 @@ PRs landing the same day never append-conflict.
 3. Commit it as part of the PR.
 4. **Once GitHub has assigned the PR number, put it in the heading.** The
    template ships `(PR #<n>)` as a placeholder, and assembly refuses a
-   fragment that still carries one — so this is not a tidiness step, it is
-   the difference between the run folding your fragment and stopping on it.
+   fragment that still carries one. Nothing after assembly looks at the
+   heading again, so a placeholder that gets past it stays in the published
+   notes.
 
-   The refusal exists because nothing downstream will catch a placeholder.
-   Assembly is the last step that looks at the heading, and afterwards the
-   section is just text in a dated file — the review pass below is for
-   wording and the intro, not for auditing PR numbers, so in practice a
-   placeholder that gets past assembly stays. A sixth of all published
-   section headings already carry one, which is what this is there to stop
-   adding to. (Count with the rule, as below.)
+   **What assembly checks.** It reads **one line**: the fragment's first
+   line of content, after any blank lines. Nothing below that line is
+   examined. The run stops — naming the file, publishing nothing and
+   deleting nothing — when that line:
 
-   **What the refusal does and does not cover**, so it is not relied on for
-   more than it does:
+   - **is not a `#` heading.** This is an allow-list: a title underlined
+     with `=` or `-`, raw HTML such as `<h1>`, a list, prose, a file saved
+     with a byte-order mark or in UTF-16 — anything that is not an ATX
+     heading is refused. A fragment that opens with `---` gets its own
+     message, because front matter becomes a thematic break once folded.
+   - **opens at `#` rather than `##`.** It would land in the dated file as a
+     second document title instead of a section of the release.
+   - **carries a `PR #…` reference that is not a plain number**, including
+     the template's placeholder. `(PR #2290)` and `(PR #2290, issue #99)`
+     pass; `PR #2290:` and `PR #2290—follow-up` do not, because the colon
+     and the dash are part of the token. Put the reference in its own
+     parentheses, or leave a space after it.
 
-   - It reads **one line**: the fragment's first line of content, after any
-     blank lines. Nothing below that line is examined — a `#` heading
-     further down the file is never looked at.
-   - **That line must be a `#` heading, or the run stops.** This is an
-     allow-list, not a list of banned shapes: a title underlined with `=` or
-     `-` instead of prefixed, raw HTML such as `<h1>`, a list, a line of
-     prose, a fragment saved with a byte-order mark — none of these is an
-     ATX heading, so each is refused and named. You get a message; nothing is
-     published and nothing is deleted.
+   **What it does not refuse:**
 
-     It reads as strict and costs nothing: **every fragment ever written in
-     this repository already opens with one**, without exception. (The count
-     lives with the rule, for the reason given in the last bullet below.) The
-     rule exists because the opposite default — publish what it cannot read —
-     was shown eleven separate times, by a test or during review, to publish
-     a mangled section and delete its source. None of those was a real
-     fragment; they did not have to be, since any one of them lands the first
-     time somebody saves a file a little differently.
-   - A fragment that **opens with `---`** is refused with its own message,
-     naming front matter. The verdict would be the same without it (a `---`
-     is not a heading); the separate message exists because an author who
-     wrote front matter should be told it becomes a thematic break once
-     folded, rather than just that the line is not a heading.
-   - A heading with **no PR reference at all** is not refused. That is not an
-     oversight — most fragments written so far carry none, as do most
-     published section headings. The `(PR #<n>)` convention is the template's,
-     not a rule the corpus follows, so refusing its absence would stop the
-     majority of real fragments. (The counts behind that live with the rule,
-     in `assemble.py`'s `check_heading_conformance` docstring, and are
-     deliberately not copied here — three review rounds were spent on figures
-     that had drifted between files.)
+   - a heading with **no** PR reference;
+   - a heading at **`###` or deeper** — but it prints a warning naming the
+     file. A deeper heading becomes a subsection of whatever shallower
+     heading precedes it in the finished file, which depends on the fragments
+     folded ahead of yours and cannot be known when you write it. Open at
+     `##`.
 
-   What is refused is worth stating exactly, because it is **stricter than
-   "not a placeholder"**: a `PR #…` reference that is present must be a
-   **plain number and nothing else**. `(PR #2290)` and `(PR #2290, issue
-   #99)` pass. `PR #2290:` and `PR #2290—follow-up` do **not** — the colon
-   and the dash are part of the token, so the token is not a plain number.
-   Put the reference in its own parentheses, or leave a space after it.
-
-   That is deliberately blunt. Five review rounds were spent trying to tell
-   an ornamented reference from a placeholder, and every disputed shape
-   turned out to be one nobody had ever written. The strict rule refuses a
-   few things it need not; the permissive ones kept publishing sections
-   nothing could trace. An over-refusal costs you this message.
-
-   The heading must also open at `##`, not `#` — a fragment opening at `#`
-   lands in the dated file as a second document title rather than nesting
-   under the release title, and assembly refuses it. `###` or deeper is
-   **not** refused, but it is not harmless either, and assembly prints a
-   warning naming the file. A `##` heading becomes a section of the release;
-   a deeper one becomes a **subsection of the nearest preceding heading
-   shallower than itself**, so outlines and screen-reader navigation file
-   your change under that one. That is usually the fragment folded before
-   you, but not always — if that fragment ends in a `####`, your `###`
-   closes it and attaches further back instead. This has happened twice in
-   published notes: two fragments in `ReleaseNotes-2026-08-25.md` sit under
-   `## What it does not change`, a subsection of an earlier change, so a
-   reader's outline presents each as something an unrelated change does
-   *not* do.
-
-   It warns rather than refuses because about one fragment in ten opens that
-   way, and refusing them would block work already in flight. (Counts with
-   the rule, as above.) Open at `##` unless you mean to be a subsection of
-   something — and you cannot know what that will be.
-
-   Something shallower always precedes you — the dated file opens with its
-   own `# Release Notes` title — so the question is only *what*. If a `##`
-   section of another change comes first, your heading is filed under that
-   change. If only the release title comes first, your heading hangs off it
-   at a level that skips one. Which you get depends on the fold order and on
-   the heading levels of every fragment ahead of yours, so the warning names
-   both rather than guessing.
+   Why each line is drawn where it is — and the counts behind it — is in the
+   `check_heading_conformance` docstring in [`assemble.py`](../assemble.py),
+   and deliberately not repeated here.
 
 `README.md` and `_TEMPLATE.md` are ignored by the assembler — every
 other `*.md` here is a pending fragment.
