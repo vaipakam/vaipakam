@@ -176,8 +176,14 @@ async function runPeriodic(initial) {
     toSettler + toTreasury + toLender === proceeds,
     `gas=${autoReceipt.gasUsed} sold=${f18(sold)} proceeds=${f18(proceeds)} settler=${f18(toSettler)} (${settlerBps}bps) ` +
     `treasury=${f18(toTreasury)} (${handlingFeeBps}bps) lender=${f18(toLender)} shortfall=${f18(shortfallDue)}`);
-  await expectPosition('A9.11c', 'the auto-settlement changes the position exactly: recorded collateral and lien down by the collateral sold — principal, NFTs and status unchanged',
-    loanId, autoPos, { collateralAmount: autoPos.collateralAmount - sold, lienAmount: autoPos.lienAmount - sold });
+  await expectPosition('A9.11c', 'the auto-settlement changes the position exactly: recorded collateral and lien down by the collateral sold, the period checkpointed and the lender\'s receipt booked as interest settled — principal, NFTs and status unchanged',
+    loanId, autoPos, {
+      collateralAmount: autoPos.collateralAmount - sold, lienAmount: autoPos.lienAmount - sold,
+      // The period closes: the checkpoint lands on the previewed period end,
+      // and what the lender received is booked as interest settled, so a
+      // later repayment does not charge those days again.
+      lastPeriodicInterestSettledAt: preview[1], interestSettled: toLender,
+    });
   // What the spec does NOT pin down is where the sizing buffer ends up once
   // the period is covered. Surfaced, not certified.
   observe('A9.11b', 'after an auto-settled period, the lender receives this much above the period\'s shortfall (the sale\'s sizing buffer)',
@@ -229,8 +235,15 @@ async function runPeriodic(initial) {
     payInterest >= due[3] && BigInt(paid.lastPeriodicInterestSettledAt) === BigInt(due[1]) && paid.collateralAmount === secondLoan.collateralAmount,
     `settledAt ${stampBefore} -> ${paid.lastPeriodicInterestSettledAt} (previewed period end ${due[1]}) principal ${f18(secondLoan.principal)} -> ${f18(paid.principal)} ` +
     `nextDue=${Array.isArray(afterPay) ? afterPay[1] : '?'} dueNow=${Array.isArray(afterPay) ? afterPay[6] : '?'}`);
-  await expectPosition('A9.13c', 'the voluntary payment changes the position exactly: principal down by the reduction, nothing else',
-    second.loanId, payPos, { principal: payPos.principal - part });
+  await expectPosition('A9.13c', 'the voluntary payment changes the position exactly: principal down by the reduction, the period checkpointed, the accrual clock restarted, the remaining days reduced',
+    second.loanId, payPos, {
+      principal: payPos.principal - part,
+      // The period is checkpointed at its previewed end, the accrual clock
+      // restarts at the payment, and the days remaining fall by the whole
+      // days elapsed.
+      lastPeriodicInterestSettledAt: due[1], interestAccrualStart: payAt,
+      interestRemainingDays: BigInt(payPos.durationDays) - payDays,
+    });
   const stampSim = await simulate(DIAMOND, ABIS.repayPeriodic, 'settlePeriodicInterest', [second.loanId, []], outsider.address);
   expectRefusal('A9.14', 'a stamp call after a voluntary payment is refused — the period is already closed', stampSim, 'PeriodicSettleNotDue');
 }

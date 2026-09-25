@@ -21,25 +21,30 @@ const ALWAYS_TRUE_RUNTIME = '0x600160005260206000f3';
 const UNSET = '0x0000000000000000000000000000000000000000';
 
 export async function run() {
+  // Capture the deployment's OWN posture for both gates, then start from the
+  // retail posture (no oracle, KYC dormant) whatever the deployment set — the
+  // fixture's loan and the dormant-KYC row need it — exactly as A9 does for
+  // its switch. Both are put back to the CAPTURED values afterwards, even on
+  // an abort: the runner's snapshot revert also restores them, and this makes
+  // the file correct on its own.
+  const initialOracle = await read(ABIS.profile, 'getSanctionsOracle');
+  const initialKyc = await read(ABIS.admin, 'isKYCEnforcementEnabled');
   try {
-    await runGates();
+    if (initialKyc) await sendAs(ADMIN, { address: DIAMOND, abi: ABIS.admin, functionName: 'setKYCEnforcement', args: [false] });
+    if (initialOracle !== UNSET) await sendAs(ADMIN, { address: DIAMOND, abi: ABIS.profile, functionName: 'setSanctionsOracle', args: [UNSET] });
+    await runGates(initialOracle, initialKyc);
   } finally {
-    // A5 is the only scenario that arms a global gate. Put both back even on
-    // an abort — a shared fork left with a live sanctions oracle poisons
-    // every later run, and the failure it produces (`SanctionedAddress` from
-    // an unrelated scenario) reads like a product defect.
-    await sendAs(ADMIN, { address: DIAMOND, abi: ABIS.profile, functionName: 'setSanctionsOracle', args: [UNSET] });
-    await sendAs(ADMIN, { address: DIAMOND, abi: ABIS.admin, functionName: 'setKYCEnforcement', args: [false] });
+    await sendAs(ADMIN, { address: DIAMOND, abi: ABIS.profile, functionName: 'setSanctionsOracle', args: [initialOracle] });
+    await sendAs(ADMIN, { address: DIAMOND, abi: ABIS.admin, functionName: 'setKYCEnforcement', args: [initialKyc] });
   }
 }
 
-async function runGates() {
+async function runGates(initial, initialKyc) {
   // ------------------------------------------------------------ sanctions
-  const initial = await read(ABIS.profile, 'getSanctionsOracle');
   // Configuration, not a protocol property: retail is meant to wire an
   // oracle once one exists on-chain, so the starting value is observed.
-  observe('A5.1', 'the deployment\'s sanctions oracle before the scenario arms one (unset = the documented fail-open window)',
-    `getSanctionsOracle=${initial}${initial === UNSET ? ' (unset)' : ''}`);
+  observe('A5.1', 'the deployment\'s own gate posture, before the scenario normalizes it (oracle unset = the documented fail-open window)',
+    `getSanctionsOracle=${initial}${initial === UNSET ? ' (unset)' : ''} isKYCEnforcementEnabled=${initialKyc}`);
 
   // Open a loan BEFORE arming, so the Tier-2 close-out paths have something
   // to act on while the flag is live.
@@ -82,7 +87,8 @@ async function runGates() {
 
   // ------------------------------------------------------------------ KYC
   // Retail invariant (never flipped on the retail deploy): with enforcement
-  // off both checks short-circuit to true for an unverified wallet.
+  // off — which run() ensured, whatever the deployment set — both checks
+  // short-circuit to true for an unverified wallet.
   const kycVerified = await read(ABIS.profile, 'isKYCVerified', [borrower.address]);
   const meetsBig = await read(ABIS.profile, 'meetsKYCRequirement', [borrower.address, parseUnits('50000', 18)]);
   check('A5.7', 'KYC enforcement is dormant on retail — the checks short-circuit true', kycVerified === true && meetsBig === true,

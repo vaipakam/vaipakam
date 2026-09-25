@@ -175,10 +175,11 @@ export async function run() {
       });
     // The recorded collateral and its lien fall by exactly what was sold, so
     // risk math and a later claim never stand on collateral that has left.
-    await expectPosition('A11.8c', 'the partial swap changes the position exactly: principal down by the principal repaid, recorded collateral and lien both down by the 0.1 sold',
+    await expectPosition('A11.8c', 'the partial swap changes the position exactly: principal down by the principal repaid, recorded collateral and lien both down by the 0.1 sold, the accrual clock restarted',
       loanId, partialPos, {
         principal: partialPos.principal - (psProceeds - psInterest),
         collateralAmount: partialPos.collateralAmount - SOLD, lienAmount: partialPos.lienAmount - SOLD,
+        interestAccrualStart: psAt, // the accrued interest is paid, so the clock restarts here
       });
     check('A11.9', 'a partial swap never leaves the position LESS healthy than it was',
       hfAfter >= hfBefore, `HF ${f18(hfBefore)} -> ${f18(hfAfter)}`);

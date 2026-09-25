@@ -10,7 +10,7 @@
  * for a manual second step is waiting for something that already happened.
  */
 import { DIAMOND, MOCKS, TREASURY, borrower, lender, outsider, parseUnits, pub, tx } from '../lib/chain.mjs';
-import { ABIS, ANY, STATUS, approveDiamond, acceptOffer, acceptStoredOffer, createOffer, delta, expectPosition, mint, openLoan, positionOf, read, snapshot, vaultAddressFor, lifSplit, liveFees } from '../lib/flow.mjs';
+import { ABIS, ANY, STATUS, approveDiamond, acceptOffer, acceptStoredOffer, createOffer, delta, expectPosition, liveStamps, mint, openLoan, positionOf, read, snapshot, termsFromOffer, vaultAddressFor, lifSplit, liveFees } from '../lib/flow.mjs';
 import { chainNow, f18 } from '../lib/chain.mjs';
 import { warpDays } from '../lib/impersonate.mjs';
 import { simulate } from '../lib/errors.mjs';
@@ -138,9 +138,13 @@ export async function run() {
     if (createdIds.length === 1) {
       await expectPosition('A7.3e', 'the REPLACEMENT position in full: the vehicle\'s terms, the exiting borrower as lender, the incoming borrower\'s collateral liened, each side holding its NFT',
         BigInt(createdIds[0]), null, {
-          status: STATUS.Active, principal: vehicle.amount, collateralAmount: vehicle.collateralAmount,
-          lender: borrower.address, borrower: outsider.address,
-          lenderTokenId: ANY, borrowerTokenId: ANY,
+          // The vehicle's terms read back from the chain, the live fee stamps,
+          // and the risk stamps the original loan carries on the same
+          // collateral under the same configuration.
+          ...termsFromOffer(vehicle), ...(await liveStamps()),
+          liquidationLtvBpsAtInit: origLoan.liquidationLtvBpsAtInit, initLtvCapBpsAtInit: origLoan.initLtvCapBpsAtInit,
+          principalLiquidity: 0, collateralLiquidity: 0, prepayAmount: 0n, bufferAmount: 0n,
+          status: STATUS.Active, lender: borrower.address, borrower: outsider.address,
           lenderNftOwner: borrower.address, borrowerNftOwner: outsider.address,
           lienUser: outsider.address, lienAsset: vehicle.collateralAsset, lienTokenId: 0n,
           lienAmount: vehicle.collateralAmount, lienAssetType: 0, lienReleased: false,
@@ -172,6 +176,9 @@ export async function run() {
 
     // The replacement borrower posts a standing Borrower offer matching the
     // loan's shape; the exiting borrower then consumes it.
+    // Posting a borrow offer escrows the replacement borrower's collateral in
+    // THEIR OWN vault — asserted, since every later ledger starts after it.
+    const beforePost = await snapshot(tokens, holders);
     const replacement = await createOffer(outsider, {
       offerType: 1,
       amount: loan.principal,
@@ -185,7 +192,13 @@ export async function run() {
       // maturity, so a same-length term cannot fit once the loan is running.
       durationDays: loan.durationDays - 1n,
     });
+    const afterPost = await snapshot(tokens, holders);
     const standing = await read(ABIS.offerCancel, 'getOffer', [replacement.offerId]);
+    expectLedger('A7.5b', 'posting the replacement borrow offer moves exactly its collateral from the replacement borrower\'s wallet into their own vault, and nothing else',
+      beforePost, afterPost, {
+        'collateral.outsiderEOA': -standing.collateralAmount,
+        'collateral.outsiderVault': standing.collateralAmount,
+      });
     check('A7.5', 'a replacement borrower can post a standing borrow offer',
       standing.creator.toLowerCase() === outsider.address.toLowerCase() && String(standing.offerType) === '1',
       `loanId=${loanId} offerId=${replacement.offerId}`);
@@ -254,10 +267,15 @@ export async function run() {
     // The whole position: the borrower side — record, NFT and the collateral
     // backing the loan — becomes the replacement's; the lender side and the
     // terms stay exactly as they were.
-    await expectPosition('A7.7d', 'the handover changes the position exactly: the borrower, their NFT and the lien move to the replacement borrower and their collateral; the lender side and terms unchanged',
+    await expectPosition('A7.7d', 'the handover changes the position exactly: the borrower, their NFT and the lien move to the replacement; the loan continues on the replacement\'s rate and term from the handover; the lender side unchanged',
       loanId, handoverPosBefore, {
         borrower: outsider.address, borrowerTokenId: ANY, borrowerNftOwner: outsider.address,
         collateralAmount: standing.collateralAmount, lienUser: outsider.address, lienAmount: standing.collateralAmount,
+        // The loan continues on the REPLACEMENT's terms from the handover: its
+        // rate and term, clock restarted at the handover block (the exiting
+        // borrower settled the interest accrued so far).
+        interestRateBps: standing.interestRateBps, durationDays: standing.durationDays,
+        interestRemainingDays: standing.durationDays, startTime: at, interestAccrualStart: at,
       });
     expectEq('A7.8', 'the lender is untouched by a handover — same lender, same principal',
       `${moved.lender}/${moved.principal}`, `${loan.lender}/${loan.principal}`);

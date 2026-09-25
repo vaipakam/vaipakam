@@ -129,6 +129,7 @@ export async function run() {
   // (not the Diamond, not the treasury, not the other side). Any collateral
   // the sale did not take goes back with the borrower's claim.
   const unsold = preDefault.collateralAmount - sold;
+  let claimPos = await positionOf(loanId);
   for (const [side, fn, acct] of [['lender', 'claimAsLender', lender], ['borrower', 'claimAsBorrower', borrower]]) {
     const credited = afterDefault[`lending.${side}Vault`] - beforeDefault[`lending.${side}Vault`];
     if (credited <= 0n) cannotContinue(`A3.7.${side}`, `the default credited the ${side} nothing to claim`);
@@ -143,6 +144,12 @@ export async function run() {
         [`collateral.${side}Vault`]: -residual,
         [`collateral.${side}EOA`]: residual,
       }, `gas=${r.gasUsed} credited=${f18(credited)} unsoldCollateral=${f18(residual)}`);
+    // The claim spends that side's receipt; once BOTH sides have claimed the
+    // defaulted loan settles (the same closure rule as a repaid one).
+    const last = side === 'borrower';
+    await expectPosition(`A3.7.${side}.pos`, `after the ${side}'s default claim the position changes exactly: their NFT burned${last ? ', and with both sides claimed the loan Settled' : ''}`,
+      loanId, claimPos, { [`${side}NftOwner`]: null, ...(last ? { status: STATUS.Settled } : {}) });
+    claimPos = await positionOf(loanId);
   }
 
   // ------------------------------------------------------- HF liquidation

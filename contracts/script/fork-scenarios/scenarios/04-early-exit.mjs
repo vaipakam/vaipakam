@@ -45,7 +45,7 @@ export async function run() {
       paid, payoff, 'no early-exit interest saving — a payoff quote must say so');
     const preInterest = payoff - closed.principal;
     const preCut = (preInterest * BigInt(closed.treasuryFeeBpsAtInit)) / 10_000n;
-    expectLedger('A4.2b', 'the preclose moves exactly: the payoff from the borrower\'s wallet, principal + 98% of the interest to the lender\'s vault, 2% of the interest to the treasury',
+    expectLedger('A4.2b', 'the preclose moves exactly: the payoff from the borrower\'s wallet, principal + the interest net of the treasury\'s stamped share to the lender\'s vault, that share to the treasury',
       before, after, {
         'lending.borrowerEOA': -payoff,
         'lending.lenderVault': payoff - preCut,
@@ -97,8 +97,10 @@ export async function run() {
       String(mid.status) === '0' && opened.principal - mid.principal === part,
       `gas=${receipt.gasUsed} status=${mid.status} principalNow=${f18(mid.principal)} deltas=${JSON.stringify(delta(before, after))}`);
 
-    await expectPosition('A4.5c', 'the partial changes ONLY the principal, down by exactly the payment — collateral, NFTs and lien unchanged, still Active',
-      loanId, partPos, { principal: partPos.principal - part });
+    // The partial also restarts the accrual clock at its own block — the
+    // interest it charged is paid, so the next charge accrues from here.
+    await expectPosition('A4.5c', 'the partial changes the position exactly: principal down by the payment, the accrual clock restarted at the payment — collateral, NFTs and lien unchanged, still Active',
+      loanId, partPos, { principal: partPos.principal - part, interestAccrualStart: partAt });
     const quoted = await read(ABIS.repay, 'calculateRepaymentAmount', [loanId]);
     const remaining = Array.isArray(quoted) ? quoted[0] : quoted;
     check('A4.6', 'the payoff quote reflects the paydown — the new principal plus interest, and no more than before',

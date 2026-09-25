@@ -113,13 +113,13 @@ export async function run() {
   const repayReceipt = await tx(borrower, { address: DIAMOND, abi: ABIS.repay, functionName: 'repayLoan', args: [loanId] }, 'repayLoan');
   const afterRepay = await snapshot(tokens, holders);
   const treasuryCut = afterRepay['lending.treasury'] - beforeRepay['lending.treasury'];
-  expectEq('A2.10', 'the treasury takes 2% of the INTEREST and nothing of the principal',
+  expectEq('A2.10', 'the treasury takes its stamped share of the INTEREST and nothing of the principal',
     treasuryCut, (interest * BigInt(loan.treasuryFeeBpsAtInit)) / 10_000n, `gas=${repayReceipt.gasUsed} at the stamped ${loan.treasuryFeeBpsAtInit}bps`);
   const lenderCredit = afterRepay['lending.lenderVault'] - beforeRepay['lending.lenderVault'];
-  expectEq('A2.11', 'the lender is credited principal plus 98% of the interest, into their vault',
+  expectEq('A2.11', 'the lender is credited principal plus the interest net of the treasury\'s stamped share, into their vault',
     lenderCredit, PRINCIPAL + interest - treasuryCut);
   const interestCut = (interest * BigInt(loan.treasuryFeeBpsAtInit)) / 10_000n;
-  expectLedger('A2.11b', 'the repay moves exactly: principal + interest from the borrower\'s wallet, 98% of the interest and all the principal to the lender\'s vault, 2% to the treasury — and no collateral',
+  expectLedger('A2.11b', 'the repay moves exactly: principal + interest from the borrower\'s wallet, the interest net of the treasury\'s stamped share and all the principal to the lender\'s vault, that share to the treasury — and no collateral',
     beforeRepay, afterRepay, {
       'lending.borrowerEOA': -(PRINCIPAL + interest),
       'lending.lenderVault': PRINCIPAL + interest - interestCut,

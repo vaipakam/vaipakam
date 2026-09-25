@@ -420,11 +420,33 @@ export function forcedCloseWaterfall({ proceeds, incentiveBps, handlingBps, trea
 // what it was. Nothing is silently out of scope.
 // ---------------------------------------------------------------------------
 
-/** Every field `expectPosition` tracks. */
-export const POSITION_FIELDS = [
-  'status', 'principal', 'collateralAmount', 'lender', 'borrower',
-  'lenderTokenId', 'borrowerTokenId', 'lenderNftOwner', 'borrowerNftOwner',
-  'lienUser', 'lienAsset', 'lienTokenId', 'lienAmount', 'lienAssetType', 'lienReleased',
+/**
+ * Every field `expectPosition` tracks: EVERY field `getLoanDetails` returns —
+ * derived from the compiled ABI, so a field the contract adds is tracked
+ * without an edit here and none is hand-picked out — plus each position NFT's
+ * holder and every field of the collateral lien.
+ */
+const LOAN_FIELDS = (() => {
+  const fn = ABIS.loan.find((e) => e.type === 'function' && e.name === 'getLoanDetails');
+  const comps = fn?.outputs?.[0]?.components;
+  if (!comps?.length) throw new Error('fork-scenarios: could not read getLoanDetails\'s Loan tuple from LoanFacet.json');
+  return comps.map((c) => c.name);
+})();
+const LIEN_FIELDS = ['lienUser', 'lienAsset', 'lienTokenId', 'lienAmount', 'lienAssetType', 'lienReleased'];
+export const POSITION_FIELDS = [...LOAN_FIELDS, 'lenderNftOwner', 'borrowerNftOwner', ...LIEN_FIELDS];
+
+/**
+ * The fields the CHAIN assigns when it creates a position — identifiers,
+ * timestamps, running accumulators and bookkeeping flags — none of which an
+ * offer or a spec formula fixes in advance. A created position may leave
+ * exactly these unstated (they are then not compared); every other field,
+ * terms, parties, NFTs, lien and fee stamps, must be stated.
+ */
+export const CHAIN_ASSIGNED_AT_CREATION = [
+  'id', 'offerId', 'lenderTokenId', 'borrowerTokenId', 'startTime', 'interestAccrualStart',
+  'lastPeriodicInterestSettledAt', 'lastDeductTime', 'interestPaidSinceLastPeriod', 'interestSettled',
+  'interestRemainingDays', 'lenderDiscountAccAtInit', 'borrowerDiscountAccAtInit', 'matcher',
+  'lenderNotifBilled', 'borrowerNotifBilled', 'riskAndTermsConsentFromBoth',
 ];
 
 /** A value that matches anything — only for ids a step mints fresh. */
@@ -441,13 +463,45 @@ async function nftOwner(tokenId) {
 export async function positionOf(loanId) {
   const l = await read(ABIS.loan, 'getLoanDetails', [loanId]);
   const lien = await read(ABIS.metrics, 'getLoanCollateralLien', [loanId]);
-  return {
-    status: Number(l.status), principal: l.principal, collateralAmount: l.collateralAmount,
-    lender: lower(l.lender), borrower: lower(l.borrower),
-    lenderTokenId: l.lenderTokenId, borrowerTokenId: l.borrowerTokenId,
+  const out = {};
+  for (const k of LOAN_FIELDS) out[k] = typeof l[k] === 'number' ? l[k] : lower(l[k]);
+  Object.assign(out, {
     lenderNftOwner: await nftOwner(l.lenderTokenId), borrowerNftOwner: await nftOwner(l.borrowerTokenId),
     lienUser: lower(lien.user), lienAsset: lower(lien.asset), lienTokenId: lien.tokenId,
     lienAmount: lien.amount, lienAssetType: Number(lien.assetType), lienReleased: lien.released,
+  });
+  return out;
+}
+
+/**
+ * The terms a position created from `offer` must carry, read off the stored
+ * offer — so a created position is compared against what was actually
+ * offered, not against a transcription of it.
+ */
+export function termsFromOffer(offer) {
+  return {
+    principal: offer.amount, principalAsset: offer.lendingAsset, interestRateBps: offer.interestRateBps,
+    durationDays: offer.durationDays, collateralAsset: offer.collateralAsset, collateralAmount: offer.collateralAmount,
+    assetType: offer.assetType, collateralAssetType: offer.collateralAssetType, tokenId: offer.tokenId,
+    quantity: offer.quantity, collateralTokenId: offer.collateralTokenId, collateralQuantity: offer.collateralQuantity,
+    prepayAsset: offer.prepayAsset, useFullTermInterest: offer.useFullTermInterest,
+    allowsPartialRepay: offer.allowsPartialRepay, allowsPrepayListing: offer.allowsPrepayListing,
+    periodicInterestCadence: offer.periodicInterestCadence,
+  };
+}
+
+/**
+ * The per-loan stamps a position created NOW must carry: the live governance
+ * configuration, read from its getters, plus the asset-derived risk stamps as
+ * the chain reports them for the collateral.
+ */
+export async function liveStamps() {
+  const fees = await liveFees();
+  const [lenderBonusBps, treasuryBps] = await read(ABIS.config, 'getFallbackSplit');
+  return {
+    treasuryFeeBpsAtInit: fees.treasuryFeeBps, loanInitiationFeeBpsAtInit: fees.lifBps,
+    minHealthFactorAtInit: await read(ABIS.risk, 'getMinHealthFactor'),
+    fallbackLenderBonusBpsAtInit: lenderBonusBps, fallbackTreasuryBpsAtInit: treasuryBps,
   };
 }
 
@@ -461,10 +515,10 @@ export async function expectPosition(id, name, loanId, before, changes) {
   const unknown = Object.keys(changes).filter((k) => !POSITION_FIELDS.includes(k));
   if (unknown.length) throw new TypeError(`expectPosition(${id}): unknown field(s) ${unknown.join(', ')}`);
   if (before === null) {
-    const missing = POSITION_FIELDS.filter((k) => !(k in changes));
-    if (missing.length) throw new TypeError(`expectPosition(${id}): a new position must state every field; missing ${missing.join(', ')}`);
+    const missing = POSITION_FIELDS.filter((k) => !(k in changes) && !CHAIN_ASSIGNED_AT_CREATION.includes(k));
+    if (missing.length) throw new TypeError(`expectPosition(${id}): a new position must state every non-chain-assigned field; missing ${missing.join(', ')}`);
   }
-  const want = { ...(before ?? {}) };
+  const want = before ? { ...before } : Object.fromEntries(CHAIN_ASSIGNED_AT_CREATION.map((k) => [k, ANY]));
   for (const [k, v] of Object.entries(changes)) want[k] = lower(v);
   const after = await positionOf(loanId);
   const wrong = POSITION_FIELDS.filter((k) => want[k] !== ANY && String(after[k]) !== String(want[k]))

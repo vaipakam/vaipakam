@@ -13,7 +13,7 @@
  *    That is worth observing rather than trusting.
  */
 import { DIAMOND, MOCKS, TREASURY, borrower, lender, outsider, parseUnits, pub, tx } from '../lib/chain.mjs';
-import { ABIS, ANY, STATUS, approveDiamond, acceptOffer, createOffer, delta, expectPosition, mint, openLoan, positionOf, read, snapshot, vaultAddressFor, lifSplit, liveFees } from '../lib/flow.mjs';
+import { ABIS, STATUS, approveDiamond, acceptOffer, createOffer, delta, expectPosition, liveStamps, mint, openLoan, positionOf, read, snapshot, termsFromOffer, vaultAddressFor, lifSplit, liveFees } from '../lib/flow.mjs';
 import { chainNow, f18 } from '../lib/chain.mjs';
 import { simulate } from '../lib/errors.mjs';
 import { cannotContinue, check, expectEq, expectLedger, expectRefusal } from '../lib/report.mjs';
@@ -222,12 +222,17 @@ export async function run() {
           oldLoanId, oldPos, { status: STATUS.Repaid, lienReleased: true, lienAmount: 0n });
         await expectPosition('A6.10c', 'the REPLACEMENT position in full: new lender and its NFT, the same borrower and collateral, the collateral\'s lien retagged to it',
           newLoanId, null, {
-            status: STATUS.Active, principal: tagged.amount, collateralAmount: oldLoan.collateralAmount,
-            lender: outsider.address, borrower: borrower.address,
-            lenderTokenId: ANY, borrowerTokenId: ANY,
+            // The terms are the tagged offer's, read back from the chain; the fee
+            // stamps are the live configuration; the asset-derived risk stamps are
+            // those the ORIGINAL loan carries on the same collateral under the same
+            // configuration; an ERC-20 loan carries no rental prepay or buffer.
+            ...termsFromOffer(tagged), ...(await liveStamps()),
+            liquidationLtvBpsAtInit: oldLoan.liquidationLtvBpsAtInit, initLtvCapBpsAtInit: oldLoan.initLtvCapBpsAtInit,
+            principalLiquidity: 0, collateralLiquidity: 0, prepayAmount: 0n, bufferAmount: 0n,
+            status: STATUS.Active, lender: outsider.address, borrower: borrower.address,
             lenderNftOwner: outsider.address, borrowerNftOwner: borrower.address,
             lienUser: borrower.address, lienAsset: collateral, lienTokenId: 0n,
-            lienAmount: oldLoan.collateralAmount, lienAssetType: 0, lienReleased: false,
+            lienAmount: tagged.collateralAmount, lienAssetType: 0, lienReleased: false,
           });
       }
     }

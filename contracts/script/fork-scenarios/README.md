@@ -200,11 +200,13 @@ this harness and are worth keeping:
   certifies one deployment's configuration as a protocol invariant.
 - **A step asserts the WHOLE position** — `expectPosition(id, name, loanId,
   before, changes)` with `before = positionOf(loanId)` from before the step.
-  Every tracked field (status, principal, recorded collateral, both parties,
-  both token ids and their NFT holders, every field of the collateral lien)
-  must change to the stated value or stay exactly as it was; a position the
-  step creates passes `before = null` and states every field (`ANY` only for
-  a freshly minted token id). A row that checks one field of a position
+  Every tracked field — EVERY field `getLoanDetails` returns, derived from
+  the ABI, plus both NFT holders and every lien field — must change to the
+  stated value or stay exactly as it was. A position the step creates passes
+  `before = null` and states every field except `CHAIN_ASSIGNED_AT_CREATION`
+  (ids, timestamps, accumulators), building its terms with
+  `termsFromOffer(storedOffer)` and its stamps with `liveStamps()`; `ANY` is
+  only for a token id a step re-mints on an existing position. A row that checks one field of a position
   leaves every other field unchecked, and adding them row by row never ends.
 - **An input a scenario CHOOSES is derived, or declared.** The same holds
   for the probe's own inputs — how far to warp, how big a partial, what

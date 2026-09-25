@@ -10,7 +10,7 @@
  * vault custody. Each of those is asserted below against what the chain did.
  */
 import { DIAMOND, MOCKS, TREASURY, borrower, lender, outsider, parseUnits, pub, tx } from '../lib/chain.mjs';
-import { ABIS, STATUS, acceptStoredOffer, approveDiamond, delta, mint, read, snapshot, vaultAddressFor } from '../lib/flow.mjs';
+import { ABIS, STATUS, acceptStoredOffer, approveDiamond, delta, expectPosition, mint, positionOf, read, snapshot, vaultAddressFor } from '../lib/flow.mjs';
 import { f18 } from '../lib/chain.mjs';
 import { warpDays } from '../lib/impersonate.mjs';
 import { simulate } from '../lib/errors.mjs';
@@ -160,7 +160,9 @@ export async function run() {
       'prepay.treasury': toTreasury,
     }, `daysUsed=${daysUsed} usedRent=${f18(usedRent)} treasury=${f18(toTreasury)}`);
 
-  // Claims — each side withdraws exactly its independently computed share.
+  // Claims — each side withdraws exactly its independently computed share,
+  // spends its position NFT, and with both claimed the rental settles.
+  let rentalPos = await positionOf(loanId);
   for (const [who, side, acct, fn, owed] of [
     ['lender', 'lender', lender, 'claimAsLender', lenderShare],
     ['renter', 'borrower', borrower, 'claimAsBorrower', renterBack],
@@ -170,6 +172,10 @@ export async function run() {
     const after = await snapshot(tokens, holders);
     expectLedger(`A10.7.${who}`, `after the early close the ${who} claims exactly their share from their vault to their wallet`,
       before, after, { [`prepay.${side}Vault`]: -owed, [`prepay.${side}EOA`]: owed }, `gas=${r.gasUsed} owed=${f18(owed)}`);
+    const last = side === 'borrower';
+    await expectPosition(`A10.7.${who}.pos`, `after the ${who}'s claim the rental position changes exactly: their NFT burned${last ? ', and with both sides claimed the rental Settled' : ''}`,
+      loanId, rentalPos, { [`${side}NftOwner`]: null, ...(last ? { status: STATUS.Settled } : {}) });
+    rentalPos = await positionOf(loanId);
   }
   const finalOwner = await pub.readContract({ address: nft, abi: NFT, functionName: 'ownerOf', args: [tokenId] });
   check('A10.8', 'after the lender\'s claim the NFT is back in the lender\'s wallet',
