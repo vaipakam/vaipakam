@@ -34,13 +34,18 @@ export async function run() {
   record('A3.1', 'a healthy in-term loan is not defaultable',
     (await read(ABIS.defaulted, 'isLoanDefaultable', [loanId])) === false ? 'PASS' : 'FAIL', `loanId=${loanId}`);
 
-  await warpDays(8); // one day past a 7-day term
+  // Half a day past a 7-day term. Not a full day: this deployment's grace
+  // for a 7-day loan is exactly one day, and the bound is seconds-precise, so
+  // a one-day warp lands ON the boundary and the answer flips with whichever
+  // second the warp happens to land on — seen on Anvil as `true` one run and
+  // `false` the next.
+  await warpDays(7.5);
   // The grace window is configurable per deployment (ConfigFacet's grace
   // buckets), so this is recorded rather than asserted: what matters is the
   // ORDERING A3.1 -> A3.3, not that one particular day lands inside grace.
   const dayPast = await read(ABIS.defaulted, 'isLoanDefaultable', [loanId]);
   const graceSeconds = await read(ABIS.config, 'getEffectiveGraceSeconds', [loanId]).catch(() => null);
-  record('A3.2', 'one day past a 7-day term, against this deployment\'s grace window',
+  record('A3.2', 'half a day past a 7-day term, against this deployment\'s grace window',
     dayPast === false ? 'PASS' : 'INFO',
     `isLoanDefaultable=${dayPast}` + (graceSeconds === null ? '' : ` effectiveGrace=${graceSeconds}s (${Number(graceSeconds) / 86400}d)`));
 

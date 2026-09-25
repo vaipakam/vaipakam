@@ -9,20 +9,76 @@ configuration — not the source tree's idea of them.
   84532 (Base Sepolia), forked at block 47,228,632.
 - **Driver** — [`contracts/script/fork-scenarios/`](../../contracts/script/fork-scenarios/README.md),
   committed with this document. `node run-all.mjs` reproduces every row.
-- **Result** — 129 scenarios: **123 PASS, 6 INFO, 0 FAIL.** The INFOs are
+- **Result** — 129 scenarios: **122 PASS, 6 INFO, 1 FAIL.** The INFOs are
   observations with no assertion behind them, not soft failures; each is
-  written out below.
+  written out below. The one FAIL is **A11.5**, and it is deliberate: after
+  the owner's #2317 decision (§3D) that row asserts the SPEC — sell only what
+  the debt needs — and the live bytecode sells the whole cap. It turns green
+  when the #2317 fix is deployed.
+- **Node** — the figures above are from a re-run on **Anvil** (2026-09-25,
+  forked at block 47,272,642). The first run used a hardhat fork node and
+  reported 123 / 6 / 0; the difference is exactly the A11.5 oracle change
+  above. The re-run also found three defects in the HARNESS that the hardhat
+  node had hidden — see [§0](#0-re-run-on-anvil-and-three-harness-defects-it-exposed).
 - **Assets** — the deployment's own faucet mocks: `tLIQ` priced $2,000,
   `tLIQ2` priced $1.00, plus `illiquidToken` (unpriced).
 
 Two things this run did **not** cover, stated up front so the coverage is not
-read as wider than it is: the **contracts were not refreshed** and **no ABI
-re-export was performed** (neither is possible in the session container —
-see "What could not be done here"), and the **full Foundry regression was
+read as wider than it is: the **contracts were not refreshed on-chain** (that
+needs the Diamond admin's key — see §6; the ABI re-export, by contrast, was
+run and found nothing to change), and the **full Foundry regression was
 deliberately not run**, per the standing per-PR rule that it is a pre-deploy
 gate only.
 
 ---
+
+## 0. Re-run on Anvil, and three harness defects it exposed
+
+The first run was driven against a hardhat fork node because Foundry could
+not be installed from GitHub releases in the session container. Foundry's
+official npm packages (`@foundry-rs/anvil`, `@foundry-rs/forge`) install
+from the npm registry, and the whole suite was re-run on Anvil. Its first
+pass aborted two files and turned three accepts into
+`AcceptSignatureInvalid()`. None of that was the protocol; all three causes
+were in the harness, and each is now fixed at the root rather than per
+scenario:
+
+1. **The published test-mnemonic keys are not clean on a public testnet.**
+   On Base Sepolia the second and third default accounts carry **EIP-7702
+   delegations** (`0xef0100…` code). The Diamond therefore saw a contract
+   where the scenario meant a wallet: an accept signature went down the
+   ERC-1271 path and failed, and minting a position NFT to one called a
+   receiver hook that reverted (`NFTMintFailed`). The hardhat node did not
+   reproduce those delegations, which is why the first run passed.
+   **Fix:** the driver generates fresh keys every run, funds them, and
+   refuses to start if any actor has code.
+2. **An aborted file leaked its state into every later file.** One abort in
+   A3 left the debt asset priced 2.5×, and every file after it failed with
+   an unrelated-looking `IlliquidAssetNotAcknowledged`. **Fix:** each file
+   runs inside an `evm_snapshot` / `evm_revert` pair, so it starts from the
+   same fork state whatever ran before it.
+3. **Anvil under-estimates gas for a loan-closing call.** `repayLoan` after a
+   partial estimated 573,777 and reverted at 565,251 with "not enough gas for
+   reentrancy sentry" — the EIP-2200 rule that an SSTORE needs more than
+   2,300 gas left. Closing a loan clears enough storage that the refund hides
+   the peak. **Fix:** a 20% margin on every estimate, plus a replay of any
+   send that still reverts on-chain, so the abort line says whether it was a
+   refusal or a gas shortfall.
+
+   This was observed on **Anvil's** estimator only. A production node that
+   binary-searches the estimate should not return a figure that fails, and
+   this run did not test one — so it is recorded as a harness fact, not as a
+   finding about the connected app, which sends viem/wagmi estimates without
+   a margin. Whether a real Base Sepolia node's estimate for the same call
+   clears the sentry is **unverified**.
+
+With those fixed, the Anvil run ran all 129 rows with no aborts and
+reproduced the first run's verdicts: the same six rows are INFO, and every
+row that passed before passes again except A11.5, whose oracle changed on
+purpose. Figures that depend on ELAPSED time — accrued interest, and so the
+forced-close splits in §2.1 — differ from the first run's in the sixth
+decimal, because the time warps land on different seconds; every fee rate,
+cap, ratio and fixed-amount figure is identical.
 
 ## 1. What the walkthrough establishes
 
@@ -116,8 +172,9 @@ always resolve" is also wrong. An indexer needs both halves.
 ### 2.1 Time-based default
 
 Grace behaves as documented and the boundary is observable: a healthy in-term
-loan is not defaultable; one day past a 7-day term it is still not
-defaultable (inside grace); past term *and* grace it is.
+loan is not defaultable; half a day past a 7-day term it is still not
+defaultable (inside this deployment's 1-day grace for that term); past term
+*and* grace it is.
 
 `triggerDefault` is **permissionless** — an unrelated third party closed the
 position — and the settlement on 1.25 tLIQ of collateral sold for 2,500
@@ -434,7 +491,7 @@ Two further points:
   `InvalidLoan()` with zero collateral was an NFT rental behaving correctly,
   not a defect.
 
-## 3D. Swap-to-repay — and a candidate divergence on the cap
+## 3D. Swap-to-repay — and a divergence on the cap (owner-decided: the code is the bug)
 
 Swap-to-repay lets a borrower settle without holding the principal asset:
 collateral is sold for principal and applied to the repayment in one
@@ -454,7 +511,7 @@ transaction. Checked against the spec's swap-to-repay bullets:
   `PartialRepayNotAllowed()` without it) and **never leaves the position
   less healthy**: 0.1 collateral sold, principal 1,000 → 800, HF 2.0 → 2.3.
 
-**The candidate divergence.** The sale is **exact-in on the caller's cap**:
+**The divergence.** The sale is **exact-in on the caller's cap**:
 `maxCollateralIn` is the amount sold, not an upper bound on it. A 0.6 cap
 sold all 0.6 and returned 199.04 of surplus; the full 1.25 cap sold
 everything and returned 1,499.04. The spec frames surplus as arising from a
@@ -465,12 +522,16 @@ the repayment needs.
 
 No value is lost beyond slippage, and **no shipped surface drives this path**
 (`apps/app` does not call it; only the indexer observes its events), so there
-is no current user exposure. It is recorded in
-[`_CodeVsDocsAudit.md`](../FunctionalSpecs/_CodeVsDocsAudit.md) as pending
-triage and filed as **#2317** for an owner intent-decision — fix the code to
-sell only what is needed, or document the cap as the exact sale size and
-require surfaces to size it. It is deliberately **not** resolved by
-rewording the spec to match the code.
+is no current user exposure.
+
+**Owner decision (2026-09-25): the spec is the intent and the code is the
+defect.** `maxCollateralIn` is an upper bound; the sale is sized to what the
+debt needs, and collateral the debt does not need stays pledged and
+claimable. The fix is tracked as **#2317** and recorded in
+[`_CodeVsDocsAudit.md`](../FunctionalSpecs/_CodeVsDocsAudit.md). A11.5 now
+asserts that intent, so it **FAILS against the live bytecode** and will pass
+once the fix is deployed — a red row that means exactly what it says,
+rather than a green one that certified the defect.
 
 ## 4. The three gates
 
@@ -584,35 +645,39 @@ from here on.
 
 ---
 
-## 6. What could not be done here, and why
+## 6. The refresh-and-re-export half: what has and has not been done
 
 The request had two halves. The verification half is above. The other half —
-**refresh the contracts on Base Sepolia and re-export the ABIs** — cannot be
-done from this session container, and is reported rather than approximated:
+**refresh the contracts on Base Sepolia and re-export the ABIs** — splits
+into two parts that turned out to have different answers:
 
-| Blocker | Detail |
-| --- | --- |
-| No Foundry | `forge` is not installed, and `foundryup` is refused by the environment's egress policy (403 on both the GitHub attestations and releases hosts). Without `forge`, neither a deploy nor `forge inspect` — which is the only thing that generates the ABI JSONs — can run. |
-| No deployer key | The Base Sepolia admin/deployer key is not present in this environment, by design. |
-| No funded RPC | No write-capable Base Sepolia endpoint with a funded account. |
-| Insufficient memory | The `default` Foundry profile needs ≈17.7 GB RSS on this codebase; this container has 15 GB. Even with `forge` present, the build the export needs would not complete. |
+- **ABI re-export — run, and a no-op.** With Foundry installed from its
+  official npm packages, `exportFrontendAbis.sh` ran end to end on
+  2026-09-25 (it compiles `src/` + `script/` only, `forge build --skip test`,
+  which fits this container's 15 GB comfortably — the ≈17.7 GB figure is the
+  test-inclusive default build, which the export does not need). Every
+  per-facet ABI it regenerated was byte-identical to the committed one; the
+  only change was the provenance stamp, which was not committed. The
+  frontend, Workers and this driver are therefore already reading ABIs that
+  match the source tree.
+- **On-chain refresh — still an operator action.** The live Diamond's owner
+  is `0xF718BaE5e0dc36140F16dAEF73289294c2372030` (read from `owner()`, and
+  it matches the artifact's `admin`). `RefreshAllFacetsInPlace.s.sol` signs
+  its cuts with `ADMIN_PRIVATE_KEY`, which must be that account's key. None
+  of the dev test wallets supplied for this work is that account, so they
+  cannot perform the cut — a refresh needs the admin key provisioned to the
+  environment as a secret, never pasted into a conversation. A fork
+  REHEARSAL of the same refresh (impersonating the admin on Anvil) needs no
+  key and is the natural first step once the swap-to-repay fix (#2317) is
+  in the source, so the refresh ships that too.
 
-Nothing was therefore merged to `main` on that half: an ABI re-export that
-has not actually run `forge inspect` would be a fabricated artifact, and a
-"refreshed" deployment record with no deploy behind it would be worse than
-the stale one it replaced.
-
-**The refresh remains the right next action** — §5 is the direct consequence
-of not having done it — and it needs an operator-side run with `forge`, the
-deployer key and a funded RPC, followed by
-`contracts/script/exportFrontendAbis.sh` and
-`contracts/script/exportFrontendDeployments.sh`.
-
----
+Nothing was merged to `main` on the refresh half: a "refreshed" deployment
+record with no deploy behind it would be worse than the stale one it would
+replace.
 
 ## 7. Ledger
 
-The full 63-row ledger, with per-scenario verdicts and observed numbers, is
+The full 129-row ledger, with per-scenario verdicts and observed numbers, is
 regenerated as `contracts/script/fork-scenarios/last-run.json` on every run
 (untracked). Scenario ids map to the driver's files:
 
@@ -636,8 +701,11 @@ post-claim NFT readbacks (A2.16, written up in §1.4), and the offset
 vehicle's offer type (A7.2b, written up in §3A.3; its mirror, the sale
 vehicle, is asserted as A8.1), and a rental's health-factor refusal (A10.5,
 written up in §3C). A3.2 records this
-deployment's effective grace window (3 days) rather than asserting it, since
-the window is per-deployment config — what the suite asserts there is the
+deployment's effective grace window — **1 day for a 7-day loan** — rather
+than asserting it, since the window is per-deployment config. (The first
+revision of this document said 3 days; the chain answers 86,400 s, and the
+probe now warps HALF a day past term, because a full day lands exactly on a
+1-day boundary and flips with the second the warp lands on) — what the suite asserts there is the
 ORDERING A3.1 → A3.3, not that any particular day lands inside grace.
 
 ---
@@ -650,9 +718,11 @@ ORDERING A3.1 → A3.3, not that any particular day lands inside grace.
 2. **Re-seed the mock `tLIQ` pool with more depth** so HF liquidation is
    exercisable on the testnet through a collateral price move (§2.4) —
    tracked as **#2314**.
-3. **Decide the swap-to-repay cap semantics** — exact-in on
-   `maxCollateralIn`, where the spec and natspec read it as an upper bound
-   (§3D) — tracked as **#2317**, recorded in `_CodeVsDocsAudit.md`.
+3. **Fix swap-to-repay to sell only what the debt needs** — the owner
+   decided on 2026-09-25 that `maxCollateralIn` is an upper bound, as the
+   spec and natspec say, and the live exact-in behaviour is the defect (§3D)
+   — tracked as **#2317**, recorded in `_CodeVsDocsAudit.md`; A11.5 is the
+   row that turns green when it ships.
 
 Two items were on this list in the first revision of this document and have
 been **withdrawn**, because scouting `apps/app` afterwards found both already

@@ -31,8 +31,11 @@ fresh deploy would have hidden every one of them.
 ```bash
 # 1. a fork of the target chain, on 127.0.0.1:8545
 anvil --fork-url "$BASE_SEPOLIA_RPC_URL" --chain-id 84532
-#    (or, with no foundry available:)
-npx hardhat node --fork "$BASE_SEPOLIA_RPC_URL" --chain-id 84532 --port 8545
+#    No Foundry install? Its official npm packages work where GitHub
+#    release downloads are blocked:  npm i @foundry-rs/anvil @foundry-rs/forge
+#    Anvil is the node to use. A hardhat fork node runs the driver too, but it
+#    did NOT reproduce the EIP-7702 delegations on the real chain (see below),
+#    so it can pass what the live chain would refuse.
 
 # 2. install viem for the driver, once
 cd contracts/script/fork-scenarios && npm install
@@ -57,8 +60,8 @@ The driver leaves `last-run.json` beside itself — the full ledger, one row per
 scenario, with the verdict and the observed numbers, plus any scenario file
 that aborted.
 
-Two things the driver handles for you, both of which silently cost a whole
-scenario file before they were fixed:
+Five things the driver handles for you, each of which silently cost a
+scenario file, or a whole run, before it was fixed:
 
 - **It mines one block first.** On a fresh fork `latest` IS the fork block,
   and a hardhat node refuses to execute `eth_call` there ("No known hardfork
@@ -67,6 +70,30 @@ scenario file before they were fixed:
 - **An aborted file is named in the summary**, not only in the scroll-back,
   and it sets a non-zero exit. A file that aborts contributes no rows, so
   without that the tally reads clean while a fifth of the suite never ran.
+- **It generates fresh actor keys every run** and funds them with
+  `setBalance`, refusing to start if any actor has code. The published
+  test-mnemonic keys a fork node pre-funds are not clean on a public testnet:
+  on Base Sepolia the second and third already carry **EIP-7702 delegations**,
+  so the Diamond saw a contract where the scenario meant a wallet — accept
+  signatures went down the ERC-1271 path (`AcceptSignatureInvalid`) and a
+  position-NFT mint to one hit a receiver hook (`NFTMintFailed`). The first
+  full run used a hardhat fork node that did not reproduce those delegations
+  and passed; Anvil does, and failed.
+- **Each scenario file runs inside a node snapshot** (`evm_snapshot` before,
+  `evm_revert` after, abort or not). A file that aborted halfway used to
+  leave its price moves behind — one abort in A3 left the debt asset priced
+  2.5× and turned every later file into an unrelated-looking
+  `IlliquidAssetNotAcknowledged`. Restoring by hand in every file is only as
+  complete as the last person remembered; the snapshot is complete by
+  construction.
+- **Sends carry a 20% gas margin over the estimate**, and a send that still
+  reverts on-chain is replayed at its parent block so the abort line says
+  whether it was a real refusal or a gas shortfall. Anvil's estimate for a
+  loan-CLOSING call comes back short: clearing that much storage earns a
+  refund that hides the peak, and the send dies with "not enough gas for
+  reentrancy sentry" (the EIP-2200 rule that an SSTORE needs more than 2,300
+  gas left) — observed on `repayLoan` after a partial, estimate 573,777,
+  reverted at 565,251.
 
 ## It is not a member of the pnpm workspace
 
@@ -95,11 +122,13 @@ and worth naming:
   Solidity compiler. The stub is a ten-byte runtime that answers `true` to
   everything; the Diamond itself is never patched.
 
-A scenario that changes global state puts it back (A3 restores the seeded
-prices, A5 disarms the oracle and the KYC knob). Scenarios still run in
-order on one shared fork — A3 warps the chain weeks forward — so a subset run
-that skips a predecessor may start from a different chain state than a full
-run does.
+A scenario that changes global state still puts it back where it can (A3
+restores the seeded prices, A5 disarms the oracle and the KYC knob, A9
+re-sets the periodic-interest switch), but that is now belt-and-braces:
+`run-all.mjs` reverts the fork to its pre-file snapshot after every file, so
+each file starts from the same chain state whether it runs alone, in a
+subset, or after a predecessor that aborted. A file that runs on a node
+without `evm_snapshot` support is refused rather than run unisolated.
 
 ## Adding a scenario
 

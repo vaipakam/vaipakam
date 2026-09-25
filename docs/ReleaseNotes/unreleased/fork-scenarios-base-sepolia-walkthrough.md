@@ -92,13 +92,17 @@ loan does, so any surface showing health factor has to recognise both.
 
 Repaying straight from collateral behaves as specified on authority,
 partial-mode consent and health, and accounts every unit of the sale — but it
-turned up one candidate divergence. The amount of collateral the caller
-allows the protocol to sell is treated as the exact amount to sell, not as a
-ceiling, so an over-generous allowance converts far more collateral into the
-lending asset than the debt needs. The specification and the code's own
-description both read it as a ceiling. No value is lost and no shipped
-surface uses this path yet, so it is recorded as a pending divergence for an
-owner decision rather than resolved by rewording the specification.
+turned up one divergence. The amount of collateral the caller allows the
+protocol to sell is treated as the exact amount to sell, not as a ceiling, so
+an over-generous allowance converts far more collateral into the lending
+asset than the debt needs. The specification and the code's own description
+both read it as a ceiling. No value is lost and no shipped surface uses this
+path yet. The owner has since decided that the specification is the intent
+and the code is the defect: the sale should be sized to the debt, with the
+rest of the collateral left pledged and claimable. The fix is tracked
+separately, and the walkthrough's check for it now asserts the intended
+behaviour — so it reads as a failure against the live deployment until the
+fix ships, rather than as a pass that certified the defect.
 
 On the middle two of the four findings, the connected app was checked afterwards rather than
 assumed, and already honours both: the early-repay card reads the loan's
@@ -118,9 +122,28 @@ is the same omission class the deploy-time readback guard was built to catch;
 the live deployment simply predates that guard. No address is lost — every
 implementation stays recoverable from the Diamond's own loupe — so the cost is
 inventory accuracy rather than funds, and the fix is the refresh-and-re-export
-that this work could not perform itself. That half of the task is reported
-rather than approximated: the session had no Foundry, no deployer key, no
-write-capable endpoint and not enough memory for the build, and an ABI export
-that never ran the compiler would be a fabricated artifact. It remains an
-operator-side action, and the written-up walkthrough names it as the first
-follow-up.
+that this work could not perform itself. Once Foundry was available the ABI
+re-export was run for real and found every committed interface already
+matching the source, so there was nothing to publish. The on-chain refresh
+is different: it has to be signed by the Diamond's admin account, whose key
+this work does not hold, and it remains an operator-side action that the
+written-up walkthrough names as the first follow-up.
+
+The whole walkthrough was then re-run on Anvil, Foundry's fork node, which
+the session could install after all through Foundry's official npm packages.
+That re-run found three problems in the test driver that the first node had
+masked, each now fixed at its root rather than scenario by scenario. The
+well-known development accounts a fork node hands out are not clean on a
+public testnet: two of them already carry smart-account delegations on Base
+Sepolia, so the protocol saw contracts where the test meant plain wallets.
+The driver now generates fresh accounts every run and refuses to start if any
+of them has code. A scenario that aborted halfway used to leave its price
+changes behind and quietly break every scenario after it; each scenario now
+runs inside a snapshot of the fork and is rolled back afterwards, whatever
+happened. And Anvil's gas estimate for a call that closes a loan comes back
+just short, because clearing that much storage earns a refund that hides the
+peak; the driver adds a margin, as wallets do, and names a gas shortfall as
+such when one still happens. Whether a production node's estimate has the
+same shortfall was not tested, and the write-up says so. With those fixed,
+the re-run reproduced every verdict of the first run, the only change being
+the swap-to-repay check whose expectation was deliberately corrected.

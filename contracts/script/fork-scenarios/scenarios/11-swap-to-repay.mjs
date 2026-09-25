@@ -62,9 +62,14 @@ export async function run() {
       String(closed.status) !== '0' ? 'PASS' : 'FAIL',
       `gas=${receipt.gasUsed} status=${closed.status} deltas=${JSON.stringify(d)}`);
 
+    // The oracle is the spec, per the owner's #2317 decision (2026-09-25):
+    // `maxCollateralIn` is an UPPER BOUND and the sale is sized to the debt,
+    // so collateral the debt does not need stays pledged. The live bytecode
+    // this was first run against sells the whole cap, so this row FAILS
+    // there until the #2317 fix is deployed — which is the point of it.
     const sold = before['collateral.borrowerVault'] - after['collateral.borrowerVault'];
-    record('A11.5', 'the protocol sells the WHOLE cap, not only what the debt needs — the cap is the sale size',
-      sold === CAP ? 'PASS' : 'INFO',
+    record('A11.5', 'the protocol sells only what the debt needs — the cap is an upper bound, not the sale size (#2317)',
+      sold < CAP ? 'PASS' : 'FAIL',
       `cap=${f18(CAP)} sold=${f18(sold)} of ${f18(loan.collateralAmount)}`);
 
     // Everything the sale raised is accounted: the debt to lender + treasury,

@@ -13,7 +13,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CHAIN_SLUG, DIAMOND, RPC_URL, pub, rpc } from './lib/chain.mjs';
+import { CHAIN_SLUG, DIAMOND, RPC_URL, fundActors, pub, rpc } from './lib/chain.mjs';
 import { ledger, summarise } from './lib/report.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -43,11 +43,24 @@ if (!code) {
 // below still looked clean. One mined block puts `latest` past the fork point
 // and the whole class goes away.
 await rpc('evm_mine');
+await fundActors();
 console.log(`fork ${RPC_URL} | chain ${CHAIN_SLUG} | diamond ${DIAMOND} | block ${await pub.getBlockNumber()}\n`);
 
+// Every file starts from the SAME fork state and leaves nothing behind.
+//
+// Scenario files move prices, warp time and arm switches. Each tries to put
+// things back, but a file that aborts halfway cannot — and before this, one
+// abort in the forced-close set left a debt asset repriced 2.5× and turned
+// every later file into an unrelated-looking `IlliquidAssetNotAcknowledged`.
+// Restoring by hand in every file is a list that is only ever as complete as
+// the last person remembered; a node snapshot around each file is complete
+// by construction. A snapshot id is consumed by its revert, so it is retaken
+// per file.
 const aborted = [];
 for (const file of files) {
   console.log(`--- ${file}`);
+  const snap = await rpc('evm_snapshot');
+  if (snap.error || !snap.result) throw new Error(`fork node refused evm_snapshot: ${snap.error?.message ?? 'no id'}`);
   const mod = await import(path.join(HERE, 'scenarios', file));
   try {
     await mod.run();
@@ -56,6 +69,9 @@ for (const file of files) {
     console.error(`  ${file} ABORTED: ${why}`);
     aborted.push({ file, why });
     process.exitCode = 1;
+  } finally {
+    const back = await rpc('evm_revert', [snap.result]);
+    if (back.error || back.result !== true) throw new Error(`fork node failed to revert to the pre-${file} snapshot`);
   }
   console.log('');
 }
