@@ -1726,7 +1726,8 @@ class Assembly:
         That last row is the defect itself, already published: 179 sections
         in the dated notes that nothing can trace back to the change they
         describe. It is the motivation for the rule, not an argument about
-        its scope, and it is the figure the contributor README points at.
+        its scope. The contributor README states the rule and points here for
+        the reasoning and the counts; none of these figures is copied there.
 
         Read those two rows carefully, because conflating them is easy and a
         review round caught this paragraph doing it. Requiring a reference to
