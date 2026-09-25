@@ -406,6 +406,63 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         assertEq(tr, 5, "and the recycled leg too, from the ordinary epoch");
     }
 
+    /// @dev The split is EXACT, not greedy (Codex #2276, the fourth finding on
+    ///      this one decision). Plan-ordered A = balance 2 with room on both
+    ///      legs, B = 1 payable only in fresh, C = 2 with one unit of room per
+    ///      leg, asked 2F/1R. Every forward greedy chose A's legs without seeing
+    ///      what that forced later — the last one gave A 2F, skipped B, and
+    ///      took 1R from C. A 1F/1R and B 1F cover the same request and leave C,
+    ///      which may be another day's only backing, untouched. The backward
+    ///      walk makes each epoch supply only what the epochs before it cannot.
+    function test_TheSplit_IsExact_AndSparesTheLatestEpoch() public {
+        bytes32 a = _epochOf(2, _one(1), 101, keccak256("exact-A"));
+        vm.warp(vm.getBlockTimestamp() + 1);
+        bytes32 b = _epochOf(1, _one(1), 102, keccak256("exact-B"));
+        _attest(102, 1, 0);
+        vm.warp(vm.getBlockTimestamp() + 1);
+        bytes32 c = _epochOf(2, _one(1), 103, keccak256("exact-C"));
+        _attest(103, 1, 1);
+        (uint256 af, uint256 ar) = _plannedLegs(1, 2, 1, a);
+        (uint256 bf, uint256 br) = _plannedLegs(1, 2, 1, b);
+        (uint256 cf, uint256 cr) = _plannedLegs(1, 2, 1, c);
+        assertEq(af + bf + cf, 2, "the fresh leg is covered");
+        assertEq(ar + br + cr, 1, "and the recycled leg");
+        assertEq(af, 1, "A pays one fresh");
+        assertEq(ar, 1, "and one recycled");
+        assertEq(bf + br, 1, "B pays its one fresh");
+        assertEq(cf + cr, 0, "and C, the latest, is spared entirely");
+    }
+
+    /// @dev A classification CORRECTION reconciles the transport legs already
+    ///      drawn, as attestation does (Codex #2276). Codex's shape: a ten-token
+    ///      rollout packet attested 5F/5R, five classified fresh before
+    ///      admission, the remaining five drawn recycled. A correction then
+    ///      moves the five fresh to recycled, so the net caps become 5F/0R
+    ///      while the batch still holds five recycled — ten recycled against a
+    ///      five-recycled cap. The drawn leg must be retyped to fresh.
+    function test_AClassificationCorrection_ReconcilesTheDrawnLegs() public {
+        uint256[] memory d1 = _one(1);
+        _ingress().onRewardBudgetReceived(address(vpfi), 10e18, d1, CHAIN_BASE, 3, REMITTER, 0, 0, keccak256("corr"), false);
+        bytes32 h = keccak256(abi.encode(uint256(CHAIN_BASE), keccak256("corr")));
+        _mut().unadmitTransportBatchRaw(h);
+        _mut().classifyPacketPreGateRaw(h, 5e18, 0);
+        assertEq(_epoch().admitLegacyTransportBatch(h, d1), h);
+        _epoch().materializeTransportBatchPage(h, d1);
+        _mut().setTransportBatchConsumedRaw(h, 0, 5e18);
+        _attest(3, 1, 1); // caps 5e18 fresh / 5e18 recycled on 10e18
+        (uint256 lf, uint256 lr) = _legs(h);
+        assertEq(lf, 0, "fixture: nothing to retype at attestation");
+        assertEq(lr, 5e18, "fixture: five drawn recycled, within the recycled cap");
+        _mut().moveClassificationRaw(h, 5e18, true); // the correction: 5F -> 5R
+        (lf, lr) = _legs(h);
+        assertEq(lr, 0, "the recycled cap is now spent by classification");
+        assertEq(lf, 5e18, "so the drawn leg is retyped fresh, within the fresh cap");
+        (bool att, uint256 exF, uint256 exR) =
+            RewardReconciliationFacet(address(diamond)).getPacketClassificationExcess(h);
+        assertTrue(att);
+        assertEq(exF + exR, 0, "and nothing is left beyond either cap");
+    }
+
     function test_AShortEpochPaysWhatItHolds_TheLedgerTheRest_AndIsRetired() public {
         _scene(NEED);
         _liveOf(1e18, _one(1), 1, keccak256("live"));

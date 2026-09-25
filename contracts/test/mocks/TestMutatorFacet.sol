@@ -2448,6 +2448,25 @@ contract TestMutatorFacet {
         p.classifiedRecycled = recycled;
     }
 
+    /// @notice 3b-ii-A test-only (Codex #2276) — a classification correction
+    ///         through the SAME library write the correction path uses
+    ///         ({LibRewardCustody.moveClassification}), so a test exercises the
+    ///         production move-and-reconcile rather than a copy of it. The real
+    ///         entry needs a reconciliation-log entry and settled queues this
+    ///         suite does not build.
+    function moveClassificationRaw(bytes32 packetHash, uint256 amount, bool freshToRecycled) external {
+        LibRewardCustody.moveClassification(LibVaipakam.storageSlot(), packetHash, amount, freshToRecycled);
+    }
+
+    /// @notice 3b-ii-A test-only (Codex #2276) — set what a batch's draws
+    ///         have consumed per leg, standing in for draws a test does not
+    ///         want to route through a claim.
+    function setTransportBatchConsumedRaw(bytes32 batchId, uint256 fresh, uint256 recycled) external {
+        LibVaipakam.TransportBatch storage b = LibVaipakam.storageSlot().transportBatches[batchId];
+        b.consumedFresh = fresh;
+        b.consumedRecycled = recycled;
+    }
+
     function classifyPacketPreGateRaw(bytes32 packetHash, uint256 freshShare, uint256 recycledShare) external {
         LibRewardCustody.takeFromUnclassified(LibVaipakam.storageSlot(), packetHash, freshShare, recycledShare);
     }

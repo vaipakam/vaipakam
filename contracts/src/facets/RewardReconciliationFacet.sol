@@ -902,14 +902,10 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
         bool freshToRecycled
     ) private {
         if (e.envelope) return;
-        LibVaipakam.IngressPacket storage p = s.ingressPackets[e.key];
-        if (freshToRecycled) {
-            p.classifiedFresh -= amount;
-            p.classifiedRecycled += amount;
-        } else {
-            p.classifiedRecycled -= amount;
-            p.classifiedFresh += amount;
-        }
+        // Through the one library write, which also reconciles the transport
+        // legs already drawn against the caps this correction moves (Codex
+        // #2276) — see {LibRewardCustody.moveClassification}.
+        LibRewardCustody.moveClassification(s, e.key, amount, freshToRecycled);
     }
 
     /// @dev An entry's figures, per side, from its own records.
