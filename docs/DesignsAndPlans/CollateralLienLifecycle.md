@@ -141,7 +141,22 @@ single chokepoint behind **Codex round-6 P1s on RiskFacet:554 + DefaultedFacet:2
 (both route through here).
 
 ### Gap B — swap-to-repay-intent residual (SV4 / BV4)
-The intent commit decrements the lien to zero (collateral → custody); on fill
+
+> **Superseded in part by #2322 (2026-09-25) — partial custody.** The intent
+> commit no longer takes the whole collateral: it pulls only a debt-sized
+> **lot** and decrements the lien by that lot, so the untouched remainder stays
+> in the vault and stays **continuously liened** through the auction. On fill
+> the lien is **topped up to cover the borrower's claim**
+> (`collateralAmount − consumed`) — by the difference from what is still liened,
+> never by the whole claim, which would count the never-unliened remainder
+> twice. Cancel and the force-cancels still re-lien exactly what they return
+> (the lot). The paragraph below records the original, whole-custody model;
+> its Gap-B fix is still correct in intent (the borrower's claim must be
+> liened through the Repaid→claim window) and is now implemented as the
+> top-up. The census conclusion below still holds: this changes how the intent
+> site keeps the lien equal to the vault-held collateral, not which sites exist.
+
+Original text: the intent commit decrements the lien to zero (collateral → custody); on fill
 with `makingAmount < custodialCollateral` the residual is pushed back to the
 vault and the loan goes `Repaid`, but the residual is **not re-liened** (the
 `:270` release is a tombstone). `claimAsBorrower` is reachable (Repaid).

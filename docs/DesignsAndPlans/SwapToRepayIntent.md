@@ -132,8 +132,13 @@ borrower-supplied order must:
   with a live commit has nothing internally matchable. A commit whose
   whole collateral at the worst case cannot cover the minimum output is
   refused.
-- Place a taker amount at or above the protocol's **live settlement
-  floor** plus the configured buffer.
+- Place a taker amount at or above the **lot's own worst-case value**
+  under the borrower-facing slippage cap (#2322 r3). That value always
+  covers the protocol's live settlement floor plus the configured buffer,
+  and exceeds it when the collateral comes in coarse units, so the smallest
+  covering lot is worth more than the debt; the lot preview reports it.
+  (Originally: "at or above the live settlement floor plus the configured
+  buffer", which would have let such a lot sell below that worst case.)
 - Disable partial fills and disable multiple fills (a v1.1 intent fills
   exactly once or expires).
 - Carry the protocol's canonical extension bytes verbatim, with the

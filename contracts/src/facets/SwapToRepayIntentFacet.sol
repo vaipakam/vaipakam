@@ -90,9 +90,13 @@ contract SwapToRepayIntentFacet is
     ///         asset fields and finalises makerAmount based on the
     ///         actual vault withdraw.
     struct FusionOrderParams {
-        /// @dev Borrower-picked principal-side minimum. Must clear
-        ///      the §5.4 floor: `lenderLeg + treasuryLeg + lateFee`
-        ///      with the `cfgIntentMinOutputBufferBps` buffer.
+        /// @dev Borrower-picked principal the order asks for the lot — its
+        ///      PRICE on this fixed-price order. Must be at least the lot's own
+        ///      slippage-capped floor (#2322 r3), which covers the §5.4 floor
+        ///      (`lenderLeg + treasuryLeg + lateFee` with the
+        ///      `cfgIntentMinOutputBufferBps` buffer) and can exceed it when
+        ///      collateral granularity makes the smallest covering lot worth
+        ///      more. {previewSwapToRepayIntentLot} reports that minimum.
         uint256 takerAmount;
         /// @dev Auction end. Must satisfy the §5.1 step 2 bounds
         ///      (`min/maxAuctionSeconds`) AND be `<=
