@@ -345,14 +345,11 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
     function getTransportBatchLegs(bytes32 batchId)
         external
         view
-        returns (uint256 consumedFresh, uint256 consumedRecycled, uint256 consumedBeyondCaps)
+        returns (uint256 consumedFresh, uint256 consumedRecycled)
     {
         LibVaipakam.TransportBatch storage b = LibVaipakam.storageSlot().transportBatches[batchId];
         if (!LibRewardCustody.transportBatchExists(b)) revert TransportBatchUnknown(batchId);
-        // The third figure (Codex #2276 r6): what a late attestation showed to
-        // lie outside both recorded caps — in the epoch's identity, in neither
-        // leg, for the close-out's disposition path.
-        return (b.consumedFresh, b.consumedRecycled, b.consumedBeyondCaps);
+        return (b.consumedFresh, b.consumedRecycled);
     }
 
     /// @notice A batch's parked remainder, and what has left it.
@@ -451,30 +448,20 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
         // along the order (Codex #2276 r8 P2) — and the cursor is the stored
         // position, exact in one read, on this selector's numeric contract
         // (r10, r11 P2). {getTransportDayBatchesFrom} pages from any node
-        // for the cost of the page alone.
-        bool listed = LibRewardCustody.transportDayListed(s, dayId);
-        cursor = listed ? s.transportDayListCursor[dayId] : s.transportDayCursor[dayId];
-        if (listed) {
-            bytes32 node = s.transportDayHead[dayId];
-            uint256 pos;
-            uint256 w;
-            while (node != bytes32(0) && w < want) {
-                if (pos >= offset) {
-                    page[w] = node;
-                    arrivedAt[w] = s.ingressPackets[node].arrivedAt;
-                    unchecked { ++w; }
-                }
-                node = s.transportDayNext[dayId][node];
-                unchecked { ++pos; }
+        // for the cost of the page alone. One order: the list holds every day
+        // whole (Codex #2296 items 2 and 4).
+        cursor = s.transportDayCursor[dayId];
+        bytes32 node = s.transportDayHead[dayId];
+        uint256 pos;
+        uint256 w;
+        while (node != bytes32(0) && w < want) {
+            if (pos >= offset) {
+                page[w] = node;
+                arrivedAt[w] = s.ingressPackets[node].arrivedAt;
+                unchecked { ++w; }
             }
-        } else {
-            // A day indexed before the list existed and not yet linked: the
-            // array in its own order.
-            for (uint256 i; i < want; ++i) {
-                bytes32 id = arr[offset + i];
-                page[i] = id;
-                arrivedAt[i] = s.ingressPackets[id].arrivedAt;
-            }
+            node = s.transportDayNext[dayId][node];
+            unchecked { ++pos; }
         }
     }
 
@@ -482,42 +469,28 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
     ///         `from` (zero: the head), with the node the next page starts
     ///         at (zero: none) — each page costs its own length (Codex #2276
     ///         r8 P2).
-    /// @dev    For a day indexed before the list existed and not yet linked
-    ///         the order is the array's and `from` is found by position, so
-    ///         that read costs the scan to it as well; the link ends that.
+    /// @dev    The day's order is the list's, for every day (Codex #2296
+    ///         items 2 and 4), so a page costs its own length and nothing
+    ///         else — there is no array-ordered case that had to scan to
+    ///         `from` by position.
     function getTransportDayBatchesFrom(uint256 dayId, bytes32 from, uint256 limit)
         external
         view
         returns (bytes32[] memory page, uint64[] memory arrivedAt, bytes32 next)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        bytes32[] storage arr = s.transportBatchesByDay[dayId];
         bytes32[] memory buf = new bytes32[](limit);
         uint256 w;
-        if (LibRewardCustody.transportDayListed(s, dayId)) {
-            bytes32 head = s.transportDayHead[dayId];
-            // A node outside the day's order pages nothing rather than itself.
-            bool listed = from == bytes32(0) || from == head || s.transportDayPrev[dayId][from] != bytes32(0);
-            bytes32 node = !listed ? bytes32(0) : (from == bytes32(0) ? head : from);
-            while (node != bytes32(0) && w < limit) {
-                buf[w] = node;
-                unchecked { ++w; }
-                node = s.transportDayNext[dayId][node];
-            }
-            next = node;
-        } else {
-            uint256 i;
-            if (from != bytes32(0)) {
-                while (i < arr.length && arr[i] != from) {
-                    unchecked { ++i; }
-                }
-            }
-            for (; i < arr.length && w < limit; ++i) {
-                buf[w] = arr[i];
-                unchecked { ++w; }
-            }
-            next = i < arr.length ? arr[i] : bytes32(0);
+        bytes32 head = s.transportDayHead[dayId];
+        // A node outside the day's order pages nothing rather than itself.
+        bool inOrder = from == bytes32(0) || from == head || s.transportDayPrev[dayId][from] != bytes32(0);
+        bytes32 node = !inOrder ? bytes32(0) : (from == bytes32(0) ? head : from);
+        while (node != bytes32(0) && w < limit) {
+            buf[w] = node;
+            unchecked { ++w; }
+            node = s.transportDayNext[dayId][node];
         }
+        next = node;
         page = new bytes32[](w);
         arrivedAt = new uint64[](w);
         for (uint256 k; k < w; ++k) {
@@ -534,51 +507,24 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
         return LibRewardCustody.transportDayScanIds(LibVaipakam.storageSlot(), dayId);
     }
 
-    /// @notice The state of `dayId`'s index: how much of its membership the
-    ///         ordered list holds — equal figures for every day indexed under
-    ///         the list, and for a day indexed before it once
-    ///         {epochLinkTransportDayIndex} has caught it up (Codex #2276 r8
-    ///         P1) — and the consumption cursor as the NODE it is (r10 P2: the
-    ///         last exhausted epoch at the front of the order, zero when none
-    ///         is), which {getTransportDayBatchesFrom} pages from — and
-    ///         whether the day reads from its list yet (r14 P2: a day indexed
-    ///         before the list switches only once its consumption count has
-    ///         been carried over exactly; until then its array is read).
+    /// @notice The state of `dayId`'s index: how many epochs it has ever
+    ///         listed, and its consumption cursor as the NODE it is (Codex
+    ///         #2276 r10 P2 — the last exhausted epoch at the front of the
+    ///         order, zero when none is), which
+    ///         {getTransportDayBatchesFrom} pages from.
+    /// @dev    The list holds every day whole, so there is no "how much is
+    ///         linked" figure and no conversion flag to report (Codex #2296
+    ///         items 2 and 4): a day's membership count IS its order's
+    ///         length. The cursor as a POSITION is
+    ///         {getTransportDayBatches}'s fourth return.
     function getTransportDayIndex(uint256 dayId)
         external
         view
-        returns (uint256 linked, uint256 total, bytes32 cursor, bool converted)
+        returns (uint256 total, bytes32 cursor)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        bytes32[] storage arr = s.transportBatchesByDay[dayId];
-        linked = s.transportDayLinked[dayId];
-        total = arr.length;
-        converted = LibRewardCustody.transportDayListed(s, dayId);
-        if (converted) {
-            cursor = s.transportDayCursorNode[dayId];
-        } else {
-            uint256 c = s.transportDayCursor[dayId];
-            cursor = c == 0 ? bytes32(0) : arr[c - 1];
-        }
-    }
-
-    /// @notice Link the next entries of `dayId`'s membership into its ordered
-    ///         list — the catch-up for a day indexed before the list existed
-    ///         (Codex #2276 r8 P1). Permissionless, idempotent and bounded;
-    ///         see {LibRewardCustody.linkTransportDayIndex} for the page, the
-    ///         hints — `lateHints` empty or aligned with `hints`, the late-
-    ///         chain predecessors (Codex #2308 r4) — and the conversion that
-    ///         follows the last page (r14 P2): call again until `converted`
-    ///         reads true.
-    function epochLinkTransportDayIndex(uint256 dayId, bytes32[] calldata hints, bytes32[] calldata lateHints)
-        external
-        nonReentrant
-        returns (uint256 linked, uint256 total, bool converted)
-    {
-        if (lateHints.length != 0 && lateHints.length != hints.length) {
-            revert TransportIndexHintInvalid(bytes32(0), dayId, bytes32(0));
-        }
-        return LibRewardCustody.linkTransportDayIndex(LibVaipakam.storageSlot(), dayId, hints, lateHints);
+        total = s.transportBatchesByDay[dayId].length;
+        cursor = s.transportDayCursorNode[dayId];
     }
 
     /// @notice Open the transport epoch of an old-wire packet that landed
@@ -649,12 +595,17 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
     // ─── Transport epochs PR 3b-ii-A: the draws ─────────────────────────────
 
     /// @notice What `dayId`'s epochs can fund right now, within one scan
-    ///         window, and whether the window ended before the index did.
-    /// @dev    The read every armed-day settlement and preview makes, through
-    ///         {LibRewardCustody.callTransportCoverageForDay}; see
-    ///         {LibRewardCustody.transportCoverageForDay} for what the two
-    ///         figures mean and why a cap hit defers a day.
-    function getTransportCoverageForDay(uint256 dayId) external view returns (uint256 available, bool capHit) {
+    ///         window; whether the window ended before the index did; and what
+    ///         the window held that no draw may take yet, by named reason.
+    /// @dev    See {LibRewardCustody.TransportDrawPlan} for the two withheld
+    ///         figures (Codex #2276 r26): `withheldShared` waits for the
+    ///         contested-allocation machinery, `withheldUnattested` for its
+    ///         packet's split attestation.
+    function getTransportCoverageForDay(uint256 dayId)
+        external
+        view
+        returns (uint256 available, bool capHit, uint256 withheldShared, uint256 withheldUnattested)
+    {
         return LibRewardCustody.transportCoverageForDay(LibVaipakam.storageSlot(), dayId);
     }
 

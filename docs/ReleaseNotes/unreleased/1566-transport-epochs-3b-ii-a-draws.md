@@ -37,7 +37,20 @@ deficit against the shared sources over the **allocation domain**, fresh
 first on ties. The domain is the days one settlement call prices for one
 claimant — a single day for a forfeit or expiry sweep — and its needs are
 totalled once per call and worked down as days settle; nothing is carried
-across calls. Two of the design's own cases are the reason. Five fresh and
+across calls. The domain is deliberately the GROSS needs — what the call
+would price if every day settled — not the days a funded call ends up
+settling: those depend on which leg each epoch's leftover coverage took,
+which is the very choice the domain guides, so a funded domain would be a
+fixed point with no single-pass answer. The choice only decides which shared
+source pays an obligation in the call — never whether value is paid, moved or
+lost — and a day it leaves short defers whole to the next call. Since an
+epoch is drawn only once attested, and an attested epoch's two component
+rooms together never exceed its balance, the choice has nothing to decide for
+any epoch ingress creates today; it is kept for an epoch whose rooms together
+exceed what it holds. The same pass's quick check for whether any reachable
+day lists an epoch now gives each side the whole day allowance, since a side
+that defers on its first day leaves the next side all of it. Two of the
+design's own cases are the reason. Five fresh and
 five recycled, with five of live fresh, an empty bucket and a five-token
 epoch, is fully payable only if live pays the fresh and the epoch pays the
 recycled — a blind fresh-first rule would refuse a claim the funding fully
@@ -67,16 +80,26 @@ before, and a shortfall of it still defers.
 Every draw is recorded on the epoch as a fresh leg and a recycled leg, so
 the ledger's conservation identity — what was admitted equals what is
 held, plus what was parked, plus what left by classification, plus what
-the legs paid, plus what a late attestation showed to lie outside both
-caps — holds after every draw, and a delivery's attested fresh cap is
-netted by the fresh leg its epoch has already paid. Where a delivery's split is attested, its epoch pays each leg only
-within that component's remaining cap; where the split arrives after
-draws, the legs already drawn are re-typed so the caps hold, the epoch's
-total unchanged, each cap read net of the classification the delivery
-already carried; a classification recorded before the split that already
-exceeds a cap is not undone by the attestation — it is recorded as a
-divergence for the correction path, and no further draw or
-classification of that component is admitted meanwhile. A deferred settlement's cursor move is progress the
+the legs paid — holds after every draw, and a delivery's attested fresh cap
+is netted by the fresh leg its epoch has already paid.
+
+**An epoch is drawn only once its split is attested.** Until the source
+chain's attestation of a delivery's fresh/recycled split lands, its epoch is
+withheld from every day's draws and reported as withheld for that reason.
+A leg is typed once, by the caps it is drawn under, and never retyped. An
+earlier version drew an unattested epoch and retyped its legs when the split
+arrived — but by then the claim had already charged the bucket, released the
+recycled commitment and charged live funding for the legs as first typed, so
+the retyped epoch and those ledgers told different stories. Once attested, the
+epoch pays each leg only within that component's remaining cap, each cap read
+net of the classification the delivery already carried; a classification
+recorded before the split that already exceeds a cap is not undone by the
+attestation — it is recorded as a divergence for the correction path, and no
+further draw or classification of that component is admitted meanwhile. A
+later classification correction moves no drawn leg either: where it takes a
+component's classification plus that component's drawn leg past the cap, the
+excess is reported on the same divergence view and no further draw of that
+component is admitted. A deferred settlement's cursor move is progress the
 claim keeps even when it paid nothing, so a retry never scans the same
 exhausted window twice, and such a deferral ends that call's settlement on
 every side, so the preview — which cannot move the cursor — describes what
@@ -99,39 +122,41 @@ ledger's choice and not the indexer's; same-block arrivals in a fixed order by d
 linked into its place in constant work (a materializer may name the
 predecessor; without one the ledger searches back from the newest for a
 bounded number of steps and refuses beyond that), so indexing an epoch
-late never costs more than indexing it on time; a day indexed before the
-ordered list existed is read exactly as it was, from its membership in
-the order it was indexed, until a permissionless, bounded catch-up has
-linked its members and carried its record of consumption over to the
-linked order exactly, so nothing the day reports changes at the switch —
-so an in-place upgrade needs no migration step and no epoch is ever
-invisible —
+late never costs more than indexing it on time; every epoch is linked as
+it is indexed, so a day's order holds it whole from its first member and
+a day is read one way only — an earlier revision of this release carried a
+second, membership-ordered read path for days indexed before the order
+existed, with a catch-up step and a switch-over; no chain ever held such a
+day, and two read sources were the root of several review findings, so the
+path was removed rather than carried —
 so the **bounded window** a day is read through always holds its oldest
 epochs, and within the window they are spent in an order the ledger
-fixes rather than the order anyone indexed them: the epoch listing the
-**fewest days first**, the oldest arrival on ties; the order is a
+fixes rather than the order anyone indexed them: the **oldest arrival
+first**, the epoch's identifier on ties; the order is a
 property of the epochs in the window, never of who indexed them or how
 they were read, and that order is the priority in which epochs are spent.
 An epoch's flexible balance — what either leg may take — is held back
 from a leg only where a later epoch's capacity for the other leg could
 not otherwise be used, so the two legs are paid the most any assignment
 could pay them without a lower-priority epoch being spent ahead of a
-higher one, and coverage one leg's cap rejects
-is offered to the other leg; a day indexed before the ordered list
-existed and wider than one window defers, drawing nothing, until enough
-of its members are exhausted or the catch-up has linked it; an attested
+higher one. Where either leg could take a flexible unit and the day is
+covered the same amount either way, it goes to the leg that would otherwise
+have to **reach furthest** into the window to be served, so the epochs
+actually opened are the earliest ones and the furthest — which may be the
+only one funding another day — is left standing. A leg the window cannot
+serve at all reaches past its end, the furthest there is, so it is served
+at once, which is the same rule as the reservation above. Coverage one leg's cap rejects
+is offered to the other leg; a day wider than one window is read through
+that window and draws from it, rather than being refused outright, because
+the window is always a prefix of the day's one order; an attested
 epoch pays each leg only within that component's recorded cap, and the
 one unit a scaling residual can leave outside both caps is never drawn
-once the split is known — drawn before it was, it is recorded beyond
-both caps, inside the epoch's identity, for the close-out's disposition
-path; and a
+and stays in the epoch for the close-out's disposition path; and a
 forfeit's or an expiry's recycled slice is a commitment release, not a
 funding pull, so it draws no epoch value — the epoch's coverage goes to
-the legs that need funding. An epoch that lists fewer days has fewer other
-obligations that could need it, so it is spent first and the wider one is
-kept for the days only it can fund — the design's own default, applied on
-chain because indexing is open to anyone and its order would otherwise
-decide who gets scarce funding. An epoch whose membership is still being
+the legs that need funding. The spending order is fixed by the ledger —
+arrival, then identifier — because indexing is open to anyone and its order
+would otherwise decide who gets scarce funding. An epoch whose membership is still being
 written in pages is invisible to every day until its last page lands, so
 a first page's days cannot drain what later pages' days were owed. When
 more epochs list a day than one window scans, and the visible coverage
@@ -164,11 +189,36 @@ epoch paid retires its commitment the way a forfeit's does — without a
 bucket debit, since the bucket never paid it — so what the mirror reports
 as fundable is not depressed by obligations that have already ended.
 
-What this release deliberately does not decide: an allocation the design
-calls **contested** — one where another obligation is known to be
-competing for the same epoch — is refused until the contested-allocation
-machinery lands, and "known" is read as the design defines it, through a
-staging reference, which this release has none of. The close-out of an
-epoch (parking its remainder, acknowledging it, the operator dispositions)
-stays unavailable to everyone, as the previous release left it, until the
-per-day obligation check that gates it lands.
+**An epoch listing more than one day is withheld until contested
+allocation lands.** The design refuses a draw that another day's known unmet
+obligation is competing for, and draws an epoch listing a not-yet-arrived day
+only for a day's gap. Neither condition can be checked yet: an epoch records
+how many days it lists but not which ones, and there is no per-day record of
+unmet obligations. So every epoch listing more than one day is withheld from
+every day's draws, reported as withheld for that reason, and kept whole for
+the contested-allocation machinery, which settles it. An intermediate version
+of this change drew such epochs last, for a day's gap only; that still let an
+underfunded day drain an epoch another day's unmet obligation was counting
+on, which is exactly the contested draw the design refuses. A day that only a
+shared epoch could fund defers until then; nothing is spent or lost.
+
+**A claim now allocates against the live funding it will actually be
+checked against.** The claim chose which part of a day an epoch pays using
+the delivered ledger alone, while its final check requires every live-paid
+unit to be backed by tokens actually held. With the ledger showing funding
+the backing could not support, the allocator could spend an epoch on the
+recycled leg and leave the fresh leg to live funding that the final check
+then refused, reverting a claim that a different split funds in full. The
+claim and its preview now read the same live-backed figure the expiry and
+forfeit sweeps already used.
+
+**The reconciliation view says when an excess is not yet knowable.** For a
+recorded delivery whose split has not arrived, the view that reports how far
+a classification exceeds its attested caps now says so explicitly instead of
+reporting a zero, which reconciliation tooling would have read as "within
+its caps".
+
+What this release deliberately does not decide: the close-out of an epoch
+(parking its remainder, acknowledging it, the operator dispositions) stays
+unavailable to everyone, as the previous release left it, until the per-day
+obligation check that gates it lands.

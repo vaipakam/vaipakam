@@ -227,7 +227,7 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
     }
 
     function _legs(bytes32 h) internal view returns (uint256 f, uint256 r) {
-        (f, r, ) = _epoch().getTransportBatchLegs(h);
+        (f, r) = _epoch().getTransportBatchLegs(h);
     }
 
     function _cursor(uint256 d) internal view returns (uint256 c) {
@@ -849,32 +849,32 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         _epoch().materializeTransportBatchPage(h, dayList); // page one: days 1..32 — day 1 lists it, the batch is not whole
     }
 
-    function test_AnEpochNotYetWhole_WhenTheRecordScans_IsRevisitedOnceWhole() public {
+    /// @dev A SHARED epoch the record scans is passed, not remembered, and
+    ///      never staged — before or after its membership is whole (Codex #2276
+    ///      r26, carried into staging): staging from it is the contested draw
+    ///      the plan refuses until 3c, and a day holding many of them must not
+    ///      fill the record's page of pending re-checks.
+    function test_ASharedEpoch_WhenTheRecordScans_IsPassedNotRemembered() public {
         _scene();
         _wideDay(true);
         vm.warp(block.timestamp + 10);
         bytes32 paged = _pagedEpochOf(TINY, 950, keccak256("paged"));
-        _ingress().onRemitSplitAttested(CHAIN_BASE, REMITTER, 950, TINY, 0); // typed, but not whole
+        _ingress().onRemitSplitAttested(CHAIN_BASE, REMITTER, 950, TINY, 0); // typed, shared, not yet whole
         assertEq(_claim(), 0);
         _staging().prepareStagedDay(_key()); // the window
-        _staging().prepareStagedDay(_key()); // the 65th, and the paged epoch: pending, remembered
+        _staging().prepareStagedDay(_key()); // the 65th; the shared epoch is passed
         assertTrue(_rec().scanComplete);
-        assertEq(_rec().skippedCount, 1, "an epoch not yet whole is remembered, not passed");
+        assertEq(_rec().skippedCount, 0, "a shared epoch is withheld, not pending");
         (, , uint256 refs) = _staged(paged);
         assertEq(refs, 0, "and not staged from");
-        // Its last page lands: the list did not grow and no link moved, yet
-        // the reservation must not walk past an epoch now stageable.
         uint256[] memory dayList = new uint256[](33);
         for (uint256 i; i < 33; ++i) dayList[i] = i + 1;
         _epoch().materializeTransportBatchPage(paged, dayList);
         _liveFresh(1e18);
-        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.StagingScanIncomplete.selector, _key()));
         _staging().reserveStagedDay(_key());
-        (uint256 sf, ) = _staging().prepareStagedDay(_key());
-        assertEq(sf, TINY, "re-checked whole, it is staged");
-        assertEq(_rec().skippedCount, 0, "and forgotten as pending");
-        _staging().reserveStagedDay(_key());
-        assertEq(_rec().phase, uint8(LibVaipakam.StagingPhase.Reserved));
+        assertEq(_rec().phase, uint8(LibVaipakam.StagingPhase.Reserved), "nothing pending stands in the way");
+        (, , refs) = _staged(paged);
+        assertEq(refs, 0, "and, whole, it is still never staged");
     }
 
     function test_ALoanSideReservation_DefersAnotherHolder_NeverTrims() public {
@@ -1065,19 +1065,6 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         assertEq(lens.getLoanSideRewardReserved(LOAN, LibVaipakam.RewardSide.Lender), NEED, "the loan side's reservation");
         (, uint256 remaining) = RewardRemittanceLensFacet(address(diamond)).getDeliveredFreshBound();
         assertEq(remaining, 1e18 - live, "the delivered bound is net of the reservation");
-    }
-
-    function test_APreListDay_OpensNoRecord() public {
-        // A day indexed before the list existed is read from its array; a
-        // wide one defers with nothing to stage, and the opener refuses a day
-        // not read from its list, so no record ever scans an array-backed day.
-        _scene();
-        _wideDay(true);
-        _mut().resetTransportDayListRaw(1);
-        vm.prank(alice);
-        (bool ok, ) = address(diamond).call(abi.encodeWithSelector(RewardClaimFacet.claimInteractionRewards.selector));
-        ok; // deferred either way: nothing to stage from an array-backed day
-        assertEq(_rec().phase, uint8(LibVaipakam.StagingPhase.None), "no record on a day read from its array");
     }
 
     function test_AChainRestart_CountsItsOwnWork_InTheDeadline() public {

@@ -67,45 +67,6 @@
   },
   {
     "type": "function",
-    "name": "epochLinkTransportDayIndex",
-    "inputs": [
-      {
-        "name": "dayId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "hints",
-        "type": "bytes32[]",
-        "internalType": "bytes32[]"
-      },
-      {
-        "name": "lateHints",
-        "type": "bytes32[]",
-        "internalType": "bytes32[]"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "linked",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "total",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "converted",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "epochPruneTransportDayCursor",
     "inputs": [
       {
@@ -322,11 +283,6 @@
         "name": "consumedRecycled",
         "type": "uint256",
         "internalType": "uint256"
-      },
-      {
-        "name": "consumedBeyondCaps",
-        "type": "uint256",
-        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -380,6 +336,16 @@
         "name": "capHit",
         "type": "bool",
         "internalType": "bool"
+      },
+      {
+        "name": "withheldShared",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "withheldUnattested",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -479,11 +445,6 @@
     ],
     "outputs": [
       {
-        "name": "linked",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
         "name": "total",
         "type": "uint256",
         "internalType": "uint256"
@@ -492,11 +453,6 @@
         "name": "cursor",
         "type": "bytes32",
         "internalType": "bytes32"
-      },
-      {
-        "name": "converted",
-        "type": "bool",
-        "internalType": "bool"
       }
     ],
     "stateMutability": "view"

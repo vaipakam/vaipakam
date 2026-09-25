@@ -7572,41 +7572,26 @@ library LibVaipakam {
         ///      NODE (zero = the head). A list inserts in constant work given
         ///      the predecessor, which is what bounds a late epoch's indexing;
         ///      an arrival-sorted ARRAY had to shift every newer entry, which
-        ///      no budget could bound for the day itself. The index cursor
-        ///      `transportDayCursor` above is the day's cursor as a POSITION
-        ///      in the ARRAY's order — the count of leading exhausted epochs —
-        ///      read while the day is read from the array; the list's own is
-        ///      `transportDayListCursor` below (Codex #2276 r11, r14 P2).
+        ///      no budget could bound for the day itself.
+        ///
+        ///      The LIST is a day's ONLY order and its only read source (Codex
+        ///      #2296 items 2 and 4): every member is linked as it is pushed,
+        ///      so the list holds every day whole from its first member, and
+        ///      `transportBatchesByDay` is the membership set alone. An earlier
+        ///      revision of this slice carried a second, ARRAY-ordered read
+        ///      path for days indexed before the list, with a catch-up link
+        ///      and a conversion; no chain ever held such a day, and the two
+        ///      sources were the root of four review rounds, so the path was
+        ///      removed rather than carried. `transportDayCursor` above is the
+        ///      day's cursor as a POSITION in the list's order — the count of
+        ///      leading exhausted epochs, exact because the cursor only
+        ///      advances (Codex #2276 r11) — and `transportDayCursorNode` the
+        ///      same cursor as the node it stands on.
         mapping(uint256 => bytes32) transportDayHead;
         mapping(uint256 => bytes32) transportDayTail;
         mapping(uint256 => mapping(bytes32 => bytes32)) transportDayNext;
         mapping(uint256 => mapping(bytes32 => bytes32)) transportDayPrev;
         mapping(uint256 => bytes32) transportDayCursorNode;
-        /// @dev How many of `transportBatchesByDay[d]`'s leading entries the
-        ///      day's list holds (Codex #2276 r8 P1). A day indexed before the
-        ///      list existed has a full array and an empty list, and is READ
-        ///      FROM THE ARRAY — its pre-list order and its array cursor
-        ///      `transportDayCursor` — until a permissionless, bounded link
-        ///      has caught the list up; then the list is the order. A day
-        ///      first indexed under the list links each entry as it is
-        ///      pushed, so its count always equals its length. No migration
-        ///      step is needed and no epoch is ever invisible.
-        mapping(uint256 => uint256) transportDayLinked;
-        /// @dev Whether a day whose list holds every member has had its
-        ///      consumption count carried over to the list's order (Codex
-        ///      #2276 r14 P2). A day indexed before the list keeps being read
-        ///      from the array — its array cursor exact — until a bounded
-        ///      conversion prune has run to a stop short of its bound; only
-        ///      then do reads switch, so the position the day reports is
-        ///      exact at the switch. A day first indexed under the list is
-        ///      converted from its first member.
-        mapping(uint256 => bool) transportDayConverted;
-        /// @dev The day's cursor as a POSITION in the LIST's order — the
-        ///      count of leading exhausted epochs — kept exact because the
-        ///      cursor only advances; `transportDayCursor` above is the same
-        ///      count in the ARRAY's order, read while the day is read from
-        ///      the array.
-        mapping(uint256 => uint256) transportDayListCursor;
         // ───────── 3b-ii-A2 (#2305) — staging (append-only) ─────────
         /// @dev One record per obligation-day; key = keccak256(abi.encode(user, side, day)).
         mapping(bytes32 => StagingRecord) stagingRecords;
@@ -7888,25 +7873,11 @@ library LibVaipakam {
         ///      obligations: the packet-level EXIT a draw records beside its
         ///      step-down of `unclassified`, so the packet's own identity
         ///      holds after every draw exactly as its epoch's does (Codex
-        ///      #2274 r8 P1). Equals the epoch's two consumed legs together
-        ///      with what a late attestation recorded beyond both caps
-        ///      (`consumedFresh + consumedRecycled + consumedBeyondCaps`,
-        ///      Codex #2276 r11 P2): the attestation retypes legs and moves
-        ///      a scaling residual between the three, and none of that is a
-        ///      packet exit.
+        ///      #2274 r8 P1). Equals the epoch's two consumed legs
+        ///      (`consumedFresh + consumedRecycled`): a leg is typed ONCE, by
+        ///      the attested caps it is drawn under, and never retyped
+        ///      (Codex #2276 r26 P1) — an unattested epoch is not drawn.
         uint256 drawn;
-        /// @dev #1566 transport epochs PR 3b-ii-A (Codex #2276 r15 P1),
-        ///      appended — by how much a classification the packet carried
-        ///      BEFORE its split was attested exceeds the attested cap of
-        ///      that component: recorded at attestation as a DIVERGENCE for
-        ///      the correction path (a classification moved custody rows;
-        ///      only a correction moves them back), never satisfied by
-        ///      retyping. Zero for every packet classified after, or within,
-        ///      its attested caps. The caps net of classification saturate
-        ///      at zero meanwhile, so nothing further is drawn or classified
-        ///      on that component.
-        uint256 classifiedFreshBeyondCap;
-        uint256 classifiedRecycledBeyondCap;
     }
 
     /// @notice #1566 transport epochs PR 3b — the TRANSPORT EPOCH of one
@@ -7977,16 +7948,6 @@ library LibVaipakam {
         bool released;
         uint256 consumedFresh;
         uint256 consumedRecycled;
-        /// @dev #1566 transport epochs PR 3b-ii-A, appended (Codex #2276 r6).
-        ///      What the epoch's draws spent that an attestation, arriving
-        ///      after them, showed to lie OUTSIDE both of the packet's recorded
-        ///      component caps — the scaling residual the two floored figures
-        ///      leave, at most one unit. Neither leg may carry it (each leg
-        ///      stays within its cap), and it is not lost: the identity
-        ///      `admitted == balance + parked + debited + consumedFresh +
-        ///      consumedRecycled + consumedBeyondCaps` holds, and the
-        ///      close-out's disposition path is where the record is settled.
-        uint256 consumedBeyondCaps;
         /// @dev 3b-ii-A2 (#2305), appended — the batch's STAGED components:
         ///      debited from `balance` by a standing staging record, credited
         ///      to no one until that record resolves (consumed) or unwinds
@@ -7995,7 +7956,7 @@ library LibVaipakam {
         ///      `consumedFresh` against one fresh cap could otherwise both take
         ///      it. The identity gains both terms: `admitted == balance +
         ///      parked + debited + consumedFresh + consumedRecycled +
-        ///      consumedBeyondCaps + stagedFresh + stagedRecycled`.
+        ///      stagedFresh + stagedRecycled`.
         uint256 stagedFresh;
         uint256 stagedRecycled;
     }

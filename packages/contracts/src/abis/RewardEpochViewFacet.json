@@ -44,6 +44,11 @@
         "name": "capHit",
         "type": "bool",
         "internalType": "bool"
+      },
+      {
+        "name": "deferred",
+        "type": "bool",
+        "internalType": "bool"
       }
     ],
     "stateMutability": "view"

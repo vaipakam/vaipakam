@@ -2348,15 +2348,18 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         // selector must not survive routed to bytecode that checks neither
         // the manual pause, the epoch, nor the cap.
         s[0] = bytes4(keccak256("seedArmedFreshPaid(uint256)"));
-        // 3b-ii-A2 (#2305; Codex #2308 r6) — the two hinted index entries
-        // gained `lateHints` and the claim walk's host entry gained the
-        // delivery venue, so their earlier shapes are retired here. No chain
-        // has routed any of the three (the A1 and A2 cuts are undeployed), so
-        // each Remove leg is a no-op today; they are listed because the rule
-        // is stated once — a renamed selector needs its Remove leg, or an
-        // in-place refresh leaves the old shape routed to the old bytecode,
-        // and a stale hinted entry would link an epoch into the list without
-        // the late chain a standing record scans.
+        // Retired selectors need an explicit Remove leg: merely dropping one
+        // from the facet's cut list would leave its OLD route pointed at the
+        // stale implementation wherever it were routed. No chain routes any
+        // of these three (none has the epoch facet at all), so each leg is a
+        // no-op today and is here so it cannot become one that matters.
+        // - #1566 3b-ii-A (Codex #2296 items 2 and 4): the pre-list catch-up
+        //   link is gone with the read path it served.
+        // - 3b-ii-A2 (#2305; Codex #2308 r6): the hinted index entry gained
+        //   `lateHints` and the claim walk's host entry gained the delivery
+        //   venue, so their earlier shapes are retired; a stale hinted entry
+        //   would link an epoch into the list without the late chain a
+        //   standing record scans.
         s[1] = bytes4(keccak256("materializeTransportBatchPageHinted(bytes32,uint256[],bytes32[])"));
         s[2] = bytes4(keccak256("epochLinkTransportDayIndex(uint256,bytes32[])"));
         s[3] = bytes4(keccak256("epochClaimEntriesWalk(address,uint256,uint256)"));

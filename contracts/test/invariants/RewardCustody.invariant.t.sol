@@ -254,11 +254,11 @@ contract RewardCustodyInvariant is SetupTest {
             (bytes32 packetHash, uint256 balance, uint256 admitted, , , ) = ep.getTransportBatch(h);
             if (packetHash == bytes32(0)) continue; // a typed delivery holds no epoch
             (uint256 parked, , , , uint256 debited) = ep.getTransportRemainder(h);
-            (uint256 legFresh, uint256 legRecycled, uint256 beyond) = ep.getTransportBatchLegs(h);
+            (uint256 legFresh, uint256 legRecycled) = ep.getTransportBatchLegs(h);
             // 3b-ii-A2 (#2305) — the identity gains the staged terms.
             (uint256 stagedFresh, uint256 stagedRecycled, ) = ep.getTransportBatchStaged(h);
             assertEq(
-                balance + parked + debited + legFresh + legRecycled + beyond + stagedFresh + stagedRecycled,
+                balance + parked + debited + legFresh + legRecycled + stagedFresh + stagedRecycled,
                 admitted,
                 "transport epoch conserves"
             );
@@ -266,17 +266,21 @@ contract RewardCustodyInvariant is SetupTest {
         }
     }
 
-    /// #1566 transport epochs 3b-ii-A (Codex #2276 r8) — the day's ordered
-    /// list holds every member the handler indexed, in (arrival, batch id)
-    /// order: the linked count equals the membership, and the node pages walk
-    /// exactly that many, each ordered after the last — except that the
-    /// order may restart right after the cursor, where a late epoch older
-    /// than the passed prefix takes the first place of the window (r11). The
-    /// handler's untyped deliveries all list day 1.
+    /// #1566 transport epochs 3b-ii-A — the day's ordered list holds every
+    /// member the handler indexed, in (arrival, batch id) order: the node
+    /// pages walk exactly as many as the day has ever listed, each ordered
+    /// after the last — except that the order may restart right after the
+    /// cursor, where a late epoch older than the passed prefix takes the first
+    /// place of the window (Codex #2276 r11). The handler's untyped deliveries
+    /// all list day 1.
+    ///
+    /// There is no longer a "how much is linked" figure to compare (Codex
+    /// #2296 items 2 and 4): every member is linked as it is pushed, so the
+    /// count the walk reaches IS the membership, and this walk is what proves
+    /// it rather than a flag the ledger sets about itself.
     function invariant_DayIndexIsLinkedAndOrdered() public view {
         RewardEpochFacet ep = RewardEpochFacet(address(diamond));
-        (uint256 linked, uint256 total, bytes32 cursorNode, ) = ep.getTransportDayIndex(1);
-        assertEq(linked, total, "every member is linked");
+        (uint256 total, bytes32 cursorNode) = ep.getTransportDayIndex(1);
         bytes32 from;
         uint256 seen;
         uint64 lastAt;
