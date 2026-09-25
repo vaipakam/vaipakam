@@ -302,9 +302,9 @@ describe('extractRevertData', () => {
       expect(extractRevertData(e)).toBe(SEL_HF_TOO_LOW);
     });
 
-    // #2336 r2: `metaMessages` is not purely the request — viem names an
-    // undecodable revert's own selector there — so structured bytes must not
-    // be filtered against it.
+    // #2336 r2/r3: `metaMessages` is not purely the request — viem names an
+    // undecodable revert's own selector there. Bytes a node reports in its own
+    // structured fields are therefore never counted as its request echo.
     it('keeps an undecodable revert whose selector viem also lists in metaMessages', () => {
       const sel = '0xabcd1234';
       const reverted = new ContractFunctionRevertedError({
@@ -316,6 +316,31 @@ describe('extractRevertData', () => {
       expect(extractRevertData(reverted)).toBe(sel);
       const wrapped = new CallExecutionError(reverted as never, request);
       expect(extractRevertData(wrapped)).toBe(sel);
+    });
+
+    // #2336 r3: a provider can echo the request in JSON-RPC `error.data`,
+    // which viem copies to `RpcRequestError.data` — a STRUCTURED field.
+    const rpcData = (data: string, message = 'execution reverted') =>
+      new RpcRequestError({
+        body: { method: 'eth_call', params: [{ data: calldata }] },
+        error: { code: 3, message, data },
+        url: 'https://rpc.example',
+      });
+
+    it('does not read a provider echo of the calldata in `error.data` as the revert', () => {
+      const e = new CallExecutionError(rpcData(calldata), request);
+      expect((e.cause as { data?: unknown }).data).toBe(calldata); // really echoed
+      expect(extractRevertData(e)).toBeUndefined();
+      const trap = new EstimateGasExecutionError(
+        rpcData(calldata, 'exceeds max transaction gas limit'),
+        request,
+      );
+      expect(extractRevertSelector(trap)).toBeUndefined();
+    });
+
+    it('still reads a real revert the provider returns in `error.data`', () => {
+      const e = new CallExecutionError(rpcData(errorString), request);
+      expect(extractRevertData(e)).toBe(errorString);
     });
 
     it('still reads a revert quoted in the response text (`details`)', () => {
