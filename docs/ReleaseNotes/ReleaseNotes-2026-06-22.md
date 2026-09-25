@@ -25,7 +25,7 @@ accumulated since the last dated release-notes file. The headline themes:
   model, and the ossification roadmap.
 - **Refinance carry-over correctness (#595).**
 
-### #394 — Dual-factor risk premiums + a runtime risk-appetite knob
+## #394 — Dual-factor risk premiums + a runtime risk-appetite knob
 
 Risk pricing on Vaipakam now has **two independent, governance-tunable levers**,
 where before it had hard-coded constants. Neither touches a human's typed
@@ -85,7 +85,7 @@ incident.
 The optimistic-delta / cooldown "risk-steward" machinery is intentionally left
 to the governance track (#404).
 
-### #395 — Graduated partial-liquidation sizing ("liquidate only as much as needed")
+## #395 — Graduated partial-liquidation sizing ("liquidate only as much as needed")
 
 Intentional partial liquidation already restored an unhealthy loan to health by
 selling the smallest collateral slice the keeper chose — but nothing stopped a
@@ -132,7 +132,7 @@ dust floor) are set together via a single admin call, each range-checked; all
 default to sensible values so the feature is active out of the box without any
 configuration.
 
-### #400 — Pluggable quote-time interest-rate model (the mechanism, identity by default)
+## #400 — Pluggable quote-time interest-rate model (the mechanism, identity by default)
 
 Vaipakam's interest rate is set by the **human-driven P2P order book** — lenders
 and borrowers post offers at the rate *they* choose, and the market clears
@@ -185,7 +185,7 @@ Safety / anti-rate-setting hardening:
   the consumer work (risk premiums / auto-lend); this change ships only the
   mechanism and never auto-posts on its own.
 
-### #404 — Published ossification roadmap + guardian-pause framing
+## #404 — Published ossification roadmap + guardian-pause framing
 
 Vaipakam now publishes an **ossification roadmap** (`docs/DesignsAndPlans/OssificationRoadmap.md`)
 — a plain-English, honest commitment about which protocol rules can still
@@ -219,7 +219,7 @@ custody-moving surface (#651).
 No contract behaviour changed — this is a published commitment and an accurate
 trust-surface map.
 
-### #594 (PR 2/3) — auto-consolidate a transferred position on borrower-side actions
+## #594 (PR 2/3) — auto-consolidate a transferred position on borrower-side actions
 
 PR 1 shipped the consolidation primitive plus the proactive
 `consolidate…ToHolder` entry points. This PR makes consolidation **automatic**
@@ -267,7 +267,7 @@ The full swap-to-repay and the prepay-listing creation paths are wired in the
 remaining PRs / follow-up (see #656); lender-side and both-side close-out
 wiring lands in PR 3.
 
-### #594 (PR 3/3a) — auto-consolidate on the two most common loan terminations
+## #594 (PR 3/3a) — auto-consolidate on the two most common loan terminations
 
 Following PR 1 (the primitive) and PR 2 (borrower-side mid-life actions), this PR
 makes consolidation automatic on **both sides** for the two most common ways a
@@ -306,7 +306,7 @@ with the architectural note that the size-constrained liquidation facets need a
 cross-facet entry point (the consolidation logic inlines into each caller, and
 those facets are already at the contract-size limit).
 
-### #594 (PR 1/3) — collateral/principal consolidation to the position-NFT holder: the primitive
+## #594 (PR 1/3) — collateral/principal consolidation to the position-NFT holder: the primitive
 
 When a position NFT is transferred, the underlying vaulted assets cannot move
 with it (an ERC-721 transfer can't carry ERC-20/721/1155 balances), so they stay
@@ -379,7 +379,7 @@ carry-over offer's amount is frozen while it stays refinance-tagged (cancel
 and re-create to retarget), and a carry-over offer is all-or-nothing
 single-value from creation. Closes #595.
 
-### #597 — reserve held-for-lender VPFI against the unstake path
+## #597 — reserve held-for-lender VPFI against the unstake path
 
 When a lender's obligation is transferred or offset to a new offer mid-loan, the
 amount owed to that lender is parked in their vault as a "held-for-lender"
@@ -725,7 +725,7 @@ fund-misrouting gap.
   internal-match proceeds are already current-holder-safe via #585
   `lenderClaims` + `claimAsBorrower`.
 
-### #661 — reserve a borrower's VPFI default surplus against the unstake path
+## #661 — reserve a borrower's VPFI default surplus against the unstake path
 
 When a loan is liquidated or defaults and the collateral is worth more than the
 debt, the leftover surplus is returned to the borrower's vault and paid out

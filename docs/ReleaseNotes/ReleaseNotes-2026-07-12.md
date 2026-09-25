@@ -677,7 +677,7 @@ marker on a clean read). Only a genuinely sanctioned recipient is frozen out.
 Relates to #998, #1132; implements `docs/DesignsAndPlans/S10CentralEnforcement.md`
 §2 Invariant B + Keystone. Closes #1144.
 
-### Indexer: Base-Sepolia ingest stall fixed — offer modifications no longer wedge the scan (#1149)
+## Indexer: Base-Sepolia ingest stall fixed — offer modifications no longer wedge the scan (#1149)
 
 The chain indexer's handler for offer modifications tried to save a
 "maximum collateral" figure into a database column that was never
@@ -1147,7 +1147,7 @@ logic changes. Operators pick it up by re-running the testnet-mocks deploy
 (reuse-pinning every existing faucet asset except the relabelled token) and
 the frontend deployments sync.
 
-### alpha02: UX trust batch 1 — six review findings fixed
+## alpha02: UX trust batch 1 — six review findings fixed
 
 First fix batch from the 2026-07-11 whole-site UI/UX review
 (UX-001/002/007/020/021/022):
@@ -1167,7 +1167,7 @@ First fix batch from the 2026-07-11 whole-site UI/UX review
   user to retry.
 - Loading indicators actually spin.
 
-### alpha02: UX mobile batch 2 — four review findings fixed
+## alpha02: UX mobile batch 2 — four review findings fixed
 
 Second fix batch from the 2026-07-11 whole-site UI/UX review
 (UX-006/019/039/042), all phone-experience fixes:
@@ -1185,7 +1185,7 @@ Second fix batch from the 2026-07-11 whole-site UI/UX review
   comfortable target opens the block explorer — replacing tiny link
   glyphs well under thumb size.
 
-### alpha02: whole-site UI/UX review — findings logged + reusable evidence sweep
+## alpha02: whole-site UI/UX review — findings logged + reusable evidence sweep
 
 A full-surface UI/UX review of the alpha02 site was run against the
 deployed testnet (every page, desktop and mobile, Basic and Advanced

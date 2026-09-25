@@ -4,7 +4,7 @@ The backstop gained its second half — #630 Role B, the liquidator-of-last-reso
 cash buyout — and governance gained four feature kill switches (#633) for
 aggregators, keepers, individual swap venues, and peer-data reads.
 
-### #630 — Treasury-seeded backstop, v0 Role B (liquidator-of-last-resort)
+## #630 — Treasury-seeded backstop, v0 Role B (liquidator-of-last-resort)
 
 The protocol backstop now has its second half: a cash buyout that can make a
 lender whole when a liquidation fails and the loan is stuck holding collateral
@@ -46,7 +46,7 @@ This completes the v0 backstop. Both halves stay inert until governance enables
 and funds them. The pooled-LP / first-loss version remains a separate future
 effort.
 
-### #633 — Admin/governance kill-switches for aggregators, keepers, swap venues, and peer data
+## #633 — Admin/governance kill-switches for aggregators, keepers, swap venues, and peer data
 
 Governance now has four additional emergency levers to pause individual platform
 features without disabling unrelated machinery. Each defaults to "active" so the

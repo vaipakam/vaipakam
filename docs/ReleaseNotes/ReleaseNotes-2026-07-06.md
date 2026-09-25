@@ -273,7 +273,7 @@ deployed, with no app release needed. Single-position lookups (a deep
 link to one offer) keep the direct single read: a batch of one gains
 nothing.
 
-### Offer Book: just-ended offers vanish even while the cache lags (alpha02)
+## Offer Book: just-ended offers vanish even while the cache lags (alpha02)
 
 The shared Offer Book (and every guided flow that reads it — borrow
 and lend matching, rentals, early exit) now double-checks the chain
@@ -298,7 +298,7 @@ drifted from the deployed contracts. alpha02 derives them from the
 compiled contract ABI, so a future contract change breaks tests
 loudly instead of silently disabling the safety net.
 
-### Market-listing check on pasted token addresses (alpha02)
+## Market-listing check on pasted token addresses (alpha02)
 
 Pasting an unknown token address into an offer form now also asks the
 wider market about it, alongside the existing security screen
@@ -317,7 +317,7 @@ screen keeps that job), it stays silent when the lookup itself fails,
 and it doesn't appear on test networks — where no test token has a
 market listing and the line would only teach people to ignore it.
 
-### Copy and legal honesty batch (alpha02)
+## Copy and legal honesty batch (alpha02)
 
 Three small alignment items from the spec-vs-app audit (#1030):
 
@@ -338,7 +338,7 @@ Three small alignment items from the spec-vs-app audit (#1030):
   names never participate in any check or verdict, and asset
   addresses deliberately stay hex.
 
-### Support drawer: connection health + report-a-problem (alpha02)
+## Support drawer: connection health + report-a-problem (alpha02)
 
 The naive-user app now has a Support button on every page — a small
 floating control that opens a health-check panel (#1028 item 4, the
@@ -488,7 +488,7 @@ still reads as not found, and a transport failure still reads as
 unavailable. Found by live-testing the two-illiquid-token flow on
 Base Sepolia.
 
-### Fewer wallet prompts: gasless Permit2 approvals (alpha02)
+## Fewer wallet prompts: gasless Permit2 approvals (alpha02)
 
 Posting an offer, accepting one, renting an NFT, and depositing VPFI
 previously needed a separate token-approval transaction before the
@@ -592,7 +592,7 @@ about; the rental, repayment, and VPFI surfaces follow under the same
 card, and the deeper prompt-reduction path (signature-based approvals)
 is tracked separately.
 
-### Send a support ticket from inside the app (alpha02)
+## Send a support ticket from inside the app (alpha02)
 
 The Support panel (the round button in the corner of every page) can
 now send a message straight to the team (#1040 phase 1):
@@ -648,7 +648,7 @@ storage incident cannot silently drop them, and the restore runbook
 covers them too. In builds where no support backend is configured,
 the panel says so and offers the email path — it never pretends.
 
-### Risk badges on the offer book and matcher; flagged offers leave the shortlist (alpha02)
+## Risk badges on the offer book and matcher; flagged offers leave the shortlist (alpha02)
 
 The independent token-security screen already guards the accept
 review (a deal with a flagged token cannot be signed). It now also
@@ -722,7 +722,7 @@ to the connected app:
   classified as wallet events rather than misfiled as contract
   reverts, which keeps the Diagnostics drawer's story truthful.
 
-### Fixed: dead loan links and a blind live-tail in the pro app
+## Fixed: dead loan links and a blind live-tail in the pro app
 
 Two defi-side fixes (#1057, #1064):
 

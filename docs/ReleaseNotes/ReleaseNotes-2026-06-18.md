@@ -56,7 +56,7 @@ Part of #398 / the #401 hybrid intent/liquidity program (phase v1.5). Builds on
 the standing-intent layer (#393); the offer-vs-intent capital isolation it relies
 on was settled in #621.
 
-### #399 — Treasury-seeded backstop, v0 Role A (counterparty-of-last-resort)
+## #399 — Treasury-seeded backstop, v0 Role A (counterparty-of-last-resort)
 
 The platform now has an optional, protocol-funded backstop that can step in as the
 lender when a borrower's offer would otherwise sit unmatched. It is governance-run,
@@ -85,7 +85,7 @@ backstop buying out a stuck, thin-market liquidation to make a lender whole) is 
 separate follow-up. Both remain off until governance explicitly enables and seeds
 the backstop.
 
-### #627 — Aggregator adapter screens its real principal's KYC
+## #627 — Aggregator adapter screens its real principal's KYC
 
 The ERC-4626 aggregator lender-adapter (#398) lends as the on-chain lender-of-record, so when a deploy enables KYC enforcement the protocol's threshold KYC check landed on the adapter rather than on the aggregator that actually controls the capital. The adapter now screens its real principal's KYC inside `matchLoan`, at the exact transaction value the accept path itself computes (a new public view exposes that valuation, so there's no risk of a re-derived value drifting from the protocol's own).
 

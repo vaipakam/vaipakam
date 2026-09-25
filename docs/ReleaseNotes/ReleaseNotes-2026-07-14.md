@@ -15,7 +15,7 @@ Alongside: the claimables feed learns about internally matched loans,
 and a deploy-env guard makes the silently-degraded frontend build that
 bit us this morning impossible to ship again.
 
-### Rental loans no longer default early or brick their own repayment (Pass-2 D1, #1188)
+## Rental loans no longer default early or brick their own repayment (Pass-2 D1, #1188)
 
 An NFT rental amortises by consuming one prepaid day at a time. Previously each
 daily deduction (and each multi-day rental partial-payment) shrank the loan's
@@ -82,7 +82,7 @@ lender-favourable, penalty-charging basis.
 On-time and in-term closes see no behavioural difference. Closes #1189
 (umbrella #1196).
 
-### Partial repayments: deleveraging is no longer blocked, and settled interest isn't double-counted (Pass-2 A2 + A3, #1190 / #1191)
+## Partial repayments: deleveraging is no longer blocked, and settled interest isn't double-counted (Pass-2 A2 + A3, #1190 / #1191)
 
 Two fixes to voluntary partial-repayment paths.
 
@@ -336,7 +336,7 @@ fresh page load always verifies from scratch. Transport failures are
 never remembered as verdicts, so "couldn't confirm" still surfaces as
 unavailable rather than a confident stale answer.
 
-### alpha02: risk visibility — health-aware list badges, grace countdown, jargon glosses (UX batch 3)
+## alpha02: risk visibility — health-aware list badges, grace countdown, jargon glosses (UX batch 3)
 
 Third batch from the 2026-07-11 whole-site UI/UX review
 (`docs/FindingsAndFixes/Findings20260711-Alpha02UiUxReview.md`),
@@ -367,7 +367,7 @@ becomes loss:
   loan-to-value numbers carry one-clause definitions instead of bare
   figures.
 
-### alpha02: dead-ends removed, product made discoverable (UX batch 4)
+## alpha02: dead-ends removed, product made discoverable (UX batch 4)
 
 Fourth batch from the 2026-07-11 whole-site UI/UX review
 (`docs/FindingsAndFixes/Findings20260711-Alpha02UiUxReview.md`),
@@ -408,7 +408,7 @@ that existed but couldn't be found are now findable:
   they're not part of now gets neutral "if nothing happens" wording
   instead of being addressed as the lender.
 
-### alpha02: cold-load performance — instant splash + code splitting (UX batch 5)
+## alpha02: cold-load performance — instant splash + code splitting (UX batch 5)
 
 Fifth batch from the 2026-07-11 whole-site UI/UX review
 (`docs/FindingsAndFixes/Findings20260711-Alpha02UiUxReview.md`),
@@ -443,7 +443,7 @@ a ~118 KB entry bundle, with the large dependencies loaded in parallel
 and the boot splash covering the wait. No behaviour changed — this is
 purely how fast the app starts and how it recovers across deploys.
 
-### alpha02: readable Activity feed (UX batch 6)
+## alpha02: readable Activity feed (UX batch 6)
 
 Sixth batch from the 2026-07-11 whole-site UI/UX review
 (`docs/FindingsAndFixes/Findings20260711-Alpha02UiUxReview.md`),
@@ -477,7 +477,7 @@ Per-row amounts are a follow-up (they need per-asset decimal
 resolution); the loan/offer link and the explorer transaction link
 carry provenance today.
 
-### Rate Desk order ticket — clearer why-disabled, re-confirm note, Max chips + fee preview (UX-009 / UX-016 / UX-027)
+## Rate Desk order ticket — clearer why-disabled, re-confirm note, Max chips + fee preview (UX-009 / UX-016 / UX-027)
 
 The Rate Desk order ticket used to grey out its **Post order** button with
 no explanation, silently un-tick the risk-terms checkbox on every
@@ -505,7 +505,7 @@ fixes:
   — a lender's net yield after the fee on interest, a borrower's one-time
   loan-initiation fee on the principal.
 
-### Rate Desk polish — readable ladder, honest fill %, clearer chips and match band (UX-028 / UX-036 / UX-037 / UX-038 / UX-045 / UX-046)
+## Rate Desk polish — readable ladder, honest fill %, clearer chips and match band (UX-028 / UX-036 / UX-037 / UX-038 / UX-045 / UX-046)
 
 A batch of Rate Desk readability and honesty fixes:
 
@@ -540,7 +540,7 @@ A batch of Rate Desk readability and honesty fixes:
   attribution shows only when a rate chart actually renders, not on the
   pick-a-market / loading / empty states where nothing is drawn.
 
-### Accessibility + header chrome — skip link, route focus, network indicator, readable build date (UX-031 / UX-013 / UX-044)
+## Accessibility + header chrome — skip link, route focus, network indicator, readable build date (UX-031 / UX-013 / UX-044)
 
 - **Skip link + focus on navigation (UX-031).** A "Skip to content" link is
   now the first thing keyboard focus reaches (off-screen until focused),
@@ -559,7 +559,7 @@ A batch of Rate Desk readability and honesty fixes:
   a readable form instead of a raw machine timestamp; the full string
   remains available in the diagnostics drawer.
 
-### Guided flow + offer-card clarity — earlier wallet prompt, role-specific CTAs, role-checking state, consistent empty state, "Post another" (UX-014 / UX-018 / UX-025 / UX-040 / UX-041)
+## Guided flow + offer-card clarity — earlier wallet prompt, role-specific CTAs, role-checking state, consistent empty state, "Post another" (UX-014 / UX-018 / UX-025 / UX-040 / UX-041)
 
 - **Connect prompt up front (UX-014).** The guided borrow/lend flow now
   shows a non-blocking "connect your wallet" note with a Connect button on
@@ -586,7 +586,7 @@ A batch of Rate Desk readability and honesty fixes:
   offers "Post another" beside "View my positions", resetting the flow for a
   fresh offer without leaving the page.
 
-### VPFI/faucet polish, nav alignment, and honest Telegram alerts — batch 8 remainder (UX-012 / UX-017 / UX-029 / UX-033 / UX-034 / UX-035 / UX-043 / UX-047 / UX-048 / UX-049)
+## VPFI/faucet polish, nav alignment, and honest Telegram alerts — batch 8 remainder (UX-012 / UX-017 / UX-029 / UX-033 / UX-034 / UX-035 / UX-043 / UX-047 / UX-048 / UX-049)
 
 - **Test-alert round-trip for Telegram linking (UX-012).** Linking Telegram
   alerts used to end on a self-attested "I've done it — the bot replied"
@@ -647,7 +647,7 @@ Closes the batch-8 remainder of the 2026-07-11 alpha02 UI/UX review
 (`docs/FindingsAndFixes/Findings20260711-Alpha02UiUxReview.md`), leaving no
 open findings in that document.
 
-### UX2 batch A — connected-mobile header overflow + boot-splash failure state (UX2-001 / UX2-002 / UX2-006)
+## UX2 batch A — connected-mobile header overflow + boot-splash failure state (UX2-001 / UX2-002 / UX2-006)
 
 - **Connected phone header no longer widens the page (UX2-001).** Every
   route at 390 px used to pan ~71 px sideways once a wallet connected —
@@ -680,7 +680,7 @@ open findings in that document.
   `preAuthorized:false` option (a real wallet reports no accounts until
   approved), making genuinely-disconnected states testable in CI at all.
 
-### UX2 batch B — naming drift, real switch, offer-the-remedy CTAs (UX2-003/004/005/007)
+## UX2 batch B — naming drift, real switch, offer-the-remedy CTAs (UX2-003/004/005/007)
 
 - **Settings "More" cards match the nav (UX2-003).** "Claim Center" /
   "Your Vaipakam Vault" / "VPFI fee discounts" → "Claims" / "My vault" /
@@ -702,7 +702,7 @@ open findings in that document.
   hedged/truncated empty variants; the indexer-timeout tuning half of
   the finding stays open alongside UX2-008.
 
-### UX2 batch C — ABI off the first-paint path + honest Activity empty (UX2-007 tail / UX2-008)
+## UX2 batch C — ABI off the first-paint path + honest Activity empty (UX2-007 tail / UX2-008)
 
 - **The ~761 KB contract-ABI no longer weighs on the landing or help
   page (UX2-008).** The combined Diamond ABI is now its own long-cached
@@ -732,7 +732,7 @@ open findings in that document.
   that older events definitely exist. Both the plain and the
   recent-only empty states keep their Borrow / Lend next-step buttons.
 
-### Second-pass alpha02 live UI/UX review — sweep sessions + findings doc
+## Second-pass alpha02 live UI/UX review — sweep sessions + findings doc
 
 - **Findings doc.** A second full-surface live review of the deployed
   alpha02 site (build `1dc607b`, the night the 50-finding 2026-07-11
