@@ -1,4 +1,4 @@
-## An older release-notes file that has gained one marker no longer loses a fragment on rerun (PR #NNNN)
+## An older release-notes file that has gained one marker no longer loses a fragment on rerun (PR #2328)
 
 Folding a release-note fragment into its dated file leaves a small invisible
 marker behind, which is how a later run recognises a fragment it has already
