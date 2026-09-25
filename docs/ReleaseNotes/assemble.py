@@ -1650,6 +1650,31 @@ class Assembly:
         author (#2301 r2). What was published, and what motivates the check,
         is the separate matter of headings no check ever looked at.
 
+        The eleven were an indented marker, a tab delimiter, a setext
+        underline, a YAML fence, a list above a thematic break, four
+        byte-order marks, a CR-only line ending and a heading inside a
+        blockquote. Recognising one more per round only moved the boundary:
+        the set of things that are not an ATX heading is unbounded, so a rule
+        that must enumerate them can always be surprised, and a surprise cost
+        a release note and a source file. Refusing inverts the failure
+        direction — an unanticipated shape costs its author one message — and
+        it cost nothing measurable: all 759 fragments committed before #2295
+        open with an ATX heading, so the allowance only ever served test
+        fixtures.
+
+        THERE IS NO BYTE-ORDER-MARK CLAUSE, and removing one was the fix
+        (#2290 r21). A BOM refusal was added in r11, recognised only UTF-8
+        (r15), and twice produced a reproduced data-loss path (r20, r21):
+        telling an author to re-save the file is the edit that stopped the
+        markerless duplicate guard recognising the copy already published.
+        None of those 759 begins with a BOM. A BOM-bearing fragment is
+        refused by the allow-list instead, and that message names the LINE, so
+        it never PRESCRIBES a re-save — a claim about the message, not the
+        operator (#2311 r3): for a UTF-16 opener, re-saving as UTF-8 is the
+        obvious response anyway. What survives that remediation is the
+        duplicate guard's readability refusal, which reads only the published
+        side (#2315).
+
         `_TEMPLATE.md` opens `## Thread — <short title> (PR #<n>)`. Two
         things about that line are load-bearing the moment the fragment is
         folded, and nothing downstream looks at either — assembly is the last
@@ -1755,6 +1780,25 @@ class Assembly:
         signal that distinguishes that from the 457 fragments that legitimately
         carry none, and inventing one would refuse them too.
 
+        THE PR-REFERENCE TOKEN MUST BE ALL DIGITS, and nothing subtler — this
+        is where the rule stops being refined (#2290 r17). EVERY `PR #` token
+        on the line is tested, not just the first, since a `search` would
+        accept `(PR #123, PR #TBD)` on its numeric prefix (#2290 r6).
+
+        Five consecutive rounds found an edge in subtler rules, each fix
+        opening the next: capture to `)` missed `:`; allowing punctuation
+        missed an em dash; testing the first byte accepted `1TBD`; a
+        non-alphanumeric boundary accepted `123_TBD`. Every disputed shape was
+        hypothetical — across 2,076 published headings, no token begins with
+        a digit without being all digits — so the rule was being tuned against
+        invented input. It takes the STRICT side because the two directions
+        are not symmetric: refusing an ornamented reference costs one message
+        to an author who can add a space, while accepting a non-number
+        publishes a section nothing can trace and deletes the source. The
+        message says "not a plain number" rather than "placeholder", because
+        `PR #123:` is not one and telling its author to replace a placeholder
+        sends them looking for something that is not there (#2290 r14).
+
         RUNS BEFORE `clear_already_assembled`, which DELETES fragments. An
         earlier revision ran after it and claimed in this docstring to run
         "before anything is appended or cleared" — a run refused here would
@@ -1777,60 +1821,10 @@ class Assembly:
                 f"reading {name}",
                 lambda p=self.frag_snap[f]: open(p, "rb").read(),
             )
-            # REFUSED BEFORE THE HEADING IS EVEN LOOKED AT: a fragment whose
-            # first bytes need normalising to be understood (#2290 r12). The
-            # assembler publishes the fragment's raw bytes after the release
-            # title, so anything that reads differently at the top of its own
-            # file than it does mid-document is a fragment the check cannot
-            # honestly bless — see `first_heading` for the two worked cases.
-            # THERE IS NO BOM REFUSAL, and removing it is the fix rather than
-            # a gap (#2290 r21). It was added in r11 to close a
-            # permit-by-misrecognition, and then caused three findings of its
-            # own: it recognised only UTF-8 (r15), and twice it produced a
-            # REPRODUCED DATA-LOSS path (r20, r21) — refusing a BOM tells the
-            # author to re-save the file, and that edit is exactly what makes
-            # the markerless duplicate guard stop recognising the copy already
-            # published, so the rerun appended a second one and consumed the
-            # source.
-            #
-            # It guarded nothing: ZERO of the 759 fragments ever committed
-            # begin with any byte-order mark. A refusal that has never been
-            # needed and has caused two data-loss paths is the speculative
-            # branch this change has already removed twice — the setext
-            # parser, and normalising-to-decide.
-            #
-            # Patching it again meant adding four more byte prefixes to the
-            # guard's de-BOM helper, which is precisely the grow-a-list option
-            # #2298 argues is the weaker one, because it couples a list of
-            # remedies to a list of refusals.
-            #
-            # A BOM-bearing fragment is now refused BY THE GENERAL RULE below
-            # (#2295) — as an unrecognised opening line, alongside every other
-            # shape that is not an ATX heading, rather than by a clause of its
-            # own. That is the difference that matters: the message names the
-            # line rather than the byte order mark, so it never TELLS an
-            # author to re-save the file, which is the edit that made the
-            # markerless duplicate guard lose a fragment twice.
-            #
-            # THAT IS A CLAIM ABOUT THE MESSAGE, NOT ABOUT THE OPERATOR
-            # (#2311 r3). Not prescribing the destructive edit is not the same
-            # as putting it out of reach, and for a UTF-16 opener it is not
-            # out of reach at all: re-saving as UTF-8 is the obvious reading
-            # of "open with an ATX heading", and where the ALREADY-PUBLISHED
-            # copy is the UTF-16 one, that re-save is precisely what moves the
-            # two out of comparison — before #2315, the next run matched
-            # nothing, appended a second copy and consumed the source. So
-            # this refusal does not survive its own remediation; what it stops
-            # doing is PRESCRIBING it. What does survive it is the duplicate
-            # guard's readability refusal, which reads only the published
-            # side (#2315).
-            # SPLIT THE SAME WAY `first_heading` DOES (#2295). These two scans
-            # both answer "what is the first line of content", and if they
-            # disagree about where a line ends, the `---` refusal below and the
-            # message printed for an unrecognised opener describe a different
-            # line from the one actually judged. They must also agree on what
-            # BLANK means, for the same reason (#2301 r1). `LINE_END_RE` and
-            # `BLANK_RE` are the single definitions, so they cannot drift.
+            # The first line of content, found with the same line and blank
+            # definitions `first_heading` uses (#2295, #2301 r1), so the `---`
+            # clause and the message below describe the line actually judged.
+            # There is no BOM clause here — see the docstring.
             _first_content = next(
                 (ln for ln in LINE_END_RE.split(body) if not BLANK_RE.match(ln)),
                 None,
@@ -1842,13 +1836,9 @@ class Assembly:
             # `---` is a thematic break rather than a fence, which is the r5
             # finding, and `.strip()` here would re-make that mistake.
             #
-            # SINCE #2295 THIS CHANGES THE MESSAGE, NOT THE OUTCOME. `---` is
-            # not an ATX heading, so the general refusal below would catch it
-            # anyway; this clause survives because it is the one unrecognised
-            # shape whose CAUSE is worth naming — an author who wrote front
-            # matter needs to know it becomes a thematic break once folded,
-            # not merely that the line is not a heading. Deleting it would
-            # cost a diagnosis, not a refusal. Do not read it as a gate.
+            # A DIAGNOSIS, NOT A GATE: `---` is not an ATX heading, so the
+            # allow-list below would refuse it anyway. This clause only names
+            # the cause — front matter becomes a thematic break once folded.
             if _first_content is not None and _first_content.rstrip(b" \t") == b"---":
                 bad.append(
                     f"{name}: opens with `---`, which is front matter in its own "
@@ -1858,56 +1848,9 @@ class Assembly:
                 continue
             found = first_heading(body)
             if found is None:
-                # AN UNRECOGNISED OPENING LINE IS REFUSED (#2295). It used to
-                # be ALLOWED, and that allowance was the amplifier behind
-                # every misrecognition finding on #2290: some shape was not
-                # recognised as a heading, this returned None, and the
-                # fragment was PUBLISHED AND CONSUMED. Eleven shapes were
-                # shown to reach that outcome across sixteen review rounds —
-                # an indented marker, a tab delimiter, a setext underline, a
-                # YAML fence, a list above a thematic break, four byte-order
-                # marks, a CR-only line ending, a heading inside a blockquote.
-                #
-                # SHOWN, NOT OBSERVED, and the distinction is load-bearing
-                # (#2301 r2). Each was demonstrated by a test or reproduced
-                # during review; NONE was ever written by an author, because
-                # all 759 fragments in the archive open with an ATX heading.
-                # Writing these up as incidents would claim a history the
-                # repository's own evidence contradicts — and the argument
-                # does not need it. A defect that is certain to occur the
-                # first time somebody saves a file differently is worth
-                # closing on its own terms.
-                #
-                # Recognising one more shape per round only moved the
-                # boundary. The input is author-written Markdown in arbitrary
-                # encodings: the set of things that are not an ATX heading is
-                # unbounded, so a rule that must ENUMERATE them can always be
-                # surprised — and a surprise here costs a release note and a
-                # source file, since the fragment is published mangled and
-                # then deleted. Refusing instead inverts the failure
-                # direction: an unanticipated shape now costs its author one
-                # message.
-                #
-                # THE INVERSION IS WHY THIS FUNCTION NEED NOT GROW. Every
-                # shape above is closed as a consequence rather than
-                # individually, including the two still open when #2290
-                # merged, and a twelfth nobody has thought of is closed in
-                # advance. That is the whole value: the check stops being a
-                # list of known-bad shapes and becomes one known-good one.
-                #
-                # It costs nothing measurable. Of the 759 distinct fragments
-                # ever committed to `unreleased/`, 759 open with an ATX
-                # heading and ZERO relied on the allowance — it existed for
-                # test fixtures and never once protected real work.
-                #
-                # Deliberately NOT a patch on #2290: it inverts six test
-                # cases that exist to PIN the allowance, which is a re-cut
-                # rather than a fix, and attempting it on a change already
-                # past its review cap is how that PR's round-15 fix
-                # introduced its round-16 regression. Fixture cost was never
-                # the argument — that reasoning was offered there at r3 and
-                # correctly rejected, since test churn is not a reason to
-                # weaken a production rule.
+                # The allow-list refusal (#2295): anything that is not an ATX
+                # heading. Why the rule names one good shape instead of listing
+                # bad ones is the docstring's ALLOW-LIST paragraph.
                 shown_open = (
                     quoted(_first_content)
                     if _first_content is not None
@@ -1936,76 +1879,16 @@ class Assembly:
                 )
                 continue
             if level >= 3:
-                # Allowed, but NOT harmless, and the previous revision of this
-                # said "nests under nothing" — which is false (#2290 r10). In
-                # the assembled file a `###` opener becomes a CHILD of the
-                # nearest preceding `##`, which belongs to the fragment above
-                # it. Outlines and screen-reader navigation then attribute the
-                # change to a different change.
-                #
-                # It has happened, twice, in published notes: two fragments in
-                # ReleaseNotes-2026-08-25 sit under `## What it does not
-                # change`, a subsection of the fragment before them — so a
-                # reader's outline presents each as something an unrelated
-                # change does NOT do.
-                #
-                # Warned rather than refused because refusing it stops a
-                # substantial minority of real fragments, including work in
-                # flight in other pull requests. A warning is visible at the
-                # one moment somebody can still act on it, and costs nobody a
-                # release. See the docstring for the figures.
-                #
-                # NO `continue` HERE, deliberately: a warning must not exempt
-                # the fragment from the PR-reference check below, or
-                # `### Title (PR #TBD)` would publish its placeholder because
-                # the heading was merely deep. Warnings and refusals are
-                # independent; the first revision of this block got that wrong.
+                # Warned, not refused — see the docstring. NO `continue`: a
+                # warning must not exempt the fragment from the PR-reference
+                # check below, or `### Title (PR #TBD)` would publish its
+                # placeholder because the heading was merely deep.
                 deep.append(f"{name}: opens at level {level}  ->  {shown}")
-            # EVERY `PR #` token on the line, not just the first (#2290 r6).
-            # `(PR #123, PR #TBD)` is accepted by a `search`, which returns
-            # the numeric one and never looks further — the guard passing on
-            # the evidence that it should have refused. No heading in the
-            # corpus carries two tokens, so this refuses nothing that exists;
-            # it removes a way for the check to be satisfied by a prefix.
-            # THE FIRST CHARACTER AFTER `PR #`, and nothing else (#2290 r15).
-            # A reference that has been substituted begins with a digit; the
-            # template's placeholder does not. Every placeholder the corpus
-            # contains — `<n>`, `TBD`, `__`, `PLACEHOLDER`, `NNNN`, `?` —
-            # starts with a non-digit, and no real reference does.
-            #
-            # This is the ROOT of three rounds of findings. Earlier revisions
-            # classified the whole token, so each one needed to know which
-            # characters may follow a number: `)` was missed, then `:`, then an
-            # em dash. Testing one character asks a question with no separator
-            # list in it at all.
-            # THE TOKEN IS ALL DIGITS. Nothing subtler, deliberately, and
-            # this is where the rule stops being refined (#2290 r17).
-            #
-            # Five consecutive rounds found an edge here, and each fix opened
-            # the next: capture to `)` missed `:`; allowing punctuation missed
-            # an em dash; testing the first byte accepted `1TBD`; a
-            # non-alphanumeric boundary accepted `123_TBD`. Nine findings
-            # across eight rounds, more than any other rule on this change.
-            #
-            # What settles it is that EVERY disputed shape is hypothetical.
-            # Across 2,076 published headings, the number of tokens that begin
-            # with a digit but are not all digits is ZERO. `123:`, `123—final`,
-            # `1TBD`, `123_TBD` — none has ever been written. The rule was
-            # being tuned against invented input.
-            #
-            # So it takes the STRICT side, because the two directions are not
-            # symmetric. Refusing a valid-but-ornamented reference costs one
-            # message to an author who can add a space. Accepting a non-number
-            # publishes a section nothing can trace and deletes the source.
-            # The message below says "not a plain number" rather than claiming
-            # a placeholder, which was the real harm in the r14 finding.
+            # Every `PR #` token on the line must be all digits; why nothing
+            # subtler is the docstring's PR-REFERENCE paragraph.
             bads = [t for t in PR_REF_RE.findall(first) if not t.isdigit()]
             if bads:
-                # Says what is true — the token is not a plain number — rather
-                # than asserting it is the template's placeholder (#2290 r14).
-                # It usually IS the placeholder, but `PR #123:` is not, and
-                # telling that author to "replace the placeholder" sends them
-                # looking for something that is not there.
+                # "Not a plain number", not "placeholder" — see the docstring.
                 shown_tok = capped(
                     ", ".join(t.decode("utf-8", errors="replace") for t in bads)
                 )
