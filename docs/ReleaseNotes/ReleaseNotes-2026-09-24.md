@@ -25,14 +25,13 @@ and losing the original rather than refusing. That path is now closed: the
 fragment is converted to its published form before anything is compared.
 
 It is not the only such path, and this change does not claim to be. If an
-interrupted older run already published a fragment saved in an encoding that
-writes its heading differently from UTF-8 — UTF-16, or an older single-byte
-encoding once the heading has any non-ASCII character, such as the em dash
-nearly every heading here carries — the next run refuses it. The refusal does
-not tell the author to re-save the file, but re-saving it as UTF-8 is the
-obvious response — and on the run after that, the check still cannot see the
-earlier copy, and the same duplicate-and-delete follows. No such fragment is
-pending today; the case is open and tracked as #2315.
+interrupted older run already published a fragment saved in UTF-16 or UTF-32 —
+an encoding whose heading the check cannot even recognise — the next run
+refuses it. The refusal does not tell the author to re-save the file, but re-
+saving it as UTF-8 is the obvious response — and on the run after that, the
+check still cannot see the earlier copy, and the same duplicate-and-delete
+follows. No such fragment is pending today; the case is open and tracked as
+#2315.
 
 Only the heading comparison changes. A fragment with no link in its title
 behaved correctly before and behaves identically now; no fragment that was
