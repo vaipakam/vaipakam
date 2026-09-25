@@ -497,7 +497,6 @@ const PINNED = new Map([
   ["docs/ops/VPFITokenRotationRunbook.md", [1, "HISTORICAL — rotation-scope note", "d519e9306d02"]],
   ["docs/ops/tenderly-paste/Diamond-full.json", [45, "HISTORICAL — a captured ABI artifact; regenerate rather than hand-edit", "9256252cfcc1"]],
   ["ops/offchain-data-warm/wrangler.jsonc", [1, "RETRACTION — notes the excised surface in a coverage comment", "5f91cb0ab0b5"]],
-  ["ops/subgraph/abis/Diamond.json", [24, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "af0f882df245"]],
   ["packages/contracts/src/abis/index.ts", [2, "RETRACTION — removed-ABI notes in the barrel", "4358e3667e43"]],
   ["packages/contracts/src/chain-config.ts", [2, "RETRACTION — removed-key note", "b0b59696db74"]],
   ["packages/contracts/src/deployments.ts", [1, "RETRACTION — removed-key note on the typed loader", "4dac8a4cde88"]],
