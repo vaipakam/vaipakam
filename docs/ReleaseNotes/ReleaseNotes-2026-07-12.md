@@ -832,7 +832,7 @@ liquidator-KYC blocks in `RiskFacet` were folded into one private helper.
 
 Closes #915, #1005, #1009, #1010 (umbrella #998).
 
-# ENS name lookups stop hitting a rate-limited default endpoint (alpha02)
+## ENS name lookups stop hitting a rate-limited default endpoint (alpha02)
 
 The address-to-name display sugar (a wallet address with an ENS name
 shows the name instead of hex) resolves on Ethereum mainnet, which is
@@ -915,7 +915,7 @@ No contract or ABI changes. The decode/humanize logic is unit-tested; the
 end-to-end rendering is verified live against a real testnet revert per the
 live-review definition of done. Closes the borrow-error UX follow-up.
 
-# RPC diet — the app stops streaming chain polls (alpha02)
+## RPC diet — the app stops streaming chain polls (alpha02)
 
 A live measurement on the deployed site showed one open tab — signed
 in or not — issuing about 3,700 chain-RPC calls per hour: the live
@@ -959,7 +959,7 @@ fails if a parked Offer Book tab ever streams block polls again, and
 a committed live audit driver measures the deployed site's real
 traffic against the same budget.
 
-# Asset pickers list the faucet test tokens, and every dropdown gets a real menu (alpha02)
+## Asset pickers list the faucet test tokens, and every dropdown gets a real menu (alpha02)
 
 Two changes from the same user request (2026-07-06):
 

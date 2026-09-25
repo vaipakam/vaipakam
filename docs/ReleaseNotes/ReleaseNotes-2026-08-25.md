@@ -142,7 +142,7 @@ reading the documentation and believing it. That distinction is the reason the
 audit was worth running.
 <!-- assembled-fragment: 1349-stale-source-assertions.md sha256=0b4a93078f08e253944951cb7c926dfabd1c25dcc758e053c4d07ec06778566f -->
 
-# The keeper is deployed but no longer scheduled
+## The keeper is deployed but no longer scheduled
 
 The keeper Worker has been removed from its every-minute schedule. It is
 still deployed, and everything it needs to work is still in place — the
@@ -160,7 +160,7 @@ before arming the ones that can. It is kept beside the schedule itself
 and is summarised further down. Follow it rather than the one-line
 shortcut.
 
-## Why
+### Why
 
 It had not been completing its work for at least as long as the
 platform's logs go back. Measured against the live deployment, roughly
@@ -185,7 +185,7 @@ It also returns a scheduling slot to a pool that was completely full.
 The platform's plan allows only five scheduled jobs across the whole
 account, and a previous deployment failed outright on that limit.
 
-## What it does cost
+### What it does cost
 
 **Four** of the ten jobs were not switched off by configuration, so
 stopping the schedule stops them for certain. Two earlier drafts of
@@ -260,7 +260,7 @@ warnings rather than silence, and borrowers may get less notice than
 the window is meant to give them. Expect both, and treat a long stop as
 something to announce rather than to let people discover.
 
-## What it does not change
+### What it does not change
 
 Nothing about what the keeper *is*. No job was deleted and no
 configuration was cleared. The switch that arms the fund-moving jobs

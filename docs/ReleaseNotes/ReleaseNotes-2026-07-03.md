@@ -350,23 +350,23 @@ to GitHub issues #865–#868 under epic #863.
 
 Closes #864. Implementation PRs follow the merge order in the design doc.
 
-# Alpha01 scaffold (P0, #865)
+## Alpha01 scaffold (P0, #865)
 
 Greenfield `apps/alpha01` Vite SPA with Cloudflare Worker config (`vaipakam-alpha01`), light/dark theme tokens synced via `@vaipakam/lib` cross-domain cookie, mobile-first `MobileShell` with bottom navigation, and wagmi/ConnectKit bootstrap on dev port 5175.
 
-# Alpha01 UX primitives (P1, #866)
+## Alpha01 UX primitives (P1, #866)
 
 Shared Basic-mode components: `ReviewReceipt` (six-field trust surface), `EligibilityChecklist` (fixable preflight items), `ModeContext` (basic/advanced persisted in `vaipakam.alpha01.uiMode`), and intent-first home with four job cards. `packages/defi-client` package scaffolded for protocol types.
 
-# Alpha01 Journey B1 — borrow (P2, #867)
+## Alpha01 Journey B1 — borrow (P2, #867)
 
 `packages/defi-client` implements indexer offer reads, EIP-712 accept terms signing, and `acceptOffer` flow. Alpha01 borrow wizard walks pick-offer → eligibility → review receipt → confirm, plus position detail command center with repay entry.
 
-# Alpha01 Journeys L1 + M1 (P3, #868)
+## Alpha01 Journeys L1 + M1 (P3, #868)
 
 Lend wizard posts lender offers with the same eligibility/review pattern. Positions list shows active loans as mobile-friendly cards; loan detail supports repay and lender/borrower claim paths. Claims and More pages provide simplified navigation without touching `apps/defi`.
 
-# Alpha01 Basic mode journey wiring (#869)
+## Alpha01 Basic mode journey wiring (#869)
 
 Completes Basic-mode journeys B1, B2, L1, L2 (create path), M1, and C1 in alpha01: intent-first borrow/lend wizards with eligibility (wallet, chain, sanctions, terms), vault + allowance preflight in defi-client, review receipts with journey copy, loan command center with plain health labels and repay→claim CTAs, claim center backed by indexer `/claimables`, NFT rent intent chooser, and help links to the Basic user guide.
 
@@ -462,25 +462,25 @@ Round 14: Borrow accept receipt reuses `offerPrincipalWei`; Claims prunes empty 
 
 Round 15: Offer cards use `offerPrincipalWei` for display; `liquidated` borrower claims gated on `getClaimable`; activity merge reserves participant slots when the actor page is full.
 
-# Alpha01 P4 — NFT rental wizards (N1 / N2)
+## Alpha01 P4 — NFT rental wizards (N1 / N2)
 
-## Summary
+### Summary
 
 Replaces the `/rent` stub with full Basic-mode NFT rental flows inside `alpha01.vaipakam.com`, backed by new `defi-client` rental modules.
 
-## User-visible changes
+### User-visible changes
 
 - **List NFT (N1):** Owners can post ERC-721 / ERC-1155 rental listings with daily fee, prepay token, and duration; review receipt explains vault custody and temporary renter rights.
 - **Browse & rent (N2):** Renters browse indexer listings, see total prepay (fees + buffer), and accept with the shared eligibility + receipt pattern.
 - **Post request (PF-044):** When no listing fits, renters can post a demand offer that locks prepay + buffer at create time.
 - **Positions:** Rental rows and detail pages use rental vocabulary (renter / NFT owner, close rental, claim fees and NFT) instead of debt-loan copy.
 
-## Technical
+### Technical
 
 - `packages/defi-client`: rental prepay math, NFT rental offer payloads, NFT approval helper, accept/create flows, indexer filters.
 - Daily fees scale with prepay-token `decimals()` (fixes the raw-integer footgun in legacy defi NFT rental forms).
 
-## Verification
+### Verification
 
 - `pnpm --filter @vaipakam/alpha01 test`
 - `pnpm --filter @vaipakam/alpha01 exec tsc -b --noEmit`
@@ -748,13 +748,13 @@ This adds the missing surface (a #921 pre-audit follow-up):
 
 Closes #956.
 
-# Alpha01 P5 — Advanced mode reveal
+## Alpha01 P5 — Advanced mode reveal
 
-## Summary
+### Summary
 
 Turns on Advanced-mode density across alpha01 without new routes: portfolio strip, HF/LTV panels, receipt technical details, and position filters.
 
-## User-visible changes
+### User-visible changes
 
 - **Home (Advanced):** Portfolio strip plus shortcuts to Claims, VPFI vault, allowances, and analytics.
 - **Borrow / Lend / Rent (Advanced):** Bounds/construction panels on wizard steps; browse cards show offer IDs, liquidity class, and rental buffer; receipts include collapsible technical details.
@@ -764,12 +764,12 @@ Turns on Advanced-mode density across alpha01 without new routes: portfolio stri
 - **More (Advanced):** Keeper settings, risk access, allowances, analytics, and NFT verifier link to `defi.vaipakam.com`.
 - **Open offers:** NFT rental listings/requests use rental vocabulary instead of debt-loan copy.
 
-## Verification
+### Verification
 
 - `pnpm --filter @vaipakam/alpha01 test`
 - `pnpm --filter @vaipakam/alpha01 exec tsc -b --noEmit`
 
-# alpha02 — advanced-mode strategy flows, hardening, and trust surfaces
+## alpha02 — advanced-mode strategy flows, hardening, and trust surfaces
 
 One batch, eight features: submit-time preflight hardening and
 consent integrity; borrower close-early and refinance; lender early
