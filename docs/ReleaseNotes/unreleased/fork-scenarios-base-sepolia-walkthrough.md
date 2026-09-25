@@ -13,7 +13,7 @@ needs no Solidity compiler: it reads the committed per-facet ABIs, so the
 compiler stays the single source of truth for every decode while the driver
 itself is plain Node.
 
-The run now covers one hundred and twenty-nine scenarios across the whole advanced
+The run now covers one hundred and thirty scenarios across the whole advanced
 surface — offer creation and escrow, accept and the loan-initiation fee,
 repayment and the treasury's interest cut, the borrower's collateral claim,
 time-based default, health-factor liquidation, preclose, partial repayment,
@@ -22,11 +22,15 @@ the offset and obligation-handover exits, periodic interest, NFT rental, repayin
 illiquid-asset gates. The
 fee and health-factor behaviour reconciles exactly against the specification,
 including the per-loan fee stamps that stop a governance retune re-pricing an
-open loan. Four results are worth an operator's attention. A forced close on
-this testnet cannot be reached through a collateral price move, because the
-seeded pool sits so close to the liquidity-depth floor that any meaningful
-drawdown flips the asset illiquid and the protocol then correctly refuses to
-swap it. Closing a loan early under a full-term-interest offer saves the
+open loan. Four results are worth an operator's attention. Rehearsing a
+forced close by moving a faucet asset's price feed alone makes the asset
+read illiquid after a three-percent move, and the protocol then correctly
+refuses to swap it — not because the test pool is shallow, as the first
+write-up said, but because the pool's own price does not follow the feed and
+the protocol distrusts a pool whose price disagrees with the oracle. Moved
+together, as a real market would move them, the asset stays tradable through
+a fifty-five-percent fall and the position is liquidated from the collateral
+side exactly as specified; the driver now does that in one step. Closing a loan early under a full-term-interest offer saves the
 borrower nothing, which every preclose quote has to say out loud. A repayment
 settles the money but leaves the collateral lien standing until the borrower
 separately claims it, so "Repaid" is not "done". And with KYC enforcement
@@ -156,6 +160,6 @@ formerly unchecked pass was given an exact expectation, and all of them hold
 on the live deployment. Four rows that had been certifying a deployment's
 configured value now record it as an observation instead, so a later change
 of configuration can never be reported as a green "unchanged". The re-run
-records one hundred and eighteen passes, ten observations and one failure —
+records one hundred and nineteen passes, ten observations and one failure —
 the swap-to-repay check whose expectation was deliberately corrected — with
 no scenario file aborted.

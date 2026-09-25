@@ -9,7 +9,7 @@ configuration — not the source tree's idea of them.
   84532 (Base Sepolia), forked at block 47,228,632.
 - **Driver** — [`contracts/script/fork-scenarios/`](../../contracts/script/fork-scenarios/README.md),
   committed with this document. `node run-all.mjs` reproduces every row.
-- **Result** — 129 scenarios: **118 PASS, 10 INFO, 1 FAIL**, no aborted
+- **Result** — 130 scenarios: **119 PASS, 10 INFO, 1 FAIL**, no aborted
   file. The INFOs are observations with no assertion behind them, not soft
   failures — the ledger's API makes a row either an assertion (PASS/FAIL
   only) or an observation (INFO only), so no failure can land as INFO; each
@@ -18,9 +18,10 @@ configuration — not the source tree's idea of them.
   the debt needs — and the live bytecode sells the whole cap. It turns green
   when the #2317 fix is deployed.
 - **Node** — the figures above are from a re-run on **Anvil** (2026-09-25,
-  forked at block 47,274,237). The first run used a hardhat fork node and
-  reported 123 / 6 / 0. The differences are the A11.5 oracle change above,
-  and four rows that recorded a deployment's CONFIGURED value as a PASS and
+  forked at block 47,274,660). The first run used a hardhat fork node and
+  reported 129 rows, 123 / 6 / 0. The differences are the A11.5 oracle
+  change above, one new row (A3.13, the collateral-drawdown liquidation §2.4
+  now drives), and four rows that recorded a deployment's CONFIGURED value as a PASS and
   now observe it instead (§7). The re-run also found three defects in the
   HARNESS that the hardhat node had hidden — see
   [§0](#0-re-run-on-anvil-and-three-harness-defects-it-exposed).
@@ -76,7 +77,7 @@ scenario:
    a margin. Whether a real Base Sepolia node's estimate for the same call
    clears the sentry is **unverified**.
 
-With those fixed, the Anvil run ran all 129 rows with no aborts. Every row
+With those fixed, the Anvil run ran every row with no aborts. Every row
 that passed in the first run passes again — most now against a STRICTER
 condition — except A11.5, whose oracle changed on purpose, and four
 configuration rows that are now observations rather than passes.
@@ -229,36 +230,47 @@ The two thresholds are distinct and both were exercised:
   because the proceeds did not cover the debt — the lender takes the
   shortfall, and the bonus comes off the top regardless.
 
-### 2.4 FINDING — on this deployment a collateral crash closes the HF-swap route
+### 2.4 FINDING — a feed-only reprice closes the HF-swap route; a real price move does not
 
-**Observed:** the seeded `tLIQ` / WETH pool sits barely above the on-chain
-depth floor at the seeded price. Repricing `tLIQ` downward flips it from
-Liquid (tier 3) to Illiquid (tier 0) at a **20% drawdown**:
+**Observed first:** repricing `tLIQ` downward through its faucet feed flipped
+it from Liquid to Illiquid, and `triggerLiquidation` — which re-checks
+liquidity **live** and will not swap an asset it can no longer route — then
+refused with `NonLiquidAsset()` even at HF < 1.
 
-| tLIQ price | `checkLiquidity` | tier |
-| --- | --- | --- |
-| $2,000 (seeded) | Liquid | 3 |
-| $1,600 | Illiquid | 0 |
-| $1,400 … $900 | Illiquid | 0 |
+**The first revision of this document diagnosed that as pool depth** ("the
+seeded pool sits barely above the depth floor; seed it deeper"), and filed it
+that way as #2314. **That diagnosis was wrong**, and the correction matters
+because the remedy it prescribed would not have worked. Re-tested on Anvil:
 
-Because `triggerLiquidation` re-checks liquidity **live** (it will not swap
-an asset it can no longer route) it then refuses with `NonLiquidAsset()` —
-even though HF is below 1 and the loan is otherwise liquidatable.
+| Reprice | `checkLiquidity(tLIQ)` |
+| --- | --- |
+| feed only, $2,000 → $1,960 (−2%) | Liquid |
+| feed only, → $1,940 (−3%) | **Illiquid** |
+| feed only, → $1,600 / $1,100 | Illiquid |
+| feed **and pool spot together**, → $1,600, $1,200, $1,000, $900 | **Liquid** at every step |
 
-Any collateral drawdown large enough to make a position unhealthy on this
-deployment is therefore also large enough to close the route that would
-resolve it, leaving only the slower time-based default. The HF-liquidation
-payout above had to be driven from the **debt** side (repricing `tLIQ2`
-upward) to keep the collateral routable.
+The cause is the oracle's pool-consistency guard, not depth. The faucet's
+mock v3 pool has a **static** spot price, and the oracle only counts a pool
+whose spot agrees with the Chainlink feed within the TWAP-consistency band
+(3% by default) — so a feed-only move past that band leaves no consistent
+pool, and the asset reads Illiquid exactly as if the pool were too shallow.
+Moving the pool's spot with the feed, as a real market would, keeps the
+asset Liquid through a 55% drawdown on the seeded depth.
 
-**Classification:** this is a property of the *testnet mock pool seeding*,
-not a contract defect — the refusal is correct behaviour, and refusing is
-strictly better than swapping into a pool that cannot absorb the trade. But
-it does mean **HF liquidation is effectively untestable on Base Sepolia
-through a collateral price move**, which matters for any rehearsal that
-claims to have exercised it. The remedy is operational: seed the mock pool
-with materially more depth, so the asset stays above the floor across a
-realistic drawdown.
+**Driven end to end (A3.13):** with the collateral repriced to $900 through
+both feed and pool, the position reaches HF 0.9, stays routable, and
+`triggerLiquidation` settles it from the collateral side with every unit of
+the 1,125 of proceeds accounted — debt to the lender, the treasury's cut, the
+liquidator's bonus, and a 68.75 surplus returned to the borrower. The
+debt-side workaround (A3.11–A3.12) is kept as a second path.
+
+**Classification:** not a contract defect, and not a pool-seeding defect
+either — the guard is doing its job (a pool whose spot disagrees with the
+feed is exactly what it exists to distrust). It is a **rehearsal-tooling**
+gap: any operator repricing a faucet asset to rehearse a drawdown must move
+the pool's spot with its feed (both are owner-gated to the mock deployer).
+The driver does this in one step (`repriceFaucetAsset`). #2314 is updated
+with the corrected diagnosis.
 
 ---
 
@@ -693,7 +705,7 @@ replace.
 
 ## 7. Ledger
 
-The full 129-row ledger, with per-scenario verdicts and observed numbers, is
+The full 130-row ledger, with per-scenario verdicts and observed numbers, is
 regenerated as `contracts/script/fork-scenarios/last-run.json` on every run
 (untracked). Scenario ids map to the driver's files:
 
@@ -701,7 +713,7 @@ regenerated as `contracts/script/fork-scenarios/last-run.json` on every run
 | --- | --- | --- |
 | A1.* | `01-config-and-vault.mjs` | deployment config, per-user vault, Diamond-internal gating |
 | A2.* | `02-lifecycle-fees.mjs` | offer → accept → fees → repay → claim, position NFTs |
-| A3.* | `03-forced-close.mjs` | time-based default, HF liquidation, depth-floor finding |
+| A3.* | `03-forced-close.mjs` | time-based default, HF liquidation from the debt side and from a collateral drawdown, the feed-only reprice finding |
 | A4.* | `04-early-exit.mjs` | preclose, partial repay, lender sale listing |
 | A5.* | `05-gates.mjs` | sanctions, KYC, illiquid dual consent |
 | A6.* | `06-collateral-and-refinance.mjs` | surplus-collateral release, refinance consent + the four-NFT invariant |
@@ -719,8 +731,8 @@ The ten `INFO` rows, each an observation with no assertion behind it:
   arms the feature must not keep reporting a green "unset". (The first run
   recorded them as PASS.)
 - **The live facet count** (A1.6), an observation feeding §5.
-- **Findings written up rather than certified** — the depth-floor flip
-  (A3.10, §2.4) and where the KYC gate binds (A5.9, §4.2; the first run
+- **Findings written up rather than certified** — the feed-only reprice
+  flip (A3.10, §2.4) and where the KYC gate binds (A5.9, §4.2; the first run
   recorded it as PASS, which would have certified a behaviour this document
   calls a finding).
 - **Shapes worth writing down** — the two post-claim NFT readbacks (A2.16,
@@ -742,9 +754,12 @@ second the warp landed on.)
 1. **Refresh Base Sepolia and re-export the ABIs + deployments** (operator —
    §6), which also repairs the artifact drift in §5 and the stale
    `deployment_source.json` — tracked as **#2313**.
-2. **Re-seed the mock `tLIQ` pool with more depth** so HF liquidation is
-   exercisable on the testnet through a collateral price move (§2.4) —
-   tracked as **#2314**.
+2. **Reprice faucet assets through feed AND pool together** when rehearsing
+   a drawdown on the live testnet (§2.4) — tracked as **#2314**. The first
+   revision of this item said "re-seed the pool with more depth"; that was a
+   misdiagnosis, corrected in §2.4 and on the issue. The seeded depth is
+   fine; the gap is a tool that moves the mock pool's spot with its feed,
+   run with the mock deployer's key.
 3. **Fix swap-to-repay to sell only what the debt needs** — the owner
    decided on 2026-09-25 that `maxCollateralIn` is an upper bound, as the
    spec and natspec say, and the live exact-in behaviour is the defect (§3D)

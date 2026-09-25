@@ -118,8 +118,13 @@ and worth naming:
 - **Impersonating the Diamond admin**, to arm the sanctions oracle and to
   flip KYC enforcement. Both are admin-only by design; there is no other way
   to observe what those gates do when they bite.
-- **Impersonating the testnet mocks' deployer**, to reprice a faucet feed or
-  the mock swap venue. Those setters are owner-gated *on purpose* — a public
+- **Impersonating the testnet mocks' deployer**, to reprice a faucet feed,
+  its mock v3 pool, or the mock swap venue. To rehearse a PRICE MOVE use
+  `repriceFaucetAsset`, which moves the feed and the pool's spot together:
+  the oracle only trusts a pool whose spot agrees with the feed within the
+  TWAP-consistency band (3% by default), so moving the feed alone flips the
+  asset Illiquid after a 3% move — which looks exactly like a pool too
+  shallow for the trade, and was first misdiagnosed that way (#2314). Those setters are owner-gated *on purpose* — a public
   testnet's HF and liquidation demos must not be repriceable by a passer-by —
   so the harness has to step into that role rather than around it.
 - **`setCode` for a stub sanctions oracle**, because this driver has no

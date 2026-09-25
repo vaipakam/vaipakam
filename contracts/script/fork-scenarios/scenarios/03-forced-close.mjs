@@ -9,7 +9,7 @@
 import { DIAMOND, MOCKS, TREASURY, borrower, lender, outsider, parseUnits, pub, tx } from '../lib/chain.mjs';
 import { ABIS, delta, mint, openLoan, read, snapshot, vaultAddressFor } from '../lib/flow.mjs';
 import { f18 } from '../lib/chain.mjs';
-import { MOCK_ADAPTER_ABI, sendAsOwner, setFeedUsd, warpDays } from '../lib/impersonate.mjs';
+import { MOCK_ADAPTER_ABI, repriceFaucetAsset, sendAsOwner, setFeedUsd, warpDays } from '../lib/impersonate.mjs';
 import { simulate } from '../lib/errors.mjs';
 import { check, expectEq, observe } from '../lib/report.mjs';
 
@@ -108,12 +108,15 @@ export async function run() {
     midHf < 1_500_000_000_000_000_000n && midHf >= 1_000_000_000_000_000_000n && !midSim.ok,
     `HF=${f18(midHf)} -> ${midSim.ok ? 'would liquidate' : midSim.name}`);
 
-  // A large collateral drawdown can also push the asset under the on-chain
-  // depth floor, which closes the swap route entirely. Record it, then drive
-  // HF from the DEBT side so the swap route stays open for the payout test.
+  // That reprice moved the FEED only. The faucet's mock v3 pool keeps its
+  // seeded spot, and the oracle only counts a pool whose spot agrees with
+  // the feed within the TWAP-consistency band — so a feed-only move past the
+  // band leaves no consistent pool and the asset reads Illiquid. It is not a
+  // depth limit (#2314 first said it was); A3.13 moves the pool with the
+  // feed and the route stays open.
   const depthAfterCrash = await read(ABIS.oracle, 'checkLiquidity', [collateral]);
-  observe('A3.10', 'a collateral drawdown can itself push the asset below the liquidity-depth floor',
-    `checkLiquidity(collateral) after the price drop = ${depthAfterCrash} (0=Liquid, 1=Illiquid) — while Illiquid, the HF-swap route refuses`);
+  observe('A3.10', 'a FEED-ONLY reprice past the pool-consistency band flips the asset Illiquid (the mock pool\'s spot does not follow the feed)',
+    `checkLiquidity(collateral) after a feed-only move to $1,100 = ${depthAfterCrash} (0=Liquid, 1=Illiquid) — while Illiquid, the HF-swap route refuses`);
 
   await setFeedUsd(MOCKS.liquidTokenUsdFeed, 2000);
   await setFeedUsd(MOCKS.liquidToken2UsdFeed, 2.5);
@@ -139,4 +142,32 @@ export async function run() {
   // leave the fork on the deployment's seeded prices
   await setFeedUsd(MOCKS.liquidToken2UsdFeed, 1);
   await sendAsOwner(venue, MOCK_ADAPTER_ABI, 'setTokenPrice', [lending, 100_000_000n]);
+
+  // ------------------------------- HF liquidation by a COLLATERAL drawdown
+  // The scenario an operator naturally reaches for, which the feed-only
+  // reprice above cannot reach: the collateral falls 55%, the pool moves
+  // with its feed as a real market would, the asset stays routable, and the
+  // position is liquidated from the collateral side.
+  const { loanId: crashLoan } = await openLoan({ lender, borrower });
+  const tliq = {
+    asset: collateral, feed: MOCKS.liquidTokenUsdFeed, pool: MOCKS.liquidTokenWethPool,
+    quote: '0x4200000000000000000000000000000000000006',
+  };
+  await repriceFaucetAsset(tliq, 900);
+  await sendAsOwner(venue, MOCK_ADAPTER_ABI, 'setTokenPrice', [collateral, 90_000_000_000n]);
+  const crashHf = await read(ABIS.risk, 'calculateHealthFactor', [crashLoan]);
+  const stillRoutable = await read(ABIS.oracle, 'checkLiquidity', [collateral]);
+  await tx(outsider, { address: lending, abi: (await import('../lib/chain.mjs')).ERC20, functionName: 'mint', args: [venue, parseUnits('1000000', 18)] }, 'top up venue');
+  const beforeCrash = await snapshot(tokens, holders);
+  const crashReceipt = await tx(outsider, { address: DIAMOND, abi: ABIS.risk, functionName: 'triggerLiquidation', args: [crashLoan, TRY_LIST] }, 'triggerLiquidation(collateral drawdown)');
+  const afterCrash = await snapshot(tokens, holders);
+  const crashed = await read(ABIS.loan, 'getLoanDetails', [crashLoan]);
+  const crashProceeds = beforeCrash['lending.venue'] - afterCrash['lending.venue'];
+  const crashLanded = ['lenderVault', 'borrowerVault', 'treasury', 'liquidator']
+    .reduce((acc, k) => acc + (afterCrash[`lending.${k}`] - beforeCrash[`lending.${k}`]), 0n);
+  check('A3.13', 'a 55% collateral drawdown with the pool following its feed keeps the asset routable, and HF<1 liquidation settles from the collateral side',
+    Number(stillRoutable) === 0 && crashHf < 1_000_000_000_000_000_000n && String(crashed.status) !== '0' &&
+    crashProceeds > 0n && crashLanded === crashProceeds,
+    `tLIQ $2,000 -> $900 (feed + pool spot) checkLiquidity=${stillRoutable} HF=${f18(crashHf)} gas=${crashReceipt.gasUsed} ` +
+    `status=${crashed.status} proceeds=${f18(crashProceeds)} deltas=${JSON.stringify(delta(beforeCrash, afterCrash))}`);
 }

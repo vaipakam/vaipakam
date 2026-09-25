@@ -61,3 +61,40 @@ export const setFeedUsd = (feed, dollars) =>
   sendAsOwner(feed, MOCK_FEED_ABI, 'setPrice', [BigInt(Math.round(dollars * 1e8))]);
 
 export { walletFor };
+
+/** The faucet v3 pools: `MockUniswapV3Pool`, deployer-gated spot setter. */
+export const MOCK_POOL_ABI = [
+  { type: 'function', name: 'sqrtPriceX96', inputs: [], outputs: [{ type: 'uint160' }], stateMutability: 'view' },
+  { type: 'function', name: 'setSqrtPriceX96', inputs: [{ type: 'uint160' }], outputs: [], stateMutability: 'nonpayable' },
+];
+
+const isqrt = (n) => {
+  if (n < 2n) return n;
+  let x = n; let y = (x + 1n) / 2n;
+  while (y < x) { x = y; y = (x + n / x) / 2n; }
+  return x;
+};
+
+/**
+ * Reprice a faucet asset the way a real market would move: its Chainlink
+ * feed AND the spot of its mock v3 pool against `quote`, together.
+ *
+ * Moving the feed alone is not a price move — the mock pool's spot is
+ * static, and the oracle only counts a pool whose spot agrees with the feed
+ * within the TWAP-consistency band (3% by default). A feed-only reprice past
+ * that band makes every pool "inconsistent" and flips the asset Illiquid,
+ * which reads exactly like a pool too shallow for the trade. That is the
+ * shape #2314 first misdiagnosed as depth.
+ */
+export async function repriceFaucetAsset({ asset, feed, pool, quote }, dollars) {
+  const [, answer] = await pub.readContract({ address: feed, abi: MOCK_FEED_ABI, functionName: 'latestRoundData' });
+  const newAnswer = BigInt(Math.round(dollars * 1e8));
+  const sqrt0 = await pub.readContract({ address: pool, abi: MOCK_POOL_ABI, functionName: 'sqrtPriceX96' });
+  // Pool price is token1-per-token0; the asset's price moving by r moves it
+  // by r when the asset is token0 and by 1/r when it is token1.
+  const assetIs0 = asset.toLowerCase() < quote.toLowerCase();
+  const [num, den] = assetIs0 ? [newAnswer, answer] : [answer, newAnswer];
+  const sqrt1 = (sqrt0 * isqrt((num * 10n ** 36n) / den)) / 10n ** 18n;
+  await sendAsOwner(feed, MOCK_FEED_ABI, 'setPrice', [newAnswer]);
+  await sendAsOwner(pool, MOCK_POOL_ABI, 'setSqrtPriceX96', [sqrt1]);
+}
