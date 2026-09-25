@@ -19,6 +19,7 @@ import { describe, it, expect } from 'vitest';
 import {
   BaseError,
   CallExecutionError,
+  ContractFunctionRevertedError,
   EstimateGasExecutionError,
   RawContractError,
   RpcRequestError,
@@ -301,6 +302,22 @@ describe('extractRevertData', () => {
       expect(extractRevertData(e)).toBe(SEL_HF_TOO_LOW);
     });
 
+    // #2336 r2: `metaMessages` is not purely the request — viem names an
+    // undecodable revert's own selector there — so structured bytes must not
+    // be filtered against it.
+    it('keeps an undecodable revert whose selector viem also lists in metaMessages', () => {
+      const sel = '0xabcd1234';
+      const reverted = new ContractFunctionRevertedError({
+        abi: [],
+        data: sel,
+        functionName: 'acceptOffer',
+      });
+      expect(reverted.metaMessages?.join('\n')).toContain(sel);
+      expect(extractRevertData(reverted)).toBe(sel);
+      const wrapped = new CallExecutionError(reverted as never, request);
+      expect(extractRevertData(wrapped)).toBe(sel);
+    });
+
     it('still reads a revert quoted in the response text (`details`)', () => {
       const rpc = new BaseError('execution reverted', { details: `execution reverted: ${SEL_HF_TOO_LOW}` });
       const e = new CallExecutionError(rpc, request);
@@ -319,10 +336,15 @@ describe('extractRevertData', () => {
     ).toBe(SEL_HF_TOO_LOW);
   });
 
-  it('scans only shortMessage and details on a node that has a shortMessage', () => {
+  // #2336 r2: a `shortMessage` does not make `message` untrustworthy — only
+  // the request echo is removed, wherever it appears.
+  it('keeps a message-only revert on a node that also has a shortMessage', () => {
     expect(
-      extractRevertData({ shortMessage: 'reverted', message: `data: ${SEL_HF_TOO_LOW}` }),
-    ).toBeUndefined();
+      extractRevertData({
+        shortMessage: 'Internal JSON-RPC error.',
+        message: `execution reverted: ${SEL_HF_TOO_LOW}`,
+      }),
+    ).toBe(SEL_HF_TOO_LOW);
     expect(extractRevertData({ shortMessage: `reverted ${SEL_HF_TOO_LOW}` })).toBe(
       SEL_HF_TOO_LOW,
     );
