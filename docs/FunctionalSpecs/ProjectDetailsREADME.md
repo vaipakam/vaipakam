@@ -1390,6 +1390,21 @@ considers it finished.
   is cleared, and unused pledged collateral becomes borrower-claimable.
   Favorable-quote surplus principal should transfer directly to the
   current borrower-position NFT holder's wallet.
+- In full-close mode the borrower names an **upper bound** on the collateral
+  the protocol may sell, never the amount to sell. The protocol sells only
+  the collateral the debt needs — the least amount whose worst-case proceeds
+  under the borrower-facing slippage cap still cover the full repayment — and
+  everything else stays pledged and becomes borrower-claimable. A generous
+  bound therefore changes nothing; a bound too small to cover the debt even
+  at the cap is refused before anything moves. Any principal left over after
+  the debt is paid is the fill beating that worst case (the favorable-quote
+  surplus above), not collateral the borrower was made to convert. The
+  protocol exposes a read-only preview of the sale size, the slippage floor
+  it must clear, and the debt it covers, so an interface can quote a route
+  for exactly that amount before the borrower submits; because the figure
+  moves with accrued interest and price updates, a route quoted for a fixed
+  amount can go stale and must fail over or be re-quoted rather than sell a
+  different amount.
 - Full-mode swap-to-repay is a **must-complete close-out**: it is never
   blocked by the sanctions screen, so an honest counterparty can always
   be made whole. A flagged party's proceeds are instead **frozen at the
