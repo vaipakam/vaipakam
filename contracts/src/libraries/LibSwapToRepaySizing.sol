@@ -2,8 +2,9 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
-import {LibFallback} from "./LibFallback.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
+import {OracleFacet} from "../facets/OracleFacet.sol";
+import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 
 /**
  * @title  LibSwapToRepaySizing
@@ -23,25 +24,36 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
  */
 library LibSwapToRepaySizing {
     /**
-     * @notice The least collateral, up to rounding worth at most a few base
-     *         units of the principal asset, whose slippage-capped oracle floor
-     *         covers `required`, bounded by `maxIn`.
-     * @dev    `floor(x) = expectedSwapOutput(x) × (BPS − cap) / BPS` is linear
-     *         in `x` up to two floored divisions, so the ceiling of
-     *         `required × maxIn / floor(maxIn)` is exact in real arithmetic and
-     *         at most a few units short after rounding. The short case steps up
-     *         by the ceiling of the remaining deficit, and falls back to `maxIn`
-     *         — whose floor is already known to cover `required` — so a
-     *         covering result ALWAYS clears `required` and never exceeds
-     *         `maxIn`.
+     * @notice The least collateral whose slippage-capped oracle floor covers
+     *         `required`, bounded by `maxIn` — EXACTLY the least, whatever the
+     *         two tokens' decimals and prices.
+     * @dev    The floor is two floored divisions, and it inverts exactly
+     *         (Codex #2341 r5 — an earlier approximate-then-step-up version
+     *         could overshoot by far more than "a few base units" when the
+     *         principal token is coarse, e.g. auctioning 149 collateral units
+     *         where 100 already met the same floor). With
+     *           A = colPrice · 10^prinTokenDec · 10^prinFeedDec
+     *           B = prinPrice · 10^colTokenDec · 10^colFeedDec
+     *           E(x) = ⌊x·A / B⌋                      (= expectedSwapOutput)
+     *           floor(x) = ⌊E(x)·K / BPS⌋,  K = BPS − cap
+     *         both floors are monotone, so
+     *           floor(x) ≥ R  ⇔  E(x) ≥ ⌈R·BPS / K⌉ =: Emin
+     *                         ⇔  x·A ≥ Emin·B
+     *                         ⇔  x ≥ ⌈Emin·B / A⌉,
+     *         and the least covering amount is that ceiling. The prices and
+     *         decimals are read once, with the same getters and the same
+     *         arithmetic as `LibFallback.expectedSwapOutput`, so the answer
+     *         agrees with the floor enforcement checks. `mulDiv` keeps every
+     *         product exact.
      * @param collateralAsset The asset being sold.
      * @param principalAsset  The asset the sale must raise.
      * @param required        Principal the worst-case proceeds must cover.
      * @param maxIn           The caller's upper bound on collateral sold.
      * @return covers False when even `maxIn` cannot cover `required` at the
-     *                slippage floor; the caller refuses with its own error and
-     *                `sell` / `floor` are then zero.
-     * @return sell   Collateral to sell (`<= maxIn`).
+     *                slippage floor (or an oracle price is zero); the caller
+     *                refuses with its own error and `sell` / `floor` are then
+     *                zero.
+     * @return sell   Collateral to sell: the least covering amount (`<= maxIn`).
      * @return floor  The slippage-capped floor for `sell` (`>= required`).
      */
     function sizeSale(
@@ -50,27 +62,30 @@ library LibSwapToRepaySizing {
         uint256 required,
         uint256 maxIn
     ) internal view returns (bool covers, uint256 sell, uint256 floor) {
-        uint256 floorAtMax = slippageFloor(collateralAsset, principalAsset, maxIn);
-        if (floorAtMax < required) return (false, 0, 0);
-        sell = Math.mulDiv(required, maxIn, floorAtMax, Math.Rounding.Ceil);
-        floor = slippageFloor(collateralAsset, principalAsset, sell);
-        for (uint256 i; i < 2 && floor < required; ++i) {
-            sell += Math.mulDiv(required - floor, maxIn, floorAtMax, Math.Rounding.Ceil);
-            if (sell >= maxIn) break;
-            floor = slippageFloor(collateralAsset, principalAsset, sell);
-        }
-        if (sell >= maxIn || floor < required) return (true, maxIn, floorAtMax);
-        return (true, sell, floor);
+        (uint256 a, uint256 b) = _conversion(collateralAsset, principalAsset);
+        if (a == 0 || b == 0) return (false, 0, 0);
+        uint256 k = LibVaipakam.BASIS_POINTS - LibVaipakam.cfgMaxSwapToRepaySlippageBps();
+        uint256 eMin = Math.mulDiv(required, LibVaipakam.BASIS_POINTS, k, Math.Rounding.Ceil);
+        sell = Math.mulDiv(eMin, b, a, Math.Rounding.Ceil);
+        if (sell > maxIn) return (false, 0, 0);
+        floor = (Math.mulDiv(sell, a, b) * k) / LibVaipakam.BASIS_POINTS;
+        covers = true;
     }
 
-    /// @notice Slippage-capped oracle floor for selling `amount` collateral.
-    function slippageFloor(address collateralAsset, address principalAsset, uint256 amount)
-        internal
+    /// @dev The two sides of the oracle conversion `expectedSwapOutput`
+    ///      applies (`x · a / b`), read once. `b == 0` (a zero principal
+    ///      price) and `a == 0` (a zero collateral price) both mean the sale
+    ///      cannot be valued, and {sizeSale} refuses.
+    function _conversion(address collateralAsset, address principalAsset)
+        private
         view
-        returns (uint256)
+        returns (uint256 a, uint256 b)
     {
-        return (LibFallback.expectedSwapOutput(address(this), collateralAsset, principalAsset, amount) *
-            (LibVaipakam.BASIS_POINTS - LibVaipakam.cfgMaxSwapToRepaySlippageBps())) /
-            LibVaipakam.BASIS_POINTS;
+        (uint256 colPrice, uint8 colFeedDec) = OracleFacet(address(this)).getAssetPrice(collateralAsset);
+        (uint256 prinPrice, uint8 prinFeedDec) = OracleFacet(address(this)).getAssetPrice(principalAsset);
+        uint8 colTokenDec = IERC20Metadata(collateralAsset).decimals();
+        uint8 prinTokenDec = IERC20Metadata(principalAsset).decimals();
+        a = colPrice * (10 ** prinTokenDec) * (10 ** prinFeedDec);
+        b = prinPrice * (10 ** colTokenDec) * (10 ** colFeedDec);
     }
 }

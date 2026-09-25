@@ -325,8 +325,19 @@ Phase 1 surface — three external entry points:
      ```
      This is unit-safe across any collateral/principal pair with
      mismatched prices or decimals — the comparison is principal-
-     vs-principal. The final `makerAmount` (collateral side) is
-     determined at step 9 and the floor check has no opinion on it.
+     vs-principal.
+     **#2322 — this `required` is now the input to the lot, not the
+     final gate.** The lot (`makerAmount`) is exactly the least
+     collateral whose slippage-capped oracle value covers `required`
+     (`LibSwapToRepaySizing.sizeSale`, shared with the direct close),
+     and the gate is `params.takerAmount >= floor(lot)` — the lot's OWN
+     slippage-capped value, which is always `>= required` and exceeds it
+     when collateral granularity makes the smallest covering lot worth
+     more. Clients should read both figures from
+     `previewSwapToRepayIntentLot(loanId) -> (lot, minTakerAmount)`
+     rather than recompute `required`. The original text said "the floor
+     check has no opinion on `makerAmount`"; since #2322 the two are
+     linked through the lot.
   8. Pull the pledged collateral from the borrower's vault into the
      diamond's custodial slot via `VaultFactoryFacet.vaultWithdrawERC20`.
      **Use balance-delta accounting**:
@@ -805,8 +816,13 @@ PrepayContext pctx = IVaipakamPrepayContext(this).getPrepayContext(loanId, block
 uint256 lateFee = LibVaipakam.calculateLateFee(s.loans[loanId], block.timestamp);
 uint256 floor   = pctx.lenderLeg + pctx.treasuryLeg + lateFee;
 uint256 minOut  = (floor * (10_000 + s.cfgIntentMinOutputBufferBps)) / 10_000;
-if (params.takerAmount < minOut) revert IntentMinOutputBelowFloor(params.takerAmount, minOut);
+// #2322 — size the lot to minOut, then gate on the LOT's own floor:
+(uint256 lot, uint256 minTaker) = sizeSale(collateral, principal, minOut, loan.collateralAmount);
+if (params.takerAmount < minTaker) revert IntentMinOutputBelowFloor(params.takerAmount, minTaker);
 ```
+
+(Superseded: the original gate was `params.takerAmount < minOut`, which
+let a coarse lot worth far more than `minOut` sell below its worst case.)
 
 The `postInteraction` hook re-asserts the floor (against the *live*
 recomputed `lenderLeg + treasuryLeg` at fill time, see §5.1
@@ -1321,14 +1337,20 @@ function and the on-chain reverse-index, both inside
 The Loan Details swap-to-repay panel grows a mode toggle (atomic vs
 best-price intent). On the intent path:
 
-1. Borrower picks `takerAmount` (default = the §5.4 floor + a
-   small UX buffer; the dapp shows the live floor so the borrower
-   can override if they want to raise the threshold further).
+1. Borrower picks `takerAmount` — the order's PRICE for the lot.
+   The dapp reads `previewSwapToRepayIntentLot(loanId)` for the lot
+   and `minTakerAmount` (the lot's own worst-case value, #2322) and
+   defaults to that minimum plus a small UX buffer; the borrower may
+   ask more to price the lot higher. (Originally: "default = the §5.4
+   floor + a small UX buffer" — superseded, since the minimum is the
+   lot's floor, which can exceed the §5.4 floor.)
 2. Borrower submits one transaction:
    `commitSwapToRepayIntent(loanId, params)`. The diamond rejects
    fee-on-transfer / rebasing collateral (§5.1 step 8 invariant
-   guard); so for the supported case `custodialCollateral ==
-   loan.collateralAmount` always holds. The diamond constructs the
+   guard); so for the supported case `custodialCollateral == lot`
+   always holds — the debt-sized lot, NOT `loan.collateralAmount`
+   (#2322: the rest stays in the vault, liened, and the borrower
+   position is locked for the auction). The diamond constructs the
    final Fusion order from `params` + the now-known `makerAmount =
    custodialCollateral`, computes the canonical orderHash, registers
    it in storage, approves Fusion's `LimitOrderProtocol` (per Codex round-7 P1 #1 — Fusion is

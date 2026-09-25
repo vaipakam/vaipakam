@@ -191,7 +191,7 @@ pattern — confirm at implementation time).
         requiredPrincipal = plan.lenderDue + plan.treasuryShare
 7.  SUPERSEDED by #2317 (2026-09-25) — the sale is sized to the debt,
     not to the bound. `maxCollateralIn` is an UPPER BOUND: the close-out
-    sells the least collateral (up to rounding) whose slippage-capped
+    sells exactly the least collateral whose slippage-capped
     oracle floor covers requiredPrincipal, never more than the bound,
     and reverts SwapBoundsInsufficient if even the bound cannot cover
     it. `previewSwapToRepayFull` reports that sale size from the same

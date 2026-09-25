@@ -1392,9 +1392,9 @@ considers it finished.
   current borrower-position NFT holder's wallet.
 - In full-close mode the borrower names an **upper bound** on the collateral
   the protocol may sell, never the amount to sell. The protocol sells only
-  the collateral the debt needs — the least amount, up to rounding worth at
-  most a few base units of the lending asset, whose worst-case proceeds
-  under the borrower-facing slippage cap still cover the full repayment — and
+  the collateral the debt needs — exactly the least amount whose
+  worst-case proceeds under the borrower-facing slippage cap still cover
+  the full repayment, whatever the two assets' decimals and prices — and
   everything else stays pledged and becomes borrower-claimable. A generous
   bound therefore changes nothing; a bound too small to cover the debt even
   at the cap is refused before anything moves. Any principal left over after

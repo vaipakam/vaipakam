@@ -11,9 +11,9 @@ deployment measured it: with a little over a thousand owed and an allowance
 worth twelve hundred, all twelve hundred was sold. The owner decided the
 specification is the intent and the code was the defect.
 
-The close-out now sizes the sale to the debt. It sells the least collateral — up to rounding worth at most a few base
-units of the lending asset — whose worst-case proceeds, under the
-borrower-facing slippage cap, still cover the whole repayment; the allowance only bounds that, and everything
+The close-out now sizes the sale to the debt. It sells exactly the least collateral whose worst-case proceeds, under the
+borrower-facing slippage cap, still cover the whole repayment, whatever the
+two assets' decimals and prices (as refined by #2322); the allowance only bounds that, and everything
 above it stays pledged and is released by the borrower's normal claim. Any
 principal left after the debt is paid is the fill beating that worst case,
 which is the favourable-quote surplus the specification describes. A new
