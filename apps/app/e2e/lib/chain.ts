@@ -18,6 +18,7 @@ import {
   type Chain,
   type TransactionReceipt,
 } from 'viem';
+import { extractRevertData } from '@vaipakam/lib/decodeContractError';
 import { ANVIL_URL } from './anvil';
 import { loadDeployment, loadDiamondAbi } from './artifacts';
 
@@ -168,38 +169,15 @@ async function revertReason(hash: Hex, blockNumber: bigint): Promise<string> {
       'any earlier transaction of the same block, so it cannot say which'
     );
   } catch (err) {
-    const data = revertData(err);
+    // The app's own extractor (#2336): structured fields first, then only the
+    // text the provider reported — never viem's notes about the call, which
+    // repeat the request's calldata in the same shape as revert data.
+    const data = extractRevertData(err);
     if (!data || !data.startsWith('0x')) {
       return `unavailable — no trace, and the replay failed without revert data (${shortMessage(err)})`;
     }
     return `${decodeRevert(data as Hex)} ${approx}`;
   }
-}
-
-/**
- * The raw revert bytes a failed `eth_call` carried, from STRUCTURED fields
- * only, walking the `cause` chain: `data` as a string, the nested
- * `data.data` some providers use, and viem's `raw`.
- *
- * NOT `@vaipakam/lib`'s `extractRevertData` (#2335 r1, measured). That helper
- * falls back to a regex over each node's MESSAGE before descending, and viem's
- * `CallExecutionError` message embeds the request's calldata — which has the
- * selector-plus-words shape it accepts. Against real reverted Base Sepolia
- * transactions it returned the call's own arguments as the revert, where this
- * walk finds the true bytes on the nested `RawContractError`. Filed as #2336.
- */
-function revertData(err: unknown): Hex | undefined {
-  let node: unknown = err;
-  for (let depth = 0; node && typeof node === 'object' && depth < 8; depth++) {
-    const n = node as { data?: unknown; raw?: unknown; cause?: unknown };
-    const nested =
-      n.data && typeof n.data === 'object' ? (n.data as { data?: unknown }).data : undefined;
-    for (const c of [n.data, nested, n.raw]) {
-      if (typeof c === 'string' && c.startsWith('0x') && c.length >= 10) return c as Hex;
-    }
-    node = n.cause;
-  }
-  return undefined;
 }
 
 /** Revert bytes as `Name(args)` against the Diamond's merged ABI, or raw. */
