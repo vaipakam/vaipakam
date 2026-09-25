@@ -13,7 +13,7 @@
  *    That is worth observing rather than trusting.
  */
 import { DIAMOND, MOCKS, TREASURY, borrower, lender, outsider, parseUnits, pub, tx } from '../lib/chain.mjs';
-import { ABIS, approveDiamond, acceptOffer, createOffer, delta, mint, openLoan, read, snapshot, vaultAddressFor, lifSplit, liveFees } from '../lib/flow.mjs';
+import { ABIS, ANY, STATUS, approveDiamond, acceptOffer, createOffer, delta, expectPosition, mint, openLoan, positionOf, read, snapshot, vaultAddressFor, lifSplit, liveFees } from '../lib/flow.mjs';
 import { chainNow, f18 } from '../lib/chain.mjs';
 import { simulate } from '../lib/errors.mjs';
 import { cannotContinue, check, expectEq, expectLedger, expectRefusal } from '../lib/report.mjs';
@@ -53,6 +53,7 @@ export async function run() {
     const overshoot = await simulate(DIAMOND, ABIS.partialWithdrawal, 'partialWithdrawCollateral', [loanId, maxAmount + 1n], borrower.address);
     expectRefusal('A6.2', 'one wei past the quoted maximum is refused, not silently clamped', overshoot, 'HealthFactorTooLow');
 
+    const posBefore = await positionOf(loanId);
     const before = await snapshot(tokens, holders);
     const receipt = await tx(borrower, { address: DIAMOND, abi: ABIS.partialWithdrawal, functionName: 'partialWithdrawCollateral', args: [loanId, maxAmount] }, 'partialWithdrawCollateral');
     const after = await snapshot(tokens, holders);
@@ -65,6 +66,11 @@ export async function run() {
     // lands in their wallet — straight out of their own vault.
     expectLedger('A6.3b', 'the released collateral moves exactly: out of the borrower\'s vault into their wallet',
       before, after, { 'collateral.borrowerVault': -maxAmount, 'collateral.borrowerEOA': maxAmount }, `released=${f18(maxAmount)}`);
+    // The recorded collateral AND the lien fall by exactly the release —
+    // otherwise risk math or a later claim would stand on collateral that has
+    // already left the vault.
+    await expectPosition('A6.3c', 'the release changes the position exactly: recorded collateral and lien amount both down by the released amount, nothing else',
+      loanId, posBefore, { collateralAmount: posBefore.collateralAmount - maxAmount, lienAmount: posBefore.lienAmount - maxAmount });
 
     // Having released the surplus, there is none left to release.
     const again = await read(ABIS.partialWithdrawal, 'calculateMaxWithdrawable', [loanId]);
@@ -137,6 +143,7 @@ export async function run() {
       `oldLoanId=${oldLoanId} offerId=${posted.offerId} rate ${oldLoan.interestRateBps}bps -> ${tagged.interestRateBps}bps`);
 
     {
+      const oldPos = await positionOf(oldLoanId);
       const activeBefore = (await read(ABIS.metrics, 'getUserActiveLoans', [borrower.address])).map(String);
       const refiHolders = { ...holders, newLenderEOA: outsider.address, newLenderVault: await vaultAddressFor(outsider) };
       const beforeRefi = await snapshot(tokens, refiHolders);
@@ -203,6 +210,25 @@ export async function run() {
         check('A6.10', 'a completed refinance leaves FOUR distinct position NFTs, all still resolving',
           distinct === 4 && !resolved.some((r) => r.endsWith('BURNED')),
           resolved.join(' '));
+
+        // Both positions in FULL. The old one only terminalizes — its NFTs stay
+        // with their holders as redeemable receipts. The replacement carries
+        // the new terms, the new lender holds its lender NFT, the borrower its
+        // borrower NFT, and — a CARRY-OVER refinance, no collateral moving —
+        // the collateral's lien now secures the replacement loan.
+        // Its lien is RELEASED (amount 0): the collateral's encumbrance moved to
+        // the replacement below rather than being duplicated or left behind.
+        await expectPosition('A6.10b', 'the ORIGINAL position after refinance: status Repaid, both receipts still with their holders, its lien released because it moved to the replacement',
+          oldLoanId, oldPos, { status: STATUS.Repaid, lienReleased: true, lienAmount: 0n });
+        await expectPosition('A6.10c', 'the REPLACEMENT position in full: new lender and its NFT, the same borrower and collateral, the collateral\'s lien retagged to it',
+          newLoanId, null, {
+            status: STATUS.Active, principal: tagged.amount, collateralAmount: oldLoan.collateralAmount,
+            lender: outsider.address, borrower: borrower.address,
+            lenderTokenId: ANY, borrowerTokenId: ANY,
+            lenderNftOwner: outsider.address, borrowerNftOwner: borrower.address,
+            lienUser: borrower.address, lienAsset: collateral, lienTokenId: 0n,
+            lienAmount: oldLoan.collateralAmount, lienAssetType: 0, lienReleased: false,
+          });
       }
     }
   }

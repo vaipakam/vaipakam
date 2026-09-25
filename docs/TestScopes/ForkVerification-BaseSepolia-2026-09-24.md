@@ -16,7 +16,7 @@ configuration — not the source tree's idea of them.
   ledger now records as `forkBlock`. Figures that depend on elapsed time can
   still differ in the last decimals, since the warps land on different
   seconds.
-- **Result** — 157 scenarios: **145 PASS, 11 INFO, 1 FAIL**, no aborted
+- **Result** — 180 scenarios: **168 PASS, 11 INFO, 1 FAIL**, no aborted
   file. The INFOs are observations with no assertion behind them, not soft
   failures — the ledger's API makes a row either an assertion (PASS/FAIL
   only) or an observation (INFO only), so no failure can land as INFO; each
@@ -169,7 +169,28 @@ stops that file naming the knob, reported as "did not run" rather than as a
 protocol failure. The treasury topology is one of those: the ledgers are
 written for an external treasury, and on a Diamond-as-treasury deployment —
 a supported mode — the run stops before any file rather than reporting every
-fee row as wrong. This deployment is inside every envelope. The stamps are themselves asserted equal to
+fee row as wrong. This deployment is inside every envelope.
+
+A seventh pass closed the last recurring gap at its root. Rows kept asserting
+ONE field of a position after a step — the loan names the new lender, the lien
+is unreleased — while another could be wrong: the NFT authority resolves
+through, the recorded collateral, the lien's holder or amount, the other
+side's receipt. Now every step asserts the WHOLE position (`expectPosition`):
+status, principal, recorded collateral, both parties, both token ids and
+their holders, and every field of the collateral lien — each either changes
+to the value the step states or stays exactly as it was, and a position a
+step CREATES must state every field. That is what now substantiates: the
+lien shrinking with a collateral release, a partial swap and a periodic
+settlement; the carry-over refinance RETAGGING the lien to the replacement
+(the old loan's reads released); the offset creating its replacement loan on
+the vehicle's terms, each side holding its NFT; a handover moving the
+borrower NFT and the lien to the replacement; both sales moving the lender
+NFT and nothing else; and the loan settling only when BOTH sides have
+claimed (the lender's claim after an ordinary repay is now exercised too,
+A2.18). A forced close sells the whole collateral and releases the lien; the
+loan record keeps its original collateral figure as a term. The swap-to-repay
+row now checks the sale against an independently computed debt-sized amount
+(within oracle-rounding wei), not merely "below the cap". The stamps are themselves asserted equal to
 the live configuration at origination (A2.3–A2.5), and the admission floor
 against the spec's governed range [1.2, 2.0] (A1.1).
 
@@ -837,7 +858,7 @@ replace.
 
 ## 7. Ledger
 
-The full 157-row ledger, with per-scenario verdicts and observed numbers, is
+The full 180-row ledger, with per-scenario verdicts and observed numbers, is
 regenerated as `contracts/script/fork-scenarios/last-run.json` on every run
 (untracked). Scenario ids map to the driver's files:
 

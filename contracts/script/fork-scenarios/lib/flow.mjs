@@ -30,6 +30,7 @@ import {
   walletFor,
 } from './chain.mjs';
 import { simulate } from './errors.mjs';
+import { check } from './report.mjs';
 
 export const ZERO = '0x0000000000000000000000000000000000000000';
 export const BYTES32_ZERO = `0x${'0'.repeat(64)}`;
@@ -404,4 +405,71 @@ export function forcedCloseWaterfall({ proceeds, incentiveBps, handlingBps, trea
     interestFee = (recovered * BigInt(treasuryFeeBps)) / 10_000n;
   }
   return { bonus, lender: allocated - interestFee, treasury: handling + interestFee, borrower: surplus - handling };
+}
+
+// ---------------------------------------------------------------------------
+// A position's whole observable state, asserted in one place.
+//
+// A row that checks ONE field of a position after a step — "the loan names
+// the new lender", "the lien is unreleased" — certifies that field while any
+// other could be wrong: the NFT the authority resolves through, the recorded
+// collateral, the lien's holder or amount, the other side's receipt. Adding
+// the missing field to that one row leaves the next row with the same gap.
+// So every step asserts the WHOLE position through `expectPosition`: each
+// tracked field either changes to the value the step states, or stays exactly
+// what it was. Nothing is silently out of scope.
+// ---------------------------------------------------------------------------
+
+/** Every field `expectPosition` tracks. */
+export const POSITION_FIELDS = [
+  'status', 'principal', 'collateralAmount', 'lender', 'borrower',
+  'lenderTokenId', 'borrowerTokenId', 'lenderNftOwner', 'borrowerNftOwner',
+  'lienUser', 'lienAsset', 'lienTokenId', 'lienAmount', 'lienAssetType', 'lienReleased',
+];
+
+/** A value that matches anything — only for ids a step mints fresh. */
+export const ANY = Symbol('any');
+
+const lower = (v) => (typeof v === 'string' ? v.toLowerCase() : v);
+
+async function nftOwner(tokenId) {
+  try { return lower(await pub.readContract({ address: DIAMOND, abi: ABIS.nft, functionName: 'ownerOf', args: [tokenId] })); }
+  catch { return null; } // burned, or never minted
+}
+
+/** The position as the chain reports it now. */
+export async function positionOf(loanId) {
+  const l = await read(ABIS.loan, 'getLoanDetails', [loanId]);
+  const lien = await read(ABIS.metrics, 'getLoanCollateralLien', [loanId]);
+  return {
+    status: Number(l.status), principal: l.principal, collateralAmount: l.collateralAmount,
+    lender: lower(l.lender), borrower: lower(l.borrower),
+    lenderTokenId: l.lenderTokenId, borrowerTokenId: l.borrowerTokenId,
+    lenderNftOwner: await nftOwner(l.lenderTokenId), borrowerNftOwner: await nftOwner(l.borrowerTokenId),
+    lienUser: lower(lien.user), lienAsset: lower(lien.asset), lienTokenId: lien.tokenId,
+    lienAmount: lien.amount, lienAssetType: Number(lien.assetType), lienReleased: lien.released,
+  };
+}
+
+/**
+ * Assert the WHOLE position after a step. `before` is `positionOf()` from
+ * before the step and `changes` the fields the step is meant to change; every
+ * other tracked field must be exactly as it was. For a position the step
+ * CREATES, pass `before = null` and state every field.
+ */
+export async function expectPosition(id, name, loanId, before, changes) {
+  const unknown = Object.keys(changes).filter((k) => !POSITION_FIELDS.includes(k));
+  if (unknown.length) throw new TypeError(`expectPosition(${id}): unknown field(s) ${unknown.join(', ')}`);
+  if (before === null) {
+    const missing = POSITION_FIELDS.filter((k) => !(k in changes));
+    if (missing.length) throw new TypeError(`expectPosition(${id}): a new position must state every field; missing ${missing.join(', ')}`);
+  }
+  const want = { ...(before ?? {}) };
+  for (const [k, v] of Object.entries(changes)) want[k] = lower(v);
+  const after = await positionOf(loanId);
+  const wrong = POSITION_FIELDS.filter((k) => want[k] !== ANY && String(after[k]) !== String(want[k]))
+    .map((k) => `${k}: got ${after[k]} want ${want[k]}`);
+  const stated = Object.entries(changes).map(([k, v]) => `${k}=${v === ANY ? '*' : v}`).join(' ');
+  return check(id, name, wrong.length === 0,
+    wrong.length ? `MISMATCH ${wrong.join('; ')}` : `loanId=${loanId} ${before === null ? 'new position:' : 'changed:'} ${stated || '(nothing)'}; every other field unchanged`);
 }

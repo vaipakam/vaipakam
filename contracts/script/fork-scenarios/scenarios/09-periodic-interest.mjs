@@ -15,7 +15,7 @@
  * contract path, not an interface gap.
  */
 import { ADMIN, DIAMOND, MOCKS, TREASURY, borrower, chainNow, lender, outsider, parseUnits, pub, tx } from '../lib/chain.mjs';
-import { ABIS, approveDiamond, delta, mint, offerParams, openLoan, read, snapshot, vaultAddressFor } from '../lib/flow.mjs';
+import { ABIS, approveDiamond, delta, expectPosition, mint, offerParams, openLoan, positionOf, read, snapshot, vaultAddressFor } from '../lib/flow.mjs';
 import { f18 } from '../lib/chain.mjs';
 import { sendAs, warpDays } from '../lib/impersonate.mjs';
 import { simulate } from '../lib/errors.mjs';
@@ -142,6 +142,7 @@ async function runPeriodic(initial) {
     settlerEOA: outsider.address, treasury: TREASURY, venue,
   };
   const tokens = { lending, collateral: MOCKS.liquidToken };
+  const autoPos = await positionOf(loanId);
   const beforeAuto = await snapshot(tokens, holders);
   const autoReceipt = await tx(outsider, {
     address: DIAMOND, abi: ABIS.repayPeriodic, functionName: 'settlePeriodicInterest',
@@ -161,8 +162,13 @@ async function runPeriodic(initial) {
   const toLender = afterAuto['lending.lenderEOA'] - beforeAuto['lending.lenderEOA'] + (afterAuto['lending.lenderVault'] - beforeAuto['lending.lenderVault']);
   const [handlingFeeBps] = await read(ABIS.config, 'getLiquidationConfig');
   const settlerBps = await dynamicIncentiveBps(MOCKS.liquidToken, lending, sold, proceeds);
+  // The collateral leg too: exactly `sold` goes from the borrower's vault to
+  // the venue, and no other watched holder's collateral moves.
+  const colMoved = Object.keys(afterAuto).filter((k) => k.startsWith('collateral.') && afterAuto[k] !== beforeAuto[k]);
+  const colLegOk = afterAuto['collateral.venue'] - beforeAuto['collateral.venue'] === sold &&
+    colMoved.every((k) => k === 'collateral.venue' || k === 'collateral.borrowerVault');
   check('A9.11', 'an unpaid period is closed by selling collateral: the loan stays Active, the settler earns the dynamic incentive and the treasury its handling charge on the proceeds, the lender is covered, and every unit is accounted',
-    String(autoLoan.status) === '0' &&
+    String(autoLoan.status) === '0' && colLegOk &&
     loan.collateralAmount - autoLoan.collateralAmount === sold &&
     toSettler === (proceeds * settlerBps) / 10_000n &&
     toTreasury === (proceeds * handlingFeeBps) / 10_000n &&
@@ -170,6 +176,8 @@ async function runPeriodic(initial) {
     toSettler + toTreasury + toLender === proceeds,
     `gas=${autoReceipt.gasUsed} sold=${f18(sold)} proceeds=${f18(proceeds)} settler=${f18(toSettler)} (${settlerBps}bps) ` +
     `treasury=${f18(toTreasury)} (${handlingFeeBps}bps) lender=${f18(toLender)} shortfall=${f18(shortfallDue)}`);
+  await expectPosition('A9.11c', 'the auto-settlement changes the position exactly: recorded collateral and lien down by the collateral sold — principal, NFTs and status unchanged',
+    loanId, autoPos, { collateralAmount: autoPos.collateralAmount - sold, lienAmount: autoPos.lienAmount - sold });
   // What the spec does NOT pin down is where the sizing buffer ends up once
   // the period is covered. Surfaced, not certified.
   observe('A9.11b', 'after an auto-settled period, the lender receives this much above the period\'s shortfall (the sale\'s sizing buffer)',
@@ -197,6 +205,7 @@ async function runPeriodic(initial) {
   const pay = await simulate(DIAMOND, ABIS.repay, 'repayPartial', [second.loanId, part], borrower.address);
   if (!pay.ok) cannotContinue('A9.13 voluntary period payment', `repayPartial(${f18(part)}) -> ${pay.name}`);
   const stampBefore = secondLoan.lastPeriodicInterestSettledAt;
+  const payPos = await positionOf(second.loanId);
   const beforePay = await snapshot(tokens, holders);
   const payReceipt = await tx(borrower, { address: DIAMOND, abi: ABIS.repay, functionName: 'repayPartial', args: [second.loanId, part] }, 'repayPartial(period)');
   const afterPayBal = await snapshot(tokens, holders);
@@ -213,11 +222,15 @@ async function runPeriodic(initial) {
       'lending.lenderEOA': payInterest - payCut + part,
       'lending.treasury': payCut,
     }, `wholeDays=${payDays} interest=${f18(payInterest)} principalReduction=${f18(part)} (minPartialBps=${minPartialBps}) periodDue=${f18(due[3])}`);
-  check('A9.13b', 'that payment covers the period and closes it in the same transaction — principal down by exactly the reduction, the settled-at stamp advanced, nothing sold',
-    payInterest >= due[3] && secondLoan.principal - paid.principal === part &&
-    paid.lastPeriodicInterestSettledAt > stampBefore && paid.collateralAmount === secondLoan.collateralAmount,
-    `settledAt ${stampBefore} -> ${paid.lastPeriodicInterestSettledAt} principal ${f18(secondLoan.principal)} -> ${f18(paid.principal)} ` +
+  // Exactly ONE period closes: the stamp lands on the period end the
+  // pre-payment preview reported — not merely "later", which a jump past
+  // several intervals would also satisfy while forgiving the ones skipped.
+  check('A9.13b', 'that payment covers the period and closes EXACTLY that one — the settled-at stamp lands on the previewed period end, nothing sold',
+    payInterest >= due[3] && BigInt(paid.lastPeriodicInterestSettledAt) === BigInt(due[1]) && paid.collateralAmount === secondLoan.collateralAmount,
+    `settledAt ${stampBefore} -> ${paid.lastPeriodicInterestSettledAt} (previewed period end ${due[1]}) principal ${f18(secondLoan.principal)} -> ${f18(paid.principal)} ` +
     `nextDue=${Array.isArray(afterPay) ? afterPay[1] : '?'} dueNow=${Array.isArray(afterPay) ? afterPay[6] : '?'}`);
+  await expectPosition('A9.13c', 'the voluntary payment changes the position exactly: principal down by the reduction, nothing else',
+    second.loanId, payPos, { principal: payPos.principal - part });
   const stampSim = await simulate(DIAMOND, ABIS.repayPeriodic, 'settlePeriodicInterest', [second.loanId, []], outsider.address);
   expectRefusal('A9.14', 'a stamp call after a voluntary payment is refused — the period is already closed', stampSim, 'PeriodicSettleNotDue');
 }

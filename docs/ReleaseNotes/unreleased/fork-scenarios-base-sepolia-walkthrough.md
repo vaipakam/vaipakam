@@ -13,7 +13,7 @@ needs no Solidity compiler: it reads the committed per-facet ABIs, so the
 compiler stays the single source of truth for every decode while the driver
 itself is plain Node.
 
-The run now covers one hundred and fifty-seven scenarios across the whole advanced
+The run now covers one hundred and eighty scenarios across the whole advanced
 surface — offer creation and escrow, accept and the loan-initiation fee,
 repayment and the treasury's interest cut, the borrower's collateral claim,
 time-based default, health-factor liquidation, preclose, partial repayment,
@@ -193,7 +193,10 @@ changes. Where a scenario chooses an input rather than asserting one — the
 size of a probe, how far to move the clock — it now derives it from the
 deployment, or declares the configuration it was written for and stops,
 naming the setting, on a deployment outside it, instead of reporting a
-protocol failure. The re-run records one hundred and forty-five passes,
+protocol failure. After every step the whole position is checked — status,
+terms, both position NFTs and their holders, and the collateral lien — not
+just the field the step is named for. The re-run records one hundred and
+sixty-eight passes,
 eleven observations and one failure —
 the swap-to-repay check whose expectation was deliberately corrected — with
 no scenario file aborted.

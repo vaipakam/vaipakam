@@ -10,7 +10,7 @@
  * start it.
  */
 import { DIAMOND, ERC20, MOCKS, TREASURY, borrower, lender, outsider, parseUnits, pub, tx } from '../lib/chain.mjs';
-import { ABIS, STATUS, delta, openLoan, read, snapshot, vaultAddressFor } from '../lib/flow.mjs';
+import { ABIS, STATUS, delta, expectPosition, openLoan, positionOf, read, snapshot, vaultAddressFor } from '../lib/flow.mjs';
 import { f18 } from '../lib/chain.mjs';
 import { simulate } from '../lib/errors.mjs';
 import { cannotContinue, check, expectLedger, expectRefusal, requireEnvelope } from '../lib/report.mjs';
@@ -57,6 +57,7 @@ export async function run() {
     const payoff = Array.isArray(quoted) ? quoted[0] : quoted;
     const interestDue = payoff - loan.principal;
     const interestCut = (interestDue * BigInt(loan.treasuryFeeBpsAtInit)) / 10_000n;
+    const fullPos = await positionOf(loanId);
     const before = await snapshot(tokens, holders);
     const sim = await simulate(DIAMOND, ABIS.swapToRepay, 'swapToRepayFull', [loanId, TRY_LIST, CAP], borrower.address);
     if (!sim.ok) cannotContinue('A11.4 full swap-to-repay', sim.name);
@@ -73,10 +74,25 @@ export async function run() {
     // so collateral the debt does not need stays pledged. The live bytecode
     // this was first run against sells the whole cap, so this row FAILS
     // there until the #2317 fix is deployed — which is the point of it.
+    //
+    // "Only what the debt needs" is computed INDEPENDENTLY, not read back: the
+    // least collateral whose worst-case proceeds — the oracle value less the
+    // borrower-facing swap-to-repay slippage cap — cover the debt (the payoff,
+    // fixed before the sale). A sale merely below the cap, e.g. cap − 1 wei,
+    // is not that. The tolerance covers only the integer rounding of the
+    // oracle conversion (a few wei in 1e18).
     const sold = before['collateral.borrowerVault'] - after['collateral.borrowerVault'];
-    check('A11.5', 'the protocol sells only what the debt needs — the cap is an upper bound, not the sale size (#2317)',
-      sold < CAP,
-      `cap=${f18(CAP)} sold=${f18(sold)} of ${f18(loan.collateralAmount)}`);
+    const [cP, cD] = await read(ABIS.oracle, 'getAssetPrice', [collateral]);
+    const [pP, pD] = await read(ABIS.oracle, 'getAssetPrice', [lending]);
+    const slipBps = BigInt(await read(ABIS.config, 'getMaxSwapToRepaySlippageBps'));
+    const num = payoff * pP * 10n ** BigInt(cD) * 10_000n;
+    const den = cP * 10n ** BigInt(pD) * (10_000n - slipBps);
+    const debtSized = (num + den - 1n) / den;
+    const tolerance = debtSized / 1_000_000_000_000n + 10n;
+    const off = sold > debtSized ? sold - debtSized : debtSized - sold;
+    check('A11.5', 'the protocol sells only what the debt needs — the least collateral whose slippage-capped oracle floor covers the payoff; the cap is an upper bound, not the sale size (#2317)',
+      off <= tolerance,
+      `sold=${f18(sold)} debtSized=${f18(debtSized)} (payoff ${f18(payoff)} at ${slipBps}bps worst case) cap=${f18(CAP)} of ${f18(loan.collateralAmount)}`);
 
     // Everything the sale raised is accounted, EACH recipient against its own
     // expectation: the lender's vault gets principal + interest net of the
@@ -93,6 +109,9 @@ export async function run() {
         'lending.treasury': interestCut,
         'lending.borrowerEOA': raised - payoff,
       }, `payoff=${f18(payoff)} interest=${f18(interestDue)} raised=${f18(raised)} surplusToWallet=${f18(raised - payoff)}`);
+
+    await expectPosition('A11.6c', 'the full swap changes the position exactly: status Repaid, the lien down to the unsold collateral — NFTs and recorded terms unchanged',
+      loanId, fullPos, { status: STATUS.Repaid, lienAmount: fullPos.lienAmount - sold });
 
     // What was NOT sold is still the borrower's collateral, released to claim.
     const lien = await read(ABIS.metrics, 'getLoanCollateralLien', [loanId]);
@@ -125,6 +144,7 @@ export async function run() {
     }
     const hfBefore = await read(ABIS.risk, 'calculateHealthFactor', [loanId]);
     const loanBefore = await read(ABIS.loan, 'getLoanDetails', [loanId]);
+    const partialPos = await positionOf(loanId);
     const sim = await simulate(DIAMOND, ABIS.swapToRepay, 'swapToRepayPartial', [loanId, parseUnits('0.1', 18), TRY_LIST], borrower.address);
     if (!sim.ok) cannotContinue('A11.8 partial swap-to-repay', sim.name);
     const before = await snapshot(tokens, holders);
@@ -152,6 +172,13 @@ export async function run() {
         'lending.venue': -psProceeds,
         'lending.lenderEOA': psProceeds - psCut,
         'lending.treasury': psCut,
+      });
+    // The recorded collateral and its lien fall by exactly what was sold, so
+    // risk math and a later claim never stand on collateral that has left.
+    await expectPosition('A11.8c', 'the partial swap changes the position exactly: principal down by the principal repaid, recorded collateral and lien both down by the 0.1 sold',
+      loanId, partialPos, {
+        principal: partialPos.principal - (psProceeds - psInterest),
+        collateralAmount: partialPos.collateralAmount - SOLD, lienAmount: partialPos.lienAmount - SOLD,
       });
     check('A11.9', 'a partial swap never leaves the position LESS healthy than it was',
       hfAfter >= hfBefore, `HF ${f18(hfBefore)} -> ${f18(hfAfter)}`);

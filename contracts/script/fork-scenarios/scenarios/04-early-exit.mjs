@@ -8,7 +8,7 @@
  * has to say out loud.
  */
 import { DIAMOND, MOCKS, TREASURY, borrower, lender, outsider, parseUnits, pub, tx } from '../lib/chain.mjs';
-import { ABIS, STATUS, delta, openLoan, read, snapshot, vaultAddressFor } from '../lib/flow.mjs';
+import { ABIS, STATUS, delta, expectPosition, openLoan, positionOf, read, snapshot, vaultAddressFor } from '../lib/flow.mjs';
 import { parseEventLogs } from 'viem';
 import { f18 } from '../lib/chain.mjs';
 import { warpDays } from '../lib/impersonate.mjs';
@@ -33,6 +33,7 @@ export async function run() {
     await warpDays(1);
     const quoted = await read(ABIS.repay, 'calculateRepaymentAmount', [loanId]);
     const payoff = Array.isArray(quoted) ? quoted[0] : quoted;
+    const prePos = await positionOf(loanId);
     const before = await snapshot(tokens, holders);
     const receipt = await tx(borrower, { address: DIAMOND, abi: ABIS.preclose, functionName: 'precloseDirect', args: [loanId] }, 'precloseDirect');
     const after = await snapshot(tokens, holders);
@@ -50,6 +51,8 @@ export async function run() {
         'lending.lenderVault': payoff - preCut,
         'lending.treasury': preCut,
       });
+    await expectPosition('A4.2c', 'the preclose changes ONLY the status to Repaid — both NFTs, terms and the whole lien as they were',
+      loanId, prePos, { status: STATUS.Repaid });
     const beforeClaim = await snapshot(tokens, holders);
     await tx(borrower, { address: DIAMOND, abi: ABIS.claim, functionName: 'claimAsBorrower', args: [loanId] }, 'claimAsBorrower');
     const afterClaim = await snapshot(tokens, holders);
@@ -71,6 +74,7 @@ export async function run() {
     const part = floor > parseUnits('400', 18) ? floor : parseUnits('400', 18);
     requireEnvelope('minPartialBps', part < opened.principal,
       `the asset's minimum partial (${minPartialBps} bps) leaves no partial below the whole principal`);
+    const partPos = await positionOf(loanId);
     const before = await snapshot(tokens, holders);
     const receipt = await tx(borrower, { address: DIAMOND, abi: ABIS.repay, functionName: 'repayPartial', args: [loanId, part] }, 'repayPartial');
     const after = await snapshot(tokens, holders);
@@ -93,6 +97,8 @@ export async function run() {
       String(mid.status) === '0' && opened.principal - mid.principal === part,
       `gas=${receipt.gasUsed} status=${mid.status} principalNow=${f18(mid.principal)} deltas=${JSON.stringify(delta(before, after))}`);
 
+    await expectPosition('A4.5c', 'the partial changes ONLY the principal, down by exactly the payment — collateral, NFTs and lien unchanged, still Active',
+      loanId, partPos, { principal: partPos.principal - part });
     const quoted = await read(ABIS.repay, 'calculateRepaymentAmount', [loanId]);
     const remaining = Array.isArray(quoted) ? quoted[0] : quoted;
     check('A4.6', 'the payoff quote reflects the paydown — the new principal plus interest, and no more than before',
@@ -105,6 +111,7 @@ export async function run() {
     // less the treasury's fee on that interest into the lender's vault.
     const finalInterest = remaining - mid.principal;
     const finalCut = (finalInterest * BigInt(mid.treasuryFeeBpsAtInit)) / 10_000n;
+    const finalPos = await positionOf(loanId);
     const beforeFinal = await snapshot(tokens, holders);
     const finalReceipt = await tx(borrower, { address: DIAMOND, abi: ABIS.repay, functionName: 'repayLoan', args: [loanId] }, 'repayLoan');
     const afterFinal = await snapshot(tokens, holders);
@@ -116,6 +123,8 @@ export async function run() {
         'lending.lenderVault': remaining - finalCut,
         'lending.treasury': finalCut,
       }, `gas=${finalReceipt.gasUsed} principal=${f18(mid.principal)} interest=${f18(finalInterest)}`);
+    await expectPosition('A4.7c', 'the final repayment changes ONLY the status to Repaid',
+      loanId, finalPos, { status: STATUS.Repaid });
   }
 
   // ---------------------------------------------------- lender loan sale

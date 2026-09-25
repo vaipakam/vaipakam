@@ -7,7 +7,7 @@
  * the liquidator's bonus, which comes off the top before the lender is paid.
  */
 import { DIAMOND, MOCKS, TREASURY, borrower, lender, outsider, parseUnits, pub, tx } from '../lib/chain.mjs';
-import { ABIS, STATUS, delta, dynamicIncentiveBps, forcedCloseWaterfall, lateFee, mint, openLoan, perSecondInterest, read, snapshot, vaultAddressFor } from '../lib/flow.mjs';
+import { ABIS, STATUS, delta, dynamicIncentiveBps, expectPosition, forcedCloseWaterfall, lateFee, mint, openLoan, perSecondInterest, positionOf, read, snapshot, vaultAddressFor } from '../lib/flow.mjs';
 import { f18 } from '../lib/chain.mjs';
 import { MOCK_ADAPTER_ABI, repriceFaucetAsset, sendAsOwner, setFeedUsd, warpDays } from '../lib/impersonate.mjs';
 import { simulate } from '../lib/errors.mjs';
@@ -90,6 +90,7 @@ export async function run() {
   await tx(outsider, { address: lending, abi: (await import('../lib/chain.mjs')).ERC20, functionName: 'mint', args: [venue, parseUnits('1000000', 18)] }, 'fund venue');
 
   const preDefault = await read(ABIS.loan, 'getLoanDetails', [loanId]);
+  const preDefaultPos = await positionOf(loanId);
   const beforeDefault = await snapshot(tokens, holders);
   const defaultReceipt = await tx(outsider, { address: DIAMOND, abi: ABIS.defaulted, functionName: 'triggerDefault', args: [loanId, TRY_LIST] }, 'triggerDefault');
   const afterDefault = await snapshot(tokens, holders);
@@ -116,6 +117,12 @@ export async function run() {
     bonus, (proceeds * bonusBps) / 10_000n, `${bonusBps}bps of ${f18(proceeds)} of swap proceeds`);
   await expectForcedClose('A3.6b', 'the time-based default settles exactly per the spec\'s waterfall: keeper first, lender (net of the treasury fee on recovered interest and late fee), the subordinated handling charge, the borrower\'s residual',
     preDefault, defaultReceipt, beforeDefault, afterDefault, collateral, lending);
+  // A forced close sells the WHOLE collateral, so nothing is left to
+  // encumber and the lien reads released (amount 0). The recorded collateral
+  // amount is the loan's original term and stays as it was on a terminal
+  // close; the NFTs stay with their holders, who claim through them next.
+  await expectPosition('A3.6c', 'the time-based default changes the position exactly: status Defaulted, the lien released because the whole collateral was sold — NFTs and recorded terms unchanged',
+    loanId, preDefaultPos, { status: STATUS.Defaulted, lienReleased: true, lienAmount: 0n });
 
   // Each side's claim must move exactly the share the default credited to
   // that side's vault out to that side's wallet — both legs, and nothing else
@@ -200,6 +207,7 @@ export async function run() {
 
   await tx(outsider, { address: lending, abi: (await import('../lib/chain.mjs')).ERC20, functionName: 'mint', args: [venue, parseUnits('1000000', 18)] }, 'top up venue');
   const preLiq = await read(ABIS.loan, 'getLoanDetails', [hfLoan]);
+  const preLiqPos = await positionOf(hfLoan);
   const beforeLiq = await snapshot(tokens, holders);
   const liqReceipt = await tx(outsider, { address: DIAMOND, abi: ABIS.risk, functionName: 'triggerLiquidation', args: [hfLoan, TRY_LIST] }, 'triggerLiquidation');
   const afterLiq = await snapshot(tokens, holders);
@@ -212,6 +220,8 @@ export async function run() {
     `caller=outsider gas=${liqReceipt.gasUsed} status=${liquidated.status} proceeds=${f18(liqProceeds)}`);
   await expectForcedClose('A3.12b', 'the underwater HF liquidation settles exactly per the waterfall: keeper first, the lender takes the rest and the loss, no handling charge',
     preLiq, liqReceipt, beforeLiq, afterLiq, collateral, lending);
+  await expectPosition('A3.12c', 'the HF liquidation changes the position exactly: status Defaulted, the lien released because the whole collateral was sold — NFTs and recorded terms unchanged',
+    hfLoan, preLiqPos, { status: STATUS.Defaulted, lienReleased: true, lienAmount: 0n });
 
   // leave the fork on the deployment's seeded prices
   await setFeedUsd(MOCKS.liquidToken2UsdFeed, 1);
@@ -229,6 +239,7 @@ export async function run() {
   const stillRoutable = await read(ABIS.oracle, 'checkLiquidity', [collateral]);
   await tx(outsider, { address: lending, abi: (await import('../lib/chain.mjs')).ERC20, functionName: 'mint', args: [venue, parseUnits('1000000', 18)] }, 'top up venue');
   const preCrash = await read(ABIS.loan, 'getLoanDetails', [crashLoan]);
+  const preCrashPos = await positionOf(crashLoan);
   const beforeCrash = await snapshot(tokens, holders);
   const crashReceipt = await tx(outsider, { address: DIAMOND, abi: ABIS.risk, functionName: 'triggerLiquidation', args: [crashLoan, TRY_LIST] }, 'triggerLiquidation(collateral drawdown)');
   const afterCrash = await snapshot(tokens, holders);
@@ -243,4 +254,6 @@ export async function run() {
     `status=${crashed.status} proceeds=${f18(crashProceeds)}`);
   await expectForcedClose('A3.13b', 'the collateral-drawdown liquidation settles exactly per the waterfall, with a surplus: keeper, lender net of the interest fee, the handling charge, the borrower\'s residual',
     preCrash, crashReceipt, beforeCrash, afterCrash, collateral, lending);
+  await expectPosition('A3.13c', 'the drawdown liquidation changes the position exactly: status Defaulted, the lien released because the whole collateral was sold — NFTs and recorded terms unchanged',
+    crashLoan, preCrashPos, { status: STATUS.Defaulted, lienReleased: true, lienAmount: 0n });
 }

@@ -8,7 +8,7 @@
  * repay leaves standing until the borrower claims.
  */
 import { DIAMOND, MOCKS, TREASURY, borrower, lender, parseUnits, pub, tx } from '../lib/chain.mjs';
-import { ABIS, approveDiamond, createOffer, acceptOffer, delta, lifSplit, liveFees, mint, read, snapshot, vaultAddressFor } from '../lib/flow.mjs';
+import { ABIS, STATUS, approveDiamond, createOffer, acceptOffer, delta, expectPosition, lifSplit, liveFees, mint, positionOf, read, snapshot, vaultAddressFor } from '../lib/flow.mjs';
 import { f18 } from '../lib/chain.mjs';
 import { cannotContinue, check, expectEq, expectLedger } from '../lib/report.mjs';
 
@@ -99,6 +99,9 @@ export async function run() {
     hf === wantHf && ltv === wantLtv,
     `HF=${f18(hf)} want ${f18(wantHf)}; LTV=${ltv}bps want ${wantLtv} (collateral $${f18(colUsd)} at ${loan.liquidationLtvBpsAtInit}bps against $${f18(debtUsd)})`);
 
+  // The opened position, which every later step is compared against in FULL.
+  const opened = await positionOf(loanId);
+
   // --- repay
   const quoted = await read(ABIS.repay, 'calculateRepaymentAmount', [loanId]);
   const total = Array.isArray(quoted) ? quoted[0] : quoted;
@@ -124,7 +127,10 @@ export async function run() {
     });
 
   const repaid = await read(ABIS.loan, 'getLoanDetails', [loanId]);
-  expectEq('A2.12', 'the loan terminalizes to Repaid', repaid.status, 1);
+  expectEq('A2.12', 'the loan terminalizes to Repaid', repaid.status, STATUS.Repaid);
+  await expectPosition('A2.12b', 'the repay changes ONLY the status: both position NFTs, the recorded terms and the whole collateral lien are exactly as they were',
+    loanId, opened, { status: STATUS.Repaid });
+  const afterRepayPos = await positionOf(loanId);
 
   // --- the collateral lien outlives the repay
   // Every field, not just `released`: a standing lien with the wrong holder,
@@ -170,6 +176,14 @@ export async function run() {
     lenderNftAfter !== null && lenderNftAfter.toLowerCase() === lender.address.toLowerCase(),
     lenderNftAfter ? `tokenId=${repaid.lenderTokenId} owner=${lenderNftAfter}` : 'no longer resolves');
 
+  // Spec: the loan settles once BOTH sides have claimed, so after the
+  // borrower's claim alone it is still Repaid — the borrower receipt burned
+  // and the lien released (a released lien encumbers nothing, so it reads
+  // amount 0), nothing else changed.
+  await expectPosition('A2.16b', 'after the borrower\'s claim alone the position changes exactly: borrower NFT burned, lien released, still Repaid',
+    loanId, afterRepayPos, { borrowerNftOwner: null, lienReleased: true, lienAmount: 0n });
+  const afterBorrowerClaimPos = await positionOf(loanId);
+
   // --- claiming cannot pay twice
   const beforeSecond = await snapshot(tokens, holders);
   let secondReason = '(no revert)';
@@ -179,4 +193,17 @@ export async function run() {
   const afterSecond = await snapshot(tokens, holders);
   check('A2.17', 'a second claim on the same side is refused AlreadyClaimed and pays out nothing',
     Object.keys(delta(beforeSecond, afterSecond)).length === 0 && /AlreadyClaimed\(\)/.test(secondReason), secondReason);
+
+  // The lender claims LAST: once both sides have claimed the loan settles,
+  // and the double-claim probe above must run while it is still Repaid.
+  // --- the lender's claim on an ordinary repayment: the repay credited the
+  //     lender's VAULT, and the claim sweeps exactly that to their wallet.
+  const lenderCredit2 = PRINCIPAL + interest - interestCut;
+  const beforeLenderClaim = await snapshot(tokens, holders);
+  const lenderClaim = await tx(lender, { address: DIAMOND, abi: ABIS.claim, functionName: 'claimAsLender', args: [loanId] }, 'claimAsLender');
+  const afterLenderClaim = await snapshot(tokens, holders);
+  expectLedger('A2.18', 'the lender\'s claim moves exactly principal + interest net of the treasury fee, vault → wallet, and nothing else',
+    beforeLenderClaim, afterLenderClaim, { 'lending.lenderVault': -lenderCredit2, 'lending.lenderEOA': lenderCredit2 }, `gas=${lenderClaim.gasUsed}`);
+  await expectPosition('A2.18b', 'with both sides claimed the position settles: the lender NFT is burned too, status Settled, nothing else changed',
+    loanId, afterBorrowerClaimPos, { lenderNftOwner: null, status: STATUS.Settled });
 }

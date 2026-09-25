@@ -10,7 +10,7 @@
  * for a manual second step is waiting for something that already happened.
  */
 import { DIAMOND, MOCKS, TREASURY, borrower, lender, outsider, parseUnits, pub, tx } from '../lib/chain.mjs';
-import { ABIS, STATUS, approveDiamond, acceptOffer, acceptStoredOffer, createOffer, delta, mint, openLoan, read, snapshot, vaultAddressFor, lifSplit, liveFees } from '../lib/flow.mjs';
+import { ABIS, ANY, STATUS, approveDiamond, acceptOffer, acceptStoredOffer, createOffer, delta, expectPosition, mint, openLoan, positionOf, read, snapshot, vaultAddressFor, lifSplit, liveFees } from '../lib/flow.mjs';
 import { chainNow, f18 } from '../lib/chain.mjs';
 import { warpDays } from '../lib/impersonate.mjs';
 import { simulate } from '../lib/errors.mjs';
@@ -78,6 +78,8 @@ export async function run() {
       `offerType=${vehicle.offerType} creator=${vehicle.creator.slice(0, 10)} ` +
       `amount=${f18(vehicle.amount)} rate=${vehicle.interestRateBps}bps term=${vehicle.durationDays}d`);
 
+    const offsetPosBefore = await positionOf(loanId);
+    const outsiderActiveBefore = (await read(ABIS.metrics, 'getUserActiveLoans', [outsider.address])).map(String);
     const before = await snapshot(tokens, holders);
     const accepted = await acceptStoredOffer(offsetOfferId, outsider);
     if (!accepted.ok) cannotContinue('A7.3 offset fill', accepted.reason);
@@ -120,6 +122,30 @@ export async function run() {
         'collateral.outsiderEOA': -vehicle.collateralAmount,
         'collateral.outsiderVault': vehicle.collateralAmount,
       }, `elapsed=${oElapsed}s accrued=${f18(oAccrued)} shortfall=${f18(oShortfall)}`);
+
+    // Both positions in full. The original only terminalizes — its
+    // collateral stays liened for the claim below. The fill must also CREATE
+    // the replacement loan the vehicle promised: exactly one new loan for the
+    // incoming borrower, on the vehicle's terms, with the exiting borrower as
+    // its lender (they posted a lender-side offer) and each side holding its
+    // position NFT.
+    await expectPosition('A7.3c', 'the ORIGINAL position after the offset: status Repaid, its collateral still liened for the claim, nothing else changed',
+      loanId, offsetPosBefore, { status: STATUS.Repaid });
+    const outsiderActiveAfter = (await read(ABIS.metrics, 'getUserActiveLoans', [outsider.address])).map(String);
+    const createdIds = outsiderActiveAfter.filter((id) => !outsiderActiveBefore.includes(id));
+    check('A7.3d', 'the offset fill creates exactly one replacement loan for the incoming borrower',
+      createdIds.length === 1, `created=[${createdIds}]`);
+    if (createdIds.length === 1) {
+      await expectPosition('A7.3e', 'the REPLACEMENT position in full: the vehicle\'s terms, the exiting borrower as lender, the incoming borrower\'s collateral liened, each side holding its NFT',
+        BigInt(createdIds[0]), null, {
+          status: STATUS.Active, principal: vehicle.amount, collateralAmount: vehicle.collateralAmount,
+          lender: borrower.address, borrower: outsider.address,
+          lenderTokenId: ANY, borrowerTokenId: ANY,
+          lenderNftOwner: borrower.address, borrowerNftOwner: outsider.address,
+          lienUser: outsider.address, lienAsset: vehicle.collateralAsset, lienTokenId: 0n,
+          lienAmount: vehicle.collateralAmount, lienAssetType: 0, lienReleased: false,
+        });
+    }
 
     const late = await simulate(DIAMOND, ABIS.preclose, 'completeOffset', [loanId], borrower.address);
     expectRefusal('A7.4', 'calling completeOffset afterwards is refused — the auto-link already ran', late, 'LoanNotActive');
@@ -171,6 +197,7 @@ export async function run() {
     const handover = await simulate(DIAMOND, ABIS.preclose, 'transferObligationViaOffer',
       [loanId, replacement.offerId], borrower.address);
     if (!handover.ok) cannotContinue('A7.7 handover', handover.name);
+    const handoverPosBefore = await positionOf(loanId);
     const before = await snapshot(tokens, holders);
     const receipt = await tx(borrower, {
       address: DIAMOND, abi: ABIS.preclose, functionName: 'transferObligationViaOffer',
@@ -224,6 +251,14 @@ export async function run() {
         'collateral.borrowerVault': -loan.collateralAmount,
         'collateral.borrowerEOA': loan.collateralAmount,
       }, `elapsed=${elapsed}s accrued=${f18(accrued)} shortfall=${f18(shortfall)}`);
+    // The whole position: the borrower side — record, NFT and the collateral
+    // backing the loan — becomes the replacement's; the lender side and the
+    // terms stay exactly as they were.
+    await expectPosition('A7.7d', 'the handover changes the position exactly: the borrower, their NFT and the lien move to the replacement borrower and their collateral; the lender side and terms unchanged',
+      loanId, handoverPosBefore, {
+        borrower: outsider.address, borrowerTokenId: ANY, borrowerNftOwner: outsider.address,
+        collateralAmount: standing.collateralAmount, lienUser: outsider.address, lienAmount: standing.collateralAmount,
+      });
     expectEq('A7.8', 'the lender is untouched by a handover — same lender, same principal',
       `${moved.lender}/${moved.principal}`, `${loan.lender}/${loan.principal}`);
   }

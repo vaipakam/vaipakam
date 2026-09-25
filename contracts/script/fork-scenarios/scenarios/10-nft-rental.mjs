@@ -14,7 +14,7 @@ import { ABIS, STATUS, acceptStoredOffer, approveDiamond, delta, mint, read, sna
 import { f18 } from '../lib/chain.mjs';
 import { warpDays } from '../lib/impersonate.mjs';
 import { simulate } from '../lib/errors.mjs';
-import { cannotContinue, check, expectEq, expectLedger, expectRefusal, observe } from '../lib/report.mjs';
+import { cannotContinue, check, expectEq, expectLedger, expectRefusal, requireEnvelope } from '../lib/report.mjs';
 
 const NFT = [
   { type: 'function', name: 'mint', inputs: [{ type: 'address' }, { type: 'uint256' }], outputs: [], stateMutability: 'nonpayable' },
@@ -29,9 +29,11 @@ const DAYS = 7n;
 export async function run() {
   const nft = MOCKS.rentalNft;
   const prepay = MOCKS.liquidToken2;
-  // A deployment without the rental mock cannot be tested here at all — an
-  // honest observation, not a failure of the protocol.
-  if (!nft) { observe('A10.0', 'a rentable NFT mock is deployed', 'no rentalNft in the artifact — rental not exercised'); return; }
+  // A deployment without the rental mock cannot run this file at all. That is
+  // not a protocol verdict — but it is not a verified run either, so it is
+  // declared as the file's envelope: the runner reports it DID NOT RUN and
+  // exits non-zero, rather than a lone INFO row on an otherwise clean run.
+  requireEnvelope('rentalNft fixture', Boolean(nft), 'the deployment artifact carries no rentalNft mock, so the rental flow cannot be exercised');
 
   // A fresh token id per run, so a re-run never collides with a prior mint.
   const tokenId = BigInt(Date.now() % 1_000_000_000) + 7_000_000n;

@@ -14,7 +14,7 @@
  *    exercising for that reason alone.
  */
 import { DIAMOND, MOCKS, TREASURY, borrower, lender, outsider, parseUnits, pub, tx } from '../lib/chain.mjs';
-import { ABIS, acceptStoredOffer, approveDiamond, createOffer, delta, mint, openLoan, read, snapshot, vaultAddressFor } from '../lib/flow.mjs';
+import { ABIS, ANY, acceptStoredOffer, approveDiamond, createOffer, delta, expectPosition, mint, openLoan, positionOf, read, snapshot, vaultAddressFor } from '../lib/flow.mjs';
 import { f18 } from '../lib/chain.mjs';
 import { simulate } from '../lib/errors.mjs';
 import { parseEventLogs } from 'viem';
@@ -77,6 +77,7 @@ export async function run() {
         `saleOfferId=${saleOfferId} linkedLoanId=${linked} offerType=${vehicle.offerType} ` +
         `creator=${vehicle.creator.slice(0, 10)} expiresAt=${vehicle.expiresAt}`);
 
+      const listedPos = await positionOf(loanId);
       const pre = await snapshot(tokens, holders);
       const bought = await acceptStoredOffer(saleOfferId, outsider);
       if (!bought.ok) cannotContinue('A8.2 buyer fill', bought.reason);
@@ -98,6 +99,8 @@ export async function run() {
           after.borrower === before.borrower && after.principal === before.principal &&
           after.interestRateBps === before.interestRateBps && after.durationDays === before.durationDays && String(after.status) === '0',
           `borrower=${after.borrower.slice(0, 10)} principal=${f18(after.principal)} rate=${after.interestRateBps}bps status=${after.status}`);
+        await expectPosition('A8.3b', 'the listed sale changes the position exactly: the lender, the lender token and its holder become the buyer\'s; the borrower side, terms and lien unchanged',
+          loanId, listedPos, { lender: outsider.address, lenderTokenId: ANY, lenderNftOwner: outsider.address });
         const late = await simulate(DIAMOND, ABIS.earlyWithdrawal, 'completeLoanSale', [loanId], lender.address);
         expectRefusal('A8.4', 'completeLoanSale afterwards is refused — the fill already completed it', late, 'SaleNotLinked');
       }
@@ -130,6 +133,7 @@ export async function run() {
     const sim = await simulate(DIAMOND, ABIS.earlyWithdrawalDirect, 'sellLoanViaBuyOffer',
       [loanId, buy.offerId], lender.address);
     if (!sim.ok) cannotContinue('A8.7 direct sale', sim.name);
+    const directPos = await positionOf(loanId);
     const pre = await snapshot(tokens, holders);
     const receipt = await tx(lender, {
       address: DIAMOND, abi: ABIS.earlyWithdrawalDirect, functionName: 'sellLoanViaBuyOffer',
@@ -150,5 +154,7 @@ export async function run() {
         'lending.lenderEOA': before.principal - forfeited,
         'lending.treasury': forfeited,
       }, `forfeited=${f18(forfeited)}`);
+    await expectPosition('A8.7c', 'the direct sale changes the position exactly: the lender, the lender token and its holder become the buyer\'s; the borrower side, terms and lien unchanged',
+      loanId, directPos, { lender: outsider.address, lenderTokenId: ANY, lenderNftOwner: outsider.address });
   }
 }
