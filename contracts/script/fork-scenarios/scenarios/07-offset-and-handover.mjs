@@ -14,7 +14,7 @@ import { ABIS, STATUS, approveDiamond, acceptOffer, acceptStoredOffer, createOff
 import { chainNow, f18 } from '../lib/chain.mjs';
 import { warpDays } from '../lib/impersonate.mjs';
 import { simulate } from '../lib/errors.mjs';
-import { cannotContinue, check, expectEq, expectLedger, observe } from '../lib/report.mjs';
+import { cannotContinue, check, expectEq, expectLedger, observe, expectRefusal } from '../lib/report.mjs';
 
 export async function run() {
   const lending = MOCKS.liquidToken2;
@@ -41,8 +41,7 @@ export async function run() {
 
     const impostor = await simulate(DIAMOND, ABIS.preclose, 'offsetWithNewOffer',
       [loanId, 400n, 7n, collateral, parseUnits('1.25', 18), true, lending], outsider.address);
-    check('A7.1', 'only the borrower can offset their own loan',
-      !impostor.ok, impostor.ok ? 'NOT refused' : impostor.name);
+    expectRefusal('A7.1', 'only the borrower can offset their own loan', impostor, 'KeeperAccessRequired');
 
     // The replacement's maturity must not pass the ORIGINAL loan's, and the
     // bound is seconds-precise: `now + newTerm <= startTime + oldTerm`. A
@@ -52,9 +51,7 @@ export async function run() {
     await warpDays(1 / 1440); // one minute, so the comparison is not same-second
     const sameTerm = await simulate(DIAMOND, ABIS.preclose, 'offsetWithNewOffer',
       [loanId, 400n, 7n, collateral, parseUnits('1.25', 18), true, lending], borrower.address);
-    check('A7.2a', 'a same-length replacement is refused once any time has passed — the maturity bound is seconds-precise',
-      !sameTerm.ok,
-      sameTerm.ok ? 'NOT refused a minute after origination' : sameTerm.name);
+    expectRefusal('A7.2a', 'a same-length replacement is refused once any time has passed — the maturity bound is seconds-precise', sameTerm, 'InvalidOfferTerms');
 
     const OFFSET_DAYS = 6n;
     const sim = await simulate(DIAMOND, ABIS.preclose, 'offsetWithNewOffer',
@@ -87,12 +84,43 @@ export async function run() {
     const after = await snapshot(tokens, holders);
     const settled = await read(ABIS.loan, 'getLoanDetails', [loanId]);
     check('A7.3', 'accepting the offset offer CLOSES the original loan automatically — no manual second step',
-      String(settled.status) === String(STATUS.Repaid),
-      `gas=${accepted.gas} originalStatus=${settled.status} deltas=${JSON.stringify(delta(before, after))}`);
+      String(settled.status) === String(STATUS.Repaid), `gas=${accepted.gas} originalStatus=${settled.status}`);
+
+    // The money, from the spec's Option 3 "Economic Protection": the exiting
+    // borrower repays the principal and pays the interest accrued to the
+    // offset SECOND plus max(0, original remaining interest − the new
+    // offer's expected interest), held for the original lender; the treasury
+    // takes its fee on the accrued part only. The borrower ALSO funds the new
+    // position from the escrow they posted with the vehicle, and the third
+    // party who fills it borrows that amount net of the loan-initiation fee
+    // (99% treasury, 1% back to them as the accept's matcher), posting their
+    // own collateral. The original collateral is not moved here — it becomes
+    // claimable.
+    const YEAR_BPS = 365n * 86_400n * 10_000n;
+    const offsetAt = BigInt((await pub.getBlock({ blockNumber: accepted.receipt.blockNumber })).timestamp);
+    const origLoan = await read(ABIS.loan, 'getLoanDetails', [loanId]);
+    const oElapsed = offsetAt - BigInt(origLoan.startTime);
+    const oTotal = BigInt(origLoan.durationDays) * 86_400n;
+    const oRate = BigInt(origLoan.interestRateBps);
+    const oAccrued = (origLoan.principal * oRate * oElapsed) / YEAR_BPS;
+    const oRemaining = (origLoan.principal * oRate * (oTotal > oElapsed ? oTotal - oElapsed : 0n)) / YEAR_BPS;
+    const oNew = (vehicle.amount * BigInt(vehicle.interestRateBps) * BigInt(vehicle.durationDays) * 86_400n) / YEAR_BPS;
+    const oShortfall = oRemaining > oNew ? oRemaining - oNew : 0n;
+    const oCut = (oAccrued * BigInt(origLoan.treasuryFeeBpsAtInit)) / 10_000n;
+    const lif = (vehicle.amount * 20n) / 10_000n;
+    expectLedger('A7.3b', 'the offset settles exactly: the original lender is paid principal + accrued interest + the protection shortfall, the new borrower draws the escrowed principal net of the LIF',
+      before, after, {
+        'lending.borrowerEOA': -(origLoan.principal + oAccrued + oShortfall),
+        'lending.lenderVault': origLoan.principal + oAccrued - oCut + oShortfall,
+        'lending.borrowerVault': -vehicle.amount,
+        'lending.outsiderEOA': vehicle.amount - lif + lif / 100n,
+        'lending.treasury': oCut + lif - lif / 100n,
+        'collateral.outsiderEOA': -vehicle.collateralAmount,
+        'collateral.outsiderVault': vehicle.collateralAmount,
+      }, `elapsed=${oElapsed}s accrued=${f18(oAccrued)} shortfall=${f18(oShortfall)}`);
 
     const late = await simulate(DIAMOND, ABIS.preclose, 'completeOffset', [loanId], borrower.address);
-    check('A7.4', 'calling completeOffset afterwards is refused — the auto-link already ran',
-      !late.ok, late.ok ? 'still callable' : late.name);
+    expectRefusal('A7.4', 'calling completeOffset afterwards is refused — the auto-link already ran', late, 'LoanNotActive');
   }
 
   // ------------------------------------------------- obligation handover
@@ -122,8 +150,7 @@ export async function run() {
 
     const notBorrower = await simulate(DIAMOND, ABIS.preclose, 'transferObligationViaOffer',
       [loanId, replacement.offerId], outsider.address);
-    check('A7.6', 'only the exiting borrower can hand over their own obligation',
-      !notBorrower.ok, notBorrower.ok ? 'NOT refused' : notBorrower.name);
+    expectRefusal('A7.6', 'only the exiting borrower can hand over their own obligation', notBorrower, 'KeeperAccessRequired');
 
     const handover = await simulate(DIAMOND, ABIS.preclose, 'transferObligationViaOffer',
       [loanId, replacement.offerId], borrower.address);

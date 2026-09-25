@@ -8,7 +8,7 @@
 import { ARTIFACT_TREASURY, DIAMOND, MOCKS, TREASURY, borrower, lender, pub } from '../lib/chain.mjs';
 import { ABIS, read, vaultAddressFor } from '../lib/flow.mjs';
 import { simulate } from '../lib/errors.mjs';
-import { check, expectEq, observe } from '../lib/report.mjs';
+import { check, expectEq, observe, expectRefusal } from '../lib/report.mjs';
 
 export async function run() {
   const minHf = await read(ABIS.risk, 'getMinHealthFactor');
@@ -49,8 +49,7 @@ export async function run() {
     DIAMOND, ABIS.vaultFactory, 'vaultDepositERC20',
     [borrower.address, MOCKS.liquidToken, 1n], borrower.address,
   );
-  check('A1.5', 'vault mutators are Diamond-internal — a direct user call is refused',
-    !direct.ok, direct.ok ? 'NOT refused' : direct.name);
+  expectRefusal('A1.5', 'vault mutators are Diamond-internal — a direct user call is refused', direct, 'OnlyDiamondInternal');
 
   // The Diamond's own routing table, against what the artifact claims.
   const live = await read(ABIS.loupe, 'facetAddresses');

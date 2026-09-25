@@ -16,7 +16,7 @@ import { DIAMOND, MOCKS, TREASURY, borrower, lender, outsider, parseUnits, pub, 
 import { ABIS, approveDiamond, acceptOffer, createOffer, delta, mint, openLoan, read, snapshot, vaultAddressFor } from '../lib/flow.mjs';
 import { chainNow, f18 } from '../lib/chain.mjs';
 import { simulate } from '../lib/errors.mjs';
-import { cannotContinue, check, expectEq } from '../lib/report.mjs';
+import { cannotContinue, check, expectEq, expectLedger, expectRefusal } from '../lib/report.mjs';
 
 export async function run() {
   const lending = MOCKS.liquidToken2;
@@ -47,23 +47,24 @@ export async function run() {
     // and the row would certify an authorisation it never tested. The refusal
     // must also be the OWNERSHIP one, by name.
     const impostor = await simulate(DIAMOND, ABIS.partialWithdrawal, 'partialWithdrawCollateral', [loanId, 1n], outsider.address);
-    check('A6.5', 'a third party cannot release the borrower\'s collateral, even while a surplus is releasable',
-      !impostor.ok && impostor.name === 'NotNFTOwner()', impostor.ok ? 'NOT refused' : impostor.name);
+    expectRefusal('A6.5', 'a third party cannot release the borrower\'s collateral, even while a surplus is releasable', impostor, 'NotNFTOwner');
 
     // A wei past the quoted maximum must be refused, not clamped.
     const overshoot = await simulate(DIAMOND, ABIS.partialWithdrawal, 'partialWithdrawCollateral', [loanId, maxAmount + 1n], borrower.address);
-    check('A6.2', 'one wei past the quoted maximum is refused, not silently clamped',
-      !overshoot.ok, overshoot.ok ? 'NOT refused' : overshoot.name);
+    expectRefusal('A6.2', 'one wei past the quoted maximum is refused, not silently clamped', overshoot, 'HealthFactorTooLow');
 
     const before = await snapshot(tokens, holders);
     const receipt = await tx(borrower, { address: DIAMOND, abi: ABIS.partialWithdrawal, functionName: 'partialWithdrawCollateral', args: [loanId, maxAmount] }, 'partialWithdrawCollateral');
     const after = await snapshot(tokens, holders);
     const closingHf = await read(ABIS.risk, 'calculateHealthFactor', [loanId]);
     const loan = await read(ABIS.loan, 'getLoanDetails', [loanId]);
-    check('A6.3', 'releasing the whole quoted surplus leaves the loan Active and still above the floor',
-      String(loan.status) === '0' && closingHf >= 1_500_000_000_000_000_000n,
-      `gas=${receipt.gasUsed} status=${loan.status} HF ${f18(openedHf)} -> ${f18(closingHf)} ` +
-      `collateral ${f18(loan.collateralAmount)} deltas=${JSON.stringify(delta(before, after))}`);
+    check('A6.3', 'releasing the whole quoted surplus leaves the loan Active, still above the floor, with its recorded collateral reduced by exactly that amount',
+      String(loan.status) === '0' && closingHf >= 1_500_000_000_000_000_000n && parseUnits('2.5', 18) - loan.collateralAmount === maxAmount,
+      `gas=${receipt.gasUsed} status=${loan.status} HF ${f18(openedHf)} -> ${f18(closingHf)} collateral ${f18(loan.collateralAmount)}`);
+    // The borrower-position NFT holder is the borrower here, so the release
+    // lands in their wallet — straight out of their own vault.
+    expectLedger('A6.3b', 'the released collateral moves exactly: out of the borrower\'s vault into their wallet',
+      before, after, { 'collateral.borrowerVault': -maxAmount, 'collateral.borrowerEOA': maxAmount }, `released=${f18(maxAmount)}`);
 
     // Having released the surplus, there is none left to release.
     const again = await read(ABIS.partialWithdrawal, 'calculateMaxWithdrawable', [loanId]);
@@ -90,8 +91,7 @@ export async function run() {
         offerType: 1, interestRateBps: 300n, interestRateBpsMax: 300n,
         refinanceTargetLoanId: oldLoanId, fillMode: 1,
       })], borrower.address);
-    check('A6.6a', 'a refinance-tagged offer is refused until the borrower has set auto-refinance caps',
-      !capless.ok, capless.ok ? 'NOT refused' : capless.name);
+    expectRefusal('A6.6a', 'a refinance-tagged offer is refused until the borrower has set auto-refinance caps', capless, 'RefinanceCapsRequired');
 
     // `maxNewExpiry` must be a FUTURE timestamp when enabling: the setter
     // refuses 0 even though the checker reads 0 as "no expiry cap", so the
@@ -99,8 +99,7 @@ export async function run() {
     const capsExpiry = BigInt((await chainNow()) + 365 * 86_400);
     const zeroExpiry = await simulate(DIAMOND, ABIS.autoLifecycle, 'setAutoRefinanceCaps',
       [oldLoanId, true, 400, 0n], borrower.address);
-    check('A6.6b', 'enabling caps with no expiry is refused — the consent always carries a deadline',
-      !zeroExpiry.ok, zeroExpiry.ok ? 'NOT refused' : zeroExpiry.name);
+    expectRefusal('A6.6b', 'enabling caps with no expiry is refused — the consent always carries a deadline', zeroExpiry, 'InvalidCaps');
 
     const capsReceipt = await tx(borrower, {
       address: DIAMOND, abi: ABIS.autoLifecycle, functionName: 'setAutoRefinanceCaps',
@@ -119,8 +118,7 @@ export async function run() {
         offerType: 1, interestRateBps: 500n, interestRateBpsMax: 500n,
         refinanceTargetLoanId: oldLoanId, fillMode: 1,
       })], borrower.address);
-    check('A6.6d', 'an offer above the consented rate cap is refused',
-      !overCap.ok, overCap.ok ? 'NOT refused' : overCap.name);
+    expectRefusal('A6.6d', 'an offer above the consented rate cap is refused', overCap, 'RefinanceRateExceedsCap');
 
     await mint(outsider, lending, '100000');
     await approveDiamond(outsider, lending);
@@ -140,8 +138,11 @@ export async function run() {
 
     {
       const activeBefore = (await read(ABIS.metrics, 'getUserActiveLoans', [borrower.address])).map(String);
+      const refiHolders = { ...holders, newLenderEOA: outsider.address, newLenderVault: await vaultAddressFor(outsider) };
+      const beforeRefi = await snapshot(tokens, refiHolders);
       const accepted = await acceptOffer(posted.offerId, posted.offer, outsider, borrower);
       if (!accepted.ok) cannotContinue('A6.7 refinance accept', accepted.reason);
+      const afterRefi = await snapshot(tokens, refiHolders);
       const activeAfter = (await read(ABIS.metrics, 'getUserActiveLoans', [borrower.address])).map(String);
       const opened = activeAfter.filter((id) => !activeBefore.includes(id));
       const closedIds = activeBefore.filter((id) => !activeAfter.includes(id));
@@ -179,6 +180,26 @@ export async function run() {
           }
         }
         const distinct = new Set(tokenIds.map(([, id]) => String(id))).size;
+        // The money. Spec (refinance, #411): the EXITING lender is repaid
+        // principal + the interest due under the loan's interest mode — the
+        // FULL term's interest on this full-term loan — with the treasury's
+        // fee on that interest; no rate-shortfall top-up. The new lender funds
+        // the replacement principal, paying the replacement's loan-initiation
+        // fee as any accept does (99% treasury, 1% to the matcher — the new
+        // lender, who called accept). The borrower covers the rest from their
+        // wallet. This is a carry-over refinance, so no collateral moves.
+        const oldInterest = (oldLoan.principal * BigInt(oldLoan.interestRateBps) * BigInt(oldLoan.durationDays)) / (365n * 10_000n);
+        const oldCut = (oldInterest * BigInt(oldLoan.treasuryFeeBpsAtInit)) / 10_000n;
+        const newLif = (fresh.principal * BigInt(fresh.loanInitiationFeeBpsAtInit)) / 10_000n;
+        const toBorrower = fresh.principal - newLif; // net disbursement, applied to the payoff
+        expectLedger('A6.7b', 'the refinance moves exactly: the new lender funds the replacement, the old lender receives principal + full-term interest net of the treasury fee, the borrower covers the difference, and no collateral moves',
+          beforeRefi, afterRefi, {
+            'lending.newLenderEOA': -fresh.principal + newLif / 100n,
+            'lending.lenderVault': oldLoan.principal + oldInterest - oldCut,
+            'lending.treasury': oldCut + newLif - newLif / 100n,
+            'lending.borrowerEOA': -(oldLoan.principal + oldInterest - toBorrower),
+          }, `oldInterest=${f18(oldInterest)} newLIF=${f18(newLif)}`);
+
         check('A6.10', 'a completed refinance leaves FOUR distinct position NFTs, all still resolving',
           distinct === 4 && !resolved.some((r) => r.endsWith('BURNED')),
           resolved.join(' '));

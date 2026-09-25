@@ -7,13 +7,13 @@
  * borrower no interest at all, which any interface quoting an early payoff
  * has to say out loud.
  */
-import { DIAMOND, MOCKS, TREASURY, borrower, lender, outsider, parseUnits, tx } from '../lib/chain.mjs';
+import { DIAMOND, MOCKS, TREASURY, borrower, lender, outsider, parseUnits, pub, tx } from '../lib/chain.mjs';
 import { ABIS, STATUS, delta, openLoan, read, snapshot, vaultAddressFor } from '../lib/flow.mjs';
 import { parseEventLogs } from 'viem';
 import { f18 } from '../lib/chain.mjs';
 import { warpDays } from '../lib/impersonate.mjs';
 import { simulate } from '../lib/errors.mjs';
-import { check, expectEq } from '../lib/report.mjs';
+import { check, expectEq, expectLedger, expectRefusal } from '../lib/report.mjs';
 
 export async function run() {
   const lending = MOCKS.liquidToken2;
@@ -42,11 +42,19 @@ export async function run() {
       `loanId=${loanId} gas=${receipt.gasUsed} status=${closed.status} deltas=${JSON.stringify(delta(before, after))}`);
     expectEq('A4.2', 'under a full-term-interest offer an early exit pays the FULL term\'s interest',
       paid, payoff, 'no early-exit interest saving — a payoff quote must say so');
+    const preInterest = payoff - closed.principal;
+    const preCut = (preInterest * BigInt(closed.treasuryFeeBpsAtInit)) / 10_000n;
+    expectLedger('A4.2b', 'the preclose moves exactly: the payoff from the borrower\'s wallet, principal + 98% of the interest to the lender\'s vault, 2% of the interest to the treasury',
+      before, after, {
+        'lending.borrowerEOA': -payoff,
+        'lending.lenderVault': payoff - preCut,
+        'lending.treasury': preCut,
+      });
     const beforeClaim = await snapshot(tokens, holders);
     await tx(borrower, { address: DIAMOND, abi: ABIS.claim, functionName: 'claimAsBorrower', args: [loanId] }, 'claimAsBorrower');
     const afterClaim = await snapshot(tokens, holders);
-    const reclaimed = afterClaim['collateral.borrowerEOA'] - beforeClaim['collateral.borrowerEOA'];
-    expectEq('A4.3', 'the borrower reclaims the whole collateral after a preclose', reclaimed, closed.collateralAmount);
+    expectLedger('A4.3', 'the borrower reclaims exactly the whole collateral after a preclose, vault → wallet',
+      beforeClaim, afterClaim, { 'collateral.borrowerVault': -closed.collateralAmount, 'collateral.borrowerEOA': closed.collateralAmount });
   }
 
   // -------------------------------------------------------- partial repay
@@ -60,6 +68,20 @@ export async function run() {
     const receipt = await tx(borrower, { address: DIAMOND, abi: ABIS.repay, functionName: 'repayPartial', args: [loanId, part] }, 'repayPartial');
     const after = await snapshot(tokens, holders);
     const mid = await read(ABIS.loan, 'getLoanDetails', [loanId]);
+    // Spec: a non-periodic partial pays the interest accrued so far (whole
+    // days, rounded down — borrower-favourable) plus the principal reduction,
+    // straight to the lender's WALLET; the treasury takes its fee on the
+    // interest only.
+    const partAt = BigInt((await pub.getBlock({ blockNumber: receipt.blockNumber })).timestamp);
+    const partDays = (partAt - BigInt(opened.startTime)) / 86_400n;
+    const partInterest = (opened.principal * BigInt(opened.interestRateBps) * partDays) / (365n * 10_000n);
+    const partCut = (partInterest * BigInt(opened.treasuryFeeBpsAtInit)) / 10_000n;
+    expectLedger('A4.5b', 'the partial repayment moves exactly: accrued interest + the principal reduction from the borrower, to the lender\'s wallet, the treasury\'s fee on the interest only',
+      before, after, {
+        'lending.borrowerEOA': -(part + partInterest),
+        'lending.lenderEOA': part + partInterest - partCut,
+        'lending.treasury': partCut,
+      }, `wholeDaysElapsed=${partDays} interest=${f18(partInterest)}`);
     check('A4.5', 'a partial repayment reduces the outstanding principal by exactly the payment and leaves the loan Active',
       String(mid.status) === '0' && opened.principal - mid.principal === part,
       `gas=${receipt.gasUsed} status=${mid.status} principalNow=${f18(mid.principal)} deltas=${JSON.stringify(delta(before, after))}`);
@@ -81,12 +103,10 @@ export async function run() {
     check('A4.8', 'the lender can list an open position for sale', ok.ok, ok.ok ? `loanId=${loanId}` : ok.name);
 
     const perpetual = await simulate(DIAMOND, ABIS.earlyWithdrawal, 'createLoanSaleOffer', [loanId, 600n, true, 0n], lender.address);
-    check('A4.9', 'a zero listing window is refused — every sale listing carries a finite expiry',
-      !perpetual.ok, perpetual.ok ? 'zero expiry accepted' : perpetual.name);
+    expectRefusal('A4.9', 'a zero listing window is refused — every sale listing carries a finite expiry', perpetual, 'SaleListingWindowInvalid');
 
     const impostor = await simulate(DIAMOND, ABIS.earlyWithdrawal, 'createLoanSaleOffer', [loanId, 600n, true, BigInt(3 * 86_400)], outsider.address);
-    check('A4.10', 'a third party cannot list someone else\'s position',
-      !impostor.ok, impostor.ok ? 'NOT refused' : impostor.name);
+    expectRefusal('A4.10', 'a third party cannot list someone else\'s position', impostor, 'KeeperAccessRequired');
 
     if (ok.ok) {
       const receipt = await tx(lender, { address: DIAMOND, abi: ABIS.earlyWithdrawal, functionName: 'createLoanSaleOffer', args: [loanId, 600n, true, BigInt(3 * 86_400)] }, 'createLoanSaleOffer');

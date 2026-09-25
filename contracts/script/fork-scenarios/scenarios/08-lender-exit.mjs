@@ -18,7 +18,7 @@ import { ABIS, acceptStoredOffer, approveDiamond, createOffer, delta, mint, open
 import { f18 } from '../lib/chain.mjs';
 import { simulate } from '../lib/errors.mjs';
 import { parseEventLogs } from 'viem';
-import { cannotContinue, check, expectLedger } from '../lib/report.mjs';
+import { cannotContinue, check, expectLedger, expectRefusal } from '../lib/report.mjs';
 
 // Spec, "Sell the Loan to Another Lender" → Accrued Interest: the new lender
 // pays EXACTLY the outstanding principal; interest accrued up to the sale is
@@ -89,8 +89,7 @@ export async function run() {
           after.interestRateBps === before.interestRateBps && after.durationDays === before.durationDays && String(after.status) === '0',
           `borrower=${after.borrower.slice(0, 10)} principal=${f18(after.principal)} rate=${after.interestRateBps}bps status=${after.status}`);
         const late = await simulate(DIAMOND, ABIS.earlyWithdrawal, 'completeLoanSale', [loanId], lender.address);
-        check('A8.4', 'completeLoanSale afterwards is refused — the fill already completed it',
-          !late.ok, late.ok ? 'still callable' : late.name);
+        expectRefusal('A8.4', 'completeLoanSale afterwards is refused — the fill already completed it', late, 'SaleNotLinked');
       }
     }
   }
@@ -116,8 +115,7 @@ export async function run() {
 
     const notLender = await simulate(DIAMOND, ABIS.earlyWithdrawalDirect, 'sellLoanViaBuyOffer',
       [loanId, buy.offerId], outsider.address);
-    check('A8.6', 'only the current lender can sell the position',
-      !notLender.ok, notLender.ok ? 'NOT refused' : notLender.name);
+    expectRefusal('A8.6', 'only the current lender can sell the position', notLender, 'NotNFTOwner');
 
     const sim = await simulate(DIAMOND, ABIS.earlyWithdrawalDirect, 'sellLoanViaBuyOffer',
       [loanId, buy.offerId], lender.address);

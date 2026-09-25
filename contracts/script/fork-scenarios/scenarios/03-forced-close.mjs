@@ -11,7 +11,7 @@ import { ABIS, STATUS, delta, dynamicIncentiveBps, mint, openLoan, read, snapsho
 import { f18 } from '../lib/chain.mjs';
 import { MOCK_ADAPTER_ABI, repriceFaucetAsset, sendAsOwner, setFeedUsd, warpDays } from '../lib/impersonate.mjs';
 import { simulate } from '../lib/errors.mjs';
-import { check, expectEq, observe } from '../lib/report.mjs';
+import { check, expectEq, observe, expectRefusal } from '../lib/report.mjs';
 
 const TRY_LIST = [{ adapterIdx: 0n, data: '0x' }];
 
@@ -57,8 +57,7 @@ export async function run() {
   // A forced close that cannot route the collateral REFUSES rather than
   // guessing a settlement — the try-list has to name an enabled venue.
   const noRoute = await simulate(DIAMOND, ABIS.defaulted, 'triggerDefault', [loanId, []], outsider.address);
-  check('A3.4', 'a forced close with an empty swap try-list is refused, not silently mis-settled',
-    !noRoute.ok, noRoute.ok ? 'NOT refused' : noRoute.name);
+  expectRefusal('A3.4', 'a forced close with an empty swap try-list is refused, not silently mis-settled', noRoute, 'NoEnabledSwapRoute');
 
   // Seed the venue's output float — the mock pays out of its own balance.
   await tx(outsider, { address: lending, abi: (await import('../lib/chain.mjs')).ERC20, functionName: 'mint', args: [venue, parseUnits('1000000', 18)] }, 'fund venue');
@@ -106,23 +105,36 @@ export async function run() {
   check('A3.8', 'a fresh loan opens at or above the 1.5 initiation floor', openHf >= 1_500_000_000_000_000_000n,
     `loanId=${hfLoan} HF=${f18(openHf)}`);
 
-  // The 1.5 floor binds at INITIATION; liquidation binds at 1.0. Prove the gap.
-  await setFeedUsd(MOCKS.liquidTokenUsdFeed, 1100);
+  // The 1.5 floor binds at INITIATION; liquidation binds at 1.0. Prove the
+  // gap with the pool moving WITH its feed, so the collateral stays routable
+  // and the only thing that can refuse is the health-factor guard itself —
+  // required by name, since a feed-only move would let the later illiquidity
+  // refusal keep this row green with the HF guard removed.
+  const tliq = {
+    asset: collateral, feed: MOCKS.liquidTokenUsdFeed, pool: MOCKS.liquidTokenWethPool,
+    quote: '0x4200000000000000000000000000000000000006',
+  };
+  await repriceFaucetAsset(tliq, 1100);
   const midHf = await read(ABIS.risk, 'calculateHealthFactor', [hfLoan]);
+  const midRoutable = await read(ABIS.oracle, 'checkLiquidity', [collateral]);
   const midSim = await simulate(DIAMOND, ABIS.risk, 'triggerLiquidation', [hfLoan, TRY_LIST], outsider.address);
-  check('A3.9', 'below the 1.5 initiation floor but above 1.0 the position is NOT liquidatable',
-    midHf < 1_500_000_000_000_000_000n && midHf >= 1_000_000_000_000_000_000n && !midSim.ok,
-    `HF=${f18(midHf)} -> ${midSim.ok ? 'would liquidate' : midSim.name}`);
+  check('A3.9a', 'the probe position sits below the 1.5 initiation floor but above 1.0, with the collateral still routable',
+    midHf < 1_500_000_000_000_000_000n && midHf >= 1_000_000_000_000_000_000n && Number(midRoutable) === 0,
+    `HF=${f18(midHf)} checkLiquidity=${midRoutable}`);
+  expectRefusal('A3.9', 'below the 1.5 initiation floor but above 1.0 the position is NOT liquidatable', midSim, 'HealthFactorNotLow');
+  await repriceFaucetAsset(tliq, 2000);
 
-  // That reprice moved the FEED only. The faucet's mock v3 pool keeps its
+  // A FEED-ONLY reprice, for contrast. The faucet's mock v3 pool keeps its
   // seeded spot, and the oracle only counts a pool whose spot agrees with
   // the feed within the TWAP-consistency band — so a feed-only move past the
   // band leaves no consistent pool and the asset reads Illiquid. It is not a
   // depth limit (#2314 first said it was); A3.13 moves the pool with the
   // feed and the route stays open.
+  await setFeedUsd(MOCKS.liquidTokenUsdFeed, 1940);
   const depthAfterCrash = await read(ABIS.oracle, 'checkLiquidity', [collateral]);
   observe('A3.10', 'a FEED-ONLY reprice past the pool-consistency band flips the asset Illiquid (the mock pool\'s spot does not follow the feed)',
-    `checkLiquidity(collateral) after a feed-only move to $1,100 = ${depthAfterCrash} (0=Liquid, 1=Illiquid) — while Illiquid, the HF-swap route refuses`);
+    `checkLiquidity(collateral) after a feed-only 3% move to $1,940 = ${depthAfterCrash} (0=Liquid, 1=Illiquid) — while Illiquid, the HF-swap route refuses`);
+  await setFeedUsd(MOCKS.liquidTokenUsdFeed, 2000);
 
   await setFeedUsd(MOCKS.liquidTokenUsdFeed, 2000);
   await setFeedUsd(MOCKS.liquidToken2UsdFeed, 2.5);
@@ -155,10 +167,6 @@ export async function run() {
   // with its feed as a real market would, the asset stays routable, and the
   // position is liquidated from the collateral side.
   const { loanId: crashLoan } = await openLoan({ lender, borrower });
-  const tliq = {
-    asset: collateral, feed: MOCKS.liquidTokenUsdFeed, pool: MOCKS.liquidTokenWethPool,
-    quote: '0x4200000000000000000000000000000000000006',
-  };
   await repriceFaucetAsset(tliq, 900);
   await sendAsOwner(venue, MOCK_ADAPTER_ABI, 'setTokenPrice', [collateral, 90_000_000_000n]);
   const crashHf = await read(ABIS.risk, 'calculateHealthFactor', [crashLoan]);

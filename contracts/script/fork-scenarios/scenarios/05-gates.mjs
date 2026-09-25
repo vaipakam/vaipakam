@@ -11,7 +11,7 @@ import { ADMIN, DIAMOND, MOCKS, borrower, lender, outsider, parseUnits, pub, rpc
 import { ABIS, approveDiamond, acceptOffer, createOffer, mint, offerParams, read } from '../lib/flow.mjs';
 import { sendAs } from '../lib/impersonate.mjs';
 import { simulate } from '../lib/errors.mjs';
-import { check, observe } from '../lib/report.mjs';
+import { check, observe, expectRefusal } from '../lib/report.mjs';
 
 // A stub oracle whose runtime is "return 1 for any call" — every address
 // reads as sanctioned. Injected with the fork's setCode cheatcode because
@@ -52,12 +52,10 @@ async function runGates() {
 
   const params = await offerParams({ amount: parseUnits('10', 18), collateralAmount: parseUnits('0.02', 18) });
   const tier1Create = await simulate(DIAMOND, ABIS.offerCreate, 'createOffer', [params], lender.address);
-  check('A5.3', 'Tier-1 createOffer refuses a flagged wallet',
-    !tier1Create.ok && /Sanctioned/.test(tier1Create.name), tier1Create.ok ? 'NOT refused' : tier1Create.name);
+  expectRefusal('A5.3', 'Tier-1 createOffer refuses a flagged wallet', tier1Create, 'SanctionedAddress');
 
   const tier1Vault = await simulate(DIAMOND, ABIS.vaultFactory, 'getOrCreateUserVault', [outsider.address], outsider.address);
-  check('A5.4', 'Tier-1 getOrCreateUserVault refuses a flagged wallet',
-    !tier1Vault.ok && /Sanctioned/.test(tier1Vault.name), tier1Vault.ok ? 'NOT refused' : tier1Vault.name);
+  expectRefusal('A5.4', 'Tier-1 getOrCreateUserVault refuses a flagged wallet', tier1Vault, 'SanctionedAddress');
 
   const tier2Repay = await simulate(DIAMOND, ABIS.repay, 'repayLoan', [loanId], borrower.address);
   check('A5.5', 'Tier-2 repayLoan stays OPEN under a blanket flag, so the unflagged side can be made whole',
@@ -117,8 +115,7 @@ async function runGates() {
     collateralAmountMax: parseUnits('5000', 18),
   });
   const withoutConsent = await acceptOffer(illiquidOffer.offerId, illiquidOffer.offer, borrower, lender);
-  check('A5.12', 'accepting illiquid collateral WITHOUT the explicit acknowledgement is refused',
-    !withoutConsent.ok, withoutConsent.ok ? 'accepted without consent' : withoutConsent.reason);
+  expectRefusal('A5.12', 'accepting illiquid collateral WITHOUT the explicit acknowledgement is refused', withoutConsent, 'IlliquidAssetNotAcknowledged');
 
   const withConsent = await acceptOffer(illiquidOffer.offerId, illiquidOffer.offer, borrower, lender, {
     acknowledgedIlliquidCollateralAsset: illiquid,
@@ -130,7 +127,6 @@ async function runGates() {
     const active = await read(ABIS.metrics, 'getUserActiveLoans', [borrower.address]);
     const illiquidLoan = active[active.length - 1];
     const hf = await simulate(DIAMOND, ABIS.risk, 'calculateHealthFactor', [illiquidLoan], borrower.address);
-    check('A5.14', 'an illiquid-collateral loan reports NO health factor rather than inventing one',
-      !hf.ok, hf.ok ? `returned ${hf.result}` : hf.name);
+    expectRefusal('A5.14', 'an illiquid-collateral loan reports NO health factor rather than inventing one', hf, 'IlliquidLoanNoRiskMath');
   }
 }

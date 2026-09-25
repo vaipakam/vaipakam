@@ -13,7 +13,7 @@ needs no Solidity compiler: it reads the committed per-facet ABIs, so the
 compiler stays the single source of truth for every decode while the driver
 itself is plain Node.
 
-The run now covers one hundred and thirty-five scenarios across the whole advanced
+The run now covers one hundred and forty-six scenarios across the whole advanced
 surface — offer creation and escrow, accept and the loan-initiation fee,
 repayment and the treasury's interest cut, the borrower's collateral claim,
 time-based default, health-factor liquidation, preclose, partial repayment,
@@ -167,7 +167,16 @@ unexpected transfer fails as surely as a wrong one; all of them reconcile to
 the smallest unit. One thing the specification leaves open is surfaced
 rather than certified: after an automatic periodic settlement the lender
 receives slightly more than the period's shortfall, because the collateral
-sale is sized with a buffer and the specification does not say who keeps it. The re-run
-records one hundred and twenty-two passes, twelve observations and one failure —
+sale is sized with a buffer and the specification does not say who keeps it.
+Every refusal the walkthrough checks is now checked by the error's name, so a
+guard that disappears cannot hide behind an unrelated later refusal, and
+every step that moves money — from the first offer to the last claim, across
+the early exits, the refinance, the offset and the rental — now reconciles
+exactly against the specification's own arithmetic. Two places are checked
+less tightly, and the write-up says which and why: the split inside a forced
+close is checked for completeness rather than per party, and the full
+repayment from collateral is checked as an accounting identity until the fix
+that changes its sale size ships. The re-run
+records one hundred and thirty-four passes, eleven observations and one failure —
 the swap-to-repay check whose expectation was deliberately corrected — with
 no scenario file aborted.

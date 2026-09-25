@@ -19,7 +19,7 @@ import { ABIS, approveDiamond, delta, mint, offerParams, openLoan, read, snapsho
 import { f18 } from '../lib/chain.mjs';
 import { sendAs, warpDays } from '../lib/impersonate.mjs';
 import { simulate } from '../lib/errors.mjs';
-import { check, observe } from '../lib/report.mjs';
+import { check, observe, expectRefusal } from '../lib/report.mjs';
 import { dynamicIncentiveBps } from '../lib/flow.mjs';
 
 const MONTHLY = 1;
@@ -52,13 +52,11 @@ async function runPeriodic(initial) {
   const dark = await simulate(DIAMOND, ABIS.offerCreate, 'createOffer',
     [await offerParams({ amount: parseUnits('100000', 18), collateralAmount: parseUnits('125', 18), durationDays: 90n, periodicInterestCadence: MONTHLY })],
     lender.address);
-  check('A9.2', 'while dark, an offer carrying a cadence is refused outright rather than silently downgraded to None',
-    !dark.ok, dark.ok ? 'NOT refused' : dark.name);
+  expectRefusal('A9.2', 'while dark, an offer carrying a cadence is refused outright rather than silently downgraded to None', dark, 'PeriodicInterestDisabled');
 
   const tooLong = await simulate(DIAMOND, ABIS.offerCreate, 'createOffer',
     [await offerParams({ durationDays: 400n })], lender.address);
-  check('A9.3', 'offer terms are capped — a 400-day term is refused, naming the cap',
-    !tooLong.ok, tooLong.ok ? 'NOT refused' : tooLong.name);
+  expectRefusal('A9.3', 'offer terms are capped — a 400-day term is refused, naming the cap', tooLong, 'OfferDurationExceedsCap');
 
   // ------------------------------------------- armed on the fork only
   await sendAs(ADMIN, { address: DIAMOND, abi: ABIS.numeraireConfig, functionName: 'setPeriodicInterestEnabled', args: [true] });
@@ -71,8 +69,7 @@ async function runPeriodic(initial) {
   const shortTerm = await simulate(DIAMOND, ABIS.offerCreate, 'createOffer',
     [await offerParams({ amount: parseUnits('100000', 18), collateralAmount: parseUnits('125', 18), durationDays: 20n, periodicInterestCadence: MONTHLY })],
     lender.address);
-  check('A9.5', 'a monthly cadence on a term shorter than one interval is refused',
-    !shortTerm.ok, shortTerm.ok ? 'NOT refused' : shortTerm.name);
+  expectRefusal('A9.5', 'a monthly cadence on a term shorter than one interval is refused', shortTerm, 'CadenceNotAllowed');
 
   const small = await simulate(DIAMOND, ABIS.offerCreate, 'createOffer',
     [await offerParams({ amount: parseUnits('10', 18), collateralAmount: parseUnits('0.0125', 18), durationDays: 90n, periodicInterestCadence: MONTHLY })],
@@ -81,7 +78,8 @@ async function runPeriodic(initial) {
   // deployment's threshold is above that, admitted otherwise.
   const shouldRefuse = threshold > parseUnits('10', 18);
   check('A9.6', 'the finer-cadence principal threshold decides admission of a 10-unit principal',
-    !small.ok === shouldRefuse, `threshold=${f18(threshold)} -> ${small.ok ? 'admitted' : small.name}`);
+    small.ok === !shouldRefuse && (small.ok || small.name.split('(')[0] === 'CadenceNotAllowed'),
+    `threshold=${f18(threshold)} -> ${small.ok ? 'admitted' : small.name}`);
 
   // ---------------------------------------- a periodic loan, settled
   const PRINCIPAL = parseUnits('100000', 18);
@@ -93,7 +91,7 @@ async function runPeriodic(initial) {
     `loanId=${loanId} cadence=${loan.periodicInterestCadence} principal=${f18(loan.principal)} term=${loan.durationDays}d`);
 
   const early = await simulate(DIAMOND, ABIS.repayPeriodic, 'settlePeriodicInterest', [loanId, []], outsider.address);
-  check('A9.8', 'settling before the first period closes is refused', !early.ok, early.ok ? 'NOT refused' : early.name);
+  expectRefusal('A9.8', 'settling before the first period closes is refused', early, 'PeriodicSettleNotDue');
 
   await warpDays(31);
   const preview = await read(ABIS.repayPeriodic, 'previewPeriodicSettle', [loanId]);
@@ -106,8 +104,7 @@ async function runPeriodic(initial) {
   // has already paid it. Here they have NOT, so settling needs a swap route:
   // the protocol sells just enough collateral to cover the shortfall.
   const noRoute = await simulate(DIAMOND, ABIS.repayPeriodic, 'settlePeriodicInterest', [loanId, []], outsider.address);
-  check('A9.10', 'an UNPAID period cannot be stamped closed — settling it needs a swap route, and says so',
-    !noRoute.ok, noRoute.ok ? 'NOT refused' : noRoute.name);
+  expectRefusal('A9.10', 'an UNPAID period cannot be stamped closed — settling it needs a swap route, and says so', noRoute, 'PeriodicSettleSwapPathRequired');
 
   // Auto-liquidate path: a permissionless settler supplies the route.
   const venue = MOCKS.mockSwapAdapter;
@@ -152,7 +149,7 @@ async function runPeriodic(initial) {
     `excess=${f18(toLender - shortfallDue)} of proceeds=${f18(proceeds)} — the spec says "shortfall plus configured buffers" and does not say who keeps the buffer`);
 
   const twice = await simulate(DIAMOND, ABIS.repayPeriodic, 'settlePeriodicInterest', [loanId, [{ adapterIdx: 0n, data: '0x' }]], outsider.address);
-  check('A9.12', 'the same period cannot be settled twice', !twice.ok, twice.ok ? 'NOT refused' : twice.name);
+  expectRefusal('A9.12', 'the same period cannot be settled twice', twice, 'PeriodicSettleNotDue');
 
   // Just-stamp path: a second loan whose borrower pays the period's interest
   // voluntarily first. Then nothing is sold — the period is simply stamped.
@@ -176,6 +173,5 @@ async function runPeriodic(initial) {
     `paid=${f18(shortfall)} settledAt ${stampBefore} -> ${paid.lastPeriodicInterestSettledAt} ` +
     `nextDue=${Array.isArray(afterPay) ? afterPay[1] : '?'} dueNow=${Array.isArray(afterPay) ? afterPay[6] : '?'}`);
   const stampSim = await simulate(DIAMOND, ABIS.repayPeriodic, 'settlePeriodicInterest', [second.loanId, []], outsider.address);
-  check('A9.14', 'a stamp call after a voluntary payment is refused — the period is already closed',
-    !stampSim.ok, stampSim.ok ? 'still stampable' : stampSim.name);
+  expectRefusal('A9.14', 'a stamp call after a voluntary payment is refused — the period is already closed', stampSim, 'PeriodicSettleNotDue');
 }

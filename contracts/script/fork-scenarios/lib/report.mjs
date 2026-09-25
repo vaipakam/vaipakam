@@ -57,6 +57,19 @@ export function expectLedger(id, name, before, after, expected, note = '') {
   return check(id, name, wrong.length === 0, (wrong.length ? `MISMATCH ${wrong.join('; ')}` : `exact: ${shown}`) + (note ? ` (${note})` : ''));
 }
 
+/**
+ * Assert a REFUSAL by name. A refusal row that accepts any revert certifies
+ * whichever guard happened to fire — so when the guard under test is removed,
+ * a later, unrelated check (an empty route, a missing allowance, the health
+ * bound) keeps the row green. `res` is a `simulate()` result (`name`) or an
+ * accept result (`reason`); the error's name is compared up to its arguments.
+ */
+export function expectRefusal(id, name, res, errorName, detail = '') {
+  const got = res.ok ? null : String(res.name ?? res.reason ?? '');
+  const ok = got !== null && got.split('(')[0] === errorName;
+  return check(id, name, ok, `${got === null ? 'NOT refused' : got}${ok ? '' : ` (want ${errorName})`}${detail ? ` — ${detail}` : ''}`);
+}
+
 /** Record an observation with no assertion behind it; always INFO. */
 export function observe(id, name, detail = '') {
   return push(id, name, 'INFO', detail);

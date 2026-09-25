@@ -169,6 +169,19 @@ this harness and are worth keeping:
   condition that would actually be false if the behaviour regressed: an exact
   expected value, the refusal's NAME rather than "it reverted", both sides of
   a transfer rather than one.
+- **A refusal is asserted by name** — `expectRefusal(id, name, result,
+  'ErrorName')`. A row that accepts any revert certifies whichever guard
+  fired first, so with the guard under test removed a later, unrelated
+  refusal (a missing allowance, an empty route, an illiquid asset) keeps it
+  green. Set the probe up so only the guard under test CAN refuse, then name
+  it.
+- **A step that moves money is asserted as an exact ledger** —
+  `expectLedger(id, name, before, after, expected)`. Every watched balance
+  change must equal the expected map (absent = 0), so an unexpected transfer
+  fails as surely as a wrong amount. Compute the expected map from the
+  functional spec's formula, never from the deltas the step just produced —
+  deriving the expectation from the outcome only proves the outcome equals
+  itself.
 - **Resolve a vault through `vaultAddressFor`, never `getUserVaultAddress`
   directly.** The raw getter answers `address(0)` for a user who has no vault
   yet, without reverting, and snapshotting the zero address yields a

@@ -9,7 +9,7 @@ configuration — not the source tree's idea of them.
   84532 (Base Sepolia), forked at block 47,228,632.
 - **Driver** — [`contracts/script/fork-scenarios/`](../../contracts/script/fork-scenarios/README.md),
   committed with this document. `node run-all.mjs` reproduces every row.
-- **Result** — 135 scenarios: **122 PASS, 12 INFO, 1 FAIL**, no aborted
+- **Result** — 146 scenarios: **134 PASS, 11 INFO, 1 FAIL**, no aborted
   file. The INFOs are observations with no assertion behind them, not soft
   failures — the ledger's API makes a row either an assertion (PASS/FAIL
   only) or an observation (INFO only), so no failure can land as INFO; each
@@ -18,12 +18,11 @@ configuration — not the source tree's idea of them.
   the debt needs — and the live bytecode sells the whole cap. It turns green
   when the #2317 fix is deployed.
 - **Node** — the figures above are from a re-run on **Anvil** (2026-09-25,
-  forked at block 47,275,089). The first run used a hardhat fork node and
+  forked at block 47,275,629). The first run used a hardhat fork node and
   reported 129 rows, 123 / 6 / 0. The differences are the A11.5 oracle
   change above; new rows — A3.13 (the collateral-drawdown liquidation §2.4
-  now drives), exact settlement ledgers for the handover and both lender
-  sales (A7.7b, A8.2b, A8.7b), and two new observations (A1.3b, A9.11b); and
-  four rows that recorded a deployment's CONFIGURED value as a PASS and
+  now drives), exact settlement ledgers for every fund-moving step (the
+  `…b` rows), and two new observations (A1.3b, A9.11b); and four rows that recorded a deployment's CONFIGURED value as a PASS and
   now observe it instead (§7). The re-run also found three defects in the
   HARNESS that the hardhat node had hidden — see
   [§0](#0-re-run-on-anvil-and-three-harness-defects-it-exposed).
@@ -111,7 +110,37 @@ the dynamic incentive the spec describes rather than the loan's stamped
 fallback split, which only coincides with it on this deployment. Every
 terminal status is compared exactly (Repaid, Defaulted), and the treasury is
 read from the live Diamond rather than the artifact. All hold on the live
-bytecode, to the wei. Figures that depend on ELAPSED time — accrued interest, and so the
+bytecode, to the wei.
+
+A third pass finished both sweeps rather than patching the rows it named.
+**Every refusal is now asserted by the error's NAME** (`expectRefusal`): a
+row that accepted any revert certified whichever guard happened to fire, so
+removing the guard under test left it green on a later, unrelated refusal —
+the missing allowance under the vault-internal probe, the illiquidity
+refusal under the health-factor threshold probe, the empty route under the
+periodic not-due probe. (The threshold probe now also moves the pool with
+its feed, so only the health-factor guard can refuse it.) And **every
+fund-moving step now carries an exact ledger** computed from the spec:
+offer escrow, accept, repay and claim; preclose and its claim; the partial
+repayment (interest in whole elapsed days, borrower-favourable, then
+principal, to the lender's wallet); the collateral release; the offset (the
+original lender paid principal + accrued interest + the protection
+shortfall, the new borrower drawing the escrowed principal net of the
+initiation fee); the refinance (the exiting lender paid principal plus the
+full term's interest — no rate top-up, per #411 — and the borrower covering
+the rest, with no collateral moving on a carry-over); the partial
+swap-to-repay; and the rental's accept, early close and both claims against
+the offer's stamped buffer. Each reconciled on its first run.
+
+**What is still asserted below that level, and why.** The two forced-close
+settlements (A3.5, A3.12, A3.13) are asserted as full conservation — every
+unit of the proceeds lands with exactly one of the four parties — plus the
+exact keeper bonus and the terminal status, but not the per-party split of
+the waterfall, whose late-fee and handling-fee subordination this run did not
+re-derive independently. And the full swap-to-repay (A11.4, A11.6) is asserted
+as an accounting identity rather than an expected ledger, because its
+intended sale size is exactly what #2317 changes — A11.5 carries that
+expectation and fails until the fix ships. Figures that depend on ELAPSED time — accrued interest, and so the
 forced-close splits in §2.1 — differ from the first run's in the sixth
 decimal, because the time warps land on different seconds; every fee rate,
 cap, ratio and fixed-amount figure is identical.
@@ -724,7 +753,7 @@ replace.
 
 ## 7. Ledger
 
-The full 135-row ledger, with per-scenario verdicts and observed numbers, is
+The full 146-row ledger, with per-scenario verdicts and observed numbers, is
 regenerated as `contracts/script/fork-scenarios/last-run.json` on every run
 (untracked). Scenario ids map to the driver's files:
 
@@ -742,7 +771,7 @@ regenerated as `contracts/script/fork-scenarios/last-run.json` on every run
 | A10.* | `10-nft-rental.mjs` | ERC-721 rental against the spec's custody-vs-use model, early close, claims |
 | A11.* | `11-swap-to-repay.mjs` | repaying from collateral: authority, the cap, full and partial modes |
 
-The ten `INFO` rows, each an observation with no assertion behind it:
+The eleven `INFO` rows, each an observation with no assertion behind it:
 
 - **Deployment configuration** — the sanctions oracle and KYC posture (A1.2,
   A5.1) and the periodic-interest switch (A9.1). These are values an
@@ -762,9 +791,10 @@ The ten `INFO` rows, each an observation with no assertion behind it:
   configured buffers" and does not say who keeps the buffer, so the amount is
   surfaced for an owner reading rather than certified.
 - **Shapes worth writing down** — the two post-claim NFT readbacks (A2.16,
-  §1.4), the offset vehicle's offer type (A7.2b, §3A.3; its mirror, the sale
-  vehicle, is asserted as A8.1), and a rental's health-factor refusal
-  (A10.5, §3C).
+  §1.4) and the offset vehicle's offer type (A7.2b, §3A.3; its mirror, the
+  sale vehicle, is asserted as A8.1). A rental's health-factor refusal
+  (A10.5, §3C) was an observation in the first run and is now asserted by
+  name, since the spec says a rental has no health factor.
 
 A3.2 asserts RELATIVE to what the chain reports: it reads this deployment's
 effective grace window — **1 day for a 7-day loan** — and requires the loan

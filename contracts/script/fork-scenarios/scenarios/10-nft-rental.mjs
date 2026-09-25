@@ -14,7 +14,7 @@ import { ABIS, acceptStoredOffer, approveDiamond, delta, mint, read, snapshot, v
 import { f18 } from '../lib/chain.mjs';
 import { warpDays } from '../lib/impersonate.mjs';
 import { simulate } from '../lib/errors.mjs';
-import { cannotContinue, check, expectEq, observe } from '../lib/report.mjs';
+import { cannotContinue, check, expectEq, expectLedger, expectRefusal, observe } from '../lib/report.mjs';
 
 const NFT = [
   { type: 'function', name: 'mint', inputs: [{ type: 'address' }, { type: 'uint256' }], outputs: [], stateMutability: 'nonpayable' },
@@ -25,7 +25,6 @@ const NFT = [
 
 const DAILY_FEE = parseUnits('10', 18);
 const DAYS = 7n;
-const BUFFER_BPS = 500n; // RENTAL_BUFFER_BPS
 
 export async function run() {
   const nft = MOCKS.rentalNft;
@@ -75,8 +74,12 @@ export async function run() {
     `ownerOf=${custodyAfterList} lenderVault=${lenderVault}`);
 
   // The renter prepays rent for the whole term plus a buffer.
+  // The buffer rate is governance-mutable and STAMPED on the offer at
+  // creation (`rentalBufferBpsAtCreate`); the contract uses the stamp, so the
+  // expectation reads it rather than assuming the 5% default.
+  const bufferBps = BigInt(listed.rentalBufferBpsAtCreate);
   const rent = DAILY_FEE * DAYS;
-  const buffer = (rent * BUFFER_BPS) / 10_000n;
+  const buffer = (rent * bufferBps) / 10_000n;
   await mint(borrower, prepay, '100000');
   await approveDiamond(borrower, prepay);
   const tokens = { prepay };
@@ -89,8 +92,7 @@ export async function run() {
   // explicit acknowledgement — the same dual-consent gate as illiquid
   // collateral (A5.12), applied here to the LENT asset.
   const unacked = await acceptStoredOffer(created.offerId, borrower);
-  check('A10.3a', 'accepting a rental WITHOUT acknowledging the illiquid NFT is refused',
-    !unacked.ok, unacked.ok ? 'accepted without consent' : unacked.reason);
+  expectRefusal('A10.3a', 'accepting a rental WITHOUT acknowledging the illiquid NFT is refused', unacked, 'IlliquidAssetNotAcknowledged');
   if (unacked.ok) cannotContinue('A10.3a', 'an unacknowledged rental was accepted; the rest of the rental flow would run on the wrong loan');
 
   const beforeAccept = await snapshot(tokens, holders);
@@ -99,9 +101,11 @@ export async function run() {
   const afterAccept = await snapshot(tokens, holders);
   const active = await read(ABIS.metrics, 'getUserActiveLoans', [borrower.address]);
   const loanId = active[active.length - 1];
-  const paid = beforeAccept['prepay.borrowerEOA'] - afterAccept['prepay.borrowerEOA'];
-  expectEq('A10.3', 'the renter prepays the full term\'s rent PLUS a 5% buffer, up front',
-    paid, rent + buffer, `rent=${f18(rent)} buffer=${f18(buffer)} deltas=${JSON.stringify(delta(beforeAccept, afterAccept))}`);
+  expectLedger('A10.3', 'the renter prepays the full term\'s rent PLUS the stamped buffer, up front, into their own vault',
+    beforeAccept, afterAccept, {
+      'prepay.borrowerEOA': -(rent + buffer),
+      'prepay.borrowerVault': rent + buffer,
+    }, `rent=${f18(rent)} buffer=${f18(buffer)} at the offer's stamped ${bufferBps}bps`);
 
   // Custody vs use — the core of the spec's rental model.
   const owner = await pub.readContract({ address: nft, abi: NFT, functionName: 'ownerOf', args: [tokenId] });
@@ -110,9 +114,11 @@ export async function run() {
     user.toLowerCase() === borrower.address.toLowerCase() && owner.toLowerCase() === lenderVault.toLowerCase(),
     `userOf=${user.slice(0, 10)} ownerOf=${owner} (renter=${borrower.address.slice(0, 10)})`);
 
+  // The spec: a rental is not a collateralised loan and has no health
+  // factor. Asserted by name, so a regression that starts inventing risk
+  // math for a zero-collateral rental fails.
   const noHf = await simulate(DIAMOND, ABIS.risk, 'calculateHealthFactor', [loanId], borrower.address);
-  observe('A10.5', 'a rental carries no health factor — it is not a collateralised loan',
-    noHf.ok ? `returned ${noHf.result}` : noHf.name);
+  expectRefusal('A10.5', 'a rental carries no health factor — it is not a collateralised loan', noHf, 'InvalidLoan');
 
   // Early close on day 3 of 7.
   await warpDays(3);
@@ -132,22 +138,36 @@ export async function run() {
   check('A10.6', 'closing early REVOKES the renter\'s user right, and the NFT stays in the lender\'s vault',
     /^0x0{40}$/i.test(userAfter) && ownerAfter.toLowerCase() === lenderVault.toLowerCase(),
     `gas=${closed.gasUsed} status=${loanAfter.status} userOf=${userAfter.slice(0, 10)} ownerOf=${ownerAfter.slice(0, 10)} ` +
-    `quote=${quote === null ? 'n/a' : JSON.stringify(quote, (_, v) => (typeof v === 'bigint' ? String(v) : v))} ` +
-    `deltas=${JSON.stringify(delta(beforeClose, afterClose))}`);
+    `quote=${quote === null ? 'n/a' : JSON.stringify(quote, (_, v) => (typeof v === 'bigint' ? String(v) : v))}`);
 
-  // Claims — each side's claim moves exactly what the close credited to that
-  // side's vault out to that side's wallet: the lender's rent for the days
-  // used (net of the treasury's cut), the renter's unused prepay plus the
-  // whole buffer.
-  for (const [who, side, acct, fn] of [['lender', 'lender', lender, 'claimAsLender'], ['renter', 'borrower', borrower, 'claimAsBorrower']]) {
-    const credited = afterClose[`prepay.${side}Vault`] - beforeClose[`prepay.${side}Vault`] +
-      (side === 'borrower' ? afterAccept['prepay.borrowerVault'] - beforeAccept['prepay.borrowerVault'] : 0n);
+  // The money, computed independently of what the close did (spec: on an
+  // early close the lender is owed the rent for the days used, net of the
+  // treasury's fee on it; the renter is owed the unused prepay AND the whole
+  // buffer back). Whole days used, measured from the rental's start to the
+  // close block.
+  const closeAt = BigInt((await pub.getBlock({ blockNumber: closed.blockNumber })).timestamp);
+  const daysUsed = (closeAt - BigInt(loanAfter.startTime)) / 86_400n;
+  const usedRent = DAILY_FEE * daysUsed;
+  const toTreasury = (usedRent * BigInt(loanAfter.treasuryFeeBpsAtInit)) / 10_000n;
+  const lenderShare = usedRent - toTreasury;
+  const renterBack = rent + buffer - usedRent;
+  expectLedger('A10.6b', 'the early close pays the lender the used days\' rent net of the treasury fee, into their vault, and leaves the rest of the prepay with the renter',
+    beforeClose, afterClose, {
+      'prepay.borrowerVault': -usedRent,
+      'prepay.lenderVault': lenderShare,
+      'prepay.treasury': toTreasury,
+    }, `daysUsed=${daysUsed} usedRent=${f18(usedRent)} treasury=${f18(toTreasury)}`);
+
+  // Claims — each side withdraws exactly its independently computed share.
+  for (const [who, side, acct, fn, owed] of [
+    ['lender', 'lender', lender, 'claimAsLender', lenderShare],
+    ['renter', 'borrower', borrower, 'claimAsBorrower', renterBack],
+  ]) {
     const before = await snapshot(tokens, holders);
     const r = await tx(acct, { address: DIAMOND, abi: ABIS.claim, functionName: fn, args: [loanId] }, fn);
     const after = await snapshot(tokens, holders);
-    check(`A10.7.${who}`, `after the early close the ${who} claims exactly their side`,
-      after[`prepay.${side}EOA`] - before[`prepay.${side}EOA`] === credited && credited > 0n,
-      `gas=${r.gasUsed} credited=${f18(credited)} deltas=${JSON.stringify(delta(before, after))}`);
+    expectLedger(`A10.7.${who}`, `after the early close the ${who} claims exactly their share from their vault to their wallet`,
+      before, after, { [`prepay.${side}Vault`]: -owed, [`prepay.${side}EOA`]: owed }, `gas=${r.gasUsed} owed=${f18(owed)}`);
   }
   const finalOwner = await pub.readContract({ address: nft, abi: NFT, functionName: 'ownerOf', args: [tokenId] });
   check('A10.8', 'after the lender\'s claim the NFT is back in the lender\'s wallet',

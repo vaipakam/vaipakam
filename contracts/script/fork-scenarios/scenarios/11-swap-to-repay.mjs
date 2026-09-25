@@ -13,7 +13,7 @@ import { DIAMOND, ERC20, MOCKS, TREASURY, borrower, lender, outsider, parseUnits
 import { ABIS, STATUS, delta, openLoan, read, snapshot, vaultAddressFor } from '../lib/flow.mjs';
 import { f18 } from '../lib/chain.mjs';
 import { simulate } from '../lib/errors.mjs';
-import { cannotContinue, check, expectEq } from '../lib/report.mjs';
+import { cannotContinue, check, expectEq, expectLedger, expectRefusal } from '../lib/report.mjs';
 
 const TRY_LIST = [{ adapterIdx: 0n, data: '0x' }];
 
@@ -38,16 +38,13 @@ export async function run() {
     const loan = await read(ABIS.loan, 'getLoanDetails', [loanId]);
 
     const impostor = await simulate(DIAMOND, ABIS.swapToRepay, 'swapToRepayFull', [loanId, TRY_LIST, loan.collateralAmount], outsider.address);
-    check('A11.1', 'only the borrower can sell their own collateral to repay',
-      !impostor.ok, impostor.ok ? 'NOT refused' : impostor.name);
+    expectRefusal('A11.1', 'only the borrower can sell their own collateral to repay', impostor, 'NotNFTOwner');
 
     const overCap = await simulate(DIAMOND, ABIS.swapToRepay, 'swapToRepayFull', [loanId, TRY_LIST, loan.collateralAmount + 1n], borrower.address);
-    check('A11.2', 'a collateral cap larger than the collateral held is refused',
-      !overCap.ok, overCap.ok ? 'NOT refused' : overCap.name);
+    expectRefusal('A11.2', 'a collateral cap larger than the collateral held is refused', overCap, 'InvalidAmount');
 
     const noRoute = await simulate(DIAMOND, ABIS.swapToRepay, 'swapToRepayFull', [loanId, [], loan.collateralAmount], borrower.address);
-    check('A11.3', 'with no swap route, the repayment is refused rather than attempted',
-      !noRoute.ok, noRoute.ok ? 'NOT refused' : noRoute.name);
+    expectRefusal('A11.3', 'with no swap route, the repayment is refused rather than attempted', noRoute, 'NoEnabledSwapRoute');
 
     // A TIGHT cap: 0.6 collateral ($1,200) against ≈$1,001 of debt. The cap
     // is what the caller lets the protocol take, so this is the case that
@@ -93,8 +90,7 @@ export async function run() {
   {
     const { loanId: noPartial } = await openLoan({ lender, borrower, borrowerCanRepayFromWallet: false });
     const refused = await simulate(DIAMOND, ABIS.swapToRepay, 'swapToRepayPartial', [noPartial, parseUnits('0.1', 18), TRY_LIST], borrower.address);
-    check('A11.7', 'a partial swap on a loan that never allowed partial repayment is refused',
-      !refused.ok, refused.ok ? 'NOT refused' : refused.name);
+    expectRefusal('A11.7', 'a partial swap on a loan that never allowed partial repayment is refused', refused, 'PartialRepayNotAllowed');
 
     const { loanId } = await openLoan({ lender, borrower, allowsPartialRepay: true, borrowerCanRepayFromWallet: false });
     const hfBefore = await read(ABIS.risk, 'calculateHealthFactor', [loanId]);
@@ -106,10 +102,27 @@ export async function run() {
     const after = await snapshot(tokens, holders);
     const hfAfter = await read(ABIS.risk, 'calculateHealthFactor', [loanId]);
     const loanAfter = await read(ABIS.loan, 'getLoanDetails', [loanId]);
-    check('A11.8', 'a partial swap sells 0.1 collateral, reduces principal, and the loan stays Active',
-      String(loanAfter.status) === '0' && loanAfter.principal < loanBefore.principal &&
-      before['collateral.borrowerVault'] - after['collateral.borrowerVault'] === parseUnits('0.1', 18),
-      `gas=${receipt.gasUsed} principal ${f18(loanBefore.principal)} -> ${f18(loanAfter.principal)} deltas=${JSON.stringify(delta(before, after))}`);
+    // The money: the venue's proceeds for exactly 0.1 collateral go to the
+    // lender (interest accrued so far — whole days, rounded down — then
+    // principal), the treasury's fee on the interest part only, and the
+    // principal falls by exactly the proceeds' principal part.
+    const SOLD = parseUnits('0.1', 18);
+    const psProceeds = before['lending.venue'] - after['lending.venue'];
+    const psAt = BigInt((await pub.getBlock({ blockNumber: receipt.blockNumber })).timestamp);
+    const psDays = (psAt - BigInt(loanBefore.startTime)) / 86_400n;
+    const psInterest = (loanBefore.principal * BigInt(loanBefore.interestRateBps) * psDays) / (365n * 10_000n);
+    const psCut = (psInterest * BigInt(loanBefore.treasuryFeeBpsAtInit)) / 10_000n;
+    check('A11.8', 'a partial swap sells exactly 0.1 collateral, reduces principal by the proceeds net of accrued interest, and the loan stays Active',
+      String(loanAfter.status) === '0' && loanBefore.principal - loanAfter.principal === psProceeds - psInterest,
+      `gas=${receipt.gasUsed} principal ${f18(loanBefore.principal)} -> ${f18(loanAfter.principal)} proceeds=${f18(psProceeds)} interest=${f18(psInterest)}`);
+    expectLedger('A11.8b', 'the partial swap moves exactly: 0.1 collateral to the venue, the proceeds to the lender net of the treasury\'s fee on the interest part',
+      before, after, {
+        'collateral.borrowerVault': -SOLD,
+        'collateral.venue': SOLD,
+        'lending.venue': -psProceeds,
+        'lending.lenderEOA': psProceeds - psCut,
+        'lending.treasury': psCut,
+      });
     check('A11.9', 'a partial swap never leaves the position LESS healthy than it was',
       hfAfter >= hfBefore, `HF ${f18(hfBefore)} -> ${f18(hfAfter)}`);
   }

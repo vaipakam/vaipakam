@@ -10,7 +10,7 @@
 import { DIAMOND, MOCKS, TREASURY, borrower, lender, parseUnits, pub, tx } from '../lib/chain.mjs';
 import { ABIS, approveDiamond, createOffer, acceptOffer, delta, mint, read, snapshot, vaultAddressFor } from '../lib/flow.mjs';
 import { f18 } from '../lib/chain.mjs';
-import { cannotContinue, check, expectEq, observe } from '../lib/report.mjs';
+import { cannotContinue, check, expectEq, expectLedger, observe } from '../lib/report.mjs';
 
 const PRINCIPAL = parseUnits('1000', 18);
 const COLLATERAL = parseUnits('1.25', 18);
@@ -44,9 +44,8 @@ export async function run() {
   // to an accounting failure ten steps later.
   const escrowed = afterCreate['lending.lenderVault'] - atStart['lending.lenderVault'];
   const debited = atStart['lending.lenderEOA'] - afterCreate['lending.lenderEOA'];
-  check('A2.1', 'creating a lender offer moves the principal into the LENDER\'S OWN vault',
-    escrowed === PRINCIPAL && debited === PRINCIPAL,
-    `offerId=${offerId} deltas=${JSON.stringify(delta(atStart, afterCreate))}`);
+  expectLedger('A2.1', 'creating a lender offer moves the principal into the LENDER\'S OWN vault, and nothing else moves',
+    atStart, afterCreate, { 'lending.lenderEOA': -PRINCIPAL, 'lending.lenderVault': PRINCIPAL }, `offerId=${offerId}`);
 
   // --- accept: LIF + net delivery
   const accepted = await acceptOffer(offerId, offer, borrower, lender);
@@ -70,6 +69,14 @@ export async function run() {
   const toBorrower = afterAccept['lending.borrowerEOA'] - afterCreate['lending.borrowerEOA'];
   expectEq('A2.7', 'the borrower receives principal net of the LIF, in their WALLET not their vault',
     toBorrower, PRINCIPAL - lif + lif / 100n, 'the borrower was the accept caller, so the 1% matcher cut returns to them');
+  expectLedger('A2.7b', 'the accept moves exactly: escrow → borrower wallet net of the LIF, 99% of the LIF to the treasury, the collateral into the borrower\'s own vault',
+    afterCreate, afterAccept, {
+      'lending.lenderVault': -PRINCIPAL,
+      'lending.borrowerEOA': PRINCIPAL - lif + lif / 100n,
+      'lending.treasury': lif - lif / 100n,
+      'collateral.borrowerEOA': -COLLATERAL,
+      'collateral.borrowerVault': COLLATERAL,
+    });
 
   const hf = await read(ABIS.risk, 'calculateHealthFactor', [loanId]);
   const ltv = await read(ABIS.risk, 'calculateLTV', [loanId]);
@@ -95,6 +102,13 @@ export async function run() {
   const lenderCredit = afterRepay['lending.lenderVault'] - beforeRepay['lending.lenderVault'];
   expectEq('A2.11', 'the lender is credited principal plus 98% of the interest, into their vault',
     lenderCredit, PRINCIPAL + interest - treasuryCut);
+  const interestCut = (interest * 200n) / 10_000n;
+  expectLedger('A2.11b', 'the repay moves exactly: principal + interest from the borrower\'s wallet, 98% of the interest and all the principal to the lender\'s vault, 2% to the treasury — and no collateral',
+    beforeRepay, afterRepay, {
+      'lending.borrowerEOA': -(PRINCIPAL + interest),
+      'lending.lenderVault': PRINCIPAL + interest - interestCut,
+      'lending.treasury': interestCut,
+    });
 
   const repaid = await read(ABIS.loan, 'getLoanDetails', [loanId]);
   expectEq('A2.12', 'the loan terminalizes to Repaid', repaid.status, 1);
@@ -117,9 +131,9 @@ export async function run() {
   const claimReceipt = await tx(borrower, { address: DIAMOND, abi: ABIS.claim, functionName: 'claimAsBorrower', args: [loanId] }, 'claimAsBorrower');
   const afterClaim = await snapshot(tokens, holders);
   const lienAfterClaim = await read(ABIS.metrics, 'getLoanCollateralLien', [loanId]);
-  check('A2.15', 'claimAsBorrower releases the lien and returns the collateral',
-    lienAfterClaim.released && afterClaim['collateral.borrowerEOA'] - beforeClaim['collateral.borrowerEOA'] === COLLATERAL,
-    `gas=${claimReceipt.gasUsed} deltas=${JSON.stringify(delta(beforeClaim, afterClaim))}`);
+  check('A2.15', 'claimAsBorrower releases the lien', lienAfterClaim.released, `gas=${claimReceipt.gasUsed}`);
+  expectLedger('A2.15b', 'the borrower\'s claim moves exactly the collateral, vault → wallet',
+    beforeClaim, afterClaim, { 'collateral.borrowerVault': -COLLATERAL, 'collateral.borrowerEOA': COLLATERAL });
 
   // --- and what the claim does to the position NFTs. The receipt is spent
   //     by redeeming it: the CLAIMING side's NFT is burned, the other stays.
@@ -137,6 +151,6 @@ export async function run() {
     await tx(borrower, { address: DIAMOND, abi: ABIS.claim, functionName: 'claimAsBorrower', args: [loanId] }, 'claimAsBorrower');
   } catch (e) { secondReason = String(e.shortMessage ?? e.message).split('\n')[0].slice(0, 120); }
   const afterSecond = await snapshot(tokens, holders);
-  check('A2.17', 'a second claim on the same side cannot pay out again',
-    Object.keys(delta(beforeSecond, afterSecond)).length === 0, secondReason);
+  check('A2.17', 'a second claim on the same side is refused AlreadyClaimed and pays out nothing',
+    Object.keys(delta(beforeSecond, afterSecond)).length === 0 && /AlreadyClaimed\(\)/.test(secondReason), secondReason);
 }
