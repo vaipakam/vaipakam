@@ -149,8 +149,9 @@ live values it binds to rather than assuming, are worth naming:
 - **The live swap route.** Every sale — default, liquidation, periodic
   settlement, swap-to-repay — routes through the deployment's mock swap
   venue at the index the live Diamond lists it under (`VENUE_ROUTE`), never
-  a hard-coded slot. A deployment that does not register the mock venue is
-  out of envelope and the run stops, naming it.
+  a hard-coded slot. A deployment that does not register the mock venue, or
+  registers it but has disabled it, is out of envelope and the run stops,
+  naming which.
 - **`setCode` for a stub sanctions oracle**, because this driver has no
   Solidity compiler. The stub is a ten-byte runtime that answers `true` to
   everything; the Diamond itself is never patched.

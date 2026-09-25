@@ -245,8 +245,8 @@ patch**, and the sixteenth round's five findings were traced to three causes.
 The venue: sales passed a hard-coded adapter index, so a deployment that
 registered the mock venue at a different slot would have reported every sale
 as a protocol failure; the runner now looks the mock venue up in the live
-adapter list and every sale uses that route, and a deployment without it is
-declared out of envelope. The posture: the runner now reads the deployment's
+adapter list and every sale uses that route, and a deployment that has removed or
+disabled it is declared out of envelope. The posture: the runner now reads the deployment's
 sanctions and KYC posture before it does anything, and a deployment with KYC
 armed is normalized to the retail posture on the fork only — said in the run
 log — while A1.2 and A5.1 report the deployment's own values rather than the
@@ -688,8 +688,9 @@ and put back afterwards (confirmed `false` after the run):
   asserted against the spec, which sells "only enough collateral to cover
   the shortfall plus configured buffers" with the configured max
   liquidation slippage as "the single shared lever": the shortfall's
-  collateral equivalent at the oracle, grossed up by that lever (300 bps
-  here), capped at the pledged collateral — 0.2178 to the wei (A9.11). The
+  collateral equivalent at the oracle, grossed up by that lever (600 bps
+  on this deployment, read from `getLiquidationConfig` — not the 300 bps
+  settler-incentive cap), capped at the pledged collateral — 0.2178 to the wei (A9.11). The
   lender therefore received 2.88 *more* than the 410.96 due, and that
   buffer is not lost to the borrower: the whole receipt is booked as
   interest settled (A9.11b), which the spec's forced-close rule credits

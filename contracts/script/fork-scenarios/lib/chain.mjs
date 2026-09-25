@@ -75,6 +75,8 @@ export let OWNER = null;
 // from the live Diamond — governance may reorder or remove adapters, so a
 // hard-coded index 0 could route a scenario through a different venue.
 export let VENUE_ROUTE = null;
+// Why VENUE_ROUTE is null, when it is: unregistered, or registered but disabled.
+export let VENUE_UNAVAILABLE = null;
 // The deployment's OWN gate posture, captured before the runner normalizes
 // anything, so the rows that report posture report the deployment's, not the
 // fork's normalized one.
@@ -105,9 +107,16 @@ export async function resolveLive() {
     throw new Error(`no ADMIN_ROLE holder found among the Diamond owner ${owner}, the artifact admin ${ARTIFACT_ADMIN}` +
       `${override ? ` and FORK_ADMIN=${override}` : ''} — set FORK_ADMIN to the live holder (it is verified with hasRole before use)`);
   }
+  // The route is usable only when the mock venue is BOTH registered and
+  // enabled: routing skips a registered adapter governance has disabled, so
+  // membership alone would pass the runner's preflight and then abort every
+  // sale on a routing error. Anything short of both is reported by the
+  // runner as out of envelope, with the reason in VENUE_UNAVAILABLE.
   const adapters = await readD(view('getSwapAdapters', [], 'address[]'));
   const idx = adapters.findIndex((a) => MOCKS.mockSwapAdapter && a.toLowerCase() === MOCKS.mockSwapAdapter.toLowerCase());
-  VENUE_ROUTE = idx < 0 ? null : [{ adapterIdx: BigInt(idx), data: '0x' }];
+  const disabled = idx >= 0 && (await readD(view('isSwapAdapterDisabled', ['address'], 'bool'), [MOCKS.mockSwapAdapter]));
+  VENUE_UNAVAILABLE = idx < 0 ? 'is not in the Diamond\'s live adapter list' : disabled ? 'is registered but DISABLED (isSwapAdapterDisabled = true)' : null;
+  VENUE_ROUTE = VENUE_UNAVAILABLE ? null : [{ adapterIdx: BigInt(idx), data: '0x' }];
   POSTURE = {
     kycEnforced: await readD(view('isKYCEnforcementEnabled', [], 'bool')),
     sanctionsOracle: await readD(view('getSanctionsOracle', [], 'address')),

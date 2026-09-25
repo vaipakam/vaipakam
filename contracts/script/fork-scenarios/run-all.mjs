@@ -13,7 +13,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ADMIN, CHAIN_SLUG, DIAMOND, MOCKS, POSTURE, RPC_URL, TREASURY, VENUE_ROUTE, WETH, fundActors, pub, resolveLive, rpc } from './lib/chain.mjs';
+import { ADMIN, CHAIN_SLUG, DIAMOND, MOCKS, POSTURE, RPC_URL, TREASURY, VENUE_ROUTE, VENUE_UNAVAILABLE, WETH, fundActors, pub, resolveLive, rpc } from './lib/chain.mjs';
 import { ledger, mark, summarise, takeSince } from './lib/report.mjs';
 import { sendAs } from './lib/impersonate.mjs';
 
@@ -87,10 +87,11 @@ if (TREASURY.toLowerCase() === DIAMOND.toLowerCase()) {
   console.error(`OUT OF ENVELOPE — treasury topology: the live treasury IS the Diamond (${DIAMOND}); these ledgers are written for an external treasury. Nothing was run.`);
   process.exit(1);
 }
-// The mock venue must be registered with the live Diamond for any sale to
-// route through it; if governance removed it, the run cannot exercise a sale.
+// The mock venue must be registered with the live Diamond AND enabled for
+// any sale to route through it; if governance removed or disabled it, the
+// run cannot exercise a sale.
 if (!VENUE_ROUTE) {
-  console.error(`OUT OF ENVELOPE — swap venue: the mock swap adapter ${MOCKS.mockSwapAdapter} is not in the Diamond's live adapter list. Nothing was run.`);
+  console.error(`OUT OF ENVELOPE — swap venue: the mock swap adapter ${MOCKS.mockSwapAdapter} ${VENUE_UNAVAILABLE}. Nothing was run.`);
   process.exit(1);
 }
 // The run executes against the RETAIL POSTURE the scenarios are written for:
