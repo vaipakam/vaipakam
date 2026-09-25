@@ -1428,8 +1428,9 @@ considers it finished.
   case — and asking that minimum accepts the worst case, which a resolver
   keeps; asking more prices the lot higher;
   and whatever a fill raises above the debt is paid to the borrower as
-  surplus principal, as on the direct path. The rest of the collateral
-  stays in the borrower's vault, pledged, for the whole auction; the
+  surplus principal, as on the direct path. Any collateral the lot does
+  not include — there is none when the debt needs all of it — stays in
+  the borrower's vault, pledged, for the whole auction; the
   borrower position cannot be transferred while the auction is live, so
   the holder whose vault keeps that remainder is the holder at settlement;
   and a loan with a live auction is never drawn into an internal match.

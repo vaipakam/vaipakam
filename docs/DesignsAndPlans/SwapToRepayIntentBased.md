@@ -788,9 +788,19 @@ routing).
 ### 5.4 minOutput floor — reuse the NFT auction prepay formula
 
 v1 enforces slippage via `cfgMaxSwapToRepaySlippageBps` (admin-tunable,
-default 3%). v1.1 doesn't use a slippage cap at all — the order's
-`minPrincipalOut` IS the floor. But the borrower can't pick that floor
-freely: it must cover the full debt obligation plus a safety buffer.
+default 3%) on the swap it executes. v1.1 does not EXECUTE against a
+slippage cap — the order is a fixed-price limit order, so its
+`takingAmount` is the exact price and there is no execution slippage to
+bound. Since #2322 it USES that same cap to size and price the lot: the
+lot is the least collateral whose value at the oracle less the cap covers
+the debt floor plus buffer below, and the least `takerAmount` a commit
+accepts is that lot's own value at the oracle less the cap. So the cap is
+the protection against giving collateral away cheaply, not a bound on
+fill slippage; removing it would let the lot be sized and priced with no
+worst case at all. (Originally: "v1.1 doesn't use a slippage cap at
+all", which was true before #2322.) The borrower still can't pick the
+floor freely: it must cover the full debt obligation plus a safety
+buffer.
 
 The canonical formula already exists for the NFT auction prepay-listing
 flow (T-086 §17.5-bis), at

@@ -305,7 +305,7 @@ export async function handleIntentFusionPost(
       ok: true,
       status: 'queued',
       orderHash: parsed.orderHash,
-      note: `Chain ${parsed.chainId} is not supported by 1inch Fusion. The auction lot recorded by the on-chain commit is in protocol custody, and the rest of your collateral is still pledged in your vault; cancel after the auction deadline to return the lot to your vault — do not wait for a fill that will not arrive.`,
+      note: `Chain ${parsed.chainId} is not supported by 1inch Fusion. The auction lot recorded by the on-chain commit is in protocol custody, and any collateral the lot does not include is still pledged in your vault; cancel after the auction deadline to return the lot to your vault — do not wait for a fill that will not arrive.`,
     });
   }
 
@@ -328,7 +328,7 @@ export async function handleIntentFusionPost(
       status: 'queued',
       orderHash: parsed.orderHash,
       note:
-        'ONEINCH_API_KEY is not configured on this Worker (operator-pre-activation state). No Fusion solver discovery happens until the secret is bound + the worker redeploys. The auction lot recorded by the on-chain commit is in protocol custody, and the rest of your collateral is still pledged in your vault; cancel after the auction deadline to return the lot to your vault — do not wait for a fill that will not arrive.',
+        'ONEINCH_API_KEY is not configured on this Worker (operator-pre-activation state). No Fusion solver discovery happens until the secret is bound + the worker redeploys. The auction lot recorded by the on-chain commit is in protocol custody, and any collateral the lot does not include is still pledged in your vault; cancel after the auction deadline to return the lot to your vault — do not wait for a fill that will not arrive.',
     });
   }
 

@@ -23,16 +23,17 @@ and the borrower sets its price by how much principal they ask for that lot:
 - Whatever a fill raises above the debt is paid to the borrower as surplus,
   exactly as in the direct form.
 
-The rest of the collateral never leaves the borrower's vault and stays
-pledged for the whole auction. So that this remainder cannot end up
+Any collateral the lot does not include never leaves the borrower's vault
+and stays pledged for the whole auction. There is none left over when the
+debt needs all of it. So that this remainder cannot end up
 anchored to someone who no longer holds the position, the borrower position
 is locked while the auction is live. This uses the same transfer lock the
 early-close and loan-sale flows use, and it is released when the auction
 settles or is cancelled. The app's NFT verifier now names this lock ("locked
 for a repay-from-collateral auction") instead of calling it an unrecognised
 reason. The agent's queued-order notes now say that only the auction lot
-is in protocol custody, and that the rest of the collateral stays pledged
-in the borrower's vault. A loan with a live auction is also kept out of the
+is in protocol custody, and that any collateral the lot does not include
+stays pledged in the borrower's vault. A loan with a live auction is also kept out of the
 protocol's internal loan-against-loan matching, because none of its
 collateral is free to match. After a fill, the borrower claims the rest
 through the ordinary claim, and it stays pledged until they do. A cancelled

@@ -853,7 +853,7 @@
       "lockPrecloseOffset": "Bloqueado para un cierre anticipado por compensación — no puede transferirse hasta que eso se complete o cancele.",
       "lockSale": "Bloqueado para un listado de venta de posición — no puede transferirse hasta que la venta se complete o el listado se cancele.",
       "lockPrepayListing": "Bloqueado para un listado de garantía — no puede transferirse mientras ese listado exista.",
-      "lockSwapToRepayIntent": "Bloqueado por una subasta de reembolso con garantía — parte de la garantía del préstamo está comprometida en una orden activa para reembolsarlo, y el resto sigue pignorado. No puede transferirse hasta que la subasta se liquide o se cancele.",
+      "lockSwapToRepayIntent": "Bloqueado por una subasta de reembolso con garantía — hay garantía comprometida en una orden activa para reembolsar el préstamo, y cualquier garantía que la orden no incluya sigue pignorada. No puede transferirse hasta que la subasta se liquide o se cancele.",
       "sanctionsLabel": "Estado de cumplimiento",
       "sanctionsFlagged": "El titular actual está marcado por cumplimiento: este NFT no puede transferirse hacia o desde su billetera, y sus reclamos quedan congelados hasta que se quite la marca. No compres este token esperando entrega.",
       "sanctionsUnknown": "No pudimos comprobar ahora mismo el estado de cumplimiento del titular — un titular marcado significaría que el token no puede transferirse, así que vuelve a comprobar antes de confiar en él.",
