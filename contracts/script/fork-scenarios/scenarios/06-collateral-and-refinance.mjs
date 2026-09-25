@@ -13,7 +13,7 @@
  *    That is worth observing rather than trusting.
  */
 import { DIAMOND, MOCKS, TREASURY, borrower, lender, outsider, parseUnits, pub, tx } from '../lib/chain.mjs';
-import { ABIS, STATUS, approveDiamond, acceptOffer, createOffer, creationFields, delta, expectPosition, liveStamps, mint, openLoan, positionOf, read, snapshot, termsFromOffer, vaultAddressFor, lifSplit, liveFees } from '../lib/flow.mjs';
+import { ABIS, STATUS, approveDiamond, acceptOffer, claimAndExpect, createOffer, creationFields, delta, expectPosition, liveStamps, mint, openLoan, positionOf, read, snapshot, termsFromOffer, vaultAddressFor, lifSplit, liveFees } from '../lib/flow.mjs';
 import { chainNow, f18 } from '../lib/chain.mjs';
 import { simulate } from '../lib/errors.mjs';
 import { cannotContinue, check, expectEq, expectLedger, expectRefusal } from '../lib/report.mjs';
@@ -240,6 +240,19 @@ export async function run() {
             lienUser: borrower.address, lienAsset: collateral, lienTokenId: 0n,
             lienAmount: tagged.collateralAmount, lienAssetType: 0, lienReleased: false,
           });
+
+        // RefinanceFacet parks the old lender's payoff as their claim on the
+        // ORIGINAL loan; claiming it moves exactly principal + full-term
+        // interest net of the treasury fee (computed above) out of their vault.
+        await claimAndExpect({
+          id: 'A6.10d', who: 'old lender', account: lender, fn: 'claimAsLender', loanId: oldLoanId, tokens, holders,
+          before: await positionOf(oldLoanId),
+          moves: { 'lending.lenderVault': -(oldLoan.principal + oldInterest - oldCut), 'lending.lenderEOA': oldLoan.principal + oldInterest - oldCut },
+          // The collateral carried over to the replacement, so the old
+          // borrower has nothing to claim on this loan: the old lender's claim
+          // is the last and settles it, leaving the old borrower receipt as it was.
+          changes: { lenderNftOwner: null, status: STATUS.Settled },
+        });
       }
     }
   }

@@ -10,7 +10,7 @@
  * for a manual second step is waiting for something that already happened.
  */
 import { DIAMOND, MOCKS, TREASURY, borrower, lender, outsider, parseUnits, pub, tx } from '../lib/chain.mjs';
-import { ABIS, ANY, STATUS, approveDiamond, acceptOffer, acceptStoredOffer, createOffer, creationFields, delta, expectPosition, liveStamps, mint, openLoan, positionOf, read, snapshot, termsFromOffer, vaultAddressFor, lifSplit, liveFees } from '../lib/flow.mjs';
+import { ABIS, ANY, STATUS, approveDiamond, acceptOffer, acceptStoredOffer, claimAndExpect, createOffer, creationFields, delta, expectPosition, liveStamps, mint, openLoan, positionOf, read, snapshot, termsFromOffer, vaultAddressFor, lifSplit, liveFees } from '../lib/flow.mjs';
 import { chainNow, f18 } from '../lib/chain.mjs';
 import { warpDays } from '../lib/impersonate.mjs';
 import { simulate } from '../lib/errors.mjs';
@@ -177,6 +177,17 @@ export async function run() {
         'collateral.borrowerEOA': origLoan.collateralAmount,
       }, `gas=${claimed.gasUsed}`);
     check('A7.4c', 'the claim releases the original loan\'s collateral lien', lien.released === true, `lien.released=${lien.released}`);
+
+    // The offset parked the original lender's payoff — principal + accrued
+    // interest net of the treasury fee, plus the protection shortfall — for
+    // their claim. Claiming it moves exactly that out of their vault, and
+    // with both sides claimed the original loan settles.
+    await claimAndExpect({
+      id: 'A7.4d', who: 'original lender', account: lender, fn: 'claimAsLender', loanId, tokens, holders,
+      before: await positionOf(loanId),
+      moves: { 'lending.lenderVault': -(origLoan.principal + oAccrued - oCut + oShortfall), 'lending.lenderEOA': origLoan.principal + oAccrued - oCut + oShortfall },
+      changes: { lenderNftOwner: null, status: STATUS.Settled },
+    });
   }
 
   // ------------------------------------------------- obligation handover

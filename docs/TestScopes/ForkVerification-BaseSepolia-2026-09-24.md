@@ -17,7 +17,7 @@ configuration — not the source tree's idea of them.
   ledger now records as `forkBlock`. Figures that depend on elapsed time can
   still differ in the last decimals, since the warps land on different
   seconds.
-- **Result** — 207 scenarios: **195 PASS, 11 INFO, 1 FAIL**, no aborted
+- **Result** — 211 scenarios: **199 PASS, 11 INFO, 1 FAIL**, no aborted
   file. The INFOs are observations with no assertion behind them, not soft
   failures — the ledger's API makes a row either an assertion (PASS/FAIL
   only) or an observation (INFO only), so no failure can land as INFO; each
@@ -212,8 +212,12 @@ stated in the driver README ("What a run verifies"): an exact token ledger
 over every holder the funds pass through (every offer posting and listing
 included — A6.6e, A7.2c, A8.1b, A8.5b, A4.11b), the whole position after
 every step, refusals by name, and no configurable number written in; forced
-closes are checked to sell the whole collateral, and every claim — preclose's
-too (A4.3/A4.3b) — goes through the one claim assertion. Four checks beyond
+closes are checked to sell the whole collateral, and every claim a flow
+produces — preclose's (A4.3/A4.3b), the old lender's after a refinance
+(A6.10d) and the original lender's after an offset (A7.4d) included — goes
+through the one claim assertion. The fixture loan's shape is declared as an
+envelope: a deployment that refuses it on one of its own admission limits is
+reported as did-not-run, naming the refusal. Four checks beyond
 that scope are recorded as follow-ups in **#2332** rather than widening this
 document: position-NFT metadata and the reverse index, position locks while a
 sale or offset link is live, the size of a periodic settlement's sale (the
@@ -886,7 +890,7 @@ replace.
 
 ## 7. Ledger
 
-The full 207-row ledger, with per-scenario verdicts and observed numbers, is
+The full 211-row ledger, with per-scenario verdicts and observed numbers, is
 regenerated as `contracts/script/fork-scenarios/last-run.json` on every run
 (untracked). Scenario ids map to the driver's files:
 
