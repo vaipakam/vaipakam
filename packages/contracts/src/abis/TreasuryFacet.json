@@ -5692,11 +5692,6 @@
   },
   {
     "type": "error",
-    "name": "VPFIInvalidOriginChainId",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "VPFITokenNotRegistered",
     "inputs": []
   },
