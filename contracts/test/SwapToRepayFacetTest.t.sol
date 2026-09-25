@@ -20,6 +20,7 @@ import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {MockSwapAdapter} from "./mocks/MockSwapAdapter.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 /**
  * @title SwapToRepayFacetTest
@@ -438,10 +439,12 @@ contract SwapToRepayFacetTest is SetupTest {
 
     function test_swapToRepayFull_SurplusPrincipalToBorrowerEoa() public {
         _scaffoldLoan(1, /* allowsPartialRepay */ false, /* useFullTermInterest */ false);
-        // 1:1 quote, 1500 collateral → 1500 principal. Debt is ~1011
-        // ether. Surplus ≈ 489 ether goes direct-to-EOA (Codex round-4
-        // P1 #2 — vault routing leaves the surplus unclaimable because
-        // ClaimFacet only releases the collateral asset).
+        // 1:1 quote. #2317: the bound of 1500 only BOUNDS the sale, which is
+        // sized to the ~1000 debt at the 3% slippage floor, so the surplus is
+        // that floor's headroom (~31 ether), not 1500 − debt. It goes
+        // direct-to-EOA (Codex round-4 P1 #2 — vault routing leaves the
+        // surplus unclaimable because ClaimFacet only releases the
+        // collateral asset).
         adapter1.setOutputMultiplierBps(10_000);
         uint256 borrowerEoaPrincipalBefore = IERC20(address(principalAsset)).balanceOf(borrowerEoa);
         uint256 maxCollateralIn = 1_500 ether;
@@ -565,6 +568,105 @@ contract SwapToRepayFacetTest is SetupTest {
             LOAN_COLLATERAL - tight,
             "the generous bound sold exactly what the tight one would have"
         );
+    }
+
+    /// @dev Independent restatement of the slippage-capped oracle floor for
+    ///      arbitrary prices and decimals — the arithmetic the specification
+    ///      describes, written out here rather than trusted from the facet.
+    function _indepFloor(
+        uint256 amount,
+        uint256 colPrice,
+        uint8 colFeedDec,
+        uint8 colTokenDec,
+        uint256 prinPrice,
+        uint8 prinFeedDec,
+        uint8 prinTokenDec
+    ) internal view returns (uint256) {
+        uint256 expected = (amount * colPrice * (10 ** prinTokenDec) * (10 ** prinFeedDec)) /
+            (prinPrice * (10 ** colTokenDec) * (10 ** colFeedDec));
+        return (expected * (LibVaipakam.BASIS_POINTS - ConfigFacet(address(diamond)).getMaxSwapToRepaySlippageBps())) /
+            LibVaipakam.BASIS_POINTS;
+    }
+
+    struct SizingCase {
+        uint256 colPrice;
+        uint8 colFeedDec;
+        uint8 colTokenDec;
+        uint256 prinPrice;
+        uint8 prinFeedDec;
+    }
+
+    /// @dev #2317 sizing property, for any prices, bound and decimals:
+    ///      - a revert happens only when even the bound cannot cover the debt;
+    ///      - otherwise the sale covers the debt at its floor, never exceeds
+    ///        the bound, reports the floor it will enforce, and is the least
+    ///        such amount up to rounding worth at most a few base units of
+    ///        the lending asset (the minimum found by binary search over the
+    ///        independent floor).
+    ///      Removing the facet's step-up past rounding, or selling the bound
+    ///      (the pre-#2317 behaviour), each fails this property.
+    function _assertSizingProperty(SizingCase memory c, uint256 maxIn) internal {
+        uint8 prinTokenDec = principalAsset.decimals();
+        _mockAssetPrice(address(collateralAsset), c.colPrice, c.colFeedDec);
+        _mockAssetPrice(address(principalAsset), c.prinPrice, c.prinFeedDec);
+        _scaffoldLoan(1, false, false);
+
+        try SwapToRepayFacet(address(diamond)).previewSwapToRepayFull(1, maxIn) returns (
+            uint256 sell, uint256 floorOut, uint256 required
+        ) {
+            uint256 f = _indepFloor(sell, c.colPrice, c.colFeedDec, c.colTokenDec, c.prinPrice, c.prinFeedDec, prinTokenDec);
+            assertGe(f, required, "the sale covers the debt at its slippage floor");
+            assertLe(sell, maxIn, "the sale never exceeds the bound");
+            assertEq(floorOut, f, "the reported floor is the floor of the sale");
+            // Exact minimum by binary search (the floor is monotone in amount).
+            uint256 lo = 0;
+            uint256 hi = sell;
+            while (lo < hi) {
+                uint256 mid = (lo + hi) / 2;
+                if (_indepFloor(mid, c.colPrice, c.colFeedDec, c.colTokenDec, c.prinPrice, c.prinFeedDec, prinTokenDec) >= required) hi = mid;
+                else lo = mid + 1;
+            }
+            // Collateral units worth two base units of the lending asset,
+            // rounded up, plus two — the rounding the spec allows.
+            uint256 slack = Math.mulDiv(
+                2 * c.prinPrice * (10 ** c.colTokenDec) * (10 ** c.colFeedDec),
+                1,
+                c.colPrice * (10 ** prinTokenDec) * (10 ** c.prinFeedDec),
+                Math.Rounding.Ceil
+            ) + 2;
+            assertLe(sell - lo, slack, "the least such sale, up to rounding");
+        } catch (bytes memory reason) {
+            assertEq(bytes4(reason), SwapToRepayFacet.SwapBoundsInsufficient.selector, "only an insufficient bound refuses");
+            // The debt the preview would have covered, at the loan's own clock.
+            (uint256 payoff) = RepayFacet(address(diamond)).calculateRepaymentAmount(1);
+            uint256 fAtMax = _indepFloor(maxIn, c.colPrice, c.colFeedDec, c.colTokenDec, c.prinPrice, c.prinFeedDec, prinTokenDec);
+            assertLt(fAtMax, payoff, "refused only when even the bound cannot cover the debt");
+        }
+    }
+
+    function testFuzz_swapToRepayFull_SizingProperty_SameDecimals(
+        uint256 colPrice,
+        uint256 prinPrice,
+        uint256 maxIn
+    ) public {
+        colPrice = bound(colPrice, 1e6, 1e12);
+        prinPrice = bound(prinPrice, 1e6, 1e12);
+        maxIn = bound(maxIn, 1, LOAN_COLLATERAL);
+        _assertSizingProperty(SizingCase(colPrice, 8, 18, prinPrice, 8), maxIn);
+    }
+
+    /// @dev A 6-decimal collateral token against an 18-decimal lending asset,
+    ///      with an 8-decimal collateral feed and an 18-decimal lending feed.
+    function testFuzz_swapToRepayFull_SizingProperty_MixedDecimals(
+        uint256 colPrice,
+        uint256 prinPrice,
+        uint256 maxIn
+    ) public {
+        collateralAsset = new ERC20Mock("Collateral6", "COL6", 6);
+        colPrice = bound(colPrice, 1e6, 1e12);
+        prinPrice = bound(prinPrice, 1e16, 1e22);
+        maxIn = bound(maxIn, 1, LOAN_COLLATERAL);
+        _assertSizingProperty(SizingCase(colPrice, 8, 6, prinPrice, 18), maxIn);
     }
 
     /// @dev The preview applies the same numeric gates the close-out does.

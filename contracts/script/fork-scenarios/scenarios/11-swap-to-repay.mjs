@@ -57,8 +57,13 @@ export async function run() {
     const [cP, cD] = await read(ABIS.oracle, 'getAssetPrice', [collateral]);
     const [pP, pD] = await read(ABIS.oracle, 'getAssetPrice', [lending]);
     const slipBps = BigInt(await read(ABIS.config, 'getMaxSwapToRepaySlippageBps'));
-    const num = payoff * pP * 10n ** BigInt(cD) * 10_000n;
-    const den = cP * 10n ** BigInt(pD) * (10_000n - slipBps);
+    // Token decimals enter the conversion as well as feed decimals, so the
+    // figure stays right for a collateral and lending asset of different
+    // decimals (the faucet pair happens to share 18).
+    const decimalsOf = async (token) => BigInt(await pub.readContract({ address: token, abi: ERC20, functionName: 'decimals' }));
+    const [cTok, pTok] = [await decimalsOf(collateral), await decimalsOf(lending)];
+    const num = payoff * pP * 10n ** BigInt(cD) * 10n ** cTok * 10_000n;
+    const den = cP * 10n ** BigInt(pD) * 10n ** pTok * (10_000n - slipBps);
     const debtSized = (num + den - 1n) / den;
     // The cap is DERIVED too: midway between what the debt needs and all the
     // collateral — generous enough that "sell the cap" and "sell only what the
