@@ -21,6 +21,7 @@ import {
   CallExecutionError,
   EstimateGasExecutionError,
   RawContractError,
+  RpcRequestError,
   encodeFunctionData,
   parseAbi,
 } from 'viem';
@@ -255,6 +256,49 @@ describe('extractRevertData', () => {
       const e = new CallExecutionError(new RawContractError({ data: errorString }), request);
       expect(extractRevertData(e)).toBe(errorString);
       expect(extractRevertSelector(e)).toBe('0x08c379a0');
+    });
+
+    // r1: `details` is the provider's message verbatim, so a provider that
+    // repeats the request puts the calldata back in "response" text.
+    const rpcEcho = (message: string) =>
+      new RpcRequestError({
+        body: { method: 'eth_call', params: [{ data: calldata }] },
+        error: { code: -32000, message },
+        url: 'https://rpc.example',
+      });
+
+    it('does not read a provider echo of the calldata in `details` as the revert', () => {
+      const e = new CallExecutionError(rpcEcho(`execution reverted for ${calldata}`), request);
+      expect(e.details).toContain(calldata); // the fixture really echoes it
+      expect(extractRevertData(e)).toBeUndefined();
+    });
+
+    it('does not read a TRUNCATED echo of the calldata as the revert', () => {
+      const cut = calldata.slice(0, 10 + 64); // selector + first word
+      const e = new CallExecutionError(rpcEcho(`execution reverted for ${cut}...`), request);
+      expect(extractRevertData(e)).toBeUndefined();
+      const bare = new CallExecutionError(rpcEcho(`reverted in ${calldata.slice(0, 10)}`), request);
+      expect(extractRevertData(bare)).toBeUndefined();
+    });
+
+    it('still finds a real revert quoted next to the echo', () => {
+      const e = new CallExecutionError(
+        rpcEcho(`request ${calldata} reverted: ${SEL_HF_TOO_LOW}`),
+        request,
+      );
+      expect(extractRevertData(e)).toBe(SEL_HF_TOO_LOW);
+    });
+
+    it('an address in the request echo cannot shadow a real selector', () => {
+      // `to` begins with the same four bytes as the revert selector; only
+      // revert-SHAPED request tokens are treated as echo.
+      const to = SEL_HF_TOO_LOW + 'ab'.repeat(16);
+      const e = new CallExecutionError(
+        new BaseError('execution reverted', { details: `reverted: ${SEL_HF_TOO_LOW}` }),
+        { ...(request as object), to } as never,
+      );
+      expect(e.message).toContain(to);
+      expect(extractRevertData(e)).toBe(SEL_HF_TOO_LOW);
     });
 
     it('still reads a revert quoted in the response text (`details`)', () => {

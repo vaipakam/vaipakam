@@ -769,7 +769,8 @@ function structuredRevertData(e: DecodableError): string | undefined {
  * below accepts. Scanning `message` therefore returned the call's own
  * function selector as its revert. On a node carrying a string `shortMessage`
  * (viem's `BaseError`) only `shortMessage` and `details` — the response side —
- * are read. ethers v6 errors also carry `shortMessage` and are narrowed the
+ * are read. `details` is the provider's text and can still repeat the request;
+ * {@link requestEchoHex} removes that. ethers v6 errors also carry `shortMessage` and are narrowed the
  * same way; their revert bytes sit in the structured `data` field, which the
  * first pass reads regardless. Any other node keeps the `message` scan, which
  * is where wallets that embed the revert in plain text put it.
@@ -782,20 +783,50 @@ function revertBearingText(e: DecodableError): string {
   return e.message ?? '';
 }
 
-/** Revert bytes quoted in a SINGLE node's revert-bearing text. Some wallets /
- *  RPCs embed them there (e.g. `... data: 0x08c379a0...`). Accepts ONLY a
- *  clean 4-byte selector (10 chars) or a full ABI-encoded revert payload (10
- *  chars + multiples of 64 hex chars), which rules out a 40-char address
- *  (mistaken for the revert selector by the old `slice(0, 10)`) or a 64-char
- *  tx hash. */
-function messageRevertData(e: DecodableError): string | undefined {
-  const matches = revertBearingText(e).match(/0x[0-9a-fA-F]+/g) ?? [];
-  for (const m of matches) {
+/** The hex blobs in `text` shaped like revert data: ONLY a clean 4-byte
+ *  selector (10 chars) or a full ABI-encoded payload (10 chars + multiples of
+ *  64 hex chars), which rules out a 40-char address (mistaken for the revert
+ *  selector by the old `slice(0, 10)`) or a 64-char tx hash. */
+function revertShapedHex(text: string): string[] {
+  return (text.match(/0x[0-9a-fA-F]+/g) ?? []).filter((m) => {
     const len = m.length - 2; // strip 0x
-    if (len === 8) return m; // bare 4-byte selector
-    if (len >= 8 && (len - 8) % 64 === 0) return m; // selector + N abi-encoded args
+    return len === 8 || (len >= 8 && (len - 8) % 64 === 0);
+  });
+}
+
+/**
+ * Revert-shaped hex the chain itself records as part of the REQUEST (#2336
+ * r1). viem keeps no structured copy of the calldata it sent — only the
+ * `metaMessages` text (`data: 0x…`, `Request body: {…}`) — and `details` is
+ * the provider's own message copied verbatim, so a provider that repeats the
+ * calldata there hands the same bytes back as "response" text. Any text
+ * candidate that is a prefix of one of these tokens (equal, or a truncated
+ * echo) is the request, not the revert. Only the revert shape is collected,
+ * so an address or hash in the echo cannot shadow a real selector.
+ */
+function requestEchoHex(err: unknown): string[] {
+  const out: string[] = [];
+  let node: unknown = err;
+  for (let depth = 0; node && typeof node === 'object' && depth < 6; depth++) {
+    const meta = (node as { metaMessages?: unknown }).metaMessages;
+    if (Array.isArray(meta)) {
+      for (const line of meta) {
+        if (typeof line === 'string') out.push(...revertShapedHex(line).map((m) => m.toLowerCase()));
+      }
+    }
+    node = (node as { cause?: unknown }).cause;
   }
-  return undefined;
+  return out;
+}
+
+/** Revert bytes quoted in a SINGLE node's revert-bearing text — some wallets
+ *  / RPCs embed them there (e.g. `... data: 0x08c379a0...`) — excluding the
+ *  request echo. */
+function messageRevertData(e: DecodableError, echoed: string[]): string | undefined {
+  return revertShapedHex(revertBearingText(e)).find((m) => {
+    const lower = m.toLowerCase();
+    return !echoed.some((t) => t.startsWith(lower));
+  });
 }
 
 /** The first `pick` hit along the `cause` chain. Bounded depth guards a
@@ -824,7 +855,11 @@ function firstAlongCauses(
  *  outer wrapper's text answer before the structured bytes one cause deeper
  *  were reached. */
 export function extractRevertData(err: unknown): string | undefined {
-  return firstAlongCauses(err, structuredRevertData) ?? firstAlongCauses(err, messageRevertData);
+  const echoed = requestEchoHex(err);
+  return (
+    firstAlongCauses(err, structuredRevertData) ??
+    firstAlongCauses(err, (e) => messageRevertData(e, echoed))
+  );
 }
 
 /**

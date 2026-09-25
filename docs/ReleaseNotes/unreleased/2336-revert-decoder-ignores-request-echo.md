@@ -20,5 +20,10 @@ name the wrong code.
 The decoder now reads the error's structured fields across the whole chain of
 wrapped errors first, and only then falls back to message text. For the
 library's errors it reads only the part of the text that describes the
-response, never the part that repeats the request. Wallets that put the error
-only in plain message text are still read as before. Closes #2336.
+response, never the part that repeats the request, and it also discards
+anything in that response text that matches the request the library recorded
+sending, since some network providers repeat the request in their own error
+message. Wallets that put the error only in plain message text are still read
+as before. One case remains: an error from outside the library that repeats
+the request without the library having recorded it cannot be told apart from
+a real error. Closes #2336.
