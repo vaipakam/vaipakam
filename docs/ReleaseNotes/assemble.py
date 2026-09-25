@@ -104,6 +104,29 @@ LINE_END_RE = re.compile(rb"\r\n|\r|\n")
 BLANK_RE = re.compile(rb"^[ \t]*$")
 
 
+def without_markers(data: bytes) -> bytes:
+    """`data` with each well-formed assembly-marker line blanked, same length.
+
+    A marker is this script's own record, not section text, and it carries
+    the fragment's file name as the filesystem gave it — which may be any
+    bytes (T107). So `unreadable_at` must not judge a file by its markers
+    (#2328 r1): a non-UTF-8 name in one would otherwise make every other
+    pending fragment look unanswerable. Blanked with spaces rather than
+    removed, so an offset reported afterwards is still an offset into the
+    file.
+    """
+    out = bytearray(data)
+    prefix = os.fsencode(MARKER_PREFIX)
+    start = 0
+    ends = [(m.start(), m.end()) for m in LINE_END_RE.finditer(data)]
+    for line_end, next_start in ends + [(len(data), len(data))]:
+        line = data[start:line_end]
+        if line.startswith(prefix) and MARKER_RE.match(os.fsdecode(line)):
+            out[start:line_end] = b" " * (line_end - start)
+        start = next_start
+    return bytes(out)
+
+
 def unreadable_at(data: bytes):
     """Where `data` stops being text a byte comparison can speak for (#2315).
 
@@ -547,6 +570,7 @@ class Assembly:
         self.out = os.path.join(directory, f"ReleaseNotes-{date}.md")
 
         self.lock_held = False
+        self.marker_seen: dict[tuple[str, str, str], bool] = {}
         self.workdir: str | None = None
         self.work: str | None = None
         self.snap: str | None = None
@@ -1906,19 +1930,40 @@ class Assembly:
         because 61 of the 84 dated files predate markers, so for those the
         file cannot.
 
-        A MIXED FILE IS THE WEAK CASE, and it is marker PRESENCE rather than
-        marker COVERAGE that this reads. `out_has_markers` is an `any()` over
-        the whole file, and one marker anywhere downgrades the refusal below
-        to a note that appends regardless. Sound for a wholly-marked file:
-        there, a heading match carrying no marker of its own is a heading
-        that recurs, not an interrupted run. NOT sound for a legacy file that
-        has since taken one marked fragment — its older sections are still
-        markerless, a pending fragment matching one of those is exactly the
-        interrupted-run case, and that single newer marker suppresses the
-        refusal that would catch it. Every one of the 61 becomes that shape
-        on its next assembly. Filed as #2312 rather than patched here: the
-        predicate is whole-file where the question is per-section, and this
-        guard does not track where a marker's coverage begins or ends.
+        MARKER COVERAGE IS ASKED PER FRAGMENT, BY NAME (#2312). A heading
+        match is only a note when this file records a marker for the SAME
+        fragment name; any other match is refused, whatever other markers
+        the file carries. A same-name marker whose hash differs from the
+        pending text is AMBIGUOUS, and is not claimed to be anything more
+        (#2328 r2): it is either the documented edit made after an
+        interrupted run, or a new fragment reusing an old file name. Both
+        are noted and appended rather than refused because neither loses
+        text: the result is two sections, the recorded and the pending. This
+        path makes NO claim that the two differ once published — two
+        versions differing only in link spellings `rewrite_links` normalises
+        publish identical bytes (#2328 r5) — and an earlier revision's claim
+        that the hash mismatch ruled that out was withdrawn rather than
+        defended with a further check. The note tells the operator to look
+        for a superseded copy, which is the right action under either
+        reading, and it is keyed on the marker rather than on the heading
+        scan, since an edit may retitle the fragment (#2328 r3).
+
+        This used to be a whole-file `any()`: one marker anywhere downgraded
+        every refusal to a note. That was sound for a file written wholly in
+        the marker era and unsound for a MIXED one — a legacy file that has
+        since taken one marked fragment, which is what every one of the 61
+        becomes on its next assembly. Its older sections are still
+        markerless, a pending fragment matching one of them is exactly the
+        interrupted-run case, and the single newer marker suppressed the
+        refusal that would catch it: a second copy appended, the source
+        consumed. Asking by name needs no map of where each marker's
+        coverage begins and ends, which the file does not record.
+
+        The cost is a refusal where a DIFFERENT fragment's title recurs in
+        the file. Measured across all 86 dated files, every repeated heading
+        line is a subsection (`### Verification`, `## Operator deploy notes`),
+        never two fragments' titles; `--force-append` is the override when it
+        happens.
 
         WHAT IT CANNOT DO, stated rather than implied. It does not survive an
         edit TO THE MATCHED HEADING — which is narrower than "an edit". The
@@ -1959,6 +2004,10 @@ class Assembly:
         answered honestly as "cannot tell". It survives the author's re-save
         because it reads only the published side, which the re-save does not
         touch; all 86 dated files pass it, so it refuses nothing real today.
+        Marker lines are blanked before it looks (`without_markers`): a
+        marker is this script's own record and carries a fragment's file name
+        as the filesystem gave it, so a non-UTF-8 name there must not make
+        the file read as unreadable (#2328 r1).
 
         WHAT CONFORMANCE DOES CARRY is the single-run half, and it rests on
         conformance EXISTING rather than on where it sits. `run()` calls this
@@ -2051,24 +2100,31 @@ class Assembly:
             f"checking {base} for assembly markers",
             lambda: open(self.out_copy, "rb").read(),
         )
-        out_has_markers = any(
-            MARKER_RE.match(line.decode("utf-8", errors="replace"))
-            for line in LINE_END_RE.split(out_data)
-            if line.startswith(MARKER_PREFIX.encode())
-        )
+        # The fragments THIS file records, by name — the per-fragment
+        # question the docstring's MARKER COVERAGE paragraph explains (#2312).
+        # Taken from `scan_markers`, which read this same copy: a second
+        # parse here decoded names differently and missed a non-UTF-8 one
+        # (#2328 r1).
+        marked_here = {name for (_, name, dated) in self.marker_seen if dated == self.out}
+        unmarked = [self.frag_name[f] for f in self.frags if self.frag_name[f] not in marked_here]
         # An unreadable file is refused before any fragment is examined —
         # see the docstring's ENCODING paragraphs. Gated like the heading
-        # refusal below: a note on a marked file (#2312) or under
-        # `--force-append`, where the operator has already read the file.
-        bad = unreadable_at(out_data)
+        # refusal below: only for pending fragments this file records no
+        # marker for, and not under `--force-append`, where the operator has
+        # already read the file.
+        bad = unreadable_at(without_markers(out_data))
         if bad is not None:
             at, why = bad
-            if not out_has_markers and not self.force:
-                err(f"Error: {base} carries no assembly markers at all, and cannot be read as")
-                err(f"UTF-8 text (byte {at}: {why}). An older version of this script")
-                err("appended fragments exactly as saved, so a section in another encoding")
-                err("may already hold a fragment about to be appended — and comparing")
-                err("against text it cannot read, this check would miss it every time.")
+            if unmarked and not self.force:
+                err(f"Error: {base} cannot be read as UTF-8 text (byte {at}: {why}), and")
+                err("records no assembly marker for these pending fragments:")
+                err("")
+                for s in unmarked:
+                    err(f"  {s}")
+                err("")
+                err("An older version of this script appended fragments exactly as saved,")
+                err("so a section in another encoding may already hold one of them — and")
+                err("comparing against text it cannot read, this check would miss it.")
                 err("")
                 err(f"Read {base} and then either:")
                 err("  - a pending fragment is already there -> delete it by hand")
@@ -2102,13 +2158,15 @@ class Assembly:
                     suspect.append(self.frag_name[f])
                 break
 
-        if suspect and not out_has_markers and not self.force:
-            err(f"Error: {os.path.basename(self.out)} carries no assembly markers at all, and already")
-            err("contains the heading of a fragment about to be appended. It may have been")
-            err("written by an older version of this script whose run was interrupted, in")
-            err("which case appending would duplicate it — and nothing in the file can say:")
+        refuse = [s for s in suspect if s not in marked_here]
+        if refuse and not self.force:
+            err(f"Error: {os.path.basename(self.out)} already contains the heading of a fragment")
+            err("about to be appended, and records no assembly marker for that fragment. It")
+            err("may have been written by an older version of this script whose run was")
+            err("interrupted, in which case appending would duplicate it — and nothing in")
+            err("the file can say:")
             err("")
-            for s in suspect:
+            for s in refuse:
                 err(f"  {s}")
             err("")
             err(f"Read that section of {os.path.basename(self.out)} and then either:")
@@ -2116,12 +2174,27 @@ class Assembly:
             err("  - it is a new section  -> re-run with --force-append")
             self.refuse_reporting_consumed()
 
-        if suspect:
-            err(f"Note: {os.path.basename(self.out)} already contains these headings; appending anyway")
-            err("(their fragments are not recorded as folded in, so the text differs):")
-            for s in suspect:
+        # THE SAME-NAME NOTE IS KEYED ON THE MARKER, NOT ON THE HEADING
+        # (#2328 r3). A pending fragment this file records under the same
+        # name differs from what was recorded — `classify` would have cleared
+        # it otherwise — and that ambiguity holds whether or not its heading
+        # still matches, since an edit may retitle it. So every such fragment
+        # is named, whatever the scan above found.
+        same_name = [self.frag_name[f] for f in self.frags if self.frag_name[f] in marked_here]
+        if same_name:
+            err(f"Note: {base} records an earlier text under the same name for these")
+            err("fragments, and the pending text differs, so it is appended as well:")
+            for s in same_name:
+                err(f"  {s}" + ("   (its heading is already there)" if s in suspect else ""))
+            err("That is either an edit made after an interrupted run or a new fragment")
+            err("reusing an old file name. Check for a superseded copy while reviewing.")
+            err("")
+        forced = [s for s in suspect if s not in marked_here]
+        if forced:
+            err(f"Note: {base} already contains these headings; appending anyway, as")
+            err("--force-append was given:")
+            for s in forced:
                 err(f"  {s}")
-            err("Check for a superseded copy of that section while reviewing.")
             err("")
 
     # ── building the replacement ─────────────────────────────────────────
@@ -2474,6 +2547,9 @@ class Assembly:
                 raise SystemExit(1)
 
         marker_seen, marker_where = self.scan_markers()
+        # Kept for the duplicate guard, which asks which fragment NAMES this
+        # file records (#2312) — from the one parse, not a second one.
+        self.marker_seen = marker_seen
         already, pending = self.classify(marker_seen, marker_where)
 
         # BEFORE the recovery clear, not merely before the append (#2290 r1).
