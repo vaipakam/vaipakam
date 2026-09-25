@@ -4801,17 +4801,28 @@ printf '## Thread — a new one (PR #4254)\n\nBody.\n' > "$out/unreleased/0003-n
 msg="$(bash "$out/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
 check "a readable file assembles"   "$?"                                 "0"
 check "without the unreadable note" "$(says "$msg" 'cannot be read as')" "0"
-# A MARKED file is noted, not refused — the same gating the heading refusal
-# has, and the same weakness (#2312). Pinned for the NOTE: whatever #2312
-# decides about the verdict, an unread region must not pass unmentioned.
+# A MARKED file is refused too when the pending fragment has no marker OF
+# ITS OWN there (#2312): another fragment's marker says nothing about the
+# unreadable region. Only a same-name marker — the edit-after-interrupted-run
+# case — turns the refusal into a note.
 W="$ROOT/t217m5e"; build "$W"
 out="$W/docs/ReleaseNotes"
+# Only the fragment under test is pending, so the verdict is about it alone.
+rm "$out/unreleased/0001-a.md" "$out/unreleased/0002-b.md"
 { printf '# Release Notes — 2026-08-17\n\n## Thread — marked (PR #4255)\n\nBody.\n'
   printf '<!-- assembled-fragment: 0009-old.md sha256=%064d -->\n\n' 0
   enc utf-16 $'## Thread — legacy UTF-16 (PR #4256)\n'; } > "$out/ReleaseNotes-2026-08-17.md"
 printf '## Thread — a new one (PR #4257)\n\nBody.\n' > "$out/unreleased/0003-new.md"
 msg="$(bash "$out/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
-check "a marked file is not refused" "$?"                                 "0"
+check "another fragment's marker does not excuse it" "$?"                   "1"
+check "naming the unmarked fragment" "$(says "$msg" '0003-new.md')"         "1"
+check "nothing was consumed"         "$(pending "$W")"                       "1"
+# A leading newline: the UTF-16 section ends mid-character (`\n\x00`), and
+# without it the marker line would begin with that NUL and not parse.
+printf '\n<!-- assembled-fragment: 0003-new.md sha256=%064d -->\n' 0 \
+  >> "$out/ReleaseNotes-2026-08-17.md"
+msg="$(bash "$out/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
+check "a same-name marker is noted, not refused" "$?"                       "0"
 check "but the unread part is named" "$(says "$msg" 'cannot be read as')" "1"
 
 # ── Author text cannot forge the assembler's own output (#2302) ───────────
@@ -4866,6 +4877,40 @@ msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates 2>
 check "a token list still refuses"  "$?"                                    "1"
 check "for the placeholder"         "$(says "$msg" 'is not a plain number')" "1"
 check "and its output is bounded"   "$(( ${#msg} < 4000 ))"                 "1"
+
+# ── Marker coverage is asked per fragment, not per file (#2312) ──────────
+# A legacy file that has since taken ONE marked fragment is what every
+# pre-marker dated file becomes on its next assembly. Its older sections are
+# still markerless. The guard used to read marker PRESENCE for the whole file,
+# so that single newer marker downgraded the refusal to a note, and a pending
+# fragment matching an older section was appended a second time and consumed.
+# Reproduced on `main` before the fix.
+case_start "T217y: one marker anywhere no longer excuses an unmarked match"
+W="$ROOT/t217y"; build "$W"
+out="$W/docs/ReleaseNotes"
+printf '# Release Notes — 2026-08-17\n\n## Thread — legacy (PR #4270)\n\nOld body.\n\n## Thread — marked (PR #4271)\n\nBody.\n<!-- assembled-fragment: 0009-marked.md sha256=%064d -->\n' 0 \
+  > "$out/ReleaseNotes-2026-08-17.md"
+printf '## Thread — legacy (PR #4270)\n\nOld body.\n' > "$out/unreleased/0003-legacy.md"
+msg="$(bash "$out/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
+check "the mixed-file match is refused" "$?"                                "1"
+check "naming the fragment"             "$(says "$msg" '0003-legacy.md')"   "1"
+check "nothing was consumed"            "$(pending "$W")"                    "3"
+check "and nothing is doubled" \
+  "$(grep -cxF -- '## Thread — legacy (PR #4270)' "$out/ReleaseNotes-2026-08-17.md" || true)" "1"
+# The override still works once the operator has read the file.
+msg="$(bash "$out/assemble.sh" 2026-08-17 --allow-mixed-dates --force-append 2>&1)"
+check "--force-append proceeds"         "$?"                                "0"
+# A DIFFERENT fragment's title recurring in a wholly-marked file is the rule's
+# stated cost: refused, with the same override.
+W="$ROOT/t217y2"; build "$W"
+out="$W/docs/ReleaseNotes"
+printf '# Release Notes — 2026-08-17\n\n## Thread — same title (PR #4272)\n\nBody.\n<!-- assembled-fragment: 0009-first.md sha256=%064d -->\n' 0 \
+  > "$out/ReleaseNotes-2026-08-17.md"
+printf '## Thread — same title (PR #4272)\n\nOther body.\n' > "$out/unreleased/0003-second.md"
+msg="$(bash "$out/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
+check "a recurring title is refused"    "$?"                                "1"
+msg="$(bash "$out/assemble.sh" 2026-08-17 --allow-mixed-dates --force-append 2>&1)"
+check "and --force-append proceeds"     "$?"                                "0"
 
 # ── The front-matter refusal is not escaped by trailing whitespace (r14) ───
 # `---   ` and `---\t` are valid YAML delimiters. An exact comparison let

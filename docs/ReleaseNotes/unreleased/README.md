@@ -220,10 +220,14 @@ and work out what happened.
 Editing a section's WORDING is fine and expected — that is what the
 review-and-add-an-intro step is for. What the check objects to is a
 section that is no longer there at all, or one edited before its
-fragment was consumed, which are the two shapes that lose text. If a dated file has
-no markers at all (it predates them) and already contains a pending
-fragment's heading, the script stops and asks rather than guessing —
-`--force-append` overrides it once you have checked (#1788).
+fragment was consumed, which are the two shapes that lose text. If a
+dated file already contains a pending fragment's heading and records no
+marker for that fragment — usually because the section predates markers,
+even in a file that has gained some since — the script stops and asks
+rather than guessing. It does the same when the file cannot be read as
+UTF-8 text, since a section in another encoding could hold the fragment
+unseen. `--force-append` overrides either once you have checked (#1788,
+#2312, #2315).
 
 ### The date is the fragment's UTC merge day
 
