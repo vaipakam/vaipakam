@@ -35,8 +35,8 @@ follows. No such fragment is pending today; the case is open and tracked as
 #2315.
 
 Only the heading comparison changes. A fragment whose title contains neither
-sequence behaved correctly before and behaves identically now; no fragment
-that was previously accepted is now refused for any other reason.
+sequence is unaffected by this change; no fragment that was previously
+accepted is now refused for any other reason.
 
 Two accompanying notes in the source were also wrong and are corrected. One
 claimed this comparison was unaffected by the link rewrite. The reasoning
