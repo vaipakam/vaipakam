@@ -737,8 +737,9 @@ export const KNOWN_ERROR_SELECTORS: Record<string, string> = {
   // contract surface.
 };
 
-/** Revert bytes carried on a SINGLE error node (no cause traversal). */
-function revertDataFromNode(e: DecodableError): string | undefined {
+/** Revert bytes in a SINGLE error node's STRUCTURED fields (no cause
+ *  traversal, no message text). */
+function structuredRevertData(e: DecodableError): string | undefined {
   const candidates: unknown[] = [
     typeof e.data === 'string' ? e.data : undefined,
     typeof e.data === 'object' ? e.data?.data : undefined,
@@ -753,16 +754,42 @@ function revertDataFromNode(e: DecodableError): string | undefined {
   for (const c of candidates) {
     if (typeof c === 'string' && c.startsWith('0x') && c.length >= 10) return c;
   }
-  // Some wallets / RPCs embed the revert bytes directly in the message
-  // string (e.g. `... data: 0x08c379a0...`). Fall back to a regex
-  // match — but ONLY accept hex blobs that are EITHER a clean 4-byte
-  // selector (10 chars) OR a full ABI-encoded revert payload (10
-  // chars + multiples of 64 hex chars). This rules out the trap
-  // where the message also contains a 40-char address (mistaken for
-  // the revert selector by the old `slice(0, 10)`) or a 64-char tx
-  // hash.
-  const msg = e.message ?? '';
-  const matches = msg.match(/0x[0-9a-fA-F]+/g) ?? [];
+  return undefined;
+}
+
+/**
+ * The text of a node that can carry a REVERT, as opposed to text that echoes
+ * the REQUEST (#2336).
+ *
+ * viem's `BaseError` builds `message` from `shortMessage`, `metaMessages` and
+ * `details`, and its execution errors (`CallExecutionError`,
+ * `EstimateGasExecutionError`, `ContractFunctionExecutionError`, …) put the
+ * request's arguments in `metaMessages` — including `data:` followed by the
+ * calldata, whose selector-plus-whole-words shape is exactly what the scan
+ * below accepts. Scanning `message` therefore returned the call's own
+ * function selector as its revert. On a node carrying a string `shortMessage`
+ * (viem's `BaseError`) only `shortMessage` and `details` — the response side —
+ * are read. ethers v6 errors also carry `shortMessage` and are narrowed the
+ * same way; their revert bytes sit in the structured `data` field, which the
+ * first pass reads regardless. Any other node keeps the `message` scan, which
+ * is where wallets that embed the revert in plain text put it.
+ */
+function revertBearingText(e: DecodableError): string {
+  if (typeof e.shortMessage === 'string') {
+    const details = (e as { details?: unknown }).details;
+    return typeof details === 'string' ? `${e.shortMessage}\n${details}` : e.shortMessage;
+  }
+  return e.message ?? '';
+}
+
+/** Revert bytes quoted in a SINGLE node's revert-bearing text. Some wallets /
+ *  RPCs embed them there (e.g. `... data: 0x08c379a0...`). Accepts ONLY a
+ *  clean 4-byte selector (10 chars) or a full ABI-encoded revert payload (10
+ *  chars + multiples of 64 hex chars), which rules out a 40-char address
+ *  (mistaken for the revert selector by the old `slice(0, 10)`) or a 64-char
+ *  tx hash. */
+function messageRevertData(e: DecodableError): string | undefined {
+  const matches = revertBearingText(e).match(/0x[0-9a-fA-F]+/g) ?? [];
   for (const m of matches) {
     const len = m.length - 2; // strip 0x
     if (len === 8) return m; // bare 4-byte selector
@@ -771,20 +798,33 @@ function revertDataFromNode(e: DecodableError): string | undefined {
   return undefined;
 }
 
-/** Extracts the raw revert data (hex string starting with 0x) from the tangle
- *  of shapes ethers/injected wallets surface. Walks the viem `cause` chain:
- *  the real revert is usually wrapped several layers deep
- *  (ContractFunctionExecutionError → ContractFunctionRevertedError), so the
- *  top-level object has no `data` while a nested cause does. Bounded depth
- *  guards a cyclic graph. */
-export function extractRevertData(err: unknown): string | undefined {
+/** The first `pick` hit along the `cause` chain. Bounded depth guards a
+ *  cyclic graph. */
+function firstAlongCauses(
+  err: unknown,
+  pick: (e: DecodableError) => string | undefined,
+): string | undefined {
   let node: unknown = err;
   for (let depth = 0; node && typeof node === 'object' && depth < 6; depth++) {
-    const found = revertDataFromNode(node as DecodableError);
+    const found = pick(node as DecodableError);
     if (found) return found;
     node = (node as { cause?: unknown }).cause;
   }
   return undefined;
+}
+
+/** Extracts the raw revert data (hex string starting with 0x) from the tangle
+ *  of shapes ethers/injected wallets surface. Walks the viem `cause` chain:
+ *  the real revert is usually wrapped several layers deep
+ *  (ContractFunctionExecutionError → ContractFunctionRevertedError), so the
+ *  top-level object has no `data` while a nested cause does.
+ *
+ *  Two passes, in this order (#2336): STRUCTURED fields on every node first,
+ *  and only then revert-bearing message text. A single per-node pass let an
+ *  outer wrapper's text answer before the structured bytes one cause deeper
+ *  were reached. */
+export function extractRevertData(err: unknown): string | undefined {
+  return firstAlongCauses(err, structuredRevertData) ?? firstAlongCauses(err, messageRevertData);
 }
 
 /**

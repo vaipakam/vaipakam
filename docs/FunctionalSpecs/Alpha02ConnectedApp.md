@@ -2044,7 +2044,10 @@ Thin-market honesty rules apply.
   error name) rather than a bare code, and is translatable too. Only a
   genuinely unrecognised revert (a selector in no table) falls through to a
   support-triage string that appends the raw selector — that residual case
-  is not translatable by design.
+  is not translatable by design. The explanation is always derived from
+  the error the contract or the network reported, never from the
+  transaction the user sent: a failure whose report also repeats the
+  request must not be explained as though the request were the error.
 
 ## Indexing Policy
 

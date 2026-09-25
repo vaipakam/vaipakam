@@ -17,6 +17,14 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
+  BaseError,
+  CallExecutionError,
+  EstimateGasExecutionError,
+  RawContractError,
+  encodeFunctionData,
+  parseAbi,
+} from 'viem';
+import {
   decodeContractError,
   extractRevertData,
   extractRevertSelector,
@@ -206,6 +214,77 @@ describe('extractRevertData', () => {
 
   it('reads viem ContractFunctionRevertedError raw bytes on a cause', () => {
     expect(extractRevertData({ cause: { raw: SEL_HF_TOO_LOW } })).toBe(SEL_HF_TOO_LOW);
+  });
+
+  // #2336: viem's execution errors echo the REQUEST — `data:` plus the
+  // calldata — into `message` via `metaMessages`, and calldata has the
+  // selector-plus-whole-words shape the message scan accepts. Built from the
+  // real viem classes so the echo is viem's own, not a hand-written guess.
+  describe('viem request echo (#2336)', () => {
+    const abi = parseAbi(['function acceptOffer(uint256 offerId, bool acceptTerms)']);
+    const calldata = encodeFunctionData({
+      abi,
+      functionName: 'acceptOffer',
+      args: [42n, true],
+    });
+    const request = {
+      account: { address: '0x000000000000000000000000000000000000dEaD', type: 'json-rpc' },
+      to: '0xd89fd7F787e4415460b23891E97570a4881fb995',
+      data: calldata,
+    } as never;
+    const errorString = ('0x08c379a0' +
+      '20'.padStart(64, '0') +
+      '04'.padStart(64, '0') +
+      '626f6f6d'.padEnd(64, '0')) as `0x${string}`;
+
+    it('the fixture really does echo the calldata into the message', () => {
+      // Guards the tests below: without the echo they would pass vacuously.
+      const e = new EstimateGasExecutionError(new BaseError('exceeds max transaction gas limit'), request);
+      expect(e.message).toContain(calldata);
+    });
+
+    it('does not return the calldata of a gas-trap estimate as its revert', () => {
+      const e = new EstimateGasExecutionError(new BaseError('exceeds max transaction gas limit'), request);
+      expect(extractRevertData(e)).toBeUndefined();
+      expect(extractRevertSelector(e)).toBeUndefined();
+      // With no selector invented, the #780 guidance is what the user sees.
+      expect(decodeContractError(e)).toMatch(/could not estimate this transaction/);
+    });
+
+    it('returns the nested RawContractError bytes, not the calldata', () => {
+      const e = new CallExecutionError(new RawContractError({ data: errorString }), request);
+      expect(extractRevertData(e)).toBe(errorString);
+      expect(extractRevertSelector(e)).toBe('0x08c379a0');
+    });
+
+    it('still reads a revert quoted in the response text (`details`)', () => {
+      const rpc = new BaseError('execution reverted', { details: `execution reverted: ${SEL_HF_TOO_LOW}` });
+      const e = new CallExecutionError(rpc, request);
+      expect(extractRevertData(e)).toBe(SEL_HF_TOO_LOW);
+    });
+  });
+
+  // #2336: structured bytes anywhere on the chain outrank text on an outer
+  // node. A single per-node pass let the wrapper's text answer first.
+  it('prefers structured bytes on a cause over a selector in an outer message', () => {
+    expect(
+      extractRevertData({
+        message: `wrapper quoting ${SEL_INSUFFICIENT_BALANCE}`,
+        cause: { data: SEL_HF_TOO_LOW },
+      }),
+    ).toBe(SEL_HF_TOO_LOW);
+  });
+
+  it('scans only shortMessage and details on a node that has a shortMessage', () => {
+    expect(
+      extractRevertData({ shortMessage: 'reverted', message: `data: ${SEL_HF_TOO_LOW}` }),
+    ).toBeUndefined();
+    expect(extractRevertData({ shortMessage: `reverted ${SEL_HF_TOO_LOW}` })).toBe(
+      SEL_HF_TOO_LOW,
+    );
+    expect(
+      extractRevertData({ shortMessage: 'reverted', details: `reverted ${SEL_HF_TOO_LOW}` }),
+    ).toBe(SEL_HF_TOO_LOW);
   });
 });
 
