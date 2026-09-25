@@ -80,6 +80,26 @@ export function cannotContinue(step, why) {
   throw new Error(`${step}: ${why}`);
 }
 
+/**
+ * Declare a scenario's ENVELOPE: a configuration value its fixed inputs were
+ * written for. Every configurable number a scenario ASSERTS against is read
+ * from the chain; the few it cannot cheaply derive — the size of a probe, the
+ * topology a ledger is written for — are instead declared here, checked
+ * against the live configuration, and a deployment outside them stops the
+ * file NAMING the knob. That is neither a PASS nor a protocol FAIL: it says
+ * this scenario did not run on this configuration, and why.
+ *
+ * One mechanism instead of scaling every input for every valid setting,
+ * which is an edge list with no end.
+ */
+export function requireEnvelope(knob, ok, detail) {
+  if (typeof ok !== 'boolean') throw new TypeError(`requireEnvelope(${knob}): condition must be a boolean`);
+  if (ok) return;
+  const e = new Error(`OUT OF ENVELOPE — ${knob}: ${detail}`);
+  e.outOfEnvelope = true;
+  throw e;
+}
+
 export const ledger = () => rows.slice();
 
 /** Ledger position, so the runner can set aside rows from a file that aborts. */

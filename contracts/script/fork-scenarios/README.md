@@ -60,9 +60,10 @@ Environment:
 | `FORK_RPC_URL` | `http://127.0.0.1:8545` | the fork node |
 | `FORK_CHAIN_SLUG` | `base-sepolia` | which `contracts/deployments/<slug>/addresses.json` to read |
 
-Nothing is hard-coded: the Diamond, treasury, admin and faucet-mock addresses
-all come from the deployment artifact for the selected slug, so the driver
-follows a redeploy without an edit.
+Nothing is hard-coded: the Diamond and faucet-mock addresses come from the
+deployment artifact for the selected slug, so the driver follows a redeploy
+without an edit; the treasury and the admin, both mutable, are read from the
+live Diamond (the artifact's values are only compared against them).
 
 The driver leaves `last-run.json` beside itself — the full ledger, one row per
 scenario, with the verdict and the observed numbers, plus any scenario file
@@ -197,6 +198,18 @@ this harness and are worth keeping:
   `getEffectiveGraceSeconds`, …) for what a new loan will stamp, and the
   loan's own stamp for how an open loan settles. A hard-coded default
   certifies one deployment's configuration as a protocol invariant.
+- **An input a scenario CHOOSES is derived, or declared.** The same holds
+  for the probe's own inputs — how far to warp, how big a partial, what
+  price to move to. Derive it from the chain where that is cheap (warp to
+  the grace end the chain reports; raise a partial to the asset's
+  `minPartialBps`; compute a probe price from the loan's stamps). Where it
+  is not, declare the configuration the scenario was written for with
+  `requireEnvelope(knob, ok, detail)`: a deployment outside it stops the
+  file, reported as DID NOT RUN with the knob named — not as a protocol
+  FAIL. Scaling every input to every valid setting is an edge list with no
+  end; one declared envelope per scenario is bounded. The runner applies one
+  globally: the ledgers are written for an EXTERNAL treasury, so a
+  Diamond-as-treasury deployment stops the run before any file.
 - **Resolve a vault through `vaultAddressFor`, never `getUserVaultAddress`
   directly.** The raw getter answers `address(0)` for a user who has no vault
   yet, without reverting, and snapshotting the zero address yields a

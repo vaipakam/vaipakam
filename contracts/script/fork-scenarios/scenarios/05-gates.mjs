@@ -7,11 +7,11 @@
  * requirement, and the loan it produces reports NO health factor rather than
  * inventing one from a price it does not have.
  */
-import { ADMIN, DIAMOND, ERC20, MOCKS, borrower, lender, outsider, parseUnits, pub, rpc, tx } from '../lib/chain.mjs';
+import { ADMIN, DIAMOND, ERC20, MOCKS, borrower, f18, lender, outsider, parseUnits, pub, rpc, tx } from '../lib/chain.mjs';
 import { ABIS, approveDiamond, acceptOffer, createOffer, mint, offerParams, read } from '../lib/flow.mjs';
 import { sendAs, warpDays } from '../lib/impersonate.mjs';
 import { simulate } from '../lib/errors.mjs';
-import { check, observe, expectRefusal } from '../lib/report.mjs';
+import { check, observe, expectRefusal, requireEnvelope } from '../lib/report.mjs';
 
 // A stub oracle whose runtime is "return 1 for any call" — every address
 // reads as sanctioned. Injected with the fork's setCode cheatcode because
@@ -93,7 +93,18 @@ async function runGates() {
     (await read(ABIS.profile, 'isKYCVerified', [borrower.address])) === false);
 
   // The gate is threshold-based and binds at ACCEPT, not at offer creation.
+  // The probe is a fixed $50,000-class offer; whether an unverified wallet
+  // needs KYC for it is the protocol's OWN answer (`meetsKYCRequirement` at
+  // the probe's live numeraire value, thresholds and all), so the envelope is
+  // that answer — a deployment whose thresholds sit above the probe does not
+  // run it, rather than reporting its (correct) acceptance as a failure.
   const bigParams = { amount: parseUnits('50000', 18), collateralAmount: parseUnits('60', 18) };
+  const [bigPrice, bigFeedDec] = await read(ABIS.oracle, 'getAssetPrice', [MOCKS.liquidToken2]);
+  const bigValue = (bigParams.amount * bigPrice) / 10n ** BigInt(bigFeedDec);
+  const bigNeedsKyc = (await read(ABIS.profile, 'meetsKYCRequirement', [borrower.address, bigValue])) === false;
+  const [tier0, tier1] = await read(ABIS.profile, 'getKYCThresholds');
+  requireEnvelope('KYC thresholds', bigNeedsKyc,
+    `the probe's ${f18(bigValue)} numeraire value needs no KYC for an unverified wallet (tier0=${f18(tier0)}, tier1=${f18(tier1)})`);
   const bigCreate = await simulate(DIAMOND, ABIS.offerCreate, 'createOffer', [await offerParams(bigParams)], lender.address);
   await mint(lender, MOCKS.liquidToken2, '100000');
   await approveDiamond(lender, MOCKS.liquidToken2);

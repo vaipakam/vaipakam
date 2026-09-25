@@ -13,7 +13,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CHAIN_SLUG, DIAMOND, RPC_URL, fundActors, pub, resolveLive, rpc } from './lib/chain.mjs';
+import { CHAIN_SLUG, DIAMOND, RPC_URL, TREASURY, fundActors, pub, resolveLive, rpc } from './lib/chain.mjs';
 import { ledger, mark, summarise, takeSince } from './lib/report.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -64,6 +64,16 @@ const info = await rpc('anvil_nodeInfo');
 const forkBlock = info.result?.forkConfig?.forkBlockNumber ?? null;
 await rpc('evm_mine');
 await resolveLive();
+// The exact ledgers are written for the EXTERNAL-treasury topology (the
+// documented mainnet one): fees leave the Diamond for a separate address. A
+// Diamond-as-treasury deployment is supported by the protocol, but there fees
+// are credited inside the Diamond (`treasuryBalances`) and every fee row would
+// need a different expectation — so the run stops, naming the topology,
+// rather than reporting each of those rows as a protocol failure.
+if (TREASURY.toLowerCase() === DIAMOND.toLowerCase()) {
+  console.error(`OUT OF ENVELOPE — treasury topology: the live treasury IS the Diamond (${DIAMOND}); these ledgers are written for an external treasury. Nothing was run.`);
+  process.exit(1);
+}
 await fundActors();
 console.log(`fork ${RPC_URL} | chain ${CHAIN_SLUG} | diamond ${DIAMOND} | forked at block ${forkBlock ?? 'unknown'} | now ${await pub.getBlockNumber()}\n`);
 
@@ -95,8 +105,9 @@ for (const file of files) {
     // Rows the file recorded before it aborted describe chain state that the
     // revert below erases; they leave the verdict and are kept for diagnosis.
     const partialRows = takeSince(firstRow);
-    console.error(`  ${file} ABORTED: ${why}${partialRows.length ? ` (${partialRows.length} partial row(s) set aside)` : ''}`);
-    aborted.push({ file, why, partialRows });
+    const outOfEnvelope = e.outOfEnvelope === true;
+    console.error(`  ${file} ${outOfEnvelope ? 'DID NOT RUN' : 'ABORTED'}: ${why}${partialRows.length ? ` (${partialRows.length} partial row(s) set aside)` : ''}`);
+    aborted.push({ file, why, outOfEnvelope, partialRows });
     process.exitCode = 1;
   } finally {
     const back = await rpc('evm_revert', [snap.result]);
@@ -108,9 +119,19 @@ for (const file of files) {
 const counts = summarise();
 // An aborted file contributes no rows, so a clean-looking tally can sit on
 // top of a scenario set that never ran. Say so where the verdict is read.
-if (aborted.length) {
-  console.log(`\n${aborted.length} scenario file(s) ABORTED and contributed no rows:`);
-  for (const a of aborted) console.log(`  ${a.file} — ${a.why}`);
+// Two different things, reported apart: a file that could not continue (a
+// flow broke), and a file whose declared configuration envelope this
+// deployment is outside (it did not run here — not a protocol verdict).
+// Both leave the run unverified, so both exit non-zero.
+const broke = aborted.filter((a) => !a.outOfEnvelope);
+const skipped = aborted.filter((a) => a.outOfEnvelope);
+if (broke.length) {
+  console.log(`\n${broke.length} scenario file(s) ABORTED and contributed no rows:`);
+  for (const a of broke) console.log(`  ${a.file} — ${a.why}`);
+}
+if (skipped.length) {
+  console.log(`\n${skipped.length} scenario file(s) DID NOT RUN — this deployment's configuration is outside what they were written for:`);
+  for (const a of skipped) console.log(`  ${a.file} — ${a.why}`);
 }
 const out = path.join(HERE, 'last-run.json');
 fs.writeFileSync(out, JSON.stringify({ chain: CHAIN_SLUG, diamond: DIAMOND, forkBlock, counts, aborted, rows: ledger() }, null, 1));

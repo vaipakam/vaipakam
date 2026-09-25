@@ -13,7 +13,7 @@ import { DIAMOND, ERC20, MOCKS, TREASURY, borrower, lender, outsider, parseUnits
 import { ABIS, STATUS, delta, openLoan, read, snapshot, vaultAddressFor } from '../lib/flow.mjs';
 import { f18 } from '../lib/chain.mjs';
 import { simulate } from '../lib/errors.mjs';
-import { cannotContinue, check, expectLedger, expectRefusal } from '../lib/report.mjs';
+import { cannotContinue, check, expectLedger, expectRefusal, requireEnvelope } from '../lib/report.mjs';
 
 const TRY_LIST = [{ adapterIdx: 0n, data: '0x' }];
 
@@ -108,6 +108,21 @@ export async function run() {
     expectRefusal('A11.7', 'a partial swap on a loan that never allowed partial repayment is refused', refused, 'PartialRepayNotAllowed');
 
     const { loanId } = await openLoan({ lender, borrower, allowsPartialRepay: true, borrowerCanRepayFromWallet: false });
+    // The probe sells a fixed 0.1 collateral. Its principal reduction must
+    // clear the asset's governed minimum partial, so the envelope is checked
+    // against the oracle value of that sale at the worst the slippage cap
+    // allows — a deployment whose floor is higher does not run this probe.
+    {
+      const probe = await read(ABIS.loan, 'getLoanDetails', [loanId]);
+      const { minPartialBps } = await read(ABIS.config, 'getAssetRiskParams', [lending]);
+      const minPart = (probe.principal * BigInt(minPartialBps)) / 10_000n;
+      const [cP, cD] = await read(ABIS.oracle, 'getAssetPrice', [collateral]);
+      const [pP, pD] = await read(ABIS.oracle, 'getAssetPrice', [lending]);
+      const slipBps = BigInt(await read(ABIS.config, 'getMaxSwapToRepaySlippageBps'));
+      const worst = (parseUnits('0.1', 18) * cP * 10n ** BigInt(pD) * (10_000n - slipBps)) / (pP * 10n ** BigInt(cD) * 10_000n);
+      requireEnvelope('minPartialBps', worst >= minPart,
+        `selling 0.1 collateral yields at worst ${f18(worst)}, below the asset's minimum partial ${f18(minPart)} (${minPartialBps} bps)`);
+    }
     const hfBefore = await read(ABIS.risk, 'calculateHealthFactor', [loanId]);
     const loanBefore = await read(ABIS.loan, 'getLoanDetails', [loanId]);
     const sim = await simulate(DIAMOND, ABIS.swapToRepay, 'swapToRepayPartial', [loanId, parseUnits('0.1', 18), TRY_LIST], borrower.address);

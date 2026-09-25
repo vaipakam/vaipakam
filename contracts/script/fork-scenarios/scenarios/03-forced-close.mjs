@@ -11,7 +11,7 @@ import { ABIS, STATUS, delta, dynamicIncentiveBps, forcedCloseWaterfall, lateFee
 import { f18 } from '../lib/chain.mjs';
 import { MOCK_ADAPTER_ABI, repriceFaucetAsset, sendAsOwner, setFeedUsd, warpDays } from '../lib/impersonate.mjs';
 import { simulate } from '../lib/errors.mjs';
-import { cannotContinue, check, expectEq, expectLedger, observe, expectRefusal } from '../lib/report.mjs';
+import { cannotContinue, check, expectEq, expectLedger, observe, expectRefusal, requireEnvelope } from '../lib/report.mjs';
 
 const TRY_LIST = [{ adapterIdx: 0n, data: '0x' }];
 
@@ -154,14 +154,27 @@ export async function run() {
     asset: collateral, feed: MOCKS.liquidTokenUsdFeed, pool: MOCKS.liquidTokenWethPool,
     quote: '0x4200000000000000000000000000000000000006',
   };
-  await repriceFaucetAsset(tliq, 1100);
+  // The probe price is DERIVED, not fixed: the collateral price that puts HF
+  // midway between 1.0 and this loan's stamped floor, from the loan's own
+  // stamped liquidation LTV and the live debt-asset price. A fixed price is
+  // only in the band for one configuration of those knobs.
+  const hfLoanDetails = await read(ABIS.loan, 'getLoanDetails', [hfLoan]);
+  const [dP, dD] = await read(ABIS.oracle, 'getAssetPrice', [lending]);
+  const debtUsd = (hfLoanDetails.principal * dP) / 10n ** BigInt(dD);
+  const targetHf = (10n ** 18n + hfFloor) / 2n;
+  const probePrice = (targetHf * debtUsd * 10_000n) / (BigInt(hfLoanDetails.liquidationLtvBpsAtInit) * hfLoanDetails.collateralAmount);
+  await repriceFaucetAsset(tliq, Number(probePrice) / 1e18);
   const midHf = await read(ABIS.risk, 'calculateHealthFactor', [hfLoan]);
   const midRoutable = await read(ABIS.oracle, 'checkLiquidity', [collateral]);
   const midSim = await simulate(DIAMOND, ABIS.risk, 'triggerLiquidation', [hfLoan, TRY_LIST], outsider.address);
-  check('A3.9a', 'the probe position sits below the 1.5 initiation floor but above 1.0, with the collateral still routable',
-    midHf < hfFloor && midHf >= 1_000_000_000_000_000_000n && Number(midRoutable) === 0,
-    `HF=${f18(midHf)} checkLiquidity=${midRoutable}`);
-  expectRefusal('A3.9', 'below the 1.5 initiation floor but above 1.0 the position is NOT liquidatable', midSim, 'HealthFactorNotLow');
+  // In band by construction; routable only if the seeded pool carries the
+  // move — which is the file's envelope, not a protocol property.
+  requireEnvelope('seeded pool depth', Number(midRoutable) === 0,
+    `at the derived probe price $${f18(probePrice)} the collateral reads Illiquid (checkLiquidity=${midRoutable})`);
+  check('A3.9a', 'the probe position sits below the stamped initiation floor but above 1.0',
+    midHf < hfFloor && midHf >= 1_000_000_000_000_000_000n,
+    `HF=${f18(midHf)} (target ${f18(targetHf)}, floor ${f18(hfFloor)}) at collateral $${f18(probePrice)} checkLiquidity=${midRoutable}`);
+  expectRefusal('A3.9', 'below the stamped initiation floor but above 1.0 the position is NOT liquidatable', midSim, 'HealthFactorNotLow');
   await repriceFaucetAsset(tliq, 2000);
 
   // A FEED-ONLY reprice, for contrast. The faucet's mock v3 pool keeps its

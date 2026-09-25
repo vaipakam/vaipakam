@@ -28,8 +28,12 @@ export async function run() {
     `sanctionsOracle=${oracle}${/^0x0{40}$/i.test(oracle) ? ' (unset)' : ''} ` +
     `isKYCVerified(fresh wallet)=${kycShortCircuits}${kycShortCircuits ? ' (enforcement dormant)' : ' (enforcement ARMED)'}`);
 
-  check('A1.3', 'treasury is an EXTERNAL address, not the Diamond', TREASURY.toLowerCase() !== DIAMOND.toLowerCase(),
-    `treasury(live getTreasury)=${TREASURY} diamond=${DIAMOND} — fees leave at once; the Diamond-custody claim paths are dark on this topology`);
+  // Topology is configuration: Diamond-as-treasury is a supported mode. The
+  // runner refuses to run the ledgers on it (they are written for an external
+  // treasury), so by the time this row runs the topology is external — and it
+  // is recorded, not certified.
+  observe('A1.3', 'treasury topology',
+    `treasury(live getTreasury)=${TREASURY} diamond=${DIAMOND} — EXTERNAL: fees leave at once; the Diamond-custody claim paths are dark on this topology`);
   // The treasury is mutable; the artifact records only its deploy-time value.
   // Every accounting row uses the LIVE value, so a drifted artifact is shown,
   // not silently trusted.

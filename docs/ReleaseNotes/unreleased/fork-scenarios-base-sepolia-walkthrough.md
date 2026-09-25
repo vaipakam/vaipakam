@@ -189,7 +189,11 @@ through is whoever holds the role on the live deployment rather than the
 address the deployment record names. One figure is read rather than
 predicted, and the write-up says why: the size of the collateral sale in a
 full repayment from collateral, which is exactly what the pending fix
-changes. The re-run records one hundred and forty-five passes, ten
-observations and one failure —
+changes. Where a scenario chooses an input rather than asserting one — the
+size of a probe, how far to move the clock — it now derives it from the
+deployment, or declares the configuration it was written for and stops,
+naming the setting, on a deployment outside it, instead of reporting a
+protocol failure. The re-run records one hundred and forty-four passes,
+eleven observations and one failure —
 the swap-to-repay check whose expectation was deliberately corrected — with
 no scenario file aborted.

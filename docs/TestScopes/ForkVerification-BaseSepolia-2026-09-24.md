@@ -16,7 +16,7 @@ configuration — not the source tree's idea of them.
   ledger now records as `forkBlock`. Figures that depend on elapsed time can
   still differ in the last decimals, since the warps land on different
   seconds.
-- **Result** — 156 scenarios: **145 PASS, 10 INFO, 1 FAIL**, no aborted
+- **Result** — 156 scenarios: **144 PASS, 11 INFO, 1 FAIL**, no aborted
   file. The INFOs are observations with no assertion behind them, not soft
   failures — the ledger's API makes a row either an assertion (PASS/FAIL
   only) or an observation (INFO only), so no failure can land as INFO; each
@@ -154,7 +154,22 @@ floor, liquidation LTV, buffer rate and grace window is read from the chain —
 the live getter for what a new loan will stamp, the loan's own stamp for how
 an open loan settles — so a valid governance retune can no longer turn a
 correct loan into a reported failure, nor a hard-coded default pass for a
-deployment configured otherwise. The stamps are themselves asserted equal to
+deployment configured otherwise.
+
+A sixth pass extended that from the numbers a row ASSERTS to the inputs a
+scenario CHOOSES. Where an input is cheap to derive it now is: the periodic
+warps land just past the grace the chain reports, the partial repayment is
+raised to the asset's minimum partial, the health-factor probe price is
+computed from the loan's stamped liquidation LTV and floor, and the term-cap
+probe uses one day past the setter's code ceiling so no valid cap defeats
+it. Where it is not — a probe's size, the topology the ledgers are written
+for — the scenario DECLARES the configuration it was written for
+(`requireEnvelope`): the live value is checked, and a deployment outside it
+stops that file naming the knob, reported as "did not run" rather than as a
+protocol failure. The treasury topology is one of those: the ledgers are
+written for an external treasury, and on a Diamond-as-treasury deployment —
+a supported mode — the run stops before any file rather than reporting every
+fee row as wrong. This deployment is inside every envelope. The stamps are themselves asserted equal to
 the live configuration at origination (A2.3–A2.5), and the admission floor
 against the spec's governed range [1.2, 2.0] (A1.1).
 
@@ -287,7 +302,7 @@ tLIQ2 came out as:
 
 | Recipient | Amount | Basis |
 | --- | --- | --- |
-| caller (liquidator) | 75.000000 | 300 bps of proceeds, the loan's stamped `fallbackLenderBonusBpsAtInit`, taken off the top |
+| caller (liquidator) | 75.000000 | the DYNAMIC keeper incentive, taken off the top: the max-liquidation-slippage budget minus the slippage realized against the oracle, capped by the global and per-asset caps — 300 bps here (no realized slippage on the mock venue). It happens to equal the loan's stamped fallback split on this deployment, but is not derived from it |
 | lender | 1,054.101373 | debt owed, net of the treasury's cut |
 | treasury | 51.104110 | the loan's stamped treasury bps |
 | borrower (surplus) | 1,319.794517 | what is left, returned to the borrower |
@@ -309,8 +324,9 @@ keeper that cannot quote a route must report that, not retry blindly.
 
 The two thresholds are distinct and both were exercised:
 
-- At **HF 1.1** — below the 1.5 initiation floor — `triggerLiquidation`
-  refuses with `HealthFactorNotLow()`. The 1.5 floor binds at *initiation*
+- At **HF 1.25** — midway between 1.0 and the loan's stamped 1.5 floor, the
+  collateral repriced to a DERIVED $1,250 (feed and pool together) —
+  `triggerLiquidation` refuses with `HealthFactorNotLow()`. The 1.5 floor binds at *initiation*
   only; a live position is not liquidatable until HF < 1.0.
 - At **HF 0.8**, liquidation succeeds, permissionlessly, and pays the caller
   a 30 tLIQ2 bonus out of 1,000 tLIQ2 of proceeds (3%), with the remaining
@@ -834,10 +850,13 @@ regenerated as `contracts/script/fork-scenarios/last-run.json` on every run
 | A10.* | `10-nft-rental.mjs` | ERC-721 rental against the spec's custody-vs-use model, early close, claims |
 | A11.* | `11-swap-to-repay.mjs` | repaying from collateral: authority, the cap, full and partial modes |
 
-The ten `INFO` rows, each an observation with no assertion behind it:
+The eleven `INFO` rows, each an observation with no assertion behind it:
 
 - **Deployment configuration** — the sanctions oracle and KYC posture (A1.2,
-  A5.1) and the periodic-interest switch (A9.1). These are values an
+  A5.1), the treasury topology (A1.3 — it was an assertion that the treasury
+  is external; Diamond-as-treasury is a supported mode, so it is now recorded
+  and the runner declares the external topology as its envelope instead) and
+  the periodic-interest switch (A9.1). These are values an
   operator or governance sets, so a later deploy that wires the oracle or
   arms the feature must not keep reporting a green "unset". (The first run
   recorded them as PASS.)

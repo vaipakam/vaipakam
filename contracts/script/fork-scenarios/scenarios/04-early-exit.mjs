@@ -13,7 +13,7 @@ import { parseEventLogs } from 'viem';
 import { f18 } from '../lib/chain.mjs';
 import { warpDays } from '../lib/impersonate.mjs';
 import { simulate } from '../lib/errors.mjs';
-import { check, expectEq, expectLedger, expectRefusal } from '../lib/report.mjs';
+import { check, expectEq, expectLedger, expectRefusal, requireEnvelope } from '../lib/report.mjs';
 
 export async function run() {
   const lending = MOCKS.liquidToken2;
@@ -63,7 +63,14 @@ export async function run() {
     const opened = await read(ABIS.loan, 'getLoanDetails', [loanId]);
     expectEq('A4.4', 'the offer\'s allowsPartialRepay flag carries onto the loan', opened.allowsPartialRepay, true);
 
-    const part = parseUnits('400', 18);
+    // 400 of 1,000, raised to the asset's governed minimum partial if that is
+    // higher (a partial below it is refused by design), and declared in-
+    // envelope only if that still leaves some principal outstanding.
+    const { minPartialBps } = await read(ABIS.config, 'getAssetRiskParams', [lending]);
+    const floor = (opened.principal * BigInt(minPartialBps) + 9_999n) / 10_000n;
+    const part = floor > parseUnits('400', 18) ? floor : parseUnits('400', 18);
+    requireEnvelope('minPartialBps', part < opened.principal,
+      `the asset's minimum partial (${minPartialBps} bps) leaves no partial below the whole principal`);
     const before = await snapshot(tokens, holders);
     const receipt = await tx(borrower, { address: DIAMOND, abi: ABIS.repay, functionName: 'repayPartial', args: [loanId, part] }, 'repayPartial');
     const after = await snapshot(tokens, holders);
