@@ -80,6 +80,12 @@ contract RewardEpochViewFacet {
         bool pendingOverflow;
         uint256 lateWorkBase;
         uint256 lateWorkRestored;
+        /// @dev The day's restore log (Codex #2308 r15, r16): how far this
+        ///      record has read it, and how long it is now. While the two
+        ///      differ the reservation refuses `StagingScanIncomplete`, and
+        ///      each preparation re-offers up to one window of the difference.
+        uint256 restoredSeen;
+        uint256 restoredLogLength;
     }
 
     /// @notice The preview's dry run of `user`'s ShareOfPool days against the
@@ -201,6 +207,8 @@ contract RewardEpochViewFacet {
         v.pendingOverflow = r.pendingOverflow;
         v.lateWorkBase = r.lateWorkBase;
         v.lateWorkRestored = r.lateWorkRestored;
+        v.restoredSeen = r.restoredSeen;
+        v.restoredLogLength = LibVaipakam.storageSlot().transportDayRestored[r.day].length;
     }
 
     /// @notice One page of the record's batches — each with the components it

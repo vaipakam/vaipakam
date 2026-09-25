@@ -1159,6 +1159,9 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         while (!_settle().unwindStagedDayPage(_key())) {}
         vm.stopPrank();
         _liveFresh(1e18);
+        // The blocker is readable (Codex #2308 r16): 65 restorations unread.
+        RewardEpochViewFacet.StagingRecordView memory bv = _view().getStagingRecord(bobKey);
+        assertEq(bv.restoredLogLength - bv.restoredSeen, 65, "the view names the unread restorations");
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.StagingScanIncomplete.selector, bobKey));
         _staging().reserveStagedDay(bobKey);
         (uint256 sf, ) = _staging().prepareStagedDay(bobKey);
@@ -1169,6 +1172,8 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         _staging().reserveStagedDay(bobKey);
         (uint256 sf2, ) = _staging().prepareStagedDay(bobKey);
         assertGt(sf2, 0, "the last restoration too");
+        bv = _view().getStagingRecord(bobKey);
+        assertEq(bv.restoredSeen, bv.restoredLogLength, "and the view shows the log read");
         _staging().reserveStagedDay(bobKey);
         assertEq(_view().getStagingRecord(bobKey).phase, uint8(LibVaipakam.StagingPhase.Reserved));
     }

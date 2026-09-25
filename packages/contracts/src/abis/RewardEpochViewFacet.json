@@ -378,6 +378,16 @@
             "name": "lateWorkRestored",
             "type": "uint256",
             "internalType": "uint256"
+          },
+          {
+            "name": "restoredSeen",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "restoredLogLength",
+            "type": "uint256",
+            "internalType": "uint256"
           }
         ]
       }
