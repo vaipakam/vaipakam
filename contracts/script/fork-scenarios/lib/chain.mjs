@@ -67,6 +67,10 @@ export const pub = createPublicClient({ chain: forkChain, transport: http(RPC_UR
 // the resolved value by then.
 export let TREASURY = null;
 export let ADMIN = null;
+// ERC-173 ownership and ADMIN_ROLE can be held by DIFFERENT addresses:
+// setters gated on ownership (e.g. the sanctions oracle) act through OWNER,
+// role-gated ones through ADMIN. Both are read from the live Diamond.
+export let OWNER = null;
 const view = (name, inputs, output) => ({ type: 'function', name, inputs: inputs.map((type) => ({ type })), outputs: [{ type: output }], stateMutability: 'view' });
 const ADMIN_ROLE = keccak256(toBytes('ADMIN_ROLE'));
 export async function resolveLive() {
@@ -78,6 +82,7 @@ export async function resolveLive() {
   // letting the gate scenarios abort later on an authorization error that
   // reads like a product defect.
   const owner = await readD(view('owner', [], 'address'));
+  OWNER = owner;
   for (const candidate of [owner, ARTIFACT_ADMIN]) {
     if (candidate && (await readD(view('hasRole', ['bytes32', 'address'], 'bool'), [ADMIN_ROLE, candidate]))) { ADMIN = candidate; return; }
   }

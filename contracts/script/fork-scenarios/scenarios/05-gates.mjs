@@ -7,7 +7,7 @@
  * requirement, and the loan it produces reports NO health factor rather than
  * inventing one from a price it does not have.
  */
-import { ADMIN, DIAMOND, ERC20, MOCKS, borrower, f18, lender, outsider, parseUnits, pub, rpc, tx } from '../lib/chain.mjs';
+import { ADMIN, DIAMOND, ERC20, MOCKS, OWNER, borrower, f18, lender, outsider, parseUnits, pub, rpc, tx } from '../lib/chain.mjs';
 import { ABIS, approveDiamond, acceptOffer, createOffer, mint, offerParams, read } from '../lib/flow.mjs';
 import { sendAs, warpDays } from '../lib/impersonate.mjs';
 import { simulate } from '../lib/errors.mjs';
@@ -21,6 +21,9 @@ const ALWAYS_TRUE_RUNTIME = '0x600160005260206000f3';
 const UNSET = '0x0000000000000000000000000000000000000000';
 
 export async function run() {
+  // The sanctions oracle's setter is gated on Diamond OWNERSHIP and KYC
+  // enforcement on ADMIN_ROLE, which a deployment may give to different
+  // addresses — each is sent through its own live holder.
   // Capture the deployment's OWN posture for both gates, then start from the
   // retail posture (no oracle, KYC dormant) whatever the deployment set — the
   // fixture's loan and the dormant-KYC row need it — exactly as A9 does for
@@ -31,10 +34,10 @@ export async function run() {
   const initialKyc = await read(ABIS.admin, 'isKYCEnforcementEnabled');
   try {
     if (initialKyc) await sendAs(ADMIN, { address: DIAMOND, abi: ABIS.admin, functionName: 'setKYCEnforcement', args: [false] });
-    if (initialOracle !== UNSET) await sendAs(ADMIN, { address: DIAMOND, abi: ABIS.profile, functionName: 'setSanctionsOracle', args: [UNSET] });
+    if (initialOracle !== UNSET) await sendAs(OWNER, { address: DIAMOND, abi: ABIS.profile, functionName: 'setSanctionsOracle', args: [UNSET] });
     await runGates(initialOracle, initialKyc);
   } finally {
-    await sendAs(ADMIN, { address: DIAMOND, abi: ABIS.profile, functionName: 'setSanctionsOracle', args: [initialOracle] });
+    await sendAs(OWNER, { address: DIAMOND, abi: ABIS.profile, functionName: 'setSanctionsOracle', args: [initialOracle] });
     await sendAs(ADMIN, { address: DIAMOND, abi: ABIS.admin, functionName: 'setKYCEnforcement', args: [initialKyc] });
   }
 }
@@ -51,7 +54,7 @@ async function runGates(initial, initialKyc) {
   const { loanId } = await (await import('../lib/flow.mjs')).openLoan({ lender, borrower });
 
   await rpc('hardhat_setCode', [ALWAYS_SANCTIONED, ALWAYS_TRUE_RUNTIME]);
-  await sendAs(ADMIN, { address: DIAMOND, abi: ABIS.profile, functionName: 'setSanctionsOracle', args: [ALWAYS_SANCTIONED] });
+  await sendAs(OWNER, { address: DIAMOND, abi: ABIS.profile, functionName: 'setSanctionsOracle', args: [ALWAYS_SANCTIONED] });
   const armed = await read(ABIS.profile, 'getSanctionsOracle');
   check('A5.2', 'the admin can arm the sanctions oracle', armed.toLowerCase() === ALWAYS_SANCTIONED.toLowerCase(), `oracle=${armed}`);
 
@@ -78,7 +81,7 @@ async function runGates(initial, initialKyc) {
   check('A5.5b', 'Tier-2 triggerDefault stays OPEN under a blanket flag — a flagged caller can still force-close a defaulted loan',
     tier2Default.ok, tier2Default.ok ? 'simulates clean, past term + grace' : tier2Default.name);
 
-  await sendAs(ADMIN, { address: DIAMOND, abi: ABIS.profile, functionName: 'setSanctionsOracle', args: [UNSET] });
+  await sendAs(OWNER, { address: DIAMOND, abi: ABIS.profile, functionName: 'setSanctionsOracle', args: [UNSET] });
   // Fresh params: A5.5b warped the chain past the first set's expiry.
   const freshParams = await offerParams({ amount: parseUnits('10', 18), collateralAmount: parseUnits('0.02', 18) });
   const restored = await simulate(DIAMOND, ABIS.offerCreate, 'createOffer', [freshParams], lender.address);

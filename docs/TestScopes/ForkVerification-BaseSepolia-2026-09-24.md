@@ -17,7 +17,7 @@ configuration — not the source tree's idea of them.
   ledger now records as `forkBlock`. Figures that depend on elapsed time can
   still differ in the last decimals, since the warps land on different
   seconds.
-- **Result** — 215 scenarios: **204 PASS, 10 INFO, 1 FAIL**, no aborted
+- **Result** — 217 scenarios: **206 PASS, 10 INFO, 1 FAIL**, no aborted
   file. The INFOs are observations with no assertion behind them, not soft
   failures — the ledger's API makes a row either an assertion (PASS/FAIL
   only) or an observation (INFO only), so no failure can land as INFO; each
@@ -217,7 +217,20 @@ produces — preclose's (A4.3/A4.3b), the old lender's after a refinance
 (A6.10d) and the original lender's after an offset (A7.4d) included — goes
 through the one claim assertion. The fixture loan's shape is declared as an
 envelope: a deployment that refuses it on one of its own admission limits is
-reported as did-not-run, naming the refusal. Four checks beyond
+reported as did-not-run, naming the refusal.
+
+**The review loop was stopped at its fifteen-round cap**, and the mandatory
+root review at that point found two causes behind the last round's findings,
+both now fixed at the root rather than per row. First, only the fixture loan
+treated a governance admission-limit refusal as out of envelope; the shared
+`createOffer` / `acceptOffer` now do, for every loan a scenario creates (the
+term cap included), and the drawdown price is derived from the loan's
+stamped liquidation LTV. Ownership and `ADMIN_ROLE` are bound separately
+from the live Diamond, so an owner-gated setter goes through the owner.
+Second, two steps compared the position against a snapshot taken AFTER the
+step: the offset posting and the rental close now take theirs before (A7.2d,
+A10.6c), and the rental's expected split is derived from the pre-close
+record. Four checks beyond
 that scope are recorded as follow-ups in **#2332** rather than widening this
 document: position-NFT metadata and the reverse index, position locks while a
 sale or offset link is live, the size of a periodic settlement's sale (the
@@ -894,7 +907,7 @@ replace.
 
 ## 7. Ledger
 
-The full 215-row ledger, with per-scenario verdicts and observed numbers, is
+The full 217-row ledger, with per-scenario verdicts and observed numbers, is
 regenerated as `contracts/script/fork-scenarios/last-run.json` on every run
 (untracked). Scenario ids map to the driver's files:
 

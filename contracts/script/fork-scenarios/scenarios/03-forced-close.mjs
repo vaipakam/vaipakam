@@ -269,10 +269,21 @@ export async function run() {
   // with its feed as a real market would, the asset stays routable, and the
   // position is liquidated from the collateral side.
   const { loanId: crashLoan } = await openLoan({ lender, borrower });
-  await repriceFaucetAsset(tliq, 900);
-  await sendAsOwner(venue, MOCK_ADAPTER_ABI, 'setTokenPrice', [collateral, 90_000_000_000n]);
+  // The drawdown is DERIVED from the loan's own stamped liquidation LTV: the
+  // collateral price that puts HF at 0.9 — below 1, so the HF path fires,
+  // whatever threshold the loan stamped (a fixed $900 is only below it for
+  // thresholds up to ~89%).
+  const crashDetails = await read(ABIS.loan, 'getLoanDetails', [crashLoan]);
+  const [crashDP, crashDD] = await read(ABIS.oracle, 'getAssetPrice', [lending]);
+  const crashDebtUsd = (crashDetails.principal * crashDP) / 10n ** BigInt(crashDD);
+  const crashPrice = (9n * 10n ** 17n * crashDebtUsd * 10_000n) / (BigInt(crashDetails.liquidationLtvBpsAtInit) * crashDetails.collateralAmount);
+  const crashDollars = Number(crashPrice) / 1e18;
+  await repriceFaucetAsset(tliq, crashDollars);
+  await sendAsOwner(venue, MOCK_ADAPTER_ABI, 'setTokenPrice', [collateral, BigInt(Math.round(crashDollars * 1e8))]);
   const crashHf = await read(ABIS.risk, 'calculateHealthFactor', [crashLoan]);
   const stillRoutable = await read(ABIS.oracle, 'checkLiquidity', [collateral]);
+  requireEnvelope('seeded pool depth', Number(stillRoutable) === 0,
+    `at the derived drawdown price $${crashDollars} the collateral reads Illiquid`);
   await tx(outsider, { address: lending, abi: (await import('../lib/chain.mjs')).ERC20, functionName: 'mint', args: [venue, parseUnits('1000000', 18)] }, 'top up venue');
   const preCrash = await read(ABIS.loan, 'getLoanDetails', [crashLoan]);
   const preCrashPos = await positionOf(crashLoan);
@@ -283,10 +294,10 @@ export async function run() {
   const crashProceeds = beforeCrash['lending.venue'] - afterCrash['lending.venue'];
   const crashLanded = ['lenderVault', 'borrowerVault', 'treasury', 'liquidator']
     .reduce((acc, k) => acc + (afterCrash[`lending.${k}`] - beforeCrash[`lending.${k}`]), 0n);
-  check('A3.13', 'a 55% collateral drawdown with the pool following its feed keeps the asset routable, and HF<1 liquidation settles from the collateral side',
+  check('A3.13', 'a collateral drawdown to HF 0.9 with the pool following its feed keeps the asset routable, and HF<1 liquidation settles from the collateral side',
     Number(stillRoutable) === 0 && crashHf < 1_000_000_000_000_000_000n && String(crashed.status) === String(STATUS.Defaulted) &&
     crashProceeds > 0n && crashLanded === crashProceeds,
-    `tLIQ $2,000 -> $900 (feed + pool spot) checkLiquidity=${stillRoutable} HF=${f18(crashHf)} gas=${crashReceipt.gasUsed} ` +
+    `tLIQ $2,000 -> $${crashDollars} (derived; feed + pool spot) checkLiquidity=${stillRoutable} HF=${f18(crashHf)} gas=${crashReceipt.gasUsed} ` +
     `status=${crashed.status} proceeds=${f18(crashProceeds)}`);
   await expectForcedClose('A3.13b', 'the collateral-drawdown liquidation settles exactly per the waterfall, with a surplus: keeper, lender net of the interest fee, the handling charge, the borrower\'s residual',
     preCrash, crashReceipt, beforeCrash, afterCrash, collateral, lending);

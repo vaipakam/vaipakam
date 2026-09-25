@@ -167,11 +167,14 @@ so a run certifies exactly this, for every step a row is written about:
    from a spec formula; a chosen input is derived or declared as an envelope.
 
 Fixture steps a scenario only sets up with (`openLoan`, gate-probe offers)
-are asserted once, in A2, not at every use. The fixture loan's fixed shape is
-itself an envelope: if the deployment refuses it on one of its own admission
-limits (`HealthFactorTooLow`, `LTVExceeded`, `InitLtvAboveTier`,
-`CollateralBelowRequired`, `MinCollateralBelowFloor`), the file is reported
-DID NOT RUN, naming the refusal; any other refusal is a broken flow.
+are asserted once, in A2, not at every use. Every loan a scenario creates has
+a fixed shape, which is itself an envelope: the shared `createOffer` /
+`acceptOffer` treat a refusal on one of the protocol's own admission limits
+(`HealthFactorTooLow`, `LTVExceeded`, `InitLtvAboveTier`,
+`CollateralBelowRequired`, `MinCollateralBelowFloor`,
+`OfferDurationExceedsCap`) as DID NOT RUN, naming the refusal; any other
+refusal is a broken flow or a refusal the scenario asserts on. Every step's
+position check compares against a snapshot taken BEFORE that step.
 
 **Not verified, and tracked in #2332**: position-NFT metadata and the
 reverse position index; position locks while a sale or offset link is live;

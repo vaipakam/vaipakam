@@ -5,7 +5,7 @@
  * and health-factor knobs read back at their documented values) before any
  * later scenario relies on them.
  */
-import { ADMIN, ARTIFACT_ADMIN, ARTIFACT_TREASURY, DIAMOND, MOCKS, TREASURY, borrower, f18, lender, pub } from '../lib/chain.mjs';
+import { ADMIN, ARTIFACT_ADMIN, OWNER, ARTIFACT_TREASURY, DIAMOND, MOCKS, TREASURY, borrower, f18, lender, pub } from '../lib/chain.mjs';
 import { ABIS, read, vaultAddressFor } from '../lib/flow.mjs';
 import { simulate } from '../lib/errors.mjs';
 import { check, expectEq, observe, expectRefusal } from '../lib/report.mjs';
@@ -42,7 +42,8 @@ export async function run() {
   // Same for the admin: the gate scenarios act through whoever holds
   // ADMIN_ROLE on the live Diamond, resolved at start-up, not the artifact.
   observe('A1.3c', 'the deployment artifact\'s admin against the live ADMIN_ROLE holder',
-    ARTIFACT_ADMIN.toLowerCase() === ADMIN.toLowerCase() ? `match (${ADMIN})` : `DRIFT: artifact=${ARTIFACT_ADMIN} live=${ADMIN}`);
+    (ARTIFACT_ADMIN.toLowerCase() === ADMIN.toLowerCase() ? `match (${ADMIN})` : `DRIFT: artifact=${ARTIFACT_ADMIN} live=${ADMIN}`) +
+    `; Diamond owner=${OWNER}${OWNER.toLowerCase() === ADMIN.toLowerCase() ? ' (same address)' : ' (a DIFFERENT address from the admin)'}`);
 
   // Per-user vault: created on demand, idempotent, real code. On a PRISTINE
   // fork neither role has one yet and `getUserVaultAddress` answers

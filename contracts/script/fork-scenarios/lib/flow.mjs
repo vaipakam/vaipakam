@@ -112,10 +112,25 @@ export async function offerParams(overrides = {}) {
   };
 }
 
+/**
+ * The protocol's own ADMISSION-LIMIT refusals — governance-set bounds on
+ * what a new loan may look like (risk limits, the term cap). Every loan a
+ * scenario creates has a fixed shape, and a valid governance setting can make
+ * the deployment refuse it on one of these limits. That is the scenario's
+ * ENVELOPE, not a broken flow, so it is reported as DID NOT RUN naming the
+ * refusal — enforced in the shared `createOffer` / `acceptOffer`, so no loan a
+ * scenario creates can be outside it silently. Any OTHER refusal still
+ * aborts (createOffer) or comes back as a refusal the scenario asserts on.
+ */
+const ADMISSION_LIMITS = new Set(['HealthFactorTooLow', 'LTVExceeded', 'InitLtvAboveTier', 'CollateralBelowRequired', 'MinCollateralBelowFloor', 'OfferDurationExceedsCap']);
+const requireAdmissible = (what, reason) => requireEnvelope('admission limits', !ADMISSION_LIMITS.has(refusalName(reason)),
+  `the deployment refuses the scenario's ${what} on its own admission limit: ${reason}`);
+const refusalName = (reason) => String(reason ?? '').split('(')[0];
+
 export async function createOffer(creator, overrides = {}) {
   const offer = await offerParams(overrides);
   const sim = await simulate(DIAMOND, ABIS.offerCreate, 'createOffer', [offer], creator.address);
-  if (!sim.ok) throw new Error(`createOffer would revert: ${sim.name}`);
+  if (!sim.ok) { requireAdmissible('offer', sim.name); throw new Error(`createOffer would revert: ${sim.name}`); }
   const receipt = await tx(creator, { address: DIAMOND, abi: ABIS.offerCreate, functionName: 'createOffer', args: [offer] }, 'createOffer');
   return { offerId: BigInt(sim.result), offer, gas: receipt.gasUsed };
 }
@@ -222,7 +237,7 @@ export async function acceptOffer(offerId, offer, acceptor, creator, overrides =
     message: terms,
   });
   const sim = await simulate(DIAMOND, ABIS.offerAccept, 'acceptOffer', [offerId, terms, signature], acceptor.address);
-  if (!sim.ok) return { ok: false, reason: sim.name };
+  if (!sim.ok) { requireAdmissible('loan', sim.name); return { ok: false, reason: sim.name }; }
   const receipt = await tx(
     acceptor,
     { address: DIAMOND, abi: ABIS.offerAccept, functionName: 'acceptOffer', args: [offerId, terms, signature] },
@@ -245,17 +260,6 @@ export async function acceptOffer(offerId, offer, acceptor, creator, overrides =
  * collateral alone, where a wallet the protocol could quietly debit would
  * let a broken implementation pass.
  */
-/**
- * The protocol's own ADMISSION-LIMIT refusals. The fixture loan is a fixed
- * shape (1,000 against 1.25 collateral at the seeded prices unless a scenario
- * overrides it); a valid governance setting can make the deployment refuse it
- * on one of these limits. That is the fixture's envelope, not a broken flow,
- * so it is reported as DID NOT RUN naming the refusal — any OTHER refusal
- * still aborts as a broken flow.
- */
-const ADMISSION_LIMITS = new Set(['HealthFactorTooLow', 'LTVExceeded', 'InitLtvAboveTier', 'CollateralBelowRequired', 'MinCollateralBelowFloor']);
-const refusalName = (reason) => String(reason ?? '').split('(')[0];
-
 export async function openLoan({ lender, borrower, borrowerCanRepayFromWallet = true, ...overrides } = {}) {
   const { liquidToken: collateral, liquidToken2: lending } = MOCKS;
   await mint(lender, lending, '100000');
@@ -266,14 +270,8 @@ export async function openLoan({ lender, borrower, borrowerCanRepayFromWallet = 
     await mint(borrower, lending, '100000');
     await approveDiamond(borrower, lending);
   }
-  const offer0 = await offerParams(overrides);
-  const created = await simulate(DIAMOND, ABIS.offerCreate, 'createOffer', [offer0], lender.address);
-  if (!created.ok) requireEnvelope('fixture admission limits', !ADMISSION_LIMITS.has(refusalName(created.name)),
-    `the deployment refuses the fixture offer on its own admission limit: ${created.name}`);
   const { offerId, offer } = await createOffer(lender, overrides);
   const accepted = await acceptOffer(offerId, offer, borrower, lender);
-  if (!accepted.ok) requireEnvelope('fixture admission limits', !ADMISSION_LIMITS.has(refusalName(accepted.reason)),
-    `the deployment refuses the fixture loan on its own admission limit: ${accepted.reason}`);
   if (!accepted.ok) throw new Error(`accept failed: ${accepted.reason}`);
   if (!borrowerCanRepayFromWallet) {
     await tx(borrower, { address: lending, abi: ERC20, functionName: 'approve', args: [DIAMOND, 0n] }, 'revoke lending allowance');

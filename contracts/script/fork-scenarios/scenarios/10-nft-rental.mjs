@@ -125,6 +125,8 @@ export async function run() {
   // Early close on day 3 of 7.
   await warpDays(3);
   const quote = await read(ABIS.repay, 'calculateRepaymentAmount', [loanId]).catch(() => null);
+  const preClosePos = await positionOf(loanId);
+  const loanBeforeClose = await read(ABIS.loan, 'getLoanDetails', [loanId]);
   const beforeClose = await snapshot(tokens, holders);
   const closeSim = await simulate(DIAMOND, ABIS.repay, 'repayLoan', [loanId], borrower.address);
   // The spec gives an accepted rental an early close; losing it is a
@@ -148,9 +150,11 @@ export async function run() {
   // buffer back). Whole days used, measured from the rental's start to the
   // close block.
   const closeAt = BigInt((await pub.getBlock({ blockNumber: closed.blockNumber })).timestamp);
-  const daysUsed = (closeAt - BigInt(loanAfter.startTime)) / 86_400n;
+  // Derived from the PRE-close record, so a close that corrupted the record
+  // cannot also move the expectation it is checked against.
+  const daysUsed = (closeAt - BigInt(loanBeforeClose.startTime)) / 86_400n;
   const usedRent = DAILY_FEE * daysUsed;
-  const toTreasury = (usedRent * BigInt(loanAfter.treasuryFeeBpsAtInit)) / 10_000n;
+  const toTreasury = (usedRent * BigInt(loanBeforeClose.treasuryFeeBpsAtInit)) / 10_000n;
   const lenderShare = usedRent - toTreasury;
   const renterBack = rent + buffer - usedRent;
   expectLedger('A10.6b', 'the early close pays the lender the used days\' rent net of the treasury fee, into their vault, and leaves the rest of the prepay with the renter',
@@ -160,6 +164,8 @@ export async function run() {
       'prepay.treasury': toTreasury,
     }, `daysUsed=${daysUsed} usedRent=${f18(usedRent)} treasury=${f18(toTreasury)}`);
 
+  await expectPosition('A10.6c', 'the early close changes the rental position exactly as stated, against the pre-close snapshot',
+    loanId, preClosePos, { status: STATUS.Repaid });
   // Claims — each side withdraws exactly its independently computed share,
   // spends its position NFT, and with both claimed the rental settles.
   let rentalPos = await positionOf(loanId);
