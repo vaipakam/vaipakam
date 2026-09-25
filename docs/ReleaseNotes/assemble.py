@@ -375,12 +375,21 @@ def terminal_safe(msg: str) -> str:
 QUOTE_LIMIT = 160
 
 
-def quoted(raw: bytes) -> str:
-    """Author bytes as shown in a message: decoded, and cut at `QUOTE_LIMIT`."""
-    text = raw.decode("utf-8", errors="replace")
+def capped(text: str) -> str:
+    """`text` cut at `QUOTE_LIMIT`, saying how much was left out.
+
+    Applied to the WHOLE author-controlled value a message quotes, never to
+    its parts: a list of short pieces each under the limit joins into one
+    that is not (#2323 r1 — ten thousand `PR #BAD` tokens made 51 KB).
+    """
     if len(text) <= QUOTE_LIMIT:
         return text
     return f"{text[:QUOTE_LIMIT]}… ({len(text) - QUOTE_LIMIT} more characters)"
+
+
+def quoted(raw: bytes) -> str:
+    """Author bytes as shown in a message: decoded, then `capped`."""
+    return capped(raw.decode("utf-8", errors="replace"))
 
 
 def out_line(msg: str = "") -> None:
@@ -1996,7 +2005,9 @@ class Assembly:
                 # It usually IS the placeholder, but `PR #123:` is not, and
                 # telling that author to "replace the placeholder" sends them
                 # looking for something that is not there.
-                shown_tok = ", ".join(quoted(t) for t in bads)
+                shown_tok = capped(
+                    ", ".join(t.decode("utf-8", errors="replace") for t in bads)
+                )
                 bad.append(
                     f"{name}: `PR #{shown_tok}` is not a plain number  ->  "
                     f"write the number alone, as `(PR #2290)`  ->  {shown}"

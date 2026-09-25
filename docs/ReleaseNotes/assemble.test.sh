@@ -4854,6 +4854,18 @@ W="$ROOT/t217x4"; build "$W"
 msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
 check "a long line is capped"      "$(says "$msg" 'more characters)')"     "1"
 check "and not echoed whole"       "$(says "$msg" '(PR #4263)')"           "0"
+# The cap is on the WHOLE quoted value, not on each piece of it (#2323 r1).
+# Every `PR #BAD` token is far under the limit, so capping them one by one
+# and then joining them produced tens of kilobytes; the fixture asserts the
+# refusal stays short enough to read. A level-2 heading, so the placeholder
+# refusal is the one that quotes the token list.
+W="$ROOT/t217x5"; build "$W"
+{ printf '## Many refs'; printf ' PR #BAD%.0s' $(seq 1 2000); printf '\n'; } \
+  > "$W/docs/ReleaseNotes/unreleased/0003-refs.md"
+msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
+check "a token list still refuses"  "$?"                                    "1"
+check "for the placeholder"         "$(says "$msg" 'is not a plain number')" "1"
+check "and its output is bounded"   "$(( ${#msg} < 4000 ))"                 "1"
 
 # ── The front-matter refusal is not escaped by trailing whitespace (r14) ───
 # `---   ` and `---\t` are valid YAML delimiters. An exact comparison let

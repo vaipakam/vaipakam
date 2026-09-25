@@ -1,4 +1,4 @@
-## Text quoted back from a fragment can no longer rewrite the assembler's messages (PR #NNNN)
+## Text quoted back from a fragment can no longer rewrite the assembler's messages (PR #2323)
 
 When the release-note assembler refuses a fragment, it quotes the offending
 line and names the file, so the author can find what to fix. Nothing filtered
@@ -19,6 +19,7 @@ are treated the same way, since they can reorder a line on screen without
 any control sequence. Ordinary text, including the em dash every heading
 here uses, is printed as before.
 
-A quoted line is also cut off after 160 characters, with a note of how much
-was left out, so one very long line cannot bury the message around it.
-Closes #2302.
+Anything quoted from a fragment — a line, or a list of the references it
+refused — is also cut off after 160 characters as a whole, with a note of how
+much was left out, so no author text can bury the message around it. Closes
+#2302.
