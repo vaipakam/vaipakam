@@ -112,25 +112,47 @@ export async function confirm(
 /**
  * Why a mined transaction reverted, as a sentence for an error message.
  *
- * Replays the transaction with `eth_call` against the state at the END OF
- * THE PREVIOUS BLOCK and decodes the revert data against the Diamond's merged
- * ABI, so a custom error reads as `Name(args)` rather than as a selector.
- * On anvil's automine each transaction gets its own block, so that state is
- * the one the transaction actually ran against; if another transaction had
- * shared the block, the replay would miss its effects, and a replay that does
- * not revert says so rather than guessing.
+ * FIRST FROM A TRACE OF THE TRANSACTION ITSELF (#2335 r1). `debug_trace-
+ * Transaction` with the call tracer re-executes the transaction in its own
+ * block, with that block's context and every earlier transaction in it, and
+ * returns the exact revert output. anvil serves it, which is what CI runs
+ * against. Its revert bytes are decoded against the Diamond's merged ABI, so
+ * a custom error reads as `Name(args)` rather than as a selector.
+ *
+ * ONLY IF THE TRACE IS UNAVAILABLE, a replay with `eth_call` at the previous
+ * block — and that is an approximation, labelled as one. It runs against the
+ * right state only when no earlier transaction shared the block, and against
+ * the previous block's context (timestamp, number, base fee) in every case,
+ * so a deadline or a timestamp check can revert the original and pass the
+ * replay. A replay that does not revert is therefore reported as unknown,
+ * never attributed to a cause.
  *
  * BEST-EFFORT, AND NEVER THE CAUSE OF A FAILURE. Every path returns a string:
  * a lookup that itself fails is reported as unavailable, so the caller still
  * throws the original revert with its label and hash.
  */
 async function revertReason(hash: Hex, blockNumber: bigint): Promise<string> {
+  try {
+    const trace = (await pub.request({
+      method: 'debug_traceTransaction' as never,
+      params: [hash, { tracer: 'callTracer' }] as never,
+    })) as { output?: unknown; error?: unknown };
+    if (typeof trace?.output === 'string' && trace.output.startsWith('0x') && trace.output.length > 2) {
+      return decodeRevert(trace.output as Hex);
+    }
+    if (typeof trace?.error === 'string') {
+      return `${trace.error} (from a trace of the transaction; it carried no revert data)`;
+    }
+  } catch {
+    // No trace on this node — fall through to the labelled replay.
+  }
   let tx;
   try {
     tx = await pub.getTransaction({ hash });
   } catch (err) {
-    return `unavailable — the transaction could not be fetched (${shortMessage(err)})`;
+    return `unavailable — no trace, and the transaction could not be fetched (${shortMessage(err)})`;
   }
+  const approx = `(approximate: replayed at block ${blockNumber - 1n}, not traced in its own block)`;
   try {
     await pub.call({
       account: tx.from,
@@ -141,30 +163,56 @@ async function revertReason(hash: Hex, blockNumber: bigint): Promise<string> {
       blockNumber: blockNumber - 1n,
     });
     return (
-      'unavailable — replaying it against the previous block did not revert, ' +
-      'so the cause was state that changed within its own block'
+      'unknown — no trace was available, and a replay against the previous block did not ' +
+      'revert; it differs from the original in block context (timestamp, number) and in ' +
+      'any earlier transaction of the same block, so it cannot say which'
     );
   } catch (err) {
     const data = revertData(err);
-    if (!data) return `unavailable — the replay failed without revert data (${shortMessage(err)})`;
-    try {
-      const decoded = decodeErrorResult({ abi: DIAMOND_ABI_VIEM, data });
-      const args = (decoded.args ?? []).map((a) =>
-        typeof a === 'bigint' ? a.toString() : JSON.stringify(a),
-      );
-      return `${decoded.errorName}(${args.join(', ')})`;
-    } catch {
-      return `undecoded revert data ${data}`;
+    if (!data || !data.startsWith('0x')) {
+      return `unavailable — no trace, and the replay failed without revert data (${shortMessage(err)})`;
     }
+    return `${decodeRevert(data as Hex)} ${approx}`;
   }
 }
 
-/** The raw revert bytes a failed `eth_call` carried, if any. */
+/**
+ * The raw revert bytes a failed `eth_call` carried, from STRUCTURED fields
+ * only, walking the `cause` chain: `data` as a string, the nested
+ * `data.data` some providers use, and viem's `raw`.
+ *
+ * NOT `@vaipakam/lib`'s `extractRevertData` (#2335 r1, measured). That helper
+ * falls back to a regex over each node's MESSAGE before descending, and viem's
+ * `CallExecutionError` message embeds the request's calldata — which has the
+ * selector-plus-words shape it accepts. Against real reverted Base Sepolia
+ * transactions it returned the call's own arguments as the revert, where this
+ * walk finds the true bytes on the nested `RawContractError`. Filed as #2336.
+ */
 function revertData(err: unknown): Hex | undefined {
-  if (!(err instanceof BaseError)) return undefined;
-  const found = err.walk((e) => typeof (e as { data?: unknown }).data === 'string');
-  const data = (found as { data?: unknown } | null)?.data;
-  return typeof data === 'string' && data.startsWith('0x') ? (data as Hex) : undefined;
+  let node: unknown = err;
+  for (let depth = 0; node && typeof node === 'object' && depth < 8; depth++) {
+    const n = node as { data?: unknown; raw?: unknown; cause?: unknown };
+    const nested =
+      n.data && typeof n.data === 'object' ? (n.data as { data?: unknown }).data : undefined;
+    for (const c of [n.data, nested, n.raw]) {
+      if (typeof c === 'string' && c.startsWith('0x') && c.length >= 10) return c as Hex;
+    }
+    node = n.cause;
+  }
+  return undefined;
+}
+
+/** Revert bytes as `Name(args)` against the Diamond's merged ABI, or raw. */
+function decodeRevert(data: Hex): string {
+  try {
+    const decoded = decodeErrorResult({ abi: DIAMOND_ABI_VIEM, data });
+    const args = (decoded.args ?? []).map((a) =>
+      typeof a === 'bigint' ? a.toString() : JSON.stringify(a),
+    );
+    return `${decoded.errorName}(${args.join(', ')})`;
+  } catch {
+    return `undecoded revert data ${data}`;
+  }
 }
 
 function shortMessage(err: unknown): string {
