@@ -14,7 +14,7 @@
  * no user-reachable capability hidden behind the flag — this file checks the
  * contract path, not an interface gap.
  */
-import { ADMIN, DIAMOND, MOCKS, TREASURY, borrower, chainNow, lender, outsider, parseUnits, pub, tx } from '../lib/chain.mjs';
+import { ADMIN, DIAMOND, ERC20, MOCKS, TREASURY, VENUE_ROUTE, borrower, chainNow, lender, outsider, parseUnits, pub, tx } from '../lib/chain.mjs';
 import { ABIS, approveDiamond, delta, expectPosition, mint, offerParams, openLoan, positionOf, read, snapshot, vaultAddressFor } from '../lib/flow.mjs';
 import { f18 } from '../lib/chain.mjs';
 import { sendAs, warpDays } from '../lib/impersonate.mjs';
@@ -129,7 +129,8 @@ async function runPeriodic(initial) {
 
   // The period closes on one of two paths, chosen by whether the borrower
   // has already paid it. Here they have NOT, so settling needs a swap route:
-  // the protocol sells just enough collateral to cover the shortfall.
+  // the protocol sells the shortfall's collateral equivalent plus the
+  // configured slippage buffer (A9.11 asserts the exact size).
   const noRoute = await simulate(DIAMOND, ABIS.repayPeriodic, 'settlePeriodicInterest', [loanId, []], outsider.address);
   expectRefusal('A9.10', 'an UNPAID period cannot be stamped closed — settling it needs a swap route, and says so', noRoute, 'PeriodicSettleSwapPathRequired');
 
@@ -146,10 +147,27 @@ async function runPeriodic(initial) {
   };
   const tokens = { lending, collateral: MOCKS.liquidToken };
   const autoPos = await positionOf(loanId);
+  // The sale size the specification fixes: "only enough collateral to cover
+  // the shortfall plus configured buffers", with the configured max
+  // liquidation slippage as "the single shared lever". So the collateral
+  // equivalent of the shortfall at the oracle, grossed up by that lever, and
+  // never more than is pledged. Every input is read from the deployment
+  // before the settlement moves anything.
+  const [, maxSlippageBps] = await read(ABIS.config, 'getLiquidationConfig');
+  const [colPrice, colFeedDec] = await read(ABIS.oracle, 'getAssetPrice', [MOCKS.liquidToken]);
+  const [prinPrice, prinFeedDec] = await read(ABIS.oracle, 'getAssetPrice', [lending]);
+  const decimalsOf = (token) => pub.readContract({ address: token, abi: ERC20, functionName: 'decimals' });
+  const [colTokenDec, prinTokenDec] = [BigInt(await decimalsOf(MOCKS.liquidToken)), BigInt(await decimalsOf(lending))];
+  const shortfallAtOracle = (preview[5] * prinPrice * 10n ** colTokenDec * 10n ** BigInt(colFeedDec)) /
+    (colPrice * 10n ** prinTokenDec * 10n ** BigInt(prinFeedDec));
+  const specSale = (() => {
+    const grossed = (shortfallAtOracle * (10_000n + BigInt(maxSlippageBps))) / 10_000n;
+    return grossed > autoPos.collateralAmount ? autoPos.collateralAmount : grossed;
+  })();
   const beforeAuto = await snapshot(tokens, holders);
   const autoReceipt = await tx(outsider, {
     address: DIAMOND, abi: ABIS.repayPeriodic, functionName: 'settlePeriodicInterest',
-    args: [loanId, [{ adapterIdx: 0n, data: '0x' }]],
+    args: [loanId, VENUE_ROUTE],
   }, 'settlePeriodicInterest(auto)');
   const afterAuto = await snapshot(tokens, holders);
   const autoLoan = await read(ABIS.loan, 'getLoanDetails', [loanId]);
@@ -170,14 +188,14 @@ async function runPeriodic(initial) {
   const colMoved = Object.keys(afterAuto).filter((k) => k.startsWith('collateral.') && afterAuto[k] !== beforeAuto[k]);
   const colLegOk = afterAuto['collateral.venue'] - beforeAuto['collateral.venue'] === sold &&
     colMoved.every((k) => k === 'collateral.venue' || k === 'collateral.borrowerVault');
-  check('A9.11', 'an unpaid period is closed by selling collateral: the loan stays Active, the settler earns the dynamic incentive and the treasury its handling charge on the proceeds, the lender is covered, and every unit is accounted',
-    String(autoLoan.status) === '0' && colLegOk &&
+  check('A9.11', 'an unpaid period is closed by selling exactly the collateral the specification sizes — the shortfall at the oracle plus the configured max-slippage buffer — the loan stays Active, the settler earns the dynamic incentive and the treasury its handling charge on the proceeds, the lender is covered, and every unit is accounted',
+    String(autoLoan.status) === '0' && colLegOk && sold === specSale &&
     loan.collateralAmount - autoLoan.collateralAmount === sold &&
     toSettler === (proceeds * settlerBps) / 10_000n &&
     toTreasury === (proceeds * handlingFeeBps) / 10_000n &&
     toLender >= shortfallDue &&
     toSettler + toTreasury + toLender === proceeds,
-    `gas=${autoReceipt.gasUsed} sold=${f18(sold)} proceeds=${f18(proceeds)} settler=${f18(toSettler)} (${settlerBps}bps) ` +
+    `gas=${autoReceipt.gasUsed} sold=${f18(sold)} spec sale=${f18(specSale)} (shortfall at oracle ${f18(shortfallAtOracle)} × (1 + ${maxSlippageBps}bps)) proceeds=${f18(proceeds)} settler=${f18(toSettler)} (${settlerBps}bps) ` +
     `treasury=${f18(toTreasury)} (${handlingFeeBps}bps) lender=${f18(toLender)} shortfall=${f18(shortfallDue)}`);
   await expectPosition('A9.11c', 'the auto-settlement changes the position exactly: recorded collateral and lien down by the collateral sold, the period checkpointed and the lender\'s receipt booked as interest settled — principal, NFTs and status unchanged',
     loanId, autoPos, {
@@ -199,12 +217,17 @@ async function runPeriodic(initial) {
       'lending.treasury': (proceeds * handlingFeeBps) / 10_000n,
       'lending.lenderEOA': proceeds - (proceeds * settlerBps) / 10_000n - (proceeds * handlingFeeBps) / 10_000n,
     });
-  // What the spec does NOT pin down is where the sizing buffer ends up once
-  // the period is covered. Surfaced, not certified.
-  observe('A9.11b', 'after an auto-settled period, the lender receives this much above the period\'s shortfall (the sale\'s sizing buffer)',
-    `excess=${f18(toLender - shortfallDue)} of proceeds=${f18(proceeds)} — the spec says "shortfall plus configured buffers" and does not say who keeps the buffer`);
+  // Where the sizing buffer ends up: the specification credits interest
+  // already forwarded to the lender through a periodic auto-liquidation
+  // against the interest accrued, so it is never charged to the borrower a
+  // second time. So the lender keeps all of the net proceeds — the buffer
+  // above the shortfall included — and ALL of it is booked as interest
+  // settled, which is what a later repayment or forced close credits back.
+  check('A9.11b', 'the sale\'s sizing buffer is not lost to the borrower: the lender receives the whole net proceeds, the buffer above the shortfall included, and the whole of it is booked as interest settled for later closes to credit',
+    toLender >= shortfallDue && BigInt(autoLoan.interestSettled) - BigInt(autoPos.interestSettled) === toLender,
+    `lender=${f18(toLender)} shortfall=${f18(shortfallDue)} buffer=${f18(toLender - shortfallDue)} interestSettled ${f18(autoPos.interestSettled)} -> ${f18(autoLoan.interestSettled)}`);
 
-  const twice = await simulate(DIAMOND, ABIS.repayPeriodic, 'settlePeriodicInterest', [loanId, [{ adapterIdx: 0n, data: '0x' }]], outsider.address);
+  const twice = await simulate(DIAMOND, ABIS.repayPeriodic, 'settlePeriodicInterest', [loanId, VENUE_ROUTE], outsider.address);
   expectRefusal('A9.12', 'the same period cannot be settled twice', twice, 'PeriodicSettleNotDue');
 
   // Voluntary path: a second loan whose borrower pays the period themselves.

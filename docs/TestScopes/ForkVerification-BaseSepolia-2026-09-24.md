@@ -17,7 +17,7 @@ configuration — not the source tree's idea of them.
   ledger now records as `forkBlock`. Figures that depend on elapsed time can
   still differ in the last decimals, since the warps land on different
   seconds.
-- **Result** — 217 scenarios: **206 PASS, 10 INFO, 1 FAIL**, no aborted
+- **Result** — 217 scenarios: **207 PASS, 9 INFO, 1 FAIL**, no aborted
   file. The INFOs are observations with no assertion behind them, not soft
   failures — the ledger's API makes a row either an assertion (PASS/FAIL
   only) or an observation (INFO only), so no failure can land as INFO; each
@@ -30,7 +30,8 @@ configuration — not the source tree's idea of them.
   reported 129 rows, 123 / 6 / 0. The differences are the A11.5 oracle
   change above; new rows — A3.13 (the collateral-drawdown liquidation §2.4
   now drives), exact settlement ledgers for every fund-moving step (the
-  `…b` rows), and two new observations (A1.3b, A9.11b); and four rows that recorded a deployment's CONFIGURED value as a PASS and
+  `…b` rows), a new observation (A1.3b), and A9.11b — an observation first,
+  now asserted against the spec (§3B); and four rows that recorded a deployment's CONFIGURED value as a PASS and
   now observe it instead (§7). The re-run also found three defects in the
   HARNESS that the hardhat node had hidden — see
   [§0](#0-re-run-on-anvil-and-three-harness-defects-it-exposed).
@@ -233,11 +234,29 @@ A10.6c), and the rental's expected split is derived from the pre-close
 record. Four checks beyond
 that scope are recorded as follow-ups in **#2332** rather than widening this
 document: position-NFT metadata and the reverse index, position locks while a
-sale or offset link is live, the size of a periodic settlement's sale (the
-spec does not define its buffer — an owner question), and whether interest a
-periodic settlement booked is credited when the loan later closes. The stamps are themselves asserted equal to
+sale or offset link is live, the size of a periodic settlement's sale, and
+whether interest a periodic settlement booked is credited when the loan later
+closes. (The sale size has since been asserted — see the next paragraph.) The stamps are themselves asserted equal to
 the live configuration at origination (A2.3–A2.5), and the admission floor
 against the spec's governed range [1.2, 2.0] (A1.1).
+
+**Past the cap, the owner directed root fixes rather than another per-row
+patch**, and the sixteenth round's five findings were traced to three causes.
+The venue: sales passed a hard-coded adapter index, so a deployment that
+registered the mock venue at a different slot would have reported every sale
+as a protocol failure; the runner now looks the mock venue up in the live
+adapter list and every sale uses that route, and a deployment without it is
+declared out of envelope. The posture: the runner now reads the deployment's
+sanctions and KYC posture before it does anything, and a deployment with KYC
+armed is normalized to the retail posture on the fork only — said in the run
+log — while A1.2 and A5.1 report the deployment's own values rather than the
+fork's normalized one (an explicit `FORK_ADMIN` can name the admin to act
+through). And two rows assumed an outcome the spec leaves to the numbers:
+the drawdown liquidation's claims now follow the waterfall computed from the
+spec (a borrower residual or not), and the periodic sale size, which the spec
+does fix — the shortfall's collateral equivalent plus the configured
+max-slippage buffer — is asserted to the wei (A9.11) together with where the
+buffer lands (A9.11b).
 
 A fifth pass took the same question to the rows that still asserted part of
 a step: every claim is now checked on BOTH legs (the vault it leaves and the
@@ -665,10 +684,17 @@ and put back afterwards (confirmed `false` after the run):
   refuses to stamp it closed without a route
   (`PeriodicSettleSwapPathRequired`). With a route, a permissionless settler
   sold 0.2178 tLIQ (435.62 tLIQ2): lender 413.84, settler 13.07 (3%),
-  treasury 8.71 (2%), and the loan stayed **Active**. The lender received
-  about 0.7% *more* than the 410.96 due — consistent with the sale being
-  sized to cover the bonus and fee with a small margin, but this run does not
-  assert the sizing rule. A second settle of the same period is refused.
+  treasury 8.71 (2%), and the loan stayed **Active**. The sale size is
+  asserted against the spec, which sells "only enough collateral to cover
+  the shortfall plus configured buffers" with the configured max
+  liquidation slippage as "the single shared lever": the shortfall's
+  collateral equivalent at the oracle, grossed up by that lever (300 bps
+  here), capped at the pledged collateral — 0.2178 to the wei (A9.11). The
+  lender therefore received 2.88 *more* than the 410.96 due, and that
+  buffer is not lost to the borrower: the whole receipt is booked as
+  interest settled (A9.11b), which the spec's forced-close rule credits
+  against accrued interest so it is never charged twice. A second settle of
+  the same period is refused.
 - **A period the borrower pays voluntarily closes itself.** A partial
   repayment charges ALL interest accrued to that moment, then retires the
   principal amount named — so a borrower paying a period names the smallest
@@ -925,7 +951,7 @@ regenerated as `contracts/script/fork-scenarios/last-run.json` on every run
 | A10.* | `10-nft-rental.mjs` | ERC-721 rental against the spec's custody-vs-use model, early close, claims |
 | A11.* | `11-swap-to-repay.mjs` | repaying from collateral: authority, the cap, full and partial modes |
 
-The ten `INFO` rows, each an observation with no assertion behind it:
+The nine `INFO` rows, each an observation with no assertion behind it:
 
 - **Deployment configuration** — the sanctions oracle and KYC posture (A1.2,
   A5.1), the treasury topology (A1.3 — it was an assertion that the treasury
@@ -944,11 +970,6 @@ The ten `INFO` rows, each an observation with no assertion behind it:
   refusal beside it is asserted, A5.9). The feed-only reprice flip (A3.10,
   §2.4) was an observation until its probe was derived from the live
   consistency band; it is now asserted.
-- **Something the spec does not pin down** — how much the lender receives
-  above the period's shortfall after a periodic auto-settlement (A9.11b:
-  2.88 on a 410.96 period). The spec says the sale covers "the shortfall plus
-  configured buffers" and does not say who keeps the buffer, so the amount is
-  surfaced for an owner reading rather than certified.
 - **Shapes worth writing down** — the offset vehicle's offer type (A7.2b,
   §3A.3; its mirror, the sale vehicle, is asserted as A8.1). The two
   post-claim NFT readbacks (A2.16, §1.4) were observations until the fifth

@@ -84,8 +84,13 @@ rather than quietly downgraded. The connected app never offers a cadence, so
 nothing is hidden from users behind the flag. Armed on the fork only and then
 restored, the feature proved strict about admission — on this deployment a
 monthly cadence needs a principal of at least one hundred thousand in the
-numeraire — and it closes an unpaid period by selling just enough collateral,
-with a settler bonus and treasury fee, while the loan stays open. A period the
+numeraire — and it closes an unpaid period by selling collateral while the
+loan stays open, sized exactly as the specification sets it: the shortfall's
+worth at the oracle, plus the configured maximum-slippage allowance as a
+buffer. The settler bonus and treasury fee come out of the proceeds, and the
+lender keeps the rest — slightly more than the period's shortfall — with all
+of it recorded as interest already paid, so the borrower is not charged for
+it again. A period the
 borrower pays voluntarily is closed by that payment itself — and because a
 partial repayment charges all interest accrued to that moment, paying on the
 day after the period ends costs that extra day's interest too.
@@ -169,11 +174,7 @@ move money on an open position — the obligation handover, both kinds of
 lender sale, and the periodic interest settlement — now check every balance
 change against the amount the specification's own formula gives, so an
 unexpected transfer fails as surely as a wrong one; all of them reconcile to
-the smallest unit. One thing the specification leaves open is surfaced
-rather than certified: after an automatic periodic settlement the lender
-receives slightly more than the period's shortfall, because the collateral
-sale is sized with a buffer and the specification does not say who keeps it.
-Every refusal the walkthrough checks is now checked by the error's name, so a
+the smallest unit. Every refusal the walkthrough checks is now checked by the error's name, so a
 guard that disappears cannot hide behind an unrelated later refusal, and
 every step that moves money — from the first offer to the last claim, across
 the early exits, the refinance, the offset and the rental — now reconciles
@@ -196,8 +197,12 @@ naming the setting, on a deployment outside it, instead of reporting a
 protocol failure. After every step the whole position is checked — every field
 of the loan record, both position NFTs and their holders, and the collateral
 lien — not just the field the step is named for. What a run verifies is
-declared in the driver's README, and four checks beyond it are tracked as a
-follow-up (#2332). The re-run records two hundred and six passes,
-ten observations and one failure —
+declared in the driver's README, and the checks beyond it are tracked as a
+follow-up (#2332). Every sale routes through the swap venue at the position
+the live deployment lists it, and the deployment's own sanctions and KYC
+settings are recorded before the run; if a deployment has KYC switched on,
+the runner switches it off on the fork only, and says so, so the scenarios
+run on the retail setup they were written for. The re-run records two
+hundred and seven passes, nine observations and one failure —
 the swap-to-repay check whose expectation was deliberately corrected — with
 no scenario file aborted.

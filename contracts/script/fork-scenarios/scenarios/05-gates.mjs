@@ -7,7 +7,7 @@
  * requirement, and the loan it produces reports NO health factor rather than
  * inventing one from a price it does not have.
  */
-import { ADMIN, DIAMOND, ERC20, MOCKS, OWNER, borrower, f18, lender, outsider, parseUnits, pub, rpc, tx } from '../lib/chain.mjs';
+import { ADMIN, DIAMOND, ERC20, MOCKS, OWNER, POSTURE, VENUE_ROUTE, borrower, f18, lender, outsider, parseUnits, pub, rpc, tx } from '../lib/chain.mjs';
 import { ABIS, approveDiamond, acceptOffer, createOffer, mint, offerParams, read } from '../lib/flow.mjs';
 import { sendAs, warpDays } from '../lib/impersonate.mjs';
 import { simulate } from '../lib/errors.mjs';
@@ -24,30 +24,35 @@ export async function run() {
   // The sanctions oracle's setter is gated on Diamond OWNERSHIP and KYC
   // enforcement on ADMIN_ROLE, which a deployment may give to different
   // addresses — each is sent through its own live holder.
-  // Capture the deployment's OWN posture for both gates, then start from the
-  // retail posture (no oracle, KYC dormant) whatever the deployment set — the
-  // fixture's loan and the dormant-KYC row need it — exactly as A9 does for
-  // its switch. Both are put back to the CAPTURED values afterwards, even on
-  // an abort: the runner's snapshot revert also restores them, and this makes
-  // the file correct on its own.
+  // Capture the FORK's current posture for both gates (the deployment's own
+  // values are in POSTURE — the runner read them before normalizing), then
+  // start from the retail posture (no oracle, KYC dormant) whatever is set —
+  // the fixture's loan and the dormant-KYC row need it — exactly as A9 does
+  // for its switch. Both are put back to the captured values afterwards, even
+  // on an abort: the runner's snapshot revert also restores them, and this
+  // makes the file correct on its own.
   const initialOracle = await read(ABIS.profile, 'getSanctionsOracle');
   const initialKyc = await read(ABIS.admin, 'isKYCEnforcementEnabled');
   try {
     if (initialKyc) await sendAs(ADMIN, { address: DIAMOND, abi: ABIS.admin, functionName: 'setKYCEnforcement', args: [false] });
     if (initialOracle !== UNSET) await sendAs(OWNER, { address: DIAMOND, abi: ABIS.profile, functionName: 'setSanctionsOracle', args: [UNSET] });
-    await runGates(initialOracle, initialKyc);
+    await runGates();
   } finally {
     await sendAs(OWNER, { address: DIAMOND, abi: ABIS.profile, functionName: 'setSanctionsOracle', args: [initialOracle] });
     await sendAs(ADMIN, { address: DIAMOND, abi: ABIS.admin, functionName: 'setKYCEnforcement', args: [initialKyc] });
   }
 }
 
-async function runGates(initial, initialKyc) {
+async function runGates() {
   // ------------------------------------------------------------ sanctions
   // Configuration, not a protocol property: retail is meant to wire an
   // oracle once one exists on-chain, so the starting value is observed.
-  observe('A5.1', 'the deployment\'s own gate posture, before the scenario normalizes it (oracle unset = the documented fail-open window)',
-    `getSanctionsOracle=${initial}${initial === UNSET ? ' (unset)' : ''} isKYCEnforcementEnabled=${initialKyc}`);
+  // Reported from POSTURE — the values the runner read before it normalized
+  // the fork — because by now the runner may already have disarmed KYC, and
+  // a live read here would report the fork's normalized value as the
+  // deployment's.
+  observe('A5.1', 'the deployment\'s own gate posture, read before the run normalizes it (oracle unset = the documented fail-open window)',
+    `getSanctionsOracle=${POSTURE.sanctionsOracle}${POSTURE.sanctionsOracle === UNSET ? ' (unset)' : ''} isKYCEnforcementEnabled=${POSTURE.kycEnforced}`);
 
   // Open a loan BEFORE arming, so the Tier-2 close-out paths have something
   // to act on while the flag is live.
@@ -77,7 +82,7 @@ async function runGates(initial, initialKyc) {
   const loan = await read(ABIS.loan, 'getLoanDetails', [loanId]);
   const graceSeconds = Number(await read(ABIS.config, 'getEffectiveGraceSeconds', [loanId]));
   await warpDays(Number(loan.durationDays) + graceSeconds / 86_400 + 1);
-  const tier2Default = await simulate(DIAMOND, ABIS.defaulted, 'triggerDefault', [loanId, [{ adapterIdx: 0n, data: '0x' }]], outsider.address);
+  const tier2Default = await simulate(DIAMOND, ABIS.defaulted, 'triggerDefault', [loanId, VENUE_ROUTE], outsider.address);
   check('A5.5b', 'Tier-2 triggerDefault stays OPEN under a blanket flag — a flagged caller can still force-close a defaulted loan',
     tier2Default.ok, tier2Default.ok ? 'simulates clean, past term + grace' : tier2Default.name);
 

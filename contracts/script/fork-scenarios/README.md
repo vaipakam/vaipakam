@@ -121,12 +121,22 @@ follow.
 ## What it may and may not do to the fork
 
 It uses the fork node's own cheatcodes — time warp, `setBalance`,
-impersonation, `setCode` — and nothing else. Three of those are unavoidable
-and worth naming:
+impersonation, `setCode` — and nothing else. What it does with them, and the
+live values it binds to rather than assuming, are worth naming:
 
 - **Impersonating the Diamond admin**, to arm the sanctions oracle and to
   flip KYC enforcement. Both are admin-only by design; there is no other way
-  to observe what those gates do when they bite.
+  to observe what those gates do when they bite. The admin is whoever holds
+  `ADMIN_ROLE` on the live Diamond — the owner, then the artifact's admin,
+  are tried in turn — and `FORK_ADMIN=0x…` names one explicitly when neither
+  holds it. The sanctions oracle's setter is owner-gated and goes through the
+  live owner.
+- **Normalizing the fork to the retail posture.** Before any scenario runs,
+  the runner reads the deployment's own sanctions and KYC posture (A1.2 and
+  A5.1 report those values). If the deployment has KYC enforcement armed,
+  the runner disarms it **on the fork only**, and says so in the run log:
+  freshly generated actors are unverified, so every loan above the threshold
+  would otherwise be refused. A5 still arms KYC itself to test the gate.
 - **Impersonating the testnet mocks' deployer**, to reprice a faucet feed,
   its mock v3 pool, or the mock swap venue. To rehearse a PRICE MOVE use
   `repriceFaucetAsset`, which moves the feed and the pool's spot together:
@@ -136,6 +146,11 @@ and worth naming:
   shallow for the trade, and was first misdiagnosed that way (#2314). Those setters are owner-gated *on purpose* — a public
   testnet's HF and liquidation demos must not be repriceable by a passer-by —
   so the harness has to step into that role rather than around it.
+- **The live swap route.** Every sale — default, liquidation, periodic
+  settlement, swap-to-repay — routes through the deployment's mock swap
+  venue at the index the live Diamond lists it under (`VENUE_ROUTE`), never
+  a hard-coded slot. A deployment that does not register the mock venue is
+  out of envelope and the run stops, naming it.
 - **`setCode` for a stub sanctions oracle**, because this driver has no
   Solidity compiler. The stub is a ten-byte runtime that answers `true` to
   everything; the Diamond itself is never patched.
@@ -178,9 +193,8 @@ position check compares against a snapshot taken BEFORE that step.
 
 **Not verified, and tracked in #2332**: position-NFT metadata and the
 reverse position index; position locks while a sale or offset link is live;
-the SIZE of a periodic auto-settlement's collateral sale (the spec does not
-define its buffer — an owner question); and whether interest booked by a
-periodic settlement is credited when that loan later closes. A finding in one
+and whether interest booked by a periodic settlement is credited when that
+loan later closes. A finding in one
 of those is a follow-up for #2332, not a gap in what a run claims.
 
 ## Adding a scenario

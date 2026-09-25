@@ -13,8 +13,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CHAIN_SLUG, DIAMOND, MOCKS, RPC_URL, TREASURY, WETH, fundActors, pub, resolveLive, rpc } from './lib/chain.mjs';
+import { ADMIN, CHAIN_SLUG, DIAMOND, MOCKS, POSTURE, RPC_URL, TREASURY, VENUE_ROUTE, WETH, fundActors, pub, resolveLive, rpc } from './lib/chain.mjs';
 import { ledger, mark, summarise, takeSince } from './lib/report.mjs';
+import { sendAs } from './lib/impersonate.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const wanted = process.argv.slice(2);
@@ -85,6 +86,22 @@ await resolveLive();
 if (TREASURY.toLowerCase() === DIAMOND.toLowerCase()) {
   console.error(`OUT OF ENVELOPE — treasury topology: the live treasury IS the Diamond (${DIAMOND}); these ledgers are written for an external treasury. Nothing was run.`);
   process.exit(1);
+}
+// The mock venue must be registered with the live Diamond for any sale to
+// route through it; if governance removed it, the run cannot exercise a sale.
+if (!VENUE_ROUTE) {
+  console.error(`OUT OF ENVELOPE — swap venue: the mock swap adapter ${MOCKS.mockSwapAdapter} is not in the Diamond's live adapter list. Nothing was run.`);
+  process.exit(1);
+}
+// The run executes against the RETAIL POSTURE the scenarios are written for:
+// if this deployment has KYC enforcement armed, freshly generated actors are
+// unverified and every loan above the threshold would be refused. So the
+// runner disarms it ON THE FORK ONLY (the live deployment is untouched),
+// says so here, and the posture rows report the deployment's own value
+// (POSTURE, captured before this). A5 still arms KYC itself to test the gate.
+if (POSTURE.kycEnforced) {
+  await sendAs(ADMIN, { address: DIAMOND, abi: [{ type: 'function', name: 'setKYCEnforcement', inputs: [{ type: 'bool' }], outputs: [], stateMutability: 'nonpayable' }], functionName: 'setKYCEnforcement', args: [false] });
+  console.log('NOTE — this deployment has KYC enforcement ARMED; the runner disarmed it on the fork only, so the scenarios run on the retail posture. A1.2 / A5.1 report the deployment\'s own value.');
 }
 await fundActors();
 console.log(`fork ${RPC_URL} | chain ${CHAIN_SLUG} | diamond ${DIAMOND} | forked at block ${forkBlock ?? 'unknown'} | now ${await pub.getBlockNumber()}\n`);

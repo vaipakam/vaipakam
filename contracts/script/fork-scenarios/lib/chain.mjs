@@ -71,6 +71,14 @@ export let ADMIN = null;
 // setters gated on ownership (e.g. the sanctions oracle) act through OWNER,
 // role-gated ones through ADMIN. Both are read from the live Diamond.
 export let OWNER = null;
+// The mock swap venue's CURRENT position in the governed adapter list, read
+// from the live Diamond — governance may reorder or remove adapters, so a
+// hard-coded index 0 could route a scenario through a different venue.
+export let VENUE_ROUTE = null;
+// The deployment's OWN gate posture, captured before the runner normalizes
+// anything, so the rows that report posture report the deployment's, not the
+// fork's normalized one.
+export let POSTURE = null;
 const view = (name, inputs, output) => ({ type: 'function', name, inputs: inputs.map((type) => ({ type })), outputs: [{ type: output }], stateMutability: 'view' });
 const ADMIN_ROLE = keccak256(toBytes('ADMIN_ROLE'));
 export async function resolveLive() {
@@ -83,10 +91,27 @@ export async function resolveLive() {
   // reads like a product defect.
   const owner = await readD(view('owner', [], 'address'));
   OWNER = owner;
-  for (const candidate of [owner, ARTIFACT_ADMIN]) {
-    if (candidate && (await readD(view('hasRole', ['bytes32', 'address'], 'bool'), [ADMIN_ROLE, candidate]))) { ADMIN = candidate; return; }
+  // ADMIN_ROLE can be granted to any address, and role membership is not
+  // enumerable on-chain, so the candidates are the Diamond owner, the
+  // artifact's admin, and an operator-supplied FORK_ADMIN override — each
+  // VERIFIED against the live Diamond, none trusted as given.
+  const override = process.env.FORK_ADMIN || null;
+  const hasAdmin = (a) => readD(view('hasRole', ['bytes32', 'address'], 'bool'), [ADMIN_ROLE, a]);
+  ADMIN = null;
+  for (const candidate of [override, owner, ARTIFACT_ADMIN]) {
+    if (candidate && (await hasAdmin(candidate))) { ADMIN = candidate; break; }
   }
-  throw new Error(`no ADMIN_ROLE holder found: neither the Diamond owner ${owner} nor the artifact admin ${ARTIFACT_ADMIN} holds it — the deployment artifact has drifted from the live Diamond`);
+  if (!ADMIN) {
+    throw new Error(`no ADMIN_ROLE holder found among the Diamond owner ${owner}, the artifact admin ${ARTIFACT_ADMIN}` +
+      `${override ? ` and FORK_ADMIN=${override}` : ''} — set FORK_ADMIN to the live holder (it is verified with hasRole before use)`);
+  }
+  const adapters = await readD(view('getSwapAdapters', [], 'address[]'));
+  const idx = adapters.findIndex((a) => MOCKS.mockSwapAdapter && a.toLowerCase() === MOCKS.mockSwapAdapter.toLowerCase());
+  VENUE_ROUTE = idx < 0 ? null : [{ adapterIdx: BigInt(idx), data: '0x' }];
+  POSTURE = {
+    kycEnforced: await readD(view('isKYCEnforcementEnabled', [], 'bool')),
+    sanctionsOracle: await readD(view('getSanctionsOracle', [], 'address')),
+  };
 }
 
 // Fresh keys every run, NOT the published test-mnemonic accounts a fork node

@@ -5,7 +5,7 @@
  * and health-factor knobs read back at their documented values) before any
  * later scenario relies on them.
  */
-import { ADMIN, ARTIFACT_ADMIN, OWNER, ARTIFACT_TREASURY, DIAMOND, MOCKS, TREASURY, borrower, f18, lender, pub } from '../lib/chain.mjs';
+import { ADMIN, ARTIFACT_ADMIN, OWNER, ARTIFACT_TREASURY, DIAMOND, MOCKS, POSTURE, TREASURY, borrower, f18, lender, pub } from '../lib/chain.mjs';
 import { ABIS, read, vaultAddressFor } from '../lib/flow.mjs';
 import { simulate } from '../lib/errors.mjs';
 import { check, expectEq, observe, expectRefusal } from '../lib/report.mjs';
@@ -22,11 +22,13 @@ export async function run() {
   // exists on-chain, and this testnet has not. So it is observed, with the
   // values, rather than certified — a later deploy that wires the oracle must
   // not keep reporting a green "unset".
-  const oracle = await read(ABIS.profile, 'getSanctionsOracle');
-  const kycShortCircuits = await read(ABIS.profile, 'isKYCVerified', [borrower.address]);
-  observe('A1.2', 'operational posture: sanctions oracle and KYC enforcement',
+  // POSTURE is read by the runner BEFORE it normalizes the fork to the retail
+  // posture (it disarms KYC on the fork if the deployment armed it), so this
+  // row reports the DEPLOYMENT'S value, not the fork's normalized one.
+  const oracle = POSTURE.sanctionsOracle;
+  observe('A1.2', 'operational posture: sanctions oracle and KYC enforcement (the deployment\'s own values, read before the runner normalizes the fork)',
     `sanctionsOracle=${oracle}${/^0x0{40}$/i.test(oracle) ? ' (unset)' : ''} ` +
-    `isKYCVerified(fresh wallet)=${kycShortCircuits}${kycShortCircuits ? ' (enforcement dormant)' : ' (enforcement ARMED)'}`);
+    `isKYCEnforcementEnabled=${POSTURE.kycEnforced}${POSTURE.kycEnforced ? ' (ARMED on the deployment; disarmed on the fork for this run)' : ' (dormant)'}`);
 
   // Topology is configuration: Diamond-as-treasury is a supported mode. The
   // runner refuses to run the ledgers on it (they are written for an external
