@@ -16,6 +16,42 @@ PRs landing the same day never append-conflict.
    developer/operator reader. **No code snippets.** Match the tone of the
    committed `ReleaseNotes-<date>.md` files.
 3. Commit it as part of the PR.
+4. **Once GitHub has assigned the PR number, put it in the heading.** The
+   template ships `(PR #<n>)` as a placeholder, and assembly refuses a
+   fragment that still carries one. Nothing after assembly looks at the
+   heading again, so a placeholder that gets past it stays in the published
+   notes.
+
+   **What assembly checks.** It reads **one line**: the fragment's first
+   line of content, after any blank lines. Nothing below that line is
+   examined. The run stops — naming the file, publishing nothing and
+   deleting nothing — when that line:
+
+   - **is not a `#` heading.** This is an allow-list: a title underlined
+     with `=` or `-`, raw HTML such as `<h1>`, a list, prose, a file saved
+     with a byte-order mark or in UTF-16 — anything that is not an ATX
+     heading is refused. A fragment that opens with `---` gets its own
+     message, because front matter becomes a thematic break once folded.
+   - **opens at `#` rather than `##`.** It would land in the dated file as a
+     second document title instead of a section of the release.
+   - **carries a `PR #…` reference that is not a plain number**, including
+     the template's placeholder. `(PR #2290)` and `(PR #2290, issue #99)`
+     pass; `PR #2290:` and `PR #2290—follow-up` do not, because the colon
+     and the dash are part of the token. Put the reference in its own
+     parentheses, or leave a space after it.
+
+   **What it does not refuse:**
+
+   - a heading with **no** PR reference;
+   - a heading at **`###` or deeper** — but it prints a warning naming the
+     file. A deeper heading becomes a subsection of whatever shallower
+     heading precedes it in the finished file, which depends on the fragments
+     folded ahead of yours and cannot be known when you write it. Open at
+     `##`.
+
+   Why each line is drawn where it is — and the counts behind it — is in the
+   `check_heading_conformance` docstring in [`assemble.py`](../assemble.py),
+   and deliberately not repeated here.
 
 `README.md` and `_TEMPLATE.md` are ignored by the assembler — every
 other `*.md` here is a pending fragment.
@@ -168,7 +204,11 @@ timer. The error prints the exact command — `rmdir <path>` — and it is
 safe to run once you know no other assembly is in progress.
 
 **Leave the markers in place** when editing the assembled notes.
-Deleting one makes a re-run duplicate that fragment.
+Deleting one leaves the file unable to say that fragment was folded in.
+A re-run that finds it pending again stops and asks — provided the
+section's heading is unchanged, since that heading is all it has left to
+match on (#2298). If the heading was edited too, the re-run publishes the
+fragment a second time without asking.
 
 **And do not delete the section a marker sits under** while leaving the
 marker itself. That is the inverse mistake, and it used to be the
@@ -184,10 +224,14 @@ and work out what happened.
 Editing a section's WORDING is fine and expected — that is what the
 review-and-add-an-intro step is for. What the check objects to is a
 section that is no longer there at all, or one edited before its
-fragment was consumed, which are the two shapes that lose text. If a dated file has
-no markers at all (it predates them) and already contains a pending
-fragment's heading, the script stops and asks rather than guessing —
-`--force-append` overrides it once you have checked (#1788).
+fragment was consumed, which are the two shapes that lose text. If a
+dated file already contains a pending fragment's heading and records no
+marker for that fragment — usually because the section predates markers,
+even in a file that has gained some since — the script stops and asks
+rather than guessing. It does the same when the file cannot be read as
+UTF-8 text, since a section in another encoding could hold the fragment
+unseen. `--force-append` overrides either once you have checked (#1788,
+#2312, #2315).
 
 ### The date is the fragment's UTC merge day
 

@@ -492,9 +492,41 @@ the tariff, so launch absorption is never single-channel:
    already recommends) so the slash-absorption class isn't blocked on an
    unscheduled prerequisite.
 
+   > **SUPERSEDED on the BUILD gate, 2026-09-24 — the ACTIVATION gate
+   > stands.** The glance was taken and is DISCHARGED for the no-yield
+   > refundable-deposit shape, so the mechanism is no longer behind an
+   > unscheduled prerequisite and may be built, reviewed and merged. SHIPPING
+   > is a separate gate the legal move does not answer: the bonds note requires
+   > #1566's delivered-custody holder with reward payouts debiting that holder
+   > EXCLUSIVELY first, because until then reward backing counts every VPFI
+   > outside the recycle bucket and a Diamond-held deposit is available to pay
+   > reward claimants. What is NOT discharged legally is fork C's
+   > NON-REFUNDABLE arming fee, a
+   > separate legal shape. Its gate is a DISJUNCTION, and reading only the
+   > first half invents a blocker: the fee stays at zero until **either** its
+   > own bounded legal glance **or** an explicit recorded owner approval of the
+   > fee shape is on record. Until one of the two is, the permanent-absorption
+   > channel this item was scheduling cannot be counted as live.
+   >
+   > Two corrections to the sentence above while we are here. There is no
+   > **slash**-absorption class: slashing collapsed in the bonds note's own
+   > review, neither selectable fork carries it, and C's arming fee is the
+   > permanent path — read it as the **arming-fee** channel. And the
+   > prerequisite this item worried about was the glance being unscheduled,
+   > which is answered; the fee's activation gate is a different thing and is
+   > still ahead. See
+   > [`VpfiServiceBondsDesign.md`](VpfiServiceBondsDesign.md)'s status header,
+   > which is the authoritative gate.
+
 With RL-1 filling vaults at the distribution end, these three plus the Full
-tariff give four independent absorption channels within one release cycle of
-each other — the flywheel stops depending on any single attach rate.
+tariff were scheduled as four independent absorption channels within one
+release cycle of each other — the flywheel no longer depending on any single
+attach rate. **Count three, not four, until the arming fee is armed** (marker
+above, 2026-09-24): the bond channel's permanent absorption is the fee, the
+fee stays at zero until its own gate is satisfied on EITHER branch — the
+bounded legal glance or a recorded owner approval of the fee shape — and
+neither has a schedule. A zero fee absorbs nothing, so planning that counts it is planning
+against a channel that is shipped but inert.
 
 ### RL-6 — Legal evidence pack + copy rules — ADOPT (docs only)
 

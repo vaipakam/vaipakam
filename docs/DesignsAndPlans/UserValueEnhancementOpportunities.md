@@ -316,8 +316,8 @@ reintroduces hold-to-earn.
 | **S-1 Fee payment in VPFI** | The borrower VPFI-LIF custody path (spec §6b) already deducts full LIF in VPFI into Diamond custody; notification fees are already VPFI-billed. Extend the same "pay protocol services in VPFI" pattern to other service fees. | Temporal (custody) + permanent (treasury share / forfeiture) | Mostly already specified; activation is gated on the peg posture — E-1 (lender-discount decoupling) creates hold-demand even while the peg is unset |
 | **S-2 Consumable perks priced in VPFI** | E-2's perks (priority solver routing, higher auto-lifecycle limits, listing visibility boosts, reduced notification pricing) purchased by *spending* VPFI, not just by holding it. | Permanent (spent to treasury) | Pure fee-for-service; near-zero legal surface |
 | **S-3 Hold-for-tier demand** | Fee-discount tiers with time-weighted accumulator + min-history gates (existing spec §6/6a). | Temporal (vaulted) | Already built; E-1 makes it live day-one |
-| **S-4 Service bonds (work-token)** | Solvers / matchers / keepers post a VPFI **security deposit** to access higher rate limits, priority match windows, or larger intent batches; slashed on misbehaviour (slash → treasury, recycled like any other treasury VPFI receipt). | Temporal (escrow) + permanent (slash) | A performance bond, not an investment: no yield is ever paid on the bond. Legal-glance required but the shape is a deposit, not a return |
-| **S-5 Recycle-first rule (supersedes an earlier burn proposal — owner decision 2026-07-13)** | 100% of the VPFI the treasury receives from fees / forfeitures / slashes routes to the reward-emissions and keeper-reward budgets (§5.2). **No burn.** | Permanent absorption into the reward loop | See "Why recycle instead of burn" below |
+| **S-4 Service bonds (work-token)** | Solvers / matchers / keepers post VPFI to access **capacity** only, and the authoritative role table is the CLOSED list of what that means: larger **match-batch** sizes for a solver / matcher, higher **per-pass action counts** for a keeper's granted action roles. Nothing else is a bond entitlement — in particular **priority windows** are E-2's spend-gated perk with their own flat VPFI fee, and **intent batch sizes** are E-2's hold-gated perk, so a bond neither gates nor grants either. Repeating a perk here would let an implementation demand a bond ON TOP of its own gate, or hand the perk out for bonding alone. Bond buys capacity; the perk catalog gates perks. **MECHANISM SUPERSEDED 2026-09-24** — review settled on a **non-slashable capacity deposit**: nothing is confiscated for misbehaviour, because no slash predicate cleared the objectivity bar. **Fork C is the ratified mechanism** (owner, 2026-09-07): a refundable deposit plus a separate non-refundable arming fee, which is the permanent sink the owner chose it to preserve. Fork A — a refundable deposit only, and so no permanent sink at all — was the alternative on offer and was NOT selected; it is retained here as history, not as a current option. Neither carries a slash. **This row is a POINTER, not a specification, and it is not exhaustive** — [`VpfiServiceBondsDesign.md`](VpfiServiceBondsDesign.md) is authoritative on every term, and any conflict is resolved there and not here. Read its **status header and owner-decisions section first** — those carry the current record, and the header says outright that it supersedes stale wording further down. The role table is what a bond unlocks. "Shape rules (the legal spine)" carries the deposit rules but PREDATES the unbond ratification and still calls that selection pending; the owner decision is **option (i), immediate withdrawal**, with the delayed machinery kept only for a future predicate-enabled tier reachable by affirmative per-operator enrolment. Six review rounds on this one row each found another qualifier a summary had dropped, which is the argument for pointing rather than restating. | Temporal (deposit held while active) + permanent (fork C's arming fee only, amount UNSET — **no slash sink**) | NOT a performance bond, and that word must not be used for it: a deposit, with no yield ever paid on it, returned on exit **subject to the sanctions gate** — a flagged wallet's principal is PARKED and stays frozen until delisting, while an oracle outage DEFERS every release instead of permitting it — latency, not a lock: a clean operator's refused withdrawal succeeds on the first authoritative clean read after recovery, and nothing is queued for later processing in the meantime. So this is not an unconditional promise of immediate access. Fork C's arming fee is ratified as a SHAPE only: governance sets the figure within a positive code-enforced floor, **no value is set**, and the fee may not be armed until the fee-shape gate is satisfied. **While it is unarmed the deposit half is not open for business either** — the design closes fee-free arming by omission, either by requiring the floor and the active fee to both be positive or by defining zero as DARK with posting and raising refused. Accepting deposits at a zero fee would silently operate fork A, the alternative the owner did not select. The legal glance is discharged for the deposit shape; only a non-zero arming fee still waits, and on EITHER branch of its gate — that fee's own glance or a recorded owner approval of the fee shape |
+| **S-5 Recycle-first rule (supersedes an earlier burn proposal — owner decision 2026-07-13)** | 100% of the VPFI the treasury receives from fees and forfeitures — there are no slash receipts, per the superseded S-4 mechanism above — routes to the reward-emissions and keeper-reward budgets (§5.2). **No burn.** | Permanent absorption into the reward loop | See "Why recycle instead of burn" below |
 
 **Why recycle instead of burn (owner decision 2026-07-13).** An earlier draft
 proposed burning a slice of treasury VPFI receipts. The owner's challenge —
@@ -354,8 +354,8 @@ system into a loop:
 interaction rewards (emission)
         │ distributed to users
         ▼
-users SPEND (S-1/S-2), BOND (S-4), or HOLD (S-3)
-        │ treasury share / forfeitures / slashes
+users SPEND (S-1/S-2), DEPOSIT (S-4), or HOLD (S-3)
+        │ treasury share / forfeitures / fork C's arming fee
         ▼
 treasury VPFI receipts (100% recycled — S-5 rule)
         │
@@ -394,6 +394,25 @@ making price-flavoured claims.
 posture), S-2 rides E-2, R-1 is a contracts task on already-specified storage;
 S-4 is the one new design surface — it gets its own short design note and a
 legal glance before build.
+
+> **SUPERSEDED on the gate, 2026-09-24** — the glance landed and moved. It is
+> DISCHARGED for the no-yield refundable-deposit shape (owner, recorded in
+> [`VpfiServiceBondsDesign.md`](VpfiServiceBondsDesign.md)), which covers fork
+> A entirely and fork C's deposit half; what it does not reach is C's
+> NON-REFUNDABLE arming fee, a different legal shape. And the residue gates
+> **arming that fee, not building the mechanism**: C may be built, reviewed and
+> merged, and only a non-zero fee waits on the fee-shape gate — which is a
+> DISJUNCTION: that fee's own bounded legal glance, **or** an explicit
+> recorded owner approval of the fee shape. Either satisfies it.
+>
+> DEPLOYMENT is a separate question and the legal gate moving does not answer
+> it. The bonds note carries a **shipping prerequisite** that is not legal at
+> all: #1566's delivered-custody holder, with reward payouts debiting that
+> holder EXCLUSIVELY. Until those slices are live, reward backing counts every
+> VPFI outside the recycle bucket, so a refundable deposit sitting in the
+> Diamond is available for transfer to reward claimants — someone else's
+> principal paying someone else's reward. Bonds cannot ship before that.
+> Read the sequencing above as history; the bonds note carries both live gates.
 
 ---
 

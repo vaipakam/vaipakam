@@ -73,7 +73,7 @@ const R2_BUCKET = 'vaipakam-legal-vault';
  * this constant against the single declaration in
  * `apps/indexer/wrangler.jsonc` (#1537 r6).
  */
-const ARCHIVE_DATABASE = 'vaipakam-archive';
+const ARCHIVE_DATABASE = 'vaipakam-warm';
 
 // SQL identifiers come out of the archive too, so they are untrusted
 // input like everything else in it.

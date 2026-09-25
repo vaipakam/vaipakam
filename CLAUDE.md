@@ -531,8 +531,8 @@ arg counts on `LoanRepaid`/`LoanDefaulted`) can't recur silently.
 ## Cloudflare D1 schema discipline
 
 The three plain Workers (`apps/indexer`, `apps/keeper`, `apps/agent`)
-all bind to **one shared D1 database** — `vaipakam-archive`
-(database_id `3cffebf5-b652-4da7-953c-9e1d143ad2fe`), the **staging**
+all bind to **one shared D1 database** — `vaipakam-warm`
+(database_id `e5e927cf-56c3-42c7-9820-179a235cc84f`), the **staging**
 database the Cloudflare staging deploy uses (see
 [`docs/DesignsAndPlans/CloudflareStagingDeployPlan.md`](docs/DesignsAndPlans/CloudflareStagingDeployPlan.md)
 §3 for the staging-vs-primary split). The schema is **owned by
@@ -545,7 +545,7 @@ read and write a subset of the shared tables via the same binding
 **Rule**: every schema change — even for a table only `keeper` or
 `agent` writes — lands as a new file under
 `apps/indexer/migrations/NNNN_<slug>.sql`. Apply with
-`wrangler d1 migrations apply vaipakam-archive --remote` from inside
+`wrangler d1 migrations apply vaipakam-warm --remote` from inside
 `apps/indexer/`. Never `wrangler d1 execute --command "CREATE TABLE..."`
 directly on the deployed db: that diverges the migrations record from
 the live schema and breaks fresh-environment bootstrap.
@@ -563,7 +563,7 @@ migration**, since that changes its `d1_migrations` key and re-runs it.
 `ops/mesh-watcher` uses a **separate** D1 (`vaipakam-mesh-alerts-db`,
 schema in `ops/mesh-watcher/migrations/`) for trust-boundary reasons —
 its internal ops alerts must not co-locate with user-facing data. Don't
-fold those tables into `vaipakam-archive`. (The retired `ops/lz-watcher`
+fold those tables into `vaipakam-warm`. (The retired `ops/lz-watcher`
 followed the same rule with `vaipakam-lz-alerts-db`; both the Worker and
 its source tree were removed in #1440, and the database is an operator
 deletion gated on one clean nightly backup.)
@@ -1300,12 +1300,17 @@ somewhere else in the same contract.
 
 viaIR rescues a deep frame with a **stack-to-memory mover**, which solc emits
 only behind a `memoryguard` — and it withholds that guard from the **whole
-contract** when ANY inline-assembly block in it is unannotated. So a single
+contract** when an unannotated inline-assembly block in it is one solc cannot
+treat as safe by itself. **TWO shapes do that, and the second has no memory
+opcode in it at all:** a block that accesses memory, and a block that assigns a
+computed pointer to a Solidity memory-reference variable. So a single such
 `assembly { … }` without `("memory-safe")` un-rescues every frame in that
 contract, and solc reports the frame that overflowed rather than the block that
-caused it. The two can be far apart: in #2253 the block was in a `catch` inside
-a library, and the named frame was `DeployDiamond.runWith`, which neither
-contains nor calls it.
+caused it. (The `x.slot := position` storage-pointer idiom is neither shape and
+is not a blocker — see below. Whether an in-scope block is ACTUALLY memory-safe
+is the spec's call, not this document's.) The two can be far apart: in #2253 the
+block was in a `catch` inside a library, and the named frame was
+`DeployDiamond.runWith`, which neither contains nor calls it.
 
 Verified by single-variable experiment on that PR — deleting only the two words
 `("memory-safe")` reproduces the error; restoring them compiles, nothing else
@@ -1316,30 +1321,253 @@ were all plausible and all wrong.
 
 Two practical consequences:
 
-- **Annotate new inline assembly `("memory-safe")` — but only when it is.** The
-  annotation licenses the mover to relocate stack slots into memory, so a block
-  that steps outside Solidity's memory model invites corruption or
-  optimizer-dependent behaviour — a far worse failure than a build error. It is
-  an audit, not a find-and-replace.
+- **Annotate a new inline-assembly block `("memory-safe")` when it IS — and
+  only then.** (Either shape above puts it in scope: a memory access, or an
+  exported pointer.) The annotation licenses the mover to relocate stack slots into
+  memory, so a block that steps outside Solidity's memory model invites
+  corruption or optimizer-dependent behaviour — a far worse failure than a
+  build error. It is an audit, not a find-and-replace. A block of NEITHER
+  shape above — the `x.slot := position` storage-pointer idiom — needs nothing;
+  see the measurement below. ("Touches no memory" is the wrong test, and it is
+  the one this section kept reaching for: a block with no memory opcode in it
+  still qualifies if it exports a computed pointer.)
 
-  **The test is the ALLOCATION BOUND, not read-vs-write.** Every access — read
-  included — must stay inside memory Solidity owns for that block: its own
-  allocations, the scratch space, the zero slot, or memory past the free
-  pointer that the block allocates itself. Read-only is *not* a licence: once
-  the mover is enabled, an arbitrary read can observe the very slots it spilled
-  there, which is how a "harmless" block becomes optimizer-dependent. The
-  rethrow in `Deployments.finalizeArtifact` qualifies because `err` is an
-  allocated `bytes memory` the block already holds and `add(err, 0x20)` /
-  `mload(err)` stay within it — not because it only reads (#2253 r7).
-- **`forge build --skip test` cannot see a test contract doing this.** A probe
-  or helper under `test/` that inherits a script and carries an unannotated
-  block fails only in the test build, which is the failure mode that cost #2253
-  those five revisions.
+  **What counts as memory-safe is SOLIDITY'S SPECIFICATION, and this document
+  deliberately does not restate it.** Read it in the Solidity docs under
+  Assembly → Memory Safety, and audit the block against that text. This
+  paragraph used to carry a prose summary of the rule, rewritten in four
+  successive review rounds; **two of those revisions were P1 defects that would
+  have blessed an unsafe annotation** — one treated the bound for a pointer the
+  block EXPORTS as the same bound that governs what it may TOUCH, which makes
+  `b := 0x00` (scratch space, not valid past the block) read as compliant. A
+  wrong summary here is worse than no summary: the failure it licenses is
+  silent memory corruption in a fund-moving contract, not a build error, and
+  every wrong version looked reasonable. The rule is compiler-defined and
+  belongs where it is normative.
 
-`contracts/test/deploy/PartialRefreshRoutingTest.t.sol` and ~25 blocks under
-`src/`/`script/` are still unannotated. They are LATENT, not broken: the guard
-is per-contract and those contracts compile today. Sweeping them is tracked in
-**#2260** and needs the audit above, not a bulk edit.
+  What this document can say is repo-specific and verified:
+
+  - **`("memory-safe")` is an AUDIT, not a find-and-replace.** The annotation
+    licenses the mover to relocate stack slots into memory, so an incorrect
+    one invites optimizer-dependent corruption — a far worse failure than the
+    build error you were trying to fix.
+  - **It cuts both ways.** Withholding the annotation from a block that is in
+    fact memory-safe leaves the guard down for the WHOLE contract, which is the
+    stack failure this section exists to diagnose. Neither direction is the
+    safe default; the spec decides.
+  - **A worked example, as an example and not as the rule.** The rethrow in
+    `Deployments.finalizeArtifact` is annotated because `err` is a `bytes
+    memory` the block already holds and `add(err, 0x20)` / `mload(err)` stay
+    inside it. Read-only-ness is NOT what qualifies it (#2253 r7) — once the
+    mover is on, an arbitrary read can observe the slots it spilled.
+  - **A block need not contain a memory opcode to require the audit.**
+    Assigning a computed pointer to a Solidity memory-reference variable is
+    enough. The `x.slot := position` storage-pointer idiom is the one shape
+    this document does claim is outside it, and that claim is measured rather
+    than argued — see the three-point comparison below.
+- **Retrofitting an existing bare block is a TRADE, and it can be expensive.**
+  Turning the guard on lets solc emit the stack-to-memory mover, and the mover
+  *is code*. MEASURED (#2268): a sweep of 24 blocks took `OfferCreateFacet`
+  from 21,720 to 33,026 bytes (+52%, over EIP-170 by 8,450) and
+  `OfferAcceptFacet` from 22,042 to 26,381 (over by 1,805). Both had been
+  comfortably under. 51 contracts changed size; a few shrank.
+
+  The cost lands hardest where the benefit is greatest — the facets most
+  likely to hit the stack ceiling are the big ones, which are the ones with no
+  room (`OfferAcceptFacet` shipped 164 bytes clear; #1835/#1780 exist because
+  of that squeeze). **So do not sweep.** Retrofit a contract when it actually
+  needs the guard, and check its headroom in the same change. #2260 tracks the
+  remaining blocks.
+
+  **That is an owner decision (2026-09-23), not a working preference**, and it
+  settles the three questions #2260 had been holding open. Two sessions stopped
+  at them rather than guess, so they are recorded here in full:
+
+  - **Annotate on demand, never preemptively.** A bare block in a contract that
+    compiles today is LATENT, not a defect. The annotation goes in when that
+    contract actually needs the guard, and the change states the headroom it
+    spent.
+  - **Never annotate a widely-inlined `internal` library helper on its own
+    merits.** Inlining puts its cost in every caller, so annotating one is a
+    de-facto GLOBAL switch — it moves only as part of a decision about the
+    facets that inline it, never as a local cleanup.
+  - **Facet-splitting is OUT of scope.** Guaranteeing "no contract is ever
+    caught without a guard" would need the big facets split first, and that is
+    architecture — #1835 and #1780 were each forced by this same squeeze.
+    Folding it into a cleanup issue would bury a design decision inside a
+    chore.
+
+  **A block of neither shape needs no annotation** — that is the
+  storage-pointer idiom (`x.slot := position`), and naming the idiom is the
+  claim; "touches no memory" is not, since an exported pointer needs no memory
+  opcode. Solidity does not require the annotation for
+  assembly that cannot affect memory safety; that is the compiler's rule, not
+  an inference from this repo (established in #2260 r4 review).
+
+  **The measurement corroborates it decisively, and an earlier revision of this
+  paragraph under-sold that while correcting a different overclaim.** The
+  argument is a THREE-point comparison, not a two-point one, and the third
+  point is what carries it. On `OfferCreateFacet`: bare = 21,720; all 24
+  annotated = 33,026; 18 annotated with the 6 storage-pointer blocks left bare
+  = **33,026**. The guard is contract-wide — one unannotated blocker and solc
+  emits no mover anywhere in the contract — so if the bare blocks IN THIS
+  CONTRACT'S compilation unit were blockers, the third build would have landed
+  near 21,720. It landed on the annotated figure exactly. Two-point equality
+  would indeed prove nothing; equality against a third point that differs by
+  52% is a different argument.
+
+  **The conclusion reaches only the blocks in that unit, and not all six are.**
+  `GuardianPausable._getGuardianStorage` belongs to the standalone cross-chain
+  hierarchy and is absent from `OfferCreateFacet`'s 125 compilation sources —
+  checked, not assumed — so leaving it bare could not have affected this
+  artifact either way, and this measurement says nothing about it. The claim
+  is: the storage-pointer blocks reachable from the facets measured did not
+  withhold the guard. Extending it to every such block in the tree needs a
+  representative contract compiled for each, which has not been done.
+
+  **Do not work out which blocks gate a contract by reading.** The context is
+  transitive through inheritance, modifiers and libraries.
+  `OfferMatchFacet`'s blocker count was called ONE, THREE, FIVE and TWO across
+  four review rounds; every count came from careful reading and none of the
+  read ones was right. Compile the contract both ways and compare instead —
+  reading the resulting sizes as evidence, not as proof: a size change says
+  code generation changed, while no change says only that, since a contract
+  whose stack already fits needs no spill code either way.
+
+- **Verify with the deploy-sanity suite, not with a clean compile.** EIP-170 is
+  enforced by `FacetSizeLimitTest`, not by solc — `forge build --skip test`
+  reported "Compiler run successful" on the #2268 sweep while two facets sat
+  over the limit. For anything that moves bytecode size, which includes adding
+  or removing an annotation:
+
+  ```bash
+  FOUNDRY_PROFILE=default nice -n -10 ionice -c 2 -n 0 \
+    forge test --match-path "test/deploy/*" -vv
+  # or through the gate, which shells out to bare forge and so needs the
+  # prefix on the wrapper:
+  FOUNDRY_PROFILE=default nice -n -10 ionice -c 2 -n 0 \
+    bash script/predeploy-check.sh
+  ```
+
+  `FOUNDRY_PROFILE=default` is **correctness**: an inner loop leaves `quick`
+  exported, quick skips `test/**`, and discovery then empties and the run goes
+  green having executed nothing. `nice`/`ionice` is the separate **performance**
+  policy the "Executing forge" rule sets; omitting it still runs the suite, just
+  2–3× slower. `-vv` is also correctness-adjacent: the HEADROOM figures live in
+  `test_ReportFacetsNearSizeLimit`, which always passes by design, and Foundry
+  hides logs from passing tests below `-vv`.
+
+  Two limits on what a green suite proves. It stops at the FIRST violation, so
+  its message understates the damage — it named one facet when #2268 had put
+  two over. And it iterates `cutFacetNames()` plus `DiamondCutFacet` only
+  (`FacetSizeLimitTest.t.sol:75-84`), so a **non-facet deployable**
+  (`VaipakamVaultImplementation`, the `crosschain/` contracts) is not
+  size-checked by it at all. For a change touching one of those — measure it
+  yourself, with these two steps, **in this order**:
+
+  ```bash
+  # 1. REBUILD. `--match-path "test/deploy/*"` compiles only that sparse
+  #    closure, and a standalone cross-chain deployable is outside it
+  #    (VPFIMirrorToken and VpfiPoolRateGovernor come in via
+  #    DeployCrosschain.s.sol, which no deploy test imports). Skip this and
+  #    step 2 reads a STALE artifact from an earlier build and approves a
+  #    contract that is now oversized.
+  FOUNDRY_PROFILE=default nice -n -10 ionice -c 2 -n 0 forge build --skip test
+
+  # 2. EXTRACT `.deployedBytecode.object` and convert hex chars to bytes.
+  jq -r '.deployedBytecode.object | (length - 2) / 2' \
+    out/<Name>.sol/<Name>.json
+  ```
+
+  **`.deployedBytecode` is an OBJECT, not a hex string** — `{object,
+  sourceMap, linkReferences, immutableReferences}` — so `.deployedBytecode |
+  length` returns **4**, which is under 24,576 for every contract that will
+  ever exist. That is not a wrong number, it is a check that always passes.
+  And `.object` is hex text: two characters per byte plus the `0x`, so its
+  raw length overstates by ~2×. (Verified on `VPFIMirrorToken`: naive `length`
+  = 4, `.object` length = 12,294 chars, actual = **6,146 bytes**.)
+
+  Then compare **against 24,576 — the absolute EIP-170 ceiling — and not only
+  against the pre-change build.** The before/after delta tells you the change
+  moved size and by how much; it does not tell you whether the result deploys,
+  and a contract that crosses the ceiling does so on some particular change
+  whose delta looks no different from a harmless one. Both readings: the
+  ceiling for deployability, the delta for headroom spent. The suite is not a
+  substitute here.
+- **An annotation under `test/` needs a THIRD command — neither of the two
+  above compiles it.** `forge build --skip test` excludes `test/` by
+  definition, and `--match-path "test/deploy/*"` compiles only the matched
+  files and their dependency closure (the same sparseness the "Local full
+  regression" section relies on), so a block in, say,
+  `test/SignedOfferBook.t.sol` is compiled by neither. Both advertised checks
+  then pass **without the changed block ever reaching solc** — green on a
+  change they did not look at. Match the file you actually touched:
+
+  ```bash
+  FOUNDRY_PROFILE=default nice -n -10 ionice -c 2 -n 0 \
+    forge test --match-path "test/SignedOfferBook.t.sol"
+  # or, when the block is in a widely-inherited helper and you want the
+  # whole closure compiled, the chunked regression — another wrapper that
+  # shells out to bare forge, so the prefix goes on the wrapper here too
+  # (the script raises only IO priority internally and deliberately omits
+  # `nice`, which needs privileges it cannot assume):
+  nice -n -10 ionice -c 2 -n 0 bash script/run-regression.sh
+  ```
+
+  This is the same trap in a second form: a probe or helper under `test/` that
+  inherits a script and carries an unannotated block fails only in the test
+  build, which is the failure mode that cost #2253 those five revisions.
+
+**Scope of what is actually left** (#2260, re-measured). `src/` carries 25 bare
+blocks, but **6 are the `x.slot := position` storage-pointer idiom and need
+nothing**. The real remainder is **19**, all of them in scope — 18
+bulk-annotation candidates plus the `VaipakamDiamond` fallback, whose
+`calldatacopy(0, 0, …)` clobbers memory from offset 0 and wants its own
+verification rather than a bulk annotation — plus 9 under `test/`. They are LATENT, not broken: those contracts compile today, and
+#2268 showed a blanket sweep is not the remedy.
+
+**Both figures were bounds, and a re-count settled them — for THIS TREE, on a
+stated date.** Everything below is a measurement, not a rule: the rules are
+the two shapes above, and nothing here amends them. They were first counted
+when this section's test was "touches memory", which makes them counts of
+blocks with a memory opcode — so a block exporting a computed pointer without
+one would have been filed under the 6 rather than the 18, and 18 was recorded
+as a lower bound and 6 as an upper bound. The re-count (#2260 — parsing each
+block's body with comments stripped and string literals blanked, at `main`
+`a941c7873` and re-verified at `58ef57fb0`; the counts are identical at both,
+though line numbers moved) closes both directions **as of those commits**:
+
+- **The 6 are exempt because each body is ONLY the storage-pointer
+  assignment** — not because it contains one. That distinction is the whole
+  claim: a block that assigns `.slot` *and* does an `mstore` is in scope like
+  any other, so "contains `.slot :=`" is not a classifier and must never be
+  used as one. Each of these six was checked as assignment-only, the body
+  matching `<var>.slot := <name>` and nothing else: `LibAccessControl`,
+  `LibERC721`, `LibPausable`, `LibReentrancyGuard`, `LibVaipakam` and
+  `GuardianPausable`. **No facet carries the idiom at all.** A seventh such
+  block added tomorrow gets its own check; it does not inherit this one.
+- **19 `src/` blocks are in scope, and the 18 is that 19 minus the fallback.**
+  Every non-idiom `src/` block carries a memory opcode, so the first shape
+  catches all 19 and the second adds nothing here. `VaipakamDiamond`'s
+  fallback is the nineteenth and carries memory opcodes like the rest — it is
+  held out for its own verification, not because it is out of scope. So 18 is
+  exact as *the bulk-treatment remainder*, and **19** is the number of `src/`
+  blocks that can suppress the memory guard. Do not read 18 as the latter.
+
+Two things the re-count turned up that a line-based `grep` gets wrong. The
+count of bare blocks is **34** (25 `src/` + 9 `test/` + 0 `script/`), not 36 —
+a raw grep also counts a fully commented-out block in `RiskFacet.sol:1807` and
+a natspec quotation in `DeployDiamondVerificationProbes.sol:20`.
+
+And the storage-pointer idiom is **not the only member of the neither-shape
+class**, which is worth knowing because the rule above introduces the class by
+naming that idiom. `SignedOfferBook.t.sol:742` reads with `calldataload` and
+assigns `bytes32`/`uint8` locals: it accesses no memory and exports no pointer
+to a memory-reference variable, so under the criterion above it **needs no
+annotation** — the same conclusion the idiom gets, reached by the same rule
+rather than by a second exception. What is measured for the idiom and not for
+this block is the compile-both-ways evidence; the classification stands on the
+criterion either way.
 
 ## Task tracking — @vaipakam-labs GitHub Project is the live tracker
 
@@ -1411,18 +1639,80 @@ historical breadcrumb.
 
 ## Codex PR-review policy (user directive 2026-07-05)
 
-Codex is **NOT auto-invoked** on PR open or on pushes to a PR. It runs
-ONLY when its trigger words appear in the PR description or a PR
-comment (e.g. an `@codex review` comment). Apply this loop on every PR:
+Codex **is normally auto-invoked** on PR open, and **usually** on a push to
+a PR. A trigger comment is an ADDITIONAL way to start a review, and the
+remedy when one does not start. Apply this loop on every PR:
+
+> **Corrected 2026-09-23 (#2292, refined in #2304 review).** This paragraph
+> said Codex is "NOT auto-invoked on PR open or on pushes to a PR… ONLY
+> when its trigger words appear". The first clause is false and the second
+> is false: #2300 was reviewed **12 seconds** after opening and #2301 **13
+> seconds**, neither carrying a trigger phrase anywhere, and a later push to
+> #2301 started a review whose trigger column read `New commits`.
+>
+> **BUT DO NOT READ THAT AS "EVERY PUSH".** Codex's own list of triggers —
+> *"Open a pull request for review · Mark a draft as ready · Comment
+> '<at>codex review'"* — does not mention pushes at all, and #2304's push at
+> 00:40:38Z produced no review for the following ten minutes. Both are
+> observations; the rule behind them is not documented anywhere we control.
+> So:
+>
+> **After a fix push, wait for the review to appear rather than triggering
+> immediately** — a duplicate trigger costs a second review of the same
+> commit, which spends a round against the cap and produces a second set of
+> threads carrying identical findings. **If no review has started after a
+> few minutes, post a trigger comment.** That is not a fallback for a rare
+> case; it is the documented remedy, and it worked on #2304 — a manual
+> request at 00:50:56Z started a review whose trigger column read `Manual
+> request` — the third value observed, alongside `PR opened` and `New
+> commits`. Three observed, not three that exist; the set is not
+> documented anywhere we control.
+>
+> **The trigger string has a REQUIRED shape**, defined in
+> [`AGENTS.md`](AGENTS.md): `<at>codex review <mode> [<profile>]`, where
+> `<mode>` is one of `normal`, `adversarial`, `full`, `full
+> security-critical`. An earlier revision of this paragraph wrote
+> "`<at>codex security review`" for a security pass, which is **not** that
+> shape — the canonical form is `<at>codex review full security-critical`.
+> That wrong example came from paraphrasing Codex's own blurb instead of
+> reading this repository's spec, which is the general lesson: `AGENTS.md`
+> defines the command surface, not this file and not the bot's summary.
+>
+> **Why this file writes the phrase as `<at>codex`.** #2304 opened with a
+> description naming the phrase three times and received an agent *task* —
+> a report of edits to `CLAUDE.md`, the PR template and
+> `ProjectProcedures.md`, and a commit `212d028` — instead of a review.
+> **Nothing landed**: that commit does not exist, no pull request was
+> created, the branch never moved. **The cause is UNKNOWN.** Opening the PR
+> was already an automatic trigger, so the quotation need not have caused
+> anything; and removing the phrase did not then produce a review, which is
+> evidence against the simple explanation. The `<at>` spelling is kept as a
+> cheap precaution in a document that has no need of a live token — it is
+> **not** a remedy, and no rule here forbids the literal elsewhere.
+> `.github/pull_request_template.md` injects it into every generated PR
+> body and is deliberately left alone: changing it on an unknown mechanism
+> would be a guess dressed as a fix.
+>
+> **Counting rounds: read the trigger column, do not infer it.** The review
+> summary comment carries a table whose last column names what started each
+> run — `PR opened`, `New commits`, or a comment — alongside the commit and
+> the timestamps. That is the round marker. Do NOT count rounds by
+> clustering inline-comment timestamps: on #2290 that split one round into
+> two and produced a reported count of 13 where the truth was 12, and
+> tightening the clustering window is choosing a threshold rather than
+> reading what actually happened.
 
 > **Round caps — user directive 2026-09-13, verbatim:** "if the PR is docs
 > only don't go beyond 10 rounds, merge them after 10 rounds if there are
 > no P1 findings; if its code related, then don't go beyond 30 rounds,
 > take a step back and see if you can fix the issue at the root rather
 > than patching them in every path." These caps are written INTO the two
-> bullets below rather than beside them; **10** replaces the 2026-08-07
-> two-round docs rule outright. The **30** it names as the coding loop's
-> outer bound is SUPERSEDED — see the next paragraph.
+> bullets below rather than beside them. **BOTH numbers this directive
+> names are now SUPERSEDED**, by separate later decisions: the docs **10**
+> by **5** (2026-09-22, in the docs bullet below), and the coding **30**
+> by **15** (2026-09-20, in the next paragraph). The quote is kept verbatim
+> because it is the record of what was asked on that date — read the two
+> bullets, not this quote, for the live numbers.
 >
 > **Round 15 — the MANDATORY root scout — user directive 2026-09-20,
 > verbatim:** "if the PR codex finding rounds go beyond 15 rounds, then
@@ -1458,15 +1748,18 @@ comment (e.g. an `@codex review` comment). Apply this loop on every PR:
 > was caught short of it. Round 15 is the backstop for a loop that slipped
 > past all of them, not the point at which root-cause thinking begins.
 
-- **Docs-only PRs**: loop to convergence, and **never past round 10**;
-  at round 10 merge if **no P1 finding stands** (user directive
-  2026-09-13). Merge earlier the moment a round converges (zero P1/P2) —
-  most docs PRs still end at round 1 or 2. The 2026-08-07 "merge after 2
-  rounds" wording is SUPERSEDED: two rounds is no longer a gate to stop
-  at, and a docs PR with findings keeps looping up to the cap. (That
-  wording had itself superseded a 2026-07-10 "up to 5 rounds" directive;
-  the history is recorded here only so an operator who remembers an older
-  number knows which one is live.) The cap bounds ROUNDS, not diligence —
+- **Docs-only PRs**: loop to convergence, and **never past round 5**; at
+  round 5 merge if **no P1 finding stands** (user directive 2026-09-22,
+  verbatim: "if the PR is docs only then you may merge it after 5 rounds
+  of codex findings"). Merge earlier the moment a round converges (zero
+  P1/P2) — most docs PRs still end at round 1 or 2, and #2283 ended at 2.
+  **5 supersedes the 10 of 2026-09-13**, which had superseded a 2026-08-07
+  "merge after 2 rounds" gate, which had itself superseded a 2026-07-10
+  "up to 5 rounds" directive. The number has now returned to 5 by a
+  separate decision rather than by reverting one — the history is recorded
+  only so an operator who remembers an older number knows which one is
+  live. Two rounds is still not a gate to stop at: a docs PR with findings
+  keeps looping up to the cap. The cap bounds ROUNDS, not diligence —
   every finding still gets the accept-fix / refute / defer triage gate.
   Skipping Codex entirely remains OK for trivial mechanical edits — say
   so in the thread.
@@ -1492,7 +1785,10 @@ comment (e.g. an `@codex review` comment). Apply this loop on every PR:
   rounds of edges) and **#2149** (thirty findings across rounds 2–13,
   every one an edge of a speculative branch nothing had ever observed on
   that path; deleting the branch at round 13 is what reached a clean
-  round 21). Re-trigger after every fix push.
+  round 21). A fix push usually re-triggers the review by itself (#2292) —
+  wait for it rather than posting a trigger comment, which would start a
+  second review of the same commit. If none has appeared after a few
+  minutes, trigger explicitly; that happened on #2304.
 - **Converged, operationally** (amendment 2026-07-05b): a round with
   ZERO P1/P2 findings (Codex's own severity badges). A P3-only round
   counts as clean — fix or defer P3s at the agent's judgment without
@@ -1515,7 +1811,7 @@ comment (e.g. an `@codex review` comment). Apply this loop on every PR:
 - Merge gate: **coding PRs** only after a converged round AND green CI,
   never past round 15, and at round 15 only after the root scout the
   2026-09-20 directive requires, with no P1/P2 standing; **docs-only PRs** after a
-  converged round, or at the round-10
+  converged round, or at the round-5
   cap with no P1 standing, AND green CI. All review
   conversations must be resolved before merge (repo rule) in both cases —
   and on a repo whose ruleset sets `required_review_thread_resolution`,

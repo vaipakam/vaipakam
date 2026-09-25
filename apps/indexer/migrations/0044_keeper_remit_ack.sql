@@ -1,7 +1,7 @@
 -- #1222 M3 B2-d2 — keeper state for the delivered-backing remit ledger.
 --
 -- Two concerns, both keeper-owned (schema lives here per the D1 discipline:
--- every table in the shared vaipakam-archive db is defined by an
+-- every table in the shared vaipakam-warm db is defined by an
 -- apps/indexer migration, whichever Worker writes it):
 --
 -- 1. remit-ack driving (apps/keeper/src/remitAck.ts): Base's reservations

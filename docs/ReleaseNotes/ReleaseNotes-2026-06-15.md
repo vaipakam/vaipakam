@@ -206,7 +206,7 @@ defensive settlement guard) are removed, and the unused
 lender-side lifecycle work is unchanged. Closes #591 (the Part B
 follow-up to #585).
 
-# RepayFacet split — periodic-interest + NFT-rental cluster moved to RepayPeriodicFacet (#592)
+## RepayFacet split — periodic-interest + NFT-rental cluster moved to RepayPeriodicFacet (#592)
 
 The #592 VPFI lender-proceeds reservation logic grew `RepayFacet` past the
 EIP-170 24,576-byte contract-size limit. To stay deployable, the
@@ -283,7 +283,7 @@ transaction; a later lender sale rewrites it and migrates the held funds),
 so reserving them correctly needs a re-key across every lender-change path
 plus a decision on exiting-lender ownership. Closes #592.
 
-# Lean summary projections for paginated dashboard views (#601)
+## Lean summary projections for paginated dashboard views (#601)
 
 The paginated dashboard and analytics views that return **lists** of loans or
 offers now hand back a **lean summary** of each row instead of the entire

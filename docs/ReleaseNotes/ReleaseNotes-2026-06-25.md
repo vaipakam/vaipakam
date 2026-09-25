@@ -21,7 +21,7 @@ fresh deployment behaves exactly as before. Enabling it on any network is a
 governance action with a hard precondition — a revealed risk-terms anchor must exist
 first — documented in the Governance Runbook ("Enabling progressive risk access").
 
-# Anti-phishing: offer acceptance is now bound to the exact terms (#662)
+## Anti-phishing: offer acceptance is now bound to the exact terms (#662)
 
 Accepting an offer used to commit your wallet to nothing more than an opaque
 offer id and a single "I agree" checkbox. A malicious clone of the app could

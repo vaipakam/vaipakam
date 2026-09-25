@@ -45,7 +45,7 @@
   },
   // D1 — windowed-advisory streak state + alert repeat suppression.
   //
-  // SEPARATE database from the shared `vaipakam-archive` that
+  // SEPARATE database from the shared `vaipakam-warm` that
   // apps/{indexer,keeper,agent} bind to, for the same trust-boundary
   // reason `ops/lz-watcher` had its own: this Worker is internal ops
   // only, and co-locating its alerting bookkeeping with user-facing

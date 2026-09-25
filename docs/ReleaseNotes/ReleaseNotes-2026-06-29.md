@@ -236,7 +236,7 @@ all locale JSON valid; no rendered string carries sale or staking-yield copy.
 
 Closes #712. Completes the on-chain + off-chain #687 excision.
 
-### #717 — defi staking-terminology excision (#687-B UI follow-up)
+## #717 — defi staking-terminology excision (#687-B UI follow-up)
 
 The on-chain `5% APR` staking yield was removed in #687-B (discount tiers and
 interaction rewards were kept). This change finishes the job in the connected
@@ -262,7 +262,7 @@ decoded those two retired events, and deleted the orphaned defi FAQ copy block
 strings were dropped from the nine non-English bundles so they fall back to the
 corrected English until a human re-translation pass (tracked separately).
 
-### #718 — canonical-aware VPFI vault page on mirror chains
+## #718 — canonical-aware VPFI vault page on mirror chains
 
 VPFI fee-discount tiers are resolved from your vault balance on the canonical
 chain and propagated to every other ("mirror") chain. The VPFI vault page's

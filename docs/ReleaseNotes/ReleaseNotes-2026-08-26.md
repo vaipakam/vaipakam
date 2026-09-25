@@ -14,7 +14,7 @@ documented as the convention it is, rather than the guarantee it was described
 as, with five procedures refuted and replaced by what the document can actually
 promise.
 
-# The lender's paid reduction now survives a loan that ends badly
+## The lender's paid reduction now survives a loan that ends badly
 
 A lender who paid for a fee reduction was getting it on every route a loan could
 end *well* — repaid, closed early, refinanced, swapped — and losing it on every
@@ -28,7 +28,7 @@ a discounted liquidation, a split liquidation, and a partial liquidation. Each o
 them now applies the reduction to the fee taken from recovered interest, and
 every wei the treasury gives up reaches the lender.
 
-## A larger problem on one of those routes
+### A larger problem on one of those routes
 
 Partial liquidation is the one route that recovers money without ending the loan,
 and it was paying the recovered money to whoever the records still named as the
@@ -53,7 +53,7 @@ under restriction instead of failing the whole liquidation, which paying into a
 vault could not do, because the platform will not open a vault for a restricted
 wallet at all.
 
-## And one route was reducing the right fee for the wrong person
+### And one route was reducing the right fee for the wrong person
 
 Refinancing did apply the reduction, but resolved it against the stored lender.
 It attempts to refresh that record first, but that refresh is allowed to decline
@@ -62,7 +62,7 @@ changed hands the previous lender's holdings could set the size of a reduction
 the buyer received, and once the token peg is configured, could be charged for it.
 It now resolves against the current holder, like every other route.
 
-## Why the same helper now lives in one place
+### Why the same helper now lives in one place
 
 The step that applies the reduction had been copied by hand into five separate
 components and one shared module. This change would have made it nine. It is now
@@ -71,14 +71,14 @@ but the early exit inside it is the part that decides whether a settlement
 consults the reduction machinery at all, and six hand-maintained copies of that
 decision is how they quietly stop agreeing.
 
-## What this does not change
+### What this does not change
 
 Nothing here is visible until the fee-entitlement switch is turned on, because no
 loan carries the paid stamp before then. Turning that switch on remains gated, and
 the checks for it stay manual — see the operator runbook.
 <!-- assembled-fragment: 1383-recovery-paths-honor-lender-stamp.md sha256=2c86f261f2117a6fdefc3b34f9a702b8ab18ec7c1c3bb4bed10227e24fe94f4c -->
 
-# The lender's paid discount reaches every repayment route — and none of the recovery ones
+## The lender's paid discount reaches every repayment route — and none of the recovery ones
 
 A lender who paid the optional up-front tariff on a loan earns a further
 reduction of the fee taken from their interest. When that arrangement was
@@ -317,7 +317,7 @@ Nothing changes for an operator who was not relying on the settings file to
 supply these switches, which is everyone following the documented process.
 <!-- assembled-fragment: 1932-cli-flags-survive-env.md sha256=562d30c96f140146a7a650c5cbbf536e2207ea8e77180ab73a0b554e534370a2 -->
 
-# M7 activation runbook — three preflight checks that were missing, and a review backlog that was never read
+## M7 activation runbook — three preflight checks that were missing, and a review backlog that was never read
 
 The written procedure for switching on the recycling programme gained a section
 in August describing, step by step, what an operator must confirm before the
@@ -549,7 +549,7 @@ found. The count of genuinely outstanding points is an outcome of that pass, not
 something to be asserted ahead of it.
 <!-- assembled-fragment: 1940-m7-runbook-triage.md sha256=9c773809ebbe8f798944e099226763f81d7cc4fc85bae3dd07c038ffd73107ed -->
 
-# The activation ceremony's ordering rule is a convention, not a guarantee
+## The activation ceremony's ordering rule is a convention, not a guarantee
 
 Part of the ongoing review of the activation procedure for the recycling
 programme (see the M7 runbook triage).
@@ -647,7 +647,7 @@ ceremony's own check for the fix is ever performed. This is treated as something
 to contain now rather than a hazard scheduled for the activation day.
 
 
-## A second gate that only bound one step
+### A second gate that only bound one step
 
 The same review pass found that the switch which turns on the expiry-and-sweep
 behaviour carries its own list of things to confirm first, and that list was
@@ -665,7 +665,7 @@ exposure the activation gate exists to hold shut. The condition is now listed in
 both places, with a note that deferring the step does not defer the condition.
 
 
-## Five procedures, all refuted — and what the document says instead
+### Five procedures, all refuted — and what the document says instead
 
 Successive review rounds refuted every operational procedure built on the pause,
 and each refutation was correct. Re-ordering the ceremony does not help, because

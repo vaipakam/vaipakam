@@ -190,7 +190,8 @@ final stage.
    workspace for exactly that reason)
 ☐ gh pr create with body covering: What, Why, Verification, Closes #N
 ☐ Card on @vaipakam-labs moved to "In review" (§5.3 — happens after the PR exists)
-☐ Codex review request: `@codex review <mode>` (§3.2 — mode ∈ `normal` / `adversarial` / `full` / `full security-critical`)
+☐ Codex review STARTED — normally automatic on PR open; request it with
+   `@codex review <mode>` only if none appears (§3.2 for both)
 ☐ PR monitoring armed (§3.3): the 15-min heartbeat from a Claude session, or the workspace's own poller per `AGENTS.md`
 ```
 
@@ -251,9 +252,22 @@ Sub-rules:
 - **Profile-less triggers** (`@codex review full` with no profile
   suffix): no caption needed — nothing project-specific to explain.
 
-After each fix iteration, **post a fresh trigger comment** to re-run
-Codex against the new commit. Codex's auto-review on push fires once
-on its own, but explicit triggers force a re-review.
+After each fix iteration, **wait for the push's own review** rather than
+posting a trigger comment; **if none has started after a few minutes,
+trigger explicitly.**
+
+That is the whole rule here. The reasoning, the measurements behind it and
+what remains unknown are stated **once**, in `CLAUDE.md`'s "Codex
+PR-review policy" — not repeated here. The trigger string's required shape
+is defined **once**, in [`AGENTS.md`](../../AGENTS.md).
+
+This pointer is deliberate (#2292). The policy had been restated in five
+places — this file twice, `CLAUDE.md`, `CONTRIBUTING.md` and the PR
+template — and they disagreed with each other on whether pushes
+auto-review, on the command syntax, and on whether to re-trigger. Three
+successive review rounds each found another divergent copy. A surface that
+tells an operator what to DO does not also need to carry the argument for
+it; that duplication is what drifts.
 
 #### 3.2.1 What we know about AGENTS.md being honoured
 

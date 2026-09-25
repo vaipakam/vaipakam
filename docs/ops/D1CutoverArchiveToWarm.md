@@ -1,17 +1,1027 @@
 # D1 cutover — `vaipakam-archive` → `vaipakam-warm`
 
-**Status:** planned, not executed.
+**Status: PARTLY EXECUTED 2026-09-21 — schema and a first data copy are done;
+the switch itself is NOT.** What follows the execution record is the plan as
+written beforehand, kept because its reasoning is still the reasoning — and
+because step 3 below is the part of it that had to be re-learned.
+
+## Execution record (2026-09-21)
+
+1. **Schema parity — DONE.** `vaipakam-warm` was four migrations behind —
+   `0049`, `0050`, `0052`, `0053` — and missing two tables
+   (`loan_reconcile_quarantine`, `prenotify_scan_cursor`). Applied with
+   `wrangler d1 migrations apply`, so the `d1_migrations` record is wrangler's
+   own rather than hand-written. Both databases report **53 migrations and 46
+   tables**, nothing in one absent from the other.
+2. **First data copy — DONE, and it must be repeated at switch time.** 1,384
+   rows across 17 tables. `d1_migrations` deliberately **not** copied: warm's
+   record is its own, and copying the source's would have claimed migrations
+   ran there that never did.
+
+   **That first copy was ad hoc, and the repeat is not.** It ran from a
+   terminal session — table set, conflict keys, batch sizing and comparison
+   all in the operator's head — it reported success, and it had lost a row.
+   A data step that cannot be re-run identically cannot be verified, and the
+   switch requires re-running it. So the step is now a checked-in tool:
+
+   ```
+   node apps/indexer/scripts/d1-carry-rows.mjs digest --db vaipakam-archive
+   node apps/indexer/scripts/d1-carry-rows.mjs carry \
+     --from vaipakam-archive --to vaipakam-warm \
+     --mirror --manifest cutover-mirror.json
+   ```
+
+   Both `--mirror` and `--manifest` are required and neither is implied —
+   see the properties below. A command here that omitted them would exit
+   before copying anything, which is what this block did until #2267 r8.
+
+   Five of its properties are load-bearing. Each was learned by a review
+   round finding the previous version of this list insufficient, and each is
+   now enforced by the tool rather than left to whoever repeats the step:
+
+   - **One end of a carry is always the SHARED database.** Not "the
+     destination is fixed" — that was the first version, and it made the tool
+     unable to perform the rollback §"Rolling back" requires, which is the
+     same move in the other direction. The property that matters is that
+     **BOTH ends are pinned** — the successor and its recorded predecessor,
+     by id as well as name, in
+     `apps/indexer/scripts/lib/cutover-databases.mjs`. Requiring only that
+     the shared database be ONE end is **not** the rule and must not be
+     restated as though it were: it would permit an unrelated account
+     database to be mirrored over the shared one, and the shared one's rows
+     to be copied into an unrelated database, while reading as a
+     restriction. `check-d1-name-consistency` keeps the pinned pair
+     agreeing with every binding and command, on name AND id.
+   - **Parents before children.** Tables are ordered by FOREIGN KEY
+     dependency, not alphabetically. D1 enforces foreign keys, so a child
+     carried before its parent is *rejected*, aborting the carry — and
+     alphabetical order puts `notify_state` before `user_thresholds`.
+     Deletes run in the reverse order for the same reason.
+   - **Upsert, never `INSERT OR REPLACE`.** `REPLACE` is `DELETE` + `INSERT`,
+     and `notify_state` carries `ON DELETE CASCADE` to `user_thresholds`.
+     The first copy wrote the child first and rewriting the parent cascaded it
+     away. `ON CONFLICT … DO UPDATE` mutates in place and is re-runnable. A
+     table with no primary key has no conflict target, so the tool **refuses
+     it and names it** rather than duplicating it on the next run.
+   - **A source-side DELETION is a difference like any other.** Upsert-only
+     can never make two sides equal once a row has been deleted on the
+     source — and live writers expire `telegram_links`, prune diagnostics and
+     cancel offers between carries. The default `mirror` therefore also
+     removes destination rows whose key the source no longer has, which is
+     what makes "identical digest" a reachable state rather than an
+     aspiration. It is only safe against an **inert** destination, and the
+     tool says so on every run.
+   - **Nothing is ever written to a LIVE database.** The post-switch step
+     is a separate verb, `reconcile`, which reads both sides and REPORTS.
+     It has no write path at all — the `--only-missing` insert this bullet
+     used to describe was removed rather than guarded, because no preflight
+     closes a race against a database something else is writing to (#2267
+     r14). It is why the barrier below does not have to be a proof.
+
+     **So `reconcile` finding a row does NOT mean the row has been
+     carried** — it means a person has to carry it. An operator reading the
+     old wording could watch a late row be reported and walk away leaving
+     it stranded on a database nobody reads. Every difference it prints is
+     an action item, including the ones that look mechanical.
+   - **Compare CONTENT, never row counts.** The count check passed on two
+     tables that were not equal (`indexer_cursor`, `recycle_backing_snapshot`).
+     The tool canonicalises each table's rows and hashes them, and the
+     comparison is part of the carry rather than a step someone may skip.
+
+   It also **refuses rather than guesses** in two cases that would otherwise
+   pass quietly: a table the two sides declare different columns or keys for
+   (a migration decision, not a copy — both shapes are printed), and a row
+   carrying NULL inside its key, which SQL equality cannot match, so such a
+   row could be neither reliably matched nor removed.
+
+   **[run] 2026-09-21** — the digest of both sides immediately after the
+   first copy, with the Workers still live, showed **three** tables
+   differing: `indexer_cursor`, `protocol_config`, `recycle_backing_snapshot`.
+   None was a copy fault; all three are tables the running services rewrite,
+   and the source had simply moved on. That is the evidence for step 3.
+
+   **[run] 2026-09-21** — a mirror carry with the tool, still against live
+   Workers, brought `protocol_config` and `recycle_backing_snapshot` into
+   agreement and **failed verification on `indexer_cursor` alone**: 19 rows
+   on each side, different digests, because the indexer advanced it during
+   the carry. The tool exiting non-zero there is the correct outcome and is
+   the barrier's case made twice over — a carry taken against a live source
+   cannot converge, however well it is written.
+
+   **[run] 2026-09-21, the full pair, as a rehearsal.** `--mirror
+   --manifest` carried 1,384 rows across 43 tables (0 removed) and recorded
+   a manifest of 1,384 row hashes stamped `02:30:20Z`; its own verification
+   then failed on `indexer_cursor` and `recycle_backing_snapshot`, both
+   still being written. The reconciliation that followed —
+   `--only-missing --since` that manifest (the verb has since become the
+   read-only `reconcile`) — reported **`wrote 0 row(s)`**,
+   because nothing was missing, and then **17 conflicts**, each a named
+   `indexer_cursor` row archive had changed since the mirror, with its
+   current value. Before this round's fix that same run printed `wrote 0`
+   and `VERIFIED`. The rehearsal is what shows the difference: the work the
+   reconciliation exists to find is invisible to a check that asks only
+   whether a key is present.
+
+   **[run] 2026-09-21, the read-only `reconcile`.** Against the same
+   manifest, with archive still live:
+
+   ```
+   reconcile — READ ONLY. Nothing is written to either database.
+   nothing was written, and nothing would have been: reconcile is read-only.
+     0 refusal(s), 17 conflict(s), 0 row(s) present on the source and
+     absent from the destination.
+   STOPPED — 17 problem(s)
+   ```
+
+   Not one write verb appears in the output. The seventeen are the same
+   `indexer_cursor` rows every run has found — now reported rather than
+   partly acted on.
+
+3. **The switch — NOT DONE, and it requires the writers stopped first.**
+
+   The bindings change is staged in the PR but must not land while anything is
+   writing. Merging auto-deploys the three Workers (#2237), they do not deploy
+   simultaneously, and a failed build stretches the gap without bound. Anything
+   written to the source after the final copy but before that Worker picks up
+   the new binding exists only in the database being left behind, and no
+   amount of copying *before* the merge closes a gap that opens *after* it.
+
+   This is not hypothetical. Between the first copy and the content check —
+   about twelve minutes — the source advanced **sixteen** `indexer_cursor`
+   rows. The writers are demonstrably live.
+
+   So the order is: **stop the writers (the maintenance build the mechanism
+   provides), wait for the source to be OBSERVED still, take the final copy,
+   merge, let the Workers come back on the target, then verify by binding
+   id.** The refusal callers see during that window states plainly that
+   nothing they sent was recorded, which is the whole reason that mechanism
+   exists.
+
+   **"Observed still" NARROWS the window. It does not prove the drain, and
+   this document will not say that it does.** Removing the D1 binding stops
+   any NEW invocation from obtaining a handle, but an invocation already
+   running — including `waitUntil` work admitted before the gate — still
+   holds the handle it was given. Such work can be suspended on something
+   external for longer than any interval chosen here, sit out every
+   observation, and commit afterwards. How long that takes has never been
+   measured, and §"Stopping the writers" refuses to invent a number for it;
+   observing stillness does not measure it either.
+
+   So the sequence has two distinct parts, and conflating them is the error
+   this revision exists to correct. Steps 1–5 make the window small.
+   **Step 6 is what keeps LOOKING — it does not close it either.** Nothing
+   in this procedure closes that window, because nothing here can revoke a
+   handle already granted (§4's banner). Step 6 is the only thing that
+   finds a late write, which is why it runs weekly for as long as the
+   predecessor is retained rather than ending at two clean passes.
+
+   1. Deploy the maintenance build (no `d1_databases`) to all three
+      Workers, then **confirm it took** —
+      `check-live-d1-bindings.mjs --writers-held`, which asserts that every
+      serving version of all three carries no D1 binding at all. A deploy
+      that silently did not land leaves the barrier open while every step
+      below behaves as though it were closed.
+
+      > **THE MAINTENANCE BUILD IS DEPLOYED BY MERGING IT, not by
+      > `wrangler deploy` from an operator's shell.** All three writers
+      > are on the automatic path (§3 Step 2). So step 1 is: merge a
+      > commit that removes `d1_databases` from the three writers, and
+      > confirm with `--writers-held`.
+      >
+      > **The merge is how you ASK; `--writers-held` is what establishes
+      > it.** §3 Step 2 measured both ways this misleads: `apps/app`'s
+      > build reported success on `06d657b9f` while that Worker's
+      > deployment stayed weeks older, and which commits trigger which
+      > builds is not recoverable from the diff — a root-level file
+      > change built all five Workers, a `docs/`-only change built none.
+      > So neither "a check appeared" nor "the diff touched that Worker"
+      > is evidence the barrier closed. Only reading back what the
+      > Workers are SERVING is.
+      >
+      > **Cut that commit from `main` BEFORE the cutover PR, not after.**
+      > In the barrier state the three writers declare nothing, so the
+      > shared database is named only by `ops/offchain-data-warm` and by
+      > the `wrangler d1` commands — and those must agree. Before the
+      > cutover PR they all say `vaipakam-archive` and they do. After it
+      > they all say `vaipakam-warm` and they would too, but by then the
+      > switch has already happened and the barrier is pointless.
+      >
+      > **THE BARRIER COMMIT CARRIES THE GUARD THAT PERMITS IT.** This is
+      > the part that is easy to get wrong, because it is circular and the
+      > failure lands in the window. The two-shape
+      > `check-d1-name-consistency` described below ships in the cutover
+      > PR — which merges LAST — so a barrier commit cut from the `main`
+      > that exists before it meets the OLD, anchored guard and is
+      > rejected: *"apps/indexer/wrangler.jsonc has no complete `DB` d1
+      > binding … there is nothing to check against."* Verified against
+      > `6c0c0125a`. So the barrier commit contains the config strip, the
+      > guard rewrite, **and the two modules the rewritten guard imports**
+      > — `apps/indexer/scripts/lib/d1-workers.mjs` and
+      > `apps/indexer/scripts/lib/cutover-databases.mjs`, neither of which
+      > exists on `main` — minus the `SUCCESSOR` entry in
+      > `COMMAND_GENERATORS`.
+      >
+      > **Three files, not two, and the third is not optional** (#2267
+      > r41). An earlier version of this recipe said "the config strip and
+      > the guard rewrite, minus the `SUCCESSOR` generator entry, which
+      > names a file that branch does not have". That was right when the
+      > guard's only use of the pinned pair was through that entry; it
+      > stopped being right at r39, when the ops-separation check began
+      > importing `SUCCESSOR` and `PREDECESSOR` directly. Dropping the
+      > entry no longer drops the dependency — following the two-file
+      > recipe gets `ERR_MODULE_NOT_FOUND` from a guard that cannot even
+      > start, inside the window, with the writers already held.
+      >
+      > The entry itself still comes out, for its original reason and not
+      > that one: it would compare `SUCCESSOR.name` — `vaipakam-warm` —
+      > against the name the barrier tree actually agrees on, which is
+      > still `vaipakam-archive`. Hence one generator constant below
+      > rather than two.
+      >
+      > Re-verified in a worktree cut from `origin/main` with exactly
+      > those three files applied and the three writers' `d1_databases`
+      > removed:
+      >
+      > ```
+      > CUTOVER BARRIER — all 3 writers declare no D1 binding
+      > OK — vaipakam-archive agreed by 1 of 4 bindings (writers held),
+      >      43 `wrangler d1` command(s), 1 generator constant(s),
+      >      1 Worker verified separate                            exit 0
+      > check-keep-vars / migration-prefixes / table-classification /
+      > event-coverage                                             OK
+      > ```
+      >
+      > The cutover PR then carries the same guard rewrite, so expect to
+      > resolve that file when bringing it up to date after the barrier
+      > merges. That is a textual conflict in one file, not a rethink.
+      >
+      > **The carry tool does NOT need to be on `main` for any of this.**
+      > It runs from the cutover PR's checkout throughout, and since both
+      > its endpoints are pinned constants it reads nothing from the tree
+      > it runs in — which is exactly why that dependency was removed
+      > (#2267 r22). No worktree to pin, no checkout to keep unsynced.
+      >
+      > **`check-d1-name-consistency` permits exactly this shape and only
+      > this shape** (#2267 r21). It used to anchor on the indexer's
+      > binding as the single declaration, which made the barrier
+      > unrepresentable: strip the writers and the anchor is gone, and the
+      > check reported there was nothing to compare against — so the
+      > barrier commit could not be merged, and merging is its only deploy
+      > route. The anchor is gone; the rule is that every consumer which
+      > binds the shared database binds the same one, and the three
+      > writers are ALL bound or ALL unbound.
+      >
+      > **[run] 2026-09-21** — the three shapes, against the live tree:
+      >
+      > ```
+      > normal          OK — vaipakam-warm agreed by 4 of 4 bindings          exit 0
+      > barrier         CUTOVER BARRIER — all 3 writers declare no D1 binding
+      >                 OK — agreed by 1 of 4 bindings (writers held)         exit 0
+      > half-applied    2 problem(s): … this is not the cutover barrier —
+      >                 that shape needs ALL of them unbound                  exit 1
+      > ```
+      >
+      > The half-applied case is the one worth having: a writer left bound
+      > while the others are held keeps writing through a window every
+      > later step believes is closed.
+      >
+      > **[evidence] 2026-09-21** — `cab26d24a` (#2252) carries
+      > `Workers Builds: vaipakam-{indexer,keeper,agent}`, all `success`,
+      > completing at `11:30:59Z` / `11:32:02Z` / `11:33:01Z`; the three
+      > live Workers' latest deployments are `11:30:55Z` / `11:31:57Z` /
+      > `11:32:56Z` — within seconds, all three. That establishes these
+      > three DID deploy from that merge. It does not establish that a
+      > green build is sufficient, which is the trap stated above.
+      >
+      > **[evidence] 2026-09-21, and this is the one to remember** —
+      > `ff92150df` merged at `09:34:08Z` touching
+      > `packages/contracts/src/**`, a workspace package **all three
+      > writers import**. Exactly ONE built: `Workers Builds:
+      > vaipakam-keeper`, `success` at `09:35:26Z`, deployed `09:35:22Z`.
+      > The indexer and agent did not build and did not deploy — their
+      > live versions were still yesterday's `11:30:55Z` / `11:32:56Z`
+      > when this was measured at `10:52Z`.
+      >
+      > One merge, three Workers that all depend on what changed, one
+      > deployment. **So a barrier commit touching all three configs can
+      > land with only some of them held**, which is the half-applied
+      > barrier — the state where the procedure believes the writers are
+      > stopped and one of them is still writing. `--writers-held` is what
+      > catches that. Nothing about the merge does.
+      >
+      > Note the division of labour, because the two checks sound alike
+      > and are not: `check-d1-name-consistency` refuses a half-applied
+      > barrier in the TREE (some writers stripped, some not);
+      > `--writers-held` catches a half-applied barrier in PRODUCTION (all
+      > stripped in the tree, not all deployed). Neither substitutes for
+      > the other, and this merge is why the second one exists.
+      >
+      > **A direct `wrangler deploy` needs a credential the session token
+      > does not have, and it fails after the decision to begin.** All
+      > three writers bind **Secrets Store** secrets (`apps/indexer` 15,
+      > `apps/keeper` 15, `apps/agent` 18), so creating a Worker version
+      > for any of them needs a token that can bind those, not merely
+      > `Workers Scripts: Edit`. A token without it gets:
+      >
+      > ```
+      > ✘ [ERROR] A request to the Cloudflare API
+      >   (/accounts/…/workers/scripts/vaipakam-indexer/versions) failed.
+      >   Secrets store binding authorization failed. Check your
+      >   permissions and secret scopes. [code: 10021]
+      > ```
+      >
+      > **[run] 2026-09-21** — this is exactly what the session token did.
+      > No version was created (the call fails at version-create), the
+      > stripped configs were restored, and all four Workers stayed on
+      > archive. Nothing was half-done, which is the one good property of
+      > failing at this step rather than a later one. The same token reads
+      > the store fine — it lists `vaipakam-credentials` and sees every
+      > secret `active` and `workers`-scoped — so this is the token's
+      > permission set, not the secrets' configuration, and re-scoping the
+      > secrets would not fix it.
+      >
+      > **Do NOT work around it by also stripping the Secrets Store
+      > bindings.** That removes secrets from a production Worker using a
+      > token that cannot put them back: if the post-merge build then
+      > failed, the Worker could not be restored from the same session. An
+      > action that cannot be reversed with the credentials in hand is not
+      > a workaround, it is a second outage waiting on someone else's
+      > permissions.
+      >
+      > `ops/offchain-data-warm` is the exception in both directions: it
+      > binds no Secrets Store secrets and it does not auto-deploy, so it
+      > is the one Worker here that a `Workers Scripts: Edit` token
+      > deploys by hand — which is what step 7 asks for.
+   2. `digest --db vaipakam-archive`. Wait **10 minutes**. Digest again.
+
+      **A table bigger than one page is read twice and compared, and the
+      tool refuses if the two passes disagree** (#2267 r19). Paged reads
+      are separate statements: a row inserted between pages whose sort
+      position falls into a page already read is returned by none of them,
+      so it is skipped with no sign. `activity_events` holds 1,125 rows
+      against a page of 500, so it really does page. Against a source that
+      has stopped, the second pass agrees first time. Against one that has
+      not, the run fails and names this step — which is the right answer,
+      because a reconciliation reporting "clean" from a read that may have
+      skipped a row is the false pass this procedure keeps removing.
+      **If anything changed, do not proceed — wait and repeat.** Two
+      consecutive identical digests, ten minutes apart, allow the next step.
+   3. `carry --from vaipakam-archive --to vaipakam-warm --mirror --manifest
+      cutover-mirror.json` — the mirror carry, against a warm that nothing is
+      writing to yet. **Keep that manifest**: step 6 cannot do its job
+      without it, and the tool refuses to run step 6 without one rather than
+      reporting a reconciliation it did not perform.
+
+      **Keep it until the ROLLBACK window closes, not until the cutover
+      finishes** (#2267). §4's step 2b reconciles against this same
+      manifest before its reverse mirror, and `reconcile` will not run
+      without `--since`. Deleting it when the cutover completes therefore
+      removes the only baseline the documented rollback needs — while
+      archive is still being retained for precisely that rollback. The
+      window closes when the predecessor is deleted (§5, which does not
+      authorise that on its own); the manifest goes then, with it.
+
+      **[run] 2026-09-21 — the schemas agree today, so step 3 will not
+      refuse on shape.** The carry refuses any table whose declaration
+      differs between the two sides, which would stop the cutover dead
+      inside the window. Compared directly, using the tool's own
+      normalisation over `sqlite_master` on both databases:
+
+      ```
+      46 tables compared — 0 DDL difference(s), 0 archive-only, 0 warm-only
+      ```
+
+      That is 46 tables plus their indexes agreeing exactly, which also
+      exercises the r25 change that stopped whitespace being collapsed
+      inside quoted literals: applied to real declarations on both sides
+      it produces identical strings, so it is neither over- nor
+      under-normalising in practice. Re-run this on the day — a migration
+      applied to one side between now and then is exactly what it would
+      catch.
+
+      **A failed mirror leaves the previous manifest alone**, and that is
+      deliberate (#2267 r18). The manifest is written only by a run that
+      succeeded. An earlier revision wrote it as soon as the carry
+      returned — including when the carry had refused and written nothing —
+      which replaced the baseline with archive's CURRENT, uncarried values.
+      A later reconciliation comparing archive against that baseline would
+      find them equal and classify warm's differing row as
+      `destination-moved`: the late source update vanishes, silently, in
+      the step built to find it. So if a mirror stops, the last good
+      manifest is still on disk and still true; re-run the mirror for a
+      fresh one.
+
+      **[run] 2026-09-21** — proven end to end against the live pair. A
+      mirror carried all 1,384 rows, then failed verification because
+      archive had moved under it:
+
+      ```
+      wrote 1384 row(s)
+      STOPPED — 2 problem(s):
+        - indexer_cursor: source d08701b9… (19 rows) != destination 284bbe4a… (19 rows)
+        - recycle_backing_snapshot: source 066e5e1b… (2 rows) != destination e50b5fa4… (2 rows)
+      ```
+
+      The manifest path was **never created**. Under the previous code it
+      would have been written immediately after `wrote 1384 row(s)` — before
+      the digests ran, before anything was known to be wrong — and those
+      two moving tables would have become the new baseline.
+   4. `digest --db vaipakam-archive` once more. If it differs from step 3's
+      source digest, something committed during the carry: return to step 2.
+   5. Merge. The three Workers redeploy onto warm (#2237). **Then deploy
+      `ops/offchain-data-warm` by hand** — it is not in the auto-deploy set,
+      so nothing the merge does moves it — and only then verify with
+      `check-live-d1-bindings.mjs`, which asks what each Worker is SERVING
+      rather than what its latest upload says (§3 explains why that
+      distinction cost a false pass). The gate covers all four Workers, so
+      running it before that manual deploy fails on the backup Worker even
+      when every writer switched correctly. That is the probe being right
+      and the sequence being wrong, and the sequence is what moved.
+
+      **[run] 2026-09-21 — this deploy is pre-flighted, because it is the
+      one step in the window that needs a credential rather than a merge.**
+      `npx wrangler deploy --dry-run` in `ops/offchain-data-warm` builds
+      clean at 46.26 KiB and resolves its bindings to
+      `env.DB_ARCHIVE (vaipakam-warm)` and
+      `env.R2_LEGAL_VAULT (vaipakam-legal-vault)` — so the config is
+      already pointed at the successor and the build is not what will
+      fail. It declares **no Secrets Store secrets**, which is why this
+      one is deployable with a `Workers Scripts: Edit` token while the
+      three writers are not (see step 1's box).
+
+      The command is `( cd ops/offchain-data-warm && npm ci && npm run
+      deploy )`, which is `wrangler deploy` — the same form used at lines
+      621 and 979 of this document, so there is one spelling of it.
+   6. **Reconcile, and keep reconciling.**
+      `reconcile --from vaipakam-archive --to vaipakam-warm --since
+      cutover-mirror.json` — or `--since "$MANIFEST"` if the baseline was
+      recovered under the step-6 recovery box's name — which **reads both
+      sides and reports. It writes nothing, to either database, ever.** Repeat until **TWO CONSECUTIVE**
+      runs report nothing at all — with one documented exception: three of
+      the situations below have a resolution that changes no data and so
+      report on every subsequent pass. See the #2279 box under the
+      situation table before concluding that a repeating line means
+      something is unresolved.
+
+      > **IF THE MANIFEST IS LOST, TAKE ANOTHER — DO NOT RE-RUN THE
+      > MIRROR** (#2281). `reconcile` refuses to run without `--since`,
+      > and the rollback consumes the same file, so for a while the
+      > baseline was an irreplaceable artifact in the middle of a recovery
+      > procedure: the only thing that produced one was `carry --mirror`,
+      > which writes to a destination that is now LIVE. Re-running the
+      > mirror to recover a baseline would roll warm's newer rows back to
+      > archive's stale ones — worse than the problem.
+      >
+      > ```
+      > node apps/indexer/scripts/d1-carry-rows.mjs manifest \
+      >   --db vaipakam-archive --out cutover-mirror-reconstructed.json \
+      >   --stands-for "<which moment, and what establishes it>"
+      > ```
+      >
+      > **A NEW PATH, not the one the mirror used.** The verb refuses an
+      > existing `--out`. Replacing a manifest the mirror wrote with a
+      > reconstruction destroys the only baseline that was ever a direct
+      > observation, and no error is needed to do it (#2281 r2).
+      >
+      > **IT IS ALWAYS WRITTEN UNCOVERED, and it cannot be otherwise**
+      > (#2281 r3). An earlier revision took the coverage verdict as a
+      > flag here — which recorded the claim BEFORE printing the digests
+      > meant to substantiate it, so no operator could have compared
+      > anything at the moment the artifact said "covered". Promotion is
+      > a separate step that actually checks:
+      >
+      > ```
+      > node apps/indexer/scripts/d1-carry-rows.mjs cover \
+      >   --manifest cutover-mirror-reconstructed.json \
+      >   --expect mirror-time-digests.txt
+      > ```
+      >
+      > `--expect` holds what step 2 recorded AT the mirror. The `digest`
+      > command’s own output pastes in as-is: per-table digests, the
+      > `seq <table> <n>` high-water marks, and the `seq-listing complete`
+      > line that says the sequence listing is whole.
+      >
+      > **PASTE THE WHOLE `digest` RUN — BOTH CLOSING LINES ARE
+      > MANDATORY** (#2281 r8, r10). The rule-and-count line
+      > `————…  1384  (43 tables)` closes the digest block, and
+      > `seq-listing complete` closes the sequence block. They look like
+      > formatting and are not: each is how a reading says it covered
+      > the whole of its side, which is what lets `cover` treat a table
+      > present in one recorded run and absent from another as proof the
+      > database gained or lost a table in between.
+      >
+      > **`cover` REFUSES without one of each, before comparing
+      > anything.** An earlier revision of this box said instead that
+      > stripping a line merely switched the matching check off — which
+      > described a silent downgrade as though it were a choice, on the
+      > command that licenses the reverse mirror. It is now an error you
+      > will see, and the remedy is to paste the block again.
+      >
+      > It also refuses if the count and the number of digest lines
+      > disagree, rather than reading a part-pasted block as a complete
+      > reading, and if the two closing lines come from DIFFERENT runs —
+      > one run's tables joined to another run's allocations is two
+      > moments presented as one.
+      >
+      > **Both closing lines carry the same `run:<id>`** (#2281 r15) —
+      > the rule-and-count line and `seq-listing complete`. That is how
+      > `cover` knows the table set and the allocation marks came from
+      > ONE run. Paste them as printed; do not edit the ids, and do not
+      > assemble a "clean" block from two runs, which is precisely what
+      > the identifier exists to catch.
+      >
+      > Evidence recorded before the identifier existed carries none.
+      > `cover` does not refuse it — the mirror it describes has passed
+      > and cannot be re-recorded — but it cannot establish that the two
+      > halves came from one run, so it says so and leaves
+      > `run-pairing` out of `coveredDimensions`.
+      >
+      > **`digest` also prints a `shape <table> <hex>` line per table**
+      > (#2281 r13) — how that table keys and projects its rows. Paste
+      > those too. Contents cannot speak for row identity: a table
+      > recreated with a different primary key over the same
+      > column-order values produces the SAME digest and need not move
+      > its sequence, and reconciliation classifies rows by exactly the
+      > fields that changed.
+      >
+      > Evidence recorded before this line existed has none, and a
+      > mirror that has passed cannot be re-recorded — so `cover` does
+      > not refuse for want of it. It compares shape where the evidence
+      > carries it, prints what it did NOT establish when it does not,
+      > and writes `coveredDimensions` into the artifact so the record
+      > says which dimensions it stands on. **Read that field before
+      > relying on a promotion made from older evidence.**
+      >
+      > **Rows alone cannot cover an interval.** A straggler that inserts
+      > an AUTOINCREMENT row after the mirror and deletes it again leaves
+      > every row digest and count identical while the high-water mark
+      > moves. A reconstruction absorbs the moved value, and promoting on
+      > row evidence alone would make the sequence comparison treat that
+      > late allocation as original — switching off the one check written
+      > for exactly that case. So `cover` requires BOTH, per table, and
+      > refuses the whole promotion if any table is short of either.
+      >
+      > A refusal leaves the artifact untouched and uncovered. That is
+      > still usable for finding NEW differences; what it must not do is
+      > license the rollback’s reverse mirror.
+      >
+      > **CARRY THE RECOVERED PATH FORWARD — every `--since` in this
+      > document names `cutover-mirror.json`** (#2281 r10). That file is
+      > the one you just established is missing, so following this box
+      > and then resuming the procedure as written fails on the very next
+      > command. The recovered manifest is a REPLACEMENT for it, under a
+      > different name because the original must never be written over.
+      >
+      > From here to the end of the rollback window, read every
+      > `--since cutover-mirror.json` in this document as
+      > `--since cutover-mirror-reconstructed.json`. Setting it once in
+      > the shell keeps the two from drifting apart mid-procedure:
+      >
+      > ```
+      > MANIFEST=cutover-mirror-reconstructed.json   # or cutover-mirror.json
+      > ```
+      >
+      > and pass `--since "$MANIFEST"` thereafter. **Do not rename the
+      > reconstruction to `cutover-mirror.json`** to make the commands
+      > match: the name is what tells the next reader which of the two
+      > kinds of baseline they have, and the artifact says so of itself
+      > for the same reason.
+      >
+      >
+      > Read-only; it writes no database.
+      >
+      > **PRESENT STILLNESS DOES NOT ESTABLISH PAST EQUALITY, and an
+      > earlier draft of this box implied it did** (#2281 r1). What the
+      > verb records is archive **as it is now**. Take the exact case this
+      > step exists to find — a suspended invocation commits to archive
+      > after the mirror, and archive then goes inert. Every present-tense
+      > test passes: the digests are stable, nothing binds it. And a
+      > baseline taken now **contains that late write**, so every later
+      > run treats it as original and can never report it. The check is
+      > not weakened; it is turned against itself.
+      >
+      > What substantiates the claim is evidence recorded **at** the
+      > mirror — the digests step 2 took, and the post-carry reading in
+      > step 4 — compared with what this reading finds.
+      >
+      > **Two verbs, and only one of them can decide this** (#2281 r4, an
+      > earlier draft said flatly that "the tool cannot make that
+      > comparison", which contradicted the `cover` command printed
+      > above it). `manifest` cannot: it reads the database as it is now
+      > and has no access to anything recorded earlier, so it writes the
+      > baseline UNCOVERED and takes `--stands-for` only as a statement
+      > for a human reader, carried **in the artifact** rather than in a
+      > log that can be separated from it. `cover` can, and does: it is
+      > handed the mirror-time evidence and machine-checks it against the
+      > readings the artifact recorded, table by table, on both the
+      > digest and the sequence.
+      >
+      > So `--stands-for` is not the coverage decision and never was —
+      > it says which moment a reader should understand this baseline to
+      > be about. `reconcile` prints it, along with `RECONSTRUCTED
+      > baseline` and the coverage verdict, rather than calling any of it
+      > "the mirror".
+      >
+      > **[run] 2026-09-21** — taken from archive after the cutover and
+      > compared against the manifest the mirror wrote at 19:56: 43
+      > tables, **zero differing entries**, and a reconciliation against
+      > it returned VERIFIED with 0 conflicts. Here the evidence does
+      > exist — step 2's digests at 19:40 and 19:51 and step 4's reading
+      > at 19:57 are identical — so the interval is covered and the
+      > reproduced baseline is the same baseline.
+
+      > **TWO CLEAN RUNS PAUSE THIS STEP. THEY DO NOT END IT** (#2267
+      > r34/r35). There is no fence on archive — see the banner at the
+      > head of §4 — so a suspended invocation can commit after both
+      > clean runs and leave a support ticket, a threshold or a signed
+      > offer sitting in archive and absent from warm indefinitely.
+      > Retaining archive makes that record **recoverable**; it does not
+      > make it **found**.
+      >
+      > So while archive is retained, **re-run this reconciliation
+      > weekly** — by whoever holds this runbook, from the switch until
+      > the predecessor is deleted. It is a read against both databases
+      > that writes to neither, so it costs minutes. Record every run in
+      > the run log, clean ones included: the value of the record is that
+      > a gap in it is visible.
+      >
+      > Nothing else in this procedure discovers a late write, and until
+      > the predecessor is deleted there is no point at which one becomes
+      > impossible. §5's checklist agrees — its box reads "is CURRENT",
+      > not "completed", for exactly this reason.
+
+      **It used to insert, and that capability was removed rather than
+      guarded** (#2267 r14). Inserting into warm meant inserting into a
+      LIVE database, and review found that unsafe from a new direction
+      every round — most recently that a secondary unique index can be
+      filled between the preflight read and the statement, which no
+      preflight can close, because a check against a live database is a
+      statement about the moment it read and not a lock. So the write is
+      gone. Anything reconcile finds — including a row archive gained that
+      warm lacks, which is the one case that used to be automatic — is
+      **named for a person to apply deliberately**. With the expected
+      straggler count at zero, that is a better trade than a race nobody
+      can close, and it puts a human decision on every row that moves after
+      the switch. Archive is retained regardless, so a row found a week
+      later is still recoverable.
+
+      **Two, not one**, and the difference is the whole reason this step
+      exists: a single clean run says only that nothing had arrived by the
+      moment it read. Work suspended across the barrier can commit
+      immediately afterwards, which is precisely the case step 6 is here to
+      catch — so one clean pass is the same unearned confidence the barrier
+      was corrected for. `ProjectDetailsREADME.md` §13 and this change's
+      release note both said two while this step said one; the step was
+      wrong.
+
+      **A late INSERT and a late UPDATE need different answers, which is why
+      `--since` is mandatory.** A straggler that inserts a new row leaves a
+      key warm lacks, which the reconciliation can see and name for the
+      operator to apply — it carries nothing itself. A straggler
+      that *updates* an existing row — an `offers` status, a cursor, a
+      threshold — leaves a key warm already has, so a carry keyed on
+      presence alone does nothing, reports zero rows, and calls itself
+      finished while warm is stale. That is counting instead of comparing,
+      one level up.
+
+      Comparing the two databases directly does not help either: after the
+      switch warm legitimately moves on, so almost every live row differs.
+      What identifies a straggler is that the row changed **on archive,
+      after the mirror** — a question about archive and its own past, which
+      is what the manifest is.
+
+      **With the manifest there are THREE facts per row, not two**, and
+      reading it as two is how several defects got in. Was the row in the
+      manifest; is it on archive now; is it on warm now. Those three
+      answers are what let each situation be NAMED correctly. `reconcile`
+      applies none of them — it writes to neither database — so every row
+      below is reported for a person to apply:
+
+      | situation | manifest | archive | warm | what it means |
+      | --- | --- | --- | --- | --- |
+      | `new-on-source` | no | yes | absent | a straggler inserted it → **reported for manual application**. The simplest case, and still not an automatic one |
+      | `key-collision` | no | yes | a DIFFERENT row | both sides allocated the same key after the mirror — `notifications` and `diag_legal_hold_audit` are `AUTOINCREMENT`, so this is two different records wearing one id, and an insert would drop archive's |
+      | `agreed` | either | yes | the SAME row | nothing to do, whatever the manifest says: an operator applied it after an earlier pass reported it, or resolved it some other way |
+      | `destination-moved` | yes, = archive | yes | a different row | **only warm changed** — after the switch that is the live database doing its job, `indexer_cursor` advancing every minute. Not a conflict |
+      | `source-changed` | yes, ≠ archive | yes | a different row | a straggler's write; which value wins is a decision |
+      | `destination-deleted` | yes, = archive | yes | absent | **warm DELETED it.** Retention crons delete support tickets, diagnostics, telegram links, cancelled offers — and a deletion can be a privacy obligation. Re-inserting would silently undo it |
+      | `destination-deleted-source-changed` | yes, ≠ archive | yes | absent | **warm deleted it AND archive changed it since.** Both facts belong in the decision: restoring undoes a deliberate deletion, leaving it discards a late value that no reading of warm will show. Reported as one conflict naming both (#2267 r27) |
+      | (source-side) | yes, = warm's row | **no** | yes | archive deleted it after the mirror and warm still holds the row the mirror carried, so it is stale there. It is in none of archive's rows, so a loop over archive never sees it — this is a separate pass over the manifest |
+      | (source-side) | yes, ≠ warm's row | **no** | yes | archive deleted it AND warm has changed it since, so warm has its own newer value. Not a stale row: deleting it would discard a setting a user may have just changed, which `user_thresholds` makes concrete since it is keyed by the setting rather than an allocated id (#2267 r26) |
+
+      **`agreed` and `destination-moved` are why "repeat until clean" can
+      ever come clean**, and each was missing once. Without `agreed`, a row
+      a pass carried — or a conflict the operator resolved — reports
+      forever. Without `destination-moved`, every row the live warm
+      advances reports forever. Both are the same defect: a branch that
+      stopped asking one of the three questions. The three are now asked in
+      one place, the answer is a name, and the code that acts on it handles
+      every name or throws — so a dropped question cannot be written.
+
+      > **SOME OF THOSE SITUATIONS CAN NEVER COME CLEAN, AND THAT IS A
+      > GAP IN THIS PROCEDURE RATHER THAN A MISTAKE BY THE OPERATOR WHO
+      > HITS IT** (#2279, found scouting the same seam for the fourth
+      > round running). The tool compares data. Where a situation's
+      > legitimate resolution **changes no data** — a decision to leave
+      > things as they are — the next pass compares the same two rows and
+      > reports the same difference. Forever, because a decision is not
+      > something either database holds.
+      >
+      > **The table below names examples, not the whole set** (#2286 r8).
+      > It said THREE and was read as exhaustive, which is wrong in the
+      > direction that hurts: `destination-deleted-source-changed` can
+      > legitimately resolve by letting warm's deletion stand, and the
+      > source-deleted branch by keeping warm's newer value — both
+      > change no data and therefore both report forever, and neither is
+      > in the table. An operator who trusts a bound either forces a data
+      > change to make a line go away, which can undo a privacy deletion,
+      > or refuses to count a properly decided run as clean. **The test is
+      > the property, not membership of a list: if the resolution changes
+      > no data, the line will repeat.**
+      >
+      > Driving the shipped classifier against each resolution shows which:
+      >
+      > | situation | legitimate resolution | what the next pass reports |
+      > | --- | --- | --- |
+      > | `key-collision` | insert archive's record into warm under a NEW id, leaving warm's own record on the old one | `key-collision` again — the id is still allocated on both sides to different records |
+      > | `destination-deleted` | decide the deletion stands (a retention cron did its job, or it was a privacy obligation) | `destination-deleted` again — the row is still absent from warm |
+      > | the source-side *stale row* case | decide warm's row stays as it is | the same again — archive still deleted it after the mirror |
+      > | `source-changed` | apply archive's value to warm | **clean** — this one converges, because applying it is a data change |
+      >
+      > **A fourth line behaves the same way, and it is not a row at all**
+      > (#2267 r39): a reported **sequence advance** on archive. If a
+      > straggler allocated an id and then deleted the row, nothing can be
+      > applied — the identifier is simply spent on one side. The run used
+      > to fall silent once warm's own sequence reached the same number,
+      > which is not evidence of anything: warm allocates identifiers for
+      > its own records every minute, and by number that is
+      > indistinguishable from having applied archive's. The report now
+      > shows warm's figure as context and keeps reporting. Record and
+      > carry on, exactly as above.
+      >
+      > So a run is as resolved as it is going to get once every line it
+      > reports is one **already recorded, by table and key, with the
+      > decision taken**. That is the test, and it is deliberately by key
+      > rather than by situation name: a second `destination-deleted` on a
+      > DIFFERENT key is a new difference that has been decided by nobody,
+      > and reading the name alone would wave it through. **Record each
+      > decision, treat a run carrying only already-recorded keys as the
+      > clean run for the two-run rule, and keep the weekly re-runs
+      > going** — their job is to surface anything NEW, and a fixed set of
+      > known-and-decided lines does not stop them doing it.
+      >
+      > **The by-key test is weaker than it sounds** (#2286 r5, r6). No
+      > report carries the row's CONTENTS — table, key and kind, and
+      > deliberately nothing more. So a row that changes AGAIN after a
+      > decision was recorded about it emits a line identical to the
+      > settled one, and the by-key test waves it through. Until #2279
+      > binds a decision to the state it was taken in, treat a recurring
+      > line as decided only for the state you actually REVIEWED, and
+      > **re-read the row itself** before counting a run clean on the
+      > strength of a line you have seen before.
+      >
+      > **Rows in credential-keyed tables cannot be re-read that way, and
+      > must not be recorded by their printed key either** (#2286 r7).
+      > `telegram_links` is keyed by the live handshake code, so the
+      > report prints an HMAC under a key generated fresh per run and
+      > never stored (`d1-carry-rows.mjs:1094-1148`). Cross-run
+      > correlation is given up DELIBERATELY there — a six-digit code is
+      > a million candidates, so a stable fingerprint would hand the
+      > reader the credential. Consequences, both of them: the printed
+      > value cannot be used to query the database, and the same row
+      > carries a different value in this week's report than in last
+      > week's, so it can never match a previously recorded decision.
+      > Record and review these **at table level**, and note the
+      > mitigation the tool's own design rests on: the code is live for
+      > ten minutes, so a conflict that survives into the next weekly run
+      > is a conflict about a credential that has already expired.
+      >
+      > Do not narrow that to a list of situations. An intermediate
+      > revision of this note named `source-changed` and
+      > `destination-deleted-source-changed`, which is wrong in the
+      > dangerous direction: `key-collision` is re-derived from the rows on
+      > every run (`d1-carry-rows.mjs:1502-1515`), so a straggler updating
+      > the archive record after you copied it across leaves warm's copy
+      > stale behind an unchanged line, and the `new-on-source` unique
+      > clash behaves the same way. The property belongs to the REPORT
+      > FORMAT, not to particular situations, so it applies to all of them.
+      >
+      > **Some lines have no row identity at all, and "recorded by table
+      > and key" is not a test they can satisfy** (#2286 r6). A sequence
+      > advance is per TABLE (`d1-carry-rows.mjs:932-941`), and the
+      > manifest-only classification deliberately emits conflicts with no
+      > key (`d1-carry-rows.mjs:1583-1653`) — which is what warm dropping a
+      > table, or its key, looks like from archive's side.
+      >
+      > **Record these by table, the kind of line, and STATE THAT MOVES
+      > WHEN THE DATA MOVES.** Table-plus-kind alone is not enough, for
+      > the same reason the by-key test is not (#2286 r7): a sequence that
+      > advances again after a decision, or a dropped table taking another
+      > late write, reports under the same table and the same kind. The
+      > re-read above rescues neither — an allocation that was inserted
+      > and deleted has no row left to re-read, and a manifest-only
+      > finding carries no row identity to re-read BY. What state to take
+      > differs by line:
+      >
+      > - **A sequence advance** — record archive's current mark and the
+      >   mirror baseline it is compared against. **Not warm's mark.** The
+      >   line carries it, but `compareSequences` prints it as CONTEXT
+      >   precisely because warm advances it on its own ordinary writes
+      >   (`d1-carry-rows.mjs:906-940`); a decision that includes it looks
+      >   like new state every week, so an already-reviewed archive
+      >   advance could never count as clean (#2286 r9).
+      > - **A manifest-only conflict** — **re-review the whole table**
+      >   before counting the run clean. That is the only option today,
+      >   and deliberately so: the per-table digest exists inside the run
+      >   but is NOT printed in the conflict output (`d1-carry-rows.mjs`
+      >   1643-1652, 3836-3841), so there is no digest for an operator to
+      >   record, and computing one with a later `digest` call observes a
+      >   DIFFERENT moment — which on a procedure that expressly allows
+      >   arbitrarily late source writes is a substitution, not a record
+      >   (#2286 r11). Printing the same-run digest in the conflict line
+      >   would make the cheaper option available; until it does, do not
+      >   reach for it. **And not the counts.** The line reports
+      >   only how many rows were added, changed and deleted, so changing
+      >   an already-changed row AGAIN leaves the line reading `0 added,
+      >   1 changed, 0 deleted` exactly as before and a count-based record
+      >   accepts the second write as the decided one (#2286 r8). Counts
+      >   are an identity that does not move when the data does.
+      >
+      > Then treat a run carrying only already-recorded lines as clean on
+      > the same terms, and the SAME line with DIFFERENT state as new and
+      > undecided.
+      >
+      > Without some identity here they could never be recorded to the
+      > rule's satisfaction at all and the retirement gate would stay
+      > blocked forever, which is the check-that-can-never-pass shape this
+      > procedure keeps having to remove — but an identity that cannot
+      > change is the opposite failure, and waves a real late write
+      > through. What it does cost is the property that made
+      > "repeat until clean" self-checking, which is why this is written
+      > down rather than left for an operator to work out at 2am.
+      >
+      > **The fix is not in this change.** #2279 proposes recording
+      > decisions — an `accepted` set in the manifest and a `ratify` verb
+      > that puts them there — so a decided line stops reporting while an
+      > undecided one still does. Building that at this point in the review
+      > loop would add an unreviewed write path to the one tool whose whole
+      > safety property is that it cannot write; stating the limitation
+      > where the rule is asserted is the honest half, and it is the half
+      > that helps the operator.
+
+      Two more cases sit underneath that table, because *absent by primary
+      key* is not the same as *insertable*, and *present under a key the
+      manifest never saw* is not always a clash:
+
+      - A row the **previous pass already carried** looks exactly like the
+        two-records-one-id case — not in the manifest, present on both
+        sides. **Content** is what tells them apart, and comparing it is
+        what lets "repeat until clean" ever come clean: without it, pass
+        two flags pass one's own work and the procedure never converges.
+      - A row absent by primary key can still be **present under a
+        secondary unique index** — `notifications.dedup_key` is one — where
+        the same logical row reached both sides and was numbered
+        differently. `ON CONFLICT (primary key)` does not cover that, so
+        the insert would fail with a raw constraint error and abort the
+        run. The tool checks every uniqueness the table declares and
+        reports the clash instead. (A tuple containing NULL cannot collide,
+        because SQLite treats those as distinct.)
+
+      **Once the destination has taken a migration the retained source
+      never will, three things follow, and all three are handled rather
+      than assumed away** (#2267 r39). A column the destination has
+      DROPPED is compared as absent, never as NULL — otherwise a
+      straggler writing NULL to that column reads as the two sides
+      agreeing and vanishes inside the only check still looking for it.
+      The unique indexes consulted are the DESTINATION's, since that is
+      the database that would reject the insert this run's report leads
+      an operator to make; one naming a column the source lacks cannot be
+      evaluated at all and is named in the output rather than dropped
+      quietly. **Warm is read as the live database it is** (#2267 r42):
+      paged by primary key, with no requirement that it hold still. The
+      stability check that makes the *mirror* trustworthy is a demand
+      that the database being read has stopped — right for archive inside
+      the barrier, impossible for warm on a Tuesday afternoon, and a busy
+      table like `activity_events` would have aborted the weekly run
+      telling the operator to close a barrier that is not supposed to
+      exist. Paging by key is what makes dropping that demand safe rather
+      than merely convenient: every row present for the whole read is
+      returned exactly once, where the offset paging it replaces loses a
+      row whenever an earlier one is deleted mid-read. A row created or
+      deleted *during* the read may or may not appear, which is a fact
+      about the question rather than an error. A table that exists
+      **only on warm** — what a migration creating one looks like from
+      archive's side — is printed as drift rather than failing the run: it cannot hold a late write from
+      archive, which is the only thing the run is looking for, and
+      failing on it would end the weekly check at the first schema
+      change. And a reconciliation **no longer stops at the conflict
+      list**: its two remaining late-write checks — the sequence
+      comparison and the re-read that notices the source moved — come
+      afterwards, and with #2279 making a conflict permanent, stopping
+      there would have switched both off for good. The carry still stops,
+      because it wrote nothing and has minutes of digests ahead of it
+      inside the cutover window.
+
+      **The tool resolves no conflict, and a conflicted run writes
+      nothing at all.** It classifies every table first and only then
+      acts, so a run that finds both a safe row and a conflict applies
+      neither — a failed command must not leave a live database partly
+      mutated, which is the state hardest to reason about afterwards.
+
+      **A conflict names the table and the key, and stops there.** It does
+      not print the row: `support_tickets` puts the user's message and
+      email immediately after the key, `diag_errors` carries whatever a
+      stack trace held, and cutover output gets pasted into run logs and
+      issues. An operator who needs a value queries for it deliberately.
+
+   Step 6 is not a belt-and-braces precaution; it is the only part of this
+   that covers work suspended across the whole barrier. It is possible
+   because the carry tool has a mode that **cannot write at all** —
+   reconciling with a mirror carry would roll warm's newer rows back to
+   archive's stale ones, which is a worse outcome than the problem. Read
+   "safe against a live destination" as the absence of a write path and
+   not as a careful one: a guarded write against a live database is what
+   review removed, round after round, and the phrasing should not invite
+   putting it back.
+
+   What steps 2 and 4 do rest on is "a write changes the digest", true by
+   construction — unlike "every writer is on this list", the unbounded
+   predicate §"Stopping the writers" refuses. Their residual is stated
+   rather than absorbed: a write storing a value **identical** to the one
+   already there moves no digest. Harmless for the carry, and not a claim
+   that nothing is running.
+
+   The ten minutes is not a derived bound and is not presented as one; it is
+   an observation interval long enough that ordinary movement shows up in it.
+   The **evidence** it is sized against is in step 2 of the execution record:
+   three tables drifted within minutes with the writers live.
+
+   > **SUPERSEDED (#2267 r22).** This paragraph used to say the binding
+   > removal was an uncommitted, operator-side edit that the operator
+   > restored afterwards, with tooling to avoid hand-editing production
+   > config tracked as #2250. An uncommitted edit produces no merge, and
+   > these Workers have no deploy route other than a merge — so following
+   > it would have left every writer attached while the operator went on
+   > to the copy believing they were held. The barrier is a COMMIT, cut
+   > from `main` before this change and merged; step 1 above is the
+   > executable version. #2250 is unaffected: it is about not hand-editing
+   > the config, which is still worth having.
+
+   An earlier revision of this record listed the switch as done and described
+   a "sync just before merging" as sufficient. It is not, and saying so was
+   the same class of error this document keeps warning about: a procedure
+   claiming a guarantee its mechanism does not provide.
+
+### Decision 2 below was SUPERSEDED, and that is worth stating plainly
+
+The 2026-08-03 decision was *do not migrate the data*, on the reasoning that
+fresh contract deployments were expected and would make the indexed data stale
+anyway. The owner delegated this decision again on 2026-09-21 ("proceed as
+required, I will go with your recommendations"), and the data **was** copied.
+
+The reason for reversing it: **the fresh contract deployment has not happened.**
+The Diamond addresses in `packages/contracts/src/deployments.json` are
+unchanged, so the 38 loans, 49 offers and 1,125 activity rows describe the
+deployment that is live right now. Starting warm empty today would not discard
+stale data — it would discard current data, and with it the 19 `indexer_cursor`
+rows that tell the indexer where it had scanned to. An empty cursor table means
+re-scanning from the configured start block or silently beginning from now.
+
+If a fresh contract deployment does land later, the **chain-derived** data
+becomes stale exactly as the original decision anticipated, and clearing that
+is a `DELETE FROM` per table — cheap, and a decision that can be taken with
+the redeploy in hand rather than in advance of it.
+
+**Not every table is chain-derived, and a blanket clear would take user data
+with it.** §5 records the two that a contract redeploy does not obsolete:
+`support_tickets` (4 open) and `user_thresholds` (per-wallet alert
+configuration carrying a Telegram chat id). Loans, offers, activity and
+cursors describe a deployment; a support request and a user's alert settings
+describe a person, and a new Diamond address makes neither of them stale. So
+"clear it then" means the chain-derived tables, named individually at the
+time — never `DELETE FROM` across the schema.
+
+This is the same shape as the retired Step 0 above, which is why it is
+spelled out here rather than left to judgment: a clearing instruction that
+does not say what it excludes gets carried out in full.
+
+**This is recorded as a superseded decision rather than an edited one.** The
+original reasoning was sound for the world it was written in; what changed is
+that the world did not arrive.
 
 **Owner decisions (2026-08-03):**
 1. Proceed with the cutover — the platform is pre-live.
-2. **Do not migrate the data.** Fresh contract deployments are expected, so
-   the new database starts empty and captures new data only.
+2. ~~**Do not migrate the data.** Fresh contract deployments are expected, so
+   the new database starts empty and captures new data only.~~ **Superseded
+   2026-09-21 — see above.**
 
-That second decision is what makes this document short. Earlier revisions
+That second decision is what made this document short. Earlier revisions
 carried a quiesce, a whole-database export/import, a reconciliation and a
-secure-destruction step for a file full of personal data. None of that is
-needed to move to an empty database, and every one of those steps was a
-place to get it wrong.
+secure-destruction step for a file full of personal data. The copy that was
+actually performed is none of those: 1,384 rows through an idempotent upsert,
+verified by a per-table content digest. **The quiesce came back** — execution-
+record step 3 — because this decision removed the export/import, not the need
+to stop the writers before the last copy.
 
 ---
 
@@ -179,25 +1189,37 @@ rather than discovering a mixed dataset later.
 
 ## 3. The cutover
 
-### Step 0 — clear the target
+### ~~Step 0 — clear the target~~ — RETIRED, DO NOT RUN (#2267 r28)
 
-It is **not** empty. `vaipakam-warm` still holds the six rows hand-copied
-during #1537's preparation — `user_thresholds` 1, `notify_state` 1,
-`support_tickets` 4 (verified 2026-08-03). An earlier revision of this plan
-had a clearing step; the no-migration rewrite removed it, which would have
-left those stale rows to be adopted as live state.
-
-```bash
-# [unrun] — verify against OffChainRestore.md §1 before pasting
-(cd apps/indexer && npx wrangler d1 execute "$TARGET_DB" --remote --command \
-  "DELETE FROM user_thresholds; DELETE FROM notify_state; DELETE FROM support_tickets;")
-```
-
-**Then confirm the domain tables are empty.** Not *every* table: `d1_migrations`
-necessarily holds 49 rows — that is what "prepared through `0048`" means — and
-`sqlite_sequence` may hold rows too. An earlier revision asked for a state the
-target cannot be in, which leaves an operator either blocked or deleting
-bookkeeping they need.
+> **This step deleted user data, and following it today would discard the
+> records this move exists to preserve.** It belonged to the *do not
+> migrate the data* decision, which was reversed on 2026-09-21 (see
+> §"Decision 2 below was SUPERSEDED"). Under that decision warm was to
+> start empty, so six rows hand-copied during #1537's preparation —
+> `user_thresholds` 1, `notify_state` 1, `support_tickets` 4 — were stale
+> fixtures to be cleared.
+>
+> They are not fixtures any more. The reversal carries archive's rows
+> across, `user_thresholds` and `support_tickets` among them, and no later
+> step restores anything this would delete. An operator working down §3's
+> numbered steps rather than the execution record would therefore delete
+> four open support tickets and a user's alert configuration, and the
+> cutover would carry on looking correct.
+>
+> The command is deliberately left unrunnable rather than deleted, because
+> this step was the documented first action for seven weeks and someone
+> may come looking for it:
+>
+> ```
+> RETIRED — do not paste. It read:
+>   DELETE FROM user_thresholds; DELETE FROM notify_state;
+>   DELETE FROM support_tickets;
+> ```
+>
+> **Nothing replaces it.** The mirror carries archive over warm's contents,
+> row by row, and removes what archive does not have — which is what
+> clearing was for, done by comparison rather than by deletion. Step 0b
+> below is unaffected and still applies.
 
 ### Step 0b — re-apply migrations if any landed since
 
@@ -518,15 +1540,28 @@ through — and they now cooperate with that state rather than crashing into it.
 "Off-Chain Data Services".
 
 **That is the mechanism, not the runbook.** Writing the step-by-step procedure
-around it needs four things this document does not yet have: tooling to produce
+around it needed four things this document did not have: tooling to produce
 a maintenance build without hand-editing production config (#2250), an owner
 decision on whether retained rows are archived or restored, a drain criterion
 that survives its own premise, and the contract-redeploy sequencing in §2.
-**#2255 carries that work and the open findings against the draft.** Until it
-lands the procedure is unspecified, and the paragraphs that follow explain why
-writing one anyway is worse than saying so. Their references have been moved
-from #2239 to #2255 so the distinction holds: the mechanism is settled, the
-procedure is not.
+**#2255 carries that work and the open findings against the draft.**
+
+**Two of the four are now settled, for THIS cutover** (2026-09-21, #2214).
+The owner decision was taken — the rows are carried across, recorded above as
+a superseded decision — and the drain criterion exists: the **observed-still**
+barrier in execution-record step 3. It survives its own premise because its
+premise is "a write changes the digest", true by construction, rather than
+"every writer is on this list", which is the unbounded predicate this section
+refuses. Its residual — an in-flight write storing a value identical to the
+one already stored — is named there, not absorbed.
+
+The other two remain open, and §2's sequencing is untouched. So the general
+procedure is still #2255's to write; what is settled is the procedure for
+this one move. #2250 remains open too, but it is no longer what makes the
+maintenance build an operator-side edit — **it is not one**. The barrier is
+a commit, merged, because a merge is the only route these Workers have to
+production; #2250 is about generating that commit rather than hand-editing
+the config to produce it.
 
 **Enumerating the ways code can reach a database is an unbounded predicate.**
 Writing a list here that reads authoritative and is incomplete is worse than
@@ -538,10 +1573,13 @@ one formulation that does not depend on having enumerated the entry points
 correctly. That is shipped. What remains open is the procedure built on it —
 #2255.
 
-**Until #2255 lands, treat this cutover as requiring an operator who
-accepts that exposure** — the mechanism to avoid it exists, the procedure for
-applying it safely does not — which is what the next section describes, honestly
-labelled.
+**This paragraph described the state before 2026-09-21** and said the cutover
+required an operator willing to accept that exposure, because the mechanism to
+avoid it existed and the procedure did not. That is no longer the choice being
+made here: execution-record step 3 is the procedure, and the next section's
+watch-it-through alternative is **not** the route this cutover takes. It is
+retained because the reasoning for when it would be defensible is still the
+reasoning, and because reading it explains what step 3 is avoiding.
 
 ### The alternative, and when it is defensible
 
@@ -550,11 +1588,20 @@ when someone is watching and run Step 3 immediately, accepting that anything
 written in between may be lost. This was chosen when there were no real users.
 It is not a decision to inherit once there are.
 
-**Until #2255 lands, this is effectively the only procedure this document can
-honestly offer** — and the reason to say that out loud is that a partial gate
-is this option wearing a disguise. Closing the public routes while cron still
-ticks, or while a Durable Object alarm re-arms itself, accepts the same
-exposure and hides it behind a step that looks like protection.
+~~**Until #2255 lands, this is effectively the only procedure this document
+can honestly offer.**~~ **NO LONGER TRUE, and it must not be read as an
+instruction (2026-09-21, #2267 r10).** Execution-record step 3 is a
+procedure, it is the route this cutover takes, and this sentence sat a few
+lines below a statement saying so — two mutually exclusive instructions for a
+live data move, the later of which explicitly accepts lost writes. It is
+struck through rather than deleted because the reasoning in the next
+paragraph is still correct and still worth reading.
+
+That reasoning: **a partial gate is this option wearing a disguise.** Closing
+the public routes while cron still ticks, or while a Durable Object alarm
+re-arms itself, accepts the same exposure and hides it behind a step that
+looks like protection. That is exactly why step 3 removes the binding rather
+than closing routes.
 
 What the auto-deploy correction genuinely changes is **who** closes the
 window: it no longer waits on a person remembering a command. It does not make
@@ -575,9 +1622,18 @@ r2 P2). On the cutover the intended database is `$TARGET_DB`; during a
 rollback it is the SOURCE. The probes below are written for the cutover
 direction and **must be inverted for a rollback** — reading them literally
 there makes a correctly rolled-back Worker fail its check, and, far worse,
-makes a Worker still stuck on the target appear to pass. The discriminator
-also inverts: on the way out the target's EMPTINESS is what proves the
-switch; on the way back it is the source's accumulated rows.
+makes a Worker still stuck on the target appear to pass.
+
+**The discriminator does NOT invert, because it is not a property of the
+data.** An earlier version of this paragraph said the target's emptiness
+proves the switch on the way out and the source's accumulated rows prove it
+on the way back — which contradicted the box fifteen lines below, where the
+emptiness tell is retired outright. Both databases hold the same rows after
+the copy, so neither emptiness nor accumulation distinguishes them in either
+direction. The binding id does, and it does so identically both ways: read
+it from the control plane and compare it against the database you intend.
+That is the whole of the inversion — `--expect` names the other end, and
+nothing else about the check changes.
 
 Wherever this step says "the target", read "the intended database", and pick
 the discriminator that can only be true of it.
@@ -588,15 +1644,34 @@ either way, an agent request reads a schema-valid database either way, and
 the backup Worker completes into whichever `B2_BUCKET` it holds. Those prove
 the Worker is alive, not where it is pointed.
 
-Use checks that can only be true of the new database. Since the target starts
-empty, its emptiness is the discriminator:
+Use checks that can only be true of the new database.
 
-```bash
-# [unrun] — same shape as the [run] commands above; confirm before pasting.
-# Before restoring traffic: the new database has zero rows in these.
-(cd apps/indexer && npx wrangler d1 execute "$TARGET_DB" --remote --command \
-  "SELECT (SELECT COUNT(*) FROM offers) o, (SELECT COUNT(*) FROM activity_events) a")
-```
+> **The emptiness discriminator is GONE, and this is the correction** (#2267
+> r1). Every revision of this section up to 2026-09-21 used the target's
+> emptiness as the tell: zero `offers`, zero `activity_events`, a first
+> `indexer_cursor` row appearing. **The data was copied, so both databases now
+> hold the same 1,384 rows**, and an emptiness test against the target now
+> fails on a correctly switched Worker while telling you nothing about one that
+> never switched. It inverted from a discriminator into a false alarm.
+>
+> Do not replace it with "roughly equal row counts" either. Two databases
+> carrying the same rows are indistinguishable by counting them — that is the
+> whole problem, and it is the same mistake as verifying the copy by row count
+> (which missed two genuinely divergent tables until a content comparison
+> found them).
+
+**The binding read is the discriminator.** It is authoritative, it is the only
+check available while the writers are stopped, and it reflects what is actually
+deployed rather than what the code intends — which is why it already leads the
+list below. Read each Worker's D1 binding from the control plane and compare the
+**database id**, not the name: an id cannot be ambiguous the way a name in a
+config file that may not have deployed yet can.
+
+Where a data-level tell is still wanted after traffic resumes, write a **unique
+sentinel** through the Worker's own surface and look for it in the target by
+that exact value. A sentinel discriminates because you chose it; emptiness
+discriminated only while the target happened to be empty, which was a property
+of the world rather than of the check.
 
 - **indexer** — after its first tick, `indexer_cursor` gains a row in
   `$TARGET_DB` and `offers`/`activity_events` begin filling *there*. Confirm
@@ -648,13 +1723,112 @@ empty, its emptiness is the discriminator:
 (#2238 r3 P1, adjusted r6 P2). Confirmation is two passes, and the first is
 the one that authorises restoring normal operation:
 
-1. **Binding read — control plane.** Read each Worker's D1 binding
-   (*Settings → Bindings*, or the API) and confirm every one names the
-   intended database. A configuration check, labelled as such. It is the only
-   check that distinguishes "build still running" and "build failed" from
-   "switched", since it reflects what is actually deployed — and the only one
-   available at all if the writers have been stopped, because the write probes
-   below go through the very surfaces a stoppage closes.
+1. **Binding read — control plane.** Run
+
+   ```
+   node apps/indexer/scripts/check-live-d1-bindings.mjs
+   ```
+
+   A configuration check, labelled as such. **After the merge, run it with
+   no flags.** A serving version with no D1 binding at all is a FAILURE
+   there — that is a Worker still on the maintenance build, which is what a
+   failed or unfinished deploy looks like, and passing it would authorise
+   traffic to a Worker that cannot reach any database.
+
+   > **Inside the barrier, the question is different and so is the
+   > command: `--writers-held`.** It replaces a `--allow-maintenance` flag
+   > that could not answer it (#2267 r13). That flag merely *permitted* a
+   > version with no binding, so it would have passed a writer still
+   > happily serving the old database — proving nothing about the writers
+   > being stopped — and it still checked the hand-deployed backup Worker,
+   > which inside the barrier is *deliberately* still on archive, so the
+   > one command offered for confirming the barrier reported a mismatch
+   > even when the barrier was perfect.
+   >
+   > `--writers-held` asks the positive question of the three Workers the
+   > barrier is about: **does each serving version carry no D1 binding at
+   > all.** The backup Worker is out of scope there by construction, and
+   > the command says so rather than quietly skipping it.
+
+   The post-merge form is the gate that authorises restoring normal
+   operation. It is the only check that
+   distinguishes "build still running" and "build failed" from "switched",
+   since it reflects what is actually deployed — and the only one available at
+   all if the writers have been stopped, because the write probes below go
+   through the very surfaces a stoppage closes.
+
+   > **Do NOT read this from *Settings → Bindings* or from
+   > `/workers/scripts/<name>/settings`. That probe returns the wrong answer,
+   > and it returns it in the PASSING direction.** Those report the bindings
+   > of the most recently UPLOADED version, which on a repository with branch
+   > builds is a version nobody is served. Measured 2026-09-21, mid-cutover:
+   > `settings` reported `DB=e5e927cf…` (**warm**) for `vaipakam-indexer`,
+   > while the deployment actually serving traffic — version `964d9628…`,
+   > uploaded the previous day — was bound to `3cffebf5…` (**archive**). A
+   > cutover "verified" that way is declared complete while every write still
+   > lands in the database being abandoned.
+   >
+   > The script asks the DEPLOYMENT instead: the active deployment, then
+   > **every version inside it** — a gradual deployment splits traffic, so
+   > checking only the first would let a 90/10 split pass with a tenth of
+   > requests still writing to the old database — then that version's own
+   > bindings. The expected id is one of the two databases this move is
+   > between, pinned by id in `apps/indexer/scripts/lib/cutover-databases.mjs`
+   > — `--expect` selects which, and a name that is neither is refused
+   > rather than resolved against the account (#2267 r23).
+   >
+   > **A version with no D1 binding at all FAILS this check**, and that is
+   > not the same command as the barrier confirmation. Normal mode asks
+   > "is every serving version on the expected database", and a Worker
+   > attached to nothing is not; `--writers-held` asks the opposite
+   > question of the three writers and is the only mode that treats a
+   > bindingless version as correct. An earlier version of this block said
+   > normal mode reports it as the maintenance build, which would have had
+   > an operator confirm the barrier with the command that cannot confirm
+   > it (#2267 r24).
+   >
+   > This replaces the wording added in #2267 r1, which said to read the
+   > binding id "from the control plane" without saying which reading — and
+   > the obvious reading is the one that lies.
+
+   **[run] 2026-09-21, before the switch** — all four Workers reported
+   `MISMATCH` on `3cffebf5…` (archive) at 100%, which is the correct
+   pre-cutover answer and is what a probe that works looks like when the
+   thing it checks has not happened yet.
+
+   **[run] 2026-09-21 10:52Z — the ROLLBACK direction, green for the
+   first time.** `--expect vaipakam-archive` against the same live state
+   returns `OK` for all four, with the loud header naming it as the
+   rollback direction. Both verdicts are the same reading of the same
+   four Workers, so the pair confirms the probe distinguishes the two
+   databases rather than merely reporting whatever it was asked for:
+
+   ```
+   expecting vaipakam-archive (3cffebf5…) — NOT the successor (vaipakam-warm).
+   This is the rollback direction; say so in the run log
+
+     vaipakam-indexer             964d9628 @ 100%  DB=3cffebf5… OK
+     vaipakam-keeper              cf230d1e @ 100%  DB=3cffebf5… OK
+     vaipakam-agent               54293476 @ 100%  DB=3cffebf5… OK
+     vaipakam-offchain-data-warm  31cfc0b2 @ 100%  DB_ARCHIVE=3cffebf5… OK
+   ```
+
+   That branch had never been run green before — it is the one the
+   rollback depends on and the one whose expectation was being resolved
+   from an account name lookup until #2267 r23. It is also the first run
+   since the Worker roster moved into `lib/d1-workers.mjs`, so it
+   exercises that rewiring against the live control plane rather than
+   against the repository alone.
+
+   **And the behaviour agreed, which is how the false pass was caught.**
+   `indexer_cursor` was sampled on BOTH databases three minutes apart:
+   archive's `97/diamond` moved 132243152 → 132243829 while warm's stayed at
+   132242539. The indexer writes to archive; warm is inert. Note which way
+   round this went — §"THE ORDER MATTERS" says the write probe "can still
+   find something the binding read could not", and here the write
+   observation is what **disproved** a binding read that said the move was
+   already done. Two probes that can contradict each other are worth more
+   than one that cannot, and neither is a formality.
 2. **Write probes — behaviour.** Run them once traffic is flowing again. They
    can still find something the binding read could not, so they are not
    redundant; they are simply not available while anything is closed. If one
@@ -668,11 +1842,56 @@ open. The binding read closes the window; the write confirms it afterwards.
 - **backup Worker** — verified by **row counts**, not by the table list. It
   exports a fixed set of tables from whichever database it is bound to, so
   both manifests name the same tables and an earlier revision's "check the
-  table list" would have passed either way. The manifest carries a
+  table list" would have passed either way. ~~The manifest carries a
   `rowCount` per table: against the target those are ~0, against the source
-  they are the old ~1,100. That is the discriminator.
+  they are the old ~1,100. That is the discriminator.~~ **Retired 2026-09-21
+  (#2267 r1): the data was copied, so both databases report the same counts
+  and this can no longer tell them apart.** Use
+  `check-live-d1-bindings.mjs` instead — it covers this Worker too, reading
+  its `DB_ARCHIVE` binding from the version actually serving. Note that the
+  binding read is the *only* discriminator here, because the backup Worker
+  exports a fixed table set from wherever it is pointed and has no surface of
+  its own to write a sentinel through. Note also that this Worker is deployed
+  **by hand**, so the merge does not move it — its line in the probe's output
+  stays `MISMATCH` until someone deploys it, which is the probe doing its job
+  rather than a fault.
 
 ## 4. Rollback
+
+> ## THERE IS NO FENCE ON ARCHIVE, AND THREE STEPS BELOW ASSUMED ONE
+>
+> **Nothing in this procedure can revoke a handle an invocation already
+> holds on `vaipakam-archive`.** Removing a binding stops the next
+> invocation from obtaining one; it does nothing to one already granted,
+> and §3 states plainly that no bound on how long such work can run has
+> ever been measured. Stopping the *warm* writers later cannot revoke an
+> *archive* handle taken before the cutover.
+>
+> It follows that **no point-in-time read of archive is a fence**, and any
+> step that DESTROYS archive content on the strength of one is unsound.
+> Round 34 found three places that did, and they are one defect:
+>
+> 1. the pre-migration export at step 0a — a write can land after the
+>    export and before the destructive migration;
+> 2. the migration itself at step 0b — applied in place, so it destroys
+>    what it deletes;
+> 3. the reverse mirror at step 3 — step 2b's clean report describes the
+>    moment it read, and the mirror overwrites archive afterwards.
+>
+> **THE SOUND VERSION DOES NOT MUTATE ARCHIVE AT ALL.** A rollback would
+> build a FRESH database, seed it from warm, apply the archive-only rows
+> a reconciliation names, and point the bindings there — leaving archive
+> immutable, forever, as everything else already treats it. That is a
+> design change rather than a step reordering: it needs a third pinned
+> endpoint, its own binding configuration and its own guard entries.
+> **Tracked as #2278; not built here.**
+>
+> Until it exists, an operator rolling back must know that **steps 0b and
+> 3 destroy archive content and cannot be made safe by any check in this
+> document.** Take the export at 0a, understand it may be a moment short,
+> and record in the run log that the rollback proceeded without a fence.
+> That is the honest position, and it is worse than the one this section
+> implied before.
 
 **Free until the Workers start writing to the target — and staying free is
 something you have to DO, not something you observe** (#2238 r2 P1).
@@ -689,10 +1908,199 @@ the moment the source becomes canonical again. A rollback that began inside
 the free period can leave it while it runs, and nothing after the fact undoes
 that.
 
-Mechanically: revert the binding PR, which re-deploys `apps/indexer`,
-`apps/keeper` and `apps/agent` automatically through Workers Builds — the
-revert is a merge like any other (#2237). Then redeploy
-`ops/offchain-data-warm` by hand, since it is not built on merge.
+**Mechanically — and the ORDER is the whole of it.** An earlier revision of
+this paragraph started with "revert the binding PR", which made archive
+canonical *before* the rows that exist only on warm had been carried back —
+stranding precisely what §"Rolling back" adds the reverse carry to preserve.
+Two orders for one operation, in one section, the earlier one lossy. The
+sequence is:
+
+0a. **INVENTORY the rollback target before you migrate it** (#2267 r32).
+
+   This step exists because step 0b is destructive in the general case, and
+   it runs BEFORE step 2b has looked at anything.
+
+   A migration applied here can delete rows, drop a table, or remove a
+   column. Archive is the retained copy of everything written before the
+   switch, plus anything a straggler wrote after it — and step 2b, the
+   gate that finds exactly those late writes, has not run yet. So a
+   data-deleting migration destroys them with no conflict reported,
+   because there is nothing left to report. The column-projection refusal
+   added earlier does NOT cover this: it catches a schema that no longer
+   matches the manifest, and a migration that quietly removes rows leaves
+   the schema matching.
+
+   **Reconcile BEFORE applying them — that pass is available, and this
+   paragraph used to say it was not** (#2267 r40). It said the tool
+   refuses a table whose declaration differs between the two sides, which
+   stopped being true at r36: a report-only run now reports a DDL
+   difference as drift and compares the rows anyway, and r39–r40 extended
+   that to a dropped column and a dropped table. So the ordinary weekly
+   pass runs perfectly well here, and it is the one thing that can name
+   what a destructive migration is about to erase:
+
+   ```
+   node apps/indexer/scripts/d1-carry-rows.mjs reconcile \
+     --from vaipakam-archive --to vaipakam-warm --since "${MANIFEST:-cutover-mirror.json}"
+   ```
+
+   (`MANIFEST` is unset in the ordinary case and the default applies; the
+   step-6 recovery box sets it when the baseline had to be reconstructed
+   under another name.)
+
+   Run it, and keep the output with the digest. It reads both databases
+   and writes to neither, so it costs minutes and risks nothing.
+
+   **The order matters in one direction only.** Before the migration,
+   every archive-only insert and every late change is still there to be
+   named. Afterwards some of them are gone, and a column-removing
+   migration additionally puts the manifest's own projection out of
+   reach — the tool then refuses those tables rather than comparing them,
+   so the pass that could have named the loss is degraded by the very
+   change it would have reported on.
+
+   The digest is still taken, because the two answer different questions:
+   the reconciliation names what arrived late, the digest records what
+   the whole database held.
+
+   ```
+   ROLLBACK_TARGET=vaipakam-archive     # the database being returned to
+   node apps/indexer/scripts/d1-carry-rows.mjs digest --db "$ROLLBACK_TARGET"
+   ```
+
+   Keep that output. **Then read the pending migrations before applying
+   them.** If any deletes rows, drops a table or removes a column:
+
+   - export the affected tables from archive first — the nightly B2
+     archive from `ops/offchain-data-warm` is the other copy, and
+     `OffChainRestore.md` is how it is read; and
+   - **say in the run log that the automated rollback is unavailable for
+     those tables.** What step 2b would have found is now recoverable
+     only from that export, by hand. This is a limitation NAMED, not
+     closed: replaying rows a migration deliberately removed is a
+     migration decision, and this tool does not make those.
+
+   The reconciliation run above is what turns that from a warning into a
+   list: anything it named that the migration then deletes is a known
+   loss with a known identity, rather than something nobody will ever
+   know was there.
+
+0b. **Bring the rollback target's schema back to parity:**
+
+   ```
+   (cd apps/indexer && npx wrangler d1 migrations apply "$ROLLBACK_TARGET" --remote)
+   (cd apps/indexer && npx wrangler d1 migrations list  "$ROLLBACK_TARGET" --remote)  # expect none pending
+   ```
+
+   The name goes in a variable here for the same reason as everywhere else
+   in this document: `check-d1-name-consistency` scans `wrangler d1`
+   commands, and a literal retired-database name in one is the split-brain
+   shape it exists to catch. It caught this block when it was first written
+   with the name inline — which is the guard working, not an obstacle to
+   route around, and the reason the exemption removed in r2 stays removed.
+
+   **This step is not optional and it is easy to forget, because archive
+   looks untouched.** It is: no Worker binds it after the switch, so no
+   migration reaches it, and from the first post-cutover indexer migration
+   onward it is on an older schema than warm. The carry tool refuses a
+   destination whose tables or constraints differ from the source — which
+   is correct, and means an urgent rollback would stop dead at step 3 with
+   the bindings still on warm. "The old database still exists" is not the
+   same as "the old database is a usable rollback target", and the
+   difference is one migration.
+
+   If the pending migrations cannot be applied for any reason, **stop and
+   say so** rather than working around the refusal: a reverse carry across
+   a schema difference is a migration decision, not a copy.
+
+1. **Stop the writers** — the maintenance build, as in execution-record
+   step 3. Nothing below is safe while warm is being written to.
+2. **Observe warm still** — `digest --db vaipakam-warm` twice, ten minutes
+   apart, identical. Same barrier, same reason, same stated residual.
+2b. **Account for anything archive holds that warm does not — BEFORE the
+   reverse mirror, because the mirror destroys it** (#2267 r15).
+
+   `reconcile --from vaipakam-archive --to vaipakam-warm --since
+   cutover-mirror.json` — or `--since "$MANIFEST"` for a baseline
+   recovered under the step-6 recovery box's name — read-only, and
+   **resolve everything it reports**.
+
+   > **A RECONSTRUCTED BASELINE MARKED `uncovered` DOES NOT LICENSE THIS
+   > ROLLBACK, and an earlier draft called such a baseline "usable with
+   > care"** (#2281 r2). It is usable for spotting NEW differences. It is
+   > not usable HERE, and the difference is destructive.
+   >
+   > Follow it through. A straggler updates a row on archive after the
+   > forward mirror. The baseline is later reconstructed and absorbs that
+   > value, so archive now MATCHES its own baseline. Warm has since
+   > changed the same row on its own. The comparison reads source =
+   > baseline, destination ≠ baseline — `destination-moved`, which is not
+   > a conflict and is not reported. Step 3 then mirrors warm over
+   > archive and destroys the only copy of the straggler's write, with
+   > every check having said clean.
+   >
+   > So: if the manifest in hand carries `provenance.interval:
+   > "uncovered"` — `reconcile` prints it at the top of every run —
+   > **the automated rollback is unavailable.** Say so in the run log,
+   > and recover through the export path §4 step 0a describes, by hand.
+   > That is a limitation NAMED, in the same way as the migration case
+   > below it.
+   >
+   > A manifest the mirror wrote carries no `interval` and needs none: it
+   > observed the moment it describes, so there is no gap to cover.
+
+   The trap here is exact and worth spelling out: `--mirror` makes archive
+   the DESTINATION, and a mirror deletes destination-only keys and
+   overwrites rows that differ. A straggler that reached archive after the
+   forward mirror — the precise row the whole retention argument exists to
+   protect — is a destination-only or differing row at this moment. Running
+   step 3 first erases it, and erases it before any later read-only pass
+   could have observed it. A rollback begun before the forward
+   reconciliation finished is the likeliest way to be in that state.
+
+   **If this reports nothing, step 3 is not safe — it is merely not known
+   to be unsafe** (#2267 r35). A clean result here describes the instant
+   it read, and the banner at the head of this section says why that is
+   not a fence: an invocation holding an archive handle from before the
+   cutover can commit after this read and before the mirror, and step 3
+   overwrites or deletes what it wrote. This step narrows the window; it
+   does not close it, and it never will, because closing it is #2278.
+
+   So a clean result is the signal to PROCEED KNOWING THAT, and to record
+   in the run log that the reverse mirror ran without a fence. If it
+   reports anything, deal with it first; do not reach for the mirror to
+   "sort it out", because the mirror is what loses it.
+
+3. **Carry the rows back** —
+   `carry --from vaipakam-warm --to vaipakam-archive --mirror --manifest
+   rollback-mirror.json`. This is the step the earlier wording skipped.
+4. **Revert the binding PR**, which re-deploys `apps/indexer`,
+   `apps/keeper` and `apps/agent` automatically through Workers Builds —
+   the revert is a merge like any other (#2237).
+5. **Redeploy `ops/offchain-data-warm` by hand**, since it is not built on
+   merge, and only then run the gate:
+   `check-live-d1-bindings.mjs --expect vaipakam-archive`.
+6. **Reconcile, and keep reconciling** —
+   `reconcile --from vaipakam-warm --to vaipakam-archive --since
+   rollback-mirror.json` until **two consecutive** runs come back clean in
+   the §4 step-6 sense — not necessarily silent. It reads and reports; it
+   writes nothing, so anything it finds is applied by a deliberate human
+   step. The #2279 exception applies here too, for the same reason and to
+   the same lines: the direction of the move does not change which
+   resolutions alter data, so any line whose settlement changes no data
+   repeats here as well.
+
+   **Then weekly, for as long as warm is retained** (#2267 r36). The
+   direction inverts but the reasoning does not: an invocation holding the
+   former live `vaipakam-warm` binding can resume after both clean runs and
+   commit a record that is then absent from the now-live archive
+   indefinitely. Nothing revokes that handle either. Same owner, same log,
+   same rule — two clean runs pause the search, they do not end it, and
+   warm is now the retained database that has to keep being looked at.
+
+Steps 1–3 before step 4 is not a preference. Reverting first is the same
+defect as switching forward without a final carry, in the other direction,
+and the data it loses is the data users created while warm was canonical.
 
 **`apps/app` is conditional. `apps/www` is not a rollback step at all**
 (#2243 r4, corrected r5).
@@ -728,23 +2136,108 @@ the omissions bite harder on the way back than on the way out:
   its bundle carries nothing the rollback changes (see above).
 
 Then confirm with the Step 3 probes **inverted**: the intended database is the
-SOURCE, so a write must land there, and the discriminator is the source's
-accumulated rows rather than the target's emptiness. Running them as written
-would pass a Worker still bound to the target, which is the failure this
-rollback is trying to escape.
+SOURCE, so `check-live-d1-bindings.mjs --expect vaipakam-archive` is the check,
+comparing the pinned binding id. Running the forward probe as written would
+pass a Worker still bound to the target, which is the failure this rollback is
+trying to escape.
 
-**After that it is not free, and this plan does not offer a clean one.**
-New support tickets, thresholds, signed offers, notification state and
-cursors exist only in the target. Reverting points every Worker back at a
-source that is missing them, and the exports are plain `INSERT`s that collide
-with the source's surviving rows — so a reverse import is not a one-liner
-either.
+**The discriminator is the binding id, not accumulated rows**, and this
+paragraph said otherwise until #2267 r29 while §3 said the opposite fifteen
+hundred lines earlier. After the copy both databases hold the same rows, so
+neither emptiness nor accumulation tells them apart in either direction. Where
+a data-level tell is wanted once traffic resumes, write a **unique sentinel**
+through a Worker's own surface and look for it by that exact value — a
+sentinel discriminates because you chose it.
 
-If rollback is needed after that point, treat it as its own cutover with the
-same care as the forward one. The honest planning assumption is: **once the
-Workers write to the new database, forward is the only direction.**
+**After that it is not free.** New support tickets, thresholds, signed
+offers, notification state and cursors exist only in the target. Reverting
+the bindings alone points every Worker back at a source that is missing
+them — which strands those rows exactly as going forward without a carry
+would have stranded the originals.
+
+**There IS now a repeatable path for it, and it is the forward sequence
+run backwards.** `d1-carry-rows.mjs` carries in either direction between
+the two pinned endpoints — that is what makes the reverse possible at all,
+and it is a pinned PAIR rather than "the shared database at one end" — so
+the reverse is:
+
+```
+node apps/indexer/scripts/d1-carry-rows.mjs carry \
+  --from vaipakam-warm --to vaipakam-archive \
+  --mirror --manifest rollback-mirror.json
+```
+
+with the same barrier around it. **The ordered sequence is the numbered one
+in §4 above** — bring the rollback target's schema to parity, stop the
+writers, observe still, **reconcile archive-only changes and resolve them**,
+carry back, revert, hand-deploy the backup Worker, gate, reconcile — and
+that list is the one to follow.
+
+The reconcile BEFORE the reverse carry is step 2b, and it was missing from
+this summary while the numbered list had it (#2267 r25). Skipping it is not
+a slower path to the same place: the reverse mirror makes archive identical
+to warm, so anything archive holds that warm does not is **deleted by the
+carry**, unexamined. That is the one step in the rollback whose omission
+destroys data rather than delaying it. This
+passage exists to explain *why the tool can go this way at all*; it is not a
+second procedure, and where the two ever appear to differ, §4's numbered
+steps are the instruction.
+
+**The binding check inverts too, and it needs telling.** During a rollback
+the Workers are meant to be back on archive, so the gate is
+`check-live-d1-bindings.mjs --expect vaipakam-archive` — without it the probe
+expects whatever `apps/indexer/wrangler.jsonc` declares and would reject
+every correctly rolled-back Worker. **And both tools live in this change**:
+if the rollback is performed by reverting the commit that switched the
+bindings, keep a checkout that still has `apps/indexer/scripts/` from it, or
+the reverse switch has no serving-version check at all. An earlier
+revision of this section said a reverse import "is not a one-liner either",
+which was true of the export/import approach it described and is no longer
+the only option.
+
+What has NOT changed is that this is **a cutover, not an undo**, and it
+costs what the forward one costs. The honest planning assumption stays:
+once the Workers write to the new database, treat forward as the direction
+and reach for this only with the same care.
 
 ## 5. Deleting the source
+
+> **THIS CHECKLIST DOES NOT AUTHORISE THE DELETION, and saying that it did
+> was this document contradicting itself on its one irreversible step**
+> (#2267 r28).
+>
+> §3 states plainly that work suspended on something external can sit out
+> every observation, that **how long that takes has never been measured**,
+> and that this document will not invent a number for it. Two clean
+> reconciliations are two readings — they say nothing arrived by the moment
+> each one read. A straggler can commit after both. And because an UPDATE
+> preserves the row count, the count re-validation below need not notice it
+> either.
+>
+> Every box here is necessary. **None of them, and not all of them
+> together, makes deleting the only remaining copy safe** — because what
+> would make it safe is a bound on how long a suspended invocation can
+> hold a handle, and no such bound has been measured or enforced.
+>
+> So the source is **RETAINED** at the end of this procedure. Deleting it
+> is a separate decision, taken later, by a person who accepts a residual
+> this document can describe but cannot close:
+>
+> - a **substantiated drain bound** — a measured or enforced limit on how
+>   long an invocation admitted before the barrier can still write — would
+>   close it, and does not exist today; or
+> - a **durable write fence** on the source, after which no write can land
+>   at all, which D1 does not offer; or
+> - an explicit acceptance that a record written by a straggler after the
+>   last read is lost, weighed against what those tables hold. They are
+>   support tickets, alert configuration carrying Telegram chat ids,
+>   signed offers and notification state — not data whose loss is
+>   invisible.
+>
+> The cost of retaining it is one unused D1 database. The cost of the
+> alternative is a record nobody can produce afterwards. **The boxes below
+> are what make deletion possible to CONSIDER; they are not what make it
+> correct.**
 
 Order matters here, and this plan does not own all of it:
 
@@ -758,6 +2251,47 @@ Order matters here, and this plan does not own all of it:
       An earlier revision of this checklist said "retired first" while
       listing the target's nightly verification two entries below, which
       inverted #1551's own sequence.
+- [ ] **Step 6's reconciliation is CURRENT** — the two consecutive clean
+      runs happened, every difference an earlier run reported was actually
+      resolved, AND the periodic re-run has been kept up since (#2267
+      r35). "Clean" here means the §4 step-6 sense: nothing reported, or
+      nothing beyond the lines #2279 says can never stop reporting,
+      each logged with the decision taken.
+
+      **It is never "completed" while archive is retained**, and this box
+      said so until now. Two clean runs describe two moments; a suspended
+      invocation can commit after both. The re-run is what would find
+      that, so a checklist item that treats the pair as final is a
+      checklist that stops looking at the only place a late record can be.
+
+      **Cadence and owner, since "periodically" is not a schedule:**
+      weekly, by whoever holds the cutover runbook, from the switch until
+      the predecessor is deleted. It is a read against both databases that
+      writes to neither, so it costs minutes. Record each run's result in
+      the run log — including the clean ones, because the value of the
+      record is that a gap in it is visible.
+
+      **"Whoever holds the runbook" is a duty, not an owner, and that is
+      an open gap** (#2287). It names no person, team or rotation, so a
+      week that is skipped is skipped by nobody in particular.
+
+      **What that costs is time, not the safety of the deletion.** This
+      box demands the re-run has been kept up, and the run log is written
+      so that a gap in it is visible — so an honest pass over this list
+      stops at a lapsed cadence rather than deleting through one. What an
+      unowned cadence does cost: a late write stays undiscovered for as
+      long as the lapse runs, and the predecessor is retained indefinitely
+      behind a box nobody is tasked with keeping green. Assigning an
+      accountable party is an owner decision; until it is made, treat this
+      box as unowned rather than as covered.
+
+      **This is the prerequisite that makes the rest of the list safe, and
+      it was missing** (#2267 r15). The whole reconciliation procedure
+      rests on archive being retained so a late write stays recoverable;
+      satisfying every other box while a straggler is still pending — or
+      while one arrives after the last read — and then deleting archive
+      destroys the only copy of that record. A checklist that can be
+      completed with rows outstanding is not a gate on anything.
 - [ ] All four Workers confirmed on the target by a **discriminating** probe.
 - [ ] One nightly backup completed against the target, verified by content.
 - [ ] **Both §1 exceptions decided** — `support_tickets` (4 open) and
@@ -771,7 +2305,9 @@ Order matters here, and this plan does not own all of it:
       not be. Re-run the count before deleting; do not trust this table.
 
 ```bash
-# [unrun] — irreversible; confirm the form before running
+# [unrun] — IRREVERSIBLE, and not authorised by this procedure. See the
+# banner at the top of §5: the boxes above are necessary and not
+# sufficient, and the residual they cannot close is named there.
 (cd apps/indexer && npx wrangler d1 delete "$SOURCE_DB")
 ```
 

@@ -142,7 +142,7 @@ reading the documentation and believing it. That distinction is the reason the
 audit was worth running.
 <!-- assembled-fragment: 1349-stale-source-assertions.md sha256=0b4a93078f08e253944951cb7c926dfabd1c25dcc758e053c4d07ec06778566f -->
 
-# The keeper is deployed but no longer scheduled
+## The keeper is deployed but no longer scheduled
 
 The keeper Worker has been removed from its every-minute schedule. It is
 still deployed, and everything it needs to work is still in place — the
@@ -160,7 +160,7 @@ before arming the ones that can. It is kept beside the schedule itself
 and is summarised further down. Follow it rather than the one-line
 shortcut.
 
-## Why
+### Why
 
 It had not been completing its work for at least as long as the
 platform's logs go back. Measured against the live deployment, roughly
@@ -185,7 +185,7 @@ It also returns a scheduling slot to a pool that was completely full.
 The platform's plan allows only five scheduled jobs across the whole
 account, and a previous deployment failed outright on that limit.
 
-## What it does cost
+### What it does cost
 
 **Four** of the ten jobs were not switched off by configuration, so
 stopping the schedule stops them for certain. Two earlier drafts of
@@ -260,7 +260,7 @@ warnings rather than silence, and borrowers may get less notice than
 the window is meant to give them. Expect both, and treat a long stop as
 something to announce rather than to let people discover.
 
-## What it does not change
+### What it does not change
 
 Nothing about what the keeper *is*. No job was deleted and no
 configuration was cleared. The switch that arms the fund-moving jobs
@@ -282,7 +282,7 @@ was missing when this problem went unnoticed.
 Part of #1896, which stays open for the underlying work.
 <!-- assembled-fragment: 1896-keeper-unscheduled.md sha256=34d51242d10f43df6d8f63e59af25b33064894806e92d2a57c8c3c3b97729df7 -->
 
-### A seller can now hold a direct position sale to the economics they reviewed
+## A seller can now hold a direct position sale to the economics they reviewed
 
 Selling a loan position straight into a standing buy offer settles in one
 transaction, at figures the contract recomputes from live state at the moment it
@@ -321,7 +321,7 @@ Closes #1922 (#1503 item 6) — the last of the four remaining lender-sale items
 instrument.
 <!-- assembled-fragment: 1922-direct-sale-seller-bound.md sha256=bf99069cb08c6bcf4b52af8516f9aa6f153ee5fad4d578e14f61e0ab0340f3e0 -->
 
-### A direct position sale must now fit what the buyer authored — on both size and term
+## A direct position sale must now fit what the buyer authored — on both size and term
 
 When a lender sells an active loan straight into a standing buy offer, the buyer
 steps into the loan as it stands. Two of the checks on that step were loose, and

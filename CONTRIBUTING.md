@@ -67,12 +67,16 @@ viaIR runs are long and benefit from higher priority. See
    `Closes #N`.
 5. **Move the card** on `@vaipakam-labs` to `In review` (the move
    happens *after* the PR exists; see ProjectProcedures.md §5.3).
-6. **Trigger Codex** with `@codex review <mode>` per
+6. **Usually you do not need to trigger Codex.** The
+   `vaipakam/vaipakam` repo auto-reviews on PR-open, and a push
+   usually starts one too. Trigger explicitly only when no review has
+   appeared after a few minutes, using `@codex review <mode>` per
    [`AGENTS.md`](AGENTS.md) (`normal` / `adversarial` / `full` /
-   `full security-critical`). The `vaipakam/vaipakam` repo has Codex
-   configured to auto-review on PR-open, so this is usually only
-   needed after a fix push.
-7. **Address findings**, push, re-trigger, repeat until clean.
+   `full security-critical`).
+7. **Address findings and push**, then wait for the push's own review —
+   triggering as well starts a second review of the same commit, which
+   duplicates every finding into a second set of threads (#2292).
+   Repeat until clean.
 8. **Merge** is the maintainer's call (`gh pr merge --squash`,
    without `--delete-branch` — branches are kept for troubleshooting
    per project convention).

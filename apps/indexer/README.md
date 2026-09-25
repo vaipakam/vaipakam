@@ -69,15 +69,15 @@ that was. It is not an isolation boundary: the D1 binding is
 database-scoped, so this Worker can write tables the signing Worker
 reads (#1722).
 
-### D1 — owns the canonical schema for `vaipakam-archive` (staging)
+### D1 — owns the canonical schema for `vaipakam-warm` (staging)
 
-The `DB` binding in `wrangler.jsonc` points at the **`vaipakam-archive`** D1 database (id `3cffebf5-b652-4da7-953c-9e1d143ad2fe`), the **staging** database the Cloudflare staging deploy uses — see [`docs/DesignsAndPlans/CloudflareStagingDeployPlan.md`](../../docs/DesignsAndPlans/CloudflareStagingDeployPlan.md) §3 for the staging-vs-primary split. This Worker is the **schema owner**: `apps/indexer/migrations/` is the single source of truth for every table the live db holds, even ones only the sibling Workers write to (`apps/keeper` and `apps/agent` both bind to the same database id; neither has its own `migrations/` directory).
+The `DB` binding in `wrangler.jsonc` points at the **`vaipakam-warm`** D1 database (id `e5e927cf-56c3-42c7-9820-179a235cc84f`), the **staging** database the Cloudflare staging deploy uses — see [`docs/DesignsAndPlans/CloudflareStagingDeployPlan.md`](../../docs/DesignsAndPlans/CloudflareStagingDeployPlan.md) §3 for the staging-vs-primary split. This Worker is the **schema owner**: `apps/indexer/migrations/` is the single source of truth for every table the live db holds, even ones only the sibling Workers write to (`apps/keeper` and `apps/agent` both bind to the same database id; neither has its own `migrations/` directory).
 
 Apply migrations from inside this directory:
 
 ```bash
-wrangler d1 migrations apply vaipakam-archive --local    # local dev
-wrangler d1 migrations apply vaipakam-archive --remote   # the staging d1
+wrangler d1 migrations apply vaipakam-warm --local    # local dev
+wrangler d1 migrations apply vaipakam-warm --remote   # the staging d1
 ```
 
 Any schema change — even for a table only keeper or agent writes — lands as a new `apps/indexer/migrations/NNNN_<slug>.sql` file. See [`CLAUDE.md` § "Cloudflare D1 schema discipline"](../../CLAUDE.md) for the convention.

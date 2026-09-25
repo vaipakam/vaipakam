@@ -148,13 +148,18 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///         override seam. That is unsupported and is very likely wrong; it
     ///         is corrected here rather than deleted, because it is the kind of
     ///         plausible-sounding mechanism that gets rediscovered. See the
-    ///         `memoryguard` note on `Deployments.finalizeArtifact` for what was
-    ///         actually happening — briefly: an unannotated inline-assembly
-    ///         block withdraws viaIR's stack-to-memory mover for the WHOLE
-    ///         contract, and solc reports that as the frame being too deep. The
-    ///         probes each carried such a block, which is why they failed while
-    ///         the base compiled, and five revisions were spent moving a call
-    ///         that was never the cause.
+    ///         `memoryguard` note on `Deployments.finalizeArtifact` for what
+    ///         was actually happening. In one sentence, and deliberately no
+    ///         more: the probes each carried an unannotated assembly block,
+    ///         which cost the WHOLE contract viaIR's stack-to-memory mover and
+    ///         surfaced as a too-deep frame elsewhere — which is why they
+    ///         failed while the base compiled, and why five revisions were
+    ///         spent moving a call that was never the cause.
+    ///
+    ///         **The rule is NOT summarised here.** CLAUDE.md's "1 too deep in
+    ///         the stack" section carries it. Summaries at this site went stale
+    ///         in three consecutive review rounds (#2271 r13/r14/r15), each
+    ///         time because the rule was sharpened there and not here.
     ///
     ///         Gated to self-calls so it is not an operator-reachable entry
     ///         point on a broadcast script.

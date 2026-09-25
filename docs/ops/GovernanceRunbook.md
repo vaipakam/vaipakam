@@ -949,7 +949,7 @@ remittance to authorize — and **not** `REWARD_COMMIT_ENABLED` or
 **3a. Apply the D1 migrations** — from `apps/indexer/`:
 
 ```
-wrangler d1 migrations apply vaipakam-archive --remote
+wrangler d1 migrations apply vaipakam-warm --remote
 ```
 
 covering `0043_keeper_commitment_scan.sql` and `0044_keeper_remit_ack.sql`.

@@ -18,18 +18,25 @@ import {DeployDiamond} from "../../script/DeployDiamond.s.sol";
  *
  *         What actually happened: the failing probe carried a bare
  *         `assembly { revert(add(err, 0x20), mload(err)) }` to rethrow a caught
- *         revert. An unannotated assembly block withdraws viaIR's
- *         stack-to-memory mover for the WHOLE contract — and these contracts
- *         inherit `runWith`, whose ~80 live facet addresses depend on it. solc
- *         then reports `Variable … is 1 too deep in the stack` naming `runWith`,
- *         a function the assembly block is nowhere near, and adds the real
- *         diagnosis on its last line: "No memoryguard was present."
+ *         revert. Unannotated, that block cost these contracts viaIR's
+ *         stack-to-memory mover — and they inherit `runWith`, whose ~80 live
+ *         facet addresses depend on it. solc then reported `Variable … is 1 too
+ *         deep in the stack` naming `runWith`, a function the block is nowhere
+ *         near, with the real diagnosis on its last line: "No memoryguard was
+ *         present." So the probes failed on their own assembly, not on the
+ *         seam, and five revisions were spent moving a call that was never the
+ *         cause.
  *
- *         So the probes failed on their own assembly, not on the seam, and five
- *         revisions were spent moving a call that was never the cause. Neither
- *         probe uses assembly now — the failing one reverts with a plain string.
- *         If one ever needs a block again, annotate it `("memory-safe")` and
- *         only if it genuinely is; see the note in `Deployments.finalizeArtifact`.
+ *         Neither probe uses assembly now — the failing one reverts with a
+ *         plain string.
+ *
+ *         **The rule itself is NOT restated here**, deliberately: what puts a
+ *         block in scope, what the exemption is, and what the annotation costs
+ *         all live in CLAUDE.md's "1 too deep in the stack" section, with the
+ *         local worked example on `Deployments.finalizeArtifact`. Paraphrases
+ *         of that rule went stale in three consecutive review rounds (#2271
+ *         r13/r14/r15). If a block is ever needed here again, read the section
+ *         and audit against it rather than against anything written above.
  *
  *         `forge build --skip test` cannot see any of this, because it never
  *         compiles these contracts.

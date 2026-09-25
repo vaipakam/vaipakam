@@ -2305,13 +2305,39 @@ This is the third revision in which a parameter was added to make a previous
 parameter safe. That is the signal to stop extending and check whether the
 mechanism is needed at all — it was not.
 
-**3. Capacity — the PROPOSAL (awaiting the owner's capacity-terms
-decision; see the status header and owner ask), and why the mechanism is
-not specified here.** The ACTOR rules below are design-structural
-(who a routed call charges — an identity boundary, not economics) and
-are fixed regardless of which capacity numbers the owner ratifies.
+**3. Capacity — the POLICY terms are RATIFIED BY THE OWNER, 2026-09-07
+(the three below, as proposed here; see the status header); the ARITHMETIC
+is deliberately deferred to implementation, and this section says which is
+which.** Retained in its proposal voice because the reasoning is what makes
+the terms readable, exactly as the owner-decisions section at the end of this
+note is retained — but read the retention narrowly:
 
-**The decision, which is what this note is for:** a bond buys capacity
+- **Ratified, and nothing re-opens them:** the ceiling of 4x the free tier
+  per `(role, address)`, NO minimum bond, and the clamp on any capacity
+  reduction — **together with the condition they were ratified under: the free
+  tier is sized per ACTION CLASS, not per role, and must accommodate at least
+  one action of every permissionless class.** That condition is not a detail of
+  the open cost-unit work and must not be read as one: size the floor per role,
+  or against only a role's cheapest class, and the more expensive classes
+  become bond-gated in practice while the text still claims a permissionless
+  baseline. No-minimum-bond is what preserves that baseline, and this is what
+  makes no-minimum-bond mean anything.
+- **Still open, and owned by implementation rather than by the owner:** the
+  curve's arithmetic, the limiter's envelope, the fresh-storage and zero/dark
+  semantics of every divisor, **what a dark role must still preserve**
+  (withdrawals callable and the free tier working, so disabling the feature
+  strands no escrowed VPFI and keeps the permissionless baseline), the initial
+  capacity for an unseen `(role, address)`, and the cost units per role — all
+  six items of the checklist under "What implementation must settle" later in
+  this section, whose
+  numbers come back with their throughput meaning attached (see "NOT for the
+  owner, deliberately").
+
+The ACTOR rules are design-structural (who a routed call charges — an
+identity boundary, not economics) and were fixed regardless of which capacity
+numbers were ratified.
+
+**The ratified terms:** a bond buys capacity
 *continuously and proportionally*, with **no minimum bond**, up to a ceiling
 of **4× the free tier per `(role, address)`** — the same key the bond record and the buckets use, where ADDRESS is the charged actor defined by an exhaustive selector→(role, actor) table that implementation must produce — **under actor rules this spec fixes NOW, per route family, so the table is an enumeration exercise rather than an identity-boundary decision left to an implementer**: (1) a DIRECT operator entry charges `msg.sender`, the enrolled operator; (2) an ADAPTER route charges the operator identity BOUND to that adapter at registration (recorded on-chain when the adapter is registered), never the outer caller and never the adapter contract; (3) the BACKSTOP route (`backstopFill` → shared vault → `matchIntent`) charges NO bonded actor — it runs at the permissionless free tier of the OUTER initiator, because charging the shared vault lets any user exhaust one global quota and block every backstop fill, and charging an arbitrary wrapper caller invites free-address rotation (rotation under the outer-initiator rule buys only free-tier throughput, which IS the permissionless baseline); and (4) a route with no registered binding and no bonded shape defaults to the outer initiator's free tier, never to an intermediate contract. That table is not optional and not inferable: `BackstopFacet.backstopFill` routes through `BackstopVaultImplementation.executeFill` into `OfferMatchFacet.matchIntent`, so the inner `msg.sender` is a SHARED vault rather than the initiator, and adapter fills likewise replace the keeper or principal with the adapter. Keying on the inner caller would pool unrelated activity and let one contract's bond subsidise every routed caller; charging wrappers without a closed mapping risks bypass or double-charging instead. Direct and routed paths both have to appear in it. Not per address across roles: an address holding solver, matcher and keeper bonds gets an independent ceiling for each, because their action units are not commensurable and a shared cap would let one role suppress another's capacity.
 

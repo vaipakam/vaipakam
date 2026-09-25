@@ -264,7 +264,7 @@ The refinance-path shortfall was the bug. Transfer and offset shortfall are unch
 
 - The interest floor model + `interestSettled` accumulator (#408 / #410 / #413) — separate cluster, larger contract surface.
 
-# Vault collateral encumbrance — enforcement (T-407-B, #565)
+## Vault collateral encumbrance — enforcement (T-407-B, #565)
 
 The platform now structurally guarantees that collateral backing a live loan
 cannot leave a borrower's vault except through a protocol flow that first

@@ -15,11 +15,14 @@
  * That is what this catches — each check aimed at a different way the
  * halves come apart:
  *
- *   1. Every consumer of the shared database agrees with the indexer's
- *      declaration on BOTH name and id. Matching on one field only is the
+ *   1. Every consumer that binds the shared database binds the SAME one,
+ *      on BOTH name and id. Matching on one field only is the
  *      partial-cutover signature — a name change without an id change
  *      points at the old data under a new label; an id change without a
- *      name change points at new data under the old label.
+ *      name change points at new data under the old label. The three
+ *      writers may instead be collectively unbound: that is the cutover
+ *      barrier, a deliberate state this check must permit because merging
+ *      it is the only way to deploy it. All three, or none.
  *
  *   2. Every `wrangler d1` command in a script or runbook targets a
  *      database this repo actually knows about. A command naming a
@@ -46,34 +49,17 @@ import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  MUST_NOT_SHARE,
+  SHARED_CONSUMERS,
+  WRITERS,
+  assertClassified,
+} from './lib/d1-workers.mjs';
+import { PREDECESSOR, SUCCESSOR } from './lib/cutover-databases.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO = join(__dirname, '..', '..', '..');
 
-/** The single declaration. Every other consumer is checked against this. */
-const DECLARING_FILE = 'apps/indexer/wrangler.jsonc';
-
-/**
- * Workers that bind the SHARED database. The binding name differs by
- * Worker (the ops backup Worker reads it as `DB_ARCHIVE`), so the entry
- * is identified by binding, not by position.
- */
-const SHARED_CONSUMERS = [
-  { file: 'apps/indexer/wrangler.jsonc', binding: 'DB' },
-  { file: 'apps/keeper/wrangler.jsonc', binding: 'DB' },
-  { file: 'apps/agent/wrangler.jsonc', binding: 'DB' },
-  { file: 'ops/offchain-data-warm/wrangler.jsonc', binding: 'DB_ARCHIVE' },
-];
-
-/** Workers that must NOT bind the shared database, and why. */
-const MUST_NOT_SHARE = [
-  {
-    file: 'ops/mesh-watcher/wrangler.jsonc',
-    reason:
-      'internal ops alerts must not co-locate with user-facing data ' +
-      '(CLAUDE.md, "Cloudflare D1 schema discipline")',
-  },
-];
 
 /**
  * Databases a `wrangler d1` command may target besides the shared one.
@@ -88,6 +74,35 @@ const OTHER_DATABASES = new Map([
 ]);
 
 /**
+ * `vaipakam-archive` is DELIBERATELY ABSENT from the map above, and the
+ * reason is worth stating because an entry for it was added and then
+ * removed (#2214, round 2).
+ *
+ * The retired databases that ARE listed — the mesh-alerts and lz-alerts
+ * ones — were never the shared database. A command naming one of those
+ * cannot split the shared data, because it was never where the shared data
+ * lived. `vaipakam-archive` is the opposite case: it is the shared
+ * database's immediate PREDECESSOR, holding a full copy of the same tables
+ * under the same schema. A `wrangler d1 migrations apply` aimed at it today
+ * succeeds, changes a database no Worker reads, and leaves both halves
+ * looking correct — which is precisely the failure check 2 exists to
+ * catch. Listing it would have switched that check off for the one name it
+ * matters most for.
+ *
+ * So the exemption was not narrowed; it was removed, and the single
+ * command that needed it was fixed instead
+ * (`docs/DesignsAndPlans/CloudflareStagingDeployPlan.md`, §6 step 3, which
+ * was still instructing operators to apply migrations to the retired
+ * database). The runbooks that discuss the cutover hold the name in prose
+ * and in shell variables (`"$SOURCE_DB"`), neither of which check 2 reads,
+ * so nothing else required an allowance. Dated release notes are already
+ * exempt via HISTORICAL below.
+ *
+ * If a future command genuinely must name the retired database, fix the
+ * command or move the file under HISTORICAL — do not re-add the name here.
+ */
+
+/**
  * Scripts that build a `wrangler d1` command rather than spelling one out,
  * and the constant each holds the target in. Check 2's regex reads literal
  * commands only, so without this a generated one is unverified.
@@ -97,6 +112,16 @@ const COMMAND_GENERATORS = [
     file: 'ops/offchain-data-warm/scripts/restore-from-archive.mjs',
     constant: 'ARCHIVE_DATABASE',
     why: 'emits the restore `wrangler d1 execute` lines by interpolation',
+  },
+  {
+    file: 'apps/indexer/scripts/lib/cutover-databases.mjs',
+    constant: 'SUCCESSOR',
+    field: 'name',
+    idField: 'id',
+    why:
+      'is the one pinned pair the cutover tools read, rather than each ' +
+      'reading the shared one from a Worker binding — they have to run ' +
+      'during the barrier, when no writer declares a binding at all',
   },
 ];
 
@@ -154,32 +179,123 @@ function d1Entries(file) {
   return cfg.d1_databases ?? [];
 }
 
-const problems = [];
+const problems = [...assertClassified(REPO)];
 
 // ---------------------------------------------------------------- check 1
-const declared = d1Entries(DECLARING_FILE).find((e) => e.binding === 'DB');
-if (!declared?.database_name || !declared?.database_id) {
+//
+// THERE ARE TWO LEGITIMATE SHAPES, and this check used to know only one.
+//
+// The normal shape is every consumer bound to one database. The other is
+// the CUTOVER BARRIER: the three writers deploy with no `d1_databases` at
+// all, so no invocation can obtain a handle while the data is copied
+// (`docs/ops/D1CutoverArchiveToWarm.md`). That build reaches production by
+// being merged — Workers Builds is the only deploy route these Workers
+// have — so a check that refuses it refuses the barrier itself, and the
+// documented procedure cannot be carried out. It did, and that is what
+// this rewrite fixes.
+//
+// Anchoring on one privileged file is what made the second shape
+// unrepresentable: strip the writers' bindings and the anchor is gone,
+// and the check reports there is nothing to compare against. So the
+// anchor is gone too. The invariant was never "the indexer declares it" —
+// it is **every consumer that binds the shared database binds the same
+// one**, which needs no privileged file and states the half-applied
+// cutover directly: two distinct databases among the consumers.
+//
+// The writers are all-or-none. A mixed state is the barrier half-applied,
+// which is worse than either shape, because the Workers still bound keep
+// writing while the procedure believes everything has stopped.
+const bound = [];
+const unbound = [];
+for (const { file, binding } of SHARED_CONSUMERS) {
+  const entry = d1Entries(file).find((e) => e.binding === binding);
+  if (entry?.database_name && entry?.database_id) bound.push({ file, binding, entry });
+  else unbound.push({ file, binding, entry });
+}
+
+// THE BARRIER IS AN EMPTY `d1_databases`, NOT A MISSING `DB` ENTRY, and
+// the two are not the same test (#2267 r22). Keying on the named entry
+// let a writer keep a complete attachment under any other binding name —
+// rename `DB` to `DB_OLD` on all three and the check reported the barrier
+// held while every writer could still reach the database. What the
+// barrier claims is that no invocation can obtain a handle, and a handle
+// under a different name is still a handle.
+const heldWriters = [...WRITERS].filter((f) => d1Entries(f).length === 0);
+const heldForCutover = heldWriters.length === WRITERS.size;
+
+// A writer with a d1 array that has no `DB` in it is neither bound nor
+// held: it is attached to something under another name, which the
+// barrier does not permit and the normal shape does not describe.
+for (const file of WRITERS) {
+  const entries = d1Entries(file);
+  if (entries.length === 0) continue;
+  if (entries.some((e) => e.binding === 'DB')) continue;
+  problems.push(
+    `${file}: has ${entries.length} d1 binding(s) — ` +
+      `${entries.map((e) => `"${e.binding}"`).join(', ')} — but none named ` +
+      `"DB".\n    That is neither shape: not the normal one, which binds ` +
+      `the shared database as "DB", and not the cutover barrier, which is ` +
+      `an EMPTY d1_databases. A handle under another name is still a ` +
+      `handle, and this Worker can still reach a database.`,
+  );
+}
+
+for (const { file, binding, entry } of unbound) {
+  if (heldForCutover && WRITERS.has(file)) continue;
+  problems.push(
+    entry === undefined
+      ? `${file}: no d1 binding named "${binding}"` +
+        (WRITERS.has(file)
+          ? `.\n    ${heldWriters.length} of ${WRITERS.size} writers declare ` +
+            `no d1_databases at all, so this is not the cutover barrier — ` +
+            `that shape needs ALL of them empty. A writer left attached ` +
+            `while the others are held keeps writing through a window the ` +
+            `procedure believes is closed.`
+          : '')
+      : `${file} (binding ${binding}) declares an incomplete d1 binding: ` +
+        `name ${entry.database_name ?? '(missing)'}, id ` +
+        `${entry.database_id ?? '(missing)'}. Half a binding names no database.`,
+  );
+}
+
+if (bound.length === 0) {
   console.error(
-    `[check-d1-name-consistency] ${DECLARING_FILE} has no complete "DB" ` +
-      `d1 binding — that file is the single declaration of the shared ` +
-      `database, so there is nothing to check against.`,
+    `[check-d1-name-consistency] no consumer binds the shared database — ` +
+      `not even ${SHARED_CONSUMERS.map((c) => c.file).find((f) => !WRITERS.has(f))}, ` +
+      `which is not part of the cutover barrier. There is nothing to check ` +
+      `against.`,
   );
   process.exit(1);
 }
-const SHARED_NAME = declared.database_name;
-const SHARED_ID = declared.database_id;
 
-for (const { file, binding } of SHARED_CONSUMERS) {
-  const entry = d1Entries(file).find((e) => e.binding === binding);
-  if (!entry) {
-    problems.push(`${file}: no d1 binding named "${binding}"`);
-    continue;
-  }
+// The shared database is whatever the bound consumers agree on. Two
+// distinct pairs IS the half-applied cutover, reported below per consumer
+// against the majority so the message names which file to move.
+const pairs = new Map();
+for (const c of bound) {
+  const k = `${c.entry.database_name}\u0000${c.entry.database_id}`;
+  pairs.set(k, [...(pairs.get(k) ?? []), c]);
+}
+const [agreed] = [...pairs.values()].sort((a, b) => b.length - a.length);
+const SHARED_NAME = agreed[0].entry.database_name;
+const SHARED_ID = agreed[0].entry.database_id;
+
+if (heldForCutover) {
+  console.log(
+    `[check-d1-name-consistency] CUTOVER BARRIER — all ${WRITERS.size} ` +
+      `writers declare no D1 binding. This tree deploys Workers that ` +
+      `cannot reach ${SHARED_NAME} at all. That is a deliberate, ` +
+      `temporary state (docs/ops/D1CutoverArchiveToWarm.md); if you did ` +
+      `not mean to be in it, the bindings are missing.`,
+  );
+}
+
+for (const { file, binding, entry } of bound) {
   const nameOk = entry.database_name === SHARED_NAME;
   const idOk = entry.database_id === SHARED_ID;
   if (nameOk && idOk) continue;
   problems.push(
-    `${file} (binding ${binding}) disagrees with ${DECLARING_FILE}:\n` +
+    `${file} (binding ${binding}) disagrees with the other consumers:\n` +
       `    name: ${entry.database_name} ${nameOk ? '(ok)' : `!= ${SHARED_NAME}`}\n` +
       `    id:   ${entry.database_id} ${idOk ? '(ok)' : `!= ${SHARED_ID}`}\n` +
       `    ${
@@ -193,12 +309,31 @@ for (const { file, binding } of SHARED_CONSUMERS) {
 }
 
 // ---------------------------------------------------------------- check 3
+//
+// BOTH ENDS OF THE CUTOVER ARE FORBIDDEN, NOT JUST THE LIVE ONE
+// (#2267 r39). The agreed pair is whatever the Workers bind today, which
+// after the switch is the successor — so checking only that would let an
+// internal ops Worker be pointed at the PREDECESSOR and pass. The
+// predecessor is a full copy of the same user-facing tables, retained as
+// the rollback source, so co-locating ops alert state there breaks the
+// same separation for the same reason; and applying that Worker's
+// migrations to it would mutate the copy the rollback depends on.
+//
+// Listed by id as well as name, since either identifies the database.
+const FORBIDDEN_TO_OPS = [
+  { name: SHARED_NAME, id: SHARED_ID, what: 'the SHARED database' },
+  { name: SUCCESSOR.name, id: SUCCESSOR.id, what: 'the cutover SUCCESSOR' },
+  { name: PREDECESSOR.name, id: PREDECESSOR.id, what: 'the RETAINED cutover predecessor' },
+];
 for (const { file, reason } of MUST_NOT_SHARE) {
   for (const entry of d1Entries(file)) {
-    if (entry.database_name === SHARED_NAME || entry.database_id === SHARED_ID) {
+    const hit = FORBIDDEN_TO_OPS.find(
+      (f) => entry.database_name === f.name || entry.database_id === f.id,
+    );
+    if (hit) {
       problems.push(
-        `${file} binds the SHARED database (${SHARED_NAME}) as ` +
-          `"${entry.binding}" — it must not: ${reason}.`,
+        `${file} binds ${hit.what} (${hit.name}) as "${entry.binding}" — ` +
+          `it must not: ${reason}.`,
       );
     }
   }
@@ -266,14 +401,21 @@ for (const file of tracked) {
 }
 
 // ---------------------------------------------------------------- check 4
-for (const { file, constant, why } of COMMAND_GENERATORS) {
+for (const { file, constant, field, idField, why } of COMMAND_GENERATORS) {
   const src = readFileSync(join(REPO, file), 'utf8');
   const decl = src.match(
-    new RegExp(`const\\s+${constant}\\s*=\\s*['"\`]([^'"\`]+)['"\`]`),
+    field === undefined
+      ? new RegExp(`const\\s+${constant}\\s*=\\s*['"\`]([^'"\`]+)['"\`]`)
+      : // An object constant: match the named field inside its literal.
+        new RegExp(
+          `const\\s+${constant}\\s*=\\s*\\{[^}]*?\\b${field}\\s*:\\s*['"\`]([^'"\`]+)['"\`]`,
+          's',
+        ),
   );
   if (decl === null) {
     problems.push(
-      `${file}: no \`const ${constant} = '…'\` declaration found. That ` +
+      `${file}: no \`const ${constant}${field ? ` = { ${field}: '…' }` : " = '…'"}\` ` +
+        `declaration found. That ` +
         `file ${why}, so its target must be a single named constant this ` +
         `check can validate — not a literal repeated at each use.`,
     );
@@ -282,11 +424,42 @@ for (const { file, constant, why } of COMMAND_GENERATORS) {
   if (decl[1] !== SHARED_NAME) {
     const line = src.slice(0, decl.index).split('\n').length;
     problems.push(
-      `${file}:${line}: ${constant} is "${decl[1]}", but the shared ` +
+      `${file}:${line}: ${constant}${field ? `.${field}` : ''} is ` +
+        `"${decl[1]}", but the shared ` +
         `database is "${SHARED_NAME}".\n    That file ${why} — a cutover ` +
         `that moved the bindings but not this constant would leave an ` +
         `incident restore writing to the retired database.`,
     );
+  }
+
+  // AND THE ID, where the constant carries one. Checking the name alone
+  // is the half-check this guard exists to catch everywhere else: a
+  // database recreated under the same name has a new id, so a constant
+  // whose id was edited to any other valid uuid passed while naming the
+  // right database (#2267 r24). The carry tool uses that id DIRECTLY as
+  // its destination, so an unchecked one is a valid-but-wrong account
+  // database being overwritten and then verified as correct.
+  if (idField !== undefined) {
+    const idDecl = src.match(
+      new RegExp(
+        `const\\s+${constant}\\s*=\\s*\\{[^}]*?\\b${idField}\\s*:\\s*['"\`]([^'"\`]+)['"\`]`,
+        's',
+      ),
+    );
+    if (idDecl === null) {
+      problems.push(
+        `${file}: \`${constant}\` has no \`${idField}\` field to check. ` +
+          `A name without an id is the half-check this guard exists to ` +
+          `catch — a name can be reissued to a different database.`,
+      );
+    } else if (idDecl[1] !== SHARED_ID) {
+      const line = src.slice(0, idDecl.index).split('\n').length;
+      problems.push(
+        `${file}:${line}: ${constant}.${idField} is "${idDecl[1]}", but ` +
+          `the shared database is "${SHARED_ID}".\n    Same name, ` +
+          `different database. That file ${why}.`,
+      );
+    }
   }
 }
 
@@ -294,9 +467,9 @@ if (problems.length > 0) {
   console.error(
     `\n[check-d1-name-consistency] ${problems.length} problem(s):\n\n` +
       problems.map((p) => `  - ${p}`).join('\n\n') +
-      `\n\nThe shared database is declared once, in ${DECLARING_FILE}. ` +
-      `Every\nbinding and every \`wrangler d1\` command must agree with ` +
-      `it. Changing\nwhich database the platform uses is a cutover, not a ` +
+      `\n\nEvery consumer that binds the shared database binds the SAME ` +
+      `one, and\nevery \`wrangler d1\` command agrees with it. Changing ` +
+      `which database the\nplatform uses is a cutover, not a ` +
       `rename: the\nbindings, the deploy scripts and the runbooks move in ` +
       `one step, and the\ndata is copied after the last writer has ` +
       `stopped.\n`,
@@ -306,7 +479,9 @@ if (problems.length > 0) {
 
 console.log(
   `[check-d1-name-consistency] OK — ${SHARED_NAME} agreed by ` +
-    `${SHARED_CONSUMERS.length} bindings, ${commandCount} \`wrangler d1\` ` +
+    `${bound.length} of ${SHARED_CONSUMERS.length} bindings` +
+    `${heldForCutover ? ' (writers held for cutover)' : ''}, ` +
+    `${commandCount} \`wrangler d1\` ` +
     `command(s) and ${COMMAND_GENERATORS.length} generator constant(s); ` +
     `${MUST_NOT_SHARE.length} Worker(s) verified separate.`,
 );

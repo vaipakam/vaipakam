@@ -128,3 +128,43 @@ apps/app/public/_headers
 ops/subgraph/generated/
 ops/tenderly/generated/
 ops/lz-watcher/generated/
+# D1 cutover manifests (#2214). `d1-carry-rows.mjs --mirror --manifest`
+# writes a record of every row it carried, KEYED BY PRIMARY KEY — wallet
+# addresses, support-ticket ids, Telegram handshake codes. It is data, not
+# a build artefact: the file is written 0600 and is kept until the
+# ROLLBACK window closes — the rollback reconciles against this same file
+# before its reverse mirror, so deleting it when the cutover finishes
+# removes the only baseline that rollback has. It goes when the
+# predecessor database is retired, with it. These are the paths the
+# runbook's commands produce,
+# ignored so that a `git add .` cannot commit a complete key inventory of
+# the off-chain data.
+#
+# NOT ANCHORED TO THE ROOT, and that correction was made with the real
+# file about to be written (#2214, execution). The runbook's own commands
+# run from `apps/indexer/`, because that is where the tool lives — so
+# `--manifest cutover-mirror.json` produces
+# `apps/indexer/cutover-mirror.json`, which a leading-slash pattern does
+# not match. The rule named the one directory the file is least likely to
+# appear in. It matches by NAME now, wherever the operator ran the
+# command from.
+# MATCHED BY PREFIX, NOT BY EXACT NAME (#2281 r6). The runbook's
+# recovery path tells the operator to write
+# `cutover-mirror-reconstructed.json`, a name an exact-match rule does
+# not cover — so following the documented procedure and then running
+# `git add .` would have committed the whole key inventory. That is the
+# same defect as the root-anchoring one above, arrived at from the other
+# end: the rule was right about the file it named and the procedure had
+# moved on. The `.tmp-` forms are the atomic-write staging files, which
+# hold identical content for as long as they exist.
+cutover-mirror*.json
+rollback-mirror*.json
+cutover-mirror*.json.tmp-*
+rollback-mirror*.json.tmp-*
+
+# Python bytecode caches. `assemble.py` (#1877) is the only Python in the
+# tree and it is run in place, so these appear next to it on any run — and
+# a `git add -A` then commits a 128 KB, interpreter-version-specific binary.
+# That happened in #2290.
+__pycache__/
+*.py[cod]
