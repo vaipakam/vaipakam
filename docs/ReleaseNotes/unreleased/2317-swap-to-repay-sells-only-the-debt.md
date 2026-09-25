@@ -29,5 +29,7 @@ Nothing about the settlement waterfall, the sanctions freeze or the claim
 path changed. The fork walkthrough's check for this behaviour, which fails
 against the currently deployed bytecode, turns green once this ships. The
 resolver-filled intent path still commits the whole collateral to its
-auction by design; whether it should follow the same principle is an open owner question tracked in #2322, rather than something changed here.
+auction; the specification's rule — unused collateral stays pledged and
+claimable — applies to it too, so it is to be sized to the debt as well. That
+is a separate change, tracked in #2322, and is not part of this one.
 Closes #2317.
