@@ -1738,9 +1738,11 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
     /// T-090 — Borrower-initiated swap-to-repay facet selectors.
     function _getSwapToRepayFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](2);
+        s = new bytes4[](3);
         s[0] = SwapToRepayFacet.swapToRepayFull.selector;
         s[1] = SwapToRepayFacet.swapToRepayPartial.selector;
+        // #2317 — read-only sizing preview for the full close-out.
+        s[2] = SwapToRepayFacet.previewSwapToRepayFull.selector;
     }
 
     /// T-090 v1.1 (#389) — intent-based swap-to-repay facet selectors.

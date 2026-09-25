@@ -189,7 +189,16 @@ pattern — confirm at implementation time).
     default, or the loan's own stamped rate if it predates the freeze.
 6.  Compute the required principalAsset output:
         requiredPrincipal = plan.lenderDue + plan.treasuryShare
-7.  Compute the expected swap output via LibFallback.expectedSwapOutput
+7.  SUPERSEDED by #2317 (2026-09-25) — the sale is sized to the debt,
+    not to the bound. `maxCollateralIn` is an UPPER BOUND: the close-out
+    sells the least collateral (up to rounding) whose slippage-capped
+    oracle floor covers requiredPrincipal, never more than the bound,
+    and reverts SwapBoundsInsufficient if even the bound cannot cover
+    it. `previewSwapToRepayFull` reports that sale size from the same
+    computation. Steps 8, 9 and 12b below read `sellAmount` (the sized
+    amount) wherever they say `maxCollateralIn`. The original step,
+    kept for the record:
+    Compute the expected swap output via LibFallback.expectedSwapOutput
     using the borrower's specified `maxCollateralIn`. From that
     derive the slippage-adjusted minOutput:
         minPrincipalOut = expectedProceeds *

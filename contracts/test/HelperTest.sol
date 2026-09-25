@@ -984,9 +984,10 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](2);
+        selectors = new bytes4[](3);
         selectors[0] = SwapToRepayFacet.swapToRepayFull.selector;
         selectors[1] = SwapToRepayFacet.swapToRepayPartial.selector;
+        selectors[2] = SwapToRepayFacet.previewSwapToRepayFull.selector;
     }
 
     /// T-090 v1.1 (#389) — intent-based swap-to-repay facet selectors.

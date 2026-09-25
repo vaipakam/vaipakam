@@ -27,6 +27,7 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {RiskFacet} from "./RiskFacet.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 /**
  * @title SwapToRepayFacet
@@ -57,9 +58,17 @@ import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
  *      Third parties can still use `RepayFacet.repayLoan` to repay on
  *      the borrower's behalf with their own principal asset.
  *
- *      Surplus principal (when a tight quote delivers more than the
- *      loan requires) routes to the borrower's vault — they took the
- *      slippage risk, they get the symmetric upside.
+ *      Sale sizing (#2317): in full mode the caller's `maxCollateralIn`
+ *      is an UPPER BOUND, never the sale size. The facet sells the least
+ *      collateral whose slippage-capped oracle floor still covers the
+ *      debt ({previewSwapToRepayFull} exposes that figure); everything
+ *      else stays pledged and becomes borrower-claimable.
+ *
+ *      Surplus principal (when the fill beats the slippage-capped floor
+ *      the sale was sized against) routes to the current borrower-position
+ *      NFT holder's WALLET — they took the slippage risk, they get the
+ *      symmetric upside. (A sanctioned holder's surplus is frozen instead;
+ *      see `freezeOrPayBorrowerSurplus`.)
  *
  *      Total swap failure (every adapter reverted) reverts the whole
  *      tx — no soft-fallback in v1. Borrower can retry with better
@@ -206,12 +215,27 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
     ///         NOT `vaultDepositERC20From` (would need a self-allowance
     ///         the diamond never sets; Codex round-1 P1 #3).
     ///
+    ///         Sale sizing (#2317): the facet sells ONLY the collateral the
+    ///         debt needs — the least amount whose slippage-capped oracle
+    ///         floor covers `lenderDue + treasuryShare` — never more, and
+    ///         never more than `maxCollateralIn`. The rest of the collateral
+    ///         stays pledged and is released by `claimAsBorrower`. Before
+    ///         #2317 the whole `maxCollateralIn` was sold, which let an
+    ///         over-generous bound convert collateral into the principal
+    ///         asset far beyond what the repayment needed. A route whose
+    ///         calldata is built off-chain for a fixed sell amount (0x /
+    ///         1inch) must be quoted for {previewSwapToRepayFull}'s
+    ///         `collateralToSell`; on-chain venues (UniV3 / Balancer) size
+    ///         themselves.
+    ///
     /// @param loanId           The loan to settle.
     /// @param adapterCalls     Keeper-ranked 4-DEX try-list
     ///                          (`LibSwap.AdapterCall[]`).
     /// @param maxCollateralIn  Upper bound on collateral the caller
     ///                          permits the diamond to withdraw + swap.
-    ///                          Must be ≤ `loan.collateralAmount`.
+    ///                          Must be ≤ `loan.collateralAmount`. The
+    ///                          amount actually sold is sized to the debt
+    ///                          and is usually well below this bound.
     function swapToRepayFull(
         uint256 loanId,
         LibSwap.AdapterCall[] calldata adapterCalls,
@@ -279,44 +303,39 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         );
 
         // ── Build the settlement plan + required-principal target ────
-        uint256 lateFee = LibVaipakam.calculateLateFee(loanId, endTime);
-        LibSettlement.ERC20Settlement memory plan = LibSettlement.computeRepayment(
-            loan,
-            lateFee,
-            block.timestamp
-        );
+        LibSettlement.ERC20Settlement memory plan = _fullSettlementPlan(loanId, loan, endTime);
         uint256 requiredPrincipal = plan.lenderDue + plan.treasuryShare;
 
-        // ── Slippage floor pre-flight (Codex round-1 P1 #1) ──────────
-        // Pass the slippage-floor to LibSwap, not requiredPrincipal —
-        // the latter would let any maxCollateralIn slip through at
-        // arbitrarily bad pricing as long as the debt closed.
-        uint256 expectedProceeds = LibFallback.expectedSwapOutput(
-            address(this),
+        // ── Size the sale to the debt (#2317) + slippage floor ───────
+        // `sellAmount` is the least collateral whose slippage-capped
+        // oracle floor covers `requiredPrincipal`; `maxCollateralIn` only
+        // BOUNDS it (reverts `SwapBoundsInsufficient` when even the bound
+        // cannot cover the debt). The floor — not `requiredPrincipal` — is
+        // what LibSwap enforces, so a route can never fill below the
+        // slippage cap (Codex round-1 P1 #1); the debt-cover check stays a
+        // separate post-swap assertion below.
+        (uint256 sellAmount, uint256 minPrincipalOut) = _sizeFullSale(
             loan.collateralAsset,
             loan.principalAsset,
+            requiredPrincipal,
             maxCollateralIn
         );
-        uint256 minPrincipalOut = (expectedProceeds *
-            (LibVaipakam.BASIS_POINTS - LibVaipakam.cfgMaxSwapToRepaySlippageBps())) /
-            LibVaipakam.BASIS_POINTS;
-        if (minPrincipalOut < requiredPrincipal) revert SwapBoundsInsufficient();
 
         // ── Withdraw collateral to diamond + execute swap ────────────
         // Codex round-3 P1 #2 — aggregator adapters can partial-fill
         // and return UNSPENT input to `msg.sender` (the diamond).
         // Snapshot the collateral balance before to compute actual
         // consumption after, refunding any residual to the current
-        // borrower-NFT holder's vault. Treating maxCollateralIn as
+        // borrower-NFT holder's vault. Treating sellAmount as
         // fully consumed would leave dust stuck on the diamond.
         uint256 collateralBalanceBefore =
             IERC20(loan.collateralAsset).balanceOf(address(this));
 
         // #569 Codex #572 round-4 P2 — DECREMENT the lien by exactly
-        // the collateral being withdrawn for the swap (`maxCollateralIn`),
+        // the collateral being withdrawn for the swap (`sellAmount`),
         // rather than fully releasing it. That clears the chokepoint
         // guard for this withdraw while keeping the never-withdrawn
-        // residual (`collateralAmount - maxCollateralIn`) liened. The
+        // residual (`collateralAmount - sellAmount`) liened. The
         // partial-fill leftover refunded back to the vault below is
         // re-liened, so the borrower's `unconsumedCollateral` stays
         // protected until `ClaimFacet.claimAsBorrower` releases it
@@ -324,14 +343,14 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // would expose that residual to a `withdrawVPFIFromVault` drain
         // by the stored borrower between this terminal and the claim
         // (when the borrower-position NFT has been transferred to a
-        // different claimant). `maxCollateralIn <= collateralAmount`
-        // (the withdraw below would revert otherwise), so the decrement
-        // can't underflow the lien. Safe under revert: a downstream
-        // revert rolls back the storage write.
+        // different claimant). `sellAmount <= maxCollateralIn <=
+        // collateralAmount`, so the decrement can't underflow the lien.
+        // Safe under revert: a downstream revert rolls back the storage
+        // write.
         _callEncumb2(
             EncumbranceMutateFacet.decrementCollateralLien.selector,
             loanId,
-            maxCollateralIn
+            sellAmount
         );
         // #954 (§1.2) — pull the collateral OUT of loan.borrower's vault behind
         // the from-side move-out exemption so a borrower flagged AFTER init (and
@@ -346,14 +365,14 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             loan.borrower,
             loan.collateralAsset,
             address(this),
-            maxCollateralIn
+            sellAmount
         );
 
         (bool success, uint256 outputAmount, uint256 adapterUsed) = LibSwap.swapWithFailover(
             loanId,
             loan.collateralAsset,
             loan.principalAsset,
-            maxCollateralIn,
+            sellAmount,
             minPrincipalOut,
             address(this),
             adapterCalls
@@ -364,7 +383,7 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         if (outputAmount < requiredPrincipal) revert InsufficientProceeds();
 
         // Refund partial-fill leftover collateral (Codex round-3 P1 #2).
-        uint256 actualCollateralConsumed = maxCollateralIn -
+        uint256 actualCollateralConsumed = sellAmount -
             (IERC20(loan.collateralAsset).balanceOf(address(this)) -
                 collateralBalanceBefore);
 
@@ -453,12 +472,12 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // so `settleBorrowerLifProper` below can credit
         // `borrowerLifRebate` for later claim.
         uint256 unconsumedCollateral = loan.collateralAmount - actualCollateralConsumed;
-        // Push the partial-fill leftover (= maxCollateralIn -
+        // Push the partial-fill leftover (= sellAmount -
         // actualCollateralConsumed) back into the borrower vault
         // immediately. The "never withdrawn" portion (loan.collateralAmount
-        // - maxCollateralIn) is already in the vault; the diamond holds
+        // - sellAmount) is already in the vault; the diamond holds
         // the unspent input from the swap, so refund it now.
-        uint256 partialFillRefund = maxCollateralIn - actualCollateralConsumed;
+        uint256 partialFillRefund = sellAmount - actualCollateralConsumed;
         if (partialFillRefund > 0) {
             // #954 (§1.2) — resolving loan.borrower's vault to return their OWN
             // residual collateral must not brick when the borrower was flagged
@@ -483,7 +502,7 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             // above; now that it's back in the borrower's vault as part
             // of `unconsumedCollateral`, it must be re-encumbered so the
             // whole residual stays protected until the claim. Net lien
-            // after this = `(collateralAmount - maxCollateralIn) +
+            // after this = `(collateralAmount - sellAmount) +
             // partialFillRefund` = `unconsumedCollateral`.
             _callEncumb2(
                 EncumbranceMutateFacet.incrementCollateralLien.selector,
@@ -581,7 +600,7 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // Codex round-3 P2 #1 — emit the caller (current borrower-NFT
         // owner), not the latched `loan.borrower` field.
         // Codex round-4 P2 #1 — emit `actualCollateralConsumed`, not
-        // `maxCollateralIn`. The unspent leftover was refunded to the
+        // the requested bound. The unspent leftover was refunded to the
         // borrower vault above; emitting the requested amount would
         // overstate the protocol-level sell volume and understate the
         // borrower's residual position on indexer / dashboard surfaces.
@@ -977,6 +996,117 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             partialPrincipal,
             adapterUsed
         );
+    }
+
+    /// @notice #2317 — how {swapToRepayFull} would size its sale right now.
+    /// @dev    Read-only mirror of the full-mode sizing, sharing its code
+    ///         path (`_fullSettlementPlan` + `_sizeFullSale`), so the figure
+    ///         a caller quotes against is the figure the close-out sells.
+    ///         Callers routing through an aggregator whose calldata fixes the
+    ///         sell amount (0x / 1inch) should quote for `collateralToSell` or
+    ///         slightly under it. The sized amount is the most any route is
+    ///         authorised to sell: the adapter approves exactly that. The
+    ///         figure moves with accrued interest, late fees and oracle
+    ///         updates, so a quote built for it can drift by the time the
+    ///         transaction lands. A route that sells LESS is accepted only if
+    ///         its proceeds still clear `minPrincipalOut` (the floor for the
+    ///         sized amount, which covers the debt); the collateral it did
+    ///         not sell is refunded and stays pledged. A route that would
+    ///         sell MORE fails on the short approval and the try-list fails
+    ///         over. A quote for the whole bound — the pre-#2317 exact-in
+    ///         shape — therefore fails on every such route.
+    ///         Applies the same pre-flight gates that decide the NUMBERS
+    ///         (status, loan shape, bound, grace) and reverts with the same
+    ///         errors; it does not check caller authority, sanctions or live
+    ///         intents, which gate WHO may close rather than how much sells.
+    /// @param loanId          The loan to quote.
+    /// @param maxCollateralIn The caller's upper bound, as it would be passed.
+    /// @return collateralToSell  Collateral the close-out would sell.
+    /// @return minPrincipalOut   Slippage-capped floor the sale must clear.
+    /// @return requiredPrincipal Debt the proceeds must cover
+    ///                           (`lenderDue + treasuryShare`).
+    function previewSwapToRepayFull(uint256 loanId, uint256 maxCollateralIn)
+        external
+        view
+        returns (uint256 collateralToSell, uint256 minPrincipalOut, uint256 requiredPrincipal)
+    {
+        LibVaipakam.Loan storage loan = LibVaipakam.storageSlot().loans[loanId];
+        if (loan.status != LibVaipakam.LoanStatus.Active) revert InvalidLoanStatus();
+        if (
+            loan.assetType != LibVaipakam.AssetType.ERC20 ||
+            loan.collateralAssetType != LibVaipakam.AssetType.ERC20 ||
+            loan.collateralLiquidity != LibVaipakam.LiquidityStatus.Liquid ||
+            loan.principalLiquidity != LibVaipakam.LiquidityStatus.Liquid
+        ) revert UnsupportedLoanShape();
+        if (maxCollateralIn == 0 || maxCollateralIn > loan.collateralAmount)
+            revert InvalidAmount();
+        uint256 endTime = loan.startTime + loan.durationDays * LibVaipakam.ONE_DAY;
+        if (block.timestamp > endTime + LibVaipakam.gracePeriod(loan.durationDays))
+            revert RepaymentPastGracePeriod();
+        LibSettlement.ERC20Settlement memory plan = _fullSettlementPlan(loanId, loan, endTime);
+        requiredPrincipal = plan.lenderDue + plan.treasuryShare;
+        (collateralToSell, minPrincipalOut) = _sizeFullSale(
+            loan.collateralAsset,
+            loan.principalAsset,
+            requiredPrincipal,
+            maxCollateralIn
+        );
+    }
+
+    /// @dev Full-mode settlement plan at `block.timestamp` — the ONE place
+    ///      both {swapToRepayFull} and {previewSwapToRepayFull} derive the
+    ///      debt from, so the preview cannot drift from the close-out.
+    function _fullSettlementPlan(
+        uint256 loanId,
+        LibVaipakam.Loan storage loan,
+        uint256 endTime
+    ) private view returns (LibSettlement.ERC20Settlement memory) {
+        return LibSettlement.computeRepayment(
+            loan,
+            LibVaipakam.calculateLateFee(loanId, endTime),
+            block.timestamp
+        );
+    }
+
+    /// @dev #2317 — the least collateral, up to rounding worth at most a few
+    ///      base units of the principal asset, whose slippage-capped oracle
+    ///      floor covers `required`, bounded by `maxIn`, together with that
+    ///      floor.
+    ///
+    ///      `floor(x) = expectedSwapOutput(x) × (BPS − cap) / BPS` is linear
+    ///      in `x` up to two floored divisions, so the ceiling of
+    ///      `required × maxIn / floor(maxIn)` is exact in real arithmetic and
+    ///      at most a few units short after rounding. The short case steps up
+    ///      by the ceiling of the remaining deficit, and falls back to `maxIn`
+    ///      — whose floor is already known to cover `required` — so the
+    ///      result ALWAYS clears `required` and never exceeds `maxIn`.
+    function _sizeFullSale(
+        address collateralAsset,
+        address principalAsset,
+        uint256 required,
+        uint256 maxIn
+    ) private view returns (uint256 sell, uint256 floor) {
+        uint256 floorAtMax = _slippageFloor(collateralAsset, principalAsset, maxIn);
+        if (floorAtMax < required) revert SwapBoundsInsufficient();
+        sell = Math.mulDiv(required, maxIn, floorAtMax, Math.Rounding.Ceil);
+        floor = _slippageFloor(collateralAsset, principalAsset, sell);
+        for (uint256 i; i < 2 && floor < required; ++i) {
+            sell += Math.mulDiv(required - floor, maxIn, floorAtMax, Math.Rounding.Ceil);
+            if (sell >= maxIn) break;
+            floor = _slippageFloor(collateralAsset, principalAsset, sell);
+        }
+        if (sell >= maxIn || floor < required) return (maxIn, floorAtMax);
+    }
+
+    /// @dev Slippage-capped oracle floor for selling `amount` collateral.
+    function _slippageFloor(address collateralAsset, address principalAsset, uint256 amount)
+        private
+        view
+        returns (uint256)
+    {
+        return (LibFallback.expectedSwapOutput(address(this), collateralAsset, principalAsset, amount) *
+            (LibVaipakam.BASIS_POINTS - LibVaipakam.cfgMaxSwapToRepaySlippageBps())) /
+            LibVaipakam.BASIS_POINTS;
     }
 
     /// @dev #407 PR 4 round-1 Codex P1 #3 (2026-06-12) — consolidated

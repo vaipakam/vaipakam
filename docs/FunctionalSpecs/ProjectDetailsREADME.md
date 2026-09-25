@@ -1390,6 +1390,32 @@ considers it finished.
   is cleared, and unused pledged collateral becomes borrower-claimable.
   Favorable-quote surplus principal should transfer directly to the
   current borrower-position NFT holder's wallet.
+- In full-close mode the borrower names an **upper bound** on the collateral
+  the protocol may sell, never the amount to sell. The protocol sells only
+  the collateral the debt needs — the least amount, up to rounding worth at
+  most a few base units of the lending asset, whose worst-case proceeds
+  under the borrower-facing slippage cap still cover the full repayment — and
+  everything else stays pledged and becomes borrower-claimable. A generous
+  bound therefore changes nothing; a bound too small to cover the debt even
+  at the cap is refused before anything moves. Any principal left over after
+  the debt is paid is the fill beating that worst case (the favorable-quote
+  surplus above), not collateral the borrower was made to convert. The
+  protocol exposes a read-only preview of the sale size, the slippage floor
+  it must clear, and the debt it covers, so an interface can quote a route
+  for that amount before the borrower submits. The preview answers how much
+  would sell, not whether this caller may close right now: it does not
+  apply the authority, sanctions or live-intent checks, so it can quote a
+  loan the close-out would then refuse. The sized amount is the most the
+  protocol ever authorises a route to sell. Because the figure moves with
+  accrued interest and price updates, a route quoted for a fixed amount can
+  drift from it: a route that sells LESS than the sized amount is accepted
+  only if its proceeds still clear the floor set for the sized amount and
+  cover the full repayment, and the collateral it did not sell stays pledged
+  and claimable; a route that would sell MORE than the sized amount is
+  refused, and the next route in the list is tried. An integration should
+  therefore quote for the preview figure or slightly under it. An
+  integration that quotes for the borrower's whole bound — the old
+  behaviour — is refused on every such route.
 - Full-mode swap-to-repay is a **must-complete close-out**: it is never
   blocked by the sanctions screen, so an honest counterparty can always
   be made whole. A flagged party's proceeds are instead **frozen at the
@@ -2933,7 +2959,7 @@ All functions are pure `view` functions (zero gas for callers when invoked via R
 - **Internal-Match Liquidation Tests:** Tests should cover internal-match enablement defaulting off, per-tier liquidation-threshold snapshots at loan initiation, two-loan reciprocal matches, three-loan cycle matches, priority-window blocking of external liquidation, reopening external liquidation after the window, per-leg incentive bounds, partial-match residual claimability, terminal-state claim behavior, lender-side claim of matched proceeds by the current (possibly transferred) lender-position holder, two-sided order-independent settlement (lender-first and borrower-first) including zero-residual settlement on the lender claim alone, the stored lender being unable to extract the proceeds after a position transfer, sanctions rejection of a flagged lender claimant, claim-time auto-dispatch paying the triggering holder, fallback-pending full rescue, fallback-pending partial residual scaling, oracle-unpriceable fallback-pending rejection, active-to-internally-matched and fallback-pending-to-internally-matched lifecycle edges, and event/indexer compatibility.
 - **Offer-System Behaviour Tests:** Tests should cover fill-mode behaviour, offer expiry and cleanup, in-place offer modification without orphaning already-filled obligations, direct-accept preview parity with actual acceptance, and self-trade prevention across both direct acceptance and permissionless matching.
 - **NFT Collateral Listing Tests:** Tests should cover borrower opt-in, lender-side permission, minimum sale-floor enforcement, approved marketplace transfer paths, full-position ERC-1155 sales, listing update and cancellation, marketplace-fill settlement order, grace-boundary expiry, default after an unfilled listing, proper close after a sale, stale-listing cleanup after other terminal paths, offer consumed by sale before lender acceptance, sale-versus-accept race handling, Dutch-decay monotonicity and auction-window bounds, atomic OpenSea-offer match rotation, fee-enforced collection fulfillment-data handling, sibling-listing approval isolation, current-borrower-holder release authority, and sanctions checks at fill time where sanctions screening is active.
-- **Swap-to-Repay Tests:** Tests should cover full-close and partial-reduction modes, partial-mode rejection when the swap would close the loan, current borrower-position NFT authority, lender-self-repay rejection, all-routes-failed atomic revert, slippage-cap enforcement, settlement waterfall parity with ordinary repayment, borrower surplus principal delivery, unused collateral claim creation, prepay-listing cleanup, and event/indexer compatibility for Activity and Loan Details timelines.
+- **Swap-to-Repay Tests:** Tests should cover full-close and partial-reduction modes, partial-mode rejection when the swap would close the loan, current borrower-position NFT authority, lender-self-repay rejection, all-routes-failed atomic revert, slippage-cap enforcement, settlement waterfall parity with ordinary repayment, borrower surplus principal delivery, full-close sale sizing to the debt (independent of a generous bound, with a bound too small to cover the debt refused, and across assets and price feeds of different decimals), unused collateral claim creation, prepay-listing cleanup, and event/indexer compatibility for Activity and Loan Details timelines.
 - **Auto-Lifecycle Tests:** Tests should cover per-user auto-lend / offer-posting and auto-opt-in flags, default and per-loan auto-refinance caps, default-off behavior for illiquid and NFT-collateral loans, refinance-target offer tagging at create and accept time, atomic accept-and-refinance for direct and matched accept paths, stale-cap rejection after NFT transfer, keeper-driven refinance fund routing through the current borrower-position holder, wallet-approval source-of-funds expectations, auto-extend both-side cap intersection, kill-switch reverts, sanctions checks, periodic-interest settle-first protection, pre-grace watcher throttling / viable-counterparty suppression, and keeper reward behavior.
 - **Production-Superset Test Harness:** Shared test scaffolding should route every production Diamond facet selector plus any explicit test-only helpers. A test should not pass by accidentally hitting a missing selector where production would route the call, especially for pause, legal, reward, oracle-admin, vault, and tokenomics surfaces.
 - **Off-Chain Data-Flow Audit:** Before mainnet, the project should maintain a catalog of off-chain reads and writes used by the frontend, workers, indexer, keeper, and operator tools. Each entry should identify signer requirements, freshness or time-to-live assumptions, fail-open or fail-closed behavior, plausibility checks, and blast radius. External reads that influence money-moving decisions should have explicit stale-data handling, and keeper writes should remain bounded by on-chain checks.

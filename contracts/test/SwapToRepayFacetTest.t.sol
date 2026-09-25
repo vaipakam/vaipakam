@@ -7,6 +7,7 @@ import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
+import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
@@ -19,6 +20,7 @@ import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {MockSwapAdapter} from "./mocks/MockSwapAdapter.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 /**
  * @title SwapToRepayFacetTest
@@ -437,10 +439,12 @@ contract SwapToRepayFacetTest is SetupTest {
 
     function test_swapToRepayFull_SurplusPrincipalToBorrowerEoa() public {
         _scaffoldLoan(1, /* allowsPartialRepay */ false, /* useFullTermInterest */ false);
-        // 1:1 quote, 1500 collateral → 1500 principal. Debt is ~1011
-        // ether. Surplus ≈ 489 ether goes direct-to-EOA (Codex round-4
-        // P1 #2 — vault routing leaves the surplus unclaimable because
-        // ClaimFacet only releases the collateral asset).
+        // 1:1 quote. #2317: the bound of 1500 only BOUNDS the sale, which is
+        // sized to the ~1000 debt at the 3% slippage floor, so the surplus is
+        // that floor's headroom (~31 ether), not 1500 − debt. It goes
+        // direct-to-EOA (Codex round-4 P1 #2 — vault routing leaves the
+        // surplus unclaimable because ClaimFacet only releases the
+        // collateral asset).
         adapter1.setOutputMultiplierBps(10_000);
         uint256 borrowerEoaPrincipalBefore = IERC20(address(principalAsset)).balanceOf(borrowerEoa);
         uint256 maxCollateralIn = 1_500 ether;
@@ -467,8 +471,12 @@ contract SwapToRepayFacetTest is SetupTest {
     function test_swapToRepayFull_ResidualCollateralRecordedInClaim() public {
         _scaffoldLoan(1, /* allowsPartialRepay */ false, /* useFullTermInterest */ false);
         adapter1.setOutputMultiplierBps(10_000);
-        // Swap only 1100 of 2000 collateral; 900 stays in vault.
         uint256 maxCollateralIn = 1_100 ether;
+        // #2317 — the sale is sized to the debt, so what stays behind is
+        // everything the SALE did not take, not merely what lies above the
+        // caller's bound.
+        (uint256 toSell, , ) =
+            SwapToRepayFacet(address(diamond)).previewSwapToRepayFull(1, maxCollateralIn);
 
         vm.prank(borrowerEoa);
         SwapToRepayFacet(address(diamond)).swapToRepayFull(
@@ -477,17 +485,199 @@ contract SwapToRepayFacetTest is SetupTest {
             maxCollateralIn
         );
 
-        // The diamond never withdrew the unswapped 900 ether; it
-        // stays in the borrower's vault and the claim slot records
-        // its amount (per Codex P1 #2).
-        // The exact claim assertion would need to query the s.borrowerClaims
-        // mapping via a public getter — we assert the vault balance
-        // instead which reflects the same invariant from the other side.
+        // The diamond never withdrew the unsold collateral; it stays in
+        // the borrower's vault and the claim slot records its amount (per
+        // Codex P1 #2). The vault balance reflects the same invariant from
+        // the other side of the claim row.
         assertEq(
             IERC20(address(collateralAsset)).balanceOf(borrowerVault),
-            LOAN_COLLATERAL - maxCollateralIn,
-            "unswapped collateral stays in borrower vault"
+            LOAN_COLLATERAL - toSell,
+            "unsold collateral stays in borrower vault"
         );
+    }
+
+    // ── ─────────────────────────────────────────────────────── ──
+    // #2317 — the full close-out sells only what the debt needs
+    // ── ─────────────────────────────────────────────────────── ──
+
+    /// @dev Slippage-capped floor at the 1:1 test oracle: the same arithmetic
+    ///      the facet applies, restated so the test does not trust the code
+    ///      under test for its own oracle.
+    function _floorAtParity(uint256 amount) internal view returns (uint256) {
+        return (amount * (LibVaipakam.BASIS_POINTS - ConfigFacet(address(diamond)).getMaxSwapToRepaySlippageBps())) /
+            LibVaipakam.BASIS_POINTS;
+    }
+
+    /// @dev The owner's #2317 decision: `maxCollateralIn` is an UPPER BOUND.
+    ///      With the whole collateral offered as the bound, the close-out must
+    ///      sell the LEAST collateral whose slippage-capped floor covers the
+    ///      debt — not the bound — and leave the rest pledged and claimable.
+    ///      Before the fix this sold all 2,000 and wired ~989 of it to the
+    ///      borrower's wallet as the principal asset.
+    function test_swapToRepayFull_SellsOnlyWhatTheDebtNeeds() public {
+        _scaffoldLoan(1, /* allowsPartialRepay */ false, /* useFullTermInterest */ false);
+        adapter1.setOutputMultiplierBps(10_000);
+
+        (uint256 toSell, uint256 floorOut, uint256 required) =
+            SwapToRepayFacet(address(diamond)).previewSwapToRepayFull(1, LOAN_COLLATERAL);
+
+        // The quoted sale is minimal: its floor covers the debt, and one wei
+        // less would not.
+        assertGe(floorOut, required, "the sized sale's floor covers the debt");
+        assertEq(floorOut, _floorAtParity(toSell), "preview floor matches the oracle arithmetic");
+        assertLt(_floorAtParity(toSell - 1), required, "one wei less would not cover the debt");
+        assertLt(toSell, LOAN_COLLATERAL / 2 + 100 ether, "far below the 2,000 bound");
+
+        uint256 eoaBefore = IERC20(address(principalAsset)).balanceOf(borrowerEoa);
+        vm.prank(borrowerEoa);
+        SwapToRepayFacet(address(diamond)).swapToRepayFull(1, _adapterTryList(1), LOAN_COLLATERAL);
+
+        assertEq(
+            IERC20(address(collateralAsset)).balanceOf(borrowerVault),
+            LOAN_COLLATERAL - toSell,
+            "only the sized amount left the vault; the rest stays pledged"
+        );
+        // 1:1 venue: proceeds == toSell, so the wallet surplus is exactly the
+        // slippage headroom the sale was sized against — a favourable-quote
+        // surplus, not a user-chosen conversion.
+        assertEq(
+            IERC20(address(principalAsset)).balanceOf(borrowerEoa) - eoaBefore,
+            toSell - required,
+            "surplus is the fill's headroom over the debt, nothing more"
+        );
+        assertEq(
+            uint256(LoanFacet(address(diamond)).getLoanDetails(1).status),
+            uint256(LibVaipakam.LoanStatus.Repaid),
+            "loan closes"
+        );
+    }
+
+    /// @dev The bound only BOUNDS: any bound that covers the debt yields the
+    ///      same sale. Two identical loans, bounds 1,100 and 2,000.
+    function test_swapToRepayFull_SaleIndependentOfAGenerousBound() public {
+        _scaffoldLoan(1, false, false);
+        adapter1.setOutputMultiplierBps(10_000);
+        (uint256 tight, , ) = SwapToRepayFacet(address(diamond)).previewSwapToRepayFull(1, 1_100 ether);
+        (uint256 loose, , ) = SwapToRepayFacet(address(diamond)).previewSwapToRepayFull(1, LOAN_COLLATERAL);
+        assertEq(tight, loose, "the sale size does not depend on how generous the bound is");
+
+        vm.prank(borrowerEoa);
+        SwapToRepayFacet(address(diamond)).swapToRepayFull(1, _adapterTryList(1), LOAN_COLLATERAL);
+        assertEq(
+            IERC20(address(collateralAsset)).balanceOf(borrowerVault),
+            LOAN_COLLATERAL - tight,
+            "the generous bound sold exactly what the tight one would have"
+        );
+    }
+
+    /// @dev Independent restatement of the slippage-capped oracle floor for
+    ///      arbitrary prices and decimals — the arithmetic the specification
+    ///      describes, written out here rather than trusted from the facet.
+    function _indepFloor(
+        uint256 amount,
+        uint256 colPrice,
+        uint8 colFeedDec,
+        uint8 colTokenDec,
+        uint256 prinPrice,
+        uint8 prinFeedDec,
+        uint8 prinTokenDec
+    ) internal view returns (uint256) {
+        uint256 expected = (amount * colPrice * (10 ** prinTokenDec) * (10 ** prinFeedDec)) /
+            (prinPrice * (10 ** colTokenDec) * (10 ** colFeedDec));
+        return (expected * (LibVaipakam.BASIS_POINTS - ConfigFacet(address(diamond)).getMaxSwapToRepaySlippageBps())) /
+            LibVaipakam.BASIS_POINTS;
+    }
+
+    struct SizingCase {
+        uint256 colPrice;
+        uint8 colFeedDec;
+        uint8 colTokenDec;
+        uint256 prinPrice;
+        uint8 prinFeedDec;
+    }
+
+    /// @dev #2317 sizing property, for any prices, bound and decimals:
+    ///      - a revert happens only when even the bound cannot cover the debt;
+    ///      - otherwise the sale covers the debt at its floor, never exceeds
+    ///        the bound, reports the floor it will enforce, and is the least
+    ///        such amount up to rounding worth at most a few base units of
+    ///        the lending asset (the minimum found by binary search over the
+    ///        independent floor).
+    ///      Removing the facet's step-up past rounding, or selling the bound
+    ///      (the pre-#2317 behaviour), each fails this property.
+    function _assertSizingProperty(SizingCase memory c, uint256 maxIn) internal {
+        uint8 prinTokenDec = principalAsset.decimals();
+        _mockAssetPrice(address(collateralAsset), c.colPrice, c.colFeedDec);
+        _mockAssetPrice(address(principalAsset), c.prinPrice, c.prinFeedDec);
+        _scaffoldLoan(1, false, false);
+
+        try SwapToRepayFacet(address(diamond)).previewSwapToRepayFull(1, maxIn) returns (
+            uint256 sell, uint256 floorOut, uint256 required
+        ) {
+            uint256 f = _indepFloor(sell, c.colPrice, c.colFeedDec, c.colTokenDec, c.prinPrice, c.prinFeedDec, prinTokenDec);
+            assertGe(f, required, "the sale covers the debt at its slippage floor");
+            assertLe(sell, maxIn, "the sale never exceeds the bound");
+            assertEq(floorOut, f, "the reported floor is the floor of the sale");
+            // Exact minimum by binary search (the floor is monotone in amount).
+            uint256 lo = 0;
+            uint256 hi = sell;
+            while (lo < hi) {
+                uint256 mid = (lo + hi) / 2;
+                if (_indepFloor(mid, c.colPrice, c.colFeedDec, c.colTokenDec, c.prinPrice, c.prinFeedDec, prinTokenDec) >= required) hi = mid;
+                else lo = mid + 1;
+            }
+            // Collateral units worth two base units of the lending asset,
+            // rounded up, plus two — the rounding the spec allows.
+            uint256 slack = Math.mulDiv(
+                2 * c.prinPrice * (10 ** c.colTokenDec) * (10 ** c.colFeedDec),
+                1,
+                c.colPrice * (10 ** prinTokenDec) * (10 ** c.prinFeedDec),
+                Math.Rounding.Ceil
+            ) + 2;
+            assertLe(sell - lo, slack, "the least such sale, up to rounding");
+        } catch (bytes memory reason) {
+            assertEq(bytes4(reason), SwapToRepayFacet.SwapBoundsInsufficient.selector, "only an insufficient bound refuses");
+            // The debt the preview would have covered, at the loan's own clock.
+            (uint256 payoff) = RepayFacet(address(diamond)).calculateRepaymentAmount(1);
+            uint256 fAtMax = _indepFloor(maxIn, c.colPrice, c.colFeedDec, c.colTokenDec, c.prinPrice, c.prinFeedDec, prinTokenDec);
+            assertLt(fAtMax, payoff, "refused only when even the bound cannot cover the debt");
+        }
+    }
+
+    function testFuzz_swapToRepayFull_SizingProperty_SameDecimals(
+        uint256 colPrice,
+        uint256 prinPrice,
+        uint256 maxIn
+    ) public {
+        colPrice = bound(colPrice, 1e6, 1e12);
+        prinPrice = bound(prinPrice, 1e6, 1e12);
+        maxIn = bound(maxIn, 1, LOAN_COLLATERAL);
+        _assertSizingProperty(SizingCase(colPrice, 8, 18, prinPrice, 8), maxIn);
+    }
+
+    /// @dev A 6-decimal collateral token against an 18-decimal lending asset,
+    ///      with an 8-decimal collateral feed and an 18-decimal lending feed.
+    function testFuzz_swapToRepayFull_SizingProperty_MixedDecimals(
+        uint256 colPrice,
+        uint256 prinPrice,
+        uint256 maxIn
+    ) public {
+        collateralAsset = new ERC20Mock("Collateral6", "COL6", 6);
+        colPrice = bound(colPrice, 1e6, 1e12);
+        prinPrice = bound(prinPrice, 1e16, 1e22);
+        maxIn = bound(maxIn, 1, LOAN_COLLATERAL);
+        _assertSizingProperty(SizingCase(colPrice, 8, 6, prinPrice, 18), maxIn);
+    }
+
+    /// @dev The preview applies the same numeric gates the close-out does.
+    function test_previewSwapToRepayFull_Reverts_LikeTheCloseOut() public {
+        _scaffoldLoan(1, false, false);
+        vm.expectRevert(SwapToRepayFacet.SwapBoundsInsufficient.selector);
+        SwapToRepayFacet(address(diamond)).previewSwapToRepayFull(1, 1_000 ether);
+        vm.expectRevert(IVaipakamErrors.InvalidAmount.selector);
+        SwapToRepayFacet(address(diamond)).previewSwapToRepayFull(1, LOAN_COLLATERAL + 1);
+        vm.expectRevert(IVaipakamErrors.InvalidAmount.selector);
+        SwapToRepayFacet(address(diamond)).previewSwapToRepayFull(1, 0);
     }
 
     // ── ─────────────────────────────────────────────────────── ──
@@ -743,6 +933,21 @@ contract SwapToRepayFacetTest is SetupTest {
         // is empty and only the surplus lane remains.
         address holder = makeAddr("v954SurplusOnlyHolder");
         MockSanctionsList sanctions = _transferBorrowerNftThenSanction(holder);
+
+        // #2317 — the sale is sized to the debt, so "all collateral consumed"
+        // now needs a loan whose debt takes ALL of it. Reprice the collateral
+        // so its slippage-capped floor equals the debt EXACTLY: a 22-decimal
+        // feed makes one price step worth 2,000e18 / 1e22 = 0.2 wei of output,
+        // so the floor can be pinned to the wei. The 1:1 venue then fills far
+        // above that floor, which is what leaves a surplus to freeze.
+        (, , uint256 required) =
+            SwapToRepayFacet(address(diamond)).previewSwapToRepayFull(1, LOAN_COLLATERAL);
+        uint256 keep = LibVaipakam.BASIS_POINTS - ConfigFacet(address(diamond)).getMaxSwapToRepaySlippageBps();
+        uint256 expectedAtAll = (required * LibVaipakam.BASIS_POINTS + keep - 1) / keep; // ceil
+        _mockAssetPrice(address(collateralAsset), expectedAtAll * 5, 22);
+        (uint256 toSell, , ) =
+            SwapToRepayFacet(address(diamond)).previewSwapToRepayFull(1, LOAN_COLLATERAL);
+        assertEq(toSell, LOAN_COLLATERAL, "fixture: the debt now needs all of the collateral");
 
         vm.prank(holder);
         SwapToRepayFacet(address(diamond)).swapToRepayFull(1, _adapterTryList(1), LOAN_COLLATERAL);
