@@ -234,10 +234,10 @@ contract SwapToRepayIntentFacet is
     ///      allowPartialFills / allowMultipleFills / expiration).
     /// @param reasonHash short identifier of which bit failed.
     error IntentMakerTraitsMismatch(bytes32 reasonHash);
-    /// @dev #2322 — the order's minimum taker amount exceeds the
-    ///      slippage-capped oracle value of the loan's WHOLE collateral, so
-    ///      no lot the commit could put up would be worth what the order asks.
-    error IntentTakerAmountAboveCollateralFloor(uint256 takerAmount);
+    /// @dev #2322 — even the loan's WHOLE collateral, valued at the oracle
+    ///      less the borrower-facing slippage cap, does not cover the debt
+    ///      floor plus the auction buffer, so no lot can back a repayment.
+    error IntentCollateralCannotCoverDebtFloor(uint256 minOut);
     /// @dev Codex round-6 P1 #4 — `received != committed lot` (#2322: the
     ///      debt-sized lot, formerly `loan.collateralAmount`)
     ///      on the vault withdraw means the collateral token is
@@ -512,33 +512,27 @@ contract SwapToRepayIntentFacet is
 
         // ── §5.1 step 7: minOutput floor (Codex round-10 P1 #5 +
         //    round-11 P1 #3 — must add late fee on top of getPrepayContext) ─
-        uint256 lenderLeg = LibCollateralSettlement.principalPlusAccruedInterest(
-            loanId, block.timestamp
-        );
-        uint256 treasuryLeg = LibCollateralSettlement.treasuryAndPrecloseFee(
-            loanId, block.timestamp
-        );
-        uint256 lateFee = LibVaipakam.calculateLateFee(loanId, endTime);
-        uint256 floor_ = lenderLeg + treasuryLeg + lateFee;
-        uint256 minOut = (floor_ * (
-            LibVaipakam.BASIS_POINTS + LibVaipakam.cfgIntentMinOutputBufferBpsEffective()
-        )) / LibVaipakam.BASIS_POINTS;
+        uint256 minOut = _commitMinOut(loanId, endTime);
         if (params.takerAmount < minOut)
             revert IntentMinOutputBelowFloor(params.takerAmount, minOut);
 
         // ── §5.1 step 7b: size the auction lot to the debt (#2322) ──
         // The spec's full-close rule, shared with `swapToRepayFull`
-        // through {LibSwapToRepaySizing}: the borrower's figure is an
-        // upper bound, never the amount sold, and collateral the debt
-        // does not need stays pledged. Here the bound is the loan's
-        // whole collateral and the target is the order's minimum taker
-        // amount (itself >= the live settlement floor + buffer): the lot
-        // is the least collateral whose slippage-capped oracle value
-        // covers what the order asks, so a resolver can fill it at the
-        // auction's floor without the order giving away collateral the
-        // repayment never needed. The remainder never leaves the vault
-        // and stays liened throughout the auction.
-        uint256 lot = _sizeCommitLot(loan, params.takerAmount);
+        // through {LibSwapToRepaySizing}: collateral the repayment does
+        // not need stays pledged. The lot is the least collateral whose
+        // slippage-capped oracle value covers `minOut` — the debt floor
+        // plus the auction buffer — bounded by the loan's whole
+        // collateral. It is sized to the DEBT, not to `takerAmount`: the
+        // order is a fixed-price limit order (no amount getter in the
+        // canonical extension), so `takerAmount / lot` IS its price, and
+        // sizing the lot to `takerAmount` would pin every order at the
+        // slippage-cap discount. Sized to the debt, the lot is exactly
+        // what a worst-case fill needs to repay; the borrower sets the
+        // price by asking more than `minOut` for it, and anything a fill
+        // raises above the debt is the borrower's surplus principal —
+        // the same shape as the direct close. The remainder never leaves
+        // the vault and stays liened throughout the auction.
+        uint256 lot = _sizeCommitLot(loan, minOut);
 
         // ── §5.1 step 8: pull the lot + reject fee-on-transfer ──────
         // Balance-delta accounting AND require received == requested
@@ -949,11 +943,12 @@ contract SwapToRepayIntentFacet is
         LibVaipakam.recordVaultDeposit(
             loan.borrower, loan.collateralAsset, commit.custodialCollateral
         );
-        // #569 §4.4 (2026-06-13) — temporary-custody restore. The
-        // collateral is back in the borrower's vault and the loan stays
-        // Active, so re-instate the lien that `commitSwapToRepayIntent`
-        // decremented to zero. Without this, a borrower who commits then
-        // cancels an intent would leave their (still-pledged) collateral
+        // #569 §4.4 (2026-06-13) — temporary-custody restore. The lot is
+        // back in the borrower's vault and the loan stays Active, so
+        // re-instate the part of the lien `commitSwapToRepayIntent`
+        // decremented — by the lot (#2322; the rest of the collateral never
+        // left the vault and stayed liened). Without this, a borrower who
+        // commits then cancels an intent would leave the returned lot
         // unprotected by the chokepoint guard.
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
@@ -1055,27 +1050,31 @@ contract SwapToRepayIntentFacet is
         order.extension   = s.intentExtensionBytes[commit.extensionHash];
     }
 
-    /// @notice #2322 — how much collateral {commitSwapToRepayIntent} would
-    ///         put up as the auction lot for an order asking `takerAmount`,
-    ///         at current oracle prices.
-    /// @dev    Shares the commit's sizing ({_sizeCommitLot} →
-    ///         {LibSwapToRepaySizing.sizeSale}), so the borrower can see the
-    ///         lot before committing; the rest of the collateral stays in the
-    ///         vault, pledged, and is released by the borrower's claim after
-    ///         the fill. The figure moves with oracle updates, so the lot the
-    ///         commit actually takes is the one {getIntentCommit} reports
+    /// @notice #2322 — the auction lot {commitSwapToRepayIntent} would put
+    ///         up right now, and the least `takerAmount` it would accept.
+    /// @dev    Shares the commit's computation ({_commitMinOut} +
+    ///         {_sizeCommitLot} → {LibSwapToRepaySizing.sizeSale}), so the
+    ///         borrower can see the lot before committing. The lot is the
+    ///         collateral the debt needs at the worst case; the rest stays in
+    ///         the vault, pledged, and is released by the borrower's claim
+    ///         after a fill. The order's price is `takerAmount / lot`: asking
+    ///         `minTakerAmount` accepts the slippage-cap discount, asking more
+    ///         prices the lot higher, and whatever a fill raises above the
+    ///         debt is the borrower's surplus principal. Both figures move
+    ///         with accrued interest, late fees and oracle updates, so the lot
+    ///         the commit actually takes is the one {getIntentCommit} reports
     ///         afterwards, and that — not this preview — is what the order
-    ///         posted to the resolver network must carry. It checks only the
-    ///         loan shape the sizing needs; it does not apply the commit's
-    ///         authority, HF, deadline, allowlist or minimum-output gates.
-    /// @param  loanId      The loan to quote.
-    /// @param  takerAmount The order's minimum taker amount, as it would be
-    ///                     passed in `FusionOrderParams.takerAmount`.
-    /// @return lot         Collateral the commit would take into custody.
-    function previewSwapToRepayIntentLot(uint256 loanId, uint256 takerAmount)
+    ///         posted to the resolver network must carry. Checks only the loan
+    ///         shape and grace window the numbers need; it does not apply the
+    ///         commit's authority, HF, deadline or allowlist gates.
+    /// @param  loanId         The loan to quote.
+    /// @return lot            Collateral the commit would take into custody.
+    /// @return minTakerAmount The least `takerAmount` the commit accepts
+    ///                        (the debt floor plus the auction buffer).
+    function previewSwapToRepayIntentLot(uint256 loanId)
         external
         view
-        returns (uint256 lot)
+        returns (uint256 lot, uint256 minTakerAmount)
     {
         LibVaipakam.Loan storage loan = LibVaipakam.storageSlot().loans[loanId];
         if (loan.status != LibVaipakam.LoanStatus.Active)
@@ -1086,14 +1085,32 @@ contract SwapToRepayIntentFacet is
             loan.collateralLiquidity != LibVaipakam.LiquidityStatus.Liquid ||
             loan.principalLiquidity != LibVaipakam.LiquidityStatus.Liquid
         ) revert UnsupportedLoanShape();
-        lot = _sizeCommitLot(loan, takerAmount);
+        uint256 endTime = uint256(loan.startTime) + uint256(loan.durationDays) * LibVaipakam.ONE_DAY;
+        if (block.timestamp > endTime + LibVaipakam.gracePeriod(loan.durationDays))
+            revert RepaymentPastGracePeriod();
+        minTakerAmount = _commitMinOut(loanId, endTime);
+        lot = _sizeCommitLot(loan, minTakerAmount);
+    }
+
+    /// @dev §5.1 step 7 — the least `takerAmount` a commit accepts: the live
+    ///      settlement floor (lender leg + treasury leg + late fee, Codex
+    ///      round-10 P1 #5 + round-11 P1 #3) grossed up by the auction buffer.
+    ///      The ONE place the commit and its preview derive it from.
+    function _commitMinOut(uint256 loanId, uint256 endTime) private view returns (uint256) {
+        uint256 floor_ = LibCollateralSettlement.principalPlusAccruedInterest(loanId, block.timestamp)
+            + LibCollateralSettlement.treasuryAndPrecloseFee(loanId, block.timestamp)
+            + LibVaipakam.calculateLateFee(loanId, endTime);
+        return (floor_ * (
+            LibVaipakam.BASIS_POINTS + LibVaipakam.cfgIntentMinOutputBufferBpsEffective()
+        )) / LibVaipakam.BASIS_POINTS;
     }
 
     /// @dev #2322 — the auction lot: the least collateral whose
-    ///      slippage-capped oracle value covers `takerAmount`, bounded by the
-    ///      loan's whole collateral, through the rule `swapToRepayFull` also
-    ///      uses. Refuses when even the whole collateral cannot cover it.
-    function _sizeCommitLot(LibVaipakam.Loan storage loan, uint256 takerAmount)
+    ///      slippage-capped oracle value covers `minOut` (the debt floor plus
+    ///      the auction buffer), bounded by the loan's whole collateral,
+    ///      through the rule `swapToRepayFull` also uses. Refuses when even
+    ///      the whole collateral cannot cover it.
+    function _sizeCommitLot(LibVaipakam.Loan storage loan, uint256 minOut)
         private
         view
         returns (uint256 lot)
@@ -1102,9 +1119,9 @@ contract SwapToRepayIntentFacet is
         (covers, lot, ) = LibSwapToRepaySizing.sizeSale(
             loan.collateralAsset,
             loan.principalAsset,
-            takerAmount,
+            minOut,
             loan.collateralAmount
         );
-        if (!covers) revert IntentTakerAmountAboveCollateralFloor(takerAmount);
+        if (!covers) revert IntentCollateralCannotCoverDebtFloor(minOut);
     }
 }

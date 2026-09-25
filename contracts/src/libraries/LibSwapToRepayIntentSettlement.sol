@@ -250,8 +250,9 @@ library LibSwapToRepayIntentSettlement {
         }
 
         // #658 PR-B — the intent fill is the LENDER-side close-out of this loan
-        // (the borrower side was consolidated at COMMIT and its collateral is in
-        // Diamond custody, so it must NOT be re-consolidated here). Consolidate
+        // (the borrower side was consolidated at COMMIT and its auction lot is in
+        // Diamond custody — #2322: the rest of its collateral stayed in the vault,
+        // liened — so it must NOT be re-consolidated here). Consolidate
         // the lender side while the loan is still Active (the flip to Repaid is
         // below), so the lender reward entry + VPFI checkpoint follow the current
         // lender-NFT holder and the proceeds/#592 reserve below key to them
@@ -348,11 +349,14 @@ library LibSwapToRepayIntentSettlement {
         // transferred-away stored borrower drain it (VPFI via
         // withdrawVPFIFromVault) before the rightful holder claims.
         //
-        // So the lien is set to EXACTLY the claim: topped up by the
-        // difference between the claim and what is still liened, not by the
-        // whole claim on top of it (which double-counted the untouched part
-        // once the commit stopped zeroing the lien). A zero claim — the whole
-        // collateral consumed — tombstones the now-empty row.
+        // So the lien is TOPPED UP to cover the claim — by the difference
+        // between the claim and what is still liened, not by the whole claim
+        // on top of it (which double-counted the untouched part once the
+        // commit stopped zeroing the lien). With the lien equal to the loan's
+        // collateral before the commit, as loan initiation writes it, the
+        // result equals the claim exactly; a lien that was already larger is
+        // left as it was (the claim releases the whole row either way). A
+        // zero claim — the whole collateral consumed — tombstones the row.
         uint256 claimedCollateral = loan.collateralAmount - consumed;
         if (claimedCollateral > 0) {
             uint256 stillLiened = s.loanCollateralLien[loanId].released

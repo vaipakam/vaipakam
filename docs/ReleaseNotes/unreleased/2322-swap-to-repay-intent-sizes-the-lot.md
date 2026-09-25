@@ -1,35 +1,44 @@
-## Thread — repay-from-collateral by auction puts up only what the order needs (#2322)
+## Thread — repay-from-collateral by auction puts up only what the debt needs (#2322)
 
 The auction form of repaying a loan from its collateral — where the
 borrower posts an order and a resolver fills it — used to put the loan's
-entire collateral up for sale, whatever the order asked. A filled auction
-therefore turned every unit of collateral into the lending asset and paid
-the excess out as surplus, which is the same problem the direct form had
-until #2317. The functional specification says collateral the repayment
-does not need stays pledged and returns to the borrower through their
-claim, and that rule covers both forms, so the auction now follows it.
+entire collateral up for sale. A filled auction therefore turned every unit
+of collateral into the lending asset, which is the same problem the direct
+form had until #2317. The functional specification says collateral the
+repayment does not need stays pledged and returns to the borrower through
+their claim, and that rule covers both forms, so the auction now follows it.
 
-When a borrower commits an order, the protocol now puts up only the least
-collateral whose worst-case value, under the same borrower-facing slippage
-allowance the direct form uses, covers the least the order will accept.
-Both forms size the sale through one shared rule, so they cannot drift
-apart. The rest of the collateral never leaves the borrower's vault and
-stays pledged for the whole auction. After a fill, the borrower claims it
-through the ordinary claim, together with any part of the auctioned lot the
-fill did not take, and it stays pledged until they do. A cancelled or
-expired auction returns the lot and leaves the loan exactly as it was. An
-order asking more than the whole collateral could be worth at that floor
-cannot be backed by any lot, so it is now refused at commit instead of
-sitting unfillable. A new read-only preview shows how much collateral an
-order would put up before the borrower commits. The committed order is the
-one to post to the resolver network, because prices can move between the
-preview and the commit.
+When a borrower commits an order, the protocol now puts up only the lot the
+debt needs. That is the least collateral whose worst-case value, under the
+same borrower-facing slippage allowance the direct form uses, covers the
+debt plus the auction's safety buffer. Both forms size the sale through one
+shared rule, so they cannot drift apart. The order is a fixed-price order,
+and the borrower sets its price by how much principal they ask for that lot:
+- Asking the minimum the commit allows accepts the worst case the slippage
+  allowance permits, and a resolver keeps that discount.
+- Asking more prices the lot higher.
+- Whatever a fill raises above the debt is paid to the borrower as surplus,
+  exactly as in the direct form.
+
+The rest of the collateral never leaves the borrower's vault and stays
+pledged for the whole auction. A loan with a live auction is also kept out
+of the protocol's internal loan-against-loan matching, because none of its
+collateral is free to match. After a fill, the borrower claims the rest
+through the ordinary claim, and it stays pledged until they do. A cancelled
+or expired auction returns the lot and leaves the loan exactly as it was.
+When even the whole collateral, at the worst case, cannot cover the debt
+and buffer, the commit is refused before anything moves. A new read-only
+preview shows the lot and the least principal a commit accepts. The
+committed order is the one to post to the resolver network, because
+interest and prices can move between the preview and the commit.
 
 Fixing this also exposed an accounting issue in how the pledge was
 restored after a fill. The old code assumed the whole collateral had been
 unpledged at commit, and re-pledged the borrower's whole remaining claim on
 top of whatever was still pledged. With the untouched part now pledged
 throughout, that would have counted it twice. After a fill the pledge is
-now set to exactly the borrower's claim. No shipped interface drives the
-auction form yet, and the live testnet still runs the previous contracts
-until an operator refreshes them. Closes #2322.
+now topped up to cover the claim, and it equals the claim whenever the
+pledge matched the loan's collateral before the auction, as loan initiation
+sets it. No shipped interface drives the auction form yet, and the live
+testnet still runs the previous contracts until an operator refreshes them.
+Closes #2322.

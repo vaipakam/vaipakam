@@ -1216,15 +1216,19 @@ intent expires in 5 minutes; the cancel-grace closes in 24h.
 > `custodialCollateral` with `loan.collateralAmount` (the step-8 pull, the
 > round-6 received-equals-requested guard, `makerAmount`) now reads "the
 > lot": the commit pulls only the least collateral whose slippage-capped
-> oracle value covers the order's minimum taker amount, and decrements the
+> oracle value covers the commit's minimum output (the debt floor plus the
+> buffer — the DEBT, not the taker amount, which is the borrower's price
+> for the lot on this fixed-price order), and decrements the
 > lien by that lot alone, so the rest of the collateral stays in the vault
 > and stays liened through the auction. The claim formula below is
 > unchanged — `claim = loan.collateralAmount - consumed` — and is still
 > exactly what the vault holds: the part never taken plus the fill
-> residual. What changed with it is the post-fill lien: it is set to
-> EXACTLY that claim (topped up by the difference from what is still
-> liened), because re-liening the whole claim on top of the never-unliened
-> part would count that part twice.
+> residual. What changed with it is the post-fill lien: it is topped up to
+> cover that claim (by the difference from what is still liened), because
+> re-liening the whole claim on top of the never-unliened part would count
+> that part twice. And `internalMatchableCollateral` answers 0 while a
+> commit is live, so the loan is never drawn into an internal match — with
+> the remainder still liened, a match could otherwise draw on it.
 
 ### 5.9 Partial fills + residual custodial collateral
 

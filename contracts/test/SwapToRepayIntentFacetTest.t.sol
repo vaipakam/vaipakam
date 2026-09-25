@@ -18,6 +18,8 @@ import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
+import {RepayFacet} from "../src/facets/RepayFacet.sol";
+import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
 
 /**
  * @title SwapToRepayIntentFacetTest
@@ -326,17 +328,19 @@ contract SwapToRepayIntentFacetTest is SetupTest {
         return (amount * (10_000 - ConfigFacet(address(diamond)).getMaxSwapToRepaySlippageBps())) / 10_000;
     }
 
-    /// @dev The commit puts up only the lot the order needs — the least
-    ///      collateral whose slippage-capped oracle value covers the order's
-    ///      minimum taker amount — not the loan's whole collateral. The rest
-    ///      never leaves the vault and stays liened for the whole auction.
-    function test_Commit_SizesTheLotToWhatTheOrderAsks() public {
+    /// @dev The commit puts up only the lot the DEBT needs — the least
+    ///      collateral whose slippage-capped oracle value covers the commit's
+    ///      minimum output (the debt floor plus the auction buffer) — not the
+    ///      loan's whole collateral. The rest never leaves the vault and stays
+    ///      liened for the whole auction.
+    function test_Commit_SizesTheLotToTheDebt() public {
         SwapToRepayIntentFacet.FusionOrderParams memory params = _armHappyCommit();
-        uint256 lot = SwapToRepayIntentFacet(address(diamond)).previewSwapToRepayIntentLot(LOAN_ID, params.takerAmount);
+        (uint256 lot, uint256 minTaker) = SwapToRepayIntentFacet(address(diamond)).previewSwapToRepayIntentLot(LOAN_ID);
 
-        assertGe(_floorAtParity(lot), params.takerAmount, "the lot is worth what the order asks, at the worst case");
-        assertLt(_floorAtParity(lot - 1), params.takerAmount, "and no more than it needs");
+        assertGe(_floorAtParity(lot), minTaker, "the lot covers the debt floor at the worst case");
+        assertLt(_floorAtParity(lot - 1), minTaker, "and no more than the debt needs");
         assertLt(lot, LOAN_COLLATERAL, "the lot is not the whole collateral");
+        assertGt(params.takerAmount, minTaker, "the fixture asks more than the minimum");
 
         vm.prank(borrowerEoa);
         SwapToRepayIntentFacet(address(diamond)).commitSwapToRepayIntent(LOAN_ID, params);
@@ -347,10 +351,25 @@ contract SwapToRepayIntentFacetTest is SetupTest {
         assertEq(_lien(), LOAN_COLLATERAL - lot, "and stays pledged");
     }
 
-    /// @dev A fill closes the loan and leaves the borrower's collateral
-    ///      claim — the part the commit never took plus any fill residual —
-    ///      in the vault, liened by EXACTLY the claim (not the claim on top
-    ///      of the part that was never unliened).
+    /// @dev The borrower sets the PRICE with `takerAmount`; the lot does not
+    ///      move with it. Two identical loans committed at the minimum and at
+    ///      a higher ask put up the same lot — so asking more prices it higher
+    ///      rather than selling more collateral.
+    function test_Commit_TakerAmountSetsThePriceNotTheLot() public {
+        SwapToRepayIntentFacet.FusionOrderParams memory params = _armHappyCommit();
+        (uint256 lot, uint256 minTaker) = SwapToRepayIntentFacet(address(diamond)).previewSwapToRepayIntentLot(LOAN_ID);
+        params.takerAmount = minTaker * 3 / 2;
+        vm.prank(borrowerEoa);
+        SwapToRepayIntentFacet(address(diamond)).commitSwapToRepayIntent(LOAN_ID, params);
+        assertEq(SwapToRepayIntentFacet(address(diamond)).getIntentCommit(LOAN_ID).makerAmount, lot, "a higher ask does not enlarge the lot");
+        assertEq(SwapToRepayIntentFacet(address(diamond)).getIntentCommit(LOAN_ID).takerAmount, minTaker * 3 / 2, "it prices it higher");
+    }
+
+    /// @dev A fill closes the loan; what the order raised above the debt is
+    ///      the borrower's surplus principal, and the borrower's collateral
+    ///      claim — the part the commit never took — stays in the vault,
+    ///      liened for exactly the claim (not the claim on top of the part
+    ///      that was never unliened).
     function test_Fill_LeavesTheUntakenCollateralClaimableAndLienedExactlyOnce() public {
         SwapToRepayIntentFacet.FusionOrderParams memory params = _armHappyCommit();
         vm.recordLogs();
@@ -358,6 +377,8 @@ contract SwapToRepayIntentFacetTest is SetupTest {
         SwapToRepayIntentFacet(address(diamond)).commitSwapToRepayIntent(LOAN_ID, params);
         bytes32 orderHash = _committedOrderHash();
         uint256 lot = SwapToRepayIntentFacet(address(diamond)).getIntentCommit(LOAN_ID).makerAmount;
+        uint256 eoaBefore = principalAsset.balanceOf(borrowerEoa);
+        uint256 payoff = RepayFacet(address(diamond)).calculateRepaymentAmount(LOAN_ID);
 
         // Fusion's fill, as the pinned LOP runs it: preInteraction snapshots
         // the principal baseline, the resolver delivers the taking amount and
@@ -372,6 +393,7 @@ contract SwapToRepayIntentFacetTest is SetupTest {
         IntentDispatchFacet(address(diamond)).postInteraction(o, "", orderHash, address(0), lot, params.takerAmount, 0, "");
 
         assertEq(uint256(LoanFacet(address(diamond)).getLoanDetails(LOAN_ID).status), uint256(LibVaipakam.LoanStatus.Repaid), "the fill closes the loan");
+        assertEq(principalAsset.balanceOf(borrowerEoa) - eoaBefore, params.takerAmount - payoff, "the ask above the debt is the borrower's surplus");
         (, uint256 claimAmt, , , , , , ) = ClaimFacet(address(diamond)).getClaimable(LOAN_ID, false);
         assertEq(claimAmt, LOAN_COLLATERAL - lot, "the borrower can claim every unit the fill did not take");
         assertEq(collateralAsset.balanceOf(borrowerVault), LOAN_COLLATERAL - lot, "and it is all in the vault");
@@ -393,19 +415,53 @@ contract SwapToRepayIntentFacetTest is SetupTest {
         assertEq(collateralAsset.balanceOf(address(diamond)), 0, "nothing left in custody");
     }
 
-    /// @dev An order asking more than the whole collateral is worth at the
-    ///      slippage floor cannot be backed by any lot, so it is refused before
+    /// @dev When even the whole collateral, at the slippage floor, cannot
+    ///      cover the debt floor, no lot can back a repayment: refused before
     ///      anything moves.
-    function test_Commit_RevertWhen_TakerAmountAboveWholeCollateralFloor() public {
+    function test_Commit_RevertWhen_WholeCollateralCannotCoverTheDebtFloor() public {
         SwapToRepayIntentFacet.FusionOrderParams memory params = _armHappyCommit();
-        params.takerAmount = _floorAtParity(LOAN_COLLATERAL) + 1;
+        // Collateral repriced to $0.50: 2,000 collateral is worth 970 at the
+        // 3% floor, below the ~1,020 debt floor plus buffer.
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, address(collateralAsset)), abi.encode(uint256(0.5e8), uint8(8)));
         vm.prank(borrowerEoa);
-        vm.expectRevert(abi.encodeWithSelector(SwapToRepayIntentFacet.IntentTakerAmountAboveCollateralFloor.selector, params.takerAmount));
+        vm.expectPartialRevert(SwapToRepayIntentFacet.IntentCollateralCannotCoverDebtFloor.selector);
         SwapToRepayIntentFacet(address(diamond)).commitSwapToRepayIntent(LOAN_ID, params);
     }
 
-    /// @dev The committed order's hash, read from the commit event's second
-    ///      topic (`orderHash` is indexed). Requires `vm.recordLogs()` before
+    /// @dev A loan whose collateral is committed to a live auction is never an
+    ///      internal-match candidate: part of its collateral is owed to the
+    ///      order and the rest backs the borrower's post-settlement claim.
+    ///      The precondition row proves the same loan IS a candidate before
+    ///      the commit, so the post-commit row cannot pass vacuously.
+    function test_LiveIntent_IsNeverAnInternalMatchCandidate() public {
+        SwapToRepayIntentFacet.FusionOrderParams memory params = _armHappyCommit();
+        // Index both loans the way loan initiation would, with a liquidation
+        // floor below SetupTest's mocked LTV so each is match-eligible.
+        LibVaipakam.Loan memory a = LoanFacet(address(diamond)).getLoanDetails(LOAN_ID);
+        a.id = LOAN_ID;
+        a.liquidationLtvBpsAtInit = 6_000;
+        TestMutatorFacet(address(diamond)).scaffoldActiveLoan(LOAN_ID, a);
+        LibVaipakam.Loan memory b = a;
+        b.id = 2;
+        b.principalAsset = address(collateralAsset);
+        b.collateralAsset = address(principalAsset);
+        b.lenderTokenId = 3;
+        b.borrowerTokenId = 4;
+        TestMutatorFacet(address(diamond)).scaffoldActiveLoan(2, b);
+        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateLTV.selector), abi.encode(uint256(6_666)));
+        ConfigFacet(address(diamond)).setInternalMatchEnabled(true);
+
+        (bool found, uint256 cid) = MetricsFacet(address(diamond)).hasInternalMatchCandidate(2);
+        assertTrue(found && cid == LOAN_ID, "precondition: before the commit the loan IS a candidate");
+
+        vm.prank(borrowerEoa);
+        SwapToRepayIntentFacet(address(diamond)).commitSwapToRepayIntent(LOAN_ID, params);
+        (found, cid) = MetricsFacet(address(diamond)).hasInternalMatchCandidate(2);
+        assertFalse(found && cid == LOAN_ID, "with a live auction it is not");
+    }
+
+    /// @dev The committed order's hash, read from the commit event
+    ///      (`topics[2]` — `orderHash` is the second indexed parameter). Requires `vm.recordLogs()` before
     ///      the commit.
     function _committedOrderHash() internal returns (bytes32) {
         bytes32 sig = SwapToRepayIntentFacet.SwapToRepayIntentCommitted.selector;

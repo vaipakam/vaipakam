@@ -119,13 +119,18 @@ borrower-supplied order must:
 - Place the debt-sized **lot** as the maker amount — SUPERSEDED by #2322
   (2026-09-25), which replaces the original "the loan's full collateral
   amount". The lot is the least collateral whose worst-case value under
-  the borrower-facing swap-to-repay slippage cap covers the order's
-  minimum taker amount, computed by the same rule the direct full close
-  uses (#2317); the protocol computes it at commit and the committed
-  order reports it, so the client posts the order it reads back. The
-  rest of the collateral stays in the borrower's vault, pledged, and is
-  released by the ordinary claim after a fill. An order no lot can back
-  (asking more than the whole collateral is worth at that floor) is
+  the borrower-facing swap-to-repay slippage cap covers the commit's
+  minimum output (the live settlement floor plus the buffer), computed by
+  the same rule the direct full close uses (#2317). It is sized to the
+  DEBT, not to the taker amount: the order is fixed-price (the canonical
+  extension carries no amount getter), so the taker amount is the price
+  the borrower asks for the lot, and anything a fill raises above the
+  debt is surplus principal. The protocol computes the lot at commit and
+  the committed order reports it, so the client posts the order it reads
+  back. The rest of the collateral stays in the borrower's vault,
+  pledged, and is released by the ordinary claim after a fill; a loan
+  with a live commit has nothing internally matchable. A commit whose
+  whole collateral at the worst case cannot cover the minimum output is
   refused.
 - Place a taker amount at or above the protocol's **live settlement
   floor** plus the configured buffer.
