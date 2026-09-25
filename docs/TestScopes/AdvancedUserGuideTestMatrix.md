@@ -9,9 +9,10 @@
 > with no compiler. Read them together: a fresh deploy proves the source tree
 > is self-consistent, a fork proves the deployed bytecode and that
 > deployment's own configuration are. Several findings in the fork write-up
-> are properties of the deployment (seeded pool depth, the registered swap
-> venue, an artifact that no longer matches the chain) and could not have
-> surfaced here.
+> are properties of the deployment (the faucet mocks' feed and pool spot
+> moving independently, so a feed-only reprice trips the oracle's
+> consistency band; the registered swap venue; an artifact that no longer
+> matches the chain) and could not have surfaced here.
 
 This is the single source of truth for the three new on-chain test
 scripts that exercise every flow documented in

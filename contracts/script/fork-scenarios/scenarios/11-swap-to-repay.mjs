@@ -10,7 +10,7 @@
  * start it.
  */
 import { DIAMOND, ERC20, MOCKS, TREASURY, borrower, lender, outsider, parseUnits, pub, tx } from '../lib/chain.mjs';
-import { ABIS, STATUS, delta, expectPosition, openLoan, positionOf, read, snapshot, vaultAddressFor } from '../lib/flow.mjs';
+import { ABIS, STATUS, claimAndExpect, delta, expectPosition, openLoan, positionOf, read, snapshot, vaultAddressFor } from '../lib/flow.mjs';
 import { f18 } from '../lib/chain.mjs';
 import { simulate } from '../lib/errors.mjs';
 import { cannotContinue, check, expectLedger, expectRefusal, requireEnvelope } from '../lib/report.mjs';
@@ -118,6 +118,22 @@ export async function run() {
     check('A11.6b', 'collateral the sale did not take stays in the borrower\'s vault, still liened for the claim',
       !lien.released && lien.amount === loan.collateralAmount - sold,
       `unsold=${f18(loan.collateralAmount - sold)} lien.amount=${f18(lien.amount)} lien.released=${lien.released}`);
+
+    // …and the claim actually pays it out. Both sides then claim: the
+    // borrower the unsold collateral, the lender the repayment credited to
+    // their vault; with both claimed the loan settles.
+    const unsold = loan.collateralAmount - sold;
+    let pos = await positionOf(loanId);
+    pos = await claimAndExpect({
+      id: 'A11.6d', who: 'borrower', account: borrower, fn: 'claimAsBorrower', loanId, tokens, holders, before: pos,
+      moves: { 'collateral.borrowerVault': -unsold, 'collateral.borrowerEOA': unsold },
+      changes: { borrowerNftOwner: null, lienReleased: true, lienAmount: 0n },
+    });
+    await claimAndExpect({
+      id: 'A11.6e', who: 'lender', account: lender, fn: 'claimAsLender', loanId, tokens, holders, before: pos,
+      moves: { 'lending.lenderVault': -(payoff - interestCut), 'lending.lenderEOA': payoff - interestCut },
+      changes: { lenderNftOwner: null, status: STATUS.Settled },
+    });
   }
 
   // ------------------------------------------------------------- partial

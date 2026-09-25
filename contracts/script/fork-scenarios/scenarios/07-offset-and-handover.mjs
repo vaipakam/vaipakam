@@ -10,7 +10,7 @@
  * for a manual second step is waiting for something that already happened.
  */
 import { DIAMOND, MOCKS, TREASURY, borrower, lender, outsider, parseUnits, pub, tx } from '../lib/chain.mjs';
-import { ABIS, ANY, STATUS, approveDiamond, acceptOffer, acceptStoredOffer, createOffer, delta, expectPosition, liveStamps, mint, openLoan, positionOf, read, snapshot, termsFromOffer, vaultAddressFor, lifSplit, liveFees } from '../lib/flow.mjs';
+import { ABIS, ANY, STATUS, approveDiamond, acceptOffer, acceptStoredOffer, createOffer, creationFields, delta, expectPosition, liveStamps, mint, openLoan, positionOf, read, snapshot, termsFromOffer, vaultAddressFor, lifSplit, liveFees } from '../lib/flow.mjs';
 import { chainNow, f18 } from '../lib/chain.mjs';
 import { warpDays } from '../lib/impersonate.mjs';
 import { simulate } from '../lib/errors.mjs';
@@ -142,6 +142,7 @@ export async function run() {
           // and the risk stamps the original loan carries on the same
           // collateral under the same configuration.
           ...termsFromOffer(vehicle), ...(await liveStamps()),
+          ...(await creationFields(accepted.receipt, offsetOfferId, vehicle.durationDays, outsider.address)),
           liquidationLtvBpsAtInit: origLoan.liquidationLtvBpsAtInit, initLtvCapBpsAtInit: origLoan.initLtvCapBpsAtInit,
           principalLiquidity: 0, collateralLiquidity: 0, prepayAmount: 0n, bufferAmount: 0n,
           status: STATUS.Active, lender: borrower.address, borrower: outsider.address,

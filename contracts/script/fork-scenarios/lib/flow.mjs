@@ -30,7 +30,7 @@ import {
   walletFor,
 } from './chain.mjs';
 import { simulate } from './errors.mjs';
-import { check } from './report.mjs';
+import { check, expectLedger } from './report.mjs';
 
 export const ZERO = '0x0000000000000000000000000000000000000000';
 export const BYTES32_ZERO = `0x${'0'.repeat(64)}`;
@@ -436,18 +436,32 @@ const LIEN_FIELDS = ['lienUser', 'lienAsset', 'lienTokenId', 'lienAmount', 'lien
 export const POSITION_FIELDS = [...LOAN_FIELDS, 'lenderNftOwner', 'borrowerNftOwner', ...LIEN_FIELDS];
 
 /**
- * The fields the CHAIN assigns when it creates a position — identifiers,
- * timestamps, running accumulators and bookkeeping flags — none of which an
- * offer or a spec formula fixes in advance. A created position may leave
- * exactly these unstated (they are then not compared); every other field,
- * terms, parties, NFTs, lien and fee stamps, must be stated.
+ * The only fields a created position may leave unstated: the identifiers the
+ * chain mints (the loan id and the two token ids), which nothing fixes in
+ * advance. Every other field — terms, parties, NFTs, lien, fee stamps, and the
+ * creation clock and counters (`creationFields`) — must be stated.
  */
-export const CHAIN_ASSIGNED_AT_CREATION = [
-  'id', 'offerId', 'lenderTokenId', 'borrowerTokenId', 'startTime', 'interestAccrualStart',
-  'lastPeriodicInterestSettledAt', 'lastDeductTime', 'interestPaidSinceLastPeriod', 'interestSettled',
-  'interestRemainingDays', 'lenderDiscountAccAtInit', 'borrowerDiscountAccAtInit', 'matcher',
-  'lenderNotifBilled', 'borrowerNotifBilled', 'riskAndTermsConsentFromBoth',
-];
+export const CHAIN_ASSIGNED_AT_CREATION = ['id', 'lenderTokenId', 'borrowerTokenId'];
+
+/**
+ * The creation-time fields of a loan opened by accepting `offerId` in the
+ * transaction `receipt`, called by `acceptor`: the clock starts at the fill
+ * block, the whole term remains, every running counter is zero (a rental's
+ * deduction clock too, on an ERC-20 loan), the accept's
+ * caller is the matcher, and both parties' consent is recorded.
+ */
+export async function creationFields(receipt, offerId, durationDays, acceptor, { rental = false } = {}) {
+  const at = BigInt((await pub.getBlock({ blockNumber: receipt.blockNumber })).timestamp);
+  return {
+    offerId, startTime: at, interestAccrualStart: at, interestRemainingDays: BigInt(durationDays),
+    // `lastDeductTime` is an NFT rental's daily-deduction clock; an ERC-20
+    // loan has no daily deduction, so it stays unset.
+    lastPeriodicInterestSettledAt: at, lastDeductTime: rental ? at : 0n,
+    interestPaidSinceLastPeriod: 0n, interestSettled: 0n,
+    lenderDiscountAccAtInit: 0n, borrowerDiscountAccAtInit: 0n,
+    matcher: acceptor, lenderNotifBilled: false, borrowerNotifBilled: false, riskAndTermsConsentFromBoth: true,
+  };
+}
 
 /** A value that matches anything — only for ids a step mints fresh. */
 export const ANY = Symbol('any');
@@ -526,4 +540,21 @@ export async function expectPosition(id, name, loanId, before, changes) {
   const stated = Object.entries(changes).map(([k, v]) => `${k}=${v === ANY ? '*' : v}`).join(' ');
   return check(id, name, wrong.length === 0,
     wrong.length ? `MISMATCH ${wrong.join('; ')}` : `loanId=${loanId} ${before === null ? 'new position:' : 'changed:'} ${stated || '(nothing)'}; every other field unchanged`);
+}
+
+/**
+ * One claim, asserted the one way every claim must be: an exact ledger (the
+ * claimant's credited share leaves their vault for their wallet, nothing
+ * else moves) AND the whole position afterwards (their NFT burned, plus
+ * whatever the claim is meant to change — the lien released, the loan
+ * settled). Returns the position after, for the next claim to compare to.
+ */
+export async function claimAndExpect({ id, who, account, fn, loanId, tokens, holders, moves, before, changes }) {
+  const { tx } = await import('./chain.mjs');
+  const pre = await snapshot(tokens, holders);
+  const receipt = await tx(account, { address: DIAMOND, abi: ABIS.claim, functionName: fn, args: [loanId] }, fn);
+  const post = await snapshot(tokens, holders);
+  expectLedger(id, `the ${who}'s claim moves exactly their credited share, vault → wallet, and nothing else`, pre, post, moves, `gas=${receipt.gasUsed}`);
+  await expectPosition(`${id}.pos`, `after the ${who}'s claim the position changes exactly as stated`, loanId, before, changes);
+  return positionOf(loanId);
 }

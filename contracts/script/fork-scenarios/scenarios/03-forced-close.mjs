@@ -7,7 +7,7 @@
  * the liquidator's bonus, which comes off the top before the lender is paid.
  */
 import { DIAMOND, MOCKS, TREASURY, borrower, lender, outsider, parseUnits, pub, tx } from '../lib/chain.mjs';
-import { ABIS, STATUS, delta, dynamicIncentiveBps, expectPosition, forcedCloseWaterfall, lateFee, mint, openLoan, perSecondInterest, positionOf, read, snapshot, vaultAddressFor } from '../lib/flow.mjs';
+import { ABIS, STATUS, claimAndExpect, delta, dynamicIncentiveBps, expectPosition, forcedCloseWaterfall, lateFee, mint, openLoan, perSecondInterest, positionOf, read, snapshot, vaultAddressFor } from '../lib/flow.mjs';
 import { f18 } from '../lib/chain.mjs';
 import { MOCK_ADAPTER_ABI, repriceFaucetAsset, sendAsOwner, setFeedUsd, warpDays } from '../lib/impersonate.mjs';
 import { simulate } from '../lib/errors.mjs';
@@ -230,6 +230,23 @@ export async function run() {
   await expectPosition('A3.12c', 'the HF liquidation changes the position exactly: status Defaulted, the lien released because the whole collateral was sold — NFTs and recorded terms unchanged',
     hfLoan, preLiqPos, { status: STATUS.Defaulted, lienReleased: true, lienAmount: 0n });
 
+  // The HF path writes its OWN claim records (RiskFacet, not DefaultedFacet),
+  // so its claims are exercised in their own right. Underwater: the lender
+  // was credited everything after the keeper, the borrower nothing.
+  {
+    const lenderCredit = afterLiq['lending.lenderVault'] - beforeLiq['lending.lenderVault'];
+    const borrowerCredit = afterLiq['lending.borrowerVault'] - beforeLiq['lending.borrowerVault'];
+    await claimAndExpect({
+      id: 'A3.12d', who: 'lender', account: lender, fn: 'claimAsLender', loanId: hfLoan, tokens, holders,
+      before: await positionOf(hfLoan),
+      moves: { 'lending.lenderVault': -lenderCredit, 'lending.lenderEOA': lenderCredit },
+      // The borrower has nothing to claim, so the lender's claim is the LAST
+      // one and settles the loan; the borrower's NFT is left as it was.
+      changes: { lenderNftOwner: null, status: STATUS.Settled },
+    });
+    check('A3.12e', 'an underwater HF liquidation credits the borrower nothing', borrowerCredit === 0n, `borrowerCredit=${f18(borrowerCredit)}`);
+  }
+
   // leave the fork on the deployment's seeded prices
   await setFeedUsd(MOCKS.liquidToken2UsdFeed, 1);
   await sendAsOwner(venue, MOCK_ADAPTER_ABI, 'setTokenPrice', [lending, 100_000_000n]);
@@ -263,4 +280,21 @@ export async function run() {
     preCrash, crashReceipt, beforeCrash, afterCrash, collateral, lending);
   await expectPosition('A3.13c', 'the drawdown liquidation changes the position exactly: status Defaulted, the lien released because the whole collateral was sold — NFTs and recorded terms unchanged',
     crashLoan, preCrashPos, { status: STATUS.Defaulted, lienReleased: true, lienAmount: 0n });
+
+  // With a surplus, both sides have a claim; with both claimed the loan settles.
+  {
+    const lenderCredit = afterCrash['lending.lenderVault'] - beforeCrash['lending.lenderVault'];
+    const borrowerCredit = afterCrash['lending.borrowerVault'] - beforeCrash['lending.borrowerVault'];
+    let pos = await positionOf(crashLoan);
+    pos = await claimAndExpect({
+      id: 'A3.13d', who: 'lender', account: lender, fn: 'claimAsLender', loanId: crashLoan, tokens, holders, before: pos,
+      moves: { 'lending.lenderVault': -lenderCredit, 'lending.lenderEOA': lenderCredit },
+      changes: { lenderNftOwner: null },
+    });
+    await claimAndExpect({
+      id: 'A3.13e', who: 'borrower', account: borrower, fn: 'claimAsBorrower', loanId: crashLoan, tokens, holders, before: pos,
+      moves: { 'lending.borrowerVault': -borrowerCredit, 'lending.borrowerEOA': borrowerCredit },
+      changes: { borrowerNftOwner: null, status: STATUS.Settled },
+    });
+  }
 }

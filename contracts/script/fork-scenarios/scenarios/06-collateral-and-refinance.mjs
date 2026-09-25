@@ -13,7 +13,7 @@
  *    That is worth observing rather than trusting.
  */
 import { DIAMOND, MOCKS, TREASURY, borrower, lender, outsider, parseUnits, pub, tx } from '../lib/chain.mjs';
-import { ABIS, STATUS, approveDiamond, acceptOffer, createOffer, delta, expectPosition, liveStamps, mint, openLoan, positionOf, read, snapshot, termsFromOffer, vaultAddressFor, lifSplit, liveFees } from '../lib/flow.mjs';
+import { ABIS, STATUS, approveDiamond, acceptOffer, createOffer, creationFields, delta, expectPosition, liveStamps, mint, openLoan, positionOf, read, snapshot, termsFromOffer, vaultAddressFor, lifSplit, liveFees } from '../lib/flow.mjs';
 import { chainNow, f18 } from '../lib/chain.mjs';
 import { simulate } from '../lib/errors.mjs';
 import { cannotContinue, check, expectEq, expectLedger, expectRefusal } from '../lib/report.mjs';
@@ -227,6 +227,7 @@ export async function run() {
             // those the ORIGINAL loan carries on the same collateral under the same
             // configuration; an ERC-20 loan carries no rental prepay or buffer.
             ...termsFromOffer(tagged), ...(await liveStamps()),
+            ...(await creationFields(accepted.receipt, posted.offerId, tagged.durationDays, outsider.address)),
             liquidationLtvBpsAtInit: oldLoan.liquidationLtvBpsAtInit, initLtvCapBpsAtInit: oldLoan.initLtvCapBpsAtInit,
             principalLiquidity: 0, collateralLiquidity: 0, prepayAmount: 0n, bufferAmount: 0n,
             status: STATUS.Active, lender: outsider.address, borrower: borrower.address,
