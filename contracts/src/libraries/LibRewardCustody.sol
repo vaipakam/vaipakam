@@ -2096,6 +2096,10 @@ library LibRewardCustody {
         ///        leaving the epoch and the custody ledgers disagreeing. The
         ///        epoch becomes drawable when its attestation lands.
         ///
+        ///      The two figures OVERLAP (Codex #2276 r27 P2): each is the balance
+        ///      withheld for that reason, so an unattested shared epoch counts in
+        ///      both and neither figure ever hides a pending cause.
+        ///
         ///      A withheld epoch still occupies its window slot: the scan stays
         ///      bounded, and the day's cursor passes only exhausted epochs.
         uint256 withheldShared;
@@ -2162,11 +2166,9 @@ library LibRewardCustody {
     ///         the day's OLDEST live epochs, whoever indexed them and in
     ///         whatever order (r5 P1: a caller-ordered prefix would let a
     ///         materializer decide what a bounded window sees). Within the
-    ///         window the design's own default applies: FEWEST LISTED DAYS
-    ///         FIRST, oldest arrival on ties, index position last. A batch
-    ///         listing fewer days has fewer other obligations that could need
-    ///         it, so it is spent first and the wider one is kept for the days
-    ///         only it can fund. The window is at most
+    ///         window every planned epoch lists this one day (a shared epoch is
+    ///         withheld — see `withheldShared`), so they are spent OLDEST
+    ///         ARRIVAL FIRST, the batch id breaking ties. The window is at most
     ///         `TRANSPORT_DRAW_SCAN_CAP` entries, so the sort is bounded, and
     ///         everything beyond it is newer than everything in it.
     ///
@@ -2233,10 +2235,13 @@ library LibRewardCustody {
                 bal = bal > ovF + ovR ? bal - (ovF + ovR) : 0;
                 if (bal == 0) {
                     // Exhausted net of the overlay: nothing to plan or withhold.
-                } else if (b.dayCount > 1) {
-                    plan.withheldShared += bal;
-                } else if (!s.ingressPackets[node].attested) {
-                    plan.withheldUnattested += bal;
+                } else if (b.dayCount > 1 || !s.ingressPackets[node].attested) {
+                    // Each reason counted on its own (Codex #2276 r27 P2): an
+                    // unattested shared epoch is withheld for BOTH, and a
+                    // reader asking whether an attestation is pending must not
+                    // be told no because the epoch is also shared.
+                    if (b.dayCount > 1) plan.withheldShared += bal;
+                    if (!s.ingressPackets[node].attested) plan.withheldUnattested += bal;
                 } else {
                     (uint256 fr, uint256 rr) = _capRooms(s, node, b, bal, ovF, ovR);
                     // Arrival order: every planned epoch lists this one day.

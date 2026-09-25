@@ -891,6 +891,13 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         assertEq(avail, 0, "nothing is drawable");
         assertEq(wShared, 10e18, "withheld as shared");
         assertEq(wUnattested, 0, "and not for want of an attestation");
+        // Unattested AND shared: withheld for both reasons, each reported
+        // (Codex #2276 r27 P2) — a pending attestation is never hidden.
+        _epochRaw(3e18, _two(1, 2), 12, keccak256("shared-unattested"));
+        (avail, , wShared, wUnattested) = _epoch().getTransportCoverageForDay(1);
+        assertEq(avail, 0);
+        assertEq(wShared, 13e18, "both shared epochs");
+        assertEq(wUnattested, 3e18, "and the unattested one's pending attestation");
         vm.expectRevert(IVaipakamErrors.NoInteractionRewardsToClaim.selector);
         _claim();
         assertEq(_balance(h), 10e18, "the claim took nothing from it");

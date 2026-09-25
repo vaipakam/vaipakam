@@ -131,8 +131,8 @@ day, and two read sources were the root of several review findings, so the
 path was removed rather than carried —
 so the **bounded window** a day is read through always holds its oldest
 epochs, and within the window they are spent in an order the ledger
-fixes rather than the order anyone indexed them: the epoch listing the
-**fewest days first**, the oldest arrival on ties; the order is a
+fixes rather than the order anyone indexed them: the **oldest arrival
+first**, the epoch's identifier on ties; the order is a
 property of the epochs in the window, never of who indexed them or how
 they were read, and that order is the priority in which epochs are spent.
 An epoch's flexible balance — what either leg may take — is held back
@@ -151,16 +151,12 @@ that window and draws from it, rather than being refused outright, because
 the window is always a prefix of the day's one order; an attested
 epoch pays each leg only within that component's recorded cap, and the
 one unit a scaling residual can leave outside both caps is never drawn
-once the split is known — drawn before it was, it is recorded beyond
-both caps, inside the epoch's identity, for the close-out's disposition
-path; and a
+and stays in the epoch for the close-out's disposition path; and a
 forfeit's or an expiry's recycled slice is a commitment release, not a
 funding pull, so it draws no epoch value — the epoch's coverage goes to
-the legs that need funding. An epoch that lists fewer days has fewer other
-obligations that could need it, so it is spent first and the wider one is
-kept for the days only it can fund — the design's own default, applied on
-chain because indexing is open to anyone and its order would otherwise
-decide who gets scarce funding. An epoch whose membership is still being
+the legs that need funding. The spending order is fixed by the ledger —
+arrival, then identifier — because indexing is open to anyone and its order
+would otherwise decide who gets scarce funding. An epoch whose membership is still being
 written in pages is invisible to every day until its last page lands, so
 a first page's days cannot drain what later pages' days were owed. When
 more epochs list a day than one window scans, and the visible coverage
