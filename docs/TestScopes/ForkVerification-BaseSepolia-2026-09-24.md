@@ -9,7 +9,7 @@ configuration — not the source tree's idea of them.
   84532 (Base Sepolia), forked at block 47,228,632.
 - **Driver** — [`contracts/script/fork-scenarios/`](../../contracts/script/fork-scenarios/README.md),
   committed with this document. `node run-all.mjs` reproduces every row.
-- **Result** — 146 scenarios: **134 PASS, 11 INFO, 1 FAIL**, no aborted
+- **Result** — 149 scenarios: **137 PASS, 11 INFO, 1 FAIL**, no aborted
   file. The INFOs are observations with no assertion behind them, not soft
   failures — the ledger's API makes a row either an assertion (PASS/FAIL
   only) or an observation (INFO only), so no failure can land as INFO; each
@@ -18,7 +18,7 @@ configuration — not the source tree's idea of them.
   the debt needs — and the live bytecode sells the whole cap. It turns green
   when the #2317 fix is deployed.
 - **Node** — the figures above are from a re-run on **Anvil** (2026-09-25,
-  forked at block 47,275,629). The first run used a hardhat fork node and
+  forked at block 47,275,981). The first run used a hardhat fork node and
   reported 129 rows, 123 / 6 / 0. The differences are the A11.5 oracle
   change above; new rows — A3.13 (the collateral-drawdown liquidation §2.4
   now drives), exact settlement ledgers for every fund-moving step (the
@@ -132,15 +132,29 @@ the rest, with no collateral moving on a carry-over); the partial
 swap-to-repay; and the rental's accept, early close and both claims against
 the offer's stamped buffer. Each reconciled on its first run.
 
-**What is still asserted below that level, and why.** The two forced-close
-settlements (A3.5, A3.12, A3.13) are asserted as full conservation — every
-unit of the proceeds lands with exactly one of the four parties — plus the
-exact keeper bonus and the terminal status, but not the per-party split of
-the waterfall, whose late-fee and handling-fee subordination this run did not
-re-derive independently. And the full swap-to-repay (A11.4, A11.6) is asserted
-as an accounting identity rather than an expected ledger, because its
-intended sale size is exactly what #2317 changes — A11.5 carries that
-expectation and fails until the fix ships. Figures that depend on ELAPSED time — accrued interest, and so the
+A fourth pass closed the last two gaps of that kind. **The forced-close
+settlements are now exact ledgers too** (A3.6b, A3.12b, A3.13b), computed
+from the spec's "Proceeds Distribution" waterfall with every input read from
+the chain — the keeper incentive first; the lender up to principal +
+interest (by the second) + late fee (1%, +0.5% per whole day late, capped
+5%), less the treasury's fee on what was recovered of the interest and late
+fee; the 2% handling charge only from what is left above that; the borrower
+keeps the residual. The time-based default, the underwater HF liquidation
+(no handling charge, the lender takes the loss) and the collateral-drawdown
+liquidation (with a surplus) each reconcile to the wei. **And no configurable
+number is hard-coded any more**: every fee rate, matcher share, health-factor
+floor, liquidation LTV, buffer rate and grace window is read from the chain —
+the live getter for what a new loan will stamp, the loan's own stamp for how
+an open loan settles — so a valid governance retune can no longer turn a
+correct loan into a reported failure, nor a hard-coded default pass for a
+deployment configured otherwise. The stamps are themselves asserted equal to
+the live configuration at origination (A2.3–A2.5), and the admission floor
+against the spec's governed range [1.2, 2.0] (A1.1).
+
+**What is still asserted below that level, and why.** The full swap-to-repay
+(A11.4, A11.6) is asserted as an accounting identity rather than an expected
+ledger, because its intended sale size is exactly what #2317 changes — A11.5
+carries that expectation and fails until the fix ships. Figures that depend on ELAPSED time — accrued interest, and so the
 forced-close splits in §2.1 — differ from the first run's in the sixth
 decimal, because the time warps land on different seconds; every fee rate,
 cap, ratio and fixed-amount figure is identical.
@@ -753,7 +767,7 @@ replace.
 
 ## 7. Ledger
 
-The full 146-row ledger, with per-scenario verdicts and observed numbers, is
+The full 149-row ledger, with per-scenario verdicts and observed numbers, is
 regenerated as `contracts/script/fork-scenarios/last-run.json` on every run
 (untracked). Scenario ids map to the driver's files:
 

@@ -10,7 +10,7 @@
  * for a manual second step is waiting for something that already happened.
  */
 import { DIAMOND, MOCKS, TREASURY, borrower, lender, outsider, parseUnits, pub, tx } from '../lib/chain.mjs';
-import { ABIS, STATUS, approveDiamond, acceptOffer, acceptStoredOffer, createOffer, delta, mint, openLoan, read, snapshot, vaultAddressFor } from '../lib/flow.mjs';
+import { ABIS, STATUS, approveDiamond, acceptOffer, acceptStoredOffer, createOffer, delta, mint, openLoan, read, snapshot, vaultAddressFor, lifSplit, liveFees } from '../lib/flow.mjs';
 import { chainNow, f18 } from '../lib/chain.mjs';
 import { warpDays } from '../lib/impersonate.mjs';
 import { simulate } from '../lib/errors.mjs';
@@ -107,14 +107,16 @@ export async function run() {
     const oNew = (vehicle.amount * BigInt(vehicle.interestRateBps) * BigInt(vehicle.durationDays) * 86_400n) / YEAR_BPS;
     const oShortfall = oRemaining > oNew ? oRemaining - oNew : 0n;
     const oCut = (oAccrued * BigInt(origLoan.treasuryFeeBpsAtInit)) / 10_000n;
-    const lif = (vehicle.amount * 20n) / 10_000n;
+    // The new position's LIF is charged at the live configured rate it stamps.
+    const liveFee = await liveFees();
+    const { lif, toMatcher: lifMatcher } = lifSplit(vehicle.amount, liveFee.lifBps, liveFee.matcherBps);
     expectLedger('A7.3b', 'the offset settles exactly: the original lender is paid principal + accrued interest + the protection shortfall, the new borrower draws the escrowed principal net of the LIF',
       before, after, {
         'lending.borrowerEOA': -(origLoan.principal + oAccrued + oShortfall),
         'lending.lenderVault': origLoan.principal + oAccrued - oCut + oShortfall,
         'lending.borrowerVault': -vehicle.amount,
-        'lending.outsiderEOA': vehicle.amount - lif + lif / 100n,
-        'lending.treasury': oCut + lif - lif / 100n,
+        'lending.outsiderEOA': vehicle.amount - lif + lifMatcher,
+        'lending.treasury': oCut + lif - lifMatcher,
         'collateral.outsiderEOA': -vehicle.collateralAmount,
         'collateral.outsiderVault': vehicle.collateralAmount,
       }, `elapsed=${oElapsed}s accrued=${f18(oAccrued)} shortfall=${f18(oShortfall)}`);

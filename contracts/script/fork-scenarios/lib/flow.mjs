@@ -340,3 +340,68 @@ export async function dynamicIncentiveBps(collateralAsset, principalAsset, soldC
   if (assetCap !== 0n && bps > assetCap) bps = assetCap;
   return bps;
 }
+
+// ---------------------------------------------------------------------------
+// Configurable numbers come from the chain, never from this file.
+//
+// Every fee, share and floor below is governance-tunable, and a loan STAMPS
+// the values in force when it opened. A scenario that hard-codes today's
+// value certifies one deployment's configuration as if it were a protocol
+// invariant — and reports a correct loan as a failure the day governance
+// retunes. Expectations therefore read the live getter (for what a NEW loan
+// will stamp) or the loan's own stamp (for how an OPEN loan settles).
+// ---------------------------------------------------------------------------
+
+/** The live fee configuration a loan opened now would stamp. */
+export async function liveFees() {
+  const [treasuryFeeBps, lifBps] = await read(ABIS.config, 'getFeesConfig');
+  const matcherBps = await read(ABIS.config, 'getLifMatcherFeeBps');
+  return { treasuryFeeBps, lifBps, matcherBps: BigInt(matcherBps) };
+}
+
+/** Loan-initiation fee on `amount`, and its matcher / treasury split. */
+export function lifSplit(amount, lifBps, matcherBps) {
+  const lif = (amount * BigInt(lifBps)) / 10_000n;
+  const toMatcher = (lif * BigInt(matcherBps)) / 10_000n;
+  return { lif, toMatcher, toTreasury: lif - toMatcher };
+}
+
+const YEAR_SECONDS_BPS = 365n * 86_400n * 10_000n;
+
+/** Interest accrued by the SECOND (the forced-close and HF debt measure). */
+export const perSecondInterest = (principal, rateBps, seconds) =>
+  (principal * BigInt(rateBps) * BigInt(seconds)) / YEAR_SECONDS_BPS;
+
+/** Spec late fee: 1% of principal on the first day past due, +0.5% per whole day, capped at 5%. */
+export function lateFee(principal, endTime, at) {
+  if (at <= endTime) return 0n;
+  let bps = 100n + ((at - endTime) / 86_400n) * 50n;
+  if (bps > 500n) bps = 500n;
+  return (principal * bps) / 10_000n;
+}
+
+/**
+ * The spec's forced-close proceeds waterfall ("Proceeds Distribution"):
+ * the keeper incentive first; then the lender, up to principal + interest +
+ * late fee, less the treasury's fee on the recovered interest and late fee;
+ * then the 2% handling charge, SUBORDINATED — taken only from what is left
+ * above the lender's full recovery; the borrower keeps the rest. On an
+ * underwater close the handling charge is zero and the lender bears the loss.
+ */
+export function forcedCloseWaterfall({ proceeds, incentiveBps, handlingBps, treasuryFeeBps, principal, interest, fee }) {
+  let bonus = (proceeds * BigInt(incentiveBps)) / 10_000n;
+  if (bonus > proceeds) bonus = proceeds;
+  const afterBonus = proceeds - bonus;
+  const debt = principal + interest + fee;
+  const allocated = afterBonus > debt ? debt : afterBonus;
+  const surplus = afterBonus - allocated;
+  let handling = (proceeds * BigInt(handlingBps)) / 10_000n;
+  if (handling > surplus) handling = surplus;
+  let interestFee = 0n;
+  if (allocated > principal) {
+    let recovered = allocated - principal;
+    if (recovered > interest + fee) recovered = interest + fee;
+    interestFee = (recovered * BigInt(treasuryFeeBps)) / 10_000n;
+  }
+  return { bonus, lender: allocated - interestFee, treasury: handling + interestFee, borrower: surplus - handling };
+}

@@ -33,9 +33,10 @@ fresh deploy would have hidden every one of them.
 anvil --fork-url "$BASE_SEPOLIA_RPC_URL" --chain-id 84532
 #    No Foundry install? Its official npm packages work where GitHub
 #    release downloads are blocked:  npm i @foundry-rs/anvil @foundry-rs/forge
-#    Anvil is the node to use. A hardhat fork node runs the driver too, but it
-#    did NOT reproduce the EIP-7702 delegations on the real chain (see below),
-#    so it can pass what the live chain would refuse.
+#    Anvil is the node to use, and the only one the current driver is
+#    verified on. The first run used a hardhat fork node, which did NOT
+#    reproduce the EIP-7702 delegations on the real chain (see below), so it
+#    can pass what the live chain would refuse.
 
 # 2. install the pinned dependency graph for the driver, once
 cd contracts/script/fork-scenarios && npm ci
@@ -182,6 +183,13 @@ this harness and are worth keeping:
   functional spec's formula, never from the deltas the step just produced —
   deriving the expectation from the outcome only proves the outcome equals
   itself.
+- **No configurable number is written into a scenario.** Fee rates, the
+  matcher share, health-factor floors, liquidation LTV, the rental buffer,
+  grace windows — all governance-tunable, and all stamped on a loan when it
+  opens. Read the live getter (`liveFees()`, `getMinHealthFactor`,
+  `getEffectiveGraceSeconds`, …) for what a new loan will stamp, and the
+  loan's own stamp for how an open loan settles. A hard-coded default
+  certifies one deployment's configuration as a protocol invariant.
 - **Resolve a vault through `vaultAddressFor`, never `getUserVaultAddress`
   directly.** The raw getter answers `address(0)` for a user who has no vault
   yet, without reverting, and snapshotting the zero address yields a

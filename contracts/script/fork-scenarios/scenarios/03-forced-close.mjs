@@ -7,13 +7,44 @@
  * the liquidator's bonus, which comes off the top before the lender is paid.
  */
 import { DIAMOND, MOCKS, TREASURY, borrower, lender, outsider, parseUnits, pub, tx } from '../lib/chain.mjs';
-import { ABIS, STATUS, delta, dynamicIncentiveBps, mint, openLoan, read, snapshot, vaultAddressFor } from '../lib/flow.mjs';
+import { ABIS, STATUS, delta, dynamicIncentiveBps, forcedCloseWaterfall, lateFee, mint, openLoan, perSecondInterest, read, snapshot, vaultAddressFor } from '../lib/flow.mjs';
 import { f18 } from '../lib/chain.mjs';
 import { MOCK_ADAPTER_ABI, repriceFaucetAsset, sendAsOwner, setFeedUsd, warpDays } from '../lib/impersonate.mjs';
 import { simulate } from '../lib/errors.mjs';
-import { check, expectEq, observe, expectRefusal } from '../lib/report.mjs';
+import { check, expectEq, expectLedger, observe, expectRefusal } from '../lib/report.mjs';
 
 const TRY_LIST = [{ adapterIdx: 0n, data: '0x' }];
+
+/**
+ * Assert a forced close's EXACT ledger against the spec's waterfall, with
+ * every input read from the chain: the dynamic keeper incentive, the
+ * handling-charge rate, the loan's stamped treasury fee, the debt accrued by
+ * the second to the close block, and the late fee from the loan's own term.
+ */
+async function expectForcedClose(id, name, loan, receipt, before, after, collateral, lending) {
+  const at = BigInt((await pub.getBlock({ blockNumber: receipt.blockNumber })).timestamp);
+  const start = BigInt(loan.interestAccrualStart || loan.startTime);
+  const endTime = BigInt(loan.startTime) + BigInt(loan.durationDays) * 86_400n;
+  const sold = before['collateral.borrowerVault'] - after['collateral.borrowerVault'];
+  const proceeds = before['lending.venue'] - after['lending.venue'];
+  const [handlingBps] = await read(ABIS.config, 'getLiquidationConfig');
+  const incentiveBps = await dynamicIncentiveBps(collateral, lending, sold, proceeds);
+  const interest = perSecondInterest(loan.principal, loan.interestRateBps, at - start);
+  const fee = lateFee(loan.principal, endTime, at);
+  const w = forcedCloseWaterfall({
+    proceeds, incentiveBps, handlingBps, treasuryFeeBps: loan.treasuryFeeBpsAtInit,
+    principal: loan.principal, interest, fee,
+  });
+  return expectLedger(id, name, before, after, {
+    'collateral.borrowerVault': -sold,
+    'collateral.venue': sold,
+    'lending.venue': -proceeds,
+    'lending.liquidator': w.bonus,
+    'lending.lenderVault': w.lender,
+    'lending.treasury': w.treasury,
+    'lending.borrowerVault': w.borrower,
+  }, `proceeds=${f18(proceeds)} debt=${f18(loan.principal + interest + fee)} (interest ${f18(interest)} + late fee ${f18(fee)}) incentive=${incentiveBps}bps handling=${handlingBps}bps`);
+}
 
 export async function run() {
   const lending = MOCKS.liquidToken2;
@@ -34,21 +65,17 @@ export async function run() {
   check('A3.1', 'a healthy in-term loan is not defaultable',
     (await read(ABIS.defaulted, 'isLoanDefaultable', [loanId])) === false, `loanId=${loanId}`);
 
-  // Half a day past a 7-day term. Not a full day: this deployment's grace
-  // for a 7-day loan is exactly one day, and the bound is seconds-precise, so
-  // a one-day warp lands ON the boundary and the answer flips with whichever
-  // second the warp happens to land on — seen on Anvil as `true` one run and
-  // `false` the next.
-  await warpDays(7.5);
-  // The grace window is configurable per deployment (ConfigFacet's grace
-  // buckets), so the assertion is RELATIVE to what the chain reports: inside
-  // the reported window the loan must not be defaultable. The window itself
-  // is recorded, not assumed.
+  // The grace window is governance-configurable per term bucket, so the probe
+  // is placed RELATIVE to the window the chain reports for this loan —
+  // halfway into it — rather than at a fixed offset that a different, valid
+  // setting would put on or past the boundary.
+  const graceSeconds = Number(await read(ABIS.config, 'getEffectiveGraceSeconds', [loanId]));
+  const termDays = Number((await read(ABIS.loan, 'getLoanDetails', [loanId])).durationDays);
+  await warpDays(termDays + graceSeconds / 2 / 86_400);
   const dayPast = await read(ABIS.defaulted, 'isLoanDefaultable', [loanId]);
-  const graceSeconds = await read(ABIS.config, 'getEffectiveGraceSeconds', [loanId]);
-  check('A3.2', 'half a day past a 7-day term, inside this deployment\'s grace window, the loan is NOT defaultable',
-    Number(graceSeconds) > 43_200 && dayPast === false,
-    `isLoanDefaultable=${dayPast} effectiveGrace=${graceSeconds}s (${Number(graceSeconds) / 86400}d)`);
+  check('A3.2', 'halfway into this deployment\'s grace window after the term, the loan is NOT defaultable',
+    graceSeconds > 0 && dayPast === false,
+    `isLoanDefaultable=${dayPast} effectiveGrace=${graceSeconds}s (${graceSeconds / 86400}d), probed at term + ${graceSeconds / 2}s`);
 
   await warpDays(30);
   check('A3.3', 'past term AND grace, the loan becomes defaultable',
@@ -62,6 +89,7 @@ export async function run() {
   // Seed the venue's output float — the mock pays out of its own balance.
   await tx(outsider, { address: lending, abi: (await import('../lib/chain.mjs')).ERC20, functionName: 'mint', args: [venue, parseUnits('1000000', 18)] }, 'fund venue');
 
+  const preDefault = await read(ABIS.loan, 'getLoanDetails', [loanId]);
   const beforeDefault = await snapshot(tokens, holders);
   const defaultReceipt = await tx(outsider, { address: DIAMOND, abi: ABIS.defaulted, functionName: 'triggerDefault', args: [loanId, TRY_LIST] }, 'triggerDefault');
   const afterDefault = await snapshot(tokens, holders);
@@ -86,6 +114,8 @@ export async function run() {
   const bonusBps = await dynamicIncentiveBps(collateral, lending, sold, proceeds);
   expectEq('A3.6', 'the caller earns the dynamic keeper incentive, taken off the top of the proceeds',
     bonus, (proceeds * bonusBps) / 10_000n, `${bonusBps}bps of ${f18(proceeds)} of swap proceeds`);
+  await expectForcedClose('A3.6b', 'the time-based default settles exactly per the spec\'s waterfall: keeper first, lender (net of the treasury fee on recovered interest and late fee), the subordinated handling charge, the borrower\'s residual',
+    preDefault, defaultReceipt, beforeDefault, afterDefault, collateral, lending);
 
   // Each side's claim must move exactly the share the default credited to
   // that side's vault out to that side's wallet.
@@ -102,7 +132,8 @@ export async function run() {
   // ------------------------------------------------------- HF liquidation
   const { loanId: hfLoan } = await openLoan({ lender, borrower });
   const openHf = await read(ABIS.risk, 'calculateHealthFactor', [hfLoan]);
-  check('A3.8', 'a fresh loan opens at or above the 1.5 initiation floor', openHf >= 1_500_000_000_000_000_000n,
+  const hfFloor = (await read(ABIS.loan, 'getLoanDetails', [hfLoan])).minHealthFactorAtInit;
+  check('A3.8', 'a fresh loan opens at or above its stamped initiation floor', openHf >= hfFloor,
     `loanId=${hfLoan} HF=${f18(openHf)}`);
 
   // The 1.5 floor binds at INITIATION; liquidation binds at 1.0. Prove the
@@ -119,7 +150,7 @@ export async function run() {
   const midRoutable = await read(ABIS.oracle, 'checkLiquidity', [collateral]);
   const midSim = await simulate(DIAMOND, ABIS.risk, 'triggerLiquidation', [hfLoan, TRY_LIST], outsider.address);
   check('A3.9a', 'the probe position sits below the 1.5 initiation floor but above 1.0, with the collateral still routable',
-    midHf < 1_500_000_000_000_000_000n && midHf >= 1_000_000_000_000_000_000n && Number(midRoutable) === 0,
+    midHf < hfFloor && midHf >= 1_000_000_000_000_000_000n && Number(midRoutable) === 0,
     `HF=${f18(midHf)} checkLiquidity=${midRoutable}`);
   expectRefusal('A3.9', 'below the 1.5 initiation floor but above 1.0 the position is NOT liquidatable', midSim, 'HealthFactorNotLow');
   await repriceFaucetAsset(tliq, 2000);
@@ -146,6 +177,7 @@ export async function run() {
     lowHf < 1_000_000_000_000_000_000n && Number(routable) === 0, `HF=${f18(lowHf)} checkLiquidity(collateral)=${routable}`);
 
   await tx(outsider, { address: lending, abi: (await import('../lib/chain.mjs')).ERC20, functionName: 'mint', args: [venue, parseUnits('1000000', 18)] }, 'top up venue');
+  const preLiq = await read(ABIS.loan, 'getLoanDetails', [hfLoan]);
   const beforeLiq = await snapshot(tokens, holders);
   const liqReceipt = await tx(outsider, { address: DIAMOND, abi: ABIS.risk, functionName: 'triggerLiquidation', args: [hfLoan, TRY_LIST] }, 'triggerLiquidation');
   const afterLiq = await snapshot(tokens, holders);
@@ -155,7 +187,9 @@ export async function run() {
     .reduce((acc, k) => acc + (afterLiq[`lending.${k}`] - beforeLiq[`lending.${k}`]), 0n);
   check('A3.12', 'HF<1 liquidation is permissionless, ends the loan Defaulted, and settles from the swap proceeds, every unit accounted',
     String(liquidated.status) === String(STATUS.Defaulted) && liqProceeds > 0n && liqLanded === liqProceeds,
-    `caller=outsider gas=${liqReceipt.gasUsed} status=${liquidated.status} proceeds=${f18(liqProceeds)} deltas=${JSON.stringify(delta(beforeLiq, afterLiq))}`);
+    `caller=outsider gas=${liqReceipt.gasUsed} status=${liquidated.status} proceeds=${f18(liqProceeds)}`);
+  await expectForcedClose('A3.12b', 'the underwater HF liquidation settles exactly per the waterfall: keeper first, the lender takes the rest and the loss, no handling charge',
+    preLiq, liqReceipt, beforeLiq, afterLiq, collateral, lending);
 
   // leave the fork on the deployment's seeded prices
   await setFeedUsd(MOCKS.liquidToken2UsdFeed, 1);
@@ -172,6 +206,7 @@ export async function run() {
   const crashHf = await read(ABIS.risk, 'calculateHealthFactor', [crashLoan]);
   const stillRoutable = await read(ABIS.oracle, 'checkLiquidity', [collateral]);
   await tx(outsider, { address: lending, abi: (await import('../lib/chain.mjs')).ERC20, functionName: 'mint', args: [venue, parseUnits('1000000', 18)] }, 'top up venue');
+  const preCrash = await read(ABIS.loan, 'getLoanDetails', [crashLoan]);
   const beforeCrash = await snapshot(tokens, holders);
   const crashReceipt = await tx(outsider, { address: DIAMOND, abi: ABIS.risk, functionName: 'triggerLiquidation', args: [crashLoan, TRY_LIST] }, 'triggerLiquidation(collateral drawdown)');
   const afterCrash = await snapshot(tokens, holders);
@@ -183,5 +218,7 @@ export async function run() {
     Number(stillRoutable) === 0 && crashHf < 1_000_000_000_000_000_000n && String(crashed.status) === String(STATUS.Defaulted) &&
     crashProceeds > 0n && crashLanded === crashProceeds,
     `tLIQ $2,000 -> $900 (feed + pool spot) checkLiquidity=${stillRoutable} HF=${f18(crashHf)} gas=${crashReceipt.gasUsed} ` +
-    `status=${crashed.status} proceeds=${f18(crashProceeds)} deltas=${JSON.stringify(delta(beforeCrash, afterCrash))}`);
+    `status=${crashed.status} proceeds=${f18(crashProceeds)}`);
+  await expectForcedClose('A3.13b', 'the collateral-drawdown liquidation settles exactly per the waterfall, with a surplus: keeper, lender net of the interest fee, the handling charge, the borrower\'s residual',
+    preCrash, crashReceipt, beforeCrash, afterCrash, collateral, lending);
 }

@@ -13,7 +13,7 @@ needs no Solidity compiler: it reads the committed per-facet ABIs, so the
 compiler stays the single source of truth for every decode while the driver
 itself is plain Node.
 
-The run now covers one hundred and forty-six scenarios across the whole advanced
+The run now covers one hundred and forty-nine scenarios across the whole advanced
 surface — offer creation and escrow, accept and the loan-initiation fee,
 repayment and the treasury's interest cut, the borrower's collateral claim,
 time-based default, health-factor liquidation, preclose, partial repayment,
@@ -172,11 +172,14 @@ Every refusal the walkthrough checks is now checked by the error's name, so a
 guard that disappears cannot hide behind an unrelated later refusal, and
 every step that moves money — from the first offer to the last claim, across
 the early exits, the refinance, the offset and the rental — now reconciles
-exactly against the specification's own arithmetic. Two places are checked
-less tightly, and the write-up says which and why: the split inside a forced
-close is checked for completeness rather than per party, and the full
-repayment from collateral is checked as an accounting identity until the fix
-that changes its sale size ships. The re-run
-records one hundred and thirty-four passes, eleven observations and one failure —
+exactly against the specification's own arithmetic, including the split of a
+forced close between the keeper, the lender, the treasury and the borrower.
+No fee rate, share, floor or window is written into the walkthrough any more:
+each is read from the deployment, or from the loan's own record of the terms
+it opened on, so a legitimate change of configuration can neither break a
+correct check nor pass a wrong one. One place is checked less tightly, and
+the write-up says why: the full repayment from collateral is checked as an
+accounting identity until the fix that changes its sale size ships. The re-run
+records one hundred and thirty-seven passes, eleven observations and one failure —
 the swap-to-repay check whose expectation was deliberately corrected — with
 no scenario file aborted.

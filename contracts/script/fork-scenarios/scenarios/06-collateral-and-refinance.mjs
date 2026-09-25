@@ -13,7 +13,7 @@
  *    That is worth observing rather than trusting.
  */
 import { DIAMOND, MOCKS, TREASURY, borrower, lender, outsider, parseUnits, pub, tx } from '../lib/chain.mjs';
-import { ABIS, approveDiamond, acceptOffer, createOffer, delta, mint, openLoan, read, snapshot, vaultAddressFor } from '../lib/flow.mjs';
+import { ABIS, approveDiamond, acceptOffer, createOffer, delta, mint, openLoan, read, snapshot, vaultAddressFor, lifSplit, liveFees } from '../lib/flow.mjs';
 import { chainNow, f18 } from '../lib/chain.mjs';
 import { simulate } from '../lib/errors.mjs';
 import { cannotContinue, check, expectEq, expectLedger, expectRefusal } from '../lib/report.mjs';
@@ -59,7 +59,7 @@ export async function run() {
     const closingHf = await read(ABIS.risk, 'calculateHealthFactor', [loanId]);
     const loan = await read(ABIS.loan, 'getLoanDetails', [loanId]);
     check('A6.3', 'releasing the whole quoted surplus leaves the loan Active, still above the floor, with its recorded collateral reduced by exactly that amount',
-      String(loan.status) === '0' && closingHf >= 1_500_000_000_000_000_000n && parseUnits('2.5', 18) - loan.collateralAmount === maxAmount,
+      String(loan.status) === '0' && closingHf >= loan.minHealthFactorAtInit && parseUnits('2.5', 18) - loan.collateralAmount === maxAmount,
       `gas=${receipt.gasUsed} status=${loan.status} HF ${f18(openedHf)} -> ${f18(closingHf)} collateral ${f18(loan.collateralAmount)}`);
     // The borrower-position NFT holder is the borrower here, so the release
     // lands in their wallet — straight out of their own vault.
@@ -190,13 +190,13 @@ export async function run() {
         // wallet. This is a carry-over refinance, so no collateral moves.
         const oldInterest = (oldLoan.principal * BigInt(oldLoan.interestRateBps) * BigInt(oldLoan.durationDays)) / (365n * 10_000n);
         const oldCut = (oldInterest * BigInt(oldLoan.treasuryFeeBpsAtInit)) / 10_000n;
-        const newLif = (fresh.principal * BigInt(fresh.loanInitiationFeeBpsAtInit)) / 10_000n;
+        const { lif: newLif, toMatcher: newLifMatcher } = lifSplit(fresh.principal, fresh.loanInitiationFeeBpsAtInit, (await liveFees()).matcherBps);
         const toBorrower = fresh.principal - newLif; // net disbursement, applied to the payoff
         expectLedger('A6.7b', 'the refinance moves exactly: the new lender funds the replacement, the old lender receives principal + full-term interest net of the treasury fee, the borrower covers the difference, and no collateral moves',
           beforeRefi, afterRefi, {
-            'lending.newLenderEOA': -fresh.principal + newLif / 100n,
+            'lending.newLenderEOA': -fresh.principal + newLifMatcher,
             'lending.lenderVault': oldLoan.principal + oldInterest - oldCut,
-            'lending.treasury': oldCut + newLif - newLif / 100n,
+            'lending.treasury': oldCut + newLif - newLifMatcher,
             'lending.borrowerEOA': -(oldLoan.principal + oldInterest - toBorrower),
           }, `oldInterest=${f18(oldInterest)} newLIF=${f18(newLif)}`);
 

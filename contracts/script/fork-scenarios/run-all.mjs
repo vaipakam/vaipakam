@@ -13,7 +13,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CHAIN_SLUG, DIAMOND, RPC_URL, fundActors, pub, rpc } from './lib/chain.mjs';
+import { CHAIN_SLUG, DIAMOND, RPC_URL, fundActors, pub, resolveLive, rpc } from './lib/chain.mjs';
 import { ledger, mark, summarise, takeSince } from './lib/report.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -57,6 +57,7 @@ if (!code) {
 // below still looked clean. One mined block puts `latest` past the fork point
 // and the whole class goes away.
 await rpc('evm_mine');
+await resolveLive();
 await fundActors();
 console.log(`fork ${RPC_URL} | chain ${CHAIN_SLUG} | diamond ${DIAMOND} | block ${await pub.getBlockNumber()}\n`);
 

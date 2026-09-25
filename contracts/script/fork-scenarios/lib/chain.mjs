@@ -53,13 +53,19 @@ export const forkChain = defineChain({
 
 export const pub = createPublicClient({ chain: forkChain, transport: http(RPC_URL) });
 
-export const TREASURY = await pub.readContract({
-  address: DIAMOND,
-  abi: [{ type: 'function', name: 'getTreasury', inputs: [], outputs: [{ type: 'address' }], stateMutability: 'view' }],
-  functionName: 'getTreasury',
-}).catch((e) => {
-  throw new Error(`cannot read the live treasury from ${DIAMOND} on ${RPC_URL} — is the fork node running? (${String(e.shortMessage ?? e.message).split('\n')[0]})`);
-});
+// Resolved by `resolveLive()`, which the runner calls AFTER its first
+// `evm_mine`: a hardhat node refuses `eth_call` at a fresh fork's own block,
+// so reading this while the module loads would fail before the runner could
+// mine past it. Scenarios read it inside `run()`, so the live binding holds
+// the resolved value by then.
+export let TREASURY = null;
+export async function resolveLive() {
+  TREASURY = await pub.readContract({
+    address: DIAMOND,
+    abi: [{ type: 'function', name: 'getTreasury', inputs: [], outputs: [{ type: 'address' }], stateMutability: 'view' }],
+    functionName: 'getTreasury',
+  });
+}
 
 // Fresh keys every run, NOT the published test-mnemonic accounts a fork node
 // pre-funds. A fork carries the REAL chain's state for every address it

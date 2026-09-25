@@ -5,14 +5,17 @@
  * and health-factor knobs read back at their documented values) before any
  * later scenario relies on them.
  */
-import { ARTIFACT_TREASURY, DIAMOND, MOCKS, TREASURY, borrower, lender, pub } from '../lib/chain.mjs';
+import { ARTIFACT_TREASURY, DIAMOND, MOCKS, TREASURY, borrower, f18, lender, pub } from '../lib/chain.mjs';
 import { ABIS, read, vaultAddressFor } from '../lib/flow.mjs';
 import { simulate } from '../lib/errors.mjs';
 import { check, expectEq, observe, expectRefusal } from '../lib/report.mjs';
 
 export async function run() {
   const minHf = await read(ABIS.risk, 'getMinHealthFactor');
-  expectEq('A1.1', 'MIN_HEALTH_FACTOR reads back at 1.5e18', minHf, 1_500_000_000_000_000_000n);
+  // Governance-tunable within the spec's bounded range [1.2, 2.0] (default
+  // 1.5), so the value is asserted against the range, not a fixed number.
+  check('A1.1', 'the loan-admission health-factor floor is inside the spec\'s governed range [1.2, 2.0]',
+    minHf >= 1_200_000_000_000_000_000n && minHf <= 2_000_000_000_000_000_000n, `getMinHealthFactor=${f18(minHf)}`);
 
   // The deployment's OPERATIONAL posture is configuration, not a protocol
   // property: the retail deploy is meant to wire a sanctions oracle once one

@@ -8,7 +8,7 @@
  * repay leaves standing until the borrower claims.
  */
 import { DIAMOND, MOCKS, TREASURY, borrower, lender, parseUnits, pub, tx } from '../lib/chain.mjs';
-import { ABIS, approveDiamond, createOffer, acceptOffer, delta, mint, read, snapshot, vaultAddressFor } from '../lib/flow.mjs';
+import { ABIS, approveDiamond, createOffer, acceptOffer, delta, lifSplit, liveFees, mint, read, snapshot, vaultAddressFor } from '../lib/flow.mjs';
 import { f18 } from '../lib/chain.mjs';
 import { cannotContinue, check, expectEq, expectLedger, observe } from '../lib/report.mjs';
 
@@ -58,51 +58,64 @@ export async function run() {
     afterCreate['lending.lenderVault'] - afterAccept['lending.lenderVault'] === PRINCIPAL && String(loan.status) === '0',
     `loanId=${loanId} gas=${accepted.gas} deltas=${JSON.stringify(delta(afterCreate, afterAccept))}`);
 
-  expectEq('A2.3', 'treasury fee bps is STAMPED per loan (rev-8 freeze)', loan.treasuryFeeBpsAtInit, 200);
-  expectEq('A2.4', 'loan-initiation fee bps is STAMPED per loan', loan.loanInitiationFeeBpsAtInit, 20);
-  expectEq('A2.5', 'minimum health factor is STAMPED per loan', loan.minHealthFactorAtInit, 1_500_000_000_000_000_000n);
+  // The stamps must equal the live governance configuration at the moment
+  // the loan opened — that is what "stamped" means. The values themselves are
+  // configuration (this deployment: 200 bps, 20 bps, 1.5), so every fee
+  // figure below is derived FROM the stamps, never from today's defaults.
+  const fees = await liveFees();
+  const liveMinHf = await read(ABIS.risk, 'getMinHealthFactor');
+  expectEq('A2.3', 'the treasury fee bps is STAMPED per loan, at the live configured value', loan.treasuryFeeBpsAtInit, fees.treasuryFeeBps);
+  expectEq('A2.4', 'the loan-initiation fee bps is STAMPED per loan, at the live configured value', loan.loanInitiationFeeBpsAtInit, fees.lifBps);
+  expectEq('A2.5', 'the minimum health factor is STAMPED per loan, at the live configured floor', loan.minHealthFactorAtInit, liveMinHf);
 
-  const lif = PRINCIPAL * 20n / 10_000n;
+  const { lif, toMatcher, toTreasury: lifToTreasury } = lifSplit(PRINCIPAL, loan.loanInitiationFeeBpsAtInit, fees.matcherBps);
   const toTreasury = afterAccept['lending.treasury'] - afterCreate['lending.treasury'];
-  expectEq('A2.6', 'the LIF is charged in the LENDING asset and 99% of it reaches the treasury',
-    toTreasury, lif - lif / 100n, 'the remaining 1% is the matcher kickback');
+  expectEq('A2.6', 'the LIF is charged in the LENDING asset and, net of the matcher share, reaches the treasury',
+    toTreasury, lifToTreasury, `LIF=${f18(lif)} at ${loan.loanInitiationFeeBpsAtInit}bps, matcher share ${fees.matcherBps}bps of it`);
   const toBorrower = afterAccept['lending.borrowerEOA'] - afterCreate['lending.borrowerEOA'];
   expectEq('A2.7', 'the borrower receives principal net of the LIF, in their WALLET not their vault',
-    toBorrower, PRINCIPAL - lif + lif / 100n, 'the borrower was the accept caller, so the 1% matcher cut returns to them');
-  expectLedger('A2.7b', 'the accept moves exactly: escrow → borrower wallet net of the LIF, 99% of the LIF to the treasury, the collateral into the borrower\'s own vault',
+    toBorrower, PRINCIPAL - lif + toMatcher, 'the borrower was the accept caller, so the matcher share returns to them');
+  expectLedger('A2.7b', 'the accept moves exactly: escrow → borrower wallet net of the LIF, the LIF net of the matcher share to the treasury, the collateral into the borrower\'s own vault',
     afterCreate, afterAccept, {
       'lending.lenderVault': -PRINCIPAL,
-      'lending.borrowerEOA': PRINCIPAL - lif + lif / 100n,
-      'lending.treasury': lif - lif / 100n,
+      'lending.borrowerEOA': PRINCIPAL - lif + toMatcher,
+      'lending.treasury': lifToTreasury,
       'collateral.borrowerEOA': -COLLATERAL,
       'collateral.borrowerVault': COLLATERAL,
     });
 
   const hf = await read(ABIS.risk, 'calculateHealthFactor', [loanId]);
   const ltv = await read(ABIS.risk, 'calculateLTV', [loanId]);
-  // $2,500 of collateral at the 80% liquidation LTV against $1,000 of debt:
-  // HF = 2,500 × 0.8 / 1,000 = 2.0 and LTV = 1,000 / 2,500 = 40%, exactly.
-  check('A2.8', 'health factor and LTV are computed from live oracle prices',
-    hf === 2_000_000_000_000_000_000n && ltv === 4000n,
-    `HF=${f18(hf)} LTV=${ltv}bps (want HF=2 LTV=4000bps: collateral $2,500 at 80% liquidation LTV against $1,000 of debt)`);
+  // HF = collateral value × the loan's stamped liquidation LTV / debt, and
+  // LTV = debt / collateral value, both from the live feeds (1e18-scaled
+  // USD). Read in the accept's block-neighbourhood the debt is the principal.
+  const [cP, cD] = await read(ABIS.oracle, 'getAssetPrice', [collateral]);
+  const [pP, pD] = await read(ABIS.oracle, 'getAssetPrice', [lending]);
+  const colUsd = (COLLATERAL * cP) / 10n ** BigInt(cD);
+  const debtUsd = (loan.principal * pP) / 10n ** BigInt(pD);
+  const wantHf = (colUsd * BigInt(loan.liquidationLtvBpsAtInit) * 10n ** 18n) / (debtUsd * 10_000n);
+  const wantLtv = (debtUsd * 10_000n) / colUsd;
+  check('A2.8', 'health factor and LTV are computed from live oracle prices and the stamped liquidation LTV',
+    hf === wantHf && ltv === wantLtv,
+    `HF=${f18(hf)} want ${f18(wantHf)}; LTV=${ltv}bps want ${wantLtv} (collateral $${f18(colUsd)} at ${loan.liquidationLtvBpsAtInit}bps against $${f18(debtUsd)})`);
 
   // --- repay
   const quoted = await read(ABIS.repay, 'calculateRepaymentAmount', [loanId]);
   const total = Array.isArray(quoted) ? quoted[0] : quoted;
   const interest = total - PRINCIPAL;
   expectEq('A2.9', 'the payoff quote is principal + simple interest over the full term',
-    interest, PRINCIPAL * 500n * 7n / 10_000n / 365n, `total=${f18(total)}`);
+    interest, (PRINCIPAL * BigInt(loan.interestRateBps) * BigInt(loan.durationDays)) / (365n * 10_000n), `total=${f18(total)}`);
 
   const beforeRepay = await snapshot(tokens, holders);
   const repayReceipt = await tx(borrower, { address: DIAMOND, abi: ABIS.repay, functionName: 'repayLoan', args: [loanId] }, 'repayLoan');
   const afterRepay = await snapshot(tokens, holders);
   const treasuryCut = afterRepay['lending.treasury'] - beforeRepay['lending.treasury'];
   expectEq('A2.10', 'the treasury takes 2% of the INTEREST and nothing of the principal',
-    treasuryCut, interest * 200n / 10_000n, `gas=${repayReceipt.gasUsed}`);
+    treasuryCut, (interest * BigInt(loan.treasuryFeeBpsAtInit)) / 10_000n, `gas=${repayReceipt.gasUsed} at the stamped ${loan.treasuryFeeBpsAtInit}bps`);
   const lenderCredit = afterRepay['lending.lenderVault'] - beforeRepay['lending.lenderVault'];
   expectEq('A2.11', 'the lender is credited principal plus 98% of the interest, into their vault',
     lenderCredit, PRINCIPAL + interest - treasuryCut);
-  const interestCut = (interest * 200n) / 10_000n;
+  const interestCut = (interest * BigInt(loan.treasuryFeeBpsAtInit)) / 10_000n;
   expectLedger('A2.11b', 'the repay moves exactly: principal + interest from the borrower\'s wallet, 98% of the interest and all the principal to the lender\'s vault, 2% to the treasury — and no collateral',
     beforeRepay, afterRepay, {
       'lending.borrowerEOA': -(PRINCIPAL + interest),
