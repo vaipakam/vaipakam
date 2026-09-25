@@ -1937,13 +1937,16 @@ class Assembly:
         pending text is AMBIGUOUS, and is not claimed to be anything more
         (#2328 r2): it is either the documented edit made after an
         interrupted run, or a new fragment reusing an old file name. Both
-        are noted and appended rather than refused because both produce the
-        same file — two sections, neither lost — and the hash mismatch rules
-        out publishing the recorded text a second time, which is the one
-        thing a refusal here exists to prevent. The note tells the operator
-        to look for a superseded copy, which is the right action under
-        either reading, and it is keyed on the marker rather than on the
-        heading scan, since an edit may retitle the fragment (#2328 r3).
+        are noted and appended rather than refused because neither loses
+        text: the result is two sections, the recorded and the pending. This
+        path makes NO claim that the two differ once published — two
+        versions differing only in link spellings `rewrite_links` normalises
+        publish identical bytes (#2328 r5) — and an earlier revision's claim
+        that the hash mismatch ruled that out was withdrawn rather than
+        defended with a further check. The note tells the operator to look
+        for a superseded copy, which is the right action under either
+        reading, and it is keyed on the marker rather than on the heading
+        scan, since an edit may retitle the fragment (#2328 r3).
 
         This used to be a whole-file `any()`: one marker anywhere downgraded
         every refusal to a note. That was sound for a file written wholly in

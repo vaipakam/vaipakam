@@ -204,9 +204,11 @@ timer. The error prints the exact command — `rmdir <path>` — and it is
 safe to run once you know no other assembly is in progress.
 
 **Leave the markers in place** when editing the assembled notes.
-Deleting one leaves the file unable to say that fragment was folded in:
-a re-run that finds it pending again stops and asks, and
-`--force-append` at that point would publish it a second time.
+Deleting one leaves the file unable to say that fragment was folded in.
+A re-run that finds it pending again stops and asks — provided the
+section's heading is unchanged, since that heading is all it has left to
+match on (#2298). If the heading was edited too, the re-run publishes the
+fragment a second time without asking.
 
 **And do not delete the section a marker sits under** while leaving the
 marker itself. That is the inverse mistake, and it used to be the
