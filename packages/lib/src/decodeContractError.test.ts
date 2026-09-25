@@ -259,40 +259,23 @@ describe('extractRevertData', () => {
       expect(extractRevertSelector(e)).toBe('0x08c379a0');
     });
 
-    // r1: `details` is the provider's message verbatim, so a provider that
-    // repeats the request puts the calldata back in "response" text.
-    const rpcEcho = (message: string) =>
+    // `RpcRequestError` writes the request body into its annotations too.
+    const rpcData = (data?: string, message = 'execution reverted') =>
       new RpcRequestError({
         body: { method: 'eth_call', params: [{ data: calldata }] },
-        error: { code: -32000, message },
+        error: { code: 3, message, ...(data ? { data } : {}) },
         url: 'https://rpc.example',
       });
 
-    it('does not read a provider echo of the calldata in `details` as the revert', () => {
-      const e = new CallExecutionError(rpcEcho(`execution reverted for ${calldata}`), request);
-      expect(e.details).toContain(calldata); // the fixture really echoes it
-      expect(extractRevertData(e)).toBeUndefined();
-    });
-
-    it('does not read a TRUNCATED echo of the calldata as the revert', () => {
-      const cut = calldata.slice(0, 10 + 64); // selector + first word
-      const e = new CallExecutionError(rpcEcho(`execution reverted for ${cut}...`), request);
-      expect(extractRevertData(e)).toBeUndefined();
-      const bare = new CallExecutionError(rpcEcho(`reverted in ${calldata.slice(0, 10)}`), request);
+    it('never scans the request body an RpcRequestError annotates, bare or wrapped', () => {
+      const bare = rpcData();
+      expect(bare.message).toContain(calldata); // the annotation really is in message
       expect(extractRevertData(bare)).toBeUndefined();
+      expect(extractRevertData(new CallExecutionError(bare, request))).toBeUndefined();
     });
 
-    it('still finds a real revert quoted next to the echo', () => {
-      const e = new CallExecutionError(
-        rpcEcho(`request ${calldata} reverted: ${SEL_HF_TOO_LOW}`),
-        request,
-      );
-      expect(extractRevertData(e)).toBe(SEL_HF_TOO_LOW);
-    });
-
-    it('an address in the request echo cannot shadow a real selector', () => {
-      // `to` begins with the same four bytes as the revert selector; only
-      // revert-SHAPED request tokens are treated as echo.
+    it('an address in the annotations cannot shadow a real selector', () => {
+      // `to` begins with the same four bytes as the revert selector.
       const to = SEL_HF_TOO_LOW + 'ab'.repeat(16);
       const e = new CallExecutionError(
         new BaseError('execution reverted', { details: `reverted: ${SEL_HF_TOO_LOW}` }),
@@ -302,10 +285,9 @@ describe('extractRevertData', () => {
       expect(extractRevertData(e)).toBe(SEL_HF_TOO_LOW);
     });
 
-    // #2336 r2/r3: `metaMessages` is not purely the request — viem names an
-    // undecodable revert's own selector there. Bytes a node reports in its own
-    // structured fields are therefore never counted as its request echo.
-    it('keeps an undecodable revert whose selector viem also lists in metaMessages', () => {
+    // viem also annotates RESPONSE facts — an undecodable revert's selector —
+    // which structured `raw` carries; structured fields are read as reported.
+    it('keeps an undecodable revert whose selector viem also annotates', () => {
       const sel = '0xabcd1234';
       const reverted = new ContractFunctionRevertedError({
         abi: [],
@@ -318,29 +300,27 @@ describe('extractRevertData', () => {
       expect(extractRevertData(wrapped)).toBe(sel);
     });
 
-    // #2336 r3: a provider can echo the request in JSON-RPC `error.data`,
-    // which viem copies to `RpcRequestError.data` — a STRUCTURED field.
-    const rpcData = (data: string, message = 'execution reverted') =>
-      new RpcRequestError({
-        body: { method: 'eth_call', params: [{ data: calldata }] },
-        error: { code: 3, message, data },
-        url: 'https://rpc.example',
-      });
-
-    it('does not read a provider echo of the calldata in `error.data` as the revert', () => {
-      const e = new CallExecutionError(rpcData(calldata), request);
-      expect((e.cause as { data?: unknown }).data).toBe(calldata); // really echoed
-      expect(extractRevertData(e)).toBeUndefined();
-      const trap = new EstimateGasExecutionError(
-        rpcData(calldata, 'exceeds max transaction gas limit'),
-        request,
-      );
-      expect(extractRevertSelector(trap)).toBeUndefined();
+    // #2338 r4: a real revert whose selector equals the called function's
+    // must not be mistaken for the request — which any matching of reported
+    // bytes against the calldata would do.
+    it('keeps a real revert that shares the called function selector', () => {
+      const sel = calldata.slice(0, 10);
+      const reverted = new ContractFunctionRevertedError({ abi: [], data: sel as `0x${string}`, functionName: 'acceptOffer' });
+      expect(extractRevertData(new CallExecutionError(reverted as never, request))).toBe(sel);
     });
 
-    it('still reads a real revert the provider returns in `error.data`', () => {
-      const e = new CallExecutionError(rpcData(errorString), request);
-      expect(extractRevertData(e)).toBe(errorString);
+    it('reads a revert the provider returns in `error.data`', () => {
+      expect(extractRevertData(new CallExecutionError(rpcData(errorString), request))).toBe(
+        errorString,
+      );
+    });
+
+    // The deliberate boundary (#2338 r1–r4): what the provider REPORTS as the
+    // error is read as reported, even if it happens to equal the request —
+    // telling such an echo from a real same-selector revert is not possible
+    // from the bytes. Pinned so that changing it is a decision, not a drift.
+    it('reads provider-reported bytes as reported, even when they equal the calldata', () => {
+      expect(extractRevertData(new CallExecutionError(rpcData(calldata), request))).toBe(calldata);
     });
 
     it('still reads a revert quoted in the response text (`details`)', () => {
@@ -359,6 +339,14 @@ describe('extractRevertData', () => {
         cause: { data: SEL_HF_TOO_LOW },
       }),
     ).toBe(SEL_HF_TOO_LOW);
+  });
+
+  // Removing an annotation must not splice the text either side of it into
+  // one hex token that was never reported.
+  it('does not fuse text across a removed annotation into a selector', () => {
+    expect(
+      extractRevertData({ message: '0x1234NOTE5678', metaMessages: ['NOTE'] }),
+    ).toBeUndefined();
   });
 
   // #2336 r2: a `shortMessage` does not make `message` untrustworthy — only

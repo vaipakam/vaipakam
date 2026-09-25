@@ -737,9 +737,10 @@ export const KNOWN_ERROR_SELECTORS: Record<string, string> = {
   // contract surface.
 };
 
-/** Every hex string a SINGLE node carries in its STRUCTURED fields, in
- *  preference order (no cause traversal, no message text). */
-function structuredCandidates(e: DecodableError): string[] {
+/** Revert bytes in a SINGLE error node's STRUCTURED fields (no cause
+ *  traversal, no message text). These are what the provider or wallet
+ *  reported as the error, and are read as reported. */
+function structuredRevertData(e: DecodableError): string | undefined {
   const candidates: unknown[] = [
     typeof e.data === 'string' ? e.data : undefined,
     typeof e.data === 'object' ? e.data?.data : undefined,
@@ -751,92 +752,63 @@ function structuredCandidates(e: DecodableError): string[] {
     // extractRevertName).
     (e as { raw?: unknown }).raw,
   ];
-  return candidates.filter(
-    (c): c is string => typeof c === 'string' && c.startsWith('0x') && c.length >= 10,
-  );
-}
-
-/** The hex blobs in `text` shaped like revert data: ONLY a clean 4-byte
- *  selector (10 chars) or a full ABI-encoded payload (10 chars + multiples of
- *  64 hex chars), which rules out a 40-char address (mistaken for the revert
- *  selector by the old `slice(0, 10)`) or a 64-char tx hash. */
-function revertShapedHex(text: string): string[] {
-  return (text.match(/0x[0-9a-fA-F]+/g) ?? []).filter((m) => {
-    const len = m.length - 2; // strip 0x
-    return len === 8 || (len >= 8 && (len - 8) % 64 === 0);
-  });
+  for (const c of candidates) {
+    if (typeof c === 'string' && c.startsWith('0x') && c.length >= 10) return c;
+  }
+  return undefined;
 }
 
 /**
- * The REQUEST as the error chain itself recorded it (#2336) — the one rule
- * both passes of {@link extractRevertData} apply.
+ * A node's text with viem's ANNOTATIONS removed (#2336).
  *
- * viem keeps no structured copy of the calldata it sent. It records it only
- * in each node's `metaMessages` annotations: `data: 0x…` from its execution
- * errors (`CallExecutionError`, `EstimateGasExecutionError`, …) and
- * `Request body: {…}` from `RpcRequestError`. That text also reaches
- * `message`, and a provider can repeat the request in its own error text
- * (which viem copies verbatim into `details`) or in its `error.data` (which
- * viem copies into `RpcRequestError.data`). Calldata has exactly the shape of
- * revert data, so each of those returned the call's own selector as its
- * revert.
+ * viem builds `message` from `shortMessage`, its `metaMessages` annotations
+ * and `details`, and its execution errors (`CallExecutionError`,
+ * `EstimateGasExecutionError`, …) and `RpcRequestError` write the REQUEST into
+ * those annotations — `data:` followed by the calldata, `Request body: {…}` —
+ * whose selector-plus-whole-words shape is exactly what the scan below
+ * accepts. Scanning them returned the call's own selector as its revert.
  *
- * So: the revert-shaped tokens in the `metaMessages` a node WROTE are the
- * request — EXCEPT bytes that same node reports in its own structured fields.
- * That exception keeps annotations describing the RESPONSE out of the set:
- * `ContractFunctionRevertedError` names an undecodable revert's selector in
- * `metaMessages` while carrying the same bytes in `raw`. "Wrote" matters
- * because viem's execution errors copy their cause's `metaMessages` ahead of
- * their own; a line also present on the cause is that cause's, and is judged
- * there against the cause's own fields. Only the revert
- * shape is collected, so an address or hash in the echo cannot shadow a real
- * selector.
+ * The boundary is structural: annotations are the library's notes about the
+ * call, not the error, so they are never scanned. What the provider or wallet
+ * reported — its message text, `details` (viem copies the provider's message
+ * there verbatim), and structured data — is read as reported. The decoder
+ * deliberately does NOT try to recognise a provider that repeats the request
+ * inside its own report: matching reported bytes against the request cannot
+ * tell such an echo from a real revert whose selector equals the called
+ * function's, so it would trade one misreading for another (#2338 r1–r4).
  */
-function requestEchoHex(err: unknown): string[] {
-  const out: string[] = [];
-  let node: unknown = err;
-  for (let depth = 0; node && typeof node === 'object' && depth < 6; depth++) {
-    const meta = (node as { metaMessages?: unknown }).metaMessages;
-    if (Array.isArray(meta)) {
-      const own = structuredCandidates(node as DecodableError).map((c) => c.toLowerCase());
-      const causeMeta = (node as { cause?: { metaMessages?: unknown } }).cause?.metaMessages;
-      const inherited = new Set(Array.isArray(causeMeta) ? causeMeta : []);
-      for (const line of meta) {
-        if (typeof line !== 'string' || inherited.has(line)) continue;
-        for (const m of revertShapedHex(line)) {
-          const lower = m.toLowerCase();
-          if (!own.some((c) => c.startsWith(lower))) out.push(lower);
-        }
-      }
-    }
-    node = (node as { cause?: unknown }).cause;
-  }
-  return out;
-}
-
-/** True when `candidate` is the request echo: a prefix of a recorded request
- *  token (equal, or a truncated echo). */
-function isRequestEcho(candidate: string, echoed: string[]): boolean {
-  const lower = candidate.toLowerCase();
-  return echoed.some((t) => t.startsWith(lower));
-}
-
-/** Revert bytes in a SINGLE node's structured fields, excluding the request
- *  echo. */
-function structuredRevertData(e: DecodableError, echoed: string[]): string | undefined {
-  return structuredCandidates(e).find((c) => !isRequestEcho(c, echoed));
-}
-
-/** Revert bytes quoted in a SINGLE node's text — some wallets / RPCs embed
- *  them there (e.g. `... data: 0x08c379a0...`) — excluding the request echo.
- *  `message` first, then `shortMessage` and `details` for objects whose
- *  `message` does not already include them. */
-function messageRevertData(e: DecodableError, echoed: string[]): string | undefined {
+function reportedText(e: DecodableError): string {
   const details = (e as { details?: unknown }).details;
-  const text = [e.message, e.shortMessage, details]
+  let text = [e.message, e.shortMessage, details]
     .filter((t): t is string => typeof t === 'string')
     .join('\n');
-  return revertShapedHex(text).find((m) => !isRequestEcho(m, echoed));
+  const meta = (e as { metaMessages?: unknown }).metaMessages;
+  if (Array.isArray(meta)) {
+    // Longest first, so a short annotation that also occurs inside a longer
+    // one (viem's `' '` spacer, a bare label) cannot break the longer one's
+    // removal; blank entries are spacers, not content. Each removal leaves a
+    // line break so the text either side cannot fuse into one hex token.
+    const lines = meta
+      .filter((l): l is string => typeof l === 'string' && l.trim() !== '')
+      .sort((a, b) => b.length - a.length);
+    for (const line of lines) text = text.split(line).join('\n');
+  }
+  return text;
+}
+
+/** Revert bytes quoted in a SINGLE node's reported text — some wallets / RPCs
+ *  embed them there (e.g. `... data: 0x08c379a0...`). Accepts ONLY a clean
+ *  4-byte selector (10 chars) or a full ABI-encoded revert payload (10 chars +
+ *  multiples of 64 hex chars), which rules out a 40-char address (mistaken for
+ *  the revert selector by the old `slice(0, 10)`) or a 64-char tx hash. */
+function messageRevertData(e: DecodableError): string | undefined {
+  const matches = reportedText(e).match(/0x[0-9a-fA-F]+/g) ?? [];
+  for (const m of matches) {
+    const len = m.length - 2; // strip 0x
+    if (len === 8) return m; // bare 4-byte selector
+    if (len >= 8 && (len - 8) % 64 === 0) return m; // selector + N abi-encoded args
+  }
+  return undefined;
 }
 
 /** The first `pick` hit along the `cause` chain. Bounded depth guards a
@@ -861,16 +833,12 @@ function firstAlongCauses(
  *  top-level object has no `data` while a nested cause does.
  *
  *  Two passes, in this order (#2336): STRUCTURED fields on every node first,
- *  and only then message text; both exclude the request echo
- *  ({@link requestEchoHex}). A single per-node pass let an
+ *  and only then reported message text, never viem's annotations
+ *  ({@link reportedText}). A single per-node pass let an
  *  outer wrapper's text answer before the structured bytes one cause deeper
  *  were reached. */
 export function extractRevertData(err: unknown): string | undefined {
-  const echoed = requestEchoHex(err);
-  return (
-    firstAlongCauses(err, (e) => structuredRevertData(e, echoed)) ??
-    firstAlongCauses(err, (e) => messageRevertData(e, echoed))
-  );
+  return firstAlongCauses(err, structuredRevertData) ?? firstAlongCauses(err, messageRevertData);
 }
 
 /**

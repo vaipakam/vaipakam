@@ -18,15 +18,13 @@ of that error, so no friendly explanation matched and a support string could
 name the wrong code.
 
 The decoder now reads the error's structured fields across the whole chain of
-wrapped errors first, and only then falls back to message text. In both places
-it discards anything matching the request the library recorded sending: the
-library repeats the request in its own messages, and a network provider can
-repeat it in its error text or in its error data. The library's notes are not
-only about the request, since it also names an error it could not decode
-there; such a note is recognised because the same error carries those bytes as
-its own data, so real errors are kept. Wallets that put the error only in plain
-message text are still read as before.
+wrapped errors first, and only then falls back to message text. In that text it
+skips the notes the library adds about the call, which is where the request is
+repeated, and reads only what the network or wallet itself reported. Wallets
+that put the error only in plain message text are still read as before.
 
-One case remains that the decoder cannot tell apart from a real error: an error
-from outside the library that repeats the request, when the library recorded no
-copy of the request to compare it with. Closes #2336.
+What the network reports as the error is taken as reported. The decoder does
+not try to spot a network that repeats the request inside its own report:
+review of this change showed that any such check would also discard a real
+error whose code happens to match the called function's, trading one misreading
+for another. Closes #2336.
