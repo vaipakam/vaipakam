@@ -7657,6 +7657,14 @@ library LibVaipakam {
         ///      record struct so closing one is bounded; the nonce makes a
         ///      re-opened record's namespace fresh without any clearing.
         mapping(bytes32 => mapping(uint256 => StagedBatch)) stagingBatches;
+        /// @dev 3b-ii-A2 (Codex #2308 r15) — per day, every batch whose
+        ///      balance a record RESTORED (an unwind, or a resolution's
+        ///      unconsumed excess), in the order restored. The day's third
+        ///      growth signal beside its list and its late chain: a standing
+        ///      record reads it from where it last read, re-offers what it
+        ///      finds, and reserves nothing while an entry is unread, so a
+        ///      restored epoch is never skipped for live funding.
+        mapping(uint256 => bytes32[]) transportDayRestored;
     }
 
     /// @notice 3b-ii-A2 (#2305) — one batch a staging record staged from, with
@@ -8090,6 +8098,12 @@ library LibVaipakam {
         ///      count at that moment here, and the deadline counts every
         ///      restart's pages, not only the first's (Codex #2308 r5, r10).
         uint256 lateWorkRestored;
+        /// @dev How far into the day's restore log (`transportDayRestored`)
+        ///      this record has read (Codex #2308 r15): set to the log's
+        ///      length when the record opens — its own first scan covers
+        ///      every earlier restoration — and advanced as preparations
+        ///      re-offer what was restored since.
+        uint256 restoredSeen;
     }
 
     /// @notice #1566 transport epochs PR 3b — a batch's PENDING REMAINDER:

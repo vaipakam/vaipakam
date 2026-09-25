@@ -213,7 +213,9 @@ library LibRewardStaging {
             bytes32 lastLate,
             bool complete,
             bytes32[] memory skipped
-        ) = LibRewardCustody.planTakesForRecord(s, r.day, r.continuationNode, r.lateSeen, askF, askR, r.skippedIds);
+        ) = LibRewardCustody.planTakesForRecord(
+            s, r.day, r.continuationNode, r.lateSeen, askF, askR, LibRewardCustody.recheckPage(s, r)
+        );
         if (lastNode != bytes32(0)) r.continuationNode = lastNode;
         if (lastLate != bytes32(0)) r.lateSeen = lastLate;
         // Every remembered epoch re-checked stageable this time is forgotten
@@ -271,6 +273,13 @@ library LibRewardStaging {
         // Nor while a late link landed behind the record's place, or an epoch
         // it passed over pending has become stageable since (Codex #2308 r2, r4).
         if (s.transportDayLateGen[r.day] != r.lateGenSeen || LibRewardCustody.anySkippedNowStageable(s, r)) {
+            revert IVaipakamErrors.StagingScanIncomplete(key);
+        }
+        // Nor while an epoch was RESTORED on the day since the record last
+        // read the restore log (Codex #2308 r15): a restoration moves neither
+        // the list's length nor its late generation, and the restored epoch
+        // may be one this record's scan saw drained.
+        if (r.restoredSeen != s.transportDayRestored[r.day].length) {
             revert IVaipakamErrors.StagingScanIncomplete(key);
         }
         (LibInteractionRewards.DayCharge memory charge, LibInteractionRewards.DaySlice[] memory slices) = _price(s, r);
@@ -409,6 +418,7 @@ library LibRewardStaging {
                 // claimant until the last page pays it (Codex #2308 r14).
                 LibRewardCustody.releaseStagedEarmark(s, bf - cf + br - cr);
                 emit StagingUnwoundBatch(id, key, bf - cf, br - cr);
+                LibRewardCustody.offerRestored(s, r.day, id);
             }
             if (cf + cr != 0) LibRewardCustody.spendUntypedForDraw(s, id, cf + cr);
             s.transportBatchReferences[id] -= 1;
@@ -577,6 +587,7 @@ library LibRewardStaging {
             // All of it returns to the batch, so all of it leaves the earmark.
             LibRewardCustody.releaseStagedEarmark(s, bf + br);
             emit StagingUnwoundBatch(id, key, bf, br);
+            LibRewardCustody.offerRestored(s, r.day, id);
             r.stagedFresh -= bf;
             r.stagedRecycled -= br;
             LibRewardCustody.releaseStagedBatchAt(s, key, r, i);

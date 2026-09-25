@@ -1115,6 +1115,64 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         assertEq(_rec().deadline, r.openedAt + 5 days + 3 days, "the second restart's pages are in the lease too");
     }
 
+    /// @dev A RESTORED epoch is re-offered to every standing record on its
+    ///      day (Codex #2308 r15). Alice's record holds the window; a late
+    ///      epoch older than all gives bob's claim something to stage, so his
+    ///      record opens and scans alice's epochs DRAINED. Alice cancels and
+    ///      her epochs return to their balances — which moves neither the
+    ///      list's length nor its late generation. Bob's reservation refuses
+    ///      until his record has re-offered them, and the re-offer stages them
+    ///      transport-first, ahead of the live funding.
+    function test_ARestoredEpoch_IsReofferedToAnotherStandingRecord() public {
+        _stagedAndScanned();
+        uint256 t0 = arrivedAt[0];
+        address bob = makeAddr("staging-bob");
+        _mut().setFeeEntitlementRaw(
+            78,
+            LibVaipakam.FeeEntitlement({
+                borrowerMode: LibVaipakam.FeeEntitlementMode.None,
+                lenderMode: LibVaipakam.FeeEntitlementMode.None,
+                openDays: 1,
+                rewardHaircutBpsAtOpen: 0,
+                borrowerTariffPaid: 0,
+                lenderTariffPaid: 0,
+                cStarOpen: 0,
+                loanSideRewardCapOpen: type(uint128).max
+            })
+        );
+        uint256 bobEntry = _mut().pushRewardEntry(bob, 78, LibVaipakam.RewardSide.Lender, 1e18, 1);
+        _mut().closeRewardEntryRaw(bobEntry, 2);
+        _mut().userClaimFundingNeedRaw(bob);
+        vm.warp(t0 - 2000);
+        _epochOfHinted(899, keccak256("older-than-all"), bytes32(0), bytes32(0), true);
+        _ingress().onRemitSplitAttested(CHAIN_BASE, REMITTER, 899, TINY, 0);
+        vm.warp(arrivedAt[64] + 200);
+        vm.prank(bob);
+        RewardClaimFacet(address(diamond)).claimInteractionRewards();
+        bytes32 bobKey = keccak256(abi.encode(bob, LibVaipakam.RewardSide.Lender, uint256(1)));
+        assertEq(_view().getStagingRecord(bobKey).phase, uint8(LibVaipakam.StagingPhase.Staging), "fixture: bob's record stands");
+        for (uint256 i; i < 6 && !_view().getStagingRecord(bobKey).scanComplete; ++i) {
+            _staging().prepareStagedDay(bobKey);
+        }
+        assertTrue(_view().getStagingRecord(bobKey).scanComplete, "fixture: bob scanned alice's drained epochs");
+        vm.startPrank(alice);
+        while (!_settle().unwindStagedDayPage(_key())) {}
+        vm.stopPrank();
+        _liveFresh(1e18);
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.StagingScanIncomplete.selector, bobKey));
+        _staging().reserveStagedDay(bobKey);
+        (uint256 sf, ) = _staging().prepareStagedDay(bobKey);
+        assertGt(sf, 0, "the restored epochs are re-offered and staged");
+        // 65 restorations, one window re-offered per preparation: the 65th is
+        // still unread, and the reservation still refuses.
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.StagingScanIncomplete.selector, bobKey));
+        _staging().reserveStagedDay(bobKey);
+        (uint256 sf2, ) = _staging().prepareStagedDay(bobKey);
+        assertGt(sf2, 0, "the last restoration too");
+        _staging().reserveStagedDay(bobKey);
+        assertEq(_view().getStagingRecord(bobKey).phase, uint8(LibVaipakam.StagingPhase.Reserved));
+    }
+
     // ───────────────────────── round 6 ─────────────────────────
 
     function test_AStandingRecord_PausesTheClaimantsExpiryClock() public {

@@ -1136,6 +1136,11 @@ library LibRewardCustody {
     ///         only while unexpired, only as the day's list grew.
     /// @custom:event-category state-change/reward-staging
     event StagingDeadlineSet(bytes32 indexed key, uint64 deadline);
+    /// @notice 3b-ii-A2 (Codex #2308 r15) — `batchId`'s balance was restored
+    ///         on `dayId` by a record's unwind or a resolution's excess, and
+    ///         logged for every standing record of that day to re-offer.
+    /// @custom:event-category state-change/reward-staging
+    event TransportDayRestored(uint256 indexed dayId, bytes32 indexed batchId);
     /// @notice A packet's split was attested and a classification it already
     ///         carried exceeds a component's recorded cap by these amounts
     ///         (Codex #2276 r15 P1) — a divergence recorded for the
@@ -2715,6 +2720,9 @@ library LibRewardCustody {
         uint256 lateNow = s.transportDayLateCount[r.day];
         members += lateNow > r.lateWorkBase ? lateNow - r.lateWorkBase : 0;
         members += r.lateWorkRestored;
+        // …plus the restored epochs it has yet to re-offer (Codex #2308 r15).
+        uint256 restoredNow = s.transportDayRestored[r.day].length;
+        members += restoredNow > r.restoredSeen ? restoredNow - r.restoredSeen : 0;
         uint256 pages = (members + TRANSPORT_DRAW_SCAN_CAP - 1) / TRANSPORT_DRAW_SCAN_CAP;
         if (pages == 0) pages = 1;
         uint64 next = r.openedAt + uint64(pages) * STAGING_RETRY_CADENCE + STAGING_GRACE;
@@ -2883,6 +2891,60 @@ library LibRewardCustody {
         _noteSkipped(s, key, r, id);
     }
 
+    /// @notice Record that `batchId`'s balance was RESTORED on `dayId` — by a
+    ///         record's unwind, or by a resolution returning what it staged
+    ///         beyond its assignment (Codex #2308 r15).
+    /// @dev    The ONE entry every restoration goes through. A standing record
+    ///         that already scanned the batch saw it drained by the staging now
+    ///         being returned, and neither the day's list length nor its late
+    ///         generation moves on a restoration, so without this the record
+    ///         could reserve live funding past a higher-priority epoch that is
+    ///         whole again. The log is append-only and read by each record from
+    ///         its own position, exactly as the list's growth is.
+    function offerRestored(LibVaipakam.Storage storage s, uint256 dayId, bytes32 batchId) internal {
+        s.transportDayRestored[dayId].push(batchId);
+        emit TransportDayRestored(dayId, batchId);
+    }
+
+    /// @notice A preparation's re-check page (Codex #2308 r2, r4, r15): the
+    ///         epochs the record passed over pending, then — up to one window —
+    ///         the restorations logged for its day since it last read, each id
+    ///         once. Advances the record's read position past what it returns,
+    ///         which the preparation now offers to the plan.
+    function recheckPage(LibVaipakam.Storage storage s, LibVaipakam.StagingRecord storage r)
+        internal
+        returns (bytes32[] memory out)
+    {
+        bytes32[] storage log = s.transportDayRestored[r.day];
+        uint256 from = r.restoredSeen;
+        uint256 to = log.length;
+        if (to > from + TRANSPORT_DRAW_SCAN_CAP) to = from + TRANSPORT_DRAW_SCAN_CAP;
+        uint256 nSkip = r.skippedIds.length;
+        out = new bytes32[](nSkip + (to > from ? to - from : 0));
+        uint256 n;
+        for (uint256 i; i < nSkip; ) {
+            out[n++] = r.skippedIds[i];
+            unchecked { ++i; }
+        }
+        for (uint256 i = from; i < to; ) {
+            bytes32 id = log[i];
+            if (!_amongFirst(out, n, id)) out[n++] = id;
+            unchecked { ++i; }
+        }
+        assembly ("memory-safe") {
+            mstore(out, n)
+        }
+        r.restoredSeen = to;
+    }
+
+    function _amongFirst(bytes32[] memory ids, uint256 n, bytes32 node) private pure returns (bool) {
+        for (uint256 k; k < n; ) {
+            if (ids[k] == node) return true;
+            unchecked { ++k; }
+        }
+        return false;
+    }
+
     /// @dev Whether `node` is among `ids` — the record's re-check page, at most
     ///      one window of them, so the scan stays bounded.
     function _among(bytes32[] memory ids, bytes32 node) private pure returns (bool) {
@@ -3028,6 +3090,9 @@ library LibRewardCustody {
             r.lateSeen = s.transportDayLateTail[day];
             r.lateGenSeen = s.transportDayLateGen[day];
             r.lateWorkBase = s.transportDayLateCount[day];
+            // Likewise the restore log: what was restored before now is in
+            // the balances that first scan reads (Codex #2308 r15).
+            r.restoredSeen = s.transportDayRestored[day].length;
         }
         stagingDeadlineRefresh(s, key, r);
     }

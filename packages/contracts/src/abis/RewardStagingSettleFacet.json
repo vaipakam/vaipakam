@@ -287,6 +287,25 @@
   },
   {
     "type": "event",
+    "name": "TransportDayRestored",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "batchId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "VpfiRecycleConsumed",
     "inputs": [
       {
