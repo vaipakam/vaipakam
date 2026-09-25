@@ -13,7 +13,7 @@ moment upstream no longer fails an entire end-to-end run (#1973). The forfeited
 loan-initiation VPFI note closes the day by stating a share that had been left
 implicit.
 
-# The reward expiry clock now stops when a claim would be refused
+## The reward expiry clock now stops when a claim would be refused
 
 **Task:** #1499
 
@@ -206,7 +206,7 @@ if nothing adopts it.
 Closes #1854.
 <!-- assembled-fragment: 1854-apps-restructure-app-cutover.md sha256=13bcc43528028debe4744b94b18860cb2e11d7b72ec0cbce07606a0e3e002670 -->
 
-# The arming ceremony can now read whether a chain already applied a day
+## The arming ceremony can now read whether a chain already applied a day
 
 Before a cross-chain reward day can be used to carry the recycling cutover
 date, the operator has to pick a day that the target chains have not already
@@ -236,7 +236,7 @@ pass.
 Issue: #1944
 <!-- assembled-fragment: 1944-broadcast-applied-readback.md sha256=8b96b2af12bdcdb5c776965c40c63bcdd89e5c17d02bc82ed85b3e3ec3383f59 -->
 
-# The keeper's liquidation scan was never actually batching
+## The keeper's liquidation scan was never actually batching
 
 The keeper checks every active loan's health factor on each pass. That scan
 was written to ask for all of them together in one grouped request, with a
@@ -585,7 +585,7 @@ into an unexplained slowdown, and hides exactly the signal that would
 tell an operator the endpoint needs attention.
 <!-- assembled-fragment: 1973-e2e-anvil-startup-retry.md sha256=5e4006df38d78c6950fbb7f74bd08f64598aced352cd83766ee25ddc3d63c867 -->
 
-# Forfeited loan-initiation VPFI: the matcher's share is now stated
+## Forfeited loan-initiation VPFI: the matcher's share is now stated
 
 **Task:** #1980
 

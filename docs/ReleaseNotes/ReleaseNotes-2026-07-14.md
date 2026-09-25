@@ -147,7 +147,7 @@ plus interest plus the 3% premium; at least one route must be attempted). No new
 functions or selectors were added — the routing reuses the existing on-chain LTV
 view — so there is no ABI change. Closes #1192 (Pass-2 conformance umbrella #1196).
 
-# Claimables feed includes internally matched loans (#1234)
+## Claimables feed includes internally matched loans (#1234)
 
 The indexer's claimables endpoint — the candidate layer behind the
 classic app's Claim Center — listed only repaid, defaulted, and
@@ -161,7 +161,7 @@ The endpoint now includes internally matched loans. Nothing changes
 about authority: the app still confirms every candidate on chain
 before showing a claim as actionable.
 
-# Deploy-env guard: builds without the indexer origin can't ship silently
+## Deploy-env guard: builds without the indexer origin can't ship silently
 
 Guard born from a live incident: a connected-app deploy built from a
 checkout without its env file compiled and served flawlessly while
@@ -176,7 +176,7 @@ in strict mode and refuses to produce a bundle at all, so the
 operator path that publishes to the live site can no longer ship an
 indexer-less build by accident.
 
-# VPFI tier table joins the config-snapshot display path (#1238)
+## VPFI tier table joins the config-snapshot display path (#1238)
 
 Follow-up to the read-diet config-snapshot slice, found while chasing
 a residual chain read in the post-deploy live review: the VPFI
@@ -190,7 +190,7 @@ is absent, stale, or arrives in an unexpected shape. Fee settlement is
 unaffected: discounts are applied by the contract on-chain, never from
 this display surface.
 
-# RPC read-diet PR 0 — indexer push-completeness + rail-health metadata
+## RPC read-diet PR 0 — indexer push-completeness + rail-health metadata
 
 Prerequisite slice of the Alpha02 RPC read-diet design
 (docs/DesignsAndPlans/Alpha02RpcReadDietDesign.md §9, PR 0). Before the
@@ -228,7 +228,7 @@ frame kinds were already ignored, so the indexer and app halves deploy
 independently. Observing the new `ownership.changed` frame on the live
 rail is the gate before PR A ships (design §7c).
 
-# RPC read-diet PR A — signal-gated freshness (phase 1)
+## RPC read-diet PR A — signal-gated freshness (phase 1)
 
 The main slice of the Alpha02 RPC read-diet design
 (docs/DesignsAndPlans/Alpha02RpcReadDietDesign.md §4 phase 1): the app
@@ -281,7 +281,7 @@ the rail-health verdict to "down", restoring the previous timer
 behaviour byte-for-byte. Ships one release behind that flag per the
 design's rollout plan; the live review (design §7) gates its removal.
 
-# RPC read-diet PR B — display config from the indexer snapshot
+## RPC read-diet PR B — display config from the indexer snapshot
 
 Second phase-2 slice of the Alpha02 RPC read-diet design (§4.2.1).
 Governance-tunable protocol config — the fee bundle, the NFT-rental
@@ -304,7 +304,7 @@ deliberate: anything a user signs against is still read live from the
 chain at submit time, and the master-flag-gated execute paths still
 live-check before the write.
 
-# RPC read-diet PR C — claim-candidate hint + memoized claim verdicts
+## RPC read-diet PR C — claim-candidate hint + memoized claim verdicts
 
 Third phase-2 slice of the Alpha02 RPC read-diet design (§4.2.3),
 targeting the connected app's single most expensive recurring read

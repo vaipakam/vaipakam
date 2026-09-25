@@ -699,7 +699,7 @@ written moments earlier), so a rehearsal would routinely fail for
 reasons that are not real — and a warning that cries wolf teaches
 people to ignore it.
 
-# Connected app (defi) — resilience ports from alpha02 (#1031)
+## Connected app (defi) — resilience ports from alpha02 (#1031)
 
 Three hardening behaviours proven on the alpha02 surface now also apply
 to the connected app:
