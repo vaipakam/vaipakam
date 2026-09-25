@@ -28,6 +28,7 @@ import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {RiskFacet} from "./RiskFacet.sol";
 import {LibSwapToRepaySizing} from "../libraries/LibSwapToRepaySizing.sol";
+import {LibERC721} from "../libraries/LibERC721.sol";
 
 /**
  * @title SwapToRepayIntentFacet
@@ -509,6 +510,20 @@ contract SwapToRepayIntentFacet is
         // ── §5.1 step 5: no-double-commit ───────────────────────────
         if (s.intentCommits[loanId].orderHash != bytes32(0))
             revert IntentAlreadyCommitted(loanId);
+        // #2322 — lock the borrower position for the life of the commit. The
+        // commit consolidated the borrower side to the current holder above,
+        // and the part of the collateral the auction does not take stays in
+        // THAT holder's vault, liened, until the fill. Borrower-side
+        // consolidation is skipped while an intent is live and is a no-op once
+        // the fill has closed the loan, so a transfer mid-auction would leave
+        // the remainder — and any VPFI fee-tier credit on it — anchored to a
+        // departed holder. The protocol's native position lock (the one the
+        // offset and lender-sale flows use) keeps the holder fixed instead of
+        // repairing the anchor afterwards; `_lock` refuses if another flow
+        // already holds the lock, so a commit cannot overwrite it. Every
+        // teardown (cancel, expired cancel, both force-cancels) and the fill
+        // settlement release it.
+        LibERC721._lock(loan.borrowerTokenId, LibERC721.LockReason.SwapToRepayIntent);
 
         // ── §5.1 step 7: minOutput floor (Codex round-10 P1 #5 +
         //    round-11 P1 #3 — must add late fee on top of getPrepayContext) ─
@@ -986,6 +1001,8 @@ contract SwapToRepayIntentFacet is
             delete s.intentExtensionBytes[extensionHash];
         }
         delete s.intentCommits[loanId];
+        // #2322 — release the borrower-position lock the commit took.
+        LibERC721._unlock(loan.borrowerTokenId);
 
         // #594 — every teardown (borrower cancel, permissionless cancel,
         // force-cancel via HF / past-default) returns the custodial collateral

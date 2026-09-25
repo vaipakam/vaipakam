@@ -19,6 +19,7 @@ import {VaipakamNFTFacet} from "../facets/VaipakamNFTFacet.sol";
 import {EncumbranceMutateFacet} from "../facets/EncumbranceMutateFacet.sol";
 import {ConsolidationFacet} from "../facets/ConsolidationFacet.sol";
 import {VPFIDiscountFacet} from "../facets/VPFIDiscountFacet.sol";
+import {LibERC721} from "./LibERC721.sol";
 
 /**
  * @title LibSwapToRepayIntentSettlement — T-087 Sub 3.B extraction
@@ -182,6 +183,10 @@ library LibSwapToRepayIntentSettlement {
             delete s.intentExtensionBytes[extensionHash];
         }
         delete s.intentCommits[loanId];
+        // #2322 — release the borrower-position lock the commit took. The
+        // holder was fixed for the whole auction, so the claim recorded above
+        // and the remainder in the vault belong to the same holder.
+        LibERC721._unlock(loan.borrowerTokenId);
         // T-087 Sub 3.B — clear the kind discriminator stamped at
         // commit time so a stale orderHash can't be replayed against
         // a different kind.
@@ -252,7 +257,9 @@ library LibSwapToRepayIntentSettlement {
         // #658 PR-B — the intent fill is the LENDER-side close-out of this loan
         // (the borrower side was consolidated at COMMIT and its auction lot is in
         // Diamond custody — #2322: the rest of its collateral stayed in the vault,
-        // liened — so it must NOT be re-consolidated here). Consolidate
+        // liened, and the borrower position has been LOCKED since the commit, so
+        // the holder the commit consolidated to is still the holder here; it must
+        // NOT be re-consolidated). Consolidate
         // the lender side while the loan is still Active (the flip to Repaid is
         // below), so the lender reward entry + VPFI checkpoint follow the current
         // lender-NFT holder and the proceeds/#592 reserve below key to them

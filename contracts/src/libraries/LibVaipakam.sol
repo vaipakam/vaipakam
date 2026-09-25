@@ -2853,10 +2853,13 @@ library LibVaipakam {
         uint64 deadline;
         /// @dev The debt-sized auction lot (#2322 — formerly the whole
         ///      `loan.collateralAmount`): the least collateral whose
-        ///      slippage-capped oracle value covers `takerAmount`, after the
-        ///      §5.1 step 8 fee-on-transfer rejection invariant (`received ==
-        ///      lot`). Kept separately to make the LOP order canonical hash
-        ///      recomputable from storage.
+        ///      slippage-capped oracle value covers the commit-time protocol
+        ///      minimum (the debt floor plus the auction buffer) — NOT
+        ///      `takerAmount`, which is the borrower's price for the lot and
+        ///      need not be oracle-backed. Recorded after the §5.1 step 8
+        ///      fee-on-transfer rejection invariant (`received == lot`). Kept
+        ///      separately to make the LOP order canonical hash recomputable
+        ///      from storage.
         uint256 makerAmount;
         /// @dev Borrower-picked principal-side minimum (§5.4 floor
         ///      enforced at commit + recomputed at postInteraction

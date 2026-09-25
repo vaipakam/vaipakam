@@ -1228,7 +1228,17 @@ intent expires in 5 minutes; the cancel-grace closes in 24h.
 > re-liening the whole claim on top of the never-unliened part would count
 > that part twice. And `internalMatchableCollateral` answers 0 while a
 > commit is live, so the loan is never drawn into an internal match — with
-> the remainder still liened, a match could otherwise draw on it.
+> the remainder still liened, a match could otherwise draw on it. Finally,
+> the borrower position NFT is locked (`LockReason.SwapToRepayIntent`) for
+> the life of the commit and released at every teardown and at the fill:
+> the remainder stays in the vault of the holder the commit consolidated
+> to, borrower-side consolidation is skipped while the intent is live and
+> is a no-op once the loan is Repaid, so without the lock a mid-auction
+> transfer would leave the remainder (and any VPFI tier credit on it)
+> anchored to a departed holder. This satisfies
+> `CollateralConsolidationToHolder.md`'s "consolidate the borrower side
+> after the collateral is restored" by keeping the holder fixed rather
+> than re-anchoring after the fact.
 
 ### 5.9 Partial fills + residual custodial collateral
 

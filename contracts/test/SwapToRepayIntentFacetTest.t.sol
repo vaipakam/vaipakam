@@ -20,6 +20,8 @@ import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
+import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
+import {LibERC721} from "../src/libraries/LibERC721.sol";
 
 /**
  * @title SwapToRepayIntentFacetTest
@@ -398,6 +400,28 @@ contract SwapToRepayIntentFacetTest is SetupTest {
         assertEq(claimAmt, LOAN_COLLATERAL - lot, "the borrower can claim every unit the fill did not take");
         assertEq(collateralAsset.balanceOf(borrowerVault), LOAN_COLLATERAL - lot, "and it is all in the vault");
         assertEq(_lien(), LOAN_COLLATERAL - lot, "liened exactly once, for exactly the claim");
+        assertEq(uint256(_borrowerLock()), uint256(LibERC721.LockReason.None), "the fill releases the position lock");
+    }
+
+    function _borrowerLock() internal view returns (LibERC721.LockReason) {
+        return VaipakamNFTFacet(address(diamond)).positionLock(LOAN_ID * 2);
+    }
+
+    /// @dev The borrower position is locked for the life of the commit, so the
+    ///      holder the commit consolidated to — whose vault keeps the untaken
+    ///      remainder, liened — cannot change before settlement. A cancel
+    ///      releases it.
+    function test_Commit_LocksTheBorrowerPositionUntilCancel() public {
+        SwapToRepayIntentFacet.FusionOrderParams memory params = _armHappyCommit();
+        assertEq(uint256(_borrowerLock()), uint256(LibERC721.LockReason.None), "precondition: unlocked");
+        vm.prank(borrowerEoa);
+        SwapToRepayIntentFacet(address(diamond)).commitSwapToRepayIntent(LOAN_ID, params);
+        assertEq(uint256(_borrowerLock()), uint256(LibERC721.LockReason.SwapToRepayIntent), "locked for the auction");
+
+        vm.warp(params.deadline + 1);
+        vm.prank(borrowerEoa);
+        SwapToRepayIntentFacet(address(diamond)).cancelSwapToRepayIntent(LOAN_ID);
+        assertEq(uint256(_borrowerLock()), uint256(LibERC721.LockReason.None), "released on cancel");
     }
 
     /// @dev A cancel returns the lot and restores the lien to the whole

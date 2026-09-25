@@ -31,7 +31,10 @@ library LibERC721 {
     ///      Adding a new reason MUST happen at the tail; reordering or
     ///      removing entries reinterprets every existing `locks[tokenId]`
     ///      value on a live diamond.
-    enum LockReason { None, PrecloseOffset, EarlyWithdrawalSale, PrepayCollateralListing }
+    ///      `SwapToRepayIntent` (#2322) — the borrower position is locked for
+    ///      the life of a swap-to-repay intent commit, so the holder the commit
+    ///      consolidated to is the holder at settlement.
+    enum LockReason { None, PrecloseOffset, EarlyWithdrawalSale, PrepayCollateralListing, SwapToRepayIntent }
 
     /// @dev APPEND-ONLY POST-LAUNCH. New fields go at the end; never reorder,
     ///      rename, or change types of existing fields on live diamonds.

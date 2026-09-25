@@ -21,8 +21,12 @@ and the borrower sets its price by how much principal they ask for that lot:
   exactly as in the direct form.
 
 The rest of the collateral never leaves the borrower's vault and stays
-pledged for the whole auction. A loan with a live auction is also kept out
-of the protocol's internal loan-against-loan matching, because none of its
+pledged for the whole auction. So that this remainder cannot end up
+anchored to someone who no longer holds the position, the borrower position
+is locked while the auction is live. This uses the same transfer lock the
+early-close and loan-sale flows use, and it is released when the auction
+settles or is cancelled. A loan with a live auction is also kept out of the
+protocol's internal loan-against-loan matching, because none of its
 collateral is free to match. After a fill, the borrower claims the rest
 through the ordinary claim, and it stays pledged until they do. A cancelled
 or expired auction returns the lot and leaves the loan exactly as it was.
