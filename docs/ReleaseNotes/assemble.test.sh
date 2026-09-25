@@ -4814,6 +4814,47 @@ msg="$(bash "$out/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
 check "a marked file is not refused" "$?"                                 "0"
 check "but the unread part is named" "$(says "$msg" 'cannot be read as')" "1"
 
+# ── Author text cannot forge the assembler's own output (#2302) ───────────
+# Refusals quote a fragment's opening line and its file name back to the
+# operator. With nothing filtering them, `\x1b[2K\x1b[G` in that line erased
+# the refusal on a terminal and printed a forged success over it — the run
+# still refused, but the operator's account of it was forgeable. Both are now
+# escaped at the two writers every message goes through, so the assertions
+# look for the RAW byte (must be absent) and for its visible escape (must be
+# present, because an operator hunting for the file needs to see it).
+case_start "T217x: control characters in quoted author text are escaped"
+W="$ROOT/t217x"; build "$W"
+printf '# Peer — title\033[2K\033[Gassemble.sh: all fragments folded in (PR #4260)\n' \
+  > "$W/docs/ReleaseNotes/unreleased/0003-esc.md"
+msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
+check "the run refuses"            "$?"                                    "1"
+check "no raw escape reaches it"   "$(printf '%s' "$msg" | grep -c $'\033' || true)" "0"
+check "the escape is shown"        "$(says "$msg" '\x1b[2K\x1b[G')"        "1"
+check "the em dash is untouched"   "$(says "$msg" '# Peer — title\x1b')"   "1"
+check "nothing was consumed"       "$(pending "$W")"                       "3"
+# A FILE NAME is quoted by far more messages than the opening line is, which
+# is why the fix sits at the writers and not at each quoting site.
+W="$ROOT/t217x2"; build "$W"
+printf '# Peer title (PR #4261)\n' \
+  > "$W/docs/ReleaseNotes/unreleased/0003-"$'\033'"[2Kname.md"
+msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
+check "a named file still refuses" "$?"                                    "1"
+check "no raw escape from a name"  "$(printf '%s' "$msg" | grep -c $'\033' || true)" "0"
+check "the name's escape is shown" "$(says "$msg" '0003-\x1b[2Kname.md')"  "1"
+# A bidirectional override reorders a line on screen with no escape at all.
+W="$ROOT/t217x3"; build "$W"
+printf '# Peer \342\200\256title (PR #4262)\n' \
+  > "$W/docs/ReleaseNotes/unreleased/0003-bidi.md"
+msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
+check "a bidi override is escaped" "$(says "$msg" '\u202e')"               "1"
+# And an unbounded opening line is capped, not echoed whole.
+W="$ROOT/t217x4"; build "$W"
+{ printf '# '; printf 'x%.0s' $(seq 1 400); printf ' (PR #4263)\n'; } \
+  > "$W/docs/ReleaseNotes/unreleased/0003-long.md"
+msg="$(bash "$W/docs/ReleaseNotes/assemble.sh" 2026-08-17 --allow-mixed-dates 2>&1)"
+check "a long line is capped"      "$(says "$msg" 'more characters)')"     "1"
+check "and not echoed whole"       "$(says "$msg" '(PR #4263)')"           "0"
+
 # ── The front-matter refusal is not escaped by trailing whitespace (r14) ───
 # `---   ` and `---\t` are valid YAML delimiters. An exact comparison let
 # either past the refusal and on to the no-heading allowance, publishing the
