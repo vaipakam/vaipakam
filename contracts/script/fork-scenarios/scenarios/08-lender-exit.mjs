@@ -14,7 +14,7 @@
  *    exercising for that reason alone.
  */
 import { DIAMOND, MOCKS, TREASURY, borrower, lender, outsider, parseUnits, pub, tx } from '../lib/chain.mjs';
-import { ABIS, ANY, acceptStoredOffer, approveDiamond, createOffer, delta, expectPosition, mint, openLoan, positionOf, read, snapshot, vaultAddressFor } from '../lib/flow.mjs';
+import { ABIS, ANY, acceptStoredOffer, approveDiamond, createOffer, delta, expectPosition, mint, openLoan, positionNftOwner, positionOf, read, snapshot, vaultAddressFor } from '../lib/flow.mjs';
 import { f18 } from '../lib/chain.mjs';
 import { simulate } from '../lib/errors.mjs';
 import { parseEventLogs } from 'viem';
@@ -101,6 +101,12 @@ export async function run() {
           after.borrower === before.borrower && after.principal === before.principal &&
           after.interestRateBps === before.interestRateBps && after.durationDays === before.durationDays && String(after.status) === '0',
           `borrower=${after.borrower.slice(0, 10)} principal=${f18(after.principal)} rate=${after.interestRateBps}bps status=${after.status}`);
+        // Spec: the sale retires the seller's receipt — the superseded token
+        // stops resolving — and the buyer holds a DISTINCT, newly minted one.
+        const oldListed = await positionNftOwner(before.lenderTokenId);
+        check('A8.3c', 'the listed sale retires the seller\'s lender token and gives the buyer a distinct new one',
+          after.lenderTokenId !== before.lenderTokenId && oldListed === null,
+          `lenderTokenId ${before.lenderTokenId} -> ${after.lenderTokenId}; ownerOf(old)=${oldListed ?? 'does not resolve'}`);
         await expectPosition('A8.3b', 'the listed sale changes the position exactly: the lender, the lender token and its holder become the buyer\'s; the borrower side, terms and lien unchanged',
           loanId, listedPos, { lender: outsider.address, lenderTokenId: ANY, lenderNftOwner: outsider.address });
         const late = await simulate(DIAMOND, ABIS.earlyWithdrawal, 'completeLoanSale', [loanId], lender.address);
@@ -159,6 +165,10 @@ export async function run() {
         'lending.lenderEOA': before.principal - forfeited,
         'lending.treasury': forfeited,
       }, `forfeited=${f18(forfeited)}`);
+    const oldDirect = await positionNftOwner(before.lenderTokenId);
+    check('A8.7d', 'the direct sale retires the seller\'s lender token and gives the buyer a distinct new one',
+      after.lenderTokenId !== before.lenderTokenId && oldDirect === null,
+      `lenderTokenId ${before.lenderTokenId} -> ${after.lenderTokenId}; ownerOf(old)=${oldDirect ?? 'does not resolve'}`);
     await expectPosition('A8.7c', 'the direct sale changes the position exactly: the lender, the lender token and its holder become the buyer\'s; the borrower side, terms and lien unchanged',
       loanId, directPos, { lender: outsider.address, lenderTokenId: ANY, lenderNftOwner: outsider.address });
   }

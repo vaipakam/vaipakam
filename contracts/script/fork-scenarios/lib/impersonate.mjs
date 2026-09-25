@@ -77,7 +77,8 @@ const isqrt = (n) => {
 
 /**
  * Reprice a faucet asset the way a real market would move: its Chainlink
- * feed AND the spot of its mock v3 pool against `quote`, together.
+ * feed AND the spot of its mock v3 pool against `quote` (the deployment's
+ * recorded WETH), together.
  *
  * Moving the feed alone is not a price move — the mock pool's spot is
  * static, and the oracle only counts a pool whose spot agrees with the feed
@@ -92,6 +93,8 @@ export async function repriceFaucetAsset({ asset, feed, pool, quote }, dollars) 
   const sqrt0 = await pub.readContract({ address: pool, abi: MOCK_POOL_ABI, functionName: 'sqrtPriceX96' });
   // Pool price is token1-per-token0; the asset's price moving by r moves it
   // by r when the asset is token0 and by 1/r when it is token1.
+  // Uniswap orders a pool's tokens by address; the mock pool exposes no
+  // token0(), so the order is taken from the addresses themselves.
   const assetIs0 = asset.toLowerCase() < quote.toLowerCase();
   const [num, den] = assetIs0 ? [newAnswer, answer] : [answer, newAnswer];
   const sqrt1 = (sqrt0 * isqrt((num * 10n ** 36n) / den)) / 10n ** 18n;

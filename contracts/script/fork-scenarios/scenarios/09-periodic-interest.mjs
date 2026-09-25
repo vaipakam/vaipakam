@@ -187,6 +187,18 @@ async function runPeriodic(initial) {
       // later repayment does not charge those days again.
       lastPeriodicInterestSettledAt: preview[1], interestSettled: toLender,
     });
+  // The same settlement as an EXACT ledger, each holder on its own: an
+  // unflagged lender is paid directly to their WALLET (as a partial
+  // repayment pays them), so their vault must not move at all.
+  expectLedger('A9.11d', 'the auto-settlement moves exactly: collateral vault → venue, proceeds venue → settler (incentive), treasury (handling) and the lender\'s wallet (the rest); nothing else, the lender\'s vault and the Diamond untouched',
+    beforeAuto, afterAuto, {
+      'collateral.borrowerVault': -sold,
+      'collateral.venue': sold,
+      'lending.venue': -proceeds,
+      'lending.settlerEOA': (proceeds * settlerBps) / 10_000n,
+      'lending.treasury': (proceeds * handlingFeeBps) / 10_000n,
+      'lending.lenderEOA': proceeds - (proceeds * settlerBps) / 10_000n - (proceeds * handlingFeeBps) / 10_000n,
+    });
   // What the spec does NOT pin down is where the sizing buffer ends up once
   // the period is covered. Surfaced, not certified.
   observe('A9.11b', 'after an auto-settled period, the lender receives this much above the period\'s shortfall (the sale\'s sizing buffer)',

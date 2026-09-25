@@ -30,6 +30,7 @@ import {
   walletFor,
 } from './chain.mjs';
 import { simulate } from './errors.mjs';
+import { nameRevert } from './selectors.mjs';
 import { check, expectLedger, requireEnvelope } from './report.mjs';
 
 export const ZERO = '0x0000000000000000000000000000000000000000';
@@ -485,10 +486,20 @@ export const ANY = Symbol('any');
 
 const lower = (v) => (typeof v === 'string' ? v.toLowerCase() : v);
 
+/**
+ * The holder of a position NFT, or `null` when the token does not exist
+ * (burned, or never minted). ONLY that revert — `ERC721NonexistentToken` —
+ * reads as `null`; a transport error or any other failure is rethrown, so a
+ * flaky read can never be reported as a burned receipt.
+ */
 async function nftOwner(tokenId) {
   try { return lower(await pub.readContract({ address: DIAMOND, abi: ABIS.nft, functionName: 'ownerOf', args: [tokenId] })); }
-  catch { return null; } // burned, or never minted
+  catch (e) {
+    if (String(nameRevert(e) ?? '').startsWith('ERC721NonexistentToken(')) return null;
+    throw e;
+  }
 }
+export const positionNftOwner = nftOwner;
 
 /** The position as the chain reports it now. */
 export async function positionOf(loanId) {

@@ -40,6 +40,8 @@ export const abi = (name) => JSON.parse(fs.readFileSync(path.join(ABI_DIR, `${na
 export const deployment = JSON.parse(fs.readFileSync(ARTIFACT, 'utf8'));
 export const DIAMOND = deployment.diamond;
 export const MOCKS = deployment.testnetMocks ?? {};
+/** The chain's WETH as the deployment records it — the quote side of the faucet v3 pools. */
+export const WETH = deployment.weth;
 // The treasury is MUTABLE (`AdminFacet.setTreasury`), so the artifact's value
 // is only what it was at deploy. Every accounting row reads the fee recipient
 // the fork's Diamond reports NOW; the artifact value is kept for comparison.

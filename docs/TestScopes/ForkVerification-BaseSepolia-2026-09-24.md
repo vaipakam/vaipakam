@@ -17,7 +17,7 @@ configuration — not the source tree's idea of them.
   ledger now records as `forkBlock`. Figures that depend on elapsed time can
   still differ in the last decimals, since the warps land on different
   seconds.
-- **Result** — 211 scenarios: **199 PASS, 11 INFO, 1 FAIL**, no aborted
+- **Result** — 214 scenarios: **202 PASS, 11 INFO, 1 FAIL**, no aborted
   file. The INFOs are observations with no assertion behind them, not soft
   failures — the ledger's API makes a row either an assertion (PASS/FAIL
   only) or an observation (INFO only), so no failure can land as INFO; each
@@ -494,9 +494,10 @@ same borrower, principal, rate, term and `Active` status:
 On both routes the buyer ends up holding the **lender position NFT** the
 loan now names — the lender side's authority — not merely being written into
 the loan's `lender` field. After the sale the loan names a DIFFERENT lender
-token id (68 → 72 on the listed route, 73 → 76 on the direct one), so an
+token id, and the seller's token stops resolving — the spec's retirement of
+the superseded receipt, asserted on both routes (A8.3c, A8.7d) — so an
 indexer tracking the lender side by the seller's token id loses it at the
-sale; this run does not assert what becomes of the seller's old token.
+sale.
 
 - **Direct.** `sellLoanViaBuyOffer` sells straight into a buyer's standing
   lender offer in one transaction, with no listing. A non-lender caller is
@@ -890,7 +891,7 @@ replace.
 
 ## 7. Ledger
 
-The full 211-row ledger, with per-scenario verdicts and observed numbers, is
+The full 214-row ledger, with per-scenario verdicts and observed numbers, is
 regenerated as `contracts/script/fork-scenarios/last-run.json` on every run
 (untracked). Scenario ids map to the driver's files:
 

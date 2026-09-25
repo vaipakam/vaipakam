@@ -13,7 +13,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CHAIN_SLUG, DIAMOND, RPC_URL, TREASURY, fundActors, pub, resolveLive, rpc } from './lib/chain.mjs';
+import { CHAIN_SLUG, DIAMOND, MOCKS, RPC_URL, TREASURY, WETH, fundActors, pub, resolveLive, rpc } from './lib/chain.mjs';
 import { ledger, mark, summarise, takeSince } from './lib/report.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -39,6 +39,18 @@ if (unmatched.length) {
   process.exit(1);
 }
 
+// The scenarios drive the deployment's own TESTNET FIXTURES — faucet tokens
+// with open mints, owner-gated price feeds, a mock v3 pool and a mock swap
+// venue. A deployment artifact that does not carry them cannot be exercised
+// here at all, so the run stops naming what is missing rather than aborting
+// every file on an undefined address. (The rental NFT is optional: A10
+// declares it as its own envelope.)
+const REQUIRED_FIXTURES = ['liquidToken', 'liquidToken2', 'liquidTokenUsdFeed', 'liquidToken2UsdFeed', 'liquidTokenWethPool', 'mockSwapAdapter', 'illiquidToken'];
+const missingFixtures = [...REQUIRED_FIXTURES.filter((k) => !MOCKS[k]), ...(WETH ? [] : ['weth'])];
+if (missingFixtures.length) {
+  console.error(`OUT OF ENVELOPE — testnet fixtures: the ${CHAIN_SLUG} artifact carries no ${missingFixtures.join(', ')}; this driver needs the faucet mocks to run. Nothing was run.`);
+  process.exit(1);
+}
 const code = await pub.getBytecode({ address: DIAMOND }).catch(() => null);
 if (!code) {
   console.error(

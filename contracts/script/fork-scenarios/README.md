@@ -58,7 +58,7 @@ Environment:
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `FORK_RPC_URL` | `http://127.0.0.1:8545` | the fork node |
-| `FORK_CHAIN_SLUG` | `base-sepolia` | which `contracts/deployments/<slug>/addresses.json` to read |
+| `FORK_CHAIN_SLUG` | `base-sepolia` | which `contracts/deployments/<slug>/addresses.json` to read. The scenarios drive the deployment's **testnet fixtures** (faucet tokens, owner-gated feeds, a mock v3 pool and swap venue), and today only `base-sepolia`'s artifact carries them; any other slug stops before running, naming the missing fixtures |
 
 Nothing is hard-coded: the Diamond and faucet-mock addresses come from the
 deployment artifact for the selected slug, so the driver follows a redeploy

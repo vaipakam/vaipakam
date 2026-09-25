@@ -6,7 +6,7 @@
  * registered swap venue, and both are accounted here to the wei — including
  * the liquidator's bonus, which comes off the top before the lender is paid.
  */
-import { DIAMOND, MOCKS, TREASURY, borrower, lender, outsider, parseUnits, pub, tx } from '../lib/chain.mjs';
+import { DIAMOND, MOCKS, TREASURY, WETH, borrower, lender, outsider, parseUnits, pub, tx } from '../lib/chain.mjs';
 import { ABIS, STATUS, claimAndExpect, delta, dynamicIncentiveBps, expectPosition, forcedCloseWaterfall, lateFee, mint, openLoan, perSecondInterest, positionOf, read, snapshot, vaultAddressFor } from '../lib/flow.mjs';
 import { f18 } from '../lib/chain.mjs';
 import { MOCK_ADAPTER_ABI, repriceFaucetAsset, sendAsOwner, setFeedUsd, warpDays } from '../lib/impersonate.mjs';
@@ -82,7 +82,9 @@ export async function run() {
     graceSeconds > 0 && dayPast === false,
     `isLoanDefaultable=${dayPast} effectiveGrace=${graceSeconds}s (${graceSeconds / 86400}d), probed at term + ${graceSeconds / 2}s`);
 
-  await warpDays(30);
+  // Past the REST of the window the chain reported, plus a day — not a fixed
+  // 30 days, which a valid grace longer than 60 days would leave short of.
+  await warpDays(graceSeconds / 2 / 86_400 + 1);
   check('A3.3', 'past term AND grace, the loan becomes defaultable',
     (await read(ABIS.defaulted, 'isLoanDefaultable', [loanId])) === true);
 
@@ -169,10 +171,9 @@ export async function run() {
   // and the only thing that can refuse is the health-factor guard itself —
   // required by name, since a feed-only move would let the later illiquidity
   // refusal keep this row green with the HF guard removed.
-  const tliq = {
-    asset: collateral, feed: MOCKS.liquidTokenUsdFeed, pool: MOCKS.liquidTokenWethPool,
-    quote: '0x4200000000000000000000000000000000000006',
-  };
+  // The pool's quote side is the WETH the deployment artifact records, not
+  // one chain's WETH address written in here.
+  const tliq = { asset: collateral, feed: MOCKS.liquidTokenUsdFeed, pool: MOCKS.liquidTokenWethPool, quote: WETH };
   // The probe price is DERIVED, not fixed: the collateral price that puts HF
   // midway between 1.0 and this loan's stamped floor, from the loan's own
   // stamped liquidation LTV and the live debt-asset price. A fixed price is
