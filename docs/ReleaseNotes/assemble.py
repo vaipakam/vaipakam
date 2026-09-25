@@ -332,12 +332,72 @@ def first_heading(body: bytes) -> tuple[int, bytes] | None:
     return None
 
 
+# EVERY BYTE THIS SCRIPT WRITES TO A TERMINAL PASSES HERE (#2302). Messages
+# quote author-controlled text back — a fragment's opening line, its file
+# name — and a terminal obeys what it is sent: `\x1b[2K\x1b[G` erases the
+# refusal and prints whatever follows over it, so a fragment could make a
+# refused run LOOK successful. The run itself stayed refused; what was
+# forgeable was the operator's account of it.
+#
+# Fixed at the two writers rather than at each quoting site, because the
+# sites are the unbounded side: a file name reaches dozens of messages, and
+# the next message to quote something would have to remember. No message
+# carries a control character on purpose, so escaping them all costs nothing.
+#
+# ESCAPED, NOT STRIPPED: a control character in a file name is a fact about
+# that file, and hiding it would leave the operator unable to find it.
+# Covered: C0, DEL and C1 (C1 because `\x9b` is a one-byte CSI to terminals
+# that honour it), plus the bidirectional controls, which reorder a line on
+# screen without any escape sequence at all. Printable Unicode — every em
+# dash in every heading here — is left alone.
+_TERMINAL_UNSAFE_RE = re.compile(
+    "[\x00-\x1f\x7f-\x9f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]"
+)
+
+
+def terminal_safe(msg: str) -> str:
+    """`msg` with every control character shown as a visible escape."""
+    return _TERMINAL_UNSAFE_RE.sub(
+        lambda m: (
+            f"\\x{ord(m.group()):02x}"
+            if ord(m.group()) < 0x100
+            else f"\\u{ord(m.group()):04x}"
+        ),
+        msg,
+    )
+
+
+# QUOTED AUTHOR TEXT IS CAPPED (#2302). A fragment's opening line is echoed
+# whole, and nothing bounds its length; past this many characters the
+# message stops being readable, and the file name beside it already says
+# where to look. Escaping is `terminal_safe`'s job, at the writers — this
+# is only about length.
+QUOTE_LIMIT = 160
+
+
+def capped(text: str) -> str:
+    """`text` cut at `QUOTE_LIMIT`, saying how much was left out.
+
+    Applied to the WHOLE author-controlled value a message quotes, never to
+    its parts: a list of short pieces each under the limit joins into one
+    that is not (#2323 r1 — ten thousand `PR #BAD` tokens made 51 KB).
+    """
+    if len(text) <= QUOTE_LIMIT:
+        return text
+    return f"{text[:QUOTE_LIMIT]}… ({len(text) - QUOTE_LIMIT} more characters)"
+
+
+def quoted(raw: bytes) -> str:
+    """Author bytes as shown in a message: decoded, then `capped`."""
+    return capped(raw.decode("utf-8", errors="replace"))
+
+
 def out_line(msg: str = "") -> None:
-    print(msg)
+    print(terminal_safe(msg))
 
 
 def err(msg: str = "") -> None:
-    print(msg, file=sys.stderr)
+    print(terminal_safe(msg), file=sys.stderr)
 
 
 # ── Hashing ──────────────────────────────────────────────────────────────────
@@ -1848,7 +1908,7 @@ class Assembly:
                 # correctly rejected, since test churn is not a reason to
                 # weaken a production rule.
                 shown_open = (
-                    _first_content.decode("utf-8", errors="replace")
+                    quoted(_first_content)
                     if _first_content is not None
                     else "(the file has no content)"
                 )
@@ -1859,7 +1919,7 @@ class Assembly:
                 )
                 continue
             level, first = found
-            shown = first.decode("utf-8", errors="replace")
+            shown = quoted(first)
             if level == 1:
                 # Level, not `#`-count: a setext heading carries no `#` at
                 # all, and "opens at #, not ##" describing `Title` over
@@ -1945,8 +2005,8 @@ class Assembly:
                 # It usually IS the placeholder, but `PR #123:` is not, and
                 # telling that author to "replace the placeholder" sends them
                 # looking for something that is not there.
-                shown_tok = ", ".join(
-                    t.decode("utf-8", errors="replace") for t in bads
+                shown_tok = capped(
+                    ", ".join(t.decode("utf-8", errors="replace") for t in bads)
                 )
                 bad.append(
                     f"{name}: `PR #{shown_tok}` is not a plain number  ->  "
