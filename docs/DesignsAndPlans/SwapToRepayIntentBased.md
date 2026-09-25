@@ -325,32 +325,51 @@ Phase 1 surface — three external entry points:
      ```
      This is unit-safe across any collateral/principal pair with
      mismatched prices or decimals — the comparison is principal-
-     vs-principal. The final `makerAmount` (collateral side) is
-     determined at step 9 and the floor check has no opinion on it.
-  8. Pull the pledged collateral from the borrower's vault into the
-     diamond's custodial slot via `VaultFactoryFacet.vaultWithdrawERC20`.
-     **Use balance-delta accounting**:
+     vs-principal.
+     **#2322 — this `required` is now the input to the lot, not the
+     final gate.** The lot (`makerAmount`) is exactly the least
+     collateral whose slippage-capped oracle value covers `required`
+     (`LibSwapToRepaySizing.sizeSale`, shared with the direct close),
+     and the gate is `params.takerAmount >= floor(lot)` — the lot's OWN
+     slippage-capped value, which is always `>= required` and exceeds it
+     when collateral granularity makes the smallest covering lot worth
+     more. Clients should read both figures from
+     `previewSwapToRepayIntentLot(loanId) -> (lot, minTakerAmount)`
+     rather than recompute `required`. The preview reverts
+     `IntentSurfaceDisabled` while `cfgIntentSwapToRepayEnabled` is off,
+     as the commit does, so a disabled deployment never gets a quote. The original text said "the floor
+     check has no opinion on `makerAmount`"; since #2322 the two are
+     linked through the lot.
+  8. Pull the **lot** — the debt-sized amount step 7 computed (#2322),
+     never the whole `loan.collateralAmount` — from the borrower's vault
+     into the diamond's custodial slot via
+     `VaultFactoryFacet.vaultWithdrawERC20`, after decrementing the loan's
+     collateral lien by that same lot (the chokepoint guard would otherwise
+     refuse to move liened collateral). The rest of the collateral never
+     leaves the vault and stays liened for the whole auction, and the
+     borrower position NFT is locked (`LockReason.SwapToRepayIntent`) so
+     the holder whose vault keeps that remainder cannot change before
+     settlement. **Use balance-delta accounting**:
      ```
+     decrementCollateralLien(loanId, lot);
      before = collateralToken.balanceOf(address(this));
-     vaultWithdrawERC20(loan.borrower, collateralToken, loan.collateralAmount);
+     vaultWithdrawERC20(loan.borrower, collateralToken, lot);
      received = collateralToken.balanceOf(address(this)) - before;
      ```
      **Reject fee-on-transfer / rebasing collateral at this point**
      (Codex round-6 P1 #4 + P1 #2): revert
-     `IntentCollateralFeeOnTransferUnsupported(received, requested)`
-     if `received != loan.collateralAmount`. Two reasons this
-     rejection is the right call for v1.1:
-     1. If `received < loan.collateralAmount`, cancel would only
-        return `received` to the vault, leaving the loan Active with
-        a stale `loan.collateralAmount` that liquidation /
-        time-default / partial-withdraw would try to draw from a
-        vault that no longer holds the full amount. Every downstream
+     `IntentCollateralFeeOnTransferUnsupported(received, lot)`
+     if `received != lot`. Two reasons this rejection is the right call:
+     1. If `received < lot`, cancel would only return `received` to the
+        vault, leaving the loan Active with a `loan.collateralAmount`
+        that liquidation / time-default / partial-withdraw would try to
+        draw from a vault that no longer holds it. Every downstream
         invariant breaks.
-     2. If we updated `loan.collateralAmount = received` at commit
-        time to keep the invariant, repeated commit-cancel cycles on
-        the same loan would drain the collateral via fee accrual,
-        forcing the borrower's HF into liquidation territory by their
-        own actions. Borrower-controlled foot-gun.
+     2. If we updated `loan.collateralAmount` down to match at commit
+        time, repeated commit-cancel cycles on the same loan would drain
+        the collateral via fee accrual, forcing the borrower's HF into
+        liquidation territory by their own actions. Borrower-controlled
+        foot-gun.
      v1.1 motivates fee-on-transfer support on the **PRINCIPAL**
      side (Fusion delivers actual amounts, not notional); the
      collateral side is rejected here. Future v1.2 can revisit if
@@ -359,10 +378,12 @@ Phase 1 surface — three external entry points:
      `swapToRepayFull` path available.
 
      After the rejection check passes, `custodialCollateral =
-     received` (which equals `loan.collateralAmount`). All downstream
-     references to `custodialCollateral` reduce to using
-     `loan.collateralAmount` directly — the variable name is
-     retained for code clarity but the values are equal.
+     received`, which equals the lot. Every downstream reference to
+     `custodialCollateral` (the order's `makerAmount`, cancel's return
+     and lien restore, the fill residual, the aggregate allowance) means
+     the lot — NOT `loan.collateralAmount`, which still counts the
+     remainder in the vault. (Before #2322 the whole collateral was
+     pulled, so the two were equal and this text said so.)
 
   9. **Construct and register the final Fusion order** (Codex round-5
      P1 #1). Build the full order struct with `makerAmount =
@@ -578,10 +599,12 @@ address itself, NOT a separate `ALLOWANCE_TARGET` like 0x v2 uses) to the new
      the vault deposit AND relied on the canonical waterfall's
      claim-record. But `ClaimFacet.claimAsBorrower` pays ERC20
      borrower claims by WITHDRAWING `claim.amount` FROM
-     `loan.borrower`'s vault. After step 8 of commit moved the full
-     `loan.collateralAmount` into diamond custody and the swap
-     consumed only `consumed`, the residual is in DIAMOND custody
-     — NOT the vault. Recording a claim without the underlying
+     `loan.borrower`'s vault. After step 8 of commit moved the
+     custodial amount into diamond custody (the debt-sized lot since
+     #2322 — the rest of the collateral never left the vault — and the
+     whole `loan.collateralAmount` before it) and the swap consumed
+     only `consumed`, the fill residual is in DIAMOND custody — NOT the
+     vault. Recording a claim without the underlying
      tokens in the vault would make `claimAsBorrower` revert at
      withdraw time.
 
@@ -628,6 +651,13 @@ address itself, NOT a separate `ALLOWANCE_TARGET` like 0x v2 uses) to the new
      lands in the borrower's claim slot, withdrawable via
      `claimAsBorrower`. The round-4 "double-credit" concern doesn't
      apply now that step 5 no longer pre-credits the residual.
+     That claim is exactly what the vault holds for the loan: the part
+     of the collateral the commit never took plus the fill residual.
+     So the collateral lien is **topped up to cover it** — by
+     `claim − (amount still liened)`, never by the whole claim, since
+     the never-taken remainder stayed liened throughout (#2322) — and
+     a zero claim tombstones the lien row. The borrower-position lock
+     taken at commit is released here.
   7. Decrement the per-token aggregate allowance by
      `(custodialCollateral)` from `s.intentAggregateAllowance[token]`
      (custodial slot fully consumed for this loan — step 5 vault-
@@ -678,7 +708,7 @@ struct SwapToRepayIntentCommit {
     //    the hash):
     bytes32 orderHash;            // Fusion order hash — primary key for ERC-1271 + postInteraction lookup
     uint64  deadline;
-    uint256 makerAmount;          // == custodialCollateral after step 8 invariant guard (== loan.collateralAmount post-round-6)
+    uint256 makerAmount;          // == custodialCollateral after step 8 invariant guard == the debt-sized LOT (#2322; was == loan.collateralAmount post-round-6)
     uint256 takerAmount;          // §5.4 floor enforced at commit + postInteraction
     uint256 salt;                 // borrower-supplied; must round-trip
     uint256 makerTraits;          // Fusion's packed traits bitfield (allowPartialFills, allowMultipleFills, etc.)
@@ -760,9 +790,19 @@ routing).
 ### 5.4 minOutput floor — reuse the NFT auction prepay formula
 
 v1 enforces slippage via `cfgMaxSwapToRepaySlippageBps` (admin-tunable,
-default 3%). v1.1 doesn't use a slippage cap at all — the order's
-`minPrincipalOut` IS the floor. But the borrower can't pick that floor
-freely: it must cover the full debt obligation plus a safety buffer.
+default 3%) on the swap it executes. v1.1 does not EXECUTE against a
+slippage cap — the order is a fixed-price limit order, so its
+`takingAmount` is the exact price and there is no execution slippage to
+bound. Since #2322 it USES that same cap to size and price the lot: the
+lot is the least collateral whose value at the oracle less the cap covers
+the debt floor plus buffer below, and the least `takerAmount` a commit
+accepts is that lot's own value at the oracle less the cap. So the cap is
+the protection against giving collateral away cheaply, not a bound on
+fill slippage; removing it would let the lot be sized and priced with no
+worst case at all. (Originally: "v1.1 doesn't use a slippage cap at
+all", which was true before #2322.) The borrower still can't pick the
+floor freely: it must cover the full debt obligation plus a safety
+buffer.
 
 The canonical formula already exists for the NFT auction prepay-listing
 flow (T-086 §17.5-bis), at
@@ -805,8 +845,13 @@ PrepayContext pctx = IVaipakamPrepayContext(this).getPrepayContext(loanId, block
 uint256 lateFee = LibVaipakam.calculateLateFee(s.loans[loanId], block.timestamp);
 uint256 floor   = pctx.lenderLeg + pctx.treasuryLeg + lateFee;
 uint256 minOut  = (floor * (10_000 + s.cfgIntentMinOutputBufferBps)) / 10_000;
-if (params.takerAmount < minOut) revert IntentMinOutputBelowFloor(params.takerAmount, minOut);
+// #2322 — size the lot to minOut, then gate on the LOT's own floor:
+(uint256 lot, uint256 minTaker) = sizeSale(collateral, principal, minOut, loan.collateralAmount);
+if (params.takerAmount < minTaker) revert IntentMinOutputBelowFloor(params.takerAmount, minTaker);
 ```
+
+(Superseded: the original gate was `params.takerAmount < minOut`, which
+let a coarse lot worth far more than `minOut` sell below its worst case.)
 
 The `postInteraction` hook re-asserts the floor (against the *live*
 recomputed `lenderLeg + treasuryLeg` at fill time, see §5.1
@@ -1025,13 +1070,14 @@ to re-derive it:
 
 ### 5.8 Liquidation / default interaction
 
-A committed intent leaves the loan Active while moving the pledged
-collateral out of the borrower vault into diamond custody. During
-the 1-3 minute fill window plus the 24h cancel-grace window, the
-existing HF-liquidation (`RiskFacet.triggerLiquidation`) and
-time-default (`DefaultedFacet.triggerDefault`) paths would otherwise
-expect to withdraw `loan.collateralAmount` from `loan.borrower`'s
-vault — and find it absent (Codex round-1 P1 #5).
+A committed intent leaves the loan Active while moving the auction
+lot — part of the pledged collateral, since #2322 — out of the borrower
+vault into diamond custody. During the 1-3 minute fill window plus the
+24h cancel-grace window, the existing HF-liquidation
+(`RiskFacet.triggerLiquidation`) and time-default
+(`DefaultedFacet.triggerDefault`) paths would otherwise expect to
+withdraw `loan.collateralAmount` from `loan.borrower`'s vault — and find
+the lot missing from it (Codex round-1 P1 #5).
 
 The v1.1 facet handles this with a **two-layer defence** (Codex
 round-2 P1 #2): a pre-commit HF gate that keeps already-stressed
@@ -1211,6 +1257,35 @@ the borrower committed an unfillable intent to stall, the borrower
 is the one waiting; their stall hurts them, not the lender. The
 intent expires in 5 minutes; the cancel-grace closes in 24h.
 
+> **#2322 (2026-09-25) — the custodial amount is the debt-sized LOT, not
+> `loan.collateralAmount`.** Everything below that equates
+> `custodialCollateral` with `loan.collateralAmount` (the step-8 pull, the
+> round-6 received-equals-requested guard, `makerAmount`) now reads "the
+> lot": the commit pulls only the least collateral whose slippage-capped
+> oracle value covers the commit's minimum output (the debt floor plus the
+> buffer — the DEBT, not the taker amount, which is the borrower's price
+> for the lot on this fixed-price order), and decrements the
+> lien by that lot alone, so the rest of the collateral stays in the vault
+> and stays liened through the auction. The claim formula below is
+> unchanged — `claim = loan.collateralAmount - consumed` — and is still
+> exactly what the vault holds: the part never taken plus the fill
+> residual. What changed with it is the post-fill lien: it is topped up to
+> cover that claim (by the difference from what is still liened), because
+> re-liening the whole claim on top of the never-unliened part would count
+> that part twice. And `internalMatchableCollateral` answers 0 while a
+> commit is live, so the loan is never drawn into an internal match — with
+> the remainder still liened, a match could otherwise draw on it. Finally,
+> the borrower position NFT is locked (`LockReason.SwapToRepayIntent`) for
+> the life of the commit and released at every teardown and at the fill:
+> the remainder stays in the vault of the holder the commit consolidated
+> to, borrower-side consolidation is skipped while the intent is live and
+> is a no-op once the loan is Repaid, so without the lock a mid-auction
+> transfer would leave the remainder (and any VPFI tier credit on it)
+> anchored to a departed holder. This satisfies
+> `CollateralConsolidationToHolder.md`'s "consolidate the borrower side
+> after the collateral is restored" by keeping the holder fixed rather
+> than re-anchoring after the fact.
+
 ### 5.9 Partial fills + residual custodial collateral
 
 Fusion orders typically fill the full maker amount, but partial
@@ -1292,14 +1367,20 @@ function and the on-chain reverse-index, both inside
 The Loan Details swap-to-repay panel grows a mode toggle (atomic vs
 best-price intent). On the intent path:
 
-1. Borrower picks `takerAmount` (default = the §5.4 floor + a
-   small UX buffer; the dapp shows the live floor so the borrower
-   can override if they want to raise the threshold further).
+1. Borrower picks `takerAmount` — the order's PRICE for the lot.
+   The dapp reads `previewSwapToRepayIntentLot(loanId)` for the lot
+   and `minTakerAmount` (the lot's own worst-case value, #2322) and
+   defaults to that minimum plus a small UX buffer; the borrower may
+   ask more to price the lot higher. (Originally: "default = the §5.4
+   floor + a small UX buffer" — superseded, since the minimum is the
+   lot's floor, which can exceed the §5.4 floor.)
 2. Borrower submits one transaction:
    `commitSwapToRepayIntent(loanId, params)`. The diamond rejects
    fee-on-transfer / rebasing collateral (§5.1 step 8 invariant
-   guard); so for the supported case `custodialCollateral ==
-   loan.collateralAmount` always holds. The diamond constructs the
+   guard); so for the supported case `custodialCollateral == lot`
+   always holds — the debt-sized lot, NOT `loan.collateralAmount`
+   (#2322: the rest stays in the vault, liened, and the borrower
+   position is locked for the auction). The diamond constructs the
    final Fusion order from `params` + the now-known `makerAmount =
    custodialCollateral`, computes the canonical orderHash, registers
    it in storage, approves Fusion's `LimitOrderProtocol` (per Codex round-7 P1 #1 — Fusion is

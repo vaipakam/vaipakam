@@ -722,6 +722,13 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
                 revert InternalMatchNoMatchableCollateral(loanId);
             }
         } else {
+            // #2322 — an Active leg with a live swap-to-repay intent has
+            // nothing matchable (`internalMatchableCollateral` answers 0);
+            // refuse it before any funds move rather than draw on collateral
+            // committed to the auction or pledged behind its settlement.
+            if (LibVaipakam.internalMatchableCollateral(loanId) == 0) {
+                revert InternalMatchNoMatchableCollateral(loanId);
+            }
             _requireLtvAboveFloor(loanId);
         }
     }

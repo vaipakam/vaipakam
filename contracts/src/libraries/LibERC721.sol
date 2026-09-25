@@ -31,7 +31,10 @@ library LibERC721 {
     ///      Adding a new reason MUST happen at the tail; reordering or
     ///      removing entries reinterprets every existing `locks[tokenId]`
     ///      value on a live diamond.
-    enum LockReason { None, PrecloseOffset, EarlyWithdrawalSale, PrepayCollateralListing }
+    ///      `SwapToRepayIntent` (#2322) — the borrower position is locked for
+    ///      the life of a swap-to-repay intent commit, so the holder the commit
+    ///      consolidated to is the holder at settlement.
+    enum LockReason { None, PrecloseOffset, EarlyWithdrawalSale, PrepayCollateralListing, SwapToRepayIntent }
 
     /// @dev APPEND-ONLY POST-LAUNCH. New fields go at the end; never reorder,
     ///      rename, or change types of existing fields on live diamonds.
@@ -194,6 +197,17 @@ library LibERC721 {
         // {operatorApprovalEpoch} bump above + the {lockedTokenCount}
         // counter consulted by `setApprovalForAll`.
         delete es.tokenApprovals[tokenId];
+    }
+
+    /// @dev Release the lock only if `reason` is the one holding it (#2322,
+    ///      Codex #2341 r11). A flow that tears down state it may not have
+    ///      locked — a commit made before that flow started locking, still live
+    ///      across an in-place facet refresh — must not clear a DIFFERENT flow's
+    ///      lock, or it would leave that flow's position transferable under a
+    ///      live order. A no-op when the token is unlocked or held by another
+    ///      reason.
+    function _unlockIfHeldBy(uint256 tokenId, LockReason reason) internal {
+        if (_storage().locks[tokenId] == reason) _unlock(tokenId);
     }
 
     function _unlock(uint256 tokenId) internal {

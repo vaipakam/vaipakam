@@ -2851,10 +2851,15 @@ library LibVaipakam {
         ///      `makerTraits.expiration()` (round-8 P1 #5) AND must
         ///      be `<= loan.endTime + gracePeriod` (round-5 P2 #5).
         uint64 deadline;
-        /// @dev `loan.collateralAmount` after the §5.1 step 8
-        ///      fee-on-transfer rejection invariant (`received ==
-        ///      loan.collateralAmount`). Kept separately to make the
-        ///      LOP order canonical hash recomputable from storage.
+        /// @dev The debt-sized auction lot (#2322 — formerly the whole
+        ///      `loan.collateralAmount`): the least collateral whose
+        ///      slippage-capped oracle value covers the commit-time protocol
+        ///      minimum (the debt floor plus the auction buffer) — NOT
+        ///      `takerAmount`, which is the borrower's price for the lot and
+        ///      need not be oracle-backed. Recorded after the §5.1 step 8
+        ///      fee-on-transfer rejection invariant (`received == lot`). Kept
+        ///      separately to make the LOP order canonical hash recomputable
+        ///      from storage.
         uint256 makerAmount;
         /// @dev Borrower-picked principal-side minimum (§5.4 floor
         ///      enforced at commit + recomputed at postInteraction
@@ -2884,7 +2889,8 @@ library LibVaipakam {
 
         // ── Vaipakam-side bookkeeping:
         /// @dev Exact amount the diamond holds in custody from the
-        ///      vault withdraw. Equal to `makerAmount` after §5.1
+        ///      vault withdraw — the lot; the rest of the loan's collateral
+        ///      stays in the vault, liened (#2322). Equal to `makerAmount` after §5.1
         ///      step 8 (fee-on-transfer rejection invariant). Used
         ///      by cancel paths to know how much to return + by the
         ///      per-token aggregate-allowance decrement on
@@ -9428,6 +9434,15 @@ library LibVaipakam {
     ///      (leg sizing + gate) and `MetricsFacet` (candidate scan).
     function internalMatchableCollateral(uint256 loanId) internal view returns (uint256) {
         Storage storage s = storageSlot();
+        // #2322 — a loan with a live swap-to-repay intent has NO collateral
+        // available to match: part of it is committed to the auction (in
+        // Diamond custody, owed to the order) and the rest is the pledge that
+        // backs the borrower's claim once the auction settles. Answering 0
+        // keeps such a loan out of every internal match — the candidate scan,
+        // the auto-dispatch and the explicit legs (which force-cancel a live
+        // intent first, so they read the post-cancel value) — through the one
+        // helper they all share, instead of each path re-deriving it.
+        if (s.intentCommits[loanId].orderHash != bytes32(0)) return 0;
         Loan storage loan = s.loans[loanId];
         if (loan.status == LoanStatus.FallbackPending) {
             Encumbrance storage lien = s.loanCollateralLien[loanId];

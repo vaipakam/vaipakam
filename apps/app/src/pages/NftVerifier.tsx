@@ -38,6 +38,7 @@ const LOCK_LABELS = (): Record<number, string> => ({
   1: copy.nftVerifier.lockPrecloseOffset,
   2: copy.nftVerifier.lockSale,
   3: copy.nftVerifier.lockPrepayListing,
+  4: copy.nftVerifier.lockSwapToRepayIntent,
 });
 
 interface VerifierResult {

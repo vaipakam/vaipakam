@@ -853,6 +853,7 @@
       "lockPrecloseOffset": "Preclose-by-offset के लिए locked — complete या cancel होने तक transfer नहीं हो सकता।",
       "lockSale": "Position sale listing के लिए locked — sale complete या listing cancel होने तक transfer नहीं हो सकता।",
       "lockPrepayListing": "Collateral listing के लिए locked — listing standing रहने तक transfer नहीं हो सकता।",
+      "lockSwapToRepayIntent": "Repay-from-collateral auction के लिए locked — loan चुकाने के live order में collateral लगा है, और order में शामिल न होने वाला कोई भी collateral pledged रहता है। Auction settle या cancel होने तक transfer नहीं हो सकता।",
       "sanctionsLabel": "Compliance स्थिति",
       "sanctionsFlagged": "Current holder compliance-flagged है: यह NFT उसके wallet में या बाहर transfer नहीं हो सकता, और flag clear होने तक claims frozen रहते हैं। Delivery expect करके यह token न खरीदें।",
       "sanctionsUnknown": "अभी holder का compliance status check नहीं कर सके — flagged holder का मतलब token transfer नहीं होगा, इसलिए rely करने से पहले re-check करें।",

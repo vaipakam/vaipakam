@@ -11,9 +11,9 @@ deployment measured it: with a little over a thousand owed and an allowance
 worth twelve hundred, all twelve hundred was sold. The owner decided the
 specification is the intent and the code was the defect.
 
-The close-out now sizes the sale to the debt. It sells the least collateral — up to rounding worth at most a few base
-units of the lending asset — whose worst-case proceeds, under the
-borrower-facing slippage cap, still cover the whole repayment; the allowance only bounds that, and everything
+The close-out now sizes the sale to the debt. It sells exactly the least collateral whose worst-case proceeds, under the
+borrower-facing slippage cap, still cover the whole repayment, whatever the
+two assets' decimals and prices (as refined by #2322); the allowance only bounds that, and everything
 above it stays pledged and is released by the borrower's normal claim. Any
 principal left after the debt is paid is the fill beating that worst case,
 which is the favourable-quote surplus the specification describes. A new
@@ -37,8 +37,8 @@ into a local fork of the live Base Sepolia deployment, it passes, along with
 every other repay-from-collateral check. On the walkthrough's loan the sale
 fell from the whole allowance to the collateral the debt needed, and the rest
 stayed pledged until the borrower's claim released it. The
-resolver-filled intent path still commits the whole collateral to its
-auction; the specification's rule — unused collateral stays pledged and
-claimable — applies to it too, so it is to be sized to the debt as well. That
-is a separate change, tracked in #2322, and is not part of this one.
+resolver-filled intent path committed the whole collateral to its auction
+when this change landed. The specification's rule, that unused collateral
+stays pledged and claimable, applies there too. It is sized by the same
+rule in a separate change (#2322), not in this one.
 Closes #2317.

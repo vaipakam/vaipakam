@@ -199,6 +199,30 @@
     "stateMutability": "nonpayable"
   },
   {
+    "type": "function",
+    "name": "previewSwapToRepayIntentLot",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "lot",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "minTakerAmount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
     "type": "event",
     "name": "CollateralConsolidated",
     "inputs": [
@@ -1227,6 +1251,17 @@
   },
   {
     "type": "error",
+    "name": "ERC721NonexistentToken",
+    "inputs": [
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "EncumbranceUnderflow",
     "inputs": [
       {
@@ -1491,6 +1526,17 @@
       },
       {
         "name": "minHF",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "IntentCollateralCannotCoverDebtFloor",
+    "inputs": [
+      {
+        "name": "minOut",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -2027,6 +2073,27 @@
     "type": "error",
     "name": "LoanNotActive",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "LockReasonConflict",
+    "inputs": [
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "current",
+        "type": "uint8",
+        "internalType": "enum LibERC721.LockReason"
+      },
+      {
+        "name": "attempted",
+        "type": "uint8",
+        "internalType": "enum LibERC721.LockReason"
+      }
+    ]
   },
   {
     "type": "error",

@@ -1002,7 +1002,7 @@ contract HelperTest {
     {
         // T-087 Sub 3.B — preInteraction / postInteraction /
         // isValidSignature moved to IntentDispatchFacet.
-        selectors = new bytes4[](8);
+        selectors = new bytes4[](9);
         selectors[0] = SwapToRepayIntentFacet.commitSwapToRepayIntent.selector;
         selectors[1] = SwapToRepayIntentFacet.cancelSwapToRepayIntent.selector;
         selectors[2] = SwapToRepayIntentFacet.cancelExpiredIntent.selector;
@@ -1018,6 +1018,8 @@ contract HelperTest {
         // mirror the canonical extension bytes the commit gate
         // requires.
         selectors[7] = SwapToRepayIntentFacet.canonicalExtension.selector;
+        // #2322 — read-only preview of the debt-sized auction lot.
+        selectors[8] = SwapToRepayIntentFacet.previewSwapToRepayIntentLot.selector;
     }
 
     /// @notice T-087 Sub 3.B — IntentDispatchFacet selectors.

@@ -599,10 +599,9 @@ contract SwapToRepayFacetTest is SetupTest {
     /// @dev #2317 sizing property, for any prices, bound and decimals:
     ///      - a revert happens only when even the bound cannot cover the debt;
     ///      - otherwise the sale covers the debt at its floor, never exceeds
-    ///        the bound, reports the floor it will enforce, and is the least
-    ///        such amount up to rounding worth at most a few base units of
-    ///        the lending asset (the minimum found by binary search over the
-    ///        independent floor).
+    ///        the bound, reports the floor it will enforce, and is EXACTLY
+    ///        the least such amount (the minimum found by binary search over
+    ///        the independent floor — Codex #2341 r5).
     ///      Removing the facet's step-up past rounding, or selling the bound
     ///      (the pre-#2317 behaviour), each fails this property.
     function _assertSizingProperty(SizingCase memory c, uint256 maxIn) internal {
@@ -626,15 +625,7 @@ contract SwapToRepayFacetTest is SetupTest {
                 if (_indepFloor(mid, c.colPrice, c.colFeedDec, c.colTokenDec, c.prinPrice, c.prinFeedDec, prinTokenDec) >= required) hi = mid;
                 else lo = mid + 1;
             }
-            // Collateral units worth two base units of the lending asset,
-            // rounded up, plus two — the rounding the spec allows.
-            uint256 slack = Math.mulDiv(
-                2 * c.prinPrice * (10 ** c.colTokenDec) * (10 ** c.colFeedDec),
-                1,
-                c.colPrice * (10 ** prinTokenDec) * (10 ** c.prinFeedDec),
-                Math.Rounding.Ceil
-            ) + 2;
-            assertLe(sell - lo, slack, "the least such sale, up to rounding");
+            assertEq(sell, lo, "exactly the least covering sale");
         } catch (bytes memory reason) {
             assertEq(bytes4(reason), SwapToRepayFacet.SwapBoundsInsufficient.selector, "only an insufficient bound refuses");
             // The debt the preview would have covered, at the loan's own clock.

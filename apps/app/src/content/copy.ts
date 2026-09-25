@@ -1718,6 +1718,8 @@ const copySource = {
       'Locked for a position sale listing — it can’t be transferred until the sale completes or the listing is cancelled.',
     lockPrepayListing:
       'Locked for a collateral listing — it can’t be transferred while that listing stands.',
+    lockSwapToRepayIntent:
+      'Locked for a repay-from-collateral auction — collateral is committed to a live order to repay the loan, and any collateral the order does not include stays pledged. It can’t be transferred until the auction settles or is cancelled.',
     sanctionsLabel: 'Compliance status',
     sanctionsFlagged:
       'The current holder is compliance-flagged: this NFT cannot be transferred in or out of their wallet, and its claims stay frozen until the flag clears. Do not buy this token expecting delivery.',

@@ -853,6 +853,7 @@
       "lockPrecloseOffset": "Verrouillé pour une clôture anticipée par offset — il ne peut pas être transféré tant que cela n'est pas terminé ou annulé.",
       "lockSale": "Verrouillé pour une annonce de vente de position — il ne peut pas être transféré tant que la vente n'est pas terminée ou l'annonce annulée.",
       "lockPrepayListing": "Verrouillé pour une annonce de garantie — il ne peut pas être transféré tant que cette annonce existe.",
+      "lockSwapToRepayIntent": "Verrouillé pour une enchère de remboursement sur garantie — de la garantie est engagée dans un ordre actif pour rembourser le prêt, et toute garantie que l’ordre n’inclut pas reste nantie. Il ne peut pas être transféré tant que l’enchère n’est pas réglée ou annulée.",
       "sanctionsLabel": "Statut de conformité",
       "sanctionsFlagged": "Le détenteur actuel est signalé par la conformité : ce NFT ne peut pas entrer ni sortir de son portefeuille, et ses retraits restent gelés jusqu'à levée du signalement. N'achetez pas ce token en espérant sa livraison.",
       "sanctionsUnknown": "Impossible de vérifier le statut de conformité du détenteur pour le moment — un détenteur signalé signifie que le token ne peut pas être transféré ; revérifiez avant de vous y fier.",
