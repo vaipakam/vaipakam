@@ -1932,9 +1932,17 @@ class Assembly:
 
         MARKER COVERAGE IS ASKED PER FRAGMENT, BY NAME (#2312). A heading
         match is only a note when this file records a marker for the SAME
-        fragment name — the documented case of a fragment edited after an
-        interrupted run, whose older text the marker proves was folded in. Any
-        other match is refused, whatever other markers the file carries.
+        fragment name; any other match is refused, whatever other markers
+        the file carries. A same-name marker whose hash differs from the
+        pending text is AMBIGUOUS, and is not claimed to be anything more
+        (#2328 r2): it is either the documented edit made after an
+        interrupted run, or a new fragment reusing an old file name. Both
+        are noted and appended rather than refused because both produce the
+        same file — two sections, neither lost — and the hash mismatch rules
+        out publishing the recorded text a second time, which is the one
+        thing a refusal here exists to prevent. The note tells the operator
+        to look for a superseded copy, which is the right action under
+        either reading.
 
         This used to be a whole-file `any()`: one marker anywhere downgraded
         every refusal to a note. That was sound for a file written wholly in

@@ -15,14 +15,15 @@ second time and its source deleted. This was found by reading the code and
 reproduced in a test; no duplicate has been traced to it.
 
 The check now asks the question per fragment: does this file record a marker
-for this fragment's own name? If it does, the match is the known case of a
-fragment edited after an interrupted run, and it is appended with a note as
-before. If it does not, the run stops and asks, whatever other markers the
-file carries. The same rule now governs the refusal for a dated file that
-cannot be read as plain text, and that check no longer counts the markers
-themselves: a marker records a fragment's file name exactly as the filesystem
-gave it, which need not be plain text, and one such name used to make a whole
-file look unreadable.
+for this fragment's own name? If it does, the pending text is either an edit
+made after an interrupted run or a new fragment reusing an old file name;
+neither loses anything by being appended, so it is appended with a note as
+before, asking for a superseded copy to be checked. If it does not, the run
+stops and asks, whatever other markers the file carries. The same rule now
+governs the refusal for a dated file that cannot be read as plain text, and
+that check no longer counts the markers themselves: a marker records a
+fragment's file name exactly as the filesystem gave it, which need not be
+plain text, and one such name used to make a whole file look unreadable.
 
 The cost is a refusal when two different fragments in one day's file share a
 title exactly. In every dated file in the repository, the only repeated
