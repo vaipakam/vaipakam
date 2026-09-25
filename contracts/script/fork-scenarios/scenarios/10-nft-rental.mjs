@@ -10,7 +10,7 @@
  * vault custody. Each of those is asserted below against what the chain did.
  */
 import { DIAMOND, MOCKS, TREASURY, borrower, lender, outsider, parseUnits, pub, tx } from '../lib/chain.mjs';
-import { ABIS, acceptStoredOffer, approveDiamond, delta, mint, read, snapshot, vaultAddressFor } from '../lib/flow.mjs';
+import { ABIS, STATUS, acceptStoredOffer, approveDiamond, delta, mint, read, snapshot, vaultAddressFor } from '../lib/flow.mjs';
 import { f18 } from '../lib/chain.mjs';
 import { warpDays } from '../lib/impersonate.mjs';
 import { simulate } from '../lib/errors.mjs';
@@ -135,8 +135,8 @@ export async function run() {
   const ownerAfter = await pub.readContract({ address: nft, abi: NFT, functionName: 'ownerOf', args: [tokenId] });
   // Exact, not "anyone but the renter": the user right is cleared to the
   // zero address and custody stays in the LENDER'S vault until the claim.
-  check('A10.6', 'closing early REVOKES the renter\'s user right, and the NFT stays in the lender\'s vault',
-    /^0x0{40}$/i.test(userAfter) && ownerAfter.toLowerCase() === lenderVault.toLowerCase(),
+  check('A10.6', 'closing early ends the rental Repaid, REVOKES the renter\'s user right, and the NFT stays in the lender\'s vault',
+    String(loanAfter.status) === String(STATUS.Repaid) && /^0x0{40}$/i.test(userAfter) && ownerAfter.toLowerCase() === lenderVault.toLowerCase(),
     `gas=${closed.gasUsed} status=${loanAfter.status} userOf=${userAfter.slice(0, 10)} ownerOf=${ownerAfter.slice(0, 10)} ` +
     `quote=${quote === null ? 'n/a' : JSON.stringify(quote, (_, v) => (typeof v === 'bigint' ? String(v) : v))}`);
 

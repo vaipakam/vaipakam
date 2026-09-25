@@ -8,8 +8,15 @@ configuration — not the source tree's idea of them.
 - **Target** — Diamond `0xd89fd7F787e4415460b23891E97570a4881fb995`, chain
   84532 (Base Sepolia), forked at block 47,228,632.
 - **Driver** — [`contracts/script/fork-scenarios/`](../../contracts/script/fork-scenarios/README.md),
-  committed with this document. `node run-all.mjs` reproduces every row.
-- **Result** — 149 scenarios: **137 PASS, 11 INFO, 1 FAIL**, no aborted
+  committed with this document. `node run-all.mjs` against a fresh fork
+  re-verifies the deployment **as it is at that moment**; configuration can
+  change after this run, so a later fork need not reproduce these figures. To
+  re-run against the exact state below, pin the fork to block **47,276,672**
+  (`anvil --fork-block-number`, see the driver README) — the block every
+  ledger now records as `forkBlock`. Figures that depend on elapsed time can
+  still differ in the last decimals, since the warps land on different
+  seconds.
+- **Result** — 156 scenarios: **145 PASS, 10 INFO, 1 FAIL**, no aborted
   file. The INFOs are observations with no assertion behind them, not soft
   failures — the ledger's API makes a row either an assertion (PASS/FAIL
   only) or an observation (INFO only), so no failure can land as INFO; each
@@ -18,7 +25,7 @@ configuration — not the source tree's idea of them.
   the debt needs — and the live bytecode sells the whole cap. It turns green
   when the #2317 fix is deployed.
 - **Node** — the figures above are from a re-run on **Anvil** (2026-09-25,
-  forked at block 47,275,981). The first run used a hardhat fork node and
+  forked at block 47,276,672). The first run used a hardhat fork node and
   reported 129 rows, 123 / 6 / 0. The differences are the A11.5 oracle
   change above; new rows — A3.13 (the collateral-drawdown liquidation §2.4
   now drives), exact settlement ledgers for every fund-moving step (the
@@ -151,10 +158,27 @@ deployment configured otherwise. The stamps are themselves asserted equal to
 the live configuration at origination (A2.3–A2.5), and the admission floor
 against the spec's governed range [1.2, 2.0] (A1.1).
 
+A fifth pass took the same question to the rows that still asserted part of
+a step: every claim is now checked on BOTH legs (the vault it leaves and the
+wallet it lands in, nothing else moving — A3.7), the lien left standing after
+a repay is compared field by field rather than on its `released` flag (A2.13),
+the position NFTs after a claim are asserted against the spec's closure rule
+rather than recorded (A2.16), the final repayment after a partial and the
+original borrower's collateral claim after an offset are accounted in their
+own right (A4.7b, A7.4b), both lender sales require the buyer to hold the
+lender position NFT and not merely to be named on the loan (A8.2, A8.7), the
+rental close must end exactly `Repaid` (A10.6), the armed KYC gate must refuse
+the accept by name (A5.9), and the time-based default is driven while the
+sanctions stub is armed (A5.5b). The run also stopped trusting two artifact
+values it had been reading: the admin the gate scenarios act through is the
+live `ADMIN_ROLE` holder (A1.3c records it against the artifact's), and the
+periodic threshold probe values its principal at the live oracle price.
+
 **What is still asserted below that level, and why.** The full swap-to-repay
-(A11.4, A11.6) is asserted as an accounting identity rather than an expected
-ledger, because its intended sale size is exactly what #2317 changes — A11.5
-carries that expectation and fails until the fix ships. Figures that depend on ELAPSED time — accrued interest, and so the
+debt split is now an exact ledger (A11.6: lender and treasury each against the
+loan's payoff quote and stamped fee), but the SALE SIZE in that ledger is read
+from the chain rather than predicted, because it is exactly what #2317
+changes — A11.5 carries that expectation and fails until the fix ships. Figures that depend on ELAPSED time — accrued interest, and so the
 forced-close splits in §2.1 — differ from the first run's in the sixth
 decimal, because the time warps land on different seconds; every fee rate,
 cap, ratio and fixed-amount figure is identical.
@@ -239,7 +263,9 @@ Two distinct facts that are easy to collapse into one:
   `CLAUDE.md` states for the refinance path.
 - **The claim spends the claiming side's receipt.** After
   `claimAsBorrower`, the borrower's token no longer resolves; the lender's
-  still does.
+  still resolves, to the lender. That is the spec's closure rule — each
+  side's NFT is burned once that side has claimed — and it is asserted
+  (A2.16), not merely recorded.
 
 So "a terminal loan's NFTs are gone" is wrong, and "a terminal loan's NFTs
 always resolve" is also wrong. An indexer needs both halves.
@@ -370,7 +396,8 @@ reproduce all three states — not because the shipped surface is missing it.
 With `allowsPartialRepay` set on the offer, the flag carries onto the loan, a
 400-of-1,000 payment reduces the recorded principal to 600 and leaves the
 loan `Active`, the payoff quote re-quotes at 600.575342, and the final
-`repayLoan` terminalizes to `Repaid`.
+`repayLoan` terminalizes to `Repaid` — debiting exactly that quote and paying
+the lender's vault the 600 plus the interest net of the treasury's 2% (A4.7b).
 
 One asymmetry worth noting for interface work: the **partial** payment went
 straight to the lender's **wallet**, while a **full** repay credits the
@@ -395,6 +422,13 @@ same borrower, principal, rate, term and `Active` status:
   posted by the LENDER**. Classify the two by `offerType` alone and both land
   under the wrong party. `createLoanSaleOffer` returns nothing, so the
   vehicle's id is read from the `LoanSaleOfferLinked` event.
+On both routes the buyer ends up holding the **lender position NFT** the
+loan now names — the lender side's authority — not merely being written into
+the loan's `lender` field. After the sale the loan names a DIFFERENT lender
+token id (68 → 72 on the listed route, 73 → 76 on the direct one), so an
+indexer tracking the lender side by the seller's token id loses it at the
+sale; this run does not assert what becomes of the seller's old token.
+
 - **Direct.** `sellLoanViaBuyOffer` sells straight into a buyer's standing
   lender offer in one transaction, with no listing. A non-lender caller is
   refused with `NotNFTOwner()` — the lender position NFT authorises, as the
@@ -482,15 +516,24 @@ Two details the run turned up that are not obvious from the name:
 The settlement reconciles: the borrower repays principal plus accrued
 interest, their escrowed offer principal is released, the original lender is
 made whole, the incoming party receives the net new principal and posts the
-collateral, and the treasury takes the LIF on the new loan.
+collateral, and the treasury takes the LIF on the new loan. The original
+collateral does not move in the offset itself; the original borrower's
+`claimAsBorrower` then returns exactly all of it and releases the lien
+(A7.4b, A7.4c).
 
 ### 3A.4 Obligation handover keeps the loan; refinance replaces it
 
 `transferObligationViaOffer` hands a live loan to a replacement borrower who
 has a standing offer, and — unlike refinance — the **loan record survives**.
 Its `borrower` is rewritten in place, the lender and principal are untouched,
-the exiting borrower pays only the interest accrued so far and takes their
-collateral back, and the loan stays `Active`.
+and the loan stays `Active`. The exiting borrower takes their collateral back
+and pays the interest accrued to the second **plus a lender-protection
+shortfall**: where the replacement's remaining interest is less than the
+original's, the difference is charged to the exiting borrower and held for
+the lender (the treasury's fee applies to the accrued part only). In this run
+the replacement's term was a day shorter than what remained, so that
+shortfall was positive — the handover cost more than the accrued interest,
+and A7.7b asserts both parts.
 
 So the two "move this position to someone else" paths differ in a way any
 indexer has to model: refinance ends one loan and starts another; handover
@@ -537,9 +580,14 @@ and put back afterwards (confirmed `false` after the run):
   about 0.7% *more* than the 410.96 due — consistent with the sale being
   sized to cover the bonus and fee with a small margin, but this run does not
   assert the sizing rule. A second settle of the same period is refused.
-- **A period the borrower pays voluntarily closes itself.** Paying the due
-  amount through a partial repayment advanced the period's settled-at stamp
-  by exactly one interval **inside the repayment**, so there is no separate
+- **A period the borrower pays voluntarily closes itself.** A partial
+  repayment charges ALL interest accrued to that moment, then retires the
+  principal amount named — so a borrower paying a period names the smallest
+  principal reduction the protocol accepts (on this deployment one base
+  unit: `minPartialBps` is 0). On day 31 that cost exactly **424.66** —
+  31 whole days of interest, more than the 410.96 due for the 30-day period —
+  plus that one unit (A9.13). It advanced the period's settled-at stamp by
+  exactly one interval **inside the repayment**, so there is no separate
   "stamp" call left to make — one is refused `PeriodicSettleNotDue`. The
   facet's natspec describes a separate just-stamp call for a period the
   borrower already covered; in this flow the repayment does the stamping
@@ -634,7 +682,7 @@ With a stub oracle armed so that every address reads as flagged:
 | `createOffer` | 1 | `SanctionedAddress(address)` |
 | `getOrCreateUserVault` | 1 | `SanctionedAddress(address)` |
 | `repayLoan` | 2 | **open** — simulates clean |
-| default readback | 2 | **open** |
+| `triggerDefault`, past term + grace, by a flagged caller | 2 | **open** — simulates clean (A5.5b) |
 
 Position-creating and fund-receiving paths refuse; close-out paths stay open
 so the unflagged counterparty can be made whole. Disarming restores
@@ -652,8 +700,9 @@ The knob is dormant on retail, as required: `isKYCVerified` and
 and flipping it back restores the retail posture — the knob is clean in both
 directions.
 
-But with enforcement **armed**, a $50,000 `createOffer` was still **allowed**;
-it was the **accept** that refused, with `KYCRequired()`.
+But with enforcement **armed**, a $50,000 `createOffer` was still **allowed**
+(observed, A5.9b); it was the **accept** that refused, with `KYCRequired()`
+(asserted by name, A5.9 — that refusal is the knob's purpose).
 
 This is not wrong — the offer creates no position — but it is a real
 interface consequence for the industrial fork: a maker can post an offer they
@@ -767,7 +816,7 @@ replace.
 
 ## 7. Ledger
 
-The full 149-row ledger, with per-scenario verdicts and observed numbers, is
+The full 156-row ledger, with per-scenario verdicts and observed numbers, is
 regenerated as `contracts/script/fork-scenarios/last-run.json` on every run
 (untracked). Scenario ids map to the driver's files:
 
@@ -785,7 +834,7 @@ regenerated as `contracts/script/fork-scenarios/last-run.json` on every run
 | A10.* | `10-nft-rental.mjs` | ERC-721 rental against the spec's custody-vs-use model, early close, claims |
 | A11.* | `11-swap-to-repay.mjs` | repaying from collateral: authority, the cap, full and partial modes |
 
-The eleven `INFO` rows, each an observation with no assertion behind it:
+The ten `INFO` rows, each an observation with no assertion behind it:
 
 - **Deployment configuration** — the sanctions oracle and KYC posture (A1.2,
   A5.1) and the periodic-interest switch (A9.1). These are values an
@@ -793,20 +842,22 @@ The eleven `INFO` rows, each an observation with no assertion behind it:
   arms the feature must not keep reporting a green "unset". (The first run
   recorded them as PASS.)
 - **The live facet count** (A1.6), an observation feeding §5, and **the
-  artifact's treasury against the live one** (A1.3b — they match today; the
-  driver reads the live value, because the treasury is mutable).
+  artifact's treasury and admin against the live ones** (A1.3b, A1.3c — both
+  match today; the driver reads the live values, because both are mutable).
 - **Findings written up rather than certified** — the feed-only reprice
-  flip (A3.10, §2.4) and where the KYC gate binds (A5.9, §4.2; the first run
-  recorded it as PASS, which would have certified a behaviour this document
-  calls a finding).
+  flip (A3.10, §2.4) and that offer CREATION is not KYC-gated (A5.9b, §4.2;
+  the first run recorded it as PASS, which would have certified a behaviour
+  this document calls a finding — the accept-side refusal beside it is
+  asserted, A5.9).
 - **Something the spec does not pin down** — how much the lender receives
   above the period's shortfall after a periodic auto-settlement (A9.11b:
   2.88 on a 410.96 period). The spec says the sale covers "the shortfall plus
   configured buffers" and does not say who keeps the buffer, so the amount is
   surfaced for an owner reading rather than certified.
-- **Shapes worth writing down** — the two post-claim NFT readbacks (A2.16,
-  §1.4) and the offset vehicle's offer type (A7.2b, §3A.3; its mirror, the
-  sale vehicle, is asserted as A8.1). A rental's health-factor refusal
+- **Shapes worth writing down** — the offset vehicle's offer type (A7.2b,
+  §3A.3; its mirror, the sale vehicle, is asserted as A8.1). The two
+  post-claim NFT readbacks (A2.16, §1.4) were observations until the fifth
+  pass and are now asserted against the spec's closure rule. A rental's health-factor refusal
   (A10.5, §3C) was an observation in the first run and is now asserted by
   name, since the spec says a rental has no health factor.
 

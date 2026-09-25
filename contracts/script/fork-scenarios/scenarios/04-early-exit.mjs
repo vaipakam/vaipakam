@@ -91,9 +91,24 @@ export async function run() {
     check('A4.6', 'the payoff quote reflects the paydown — the new principal plus interest, and no more than before',
       remaining > mid.principal && remaining < opened.principal, `remaining=${f18(remaining)} principalNow=${f18(mid.principal)}`);
 
-    await tx(borrower, { address: DIAMOND, abi: ABIS.repay, functionName: 'repayLoan', args: [loanId] }, 'repayLoan');
+    // The final repayment runs on the state the partial left behind — the
+    // reduced principal and the reset accrual clock — which the ordinary A2
+    // repay never exercises, so it is accounted in its own right: the payoff
+    // quote from the borrower's wallet, the remaining principal + interest
+    // less the treasury's fee on that interest into the lender's vault.
+    const finalInterest = remaining - mid.principal;
+    const finalCut = (finalInterest * BigInt(mid.treasuryFeeBpsAtInit)) / 10_000n;
+    const beforeFinal = await snapshot(tokens, holders);
+    const finalReceipt = await tx(borrower, { address: DIAMOND, abi: ABIS.repay, functionName: 'repayLoan', args: [loanId] }, 'repayLoan');
+    const afterFinal = await snapshot(tokens, holders);
     const finished = await read(ABIS.loan, 'getLoanDetails', [loanId]);
-    expectEq('A4.7', 'the final repayment after a partial terminalizes to Repaid', finished.status, 1);
+    expectEq('A4.7', 'the final repayment after a partial terminalizes to Repaid', finished.status, STATUS.Repaid);
+    expectLedger('A4.7b', 'the final repayment after a partial moves exactly: the re-quoted payoff from the borrower, the remaining principal + interest net of the treasury fee to the lender\'s vault',
+      beforeFinal, afterFinal, {
+        'lending.borrowerEOA': -remaining,
+        'lending.lenderVault': remaining - finalCut,
+        'lending.treasury': finalCut,
+      }, `gas=${finalReceipt.gasUsed} principal=${f18(mid.principal)} interest=${f18(finalInterest)}`);
   }
 
   // ---------------------------------------------------- lender loan sale

@@ -123,6 +123,20 @@ export async function run() {
 
     const late = await simulate(DIAMOND, ABIS.preclose, 'completeOffset', [loanId], borrower.address);
     expectRefusal('A7.4', 'calling completeOffset afterwards is refused — the auto-link already ran', late, 'LoanNotActive');
+
+    // The original collateral stayed put through the offset, released to the
+    // borrower's claim. Exercised, not just stated: a completion that settled
+    // the money but never recorded the claim would otherwise stay green.
+    const beforeClaim = await snapshot(tokens, holders);
+    const claimed = await tx(borrower, { address: DIAMOND, abi: ABIS.claim, functionName: 'claimAsBorrower', args: [loanId] }, 'claimAsBorrower(offset)');
+    const afterClaim = await snapshot(tokens, holders);
+    const lien = await read(ABIS.metrics, 'getLoanCollateralLien', [loanId]);
+    expectLedger('A7.4b', 'after the offset the original borrower claims exactly their original collateral, vault → wallet',
+      beforeClaim, afterClaim, {
+        'collateral.borrowerVault': -origLoan.collateralAmount,
+        'collateral.borrowerEOA': origLoan.collateralAmount,
+      }, `gas=${claimed.gasUsed}`);
+    check('A7.4c', 'the claim releases the original loan\'s collateral lien', lien.released === true, `lien.released=${lien.released}`);
   }
 
   // ------------------------------------------------- obligation handover

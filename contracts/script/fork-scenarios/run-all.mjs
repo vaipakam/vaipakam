@@ -56,10 +56,16 @@ if (!code) {
 // first read. That skipped a whole file on every fresh fork while the tally
 // below still looked clean. One mined block puts `latest` past the fork point
 // and the whole class goes away.
+// The block the fork was taken at, so a ledger says WHICH chain state it
+// describes: a later run against a later fork reads later configuration and
+// need not reproduce these figures. Anvil reports it; another node may not,
+// and then the ledger says unknown rather than guessing.
+const info = await rpc('anvil_nodeInfo');
+const forkBlock = info.result?.forkConfig?.forkBlockNumber ?? null;
 await rpc('evm_mine');
 await resolveLive();
 await fundActors();
-console.log(`fork ${RPC_URL} | chain ${CHAIN_SLUG} | diamond ${DIAMOND} | block ${await pub.getBlockNumber()}\n`);
+console.log(`fork ${RPC_URL} | chain ${CHAIN_SLUG} | diamond ${DIAMOND} | forked at block ${forkBlock ?? 'unknown'} | now ${await pub.getBlockNumber()}\n`);
 
 // Every file starts from the SAME fork state and leaves nothing behind.
 //
@@ -107,6 +113,6 @@ if (aborted.length) {
   for (const a of aborted) console.log(`  ${a.file} — ${a.why}`);
 }
 const out = path.join(HERE, 'last-run.json');
-fs.writeFileSync(out, JSON.stringify({ chain: CHAIN_SLUG, diamond: DIAMOND, counts, aborted, rows: ledger() }, null, 1));
+fs.writeFileSync(out, JSON.stringify({ chain: CHAIN_SLUG, diamond: DIAMOND, forkBlock, counts, aborted, rows: ledger() }, null, 1));
 console.log(`ledger -> ${out}`);
 if (counts.FAIL || aborted.length) process.exitCode = 1;

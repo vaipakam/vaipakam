@@ -11,7 +11,7 @@ import { ABIS, STATUS, delta, dynamicIncentiveBps, forcedCloseWaterfall, lateFee
 import { f18 } from '../lib/chain.mjs';
 import { MOCK_ADAPTER_ABI, repriceFaucetAsset, sendAsOwner, setFeedUsd, warpDays } from '../lib/impersonate.mjs';
 import { simulate } from '../lib/errors.mjs';
-import { check, expectEq, expectLedger, observe, expectRefusal } from '../lib/report.mjs';
+import { cannotContinue, check, expectEq, expectLedger, observe, expectRefusal } from '../lib/report.mjs';
 
 const TRY_LIST = [{ adapterIdx: 0n, data: '0x' }];
 
@@ -118,15 +118,24 @@ export async function run() {
     preDefault, defaultReceipt, beforeDefault, afterDefault, collateral, lending);
 
   // Each side's claim must move exactly the share the default credited to
-  // that side's vault out to that side's wallet.
+  // that side's vault out to that side's wallet — both legs, and nothing else
+  // (not the Diamond, not the treasury, not the other side). Any collateral
+  // the sale did not take goes back with the borrower's claim.
+  const unsold = preDefault.collateralAmount - sold;
   for (const [side, fn, acct] of [['lender', 'claimAsLender', lender], ['borrower', 'claimAsBorrower', borrower]]) {
     const credited = afterDefault[`lending.${side}Vault`] - beforeDefault[`lending.${side}Vault`];
+    if (credited <= 0n) cannotContinue(`A3.7.${side}`, `the default credited the ${side} nothing to claim`);
+    const residual = side === 'borrower' ? unsold : 0n;
     const before = await snapshot(tokens, holders);
     const r = await tx(acct, { address: DIAMOND, abi: ABIS.claim, functionName: fn, args: [loanId] }, fn);
     const after = await snapshot(tokens, holders);
-    check(`A3.7.${side}`, `after a default the ${side} sweeps exactly their credited share out of their vault`,
-      after[`lending.${side}EOA`] - before[`lending.${side}EOA`] === credited && credited > 0n,
-      `gas=${r.gasUsed} credited=${f18(credited)} deltas=${JSON.stringify(delta(before, after))}`);
+    expectLedger(`A3.7.${side}`, `after a default the ${side} sweeps exactly their credited share, vault → wallet, and nothing else moves`,
+      before, after, {
+        [`lending.${side}Vault`]: -credited,
+        [`lending.${side}EOA`]: credited,
+        [`collateral.${side}Vault`]: -residual,
+        [`collateral.${side}EOA`]: residual,
+      }, `gas=${r.gasUsed} credited=${f18(credited)} unsoldCollateral=${f18(residual)}`);
   }
 
   // ------------------------------------------------------- HF liquidation

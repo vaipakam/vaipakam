@@ -14,12 +14,12 @@
  * no user-reachable capability hidden behind the flag — this file checks the
  * contract path, not an interface gap.
  */
-import { ADMIN, DIAMOND, MOCKS, TREASURY, borrower, lender, outsider, parseUnits, tx } from '../lib/chain.mjs';
+import { ADMIN, DIAMOND, MOCKS, TREASURY, borrower, lender, outsider, parseUnits, pub, tx } from '../lib/chain.mjs';
 import { ABIS, approveDiamond, delta, mint, offerParams, openLoan, read, snapshot, vaultAddressFor } from '../lib/flow.mjs';
 import { f18 } from '../lib/chain.mjs';
 import { sendAs, warpDays } from '../lib/impersonate.mjs';
 import { simulate } from '../lib/errors.mjs';
-import { check, observe, expectRefusal } from '../lib/report.mjs';
+import { cannotContinue, check, expectLedger, observe, expectRefusal } from '../lib/report.mjs';
 import { dynamicIncentiveBps } from '../lib/flow.mjs';
 
 const MONTHLY = 1;
@@ -74,12 +74,15 @@ async function runPeriodic(initial) {
   const small = await simulate(DIAMOND, ABIS.offerCreate, 'createOffer',
     [await offerParams({ amount: parseUnits('10', 18), collateralAmount: parseUnits('0.0125', 18), durationDays: 90n, periodicInterestCadence: MONTHLY })],
     lender.address);
-  // 10 tLIQ2 at $1 is 10 numeraire units: refused exactly when the
-  // deployment's threshold is above that, admitted otherwise.
-  const shouldRefuse = threshold > parseUnits('10', 18);
-  check('A9.6', 'the finer-cadence principal threshold decides admission of a 10-unit principal',
+  // The threshold is in NUMERAIRE units, so the 10-token principal is valued
+  // at the live oracle price (token and feed decimals from the chain, not a
+  // $1 assumption): refused exactly when that value is below the threshold.
+  const [smallPrice, smallFeedDec] = await read(ABIS.oracle, 'getAssetPrice', [lending]);
+  const smallValue = (parseUnits('10', 18) * smallPrice) / 10n ** BigInt(smallFeedDec);
+  const shouldRefuse = smallValue < threshold;
+  check('A9.6', 'the finer-cadence principal threshold decides admission of a 10-token principal, valued at the live oracle price',
     small.ok === !shouldRefuse && (small.ok || small.name.split('(')[0] === 'CadenceNotAllowed'),
-    `threshold=${f18(threshold)} -> ${small.ok ? 'admitted' : small.name}`);
+    `value=${f18(smallValue)} threshold=${f18(threshold)} -> ${small.ok ? 'admitted' : small.name}`);
 
   // ---------------------------------------- a periodic loan, settled
   const PRINCIPAL = parseUnits('100000', 18);
@@ -151,26 +154,45 @@ async function runPeriodic(initial) {
   const twice = await simulate(DIAMOND, ABIS.repayPeriodic, 'settlePeriodicInterest', [loanId, [{ adapterIdx: 0n, data: '0x' }]], outsider.address);
   expectRefusal('A9.12', 'the same period cannot be settled twice', twice, 'PeriodicSettleNotDue');
 
-  // Just-stamp path: a second loan whose borrower pays the period's interest
-  // voluntarily first. Then nothing is sold — the period is simply stamped.
+  // Voluntary path: a second loan whose borrower pays the period themselves.
+  // A partial repayment charges ALL interest accrued to now (whole days,
+  // borrower-favourable) and then retires the principal amount named — so to
+  // pay the period rather than buy down principal, the borrower names the
+  // SMALLEST principal reduction the protocol accepts (the asset's
+  // `minPartialBps` floor, or one unit if there is none). What it costs is
+  // asserted exactly, not described.
   const second = await openLoan({ lender, borrower, amount: PRINCIPAL, collateralAmount: parseUnits('125', 18), durationDays: 90n, periodicInterestCadence: MONTHLY, allowsPartialRepay: true });
   await warpDays(31);
   const due = await read(ABIS.repayPeriodic, 'previewPeriodicSettle', [second.loanId]);
-  const shortfall = Array.isArray(due) ? due[5] : 0n;
+  const secondLoan = await read(ABIS.loan, 'getLoanDetails', [second.loanId]);
+  const { minPartialBps } = await read(ABIS.config, 'getAssetRiskParams', [lending]);
+  const minPart = (secondLoan.principal * BigInt(minPartialBps)) / 10_000n;
+  const part = minPart > 0n ? minPart : 1n;
   await mint(borrower, lending, '100000');
   await approveDiamond(borrower, lending);
-  const pay = await simulate(DIAMOND, ABIS.repay, 'repayPartial', [second.loanId, shortfall], borrower.address);
-  if (!pay.ok) throw new Error(`A9.13 voluntary period payment: repayPartial(${f18(shortfall)}) -> ${pay.name}`);
-  const stampBefore = (await read(ABIS.loan, 'getLoanDetails', [second.loanId])).lastPeriodicInterestSettledAt;
-  await tx(borrower, { address: DIAMOND, abi: ABIS.repay, functionName: 'repayPartial', args: [second.loanId, shortfall] }, 'repayPartial(period)');
+  const pay = await simulate(DIAMOND, ABIS.repay, 'repayPartial', [second.loanId, part], borrower.address);
+  if (!pay.ok) cannotContinue('A9.13 voluntary period payment', `repayPartial(${f18(part)}) -> ${pay.name}`);
+  const stampBefore = secondLoan.lastPeriodicInterestSettledAt;
+  const beforePay = await snapshot(tokens, holders);
+  const payReceipt = await tx(borrower, { address: DIAMOND, abi: ABIS.repay, functionName: 'repayPartial', args: [second.loanId, part] }, 'repayPartial(period)');
+  const afterPayBal = await snapshot(tokens, holders);
   const paid = await read(ABIS.loan, 'getLoanDetails', [second.loanId]);
   const afterPay = await read(ABIS.repayPeriodic, 'previewPeriodicSettle', [second.loanId]);
-  // What the run observed: the voluntary payment closes the period BY
-  // ITSELF — the settled-at stamp advances inside the repayment, so there is
-  // no separate "just-stamp" call left to make, and one is refused NotDue.
-  check('A9.13', 'a borrower paying the period voluntarily closes it in the same transaction — no swap, no separate stamp',
-    paid.lastPeriodicInterestSettledAt > stampBefore,
-    `paid=${f18(shortfall)} settledAt ${stampBefore} -> ${paid.lastPeriodicInterestSettledAt} ` +
+  const payAt = BigInt((await pub.getBlock({ blockNumber: payReceipt.blockNumber })).timestamp);
+  const accrualStart = BigInt(secondLoan.interestAccrualStart || secondLoan.startTime);
+  const payDays = (payAt - accrualStart) / 86_400n;
+  const payInterest = (secondLoan.principal * BigInt(secondLoan.interestRateBps) * payDays) / (365n * 10_000n);
+  const payCut = (payInterest * BigInt(secondLoan.treasuryFeeBpsAtInit)) / 10_000n;
+  expectLedger('A9.13', 'the voluntary period payment costs exactly the interest accrued to now plus the minimum principal reduction, to the lender\'s wallet, the treasury fee on the interest only',
+    beforePay, afterPayBal, {
+      'lending.borrowerEOA': -(payInterest + part),
+      'lending.lenderEOA': payInterest - payCut + part,
+      'lending.treasury': payCut,
+    }, `wholeDays=${payDays} interest=${f18(payInterest)} principalReduction=${f18(part)} (minPartialBps=${minPartialBps}) periodDue=${f18(due[3])}`);
+  check('A9.13b', 'that payment covers the period and closes it in the same transaction — principal down by exactly the reduction, the settled-at stamp advanced, nothing sold',
+    payInterest >= due[3] && secondLoan.principal - paid.principal === part &&
+    paid.lastPeriodicInterestSettledAt > stampBefore && paid.collateralAmount === secondLoan.collateralAmount,
+    `settledAt ${stampBefore} -> ${paid.lastPeriodicInterestSettledAt} principal ${f18(secondLoan.principal)} -> ${f18(paid.principal)} ` +
     `nextDue=${Array.isArray(afterPay) ? afterPay[1] : '?'} dueNow=${Array.isArray(afterPay) ? afterPay[6] : '?'}`);
   const stampSim = await simulate(DIAMOND, ABIS.repayPeriodic, 'settlePeriodicInterest', [second.loanId, []], outsider.address);
   expectRefusal('A9.14', 'a stamp call after a voluntary payment is refused — the period is already closed', stampSim, 'PeriodicSettleNotDue');

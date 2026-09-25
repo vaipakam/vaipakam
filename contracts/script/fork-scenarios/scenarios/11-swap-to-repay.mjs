@@ -13,7 +13,7 @@ import { DIAMOND, ERC20, MOCKS, TREASURY, borrower, lender, outsider, parseUnits
 import { ABIS, STATUS, delta, openLoan, read, snapshot, vaultAddressFor } from '../lib/flow.mjs';
 import { f18 } from '../lib/chain.mjs';
 import { simulate } from '../lib/errors.mjs';
-import { cannotContinue, check, expectEq, expectLedger, expectRefusal } from '../lib/report.mjs';
+import { cannotContinue, check, expectLedger, expectRefusal } from '../lib/report.mjs';
 
 const TRY_LIST = [{ adapterIdx: 0n, data: '0x' }];
 
@@ -50,6 +50,13 @@ export async function run() {
     // is what the caller lets the protocol take, so this is the case that
     // shows whether it sells the cap or only what the debt needs.
     const CAP = parseUnits('0.6', 18);
+    // The debt, fixed before the sale from the payoff quote (principal + the
+    // term's interest; no late fee in term) and split by the loan's stamped
+    // treasury fee — independent of how much collateral the sale takes.
+    const quoted = await read(ABIS.repay, 'calculateRepaymentAmount', [loanId]);
+    const payoff = Array.isArray(quoted) ? quoted[0] : quoted;
+    const interestDue = payoff - loan.principal;
+    const interestCut = (interestDue * BigInt(loan.treasuryFeeBpsAtInit)) / 10_000n;
     const before = await snapshot(tokens, holders);
     const sim = await simulate(DIAMOND, ABIS.swapToRepay, 'swapToRepayFull', [loanId, TRY_LIST, CAP], borrower.address);
     if (!sim.ok) cannotContinue('A11.4 full swap-to-repay', sim.name);
@@ -71,13 +78,21 @@ export async function run() {
       sold < CAP,
       `cap=${f18(CAP)} sold=${f18(sold)} of ${f18(loan.collateralAmount)}`);
 
-    // Everything the sale raised is accounted: the debt to lender + treasury,
-    // the surplus to the borrower's WALLET as the principal asset.
+    // Everything the sale raised is accounted, EACH recipient against its own
+    // expectation: the lender's vault gets principal + interest net of the
+    // treasury's fee, the treasury exactly that fee, the borrower's WALLET the
+    // surplus as principal asset. Only the sale's size — what #2317 changes —
+    // is read from the chain; the debt split is not.
     const raised = before['lending.venue'] - after['lending.venue'];
-    const toDebt = (after['lending.lenderVault'] - before['lending.lenderVault']) + (after['lending.treasury'] - before['lending.treasury']);
-    const surplus = after['lending.borrowerEOA'] - before['lending.borrowerEOA'];
-    expectEq('A11.6', 'the sale is accounted to the wei — debt to lender + treasury, the surplus to the borrower as principal asset',
-      raised, toDebt + surplus, `raised=${f18(raised)} debt=${f18(toDebt)} surplusToWallet=${f18(surplus)}`);
+    expectLedger('A11.6', 'the full swap settles exactly: principal + interest net of the treasury fee to the lender\'s vault, the fee to the treasury, the surplus to the borrower\'s wallet',
+      before, after, {
+        'collateral.borrowerVault': -sold,
+        'collateral.venue': sold,
+        'lending.venue': -raised,
+        'lending.lenderVault': payoff - interestCut,
+        'lending.treasury': interestCut,
+        'lending.borrowerEOA': raised - payoff,
+      }, `payoff=${f18(payoff)} interest=${f18(interestDue)} raised=${f18(raised)} surplusToWallet=${f18(raised - payoff)}`);
 
     // What was NOT sold is still the borrower's collateral, released to claim.
     const lien = await read(ABIS.metrics, 'getLoanCollateralLien', [loanId]);

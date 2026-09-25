@@ -65,8 +65,11 @@ files it under the wrong party; and the rule that the replacement may not
 mature later than the original is enforced to the second, which is why a
 same-length replacement fits in the second the loan originated and is refused
 a minute later. Obligation handover, by contrast, keeps the loan record and
-rewrites its borrower in place, with the lender and principal untouched and
-the exiting borrower paying only the interest accrued so far. Refinance ends
+rewrites its borrower in place, with the lender and principal untouched. The
+exiting borrower pays the interest accrued so far plus a protection top-up
+for the lender whenever the replacement's remaining interest falls short of
+the original's — which it did in this run, so the handover cost more than the
+accrued interest alone. Refinance ends
 one loan and starts another; handover mutates one. Any indexer has to model
 both shapes. The lender's two exits mirror the borrower's: a listed sale
 completes itself the moment a buyer fills it, a direct sale settles in one
@@ -83,7 +86,9 @@ restored, the feature proved strict about admission — on this deployment a
 monthly cadence needs a principal of at least one hundred thousand in the
 numeraire — and it closes an unpaid period by selling just enough collateral,
 with a settler bonus and treasury fee, while the loan stays open. A period the
-borrower pays voluntarily is closed by that payment itself.
+borrower pays voluntarily is closed by that payment itself — and because a
+partial repayment charges all interest accrued to that moment, paying on the
+day after the period ends costs that extra day's interest too.
 
 NFT rental was checked against the functional specification rather than the
 code, and matched it point for point: the NFT sits in the lender's own vault
@@ -177,9 +182,14 @@ forced close between the keeper, the lender, the treasury and the borrower.
 No fee rate, share, floor or window is written into the walkthrough any more:
 each is read from the deployment, or from the loan's own record of the terms
 it opened on, so a legitimate change of configuration can neither break a
-correct check nor pass a wrong one. One place is checked less tightly, and
-the write-up says why: the full repayment from collateral is checked as an
-accounting identity until the fix that changes its sale size ships. The re-run
-records one hundred and thirty-seven passes, eleven observations and one failure —
+correct check nor pass a wrong one. Every claim is checked on both sides of
+the transfer, position NFTs after a claim are checked against the
+specification's closure rule, and the administrator the walkthrough acts
+through is whoever holds the role on the live deployment rather than the
+address the deployment record names. One figure is read rather than
+predicted, and the write-up says why: the size of the collateral sale in a
+full repayment from collateral, which is exactly what the pending fix
+changes. The re-run records one hundred and forty-five passes, ten
+observations and one failure —
 the swap-to-repay check whose expectation was deliberately corrected — with
 no scenario file aborted.

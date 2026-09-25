@@ -17,8 +17,10 @@ import {
   defineChain,
   formatUnits,
   http,
+  keccak256,
   parseEther,
   parseUnits,
+  toBytes,
 } from 'viem';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import { nameRevert } from './selectors.mjs';
@@ -42,7 +44,10 @@ export const MOCKS = deployment.testnetMocks ?? {};
 // is only what it was at deploy. Every accounting row reads the fee recipient
 // the fork's Diamond reports NOW; the artifact value is kept for comparison.
 export const ARTIFACT_TREASURY = deployment.treasury;
-export const ADMIN = deployment.admin;
+// The admin is MUTABLE too (`AccessControlFacet.transferAdmin` revokes every
+// privileged role from the old holder), so the artifact's `admin` is only a
+// candidate. `resolveLive()` settles the live one; `ADMIN` is that binding.
+export const ARTIFACT_ADMIN = deployment.admin;
 
 export const forkChain = defineChain({
   id: deployment.chainId,
@@ -59,12 +64,22 @@ export const pub = createPublicClient({ chain: forkChain, transport: http(RPC_UR
 // mine past it. Scenarios read it inside `run()`, so the live binding holds
 // the resolved value by then.
 export let TREASURY = null;
+export let ADMIN = null;
+const view = (name, inputs, output) => ({ type: 'function', name, inputs: inputs.map((type) => ({ type })), outputs: [{ type: output }], stateMutability: 'view' });
+const ADMIN_ROLE = keccak256(toBytes('ADMIN_ROLE'));
 export async function resolveLive() {
-  TREASURY = await pub.readContract({
-    address: DIAMOND,
-    abi: [{ type: 'function', name: 'getTreasury', inputs: [], outputs: [{ type: 'address' }], stateMutability: 'view' }],
-    functionName: 'getTreasury',
-  });
+  const readD = (abiItem, args = []) => pub.readContract({ address: DIAMOND, abi: [abiItem], functionName: abiItem.name, args });
+  TREASURY = await readD(view('getTreasury', [], 'address'));
+  // Whoever holds ADMIN_ROLE on the live Diamond NOW: the Diamond's owner
+  // first, then the artifact's admin. Neither holding it is artifact drift the
+  // run cannot act through, so it stops here — naming both — rather than
+  // letting the gate scenarios abort later on an authorization error that
+  // reads like a product defect.
+  const owner = await readD(view('owner', [], 'address'));
+  for (const candidate of [owner, ARTIFACT_ADMIN]) {
+    if (candidate && (await readD(view('hasRole', ['bytes32', 'address'], 'bool'), [ADMIN_ROLE, candidate]))) { ADMIN = candidate; return; }
+  }
+  throw new Error(`no ADMIN_ROLE holder found: neither the Diamond owner ${owner} nor the artifact admin ${ARTIFACT_ADMIN} holds it — the deployment artifact has drifted from the live Diamond`);
 }
 
 // Fresh keys every run, NOT the published test-mnemonic accounts a fork node

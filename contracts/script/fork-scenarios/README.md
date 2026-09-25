@@ -29,8 +29,15 @@ fresh deploy would have hidden every one of them.
 ## Running it
 
 ```bash
-# 1. a fork of the target chain, on 127.0.0.1:8545
+# 1. a fork of the target chain, on 127.0.0.1:8545 — this forks the LATEST
+#    block, so it verifies the deployment as it is NOW, and a later run need
+#    not reproduce an earlier ledger's figures (configuration can change).
 anvil --fork-url "$BASE_SEPOLIA_RPC_URL" --chain-id 84532
+#    To re-run against the exact state a recorded ledger describes, pin its
+#    block (every ledger records it as `forkBlock`):
+#      anvil --fork-url "$BASE_SEPOLIA_RPC_URL" --chain-id 84532 --fork-block-number <forkBlock>
+#    Figures that depend on elapsed time (accrued interest) can still differ
+#    in the last decimals, because the time warps land on different seconds.
 #    No Foundry install? Its official npm packages work where GitHub
 #    release downloads are blocked:  npm i @foundry-rs/anvil @foundry-rs/forge
 #    Anvil is the node to use, and the only one the current driver is

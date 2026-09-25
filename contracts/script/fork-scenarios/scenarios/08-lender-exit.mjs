@@ -30,6 +30,15 @@ async function forfeitedAtSale(loan, receipt) {
   return (loan.principal * BigInt(loan.interestRateBps) * (at - BigInt(loan.startTime))) / YEAR_BPS;
 }
 
+// Lender authority resolves through `ownerOf(lenderTokenId)`, not through the
+// loan's cached `lender` field — so a sale is only a sale if the buyer holds
+// the lender position NFT the loan now names.
+async function lenderNftHolder(loan) {
+  try { return await pub.readContract({ address: DIAMOND, abi: ABIS.nft, functionName: 'ownerOf', args: [loan.lenderTokenId] }); }
+  catch { return null; }
+}
+const isBuyer = (a) => a !== null && a.toLowerCase() === outsider.address.toLowerCase();
+
 export async function run() {
   const lending = MOCKS.liquidToken2;
   const collateral = MOCKS.liquidToken;
@@ -74,9 +83,10 @@ export async function run() {
       {
         const post = await snapshot(tokens, holders);
         const after = await read(ABIS.loan, 'getLoanDetails', [loanId]);
-        check('A8.2', 'filling the listing hands the lender side to the buyer — in the same transaction',
-          after.lender.toLowerCase() === outsider.address.toLowerCase(),
-          `gas=${bought.gas} lender ${before.lender.slice(0, 10)} -> ${after.lender.slice(0, 10)} status=${after.status}`);
+        const nftHolder = await lenderNftHolder(after);
+        check('A8.2', 'filling the listing hands the lender side to the buyer — the loan names them AND they hold the lender position NFT — in the same transaction',
+          after.lender.toLowerCase() === outsider.address.toLowerCase() && isBuyer(nftHolder),
+          `gas=${bought.gas} lender ${before.lender.slice(0, 10)} -> ${after.lender.slice(0, 10)} lenderTokenId ${before.lenderTokenId} -> ${after.lenderTokenId} ownerOf=${nftHolder} status=${after.status}`);
         const forfeited = await forfeitedAtSale(before, bought.receipt);
         expectLedger('A8.2b', 'the listed sale settles exactly: the buyer pays the principal, the seller receives it net of the accrued interest they forfeit, which goes to the treasury',
           pre, post, {
@@ -127,9 +137,10 @@ export async function run() {
     }, 'sellLoanViaBuyOffer');
     const post = await snapshot(tokens, holders);
     const after = await read(ABIS.loan, 'getLoanDetails', [loanId]);
-    check('A8.7', 'a direct sale hands the lender side over in ONE transaction, with no listing',
-      after.lender.toLowerCase() === outsider.address.toLowerCase() && after.borrower === before.borrower && String(after.status) === '0',
-      `gas=${receipt.gasUsed} lender ${before.lender.slice(0, 10)} -> ${after.lender.slice(0, 10)} status=${after.status}`);
+    const nftHolder = await lenderNftHolder(after);
+    check('A8.7', 'a direct sale hands the lender side over in ONE transaction, with no listing — the buyer holds the lender position NFT',
+      after.lender.toLowerCase() === outsider.address.toLowerCase() && isBuyer(nftHolder) && after.borrower === before.borrower && String(after.status) === '0',
+      `gas=${receipt.gasUsed} lender ${before.lender.slice(0, 10)} -> ${after.lender.slice(0, 10)} lenderTokenId ${before.lenderTokenId} -> ${after.lenderTokenId} ownerOf=${nftHolder} status=${after.status}`);
     // The buyer's principal was escrowed in their vault when they posted the
     // standing offer, so the direct sale draws it from there.
     const forfeited = await forfeitedAtSale(before, receipt);

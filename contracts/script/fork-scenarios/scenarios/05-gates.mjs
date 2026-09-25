@@ -7,9 +7,9 @@
  * requirement, and the loan it produces reports NO health factor rather than
  * inventing one from a price it does not have.
  */
-import { ADMIN, DIAMOND, MOCKS, borrower, lender, outsider, parseUnits, pub, rpc } from '../lib/chain.mjs';
+import { ADMIN, DIAMOND, ERC20, MOCKS, borrower, lender, outsider, parseUnits, pub, rpc, tx } from '../lib/chain.mjs';
 import { ABIS, approveDiamond, acceptOffer, createOffer, mint, offerParams, read } from '../lib/flow.mjs';
-import { sendAs } from '../lib/impersonate.mjs';
+import { sendAs, warpDays } from '../lib/impersonate.mjs';
 import { simulate } from '../lib/errors.mjs';
 import { check, observe, expectRefusal } from '../lib/report.mjs';
 
@@ -61,8 +61,22 @@ async function runGates() {
   check('A5.5', 'Tier-2 repayLoan stays OPEN under a blanket flag, so the unflagged side can be made whole',
     tier2Repay.ok, tier2Repay.ok ? 'simulates clean' : tier2Repay.name);
 
+  // The other Tier-2 close-out: a time-based default, driven by a caller who
+  // is flagged too (the stub flags everyone). Past term + grace, with a route
+  // and a funded venue, it must still go through — a regression that blocked
+  // forced closes for flagged callers would strand the unflagged lender.
+  await tx(outsider, { address: MOCKS.liquidToken2, abi: ERC20, functionName: 'mint', args: [MOCKS.mockSwapAdapter, parseUnits('1000000', 18)] }, 'fund venue');
+  const loan = await read(ABIS.loan, 'getLoanDetails', [loanId]);
+  const graceSeconds = Number(await read(ABIS.config, 'getEffectiveGraceSeconds', [loanId]));
+  await warpDays(Number(loan.durationDays) + graceSeconds / 86_400 + 1);
+  const tier2Default = await simulate(DIAMOND, ABIS.defaulted, 'triggerDefault', [loanId, [{ adapterIdx: 0n, data: '0x' }]], outsider.address);
+  check('A5.5b', 'Tier-2 triggerDefault stays OPEN under a blanket flag — a flagged caller can still force-close a defaulted loan',
+    tier2Default.ok, tier2Default.ok ? 'simulates clean, past term + grace' : tier2Default.name);
+
   await sendAs(ADMIN, { address: DIAMOND, abi: ABIS.profile, functionName: 'setSanctionsOracle', args: [UNSET] });
-  const restored = await simulate(DIAMOND, ABIS.offerCreate, 'createOffer', [params], lender.address);
+  // Fresh params: A5.5b warped the chain past the first set's expiry.
+  const freshParams = await offerParams({ amount: parseUnits('10', 18), collateralAmount: parseUnits('0.02', 18) });
+  const restored = await simulate(DIAMOND, ABIS.offerCreate, 'createOffer', [freshParams], lender.address);
   check('A5.6', 'disarming the oracle restores permissionless access', restored.ok,
     restored.ok ? 'createOffer clean again' : restored.name);
 
@@ -87,11 +101,14 @@ async function runGates() {
   await approveDiamond(borrower, MOCKS.liquidToken);
   const { offerId, offer } = await createOffer(lender, bigParams);
   const blockedAccept = await acceptOffer(offerId, offer, borrower, lender);
-  // Written up as a FINDING (§4.2), not an intended property: it lets a
-  // maker post an offer no taker may fill. Observed, so the ledger never
-  // certifies it as correct.
-  observe('A5.9', 'with KYC armed, where the gate binds (offer creation vs accept)',
-    `createOffer($50k) -> ${bigCreate.ok ? 'allowed' : bigCreate.name}; acceptOffer -> ${blockedAccept.ok ? 'allowed' : blockedAccept.reason}`);
+  // That the armed gate refuses the position-creating accept IS the knob's
+  // purpose, so it is asserted by name.
+  expectRefusal('A5.9', 'with KYC armed, accepting a $50,000 offer as an unverified wallet is refused', blockedAccept, 'KYCRequired');
+  // Where the gate does NOT bind is written up as a FINDING (§4.2), not an
+  // intended property — it lets a maker post an offer no taker may fill — so
+  // it is observed and never certified.
+  observe('A5.9b', 'with KYC armed, whether offer CREATION is gated too',
+    `createOffer($50k) -> ${bigCreate.ok ? 'allowed' : bigCreate.name}`);
 
   await sendAs(ADMIN, { address: DIAMOND, abi: ABIS.admin, functionName: 'setKYCEnforcement', args: [false] });
   const retailAccept = await acceptOffer(offerId, offer, borrower, lender);

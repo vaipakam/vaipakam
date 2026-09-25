@@ -10,7 +10,7 @@
 import { DIAMOND, MOCKS, TREASURY, borrower, lender, parseUnits, pub, tx } from '../lib/chain.mjs';
 import { ABIS, approveDiamond, createOffer, acceptOffer, delta, lifSplit, liveFees, mint, read, snapshot, vaultAddressFor } from '../lib/flow.mjs';
 import { f18 } from '../lib/chain.mjs';
-import { cannotContinue, check, expectEq, expectLedger, observe } from '../lib/report.mjs';
+import { cannotContinue, check, expectEq, expectLedger } from '../lib/report.mjs';
 
 const PRINCIPAL = parseUnits('1000', 18);
 const COLLATERAL = parseUnits('1.25', 18);
@@ -127,9 +127,16 @@ export async function run() {
   expectEq('A2.12', 'the loan terminalizes to Repaid', repaid.status, 1);
 
   // --- the collateral lien outlives the repay
+  // Every field, not just `released`: a standing lien with the wrong holder,
+  // asset or amount would leave the collateral mis-encumbered while it awaits
+  // the claim, and the claim's own record is separate from the lien.
   const lienAfterRepay = await read(ABIS.metrics, 'getLoanCollateralLien', [loanId]);
-  check('A2.13', 'a repay settles the MONEY but leaves the collateral lien standing', !lienAfterRepay.released,
-    `lien.released=${lienAfterRepay.released} amount=${f18(lienAfterRepay.amount)} — release is a separate, borrower-initiated claim`);
+  const lienShape = (l) => `user=${l.user} asset=${l.asset} tokenId=${l.tokenId} amount=${l.amount} assetType=${l.assetType} released=${l.released}`;
+  const wantLien = { user: borrower.address, asset: collateral, tokenId: 0n, amount: COLLATERAL, assetType: 0, released: false };
+  expectEq('A2.13', 'a repay settles the MONEY but leaves the collateral lien standing, intact: the borrower\'s whole collateral, unreleased',
+    lienShape({ ...lienAfterRepay, user: lienAfterRepay.user.toLowerCase(), asset: lienAfterRepay.asset.toLowerCase() }),
+    lienShape({ ...wantLien, user: wantLien.user.toLowerCase(), asset: wantLien.asset.toLowerCase() }),
+    'release is a separate, borrower-initiated claim');
 
   // --- position NFTs at terminalization, BEFORE the claim
   for (const [side, tokenId, holder] of [['lender', repaid.lenderTokenId, lender.address], ['borrower', repaid.borrowerTokenId, borrower.address]]) {
@@ -148,14 +155,20 @@ export async function run() {
   expectLedger('A2.15b', 'the borrower\'s claim moves exactly the collateral, vault → wallet',
     beforeClaim, afterClaim, { 'collateral.borrowerVault': -COLLATERAL, 'collateral.borrowerEOA': COLLATERAL });
 
-  // --- and what the claim does to the position NFTs. The receipt is spent
-  //     by redeeming it: the CLAIMING side's NFT is burned, the other stays.
-  for (const [side, tokenId] of [['lender', repaid.lenderTokenId], ['borrower', repaid.borrowerTokenId]]) {
-    let owner = null;
-    try { owner = await pub.readContract({ address: DIAMOND, abi: ABIS.nft, functionName: 'ownerOf', args: [tokenId] }); } catch { /* burned */ }
-    observe(`A2.16.${side}`, `after the borrower's claim, the ${side} position NFT`,
-      owner ? `still resolves (owner=${owner})` : 'no longer resolves — redeeming the claim spends the receipt');
-  }
+  // --- and what the claim does to the position NFTs. Spec (NFT Status
+  //     Updates on Closure): each side's NFT is burned once THAT side has
+  //     claimed. So the borrower's receipt is spent by this claim, and the
+  //     lender's — whose side has not claimed — still resolves to the lender.
+  const ownerOrNull = async (tokenId) => {
+    try { return await pub.readContract({ address: DIAMOND, abi: ABIS.nft, functionName: 'ownerOf', args: [tokenId] }); } catch { return null; }
+  };
+  const borrowerNftAfter = await ownerOrNull(repaid.borrowerTokenId);
+  check('A2.16.borrower', 'the borrower\'s claim BURNS the borrower position NFT — redeeming the claim spends the receipt',
+    borrowerNftAfter === null, borrowerNftAfter ? `still resolves (owner=${borrowerNftAfter})` : `tokenId=${repaid.borrowerTokenId} no longer resolves`);
+  const lenderNftAfter = await ownerOrNull(repaid.lenderTokenId);
+  check('A2.16.lender', 'the borrower\'s claim leaves the LENDER position NFT alone — it still resolves, to the lender, until the lender claims',
+    lenderNftAfter !== null && lenderNftAfter.toLowerCase() === lender.address.toLowerCase(),
+    lenderNftAfter ? `tokenId=${repaid.lenderTokenId} owner=${lenderNftAfter}` : 'no longer resolves');
 
   // --- claiming cannot pay twice
   const beforeSecond = await snapshot(tokens, holders);
