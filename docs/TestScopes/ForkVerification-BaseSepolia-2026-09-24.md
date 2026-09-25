@@ -16,7 +16,7 @@ configuration — not the source tree's idea of them.
   ledger now records as `forkBlock`. Figures that depend on elapsed time can
   still differ in the last decimals, since the warps land on different
   seconds.
-- **Result** — 156 scenarios: **144 PASS, 11 INFO, 1 FAIL**, no aborted
+- **Result** — 157 scenarios: **145 PASS, 11 INFO, 1 FAIL**, no aborted
   file. The INFOs are observations with no assertion behind them, not soft
   failures — the ledger's API makes a row either an assertion (PASS/FAIL
   only) or an observation (INFO only), so no failure can land as INFO; each
@@ -551,6 +551,11 @@ the replacement's term was a day shorter than what remained, so that
 shortfall was positive — the handover cost more than the accrued interest,
 and A7.7b asserts both parts.
 
+The borrower position NFT moves with it: the loan names a new borrower token
+held by the replacement borrower, and the exiting borrower's token is burned
+(A7.7, A7.7c) — so borrower-side authority, which resolves through that NFT,
+passes over in the same transaction.
+
 So the two "move this position to someone else" paths differ in a way any
 indexer has to model: refinance ends one loan and starts another; handover
 mutates one. Both are gated on the same seconds-precise maturity bound, and
@@ -832,7 +837,7 @@ replace.
 
 ## 7. Ledger
 
-The full 156-row ledger, with per-scenario verdicts and observed numbers, is
+The full 157-row ledger, with per-scenario verdicts and observed numbers, is
 regenerated as `contracts/script/fork-scenarios/last-run.json` on every run
 (untracked). Scenario ids map to the driver's files:
 

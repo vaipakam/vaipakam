@@ -178,9 +178,25 @@ export async function run() {
     }, 'transferObligationViaOffer');
     const after = await snapshot(tokens, holders);
     const moved = await read(ABIS.loan, 'getLoanDetails', [loanId]);
-    check('A7.7', 'the handover rewrites the loan\'s borrower in place — the loan itself survives',
-      moved.borrower.toLowerCase() === outsider.address.toLowerCase() && String(moved.status) === String(STATUS.Active),
-      `gas=${receipt.gasUsed} status=${moved.status} borrower ${borrower.address.slice(0, 10)} -> ${moved.borrower.slice(0, 10)}`);
+    // Borrower-side authority resolves through `ownerOf(borrowerTokenId)`, not
+    // the cached `borrower` field, so the handover is only complete if the
+    // replacement borrower HOLDS the borrower position NFT the loan now names.
+    const ownerOrNull = async (tokenId) => {
+      try { return await pub.readContract({ address: DIAMOND, abi: ABIS.nft, functionName: 'ownerOf', args: [tokenId] }); } catch { return null; }
+    };
+    const newHolder = await ownerOrNull(moved.borrowerTokenId);
+    const oldHolder = moved.borrowerTokenId === loan.borrowerTokenId ? newHolder : await ownerOrNull(loan.borrowerTokenId);
+    check('A7.7', 'the handover rewrites the loan\'s borrower in place — the loan survives, and the replacement borrower holds the borrower position NFT it names',
+      moved.borrower.toLowerCase() === outsider.address.toLowerCase() && String(moved.status) === String(STATUS.Active) &&
+      newHolder !== null && newHolder.toLowerCase() === outsider.address.toLowerCase(),
+      `gas=${receipt.gasUsed} status=${moved.status} borrower ${borrower.address.slice(0, 10)} -> ${moved.borrower.slice(0, 10)} ` +
+      `borrowerTokenId ${loan.borrowerTokenId} -> ${moved.borrowerTokenId} ownerOf(new)=${newHolder} ownerOf(old)=${oldHolder ?? 'does not resolve'}`);
+    // And the exiting borrower keeps no authority over the continuing loan:
+    // whatever became of the old token, it is not theirs to act with.
+    check('A7.7c', 'the exiting borrower no longer holds any borrower position NFT for the continuing loan',
+      (newHolder === null || newHolder.toLowerCase() !== borrower.address.toLowerCase()) &&
+      (oldHolder === null || oldHolder.toLowerCase() !== borrower.address.toLowerCase()),
+      `ownerOf(old ${loan.borrowerTokenId})=${oldHolder ?? 'does not resolve'}`);
 
     // The money, from the spec's "Economic Protection for the Original
     // Lender": the exiting borrower pays the interest accrued to the transfer
