@@ -21,7 +21,7 @@ import { test, expect } from '../lib/wallet-fixture';
 import { postLenderOffer, newestOfferIdFor } from '../lib/flows';
 import { increaseTime, mine } from '../lib/anvil';
 import { pub, DIAMOND, DIAMOND_ABI_VIEM } from '../lib/chain';
-import { cancelDeskOffer, seedDeskOffer } from '../lib/desk';
+import { withDeskOffer } from '../lib/desk';
 
 const STUB = `http://127.0.0.1:${Number(process.env.APP_E2E_STUB_PORT ?? 8788)}`;
 
@@ -71,86 +71,88 @@ test('a just-cancelled offer vanishes from the book while the cache still serves
   // always carried other offers — a live fork's inherited book, then
   // earlier specs' leftovers — so the spec failed when run alone (#2334).
   // It rests in the WETH/tLIQ pair, whose tenor buckets specs 17/18 budget
-  // (see desk.ts freshTenor), so it is cancelled in `finally` and the
-  // bucket goes back before they run. Seeding it BEFORE the cooldown skip
-  // below is what makes that cancel legal.
-  const anchorId = await seedDeskOffer({
-    role: 'newLender',
-    side: 'lend',
-    rateBps: 700,
-    amountWeth: '0.00411',
-    collateralTliq: '80',
-    days: 30,
-  });
-  // Past the cancel cooldown BEFORE pinning, so the cancel lands in
-  // the post-pin window.
-  await increaseTime(301);
+  // (see desk.ts freshTenor), so `withDeskOffer` owns its lifetime and
+  // cancels it however this body ends — no step here can leak it.
+  await withDeskOffer(
+    {
+      role: 'newLender',
+      side: 'lend',
+      rateBps: 700,
+      amountWeth: '0.00411',
+      collateralTliq: '80',
+      days: 30,
+    },
+    async (anchorId) => {
+      // Past the cancel cooldown BEFORE pinning, so the cancel lands in
+      // the post-pin window.
+      await increaseTime(301);
 
-  const pinRes = await fetch(`${STUB}/__pin`, { method: 'POST' });
-  expect(pinRes.ok).toBe(true);
-  try {
-    // The frozen cache lists the offer…
-    expect(await stubServesOffer(offerId)).toBe(true);
+      const pinRes = await fetch(`${STUB}/__pin`, { method: 'POST' });
+      expect(pinRes.ok).toBe(true);
+      try {
+        // The frozen cache lists the offer…
+        expect(await stubServesOffer(offerId)).toBe(true);
 
-    // …and with an empty post-pin window, the borrower's rendered
-    // book shows it (positive control: the row's presence proves the
-    // catch-up layer doesn't over-filter).
-    const borrower = await launchWallet('borrower');
-    await borrower.page.goto('/offers', { waitUntil: 'domcontentloaded' });
-    const bookRow = borrower.page.locator(`a[href*="offer=${offerId}&"]`);
-    await expect(bookRow.first()).toBeVisible({ timeout: 30_000 });
+        // …and with an empty post-pin window, the borrower's rendered
+        // book shows it (positive control: the row's presence proves the
+        // catch-up layer doesn't over-filter).
+        const borrower = await launchWallet('borrower');
+        await borrower.page.goto('/offers', { waitUntil: 'domcontentloaded' });
+        const bookRow = borrower.page.locator(`a[href*="offer=${offerId}&"]`);
+        await expect(bookRow.first()).toBeVisible({ timeout: 30_000 });
 
-    // Cancel ON CHAIN (the proven /positions UI path from spec 05).
-    await lender.page.goto('/positions', { waitUntil: 'domcontentloaded' });
-    const row = lender.page
-      .locator('.row-list > div')
-      .filter({ has: lender.page.getByText(`Offer #${offerId} ·`) })
-      .first();
-    await row.getByRole('button', { name: /cancel offer/i }).click();
-    await row.getByRole('button', { name: /confirm.*cancel/i }).click();
-    await expect
-      .poll(
-        async () => {
-          const o = (await pub.readContract({
-            address: DIAMOND,
-            abi: DIAMOND_ABI_VIEM,
-            functionName: 'getOffer',
-            args: [offerId],
-          })) as { creator: string };
-          return /^0x0{40}$/i.test(o.creator);
-        },
-        { timeout: 60_000 },
-      )
-      .toBe(true);
+        // Cancel ON CHAIN (the proven /positions UI path from spec 05).
+        await lender.page.goto('/positions', { waitUntil: 'domcontentloaded' });
+        const row = lender.page
+          .locator('.row-list > div')
+          .filter({ has: lender.page.getByText(`Offer #${offerId} ·`) })
+          .first();
+        await row.getByRole('button', { name: /cancel offer/i }).click();
+        await row.getByRole('button', { name: /confirm.*cancel/i }).click();
+        await expect
+          .poll(
+            async () => {
+              const o = (await pub.readContract({
+                address: DIAMOND,
+                abi: DIAMOND_ABI_VIEM,
+                functionName: 'getOffer',
+                args: [offerId],
+              })) as { creator: string };
+              return /^0x0{40}$/i.test(o.creator);
+            },
+            { timeout: 60_000 },
+          )
+          .toBe(true);
 
-    // Let the cancel block clear the scan's reorg-settling buffer
-    // (toBlock = latest − CONFIRMATION_BUFFER).
-    await mine(4);
+        // Let the cancel block clear the scan's reorg-settling buffer
+        // (toBlock = latest − CONFIRMATION_BUFFER).
+        await mine(4);
 
-    // The frozen cache STILL serves the ghost row…
-    expect(await stubServesOffer(offerId)).toBe(true);
+        // The frozen cache STILL serves the ghost row…
+        expect(await stubServesOffer(offerId)).toBe(true);
 
-    // …but the borrower's rendered book must not: the catch-up scan
-    // over the post-pin tail decodes the terminal event and strips
-    // it. A full page load guarantees a fresh query (no SPA cache
-    // carry-over).
-    await borrower.page.goto('/offers', { waitUntil: 'domcontentloaded' });
-    // Wait for a POSITIVELY loaded book first — the spec's own anchor
-    // row — because waiting for the loading text to be ABSENT would pass
-    // trivially before React even mounts, letting the absence assert
-    // below false-pass.
-    await expect(borrower.page.locator(`a[href*="offer=${anchorId}&"]`).first()).toBeVisible({
-      timeout: 30_000,
-    });
-    await expect(
-      borrower.page.getByText('We couldn’t load the offer book right now', {
-        exact: false,
-      }),
-    ).toHaveCount(0);
-    // …and the terminated offer is gone.
-    await expect(bookRow).toHaveCount(0);
-  } finally {
-    await fetch(`${STUB}/__unpin`, { method: 'POST' });
-    await cancelDeskOffer('newLender', anchorId);
-  }
+        // …but the borrower's rendered book must not: the catch-up scan
+        // over the post-pin tail decodes the terminal event and strips
+        // it. A full page load guarantees a fresh query (no SPA cache
+        // carry-over).
+        await borrower.page.goto('/offers', { waitUntil: 'domcontentloaded' });
+        // Wait for a POSITIVELY loaded book first — the spec's own anchor
+        // row — because waiting for the loading text to be ABSENT would pass
+        // trivially before React even mounts, letting the absence assert
+        // below false-pass.
+        await expect(borrower.page.locator(`a[href*="offer=${anchorId}&"]`).first()).toBeVisible({
+          timeout: 30_000,
+        });
+        await expect(
+          borrower.page.getByText('We couldn’t load the offer book right now', {
+            exact: false,
+          }),
+        ).toHaveCount(0);
+        // …and the terminated offer is gone.
+        await expect(bookRow).toHaveCount(0);
+      } finally {
+        await fetch(`${STUB}/__unpin`, { method: 'POST' });
+      }
+    },
+  );
 });
