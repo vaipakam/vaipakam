@@ -1,4 +1,4 @@
-## Thread — deploy scripts run under `forge script` again (PR #TBD)
+## Thread — deploy scripts run under `forge script` again (PR #2348)
 
 Every deploy script that reads or writes a deployment artifact had been failing before its first transaction since #2253 (merged 2026-09-20). That includes the Diamond deploy that `deploy-chain.sh`, the testnet deploy and the mainnet deploy all run. The deployment-artifact library had started reading each script's own settings (where to write its artifact, and a snapshot of the previous artifact) by calling back into the script contract. Foundry refuses any call to the running script contract, so the scripts stopped with "Usage of `address(this)` detected in script contract". The deploy-sanity tests run the same code under `forge test`, where Foundry does not apply that rule, so they all stayed green. No deploy had run since, so nothing had noticed.
 
