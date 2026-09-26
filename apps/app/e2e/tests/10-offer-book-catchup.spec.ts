@@ -21,6 +21,7 @@ import { test, expect } from '../lib/wallet-fixture';
 import { postLenderOffer, newestOfferIdFor } from '../lib/flows';
 import { increaseTime, mine } from '../lib/anvil';
 import { pub, DIAMOND, DIAMOND_ABI_VIEM } from '../lib/chain';
+import { seedDeskOffer } from '../lib/desk';
 
 const STUB = `http://127.0.0.1:${Number(process.env.APP_E2E_STUB_PORT ?? 8788)}`;
 
@@ -63,6 +64,20 @@ test('a just-cancelled offer vanishes from the book while the cache still serves
   const lender = await launchWallet('lender');
   await postLenderOffer(lender.page);
   const offerId = await newestOfferIdFor(lender.account.address);
+  // An ANCHOR the spec owns: a second, unrelated offer that stays open
+  // throughout, seeded before the pin so the frozen cache serves it. The
+  // post-cancel page load waits for THIS row to prove the book loaded.
+  // It used to wait for "any row", which only held because the chain
+  // always carried other offers — a live fork's inherited book, then
+  // earlier specs' leftovers — so the spec failed when run alone (#2334).
+  const anchorId = await seedDeskOffer({
+    role: 'newLender',
+    side: 'lend',
+    rateBps: 700,
+    amountWeth: '0.00411',
+    collateralTliq: '80',
+    days: 30,
+  });
   // Past the cancel cooldown BEFORE pinning, so the cancel lands in
   // the post-pin window.
   await increaseTime(301);
@@ -116,12 +131,11 @@ test('a just-cancelled offer vanishes from the book while the cache still serves
     // it. A full page load guarantees a fresh query (no SPA cache
     // carry-over).
     await borrower.page.goto('/offers', { waitUntil: 'domcontentloaded' });
-    // Wait for a POSITIVELY loaded book first — some rendered row
-    // (this spec posts its own offer before the pin, and earlier specs
-    // in the run leave theirs, so rows always exist) — because waiting for the loading text to be
-    // ABSENT would pass trivially before React even mounts, letting
-    // the absence assert below false-pass.
-    await expect(borrower.page.locator('.item-row').first()).toBeVisible({
+    // Wait for a POSITIVELY loaded book first — the spec's own anchor
+    // row — because waiting for the loading text to be ABSENT would pass
+    // trivially before React even mounts, letting the absence assert
+    // below false-pass.
+    await expect(borrower.page.locator(`a[href*="offer=${anchorId}&"]`).first()).toBeVisible({
       timeout: 30_000,
     });
     await expect(
