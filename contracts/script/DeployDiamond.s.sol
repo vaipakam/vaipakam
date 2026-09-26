@@ -120,14 +120,19 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
 
-    /// @notice The completeness assertion, reached by
-    ///         `Deployments.finalizeArtifact` across a call to this contract.
+    /// @notice The completeness assertion, as `Deployments.finalizeArtifact`
+    ///         runs it: the reason the artifact fails to record a facet the
+    ///         Diamond routes, or the empty string.
     ///
-    /// @dev    **Why it is EXTERNAL.** `Deployments.assertFacetsRecorded`
-    ///         reverts WITHOUT restoring the artifact snapshot — the caller owns
-    ///         the finally — and Solidity's `try` only wraps external calls, so
-    ///         the restore the library performs on any failure needs this
-    ///         boundary to exist at all. That reason stands on its own.
+    /// @dev    **Why it REPORTS rather than reverts.** `finalizeArtifact` must
+    ///         put the operator's artifact back however the check fails, and
+    ///         then revert. #2253 did that by reverting here and catching the
+    ///         revert across an external call to this contract; Foundry's
+    ///         script runner refuses every call to the script contract, so that
+    ///         version stopped every real `forge script` deploy before its
+    ///         first transaction while `forge test`, which has no such guard,
+    ///         stayed green (#2347). A check that cannot revert needs no
+    ///         boundary to catch it.
     ///
     ///         **Why it is VIRTUAL.** #2253 r2 found the completeness check
     ///         unguarded in the other direction: deleting its call from Step 7b
@@ -135,44 +140,25 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///         read the artifact independently and assert the same property. A
     ///         fix that nothing fails without is not covered, however carefully
     ///         the check itself is written. So the CALL SITE has to be
-    ///         observable, and a probe overrides this to observe it.
+    ///         observable, and a probe overrides this to observe it — or to
+    ///         force a failure and watch the restore.
     ///
     ///         **What the `1 too deep in the stack` failures were NOT.** An
     ///         earlier revision of this comment claimed `runWith` leaves a
     ///         subclass zero spare slots, so an `internal` hook could not be an
     ///         override seam. That is unsupported and is very likely wrong; it
     ///         is corrected here rather than deleted, because it is the kind of
-    ///         plausible-sounding mechanism that gets rediscovered. See the
-    ///         `memoryguard` note on `Deployments.finalizeArtifact` for what
-    ///         was actually happening. In one sentence, and deliberately no
-    ///         more: the probes each carried an unannotated assembly block,
-    ///         which cost the WHOLE contract viaIR's stack-to-memory mover and
-    ///         surfaced as a too-deep frame elsewhere — which is why they
-    ///         failed while the base compiled, and why five revisions were
-    ///         spent moving a call that was never the cause.
-    ///
-    ///         **The rule is NOT summarised here.** CLAUDE.md's "1 too deep in
-    ///         the stack" section carries it. Summaries at this site went stale
-    ///         in three consecutive review rounds (#2271 r13/r14/r15), each
-    ///         time because the rule was sharpened there and not here.
-    ///
-    ///         Gated to self-calls so it is not an operator-reachable entry
-    ///         point on a broadcast script.
-    function assertFacetsRecordedExternal(address[] memory expected)
-        external
+    ///         plausible-sounding mechanism that gets rediscovered. The probes
+    ///         each carried an unannotated assembly block, which cost the WHOLE
+    ///         contract viaIR's stack-to-memory mover and surfaced as a
+    ///         too-deep frame elsewhere. The rule is in CLAUDE.md's "1 too deep
+    ///         in the stack" section and is deliberately not summarised here.
+    function _facetRecordingFailure(address[] memory expected)
+        internal
         virtual
+        returns (string memory)
     {
-        require(msg.sender == address(this), "DeployDiamond: self-call only");
-        _assertFacetsRecorded(expected);
-    }
-
-    /// @dev The assertion itself, separated from the entry point so an
-    ///      overriding probe can run exactly what the base runs instead of a
-    ///      copy of it that could drift. `internal`, and not called from
-    ///      `runWith`: the entry point above is what the deploy reaches, across
-    ///      the boundary its `try` needs.
-    function _assertFacetsRecorded(address[] memory expected) internal view {
-        Deployments.assertFacetsRecorded(expected);
+        return Deployments.facetRecordingFailure(expected);
     }
 
     /// @dev Restore the snapshot. `internal` so a test probe replicating the
@@ -1196,7 +1182,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // The failure branch is the library's: it restores the artifact this
         // run overwrote before re-reverting, so a caught omission does not
         // leave the inventory describing a Diamond that was never deployed.
-        Deployments.finalizeArtifact(diamond);
+        Deployments.finalizeArtifact(diamond, _facetRecordingFailure);
 
         console.log("");
         console.log("Admin:                ", admin);

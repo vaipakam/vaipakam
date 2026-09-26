@@ -4,17 +4,17 @@ pragma solidity ^0.8.29;
 import {Vm, VmSafe} from "forge-std/Vm.sol";
 
 /**
- * @title  IArtifactRoot
- * @notice The one question {Deployments} asks the script that is calling it:
- *         "where does your artifact go?".
+ * @title  Per-script artifact state
+ * @notice Where a script's artifact goes, and the artifact as it stood before
+ *         the run, held in the SCRIPT INSTANCE's own storage.
  *
  * @dev    `Deployments` is a library of `internal` functions, so it executes in
- *         the CALLING SCRIPT's context — `address(this)` inside it is the
- *         script contract. That is the whole mechanism here: the override lives
- *         in the script instance's own storage, which is EVM state, which under
- *         `forge test` is per-test-thread. It is therefore THREAD-LOCAL BY
- *         CONSTRUCTION, the same property `DeployDiamond.runWith(admin,
- *         treasury, key)` buys by taking arguments instead of reading env.
+ *         the CALLING SCRIPT's context: storage it reads is the script's
+ *         storage. That is the whole mechanism here. The state lives in EVM
+ *         storage, which under `forge test` is per-test-thread, so it is
+ *         THREAD-LOCAL BY CONSTRUCTION — the same property
+ *         `DeployDiamond.runWith(admin, treasury, key)` buys by taking
+ *         arguments instead of reading env.
  *
  *         That distinction is the reason this is not an environment variable.
  *         `vm.setEnv` writes the PROCESS environment, which every parallel test
@@ -26,31 +26,45 @@ import {Vm, VmSafe} from "forge-std/Vm.sol";
  *         into the no-token case. An env-keyed artifact root would have been a
  *         third: one test redirecting its own deploy would silently redirect
  *         every deploy running beside it.
+ *
+ *         READ DIRECTLY, NEVER THROUGH A CALL (#2347). #2253 first reached this
+ *         state through external self-calls — `IArtifactRoot(address(this))` —
+ *         and Foundry's script runner refuses ANY call whose target is the
+ *         script contract ("Usage of `address(this)` detected in script
+ *         contract"). `forge test` does not apply that guard, so every test
+ *         stayed green while every `forge script` deploy reverted before its
+ *         first transaction. A namespaced slot reaches the same storage with
+ *         no call at all. A script that never sets an override simply reads
+ *         the empty default here.
+ *
+ *         The layout is ERC-7201 so it cannot collide with a script's own
+ *         state variables, which occupy the low sequential slots.
  */
-interface IArtifactRoot {
-    /// @notice The directory holding `<chain-slug>/addresses.json` for this
-    ///         run, or the empty string to use the committed default.
-    function artifactRootOverride() external view returns (string memory);
+/// @custom:storage-location erc7201:vaipakam.script.artifact-root
+struct ArtifactRootState {
+    /// The directory holding `<chain-slug>/addresses.json` for this run, or
+    /// the empty string for the committed default.
+    string rootOverride;
+    /// The artifact's text before this run wrote to it, so a failed
+    /// completeness check can put it back (#2253 r3 P1).
+    string priorArtifact;
+    /// Whether that artifact existed at all.
+    bool priorExisted;
+}
 
-    /// @notice Hand the script the artifact as it stood before this run.
-    ///
-    /// @dev    The library cannot hold run state — it is stateless — and the
-    ///         CALLER cannot hold it either: `DeployDiamond.runWith` is at the
-    ///         viaIR stack ceiling with ~80 live facet addresses, and FOUR
-    ///         compiles failed on "Variable expr_… is 1 too deep" from nothing
-    ///         more than an extra local or a destructured return in that frame.
-    ///         So the library pushes it into the script's storage, through the
-    ///         same seam it already reads {artifactRootOverride} from.
-    function recordArtifactSnapshot(
-        string calldata prior,
-        bool priorExisted
-    ) external;
+// keccak256(abi.encode(uint256(keccak256("vaipakam.script.artifact-root")) - 1))
+//   & ~bytes32(uint256(0xff))
+bytes32 constant ARTIFACT_ROOT_STATE_SLOT =
+    0xce0d3c16c70087118e200f7434dedf6f21fb9e7830331cb2c37244decebfe900;
 
-    /// @notice The snapshot recorded by {recordArtifactSnapshot}.
-    function artifactSnapshot()
-        external
-        view
-        returns (string memory prior, bool priorExisted);
+/// The calling script's artifact state. Free-standing so both `Deployments`
+/// (a library) and `ArtifactRootBase` reach the SAME slot through one
+/// definition.
+function artifactRootState() pure returns (ArtifactRootState storage $) {
+    bytes32 slot = ARTIFACT_ROOT_STATE_SLOT;
+    assembly {
+        $.slot := slot
+    }
 }
 
 // The ONLY directory a redirected artifact may be written to.
@@ -119,41 +133,16 @@ function hasParentSegment(string memory s) pure returns (bool) {
  *         on every `forge test` run, so the assertion needs somewhere else to
  *         write — and needs it without reaching for the process environment.
  */
-abstract contract ArtifactRootBase is IArtifactRoot {
+abstract contract ArtifactRootBase {
     address private constant VM_ADDR =
         address(uint160(uint256(keccak256("hevm cheat code"))));
     Vm private constant CHEATS = Vm(VM_ADDR);
 
-
-    string private _artifactRootOverride;
-    string private _priorArtifact;
-    bool private _priorExisted;
-
-    /// @inheritdoc IArtifactRoot
-    function recordArtifactSnapshot(
-        string calldata prior,
-        bool priorExisted
-    ) external {
-        require(
-            msg.sender == address(this),
-            "ArtifactRootBase: recordArtifactSnapshot is an internal hop"
-        );
-        _priorArtifact = prior;
-        _priorExisted = priorExisted;
-    }
-
-    /// @inheritdoc IArtifactRoot
-    function artifactSnapshot()
-        external
-        view
-        returns (string memory, bool)
-    {
-        return (_priorArtifact, _priorExisted);
-    }
-
-    /// @inheritdoc IArtifactRoot
+    /// @notice This script instance's artifact root override, or the empty
+    ///         string for the committed default. For tests to read; the
+    ///         deploy path reads the state directly (see `artifactRootState`).
     function artifactRootOverride() external view returns (string memory) {
-        return _artifactRootOverride;
+        return artifactRootState().rootOverride;
     }
 
     /// @notice Redirect this script instance's artifact. LOCAL-ONLY.
@@ -187,7 +176,7 @@ abstract contract ArtifactRootBase is IArtifactRoot {
             !hasParentSegment(newRoot),
             "ArtifactRootBase: a redirected artifact root must contain no `..` segment - with one it can climb back out of the scratch directory and reach the committed artifact"
         );
-        _artifactRootOverride = newRoot;
+        artifactRootState().rootOverride = newRoot;
     }
 
     /// @dev Total test: does `s` begin with `prefix`?

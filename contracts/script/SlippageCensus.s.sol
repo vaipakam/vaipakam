@@ -86,19 +86,28 @@ contract SlippageCensus is Script {
             abi.encodeWithSignature("symbol()")
         );
         if (!ok || data.length == 0) return "?";
-        // Decode strictly — some legacy ERC20s pack symbol as a
-        // fixed-32-byte word; we accept either by trying string first
-        // and falling back. Failure path keeps the census moving.
-        try this._decodeString(data) returns (string memory s) {
-            return s;
-        } catch {
-            return "?";
-        }
+        // Decode strictly. A legacy ERC20 that packs its symbol as a
+        // fixed 32-byte word is not an ABI string and reads as "?", which
+        // keeps the census moving.
+        return _decodeStringOrMark(data);
     }
 
-    /// @dev External wrapper around `abi.decode(_, (string))` so the
-    ///      `try/catch` above can trap the decode revert path.
-    function _decodeString(bytes memory data) external pure returns (string memory) {
+    /// @dev `abi.decode(data, (string))` without its revert path: the
+    ///      bounds it would check are checked here first, and anything that
+    ///      is not a well-formed ABI string reads as "?".
+    ///
+    ///      Total rather than wrapped in `try`, because a `try` needs an
+    ///      external call and the only contract to call was this script —
+    ///      `this._decodeString(...)` until #2347. Foundry's script runner
+    ///      refuses any call to the script contract ("Usage of
+    ///      `address(this)` detected"), so that version stopped the census
+    ///      at the first asset it named.
+    function _decodeStringOrMark(bytes memory data) internal pure returns (string memory) {
+        // An ABI string is an offset word (0x20), a length word, then the
+        // bytes. Two words always decode; the length must fit what follows.
+        if (data.length < 64) return "?";
+        (uint256 offset, uint256 len) = abi.decode(data, (uint256, uint256));
+        if (offset != 32 || len > data.length - 64) return "?";
         return abi.decode(data, (string));
     }
 

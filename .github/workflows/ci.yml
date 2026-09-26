@@ -630,6 +630,38 @@ jobs:
       - name: Run positive-flow scenarios
         run: forge test --match-path "test/scenarios/*.t.sol"
 
+      # #2347 — run the operator's deploy entry point as `forge script`, the
+      # way deploy-chain.sh does, against a throwaway anvil. Tests cannot see
+      # the failure class this exists for: `forge script` refuses behaviour
+      # `forge test` allows (a call to the script contract itself), so #2253
+      # left every deploy-sanity test green while every real deploy reverted
+      # before its first transaction. Reuses this job's `cifast` build, so it
+      # adds a deploy, not a compile. The artifact it writes lands in this
+      # runner's checkout and goes nowhere.
+      #
+      # The keys are anvil's published dev keys (#0 deployer, #1 admin), valid
+      # only on that local chain; the treasury is anvil account #2.
+      #
+      # `--slow`, exactly as deploy-chain.sh passes it: one transaction per
+      # receipt. Without it forge sends the batch at once, anvil fills a block
+      # to its 30M gas limit, and the remainder sits pending with nothing
+      # arriving to mine it — observed locally as a broadcast that stalled
+      # indefinitely after the simulation had passed.
+      - name: Deploy smoke — forge script DeployDiamond on anvil
+        run: |
+          anvil --port 8545 --silent &
+          ANVIL_PID=$!
+          trap 'kill $ANVIL_PID' EXIT
+          for _ in $(seq 1 30); do
+            cast chain-id --rpc-url http://127.0.0.1:8545 >/dev/null 2>&1 && break
+            sleep 1
+          done
+          DEPLOYER_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 \
+          ADMIN_ADDRESS=0x70997970C51812dc3A010C7d01b50e0d17dc79C8 \
+          TREASURY_ADDRESS=0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC \
+            forge script script/DeployDiamond.s.sol \
+              --rpc-url http://127.0.0.1:8545 --broadcast --slow
+
       # The #1221 `forge-out-<sha>` workflow-artifact upload that sat
       # here was REMOVED in #1493: its only download-artifact consumer
       # was build-docs' warm step (gone — `forge doc` never read the
