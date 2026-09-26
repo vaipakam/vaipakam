@@ -209,8 +209,8 @@ A re-run that finds it pending again stops and asks, provided the
 section's heading or its body is unchanged; those are all it has left to
 match on (#2298). If both were edited, the re-run publishes the fragment a
 second time without asking. The same happens if the heading was edited
-and the body is very short (under 40 bytes, not counting spaces, tabs or
-line breaks).
+and the body is very short (under 40 bytes as it appears in the notes,
+not counting spaces, tabs or line breaks).
 
 **And do not delete the section a marker sits under** while leaving the
 marker itself. That is the inverse mistake, and it used to be the

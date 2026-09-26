@@ -2688,31 +2688,55 @@ bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
 check "40 content bytes, wrapped, are"            "$?"               "1"
 check "and nothing is consumed"                   "$(pending "$W")"  "1"
 
-case_start "T78i: the threshold weighs the body as authored, not as rewritten"
-# #2346 r2. `rewrite_links` shortens `](../../` and lengthens `](./`, so a
-# weight taken from the published text could move a body across the line in
-# either direction. It is matched as published and weighed as authored.
+case_start "T78i: the body is weighed exactly as it is compared"
+# #2346 r1-r3 found three bodies that WERE in the file but were measured under
+# the line — line endings, link rewriting, a BOM — each because the weight was
+# taken from a different form of the text than the one matched. The weight is
+# now taken from the compared lines themselves: published form, BOM removed,
+# spaces/tabs/line endings not counted. These pin that it is THAT text.
+#
+# Link rewriting: `](../../` publishes as `](../`. 40 authored bytes, 37 as
+# compared — below the line, so only the heading counts and it is appended.
 W="$ROOT/t78i"; build "$W"
 out="$W/docs/ReleaseNotes"
 rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
-# 12 + 28 = 40 authored content bytes; 37 once `](../../` is rewritten.
 printf '## New heading\n\n[x](../../a)aaaaaaaaaaaaaaaaaaaaaaaaaaaa\n' \
   > "$W/docs/ReleaseNotes/unreleased/0001-a.md"
 printf '# Release Notes — 2026-08-16\n\n## Old heading\n\n[x](../a)aaaaaaaaaaaaaaaaaaaaaaaaaaaa\n' \
   > "$out/ReleaseNotes-2026-08-16.md"
 bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
-check "40 authored bytes are evidence, though 37 published" "$?"              "1"
-check "and nothing is consumed"                             "$(pending "$W")" "1"
+check "37 compared bytes are not evidence"            "$?"              "0"
+# `](./` publishes as `](../`. 39 authored, 40 as compared — evidence.
 W="$ROOT/t78i2"; build "$W"
 out="$W/docs/ReleaseNotes"
 rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
-# 8 + 31 = 39 authored content bytes; 40 once `](./` is rewritten.
 printf '## New heading\n\n[x](./a)bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n' \
   > "$W/docs/ReleaseNotes/unreleased/0001-a.md"
 printf '# Release Notes — 2026-08-16\n\n## Old heading\n\n[x](../a)bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n' \
   > "$out/ReleaseNotes-2026-08-16.md"
 bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
-check "39 authored bytes are not, though 40 published"      "$?"              "0"
+check "40 compared bytes are"                         "$?"              "1"
+check "and nothing is consumed"                       "$(pending "$W")" "1"
+# A BOM on a body line is removed before comparing, so it is not weighed:
+# 3 BOM bytes + 39 content is 39.
+W="$ROOT/t78i3"; build "$W"
+out="$W/docs/ReleaseNotes"
+rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
+printf '## Added heading\n\n\xef\xbb\xbfccccccccccccccccccccccccccccccccccccccc\n' \
+  > "$W/docs/ReleaseNotes/unreleased/0001-a.md"
+printf '# Release Notes — 2026-08-16\n\n\xef\xbb\xbfccccccccccccccccccccccccccccccccccccccc\n' \
+  > "$out/ReleaseNotes-2026-08-16.md"
+bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+check "a BOM does not add weight (39 + BOM)"          "$?"              "0"
+W="$ROOT/t78i4"; build "$W"
+out="$W/docs/ReleaseNotes"
+rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
+printf '## Added heading\n\n\xef\xbb\xbfcccccccccccccccccccccccccccccccccccccccc\n' \
+  > "$W/docs/ReleaseNotes/unreleased/0001-a.md"
+printf '# Release Notes — 2026-08-16\n\n\xef\xbb\xbfcccccccccccccccccccccccccccccccccccccccc\n' \
+  > "$out/ReleaseNotes-2026-08-16.md"
+bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+check "and 40 + BOM is evidence"                      "$?"              "1"
 
 case_start "T79: the quarantine directory is validated before publication"
 W="$ROOT/t79"; build "$W"

@@ -103,16 +103,32 @@ LINE_END_RE = re.compile(rb"\r\n|\r|\n")
 # the heading. Narrowing this can only refuse more, never publish more.
 BLANK_RE = re.compile(rb"^[ \t]*$")
 
-# THE LEAST BODY TEXT THAT COUNTS AS EVIDENCE of an earlier copy, in CONTENT
-# bytes of the body AS AUTHORED: spaces, tabs and line endings are not
-# counted, so the figure is the same however a body is wrapped or indented,
-# and it is taken before link rewriting, so a rewritten link target cannot
-# move it (#2298, #2346 r2). Below it a body is too
-# short to say anything — T20's one-line note, or a `- tests pass` bullet —
-# so only the heading is compared. Measured across all dated files on adoption: of 1,158
-# section bodies, 6 recur, all hand-written carried-forward footers from
-# before fragments existed, and the figure is the same at 0, 20, 40 and 80.
+# THE LEAST BODY TEXT THAT COUNTS AS EVIDENCE of an earlier copy (#2298).
+# Below it a body is too short to say anything — T20's one-line note, or a
+# `- tests pass` bullet — so only the heading is compared. Measured across all
+# dated files on adoption: of 1,158 section bodies, 6 recur, all hand-written
+# carried-forward footers from before fragments existed, and the figure is the
+# same at 0, 20, 40 and 80.
+#
+# THE WEIGHT IS TAKEN FROM EXACTLY THE TEXT THAT IS COMPARED (`body_weight`):
+# the body's lines in published form, a leading BOM removed, spaces, tabs and
+# line endings not counted. Any other base leaves a gap between what is
+# weighed and what is matched, and each gap is a way for a body that IS in the
+# file to be measured under the line. #2346 found three in three rounds —
+# line endings, then link rewriting, then a BOM — each "fixed" by moving the
+# weight to a different base, which only moved the gap. With one base there
+# is none: the evidence is the matched text, so its weight is the matched
+# text's weight.
 BODY_EVIDENCE_MIN = 40
+
+
+def body_weight(block: list[bytes]) -> int:
+    """The evidence weight of `block` — see `BODY_EVIDENCE_MIN`.
+
+    Takes the lines `contains_block` compares, already split and
+    BOM-stripped, so it cannot weigh anything other than what is matched.
+    """
+    return len(re.sub(rb"[ \t]", b"", b"".join(block)))
 
 
 def contains_block(lines: list[bytes], block: list[bytes]) -> bool:
@@ -2008,9 +2024,8 @@ class Assembly:
         remedy at a time in #2290 (r16, r20); the body match closes the
         class, because the body is what no remedy asks anyone to touch.
 
-        A body with fewer than `BODY_EVIDENCE_MIN` content bytes (spaces,
-        tabs and line endings not counted, measured on the text as the
-        author wrote it, before any link rewriting) is not evidence — too short to tell a copy from a
+        A body weighing less than `BODY_EVIDENCE_MIN` — measured on exactly
+        the text compared, as that constant's note explains — is not evidence — too short to tell a copy from a
         coincidence, as T20's one-line note shows — so for such a fragment
         the heading is still all there is. Contiguity is what makes the rest
         safe: lines found scattered through the file are not a copy.
@@ -2199,32 +2214,21 @@ class Assembly:
                 lambda p=self.frag_snap[f]: open(p, "rb").read(),
             )
             checked(f"checking {base} for a repeated heading", lambda: None)
-            # Two views of the same lines: as AUTHORED, and as PUBLISHED
-            # (`rewrite_links`, which `build()` applies). The rewrite never
-            # adds or removes a line ending, so line i of one is line i of the
-            # other — asserted rather than assumed.
-            authored = [_debom(ln) for ln in LINE_END_RE.split(body)]
             lines = [_debom(ln) for ln in LINE_END_RE.split(self.rewrite_links(body))]
-            if len(authored) != len(lines):
-                raise AssertionError("rewrite_links changed a fragment's line count")
             found = []
             at = next((i for i, ln in enumerate(lines) if HEADING_RE.match(ln)), None)
             if at is not None and lines[at] in out_set:
                 found.append("heading")
             # The BODY: every line after the first heading, or every line when
             # there is none — see the docstring's TWO THINGS paragraph (#2298).
-            lo, hi = (0 if at is None else at + 1), len(lines)
-            while lo < hi and BLANK_RE.match(lines[lo]):
-                lo += 1
-            while hi > lo and BLANK_RE.match(lines[hi - 1]):
-                hi -= 1
-            # MATCHED as published, WEIGHED as authored (#2346 r2). The dated
-            # file holds the published form, so that is what is searched for;
-            # but the weight is a property of what the author wrote, and
-            # measuring the rewritten text let a link-target rewrite move a
-            # body across the threshold in either direction.
-            weight = len(re.sub(rb"[ \t]", b"", b"".join(authored[lo:hi])))
-            if weight >= BODY_EVIDENCE_MIN and contains_block(out_lines, lines[lo:hi]):
+            block = lines if at is None else lines[at + 1 :]
+            while block and BLANK_RE.match(block[0]):
+                block = block[1:]
+            while block and BLANK_RE.match(block[-1]):
+                block = block[:-1]
+            # WEIGHED EXACTLY AS COMPARED — the same lines, in the same form,
+            # that `contains_block` looks for. See `BODY_EVIDENCE_MIN`.
+            if body_weight(block) >= BODY_EVIDENCE_MIN and contains_block(out_lines, block):
                 found.append("text")
             if found:
                 suspect[self.frag_name[f]] = found
