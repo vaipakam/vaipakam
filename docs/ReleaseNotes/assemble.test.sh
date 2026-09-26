@@ -2688,6 +2688,32 @@ bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
 check "40 content bytes, wrapped, are"            "$?"               "1"
 check "and nothing is consumed"                   "$(pending "$W")"  "1"
 
+case_start "T78i: the threshold weighs the body as authored, not as rewritten"
+# #2346 r2. `rewrite_links` shortens `](../../` and lengthens `](./`, so a
+# weight taken from the published text could move a body across the line in
+# either direction. It is matched as published and weighed as authored.
+W="$ROOT/t78i"; build "$W"
+out="$W/docs/ReleaseNotes"
+rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
+# 12 + 28 = 40 authored content bytes; 37 once `](../../` is rewritten.
+printf '## New heading\n\n[x](../../a)aaaaaaaaaaaaaaaaaaaaaaaaaaaa\n' \
+  > "$W/docs/ReleaseNotes/unreleased/0001-a.md"
+printf '# Release Notes — 2026-08-16\n\n## Old heading\n\n[x](../a)aaaaaaaaaaaaaaaaaaaaaaaaaaaa\n' \
+  > "$out/ReleaseNotes-2026-08-16.md"
+bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+check "40 authored bytes are evidence, though 37 published" "$?"              "1"
+check "and nothing is consumed"                             "$(pending "$W")" "1"
+W="$ROOT/t78i2"; build "$W"
+out="$W/docs/ReleaseNotes"
+rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
+# 8 + 31 = 39 authored content bytes; 40 once `](./` is rewritten.
+printf '## New heading\n\n[x](./a)bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n' \
+  > "$W/docs/ReleaseNotes/unreleased/0001-a.md"
+printf '# Release Notes — 2026-08-16\n\n## Old heading\n\n[x](../a)bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n' \
+  > "$out/ReleaseNotes-2026-08-16.md"
+bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+check "39 authored bytes are not, though 40 published"      "$?"              "0"
+
 case_start "T79: the quarantine directory is validated before publication"
 W="$ROOT/t79"; build "$W"
 out="$W/docs/ReleaseNotes"
