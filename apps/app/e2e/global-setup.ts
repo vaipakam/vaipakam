@@ -91,6 +91,12 @@ export default async function globalSetup(): Promise<void> {
       // Anvil's own id: the fixture deploys as 31337 and switches the
       // chain to 84532 afterwards — see lib/fixture.ts for why.
       '--chain-id', '31337',
+      // Start high. viem's Base Sepolia chain object records Multicall3 as
+      // created at block 1,059,647 and refuses every multicall read below
+      // it, so on a chain starting at 0 each batched read the app makes
+      // fails, token decimals never load, and typed amounts parse as 0.
+      // Mining up to it is far too slow; setting the genesis number is not.
+      '--number', '2000000',
       '--host', anvilEndpoint.hostname,
       '--port', anvilEndpoint.port || '8545',
       '--silent',

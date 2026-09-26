@@ -37,6 +37,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createWalletClient, http } from 'viem';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import { ANVIL_URL, anvilRpc, setBalance } from './anvil';
 import { E2E_BUNDLE, E2E_BUNDLE_RUN_ID, e2eRunId } from './artifacts';
@@ -55,18 +56,34 @@ const COMMITTED_BUNDLE = path.join(REPO, 'packages', 'contracts', 'src', 'deploy
 const DEPLOY_CHAIN_ID = 31337;
 export const E2E_CHAIN_ID = 84532;
 
-/** Canonical addresses a bare chain lacks, and where their code comes from. */
-const CANONICAL: ReadonlyArray<{ name: string; address: `0x${string}`; code: () => `0x${string}` }> = [
+/**
+ * Canonical addresses a bare chain lacks, and how each is put there.
+ *
+ * Copying runtime code alone installs a contract WITHOUT anything its
+ * constructor wrote to storage. That is fine for Multicall3 and Permit2,
+ * which keep no constructor state (Permit2's chain id and domain live in
+ * immutables, inside the code). It is NOT fine for WETH9, whose `name`,
+ * `symbol` and `decimals` are storage variables: an etched copy reports 0
+ * decimals, and the app then parses every amount the user types as 0. So
+ * WETH9 is CONSTRUCTED normally first and then cloned, code and storage.
+ */
+type Canonical =
+  | { name: string; address: `0x${string}`; install: 'code'; code: () => `0x${string}` }
+  | { name: string; address: `0x${string}`; install: 'construct'; source: string; contract: string };
+
+const CANONICAL: ReadonlyArray<Canonical> = [
   {
     name: 'WETH9',
     address: '0x4200000000000000000000000000000000000006',
-    code: () =>
-      compiledRuntime('lib/chainlink-evm/contracts/src/v0.8/vendor/canonical-weth/WETH9.sol', 'WETH9'),
+    install: 'construct',
+    source: 'lib/chainlink-evm/contracts/src/v0.8/vendor/canonical-weth/WETH9.sol',
+    contract: 'WETH9',
   },
   {
     name: 'Multicall3',
     address: '0xcA11bde05977b3631167028862bE2a173976CA11',
-    code: () => compiledRuntime('test/mocks/Multicall3Mock.sol', 'Multicall3Mock'),
+    install: 'code',
+    code: () => compiledArtifact('test/mocks/Multicall3Mock.sol', 'Multicall3Mock').runtime,
   },
   {
     // The real Permit2, not `MockPermit2`: spec 12 relies on it verifying
@@ -74,12 +91,19 @@ const CANONICAL: ReadonlyArray<{ name: string; address: `0x${string}`; code: () 
     // tree; see the provenance note beside the file.
     name: 'Permit2',
     address: '0x000000000022D473030F116dDEE9F6B43aC78BA3',
+    install: 'code',
     code: () =>
       fs
         .readFileSync(path.join(CONTRACTS_DIR, 'script', 'e2e', 'Permit2.runtime.hex'), 'utf8')
         .trim() as `0x${string}`,
   },
 ];
+
+/** How many leading storage slots a constructed contract's clone copies.
+ *  Fixed-layout state variables occupy the low slots; mappings and dynamic
+ *  data live at hashed slots, which a freshly constructed contract has not
+ *  written. WETH9 uses slots 0–2; the margin is deliberate and cheap. */
+const CLONED_SLOTS = 16;
 
 /** Run a Foundry command in `contracts/`, failing with its output. */
 function foundry(args: string[], env: Record<string, string> = {}): string {
@@ -101,15 +125,20 @@ function foundry(args: string[], env: Record<string, string> = {}): string {
 }
 
 /**
- * Runtime bytecode from the artifact the fixture compile just wrote. Read
- * from `out/` rather than through `forge inspect`, which resolves a target
- * against the whole project and can trigger a full, test-inclusive compile.
- * The artifact's own compilation target is checked, so a same-named file
- * from another library can never be etched in its place.
+ * Creation and runtime bytecode from the artifact the fixture compile just
+ * wrote. Read from `out/` rather than through `forge inspect`, which
+ * resolves a target against the whole project and can trigger a full,
+ * test-inclusive compile. The artifact's own compilation target is checked,
+ * so a same-named file from another library can never be installed in its
+ * place.
  */
-function compiledRuntime(source: string, contract: string): `0x${string}` {
+function compiledArtifact(
+  source: string,
+  contract: string,
+): { creation: `0x${string}`; runtime: `0x${string}` } {
   const file = path.join(CONTRACTS_DIR, 'out', path.basename(source), `${contract}.json`);
   const art = JSON.parse(fs.readFileSync(file, 'utf8')) as {
+    bytecode?: { object?: string };
     deployedBytecode?: { object?: string };
     metadata?: { settings?: { compilationTarget?: Record<string, string> } };
   };
@@ -117,11 +146,60 @@ function compiledRuntime(source: string, contract: string): `0x${string}` {
   if (target[source] !== contract) {
     throw new Error(`${file} was compiled from ${JSON.stringify(target)}, not ${source}:${contract}`);
   }
-  const code = art.deployedBytecode?.object ?? '';
-  if (!/^0x[0-9a-fA-F]+$/.test(code) || code.length <= 2) {
-    throw new Error(`${file} carries no runtime bytecode`);
+  const hex = (v: string | undefined, what: string): `0x${string}` => {
+    if (!v || !/^0x[0-9a-fA-F]+$/.test(v) || v.length <= 2) {
+      throw new Error(`${file} carries no ${what} bytecode`);
+    }
+    return v as `0x${string}`;
+  };
+  return {
+    creation: hex(art.bytecode?.object, 'creation'),
+    runtime: hex(art.deployedBytecode?.object, 'runtime'),
+  };
+}
+
+/** Put `c` at its canonical address — see `CANONICAL` for why the two
+ *  install kinds differ. */
+async function installCanonical(c: Canonical, deployerKey: `0x${string}`): Promise<void> {
+  if (c.install === 'code') {
+    await anvilRpc('anvil_setCode', [c.address, c.code()]);
+    return;
   }
-  return code as `0x${string}`;
+  const { creation } = compiledArtifact(c.source, c.contract);
+  const account = privateKeyToAccount(deployerKey);
+  const wallet = createWalletClient({
+    account,
+    chain: { id: DEPLOY_CHAIN_ID, name: 'anvil', nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 }, rpcUrls: { default: { http: [ANVIL_URL] } } },
+    transport: http(ANVIL_URL),
+  });
+  const hash = await wallet.sendTransaction({ data: creation, to: null });
+  const receipt = await anvilRpc<{ status: string; contractAddress: `0x${string}` } | null>(
+    'eth_getTransactionReceipt',
+    [hash],
+  );
+  if (!receipt || receipt.status !== '0x1' || !receipt.contractAddress) {
+    throw new Error(`constructing ${c.name} for the canonical copy failed (tx ${hash})`);
+  }
+  const built = receipt.contractAddress;
+  const code = await anvilRpc<`0x${string}`>('eth_getCode', [built, 'latest']);
+  await anvilRpc('anvil_setCode', [c.address, code]);
+  for (let slot = 0; slot < CLONED_SLOTS; slot++) {
+    const key = `0x${slot.toString(16).padStart(64, '0')}`;
+    const value = await anvilRpc<`0x${string}`>('eth_getStorageAt', [built, key, 'latest']);
+    await anvilRpc('anvil_setStorageAt', [c.address, key, value]);
+  }
+}
+
+/** A canonical WETH9 that cannot be read as 18-decimal WETH would make the
+ *  app parse every amount as 0 — assert it before anything runs on it. */
+async function assertCanonicalWeth(address: `0x${string}`): Promise<void> {
+  const decimals = await anvilRpc<string>('eth_call', [
+    { to: address, data: '0x313ce567' },
+    'latest',
+  ]);
+  if (BigInt(decimals) !== 18n) {
+    throw new Error(`WETH9 at ${address} reports ${BigInt(decimals)} decimals after installation, not 18`);
+  }
 }
 
 async function fundedKey(): Promise<`0x${string}`> {
@@ -144,9 +222,11 @@ export async function deployFixture(): Promise<FixtureResult> {
   console.log('[e2e] compiling the fixture (current contracts)…');
   foundry(['forge', 'build', FIXTURE_SCRIPT]);
 
+  const installerKey = await fundedKey();
   for (const c of CANONICAL) {
-    await anvilRpc('anvil_setCode', [c.address, c.code()]);
+    await installCanonical(c, installerKey);
   }
+  await assertCanonicalWeth('0x4200000000000000000000000000000000000006');
 
   // A previous run's artifact must not be read as this run's: the deploy
   // writes the file, and a failure part-way would otherwise leave the
