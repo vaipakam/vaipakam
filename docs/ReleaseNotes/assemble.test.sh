@@ -2568,7 +2568,8 @@ rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
 # recognise it.
 #
 # The class — a refusal whose remedy edits the text this guard matches on —
-# is filed as #2298 rather than patched per remedy.
+# was filed as #2298 and is now closed at the root by comparing the body as
+# well as the heading: see T78d-T78g.
 printf '## Thread — already published (PR #4400)\n\nbody\n' \
   > "$W/docs/ReleaseNotes/unreleased/0001-a.md"
 printf '# Release Notes — 2026-08-16\n\n\xef\xbb\xbf## Thread — already published (PR #4400)\n\nbody\n' \
@@ -2579,6 +2580,87 @@ check "naming the fragment"     "$(says "$msg" '0001-a.md')"                    
 check "no fragment consumed"    "$(pending "$W")"                                 "1"
 check "not duplicated" \
   "$(count_in 'already published' "$out/ReleaseNotes-2026-08-16.md")"             "1"
+
+case_start "T78d: a retitled published copy is still found by its text (#2298)"
+W="$ROOT/t78d"; build "$W"
+out="$W/docs/ReleaseNotes"
+rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
+# THE CLASS FIX FOR #2298. Every remedy a refusal prints edits a fragment's
+# opening — heading level, heading text, a BOM, front matter — and the heading
+# was the only thing this guard compared. So an author following the advice
+# after an interrupted legacy run moved the guard's evidence: the rerun found
+# no heading, appended a second copy and consumed the source. The BODY is what
+# no remedy touches, so it is compared too, as one contiguous block.
+printf '## New title after the advice (PR #4500)\n\nThe body of this note is long enough to count as evidence.\nIt spans two lines.\n' \
+  > "$W/docs/ReleaseNotes/unreleased/0001-a.md"
+printf '# Release Notes — 2026-08-16\n\n# Old title (PR #4500)\n\nThe body of this note is long enough to count as evidence.\nIt spans two lines.\n' \
+  > "$out/ReleaseNotes-2026-08-16.md"
+msg="$(bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "the run stops and asks"   "$?"                                        "1"
+check "naming the fragment"      "$(says "$msg" '0001-a.md')"                "1"
+check "saying what was found"    "$(says "$msg" 'its text is already there')" "1"
+check "no fragment consumed"     "$(pending "$W")"                           "1"
+check "not duplicated" \
+  "$(count_in 'long enough to count' "$out/ReleaseNotes-2026-08-16.md")"     "1"
+msg="$(bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates --force-append 2>&1)"
+check "the override appends"     "$?"                                        "0"
+check "and says why it looked"   "$(says "$msg" 'its text is already there')" "1"
+
+case_start "T78e: a heading ADDED above published prose does not hide it"
+W="$ROOT/t78e"; build "$W"
+out="$W/docs/ReleaseNotes"
+rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
+# The opening-line remedy for a fragment that starts with prose is to put a
+# heading on top. The published copy has no such line, so "the body" is taken
+# as every line after the fragment's first heading — which here is the whole
+# original text, and it is found.
+printf '## A heading the author added\n\nOriginal opening prose, published before the heading existed.\n\n## Its later section\n\nbody\n' \
+  > "$W/docs/ReleaseNotes/unreleased/0001-a.md"
+printf '# Release Notes — 2026-08-16\n\nOriginal opening prose, published before the heading existed.\n\n## Its later section\n\nbody\n' \
+  > "$out/ReleaseNotes-2026-08-16.md"
+msg="$(bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "the run stops and asks"   "$?"                                        "1"
+check "on the text, not a heading" "$(says "$msg" 'its text is already there')" "1"
+check "no fragment consumed"     "$(pending "$W")"                           "1"
+
+case_start "T78f: removing a BOM and retitling together is still caught"
+W="$ROOT/t78f"; build "$W"
+out="$W/docs/ReleaseNotes"
+rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
+printf '## Retitled and re-saved (PR #4501)\n\nA body that neither remedy touched, and long enough to be evidence.\n' \
+  > "$W/docs/ReleaseNotes/unreleased/0001-a.md"
+printf '# Release Notes — 2026-08-16\n\n\xef\xbb\xbf## First title (PR #4501)\n\nA body that neither remedy touched, and long enough to be evidence.\n' \
+  > "$out/ReleaseNotes-2026-08-16.md"
+bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+check "the run stops and asks"   "$?"               "1"
+check "no fragment consumed"     "$(pending "$W")"  "1"
+
+case_start "T78g: the text match has limits, and they are pinned"
+W="$ROOT/t78g"; build "$W"
+out="$W/docs/ReleaseNotes"
+rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
+# BELOW THE EVIDENCE MINIMUM a body says nothing, so only the heading counts.
+# This is the residual #2298 leaves, stated in the docstring: a short note
+# whose heading was ALSO changed is appended again. Pinned so a change to the
+# threshold is a visible decision rather than drift.
+printf '## Changed heading\n\nShort body.\n' > "$W/docs/ReleaseNotes/unreleased/0001-a.md"
+printf '# Release Notes — 2026-08-16\n\n## Original heading\n\nShort body.\n' \
+  > "$out/ReleaseNotes-2026-08-16.md"
+bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+check "a short body is not evidence"  "$?"               "0"
+check "and the fragment is appended"  "$(pending "$W")"  "0"
+# NOT CONTIGUOUS, NOT A MATCH. The same lines scattered through the file are a
+# coincidence, not a copy; only the block as published counts.
+W="$ROOT/t78g2"; build "$W"
+out="$W/docs/ReleaseNotes"
+rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
+printf '## Fresh note\n\nFirst line of a body long enough to be evidence.\nSecond line.\n' \
+  > "$W/docs/ReleaseNotes/unreleased/0001-a.md"
+printf '# Release Notes — 2026-08-16\n\n## Other\n\nFirst line of a body long enough to be evidence.\n\nSecond line.\n' \
+  > "$out/ReleaseNotes-2026-08-16.md"
+bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+check "scattered lines are not a copy" "$?"               "0"
+check "and the fragment is appended"   "$(pending "$W")"  "0"
 
 case_start "T79: the quarantine directory is validated before publication"
 W="$ROOT/t79"; build "$W"
