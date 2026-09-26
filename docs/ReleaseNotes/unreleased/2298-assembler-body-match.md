@@ -6,7 +6,7 @@ The check now also compares the fragment's body: everything after its first head
 
 Two limits are stated, not hidden:
 
-- **Very short bodies don't count.** A body under 40 bytes as it appears in the published notes, not counting spaces, tabs or line breaks, is too short to tell a copy from a coincidence, so only the heading is compared for it.
+- **Very short bodies don't count.** A body under 40 bytes as it appears in the published notes, not counting spaces, tabs, line breaks or a byte-order mark at the start of a line, is too short to tell a copy from a coincidence, so only the heading is compared for it.
 - **Some edits can't be detected.** If a fragment's heading and body have both been rewritten since it was published, no comparison of text can tell it from a new one. Only the assembly marker can.
 
 Before adopting the body match, it was measured against every dated file. Of 1,158 section bodies, 6 appear more than once. All six are hand-written footers from before fragments existed, so the new evidence should not stop real runs. `--force-append` remains the override.
