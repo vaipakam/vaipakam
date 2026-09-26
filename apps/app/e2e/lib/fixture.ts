@@ -80,10 +80,13 @@ const CANONICAL: ReadonlyArray<Canonical> = [
     contract: 'WETH9',
   },
   {
+    // The real Multicall3, not `Multicall3Mock`: the mock implements only
+    // `aggregate3`, and the app also reads `getBlockNumber()` through it
+    // (the forced-close card's provenance), which then never resolves.
     name: 'Multicall3',
     address: '0xcA11bde05977b3631167028862bE2a173976CA11',
     install: 'code',
-    code: () => compiledArtifact('test/mocks/Multicall3Mock.sol', 'Multicall3Mock').runtime,
+    code: () => committedRuntime('Multicall3.runtime.hex'),
   },
   {
     // The real Permit2, not `MockPermit2`: spec 12 relies on it verifying
@@ -92,12 +95,15 @@ const CANONICAL: ReadonlyArray<Canonical> = [
     name: 'Permit2',
     address: '0x000000000022D473030F116dDEE9F6B43aC78BA3',
     install: 'code',
-    code: () =>
-      fs
-        .readFileSync(path.join(CONTRACTS_DIR, 'script', 'e2e', 'Permit2.runtime.hex'), 'utf8')
-        .trim() as `0x${string}`,
+    code: () => committedRuntime('Permit2.runtime.hex'),
   },
 ];
+
+/** A canonical runtime committed beside the fixture script, because its
+ *  source is not in the tree — see `contracts/script/e2e/README.md`. */
+function committedRuntime(file: string): `0x${string}` {
+  return fs.readFileSync(path.join(CONTRACTS_DIR, 'script', 'e2e', file), 'utf8').trim() as `0x${string}`;
+}
 
 /** How many leading storage slots a constructed contract's clone copies.
  *  Fixed-layout state variables occupy the low slots; mappings and dynamic

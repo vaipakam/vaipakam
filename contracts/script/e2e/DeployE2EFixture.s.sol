@@ -4,7 +4,7 @@ pragma solidity ^0.8.29;
 import {DeployDiamond} from "../DeployDiamond.s.sol";
 import {DeployTestnetMocks} from "../DeployTestnetMocks.s.sol";
 import {WETH9} from "@chainlink/contracts/src/v0.8/vendor/canonical-weth/WETH9.sol";
-import {Multicall3Mock} from "../../test/mocks/Multicall3Mock.sol";
+import {AdminFacet} from "../../src/facets/AdminFacet.sol";
 
 /**
  * @title  DeployE2EFixture
@@ -25,9 +25,10 @@ import {Multicall3Mock} from "../../test/mocks/Multicall3Mock.sol";
  *           1. before it: etches the three contracts the app expects at
  *              canonical addresses — WETH9 at Base's `0x4200…0006`,
  *              Multicall3 at `0xcA11…CA11`, Permit2 at `0x0000…78BA3`. This
- *              script REQUIRES them and checks WETH9 and Multicall3 against
- *              the bytecode compiled here, so an etch of the wrong thing
- *              fails here rather than as a confusing spec failure.
+ *              script REQUIRES them, pinning Multicall3 and Permit2 by code
+ *              hash and WETH9 by the bytecode compiled here, so installing
+ *              the wrong thing fails here rather than as a confusing spec
+ *              failure.
  *           2. after it: switches the chain id to Base Sepolia's (84532),
  *              so the app's per-chain wiring applies unchanged, and writes
  *              an e2e-only deployments bundle whose 84532 entry is this
@@ -55,6 +56,14 @@ contract DeployE2EFixture is DeployDiamond, DeployTestnetMocks {
     /// @notice Uniswap's Permit2, which the app's permit path signs for.
     address internal constant CANONICAL_PERMIT2 = 0x000000000022D473030F116dDEE9F6B43aC78BA3;
 
+    /// @notice Code hashes of the committed canonical runtimes
+    ///         (`Multicall3.runtime.hex`, `Permit2.runtime.hex`); see the
+    ///         README beside this script for where each was read from.
+    bytes32 internal constant MULTICALL3_CODEHASH =
+        0xd5c15df687b16f2ff992fc8d767b4216323184a2bbc6ee2f9c398c318e770891;
+    bytes32 internal constant PERMIT2_CODEHASH =
+        0xdcde65555316946c298e4c60c6213eb5c3aeab4354d1f3fac5427236bcbb9ebe;
+
     /// @notice Where the fixture's artifact goes — the scratch root
     ///         `Deployments` permits a redirect to, and gitignored.
     string internal constant E2E_ARTIFACT_ROOT = "deployments/.forge-test/e2e";
@@ -69,12 +78,12 @@ contract DeployE2EFixture is DeployDiamond, DeployTestnetMocks {
             "DeployE2EFixture: WETH9 is not etched at 0x4200...0006"
         );
         require(
-            keccak256(CANONICAL_MULTICALL3.code) == keccak256(type(Multicall3Mock).runtimeCode),
-            "DeployE2EFixture: Multicall3 is not etched at 0xcA11...CA11"
+            CANONICAL_MULTICALL3.codehash == MULTICALL3_CODEHASH,
+            "DeployE2EFixture: the canonical Multicall3 is not installed at 0xcA11...CA11"
         );
         require(
-            CANONICAL_PERMIT2.code.length != 0,
-            "DeployE2EFixture: Permit2 is not etched at its canonical address"
+            CANONICAL_PERMIT2.codehash == PERMIT2_CODEHASH,
+            "DeployE2EFixture: the canonical Permit2 is not installed at its address"
         );
 
         setArtifactRootOverride(E2E_ARTIFACT_ROOT);
@@ -83,5 +92,15 @@ contract DeployE2EFixture is DeployDiamond, DeployTestnetMocks {
         uint256 adminKey = vm.envUint("ADMIN_PRIVATE_KEY");
         runWith(vm.addr(adminKey), vm.envAddress("TREASURY_ADDRESS"), deployerKey);
         _deployTestnetMocks(deployerKey, adminKey, diamond, CANONICAL_WETH);
+
+        // THE LIVE TESTNET'S POSTURE, where a spec depends on it. Each line
+        // names the flag, what the testnet holds, and why the suite needs it.
+        vm.startBroadcast(adminKey);
+        // Base Sepolia holds `true`. A lender completing a borrower's posted
+        // refinance request is gated by this switch today, although the switch
+        // is documented as keeper-only — #2349. Until that is decided,
+        // spec 29 needs it on, as the testnet has it.
+        AdminFacet(diamond).setAutoRefinanceEnabled(true);
+        vm.stopBroadcast();
     }
 }
