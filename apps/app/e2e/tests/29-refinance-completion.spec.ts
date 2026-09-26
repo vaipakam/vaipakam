@@ -132,8 +132,8 @@ test('refinance request completes: old loan closes, new loan carries the collate
   await expect(pending).toBeVisible({ timeout: 120_000 });
 
   // Pin the request to THIS loan rather than trusting "newest offer by
-  // the borrower": the fork inherits Base Sepolia's whole book and the
-  // role wallets are reused across specs, so an unrelated offer could
+  // the borrower": the role wallets are reused across specs on one
+  // chain, so an unrelated offer from an earlier spec could
   // otherwise be accepted and the spec would still go green.
   const requestId = await newestOfferIdFor(
     accountFor('borrower').address,

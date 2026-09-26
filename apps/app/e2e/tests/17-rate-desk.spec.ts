@@ -3,9 +3,9 @@
  *
  *  Market choice: every test trades WETH (lending) / faucet tLIQ
  *  (collateral) — the pair the role wallets are seeded for — but at a
- *  TENOR bucket verified live-empty on the fork first. The on-chain
+ *  TENOR bucket verified empty on the chain first. The on-chain
  *  matcher requires exact durationDays equality, so a fresh tenor IS a
- *  fresh market: the inherited Base Sepolia book can never leak rows
+ *  fresh market: offers earlier specs left can never leak rows
  *  into the ladder under test, and exact rate/size/mid/spread
  *  assertions stay deterministic without faking anything.
  *
@@ -127,7 +127,7 @@ test('an empty market renders the honest empty state; a seeded two-sided book re
   await expect(take).toHaveAttribute('href', new RegExp(`offer=${bidId}&`));
 
   // Exactly our two levels — the tenor was picked empty, so nothing
-  // inherited can pad the ladder.
+  // else on the chain can pad the ladder.
   await expect(ladder.locator('.desk-ladder-row')).toHaveCount(2);
 
   // Header stats quote the ladder: mid (937+611)/2 = 774 bps, spread

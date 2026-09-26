@@ -5,13 +5,11 @@
  *  listing expires, the same card grows the permissionless "Free held
  *  options" cleanup and clicking it releases the hold on-chain.
  *
- *  SELF-ARMING: the anvil fork tracks LIVE Base Sepolia, which routes
- *  the bounded 4-arg `createLoanSaleOffer` only after the operator
- *  runs `RefreshAllFacetsInPlace` (PR #1505's migration). Until that
- *  cut lands the whole lifecycle under test does not exist on the
- *  fork, so the spec skips itself on a loupe probe instead of failing
- *  red — and activates automatically, with no code change, the run
- *  after the refresh reaches the testnet.
+ *  The bounded 4-arg `createLoanSaleOffer` is ASSERTED routed, not
+ *  probed. This spec used to skip itself while the forked live Diamond
+ *  predated that route (PR #1505's migration). The e2e chain now carries
+ *  the repository's current contracts (#2334), so a missing route here is
+ *  a regression in this tree, and a skip would hide it.
  */
 import { toFunctionSelector } from 'viem';
 import { test, expect } from '../lib/wallet-fixture';
@@ -42,10 +40,10 @@ async function boundedListingCutLive(): Promise<boolean> {
 test('listing holds the borrower options; expiry + cleanup frees them', async ({
   launchWallet,
 }) => {
-  test.skip(
-    !(await boundedListingCutLive()),
-    'live Base Sepolia Diamond pre-refresh (no 4-arg createLoanSaleOffer) — spec arms itself once RefreshAllFacetsInPlace runs',
-  );
+  expect(
+    await boundedListingCutLive(),
+    'the current Diamond must route the bounded 4-arg createLoanSaleOffer',
+  ).toBe(true);
 
   // Active loan between the fixture wallets.
   const lender = await launchWallet('lender');

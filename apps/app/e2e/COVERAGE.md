@@ -8,9 +8,14 @@ existing one, stating WHERE it is verified.
 **Tiers**
 
 - **CI-Anvil** — automatic, every PR: a spec under `e2e/tests/` run by
-  the `fork-tier scenarios` GitHub job against an Anvil fork of Base
-  Sepolia. This is the DEFAULT tier; a feature lands here unless it
-  genuinely cannot.
+  the `fork-tier scenarios` GitHub job against a local Anvil carrying the
+  repository's CURRENT contracts, deployed from source by global setup and
+  presented as Base Sepolia (#2334, `e2e/lib/fixture.ts`). The job name is
+  historical: it is no longer a fork, and nothing reads the live testnet,
+  so a spec's inputs are the commit under test and the state the spec
+  itself creates. A contract change reaches this tier in the same PR,
+  before any testnet deploy. This is the DEFAULT tier; a feature lands
+  here unless it genuinely cannot.
 - **Live-only** — a committed driver under `e2e/live/`, run manually
   after the production deploy (the CLAUDE.md live-review DoD) and as a
   batch regression via `e2e/live/run-live-batch.mjs` before testnet
@@ -29,7 +34,8 @@ landed, and the spec fails much later on a surface three steps downstream, with
 a message about the UI that says nothing about the cause. That is not
 hypothetical: it is what made `26-sale-listing-hold` look like a flake for
 weeks, red and green on the same SHA, because whether the listing reverted
-depended on live forked chain state rather than on the tree.
+depended on live forked chain state rather than on the tree. (#2334 has since
+removed that dependency: the chain is built from source for every run.)
 
 Two rules follow, and they are separate:
 

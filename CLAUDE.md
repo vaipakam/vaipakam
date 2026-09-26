@@ -1139,7 +1139,10 @@ same diff — the same per-PR discipline as release-note fragments and
 functional specs. Two tiers:
 
 - **CI-Anvil (default)**: a Playwright spec under `apps/app/e2e/tests/`,
-  run automatically on every PR by the `fork-tier scenarios` job.
+  run automatically on every PR by the `fork-tier scenarios` job —
+  against the repository's CURRENT contracts deployed from source onto a
+  local Anvil (#2334), not a fork of the live testnet; the job name is
+  historical.
 - **Live-only** (stated reason required — deployed Worker, Telegram,
   third-party API, real build env): a committed driver under
   `apps/app/e2e/live/`, run post-deploy per the live-review DoD and

@@ -106,8 +106,8 @@ test('help explainer gates the flow; dusted vault recovers to the wallet', async
     '0x0000000000000000000000000000000000000000' as Address,
   );
 
-  // Ensure the borrower HAS a vault (fork state inherits one from the
-  // live testnet history, but a freshly redeployed diamond wouldn't).
+  // Ensure the borrower HAS a vault: the chain is fresh per run (#2334),
+  // so one exists only if an earlier spec happened to create it.
   let vault = (await pub.readContract({
     address: DIAMOND,
     abi: DIAMOND_ABI_VIEM,
