@@ -6,9 +6,9 @@
  *
  * Market convention (see spec 17's header note): every desk test
  * trades WETH (lending) against a faucet collateral mock, at a TENOR
- * bucket verified live-empty on the fork first. The on-chain matcher
+ * bucket verified empty on the chain first. The on-chain matcher
  * requires exact durationDays equality, so a fresh tenor IS a fresh
- * market: the inherited Base Sepolia book can never leak rows into
+ * market: offers earlier specs left can never leak rows into
  * the ladder under test. Each spec FILE that rests GTC offers owns
  * its own collateral pair — WETH/tLIQ for 17/18, WETH/mUSDC for 19 —
  * see the bucket-budget note at {@link freshTenor}.

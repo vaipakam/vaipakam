@@ -117,8 +117,8 @@ test('a just-cancelled offer vanishes from the book while the cache still serves
     // carry-over).
     await borrower.page.goto('/offers', { waitUntil: 'domcontentloaded' });
     // Wait for a POSITIVELY loaded book first — some rendered row
-    // (the pinned snapshot carries the fork's inherited open book, so
-    // rows always exist) — because waiting for the loading text to be
+    // (this spec posts its own offer before the pin, and earlier specs
+    // in the run leave theirs, so rows always exist) — because waiting for the loading text to be
     // ABSENT would pass trivially before React even mounts, letting
     // the absence assert below false-pass.
     await expect(borrower.page.locator('.item-row').first()).toBeVisible({

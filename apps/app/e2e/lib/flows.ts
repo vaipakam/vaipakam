@@ -56,7 +56,7 @@ export async function pasteAsset(
 
 /** The suite's principal amount. DISTINCTIVE on purpose: the guided
  *  matcher ranks by |offer amount - desired amount| FIRST, so an
- *  offer at an amount nothing on the forked live book uses ranks at
+ *  offer at an amount nothing else on the chain's book uses ranks at
  *  distance 0 for a borrower asking exactly this amount — top-5
  *  placement is then deterministic against book drift (rate is only
  *  the tiebreak among same-amount offers, i.e. this run's own).
@@ -142,9 +142,9 @@ export async function acceptAsBorrower(
 
 /** Borrower accepts through the GUIDED MATCHER (flow 4.1): details →
  *  See matching offers → the card for `offerId` → review → sign. The
- *  fork inherits Base Sepolia's whole open book (stale look-alike
- *  offers included — run 3's borrower picked one whose collateral it
- *  didn't hold), so the card is selected by its "offer #<id>" line,
+ *  book holds every offer earlier specs in the run posted (look-alikes
+ *  included — on the old live fork, run 3's borrower picked one whose
+ *  collateral it didn't hold), so the card is selected by its "offer #<id>" line,
  *  never positionally, and OFFER_AMOUNT_WETH guarantees top-5
  *  placement (see its doc). */
 export async function acceptViaGuidedMatch(

@@ -37,7 +37,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createWalletClient, http } from 'viem';
+import { createPublicClient, createWalletClient, http } from 'viem';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import { ANVIL_URL, anvilRpc, setBalance } from './anvil';
 import { E2E_BUNDLE, E2E_BUNDLE_RUN_ID, e2eRunId } from './artifacts';
@@ -179,12 +179,14 @@ async function installCanonical(c: Canonical, deployerKey: `0x${string}`): Promi
     transport: http(ANVIL_URL),
   });
   const hash = await wallet.sendTransaction({ data: creation, to: null });
-  const receipt = await anvilRpc<{ status: string; contractAddress: `0x${string}` } | null>(
-    'eth_getTransactionReceipt',
-    [hash],
-  );
-  if (!receipt || receipt.status !== '0x1' || !receipt.contractAddress) {
-    throw new Error(`constructing ${c.name} for the canonical copy failed (tx ${hash})`);
+  // WAIT for the receipt. Reading it straight after sending races the
+  // mining and reads null — observed as an intermittent setup failure.
+  const receipt = await createPublicClient({ transport: http(ANVIL_URL) }).waitForTransactionReceipt({
+    hash,
+    timeout: 60_000,
+  });
+  if (receipt.status !== 'success' || !receipt.contractAddress) {
+    throw new Error(`constructing ${c.name} for the canonical copy reverted (tx ${hash})`);
   }
   const built = receipt.contractAddress;
   const code = await anvilRpc<`0x${string}`>('eth_getCode', [built, 'latest']);

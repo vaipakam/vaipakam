@@ -57,11 +57,12 @@ import { pub, DIAMOND, DIAMOND_ABI_VIEM, MOCKS } from '../lib/chain';
  *
  *  The first version of this spec warped a flat 2 days on the reasoning
  *  that a 9-day loan draws the compiled 1-day bucket. `isLoanDefaultable`
- *  was still false, so that reasoning was wrong somewhere — most likely
- *  because the fork carries REAL Base Sepolia state and `s.graceBuckets`
- *  is whatever THAT deployment configured rather than the compiled
- *  ladder. Stated as the likely cause rather than the established one:
- *  the run proves the warp was insufficient, not why.
+ *  was still false, so that reasoning was wrong somewhere. It ran against
+ *  a fork of live Base Sepolia at the time, whose `s.graceBuckets` need
+ *  not match the compiled ladder, which is the likely cause; the run
+ *  proved the warp insufficient, not why. The chain is now built from
+ *  source (#2334), and the stepping stays because it does not depend on
+ *  knowing.
  *
  *  Which is the point of stepping instead of computing — the loop is
  *  correct under either explanation, and if the loan is somehow not
@@ -183,12 +184,12 @@ test('the close-out card tracks the grace boundary for the lender', async ({
   // than by a failure, which is the point of stating it: the assertions
   // below expect the `ready-needs-route` arm, and `triggerDefault`
   // dispatches an internal match BEFORE it ever reaches the swap
-  // branch. So a fork carrying an opposing position for this pair would
+  // branch. So a chain carrying an opposing position for this pair would
   // put the card on the internal-match copy WITH a submit button, and
   // the two assertions below would fail on a wording mismatch and a
   // stray button — telling the next reader nothing about the cause.
   //
-  // The fork inherits live Base Sepolia's whole loan book, so whether
+  // Earlier specs in the run open loans on this same chain, so whether
   // such a counterparty exists is not something this spec controls. It
   // asks the chain the same question the contract asks, and fails here
   // with a named reason if the answer ever changes.

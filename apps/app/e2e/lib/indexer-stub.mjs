@@ -1254,31 +1254,25 @@ async function handler(req, res) {
 }
 
 /**
- * Startup guard: does the FORKED chain actually speak the ABI this repo
- * committed? (#1518)
+ * Startup guard: do the committed ABIs match the contracts the e2e chain
+ * was built from? (#1518, reshaped by #2334)
  *
- * The fork is live Base Sepolia, but the ABIs come from this checkout.
- * Any merged contract change that widens a read shape breaks every
- * decode against that chain until someone deploys — and nothing in CI
- * notices. That is not hypothetical: #1392 appended three fields to the
- * Offer struct on 2026-07-21, correctly re-exported the ABIs in the same
- * commit, and was never deployed to Base Sepolia. `getOffer` returned 39
- * words while the ABI expected 42, `mapOffer` threw inside a
- * `Promise.all`, the served offer book came back empty, and four specs
- * failed for ~2 weeks with timeouts that named the offer BOOK and never
- * the cause.
+ * This guard was written when the chain was a fork of live Base Sepolia
+ * and the ABIs came from this checkout, so the two could drift for weeks:
+ * #1392 appended three fields to the Offer struct on 2026-07-21 and
+ * re-exported the ABIs in the same commit, but was never deployed. After
+ * that, `getOffer` returned 39 words where the ABI expected 42, the served
+ * offer book came back empty, and four specs timed out for ~2 weeks on
+ * messages that named the book and never the cause. Back then a mismatch
+ * was an environment fact (deploy lag), so it only warned.
  *
- * So: probe the struct reads up front and say precisely what is wrong.
- * A wrong answer here is an environment fact, not a test failure — the
- * fix is a testnet deploy, and the operator should not have to infer
- * that from `Position 1279 is out of bounds`.
- *
- * Deliberately a WARNING, not a hard exit. The tier still has value with
- * a stale chain (the specs that never read the book pass), and turning a
- * deploy lag into "no e2e at all" would trade one silent failure for a
- * louder one. The banner is what was missing.
+ * Since #2334 the chain is deployed from THIS checkout's contracts, so
+ * deploy lag is gone. A mismatch can now mean only that the committed ABI
+ * JSONs disagree with the contract source in the same tree: a defect in
+ * the tree, fixed by re-exporting the ABIs. It therefore fails startup
+ * with that remedy, rather than letting specs time out on empty data.
  */
-async function assertAbiMatchesFork() {
+async function assertAbiMatchesChain() {
   // Static-head width the committed ABI expects, vs what the chain
   // returns. Only fully-static structs can be checked this way, which
   // is exactly the shape these paginated/detail reads have.
@@ -1299,27 +1293,14 @@ async function assertAbiMatchesFork() {
       });
       const words = ((data?.data?.length ?? 2) - 2) / 64;
       if (words && words !== components.length) {
-        // Name the direction from the widths, never assume it. The
-        // usual case is a chain behind the checkout, but the reverse
-        // happens too — an older checkout, or a fork pointed at a
-        // newer deployment — and telling someone to redeploy FROM the
-        // stale side would make it worse (#1529 review).
-        const chainIsBehind = words < components.length;
-        const remedy = chainIsBehind
-          ? `The deployed Diamond is BEHIND the contracts in this checkout: ` +
-            `deploy the facets (contracts/script/redeploy-testnet-inplace.sh), ` +
-            `or point the fork at a chain that matches.`
-          : `This CHECKOUT is behind the deployed Diamond: rebase onto the ` +
-            `contract change and re-export the ABIs, or point the fork at the ` +
-            `chain this checkout targets. Do NOT redeploy from here — that ` +
-            `would roll the chain back.`;
-        console.warn(
-          `[indexer-stub] ABI DRIFT — ${fn} returns ${words} words on the forked ` +
-            `chain, this checkout's ABI expects ${components.length}. Every ${fn} ` +
-            `decode will fail and the specs that need it will time out on empty ` +
-            `data. This is an environment problem, not a test bug. ${remedy} ` +
-            `See #1518.`,
+        console.error(
+          `[indexer-stub] ABI DRIFT — ${fn} returns ${words} words on the e2e ` +
+            `chain, but the committed ABI expects ${components.length}. The chain ` +
+            `was deployed from this checkout's contracts, so the committed ABI ` +
+            `JSONs are out of sync with the source: run ` +
+            `contracts/script/exportFrontendAbis.sh and commit the result. See #1518.`,
         );
+        process.exit(1);
       }
     } catch (e) {
       // A probe that cannot run at all is not worth failing startup for
@@ -1330,6 +1311,6 @@ async function assertAbiMatchesFork() {
 }
 
 http.createServer(handler).listen(PORT, '127.0.0.1', async () => {
-  await assertAbiMatchesFork();
-  console.log(`[indexer-stub] serving fork-hydrated indexer on :${PORT}`);
+  await assertAbiMatchesChain();
+  console.log(`[indexer-stub] serving chain-hydrated indexer on :${PORT}`);
 });

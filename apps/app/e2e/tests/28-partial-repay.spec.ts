@@ -51,8 +51,8 @@ async function loanOf(loanId: bigint): Promise<LoanShape> {
 
 /** The contract's own floor on a partial (`RepayFacet`: `partialAmount
  *  < principal * minPartialBps / BASIS_POINTS` reverts
- *  `InsufficientPartialAmount`). Read live — a risk-param change on
- *  the forked chain must move this spec's chosen amount with it, not
+ *  `InsufficientPartialAmount`). Read live — a risk-param change in
+ *  the deployed contracts must move this spec's chosen amount with it, not
  *  silently push it under the floor. */
 async function minPartialBpsOf(asset: `0x${string}`): Promise<bigint> {
   const params = (await pub.readContract({
