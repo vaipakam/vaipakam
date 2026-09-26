@@ -35,6 +35,7 @@
  */
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createPublicClient, createWalletClient, http } from 'viem';
@@ -45,7 +46,8 @@ import { E2E_BUNDLE, E2E_BUNDLE_RUN_ID, e2eRunId } from './artifacts';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, '..', '..', '..', '..');
 const CONTRACTS_DIR = path.join(REPO, 'contracts');
-const FIXTURE_SCRIPT = 'script/e2e/DeployE2EFixture.s.sol';
+// Absolute: Foundry runs from an empty directory (see `isolatedCwd`).
+const FIXTURE_SCRIPT = path.join(CONTRACTS_DIR, 'script', 'e2e', 'DeployE2EFixture.s.sol');
 /** Where the fixture script's artifact lands — the gitignored scratch root
  *  `Deployments` permits a redirect to, under Anvil's slug. */
 const FIXTURE_ARTIFACT_DIR = path.join(CONTRACTS_DIR, 'deployments', '.forge-test', 'e2e');
@@ -136,21 +138,57 @@ const AMBIENT_ENV = [
   'SSL_CERT_DIR',
 ] as const;
 
-/** Run a Foundry command in `contracts/`, failing with its output. */
+/**
+ * An empty working directory for Foundry, so it reads no `.env` file.
+ *
+ * The allowlist above covers the inherited environment, but Foundry adds a
+ * second source itself: at startup it loads `.env` from its working
+ * directory and from the project root it finds by walking up from there
+ * (#2351 r2). Run inside `contracts/`, that is the developer's gitignored
+ * `contracts/.env` — deployment overrides and `FOUNDRY_*` settings, loaded
+ * after the environment was cleaned. Foundry has no switch to turn this
+ * off, so the fixture runs it from a fresh empty directory and names the
+ * project with `--root`, which does not trigger the load (checked with a
+ * canary `.env`).
+ *
+ * That only holds if the walk up finds no project: an ancestor carrying
+ * `foundry.toml` or `.git` would become the root whose `.env` is read. So
+ * the directory is refused, loudly, when one does.
+ */
+function isolatedCwd(): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vaipakam-e2e-forge-'));
+  for (let d = path.dirname(dir); ; d = path.dirname(d)) {
+    for (const marker of ['foundry.toml', '.git']) {
+      if (fs.existsSync(path.join(d, marker))) {
+        throw new Error(
+          `the temp directory ${dir} sits under ${path.join(d, marker)}, so Foundry ` +
+            `would treat ${d} as its project and load its .env — point TMPDIR outside any project`,
+        );
+      }
+    }
+    if (path.dirname(d) === d) break;
+  }
+  return dir;
+}
+
+/** Run a Foundry command against `contracts/`, failing with its output.
+ *  Its environment is the allowlist plus `env`, and it reads no `.env`. */
 function foundry(args: string[], env: Record<string, string> = {}): string {
   const ambient: Record<string, string> = {};
   for (const k of AMBIENT_ENV) {
     const v = process.env[k];
     if (v !== undefined) ambient[k] = v;
   }
-  const res = spawnSync(args[0], args.slice(1), {
-    cwd: CONTRACTS_DIR,
+  const cwd = isolatedCwd();
+  const res = spawnSync(args[0], [...args.slice(1), '--root', CONTRACTS_DIR], {
+    cwd,
     // `default` explicitly: an exported `quick` from an inner loop skips
     // `script/`, and the fixture would not compile at all.
     env: { ...ambient, FOUNDRY_PROFILE: 'default', ...env },
     encoding: 'utf8',
     maxBuffer: 64 * 1024 * 1024,
   });
+  fs.rmSync(cwd, { recursive: true, force: true });
   if (res.error) throw new Error(`${args.join(' ')}: ${res.error.message}`);
   if (res.status !== 0) {
     throw new Error(
