@@ -17,7 +17,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ANVIL_URL, childHasExited, waitForAnvil } from './lib/anvil';
+import { ANVIL_URL, anvilRpc, childHasExited, waitForAnvil } from './lib/anvil';
 import { E2E_BUNDLE, E2E_BUNDLE_RUN_ID } from './lib/artifacts';
 import { deployFixture } from './lib/fixture';
 import { createAndFundWallets } from './lib/wallets';
@@ -126,6 +126,15 @@ export default async function globalSetup(): Promise<void> {
     }
     throw new Error(`anvil exited before it was ready (code ${outcome})`);
   }
+  // Give the chain a history below its head. Starting at a set genesis
+  // number leaves NO blocks beneath it, and anvil ≥1.8 answers an
+  // `eth_feeHistory` window reaching below genesis with an error rather
+  // than clamping it — which is how forge's EIP-1559 fee estimate failed
+  // the fixture deploy on CI's Foundry while 1.5.1 passed locally (#2351).
+  // 1,024 is the largest window `eth_feeHistory` serves on standard nodes
+  // (geth caps blockCount there), so every client's fee query now has
+  // blocks to read, whatever window it picks.
+  await anvilRpc('anvil_mine', ['0x400']);
   console.log('[e2e] anvil ready (bare chain)');
 
   const fixture = await deployFixture();

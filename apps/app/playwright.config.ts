@@ -21,6 +21,12 @@ import { defineConfig } from '@playwright/test';
 // worker, and a worker must keep the id its parent chose (workers inherit
 // the parent's environment).
 process.env.APP_E2E_RUN_ID ??= randomUUID();
+// `--list` collects specs WITHOUT running global setup, so no chain exists
+// and no bundle is stamped for this run — and no test body runs either. The
+// mark lets the deployment loader answer "no deployment" for collection
+// instead of refusing (#2351 r1; see `loadDeployment`). It is keyed to this
+// run's id so a value left exported in a shell cannot unlock a real run.
+if (process.argv.includes('--list')) process.env.APP_E2E_LIST_ONLY = process.env.APP_E2E_RUN_ID;
 
 const STUB_PORT = Number(process.env.APP_E2E_STUB_PORT ?? 8788);
 // Single source for the anvil RPC the BROWSER talks to — must match

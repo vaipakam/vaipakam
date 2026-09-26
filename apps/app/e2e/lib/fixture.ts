@@ -111,13 +111,43 @@ function committedRuntime(file: string): `0x${string}` {
  *  written. WETH9 uses slots 0–2; the margin is deliberate and cheap. */
 const CLONED_SLOTS = 16;
 
+/** The only ambient variables Foundry receives. Everything else the
+ *  fixture needs it passes explicitly, so the chain is built from the
+ *  checkout and nothing else (#2351 r1). An allowlist rather than a list
+ *  of known overrides: the deploy scripts honour dozens of optional
+ *  variables — every `FAUCET_*` mock address, price-feed overrides, the
+ *  chain-prefixed address overrides the deployment readers consult, and
+ *  `FOUNDRY_*` settings such as an output directory that would move the
+ *  artifacts this file reads — and a new one would slip past a denylist
+ *  the day it is added. What passes is what a process needs to run and
+ *  reach the network (the compiler download goes through the proxy). */
+const AMBIENT_ENV = [
+  'PATH',
+  'HOME',
+  'TMPDIR',
+  'LANG',
+  'HTTPS_PROXY',
+  'https_proxy',
+  'HTTP_PROXY',
+  'http_proxy',
+  'NO_PROXY',
+  'no_proxy',
+  'SSL_CERT_FILE',
+  'SSL_CERT_DIR',
+] as const;
+
 /** Run a Foundry command in `contracts/`, failing with its output. */
 function foundry(args: string[], env: Record<string, string> = {}): string {
+  const ambient: Record<string, string> = {};
+  for (const k of AMBIENT_ENV) {
+    const v = process.env[k];
+    if (v !== undefined) ambient[k] = v;
+  }
   const res = spawnSync(args[0], args.slice(1), {
     cwd: CONTRACTS_DIR,
     // `default` explicitly: an exported `quick` from an inner loop skips
     // `script/`, and the fixture would not compile at all.
-    env: { ...process.env, FOUNDRY_PROFILE: 'default', ...env },
+    env: { ...ambient, FOUNDRY_PROFILE: 'default', ...env },
     encoding: 'utf8',
     maxBuffer: 64 * 1024 * 1024,
   });

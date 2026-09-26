@@ -21,7 +21,7 @@ import { test, expect } from '../lib/wallet-fixture';
 import { postLenderOffer, newestOfferIdFor } from '../lib/flows';
 import { increaseTime, mine } from '../lib/anvil';
 import { pub, DIAMOND, DIAMOND_ABI_VIEM } from '../lib/chain';
-import { seedDeskOffer } from '../lib/desk';
+import { cancelDeskOffer, seedDeskOffer } from '../lib/desk';
 
 const STUB = `http://127.0.0.1:${Number(process.env.APP_E2E_STUB_PORT ?? 8788)}`;
 
@@ -70,6 +70,10 @@ test('a just-cancelled offer vanishes from the book while the cache still serves
   // It used to wait for "any row", which only held because the chain
   // always carried other offers — a live fork's inherited book, then
   // earlier specs' leftovers — so the spec failed when run alone (#2334).
+  // It rests in the WETH/tLIQ pair, whose tenor buckets specs 17/18 budget
+  // (see desk.ts freshTenor), so it is cancelled in `finally` and the
+  // bucket goes back before they run. Seeding it BEFORE the cooldown skip
+  // below is what makes that cancel legal.
   const anchorId = await seedDeskOffer({
     role: 'newLender',
     side: 'lend',
@@ -147,5 +151,6 @@ test('a just-cancelled offer vanishes from the book while the cache still serves
     await expect(bookRow).toHaveCount(0);
   } finally {
     await fetch(`${STUB}/__unpin`, { method: 'POST' });
+    await cancelDeskOffer('newLender', anchorId);
   }
 });

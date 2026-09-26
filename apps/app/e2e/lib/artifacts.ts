@@ -67,10 +67,31 @@ export interface DeploymentSlice {
   testnetMocks?: Record<string, string>;
 }
 
+/** What a list-only invocation gets: no deployment, stated as such. Every
+ *  address is zero and there are no mocks, because none exist — `--list`
+ *  runs no global setup, so no chain was built. Nothing reads these as live
+ *  addresses: under `--list` Playwright collects specs and runs no test
+ *  body. */
+const LIST_ONLY_SLICE: DeploymentSlice = {
+  diamond: '0x0000000000000000000000000000000000000000',
+  admin: '0x0000000000000000000000000000000000000000',
+  weth: '0x0000000000000000000000000000000000000000',
+  testnetMocks: {},
+};
+
 export function loadDeployment(chainId: number): DeploymentSlice {
   const stamped = fs.existsSync(E2E_BUNDLE_RUN_ID)
     ? fs.readFileSync(E2E_BUNDLE_RUN_ID, 'utf8').trim()
     : null;
+  // `playwright test --list` (marked by the config, keyed to this run's id)
+  // collects specs, which imports this, with no setup and no chain. Refusing
+  // would fail discovery for every spec; a stale bundle would be a lie. So
+  // collection gets the explicit no-deployment slice, and ONLY collection:
+  // a real run is never marked, and still refuses anything but its own
+  // stamped bundle (#2351 r1).
+  if (stamped !== e2eRunId() && process.env.APP_E2E_LIST_ONLY === e2eRunId()) {
+    return LIST_ONLY_SLICE;
+  }
   if (stamped !== e2eRunId()) {
     throw new Error(
       `${E2E_BUNDLE} is not this run's (stamped ${JSON.stringify(stamped)}) — global ` +

@@ -1280,32 +1280,55 @@ async function assertAbiMatchesChain() {
     { fn: 'getOffer', args: [1n] },
     { fn: 'getLoanDetails', args: [1n] },
   ];
+  // Every way the probe can fail to CHECK is fatal as well (#2351 r1): a
+  // missing ABI entry, a struct this width test cannot measure, a revert,
+  // an empty return. With the chain built from this checkout none of those
+  // is environmental, and a guard that skips when it cannot look reads as
+  // green while guarding nothing.
+  const fail = (msg) => {
+    console.error(`[indexer-stub] ABI guard: ${msg}`);
+    process.exit(1);
+  };
   for (const { fn, args } of probes) {
     const entry = DIAMOND_ABI_VIEM.find((e) => e.name === fn && e.type === 'function');
     const components = entry?.outputs?.[0]?.components;
-    if (!components || components.some((c) => /\[\]$|^string$|^bytes$/.test(c.type))) {
-      continue; // dynamic member — width is not a fixed multiple of 32
+    if (!components) {
+      fail(
+        `the committed ABI has no struct-returning ${fn}. Re-export the ABIs ` +
+          `(contracts/script/exportFrontendAbis.sh); if ${fn} was renamed or ` +
+          `removed on purpose, update this probe list.`,
+      );
     }
+    if (components.some((c) => /\[\]$|^string$|^bytes$/.test(c.type))) {
+      fail(
+        `${fn} now returns a struct with a dynamic member, so its width is no ` +
+          `longer a fixed number of words and this check cannot measure it. ` +
+          `Replace the width test for ${fn} with a decode check.`,
+      );
+    }
+    let data;
     try {
-      const data = await pub.call({
+      ({ data } = await pub.call({
         to: DIAMOND,
         data: encodeFunctionData({ abi: DIAMOND_ABI_VIEM, functionName: fn, args }),
-      });
-      const words = ((data?.data?.length ?? 2) - 2) / 64;
-      if (words && words !== components.length) {
-        console.error(
-          `[indexer-stub] ABI DRIFT — ${fn} returns ${words} words on the e2e ` +
-            `chain, but the committed ABI expects ${components.length}. The chain ` +
-            `was deployed from this checkout's contracts, so the committed ABI ` +
-            `JSONs are out of sync with the source: run ` +
-            `contracts/script/exportFrontendAbis.sh and commit the result. See #1518.`,
-        );
-        process.exit(1);
-      }
+      }));
     } catch (e) {
-      // A probe that cannot run at all is not worth failing startup for
-      // — the per-request paths still report their own errors.
-      console.warn(`[indexer-stub] ABI drift probe for ${fn} could not run:`, e?.shortMessage ?? e?.message ?? e);
+      fail(
+        `${fn} could not be called on the e2e chain (${e?.shortMessage ?? e?.message ?? e}). ` +
+          `The chain runs this checkout's contracts, so a committed selector ` +
+          `that reverts means the ABI JSONs are stale: run ` +
+          `contracts/script/exportFrontendAbis.sh and commit the result. See #1518.`,
+      );
+    }
+    const words = ((data?.length ?? 2) - 2) / 64;
+    if (words !== components.length) {
+      fail(
+        `ABI DRIFT — ${fn} returns ${words} words on the e2e chain, but the ` +
+          `committed ABI expects ${components.length}. The chain was deployed ` +
+          `from this checkout's contracts, so the committed ABI JSONs are out ` +
+          `of sync with the source: run contracts/script/exportFrontendAbis.sh ` +
+          `and commit the result. See #1518.`,
+      );
     }
   }
 }

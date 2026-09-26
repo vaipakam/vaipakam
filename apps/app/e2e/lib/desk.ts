@@ -174,6 +174,29 @@ export async function seedDeskOffer(opts: {
   return newestOfferIdFor(account.address);
 }
 
+/** Cancel an offer {@link seedDeskOffer} posted, from the same role, and
+ *  confirm the effect: a cancelled offer's record is deleted, so its
+ *  creator reads as zero. Seeding and cancelling are one pair so a spec
+ *  that borrows a bucket for a moment can hand it back (see
+ *  {@link freshTenor}'s budget note). The protocol refuses a cancel
+ *  inside the offer's cooldown, so call this only once that has passed. */
+export async function cancelDeskOffer(role: Role, offerId: bigint): Promise<void> {
+  const account = accountFor(role);
+  const hash = await walletFor(account).writeContract({
+    address: DIAMOND,
+    abi: DIAMOND_ABI_VIEM,
+    functionName: 'cancelOffer',
+    args: [offerId],
+    account,
+    chain: forkChain,
+  });
+  await confirm(hash, `cancelOffer(#${offerId})`);
+  const { creator } = (await getOffer(offerId)) as { creator: string };
+  if (!/^0x0{40}$/i.test(creator)) {
+    throw new Error(`cancelOffer(#${offerId}) succeeded but the offer still has creator ${creator}`);
+  }
+}
+
 export async function getOffer(offerId: bigint): Promise<Record<string, unknown>> {
   return (await pub.readContract({
     address: DIAMOND,
