@@ -2662,6 +2662,32 @@ bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
 check "scattered lines are not a copy" "$?"               "0"
 check "and the fragment is appended"   "$(pending "$W")"  "0"
 
+case_start "T78h: the evidence threshold counts content bytes, however the body is wrapped"
+# The contract (#2346 r1): spaces, tabs and line endings are not counted, so a
+# body's weight does not depend on where it was wrapped. Pinned on both sides
+# of the line: 39 content bytes over two CRLF lines is not evidence, 40 is.
+W="$ROOT/t78h"; build "$W"
+out="$W/docs/ReleaseNotes"
+rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
+# 20 + 19 = 39 content bytes.
+printf '## New heading\r\n\r\naaaaaaaaaaaaaaaaaaaa\r\nbbbbbbbbbbbbbbbbbbb\r\n' \
+  > "$W/docs/ReleaseNotes/unreleased/0001-a.md"
+printf '# Release Notes — 2026-08-16\r\n\r\n## Old heading\r\n\r\naaaaaaaaaaaaaaaaaaaa\r\nbbbbbbbbbbbbbbbbbbb\r\n' \
+  > "$out/ReleaseNotes-2026-08-16.md"
+bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+check "39 content bytes, wrapped, are not evidence" "$?" "0"
+W="$ROOT/t78h2"; build "$W"
+out="$W/docs/ReleaseNotes"
+rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
+# 20 + 20 = 40 content bytes.
+printf '## New heading\r\n\r\naaaaaaaaaaaaaaaaaaaa\r\nbbbbbbbbbbbbbbbbbbbb\r\n' \
+  > "$W/docs/ReleaseNotes/unreleased/0001-a.md"
+printf '# Release Notes — 2026-08-16\r\n\r\n## Old heading\r\n\r\naaaaaaaaaaaaaaaaaaaa\r\nbbbbbbbbbbbbbbbbbbbb\r\n' \
+  > "$out/ReleaseNotes-2026-08-16.md"
+bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+check "40 content bytes, wrapped, are"            "$?"               "1"
+check "and nothing is consumed"                   "$(pending "$W")"  "1"
+
 case_start "T79: the quarantine directory is validated before publication"
 W="$ROOT/t79"; build "$W"
 out="$W/docs/ReleaseNotes"

@@ -103,10 +103,11 @@ LINE_END_RE = re.compile(rb"\r\n|\r|\n")
 # the heading. Narrowing this can only refuse more, never publish more.
 BLANK_RE = re.compile(rb"^[ \t]*$")
 
-# THE LEAST BODY TEXT THAT COUNTS AS EVIDENCE of an earlier copy, in bytes
-# other than spaces and tabs (#2298). Below it a body is too short to say
-# anything — T20's one-line note, or a `- tests pass` bullet — so only the
-# heading is compared. Measured across all dated files on adoption: of 1,158
+# THE LEAST BODY TEXT THAT COUNTS AS EVIDENCE of an earlier copy, in CONTENT
+# bytes: spaces, tabs and line endings are not counted, so the figure is the
+# same however a body is wrapped or indented (#2298). Below it a body is too
+# short to say anything — T20's one-line note, or a `- tests pass` bullet —
+# so only the heading is compared. Measured across all dated files on adoption: of 1,158
 # section bodies, 6 recur, all hand-written carried-forward footers from
 # before fragments existed, and the figure is the same at 0, 20, 40 and 80.
 BODY_EVIDENCE_MIN = 40
@@ -2005,8 +2006,8 @@ class Assembly:
         remedy at a time in #2290 (r16, r20); the body match closes the
         class, because the body is what no remedy asks anyone to touch.
 
-        A body shorter than `BODY_EVIDENCE_MIN` bytes (spaces and tabs not
-        counted) is not evidence — too short to tell a copy from a
+        A body with fewer than `BODY_EVIDENCE_MIN` content bytes (spaces,
+        tabs and line endings not counted) is not evidence — too short to tell a copy from a
         coincidence, as T20's one-line note shows — so for such a fragment
         the heading is still all there is. Contiguity is what makes the rest
         safe: lines found scattered through the file are not a copy.
