@@ -1355,11 +1355,14 @@ Two practical consequences:
     fact memory-safe leaves the guard down for the WHOLE contract, which is the
     stack failure this section exists to diagnose. Neither direction is the
     safe default; the spec decides.
-  - **A worked example, as an example and not as the rule.** The rethrow in
-    `Deployments.finalizeArtifact` is annotated because `err` is a `bytes
-    memory` the block already holds and `add(err, 0x20)` / `mload(err)` stay
-    inside it. Read-only-ness is NOT what qualifies it (#2253 r7) — once the
-    mover is on, an arbitrary read can observe the slots it spilled.
+  - **A worked example, as an example and not as the rule.** The rethrow
+    `Deployments.finalizeArtifact` carried from #2253 until #2347 was
+    annotated because `err` was a `bytes memory` the block already held and
+    `add(err, 0x20)` / `mload(err)` stayed inside it. Read-only-ness was NOT
+    what qualified it (#2253 r7) — once the mover is on, an arbitrary read
+    can observe the slots it spilled. (#2347 removed the block with the
+    self-call it rethrew for; the reasoning is kept because it is the
+    worked example.)
   - **A block need not contain a memory opcode to require the audit.**
     Assigning a computed pointer to a Solidity memory-reference variable is
     enough. The `x.slot := position` storage-pointer idiom is the one shape
