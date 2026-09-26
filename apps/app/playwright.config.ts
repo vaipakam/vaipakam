@@ -1,17 +1,29 @@
 /**
- * app e2e — fork tier. Runs the real app (vite dev server) against
- * an anvil fork of Base Sepolia and a fork-hydrated indexer stub; the
- * injected test wallet signs with ephemeral per-run keys. See
+ * app e2e ("fork tier" by name; no longer a fork — #2334). Runs the real
+ * app (vite dev server) against a local anvil carrying the repository's
+ * CURRENT contracts, deployed from source by global setup and presented as
+ * Base Sepolia, plus a chain-hydrated indexer stub; the injected test
+ * wallet signs with ephemeral per-run keys. See
  * docs/TestScopes/Alpha02RegressionFlows.md for the flow inventory
  * this suite enforces.
  *
- * Serial on purpose: scenarios share one fork and create real chain
+ * Serial on purpose: scenarios share one chain and create real chain
  * state; workers>1 would race nonces and offer books.
  */
+import { randomUUID } from 'node:crypto';
 import { defineConfig } from '@playwright/test';
 
+// One id per suite run (#2334). Global setup stamps it beside the e2e
+// deployments bundle it writes, and every reader — the app through vite,
+// the harness through `e2e/lib/artifacts.ts` — accepts the bundle only
+// under this id, so a file left by an earlier run can never be read as
+// this run's. `??=` because Playwright evaluates this config again in each
+// worker, and a worker must keep the id its parent chose (workers inherit
+// the parent's environment).
+process.env.APP_E2E_RUN_ID ??= randomUUID();
+
 const STUB_PORT = Number(process.env.APP_E2E_STUB_PORT ?? 8788);
-// Single source for the fork RPC the BROWSER talks to — must match
+// Single source for the anvil RPC the BROWSER talks to — must match
 // the anvil instance global-setup spawns (see e2e/lib/anvil.ts).
 const ANVIL_URL = process.env.APP_E2E_ANVIL_URL ?? 'http://127.0.0.1:8545';
 
@@ -37,7 +49,7 @@ export default defineConfig({
     url: 'http://127.0.0.1:4173',
     timeout: 240_000,
     // Never reuse a server that happens to sit on the port: it would
-    // have been started WITHOUT the fork-tier env below (public RPC +
+    // have been started WITHOUT the e2e env below (public RPC +
     // production indexer) while the injected wallet signs on anvil —
     // silently misleading local results. --strictPort makes the clash
     // a loud failure instead.
@@ -46,6 +58,7 @@ export default defineConfig({
     stderr: 'pipe',
     env: {
       APP_E2E: '1',
+      APP_E2E_RUN_ID: process.env.APP_E2E_RUN_ID,
       VITE_DEFAULT_CHAIN_ID: '84532',
       VITE_BASE_SEPOLIA_RPC_URL: ANVIL_URL,
       VITE_INDEXER_ORIGIN: `http://127.0.0.1:${STUB_PORT}`,

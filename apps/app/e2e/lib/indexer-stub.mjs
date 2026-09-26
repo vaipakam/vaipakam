@@ -1,7 +1,7 @@
-// "Instant indexer" for the fork tier — a tiny HTTP server that
+// "Instant indexer" for the e2e tier — a tiny HTTP server that
 // serves the exact route/response shapes of apps/indexer (the subset
 // app reads: src/data/indexer.ts) but hydrates EVERY request live
-// from the fork's own paginated chain views. No ingestion, no lag, no
+// from the local chain's own paginated chain views. No ingestion, no lag, no
 // database: offers/loans created by a test are visible to the app on
 // the next request, and the freshness cursor tracks the fork's latest
 // block so time travel never reads as a stalled indexer.
@@ -35,8 +35,11 @@ const DIAMOND_ABI_VIEM = fs
     const parsed = JSON.parse(fs.readFileSync(path.join(CONTRACTS_SRC, 'abis', f), 'utf8'));
     return Array.isArray(parsed) ? parsed : [];
   });
+// The e2e bundle global setup writes after deploying the fixture chain
+// (#2334) — the same file `artifacts.ts` and the app read, never the
+// committed one, whose 84532 entry is the live testnet.
 const DIAMOND = JSON.parse(
-  fs.readFileSync(path.join(CONTRACTS_SRC, 'deployments.json'), 'utf8'),
+  fs.readFileSync(path.resolve(HERE, '..', '.state', 'deployments.json'), 'utf8'),
 )[String(CHAIN_ID)].diamond;
 const pub = createPublicClient({
   chain: {
