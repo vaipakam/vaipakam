@@ -214,6 +214,46 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         );
     }
 
+    /// @dev #2349 — every rule that depends on WHICH route is completing the
+    ///      refinance, kept out of {_refinanceLoanLogic}'s frame so `route`
+    ///      dies here instead of staying live across the whole payoff body.
+    ///      "The holder is acting directly" holds ONLY on the external route
+    ///      with the holder as caller; on both atomic routes `msg.sender` is
+    ///      the Diamond, so it can never equal the holder. On every OTHER route:
+    ///        - the holder is still the fund source (the payoff pulls from
+    ///          their wallet allowance), so they are sanctions-screened;
+    ///        - the offer must be refinance-TAGGED (T-092 Phase 2b round-3
+    ///          P2) — otherwise a keeper could complete through any compatible
+    ///          borrower offer the holder posted for a fresh loan, bypassing
+    ///          every cap check in `LibAutoRefinanceCheck`, which fires only
+    ///          on tagged offers. The atomic routes only ever arrive with a
+    ///          tagged offer (their callers chain on the tag), so this binds
+    ///          them too as a backstop;
+    ///        - the auto-refinance kill switch applies to the AUTOMATED routes
+    ///          only — a delegated keeper, and the matcher. A lender's direct
+    ///          accept is not automation and is never blocked by it.
+    function _assertRouteAllowed(
+        LibVaipakam.Storage storage s,
+        address currentBorrowerNftOwner,
+        uint256 borrowerOfferId,
+        RefinanceRoute route
+    ) private view {
+        if (
+            route == RefinanceRoute.Direct &&
+            currentBorrowerNftOwner == msg.sender
+        ) return;
+        LibVaipakam._assertNotSanctioned(currentBorrowerNftOwner);
+        // Same order as before #2349: sanctions, then the switch, then the
+        // tag — so a keeper on an untagged offer while the switch is off
+        // still sees the switch first.
+        if (
+            route != RefinanceRoute.LenderAccept &&
+            !s.protocolCfg.cfgAutoRefinanceEnabled
+        ) revert AutoRefinanceDisabled();
+        if (s.offers[borrowerOfferId].refinanceTargetLoanId == 0)
+            revert InvalidRefinanceOffer();
+    }
+
     /// @dev Shared body for all three external entries. Was the body of
     ///      `refinanceLoan` pre-T-092-H; extracted into a private so the
     ///      external `nonReentrant` entry and the two `onlyDiamondInternal`
@@ -274,28 +314,9 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         if (LibSanctionedLock.mustFreezeParty(s, currentBorrowerNftOwner)) {
             revert LibVaipakam.SanctionedAddress(currentBorrowerNftOwner);
         }
-        // #2349 — "the holder is acting directly" is true ONLY on the
-        // external route with the holder as caller. On both atomic routes
-        // `msg.sender` is the Diamond, so it can never equal the holder.
-        bool holderDirect =
-            route == RefinanceRoute.Direct &&
-            currentBorrowerNftOwner == msg.sender;
-        if (!holderDirect) {
-            // The holder is still the fund source on every other route (the
-            // payoff pulls from their wallet allowance), so screen them.
-            LibVaipakam._assertNotSanctioned(currentBorrowerNftOwner);
-            // T-092 #508 / #2349 — the auto-refinance kill switch governs the
-            // AUTOMATED completion routes only: a delegated keeper calling
-            // `refinanceLoan`, and the matcher. A lender's direct accept of
-            // the holder's tagged offer is not automation and is never
-            // blocked (see {refinanceLoanFromAccept}).
-            if (
-                route != RefinanceRoute.LenderAccept &&
-                !s.protocolCfg.cfgAutoRefinanceEnabled
-            ) {
-                revert AutoRefinanceDisabled();
-            }
-        }
+        // #2349 — every route-dependent rule in one place, so `route` never
+        // has to stay live across the rest of this frame.
+        _assertRouteAllowed(s, currentBorrowerNftOwner, borrowerOfferId, route);
         // NFT rental refinance not supported in Phase 1 (requires NFT custody transfer)
         if (oldLoan.assetType != LibVaipakam.AssetType.ERC20)
             revert InvalidRefinanceOffer();
@@ -370,19 +391,8 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             offer.refinanceTargetLoanId != 0 &&
             offer.refinanceTargetLoanId != oldLoanId
         ) revert InvalidRefinanceOffer();
-        // T-092 Phase 2b round-3 P2 — when the keeper-driven path is
-        // taken, the offer MUST be refinance-tagged. Otherwise a
-        // keeper could pick any compatible borrower offer (e.g. a
-        // standard one the borrower posted for a fresh loan) and
-        // refinance through it — bypassing every cap-check in
-        // `LibAutoRefinanceCheck` because they only fire on tagged
-        // offers. The borrower-NFT owner direct path can use any
-        // offer (caps don't apply to them; they're acting in their
-        // own interest). The atomic routes only ever reach here with
-        // a tagged offer (their callers chain on the tag), so this
-        // binds them too as a backstop.
-        if (!holderDirect && offer.refinanceTargetLoanId == 0)
-            revert InvalidRefinanceOffer();
+        // (The "non-holder routes need a TAGGED offer" rule lives in
+        // {_assertRouteAllowed} with the other route-dependent checks.)
         if (!offer.accepted) revert OfferNotAccepted();
         // Range-aware amount check: legacy single-value offers satisfy
         // `amount == amountMax`; range offers satisfy
