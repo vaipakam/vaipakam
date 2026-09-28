@@ -156,7 +156,8 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         uint256 oldLoanId,
         uint256 borrowerOfferId
     ) external nonReentrant whenNotPaused {
-        _refinanceLoanLogic(oldLoanId, borrowerOfferId, RefinanceRoute.Direct);
+        _authorizeRefinance(oldLoanId, borrowerOfferId, RefinanceRoute.Direct);
+        _refinanceLoanLogic(oldLoanId, borrowerOfferId);
     }
 
     /// @notice T-092-H (#549) — atomic accept-and-refinance entry for a
@@ -181,11 +182,12 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         uint256 oldLoanId,
         uint256 borrowerOfferId
     ) external onlyDiamondInternal whenNotPaused {
-        _refinanceLoanLogic(
+        _authorizeRefinance(
             oldLoanId,
             borrowerOfferId,
             RefinanceRoute.LenderAccept
         );
+        _refinanceLoanLogic(oldLoanId, borrowerOfferId);
     }
 
     /// @notice #2349 — atomic accept-and-refinance entry for a range-order
@@ -207,59 +209,40 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         uint256 oldLoanId,
         uint256 borrowerOfferId
     ) external onlyDiamondInternal whenNotPaused {
-        _refinanceLoanLogic(
+        _authorizeRefinance(
             oldLoanId,
             borrowerOfferId,
             RefinanceRoute.MatchedFill
         );
+        _refinanceLoanLogic(oldLoanId, borrowerOfferId);
     }
 
-    /// @dev #2349 — every rule that depends on WHICH route is completing the
-    ///      refinance, kept out of {_refinanceLoanLogic}'s frame so `route`
-    ///      dies here instead of staying live across the whole payoff body.
-    ///      "The holder is acting directly" holds ONLY on the external route
-    ///      with the holder as caller; on both atomic routes `msg.sender` is
-    ///      the Diamond, so it can never equal the holder. On every OTHER route:
+    /// @dev #2349 — every check that runs BEFORE any refinance state changes,
+    ///      including the one rule that depends on WHICH route is completing
+    ///      the refinance. Split out of {_refinanceLoanLogic} on purpose: the
+    ///      entries pass `route` as a compile-time constant, and passing it
+    ///      into the long payoff body let the optimizer specialize a copy of
+    ///      that body per route (measured: +~1.7 KB per entry). Only this
+    ///      small prelude sees `route` now. Check order is unchanged from
+    ///      before #2349.
+    ///
+    ///      Route rule — "the holder is acting directly" holds ONLY on the
+    ///      external route with the holder as caller; on both atomic routes
+    ///      `msg.sender` is the Diamond, so it can never equal the holder. On
+    ///      every OTHER route:
     ///        - the holder is still the fund source (the payoff pulls from
     ///          their wallet allowance), so they are sanctions-screened;
+    ///        - the auto-refinance kill switch applies to the AUTOMATED routes
+    ///          only — a delegated keeper, and the matcher. A lender's direct
+    ///          accept is not automation and is never blocked by it;
     ///        - the offer must be refinance-TAGGED (T-092 Phase 2b round-3
     ///          P2) — otherwise a keeper could complete through any compatible
     ///          borrower offer the holder posted for a fresh loan, bypassing
     ///          every cap check in `LibAutoRefinanceCheck`, which fires only
     ///          on tagged offers. The atomic routes only ever arrive with a
     ///          tagged offer (their callers chain on the tag), so this binds
-    ///          them too as a backstop;
-    ///        - the auto-refinance kill switch applies to the AUTOMATED routes
-    ///          only — a delegated keeper, and the matcher. A lender's direct
-    ///          accept is not automation and is never blocked by it.
-    function _assertRouteAllowed(
-        LibVaipakam.Storage storage s,
-        address currentBorrowerNftOwner,
-        uint256 borrowerOfferId,
-        RefinanceRoute route
-    ) private view {
-        if (
-            route == RefinanceRoute.Direct &&
-            currentBorrowerNftOwner == msg.sender
-        ) return;
-        LibVaipakam._assertNotSanctioned(currentBorrowerNftOwner);
-        // Same order as before #2349: sanctions, then the switch, then the
-        // tag — so a keeper on an untagged offer while the switch is off
-        // still sees the switch first.
-        if (
-            route != RefinanceRoute.LenderAccept &&
-            !s.protocolCfg.cfgAutoRefinanceEnabled
-        ) revert AutoRefinanceDisabled();
-        if (s.offers[borrowerOfferId].refinanceTargetLoanId == 0)
-            revert InvalidRefinanceOffer();
-    }
-
-    /// @dev Shared body for all three external entries. Was the body of
-    ///      `refinanceLoan` pre-T-092-H; extracted into a private so the
-    ///      external `nonReentrant` entry and the two `onlyDiamondInternal`
-    ///      atomic entries (no `nonReentrant`) can share it. `route` is
-    ///      stated by the entry point — see {RefinanceRoute}.
-    function _refinanceLoanLogic(
+    ///          them too as a backstop.
+    function _authorizeRefinance(
         uint256 oldLoanId,
         uint256 borrowerOfferId,
         RefinanceRoute route
@@ -283,13 +266,6 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         );
         if (oldLoan.status != LibVaipakam.LoanStatus.Active)
             revert LoanNotActive();
-        // Pass-2 A1/D5 (#1189) — capture the OLD loan's fixed maturity for the
-        // exiting lender's late fee below (charged when the close lands in the
-        // grace window). The strictly-post-grace BLOCK is enforced further down
-        // against the REPLACEMENT's acceptance time, not `block.timestamp` — see
-        // the gate after `newLoan` is resolved (Codex #1233 r2 P1).
-        uint256 oldEndTime = uint256(oldLoan.startTime) +
-            uint256(oldLoan.durationDays) * LibVaipakam.ONE_DAY;
         // T-092 Phase 2a (#505) — resolve the current borrower-NFT
         // owner once at the top + Tier-1 sanctions check it. A
         // keeper-driven path admitted by requireKeeperFor uses
@@ -314,9 +290,42 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         if (LibSanctionedLock.mustFreezeParty(s, currentBorrowerNftOwner)) {
             revert LibVaipakam.SanctionedAddress(currentBorrowerNftOwner);
         }
-        // #2349 — every route-dependent rule in one place, so `route` never
-        // has to stay live across the rest of this frame.
-        _assertRouteAllowed(s, currentBorrowerNftOwner, borrowerOfferId, route);
+        if (
+            route == RefinanceRoute.Direct &&
+            currentBorrowerNftOwner == msg.sender
+        ) return;
+        LibVaipakam._assertNotSanctioned(currentBorrowerNftOwner);
+        if (
+            route != RefinanceRoute.LenderAccept &&
+            !s.protocolCfg.cfgAutoRefinanceEnabled
+        ) revert AutoRefinanceDisabled();
+        if (s.offers[borrowerOfferId].refinanceTargetLoanId == 0)
+            revert InvalidRefinanceOffer();
+    }
+
+    /// @dev Shared payoff body for all three external entries, run only after
+    ///      {_authorizeRefinance} passed. Was the body of `refinanceLoan`
+    ///      pre-T-092-H; extracted into a private so the external
+    ///      `nonReentrant` entry and the two `onlyDiamondInternal` atomic
+    ///      entries (no `nonReentrant`) can share it. Takes no route — see
+    ///      {_authorizeRefinance} for why.
+    function _refinanceLoanLogic(
+        uint256 oldLoanId,
+        uint256 borrowerOfferId
+    ) private {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.Loan storage oldLoan = s.loans[oldLoanId];
+        // Pass-2 A1/D5 (#1189) — the OLD loan's fixed maturity, for the
+        // exiting lender's late fee below (charged when the close lands in the
+        // grace window). The strictly-post-grace BLOCK is enforced further down
+        // against the REPLACEMENT's acceptance time, not `block.timestamp` — see
+        // the gate after `newLoan` is resolved (Codex #1233 r2 P1).
+        uint256 oldEndTime = uint256(oldLoan.startTime) +
+            uint256(oldLoan.durationDays) * LibVaipakam.ONE_DAY;
+        // The current borrower-NFT holder — the fund source and collateral
+        // recipient on every route (screened in {_authorizeRefinance}).
+        address currentBorrowerNftOwner =
+            LibERC721.ownerOf(oldLoan.borrowerTokenId);
         // NFT rental refinance not supported in Phase 1 (requires NFT custody transfer)
         if (oldLoan.assetType != LibVaipakam.AssetType.ERC20)
             revert InvalidRefinanceOffer();
