@@ -5,6 +5,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
+import {LibRevert} from "../libraries/LibRevert.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {LibDiamond} from "@diamond-3/libraries/LibDiamond.sol";
@@ -266,16 +267,43 @@ contract VaipakamNFTFacet is IERC721, IERC721Metadata, IERC721Enumerable, Diamon
     function transferFrom(address from, address to, uint256 tokenId) external override nonReentrant {
         _assertTransferNotSanctioned(from, to);
         LibERC721.transferFrom(from, to, tokenId);
+        _syncTierExclusion(LibERC721._storage().loanIds[tokenId]);
     }
 
     function safeTransferFrom(address from, address to, uint256 tokenId) external override nonReentrant {
         _assertTransferNotSanctioned(from, to);
         LibERC721.safeTransferFrom(from, to, tokenId, "");
+        _syncTierExclusion(LibERC721._storage().loanIds[tokenId]);
     }
 
     function safeTransferFrom(address from, address to, uint256 tokenId, bytes calldata data) external override nonReentrant {
         _assertTransferNotSanctioned(from, to);
         LibERC721.safeTransferFrom(from, to, tokenId, data);
+        _syncTierExclusion(LibERC721._storage().loanIds[tokenId]);
+    }
+
+    /**
+     * @dev #2342 — a position changing hands on a TERMINAL loan changes who
+     *      its owed VPFI belongs to, so re-derive the loan's fee-tier
+     *      exclusion (`EncumbranceMutateFacet.syncTierExclusion`): selling the
+     *      claim moves the VPFI out of the stored party's tier, selling it
+     *      back to the stored party returns it. Run after the move (and after
+     *      a safe transfer's receiver hook, which cannot re-enter this
+     *      guarded facet). Also called from {burnNFT}, where the holder
+     *      becomes nobody. A live loan has no exclusion (#2342 scope), and an
+     *      offer NFT has no loan, so both skip the call.
+     */
+    function _syncTierExclusion(uint256 loanId) private {
+        if (loanId == 0) return;
+        LibVaipakam.LoanStatus st = LibVaipakam.storageSlot().loans[loanId].status;
+        if (
+            st == LibVaipakam.LoanStatus.Active ||
+            st == LibVaipakam.LoanStatus.FallbackPending
+        ) return;
+        (bool ok, bytes memory ret) = address(this).call(
+            abi.encodeWithSelector(LibEncumbrance.TIER_EXCLUSION_SYNC_SELECTOR, loanId)
+        );
+        LibRevert.bubbleOnFailureTyped(ok, ret, bytes4(0));
     }
 
     /**
@@ -391,6 +419,11 @@ contract VaipakamNFTFacet is IERC721, IERC721Metadata, IERC721Enumerable, Diamon
         delete es.offerIds[tokenId];
         delete es.loanIds[tokenId];
         delete es.isLenderRoles[tokenId];
+
+        // #2342 — the side's holder is now nobody, so nothing on it can stay
+        // excluded. Normally a no-op (the claim released the records first);
+        // it clears the charge if anything was left.
+        _syncTierExclusion(burnedLoanId);
 
         emit NFTBurned(tokenId);
     }

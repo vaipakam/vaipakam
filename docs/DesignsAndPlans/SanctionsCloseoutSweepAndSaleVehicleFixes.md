@@ -236,6 +236,23 @@ on these paths, but the design flags it.)
 
 ### 2.2 Keep the frozen VPFI surplus out of the parking owner's tier (P2)
 
+> **Superseded in part by #2342 (2026-09-28).** The counter and the
+> `tierVpfiBalance` subtraction below still stand. What changed is **who feeds
+> the counter**: the per-freeze increments this section describes covered only
+> the swap-to-repay-FULL family, so repay, preclose, default and the
+> liquidation paths left owed VPFI in the stored party's tier. The counter is
+> now maintained by `LibTierExclusion.sync` from ONE rule — a terminal loan's
+> side whose position is held by someone other than the stored party has the
+> VPFI in that side's per-loan encumbrance records excluded — re-run at the
+> terminal transition (`EncumbranceMutateFacet.terminalize*`), on every
+> position transfer or burn (`VaipakamNFTFacet`), and on every per-loan
+> encumbrance change (`LibEncumbrance`'s notify). The per-freeze bumps and
+> their `frozenVpfiOwed{LenderLeg,BorrowerSurplus}` records are no longer
+> written; a pre-upgrade loan's legacy record is folded in at its first sync or
+> released at its claim. The sanctions test is gone too: the funds belong to
+> the holder whether or not the holder can claim. Live loans are out of scope
+> (an open product decision).
+
 Encumbrance fixes the spend-as-free-balance leak but NOT the VPFI tier leak: the
 tier ring buffer is stamped from `protocolTrackedVaultBalance` (restampUserVpfi,
 LibConsolidation:436), blind to `s.encumbered`. So a clean stored `loan.borrower`
