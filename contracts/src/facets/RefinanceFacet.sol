@@ -224,7 +224,11 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
     ///      into the long payoff body let the optimizer specialize a copy of
     ///      that body per route (measured: +~1.7 KB per entry). Only this
     ///      small prelude sees `route` now. Check order is unchanged from
-    ///      before #2349.
+    ///      before #2349 with one exception: the fail-closed frozen-holder
+    ///      block (`mustFreezeParty`) runs at the top of {_refinanceLoanLogic},
+    ///      beside the payout it guards (S10 Invariant B), so a frozen holder on
+    ///      a gated route now reverts on the route rule first. Either way the
+    ///      call reverts before any state changes.
     ///
     ///      Route rule — "the holder is acting directly" holds ONLY on the
     ///      external route with the holder as caller; on both atomic routes
@@ -246,7 +250,7 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         uint256 oldLoanId,
         uint256 borrowerOfferId,
         RefinanceRoute route
-    ) private {
+    ) private view {
         // T-090 v1.1 (#389) §5.8 — refinance withdraws old
         // collateral from `loan.borrower`'s vault before flipping
         // the old loan to Repaid; block while a v1.1 commit is live.
@@ -276,20 +280,6 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         // on the fund-receiving wallet.
         address currentBorrowerNftOwner =
             LibERC721.ownerOf(oldLoan.borrowerTokenId);
-        // #998 S10 (#1006, Codex #1122-rework 186c60ff-round P1) — the fail-open
-        // `_assertNotSanctioned` screens (entry + keeper-path below) would let a
-        // PREVIOUSLY-CONFIRMED-flagged borrower holder through during an oracle
-        // outage, who then receives the OLD collateral directly in the
-        // non-carry-over branch with no registry-aware block. Refinance is a
-        // discretionary, borrower-initiated action (Tier-1), so hard-BLOCK a
-        // registry-frozen holder FAIL-CLOSED here (a previously-confirmed party
-        // during an outage, or a fresh oracle-up flag), mirroring the lender-side
-        // fail-closed protection. `mustFreezeParty` self-heals the registry on a
-        // clean read; a clean / never-confirmed holder passes unchanged, so an
-        // oracle blip can't freeze an honest borrower.
-        if (LibSanctionedLock.mustFreezeParty(s, currentBorrowerNftOwner)) {
-            revert LibVaipakam.SanctionedAddress(currentBorrowerNftOwner);
-        }
         if (
             route == RefinanceRoute.Direct &&
             currentBorrowerNftOwner == msg.sender
@@ -323,9 +313,28 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         uint256 oldEndTime = uint256(oldLoan.startTime) +
             uint256(oldLoan.durationDays) * LibVaipakam.ONE_DAY;
         // The current borrower-NFT holder — the fund source and collateral
-        // recipient on every route (screened in {_authorizeRefinance}).
+        // recipient on every route (fail-open screened in {_authorizeRefinance}).
         address currentBorrowerNftOwner =
             LibERC721.ownerOf(oldLoan.borrowerTokenId);
+        // #998 S10 (#1006, Codex #1122-rework 186c60ff-round P1) — the fail-open
+        // `_assertNotSanctioned` screens in {_authorizeRefinance} would let a
+        // PREVIOUSLY-CONFIRMED-flagged borrower holder through during an oracle
+        // outage, who then receives the OLD collateral directly in the
+        // non-carry-over branch with no registry-aware block. Refinance is a
+        // discretionary, borrower-initiated action (Tier-1), so hard-BLOCK a
+        // registry-frozen holder FAIL-CLOSED here (a previously-confirmed party
+        // during an outage, or a fresh oracle-up flag), mirroring the lender-side
+        // fail-closed protection. `mustFreezeParty` self-heals the registry on a
+        // clean read; a clean / never-confirmed holder passes unchanged, so an
+        // oracle blip can't freeze an honest borrower.
+        //
+        // It sits HERE, in the function that pays the holder, and runs on every
+        // route before any state changes. That co-location is the S10 Invariant B
+        // rule (`check-sanctions-register-coverage.mjs`), not a style choice —
+        // #2355 briefly moved it into the prelude and the guardrail caught it.
+        if (LibSanctionedLock.mustFreezeParty(s, currentBorrowerNftOwner)) {
+            revert LibVaipakam.SanctionedAddress(currentBorrowerNftOwner);
+        }
         // NFT rental refinance not supported in Phase 1 (requires NFT custody transfer)
         if (oldLoan.assetType != LibVaipakam.AssetType.ERC20)
             revert InvalidRefinanceOffer();

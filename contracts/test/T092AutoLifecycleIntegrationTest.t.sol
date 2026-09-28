@@ -20,6 +20,7 @@ import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
+import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibAutoRefinanceCheck} from "../src/libraries/LibAutoRefinanceCheck.sol";
 import {LibOfferMatch} from "../src/libraries/LibOfferMatch.sol";
@@ -1382,6 +1383,40 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         vm.expectRevert(RefinanceFacet.OfferNotAccepted.selector);
         RefinanceFacet(address(diamond))
             .refinanceLoanFromAccept(oldLoanId, taggedOfferId);
+    }
+
+    function test_2349_frozenHolder_blockedOnUngatedRoutes() public {
+        // The lender-accept route no longer stops at the switch, so the
+        // fail-closed frozen-holder block is what keeps a registry-confirmed
+        // sanctioned holder from receiving the old collateral during an oracle
+        // outage — when every fail-open screen reads "clean". Pins S10 #1006
+        // on BOTH ungated routes, with the switch off.
+        (uint256 oldLoanId, uint256 taggedOfferId, , ) =
+            _taggedRefinanceRequest("frozenHolderLender");
+        _admin().setAutoRefinanceEnabled(false);
+
+        MockSanctionsList oracle = new MockSanctionsList();
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(oracle));
+        oracle.setFlagged(borrower, true);
+        ProfileFacet(address(diamond)).refreshSanctionsFlag(borrower);
+        assertTrue(
+            ProfileFacet(address(diamond)).isSanctionsConfirmedFlagged(borrower),
+            "holder confirmed-flagged"
+        );
+        oracle.setRevertFor(borrower, true); // outage for the holder only
+
+        vm.prank(address(diamond));
+        vm.expectRevert(
+            abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, borrower)
+        );
+        RefinanceFacet(address(diamond))
+            .refinanceLoanFromAccept(oldLoanId, taggedOfferId);
+
+        vm.prank(borrower);
+        vm.expectRevert(
+            abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, borrower)
+        );
+        RefinanceFacet(address(diamond)).refinanceLoan(oldLoanId, taggedOfferId);
     }
 
     function test_2349_refinanceLoanFromMatch_rejectsExternalEOA() public {
