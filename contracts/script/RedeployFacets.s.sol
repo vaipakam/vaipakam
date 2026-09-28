@@ -379,8 +379,19 @@ contract RedeployFacets is Script {
         }
         // #2349 — the matcher-fill refinance entry is an Add on any pre-#2349
         // diamond; on a current one the subset is empty and no Add is cut.
-        // Without it, a refreshed OfferAcceptFacet / OfferMatchFacet chaining
-        // into `refinanceLoanFromMatch` would revert FunctionDoesNotExist.
+        //
+        // PARTIAL-REFRESH POSTURE, stated rather than implied (#2355 r4): this
+        // script does NOT refresh the callers that choose between the two
+        // atomic entries — OfferAcceptFacet (chain hook) and OfferMatchFacet
+        // (dust-close). On a pre-#2349 diamond those stale callers keep
+        // completing a matched fill through `refinanceLoanFromAccept`, which the
+        // refreshed facet no longer gates on the kill switch. The switch still
+        // stops matched refinances there: the matcher's ADMISSION check
+        // (`LibAutoRefinanceCheck.matchAdmissible`, inlined into the stale
+        // OfferMatchFacet and unchanged by #2349) refuses every tagged pair
+        // while it is off. What such a diamond lacks is the second,
+        // execution-time layer in `refinanceLoanFromMatch`. The full #2349
+        // rollout is a fresh `DeployDiamond` (see the scope note at the top).
         if (refiToAdd.length > 0) {
             cuts[idx++] = _add(address(refinanceFacet), refiToAdd);
         }

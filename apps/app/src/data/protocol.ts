@@ -10,6 +10,10 @@ import { useActiveChain } from '../chain/useActiveChain';
 import { fetchProtocolConfig, protocolConfigFresh } from './indexer';
 import { readGraceSecondsLive } from '../contracts/preflights';
 import { defaultGraceSeconds, formatGraceSeconds } from '../lib/grace';
+import {
+  autoRefinancePostureFrom,
+  type AutoRefinancePosture,
+} from './autoRefinancePosture';
 
 /** Deploy default (5%) — display fallback only. Money paths must use
  *  {@link readRentalBufferBps} or gate on `ready`. */
@@ -159,17 +163,18 @@ export function useMasterFlags(): { data: MasterFlags | undefined } {
  *
  *  Three states, all rendered by the caller (#2355 r1):
  *  - `posture: 'on' | 'off'` — the chain answered;
- *  - `posture: 'unknown'` — the read FAILED (after React Query's
- *    retries). Stated as unknown, never shown as silence: silence would
- *    read as "automated matching is available", which the app cannot
- *    substantiate;
+ *  - `posture: 'unknown'` — the LATEST read failed (after React Query's
+ *    retries), whether or not an earlier one succeeded. Stated as unknown,
+ *    never shown as silence: silence would read as "automated matching is
+ *    available", which the app cannot substantiate. A cached answer is NOT
+ *    shown after a failed re-read (#2355 r4) — the switch may have flipped
+ *    during the outage, so the old value is no longer known to be current;
  *  - `posture: undefined` — the first read is still in flight (briefly,
  *    so nothing is shown yet).
  *  Polled every 60 s while mounted: governance flips it with no own-wallet
  *  action, and neither window focus nor the block-driven `LiveChainSync`
  *  keys cover it, so a page left open must still pick the flip up. The
  *  poll exists only while a refinance surface is on screen. */
-export type AutoRefinancePosture = 'on' | 'off' | 'unknown';
 export function useAutoRefinancePosture(): {
   posture: AutoRefinancePosture | undefined;
 } {
@@ -186,10 +191,8 @@ export function useAutoRefinancePosture(): {
         functionName: 'getAutoRefinanceEnabled',
       })) as boolean,
   });
-  // A later failed refetch keeps the last good answer (React Query keeps
-  // `data`); only a read that never succeeded is unknown.
-  if (data !== undefined) return { posture: data ? 'on' : 'off' };
-  return { posture: isError ? 'unknown' : undefined };
+  // The next successful poll clears `isError` and restores a stated answer.
+  return { posture: autoRefinancePostureFrom({ data, isError }) };
 }
 
 /** Renter's total up-front payment for a rental:
