@@ -183,21 +183,29 @@ export function useAutoRefinancePosture(): {
     enabled: Boolean(publicClient),
     refetchInterval: 60_000,
     queryFn: async (): Promise<AutoMatchSwitches> => {
+      // All three reads are PINNED to one block (#2355 r8): independent
+      // `latest` reads can resolve against different blocks during a
+      // staged governance flip and combine into a posture that never
+      // existed on-chain.
+      const blockNumber = await publicClient!.getBlockNumber();
       const [paused, autoRefinance, flags] = await Promise.all([
         publicClient!.readContract({
           address: readChain.diamondAddress,
           abi: DIAMOND_ABI_VIEM,
           functionName: 'paused',
+          blockNumber,
         }) as Promise<boolean>,
         publicClient!.readContract({
           address: readChain.diamondAddress,
           abi: DIAMOND_ABI_VIEM,
           functionName: 'getAutoRefinanceEnabled',
+          blockNumber,
         }) as Promise<boolean>,
         publicClient!.readContract({
           address: readChain.diamondAddress,
           abi: DIAMOND_ABI_VIEM,
           functionName: 'getMasterFlags',
+          blockNumber,
         }) as Promise<readonly [boolean, boolean, boolean]>,
       ]);
       return { paused, autoRefinance, partialFill: flags[2] };
