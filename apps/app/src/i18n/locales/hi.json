@@ -781,6 +781,7 @@
       "walletNote": "Lender accept करते ही payoff आपके wallet से automatically pulled होता है। New loan का पैसा उसी transaction में आता है, इसलिए request open रहते wallet में लगभग {{topUp}} spare रखें (interest portion plus new loan initiation fee)।",
       "shortIsSafe": "अगर lender accept करते समय आपका wallet short है, acceptance simply fail होगी — कुछ taken नहीं होगा और current loan unchanged रहेगा।",
       "autoMatchOff": "इस डिप्लॉयमेंट पर पुनर्वित्त अनुरोधों का स्वचालित मिलान बंद है। कोई भी ऋणदाता अब भी आपका अनुरोध सीधे स्वीकार कर सकता है, लेकिन जब तक स्वचालित मिलान फिर से चालू नहीं होता, ऑर्डर मैचर और कीपर इसे पूरा नहीं करेंगे।",
+      "autoMatchUnknown": "हम यह नहीं पढ़ सके कि इस डिप्लॉयमेंट पर पुनर्वित्त अनुरोधों का स्वचालित मिलान चालू है या नहीं। कोई भी ऋणदाता अब भी आपका अनुरोध सीधे स्वीकार कर सकता है; ऑर्डर मैचर या कीपर इसे पूरा कर सकते हैं या नहीं, यह स्थिति लोड होने तक अज्ञात है।",
       "periodicWarning": "यह loan periodic schedule पर interest pay करता है। Request open रहने के दौरान कोई payment period overdue हो जाए तो lender की acceptance fail होगी जब तक period settled न हो — loan payments current रखें।",
       "done": "Refinance request posted. Lender accept करेगा तो यह loan automatically close होगा — आपको और कुछ नहीं करना। नीचे request cancel कर सकते हैं (posting के कुछ minutes बाद cancellation open होती है)।",
       "pending": "Refinance request #{{offerId}} live है। Lender accept करे तो यह loan उसी transaction में automatically close होता है।",

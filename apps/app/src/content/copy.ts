@@ -1576,6 +1576,10 @@ const copySource = {
      *  so this DISCLOSES the posture instead of blocking the request. */
     autoMatchOff:
       'Automatic matching of refinance requests is switched off on this deployment. Any lender can still accept your request directly, but the order matcher and keepers will not fill it until automatic matching is switched back on.',
+    /** #2355 r1 — the switch could not be read. Stated as unknown rather
+     *  than omitted, so silence never implies matching is available. */
+    autoMatchUnknown:
+      'We couldn’t read whether automatic matching of refinance requests is switched on for this deployment. Any lender can still accept your request directly; whether the order matcher or keepers can fill it is unknown until the status loads.',
     periodicWarning:
       'This loan pays interest on a periodic schedule. If a payment period becomes overdue while the request is open, a lender’s acceptance will fail until the period is settled — keep the loan’s payments current.',
     done:

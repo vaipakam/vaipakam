@@ -65,7 +65,7 @@ import {
 } from '../contracts/loanLive';
 import { assertWalletNotSanctionedLive } from '../data/sanctions';
 import { readLiveProtocolFees, useProtocolFees } from '../data/fees';
-import { useAutoRefinanceEnabled } from '../data/protocol';
+import { useAutoRefinancePosture } from '../data/protocol';
 import type { IndexedLoan } from '../data/indexer';
 import {
   MAX_INTEREST_BPS,
@@ -134,7 +134,7 @@ export function RefinanceFlow({
   const termsVerdict = useTermsBlockNonExitWrites();
   const queryClient = useQueryClient();
   const fees = useProtocolFees();
-  const { enabled: autoRefinanceEnabled } = useAutoRefinanceEnabled();
+  const { posture: autoRefinancePosture } = useAutoRefinancePosture();
 
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
@@ -662,9 +662,13 @@ export function RefinanceFlow({
         {/* #2349 — the on-chain auto-refinance switch never blocks a
             lender's direct accept, only the matcher and keepers, so it
             is DISCLOSED here rather than disabling the form. */}
-        {autoRefinanceEnabled === false ? (
+        {autoRefinancePosture === 'off' || autoRefinancePosture === 'unknown' ? (
           <div className="banner banner-info" role="status" style={{ marginTop: 12 }}>
-            <span className="banner-body">{copy.refinance.autoMatchOff}</span>
+            <span className="banner-body">
+              {autoRefinancePosture === 'off'
+                ? copy.refinance.autoMatchOff
+                : copy.refinance.autoMatchUnknown}
+            </span>
           </div>
         ) : null}
         {/* #1028 — kill switch held up front like every other gated

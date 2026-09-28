@@ -156,17 +156,29 @@ export function useMasterFlags(): { data: MasterFlags | undefined } {
  *  borrower's posted refinance request directly is never blocked by it.
  *  So the refinance surfaces DISCLOSE it (operational posture stated,
  *  never hidden) rather than blocking the form on it.
- *  `enabled === undefined` covers loading AND read failure — the
- *  disclosure is advisory, so an unknown state shows nothing instead of
- *  guessing. */
-export function useAutoRefinanceEnabled(): { enabled: boolean | undefined } {
+ *
+ *  Three states, all rendered by the caller (#2355 r1):
+ *  - `posture: 'on' | 'off'` — the chain answered;
+ *  - `posture: 'unknown'` — the read FAILED (after React Query's
+ *    retries). Stated as unknown, never shown as silence: silence would
+ *    read as "automated matching is available", which the app cannot
+ *    substantiate;
+ *  - `posture: undefined` — the first read is still in flight (briefly,
+ *    so nothing is shown yet).
+ *  Polled every 60 s while mounted: governance flips it with no own-wallet
+ *  action, and neither window focus nor the block-driven `LiveChainSync`
+ *  keys cover it, so a page left open must still pick the flip up. The
+ *  poll exists only while a refinance surface is on screen. */
+export type AutoRefinancePosture = 'on' | 'off' | 'unknown';
+export function useAutoRefinancePosture(): {
+  posture: AutoRefinancePosture | undefined;
+} {
   const { readChain } = useActiveChain();
   const publicClient = usePublicClient({ chainId: readChain.chainId });
-  const { data } = useQuery({
+  const { data, isError } = useQuery({
     queryKey: ['autoRefinanceEnabled', readChain.chainId],
     enabled: Boolean(publicClient),
-    // Governance switch — flips rarely.
-    staleTime: 10 * 60_000,
+    refetchInterval: 60_000,
     queryFn: async (): Promise<boolean> =>
       (await publicClient!.readContract({
         address: readChain.diamondAddress,
@@ -174,7 +186,10 @@ export function useAutoRefinanceEnabled(): { enabled: boolean | undefined } {
         functionName: 'getAutoRefinanceEnabled',
       })) as boolean,
   });
-  return { enabled: data };
+  // A later failed refetch keeps the last good answer (React Query keeps
+  // `data`); only a read that never succeeded is unknown.
+  if (data !== undefined) return { posture: data ? 'on' : 'off' };
+  return { posture: isError ? 'unknown' : undefined };
 }
 
 /** Renter's total up-front payment for a rental:
