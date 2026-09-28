@@ -4,7 +4,6 @@ pragma solidity ^0.8.29;
 import {DeployDiamond} from "../DeployDiamond.s.sol";
 import {DeployTestnetMocks} from "../DeployTestnetMocks.s.sol";
 import {WETH9} from "@chainlink/contracts/src/v0.8/vendor/canonical-weth/WETH9.sol";
-import {AdminFacet} from "../../src/facets/AdminFacet.sol";
 
 /**
  * @title  DeployE2EFixture
@@ -92,15 +91,11 @@ contract DeployE2EFixture is DeployDiamond, DeployTestnetMocks {
         uint256 adminKey = vm.envUint("ADMIN_PRIVATE_KEY");
         runWith(vm.addr(adminKey), vm.envAddress("TREASURY_ADDRESS"), deployerKey);
         _deployTestnetMocks(deployerKey, adminKey, diamond, CANONICAL_WETH);
-
-        // THE LIVE TESTNET'S POSTURE, where a spec depends on it. Each line
-        // names the flag, what the testnet holds, and why the suite needs it.
-        vm.startBroadcast(adminKey);
-        // Base Sepolia holds `true`. A lender completing a borrower's posted
-        // refinance request is gated by this switch today, although the switch
-        // is documented as keeper-only — #2349. Until that is decided,
-        // spec 29 needs it on, as the testnet has it.
-        AdminFacet(diamond).setAutoRefinanceEnabled(true);
-        vm.stopBroadcast();
+        // Every admin flag stays at its fresh-deployment default. The
+        // auto-refinance switch in particular stays OFF: since #2349 it gates
+        // only the automated refinance routes (a delegated keeper, the
+        // matcher), so spec 29 — a lender accepting a borrower's posted
+        // refinance request — must complete with it off, and this fixture is
+        // what proves that on every run.
     }
 }

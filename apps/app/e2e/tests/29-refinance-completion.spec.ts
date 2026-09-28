@@ -107,6 +107,24 @@ test('refinance request completes: old loan closes, new loan carries the collate
     .filter({ hasText: 'Refinance this loan' });
   await expect(card).toBeVisible({ timeout: 60_000 });
 
+  // #2349 — this whole drive runs with the auto-refinance switch at its
+  // fresh-deployment default (OFF): the fixture leaves it untouched, and
+  // the chain is read here so a fixture that started enabling it would
+  // fail loudly instead of quietly weakening the proof below. OFF is what
+  // makes the lender's accept at the end meaningful — before #2349 it
+  // reverted AutoRefinanceDisabled under exactly this posture. The form
+  // must also DISCLOSE the posture rather than hide it.
+  expect(
+    (await pub.readContract({
+      address: DIAMOND,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'getAutoRefinanceEnabled',
+    })) as boolean,
+    'the fixture must leave the auto-refinance switch at its default (off)',
+  ).toBe(false);
+  const autoMatchOff = /automatic matching of refinance requests is switched off/i;
+  await expect(card.getByText(autoMatchOff)).toBeVisible({ timeout: 30_000 });
+
   // A ceiling ABOVE the current 9% so the request is acceptable at the
   // rate a lender would take it at.
   await card.getByLabel(/highest yearly rate/i).fill('12');
@@ -130,6 +148,14 @@ test('refinance request completes: old loan closes, new loan carries the collate
   // survived its own submit.
   const pending = page.getByText(/refinance request #\d+ is live/i);
   await expect(pending).toBeVisible({ timeout: 120_000 });
+  // The standing request carries the same disclosure: it can still be
+  // accepted directly, just not filled by the matcher or a keeper.
+  const pendingCard = page
+    .locator('section.card')
+    .filter({ has: pending });
+  await expect(pendingCard.getByText(autoMatchOff)).toBeVisible({
+    timeout: 30_000,
+  });
 
   // Pin the request to THIS loan rather than trusting "newest offer by
   // the borrower": the role wallets are reused across specs on one

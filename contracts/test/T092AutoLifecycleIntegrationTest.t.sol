@@ -19,6 +19,8 @@ import {RefinanceFacet} from "../src/facets/RefinanceFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
+import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
+import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibAutoRefinanceCheck} from "../src/libraries/LibAutoRefinanceCheck.sol";
 import {LibOfferMatch} from "../src/libraries/LibOfferMatch.sol";
@@ -1215,6 +1217,212 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         vm.prank(randoUser);
         vm.expectRevert(RefinanceFacet.OnlyDiamondInternal.selector);
         RefinanceFacet(address(diamond)).refinanceLoanFromAccept(1, 1);
+    }
+
+    // ─── #2349 — the auto-refinance switch gates the AUTOMATED routes only ──
+
+    /// @dev Old loan + caps + a refinance-tagged request from the holder, a
+    ///      funded replacement lender, and the holder's standing approval for
+    ///      the old-lender payoff. Returns the ids and the lender's key.
+    function _taggedRefinanceRequest(string memory lenderLabel)
+        internal
+        returns (
+            uint256 oldLoanId,
+            uint256 taggedOfferId,
+            address newLender,
+            uint256 newLenderPk
+        )
+    {
+        oldLoanId = _buildActiveLoan();
+        vm.prank(borrower);
+        _f().setAutoRefinanceCaps(
+            oldLoanId, true, 600, uint64(block.timestamp + 365 days)
+        );
+        vm.prank(borrower);
+        taggedOfferId = OfferCreateFacet(address(diamond))
+            .createOffer(_refinanceTaggedOfferParams(oldLoanId, 400));
+        newLender = _provisionFundedActorWithVault(
+            lenderLabel, mockERC20, LOAN_PRINCIPAL * 4
+        );
+        (, newLenderPk) = makeAddrAndKey(lenderLabel);
+        _grantStandingApprovalToDiamond(borrower, mockERC20);
+    }
+
+    function test_2349_lenderAccept_killSwitchOff_refinanceCompletes() public {
+        // The spec's standard refinance process: the holder posts a tagged
+        // request, a lender accepts it. Neither is a keeper or the matcher,
+        // so the switch — OFF by default on a fresh deployment — must not
+        // block it. Pre-#2349 this reverted AutoRefinanceDisabled because the
+        // atomic entry inferred "keeper" from msg.sender == Diamond.
+        (
+            uint256 oldLoanId,
+            uint256 taggedOfferId,
+            address newLender,
+            uint256 newLenderPk
+        ) = _taggedRefinanceRequest("killSwitchOffLender");
+        _admin().setAutoRefinanceEnabled(false);
+
+        uint256 newLoanId =
+            _signAndAcceptOffer(newLender, newLenderPk, taggedOfferId);
+
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(oldLoanId).status),
+            uint8(LibVaipakam.LoanStatus.Repaid),
+            "old loan closed by the lender's accept with the switch off"
+        );
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(newLoanId).status),
+            uint8(LibVaipakam.LoanStatus.Active),
+            "replacement loan open"
+        );
+    }
+
+    function test_2349_lenderAccept_switchMovesNoFunds() public {
+        // The switch decides WHO may complete a refinance, never HOW MUCH
+        // moves. Run the identical lender accept with the switch on and off
+        // from the same state and require every fund outcome to match: the
+        // exiting lender's claim, the holder's wallet payoff, and the
+        // collateral lock.
+        (
+            uint256 oldLoanId,
+            uint256 taggedOfferId,
+            address newLender,
+            uint256 newLenderPk
+        ) = _taggedRefinanceRequest("fundParityLender");
+        uint256 snap = vm.snapshotState();
+
+        uint256[3] memory on_ = _acceptAndMeasure(
+            true, oldLoanId, taggedOfferId, newLender, newLenderPk
+        );
+        vm.revertToState(snap);
+        uint256[3] memory off_ = _acceptAndMeasure(
+            false, oldLoanId, taggedOfferId, newLender, newLenderPk
+        );
+
+        assertGt(on_[0], 0, "exiting lender is owed a payoff");
+        assertEq(off_[0], on_[0], "old lender claim identical either way");
+        assertEq(off_[1], on_[1], "holder wallet payoff identical either way");
+        assertEq(off_[2], on_[2], "collateral lock identical either way");
+    }
+
+    /// @return m [old-lender claim amount, holder wallet spend (principal
+    ///           asset), holder collateral encumbered after]
+    function _acceptAndMeasure(
+        bool switchOn,
+        uint256 oldLoanId,
+        uint256 taggedOfferId,
+        address newLender,
+        uint256 newLenderPk
+    ) internal returns (uint256[3] memory m) {
+        _admin().setAutoRefinanceEnabled(switchOn);
+        uint256 walletBefore = ERC20(mockERC20).balanceOf(borrower);
+        _signAndAcceptOffer(newLender, newLenderPk, taggedOfferId);
+        (, m[0], ) = ClaimFacet(address(diamond))
+            .getClaimableAmount(oldLoanId, true);
+        uint256 walletAfter = ERC20(mockERC20).balanceOf(borrower);
+        m[1] = walletBefore > walletAfter ? walletBefore - walletAfter : 0;
+        m[2] = MetricsFacet(address(diamond))
+            .getEncumbered(borrower, mockCollateralERC20, 0);
+    }
+
+    function test_2349_keeperRefinance_killSwitchOff_reverts() public {
+        // A keeper holding the holder's refinance delegation IS the automated
+        // route the switch exists to stop (spec: admin kill switches control
+        // keeper-driven auto-refinance).
+        (uint256 oldLoanId, uint256 taggedOfferId, , ) =
+            _taggedRefinanceRequest("keeperRouteLender");
+        address keeper = makeAddr("refinanceKeeper");
+        vm.startPrank(borrower);
+        ProfileFacet(address(diamond)).setKeeperAccess(true);
+        ProfileFacet(address(diamond)).approveKeeper(
+            keeper, LibVaipakam.KEEPER_ACTION_REFINANCE
+        );
+        ProfileFacet(address(diamond)).setLoanKeeperEnabled(oldLoanId, keeper, true);
+        vm.stopPrank();
+
+        _admin().setAutoRefinanceEnabled(false);
+        vm.prank(keeper);
+        vm.expectRevert(RefinanceFacet.AutoRefinanceDisabled.selector);
+        RefinanceFacet(address(diamond)).refinanceLoan(oldLoanId, taggedOfferId);
+
+        // Switch on: the keeper clears the gate and stops at the NEXT check
+        // (the request has not been accepted yet) — proving the revert above
+        // was the switch and nothing else.
+        _admin().setAutoRefinanceEnabled(true);
+        vm.prank(keeper);
+        vm.expectRevert(RefinanceFacet.OfferNotAccepted.selector);
+        RefinanceFacet(address(diamond)).refinanceLoan(oldLoanId, taggedOfferId);
+    }
+
+    function test_2349_holderDirectRefinance_killSwitchOff_notGated() public {
+        // The holder calling refinanceLoan themselves is never gated: with the
+        // switch off they reach the next check, not AutoRefinanceDisabled.
+        (uint256 oldLoanId, uint256 taggedOfferId, , ) =
+            _taggedRefinanceRequest("holderRouteLender");
+        _admin().setAutoRefinanceEnabled(false);
+        vm.prank(borrower);
+        vm.expectRevert(RefinanceFacet.OfferNotAccepted.selector);
+        RefinanceFacet(address(diamond)).refinanceLoan(oldLoanId, taggedOfferId);
+    }
+
+    function test_2349_atomicEntries_stateTheirRoute() public {
+        // The two atomic entries differ ONLY in the route they state. Driven
+        // as the Diamond (their sole permitted caller) with the switch off:
+        // the matcher entry stops at the switch, the lender-accept entry
+        // clears it and stops at the next check.
+        (uint256 oldLoanId, uint256 taggedOfferId, , ) =
+            _taggedRefinanceRequest("atomicRouteLender");
+        _admin().setAutoRefinanceEnabled(false);
+
+        vm.prank(address(diamond));
+        vm.expectRevert(RefinanceFacet.AutoRefinanceDisabled.selector);
+        RefinanceFacet(address(diamond))
+            .refinanceLoanFromMatch(oldLoanId, taggedOfferId);
+
+        vm.prank(address(diamond));
+        vm.expectRevert(RefinanceFacet.OfferNotAccepted.selector);
+        RefinanceFacet(address(diamond))
+            .refinanceLoanFromAccept(oldLoanId, taggedOfferId);
+    }
+
+    function test_2349_frozenHolder_blockedOnUngatedRoutes() public {
+        // The lender-accept route no longer stops at the switch, so the
+        // fail-closed frozen-holder block is what keeps a registry-confirmed
+        // sanctioned holder from receiving the old collateral during an oracle
+        // outage — when every fail-open screen reads "clean". Pins S10 #1006
+        // on BOTH ungated routes, with the switch off.
+        (uint256 oldLoanId, uint256 taggedOfferId, , ) =
+            _taggedRefinanceRequest("frozenHolderLender");
+        _admin().setAutoRefinanceEnabled(false);
+
+        MockSanctionsList oracle = new MockSanctionsList();
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(oracle));
+        oracle.setFlagged(borrower, true);
+        ProfileFacet(address(diamond)).refreshSanctionsFlag(borrower);
+        assertTrue(
+            ProfileFacet(address(diamond)).isSanctionsConfirmedFlagged(borrower),
+            "holder confirmed-flagged"
+        );
+        oracle.setRevertFor(borrower, true); // outage for the holder only
+
+        vm.prank(address(diamond));
+        vm.expectRevert(
+            abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, borrower)
+        );
+        RefinanceFacet(address(diamond))
+            .refinanceLoanFromAccept(oldLoanId, taggedOfferId);
+
+        vm.prank(borrower);
+        vm.expectRevert(
+            abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, borrower)
+        );
+        RefinanceFacet(address(diamond)).refinanceLoan(oldLoanId, taggedOfferId);
+    }
+
+    function test_2349_refinanceLoanFromMatch_rejectsExternalEOA() public {
+        vm.prank(makeAddr("randoMatchCaller"));
+        vm.expectRevert(RefinanceFacet.OnlyDiamondInternal.selector);
+        RefinanceFacet(address(diamond)).refinanceLoanFromMatch(1, 1);
     }
 
     // ─── #407 Vault encumbrance sub-ledger — collateral lien ──────────

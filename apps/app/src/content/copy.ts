@@ -1571,6 +1571,25 @@ const copySource = {
     ),
     shortIsSafe:
       'If your wallet is short when a lender tries to accept, the acceptance simply fails — nothing is taken and your current loan continues unchanged.',
+    /** #2349 / #2355 r5-r6 — the order matcher cannot fill the request:
+     *  the auto-refinance switch or the matcher's own master switch is off.
+     *  Says only that the SETTING does not stop a direct accept — never
+     *  that an accept will succeed (other things can stop it). */
+    autoMatchOff:
+      'Automatic matching of refinance requests is switched off on this deployment, so the order matcher will not fill your request. This setting does not stop a lender from accepting it directly.',
+    /** #2355 r6 — the protocol is paused: every refinance completion,
+     *  including a lender's direct accept, reverts until it resumes. */
+    autoMatchPaused:
+      'The protocol is paused right now, so no lender can accept your refinance request and the order matcher cannot fill it until the pause ends.',
+    /** #2355 r1/r5/r6 — no current answer: still loading, or the latest read
+     *  failed. Stated as unknown rather than omitted, so silence never
+     *  implies matching is available. */
+    autoMatchUnknown:
+      'We can’t confirm this deployment’s refinance status right now, so whether the order matcher may fill your request, and whether the protocol is paused, stays unknown until the status loads.',
+    /** #2355 r5-r6 — unpaused and both matcher switches on. Stated too, so
+     *  every posture is a sentence and none is silence. */
+    autoMatchOn:
+      'Automatic matching of refinance requests is switched on for this deployment, so the order matcher may fill your request, as well as a lender accepting it directly.',
     periodicWarning:
       'This loan pays interest on a periodic schedule. If a payment period becomes overdue while the request is open, a lender’s acceptance will fail until the period is settled — keep the loan’s payments current.',
     done:
