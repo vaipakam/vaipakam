@@ -30,6 +30,7 @@ import {
 import { readGraceSecondsLive } from '../contracts/preflights';
 import type { RefinancePendingState } from '../data/refinancePending';
 import { useAutoRefinancePosture } from '../data/protocol';
+import { AutoMatchPostureBanner } from './AutoMatchPostureBanner';
 import { ZERO_ADDRESS } from '../lib/offerSchema';
 import { formatDate, formatTokenAmount } from '../lib/format';
 
@@ -68,8 +69,8 @@ export function RefinancePendingCard({
   const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
-  // #2349 — disclose the auto-refinance switch while the request can
-  // still fill: off, only a lender's direct accept completes it.
+  // #2349 — state the automatic-matching posture while the request can
+  // still fill (every posture, never silence — #2355 r5).
   const { posture: autoRefinancePosture } = useAutoRefinancePosture();
   const requestLive =
     state !== undefined &&
@@ -244,15 +245,8 @@ export function RefinancePendingCard({
               )}
         </span>
       </div>
-      {requestLive &&
-      (autoRefinancePosture === 'off' || autoRefinancePosture === 'unknown') ? (
-        <div className="banner banner-info" role="status" style={{ marginTop: 12 }}>
-          <span className="banner-body">
-            {autoRefinancePosture === 'off'
-              ? copy.refinance.autoMatchOff
-              : copy.refinance.autoMatchUnknown}
-          </span>
-        </div>
+      {requestLive ? (
+        <AutoMatchPostureBanner posture={autoRefinancePosture} />
       ) : null}
       {state?.allowanceShort && state.loanActive ? (
         <div className="banner banner-danger" role="alert" style={{ marginTop: 12 }}>

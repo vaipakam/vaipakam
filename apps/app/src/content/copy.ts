@@ -1576,10 +1576,19 @@ const copySource = {
      *  so this DISCLOSES the posture instead of blocking the request. */
     autoMatchOff:
       'Automatic matching of refinance requests is switched off on this deployment. Any lender can still accept your request directly, but the order matcher and keepers will not fill it until automatic matching is switched back on.',
-    /** #2355 r1 — the switch could not be read. Stated as unknown rather
-     *  than omitted, so silence never implies matching is available. */
+    /** #2355 r1/r5 — no current answer: the switches are still loading, or
+     *  the latest read failed. Stated as unknown rather than omitted, so
+     *  silence never implies matching is available. */
     autoMatchUnknown:
-      'We couldn’t read whether automatic matching of refinance requests is switched on for this deployment. Any lender can still accept your request directly; whether the order matcher or keepers can fill it is unknown until the status loads.',
+      'We can’t confirm right now whether automatic matching of refinance requests is switched on for this deployment. Any lender can still accept your request directly; whether the order matcher or keepers can fill it stays unknown until the status loads.',
+    /** #2355 r5 — the refinance switch is on but the order matcher's own
+     *  master switch is off, so the matcher cannot fill anything. */
+    autoMatchMatcherOff:
+      'Order matching is switched off on this deployment, so the order matcher will not fill your refinance request. Any lender can still accept it directly, and keepers are not blocked by this.',
+    /** #2355 r5 — both switches read and on. Stated too, so every posture
+     *  is a sentence and none is silence. */
+    autoMatchOn:
+      'Automatic matching of refinance requests is switched on for this deployment. Besides any lender accepting your request directly, the order matcher and keepers may also fill it.',
     periodicWarning:
       'This loan pays interest on a periodic schedule. If a payment period becomes overdue while the request is open, a lender’s acceptance will fail until the period is settled — keep the loan’s payments current.',
     done:

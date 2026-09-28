@@ -66,6 +66,7 @@ import {
 import { assertWalletNotSanctionedLive } from '../data/sanctions';
 import { readLiveProtocolFees, useProtocolFees } from '../data/fees';
 import { useAutoRefinancePosture } from '../data/protocol';
+import { AutoMatchPostureBanner } from './AutoMatchPostureBanner';
 import type { IndexedLoan } from '../data/indexer';
 import {
   MAX_INTEREST_BPS,
@@ -659,18 +660,10 @@ export function RefinanceFlow({
           </p>
         ) : null}
 
-        {/* #2349 — the on-chain auto-refinance switch never blocks a
-            lender's direct accept, only the matcher and keepers, so it
-            is DISCLOSED here rather than disabling the form. */}
-        {autoRefinancePosture === 'off' || autoRefinancePosture === 'unknown' ? (
-          <div className="banner banner-info" role="status" style={{ marginTop: 12 }}>
-            <span className="banner-body">
-              {autoRefinancePosture === 'off'
-                ? copy.refinance.autoMatchOff
-                : copy.refinance.autoMatchUnknown}
-            </span>
-          </div>
-        ) : null}
+        {/* #2349 — the on-chain switches never block a lender's direct
+            accept, only the matcher and keepers, so the posture is
+            DISCLOSED here — in every state — rather than disabling the form. */}
+        <AutoMatchPostureBanner posture={autoRefinancePosture} />
         {/* #1028 — kill switch held up front like every other gated
             flow, not just at the final confirm. */}
         {flowDisabled('post-offer') ? (

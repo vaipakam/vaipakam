@@ -12,6 +12,7 @@ import { readGraceSecondsLive } from '../contracts/preflights';
 import { defaultGraceSeconds, formatGraceSeconds } from '../lib/grace';
 import {
   autoRefinancePostureFrom,
+  type AutoMatchSwitches,
   type AutoRefinancePosture,
 } from './autoRefinancePosture';
 
@@ -154,44 +155,48 @@ export function useMasterFlags(): { data: MasterFlags | undefined } {
   return { data };
 }
 
-/** The auto-refinance kill switch (`AdminFacet.getAutoRefinanceEnabled`).
- *  Since #2349 it gates only the AUTOMATED refinance routes — the
- *  range-order matcher and a delegated keeper; a lender accepting the
- *  borrower's posted refinance request directly is never blocked by it.
- *  So the refinance surfaces DISCLOSE it (operational posture stated,
- *  never hidden) rather than blocking the form on it.
+/** The automatic-matching posture for refinance requests (#2349 / #2355):
+ *  the auto-refinance switch (`AdminFacet.getAutoRefinanceEnabled`) and the
+ *  matcher master flag (`ConfigFacet.getMasterFlags()[2]`, `partialFill`),
+ *  read together in ONE query so a single read state covers both. Neither
+ *  switch ever blocks a lender accepting the request directly, so the
+ *  refinance surfaces DISCLOSE the posture — always, via
+ *  {@link AutoMatchPostureBanner} — rather than gating the form on it.
+ *  See `autoRefinancePostureFrom` for how every read state (in flight,
+ *  failed, failed re-read, partly on) maps to a stated posture.
  *
- *  Three states, all rendered by the caller (#2355 r1):
- *  - `posture: 'on' | 'off'` — the chain answered;
- *  - `posture: 'unknown'` — the LATEST read failed (after React Query's
- *    retries), whether or not an earlier one succeeded. Stated as unknown,
- *    never shown as silence: silence would read as "automated matching is
- *    available", which the app cannot substantiate. A cached answer is NOT
- *    shown after a failed re-read (#2355 r4) — the switch may have flipped
- *    during the outage, so the old value is no longer known to be current;
- *  - `posture: undefined` — the first read is still in flight (briefly,
- *    so nothing is shown yet).
- *  Polled every 60 s while mounted: governance flips it with no own-wallet
- *  action, and neither window focus nor the block-driven `LiveChainSync`
- *  keys cover it, so a page left open must still pick the flip up. The
- *  poll exists only while a refinance surface is on screen. */
+ *  Read live from the chain rather than the indexer snapshot: this is an
+ *  operational posture statement, and the snapshot can lag a flip.
+ *  Polled every 60 s while mounted: governance flips these with no
+ *  own-wallet action, and neither window focus nor the block-driven
+ *  `LiveChainSync` keys cover them, so a page left open must still pick
+ *  a flip up. The poll exists only while a refinance surface is on
+ *  screen. */
 export function useAutoRefinancePosture(): {
-  posture: AutoRefinancePosture | undefined;
+  posture: AutoRefinancePosture;
 } {
   const { readChain } = useActiveChain();
   const publicClient = usePublicClient({ chainId: readChain.chainId });
   const { data, isError } = useQuery({
-    queryKey: ['autoRefinanceEnabled', readChain.chainId],
+    queryKey: ['autoMatchSwitches', readChain.chainId],
     enabled: Boolean(publicClient),
     refetchInterval: 60_000,
-    queryFn: async (): Promise<boolean> =>
-      (await publicClient!.readContract({
-        address: readChain.diamondAddress,
-        abi: DIAMOND_ABI_VIEM,
-        functionName: 'getAutoRefinanceEnabled',
-      })) as boolean,
+    queryFn: async (): Promise<AutoMatchSwitches> => {
+      const [autoRefinance, flags] = await Promise.all([
+        publicClient!.readContract({
+          address: readChain.diamondAddress,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'getAutoRefinanceEnabled',
+        }) as Promise<boolean>,
+        publicClient!.readContract({
+          address: readChain.diamondAddress,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'getMasterFlags',
+        }) as Promise<readonly [boolean, boolean, boolean]>,
+      ]);
+      return { autoRefinance, partialFill: flags[2] };
+    },
   });
-  // The next successful poll clears `isError` and restores a stated answer.
   return { posture: autoRefinancePostureFrom({ data, isError }) };
 }
 

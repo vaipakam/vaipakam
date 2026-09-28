@@ -6,6 +6,20 @@
 
 **Prior art**: PR #542 (closed) — first attempt that surfaced the three blocking findings documented below.
 
+> **Amended by #2349 (PR #2355, 2026-09-28) — the kill switch no longer blocks
+> a lender's direct accept.** This design had every tagged accept revert while
+> `cfgAutoRefinanceEnabled` is off, because the chained entry inferred
+> "keeper-driven" from `msg.sender == Diamond`. On a fresh deployment (switch
+> off by default) that made every posted refinance request unfillable, which
+> contradicts the functional spec: the switch controls keeper-driven
+> auto-refinance, not the borrower's standard refinance process. Each
+> completion route now STATES itself. A lender's direct accept completes
+> through `refinanceLoanFromAccept` and is never gated by the switch; a
+> matcher fill completes through the new `refinanceLoanFromMatch` and is gated
+> (as is a delegated keeper calling `refinanceLoan`). The atomicity, the
+> reentrancy analysis and the fund flows in this document are unchanged. §5.3's
+> kill-switch case and §5.4's guardrails are corrected inline below.
+
 ## 1. Goal
 
 Make refinance-tagged Borrower offers fire `RefinanceFacet.refinanceLoan` **in the same transaction** as their accept, eliminating the multi-tx race-condition window between Tx 2 (accept, principal lands in borrower wallet) and Tx 3 (refinance, wallet drained to pay old loan).
@@ -188,12 +202,12 @@ Same setup, but trigger the accept via `matchOffers(lenderOfferId, borrowerOffer
 - Caps tightened between create and refinance (manual `setAutoRefinanceCaps` with stricter caps after offer create) → revert + new loan rolled back.
 - Sanctions list (borrower added to sanctions oracle between create and accept) → revert + new loan rolled back.
 - Grace expired on old loan (warp past `endTime + gracePeriod`) → revert + new loan rolled back.
-- Kill switch flipped off mid-flow (`AdminFacet.setAutoRefinanceEnabled(false)`) → revert + new loan rolled back.
+- Kill switch flipped off mid-flow (`AdminFacet.setAutoRefinanceEnabled(false)`) → revert + new loan rolled back **on the matched path only** (#2349). A lender's direct accept is not gated by the switch and completes; tests pin both (`test_2349_lenderAccept_killSwitchOff_refinanceCompletes`, `test_2349_atomicEntries_stateTheirRoute`).
 
 ### 5.4 Structural guardrails
 
 - `RefinanceFacet.refinanceLoanFromAccept.selector != bytes4(0)`.
-- `onlyDiamondInternal` modifier on `refinanceLoanFromAccept` actually rejects external EOAs (call directly, expect revert).
+- `onlyDiamondInternal` modifier on `refinanceLoanFromAccept` actually rejects external EOAs (call directly, expect revert). Same for `refinanceLoanFromMatch` (#2349).
 - Direct `acceptOffer` with non-tagged offer (refinanceTargetLoanId == 0) does NOT trigger the chain.
 
 ## 6. Out of scope
