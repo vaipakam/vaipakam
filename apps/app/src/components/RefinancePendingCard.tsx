@@ -70,14 +70,14 @@ export function RefinancePendingCard({
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
   // #2349 — state the automatic-matching posture while the request can
-  // still fill (every posture, never silence — #2355 r5).
+  // still fill (every posture, never silence — #2355 r5). Hidden only once
+  // the live read has ESTABLISHED the request is terminal: while that read
+  // is loading or failing (`state` undefined) the card is still shown as a
+  // pending request, so the posture is stated too (#2355 r7).
   const { posture: autoRefinancePosture } = useAutoRefinancePosture();
-  const requestLive =
+  const requestTerminal =
     state !== undefined &&
-    !state.accepted &&
-    !state.expired &&
-    state.loanActive &&
-    !state.pastGrace;
+    (state.accepted || state.expired || !state.loanActive || state.pastGrace);
 
   const walletReady =
     onSupportedChain && Boolean(walletClient) && Boolean(publicClient);
@@ -245,7 +245,7 @@ export function RefinancePendingCard({
               )}
         </span>
       </div>
-      {requestLive ? (
+      {!requestTerminal ? (
         <AutoMatchPostureBanner posture={autoRefinancePosture} />
       ) : null}
       {state?.allowanceShort && state.loanActive ? (

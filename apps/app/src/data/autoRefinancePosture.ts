@@ -32,18 +32,22 @@ export interface AutoMatchSwitches {
 }
 
 /**
- * `isError` must reflect the LATEST fetch. React Query keeps a stale `data`
- * across a failed refetch, so the error is checked first: a cached answer
- * is never presented as current after a failed re-read, because a switch
- * may have flipped during the outage (#2355 r4). No answer yet — still
- * loading, retrying, or no client to read with — is `unknown` too (r5).
- * A pause outranks the matcher switches: while paused nothing completes.
+ * One rule: a posture is stated as KNOWN only while the latest read
+ * attempt succeeded. React Query keeps a stale `data` both across a failed
+ * refetch (`isError`, #2355 r4) and across a refetch it has PAUSED because
+ * the browser is offline (`isPaused` — the default `networkMode`, where
+ * `isError` stays false, r7). Either way no current read exists and a
+ * switch may have flipped meanwhile, so the cached answer is not presented
+ * as current. No answer yet — still loading, retrying, or no client to read
+ * with — is `unknown` too (r5). A pause outranks the matcher switches:
+ * while paused nothing completes.
  */
 export function autoRefinancePostureFrom(read: {
   data: AutoMatchSwitches | undefined;
   isError: boolean;
+  isPaused: boolean;
 }): AutoRefinancePosture {
-  if (read.isError || read.data === undefined) return 'unknown';
+  if (read.isError || read.isPaused || read.data === undefined) return 'unknown';
   if (read.data.paused) return 'paused';
   if (!read.data.autoRefinance || !read.data.partialFill) return 'off';
   return 'on';

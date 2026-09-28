@@ -178,7 +178,7 @@ export function useAutoRefinancePosture(): {
 } {
   const { readChain } = useActiveChain();
   const publicClient = usePublicClient({ chainId: readChain.chainId });
-  const { data, isError } = useQuery({
+  const { data, isError, isPaused } = useQuery({
     queryKey: ['autoMatchPosture', readChain.chainId],
     enabled: Boolean(publicClient),
     refetchInterval: 60_000,
@@ -203,7 +203,7 @@ export function useAutoRefinancePosture(): {
       return { paused, autoRefinance, partialFill: flags[2] };
     },
   });
-  return { posture: autoRefinancePostureFrom({ data, isError }) };
+  return { posture: autoRefinancePostureFrom({ data, isError, isPaused }) };
 }
 
 /** Renter's total up-front payment for a rental:
