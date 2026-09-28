@@ -7,6 +7,8 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibCloseoutFreeze} from "../libraries/LibCloseoutFreeze.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
+import {LibTierExclusion} from "../libraries/LibTierExclusion.sol";
+import {LibConsolidation} from "../libraries/LibConsolidation.sol";
 
 /**
  * @title  EncumbranceMutateFacet
@@ -215,6 +217,10 @@ contract EncumbranceMutateFacet {
         LibLifecycle.transition(loan, expectedFrom, to);
         LibSanctionedLock.recordFrozenClaimantForLoan(s, loan, true);
         LibSanctionedLock.recordFrozenClaimantForLoan(s, loan, false);
+        // #2342 — the loan just went terminal, so what each side is owed now
+        // counts against the holder, not the stored party. Records written
+        // later in this close-out keep it exact through their ledger notify.
+        _syncTierExclusion(loanId);
     }
 
     /// @notice `transitionFromAny` variant of {terminalize}: validate only the
@@ -230,6 +236,83 @@ contract EncumbranceMutateFacet {
         LibLifecycle.transitionFromAny(loan, to);
         LibSanctionedLock.recordFrozenClaimantForLoan(s, loan, true);
         LibSanctionedLock.recordFrozenClaimantForLoan(s, loan, false);
+        _syncTierExclusion(loanId); // #2342 — see {terminalize}
+    }
+
+    // ─── #2342 — ledger-anchored VPFI fee-tier exclusion host ─────────────
+    //
+    // `LibTierExclusion.sync` derives, per side, whether a terminal loan's
+    // owed VPFI must stay out of the stored party's fee tier (position held
+    // by someone else) and by how much (the VPFI in that side's encumbrance
+    // records). Hosted here so the recompute and the restamp exist once: the
+    // terminal transitions above call it inline, `VaipakamNFTFacet` calls it
+    // on a position transfer or burn, and every `LibEncumbrance` per-loan
+    // mutator calls it when the side already carries an exclusion.
+
+    /// @notice Re-derive `loanId`'s VPFI fee-tier exclusion and restamp every
+    ///         vault owner whose excluded amount changed.
+    function syncTierExclusion(uint256 loanId) external onlyDiamondInternal {
+        _syncTierExclusion(loanId);
+    }
+
+    /// @dev Restamps with the BROADCAST-FREE local rollup. These syncs run
+    ///      inside must-complete close-outs and claims, and a broadcasting
+    ///      stamp can revert when the shared CCIP budget runs out
+    ///      (`LibConsolidation.restampUserVpfiLocal`) — a tier refresh must
+    ///      never brick a close-out. The cross-chain tier mirror picks the
+    ///      change up at the owner's next broadcasting mutation.
+    function _syncTierExclusion(uint256 loanId) private {
+        address[4] memory changed = LibTierExclusion.sync(loanId);
+        for (uint256 i; i < 4; ++i) {
+            address who = changed[i];
+            if (who == address(0)) continue;
+            bool seen;
+            for (uint256 j; j < i; ++j) {
+                if (changed[j] == who) {
+                    seen = true;
+                    break;
+                }
+            }
+            if (!seen) LibConsolidation.restampUserVpfiLocal(who);
+        }
+    }
+
+    /// @notice #2342 — the VPFI this loan currently keeps out of a vault
+    ///         owner's fee tier, per side. A zero vault means that side has
+    ///         no exclusion (live loan, untransferred position, or claimed).
+    /// @return lenderVault   Vault owner charged on the lender side.
+    /// @return lenderVpfi    VPFI excluded there (owed to the lender holder).
+    /// @return borrowerVault Vault owner charged on the borrower side.
+    /// @return borrowerVpfi  VPFI excluded there (owed to the borrower holder).
+    function getTierExclusion(uint256 loanId)
+        external
+        view
+        returns (
+            address lenderVault,
+            uint256 lenderVpfi,
+            address borrowerVault,
+            uint256 borrowerVpfi
+        )
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        return (
+            s.tierExclusionLenderVault[loanId],
+            s.tierExclusionLenderVpfi[loanId],
+            s.tierExclusionBorrowerVault[loanId],
+            s.tierExclusionBorrowerVpfi[loanId]
+        );
+    }
+
+    /// @notice The VPFI in `vaultOwner`'s vault that is owed to other wallets
+    ///         and therefore excluded from `vaultOwner`'s fee-discount tier.
+    ///         Includes amounts still carried by pre-#2342 swap-to-repay
+    ///         freeze records until their loan is next synced or claimed.
+    function getVpfiOwedToOthers(address vaultOwner)
+        external
+        view
+        returns (uint256)
+    {
+        return LibVaipakam.storageSlot().frozenVpfiOwedByVault[vaultOwner];
     }
 
     /// @notice #998 S10 (#1006) — one-call lender-payoff PARK + fail-closed freeze

@@ -5335,26 +5335,29 @@ library LibVaipakam {
         // path.
         mapping(uint256 => ClaimInfo) borrowerSurplusClaims;
         // ─── #954 (Codex #981/#986) — VPFI held-but-owed-to-another counter ────
-        // When a close-out freezes a VPFI surplus (borrower) or VPFI proceeds
-        // (lender) into a vault whose owner is NOT the economic owner — i.e. the
-        // position NFT was transferred to a now-sanctioned holder — the funds sit
-        // in the STORED party's tracked vault balance but belong to the current
-        // holder (claimable once delisted). This per-owner counter records that
-        // amount so the VPFI fee-tier stamp can EXCLUDE it (tier reads
+        // VPFI that sits in a vault owner's tracked balance but belongs to
+        // someone else — a terminal loan whose position NFT was transferred, so
+        // the proceeds / residual / surplus are owed to the current holder and
+        // only held in the STORED party's vault until that holder claims. The
+        // VPFI fee-tier stamp EXCLUDES this amount (tier reads
         // `protocolTrackedVaultBalance`, which is blind to `s.encumbered`).
-        // Incremented at the transferred-position freeze; decremented at claim/
-        // release. Only the TRANSFERRED case bumps it — a flagged self-holder's
-        // frozen VPFI is their own money and still counts toward their tier.
+        //
+        // #2342 — maintained by `LibTierExclusion.sync` as the sum of the
+        // per-loan `tierExclusion*Vpfi` records charged to each owner, which
+        // are derived from the loan's encumbrance ledger. It used to be bumped
+        // only by the swap-to-repay-FULL freezes, so every other close-out
+        // (repay, preclose, default, liquidation) left owed VPFI in the stored
+        // party's tier. A holder who is the stored party is never excluded:
+        // their own money counts toward their own tier.
         // See docs/DesignsAndPlans/SanctionsCloseoutSweepAndSaleVehicleFixes.md §2.2.
         mapping(address => uint256) frozenVpfiOwedByVault;
-        // Per-loan record of the EXACT VPFI amount this loan bumped into
-        // `frozenVpfiOwedByVault` on each side, so the matching claim
-        // decrements the aggregate by precisely what was added and can never
-        // erode a DIFFERENT loan's frozen amount on the same owner. The lender
-        // leg needs this because its `lenderClaims` row is written on EVERY
-        // close (clean or frozen), so "was this leg's VPFI frozen-and-owed?"
-        // is not re-derivable at claim time. Kept symmetric for the borrower
-        // surplus. Zero on the common path; cleared to zero on release.
+        // LEGACY (pre-#2342) per-loan records of what a swap-to-repay-FULL
+        // freeze bumped into `frozenVpfiOwedByVault` on each side. No longer
+        // written: the ledger-anchored `tierExclusion*` records replace them.
+        // Loans frozen before the upgrade still carry a value here; it is
+        // released at claim (`LibCloseoutFreeze.release*FrozenVpfi`) or folded
+        // into the new records the first time `LibTierExclusion.sync` touches
+        // the loan, whichever comes first, so no amount is counted twice.
         mapping(uint256 => uint256) frozenVpfiOwedLenderLeg;
         mapping(uint256 => uint256) frozenVpfiOwedBorrowerSurplus;
         // ── #1123 — confirmed-flagged-wallet registry (APPENDED) ──────────────
@@ -7590,6 +7593,23 @@ library LibVaipakam {
         mapping(uint256 => mapping(bytes32 => bytes32)) transportDayNext;
         mapping(uint256 => mapping(bytes32 => bytes32)) transportDayPrev;
         mapping(uint256 => bytes32) transportDayCursorNode;
+        // ─── #2342 — ledger-anchored VPFI fee-tier exclusion (APPENDED) ──────
+        // Per-(loan, side) record of the VPFI this loan currently keeps out of
+        // a vault owner's fee tier because it is owed to someone else: the loan
+        // is terminal and that side's position NFT is held by a wallet other
+        // than the stored party whose vault holds the funds. `*Vault` is the
+        // vault owner the exclusion is charged to (zero = no exclusion on that
+        // side); `*Vpfi` is the amount currently added to
+        // `frozenVpfiOwedByVault[*Vault]`. The amount is DERIVED, never written
+        // independently: it always equals the VPFI in that side's per-loan
+        // encumbrance records (`LibEncumbrance.vpfiReservedOnSide`), kept in
+        // step by `LibTierExclusion.sync`, which every per-loan ledger mutator,
+        // every terminal transition and every position-NFT transfer or burn
+        // re-runs. Zero on the common path (untransferred or live loans).
+        mapping(uint256 => address) tierExclusionLenderVault;
+        mapping(uint256 => uint256) tierExclusionLenderVpfi;
+        mapping(uint256 => address) tierExclusionBorrowerVault;
+        mapping(uint256 => uint256) tierExclusionBorrowerVpfi;
     }
 
     /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss: the

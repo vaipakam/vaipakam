@@ -1795,7 +1795,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///         offer-principal-lock impl PR adds the lock create /
     ///         decrement / release surface.
     function _getEncumbranceMutateFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](19);
+        s = new bytes4[](22);
         s[0] = EncumbranceMutateFacet.releaseCollateralLien.selector;
         // #407 PR 4 round-1 (2026-06-12) — decrement/increment cross-
         // facet entries used by active-loan slice flows + addCollateral.
@@ -1828,6 +1828,10 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // is cut into every diamond that already cuts this mutate host).
         s[17] = EncumbranceMutateFacet.terminalize.selector;
         s[18] = EncumbranceMutateFacet.terminalizeFromAny.selector;
+        // #2342 — ledger-anchored VPFI fee-tier exclusion host + its views.
+        s[19] = EncumbranceMutateFacet.syncTierExclusion.selector;
+        s[20] = EncumbranceMutateFacet.getTierExclusion.selector;
+        s[21] = EncumbranceMutateFacet.getVpfiOwedToOthers.selector;
     }
 
     /// @notice #396 v0.5 — gasless signed off-chain offer book selectors.

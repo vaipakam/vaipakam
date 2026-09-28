@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
+import {LibRevert} from "./LibRevert.sol";
 
 /**
  * @title  LibEncumbrance
@@ -73,6 +74,14 @@ library LibEncumbrance {
         uint256 available
     );
 
+    /// @notice #2342 — selector of `EncumbranceMutateFacet.syncTierExclusion`,
+    ///         the host that re-derives a loan's VPFI fee-tier exclusion from
+    ///         this ledger. Spelled from the signature rather than referenced
+    ///         through the facet type because the host imports this library;
+    ///         `TierExclusionTest` pins it to the compiled selector.
+    bytes4 internal constant TIER_EXCLUSION_SYNC_SELECTOR =
+        bytes4(keccak256("syncTierExclusion(uint256)"));
+
     // ─── Collateral lien — per-loan ─────────────────────────────────────
 
     /// @notice Create a collateral lien from a freshly-initiated loan.
@@ -140,6 +149,7 @@ library LibEncumbrance {
         // fold a bogus full-collateral claim off a released row). Callers
         // that read `.amount` now always see 0 once released.
         lien.amount = 0;
+        _notifyTierExclusion(loanId, false);
     }
 
     /// @notice Decrement an active collateral lien by `consumed`. Used
@@ -174,6 +184,7 @@ library LibEncumbrance {
         unchecked {
             lien.amount -= consumed;
         }
+        _notifyTierExclusion(loanId, false);
     }
 
     /// @notice Increment an active collateral lien by `added`. Used by
@@ -215,10 +226,11 @@ library LibEncumbrance {
                 released: false
             });
             s.encumbered[loan.borrower][asset][tokenId] += added;
-            return;
+        } else {
+            s.encumbered[lien.user][lien.asset][lien.tokenId] += added;
+            lien.amount += added;
         }
-        s.encumbered[lien.user][lien.asset][lien.tokenId] += added;
-        lien.amount += added;
+        _notifyTierExclusion(loanId, false);
     }
 
     // ─── Lender-proceeds reservation (VPFI) ─────────────────────────────
@@ -266,6 +278,7 @@ library LibEncumbrance {
         }
         s.encumbered[lender][asset][0] += amount;
         s.lenderProceedsEncumbered[loanId] += amount;
+        _notifyTierExclusion(loanId, true);
     }
 
     /// @notice #585 — release a loan's VPFI lender-proceeds reservation
@@ -296,6 +309,7 @@ library LibEncumbrance {
         _decrementAggregate(lender, asset, 0, reserved);
         s.lenderProceedsEncumbered[loanId] = 0;
         s.lenderProceedsEncumberedAsset[loanId] = address(0);
+        _notifyTierExclusion(loanId, true);
     }
 
     // ─── #998 S10 (#1006) Class B — ACTIVE-loan held reservation ─────────────
@@ -327,6 +341,7 @@ library LibEncumbrance {
         }
         s.encumbered[lender][asset][0] += amount;
         s.heldForLenderEncumbered[loanId] += amount;
+        _notifyTierExclusion(loanId, true);
     }
 
     /// @notice Release the active-held reservation in full, under the RECORDED
@@ -342,6 +357,7 @@ library LibEncumbrance {
         _decrementAggregate(lender, asset, 0, reserved);
         s.heldForLenderEncumbered[loanId] = 0;
         s.heldForLenderEncumberedAsset[loanId] = address(0);
+        _notifyTierExclusion(loanId, true);
     }
 
     /// @notice Migrate the active-held reservation `oldLender → newUser` when the
@@ -361,6 +377,7 @@ library LibEncumbrance {
         address asset = s.heldForLenderEncumberedAsset[loanId];
         _decrementAggregate(oldLender, asset, 0, reserved);
         s.encumbered[newUser][asset][0] += reserved;
+        _notifyTierExclusion(loanId, true);
     }
 
     // ─── #661 — borrower default-surplus reservation (mirror of #592) ───────
@@ -397,6 +414,7 @@ library LibEncumbrance {
         }
         s.encumbered[borrower][asset][0] += amount;
         s.borrowerProceedsEncumbered[loanId] += amount;
+        _notifyTierExclusion(loanId, false);
     }
 
     /// @notice #661 — release a loan's VPFI borrower-surplus reservation (see
@@ -416,6 +434,7 @@ library LibEncumbrance {
         _decrementAggregate(borrower, asset, 0, reserved);
         s.borrowerProceedsEncumbered[loanId] = 0;
         s.borrowerProceedsEncumberedAsset[loanId] = address(0);
+        _notifyTierExclusion(loanId, false);
     }
 
     // ─── Intent working-capital lien — #393 v1-d ────────────────────────
@@ -507,6 +526,7 @@ library LibEncumbrance {
             released: false
         });
         s.encumbered[loan.borrower][asset][tokenId] += amount;
+        _notifyTierExclusion(loanId, false);
     }
 
     /// @notice Re-key a collateral lien from one loan id to another
@@ -583,6 +603,7 @@ library LibEncumbrance {
             // refinanced-away loan. The `released` flag is the source of truth;
             // zeroing `amount` removes the footgun.
             oldLien.amount = 0;
+            _notifyTierExclusion(oldLoanId, false);
             return true;
         }
         // !sameKey — the old lien's key no longer matches the new loan (e.g.
@@ -792,6 +813,7 @@ library LibEncumbrance {
             // decrements the right bucket.
             _decrementAggregate(oldLender, asset, 0, reserved);
             s.encumbered[newUser][asset][0] += reserved;
+            _notifyTierExclusion(loanId, true);
             return;
         }
         LibVaipakam.Encumbrance storage lien = s.loanCollateralLien[loanId];
@@ -801,5 +823,79 @@ library LibEncumbrance {
         _decrementAggregate(from, lien.asset, lien.tokenId, lien.amount);
         s.encumbered[newUser][lien.asset][lien.tokenId] += lien.amount;
         lien.user = newUser;
+        _notifyTierExclusion(loanId, false);
+    }
+
+    // ─── #2342 — VPFI fee-tier exclusion, anchored to this ledger ───────
+
+    /// @notice The VPFI this loan's per-loan records hold reserved on one side
+    ///         — what that side's position holder is owed out of the stored
+    ///         party's vault. Borrower side: a live ERC-20 VPFI collateral lien
+    ///         plus the reserved borrower surplus. Lender side: the reserved
+    ///         lender proceeds plus the active-held reservation. Each record
+    ///         counts only when the asset it was reserved under is VPFI.
+    /// @dev    These records are the reason owed VPFI cannot be withdrawn by
+    ///         the stored party (VPFI has a user-facing vault exit, so every
+    ///         owed-VPFI deposit into a stored vault is reserved here), which is
+    ///         what makes them a complete account of the owed amount rather
+    ///         than one more copy of it. `LibTierExclusion` reads ONLY this.
+    function vpfiReservedOnSide(uint256 loanId, bool lenderSide)
+        internal
+        view
+        returns (uint256 total)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        address vpfi = s.vpfiToken;
+        if (vpfi == address(0)) return 0;
+        if (lenderSide) {
+            if (s.lenderProceedsEncumberedAsset[loanId] == vpfi) {
+                total += s.lenderProceedsEncumbered[loanId];
+            }
+            if (s.heldForLenderEncumberedAsset[loanId] == vpfi) {
+                total += s.heldForLenderEncumbered[loanId];
+            }
+        } else {
+            LibVaipakam.Encumbrance storage lien = s.loanCollateralLien[loanId];
+            if (
+                !lien.released &&
+                lien.asset == vpfi &&
+                lien.assetType == LibVaipakam.AssetType.ERC20
+            ) {
+                total += lien.amount;
+            }
+            if (s.borrowerProceedsEncumberedAsset[loanId] == vpfi) {
+                total += s.borrowerProceedsEncumbered[loanId];
+            }
+        }
+    }
+
+    /// @dev Re-derive the loan's fee-tier exclusion after a per-loan record
+    ///      changed, but only when the side already carries one. A side
+    ///      carries an exclusion only once its loan is terminal and its
+    ///      position is held by someone other than the stored party (set by
+    ///      `LibTierExclusion.sync` at the terminal transition or the position
+    ///      transfer), so on every live loan — the hot path — this is one
+    ///      storage read. When it does fire it cross-calls the host so the
+    ///      recompute and the tier restamp exist once, not in every facet
+    ///      that mutates this ledger.
+    ///
+    ///      Every per-loan mutator here calls it after writing, except
+    ///      {createCollateralLien}: a loan being created has no exclusion.
+    ///      The records are thereby exact at every step — including the
+    ///      claim-time releases, which must drop the exclusion BEFORE the
+    ///      VPFI leaves the vault so the post-withdraw restamp never sees the
+    ///      balance fall while the exclusion still stands (a transient dip
+    ///      that the tier's minimum-over-history clamp would keep for up to
+    ///      30 days).
+    function _notifyTierExclusion(uint256 loanId, bool lenderSide) private {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        address charged = lenderSide
+            ? s.tierExclusionLenderVault[loanId]
+            : s.tierExclusionBorrowerVault[loanId];
+        if (charged == address(0)) return;
+        (bool ok, bytes memory ret) = address(this).call(
+            abi.encodeWithSelector(TIER_EXCLUSION_SYNC_SELECTOR, loanId)
+        );
+        LibRevert.bubbleOnFailureTyped(ok, ret, bytes4(0));
     }
 }
