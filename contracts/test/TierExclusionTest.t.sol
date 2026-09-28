@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
+import {Vm} from "forge-std/Vm.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
@@ -365,6 +366,74 @@ contract TierExclusionTest is SetupTest {
             LOAN_COLLATERAL,
             "the legacy amount was folded in, not added on top"
         );
+    }
+
+    // ── Upgrade: loans already terminal before #2342 are backfillable ──
+
+    /// @dev Put the loan in the state an already-closed pre-#2342 loan is in:
+    ///      terminal, position held by a (sanctioned) transferee, owed VPFI
+    ///      still liened in the stored borrower's vault — but it went terminal
+    ///      WITHOUT passing through the syncing `terminalize*`, so no
+    ///      exclusion record exists.
+    function _preUpgradeTerminalLoan() internal {
+        TestMutatorFacet(address(diamond)).setVpfiTokenRaw(address(collateralAsset));
+        _scaffold(OWN_VPFI);
+        _moveThenFlag(BORROWER_TOKEN, makeAddr("preUpgradeHolder"));
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(LOAN_ID);
+        loan.status = LibVaipakam.LoanStatus.Repaid;
+        TestMutatorFacet(address(diamond)).setLoan(LOAN_ID, loan);
+    }
+
+    /// @notice Codex #2356 r1 P1 — an already-terminal loan never passes
+    ///         `terminalize*` again and its ledger writes do not notify while
+    ///         its record is unset, so without a backfill path the pre-#2342
+    ///         state would stand indefinitely for a holder who cannot act.
+    ///         `refreshTierExclusion` is that path, open to anyone.
+    function test_refresh_BackfillsAnAlreadyTerminalLoan() public {
+        _preUpgradeTerminalLoan();
+        (, , address bvBefore, ) = _exclusion();
+        assertEq(bvBefore, address(0), "fixture: the pre-upgrade loan carries no record");
+        assertEq(
+            _tierBalance(borrowerEoa),
+            OWN_VPFI + LOAN_COLLATERAL,
+            "fixture: before the backfill the owed VPFI still counts"
+        );
+
+        uint256[] memory ids = new uint256[](2);
+        ids[0] = LOAN_ID;
+        ids[1] = 999; // not a loan: settles to "no exclusion", does not revert
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit LibTierExclusion.TierExclusionUpdated(LOAN_ID, false, borrowerEoa, LOAN_COLLATERAL);
+        vm.prank(makeAddr("anyone"));
+        EncumbranceMutateFacet(address(diamond)).refreshTierExclusion(ids);
+
+        (, , address bv, uint256 bVpfi) = _exclusion();
+        assertEq(bv, borrowerEoa, "backfilled: charged to the stored borrower");
+        assertEq(bVpfi, LOAN_COLLATERAL, "backfilled: the liened VPFI owed to the holder");
+        assertEq(_tierBalance(borrowerEoa), OWN_VPFI, "backfilled: tier counts only owned VPFI");
+        (, uint256 dayClose) = _dayMinAndClose(borrowerEoa);
+        assertEq(dayClose, OWN_VPFI, "backfilled: the stamp was refreshed too");
+    }
+
+    /// @notice A repeat refresh re-derives the same answer and changes
+    ///         nothing — no event, no aggregate drift — so leaving the entry
+    ///         open lets a caller make the record correct and nothing else.
+    function test_refresh_IsIdempotent() public {
+        _preUpgradeTerminalLoan();
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = LOAN_ID;
+        EncumbranceMutateFacet(address(diamond)).refreshTierExclusion(ids);
+
+        vm.recordLogs();
+        EncumbranceMutateFacet(address(diamond)).refreshTierExclusion(ids);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        for (uint256 i; i < logs.length; ++i) {
+            assertTrue(
+                logs[i].topics[0] != LibTierExclusion.TierExclusionUpdated.selector,
+                "a no-op refresh states no change"
+            );
+        }
+        assertEq(_owedToOthers(borrowerEoa), LOAN_COLLATERAL, "no aggregate drift on repeat");
     }
 
     // ── Wiring ────────────────────────────────────────────────────────

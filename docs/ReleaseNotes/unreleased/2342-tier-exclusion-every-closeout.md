@@ -21,7 +21,12 @@ leaves the vault, so the vault owner's tier never dips below what they own.
 Sanctions are no longer part of the test — the VPFI belongs to the holder
 whether or not the holder can claim yet. The excluded amount is readable per
 loan and per vault owner. Loans that were frozen under the old swap-to-repay
-rule carry over without being counted twice.
+rule carry over without being counted twice. Loans that had already closed
+before this change are not re-checked on their own, because nothing happens to
+them that would trigger it. Anyone may therefore ask the platform to re-check a
+list of closed loans. The result depends only on each loan's recorded state, so
+asking can only make the exclusion correct, and asking again changes nothing.
+Operators can run this once after the upgrade.
 
 Scope and trade-offs: live loans are unchanged. Whether tier credit on a
 transferred position should move to the holder before the loan closes is an

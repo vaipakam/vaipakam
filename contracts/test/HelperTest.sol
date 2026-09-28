@@ -1068,7 +1068,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](22);
+        selectors = new bytes4[](23);
         selectors[0] = EncumbranceMutateFacet.releaseCollateralLien.selector;
         selectors[1] = EncumbranceMutateFacet.decrementCollateralLien.selector;
         selectors[2] = EncumbranceMutateFacet.incrementCollateralLien.selector;
@@ -1100,6 +1100,8 @@ contract HelperTest {
         selectors[19] = EncumbranceMutateFacet.syncTierExclusion.selector;
         selectors[20] = EncumbranceMutateFacet.getTierExclusion.selector;
         selectors[21] = EncumbranceMutateFacet.getVpfiOwedToOthers.selector;
+        // #2342 r1 — permissionless backfill / re-derive entry.
+        selectors[22] = EncumbranceMutateFacet.refreshTierExclusion.selector;
     }
 
     /// @notice #396 v0.5 — gasless signed off-chain offer book selectors.

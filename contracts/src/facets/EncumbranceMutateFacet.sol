@@ -9,6 +9,7 @@ import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibTierExclusion} from "../libraries/LibTierExclusion.sol";
 import {LibConsolidation} from "../libraries/LibConsolidation.sol";
+import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 
 /**
  * @title  EncumbranceMutateFacet
@@ -25,14 +26,17 @@ import {LibConsolidation} from "../libraries/LibConsolidation.sol";
  *         `PrecloseFacet.precloseDirect`, `RefinanceFacet`'s
  *         old-loan close, and `ClaimFacet`'s Settled transitions).
  *
- * @dev    All selectors gated to `msg.sender == address(this)` so an
- *         external EOA cannot reach the lien mutate surface
+ * @dev    Every MUTATING selector is gated to `msg.sender == address(this)`
+ *         so an external EOA cannot reach the lien mutate surface
  *         directly — only the diamond itself (via `crossFacetCall`)
- *         can mutate.
+ *         can mutate. One deliberate exception: #2342's
+ *         `refreshTierExclusion` is open to anyone, because it only
+ *         re-derives bookkeeping from on-chain state and moves no funds
+ *         (see its own NatSpec). The #2342 views are ungated reads.
  *
  *         See `docs/DesignsAndPlans/PerLoanCollateralLien.md` §3.4.
  */
-contract EncumbranceMutateFacet {
+contract EncumbranceMutateFacet is DiamondReentrancyGuard {
     /// @notice Mirror of the `onlyDiamondInternal` pattern in
     ///         `VaultFactoryFacet` + `RefinanceFacet.refinanceLoanFromAccept`.
     error OnlyDiamondInternal();
@@ -253,6 +257,28 @@ contract EncumbranceMutateFacet {
     ///         vault owner whose excluded amount changed.
     function syncTierExclusion(uint256 loanId) external onlyDiamondInternal {
         _syncTierExclusion(loanId);
+    }
+
+    /// @notice #2342 — re-derive the VPFI fee-tier exclusion for each loan in
+    ///         `loanIds`, callable by anyone.
+    /// @dev    The backfill path for loans that were ALREADY terminal when
+    ///         this rule was installed: they never pass `terminalize*` again,
+    ///         and a ledger write on them does not notify while their record
+    ///         is unset, so without this they would keep the pre-#2342 state
+    ///         for as long as their holder does not transfer or claim — for
+    ///         a sanctioned holder, indefinitely. It also folds any legacy
+    ///         swap-to-repay freeze record those loans still carry.
+    ///
+    ///         Safe to leave open: the result is derived entirely from
+    ///         on-chain state (loan status, position owner, the encumbrance
+    ///         ledger), so a caller can only make the record CORRECT, and a
+    ///         repeat call is a no-op. `nonReentrant` keeps it from being
+    ///         entered mid-close-out, where the ledger is between writes.
+    ///         Ids that are not terminal loans settle to "no exclusion".
+    function refreshTierExclusion(uint256[] calldata loanIds) external nonReentrant {
+        for (uint256 i; i < loanIds.length; ++i) {
+            _syncTierExclusion(loanIds[i]);
+        }
     }
 
     /// @dev Restamps with the BROADCAST-FREE local rollup. These syncs run

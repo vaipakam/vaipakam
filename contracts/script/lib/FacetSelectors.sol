@@ -267,7 +267,7 @@ library FacetSelectors {
     ///         selector routed would keep a live entry point whose callers pass
     ///         one argument too few.
     function encumbranceMutate() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](22);
+        s = new bytes4[](23);
         s[0] = EncumbranceMutateFacet.assertNotFrozenParty.selector;
         s[1] = EncumbranceMutateFacet.createOfferPrincipalLien.selector;
         s[2] = EncumbranceMutateFacet.decrementCollateralLien.selector;
@@ -285,11 +285,12 @@ library FacetSelectors {
         s[14] = EncumbranceMutateFacet.recordSanctionsFrozenClaimant.selector;
         s[15] = EncumbranceMutateFacet.recordSanctionsFrozenClaimantBoth.selector;
         s[16] = EncumbranceMutateFacet.recreateCollateralLien.selector;
-        s[17] = EncumbranceMutateFacet.releaseCollateralLien.selector;
-        s[18] = EncumbranceMutateFacet.releaseOfferPrincipalLien.selector;
-        s[19] = EncumbranceMutateFacet.syncTierExclusion.selector;
-        s[20] = EncumbranceMutateFacet.terminalize.selector;
-        s[21] = EncumbranceMutateFacet.terminalizeFromAny.selector;
+        s[17] = EncumbranceMutateFacet.refreshTierExclusion.selector;
+        s[18] = EncumbranceMutateFacet.releaseCollateralLien.selector;
+        s[19] = EncumbranceMutateFacet.releaseOfferPrincipalLien.selector;
+        s[20] = EncumbranceMutateFacet.syncTierExclusion.selector;
+        s[21] = EncumbranceMutateFacet.terminalize.selector;
+        s[22] = EncumbranceMutateFacet.terminalizeFromAny.selector;
     }
 
     /// @notice #1503 item 28 — the RETIRED 3-argument

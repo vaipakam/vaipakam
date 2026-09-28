@@ -364,6 +364,19 @@
   },
   {
     "type": "function",
+    "name": "refreshTierExclusion",
+    "inputs": [
+      {
+        "name": "loanIds",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "releaseCollateralLien",
     "inputs": [
       {
@@ -590,6 +603,11 @@
   {
     "type": "error",
     "name": "OnlyDiamondInternal",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ReentrancyGuardReentrantCall",
     "inputs": []
   },
   {
