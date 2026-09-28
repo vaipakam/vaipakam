@@ -1571,6 +1571,11 @@ const copySource = {
     ),
     shortIsSafe:
       'If your wallet is short when a lender tries to accept, the acceptance simply fails — nothing is taken and your current loan continues unchanged.',
+    /** #2349 — the auto-refinance switch is OFF on this deployment. It
+     *  never blocks a lender's direct accept, only the automated routes,
+     *  so this DISCLOSES the posture instead of blocking the request. */
+    autoMatchOff:
+      'Automatic matching of refinance requests is switched off on this deployment. Any lender can still accept your request directly, but the order matcher and keepers will not fill it until automatic matching is switched back on.',
     periodicWarning:
       'This loan pays interest on a periodic schedule. If a payment period becomes overdue while the request is open, a lender’s acceptance will fail until the period is settled — keep the loan’s payments current.',
     done:

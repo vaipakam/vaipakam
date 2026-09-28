@@ -798,6 +798,7 @@
       "payoffNote": "The old loan’s payoff is always principal plus the full remaining term’s interest — even if the loan normally accrues day by day. That is the exiting lender’s fixed entitlement on an early exit.",
       "walletNote": "The payoff is pulled from your wallet automatically at the moment a lender accepts. The new loan’s money arrives in the same transaction, so keep about {{topUp}} spare in your wallet (the interest portion plus the new loan’s initiation fee) while the request is open.",
       "shortIsSafe": "If your wallet is short when a lender tries to accept, the acceptance simply fails — nothing is taken and your current loan continues unchanged.",
+      "autoMatchOff": "Automatic matching of refinance requests is switched off on this deployment. Any lender can still accept your request directly, but the order matcher and keepers will not fill it until automatic matching is switched back on.",
       "periodicWarning": "This loan pays interest on a periodic schedule. If a payment period becomes overdue while the request is open, a lender’s acceptance will fail until the period is settled — keep the loan’s payments current.",
       "done": "Refinance request posted. When a lender accepts it, this loan closes automatically — you don’t need to do anything else. You can cancel the request below (cancellation opens a few minutes after posting).",
       "pending": "Refinance request #{{offerId}} is live. When a lender accepts it, this loan closes automatically in the same transaction.",

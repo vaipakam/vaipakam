@@ -80,9 +80,34 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
     // Facet-specific errors (shared errors inherited from IVaipakamErrors)
     error InvalidRefinanceOffer();
     error OfferNotAccepted();
-    /// @notice T-092 #508 — admin kill switch for the keeper-driven
-    ///         refinance path. Borrower-direct refinance ignores this.
+    /// @notice T-092 #508 / #2349 — the auto-refinance kill switch
+    ///         (`cfgAutoRefinanceEnabled`) is off, and this refinance is
+    ///         being completed by a route the switch governs: a delegated
+    ///         keeper calling {refinanceLoan}, or the range-order matcher
+    ///         filling a refinance-tagged offer. The borrower-NFT holder
+    ///         calling {refinanceLoan} themselves, and a lender directly
+    ///         accepting the borrower's refinance-tagged offer, are never
+    ///         blocked by it.
     error AutoRefinanceDisabled();
+
+    /// @notice #2349 — which door a refinance completion came through.
+    ///         STATED by the entry point, never inferred from `msg.sender`:
+    ///         on both atomic routes `msg.sender` is the Diamond itself, so a
+    ///         `msg.sender`-based test cannot tell a lender's accept from a
+    ///         matcher fill (the defect #2349 recorded — every atomic
+    ///         completion was treated as keeper-driven and blocked while the
+    ///         switch was off).
+    enum RefinanceRoute {
+        /// {refinanceLoan}: the borrower-NFT holder, or a keeper holding
+        /// the holder's `KEEPER_ACTION_REFINANCE` delegation.
+        Direct,
+        /// {refinanceLoanFromAccept}: a lender accepted the holder's
+        /// refinance-tagged offer directly (`OfferAcceptFacet.acceptOffer`).
+        LenderAccept,
+        /// {refinanceLoanFromMatch}: the range-order matcher filled the
+        /// holder's refinance-tagged offer (`OfferMatchFacet.matchOffers`).
+        MatchedFill
+    }
 
     /**
      * @notice Completes refinancing after alice's Borrower Offer has been accepted by Lender B.
@@ -131,33 +156,73 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         uint256 oldLoanId,
         uint256 borrowerOfferId
     ) external nonReentrant whenNotPaused {
-        _refinanceLoanLogic(oldLoanId, borrowerOfferId);
+        _refinanceLoanLogic(oldLoanId, borrowerOfferId, RefinanceRoute.Direct);
     }
 
-    /// @notice T-092-H (#549) — atomic accept-and-refinance entry.
+    /// @notice T-092-H (#549) — atomic accept-and-refinance entry for a
+    ///         LENDER'S DIRECT ACCEPT of a refinance-tagged borrower offer.
     ///         Callable only via `LibFacet.crossFacetCall` from
-    ///         `OfferAcceptFacet._acceptOffer` + `OfferMatchFacet`'s
-    ///         dust-close branch, AFTER `offer.accepted = true` is
-    ///         set. No `nonReentrant` here — the outer `acceptOffer`
-    ///         / `matchOffers` `nonReentrant` lock covers the whole
-    ///         tx (see design doc §3.2 "Reentrancy analysis").
-    ///         `whenNotPaused` retained — pause should freeze the
-    ///         chain as well as the direct external path.
+    ///         `OfferAcceptFacet._acceptOffer`, AFTER `offer.accepted =
+    ///         true` is set, and only when that accept is NOT running inside
+    ///         a range-order match (a match routes to
+    ///         {refinanceLoanFromMatch} instead). No `nonReentrant` here —
+    ///         the outer `acceptOffer` lock covers the whole tx (see design
+    ///         doc §3.2 "Reentrancy analysis"). `whenNotPaused` retained —
+    ///         pause freezes the chain as well as the direct external path.
+    /// @dev    #2349 — NOT gated by the auto-refinance kill switch. The
+    ///         borrower-NFT holder authorised this refinance by creating the
+    ///         tagged offer under their own caps, and the lender chose to
+    ///         accept it; no keeper or matcher is acting. The spec's standard
+    ///         refinance process (ProjectDetailsREADME "Allow Borrower to
+    ///         Choose New Lender…", steps 2–3) is exactly this route, and the
+    ///         switch defaults OFF on a fresh deployment, so gating it would
+    ///         disable ordinary refinancing wherever the switch is off.
     function refinanceLoanFromAccept(
         uint256 oldLoanId,
         uint256 borrowerOfferId
     ) external onlyDiamondInternal whenNotPaused {
-        _refinanceLoanLogic(oldLoanId, borrowerOfferId);
+        _refinanceLoanLogic(
+            oldLoanId,
+            borrowerOfferId,
+            RefinanceRoute.LenderAccept
+        );
     }
 
-    /// @dev Shared body for both external entries. Was the body of
-    ///      `refinanceLoan` pre-T-092-H; extracted into a private so
-    ///      both `refinanceLoan` (external nonReentrant) and
-    ///      `refinanceLoanFromAccept` (external onlyDiamondInternal,
-    ///      no nonReentrant) can share it.
-    function _refinanceLoanLogic(
+    /// @notice #2349 — atomic accept-and-refinance entry for a range-order
+    ///         MATCHER fill of a refinance-tagged borrower offer. Callable
+    ///         only via `LibFacet.crossFacetCall` — from `OfferMatchFacet`'s
+    ///         dust-close branch (partial-fill on), or from
+    ///         `OfferAcceptFacet._acceptOffer` when that accept is running
+    ///         inside `matchOffers` (partial-fill off). Same reentrancy /
+    ///         pause posture as {refinanceLoanFromAccept}.
+    /// @dev    Gated by the auto-refinance kill switch: the matcher is the
+    ///         automated completion path the switch exists to stop
+    ///         (ProjectDetailsREADME, carry-over-aware matched refinance —
+    ///         "the auto-refinance caps and kill-switch satisfied"). The
+    ///         matcher's admission predicate
+    ///         (`LibAutoRefinanceCheck.matchAdmissible`) already refuses a
+    ///         tagged offer while the switch is off; this gate is the
+    ///         execution-time backstop for the same rule.
+    function refinanceLoanFromMatch(
         uint256 oldLoanId,
         uint256 borrowerOfferId
+    ) external onlyDiamondInternal whenNotPaused {
+        _refinanceLoanLogic(
+            oldLoanId,
+            borrowerOfferId,
+            RefinanceRoute.MatchedFill
+        );
+    }
+
+    /// @dev Shared body for all three external entries. Was the body of
+    ///      `refinanceLoan` pre-T-092-H; extracted into a private so the
+    ///      external `nonReentrant` entry and the two `onlyDiamondInternal`
+    ///      atomic entries (no `nonReentrant`) can share it. `route` is
+    ///      stated by the entry point — see {RefinanceRoute}.
+    function _refinanceLoanLogic(
+        uint256 oldLoanId,
+        uint256 borrowerOfferId,
+        RefinanceRoute route
     ) private {
         // T-090 v1.1 (#389) §5.8 — refinance withdraws old
         // collateral from `loan.borrower`'s vault before flipping
@@ -209,13 +274,25 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         if (LibSanctionedLock.mustFreezeParty(s, currentBorrowerNftOwner)) {
             revert LibVaipakam.SanctionedAddress(currentBorrowerNftOwner);
         }
-        if (currentBorrowerNftOwner != msg.sender) {
+        // #2349 — "the holder is acting directly" is true ONLY on the
+        // external route with the holder as caller. On both atomic routes
+        // `msg.sender` is the Diamond, so it can never equal the holder.
+        bool holderDirect =
+            route == RefinanceRoute.Direct &&
+            currentBorrowerNftOwner == msg.sender;
+        if (!holderDirect) {
+            // The holder is still the fund source on every other route (the
+            // payoff pulls from their wallet allowance), so screen them.
             LibVaipakam._assertNotSanctioned(currentBorrowerNftOwner);
-            // T-092 #508 — admin kill switch only fires on the
-            // KEEPER-DRIVEN path. The borrower-NFT owner calling
-            // directly is acting in their own interest; the kill
-            // switch exists to protect against keeper-path bugs.
-            if (!s.protocolCfg.cfgAutoRefinanceEnabled) {
+            // T-092 #508 / #2349 — the auto-refinance kill switch governs the
+            // AUTOMATED completion routes only: a delegated keeper calling
+            // `refinanceLoan`, and the matcher. A lender's direct accept of
+            // the holder's tagged offer is not automation and is never
+            // blocked (see {refinanceLoanFromAccept}).
+            if (
+                route != RefinanceRoute.LenderAccept &&
+                !s.protocolCfg.cfgAutoRefinanceEnabled
+            ) {
                 revert AutoRefinanceDisabled();
             }
         }
@@ -301,11 +378,11 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         // `LibAutoRefinanceCheck` because they only fire on tagged
         // offers. The borrower-NFT owner direct path can use any
         // offer (caps don't apply to them; they're acting in their
-        // own interest).
-        if (
-            msg.sender != currentBorrowerNftOwner &&
-            offer.refinanceTargetLoanId == 0
-        ) revert InvalidRefinanceOffer();
+        // own interest). The atomic routes only ever reach here with
+        // a tagged offer (their callers chain on the tag), so this
+        // binds them too as a backstop.
+        if (!holderDirect && offer.refinanceTargetLoanId == 0)
+            revert InvalidRefinanceOffer();
         if (!offer.accepted) revert OfferNotAccepted();
         // Range-aware amount check: legacy single-value offers satisfy
         // `amount == amountMax`; range offers satisfy

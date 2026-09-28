@@ -1616,13 +1616,23 @@ contract OfferAcceptFacet is
             // dust-close branch (see design doc §3.3.2) — runs
             // there because `partialFillEnabled == true` defers the
             // `accepted = true` flip out of this if-block.
+            //
+            // #2349 — the ROUTE is stated, not inferred: with
+            // partial-fill OFF a `matchOffers` fill also reaches this
+            // block (the flip is not deferred), so an accept running
+            // under `matchOverride` is a matcher fill and chains into
+            // `refinanceLoanFromMatch` (kill-switch gated); a plain
+            // lender accept chains into `refinanceLoanFromAccept`
+            // (never gated by it).
             if (
                 offer.refinanceTargetLoanId != 0 &&
                 offer.offerType == LibVaipakam.OfferType.Borrower
             ) {
                 LibFacet.crossFacetCall(
                     abi.encodeWithSelector(
-                        RefinanceFacet.refinanceLoanFromAccept.selector,
+                        s.matchOverride.active
+                            ? RefinanceFacet.refinanceLoanFromMatch.selector
+                            : RefinanceFacet.refinanceLoanFromAccept.selector,
                         offer.refinanceTargetLoanId,
                         offerId
                     ),

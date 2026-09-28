@@ -65,6 +65,7 @@ import {
 } from '../contracts/loanLive';
 import { assertWalletNotSanctionedLive } from '../data/sanctions';
 import { readLiveProtocolFees, useProtocolFees } from '../data/fees';
+import { useAutoRefinanceEnabled } from '../data/protocol';
 import type { IndexedLoan } from '../data/indexer';
 import {
   MAX_INTEREST_BPS,
@@ -133,6 +134,7 @@ export function RefinanceFlow({
   const termsVerdict = useTermsBlockNonExitWrites();
   const queryClient = useQueryClient();
   const fees = useProtocolFees();
+  const { enabled: autoRefinanceEnabled } = useAutoRefinanceEnabled();
 
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
@@ -657,6 +659,14 @@ export function RefinanceFlow({
           </p>
         ) : null}
 
+        {/* #2349 — the on-chain auto-refinance switch never blocks a
+            lender's direct accept, only the matcher and keepers, so it
+            is DISCLOSED here rather than disabling the form. */}
+        {autoRefinanceEnabled === false ? (
+          <div className="banner banner-info" role="status" style={{ marginTop: 12 }}>
+            <span className="banner-body">{copy.refinance.autoMatchOff}</span>
+          </div>
+        ) : null}
         {/* #1028 — kill switch held up front like every other gated
             flow, not just at the final confirm. */}
         {flowDisabled('post-offer') ? (

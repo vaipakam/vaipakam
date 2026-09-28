@@ -780,6 +780,7 @@
       "payoffNote": "기존 대출의 상환액은 항상 원금에 남은 전체 기간의 이자를 더한 금액입니다 — 대출이 평소 하루 단위로 누적되더라도 마찬가지입니다. 이는 조기 종료 시 나가는 대출자가 갖는 고정 권리입니다.",
       "walletNote": "lender가 accept하는 순간 payoff가 wallet에서 자동으로 pull됩니다. new loan money는 같은 transaction에서 들어오므로 request가 open된 동안 wallet에 약 {{topUp}} spare를 유지하세요(interest portion plus new loan initiation fee).",
       "shortIsSafe": "대출자가 수락하려 할 때 회원님의 지갑 잔액이 부족하면 수락은 그냥 실패합니다 — 아무것도 인출되지 않으며 현재 대출은 변함없이 유지됩니다.",
+      "autoMatchOff": "이 배포에서는 재융자 요청의 자동 매칭이 꺼져 있습니다. 대출자는 여전히 요청을 직접 수락할 수 있지만, 자동 매칭이 다시 켜질 때까지 주문 매처와 키퍼는 이를 체결하지 않습니다.",
       "periodicWarning": "이 대출은 정기 일정에 따라 이자를 지불합니다. 요청이 열려 있는 동안 지불 기간이 연체되면, 그 기간을 정산할 때까지 대출자의 수락이 실패합니다 — 대출의 지불을 밀리지 않게 유지하세요.",
       "done": "리파이낸싱 요청이 등록되었습니다. 대출자가 수락하면 이 대출은 자동으로 종료됩니다 — 그 외에 할 일은 없습니다. 아래에서 요청을 취소할 수 있습니다(취소는 등록 후 몇 분 뒤에 가능해집니다).",
       "pending": "refinance request #{{offerId}}가 live입니다. lender가 accept하면 이 loan은 같은 transaction에서 자동으로 close됩니다.",

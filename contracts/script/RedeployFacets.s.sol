@@ -225,6 +225,13 @@ contract RedeployFacets is Script {
         // valid.
         (bytes4[] memory ewdToAdd, bytes4[] memory ewdToReplace) =
             _partitionByRouting(diamond, _earlyWithdrawalDirectSelectors());
+        // #2349 — RefinanceFacet gained `refinanceLoanFromMatch` (the matcher-
+        // fill route). On a pre-#2349 diamond `refinanceLoan` and
+        // `refinanceLoanFromAccept` are routed (Replace) and the match entry is
+        // new (Add). The routed subset is never empty (`refinanceLoan` is routed
+        // on every existing diamond), so the fixed Replace slot stays valid.
+        (bytes4[] memory refiToAdd, bytes4[] memory refiToReplace) =
+            _partitionByRouting(diamond, _refinanceSelectors());
         // #1817 r9 — the accumulator's surface, same Add/Replace-by-routing
         // split: on a current diamond all four are routed (Replace); on a
         // pre-RL-1 diamond `rollupUserDiscountLocal` is new (Add) — the half
@@ -303,6 +310,7 @@ contract RedeployFacets is Script {
             (consToAdd.length > 0 ? 1 : 0) + (consToReplace.length > 0 ? 1 : 0) +
             (ewToAdd.length > 0 ? 1 : 0) +
             (ewdToAdd.length > 0 ? 1 : 0) +
+            (refiToAdd.length > 0 ? 1 : 0) +
             (accToAdd.length > 0 ? 1 : 0) + (accToReplace.length > 0 ? 1 : 0) +
             (claimToAdd.length > 0 ? 1 : 0) + (claimToReplace.length > 0 ? 1 : 0) +
             (profToAdd.length > 0 ? 1 : 0) + (profToReplace.length > 0 ? 1 : 0) +
@@ -326,8 +334,9 @@ contract RedeployFacets is Script {
         cuts[5] = _replace(address(riskSplitLiquidationFacet), _riskSplitSelectors());
         // #658 PR-B2 — refinance selectors are already routed on a current
         // diamond, so a plain Replace repoints them to the consolidation-aware
-        // bytecode.
-        cuts[6] = _replace(address(refinanceFacet), _refinanceSelectors());
+        // bytecode. #2349 — only the ROUTED subset goes through this Replace;
+        // the new match entry is Add'ed below on a pre-#2349 diamond.
+        cuts[6] = _replace(address(refinanceFacet), refiToReplace);
         // #691 — RiskMatch selectors are already routed on a current diamond
         // (triggerInternalMatchLiquidation + the cross-facet-only
         // attemptInternalMatchAutoDispatch), so a plain Replace repoints them to
@@ -367,6 +376,13 @@ contract RedeployFacets is Script {
         // Add is cut.
         if (ewdToAdd.length > 0) {
             cuts[idx++] = _add(address(earlyWithdrawalDirectFacet), ewdToAdd);
+        }
+        // #2349 — the matcher-fill refinance entry is an Add on any pre-#2349
+        // diamond; on a current one the subset is empty and no Add is cut.
+        // Without it, a refreshed OfferAcceptFacet / OfferMatchFacet chaining
+        // into `refinanceLoanFromMatch` would revert FunctionDoesNotExist.
+        if (refiToAdd.length > 0) {
+            cuts[idx++] = _add(address(refinanceFacet), refiToAdd);
         }
         // #1817 r9 — route the accumulator's surface. The Add branch is the one
         // that matters on a pre-RL-1 diamond: without it the refreshed sale
@@ -657,9 +673,13 @@ contract RedeployFacets is Script {
     /// @dev #658 PR-B2 — RefinanceFacet selectors, mirrors
     ///      `DeployDiamond._getRefinanceSelectors` (kept in lockstep).
     function _refinanceSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](2);
+        s = new bytes4[](3);
         s[0] = RefinanceFacet.refinanceLoan.selector;
         s[1] = RefinanceFacet.refinanceLoanFromAccept.selector;
+        // #2349 — the matcher-fill route's entry. NEW, so this list is cut via
+        // the Add/Replace-by-routing partition (a Replace reverts on an
+        // unrouted selector on any pre-#2349 target).
+        s[2] = RefinanceFacet.refinanceLoanFromMatch.selector;
     }
 
     /// @dev #658 PR-B2 — ClaimFacet selectors, mirrors

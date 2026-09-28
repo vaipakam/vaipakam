@@ -29,6 +29,7 @@ import {
 } from '../contracts/loanLive';
 import { readGraceSecondsLive } from '../contracts/preflights';
 import type { RefinancePendingState } from '../data/refinancePending';
+import { useAutoRefinanceEnabled } from '../data/protocol';
 import { ZERO_ADDRESS } from '../lib/offerSchema';
 import { formatDate, formatTokenAmount } from '../lib/format';
 
@@ -67,6 +68,15 @@ export function RefinancePendingCard({
   const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
+  // #2349 — disclose the auto-refinance switch while the request can
+  // still fill: off, only a lender's direct accept completes it.
+  const { enabled: autoRefinanceEnabled } = useAutoRefinanceEnabled();
+  const requestLive =
+    state !== undefined &&
+    !state.accepted &&
+    !state.expired &&
+    state.loanActive &&
+    !state.pastGrace;
 
   const walletReady =
     onSupportedChain && Boolean(walletClient) && Boolean(publicClient);
@@ -234,6 +244,11 @@ export function RefinancePendingCard({
               )}
         </span>
       </div>
+      {requestLive && autoRefinanceEnabled === false ? (
+        <div className="banner banner-info" role="status" style={{ marginTop: 12 }}>
+          <span className="banner-body">{copy.refinance.autoMatchOff}</span>
+        </div>
+      ) : null}
       {state?.allowanceShort && state.loanActive ? (
         <div className="banner banner-danger" role="alert" style={{ marginTop: 12 }}>
           <span className="banner-body">{copy.refinance.allowanceShort}</span>

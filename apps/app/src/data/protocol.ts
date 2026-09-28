@@ -150,6 +150,33 @@ export function useMasterFlags(): { data: MasterFlags | undefined } {
   return { data };
 }
 
+/** The auto-refinance kill switch (`AdminFacet.getAutoRefinanceEnabled`).
+ *  Since #2349 it gates only the AUTOMATED refinance routes — the
+ *  range-order matcher and a delegated keeper; a lender accepting the
+ *  borrower's posted refinance request directly is never blocked by it.
+ *  So the refinance surfaces DISCLOSE it (operational posture stated,
+ *  never hidden) rather than blocking the form on it.
+ *  `enabled === undefined` covers loading AND read failure — the
+ *  disclosure is advisory, so an unknown state shows nothing instead of
+ *  guessing. */
+export function useAutoRefinanceEnabled(): { enabled: boolean | undefined } {
+  const { readChain } = useActiveChain();
+  const publicClient = usePublicClient({ chainId: readChain.chainId });
+  const { data } = useQuery({
+    queryKey: ['autoRefinanceEnabled', readChain.chainId],
+    enabled: Boolean(publicClient),
+    // Governance switch — flips rarely.
+    staleTime: 10 * 60_000,
+    queryFn: async (): Promise<boolean> =>
+      (await publicClient!.readContract({
+        address: readChain.diamondAddress,
+        abi: DIAMOND_ABI_VIEM,
+        functionName: 'getAutoRefinanceEnabled',
+      })) as boolean,
+  });
+  return { enabled: data };
+}
+
 /** Renter's total up-front payment for a rental:
  *  dailyFee × days, plus the refundable buffer. Mirrors OfferFacet's
  *  pull (`amount * durationDays * (BPS + buffer) / BPS`). */
