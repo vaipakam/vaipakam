@@ -23,8 +23,10 @@ import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
  *
  * @dev    Factoring the lender-leg freeze and the borrower-surplus freeze-or-pay
  *         into ONE place keeps the two terminals in lockstep, so neither can
- *         drift on the encumber-all-ERC20 (§1.1/§2.1) or the frozen-VPFI
- *         tier-exclusion (§2.2) rules. `internal` functions — they inline into
+ *         drift on the encumber-all-ERC20 (§1.1/§2.1) rule. The frozen-VPFI
+ *         tier exclusion (§2.2) used to live here too; #2342 moved it to
+ *         `LibTierExclusion`, which derives it from the reservations these
+ *         helpers make, for every close-out. `internal` functions — they inline into
  *         each calling facet (no delegatecall), so the shared logic is a single
  *         source of truth without a runtime hop. `address(this)` inside these
  *         helpers is the Diamond (internal-lib calls run in the caller's
@@ -56,13 +58,12 @@ library LibCloseoutFreeze {
      *         transferred-away stored lender could otherwise spend non-VPFI
      *         proceeds as offer/intent capital before the current holder claims.
      *
-     *         §2.2 tier-exclude — when the proceeds are VPFI and owed to a
-     *         TRANSFERRED, sanctioned holder (`ownerOf(lenderTokenId) !=
-     *         loan.lender`), bump `frozenVpfiOwedByVault[loan.lender]` so the
-     *         VPFI (which sits in loan.lender's tracked balance) is kept out of
-     *         loan.lender's tier — it belongs to the delistable holder. Record
-     *         the exact bumped amount per loan for an exact release. A flagged
-     *         SELF-holder keeps the VPFI in-tier (their own money).
+     *         §2.2 tier-exclude — #2342: no longer done here. The reservation
+     *         below is what `LibTierExclusion` reads, so VPFI proceeds owed to
+     *         a transferred holder leave loan.lender's tier through the same
+     *         ledger-derived rule as every other close-out, once the loan's
+     *         terminal transition runs. A SELF-holder keeps the VPFI in-tier
+     *         (their own money).
      */
     function freezeLenderProceeds(
         LibVaipakam.Storage storage s,
@@ -88,20 +89,6 @@ library LibCloseoutFreeze {
         LibEncumbrance.encumberLenderProceeds(
             loanId, loan.lender, loan.principalAsset, lenderDue
         );
-        if (lenderDue > 0 && loan.principalAsset == s.vpfiToken) {
-            address holder = IERC721(address(this)).ownerOf(loan.lenderTokenId);
-            // Codex #1122-rework r4 P2 — tier-exclude via the SAME registry-aware
-            // freeze decision as the marker above (not the bare fail-open
-            // `isSanctionedAddress`): a holder frozen only because they are in the
-            // confirmed-flagged registry during an outage must still have their VPFI
-            // excluded from `loan.lender`'s fee-tier/staking credit, since it is
-            // owed to the frozen claimant. `mustFreezeParty` self-heals the registry
-            // on a clean read here too.
-            if (holder != loan.lender && LibSanctionedLock.mustFreezeParty(s, holder)) {
-                s.frozenVpfiOwedByVault[loan.lender] += lenderDue;
-                s.frozenVpfiOwedLenderLeg[loanId] = lenderDue;
-            }
-        }
     }
 
     /**
@@ -122,10 +109,10 @@ library LibCloseoutFreeze {
      *         withdraw it via `claimAsBorrower` once delisted.
      *
      *         §2.1 encumber-all — reserve for EVERY ERC20 against the stored
-     *         borrower's signed-offer spend path. §2.2 tier-exclude — bump
-     *         `frozenVpfiOwedByVault[loan.borrower]` (and record the per-loan
-     *         amount) only for a VPFI surplus owed to a TRANSFERRED holder; a
-     *         flagged self-holder's surplus stays in their tier.
+     *         borrower's signed-offer spend path. §2.2 tier-exclude — #2342:
+     *         derived from that reservation by `LibTierExclusion` for a
+     *         surplus owed to a TRANSFERRED holder; a self-holder's surplus
+     *         stays in their tier.
      */
     function freezeOrPayBorrowerSurplus(
         LibVaipakam.Storage storage s,
@@ -163,10 +150,6 @@ library LibCloseoutFreeze {
         LibEncumbrance.encumberBorrowerProceeds(
             loanId, loan.borrower, loan.principalAsset, surplus
         );
-        if (loan.principalAsset == s.vpfiToken && currentHolder != loan.borrower) {
-            s.frozenVpfiOwedByVault[loan.borrower] += surplus;
-            s.frozenVpfiOwedBorrowerSurplus[loanId] = surplus;
-        }
     }
 
     // ─── #998 S10 (#1006) Class B — ACTIVE-loan inline lender-share freeze ─────
@@ -226,13 +209,16 @@ library LibCloseoutFreeze {
         // asset-keyed aggregate under its own per-loan record and MIGRATES with the
         // held on consolidation/sale, so the reservation always follows the funds.
         //
-        // No VPFI fee-tier exclusion here (unlike the once-at-terminal
-        // `freezeLenderProceeds`): an active park can be consolidated/sold before
-        // claim, and the `frozenVpfiOwedByVault` counter is keyed to the STALE
-        // stored lender and NOT re-pointed by those migrations — leaving it would
-        // strand a permanent over-exclusion on the old vault (fresh-round P2). The
-        // reservation above already blocks the stored lender from spending the
-        // parked VPFI; the fee-tier nicety is dropped for the active-park case.
+        // No VPFI fee-tier exclusion while the loan is ACTIVE: an active park can
+        // be consolidated/sold before claim, and a `frozenVpfiOwedByVault` charge
+        // keyed to the stored lender would go STALE when those migrations
+        // re-point the funds — stranding a permanent over-exclusion on the old
+        // vault (fresh-round P2). The reservation below already blocks the stored
+        // lender from spending the parked VPFI. #2342 — once the loan goes
+        // terminal the stored party can no longer change (consolidation is a
+        // no-op on terminal loans), so `LibTierExclusion` then excludes this
+        // reservation, like every other one, while the position is held by
+        // someone else.
         LibEncumbrance.encumberActiveHeld(loanId, loan.lender, asset, amount);
     }
 
@@ -354,10 +340,12 @@ library LibCloseoutFreeze {
     }
 
     /**
-     * @notice Release the per-loan lender-leg frozen-VPFI tier exclusion when
-     *         the lender claim is paid, decrementing the owner aggregate by
-     *         EXACTLY what this loan bumped (§2.2). Idempotent no-op for loans
-     *         that never bumped (the common clean / non-VPFI close).
+     * @notice Release a LEGACY (pre-#2342) per-loan lender-leg frozen-VPFI tier
+     *         exclusion when the lender claim is paid, decrementing the owner
+     *         aggregate by EXACTLY what this loan bumped (§2.2). Idempotent
+     *         no-op for loans that never bumped, and for every loan frozen
+     *         after #2342 (nothing writes the legacy record any more;
+     *         `LibTierExclusion.sync` folds any it finds).
      * @dev    Floored decrement guards the aggregate against any accounting
      *         drift — it can never underflow.
      */
@@ -374,9 +362,10 @@ library LibCloseoutFreeze {
     }
 
     /**
-     * @notice Release the per-loan borrower-surplus frozen-VPFI tier exclusion
-     *         when the surplus claim is paid (§2.2). Idempotent no-op for loans
-     *         that never bumped.
+     * @notice Release a LEGACY (pre-#2342) per-loan borrower-surplus
+     *         frozen-VPFI tier exclusion when the surplus claim is paid (§2.2).
+     *         Idempotent no-op for loans that never bumped, and for every loan
+     *         frozen after #2342.
      */
     function releaseBorrowerFrozenVpfi(
         LibVaipakam.Storage storage s,

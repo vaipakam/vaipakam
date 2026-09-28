@@ -203,6 +203,59 @@
   },
   {
     "type": "function",
+    "name": "getTierExclusion",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "lenderVault",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "lenderVpfi",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "borrowerVault",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "borrowerVpfi",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getVpfiOwedToOthers",
+    "inputs": [
+      {
+        "name": "vaultOwner",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "incrementCollateralLien",
     "inputs": [
       {
@@ -311,6 +364,19 @@
   },
   {
     "type": "function",
+    "name": "refreshTierExclusion",
+    "inputs": [
+      {
+        "name": "loanIds",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "releaseCollateralLien",
     "inputs": [
       {
@@ -328,6 +394,19 @@
     "inputs": [
       {
         "name": "offerId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "syncTierExclusion",
+    "inputs": [
+      {
+        "name": "loanId",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -433,6 +512,37 @@
     "anonymous": false
   },
   {
+    "type": "event",
+    "name": "TierExclusionUpdated",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "lenderSide",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
+      },
+      {
+        "name": "vaultOwner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "excludedVpfi",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
     "type": "error",
     "name": "EncumbranceAlreadyExists",
     "inputs": [
@@ -493,6 +603,11 @@
   {
     "type": "error",
     "name": "OnlyDiamondInternal",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ReentrancyGuardReentrantCall",
     "inputs": []
   },
   {
