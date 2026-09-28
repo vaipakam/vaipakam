@@ -1,4 +1,4 @@
-## Thread — owed VPFI leaves the wrong wallet's fee tier on every close-out (PR #TBD)
+## Thread — owed VPFI leaves the wrong wallet's fee tier on every close-out (PR #2356)
 
 When a loan closes, what each side is owed — the lender's proceeds, the
 borrower's returned collateral or surplus — waits in the original party's vault
