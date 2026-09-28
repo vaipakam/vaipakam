@@ -410,7 +410,7 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             offer.refinanceTargetLoanId != oldLoanId
         ) revert InvalidRefinanceOffer();
         // (The "non-holder routes need a TAGGED offer" rule lives in
-        // {_assertRouteAllowed} with the other route-dependent checks.)
+        // {_authorizeRefinance} with the other route-dependent checks.)
         if (!offer.accepted) revert OfferNotAccepted();
         // Range-aware amount check: legacy single-value offers satisfy
         // `amount == amountMax`; range offers satisfy

@@ -156,10 +156,11 @@ export function useMasterFlags(): { data: MasterFlags | undefined } {
 }
 
 /** The automatic-matching posture for refinance requests (#2349 / #2355):
- *  the auto-refinance switch (`AdminFacet.getAutoRefinanceEnabled`) and the
- *  matcher master flag (`ConfigFacet.getMasterFlags()[2]`, `partialFill`),
- *  read together in ONE query so a single read state covers both. Neither
- *  switch ever blocks a lender accepting the request directly, so the
+ *  the protocol pause (`AdminFacet.paused`), the auto-refinance switch
+ *  (`AdminFacet.getAutoRefinanceEnabled`) and the matcher master flag
+ *  (`ConfigFacet.getMasterFlags()[2]`, `partialFill`), read together in ONE
+ *  query so a single read state covers all three. Neither matcher switch
+ *  ever blocks a lender accepting the request directly, so the
  *  refinance surfaces DISCLOSE the posture — always, via
  *  {@link AutoMatchPostureBanner} — rather than gating the form on it.
  *  See `autoRefinancePostureFrom` for how every read state (in flight,
@@ -178,11 +179,16 @@ export function useAutoRefinancePosture(): {
   const { readChain } = useActiveChain();
   const publicClient = usePublicClient({ chainId: readChain.chainId });
   const { data, isError } = useQuery({
-    queryKey: ['autoMatchSwitches', readChain.chainId],
+    queryKey: ['autoMatchPosture', readChain.chainId],
     enabled: Boolean(publicClient),
     refetchInterval: 60_000,
     queryFn: async (): Promise<AutoMatchSwitches> => {
-      const [autoRefinance, flags] = await Promise.all([
+      const [paused, autoRefinance, flags] = await Promise.all([
+        publicClient!.readContract({
+          address: readChain.diamondAddress,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'paused',
+        }) as Promise<boolean>,
         publicClient!.readContract({
           address: readChain.diamondAddress,
           abi: DIAMOND_ABI_VIEM,
@@ -194,7 +200,7 @@ export function useAutoRefinancePosture(): {
           functionName: 'getMasterFlags',
         }) as Promise<readonly [boolean, boolean, boolean]>,
       ]);
-      return { autoRefinance, partialFill: flags[2] };
+      return { paused, autoRefinance, partialFill: flags[2] };
     },
   });
   return { posture: autoRefinancePostureFrom({ data, isError }) };

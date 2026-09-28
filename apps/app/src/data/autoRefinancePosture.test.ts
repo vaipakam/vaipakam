@@ -1,37 +1,39 @@
 import { describe, expect, it } from 'vitest';
 import { autoRefinancePostureFrom } from './autoRefinancePosture';
 
-const both = { autoRefinance: true, partialFill: true };
+const live = { paused: false, autoRefinance: true, partialFill: true };
 
 describe('autoRefinancePostureFrom', () => {
-  it('is on only when BOTH switches are read and on', () => {
-    expect(autoRefinancePostureFrom({ data: both, isError: false })).toBe('on');
+  it('is on only when unpaused and BOTH matcher switches are on', () => {
+    expect(autoRefinancePostureFrom({ data: live, isError: false })).toBe('on');
   });
 
-  it('is off whenever the refinance switch is off, whatever the matcher flag', () => {
+  it('is off when the refinance switch is off', () => {
     expect(
-      autoRefinancePostureFrom({
-        data: { autoRefinance: false, partialFill: true },
-        isError: false,
-      }),
-    ).toBe('off');
-    expect(
-      autoRefinancePostureFrom({
-        data: { autoRefinance: false, partialFill: false },
-        isError: false,
-      }),
+      autoRefinancePostureFrom({ data: { ...live, autoRefinance: false }, isError: false }),
     ).toBe('off');
   });
 
-  it('states the matcher is off when only the matcher master flag is off (#2355 r5)', () => {
-    // The refinance switch alone does not make the matcher available:
-    // matchOffers / matchIntent revert while partialFill is off.
+  it('is off when only the matcher master flag is off (#2355 r5)', () => {
+    // matchOffers / matchIntent revert while partialFill is off, whatever
+    // the refinance switch says, so the matcher cannot fill the request.
+    expect(
+      autoRefinancePostureFrom({ data: { ...live, partialFill: false }, isError: false }),
+    ).toBe('off');
+  });
+
+  it('states the pause over every switch setting (#2355 r6)', () => {
+    // Every refinance completion is whenNotPaused — a lender's direct
+    // accept included — so "on" or "off" would both misstate it.
+    expect(
+      autoRefinancePostureFrom({ data: { ...live, paused: true }, isError: false }),
+    ).toBe('paused');
     expect(
       autoRefinancePostureFrom({
-        data: { autoRefinance: true, partialFill: false },
+        data: { paused: true, autoRefinance: false, partialFill: false },
         isError: false,
       }),
-    ).toBe('matcherOff');
+    ).toBe('paused');
   });
 
   it('states unknown while no answer has arrived yet (#2355 r5)', () => {
@@ -43,8 +45,9 @@ describe('autoRefinancePostureFrom', () => {
   });
 
   it('states unknown after a failed re-read, never the cached answer (#2355 r4)', () => {
-    // React Query keeps the last good `data` across a failed refetch; a
-    // cached "on" would otherwise present a possibly-flipped switch as current.
-    expect(autoRefinancePostureFrom({ data: both, isError: true })).toBe('unknown');
+    expect(autoRefinancePostureFrom({ data: live, isError: true })).toBe('unknown');
+    expect(
+      autoRefinancePostureFrom({ data: { ...live, paused: true }, isError: true }),
+    ).toBe('unknown');
   });
 });

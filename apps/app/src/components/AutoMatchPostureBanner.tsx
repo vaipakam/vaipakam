@@ -4,9 +4,11 @@ import type { AutoRefinancePosture } from '../data/autoRefinancePosture';
 /**
  * #2349 / #2355 — the ONE place the refinance surfaces state whether
  * automation can fill a posted refinance request. It renders a sentence
- * for every posture, including `on` and `unknown`: the switches never
- * block a lender's direct accept, so this is a disclosure, never a gate,
- * and a missing line would imply an availability the app has not read.
+ * for every posture, including `on` and `unknown`: the matcher switches
+ * never block a lender's direct accept, so this is a disclosure, never a
+ * gate, and a missing line would imply an availability the app has not
+ * read. Each sentence claims only what `useAutoRefinancePosture` reads —
+ * see `autoRefinancePosture.ts`.
  */
 export function AutoMatchPostureBanner({
   posture,
@@ -15,8 +17,8 @@ export function AutoMatchPostureBanner({
 }) {
   const text = {
     on: copy.refinance.autoMatchOn,
-    matcherOff: copy.refinance.autoMatchMatcherOff,
     off: copy.refinance.autoMatchOff,
+    paused: copy.refinance.autoMatchPaused,
     unknown: copy.refinance.autoMatchUnknown,
   }[posture];
   return (
