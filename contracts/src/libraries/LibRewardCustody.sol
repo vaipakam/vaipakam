@@ -2720,8 +2720,12 @@ library LibRewardCustody {
         uint256 lateNow = s.transportDayLateCount[r.day];
         members += lateNow > r.lateWorkBase ? lateNow - r.lateWorkBase : 0;
         members += r.lateWorkRestored;
-        // …plus the restored epochs it has yet to re-offer (Codex #2308 r15).
+        // …plus the restore log: every restoration already re-offered and
+        // every one still unread (Codex #2308 r15, r17) — the processed part
+        // cumulatively, as the late chain's restarts are, so a page the
+        // preparation just took never drops out of the lease.
         uint256 restoredNow = s.transportDayRestored[r.day].length;
+        members += r.restoredWork;
         members += restoredNow > r.restoredSeen ? restoredNow - r.restoredSeen : 0;
         uint256 pages = (members + TRANSPORT_DRAW_SCAN_CAP - 1) / TRANSPORT_DRAW_SCAN_CAP;
         if (pages == 0) pages = 1;
@@ -2934,6 +2938,7 @@ library LibRewardCustody {
         assembly ("memory-safe") {
             mstore(out, n)
         }
+        r.restoredWork += to > from ? to - from : 0;
         r.restoredSeen = to;
     }
 
@@ -3093,6 +3098,7 @@ library LibRewardCustody {
             // Likewise the restore log: what was restored before now is in
             // the balances that first scan reads (Codex #2308 r15).
             r.restoredSeen = s.transportDayRestored[day].length;
+            r.restoredWork = 0;
         }
         stagingDeadlineRefresh(s, key, r);
     }

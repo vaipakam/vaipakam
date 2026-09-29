@@ -1155,6 +1155,7 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
             _staging().prepareStagedDay(bobKey);
         }
         assertTrue(_view().getStagingRecord(bobKey).scanComplete, "fixture: bob scanned alice's drained epochs");
+        uint64 leaseBefore = _view().getStagingRecord(bobKey).deadline;
         vm.startPrank(alice);
         while (!_settle().unwindStagedDayPage(_key())) {}
         vm.stopPrank();
@@ -1174,6 +1175,10 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         assertGt(sf2, 0, "the last restoration too");
         bv = _view().getStagingRecord(bobKey);
         assertEq(bv.restoredSeen, bv.restoredLogLength, "and the view shows the log read");
+        // The lease counts the restorations it processed, not only those left
+        // unread (Codex #2308 r17): 65 more members of work, a later deadline.
+        assertEq(bv.restoredWork, 65, "every restoration processed is counted");
+        assertGt(bv.deadline, leaseBefore, "and the lease grew by the restored work");
         _staging().reserveStagedDay(bobKey);
         assertEq(_view().getStagingRecord(bobKey).phase, uint8(LibVaipakam.StagingPhase.Reserved));
     }

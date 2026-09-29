@@ -388,6 +388,11 @@
             "name": "restoredLogLength",
             "type": "uint256",
             "internalType": "uint256"
+          },
+          {
+            "name": "restoredWork",
+            "type": "uint256",
+            "internalType": "uint256"
           }
         ]
       }

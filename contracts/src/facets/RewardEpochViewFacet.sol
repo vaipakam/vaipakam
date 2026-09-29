@@ -86,6 +86,9 @@ contract RewardEpochViewFacet {
         ///      each preparation re-offers up to one window of the difference.
         uint256 restoredSeen;
         uint256 restoredLogLength;
+        /// @dev The restore-log work processed so far, cumulative — what the
+        ///      deadline counts beside the unread part (Codex #2308 r17).
+        uint256 restoredWork;
     }
 
     /// @notice The preview's dry run of `user`'s ShareOfPool days against the
@@ -209,6 +212,7 @@ contract RewardEpochViewFacet {
         v.lateWorkRestored = r.lateWorkRestored;
         v.restoredSeen = r.restoredSeen;
         v.restoredLogLength = LibVaipakam.storageSlot().transportDayRestored[r.day].length;
+        v.restoredWork = r.restoredWork;
     }
 
     /// @notice One page of the record's batches — each with the components it

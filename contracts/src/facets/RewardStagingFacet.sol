@@ -30,6 +30,18 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
  *      {LibRewardStaging}. Staging never settles.
  */
 contract RewardStagingFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors {
+    /// @notice A staging record opened for (`user`, `side`, `day`) under
+    ///         `key`, committed to `commitment` — the event every later
+    ///         lifecycle event of the record refers back to.
+    /// @dev    Emitted by {LibRewardCustody} from the claim walk's internal
+    ///         host (`RewardClaimWalkFacet`), whose ABI is deliberately not
+    ///         exported: it is declared HERE, identically, so the record's
+    ///         opening is decodable from the published staging ABI without
+    ///         exposing the host's `address(this)`-gated selector (Codex
+    ///         #2308 r17).
+    /// @custom:event-category state-change/reward-staging
+    event StagingRecordOpened(bytes32 indexed key, address indexed user, uint8 side, uint64 day, bytes32 commitment);
+
     // ────────────────────────── the staging lifecycle ──────────────────────────
 
     /// @notice Permissionless: continue staging the record's day — its late

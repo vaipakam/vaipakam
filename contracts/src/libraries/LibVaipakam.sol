@@ -8104,6 +8104,12 @@ library LibVaipakam {
         ///      every earlier restoration — and advanced as preparations
         ///      re-offer what was restored since.
         uint256 restoredSeen;
+        /// @dev The restore-log work this record has PROCESSED, cumulative
+        ///      (Codex #2308 r17): each preparation's re-offer page adds its
+        ///      length here as it advances `restoredSeen`, so the deadline
+        ///      counts every page of restorations — processed and unread —
+        ///      exactly as `lateWorkRestored` counts every late-chain restart.
+        uint256 restoredWork;
     }
 
     /// @notice #1566 transport epochs PR 3b — a batch's PENDING REMAINDER:
