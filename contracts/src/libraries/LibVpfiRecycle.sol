@@ -608,9 +608,10 @@ library LibVpfiRecycle {
      *           6. `keeperRewardBudget` — the same routing function, step 2.
      *              **NOT subtracted.**
      *           7. `intentCommits[loanId].custodialCollateral` — a live
-     *              swap-to-repay intent on a VPFI-collateral loan pulls the
-     *              WHOLE collateral into the Diamond and returns it on
-     *              cancel ({SwapToRepayIntentFacet}). **NOT subtracted.**
+     *              swap-to-repay intent on a VPFI-collateral loan pulls its
+     *              debt-sized auction lot into the Diamond (#2322 — formerly
+     *              the whole collateral) and returns it on cancel
+     *              ({SwapToRepayIntentFacet}). **NOT subtracted.**
      *           8. liquidation `fallbackSnapshot` custody — an exhausted
      *              swap try-list leaves the full VPFI collateral on the
      *              Diamond ({RiskFacet._fullCollateralTransferFallback}).

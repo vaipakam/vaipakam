@@ -10,6 +10,11 @@ import { useActiveChain } from '../chain/useActiveChain';
 import { fetchProtocolConfig, protocolConfigFresh } from './indexer';
 import { readGraceSecondsLive } from '../contracts/preflights';
 import { defaultGraceSeconds, formatGraceSeconds } from '../lib/grace';
+import {
+  autoRefinancePostureFrom,
+  type AutoMatchSwitches,
+  type AutoRefinancePosture,
+} from './autoRefinancePosture';
 
 /** Deploy default (5%) — display fallback only. Money paths must use
  *  {@link readRentalBufferBps} or gate on `ready`. */
@@ -148,6 +153,65 @@ export function useMasterFlags(): { data: MasterFlags | undefined } {
     },
   });
   return { data };
+}
+
+/** The automatic-matching posture for refinance requests (#2349 / #2355):
+ *  the protocol pause (`AdminFacet.paused`), the auto-refinance switch
+ *  (`AdminFacet.getAutoRefinanceEnabled`) and the matcher master flag
+ *  (`ConfigFacet.getMasterFlags()[2]`, `partialFill`), read together in ONE
+ *  query so a single read state covers all three. Neither matcher switch
+ *  ever blocks a lender accepting the request directly, so the
+ *  refinance surfaces DISCLOSE the posture — always, via
+ *  {@link AutoMatchPostureBanner} — rather than gating the form on it.
+ *  See `autoRefinancePostureFrom` for how every read state (in flight,
+ *  failed, failed re-read, partly on) maps to a stated posture.
+ *
+ *  Read live from the chain rather than the indexer snapshot: this is an
+ *  operational posture statement, and the snapshot can lag a flip.
+ *  Polled every 60 s while mounted: governance flips these with no
+ *  own-wallet action, and neither window focus nor the block-driven
+ *  `LiveChainSync` keys cover them, so a page left open must still pick
+ *  a flip up. The poll exists only while a refinance surface is on
+ *  screen. */
+export function useAutoRefinancePosture(): {
+  posture: AutoRefinancePosture;
+} {
+  const { readChain } = useActiveChain();
+  const publicClient = usePublicClient({ chainId: readChain.chainId });
+  const { data, isError, isPaused } = useQuery({
+    queryKey: ['autoMatchPosture', readChain.chainId],
+    enabled: Boolean(publicClient),
+    refetchInterval: 60_000,
+    queryFn: async (): Promise<AutoMatchSwitches> => {
+      // All three reads are PINNED to one block (#2355 r8): independent
+      // `latest` reads can resolve against different blocks during a
+      // staged governance flip and combine into a posture that never
+      // existed on-chain.
+      const blockNumber = await publicClient!.getBlockNumber();
+      const [paused, autoRefinance, flags] = await Promise.all([
+        publicClient!.readContract({
+          address: readChain.diamondAddress,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'paused',
+          blockNumber,
+        }) as Promise<boolean>,
+        publicClient!.readContract({
+          address: readChain.diamondAddress,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'getAutoRefinanceEnabled',
+          blockNumber,
+        }) as Promise<boolean>,
+        publicClient!.readContract({
+          address: readChain.diamondAddress,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'getMasterFlags',
+          blockNumber,
+        }) as Promise<readonly [boolean, boolean, boolean]>,
+      ]);
+      return { paused, autoRefinance, partialFill: flags[2] };
+    },
+  });
+  return { posture: autoRefinancePostureFrom({ data, isError, isPaused }) };
 }
 
 /** Renter's total up-front payment for a rental:

@@ -2568,7 +2568,8 @@ rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
 # recognise it.
 #
 # The class — a refusal whose remedy edits the text this guard matches on —
-# is filed as #2298 rather than patched per remedy.
+# was filed as #2298 and is now closed at the root by comparing the body as
+# well as the heading: see T78d-T78g.
 printf '## Thread — already published (PR #4400)\n\nbody\n' \
   > "$W/docs/ReleaseNotes/unreleased/0001-a.md"
 printf '# Release Notes — 2026-08-16\n\n\xef\xbb\xbf## Thread — already published (PR #4400)\n\nbody\n' \
@@ -2579,6 +2580,163 @@ check "naming the fragment"     "$(says "$msg" '0001-a.md')"                    
 check "no fragment consumed"    "$(pending "$W")"                                 "1"
 check "not duplicated" \
   "$(count_in 'already published' "$out/ReleaseNotes-2026-08-16.md")"             "1"
+
+case_start "T78d: a retitled published copy is still found by its text (#2298)"
+W="$ROOT/t78d"; build "$W"
+out="$W/docs/ReleaseNotes"
+rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
+# THE CLASS FIX FOR #2298. Every remedy a refusal prints edits a fragment's
+# opening — heading level, heading text, a BOM, front matter — and the heading
+# was the only thing this guard compared. So an author following the advice
+# after an interrupted legacy run moved the guard's evidence: the rerun found
+# no heading, appended a second copy and consumed the source. The BODY is what
+# no remedy touches, so it is compared too, as one contiguous block.
+printf '## New title after the advice (PR #4500)\n\nThe body of this note is long enough to count as evidence.\nIt spans two lines.\n' \
+  > "$W/docs/ReleaseNotes/unreleased/0001-a.md"
+printf '# Release Notes — 2026-08-16\n\n# Old title (PR #4500)\n\nThe body of this note is long enough to count as evidence.\nIt spans two lines.\n' \
+  > "$out/ReleaseNotes-2026-08-16.md"
+msg="$(bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "the run stops and asks"   "$?"                                        "1"
+check "naming the fragment"      "$(says "$msg" '0001-a.md')"                "1"
+check "saying what was found"    "$(says "$msg" 'its text is already there')" "1"
+check "no fragment consumed"     "$(pending "$W")"                           "1"
+check "not duplicated" \
+  "$(count_in 'long enough to count' "$out/ReleaseNotes-2026-08-16.md")"     "1"
+msg="$(bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates --force-append 2>&1)"
+check "the override appends"     "$?"                                        "0"
+check "and says why it looked"   "$(says "$msg" 'its text is already there')" "1"
+
+case_start "T78e: a heading ADDED above published prose does not hide it"
+W="$ROOT/t78e"; build "$W"
+out="$W/docs/ReleaseNotes"
+rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
+# The opening-line remedy for a fragment that starts with prose is to put a
+# heading on top. The published copy has no such line, so "the body" is taken
+# as every line after the fragment's first heading — which here is the whole
+# original text, and it is found.
+printf '## A heading the author added\n\nOriginal opening prose, published before the heading existed.\n\n## Its later section\n\nbody\n' \
+  > "$W/docs/ReleaseNotes/unreleased/0001-a.md"
+printf '# Release Notes — 2026-08-16\n\nOriginal opening prose, published before the heading existed.\n\n## Its later section\n\nbody\n' \
+  > "$out/ReleaseNotes-2026-08-16.md"
+msg="$(bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "the run stops and asks"   "$?"                                        "1"
+check "on the text, not a heading" "$(says "$msg" 'its text is already there')" "1"
+check "no fragment consumed"     "$(pending "$W")"                           "1"
+
+case_start "T78f: removing a BOM and retitling together is still caught"
+W="$ROOT/t78f"; build "$W"
+out="$W/docs/ReleaseNotes"
+rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
+printf '## Retitled and re-saved (PR #4501)\n\nA body that neither remedy touched, and long enough to be evidence.\n' \
+  > "$W/docs/ReleaseNotes/unreleased/0001-a.md"
+printf '# Release Notes — 2026-08-16\n\n\xef\xbb\xbf## First title (PR #4501)\n\nA body that neither remedy touched, and long enough to be evidence.\n' \
+  > "$out/ReleaseNotes-2026-08-16.md"
+bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+check "the run stops and asks"   "$?"               "1"
+check "no fragment consumed"     "$(pending "$W")"  "1"
+
+case_start "T78g: the text match has limits, and they are pinned"
+W="$ROOT/t78g"; build "$W"
+out="$W/docs/ReleaseNotes"
+rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
+# BELOW THE EVIDENCE MINIMUM a body says nothing, so only the heading counts.
+# This is the residual #2298 leaves, stated in the docstring: a short note
+# whose heading was ALSO changed is appended again. Pinned so a change to the
+# threshold is a visible decision rather than drift.
+printf '## Changed heading\n\nShort body.\n' > "$W/docs/ReleaseNotes/unreleased/0001-a.md"
+printf '# Release Notes — 2026-08-16\n\n## Original heading\n\nShort body.\n' \
+  > "$out/ReleaseNotes-2026-08-16.md"
+bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+check "a short body is not evidence"  "$?"               "0"
+check "and the fragment is appended"  "$(pending "$W")"  "0"
+# NOT CONTIGUOUS, NOT A MATCH. The same lines scattered through the file are a
+# coincidence, not a copy; only the block as published counts.
+W="$ROOT/t78g2"; build "$W"
+out="$W/docs/ReleaseNotes"
+rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
+printf '## Fresh note\n\nFirst line of a body long enough to be evidence.\nSecond line.\n' \
+  > "$W/docs/ReleaseNotes/unreleased/0001-a.md"
+printf '# Release Notes — 2026-08-16\n\n## Other\n\nFirst line of a body long enough to be evidence.\n\nSecond line.\n' \
+  > "$out/ReleaseNotes-2026-08-16.md"
+bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+check "scattered lines are not a copy" "$?"               "0"
+check "and the fragment is appended"   "$(pending "$W")"  "0"
+
+case_start "T78h: the evidence threshold counts content bytes, however the body is wrapped"
+# The contract (#2346 r1): spaces, tabs and line endings are not counted, so a
+# body's weight does not depend on where it was wrapped. Pinned on both sides
+# of the line: 39 content bytes over two CRLF lines is not evidence, 40 is.
+W="$ROOT/t78h"; build "$W"
+out="$W/docs/ReleaseNotes"
+rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
+# 20 + 19 = 39 content bytes.
+printf '## New heading\r\n\r\naaaaaaaaaaaaaaaaaaaa\r\nbbbbbbbbbbbbbbbbbbb\r\n' \
+  > "$W/docs/ReleaseNotes/unreleased/0001-a.md"
+printf '# Release Notes — 2026-08-16\r\n\r\n## Old heading\r\n\r\naaaaaaaaaaaaaaaaaaaa\r\nbbbbbbbbbbbbbbbbbbb\r\n' \
+  > "$out/ReleaseNotes-2026-08-16.md"
+bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+check "39 content bytes, wrapped, are not evidence" "$?" "0"
+W="$ROOT/t78h2"; build "$W"
+out="$W/docs/ReleaseNotes"
+rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
+# 20 + 20 = 40 content bytes.
+printf '## New heading\r\n\r\naaaaaaaaaaaaaaaaaaaa\r\nbbbbbbbbbbbbbbbbbbbb\r\n' \
+  > "$W/docs/ReleaseNotes/unreleased/0001-a.md"
+printf '# Release Notes — 2026-08-16\r\n\r\n## Old heading\r\n\r\naaaaaaaaaaaaaaaaaaaa\r\nbbbbbbbbbbbbbbbbbbbb\r\n' \
+  > "$out/ReleaseNotes-2026-08-16.md"
+bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+check "40 content bytes, wrapped, are"            "$?"               "1"
+check "and nothing is consumed"                   "$(pending "$W")"  "1"
+
+case_start "T78i: the body is weighed exactly as it is compared"
+# #2346 r1-r3 found three bodies that WERE in the file but were measured under
+# the line — line endings, link rewriting, a BOM — each because the weight was
+# taken from a different form of the text than the one matched. The weight is
+# now taken from the compared lines themselves: published form, BOM removed,
+# spaces/tabs/line endings not counted. These pin that it is THAT text.
+#
+# Link rewriting: `](../../` publishes as `](../`. 40 authored bytes, 37 as
+# compared — below the line, so only the heading counts and it is appended.
+W="$ROOT/t78i"; build "$W"
+out="$W/docs/ReleaseNotes"
+rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
+printf '## New heading\n\n[x](../../a)aaaaaaaaaaaaaaaaaaaaaaaaaaaa\n' \
+  > "$W/docs/ReleaseNotes/unreleased/0001-a.md"
+printf '# Release Notes — 2026-08-16\n\n## Old heading\n\n[x](../a)aaaaaaaaaaaaaaaaaaaaaaaaaaaa\n' \
+  > "$out/ReleaseNotes-2026-08-16.md"
+bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+check "37 compared bytes are not evidence"            "$?"              "0"
+# `](./` publishes as `](../`. 39 authored, 40 as compared — evidence.
+W="$ROOT/t78i2"; build "$W"
+out="$W/docs/ReleaseNotes"
+rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
+printf '## New heading\n\n[x](./a)bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n' \
+  > "$W/docs/ReleaseNotes/unreleased/0001-a.md"
+printf '# Release Notes — 2026-08-16\n\n## Old heading\n\n[x](../a)bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n' \
+  > "$out/ReleaseNotes-2026-08-16.md"
+bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+check "40 compared bytes are"                         "$?"              "1"
+check "and nothing is consumed"                       "$(pending "$W")" "1"
+# A BOM on a body line is removed before comparing, so it is not weighed:
+# 3 BOM bytes + 39 content is 39.
+W="$ROOT/t78i3"; build "$W"
+out="$W/docs/ReleaseNotes"
+rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
+printf '## Added heading\n\n\xef\xbb\xbfccccccccccccccccccccccccccccccccccccccc\n' \
+  > "$W/docs/ReleaseNotes/unreleased/0001-a.md"
+printf '# Release Notes — 2026-08-16\n\n\xef\xbb\xbfccccccccccccccccccccccccccccccccccccccc\n' \
+  > "$out/ReleaseNotes-2026-08-16.md"
+bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+check "a BOM does not add weight (39 + BOM)"          "$?"              "0"
+W="$ROOT/t78i4"; build "$W"
+out="$W/docs/ReleaseNotes"
+rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
+printf '## Added heading\n\n\xef\xbb\xbfcccccccccccccccccccccccccccccccccccccccc\n' \
+  > "$W/docs/ReleaseNotes/unreleased/0001-a.md"
+printf '# Release Notes — 2026-08-16\n\n\xef\xbb\xbfcccccccccccccccccccccccccccccccccccccccc\n' \
+  > "$out/ReleaseNotes-2026-08-16.md"
+bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+check "and 40 + BOM is evidence"                      "$?"              "1"
 
 case_start "T79: the quarantine directory is validated before publication"
 W="$ROOT/t79"; build "$W"

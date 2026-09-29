@@ -69,7 +69,7 @@ async function setFeeEntitlementEnabled(enabled: boolean): Promise<void> {
 
 /** Open the accept review for `offerId` as the connected borrower.
  *  The deep link resolves the offer through the indexer stub, which
- *  re-derives from the forked chain per request but can transiently
+ *  re-derives from the chain per request but can transiently
  *  lag/rate-limit right after the offer lands — on a miss the flow
  *  shows the "couldn't find that offer" alert, so retry with a reload
  *  until the review renders (the offer IS on chain). */

@@ -150,8 +150,9 @@ library LibAutoRefinanceCheck {
     ///         flip), not an admission precondition (preview runs pre-accept).
     ///         Mirrors, in order: target Active; no live swap-to-repay intent
     ///         (`assertNoLiveIntentCommit`); auto-refinance kill-switch ON
-    ///         (matched fills complete via the keeper-driven retag, so the
-    ///         `cfgAutoRefinanceEnabled` gate always applies); period-settlement
+    ///         (a matched fill completes through
+    ///         `RefinanceFacet.refinanceLoanFromMatch`, which the
+    ///         `cfgAutoRefinanceEnabled` gate always governs — #2349); period-settlement
     ///         current; creator == current borrower-NFT owner; AON single-value
     ///         with `amount == target outstanding principal`; asset continuity;
     ///         caps fresh + rate/expiry within cap; live carry-over eligibility
@@ -182,9 +183,9 @@ library LibAutoRefinanceCheck {
         // No live swap-to-repay intent commit on the target (mirror
         // `LibVaipakam.assertNoLiveIntentCommit`).
         if (s.intentCommits[oldLoanId].orderHash != bytes32(0)) return false;
-        // Matched fills finish through the keeper-driven retag (msg.sender is the
-        // Diamond, not the borrower-NFT owner), so the auto-refinance kill-switch
-        // always gates them.
+        // A matched fill finishes through `refinanceLoanFromMatch`, an automated
+        // route the auto-refinance kill-switch always gates (#2349 — unlike a
+        // lender's direct accept, which it never gates).
         if (!s.protocolCfg.cfgAutoRefinanceEnabled) return false;
         // Period-settlement must be current (not overdue past grace).
         if (

@@ -6,9 +6,9 @@
  *
  * Market convention (see spec 17's header note): every desk test
  * trades WETH (lending) against a faucet collateral mock, at a TENOR
- * bucket verified live-empty on the fork first. The on-chain matcher
+ * bucket verified empty on the chain first. The on-chain matcher
  * requires exact durationDays equality, so a fresh tenor IS a fresh
- * market: the inherited Base Sepolia book can never leak rows into
+ * market: offers earlier specs left can never leak rows into
  * the ladder under test. Each spec FILE that rests GTC offers owns
  * its own collateral pair — WETH/tLIQ for 17/18, WETH/mUSDC for 19 —
  * see the bucket-budget note at {@link freshTenor}.
@@ -36,6 +36,7 @@ import {
   confirm,
 } from './chain';
 import { accountFor, type Role } from './wallets';
+import { increaseTime } from './anvil';
 
 export const TLIQ = MOCKS!.liquidToken as `0x${string}`;
 /** Second liquid faucet mock (deployments key `liquidToken2`): mUSDC —
@@ -172,6 +173,74 @@ export async function seedDeskOffer(opts: {
   });
   await confirm(hash, 'createOffer');
   return newestOfferIdFor(account.address);
+}
+
+/** The protocol's offer-cancel cooldown, in seconds: a partially-fillable
+ *  offer nobody has filled cannot be cancelled until this long after it was
+ *  created. */
+const OFFER_CANCEL_COOLDOWN_S = 300n;
+
+/** Cancel an offer {@link seedDeskOffer} posted, from the same role, and
+ *  confirm the effect: a cancelled offer's record is deleted, so its
+ *  creator reads as zero.
+ *
+ *  Callable at any point after seeding. If the chain has not yet passed the
+ *  cancel cooldown it advances time by exactly the shortfall — never
+ *  otherwise, so a caller that already moved time pays nothing. */
+export async function cancelDeskOffer(role: Role, offerId: bigint): Promise<void> {
+  const { createdAt } = (await getOffer(offerId)) as { createdAt: bigint | number };
+  const { timestamp: now } = await pub.getBlock({ blockTag: 'latest' });
+  const legalAt = BigInt(createdAt) + OFFER_CANCEL_COOLDOWN_S;
+  // `>=`: the cancel lands in the NEXT block, whose timestamp is at least
+  // now + 1, and the protocol refuses only while strictly before legalAt.
+  if (legalAt > now + 1n) await increaseTime(Number(legalAt - now));
+  const account = accountFor(role);
+  const hash = await walletFor(account).writeContract({
+    address: DIAMOND,
+    abi: DIAMOND_ABI_VIEM,
+    functionName: 'cancelOffer',
+    args: [offerId],
+    account,
+    chain: forkChain,
+  });
+  await confirm(hash, `cancelOffer(#${offerId})`);
+  const { creator } = (await getOffer(offerId)) as { creator: string };
+  if (!/^0x0{40}$/i.test(creator)) {
+    throw new Error(`cancelOffer(#${offerId}) succeeded but the offer still has creator ${creator}`);
+  }
+}
+
+/** Seed a resting desk offer for the duration of `body` ONLY: it is
+ *  cancelled when `body` finishes, however it finishes (#2351 r3).
+ *
+ *  A spec that borrows a desk bucket must hand it back — the pair has six,
+ *  and a leaked offer is one fewer for specs 17/18 and their retries (see
+ *  {@link freshTenor}'s budget note). Owning the lifetime here, rather than
+ *  in a `finally` each spec places by hand, means no step between the seed
+ *  and the cleanup can escape it: the protected region starts the moment
+ *  the offer exists.
+ *
+ *  If `body` fails, that failure is what the test reports; a cleanup
+ *  failure on top of it is logged rather than allowed to replace it. */
+export async function withDeskOffer<T>(
+  opts: Parameters<typeof seedDeskOffer>[0],
+  body: (offerId: bigint) => Promise<T>,
+): Promise<T> {
+  const offerId = await seedDeskOffer(opts);
+  let bodyFailed = false;
+  try {
+    return await body(offerId);
+  } catch (e) {
+    bodyFailed = true;
+    throw e;
+  } finally {
+    try {
+      await cancelDeskOffer(opts.role, offerId);
+    } catch (cleanupErr) {
+      if (!bodyFailed) throw cleanupErr;
+      console.error(`[e2e] desk offer #${offerId} could not be cancelled after the test failed:`, cleanupErr);
+    }
+  }
 }
 
 export async function getOffer(offerId: bigint): Promise<Record<string, unknown>> {

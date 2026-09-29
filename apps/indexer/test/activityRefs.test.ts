@@ -48,3 +48,33 @@ describe('pluckActivityRefs — loan-scoped status events (#1782)', () => {
     ).toEqual({ actor: null, loanId: null, offerId: null });
   });
 });
+
+describe('pluckActivityRefs — fee-tier exclusion (#2342)', () => {
+  it('files TierExclusionUpdated under its loan and the charged vault owner', () => {
+    expect(
+      pluckActivityRefs('TierExclusionUpdated', {
+        loanId: 11n,
+        lenderSide: false,
+        vaultOwner: '0x0000000000000000000000000000000000000B0b',
+        excludedVpfi: 2000n * 10n ** 18n,
+      }),
+    ).toEqual({
+      actor: '0x0000000000000000000000000000000000000b0b',
+      loanId: 11,
+      offerId: null,
+    });
+  });
+
+  it('leaves the actor NULL when the side stops excluding (zero vault owner)', () => {
+    // A cleared record names no wallet; filing it under 0x0 would put every
+    // clear in one shared bucket. The loan timeline still finds it.
+    expect(
+      pluckActivityRefs('TierExclusionUpdated', {
+        loanId: 11n,
+        lenderSide: true,
+        vaultOwner: '0x0000000000000000000000000000000000000000',
+        excludedVpfi: 0n,
+      }),
+    ).toEqual({ actor: null, loanId: 11, offerId: null });
+  });
+});

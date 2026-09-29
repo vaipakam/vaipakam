@@ -185,17 +185,40 @@ contract DeployTestnetMocks is Script {
     ///      loans behave like ETH loans.
     uint256 constant DEFAULT_MWETH_USD_PRICE = 3_000e8;
 
-    function run() external {
+    function run() external virtual {
         uint256 cid = block.chainid;
         require(
             cid == 84532 || cid == 11155111 || cid == 97 || cid == 421614 || cid == 11155420 || cid == 31337,
             "DeployTestnetMocks: chain not supported (need 84532, 11155111, 97, 421614, 11155420, or 31337)"
         );
+        _deployTestnetMocks(
+            vm.envUint("DEPLOYER_PRIVATE_KEY"),
+            vm.envUint("ADMIN_PRIVATE_KEY"),
+            Deployments.readDiamond(),
+            _wethFor(cid)
+        );
+    }
 
-        uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
-        uint256 adminKey = vm.envUint("ADMIN_PRIVATE_KEY");
-        address weth = _wethFor(cid);
-        address diamond = Deployments.readDiamond();
+    /// @notice Deploy the faucet + oracle mocks, wire them into `diamond`,
+    ///         and record them under `.testnetMocks` in this chain's
+    ///         artifact.
+    /// @dev    Split out of `run()` (#2334) so a composing script can supply
+    ///         the Diamond and WETH it has just put on the chain rather than
+    ///         re-reading them through env and the committed artifact. The
+    ///         e2e fixture (`script/e2e/DeployE2EFixture.s.sol`) is that
+    ///         script. `run()` keeps its exact env contract.
+    /// @param deployerKey Broadcasts the mock deployments.
+    /// @param adminKey    The Diamond's admin; broadcasts the wiring.
+    /// @param diamond     The Diamond the mocks are wired into.
+    /// @param weth        The chain's WETH, or zero on Anvil to deploy an
+    ///                    `ERC20Mock` stand-in.
+    function _deployTestnetMocks(
+        uint256 deployerKey,
+        uint256 adminKey,
+        address diamond,
+        address weth
+    ) internal {
+        uint256 cid = block.chainid;
 
         // mWETH pricing knobs. `MWETH_USD_PRICE` (8-dec, default $3,000)
         // prices BOTH the mWETH feed and the WETH quote feed so the

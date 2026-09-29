@@ -1,19 +1,21 @@
-# app fork-tier e2e — the standard automatic regression for the
-# retail app (docs/TestScopes/Alpha02RegressionFlows.md). Runs the
-# real built app against `anvil --fork-url <base-sepolia>` (the
-# DEPLOYED Diamond's live bytecode + state, disposable and
-# time-travelable) with a fork-hydrated indexer stub and ephemeral
-# per-run wallets — no secrets required.
+# app e2e — the standard automatic regression for the retail app
+# (docs/TestScopes/Alpha02RegressionFlows.md). Runs the real built app
+# against a LOCAL anvil carrying the repository's CURRENT contracts,
+# deployed from source by the e2e global setup and presented as Base
+# Sepolia (apps/app/e2e/lib/fixture.ts, #2334), with a chain-hydrated
+# indexer stub and ephemeral per-run wallets — no secrets, no live RPC.
 #
-# Trigger scope (deliberate): the suite exercises the APP against the
-# DEPLOYED chain, so it cares about apps/app/**, the shared
-# workspace code the app imports (packages/lib/** — curated assets,
-# error decoding), and the consumed artifacts in packages/contracts/**
-# (ABIs + deployments — where a contract change actually reaches the
-# app, per the repo's sync convention). Raw contracts/** changes don't
-# alter the fork until they're deployed + synced, so they don't
-# trigger it. The nightly schedule catches the other direction: the
-# live testnet moving under an unchanged app.
+# Until #2334 this forked live Base Sepolia, so a run tested the
+# testnet's deployed bytecode and whatever state it held at that block:
+# a spec could fail on live state that moved between two runs of one
+# commit, and a contract change was invisible here until an operator
+# redeployed. The job's inputs are now the commit and nothing else.
+#
+# Trigger scope: the app and the shared workspace code it imports, AND
+# the contract sources the fixture compiles — a contract change now
+# reaches this suite directly, before any testnet deploy. There is no
+# nightly run any more: it existed to catch the live testnet moving
+# under an unchanged app, and nothing live is read.
 # NOTE — the display name below deliberately still says `alpha02`, even
 # though the app is now apps/app (#1854). A required status check is keyed
 # on "<workflow name> / <job name>", so renaming it would strand
@@ -21,6 +23,8 @@
 # and block the merge of every PR. Changing it is an operator action:
 # update branch protection first, then rename here. Same reasoning as the
 # `defi vitest` workflow, which has carried this note since #1076.
+# (The "(anvil fork)" in the name is historical for the same reason: the
+# chain is no longer a fork, but the check name is keyed on it.)
 name: alpha02 e2e (anvil fork)
 
 on:
@@ -29,6 +33,12 @@ on:
       - 'apps/app/**'
       - 'packages/contracts/**'
       - 'packages/lib/**'
+      - 'contracts/src/**'
+      - 'contracts/script/**'
+      - 'contracts/test/mocks/**'
+      - 'contracts/lib/**'
+      - 'contracts/foundry.toml'
+      - 'contracts/remappings.txt'
       - '.github/workflows/app-e2e.yml'
   push:
     branches: [main]
@@ -36,9 +46,13 @@ on:
       - 'apps/app/**'
       - 'packages/contracts/**'
       - 'packages/lib/**'
+      - 'contracts/src/**'
+      - 'contracts/script/**'
+      - 'contracts/test/mocks/**'
+      - 'contracts/lib/**'
+      - 'contracts/foundry.toml'
+      - 'contracts/remappings.txt'
       - '.github/workflows/app-e2e.yml'
-  schedule:
-    - cron: '17 3 * * *' # nightly: catch live-testnet drift under an unchanged app
   workflow_dispatch:
 
 permissions:
@@ -52,13 +66,46 @@ jobs:
   e2e:
     name: fork-tier scenarios
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    # A cold fixture compile (viaIR, every facet) adds several minutes to
+    # what the fork-based run took; the forge cache below makes most runs
+    # incremental.
+    timeout-minutes: 60
     steps:
-      - name: Checkout
+      - name: Checkout (with submodules — the fixture compiles the contracts)
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          submodules: recursive
 
-      - name: Install Foundry (anvil)
+      - name: Install Foundry (forge + anvil)
         uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
+        with:
+          version: stable
+
+      # Same content-keyed design as ci.yml's contracts cache (see the note
+      # there for why the restore-key is a literal prefix of the key), under
+      # its own prefix: the fixture builds with the `default` profile, not
+      # `cifast`, so the two artifact trees are not interchangeable.
+      - name: Snapshot submodule SHAs (for content-based cache key)
+        working-directory: contracts
+        run: git submodule status --recursive > .submodule-state
+
+      - name: Cache forge artifacts
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            contracts/out
+            contracts/cache
+          key: forge-e2e-${{ runner.os }}-${{ hashFiles('contracts/foundry.toml', 'contracts/remappings.txt', 'contracts/.submodule-state') }}-${{ hashFiles('contracts/src/**/*.sol', 'contracts/script/**/*.sol', 'contracts/test/mocks/**/*.sol') }}
+          restore-keys: |
+            forge-e2e-${{ runner.os }}-${{ hashFiles('contracts/foundry.toml', 'contracts/remappings.txt', 'contracts/.submodule-state') }}-
+
+      # Global setup compiles too, but doing it as its own step keeps the
+      # compile's time and any compile error out of the Playwright log.
+      - name: Compile the e2e fixture (current contracts)
+        working-directory: contracts
+        env:
+          FOUNDRY_PROFILE: default
+        run: forge build script/e2e/DeployE2EFixture.s.sol
 
       - name: Setup pnpm
         uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
@@ -78,12 +125,7 @@ jobs:
       - name: Typecheck the e2e surface
         run: pnpm --filter @vaipakam/app run e2e:typecheck
 
-      - name: Run fork-tier e2e
-        env:
-          # Falls back to the public endpoint when the secret is unset —
-          # set BASE_SEPOLIA_RPC_URL in repo secrets for a keyed fork
-          # source if the public one throttles the fork's lazy reads.
-          APP_E2E_FORK_URL: ${{ secrets.BASE_SEPOLIA_RPC_URL || 'https://sepolia.base.org' }}
+      - name: Run e2e
         run: pnpm --filter @vaipakam/app run e2e
 
       - name: Upload traces on failure
