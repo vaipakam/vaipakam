@@ -735,11 +735,18 @@ contract AdminFacet is DiamondAccessControl, IVaipakamErrors {
         emit AutoLendEnabledSet(enabled);
     }
 
-    /// @notice Toggle whether the keeper-driven path of
-    ///         `RefinanceFacet.refinanceLoan` is open. When `false`,
-    ///         keeper invocations revert; borrower-NFT-owner direct
-    ///         calls still succeed (the borrower acts in their own
-    ///         interest, no kill-switch protection needed).
+    /// @notice Toggle the AUTOMATED refinance completion routes. When
+    ///         `false`, two routes revert `AutoRefinanceDisabled`:
+    ///           - a keeper holding the borrower's refinance delegation
+    ///             calling `RefinanceFacet.refinanceLoan`, and
+    ///           - the range-order matcher filling a refinance-tagged
+    ///             borrower offer (refused at admission, backstopped at
+    ///             execution).
+    ///         Two routes are never blocked by it (#2349): the
+    ///         borrower-NFT holder calling `refinanceLoan` themselves, and
+    ///         a lender directly accepting the holder's refinance-tagged
+    ///         offer — neither involves a keeper or the matcher. Defaults
+    ///         `false` on a fresh deployment.
     function setAutoRefinanceEnabled(bool enabled)
         external
         onlyRole(LibAccessControl.ADMIN_ROLE)

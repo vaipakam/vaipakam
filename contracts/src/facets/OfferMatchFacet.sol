@@ -1253,11 +1253,13 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
                 // Without this hook the matched path would NOT
                 // atomic-chain (Codex round-1 P2 on closed PR
                 // #542). Mirrors the direct-path hook in
-                // OfferAcceptFacet._acceptOffer.
+                // OfferAcceptFacet._acceptOffer. #2349 — a matcher fill
+                // chains into the MATCH entry, which the auto-refinance
+                // kill switch gates (the lender-accept entry is not).
                 if (bm.refinanceTargetLoanId != 0) {
                     LibFacet.crossFacetCall(
                         abi.encodeWithSelector(
-                            RefinanceFacet.refinanceLoanFromAccept.selector,
+                            RefinanceFacet.refinanceLoanFromMatch.selector,
                             bm.refinanceTargetLoanId,
                             borrowerOfferId
                         ),

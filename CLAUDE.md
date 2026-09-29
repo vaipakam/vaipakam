@@ -1139,7 +1139,10 @@ same diff — the same per-PR discipline as release-note fragments and
 functional specs. Two tiers:
 
 - **CI-Anvil (default)**: a Playwright spec under `apps/app/e2e/tests/`,
-  run automatically on every PR by the `fork-tier scenarios` job.
+  run automatically on every PR by the `fork-tier scenarios` job —
+  against the repository's CURRENT contracts deployed from source onto a
+  local Anvil (#2334), not a fork of the live testnet; the job name is
+  historical.
 - **Live-only** (stated reason required — deployed Worker, Telegram,
   third-party API, real build env): a committed driver under
   `apps/app/e2e/live/`, run post-deploy per the live-review DoD and
@@ -1355,11 +1358,14 @@ Two practical consequences:
     fact memory-safe leaves the guard down for the WHOLE contract, which is the
     stack failure this section exists to diagnose. Neither direction is the
     safe default; the spec decides.
-  - **A worked example, as an example and not as the rule.** The rethrow in
-    `Deployments.finalizeArtifact` is annotated because `err` is a `bytes
-    memory` the block already holds and `add(err, 0x20)` / `mload(err)` stay
-    inside it. Read-only-ness is NOT what qualifies it (#2253 r7) — once the
-    mover is on, an arbitrary read can observe the slots it spilled.
+  - **A worked example, as an example and not as the rule.** The rethrow
+    `Deployments.finalizeArtifact` carried from #2253 until #2347 was
+    annotated because `err` was a `bytes memory` the block already held and
+    `add(err, 0x20)` / `mload(err)` stayed inside it. Read-only-ness was NOT
+    what qualified it (#2253 r7) — once the mover is on, an arbitrary read
+    can observe the slots it spilled. (#2347 removed the block with the
+    self-call it rethrew for; the reasoning is kept because it is the
+    worked example.)
   - **A block need not contain a memory opcode to require the audit.**
     Assigning a computed pointer to a Solidity memory-reference variable is
     enough. The `x.slot := position` storage-pointer idiom is the one shape

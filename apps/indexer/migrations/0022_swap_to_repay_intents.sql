@@ -48,9 +48,15 @@ CREATE TABLE IF NOT EXISTS swap_to_repay_intents (
   -- Fusion order amounts (string-uint256 because ERC20 amounts
   -- routinely exceed 2^63, the cap on D1's INTEGER type).
   -- `maker_amount` equals the post-vault-withdraw custodial
-  -- collateral the diamond holds; for v1.1 this also equals
-  -- `loan.collateralAmount` after the fee-on-transfer rejection
-  -- guard (Codex round-6 P1 #4 on the design PR).
+  -- collateral the diamond holds: the auction LOT. Since #2322 that
+  -- is the collateral the debt needs at the worst case, NOT the
+  -- loan's whole collateral — any collateral the lot does not
+  -- include stays in the borrower's vault, pledged, and is not in
+  -- protocol custody. It equals `loan.collateralAmount` only when
+  -- the debt needs all of it. (Comment-only edit; the column and
+  -- its type are unchanged. Before #2322 this read "equals
+  -- `loan.collateralAmount`", which described the old whole-
+  -- collateral commit.)
   maker_amount        TEXT    NOT NULL,
   taker_amount        TEXT    NOT NULL,
 

@@ -36,6 +36,24 @@
     "stateMutability": "nonpayable"
   },
   {
+    "type": "function",
+    "name": "refinanceLoanFromMatch",
+    "inputs": [
+      {
+        "name": "oldLoanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "borrowerOfferId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
     "type": "event",
     "name": "LoanRefinanced",
     "inputs": [
@@ -3895,11 +3913,6 @@
   {
     "type": "error",
     "name": "UpdateNotAllowed",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "VPFIInvalidOriginChainId",
     "inputs": []
   },
   {

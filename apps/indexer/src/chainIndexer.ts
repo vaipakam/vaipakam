@@ -6238,6 +6238,22 @@ export function pluckActivityRefs(
         loanId: Number(args.loanId as bigint),
         offerId: null,
       };
+    // #2342 — a closed loan's owed VPFI entering or leaving a vault owner's
+    // fee-tier exclusion. The row belongs on the loan's timeline, and on
+    // the vault owner's feed while it charges them. `vaultOwner` is the zero
+    // address when the side stops excluding anything, which names no wallet,
+    // so the actor is left NULL rather than filed under 0x0.
+    case 'TierExclusionUpdated': {
+      const owner = (args.vaultOwner as string | undefined)?.toLowerCase();
+      return {
+        actor:
+          owner && owner !== '0x0000000000000000000000000000000000000000'
+            ? owner
+            : null,
+        loanId: Number(args.loanId as bigint),
+        offerId: null,
+      };
+    }
     default:
       return { actor: null, loanId: null, offerId: null };
   }

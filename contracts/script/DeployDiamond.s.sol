@@ -125,14 +125,19 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
 
-    /// @notice The completeness assertion, reached by
-    ///         `Deployments.finalizeArtifact` across a call to this contract.
+    /// @notice The completeness assertion, as `Deployments.finalizeArtifact`
+    ///         runs it: the reason the artifact fails to record a facet the
+    ///         Diamond routes, or the empty string.
     ///
-    /// @dev    **Why it is EXTERNAL.** `Deployments.assertFacetsRecorded`
-    ///         reverts WITHOUT restoring the artifact snapshot — the caller owns
-    ///         the finally — and Solidity's `try` only wraps external calls, so
-    ///         the restore the library performs on any failure needs this
-    ///         boundary to exist at all. That reason stands on its own.
+    /// @dev    **Why it REPORTS rather than reverts.** `finalizeArtifact` must
+    ///         put the operator's artifact back however the check fails, and
+    ///         then revert. #2253 did that by reverting here and catching the
+    ///         revert across an external call to this contract; Foundry's
+    ///         script runner refuses every call to the script contract, so that
+    ///         version stopped every real `forge script` deploy before its
+    ///         first transaction while `forge test`, which has no such guard,
+    ///         stayed green (#2347). A check that cannot revert needs no
+    ///         boundary to catch it.
     ///
     ///         **Why it is VIRTUAL.** #2253 r2 found the completeness check
     ///         unguarded in the other direction: deleting its call from Step 7b
@@ -140,44 +145,25 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///         read the artifact independently and assert the same property. A
     ///         fix that nothing fails without is not covered, however carefully
     ///         the check itself is written. So the CALL SITE has to be
-    ///         observable, and a probe overrides this to observe it.
+    ///         observable, and a probe overrides this to observe it — or to
+    ///         force a failure and watch the restore.
     ///
     ///         **What the `1 too deep in the stack` failures were NOT.** An
     ///         earlier revision of this comment claimed `runWith` leaves a
     ///         subclass zero spare slots, so an `internal` hook could not be an
     ///         override seam. That is unsupported and is very likely wrong; it
     ///         is corrected here rather than deleted, because it is the kind of
-    ///         plausible-sounding mechanism that gets rediscovered. See the
-    ///         `memoryguard` note on `Deployments.finalizeArtifact` for what
-    ///         was actually happening. In one sentence, and deliberately no
-    ///         more: the probes each carried an unannotated assembly block,
-    ///         which cost the WHOLE contract viaIR's stack-to-memory mover and
-    ///         surfaced as a too-deep frame elsewhere — which is why they
-    ///         failed while the base compiled, and why five revisions were
-    ///         spent moving a call that was never the cause.
-    ///
-    ///         **The rule is NOT summarised here.** CLAUDE.md's "1 too deep in
-    ///         the stack" section carries it. Summaries at this site went stale
-    ///         in three consecutive review rounds (#2271 r13/r14/r15), each
-    ///         time because the rule was sharpened there and not here.
-    ///
-    ///         Gated to self-calls so it is not an operator-reachable entry
-    ///         point on a broadcast script.
-    function assertFacetsRecordedExternal(address[] memory expected)
-        external
+    ///         plausible-sounding mechanism that gets rediscovered. The probes
+    ///         each carried an unannotated assembly block, which cost the WHOLE
+    ///         contract viaIR's stack-to-memory mover and surfaced as a
+    ///         too-deep frame elsewhere. The rule is in CLAUDE.md's "1 too deep
+    ///         in the stack" section and is deliberately not summarised here.
+    function _facetRecordingFailure(address[] memory expected)
+        internal
         virtual
+        returns (string memory)
     {
-        require(msg.sender == address(this), "DeployDiamond: self-call only");
-        _assertFacetsRecorded(expected);
-    }
-
-    /// @dev The assertion itself, separated from the entry point so an
-    ///      overriding probe can run exactly what the base runs instead of a
-    ///      copy of it that could drift. `internal`, and not called from
-    ///      `runWith`: the entry point above is what the deploy reaches, across
-    ///      the boundary its `try` needs.
-    function _assertFacetsRecorded(address[] memory expected) internal view {
-        Deployments.assertFacetsRecorded(expected);
+        return Deployments.facetRecordingFailure(expected);
     }
 
     /// @dev Restore the snapshot. `internal` so a test probe replicating the
@@ -1219,7 +1205,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // The failure branch is the library's: it restores the artifact this
         // run overwrote before re-reverting, so a caught omission does not
         // leave the inventory describing a Diamond that was never deployed.
-        Deployments.finalizeArtifact(diamond);
+        Deployments.finalizeArtifact(diamond, _facetRecordingFailure);
 
         console.log("");
         console.log("Admin:                ", admin);
@@ -1761,9 +1747,11 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
     /// T-090 — Borrower-initiated swap-to-repay facet selectors.
     function _getSwapToRepayFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](2);
+        s = new bytes4[](3);
         s[0] = SwapToRepayFacet.swapToRepayFull.selector;
         s[1] = SwapToRepayFacet.swapToRepayPartial.selector;
+        // #2317 — read-only sizing preview for the full close-out.
+        s[2] = SwapToRepayFacet.previewSwapToRepayFull.selector;
     }
 
     /// T-090 v1.1 (#389) — intent-based swap-to-repay facet selectors.
@@ -1772,11 +1760,12 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///   • 2 Fusion `LimitOrderProtocol` callbacks (pre/postInteraction)
     ///   • 1 ERC-1271 binding check (`isValidSignature`)
     ///   • 1 read-back view for the dapp's commit-then-post pattern.
+    ///   • 1 preview of the debt-sized auction lot (#2322).
     function _getSwapToRepayIntentFacetSelectors() internal pure returns (bytes4[] memory s) {
         // T-087 Sub 3.B — preInteraction / postInteraction /
         // isValidSignature moved to the new IntentDispatchFacet; this
         // facet now owns 8 selectors instead of 11.
-        s = new bytes4[](8);
+        s = new bytes4[](9);
         s[0] = SwapToRepayIntentFacet.commitSwapToRepayIntent.selector;
         s[1] = SwapToRepayIntentFacet.cancelSwapToRepayIntent.selector;
         s[2] = SwapToRepayIntentFacet.cancelExpiredIntent.selector;
@@ -1787,6 +1776,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[6] = SwapToRepayIntentFacet.forceCancelIntentIfPastDefaultOrRevert.selector;
         // Dapp read surface for the canonical extension bytes.
         s[7] = SwapToRepayIntentFacet.canonicalExtension.selector;
+        // #2322 — read-only preview of the debt-sized auction lot.
+        s[8] = SwapToRepayIntentFacet.previewSwapToRepayIntentLot.selector;
     }
 
     /// @notice T-087 Sub 3.B — the three 1inch LOP v4 callbacks
@@ -1827,7 +1818,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///         offer-principal-lock impl PR adds the lock create /
     ///         decrement / release surface.
     function _getEncumbranceMutateFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](19);
+        s = new bytes4[](23);
         s[0] = EncumbranceMutateFacet.releaseCollateralLien.selector;
         // #407 PR 4 round-1 (2026-06-12) — decrement/increment cross-
         // facet entries used by active-loan slice flows + addCollateral.
@@ -1860,6 +1851,12 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // is cut into every diamond that already cuts this mutate host).
         s[17] = EncumbranceMutateFacet.terminalize.selector;
         s[18] = EncumbranceMutateFacet.terminalizeFromAny.selector;
+        // #2342 — ledger-anchored VPFI fee-tier exclusion host + its views.
+        s[19] = EncumbranceMutateFacet.syncTierExclusion.selector;
+        s[20] = EncumbranceMutateFacet.getTierExclusion.selector;
+        s[21] = EncumbranceMutateFacet.getVpfiOwedToOthers.selector;
+        // #2342 r1 — permissionless backfill / re-derive entry.
+        s[22] = EncumbranceMutateFacet.refreshTierExclusion.selector;
     }
 
     /// @notice #396 v0.5 — gasless signed off-chain offer book selectors.
@@ -2365,12 +2362,15 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getRefinanceSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](2);
+        s = new bytes4[](3);
         s[0] = RefinanceFacet.refinanceLoan.selector;
-        // T-092-H (#549) — atomic accept-and-refinance internal entry.
-        // Cut here so the diamond fallback routes the cross-facet call
+        // T-092-H (#549) — atomic accept-and-refinance internal entries.
+        // Cut here so the diamond fallback routes the cross-facet calls
         // from OfferAcceptFacet / OfferMatchFacet into RefinanceFacet.
+        // #2349 — one entry per route (lender accept vs matcher fill), so
+        // the route is stated rather than inferred from msg.sender.
         s[1] = RefinanceFacet.refinanceLoanFromAccept.selector;
+        s[2] = RefinanceFacet.refinanceLoanFromMatch.selector;
     }
 
     function _getVpfiTokenSelectors() internal pure returns (bytes4[] memory s) {

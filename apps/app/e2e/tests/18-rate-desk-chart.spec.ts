@@ -1,11 +1,11 @@
 /** Rate Desk phase 2 (#1130) — executed-rate chart honesty (§5.3 of
- *  ProRateTerminalDesign.md) + the History bottom tab, on the fork,
+ *  ProRateTerminalDesign.md) + the History bottom tab, on the e2e chain,
  *  per the COVERAGE.md phase-2 gap row.
  *
  *  Market choice follows spec 17 (helpers shared via lib/desk.ts):
  *  WETH / faucet tLIQ at a tenor verified fresh — here fresh means no
- *  live offers AND no executed fills ever (the fork inherits Base
- *  Sepolia's full loan history, and a single inherited fill in the
+ *  live offers AND no executed fills ever (earlier specs in the same
+ *  run fill loans on this one chain, and a single stray fill in the
  *  bucket would corrupt the exact fill-count / empty-state asserts).
  *
  *  Fills are seeded by DIRECT-WRITE accepts (lib/desk.ts

@@ -105,7 +105,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](243); // 3b-ii-A2 +13 raw reads +5 raw writes; #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1, then -1 with the pre-list scene (Codex #2296 items 2 and 4); r26 +1 flexible caps
+        selectors = new bytes4[](244); // #2342 +setLegacyFrozenVpfiRaw; 3b-ii-A2 +13 raw reads +5 raw writes; #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1, then -1 with the pre-list scene (Codex #2296 items 2 and 4); r26 +1 flexible caps
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -538,6 +538,8 @@ contract HelperTest {
         selectors[n++] = TestMutatorFacet.consumeRecycleBucketRaw.selector;
         selectors[n++] = TestMutatorFacet.acknowledgeTransportBatchRaw.selector;
         selectors[n++] = TestMutatorFacet.releaseTransportBatchRaw.selector;
+        // #2342 — seed a pre-upgrade swap-freeze tier record for the fold test.
+        selectors[n++] = TestMutatorFacet.setLegacyFrozenVpfiRaw.selector;
         // #951 v2 (Codex #959 bind-to-live) — setSaleListingCollateralRaw removed
         // with the snapshot mapping; the accept binds `>=` live collateral.
         // #687-B: the former tail entries ([83]-[87]: setBackstopAbsorbCashRaw,
@@ -1008,9 +1010,10 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](2);
+        selectors = new bytes4[](3);
         selectors[0] = SwapToRepayFacet.swapToRepayFull.selector;
         selectors[1] = SwapToRepayFacet.swapToRepayPartial.selector;
+        selectors[2] = SwapToRepayFacet.previewSwapToRepayFull.selector;
     }
 
     /// T-090 v1.1 (#389) — intent-based swap-to-repay facet selectors.
@@ -1025,7 +1028,7 @@ contract HelperTest {
     {
         // T-087 Sub 3.B — preInteraction / postInteraction /
         // isValidSignature moved to IntentDispatchFacet.
-        selectors = new bytes4[](8);
+        selectors = new bytes4[](9);
         selectors[0] = SwapToRepayIntentFacet.commitSwapToRepayIntent.selector;
         selectors[1] = SwapToRepayIntentFacet.cancelSwapToRepayIntent.selector;
         selectors[2] = SwapToRepayIntentFacet.cancelExpiredIntent.selector;
@@ -1041,6 +1044,8 @@ contract HelperTest {
         // mirror the canonical extension bytes the commit gate
         // requires.
         selectors[7] = SwapToRepayIntentFacet.canonicalExtension.selector;
+        // #2322 — read-only preview of the debt-sized auction lot.
+        selectors[8] = SwapToRepayIntentFacet.previewSwapToRepayIntentLot.selector;
     }
 
     /// @notice T-087 Sub 3.B — IntentDispatchFacet selectors.
@@ -1087,7 +1092,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](19);
+        selectors = new bytes4[](23);
         selectors[0] = EncumbranceMutateFacet.releaseCollateralLien.selector;
         selectors[1] = EncumbranceMutateFacet.decrementCollateralLien.selector;
         selectors[2] = EncumbranceMutateFacet.incrementCollateralLien.selector;
@@ -1115,6 +1120,12 @@ contract HelperTest {
         // #1132 (S10 central enforcement) — terminal-transition register host.
         selectors[17] = EncumbranceMutateFacet.terminalize.selector;
         selectors[18] = EncumbranceMutateFacet.terminalizeFromAny.selector;
+        // #2342 — ledger-anchored VPFI fee-tier exclusion host + its views.
+        selectors[19] = EncumbranceMutateFacet.syncTierExclusion.selector;
+        selectors[20] = EncumbranceMutateFacet.getTierExclusion.selector;
+        selectors[21] = EncumbranceMutateFacet.getVpfiOwedToOthers.selector;
+        // #2342 r1 — permissionless backfill / re-derive entry.
+        selectors[22] = EncumbranceMutateFacet.refreshTierExclusion.selector;
     }
 
     /// @notice #396 v0.5 — gasless signed off-chain offer book selectors.
@@ -1606,12 +1617,14 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](2);
+        selectors = new bytes4[](3);
         selectors[0] = RefinanceFacet.refinanceLoan.selector;
         // T-092-H (#549) — atomic accept-and-refinance internal
-        // entry; cut so the diamond fallback can route the
+        // entries; cut so the diamond fallback can route the
         // OfferAcceptFacet / OfferMatchFacet cross-facet calls.
+        // #2349 — lender-accept and matcher-fill routes are separate.
         selectors[1] = RefinanceFacet.refinanceLoanFromAccept.selector;
+        selectors[2] = RefinanceFacet.refinanceLoanFromMatch.selector;
         return selectors;
     }
 

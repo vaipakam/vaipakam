@@ -116,9 +116,29 @@ borrower-supplied order must:
 - Place the diamond as the maker and the receiver.
 - Place the loan's collateral asset as the maker asset and the loan's
   principal asset as the taker asset.
-- Place the loan's full collateral amount as the maker amount.
-- Place a taker amount at or above the protocol's **live settlement
-  floor** plus the configured buffer.
+- Place the debt-sized **lot** as the maker amount — SUPERSEDED by #2322
+  (2026-09-25), which replaces the original "the loan's full collateral
+  amount". The lot is the least collateral whose worst-case value under
+  the borrower-facing swap-to-repay slippage cap covers the commit's
+  minimum output (the live settlement floor plus the buffer), computed by
+  the same rule the direct full close uses (#2317). It is sized to the
+  DEBT, not to the taker amount: the order is fixed-price (the canonical
+  extension carries no amount getter), so the taker amount is the price
+  the borrower asks for the lot, and anything a fill raises above the
+  debt is surplus principal. The protocol computes the lot at commit and
+  the committed order reports it, so the client posts the order it reads
+  back. The rest of the collateral stays in the borrower's vault,
+  pledged, and is released by the ordinary claim after a fill; a loan
+  with a live commit has nothing internally matchable. A commit whose
+  whole collateral at the worst case cannot cover the minimum output is
+  refused.
+- Place a taker amount at or above the **lot's own worst-case value**
+  under the borrower-facing slippage cap (#2322 r3). That value always
+  covers the protocol's live settlement floor plus the configured buffer,
+  and exceeds it when the collateral comes in coarse units, so the smallest
+  covering lot is worth more than the debt; the lot preview reports it.
+  (Originally: "at or above the live settlement floor plus the configured
+  buffer", which would have let such a lot sell below that worst case.)
 - Disable partial fills and disable multiple fills (a v1.1 intent fills
   exactly once or expires).
 - Carry the protocol's canonical extension bytes verbatim, with the

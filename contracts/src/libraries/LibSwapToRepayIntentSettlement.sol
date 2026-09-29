@@ -19,6 +19,7 @@ import {VaipakamNFTFacet} from "../facets/VaipakamNFTFacet.sol";
 import {EncumbranceMutateFacet} from "../facets/EncumbranceMutateFacet.sol";
 import {ConsolidationFacet} from "../facets/ConsolidationFacet.sol";
 import {VPFIDiscountFacet} from "../facets/VPFIDiscountFacet.sol";
+import {LibERC721} from "./LibERC721.sol";
 
 /**
  * @title LibSwapToRepayIntentSettlement — T-087 Sub 3.B extraction
@@ -182,6 +183,11 @@ library LibSwapToRepayIntentSettlement {
             delete s.intentExtensionBytes[extensionHash];
         }
         delete s.intentCommits[loanId];
+        // #2322 — release the borrower-position lock the commit took. The
+        // holder was fixed for the whole auction, so the claim recorded above
+        // and the remainder in the vault belong to the same holder. Reason-
+        // checked, so a pre-lock commit cannot clear another flow's lock.
+        LibERC721._unlockIfHeldBy(loan.borrowerTokenId, LibERC721.LockReason.SwapToRepayIntent);
         // T-087 Sub 3.B — clear the kind discriminator stamped at
         // commit time so a stale orderHash can't be replayed against
         // a different kind.
@@ -250,8 +256,11 @@ library LibSwapToRepayIntentSettlement {
         }
 
         // #658 PR-B — the intent fill is the LENDER-side close-out of this loan
-        // (the borrower side was consolidated at COMMIT and its collateral is in
-        // Diamond custody, so it must NOT be re-consolidated here). Consolidate
+        // (the borrower side was consolidated at COMMIT and its auction lot is in
+        // Diamond custody — #2322: the rest of its collateral stayed in the vault,
+        // liened, and the borrower position has been LOCKED since the commit, so
+        // the holder the commit consolidated to is still the holder here; it must
+        // NOT be re-consolidated). Consolidate
         // the lender side while the loan is still Active (the flip to Repaid is
         // below), so the lender reward entry + VPFI checkpoint follow the current
         // lender-NFT holder and the proceeds/#592 reserve below key to them
@@ -336,24 +345,34 @@ library LibSwapToRepayIntentSettlement {
             bytes4(0)
         );
 
-        // #569 Gap B (round-6 P1) — RE-LIEN the residual rather than
-        // tombstoning. `commitSwapToRepayIntent` decremented the lien to
-        // zero when it pulled the collateral into custody; on a partial
-        // fill (`makingAmount < custodialCollateral`) the residual was
-        // pushed BACK into loan.borrower's vault above and recorded as the
-        // borrower claim. This is the custody RETURN leg, so the residual
-        // must be re-encumbered to stay protected through the Repaid→claim
-        // window (released atomically by `claimAsBorrower`, with the burn
-        // backstop as the structural guarantee). A bare release here would
-        // let a transferred-away stored borrower drain the residual (VPFI
-        // via withdrawVPFIFromVault) before the rightful holder claims. On
-        // a full fill (residual 0) tombstone the now-zeroed row.
-        // `residual` recomputed here as `loan.collateralAmount - consumed`
-        // (identical to the borrower-claim amount recorded above; the fill
-        // residual lives in the earlier `_runFill` scope, not here).
-        uint256 intentResidual = loan.collateralAmount - consumed;
-        if (intentResidual > 0) {
-            LibEncumbrance.incrementCollateralLien(loanId, intentResidual);
+        // #569 Gap B (round-6 P1) — RE-LIEN rather than tombstone. The
+        // borrower's collateral claim recorded above is
+        // `loan.collateralAmount - consumed`, and those tokens all sit in
+        // loan.borrower's vault: the part the commit never took (#2322 —
+        // the commit pulls only the debt-sized lot, so the rest stayed in
+        // the vault, still liened) plus the fill residual pushed back above.
+        // That claim must stay encumbered through the Repaid→claim window
+        // (released atomically by `claimAsBorrower`, with the burn backstop
+        // as the structural guarantee); a bare release would let a
+        // transferred-away stored borrower drain it (VPFI via
+        // withdrawVPFIFromVault) before the rightful holder claims.
+        //
+        // So the lien is TOPPED UP to cover the claim — by the difference
+        // between the claim and what is still liened, not by the whole claim
+        // on top of it (which double-counted the untouched part once the
+        // commit stopped zeroing the lien). With the lien equal to the loan's
+        // collateral before the commit, as loan initiation writes it, the
+        // result equals the claim exactly; a lien that was already larger is
+        // left as it was (the claim releases the whole row either way). A
+        // zero claim — the whole collateral consumed — tombstones the row.
+        uint256 claimedCollateral = loan.collateralAmount - consumed;
+        if (claimedCollateral > 0) {
+            uint256 stillLiened = s.loanCollateralLien[loanId].released
+                ? 0
+                : s.loanCollateralLien[loanId].amount;
+            if (claimedCollateral > stillLiened) {
+                LibEncumbrance.incrementCollateralLien(loanId, claimedCollateral - stillLiened);
+            }
         } else {
             LibEncumbrance.releaseCollateralLien(loanId);
         }

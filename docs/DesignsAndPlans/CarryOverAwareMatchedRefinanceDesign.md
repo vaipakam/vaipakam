@@ -8,6 +8,22 @@ design review (PR #682). Ready to implement.
 **Supersedes the stop-gap in:** PR #593 (refinance-tagged offers made
 direct-accept-only).
 
+> **Amended by #2349 (PR #2355, 2026-09-28) — the completion entry and the
+> kill-switch rule changed.** A matched fill no longer completes through
+> `RefinanceFacet.refinanceLoanFromAccept`. It completes through a matcher-only
+> entry, `refinanceLoanFromMatch`, chosen by the chain hook when
+> `matchOverride` is active and called directly by the dust-close branch.
+> `refinanceLoanFromAccept` is now the **lender's direct accept** route only.
+> The auto-refinance kill switch (`cfgAutoRefinanceEnabled`) gates the
+> AUTOMATED routes — matched fills and a delegated keeper — and **never** a
+> lender's direct accept (functional spec, Borrower Position Authority). For
+> matched fills nothing in this design changes in effect: the §3.1 admission
+> mirror still refuses every tagged pair while the switch is off, and
+> `refinanceLoanFromMatch` enforces it again at execution. Read every
+> `refinanceLoanFromAccept` below as `refinanceLoanFromMatch` where it
+> describes a MATCHED fill; the retag and every other check are shared and
+> unchanged.
+
 ---
 
 ## 1. Context — why matched refinance is currently disabled
@@ -88,7 +104,8 @@ preview-centric.
 
 **Principle (PR #682 round 2): `previewMatch` admission must be a faithful
 predictor of the atomic accept/refinance path**, not just a carry-over-shape
-check. The atomic path (`acceptOfferInternal` → `refinanceLoanFromAccept`)
+check. The atomic path (`acceptOfferInternal` → `refinanceLoanFromAccept`; since
+#2349, `refinanceLoanFromMatch` for a matched fill)
 re-runs `LibAutoRefinanceCheck.validate` + the auto-refinance caps / kill-switch
 / period-settlement gates *before* creating the loan; if preview admits a pair
 those gates would reject, bots get repeated **false-positive** matches against a
@@ -230,7 +247,9 @@ window returns (Finding #5). Defense, both layers:
 
 The dust-close hook at `OfferMatchFacet` L1117 already calls
 `RefinanceFacet.refinanceLoanFromAccept(bm.refinanceTargetLoanId,
-borrowerOfferId)` when `bm.refinanceTargetLoanId != 0`. §2 + §3.2 + §3.5
+borrowerOfferId)` when `bm.refinanceTargetLoanId != 0`. (Since #2349 it calls
+`refinanceLoanFromMatch` — same retag body, but the matched route states
+itself so the kill switch gates it; see the amendment at the top.) §2 + §3.2 + §3.5
 guarantee an admitted AON carry-over fill always reaches dust-close in the same
 tx with `borrowerRemaining == 0`. The retag's own strict checks (#576 round-7:
 same-key retag, live-lien requirement, full collateral-identity re-assertion)

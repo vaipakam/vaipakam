@@ -1424,19 +1424,32 @@ Master flag for the auto-lend opt-in.
 
 ### `cfgAutoRefinanceEnabled`
 
-Master flag for the keeper-driven refinance path.
+Master flag for the AUTOMATED refinance completion routes (#2349 /
+PR #2355 — the scope below replaced an earlier "blocks every tagged
+accept" behaviour).
 
 - **Getter:** `AdminFacet.getAutoRefinanceEnabled() -> bool`
 - **Setter:** `AdminFacet.setAutoRefinanceEnabled(bool)`
-- **What `false` blocks:** `RefinanceFacet.refinanceLoan` reverts
-  `AutoRefinanceDisabled` on the keeper-driven path (when
-  `msg.sender != currentBorrowerNftOwner`). The borrower-direct
-  refinance path (`msg.sender == currentBorrowerNftOwner`)
-  remains permitted — a borrower can always refinance their own
-  loan even when the kill switch is off. **Also blocks** the
-  T-092-H atomic chain (`refinanceLoanFromAccept`) for the same
-  reason — that entry shares the same Phase 2a sanctions +
-  kill-switch gating as the standalone keeper-driven path.
+- **What `false` blocks** (reverts `AutoRefinanceDisabled`):
+  - a **keeper** holding the borrower's refinance delegation calling
+    `RefinanceFacet.refinanceLoan` (caller ≠ current borrower-NFT
+    holder);
+  - the **range-order matcher** filling a refinance-tagged borrower
+    offer — `matchOffers` / `matchIntent` refuse the pair at admission
+    (`RefinanceTaggedOfferNotMatchable`, via
+    `LibAutoRefinanceCheck.matchAdmissible`), and
+    `RefinanceFacet.refinanceLoanFromMatch` re-checks at execution.
+- **What `false` does NOT block:**
+  - the **borrower-NFT holder** calling `refinanceLoan` themselves;
+  - a **lender directly accepting** the holder's refinance-tagged
+    offer (`acceptOffer` → `RefinanceFacet.refinanceLoanFromAccept`).
+    That is the spec's standard refinance process and not automation,
+    so it completes whatever the switch says.
+- **Incident implication:** flipping this off stops the matcher and
+  keepers from completing refinances. It does NOT stop lenders from
+  accepting open refinance requests directly. To halt ALL refinance
+  completions, use the protocol pause (every refinance entry is
+  `whenNotPaused`) — not this flag.
 - **When to flip on:** once governance has confirmed the cap-check
   surface (Phase 2b: `LibAutoRefinanceCheck.validate` at both
   offer-create AND offer-accept) is operationally sound and the
@@ -1464,12 +1477,18 @@ intermediate spends / MEV front-runs / approval revocations. The
 chain reverts the WHOLE tx when the refinance fails — both loans
 roll back atomically.
 
-**Kill-switch interaction:** flipping `cfgAutoRefinanceEnabled` off
-blocks the atomic chain too (the inner `refinanceLoanFromAccept`
-goes through the same sanctions + kill-switch gates as the
-external `refinanceLoan`). Borrowers who set a refinance-tagged
-offer during the kill-switch-off window will find the accept-side
-revert with `AutoRefinanceDisabled` until the flag flips back on.
+**Kill-switch interaction (since #2349 / PR #2355):** the atomic chain
+has two entries that state their route. A **direct lender accept**
+chains into `refinanceLoanFromAccept`, which the switch does NOT gate:
+it completes with the flag off, and still runs the holder sanctions
+screen, the tagged-offer requirement and every cap / lien check. A
+**matcher fill** (the dust-close branch, or `_acceptOffer` running
+under `matchOverride` with partial-fill off) chains into
+`refinanceLoanFromMatch`, which the switch DOES gate — and admission
+refuses the pair first. Before #2349 both routes shared one entry that
+inferred "keeper" from `msg.sender`, which is the Diamond on every
+atomic route, so a flag-off deployment reverted every direct lender
+accept.
 
 **Error surface:** the chain bubbles inner revert payloads
 verbatim (no synthetic wrapper). The dapp's `autoLifecycleErrors.ts`

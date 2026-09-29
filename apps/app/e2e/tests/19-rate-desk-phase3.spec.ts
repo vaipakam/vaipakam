@@ -5,8 +5,8 @@
  *  Market convention follows specs 17/18 (lib/desk.ts) EXCEPT the pair:
  *  this spec trades WETH / faucet mUSDC (deployments `liquidToken2` —
  *  18 decimals, $1 USD feed, Liquid tier), at a tenor verified
- *  live-empty first, so the inherited Base Sepolia book can never pad
- *  the ladder or cross against this run's seeds. The pair is this
+ *  empty first, so offers earlier specs left on this chain can never
+ *  pad the ladder or cross against this run's seeds. The pair is this
  *  spec's OWN on purpose: a pair has only six tenor buckets and specs
  *  17/18 (plus retries) already spend WETH/tLIQ's — test 1 below
  *  deliberately rests a crossed pair forever, which exhausted the

@@ -59,16 +59,13 @@ import {DeployDiamond} from "../../script/DeployDiamond.s.sol";
 contract DeployDiamondVerificationProbe is DeployDiamond {
     bool public verificationRan;
 
-    function assertFacetsRecordedExternal(address[] memory expected)
-        external
+    function _facetRecordingFailure(address[] memory expected)
+        internal
         override
+        returns (string memory)
     {
-        require(msg.sender == address(this), "probe: self-call only");
         verificationRan = true;
-        // Not `super.…`: Solidity does not allow reaching an `external`
-        // override that way. `_assertFacetsRecorded` is the base's own body,
-        // so this runs what the base runs rather than a copy of it.
-        _assertFacetsRecorded(expected);
+        return super._facetRecordingFailure(expected);
     }
 }
 
@@ -76,23 +73,25 @@ contract DeployDiamondVerificationProbe is DeployDiamond {
  * @notice A deploy whose artifact verification always FAILS, so the failure
  *         path itself can be exercised without mutating `DeployDiamond`.
  *
- * @dev    #2253 r3 P1. Reverting where the real assertion would revert drives
+ * @dev    #2253 r3 P1. Reporting a failure where the real check would drives
  *         the library's restore branch while every real write has already
  *         happened — exactly the situation the finding described: a caught
- *         omission, after the canonical artifact has been overwritten.
+ *         omission, after the canonical artifact has been overwritten. (It
+ *         reported by reverting until #2347; the check now returns a reason
+ *         and the library reverts with it.)
  *
- *         The revert message deliberately mimics the real one's shape so the
+ *         The message deliberately mimics the real one's shape so the
  *         test asserts on behaviour (the deploy reverted, the artifact came
  *         back) rather than on this probe's wording.
  */
 contract DeployDiamondFailingVerificationProbe is DeployDiamond {
-    function assertFacetsRecordedExternal(address[] memory)
-        external
+    function _facetRecordingFailure(address[] memory)
+        internal
         pure
         override
+        returns (string memory)
     {
-        revert(
-            "Deployments: facet 0x000000000000000000000000000000000000dEaD is installed in the Diamond but was never recorded under any .facets.* key"
-        );
+        return
+            "Deployments: facet 0x000000000000000000000000000000000000dEaD is installed in the Diamond but was never recorded under any .facets.* key";
     }
 }

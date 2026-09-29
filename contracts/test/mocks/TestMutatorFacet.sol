@@ -1894,6 +1894,25 @@ contract TestMutatorFacet {
         s.encumbered[user][asset][tokenId] += amount;
     }
 
+    /// @notice #2342 — seed a LEGACY (pre-#2342) swap-to-repay-FULL freeze
+    ///         tier record exactly as the removed freeze code wrote it: the
+    ///         per-loan amount plus the same bump on the owner aggregate. Lets
+    ///         the fold test prove an upgraded loan is never double-counted.
+    function setLegacyFrozenVpfiRaw(
+        uint256 loanId,
+        bool lenderSide,
+        address owner,
+        uint256 amount
+    ) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (lenderSide) {
+            s.frozenVpfiOwedLenderLeg[loanId] = amount;
+        } else {
+            s.frozenVpfiOwedBorrowerSurplus[loanId] = amount;
+        }
+        s.frozenVpfiOwedByVault[owner] += amount;
+    }
+
     function getLoanCollateralLienAmount(uint256 loanId)
         external
         view

@@ -103,6 +103,51 @@ LINE_END_RE = re.compile(rb"\r\n|\r|\n")
 # the heading. Narrowing this can only refuse more, never publish more.
 BLANK_RE = re.compile(rb"^[ \t]*$")
 
+# THE LEAST BODY TEXT THAT COUNTS AS EVIDENCE of an earlier copy (#2298).
+# Below it a body is too short to say anything — T20's one-line note, or a
+# `- tests pass` bullet — so only the heading is compared. Measured across all
+# dated files on adoption: of 1,158 section bodies, 6 recur, all hand-written
+# carried-forward footers from before fragments existed, and the figure is the
+# same at 0, 20, 40 and 80.
+#
+# THE WEIGHT IS TAKEN FROM EXACTLY THE TEXT THAT IS COMPARED (`body_weight`):
+# the body's lines in published form, a leading BOM removed, spaces, tabs and
+# line endings not counted. Any other base leaves a gap between what is
+# weighed and what is matched, and each gap is a way for a body that IS in the
+# file to be measured under the line. #2346 found three in three rounds —
+# line endings, then link rewriting, then a BOM — each "fixed" by moving the
+# weight to a different base, which only moved the gap. With one base there
+# is none: the evidence is the matched text, so its weight is the matched
+# text's weight.
+BODY_EVIDENCE_MIN = 40
+
+
+def body_weight(block: list[bytes]) -> int:
+    """The evidence weight of `block` — see `BODY_EVIDENCE_MIN`.
+
+    Takes the lines `contains_block` compares, already split and
+    BOM-stripped, so it cannot weigh anything other than what is matched.
+    """
+    return len(re.sub(rb"[ \t]", b"", b"".join(block)))
+
+
+def contains_block(lines: list[bytes], block: list[bytes]) -> bool:
+    """Whether `block` occurs in `lines` as consecutive, whole lines."""
+    n = len(block)
+    if n == 0:
+        return False
+    first = block[0]
+    return any(
+        lines[i] == first and lines[i : i + n] == block for i in range(len(lines) - n + 1)
+    )
+
+
+def found_as(kinds: list[str]) -> str:
+    """How a markerless match was found, for the guard's messages."""
+    if kinds == ["heading", "text"]:
+        return "its heading and its text are already there"
+    return f"its {kinds[0]} is already there"
+
 
 def without_markers(data: bytes) -> bytes:
     """`data` with each well-formed assembly-marker line blanked, same length.
@@ -1961,21 +2006,37 @@ class Assembly:
         the file. Measured across all 86 dated files, every repeated heading
         line is a subsection (`### Verification`, `## Operator deploy notes`),
         never two fragments' titles; `--force-append` is the override when it
-        happens.
+        happens. The body match below has the same cost for a recurring BODY,
+        and was measured the same way on adoption: 6 of 1,158 section bodies
+        recur, every one a hand-written footer from before fragments existed.
 
-        WHAT IT CANNOT DO, stated rather than implied. It does not survive an
-        edit TO THE MATCHED HEADING — which is narrower than "an edit". The
-        scan compares the fragment's first ATX heading line, byte for byte,
-        against the published file's lines, so rewording a published
-        section's BODY changes nothing it looks at and the refusal still
-        stands. Retitle that section, or reformat the heading line itself,
-        and the pending fragment stops matching: a rerun appends a second
-        copy and consumes the source — the one outcome here that loses work
-        rather than refusing. That is #2298, and it is not a defect in this
-        implementation: no comparison of two texts can distinguish "not yet
-        published" from "published, then retitled". Only a marker can, by
-        recording what was published. The residual is intrinsic, and it
-        shrinks as files gain markers.
+        IT COMPARES TWO THINGS, AND A REMEDY CAN MOVE ONLY ONE (#2298). A
+        fragment counts as already there when its first ATX heading line
+        matches a line of the file, OR when its BODY does: every line after
+        that heading (every line, if it has none), blank lines trimmed from
+        both ends, found as one contiguous run of whole lines. Before #2298
+        the heading was the only evidence, and every remedy the refusals
+        print edits a fragment's OPENING — heading level, heading text, a
+        BOM, front matter, a heading added above prose. An author following
+        that advice after an interrupted legacy run therefore moved the
+        evidence: the rerun found nothing, appended a second copy and
+        consumed the source. Two instances were reproduced and fixed one
+        remedy at a time in #2290 (r16, r20); the body match closes the
+        class, because the body is what no remedy asks anyone to touch.
+
+        A body weighing less than `BODY_EVIDENCE_MIN` — measured on exactly
+        the text compared, as that constant's note explains — is not evidence — too short to tell a copy from a
+        coincidence, as T20's one-line note shows — so for such a fragment
+        the heading is still all there is. Contiguity is what makes the rest
+        safe: lines found scattered through the file are not a copy.
+
+        WHAT IT STILL CANNOT DO, stated rather than implied. A fragment whose
+        heading AND body have both changed since it was published is not
+        recognised, and neither is a short-bodied one whose heading changed:
+        a rerun appends a second copy and consumes the source. No comparison
+        of two texts can tell "not yet published" from "published, then
+        rewritten"; only a marker can, by recording what was published. That
+        residual is intrinsic, and it shrinks as files gain markers.
 
         ITS ENCODING LIMIT IS CLOSED BY REFUSING, NOT BY DECODING (#2315).
         `HEADING_RE` is a byte pattern, and a legacy interrupted run appended
@@ -2074,8 +2135,9 @@ class Assembly:
             (#2290 r20). A BOM-bearing fragment folded into a legacy file sits
             there as `<BOM>## Title`, which `HEADING_RE` cannot match; and an
             operator removing the mark by hand from the pending copy would
-            otherwise leave `## Title` facing `<BOM>## Title` — the #2298
-            class, where the remedy edits the very text compared. A UTF-16 or
+            otherwise leave `## Title` facing `<BOM>## Title` — an instance
+            of the #2298 class, where the remedy edits the very text
+            compared, which the body match now also covers. A UTF-16 or
             UTF-32 section is out of its reach, since its heading bytes are
             NUL-interleaved; `unreadable_at` catches that file first —
             refusing it when unmarked, naming it in a note otherwise (#2315).
@@ -2135,37 +2197,52 @@ class Assembly:
         # One split with the shared `LINE_END_RE` — see the docstring.
         out_lines_raw = LINE_END_RE.split(out_data)
 
-        suspect = []
+        # Both sides: BOM-stripped, split with `LINE_END_RE`, and the
+        # fragment rewritten to its published form — see the docstring.
+        def _debom(b: bytes) -> bytes:
+            return b[3:] if b.startswith(b"\xef\xbb\xbf") else b
+
+        out_lines = [_debom(o) for o in out_lines_raw]
+        out_set = set(out_lines)
+
+        # `suspect` maps a fragment name to WHAT was found — "heading", "text"
+        # or both — so every message below says which evidence it acted on.
+        suspect: dict[str, list[str]] = {}
         for f in self.frags:
             body = checked(
                 f"reading {self.frag_name[f]}",
                 lambda p=self.frag_snap[f]: open(p, "rb").read(),
             )
             checked(f"checking {base} for a repeated heading", lambda: None)
-            # Both sides: BOM-stripped, split with `LINE_END_RE`, and the
-            # fragment rewritten to its published form — see the docstring.
-            def _debom(b: bytes) -> bytes:
-                return b[3:] if b.startswith(b"\xef\xbb\xbf") else b
-
-            out_lines = [_debom(o) for o in out_lines_raw]
-            for ln in LINE_END_RE.split(self.rewrite_links(body)):
-                line = _debom(ln)
-                if not HEADING_RE.match(line):
-                    continue
-                if any(line == other for other in out_lines):
-                    suspect.append(self.frag_name[f])
-                break
+            lines = [_debom(ln) for ln in LINE_END_RE.split(self.rewrite_links(body))]
+            found = []
+            at = next((i for i, ln in enumerate(lines) if HEADING_RE.match(ln)), None)
+            if at is not None and lines[at] in out_set:
+                found.append("heading")
+            # The BODY: every line after the first heading, or every line when
+            # there is none — see the docstring's TWO THINGS paragraph (#2298).
+            block = lines if at is None else lines[at + 1 :]
+            while block and BLANK_RE.match(block[0]):
+                block = block[1:]
+            while block and BLANK_RE.match(block[-1]):
+                block = block[:-1]
+            # WEIGHED EXACTLY AS COMPARED — the same lines, in the same form,
+            # that `contains_block` looks for. See `BODY_EVIDENCE_MIN`.
+            if body_weight(block) >= BODY_EVIDENCE_MIN and contains_block(out_lines, block):
+                found.append("text")
+            if found:
+                suspect[self.frag_name[f]] = found
 
         refuse = [s for s in suspect if s not in marked_here]
         if refuse and not self.force:
-            err(f"Error: {os.path.basename(self.out)} already contains the heading of a fragment")
-            err("about to be appended, and records no assembly marker for that fragment. It")
+            err(f"Error: {os.path.basename(self.out)} already contains the heading or the text of a")
+            err("fragment about to be appended, and records no assembly marker for it. It")
             err("may have been written by an older version of this script whose run was")
             err("interrupted, in which case appending would duplicate it — and nothing in")
             err("the file can say:")
             err("")
             for s in refuse:
-                err(f"  {s}")
+                err(f"  {s}   ({found_as(suspect[s])})")
             err("")
             err(f"Read that section of {os.path.basename(self.out)} and then either:")
             err("  - it is already there  -> delete the fragment(s) by hand")
@@ -2183,16 +2260,16 @@ class Assembly:
             err(f"Note: {base} records an earlier text under the same name for these")
             err("fragments, and the pending text differs, so it is appended as well:")
             for s in same_name:
-                err(f"  {s}" + ("   (its heading is already there)" if s in suspect else ""))
+                err(f"  {s}" + (f"   ({found_as(suspect[s])})" if s in suspect else ""))
             err("That is either an edit made after an interrupted run or a new fragment")
             err("reusing an old file name. Check for a superseded copy while reviewing.")
             err("")
         forced = [s for s in suspect if s not in marked_here]
         if forced:
-            err(f"Note: {base} already contains these headings; appending anyway, as")
-            err("--force-append was given:")
+            err(f"Note: {base} already contains the heading or text of these fragments;")
+            err("appending anyway, as --force-append was given:")
             for s in forced:
-                err(f"  {s}")
+                err(f"  {s}   ({found_as(suspect[s])})")
             err("")
 
     # ── building the replacement ─────────────────────────────────────────

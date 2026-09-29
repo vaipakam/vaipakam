@@ -105,8 +105,8 @@ test('chooser surfaces every path; obligation handover completes (Option 2)', as
     .locator('section.card')
     .filter({ hasText: 'Hand this loan to another borrower' });
   await expect(transferCard).toBeVisible({ timeout: 60_000 });
-  // Pinned to the SEEDED request — the fork inherits Base Sepolia's
-  // whole open book, so "first row" could be an inherited stranger.
+  // Pinned to the SEEDED request — earlier specs in the run leave their
+  // own requests on this chain, so "first row" could be one of those.
   const candidate = transferCard
     .locator('.item-row')
     .filter({ hasText: `Request #${seededOfferId} —` })

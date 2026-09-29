@@ -1,5 +1,19 @@
 # Advanced-User-Guide-driven Test Matrix
 
+> **A sibling surface, not a replacement.** These scripts run under `forge`
+> against a freshly-bootstrapped diamond and are the canonical flow coverage.
+> [`ForkVerification-BaseSepolia-2026-09-24.md`](ForkVerification-BaseSepolia-2026-09-24.md)
+> answers a different question — whether the deployment that is *live* behaves
+> as documented — by driving a fork of it from
+> [`contracts/script/fork-scenarios/`](../../contracts/script/fork-scenarios/README.md),
+> with no compiler. Read them together: a fresh deploy proves the source tree
+> is self-consistent, a fork proves the deployed bytecode and that
+> deployment's own configuration are. Several findings in the fork write-up
+> are properties of the deployment (the faucet mocks' feed and pool spot
+> moving independently, so a feed-only reprice trips the oracle's
+> consistency band; the registered swap venue; an artifact that no longer
+> matches the chain) and could not have surfaced here.
+
 This is the single source of truth for the three new on-chain test
 scripts that exercise every flow documented in
 [`apps/www/src/content/userguide/Advanced.en.md`](../../apps/www/src/content/userguide/Advanced.en.md):
@@ -53,6 +67,17 @@ Skipped on Anvil with rationale + unit-test pointers:
   N23 swap-adapter failover, N24 secondary-oracle quorum — all need
   chain-time advance which `forge --broadcast` cannot deliver. Covered
   by per-facet `forge test` units.
+
+  **Two of those five are now also covered end-to-end against a live
+  deployment** (2026-09-24). The fork driver described in the next section
+  drives the node's own `evm_increaseTime`, which is exactly what
+  `forge --broadcast` cannot, so N16 (HF liquidation) and N17 (time-based
+  default, via `triggerDefault`) are exercised there as A3.* — including the
+  grace-window boundary and the full proceeds split. That does not retire
+  their unit coverage: the fork run is a single parameterisation against one
+  deployment, where the units sweep the branch space. It does close the gap
+  where NEITHER a broadcast script nor a unit test showed the whole
+  settlement moving real balances.
 - The remaining ~20 NEG-* paths in the matrix below are covered by
   per-facet unit tests with `vm.expectRevert` for fine-grained
   message matching.

@@ -4498,11 +4498,6 @@
   },
   {
     "type": "error",
-    "name": "VPFIInvalidOriginChainId",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "VPFITokenNotSet",
     "inputs": []
   },
