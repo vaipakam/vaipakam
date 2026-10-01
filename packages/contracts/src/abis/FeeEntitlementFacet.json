@@ -2707,6 +2707,17 @@
   },
   {
     "type": "error",
+    "name": "RewardCustodyActivationBlockedByStagedEarmark",
+    "inputs": [
+      {
+        "name": "staged",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "RewardCustodyActivationBlockedByStagedRecords",
     "inputs": [
       {

@@ -261,6 +261,25 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         assertFalse(_custody().rewardCustodyActivated(), "not activated");
     }
 
+    /// Any STAGED epoch value blocks activation, not only a reservation
+    /// (Codex #2308 r18): a record merely `Staging` earmarks Diamond-held VPFI
+    /// the relocation would strand. Straddled: one wei earmarked refuses with
+    /// the figure named; the earmark cleared, the same ceremony activates.
+    function test_Activation_RefusesWhileAnyEpochValueIsStaged() public {
+        _becomeCanonical();
+        _custody().bindRewardCustodyHolder();
+        _admin().pause();
+        uint64 epoch = _epoch();
+        _custody().rebaseArmedFreshPaid(0, epoch);
+        _mut().setStagedEpochTotalRaw(1);
+        vm.expectRevert(abi.encodeWithSelector(RewardCustodyActivationBlockedByStagedEarmark.selector, uint256(1)));
+        _custody().activateRewardCustody(epoch, false);
+        assertFalse(_custody().rewardCustodyActivated(), "not activated");
+        _mut().setStagedEpochTotalRaw(0);
+        _custody().activateRewardCustody(epoch, false);
+        assertTrue(_custody().rewardCustodyActivated(), "activated once nothing is staged");
+    }
+
     /// The ceremony's gates, each straddled: unpaused refuses; a stale epoch
     /// refuses; an unconsumed rebase refuses; the live epoch under the manual
     /// pause with the rebase consumed activates — once.

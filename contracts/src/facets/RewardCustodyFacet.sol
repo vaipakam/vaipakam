@@ -870,6 +870,13 @@ contract RewardCustodyFacet is DiamondAccessControl {
         if (s.stagingEncumberedCount != 0) {
             revert IVaipakamErrors.RewardCustodyActivationBlockedByStagedRecords(s.stagingEncumberedCount);
         }
+        // …nor any STAGED value (Codex #2308 r18): the earmark is what this
+        // relocation would strand, and it stands from a record's first staged
+        // page — a merely `Staging` record holds no reservation, so the count
+        // above cannot see it. Read the figure itself, not a proxy for it.
+        if (s.stagedEpochTotal != 0) {
+            revert IVaipakamErrors.RewardCustodyActivationBlockedByStagedEarmark(s.stagedEpochTotal);
+        }
         uint64 liveEpoch = LibPausable.pauseTransitions();
         if (pauseEpoch != liveEpoch) {
             revert IVaipakamErrors.RewardCustodyActivationStalePauseEpoch(pauseEpoch, liveEpoch);

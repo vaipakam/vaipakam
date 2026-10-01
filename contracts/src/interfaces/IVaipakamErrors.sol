@@ -328,6 +328,15 @@ interface IVaipakamErrors {
     ///         the records or unwind them first — both are permissionless, and
     ///         a resolving record only completes.
     error RewardCustodyActivationBlockedByStagedRecords(uint256 encumbered);
+    /// @notice 3b-ii-A2 (Codex #2308 r18) — reward custody cannot be
+    ///         activated while any transport-epoch value is STAGED: `staged`
+    ///         VPFI rests in the Diamond's balance as the staging earmark from
+    ///         a record's first staged page until it is paid or unwound, and
+    ///         activation relocates by attribution and has no row to carry it
+    ///         into. A record that is merely `Staging` holds no reservation,
+    ///         so the reservation count alone did not see it. Resolve or unwind
+    ///         the records first; both are permissionless.
+    error RewardCustodyActivationBlockedByStagedEarmark(uint256 staged);
     /// @notice 3b-ii-A2 (Codex #2308 r13) — a reward-ROLE change cannot
     ///         straddle a staging reservation: the role decides the delivered
     ///         allowance a reserved record's payout charges, so a transition
