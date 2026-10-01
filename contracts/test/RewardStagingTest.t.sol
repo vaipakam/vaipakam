@@ -1183,6 +1183,28 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         assertEq(_view().getStagingRecord(bobKey).phase, uint8(LibVaipakam.StagingPhase.Reserved));
     }
 
+    /// @dev A claimant already flagged when the first irreversible page would
+    ///      run, with no creditable vault, is refused BEFORE `Resolving`
+    ///      (Codex #2308 r18): the record stays `Reserved` — unwindable — and
+    ///      nothing moves. Once the flag lifts, the same page proceeds.
+    function test_AFlaggedClaimantWithoutAVault_IsRefusedBeforeResolving() public {
+        _stagedAndScanned();
+        _liveFresh(1e18);
+        _staging().reserveStagedDay(_key());
+        MockSanctionsList m = new MockSanctionsList();
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
+        m.setFlagged(alice, true);
+        ProfileFacet(address(diamond)).refreshSanctionsFlag(alice);
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.StagingClaimantUndeliverable.selector, _key(), alice));
+        _settle().resolveStagedDayPage(_key());
+        assertEq(_rec().phase, uint8(LibVaipakam.StagingPhase.Reserved), "still reserved, so still unwindable");
+        assertEq(_rec().resolveCursor, 0, "no page consumed");
+        m.setFlagged(alice, false);
+        ProfileFacet(address(diamond)).refreshSanctionsFlag(alice);
+        _settle().resolveStagedDayPage(_key());
+        assertEq(_rec().phase, uint8(LibVaipakam.StagingPhase.Resolving), "unflagged, the page proceeds");
+    }
+
     // ───────────────────────── round 6 ─────────────────────────
 
     function test_AStandingRecord_PausesTheClaimantsExpiryClock() public {

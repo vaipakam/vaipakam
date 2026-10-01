@@ -11075,6 +11075,22 @@ library LibVaipakam {
             : RewardRole.Unconfigured;
     }
 
+    /// @notice Whether `user`'s vault is at the version the protocol requires
+    ///         of a vault it credits (no mandatory version, or at least it).
+    /// @dev    The ONE statement of the version half of "creditable", read by
+    ///         {VaultFactoryFacet}'s credit routes and by any pre-flight that
+    ///         must predict them (3b-ii-A2; Codex #2308 r18), so the check and
+    ///         the operation cannot drift.
+    function vaultVersionCurrent(Storage storage s, address user) internal view returns (bool) {
+        return s.mandatoryVaultVersion == 0 || s.vaultVersion[user] >= s.mandatoryVaultVersion;
+    }
+
+    /// @notice Whether a protocol credit to `user`'s vault can land: the vault
+    ///         exists and is at the required version. Never creates one.
+    function vaultCreditable(Storage storage s, address user) internal view returns (bool) {
+        return s.userVaipakamVaults[user] != address(0) && vaultVersionCurrent(s, user);
+    }
+
     /// @param who The address to check.
     function isSanctionedAddress(address who) internal view returns (bool) {
         address oracle = storageSlot().sanctionsOracle;

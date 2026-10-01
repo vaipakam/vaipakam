@@ -337,6 +337,13 @@ interface IVaipakamErrors {
     ///         so the reservation count alone did not see it. Resolve or unwind
     ///         the records first; both are permissionless.
     error RewardCustodyActivationBlockedByStagedEarmark(uint256 staged);
+    /// @notice 3b-ii-A2 (Codex #2308 r18) — record `key` cannot enter
+    ///         `Resolving`: its claimant `user` is sanctions-flagged, so the
+    ///         payout may go to their vault and nowhere else, and they hold no
+    ///         creditable vault (none exists, and none is minted for a flagged
+    ///         wallet — #821). `Resolving` is irreversible, so the refusal comes
+    ///         first: the record stays `Reserved`, and unwinds at its deadline.
+    error StagingClaimantUndeliverable(bytes32 key, address user);
     /// @notice 3b-ii-A2 (Codex #2308 r13) — a reward-ROLE change cannot
     ///         straddle a staging reservation: the role decides the delivered
     ///         allowance a reserved record's payout charges, so a transition

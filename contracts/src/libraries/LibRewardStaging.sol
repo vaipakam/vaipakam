@@ -378,6 +378,23 @@ library LibRewardStaging {
     function resolvePage(LibVaipakam.Storage storage s, bytes32 key) internal returns (bool done) {
         LibVaipakam.StagingRecord storage r = record(s, key);
         if (r.phase == LibVaipakam.StagingPhase.Reserved) {
+            // Pre-flight the delivery BEFORE the irreversible step (Codex #2308
+            // r18): a flagged claimant is paid into their vault and nowhere
+            // else, and a flagged wallet is never minted one (#821), so without
+            // a creditable vault the last page could not deliver — and a
+            // `Resolving` record cannot unwind. Refused here it stays
+            // `Reserved` and unwinds at its deadline: the vault or nothing,
+            // with nothing stuck. The predicate is the credit route's own
+            // ({LibVaipakam.vaultCreditable}). A claimant flagged AFTER this
+            // step is the case the record holds in `Resolving` until the flag
+            // lifts — visible, and completed by the same permissionless page.
+            if (
+                r.needUserFresh + r.needUserRecycled != 0
+                    && LibVaipakam.isSanctionedAddress(r.user)
+                    && !LibVaipakam.vaultCreditable(s, r.user)
+            ) {
+                revert IVaipakamErrors.StagingClaimantUndeliverable(key, r.user);
+            }
             r.phase = LibVaipakam.StagingPhase.Resolving;
         } else {
             _requirePhase(key, r, LibVaipakam.StagingPhase.Resolving);
@@ -453,7 +470,6 @@ library LibRewardStaging {
         uint256 liveUserFresh = r.reservedLiveUserFresh;
         uint256 liveTreasuryFresh = r.reservedLiveTreasuryFresh;
         uint256 liveUserRecycled = r.reservedLiveUserRecycled;
-        uint256 forfeitRecycled = r.needTreasuryRecycled - r.epochTreasuryRecycled;
         uint256 freshSpend = r.reservedPoolCap;
         // What the pages CONSUMED of the epochs is paid out below, so it
         // leaves the staged earmark here and not a page earlier (Codex #2308
@@ -532,7 +548,16 @@ library LibRewardStaging {
         LibRewardCustody.callSettleClaimLegs(
             liveTreasuryFresh,
             r.epochTreasuryFresh + r.epochTreasuryRecycled,
-            forfeitRecycled + r.cappedOffRecycled,
+            // The treasury's whole recycled figure — the claim path's own
+            // argument (`res.toTreasury.recycled`), so the two paths state ONE
+            // formula (Codex #2308 r18). The epoch-funded share it once
+            // subtracted is zero by construction: the day's transport ask sums
+            // only loan-side-chargeable recycled (the user's leg), and a
+            // forfeit's or expiry's recycled is a commitment release that asks
+            // the epochs for nothing — so `epochTreasuryRecycled` cannot be
+            // non-zero, and nothing changes in value; only the two statements
+            // can no longer drift apart if that ever changes.
+            r.needTreasuryRecycled + r.cappedOffRecycled,
             r.epochUserRecycled,
             0
         );
@@ -542,7 +567,7 @@ library LibRewardStaging {
             liveUserFresh + r.epochUserFresh,
             liveUserRecycled + r.epochUserRecycled,
             liveTreasuryFresh + r.epochTreasuryFresh,
-            forfeitRecycled + r.epochTreasuryRecycled,
+            r.needTreasuryRecycled,
             uint8(vaulted ? LibVaipakam.RewardDelivery.Vault : LibVaipakam.RewardDelivery.Wallet)
         );
         _close(s, key, true);
