@@ -371,18 +371,30 @@ async function chainPosture(atBlock = null) {
  * `{ scanned: false }` — which the verdict treats as BLOCKED, never a pass.
  */
 const POSTURE_SCAN_MAX_BLOCKS = 600n;
+/**
+ * #2368 r11 — the page reads through its OWN provider, which may lag this
+ * drive's. A PASS is certified only when the posture also held for this
+ * many blocks BEFORE the first read (~4 min on Base Sepolia's 2 s blocks),
+ * so any page-provider lag shorter than the margin cannot have served a
+ * different posture. A page provider lagging further than that is beyond
+ * what this drive certifies — stated, not implied. Kept under the ~128
+ * blocks of recent state a full node retains; a historical read the RPC
+ * cannot serve fails the scan, which BLOCKS.
+ */
+const POSTURE_LAG_MARGIN_BLOCKS = 120n;
 async function postureIntervalScan(before, after) {
   if (!before || !after) return { scanned: false };
   // Equal heads: a zero-length interval, nothing to scan. A LOWER second
   // head (a load-balanced RPC answering from a lagging backend, or a reorg)
   // is not a chronological interval at all, so stability is unknown
   // (#2368 r7) — never a clean zero-change result.
-  if (after.blockNumber === before.blockNumber) return { scanned: true, changes: 0 };
   if (after.blockNumber < before.blockNumber) return { scanned: false };
   if (after.blockNumber - before.blockNumber > POSTURE_SCAN_MAX_BLOCKS) return { scanned: false };
   const want = expectedPostureFrom(before);
   const blocks = [];
-  for (let n = before.blockNumber + 1n; n <= after.blockNumber; n++) blocks.push(n);
+  const from =
+    before.blockNumber > POSTURE_LAG_MARGIN_BLOCKS ? before.blockNumber - POSTURE_LAG_MARGIN_BLOCKS : 0n;
+  for (let n = from; n <= after.blockNumber; n++) if (n !== before.blockNumber) blocks.push(n);
   let changes = 0;
   for (let i = 0; i < blocks.length; i += 10) {
     const reads = await Promise.all(blocks.slice(i, i + 10).map((n) => chainPosture(n)));

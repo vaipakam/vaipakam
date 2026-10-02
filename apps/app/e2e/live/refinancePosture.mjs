@@ -204,10 +204,11 @@ export function refinancePostureVerdict(o, copy) {
       why: `the chain posture moved during the observation (${expected} → ${after})`,
     };
   }
-  // #2368 r6/r8 — two agreeing endpoint reads do not show the posture HELD
-  // in between: an on → off → on excursion leaves both samples "on".
-  // Stability is established only by reading the posture at EVERY block in
-  // (before, after] and finding no difference. Unknown or changed is BLOCKED — for a match as
+  // #2368 r6/r8/r11 — two agreeing endpoint reads do not show the posture
+  // HELD in between: an on → off → on excursion leaves both samples "on".
+  // Stability is established only by reading the posture at EVERY block
+  // from a lag margin before the first read through the last, and finding
+  // no difference — the margin covers a page provider lagging this drive's. Unknown or changed is BLOCKED — for a match as
   // much as for a mismatch, so a stale banner is never certified across an
   // interval the drive could not see.
   if (!o.interval || o.interval.scanned !== true) {
@@ -221,7 +222,7 @@ export function refinancePostureVerdict(o, copy) {
     return {
       ...base,
       verdict: 'blocked',
-      why: `the posture differed at ${o.interval.changes} block(s) between the two chain reads — the page may correctly show either`,
+      why: `the posture differed at ${o.interval.changes} block(s) in the scanned window (lag margin + observation) — the page may correctly show either`,
     };
   }
   if (o.attr === 'unknown') {
