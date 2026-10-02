@@ -330,6 +330,11 @@
             "internalType": "uint256"
           },
           {
+            "name": "lateGenNow",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
             "name": "listCountSeen",
             "type": "uint256",
             "internalType": "uint256"

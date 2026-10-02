@@ -842,8 +842,11 @@ contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
                 bytes32 rKey = LibRewardCustody.remitReceiptKey(dc.provisionalEra, dc.remitId);
                 LibRewardCustody.callUnclassifiedQuarantine(s.receivedRemits[rKey].packetHash, rKey, 0, counted);
             } else {
-                uint256 af = s.rewardBudgetArmedFreshReceived;
-                s.rewardBudgetArmedFreshReceived = af > counted ? af - counted : 0;
+                // The same ledger cut the activated path makes, through the
+                // one floor-aware write (Codex #2308 r21): a staging record's
+                // reservation of the delivered ledger is not demoted out from
+                // under its irrevocable resolution.
+                LibRewardCustody.uncreditDeliveredFresh(s, counted);
             }
             s.rewardBudgetFreshUncounted += counted;
         }

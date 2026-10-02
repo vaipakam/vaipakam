@@ -105,7 +105,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](244); // #2342 +setLegacyFrozenVpfiRaw; 3b-ii-A2 +13 raw reads +5 raw writes; #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1, then -1 with the pre-list scene (Codex #2296 items 2 and 4); r26 +1 flexible caps
+        selectors = new bytes4[](245); // #2342 +setLegacyFrozenVpfiRaw; 3b-ii-A2 +13 raw reads +5 raw writes; #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1, then -1 with the pre-list scene (Codex #2296 items 2 and 4); r26 +1 flexible caps; 3b-ii-A2 r21 +1 ledger reservation
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -523,6 +523,7 @@ contract HelperTest {
         selectors[n++] = TestMutatorFacet.interactionPoolReservedRaw.selector;
         selectors[n++] = TestMutatorFacet.liveFreshReservedRaw.selector;
         selectors[n++] = TestMutatorFacet.rewardBudgetArmedFreshReservedRaw.selector;
+        selectors[n++] = TestMutatorFacet.setRewardBudgetArmedFreshReservedRaw.selector; // r21: a reservation of the delivered ledger
         selectors[n++] = TestMutatorFacet.attributedTotalRaw.selector;
         selectors[n++] = TestMutatorFacet.loanSideRewardReservedRaw.selector;
         selectors[n++] = TestMutatorFacet.poolAvailableRaw.selector;
@@ -2416,7 +2417,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](43);
+        selectors = new bytes4[](42);
         selectors[0] = RewardCustodyFacet.bindRewardCustodyHolder.selector;
         selectors[1] = RewardCustodyFacet.replaceRewardCustodyHolder.selector;
         selectors[2] = RewardCustodyFacet.rebaseArmedFreshPaid.selector;
@@ -2466,7 +2467,6 @@ contract HelperTest {
         selectors[39] = RewardCustodyFacet.custodyUnclassifiedReturn.selector;
         selectors[40] = RewardCustodyFacet.custodyReleaseUnclassifiedForReturn.selector;
         selectors[41] = RewardCustodyFacet.custodyDeliverClaim.selector; // 3b-ii-A
-        selectors[42] = RewardCustodyFacet.custodyDeliverClaimToVault.selector; // 3b-ii-A2 (#2305)
     }
 
     /// #1566 closure 2 cutover PR 2 — the legacy reconciliation epoch

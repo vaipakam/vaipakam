@@ -55,6 +55,7 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
 
     event StagingRecordOpened(bytes32 indexed key, address indexed user, uint8 side, uint64 day, bytes32 commitment);
     event TransportStaged(bytes32 indexed batchId, bytes32 indexed key, uint256 fresh, uint256 recycled);
+    event StagingClaimantForfeited(bytes32 indexed key, address indexed user, uint256 fresh, uint256 recycled);
 
     function setUp() public {
         setupHelper();
@@ -507,24 +508,34 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         _assertConserved(hs);
     }
 
-    function test_ASanctionedClaimant_IsPaidToTheVaultOrNotAtAll() public {
+    /// @dev A claimant flagged BETWEEN resolution pages is not paid: the last
+    ///      page forfeits their share into the recycle bucket with the
+    ///      treasury's forfeit legs, and closes the record (owner decision
+    ///      2026-10-02; Codex #2308 r21 — a vault-only delivery trapped the
+    ///      record in `Resolving` for a claimant with no vault).
+    function test_AClaimantFlaggedMidResolution_IsForfeited_NotTrapped() public {
         _stagedAndScanned();
         _liveFresh(1e18);
         _staging().reserveStagedDay(_key());
         _settle().resolveStagedDayPage(_key());
+        RewardEpochViewFacet.StagingRecordView memory r = _rec();
+        assertEq(r.phase, uint8(LibVaipakam.StagingPhase.Resolving), "fixture: one page in");
         MockSanctionsList m = new MockSanctionsList();
         ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
         m.setFlagged(alice, true);
         ProfileFacet(address(diamond)).refreshSanctionsFlag(alice);
         uint256 aliceBefore = vpfi.balanceOf(alice);
-        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.RewardCustodyVaultDeliveryFailed.selector, alice));
-        _settle().resolveStagedDayPage(_key());
-        assertEq(_rec().phase, uint8(LibVaipakam.StagingPhase.Resolving), "held, not paid to the wallet");
-        assertEq(vpfi.balanceOf(alice), aliceBefore);
-        m.setFlagged(alice, false);
-        ProfileFacet(address(diamond)).refreshSanctionsFlag(alice);
-        assertTrue(_settle().resolveStagedDayPage(_key()));
-        assertEq(vpfi.balanceOf(alice) - aliceBefore, NEED);
+        (, uint256 bucketBefore, , , , , , ) = InteractionRewardsLensFacet(address(diamond)).getRecycleBackingSnapshot();
+        uint256 userFresh = r.reservedLiveUserFresh + r.epochUserFresh;
+        uint256 userRecycled = r.reservedLiveUserRecycled + r.epochUserRecycled;
+        assertGt(userFresh + userRecycled, 0, "fixture: a share to forfeit");
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit StagingClaimantForfeited(_key(), alice, userFresh, userRecycled);
+        assertTrue(_settle().resolveStagedDayPage(_key()), "the last page completes");
+        assertEq(vpfi.balanceOf(alice), aliceBefore, "nothing delivered to the flagged wallet");
+        assertEq(_rec().phase, uint8(LibVaipakam.StagingPhase.None), "closed, not trapped");
+        (, uint256 bucketAfter, , , , , , ) = InteractionRewardsLensFacet(address(diamond)).getRecycleBackingSnapshot();
+        assertEq(bucketAfter - bucketBefore, userFresh, "the forfeited fresh is absorbed into the bucket");
     }
 
     function test_AReservation_BindsAOneCallClaimAsADeferral_NotATruncation() public {
@@ -1175,6 +1186,7 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         assertGt(sf2, 0, "the last restoration too");
         bv = _view().getStagingRecord(bobKey);
         assertEq(bv.restoredSeen, bv.restoredLogLength, "and the view shows the log read");
+        assertEq(bv.lateGenNow, bv.lateGenSeen, "the record has caught the day's late generation");
         // The lease counts the restorations it processed, not only those left
         // unread (Codex #2308 r17): 65 more members of work, a later deadline.
         assertEq(bv.restoredWork, 65, "every restoration processed is counted");
@@ -1183,11 +1195,11 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         assertEq(_view().getStagingRecord(bobKey).phase, uint8(LibVaipakam.StagingPhase.Reserved));
     }
 
-    /// @dev A claimant already flagged when the first irreversible page would
-    ///      run, with no creditable vault, is refused BEFORE `Resolving`
-    ///      (Codex #2308 r18): the record stays `Reserved` — unwindable — and
-    ///      nothing moves. Once the flag lifts, the same page proceeds.
-    function test_AFlaggedClaimantWithoutAVault_IsRefusedBeforeResolving() public {
+    /// @dev A claimant ALREADY flagged when resolution begins is not refused
+    ///      and not trapped: the record resolves and its share is forfeited
+    ///      (owner decision 2026-10-02). No pre-flight is needed — a forfeit
+    ///      cannot fail.
+    function test_AClaimantFlaggedBeforeResolution_ResolvesToAForfeit() public {
         _stagedAndScanned();
         _liveFresh(1e18);
         _staging().reserveStagedDay(_key());
@@ -1195,14 +1207,10 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
         m.setFlagged(alice, true);
         ProfileFacet(address(diamond)).refreshSanctionsFlag(alice);
-        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.StagingClaimantUndeliverable.selector, _key(), alice));
-        _settle().resolveStagedDayPage(_key());
-        assertEq(_rec().phase, uint8(LibVaipakam.StagingPhase.Reserved), "still reserved, so still unwindable");
-        assertEq(_rec().resolveCursor, 0, "no page consumed");
-        m.setFlagged(alice, false);
-        ProfileFacet(address(diamond)).refreshSanctionsFlag(alice);
-        _settle().resolveStagedDayPage(_key());
-        assertEq(_rec().phase, uint8(LibVaipakam.StagingPhase.Resolving), "unflagged, the page proceeds");
+        uint256 aliceBefore = vpfi.balanceOf(alice);
+        while (!_settle().resolveStagedDayPage(_key())) {}
+        assertEq(vpfi.balanceOf(alice), aliceBefore, "nothing delivered to the flagged wallet");
+        assertEq(_rec().phase, uint8(LibVaipakam.StagingPhase.None), "the record closed");
     }
 
     // ───────────────────────── round 6 ─────────────────────────

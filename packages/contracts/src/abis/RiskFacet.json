@@ -3940,22 +3940,6 @@
   },
   {
     "type": "error",
-    "name": "StagingClaimantUndeliverable",
-    "inputs": [
-      {
-        "name": "key",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "user",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "StagingCommitmentMismatch",
     "inputs": [
       {

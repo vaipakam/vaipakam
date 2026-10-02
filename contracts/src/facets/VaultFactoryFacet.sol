@@ -622,7 +622,12 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
     ) private view returns (address proxy) {
         proxy = s.userVaipakamVaults[user];
         if (proxy == address(0)) revert NoVault();
-        if (!LibVaipakam.vaultVersionCurrent(s, user)) revert VaultUpgradeRequired();
+        if (
+            s.mandatoryVaultVersion > 0 &&
+            s.vaultVersion[user] < s.mandatoryVaultVersion
+        ) {
+            revert VaultUpgradeRequired();
+        }
     }
 
     /// @dev The tracked-balance record and the broadcast-free tier rollup

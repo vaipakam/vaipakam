@@ -3243,7 +3243,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](43);
+        s = new bytes4[](42);
         s[0] = RewardCustodyFacet.bindRewardCustodyHolder.selector;
         s[1] = RewardCustodyFacet.replaceRewardCustodyHolder.selector;
         s[2] = RewardCustodyFacet.rebaseArmedFreshPaid.selector;
@@ -3293,7 +3293,6 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[39] = RewardCustodyFacet.custodyUnclassifiedReturn.selector;
         s[40] = RewardCustodyFacet.custodyReleaseUnclassifiedForReturn.selector;
         s[41] = RewardCustodyFacet.custodyDeliverClaim.selector; // 3b-ii-A
-        s[42] = RewardCustodyFacet.custodyDeliverClaimToVault.selector; // 3b-ii-A2 (#2305)
     }
 
     /// #1566 closure 2 cutover PR 2 — the legacy reconciliation epoch.

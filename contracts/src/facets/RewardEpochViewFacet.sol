@@ -70,6 +70,11 @@ contract RewardEpochViewFacet {
         bytes32 continuationNode;
         bytes32 lateSeen;
         uint256 lateGenSeen;
+        /// @dev The day's CURRENT late-chain generation (Codex #2308 r21):
+        ///      while it differs from `lateGenSeen` the reservation refuses
+        ///      `StagingScanIncomplete`, and the next preparation restarts the
+        ///      late walk from the chain's head.
+        uint256 lateGenNow;
         uint256 listCountSeen;
         uint256 consumeFreshLeft;
         uint256 consumeRecycledLeft;
@@ -165,6 +170,10 @@ contract RewardEpochViewFacet {
     ///         no record reads as phase `None` with zeros, never reverts.
     function getStagingRecord(bytes32 key) external view returns (StagingRecordView memory v) {
         LibVaipakam.StagingRecord storage r = LibVaipakam.storageSlot().stagingRecords[key];
+        // A key with no record reads as zeros — including the two DAY-level
+        // figures below, which an absent record's zero day would otherwise
+        // read off day 0 (Codex #2308 r21).
+        if (r.phase == LibVaipakam.StagingPhase.None) return v;
         v.user = r.user;
         v.side = uint8(r.side);
         v.op = uint8(r.op);
@@ -200,6 +209,7 @@ contract RewardEpochViewFacet {
         v.continuationNode = r.continuationNode;
         v.lateSeen = r.lateSeen;
         v.lateGenSeen = r.lateGenSeen;
+        v.lateGenNow = LibVaipakam.storageSlot().transportDayLateGen[r.day];
         v.listCountSeen = r.listCountSeen;
         v.consumeFreshLeft = r.consumeFreshLeft;
         v.consumeRecycledLeft = r.consumeRecycledLeft;

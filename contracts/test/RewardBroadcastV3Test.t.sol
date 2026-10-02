@@ -1754,6 +1754,26 @@ contract CompensationClassificationTest is RewardBroadcastV3Harness {
         assertEq(_rlens().getStrandedRecoveryReserved(), 5e18, "sum moved");
     }
 
+    /// Codex #2308 r21 — on an INACTIVE-custody deployment a demotion cuts the
+    /// delivered ledger through the same floor-aware write the activated path
+    /// uses: what a staging record has RESERVED of the ledger is not demoted
+    /// out from under its irrevocable resolution. Credit 5, reserve 2, demote:
+    /// the received side keeps the 2, and the full credit still parks as
+    /// uncounted beside the recovery reservation.
+    function testProvisionalDemoted_KeepsAStagingReservationOfTheLedger() public {
+        _configureCompMirror();
+        _deliverComp(3, address(0xDD), 3e18, 2e18); // stale-era sender
+        (uint256 counted0, uint256 uncounted0) = _rlens().getDeliveredFreshPosition();
+        assertEq(counted0, 5e18, "fixture: credited in full at ingress");
+        _mut().setRewardBudgetArmedFreshReservedRaw(2e18);
+        RewardBroadcastV3 memory b = _v3Packet(CHAIN_ARB);
+        b.zeroedForDest = true;
+        messenger.deliverBroadcastV3(b); // demote
+        (uint256 counted1, uint256 uncounted1) = _rlens().getDeliveredFreshPosition();
+        assertEq(counted1, 2e18, "the reserved part of the ledger survives the demotion");
+        assertEq(uncounted1, uncounted0 + 5e18, "and the whole credit parks as uncounted");
+    }
+
     function testProvisionalDemoted_NotZeroed() public {
         _configureCompMirror();
         _deliverComp(3, REMITTER, 3e18, 2e18);

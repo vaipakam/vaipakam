@@ -1007,6 +1007,22 @@ library LibRewardCustody {
         return received > floor ? received - floor : 0;
     }
 
+    /// @notice Lower the delivered ledger's RECEIVED side for a demoted
+    ///         credit, never below what is paid plus what staging records
+    ///         have reserved: the ONE write by which a demotion lowers it, on
+    ///         every custody posture (Codex #2308 r5, r21). A resolving record
+    ///         is irrevocable and its last page charges the ledger by exactly
+    ///         its reservation, so the reservation is unavailable to the cut;
+    ///         the part of `amount` above the floor is cut, the rest is not.
+    ///         With no reservation standing this is the original saturating
+    ///         cut ({deliveredFreshUncreditable} keeps the deficit model).
+    /// @return cut What the received side fell by.
+    function uncreditDeliveredFresh(LibVaipakam.Storage storage s, uint256 amount) internal returns (uint256 cut) {
+        cut = deliveredFreshUncreditable(s);
+        if (cut > amount) cut = amount;
+        s.rewardBudgetArmedFreshReceived -= cut;
+    }
+
     function uncreditFreshInHolder(
         LibVaipakam.Storage storage s,
         uint256 amount
@@ -1019,9 +1035,7 @@ library LibRewardCustody {
         // the reserved figures. Each bound reads the one figure its source
         // keeps; the ledger's keeps the deficit model where no reservation
         // stands ({deliveredFreshUncreditable}).
-        uint256 cut = deliveredFreshUncreditable(s);
-        if (cut > amount) cut = amount;
-        s.rewardBudgetArmedFreshReceived -= cut;
+        uncreditDeliveredFresh(s, amount);
         uint256 fromLive = liveFreshUnreserved(s);
         if (fromLive > amount) fromLive = amount;
         move(s, LibVaipakam.RewardCustodyRow.LiveFresh, LibVaipakam.RewardCustodyRow.Unclassified, fromLive);
@@ -3762,17 +3776,6 @@ library LibRewardCustody {
     /// @dev {RewardCustodyFacet.custodyDeliverClaim}: the claim's three legs to
     ///      the claimant's vault when asked and creditable, else to their
     ///      wallet. Returns whether the vault took it.
-    /// @dev 3b-ii-A2 (#2305) — {custodyDeliverClaimToVault}: the vault route
-    ///      with NO wallet fallback, for a claimant the sanctions path says
-    ///      may be paid into their vault and nowhere else.
-    function callDeliverClaimToVault(address user, uint256 fresh, uint256 recycled, uint256 epoch) internal {
-        _custody(
-            abi.encodeWithSignature(
-                "custodyDeliverClaimToVault(address,uint256,uint256,uint256)", user, fresh, recycled, epoch
-            )
-        );
-    }
-
     function callDeliverClaim(
         address user,
         uint256 fresh,

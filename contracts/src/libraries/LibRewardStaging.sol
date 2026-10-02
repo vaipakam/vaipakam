@@ -75,6 +75,15 @@ library LibRewardStaging {
         uint256 treasuryRecycled,
         uint8 venue
     );
+    /// @notice The record's claimant `user` is sanctions-flagged, so the
+    ///         day's user share — `fresh` and `recycled`, every source — was
+    ///         FORFEITED into the recycle bucket instead of delivered, with the
+    ///         treasury's own forfeit legs (owner decision 2026-10-02: reward
+    ///         VPFI not yet delivered to a flagged wallet is forfeited; value
+    ///         already in their vault stays frozen). `StagingPaid` for the same
+    ///         record reports the user figures as zero.
+    /// @custom:event-category state-change/reward-staging
+    event StagingClaimantForfeited(bytes32 indexed key, address indexed user, uint256 fresh, uint256 recycled);
     /// @notice An unwind page returned `batchId`'s staged components for `key`.
     /// @custom:event-category state-change/reward-staging
     event StagingUnwoundBatch(bytes32 indexed batchId, bytes32 indexed key, uint256 fresh, uint256 recycled);
@@ -378,23 +387,6 @@ library LibRewardStaging {
     function resolvePage(LibVaipakam.Storage storage s, bytes32 key) internal returns (bool done) {
         LibVaipakam.StagingRecord storage r = record(s, key);
         if (r.phase == LibVaipakam.StagingPhase.Reserved) {
-            // Pre-flight the delivery BEFORE the irreversible step (Codex #2308
-            // r18): a flagged claimant is paid into their vault and nowhere
-            // else, and a flagged wallet is never minted one (#821), so without
-            // a creditable vault the last page could not deliver — and a
-            // `Resolving` record cannot unwind. Refused here it stays
-            // `Reserved` and unwinds at its deadline: the vault or nothing,
-            // with nothing stuck. The predicate is the credit route's own
-            // ({LibVaipakam.vaultCreditable}). A claimant flagged AFTER this
-            // step is the case the record holds in `Resolving` until the flag
-            // lifts — visible, and completed by the same permissionless page.
-            if (
-                r.needUserFresh + r.needUserRecycled != 0
-                    && LibVaipakam.isSanctionedAddress(r.user)
-                    && !LibVaipakam.vaultCreditable(s, r.user)
-            ) {
-                revert IVaipakamErrors.StagingClaimantUndeliverable(key, r.user);
-            }
             r.phase = LibVaipakam.StagingPhase.Resolving;
         } else {
             _requirePhase(key, r, LibVaipakam.StagingPhase.Resolving);
@@ -471,6 +463,15 @@ library LibRewardStaging {
         uint256 liveTreasuryFresh = r.reservedLiveTreasuryFresh;
         uint256 liveUserRecycled = r.reservedLiveUserRecycled;
         uint256 freshSpend = r.reservedPoolCap;
+        // A claimant flagged by the sanctions oracle is not paid: reward VPFI
+        // not yet delivered to a flagged wallet is FORFEITED, while value
+        // already in their vault stays frozen there (owner decision
+        // 2026-10-02, rewards only — loan proceeds keep the wind-down freeze).
+        // Their share settles exactly as the day's forfeit (treasury) leg
+        // does, into the recycle bucket, so this page cannot fail for it and
+        // the record can never be trapped in `Resolving` (Codex #2308 r18,
+        // r21: a vault-only delivery reverted for a claimant with no vault).
+        bool forfeit = LibVaipakam.isSanctionedAddress(user);
         // What the pages CONSUMED of the epochs is paid out below, so it
         // leaves the staged earmark here and not a page earlier (Codex #2308
         // r14): the budget the reservation assigned, less what the batches
@@ -515,39 +516,44 @@ library LibRewardStaging {
         // The commitment retires by the full figure, the capped-off fresh
         // included, as the ordinary claim retires it.
         LibInteractionRewards.consumeArmedFresh(freshSpend + r.cappedOffFresh);
-        if (liveUserRecycled != 0) LibVpfiRecycle.consume(liveUserRecycled, false, 0);
-        LibInteractionRewards.chargeDeliveredFresh(s, liveUserFresh);
+        if (!forfeit) {
+            // Paid: the recycled leaves the bucket, the live fresh is charged
+            // to the delivered ledger. Forfeited, neither happens here — the
+            // settlement below absorbs the live fresh through the bounding
+            // operation (which charges that ledger itself) and releases the
+            // recycled commitment without a bucket debit.
+            if (liveUserRecycled != 0) LibVpfiRecycle.consume(liveUserRecycled, false, 0);
+            LibInteractionRewards.chargeDeliveredFresh(s, liveUserFresh);
+        }
 
         LibVaipakam.RewardDelivery venue = r.venueSet ? r.venue : LibVaipakam.RewardDelivery.Default;
         bool toVault = venue == LibVaipakam.RewardDelivery.Vault
             || (venue == LibVaipakam.RewardDelivery.Default && user.code.length == 0);
         uint256 userTotal = liveUserFresh + liveUserRecycled + r.epochUserFresh + r.epochUserRecycled;
         bool vaulted;
-        if (userTotal != 0 && !LibRewardCustody.active(s)) {
+        if (forfeit) {
+            emit StagingClaimantForfeited(
+                key, user, liveUserFresh + r.epochUserFresh, liveUserRecycled + r.epochUserRecycled
+            );
+        } else if (userTotal != 0 && !LibRewardCustody.active(s)) {
             // Custody inactive: the Diamond's balance pays, as it pays a
-            // claim — the vault first where the venue or the sanctions path
-            // asks for it, the wallet otherwise; a flagged claimant's payout
-            // goes to the vault or does not go (Codex #2308 r3).
-            vaulted = _payFromDiamond(s, user, userTotal, toVault || LibVaipakam.isSanctionedAddress(user), LibVaipakam.isSanctionedAddress(user));
+            // claim — the vault where the venue asks for it, the wallet
+            // otherwise.
+            vaulted = _payFromDiamond(s, user, userTotal, toVault);
         } else if (userTotal != 0) {
-            if (LibVaipakam.isSanctionedAddress(user)) {
-                // A claimant flagged since preparation is paid into their
-                // vault and nowhere else: no wallet fallback (Codex #2308 r1).
-                // Without a vault to credit the page reverts, and the record
-                // — resolving, beyond any deadline — stays until one can.
-                LibRewardCustody.callDeliverClaimToVault(
-                    user, liveUserFresh, liveUserRecycled, r.epochUserFresh + r.epochUserRecycled
-                );
-                vaulted = true;
-            } else {
-                vaulted = LibRewardCustody.callDeliverClaim(
-                    user, liveUserFresh, liveUserRecycled, r.epochUserFresh + r.epochUserRecycled, toVault
-                );
-            }
+            vaulted = LibRewardCustody.callDeliverClaim(
+                user, liveUserFresh, liveUserRecycled, r.epochUserFresh + r.epochUserRecycled, toVault
+            );
         }
+        // A forfeited claimant's share joins the treasury's forfeit legs, by
+        // the same three operations: live fresh absorbed into the bucket, epoch
+        // legs absorbed in place, the recycled commitment released.
+        uint256 forfeitLive = forfeit ? liveUserFresh : 0;
+        uint256 forfeitEpoch = forfeit ? r.epochUserFresh + r.epochUserRecycled : 0;
+        uint256 forfeitRecycled = forfeit ? liveUserRecycled + r.epochUserRecycled : 0;
         LibRewardCustody.callSettleClaimLegs(
-            liveTreasuryFresh,
-            r.epochTreasuryFresh + r.epochTreasuryRecycled,
+            liveTreasuryFresh + forfeitLive,
+            r.epochTreasuryFresh + r.epochTreasuryRecycled + forfeitEpoch,
             // The treasury's whole recycled figure — the claim path's own
             // argument (`res.toTreasury.recycled`), so the two paths state ONE
             // formula (Codex #2308 r18). The epoch-funded share it once
@@ -557,15 +563,15 @@ library LibRewardStaging {
             // the epochs for nothing — so `epochTreasuryRecycled` cannot be
             // non-zero, and nothing changes in value; only the two statements
             // can no longer drift apart if that ever changes.
-            r.needTreasuryRecycled + r.cappedOffRecycled,
-            r.epochUserRecycled,
+            r.needTreasuryRecycled + r.cappedOffRecycled + forfeitRecycled,
+            forfeit ? 0 : r.epochUserRecycled,
             0
         );
         emit StagingPaid(
             key,
             user,
-            liveUserFresh + r.epochUserFresh,
-            liveUserRecycled + r.epochUserRecycled,
+            forfeit ? 0 : liveUserFresh + r.epochUserFresh,
+            forfeit ? 0 : liveUserRecycled + r.epochUserRecycled,
             liveTreasuryFresh + r.epochTreasuryFresh,
             r.needTreasuryRecycled,
             uint8(vaulted ? LibVaipakam.RewardDelivery.Vault : LibVaipakam.RewardDelivery.Wallet)
@@ -682,8 +688,7 @@ library LibRewardStaging {
         LibVaipakam.Storage storage s,
         address user,
         uint256 amount,
-        bool toVault,
-        bool vaultOnly
+        bool toVault
     ) private returns (bool vaulted) {
         address vpfi = s.vpfiToken;
         if (toVault) {
@@ -691,7 +696,6 @@ library LibRewardStaging {
                 abi.encodeWithSignature("vaultCreditFromDiamondERC20(address,address,uint256)", user, vpfi, amount)
             );
             if (ok) return true;
-            if (vaultOnly) revert IVaipakamErrors.RewardCustodyVaultDeliveryFailed(user);
         }
         SafeERC20.safeTransfer(IERC20(vpfi), user, amount);
     }

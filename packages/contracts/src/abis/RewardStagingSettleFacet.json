@@ -119,6 +119,37 @@
   },
   {
     "type": "event",
+    "name": "StagingClaimantForfeited",
+    "inputs": [
+      {
+        "name": "key",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "user",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "fresh",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "recycled",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "StagingCooldownSet",
     "inputs": [
       {
@@ -3502,22 +3533,6 @@
         "name": "baseChainId",
         "type": "uint32",
         "internalType": "uint32"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "StagingClaimantUndeliverable",
-    "inputs": [
-      {
-        "name": "key",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "user",
-        "type": "address",
-        "internalType": "address"
       }
     ]
   },

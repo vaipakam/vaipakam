@@ -2615,6 +2615,12 @@ contract TestMutatorFacet {
         return LibVaipakam.storageSlot().liveFreshReserved;
     }
 
+    /// @notice 3b-ii-A2 test-only (Codex #2308 r21) — stand in for a staging
+    ///         record's reservation of the delivered ledger.
+    function setRewardBudgetArmedFreshReservedRaw(uint256 amount) external {
+        LibVaipakam.storageSlot().rewardBudgetArmedFreshReserved = amount;
+    }
+
     function rewardBudgetArmedFreshReservedRaw() external view returns (uint256) {
         return LibVaipakam.storageSlot().rewardBudgetArmedFreshReserved;
     }
