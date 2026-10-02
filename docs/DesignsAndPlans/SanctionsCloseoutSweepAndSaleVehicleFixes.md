@@ -252,6 +252,38 @@ on these paths, but the design flags it.)
 > released at its claim. The sanctions test is gone too: the funds belong to
 > the holder whether or not the holder can claim. Live loans are out of scope
 > (decided in #2357 — see ProjectDetailsREADME for the reasons).
+>
+> **The alternative #2357 weighed: a live exclusion kept correct by syncing at
+> every re-anchor.** Staleness is not inevitable. A live exclusion stays correct
+> if every write that changes a live loan's stored party re-runs the derivation
+> atomically, releasing the old party before the funds move and charging the new
+> one after. What that would take, measured against the tree at the time of the
+> decision:
+>
+> - Drop the terminal gate in `LibTierExclusion.sync` and the Active /
+>   FallbackPending skip in `VaipakamNFTFacet._syncTierExclusion`.
+>   `vpfiReservedOnSide` already reads the live collateral lien and the
+>   active-held reservation, so the amount side needs no new ledger.
+> - Add an ordered sync at each live stored-party writer. Today those are
+>   `LibConsolidation.consolidateToHolder`, `LibLoan.migrateLenderPosition` /
+>   `migrateBorrowerPosition`, and `PrecloseFacet`'s obligation handover. A future
+>   writer that forgets the sync leaves exactly the permanent over-exclusion
+>   this design avoids. The terminal-only rule cannot hit that failure, because
+>   nothing re-anchors a terminal loan.
+> - Accept the cost of those calls. `consolidateToHolder` is inlined into many
+>   close-out facets, so a cross-facet sync there adds bytecode to each of them,
+>   including facets near EIP-170. And because `LibEncumbrance`'s tier notify
+>   runs whenever a side carries a charge, every lien change on a transferred
+>   live loan (add collateral, partial withdrawal, partial repay) would pay a
+>   cross-facet call.
+>
+> What it would buy: the recorded party loses fee-tier credit on VPFI that is
+> economically the holder's, for the live part of the loan. That credit is a
+> discount on fees the party itself pays, clamped at 50%, and the funds
+> themselves stay reserved against the party throughout. Against the size, the
+> stored-party-writer discipline and the per-mutation cost, #2357 kept the
+> terminal-only rule. If a later decision wants the live window closed, this
+> list is the work.
 
 Encumbrance fixes the spend-as-free-balance leak but NOT the VPFI tier leak: the
 tier ring buffer is stamped from `protocolTrackedVaultBalance` (restampUserVpfi,
