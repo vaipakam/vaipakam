@@ -580,3 +580,66 @@ describe('visitProblemKinds', () => {
     );
   });
 });
+
+describe('the refinance posture banner (#2355)', () => {
+  // A borrower detail visit with the chooser and both paths present, so
+  // the only problem a case can produce is the one under test.
+  const borrower = (over) => ({
+    path: '/positions/7',
+    http: 200,
+    pageErrors: [],
+    chooser: true,
+    handover: true,
+    offset: true,
+    ...over,
+  });
+  const mismatch = {
+    verdict: 'fail',
+    failKind: 'chain',
+    why: 'the banner stated "off" while the chain posture was "on"',
+  };
+  const missing = {
+    verdict: 'fail',
+    failKind: 'observed',
+    why: 'the refinance form rendered WITHOUT its automatic-matching posture banner',
+  };
+
+  it('fails when its verdict is fail', () => {
+    expect(visitProblems(borrower({ refinancePostureVerdict: mismatch }), 'borrower')).toEqual([
+      `refinance posture banner: ${mismatch.why}`,
+    ]);
+  });
+
+  it('is reported ALONGSIDE a missing chooser, not swallowed by its early return', () => {
+    const problems = visitProblems(
+      borrower({ chooser: false, refinancePostureVerdict: missing }),
+      'borrower',
+    );
+    expect(problems).toContain(`refinance posture banner: ${missing.why}`);
+    expect(problems).toContain('borrower chooser MISSING on an eligible loan');
+  });
+
+  it('tags a chain-explainable mismatch as an absence, never promoted above the chain gates', () => {
+    const [p] = visitProblemKinds(borrower({ refinancePostureVerdict: mismatch }), 'borrower');
+    expect(p).toMatchObject({ kind: 'absence', blockable: true });
+  });
+
+  // #2368 r2 — a self-consistency defect read off the rendered form is
+  // definite: no unrelated routed request or allowlist gap can explain it,
+  // so infrastructure blockers must not bury it.
+  it('tags a DOM-read defect as observed and NOT blockable', () => {
+    const [p] = visitProblemKinds(borrower({ refinancePostureVerdict: missing }), 'borrower');
+    expect(p).toMatchObject({ kind: 'observed', blockable: false });
+  });
+
+  it('adds nothing for pass, blocked, or no verdict', () => {
+    for (const refinancePostureVerdict of [
+      { verdict: 'pass', why: 'ok' },
+      { verdict: 'blocked', why: 'slow' },
+      null,
+      undefined,
+    ]) {
+      expect(visitProblems(borrower({ refinancePostureVerdict }), 'borrower')).toEqual([]);
+    }
+  });
+});

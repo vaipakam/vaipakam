@@ -103,6 +103,12 @@ import {
   reconcileEligibility,
 } from './forcedCloseCard.mjs';
 import { requireSiteUrl } from './driver.mjs';
+import {
+  expectedPostureFrom,
+  postureCopyFrom,
+  refinancePostureCoverage,
+  refinancePostureVerdict,
+} from './refinancePosture.mjs';
 import { redactUrl } from './redact.mjs';
 import { isDetailPath, visitProblemKinds, visitVerdict } from './visitVerdict.mjs';
 import { walkOrderFor } from './walkOrder.mjs';
@@ -189,6 +195,41 @@ if (ROLE !== 'borrower' && ROLE !== 'lender') {
 const CHOOSER = ROLE === 'lender'
   ? { what: 'lender exit chooser (#1839)', title: /Your options as the lender/i }
   : { what: 'repay/exit chooser (#1505)', title: /Ways to repay or exit early/i };
+
+/**
+ * #2355 — `OBSERVE_REFINANCE_POSTURE=1` ALSO asserts the automatic-matching
+ * posture banner on the borrower's Refinance form. Opt-in, so every existing
+ * invocation (the batch runner's among them) observes exactly what it did.
+ *
+ * The form is an ADVANCED-mode surface, so the run seeds `app.mode` before
+ * the first paint — the chooser renders the same row titles in both modes,
+ * so its assertions are unaffected. It is also bound to the loan's STORED
+ * borrower (carry-over re-pledges that party's collateral), so a position
+ * held by a transferee is visited for the chooser and not judged here.
+ * Borrower-only: the form never renders for a lender, and an assertion that
+ * cannot run must not be accepted as a configuration.
+ */
+const REFI_POSTURE = process.env.OBSERVE_REFINANCE_POSTURE === '1';
+if (REFI_POSTURE && ROLE !== 'borrower') {
+  console.error(
+    `\nBLOCKED: OBSERVE_REFINANCE_POSTURE needs OBSERVE_ROLE=borrower, got "${ROLE}".` +
+      ` The refinance form never renders for a lender, so the assertion could not run.`,
+  );
+  process.exit(2);
+}
+// ROOT FIX (#2368 r8) — the posture assertion reviews a NAMED borrower's
+// position. Choosing one automatically meant mirroring every gate the
+// Refinance form mounts behind (transferred holder r1, sanctions r7, an
+// accepted lender sale r8, …), and each round found another; the operator
+// already knows which position the review is for. So the address is
+// required, and the cross-authority guesswork is gone rather than extended.
+if (REFI_POSTURE && !process.env.OBSERVE_ADDRESS) {
+  console.error(
+    '\nBLOCKED: OBSERVE_REFINANCE_POSTURE needs OBSERVE_ADDRESS — the borrower whose' +
+      ' position the posture review is for. It is not chosen automatically.',
+  );
+  process.exit(2);
+}
 
 // A mistyped OBSERVE_CHAIN_ID, or one this repo has no deployment for,
 // is a SETUP precondition — the same category as an absent wallet file
@@ -290,6 +331,98 @@ const MALFORMED_RPC = '<malformed json-rpc>';
 
 const pub = createPublicClient({ transport: http(RPC) });
 
+/**
+ * #2355 — the three switches the posture banner is derived from, read the
+ * way the app reads them: all three PINNED to one block, so a staged
+ * governance flip cannot combine into a posture that never existed. `null`
+ * on any failure — the verdict then blocks rather than guessing, and this
+ * deliberately does not go through `discovery()`, which would end the run
+ * over a read that only one assertion consumes.
+ */
+async function chainPosture(atBlock = null) {
+  try {
+    const blockNumber = atBlock ?? (await pub.getBlockNumber({ cacheTime: 0 }));
+    const read = (functionName) =>
+      pub.readContract({ address: DIAMOND, abi: DIAMOND_ABI_VIEM, functionName, blockNumber });
+    const [paused, autoRefinance, flags] = await Promise.all([
+      read('paused'),
+      read('getAutoRefinanceEnabled'),
+      read('getMasterFlags'),
+    ]);
+    return { paused, autoRefinance, partialFill: flags[2], blockNumber };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * #2368 r6 → ROOT FIX r8 — did the posture HOLD between the two bracketing
+ * reads? Endpoint samples alone cannot see an on → off → on excursion, and
+ * an event list cannot either: rounds 6–8 kept finding a write that emits
+ * something else (`AutoPaused`) and a change that emits nothing at all (an
+ * auto-pause EXPIRING — `paused()` compares `pausedUntilTimestamp` against
+ * `block.timestamp`). So instead of enumerating causes, the posture itself
+ * is read AT EVERY BLOCK in (before, after] — the same three switches, the
+ * same mapping — which covers any cause, time-based ones included.
+ *
+ * Bounded: an interval over `POSTURE_SCAN_MAX_BLOCKS` is not scanned and
+ * reads as unknown stability. Returns `{ scanned: true, changes }` where
+ * `changes` counts blocks whose posture differs from the first read, or
+ * `{ scanned: false }` — which the verdict treats as BLOCKED, never a pass.
+ */
+const POSTURE_SCAN_MAX_BLOCKS = 600n;
+/**
+ * #2368 r11 → r12 — the page reads through its OWN provider, which may lag
+ * this drive's. r11 assumed a fixed lag margin; r12 measures it instead.
+ * `pageFloor` is the lowest head the page's Diamond-serving endpoints
+ * announced, passed ONLY when `floorEstablishedFor` holds (every endpoint
+ * the page used announced a head before it read), so it soundly bounds the
+ * page's reads from below. The scan then starts there. No established
+ * floor → the page's read window is unbounded → `scanned: false` → BLOCKED.
+ */
+async function postureIntervalScan(before, after, pageFloor, pageCeiling) {
+  if (!before || !after) return { scanned: false };
+  if (typeof pageFloor !== 'bigint' || pageFloor <= 0n) return { scanned: false };
+  // #2368 r13 — and from ABOVE: a page provider AHEAD of this drive's can
+  // have served a block past `after`. The ceiling (asked after the scrape,
+  // highest across every endpoint the page used, sound only when all of
+  // them answered) extends the scan's top; without one, BLOCKED.
+  if (typeof pageCeiling !== 'bigint' || pageCeiling <= 0n) return { scanned: false };
+  // Equal heads: a zero-length interval, nothing to scan. A LOWER second
+  // head (a load-balanced RPC answering from a lagging backend, or a reorg)
+  // is not a chronological interval at all, so stability is unknown
+  // (#2368 r7) — never a clean zero-change result.
+  if (after.blockNumber < before.blockNumber) return { scanned: false };
+  const from = pageFloor < before.blockNumber ? pageFloor : before.blockNumber;
+  const to = pageCeiling > after.blockNumber ? pageCeiling : after.blockNumber;
+  if (to - from > POSTURE_SCAN_MAX_BLOCKS) return { scanned: false };
+  const want = expectedPostureFrom(before);
+  const blocks = [];
+  // EVERY block, the first sample's own included (#2368 r12): a reorg can
+  // replace `before.blockNumber` with a canonical block of another posture
+  // while the heads keep moving forward.
+  for (let n = from; n <= to; n++) blocks.push(n);
+  let changes = 0;
+  for (let i = 0; i < blocks.length; i += 10) {
+    const reads = await Promise.all(blocks.slice(i, i + 10).map((n) => chainPosture(n)));
+    for (const r of reads) {
+      if (r === null) return { scanned: false };
+      if (expectedPostureFrom(r) !== want) changes += 1;
+    }
+  }
+  return { scanned: true, changes };
+}
+
+/** Would the Refinance form render for the observed wallet on this loan? —
+ *  the parts of its gate this drive can know before visiting: the chooser's
+ *  own eligibility (the candidate pool), plus the holder being the STORED
+ *  borrower. Everything else it is gated on is read by the page. */
+const refiApplicable = (loan) =>
+  REFI_POSTURE &&
+  loan !== null &&
+  loan.authority !== null &&
+  loan.authority.toLowerCase() === String(loan.borrower).toLowerCase();
+
 /** Origin of the configured RPC, or null if `OBSERVE_RPC` is unparseable.
  *  Declared before `redactUrl` because that is where it is load-bearing. */
 const RPC_ORIGIN = (() => {
@@ -380,6 +513,21 @@ if (servedChainId !== CHAIN_ID) {
       ` OBSERVE_CHAIN_ID to ${servedChainId}.`,
   );
   process.exit(2);
+}
+if (REFI_POSTURE) {
+  // Printed BEFORE discovery, so a run that blocks on an empty candidate
+  // pool still records which sentence the deployed form would have had to
+  // state — but only AFTER the RPC's chain id is verified (#2368 r3), so a
+  // wrong-network endpoint cannot get another deployment's switches into
+  // the report as this chain's. Informational: every judged visit re-reads.
+  const sw = await chainPosture();
+  console.log(
+    sw
+      ? `posture   @${sw.blockNumber}: paused=${sw.paused} autoRefinance=${sw.autoRefinance}` +
+          ` partialFill=${sw.partialFill} (this drive's RPC) → the form is expected to state` +
+          ` "${expectedPostureFrom(sw)}"; a page whose own provider disagrees is BLOCKED, not failed`
+      : 'posture   UNREAD at startup (each judged visit re-reads it)',
+  );
 }
 
 // One height for the whole discovery walk — see the pagination note.
@@ -478,6 +626,29 @@ const FORCED_CLOSE_COPY = (() => {
     process.exit(2);
   }
 })();
+
+// The four posture sentences, from the same catalogue as the forced-close
+// copy and classified the same way: a missing key in THIS repo is a drive
+// that cannot judge, never a product defect.
+const REFI_POSTURE_COPY = REFI_POSTURE
+  ? (() => {
+      try {
+        return postureCopyFrom(
+          JSON.parse(
+            fs.readFileSync(
+              path.join(path.dirname(fileURLToPath(import.meta.url)), '../../src/i18n/locales/en.json'),
+              'utf8',
+            ),
+          ),
+        );
+      } catch (err) {
+        console.log(
+          `\nBLOCKED: the drive's own copy bundle could not be read.\n  ${err.message}`,
+        );
+        process.exit(2);
+      }
+    })()
+  : null;
 
 /**
  * Read and validate the forced-close copy this drive matches against.
@@ -1406,7 +1577,12 @@ if (dropped > 0) {
 // further down — the two used to answer this question separately, or not
 // at all. See the round-29 note in the sort.
 const acceptedSale = new Set();
-if (ROLE === 'lender') {
+// #2368 r9 — a posture run needs this too: PositionDetails suppresses the
+// Refinance form while a lender sale awaits completion
+// (`saleCompletionPending`), so within the named borrower's capped walk
+// those positions go last. Same probe, same classification; only the
+// requested borrower's loans are probed (OBSERVE_ADDRESS is required).
+if (ROLE === 'lender' || REFI_POSTURE) {
   // ROUND 52 P2 — THROUGH `discovery()`, so the one error this loop
   // deliberately rethrows exits BLOCKED rather than FAIL.
   //
@@ -1441,7 +1617,8 @@ if (ROLE === 'lender') {
   const saleCandidates = eligible.filter(
     (x) =>
       x.status === STATUS_ACTIVE &&
-      (!requestedAuthority || x.authority.toLowerCase() === requestedAuthority),
+      (!requestedAuthority || x.authority.toLowerCase() === requestedAuthority) &&
+      (ROLE === 'lender' || refiApplicable(x)),
   );
   await discovery('ranking loans by accepted sale', async () => {
     for (const l of saleCandidates) {
@@ -2252,6 +2429,18 @@ await discovery('exposing the wallet binding', () =>
 await discovery('installing the provider init script', () =>
   ctx.addInitScript(initScript),
 );
+if (REFI_POSTURE) {
+  // The Refinance form is an Advanced-mode surface; see `REFI_POSTURE`.
+  await discovery('seeding Advanced mode', () =>
+    ctx.addInitScript(() => {
+      try {
+        localStorage.setItem('app.mode', 'advanced');
+      } catch {
+        /* storage refused — the form then cannot render, and the verdict blocks */
+      }
+    }),
+  );
+}
 
 /**
  * The clock the floor's ordering proof is measured on.
@@ -2403,6 +2592,21 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
     pageHeadBeforeNav = sample.head;
     pageSampledBeforeNav = sample.sampled;
   }
+  const judgePosture = ROLE === 'borrower' && loan !== null && refiApplicable(loan);
+  if (judgePosture) {
+    // #2368 r12 — the same pre-navigation provider sample the lender path
+    // takes, for the same reason: the app issues `eth_call`s before an
+    // endpoint has announced any head, so without this sample
+    // `floorEstablishedFor` cannot bound those reads and the posture floor
+    // would never be established. Borrower-only, so it never shares a visit
+    // with the lender sample above.
+    const postureSample = await pageProviderHead();
+    pageHeadBeforeNav = postureSample.head;
+    pageSampledBeforeNav = postureSample.sampled;
+  }
+  // #2355 — the chain posture BEFORE the page loads, so the observation is
+  // bracketed by two reads (the second follows the scrape).
+  const postureBefore = judgePosture ? await chainPosture() : null;
   const pageErrors = [];
   const consoleErrors = [];
   page.on('pageerror', (e) => pageErrors.push(String(e).replace(/\s+/g, ' ').slice(0, 300)));
@@ -2430,7 +2634,15 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
     await page.waitForTimeout(4_000);
   } catch (e) {
     await page.close();
-    return { path, nav: String(e).replace(/\s+/g, ' ').slice(0, 180), pageErrors, consoleErrors };
+    return {
+      path,
+      nav: String(e).replace(/\s+/g, ' ').slice(0, 180),
+      pageErrors,
+      consoleErrors,
+      // #2368 r7 — carried so the report does not claim a holder mismatch
+      // for a candidate that was applicable and merely failed to load.
+      refinancePostureApplicable: judgePosture,
+    };
   }
   const text = await page.evaluate(() => document.body.innerText);
   const hooks = pageErrors.some((e) =>
@@ -2452,6 +2664,53 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
       : null;
   const holdCard = await page.getByTestId('sale-listing-hold-card').count();
   const freeHeld = await page.getByTestId('free-held-options').count();
+  const refinancePosture = judgePosture ? await observeRefinancePosture(page) : null;
+  // #2368 r14 — drain the in-flight head parses FIRST, so a Diamond-serving
+  // fallback still inside the response parser is admitted before EITHER
+  // bound is taken; both the ceiling and the floor below are used only when
+  // the drain completed.
+  const postureFloorDrained = judgePosture ? await settleHeadReads(page) : false;
+  // #2368 r13 — the page provider's CEILING, asked after the scrape (heads do
+  // not go backwards, so it bounds every read served during it) and kept only
+  // when every Diamond-serving endpoint the page used answered — the lender
+  // path's `ceilingSound` rule.
+  let posturePageCeiling = 0n;
+  if (judgePosture && postureFloorDrained) {
+    const postureCeiling = await pageProviderCeiling(page);
+    const sound =
+      postureCeiling.head > 0n &&
+      [...diamondKeysOf(page)].every((k) => postureCeiling.sampled.has(k) || isForeign(k));
+    if (sound) posturePageCeiling = postureCeiling.head;
+  }
+  const postureAfter = judgePosture ? await chainPosture() : null;
+  // The page's read window, bounded from below only when every endpoint it
+  // used is (see `postureIntervalScan`). In-flight head parses are drained
+  // first so the floor reflects what the page had announced.
+  let posturePageFloor = 0n;
+  if (judgePosture) {
+    // An undrained sample leaves the floor unsound (a lagging endpoint's
+    // pending head would land below it), so it is not used at all. When
+    // every endpoint is bounded, the floor is the LOWER of the
+    // pre-navigation sample and the lowest announced head.
+    if (postureFloorDrained && floorEstablishedFor(page, pageSampledBeforeNav)) {
+      const announced = pageHeadFloorOf(page);
+      const preNav = typeof pageHeadBeforeNav === 'bigint' ? pageHeadBeforeNav : 0n;
+      posturePageFloor =
+        preNav > 0n && (announced === 0n || preNav < announced) ? preNav : announced;
+    }
+  }
+  const postureInterval = judgePosture
+    ? await postureIntervalScan(postureBefore, postureAfter, posturePageFloor, posturePageCeiling)
+    : null;
+  const refinancePostureObs = judgePosture
+    ? {
+        applicable: true,
+        before: postureBefore,
+        after: postureAfter,
+        interval: postureInterval,
+        ...refinancePosture,
+      }
+    : null;
   const out = {
     path,
     http,
@@ -2528,9 +2787,101 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
     holdCard: holdCard > 0,
     freeHeld: freeHeld > 0,
     connected: !/Connect wallet/i.test(text.slice(0, 400)),
+    // #2355 — what the banner stated, the chain on both sides of it, and the
+    // verdict from its own module. `pageText` is dropped from the record:
+    // the verdict has used it, and the body text is already in `text`.
+    refinancePosture: refinancePostureObs
+      ? (({ pageText, ...rest }) => rest)(refinancePostureObs)
+      : null,
+    refinancePostureVerdict: refinancePostureObs
+      ? refinancePostureVerdict(refinancePostureObs, REFI_POSTURE_COPY)
+      : null,
   };
   await page.close();
   return out;
+}
+
+/**
+ * #2355 — scrape the posture banner inside the Refinance form.
+ *
+ * Polls until the banner states a KNOWN posture or 45 s pass: the banner
+ * renders `unknown` while the page's own read is in flight, so the first
+ * paint is not the answer. Scoped to `#refinance-card`'s own card, so the
+ * standing-request card (which carries the same banner) cannot stand in
+ * for the form. The whole-page text is taken at the same moment, for the
+ * "no other posture sentence anywhere" check.
+ *
+ * Watch-only: it reads the DOM and clicks nothing.
+ */
+async function observeRefinancePosture(page) {
+  const deadline = Date.now() + 45_000;
+  try {
+    for (;;) {
+      const snap = await page.evaluate(() => {
+        const form = document.querySelector('#refinance-card section.card');
+        // #2368 r3/r4 — a banner that is MOUNTED but not seen discloses
+        // nothing, so only a visible one counts:
+        //   - rendered: no display:none / visibility:hidden / zero opacity on
+        //     it or an ancestor, per `checkVisibility`;
+        //   - a non-empty box after intersecting it with every ancestor that
+        //     CLIPS (`overflow: hidden` / `clip` on either axis). A scroll
+        //     container (`auto` / `scroll`) is not treated as clipping: its
+        //     content is reachable by scrolling, so it is still disclosed.
+        // A hidden banner then reads as the missing-banner FAIL.
+        const seen = (el) => {
+          const visible =
+            typeof el.checkVisibility === 'function'
+              ? el.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })
+              : el.offsetParent !== null;
+          if (!visible) return false;
+          const r = el.getBoundingClientRect();
+          let left = r.left;
+          let top = r.top;
+          let right = r.right;
+          let bottom = r.bottom;
+          const clips = (v) => v === 'hidden' || v === 'clip';
+          for (let a = el.parentElement; a; a = a.parentElement) {
+            const cs = getComputedStyle(a);
+            const cx = clips(cs.overflowX);
+            const cy = clips(cs.overflowY);
+            if (!cx && !cy) continue;
+            const ar = a.getBoundingClientRect();
+            if (cx) {
+              left = Math.max(left, ar.left);
+              right = Math.min(right, ar.right);
+            }
+            if (cy) {
+              top = Math.max(top, ar.top);
+              bottom = Math.min(bottom, ar.bottom);
+            }
+          }
+          return right - left > 0 && bottom - top > 0;
+        };
+        const mounted = form ? [...form.querySelectorAll('[data-auto-match-posture]')] : [];
+        const banners = mounted.filter(seen);
+        return {
+          formPresent: Boolean(form),
+          bannerCount: banners.length,
+          hiddenBannerCount: mounted.length - banners.length,
+          attr: banners[0]?.getAttribute('data-auto-match-posture') ?? null,
+          text: banners[0]?.innerText ?? null,
+          pageText: document.body.innerText,
+        };
+      });
+      const known = snap.bannerCount > 0 && snap.attr !== 'unknown';
+      if (known || Date.now() >= deadline) return { ...snap, error: null };
+      await page.waitForTimeout(1_000);
+    }
+  } catch (e) {
+    return {
+      formPresent: false,
+      bannerCount: 0,
+      attr: null,
+      text: null,
+      pageText: '',
+      error: String(e).replace(/\s+/g, ' ').slice(0, 160),
+    };
+  }
 }
 
 /**
@@ -2602,7 +2953,19 @@ async function stillEligible(loan) {
   // exactly the "nothing decided minutes ago" gate and the other volatile
   // inputs already come through it. Lender-only: the borrower card is not
   // gated on the lender's sale.
-  if (ROLE === 'lender') {
+  // #2368 r10 — a posture run re-reads it too: a sale accepted after the
+  // pre-pass leaves the Refinance form correctly suppressed, so the visit
+  // could only BLOCK and would spend the cap. Skipped here as raced-out,
+  // which does not count against `OBSERVE_MAX_POSITIONS`.
+  // #2368 r14 — on a posture run, only after the gates already read say the
+  // candidate is still live: an offset lock or a burned/transferred token
+  // skips it anyway, and a transient failure of this now-irrelevant probe
+  // would otherwise end the whole run as BLOCKED through `discovery()`.
+  const posturePreGatesHold =
+    !lockedNow &&
+    authorityNow !== null &&
+    authorityNow.toLowerCase() === observed.toLowerCase();
+  if (ROLE === 'lender' || (REFI_POSTURE && refiApplicable(loan) && posturePreGatesHold)) {
     const soldNow = await discovery(
       `re-reading the accepted sale on loan ${loan.id} before visiting it`,
       () => saleLockedOn(loan.lenderTokenId, loan.id, undefined, authorityNow ?? loan.authority),
@@ -7331,13 +7694,25 @@ let observedDetails = 0;
 // the reason `acceptedSale` was moved before it: a ranking applied only
 // to the selected authority's loans cannot recover a better candidate one
 // authority away.
-const readyFirst = walkOrderFor({
-  loans: mine,
-  role: ROLE,
-  activeStatus: STATUS_ACTIVE,
-  acceptedSale,
-  acceptsCloseOut,
-});
+// #2355 — with the posture assertion requested, positions the Refinance
+// form can render on go first: a stable partition, so the chooser's own
+// order is kept within each band and only WHICH loans fill the cap moves.
+// #2368 r9 — and a position awaiting a lender sale's completion goes after
+// the usable ones: its form is correctly suppressed, so it can only BLOCK.
+const refiUsable = (l) => refiApplicable(l) && !acceptedSale.has(l.id);
+const refiFirst = (order) =>
+  REFI_POSTURE
+    ? [...order.filter(refiUsable), ...order.filter((l) => !refiUsable(l))]
+    : order;
+const readyFirst = refiFirst(
+  walkOrderFor({
+    loans: mine,
+    role: ROLE,
+    activeStatus: STATUS_ACTIVE,
+    acceptedSale,
+    acceptsCloseOut,
+  }),
+);
 if (acceptsCloseOut.size > 0) {
   // ROUND 79 P2 — SAY WHAT THIS RUN ACTUALLY DID.
   //
@@ -7371,6 +7746,15 @@ if (demoted.length > 0) {
     `\ndeprioritised ${demoted.length} Active position(s) with an accepted sale ` +
       `awaiting completion: ${demoted.join(', ')}` +
       `\n  → the card is correctly unmounted there, so they cannot exercise it.`,
+  );
+}
+if (REFI_POSTURE) {
+  const n = mine.filter(refiApplicable).length;
+  console.log(
+    `asserting refinance posture banner (#2355) on ${n} of ${mine.length} eligible loan(s)` +
+      (n < mine.length
+        ? ` — the rest are held by someone other than the stored borrower, which the form excludes`
+        : ''),
   );
 }
 for (const l of readyFirst) {
@@ -7570,7 +7954,20 @@ for (const v of visited) {
               ` confirmedAt=${v.forcedCloseConfirmedAt ?? 'n/a'}`
             : '')
         : `      chooser=${v.chooser} handover=${v.handover} offset=${v.offset}` +
-        ` holdCard=${v.holdCard} freeHeldBtn=${v.freeHeld}`,
+          ` holdCard=${v.holdCard} freeHeldBtn=${v.freeHeld}` +
+          // Printed on every judged visit, pass or not, so "checked and
+          // fine" is distinguishable from "never looked".
+          (v.refinancePostureVerdict
+            ? `\n      refinance-posture: ${v.refinancePostureVerdict.verdict}` +
+              ` expected=${v.refinancePostureVerdict.expected ?? 'unread'}` +
+              ` observed=${v.refinancePostureVerdict.observed ?? 'none'}` +
+              ` form=${v.refinancePosture?.formPresent} banners=${v.refinancePosture?.bannerCount}` +
+              ` (${v.refinancePostureVerdict.why})`
+            : REFI_POSTURE && detail
+              ? v.refinancePostureApplicable
+                ? '\n      refinance-posture: not judged (the page did not load — see the navigation finding)'
+                : '\n      refinance-posture: not judged (holder is not the stored borrower)'
+              : ''),
     );
   }
   problems.forEach((p) => console.log(`      ! ${p}`));
@@ -8067,6 +8464,14 @@ if (!visited.some((v) => /^\/positions\/\d+$/.test(v.path))) {
 // are: a real regression is still reported as one.
 if (fcGap) {
   console.log(`\nBLOCKED: ${fcGap}.`);
+  process.exit(2);
+}
+// #2355 — the same rule for the posture banner: requested and never made,
+// or made and unable to complete, is not a clean run. Ranked last, so every
+// failure and every earlier blocker is reported first.
+const refiGap = refinancePostureCoverage(visited, REFI_POSTURE);
+if (refiGap) {
+  console.log(`\nBLOCKED: ${refiGap}.`);
   process.exit(2);
 }
 process.exit(0);
