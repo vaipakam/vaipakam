@@ -2665,12 +2665,17 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
   const holdCard = await page.getByTestId('sale-listing-hold-card').count();
   const freeHeld = await page.getByTestId('free-held-options').count();
   const refinancePosture = judgePosture ? await observeRefinancePosture(page) : null;
+  // #2368 r14 — drain the in-flight head parses FIRST, so a Diamond-serving
+  // fallback still inside the response parser is admitted before EITHER
+  // bound is taken; both the ceiling and the floor below are used only when
+  // the drain completed.
+  const postureFloorDrained = judgePosture ? await settleHeadReads(page) : false;
   // #2368 r13 — the page provider's CEILING, asked after the scrape (heads do
   // not go backwards, so it bounds every read served during it) and kept only
   // when every Diamond-serving endpoint the page used answered — the lender
   // path's `ceilingSound` rule.
   let posturePageCeiling = 0n;
-  if (judgePosture) {
+  if (judgePosture && postureFloorDrained) {
     const postureCeiling = await pageProviderCeiling(page);
     const sound =
       postureCeiling.head > 0n &&
@@ -2683,7 +2688,6 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
   // first so the floor reflects what the page had announced.
   let posturePageFloor = 0n;
   if (judgePosture) {
-    const postureFloorDrained = await settleHeadReads(page);
     // An undrained sample leaves the floor unsound (a lagging endpoint's
     // pending head would land below it), so it is not used at all. When
     // every endpoint is bounded, the floor is the LOWER of the
@@ -2953,7 +2957,15 @@ async function stillEligible(loan) {
   // pre-pass leaves the Refinance form correctly suppressed, so the visit
   // could only BLOCK and would spend the cap. Skipped here as raced-out,
   // which does not count against `OBSERVE_MAX_POSITIONS`.
-  if (ROLE === 'lender' || (REFI_POSTURE && refiApplicable(loan))) {
+  // #2368 r14 — on a posture run, only after the gates already read say the
+  // candidate is still live: an offset lock or a burned/transferred token
+  // skips it anyway, and a transient failure of this now-irrelevant probe
+  // would otherwise end the whole run as BLOCKED through `discovery()`.
+  const posturePreGatesHold =
+    !lockedNow &&
+    authorityNow !== null &&
+    authorityNow.toLowerCase() === observed.toLowerCase();
+  if (ROLE === 'lender' || (REFI_POSTURE && refiApplicable(loan) && posturePreGatesHold)) {
     const soldNow = await discovery(
       `re-reading the accepted sale on loan ${loan.id} before visiting it`,
       () => saleLockedOn(loan.lenderTokenId, loan.id, undefined, authorityNow ?? loan.authority),
