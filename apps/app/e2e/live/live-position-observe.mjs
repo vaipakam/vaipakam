@@ -361,7 +361,12 @@ const POSTURE_EVENTS = parseAbi([
 ]);
 async function postureIntervalScan(before, after) {
   if (!before || !after) return { scanned: false };
-  if (after.blockNumber <= before.blockNumber) return { scanned: true, changes: 0 };
+  // Equal heads: a zero-length interval, nothing to scan. A LOWER second
+  // head (a load-balanced RPC answering from a lagging backend, or a reorg)
+  // is not a chronological interval at all, so stability is unknown
+  // (#2368 r7) — never a clean zero-change result.
+  if (after.blockNumber === before.blockNumber) return { scanned: true, changes: 0 };
+  if (after.blockNumber < before.blockNumber) return { scanned: false };
   try {
     const logs = await pub.getLogs({
       address: DIAMOND,
@@ -1730,6 +1735,26 @@ if (!observed) {
   // returns false on that read alone for an unlocked position and only
   // simulates for a locked one, so the common case stays a single cheap
   // call.
+  // #2368 r7 — sanctions are a definitive mount gate for the Refinance
+  // form too (PositionDetails suppresses the whole strategy block for a
+  // flagged holder), so a flagged authority must not win the posture
+  // ranking over an unflagged one. Resolved before the synchronous sort.
+  // A read that FAILS leaves the authority ranked as capable — ranking it
+  // down on a read that did not answer would hand the run to a worse
+  // candidate on no evidence (the round-29 rule) — and the form's absence
+  // on its visits then reads BLOCKED, never a FAIL.
+  const refiSanctioned = new Map();
+  if (REFI_POSTURE) {
+    for (const [k, loans] of byAuthority) {
+      if (!loans.some(refiApplicable)) continue;
+      try {
+        refiSanctioned.set(k, await sanctionedAuthority(loans[0].authority));
+      } catch {
+        refiSanctioned.set(k, null);
+      }
+    }
+  }
+  const refiCapable = ([k, loans]) => loans.some(refiApplicable) && refiSanctioned.get(k) !== true;
   const applicableCount = (loans) =>
     loans.filter((l) => l.status === STATUS_ACTIVE && !acceptedSale.has(l.id)).length;
   const capableCount = (loans) => loans.filter((l) => acceptsCloseOut.has(l.id)).length;
@@ -1752,8 +1777,7 @@ if (!observed) {
     // `refiFirst` partition below stays, for the visit cap WITHIN the
     // chosen authority.
     if (REFI_POSTURE) {
-      const byRefi =
-        (b[1].some(refiApplicable) ? 1 : 0) - (a[1].some(refiApplicable) ? 1 : 0);
+      const byRefi = (refiCapable(b) ? 1 : 0) - (refiCapable(a) ? 1 : 0);
       if (byRefi !== 0) return byRefi;
     }
     return b[1].length - a[1].length;
@@ -2591,7 +2615,15 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
     await page.waitForTimeout(4_000);
   } catch (e) {
     await page.close();
-    return { path, nav: String(e).replace(/\s+/g, ' ').slice(0, 180), pageErrors, consoleErrors };
+    return {
+      path,
+      nav: String(e).replace(/\s+/g, ' ').slice(0, 180),
+      pageErrors,
+      consoleErrors,
+      // #2368 r7 — carried so the report does not claim a holder mismatch
+      // for a candidate that was applicable and merely failed to load.
+      refinancePostureApplicable: judgePosture,
+    };
   }
   const text = await page.evaluate(() => document.body.innerText);
   const hooks = pageErrors.some((e) =>
@@ -7865,7 +7897,9 @@ for (const v of visited) {
               ` form=${v.refinancePosture?.formPresent} banners=${v.refinancePosture?.bannerCount}` +
               ` (${v.refinancePostureVerdict.why})`
             : REFI_POSTURE && detail
-              ? '\n      refinance-posture: not judged (holder is not the stored borrower)'
+              ? v.refinancePostureApplicable
+                ? '\n      refinance-posture: not judged (the page did not load — see the navigation finding)'
+                : '\n      refinance-posture: not judged (holder is not the stored borrower)'
               : ''),
     );
   }
