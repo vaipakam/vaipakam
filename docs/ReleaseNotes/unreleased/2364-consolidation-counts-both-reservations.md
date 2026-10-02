@@ -1,4 +1,4 @@
-## Thread — A fully reserved held VPFI amount no longer blocks a lender holder from consolidating (PR #TBD)
+## Thread — A fully reserved held VPFI amount no longer blocks a lender holder from consolidating (PR #2367)
 
 Consolidation moves a transferred lender position onto its current holder, and the VPFI held for that position moves with it. The platform refuses to consolidate while part of that held VPFI is unreserved, because the unreserved part would become a balance the holder could withdraw before claiming.
 
