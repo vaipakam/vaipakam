@@ -64,7 +64,9 @@ library LibRewardStaging {
     /// @custom:event-category state-change/reward-staging
     event StagingResolvedBatch(bytes32 indexed batchId, bytes32 indexed key, uint256 fresh, uint256 recycled);
     /// @notice The record's last page paid the day: the user's and the
-    ///         treasury's fresh and recycled, by source.
+    ///         treasury's fresh and recycled, by source. Where the user's
+    ///         share went is {StagingDelivered}'s to say — or
+    ///         {StagingClaimantForfeited}'s; this event claims no venue.
     /// @custom:event-category state-change/reward-staging
     event StagingPaid(
         bytes32 indexed key,
@@ -72,9 +74,17 @@ library LibRewardStaging {
         uint256 userFresh,
         uint256 userRecycled,
         uint256 treasuryFresh,
-        uint256 treasuryRecycled,
-        uint8 venue
+        uint256 treasuryRecycled
     );
+    /// @notice The record's user share — `amount`, every source — was
+    ///         DELIVERED to `user` at `venue`: the venue the delivery actually
+    ///         reached (the vault, or the wallet by choice or by fallback).
+    ///         Emitted only when a delivery happened; a forfeited share emits
+    ///         {StagingClaimantForfeited} instead, so no consumer reads a
+    ///         venue for value that never moved to the claimant (Codex #2308
+    ///         r22).
+    /// @custom:event-category state-change/reward-staging
+    event StagingDelivered(bytes32 indexed key, address indexed user, uint256 amount, uint8 venue);
     /// @notice The record's claimant `user` is sanctions-flagged, so the
     ///         day's user share — `fresh` and `recycled`, every source — was
     ///         FORFEITED into the recycle bucket instead of delivered, with the
@@ -87,6 +97,16 @@ library LibRewardStaging {
     /// @notice An unwind page returned `batchId`'s staged components for `key`.
     /// @custom:event-category state-change/reward-staging
     event StagingUnwoundBatch(bytes32 indexed batchId, bytes32 indexed key, uint256 fresh, uint256 recycled);
+    /// @notice Record `key` is STALE: `entryId`, one of its committed
+    ///         entries, changed lifecycle since the reservation — forfeited,
+    ///         defaulted, liquidated, expired, or closed before the day — so
+    ///         its committed destination split no longer matches what the
+    ///         live primitive would route. It is unwound, never resolved on
+    ///         that split (the ratified design's revalidation at the first
+    ///         irreversible page; Codex #2308 r23): emitted by the resolution
+    ///         page that found it, or by the unwind anyone may run at once.
+    /// @custom:event-category state-change/reward-staging
+    event StagingRecordStale(bytes32 indexed key, uint256 indexed entryId);
     /// @notice The record is gone: unwound (`paid == false`) or paid.
     /// @custom:event-category state-change/reward-staging
     event StagingRecordClosed(bytes32 indexed key, bool paid);
@@ -210,9 +230,18 @@ library LibRewardStaging {
             r.lateSeen = bytes32(0);
             r.lateGenSeen = gen;
             // The restart re-walks the whole chain, history included: the
-            // chain's count now is work restored, and the deadline counts it
-            // for every restart, not only the first (Codex #2308 r5, r10).
-            r.lateWorkRestored += s.transportDayLateCount[r.day];
+            // pages that walk needs — at least one — are forced on the
+            // record, and the deadline counts them for every restart, not
+            // only the first (Codex #2308 r5, r10, r22).
+            r.forcedPages += LibRewardCustody.scanPagesOf(s.transportDayLateCount[r.day]);
+        } else if (LibRewardCustody.forcedScanItems(s, r) != 0) {
+            // A call FORCED after the scan had completed — the list grew, a
+            // restoration landed, a passed epoch became stageable — is a page
+            // of its own in the lease (Codex #2308 r22), however little it
+            // walks; read before this scan takes the work. A call with
+            // nothing new counts nothing: the stager cannot lengthen the
+            // lease by calling.
+            ++r.forcedPages;
         }
         (
             bytes32[] memory ids,
@@ -380,6 +409,18 @@ library LibRewardStaging {
     function resolvePage(LibVaipakam.Storage storage s, bytes32 key) internal returns (bool done) {
         LibVaipakam.StagingRecord storage r = record(s, key);
         if (r.phase == LibVaipakam.StagingPhase.Reserved) {
+            // The first irreversible page REVALIDATES the commitment against
+            // the entries' current lifecycle (Codex #2308 r23; the design's
+            // rule): a record whose split is stale is unwound here and now,
+            // never resolved on it — `_pay` would otherwise route the frozen
+            // claimant and chargeability past a forfeit, a default or a
+            // closed window the reservation never saw.
+            (bool stale, uint256 entryId) = staleEntry(s, r);
+            if (stale) {
+                emit StagingRecordStale(key, entryId);
+                r.phase = LibVaipakam.StagingPhase.Unwinding;
+                return _unwindPage(s, key, r);
+            }
             r.phase = LibVaipakam.StagingPhase.Resolving;
         } else {
             _requirePhase(key, r, LibVaipakam.StagingPhase.Resolving);
@@ -496,7 +537,18 @@ library LibRewardStaging {
         uint256 n = r.entryIds.length;
         LibInteractionRewards.DaySlice[] memory slices = new LibInteractionRewards.DaySlice[](n);
         for (uint256 i; i < n; ) {
-            slices[i] = LibInteractionRewards.DaySlice({amount: r.sliceAmounts[i], loanSideChargeable: r.sliceChargeable[i]});
+            // A FORFEITED share is persisted as NOT chargeable (Codex #2308
+            // r22): the loan side's reward cap bounds what is emitted to the
+            // side, and a share recycled instead of paid is not — the one
+            // rule the day pricing stamps on every forfeit's slices
+            // ({LibInteractionRewards._priceEntriesForDay}), applied here
+            // because the flag was stamped at reservation, before the
+            // claimant was flagged. The stored flag still releases the
+            // reservation it took, just below.
+            slices[i] = LibInteractionRewards.DaySlice({
+                amount: r.sliceAmounts[i],
+                loanSideChargeable: r.sliceChargeable[i] && !forfeit
+            });
             if (r.sliceChargeable[i]) {
                 s.loanSideRewardReservedVpfi[s.rewardEntries[r.entryIds[i]].loanId][sideKey] -= r.sliceAmounts[i];
             }
@@ -560,22 +612,57 @@ library LibRewardStaging {
             forfeit ? 0 : r.epochUserRecycled,
             0
         );
+        if (!forfeit && userTotal != 0) {
+            emit StagingDelivered(
+                key, user, userTotal, uint8(vaulted ? LibVaipakam.RewardDelivery.Vault : LibVaipakam.RewardDelivery.Wallet)
+            );
+        }
         emit StagingPaid(
             key,
             user,
             forfeit ? 0 : liveUserFresh + r.epochUserFresh,
             forfeit ? 0 : liveUserRecycled + r.epochUserRecycled,
             liveTreasuryFresh + r.epochTreasuryFresh,
-            r.needTreasuryRecycled,
-            uint8(vaulted ? LibVaipakam.RewardDelivery.Vault : LibVaipakam.RewardDelivery.Wallet)
+            r.needTreasuryRecycled
         );
         _close(s, key, true);
     }
 
     // ─────────────────────────────── unwind ───────────────────────────────
 
+    /// @notice Whether record `r`'s commitment is STALE — an entry of its set
+    ///         no longer valid for its day under the primitive's one rule
+    ///         ({LibInteractionRewards.entrySetDefect}: expired, processed,
+    ///         closed before the day, re-anchored), or one whose forfeit
+    ///         status changed since the reservation stamped its chargeability
+    ///         (a default or liquidation since) — and which entry. Read before
+    ///         the first irreversible page and by the unwind anyone may run
+    ///         at once (Codex #2308 r23). A record not yet reserved carries no
+    ///         slices, so only the set rule applies to it.
+    function staleEntry(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.StagingRecord storage r
+    ) internal view returns (bool stale, uint256 entryId) {
+        (bool valid, uint256 bad) =
+            LibInteractionRewards.entrySetDefect(s, r.user, r.day, r.entryIds, true);
+        if (!valid) return (true, bad);
+        uint256 m = r.sliceChargeable.length;
+        for (uint256 i; i < m; ) {
+            uint256 id = r.entryIds[i];
+            // Chargeable was stamped as the negation of "forfeited": equal
+            // now means the status moved under the commitment.
+            if (r.sliceChargeable[i] == LibInteractionRewards.entryForfeited(s, s.rewardEntries[id])) {
+                return (true, id);
+            }
+            unchecked { ++i; }
+        }
+        return (false, 0);
+    }
+
     /// @notice One page of unwind: past the deadline anyone, before it only
-    ///         the claimant (a voluntary cancellation). Each page returns up
+    ///         the claimant (a voluntary cancellation) — or anyone, at once,
+    ///         when the record is STALE ({staleEntry}; Codex #2308 r23), the
+    ///         finding announced. Each page returns up
     ///         to `STAGING_PAGE` batches' staged components to their balance
     ///         and releases their references; the page that returns the last
     ///         batch releases the reservation, per source, and closes the
@@ -586,12 +673,27 @@ library LibRewardStaging {
         LibVaipakam.StagingPhase p = r.phase;
         if (p == LibVaipakam.StagingPhase.Staging || p == LibVaipakam.StagingPhase.Reserved) {
             if (caller != r.user && block.timestamp < r.deadline) {
-                revert IVaipakamErrors.StagingNotExpired(key, r.deadline);
+                // A STALE record is anyone's to unwind at once, with no
+                // deadline to wait for (Codex #2308 r23; the design's rule).
+                (bool stale, uint256 entryId) = staleEntry(s, r);
+                if (!stale) revert IVaipakamErrors.StagingNotExpired(key, r.deadline);
+                emit StagingRecordStale(key, entryId);
             }
             r.phase = LibVaipakam.StagingPhase.Unwinding;
         } else {
             _requirePhase(key, r, LibVaipakam.StagingPhase.Unwinding);
         }
+        return _unwindPage(s, key, r);
+    }
+
+    /// @dev One unwind page of a record already in `Unwinding`: returns up to
+    ///      a page of staged batches, and on the last releases every
+    ///      reservation by the figure recorded for it and closes the record.
+    function _unwindPage(
+        LibVaipakam.Storage storage s,
+        bytes32 key,
+        LibVaipakam.StagingRecord storage r
+    ) private returns (bool done) {
         // From the record's cursor, releasing each (Codex #2308 r12, r13) —
         // as the resolution walks it.
         uint256 n = r.batchCount;

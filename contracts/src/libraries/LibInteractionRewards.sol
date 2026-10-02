@@ -4432,6 +4432,83 @@ library LibInteractionRewards {
         return e.forfeited || _entryTerminalForfeit(s, e);
     }
 
+    /// @notice Whether entry `e`'s share routes to the treasury — forfeited
+    ///         by its own flag or by its loan's terminal state — the SAME
+    ///         predicate the day pricing stamps a slice's `loanSideChargeable`
+    ///         from ({_priceEntriesForDay}: chargeable is its negation). A
+    ///         staging record reads it to find a commitment whose destination
+    ///         split no longer matches what the primitive would route (Codex
+    ///         #2308 r23); exposed, not re-derived.
+    function entryForfeited(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.RewardEntry storage e
+    ) internal view returns (bool) {
+        return _isForfeited(s, e);
+    }
+
+    /// @notice The ONE validity rule for a `(user, day)` transfer set, as the
+    ///         day primitive applies it before pricing: every entry is the
+    ///         user's, on entry[0]'s side, covers `d`, stands AT `d` on its
+    ///         cursor ({_shareOfPoolCursorDay}: the stamped cursor, else the
+    ///         later of its start and `D*` — the same rule the worklist,
+    ///         {_lowestPendingDay} and {_entriesAtDay} read, so a set built
+    ///         by them cannot be refused here), is claimable and unprocessed,
+    ///         and appears once; for a SETTLING caller, no entry's pre-`D*`
+    ///         slice is unpaid. Returns `(false, id)` for the first offending
+    ///         entry, else `(true, 0)`. {processUserSideDay} reverts on it; a
+    ///         staging record's revalidation ({LibRewardStaging.staleEntry})
+    ///         reads it to find a commitment whose entries changed lifecycle
+    ///         since the reservation (Codex #2308 r23) — one implementation,
+    ///         two consumers, so the two cannot disagree about what a valid
+    ///         set is.
+    /// @dev    Each clause protects funds in its own way, kept from the
+    ///         primitive's history: entry[0]'s side drives BOTH the loan-side
+    ///         clamp and the `userSideDayPaidVpfi` key, so a mixed-side or
+    ///         foreign-user set would charge the wrong budget and pay slices
+    ///         the claimant does not own; paying a day the entry does not
+    ///         cover would mint reward from nothing; an entry past `d` on its
+    ///         cursor would be priced a SECOND time out of any unsaturated
+    ///         `C` (Codex #1399 P2); the static read (A2-iii, prepared-only)
+    ///         admits a settleable spanning entry the claim WOULD stamp this
+    ///         transaction and prices it at `D*`, as the claim's walk then
+    ///         would, while a settling walk must never run ahead of the
+    ///         legacy settlement — walking such an entry would advance its
+    ///         cursor past its unpaid slice for good, so `settling` refuses
+    ///         it here and a fund-moving primitive does not depend on its
+    ///         caller's worklist for that; {_entryClaimable} and NOT `closed`
+    ///         (#1399 r1/r2), since the loan-terminal fallback never closes
+    ///         the entries it makes claimable, which are exactly the forfeits
+    ///         the routing below must see; and a duplicated id would read the
+    ///         same loan-side remaining twice and persist both slices past
+    ///         the cap.
+    function entrySetDefect(
+        LibVaipakam.Storage storage s,
+        address user,
+        uint256 d,
+        uint256[] memory entryIds,
+        bool settling
+    ) internal view returns (bool valid, uint256 badId) {
+        uint256 n = entryIds.length;
+        if (n == 0) return (true, 0);
+        LibVaipakam.RewardSide side = s.rewardEntries[entryIds[0]].side;
+        for (uint256 i; i < n; ) {
+            uint256 id = entryIds[i];
+            LibVaipakam.RewardEntry storage v = s.rewardEntries[id];
+            if (v.user != user || v.side != side || d < v.startDay || d >= v.endDay) return (false, id);
+            if (_shareOfPoolCursorDay(s, id, v) != d) return (false, id);
+            if (settling && s.rewardEntryClaimNextDay[id] == 0 && v.startDay < s.governorCommitArmedFromDay) {
+                return (false, id);
+            }
+            if (!_entryClaimable(s, v) || v.processed) return (false, id);
+            for (uint256 j; j < i; ) {
+                if (entryIds[j] == id) return (false, id);
+                unchecked { ++j; }
+            }
+            unchecked { ++i; }
+        }
+        return (true, 0);
+    }
+
     // ─── Legacy window claim (used by test mutators) ────────────────────────
 
     /**
@@ -6571,87 +6648,11 @@ library LibInteractionRewards {
         // a CALLER BUG and must always surface as a revert — if this sat after
         // the readiness gate, the same bad set would silently no-op whenever the
         // RPN row happened to be behind, hiding the defect until the day it
-        // isn't.
-        for (uint256 i; i < n; ) {
-            LibVaipakam.RewardEntry storage v = s.rewardEntries[entryIds[i]];
-            // `side` is taken from entry[0] and then drives BOTH the loan-side
-            // clamp and the `userSideDayPaidVpfi` key, so a mixed-side or
-            // foreign-user set would charge the wrong budget and pay slices for
-            // entries the claimant doesn't own. Two independent callers build
-            // this set (2c claim, 2d sweep), so an unchecked precondition in a
-            // fund-moving primitive is exactly the kind of assumption that
-            // silently rots — make it a revert, not a comment.
-            //
-            // Paying a day the entry doesn't cover would also mint reward from
-            // nothing (`perDayNumeraire18 × Δ` is computed regardless).
-            if (
-                v.user != user ||
-                v.side != side ||
-                d < v.startDay ||
-                d >= v.endDay
-            ) {
-                revert IVaipakamErrors.RewardEntrySetMismatch(entryIds[i]);
-            }
-            // Codex #1399 P2 — the entry must be AT day `d` on its own cursor.
-            // Covering `d` is not enough: a stale worklist could re-present an
-            // entry that already advanced past `d` and get it priced a SECOND
-            // time out of any unsaturated `C`, and the loan-side proration
-            // (recomputed from `stored + 1`) would not catch it.
-            //
-            // The entry's day is ONE rule — {_shareOfPoolCursorDay}: its
-            // stamped cursor, else the later of its start and `D*` — the same
-            // rule the worklist, {_lowestPendingDay} and {_entriesAtDay} read,
-            // so a set built by them cannot be refused here. A settling walk
-            // admits an entry only once its legacy slice is settled or empty
-            // (cursor stamped, or start at/after `D*`), for which the rule IS
-            // the stored cursor; the static read (A2-iii, `preparedOnly`)
-            // admits a settleable spanning entry the claim WOULD stamp this
-            // transaction and prices it at `D*`, as the claim's walk then
-            // would. Until A2-iii the view path carried simulated cursors into
-            // this check instead; a storage-only check refused every such
-            // entry and the whole read reverted.
-            if (_shareOfPoolCursorDay(s, entryIds[i], v) != d) {
-                revert IVaipakamErrors.RewardEntrySetMismatch(entryIds[i]);
-            }
-            // A SETTLING caller must never run ahead of the legacy settlement
-            // — walking a spanning entry whose pre-`D*` slice is unpaid would
-            // advance its cursor past that slice for good. The worklist's
-            // cursor rule keeps such an entry out of a settling set; a
-            // fund-moving primitive does not depend on its caller for that.
-            if (
-                !dry.preparedOnly
-                    && s.rewardEntryClaimNextDay[entryIds[i]] == 0
-                    && v.startDay < s.governorCommitArmedFromDay
-            ) {
-                revert IVaipakamErrors.RewardEntrySetMismatch(entryIds[i]);
-            }
-            // Codex #1399 r1/r2 P2 — an entry is payable only once CLAIMABLE
-            // and not yet processed. The legacy `_processEntry` applies exactly
-            // this gate before pricing, and a shared fund-moving primitive must
-            // not depend on the outer worklist remembering to.
-            //
-            // {_entryClaimable}, NOT `closed`: an entry made claimable by the
-            // LOAN-TERMINAL fallback is never `closed` (`_closeEntry` didn't
-            // run), and that is precisely the population {_entryTerminalForfeit}
-            // exists to route below. Gating on `closed` would revert those
-            // entries before the routing branch could ever see them — the
-            // branch would be dead code, and a defaulted borrower's forfeit
-            // would strand, never advancing its cursor. Active /
-            // FallbackPending loans are still rejected, which is the part that
-            // actually protects funds.
-            if (!_entryClaimable(s, v) || v.processed) {
-                revert IVaipakamErrors.RewardEntrySetMismatch(entryIds[i]);
-            }
-            // Codex #1399 P2 — a duplicated id would read the SAME unchanged
-            // loan-side remaining twice, count the entry twice in `rawPay`, and
-            // let the caller persist both slices past the loan-side cap.
-            for (uint256 j; j < i; ) {
-                if (entryIds[j] == entryIds[i]) {
-                    revert IVaipakamErrors.RewardEntrySetMismatch(entryIds[i]);
-                }
-                unchecked { ++j; }
-            }
-            unchecked { ++i; }
+        // isn't. ONE rule ({entrySetDefect}), which a staging record's
+        // revalidation reads too (Codex #2308 r23).
+        {
+            (bool valid, uint256 bad) = entrySetDefect(s, user, d, entryIds, !dry.preparedOnly);
+            if (!valid) revert IVaipakamErrors.RewardEntrySetMismatch(bad);
         }
 
         // A day with a standing staging record is that record's to settle
