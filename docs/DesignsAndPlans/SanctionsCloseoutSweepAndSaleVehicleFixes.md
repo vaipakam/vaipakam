@@ -256,9 +256,10 @@ on these paths, but the design flags it.)
 > **The alternative #2357 weighed: a live exclusion kept correct by syncing at
 > every re-anchor.** Staleness is not inevitable. A live exclusion stays correct
 > if every write that changes a live loan's stored party re-runs the derivation
-> atomically, releasing the old party before the funds move and charging the new
-> one after. What that would take, measured against the tree at the time of the
-> decision:
+> atomically, releasing the old party's charge as the funds move. The new stored
+> party is then the position's holder, so the derivation gives it nothing: it stays
+> uncharged unless the position changes hands again. What that would take,
+> measured against the tree at the time of the decision:
 >
 > - Drop the terminal gate in `LibTierExclusion.sync` and the Active /
 >   FallbackPending skip in `VaipakamNFTFacet._syncTierExclusion`.
