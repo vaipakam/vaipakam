@@ -372,29 +372,30 @@ async function chainPosture(atBlock = null) {
  */
 const POSTURE_SCAN_MAX_BLOCKS = 600n;
 /**
- * #2368 r11 — the page reads through its OWN provider, which may lag this
- * drive's. A PASS is certified only when the posture also held for this
- * many blocks BEFORE the first read (~4 min on Base Sepolia's 2 s blocks),
- * so any page-provider lag shorter than the margin cannot have served a
- * different posture. A page provider lagging further than that is beyond
- * what this drive certifies — stated, not implied. Kept under the ~128
- * blocks of recent state a full node retains; a historical read the RPC
- * cannot serve fails the scan, which BLOCKS.
+ * #2368 r11 → r12 — the page reads through its OWN provider, which may lag
+ * this drive's. r11 assumed a fixed lag margin; r12 measures it instead.
+ * `pageFloor` is the lowest head the page's Diamond-serving endpoints
+ * announced, passed ONLY when `floorEstablishedFor` holds (every endpoint
+ * the page used announced a head before it read), so it soundly bounds the
+ * page's reads from below. The scan then starts there. No established
+ * floor → the page's read window is unbounded → `scanned: false` → BLOCKED.
  */
-const POSTURE_LAG_MARGIN_BLOCKS = 120n;
-async function postureIntervalScan(before, after) {
+async function postureIntervalScan(before, after, pageFloor) {
   if (!before || !after) return { scanned: false };
+  if (typeof pageFloor !== 'bigint' || pageFloor <= 0n) return { scanned: false };
   // Equal heads: a zero-length interval, nothing to scan. A LOWER second
   // head (a load-balanced RPC answering from a lagging backend, or a reorg)
   // is not a chronological interval at all, so stability is unknown
   // (#2368 r7) — never a clean zero-change result.
   if (after.blockNumber < before.blockNumber) return { scanned: false };
-  if (after.blockNumber - before.blockNumber > POSTURE_SCAN_MAX_BLOCKS) return { scanned: false };
+  const from = pageFloor < before.blockNumber ? pageFloor : before.blockNumber;
+  if (after.blockNumber - from > POSTURE_SCAN_MAX_BLOCKS) return { scanned: false };
   const want = expectedPostureFrom(before);
   const blocks = [];
-  const from =
-    before.blockNumber > POSTURE_LAG_MARGIN_BLOCKS ? before.blockNumber - POSTURE_LAG_MARGIN_BLOCKS : 0n;
-  for (let n = from; n <= after.blockNumber; n++) if (n !== before.blockNumber) blocks.push(n);
+  // EVERY block, the first sample's own included (#2368 r12): a reorg can
+  // replace `before.blockNumber` with a canonical block of another posture
+  // while the heads keep moving forward.
+  for (let n = from; n <= after.blockNumber; n++) blocks.push(n);
   let changes = 0;
   for (let i = 0; i < blocks.length; i += 10) {
     const reads = await Promise.all(blocks.slice(i, i + 10).map((n) => chainPosture(n)));
@@ -2586,6 +2587,17 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
     pageSampledBeforeNav = sample.sampled;
   }
   const judgePosture = ROLE === 'borrower' && loan !== null && refiApplicable(loan);
+  if (judgePosture) {
+    // #2368 r12 — the same pre-navigation provider sample the lender path
+    // takes, for the same reason: the app issues `eth_call`s before an
+    // endpoint has announced any head, so without this sample
+    // `floorEstablishedFor` cannot bound those reads and the posture floor
+    // would never be established. Borrower-only, so it never shares a visit
+    // with the lender sample above.
+    const postureSample = await pageProviderHead();
+    pageHeadBeforeNav = postureSample.head;
+    pageSampledBeforeNav = postureSample.sampled;
+  }
   // #2355 — the chain posture BEFORE the page loads, so the observation is
   // bracketed by two reads (the second follows the scrape).
   const postureBefore = judgePosture ? await chainPosture() : null;
@@ -2648,8 +2660,25 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
   const freeHeld = await page.getByTestId('free-held-options').count();
   const refinancePosture = judgePosture ? await observeRefinancePosture(page) : null;
   const postureAfter = judgePosture ? await chainPosture() : null;
+  // The page's read window, bounded from below only when every endpoint it
+  // used is (see `postureIntervalScan`). In-flight head parses are drained
+  // first so the floor reflects what the page had announced.
+  let posturePageFloor = 0n;
+  if (judgePosture) {
+    const postureFloorDrained = await settleHeadReads(page);
+    // An undrained sample leaves the floor unsound (a lagging endpoint's
+    // pending head would land below it), so it is not used at all. When
+    // every endpoint is bounded, the floor is the LOWER of the
+    // pre-navigation sample and the lowest announced head.
+    if (postureFloorDrained && floorEstablishedFor(page, pageSampledBeforeNav)) {
+      const announced = pageHeadFloorOf(page);
+      const preNav = typeof pageHeadBeforeNav === 'bigint' ? pageHeadBeforeNav : 0n;
+      posturePageFloor =
+        preNav > 0n && (announced === 0n || preNav < announced) ? preNav : announced;
+    }
+  }
   const postureInterval = judgePosture
-    ? await postureIntervalScan(postureBefore, postureAfter)
+    ? await postureIntervalScan(postureBefore, postureAfter, posturePageFloor)
     : null;
   const refinancePostureObs = judgePosture
     ? {
