@@ -171,6 +171,21 @@ function visitProblemList(v, role) {
     );
   }
 
+  // #2355 — THE REFINANCE POSTURE BANNER, placed here for the forced-close
+  // card's reason: it is a different card on the same page, so neither
+  // chooser suppression below may swallow it. Its own module decides the
+  // verdict (`refinancePosture.mjs`); this only surfaces it with the tag
+  // that module chose. `chain` — a page reading another network's Diamond
+  // would state another posture — ranks with the absences the drive's
+  // wrong-chain gates outrank. `observed` (a missing or doubled banner, a
+  // sentence that does not match its own posture) is read off the DOM, but
+  // stays `blockable` so an allowlist refusal is still ranked first.
+  if (v.refinancePostureVerdict?.verdict === 'fail') {
+    (v.refinancePostureVerdict.failKind === 'observed' ? observed : absence)(
+      `refinance posture banner: ${v.refinancePostureVerdict.why}`,
+    );
+  }
+
   if (preRaced(v)) return problems;
 
   if (!v.chooser) {
