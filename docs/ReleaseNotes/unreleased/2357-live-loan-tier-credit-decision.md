@@ -5,7 +5,7 @@ When a loan closes and one side's payout waits in the vault of the party the loa
 The decision follows rules the code had already settled for neighbouring cases. Three reasons support it:
 
 - **The recorded party can change.** On a live loan, consolidation and a sale both move the funds. An exclusion charged to the recorded party would go stale and leave a permanent over-exclusion on a vault that no longer holds the funds. The same reason led to dropping an earlier active-loan counter for parked lender shares.
-- **The recorded party cannot spend the VPFI.** The funds stay reserved against their spend paths, so only the fee-tier credit lingers.
+- **The recorded party cannot spend reserved funds.** The pledged collateral and any parked lender share stay reserved against the recorded party's spend paths, so for those funds only the fee-tier credit lingers. The stated exception is a VPFI amount held for the lender that is not fully reserved. The platform refuses to consolidate such a position for that reason, and the unreserved part is open in #2365.
 - **Sanctions are not a trigger.** Sanctions status changes in the external oracle with no on-chain event the platform could react to. The closed-loan rule takes the same stance.
 
 The window has no guaranteed end. A holder can often consolidate their own position, but not always: not while the holder is sanctioned, not while the protocol is paused, and not while the loan is in a state where consolidation is refused. The spec gives these as examples only; the platform's consolidation rules decide. A loan past its term and grace period only becomes eligible to be defaulted, and from the moment a close-out actually executes, the closed-loan exclusion applies.

@@ -66,8 +66,11 @@ import {LibERC721} from "./LibERC721.sol";
  *             `LibCloseoutFreeze._parkActiveLenderShare` gives for dropping
  *             an active-phase counter; on a terminal loan that staleness
  *             cannot arise, for the reason above;
- *           - the stored party cannot spend the funds meanwhile (the lien /
- *             active-held reservation), so only the credit lingers;
+ *           - the stored party cannot spend the RESERVED funds meanwhile
+ *             (the collateral lien / active-held reservation), so for those
+ *             only the credit lingers. Exception: a lender-side VPFI held
+ *             amount that is not fully reserved — `_isExcludedLive` refuses
+ *             to consolidate it for that reason (open in #2365);
  *           - sanctions are not an input (see below).
  *         The window has NO guaranteed end, and this comment deliberately
  *         does not enumerate when a holder can or cannot shorten it: that is
