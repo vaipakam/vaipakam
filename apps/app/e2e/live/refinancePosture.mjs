@@ -97,8 +97,9 @@ const squash = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
  *   STORED borrower, and the chooser's own eligibility held)
  * @param {object|null} o.before  chain switches read before navigation
  * @param {object|null} o.after   chain switches read after the scrape
- * @param {{scanned: boolean, changes?: number}|null} o.interval  the log scan
- *   for posture-switch events over (before, after] (#2368 r6)
+ * @param {{scanned: boolean, changes?: number}|null} o.interval  the posture
+ *   read at every block in (before, after]; `changes` counts differing
+ *   blocks (#2368 r6/r8)
  * @param {boolean} o.formPresent  the refinance form's card rendered
  * @param {number}  o.bannerCount  VISIBLE posture banners inside the form
  * @param {number}  [o.hiddenBannerCount] banners mounted but not visible
@@ -203,24 +204,24 @@ export function refinancePostureVerdict(o, copy) {
       why: `the chain posture moved during the observation (${expected} → ${after})`,
     };
   }
-  // #2368 r6 — two agreeing endpoint reads do not show the posture HELD in
-  // between: an on → off → on excursion leaves both samples "on". Stability
-  // is established only by a successful log scan over (before, after] that
-  // found no switch event. Unknown or changed is BLOCKED — for a match as
+  // #2368 r6/r8 — two agreeing endpoint reads do not show the posture HELD
+  // in between: an on → off → on excursion leaves both samples "on".
+  // Stability is established only by reading the posture at EVERY block in
+  // (before, after] and finding no difference. Unknown or changed is BLOCKED — for a match as
   // much as for a mismatch, so a stale banner is never certified across an
   // interval the drive could not see.
   if (!o.interval || o.interval.scanned !== true) {
     return {
       ...base,
       verdict: 'blocked',
-      why: 'the posture switches could not be shown stable between the two chain reads (event scan did not run)',
+      why: 'the posture could not be shown stable between the two chain reads (per-block scan did not run)',
     };
   }
   if (o.interval.changes > 0) {
     return {
       ...base,
       verdict: 'blocked',
-      why: `a posture switch changed ${o.interval.changes} time(s) between the two chain reads — the page may correctly show either`,
+      why: `the posture differed at ${o.interval.changes} block(s) between the two chain reads — the page may correctly show either`,
     };
   }
   if (o.attr === 'unknown') {

@@ -87,7 +87,6 @@ import {
   createPublicClient,
   http,
   numberToHex,
-  parseAbi,
 } from 'viem';
 import {
   excursionExplains,
@@ -218,6 +217,19 @@ if (REFI_POSTURE && ROLE !== 'borrower') {
   );
   process.exit(2);
 }
+// ROOT FIX (#2368 r8) — the posture assertion reviews a NAMED borrower's
+// position. Choosing one automatically meant mirroring every gate the
+// Refinance form mounts behind (transferred holder r1, sanctions r7, an
+// accepted lender sale r8, …), and each round found another; the operator
+// already knows which position the review is for. So the address is
+// required, and the cross-authority guesswork is gone rather than extended.
+if (REFI_POSTURE && !process.env.OBSERVE_ADDRESS) {
+  console.error(
+    '\nBLOCKED: OBSERVE_REFINANCE_POSTURE needs OBSERVE_ADDRESS — the borrower whose' +
+      ' position the posture review is for. It is not chosen automatically.',
+  );
+  process.exit(2);
+}
 
 // A mistyped OBSERVE_CHAIN_ID, or one this repo has no deployment for,
 // is a SETUP precondition — the same category as an absent wallet file
@@ -327,9 +339,9 @@ const pub = createPublicClient({ transport: http(RPC) });
  * deliberately does not go through `discovery()`, which would end the run
  * over a read that only one assertion consumes.
  */
-async function chainPosture() {
+async function chainPosture(atBlock = null) {
   try {
-    const blockNumber = await pub.getBlockNumber({ cacheTime: 0 });
+    const blockNumber = atBlock ?? (await pub.getBlockNumber({ cacheTime: 0 }));
     const read = (functionName) =>
       pub.readContract({ address: DIAMOND, abi: DIAMOND_ABI_VIEM, functionName, blockNumber });
     const [paused, autoRefinance, flags] = await Promise.all([
@@ -344,21 +356,21 @@ async function chainPosture() {
 }
 
 /**
- * #2368 r6 — did any posture switch CHANGE between the two bracketing
- * reads? Endpoint samples alone cannot see an on → off → on excursion, so
- * the Diamond's logs over (before, after] are scanned for every event the
- * three switches emit on a write: `Paused` / `Unpaused` (LibPausable),
- * `AutoRefinanceEnabledSet` (AdminFacet) and `PartialFillEnabledSet`
- * (ConfigFacet). Returns `{ scanned: true, changes }`, or
- * `{ scanned: false }` when the scan could not run — which the verdict
- * treats as unknown stability, i.e. BLOCKED, never a pass.
+ * #2368 r6 → ROOT FIX r8 — did the posture HOLD between the two bracketing
+ * reads? Endpoint samples alone cannot see an on → off → on excursion, and
+ * an event list cannot either: rounds 6–8 kept finding a write that emits
+ * something else (`AutoPaused`) and a change that emits nothing at all (an
+ * auto-pause EXPIRING — `paused()` compares `pausedUntilTimestamp` against
+ * `block.timestamp`). So instead of enumerating causes, the posture itself
+ * is read AT EVERY BLOCK in (before, after] — the same three switches, the
+ * same mapping — which covers any cause, time-based ones included.
+ *
+ * Bounded: an interval over `POSTURE_SCAN_MAX_BLOCKS` is not scanned and
+ * reads as unknown stability. Returns `{ scanned: true, changes }` where
+ * `changes` counts blocks whose posture differs from the first read, or
+ * `{ scanned: false }` — which the verdict treats as BLOCKED, never a pass.
  */
-const POSTURE_EVENTS = parseAbi([
-  'event Paused(address account)',
-  'event Unpaused(address account)',
-  'event AutoRefinanceEnabledSet(bool enabled)',
-  'event PartialFillEnabledSet(bool enabled)',
-]);
+const POSTURE_SCAN_MAX_BLOCKS = 600n;
 async function postureIntervalScan(before, after) {
   if (!before || !after) return { scanned: false };
   // Equal heads: a zero-length interval, nothing to scan. A LOWER second
@@ -367,17 +379,19 @@ async function postureIntervalScan(before, after) {
   // (#2368 r7) — never a clean zero-change result.
   if (after.blockNumber === before.blockNumber) return { scanned: true, changes: 0 };
   if (after.blockNumber < before.blockNumber) return { scanned: false };
-  try {
-    const logs = await pub.getLogs({
-      address: DIAMOND,
-      events: POSTURE_EVENTS,
-      fromBlock: before.blockNumber + 1n,
-      toBlock: after.blockNumber,
-    });
-    return { scanned: true, changes: logs.length };
-  } catch {
-    return { scanned: false };
+  if (after.blockNumber - before.blockNumber > POSTURE_SCAN_MAX_BLOCKS) return { scanned: false };
+  const want = expectedPostureFrom(before);
+  const blocks = [];
+  for (let n = before.blockNumber + 1n; n <= after.blockNumber; n++) blocks.push(n);
+  let changes = 0;
+  for (let i = 0; i < blocks.length; i += 10) {
+    const reads = await Promise.all(blocks.slice(i, i + 10).map((n) => chainPosture(n)));
+    for (const r of reads) {
+      if (r === null) return { scanned: false };
+      if (expectedPostureFrom(r) !== want) changes += 1;
+    }
   }
+  return { scanned: true, changes };
 }
 
 /** Would the Refinance form render for the observed wallet on this loan? —
@@ -1735,26 +1749,6 @@ if (!observed) {
   // returns false on that read alone for an unlocked position and only
   // simulates for a locked one, so the common case stays a single cheap
   // call.
-  // #2368 r7 — sanctions are a definitive mount gate for the Refinance
-  // form too (PositionDetails suppresses the whole strategy block for a
-  // flagged holder), so a flagged authority must not win the posture
-  // ranking over an unflagged one. Resolved before the synchronous sort.
-  // A read that FAILS leaves the authority ranked as capable — ranking it
-  // down on a read that did not answer would hand the run to a worse
-  // candidate on no evidence (the round-29 rule) — and the form's absence
-  // on its visits then reads BLOCKED, never a FAIL.
-  const refiSanctioned = new Map();
-  if (REFI_POSTURE) {
-    for (const [k, loans] of byAuthority) {
-      if (!loans.some(refiApplicable)) continue;
-      try {
-        refiSanctioned.set(k, await sanctionedAuthority(loans[0].authority));
-      } catch {
-        refiSanctioned.set(k, null);
-      }
-    }
-  }
-  const refiCapable = ([k, loans]) => loans.some(refiApplicable) && refiSanctioned.get(k) !== true;
   const applicableCount = (loans) =>
     loans.filter((l) => l.status === STATUS_ACTIVE && !acceptedSale.has(l.id)).length;
   const capableCount = (loans) => loans.filter((l) => acceptsCloseOut.has(l.id)).length;
@@ -1768,17 +1762,6 @@ if (!observed) {
       const byApplicable =
         (applicableCount(b[1]) > 0 ? 1 : 0) - (applicableCount(a[1]) > 0 ? 1 : 0);
       if (byApplicable !== 0) return byApplicable;
-    }
-    // #2368 r1 — the same lesson as rounds 12 / 29, for the refinance
-    // posture assertion: an authority holding only TRANSFERRED borrower
-    // positions (on which the form never renders) must not outrank one
-    // holding an original-borrower loan, or the run exits 2 "never ran"
-    // while an observable form sat one authority away. The walk-level
-    // `refiFirst` partition below stays, for the visit cap WITHIN the
-    // chosen authority.
-    if (REFI_POSTURE) {
-      const byRefi = (refiCapable(b) ? 1 : 0) - (refiCapable(a) ? 1 : 0);
-      if (byRefi !== 0) return byRefi;
     }
     return b[1].length - a[1].length;
   });

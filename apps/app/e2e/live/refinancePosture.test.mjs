@@ -165,7 +165,7 @@ describe('refinancePostureVerdict', () => {
   it('blocks a MATCHING banner when a switch changed between the two reads', () => {
     const v = refinancePostureVerdict(obs({ interval: { scanned: true, changes: 2 } }), COPY);
     expect(v.verdict).toBe('blocked');
-    expect(v.why).toMatch(/changed 2 time/);
+    expect(v.why).toMatch(/differed at 2 block/);
   });
 
   it('blocks a matching banner when interval stability could not be scanned', () => {
