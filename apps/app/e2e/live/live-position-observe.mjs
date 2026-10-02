@@ -387,18 +387,6 @@ const rpcLabel = RPC_ORIGIN ?? '(invalid OBSERVE_RPC)';
 console.log(`site      ${SITE}`);
 console.log(`chain     ${CHAIN_ID} via ${rpcLabel}`);
 console.log(`diamond   ${DIAMOND}`);
-if (REFI_POSTURE) {
-  // Printed BEFORE discovery, so a run that blocks on an empty candidate
-  // pool still records which sentence the deployed form would have had to
-  // state. Informational only: every judged visit re-reads it on both sides.
-  const sw = await chainPosture();
-  console.log(
-    sw
-      ? `posture   @${sw.blockNumber}: paused=${sw.paused} autoRefinance=${sw.autoRefinance}` +
-          ` partialFill=${sw.partialFill} → the form must state "${expectedPostureFrom(sw)}"`
-      : 'posture   UNREAD at startup (each judged visit re-reads it)',
-  );
-}
 
 /**
  * Discovery and setup failures are BLOCKED, never FAIL.
@@ -456,6 +444,20 @@ if (servedChainId !== CHAIN_ID) {
       ` OBSERVE_CHAIN_ID to ${servedChainId}.`,
   );
   process.exit(2);
+}
+if (REFI_POSTURE) {
+  // Printed BEFORE discovery, so a run that blocks on an empty candidate
+  // pool still records which sentence the deployed form would have had to
+  // state — but only AFTER the RPC's chain id is verified (#2368 r3), so a
+  // wrong-network endpoint cannot get another deployment's switches into
+  // the report as this chain's. Informational: every judged visit re-reads.
+  const sw = await chainPosture();
+  console.log(
+    sw
+      ? `posture   @${sw.blockNumber}: paused=${sw.paused} autoRefinance=${sw.autoRefinance}` +
+          ` partialFill=${sw.partialFill} → the form must state "${expectedPostureFrom(sw)}"`
+      : 'posture   UNREAD at startup (each judged visit re-reads it)',
+  );
 }
 
 // One height for the whole discovery walk — see the pagination note.
@@ -2526,9 +2528,20 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
     pageHeadBeforeNav = sample.head;
     pageSampledBeforeNav = sample.sampled;
   }
+  // #2355 — decided before navigation, because a judged posture
+  // visit needs the page provider's pre-navigation head as well (#2368 r3).
+  const judgePosture = ROLE === 'borrower' && loan !== null && refiApplicable(loan);
+  if (judgePosture) {
+    // Borrower-only, so it never shares a visit with the lender sample
+    // above. The SOUND floor `pageHead.mjs` reserves: a page `eth_call` can be
+    // served at block N before or alongside the page's first announced head
+    // N+1, so `pageHeadFloorOf` alone can sit above the block the banner was
+    // read at. The provider's head sampled before `page.goto` cannot.
+    const postureSample = await pageProviderHead();
+    pageHeadBeforeNav = postureSample.head;
+  }
   // #2355 — the chain posture BEFORE the page loads, so the observation is
   // bracketed by two reads (the second follows the scrape).
-  const judgePosture = ROLE === 'borrower' && loan !== null && refiApplicable(loan);
   const postureBefore = judgePosture ? await chainPosture() : null;
   const pageErrors = [];
   const consoleErrors = [];
@@ -2581,14 +2594,20 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
   const freeHeld = await page.getByTestId('free-held-options').count();
   const refinancePosture = judgePosture ? await observeRefinancePosture(page) : null;
   const postureAfter = judgePosture ? await chainPosture() : null;
-  // #2368 r2 — THE PAGE'S OWN WINDOW. The two reads above come from this
-  // drive's RPC; the page reads through its own provider, which can lag.
-  // `pageHeadFloorOf` is the lowest head the page's Diamond-serving
-  // endpoints announced — a block its queries cannot predate — so the
-  // posture there, beside the two above, brackets everything the page
-  // could have read. `null` (no floor observed, or the read failed) leaves
-  // a mismatch unattributable, which the verdict treats as BLOCKED.
-  const pageFloor = judgePosture ? pageHeadFloorOf(page) : 0n;
+  // #2368 r2/r3 — THE PAGE'S OWN WINDOW. The two reads above come from
+  // this drive's RPC; the page reads through its own provider, which can
+  // lag. The floor is the page provider's head sampled BEFORE navigation
+  // (the sound bound — see `pageProviderHead`), lowered further to the
+  // lowest head the page's Diamond-serving endpoints announced if that is
+  // lower. Without a pre-navigation sample there is no sound floor: the
+  // read is skipped and a mismatch stays BLOCKED rather than accused.
+  const announcedFloor = judgePosture ? pageHeadFloorOf(page) : 0n;
+  const pageFloor =
+    typeof pageHeadBeforeNav === 'bigint' && pageHeadBeforeNav > 0n
+      ? announcedFloor > 0n && announcedFloor < pageHeadBeforeNav
+        ? announcedFloor
+        : pageHeadBeforeNav
+      : 0n;
   const postureAtPageFloor =
     judgePosture && pageFloor > 0n ? await chainPosture(pageFloor) : null;
   const refinancePostureObs = judgePosture
@@ -2708,10 +2727,26 @@ async function observeRefinancePosture(page) {
     for (;;) {
       const snap = await page.evaluate(() => {
         const form = document.querySelector('#refinance-card section.card');
-        const banners = form ? [...form.querySelectorAll('[data-auto-match-posture]')] : [];
+        // #2368 r3 — a banner that is MOUNTED but not seen discloses nothing,
+        // so only a visible one counts: rendered (no display:none /
+        // visibility:hidden / zero opacity on it or an ancestor, per
+        // `checkVisibility`) and with a non-empty box. A hidden banner then
+        // reads as the missing-banner FAIL. Clipping by an overflow ancestor
+        // is not detected — stated, not implied.
+        const seen = (el) => {
+          const r = el.getBoundingClientRect();
+          const visible =
+            typeof el.checkVisibility === 'function'
+              ? el.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })
+              : el.offsetParent !== null;
+          return visible && r.width > 0 && r.height > 0;
+        };
+        const mounted = form ? [...form.querySelectorAll('[data-auto-match-posture]')] : [];
+        const banners = mounted.filter(seen);
         return {
           formPresent: Boolean(form),
           bannerCount: banners.length,
+          hiddenBannerCount: mounted.length - banners.length,
           attr: banners[0]?.getAttribute('data-auto-match-posture') ?? null,
           text: banners[0]?.innerText ?? null,
           pageText: document.body.innerText,

@@ -100,7 +100,8 @@ const squash = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
  * @param {object|null} [o.pageFloor] chain switches at the page provider's
  *   head floor (#2368 r2); `null` when no floor was observed
  * @param {boolean} o.formPresent  the refinance form's card rendered
- * @param {number}  o.bannerCount  posture banners inside the form
+ * @param {number}  o.bannerCount  VISIBLE posture banners inside the form
+ * @param {number}  [o.hiddenBannerCount] banners mounted but not visible
  * @param {string|null} o.attr     the banner's `data-auto-match-posture`
  * @param {string|null} o.text     the banner's own text
  * @param {string} o.pageText      the whole page's text at the scrape
@@ -136,12 +137,15 @@ export function refinancePostureVerdict(o, copy) {
   // posture it publishes, and no other posture's sentence is on the page).
   if (!o.bannerCount) {
     // The banner is unconditional inside the rendered form — a missing
-    // sentence would imply an availability the app has not read.
+    // sentence would imply an availability the app has not read. A banner
+    // that is mounted but not visible discloses nothing either (#2368 r3).
     return {
       ...base,
       verdict: 'fail',
       failKind: 'observed',
-      why: 'the refinance form rendered WITHOUT its automatic-matching posture banner',
+      why: o.hiddenBannerCount
+        ? `the refinance form's posture banner is mounted but NOT VISIBLE (${o.hiddenBannerCount} hidden)`
+        : 'the refinance form rendered WITHOUT its automatic-matching posture banner',
     };
   }
   if (o.bannerCount > 1) {

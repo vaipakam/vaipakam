@@ -203,6 +203,13 @@ describe('refinancePostureVerdict', () => {
     expect(v.why).toMatch(/paused/);
   });
 
+  // #2368 r3 — a mounted-but-invisible banner discloses nothing.
+  it('fails a banner that is mounted but not visible, naming it as hidden', () => {
+    const v = refinancePostureVerdict(obs({ bannerCount: 0, hiddenBannerCount: 1 }), COPY);
+    expect(v).toMatchObject({ verdict: 'fail', failKind: 'observed' });
+    expect(v.why).toMatch(/NOT VISIBLE/);
+  });
+
   // #2368 r1 — chain-independent defects must not hide behind a chain blocker.
   it('fails a missing or doubled banner even when the chain could not be read', () => {
     for (const chain of [{ before: null }, { after: null }, { after: OFF }]) {
