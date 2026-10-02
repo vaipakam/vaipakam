@@ -111,7 +111,7 @@ describe('refinancePostureVerdict', () => {
 
   it('blocks — never fails — when the posture moved during the observation', () => {
     // The page could rightly show either side of the flip.
-    const v = refinancePostureVerdict(obs({ after: OFF, attr: 'off', text: COPY.off }), COPY);
+    const v = refinancePostureVerdict(obs({ after: OFF, attr: 'off', text: COPY.off, pageText: COPY.off }), COPY);
     expect(v.verdict).toBe('blocked');
     expect(v.why).toMatch(/on → off/);
   });
@@ -172,8 +172,41 @@ describe('refinancePostureVerdict', () => {
 
   it('fails when another posture sentence is ALSO on the page', () => {
     const v = refinancePostureVerdict(obs({ pageText: `${COPY.on} … ${COPY.paused}` }), COPY);
-    expect(v).toMatchObject({ verdict: 'fail', failKind: 'chain' });
+    // A second posture sentence is a self-inconsistency of the page, judged
+    // without the chain (#2368 r1), so it is an OBSERVED defect.
+    expect(v).toMatchObject({ verdict: 'fail', failKind: 'observed' });
     expect(v.why).toMatch(/paused/);
+  });
+
+  // #2368 r1 — chain-independent defects must not hide behind a chain blocker.
+  it('fails a missing or doubled banner even when the chain could not be read', () => {
+    for (const chain of [{ before: null }, { after: null }, { after: OFF }]) {
+      expect(refinancePostureVerdict(obs({ ...chain, bannerCount: 0 }), COPY)).toMatchObject({
+        verdict: 'fail',
+        failKind: 'observed',
+      });
+      expect(refinancePostureVerdict(obs({ ...chain, bannerCount: 2 }), COPY)).toMatchObject({
+        verdict: 'fail',
+        failKind: 'observed',
+      });
+    }
+  });
+
+  it('fails a banner whose sentence does not match its own published posture, whatever the chain', () => {
+    for (const chain of [{}, { before: null }, { after: OFF }]) {
+      const v = refinancePostureVerdict(obs({ ...chain, attr: 'on', text: COPY.off, pageText: COPY.off }), COPY);
+      expect(v).toMatchObject({ verdict: 'fail', failKind: 'observed' });
+    }
+  });
+
+  it('fails an "unknown" banner that carries another posture\'s sentence instead of blocking', () => {
+    for (const other of ['on', 'off', 'paused']) {
+      const v = refinancePostureVerdict(
+        obs({ attr: 'unknown', text: COPY[other], pageText: COPY[other] }),
+        COPY,
+      );
+      expect(v).toMatchObject({ verdict: 'fail', failKind: 'observed' });
+    }
   });
 });
 

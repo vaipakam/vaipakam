@@ -1708,6 +1708,18 @@ if (!observed) {
         (applicableCount(b[1]) > 0 ? 1 : 0) - (applicableCount(a[1]) > 0 ? 1 : 0);
       if (byApplicable !== 0) return byApplicable;
     }
+    // #2368 r1 — the same lesson as rounds 12 / 29, for the refinance
+    // posture assertion: an authority holding only TRANSFERRED borrower
+    // positions (on which the form never renders) must not outrank one
+    // holding an original-borrower loan, or the run exits 2 "never ran"
+    // while an observable form sat one authority away. The walk-level
+    // `refiFirst` partition below stays, for the visit cap WITHIN the
+    // chosen authority.
+    if (REFI_POSTURE) {
+      const byRefi =
+        (b[1].some(refiApplicable) ? 1 : 0) - (a[1].some(refiApplicable) ? 1 : 0);
+      if (byRefi !== 0) return byRefi;
+    }
     return b[1].length - a[1].length;
   });
   if (!best) {

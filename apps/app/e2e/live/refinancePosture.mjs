@@ -115,23 +115,6 @@ export function refinancePostureVerdict(o, copy) {
   if (o.error) {
     return { ...base, verdict: 'blocked', why: `the posture scrape threw: ${o.error}` };
   }
-  if (expected === null || after === null) {
-    return {
-      ...base,
-      verdict: 'blocked',
-      why: 'the drive could not read the chain posture on both sides of the observation',
-    };
-  }
-  if (expected !== after) {
-    // A governance flip (or a pause window opening/closing) between the two
-    // reads: the page may correctly be showing either, so nothing can be
-    // concluded either way.
-    return {
-      ...base,
-      verdict: 'blocked',
-      why: `the chain posture moved during the observation (${expected} → ${after})`,
-    };
-  }
   if (!o.formPresent) {
     // The form sits behind gates this drive does not mirror in full
     // (sanctions resolution, a sale-completion window, the page's own
@@ -143,6 +126,12 @@ export function refinancePostureVerdict(o, copy) {
       why: 'the refinance form did not render, so the banner could not be observed',
     };
   }
+
+  // ── Chain-INDEPENDENT checks first (#2368 r1). Each of these is a defect
+  // whatever the chain says, so an unreadable or moving chain posture must
+  // not hide it behind a `blocked`: the banner's structure, and its
+  // self-consistency (the sentence it shows is the sentence for the
+  // posture it publishes, and no other posture's sentence is on the page).
   if (!o.bannerCount) {
     // The banner is unconditional inside the rendered form — a missing
     // sentence would imply an availability the app has not read.
@@ -161,22 +150,61 @@ export function refinancePostureVerdict(o, copy) {
       why: `the refinance form rendered ${o.bannerCount} posture banners, expected exactly one`,
     };
   }
-  if (o.attr === 'unknown') {
-    // Still loading at the deadline, or the page's read failed. Either way
-    // the banner is honestly stating `unknown`, and this drive cannot tell a
-    // slow read from a broken one — blocked, not a pass.
-    return {
-      ...base,
-      verdict: 'blocked',
-      why: 'the banner still stated "unknown" at the deadline — the page\'s posture read did not settle',
-    };
-  }
   if (!POSTURES.includes(o.attr)) {
     return {
       ...base,
       verdict: 'fail',
       failKind: 'observed',
       why: `the banner published an unrecognised posture "${o.attr}"`,
+    };
+  }
+  if (squash(o.text) !== squash(copy[o.attr])) {
+    // Includes the `unknown` state: a banner that publishes `unknown` but
+    // shows another posture's words is self-inconsistent, not merely slow.
+    return {
+      ...base,
+      verdict: 'fail',
+      failKind: 'observed',
+      why: `the banner published "${o.attr}" but did not carry copy.refinance's sentence for that posture`,
+    };
+  }
+  const page = squash(o.pageText);
+  const others = POSTURES.filter((p) => p !== o.attr && page.includes(squash(copy[p])));
+  if (others.length) {
+    return {
+      ...base,
+      verdict: 'fail',
+      failKind: 'observed',
+      why: `the page ALSO stated the ${others.join(', ')} posture sentence(s) beside "${o.attr}"`,
+    };
+  }
+
+  // ── Chain-DEPENDENT comparison: needs one stable posture to compare with.
+  if (expected === null || after === null) {
+    return {
+      ...base,
+      verdict: 'blocked',
+      why: 'the drive could not read the chain posture on both sides of the observation',
+    };
+  }
+  if (expected !== after) {
+    // A governance flip (or a pause window opening/closing) between the two
+    // reads: the page may correctly be showing either, so nothing can be
+    // concluded either way.
+    return {
+      ...base,
+      verdict: 'blocked',
+      why: `the chain posture moved during the observation (${expected} → ${after})`,
+    };
+  }
+  if (o.attr === 'unknown') {
+    // Correctly worded `unknown`: still loading at the deadline, or the
+    // page's read failed. This drive cannot tell a slow read from a broken
+    // one — blocked, not a pass.
+    return {
+      ...base,
+      verdict: 'blocked',
+      why: 'the banner still stated "unknown" at the deadline — the page\'s posture read did not settle',
     };
   }
   if (o.attr !== expected) {
@@ -188,24 +216,6 @@ export function refinancePostureVerdict(o, copy) {
       verdict: 'fail',
       failKind: 'chain',
       why: `the banner stated "${o.attr}" while the chain posture was "${expected}"`,
-    };
-  }
-  if (squash(o.text) !== squash(copy[expected])) {
-    return {
-      ...base,
-      verdict: 'fail',
-      failKind: 'observed',
-      why: `the "${expected}" banner did not carry copy.refinance's sentence for that posture`,
-    };
-  }
-  const page = squash(o.pageText);
-  const others = POSTURES.filter((p) => p !== expected && page.includes(squash(copy[p])));
-  if (others.length) {
-    return {
-      ...base,
-      verdict: 'fail',
-      failKind: 'chain',
-      why: `the page ALSO stated the ${others.join(', ')} posture sentence(s) beside "${expected}"`,
     };
   }
   return { ...base, verdict: 'pass', why: `stated "${expected}" in the expected words, and no other posture` };
