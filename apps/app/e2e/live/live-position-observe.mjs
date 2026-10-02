@@ -2727,19 +2727,43 @@ async function observeRefinancePosture(page) {
     for (;;) {
       const snap = await page.evaluate(() => {
         const form = document.querySelector('#refinance-card section.card');
-        // #2368 r3 — a banner that is MOUNTED but not seen discloses nothing,
-        // so only a visible one counts: rendered (no display:none /
-        // visibility:hidden / zero opacity on it or an ancestor, per
-        // `checkVisibility`) and with a non-empty box. A hidden banner then
-        // reads as the missing-banner FAIL. Clipping by an overflow ancestor
-        // is not detected — stated, not implied.
+        // #2368 r3/r4 — a banner that is MOUNTED but not seen discloses
+        // nothing, so only a visible one counts:
+        //   - rendered: no display:none / visibility:hidden / zero opacity on
+        //     it or an ancestor, per `checkVisibility`;
+        //   - a non-empty box after intersecting it with every ancestor that
+        //     CLIPS (`overflow: hidden` / `clip` on either axis). A scroll
+        //     container (`auto` / `scroll`) is not treated as clipping: its
+        //     content is reachable by scrolling, so it is still disclosed.
+        // A hidden banner then reads as the missing-banner FAIL.
         const seen = (el) => {
-          const r = el.getBoundingClientRect();
           const visible =
             typeof el.checkVisibility === 'function'
               ? el.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })
               : el.offsetParent !== null;
-          return visible && r.width > 0 && r.height > 0;
+          if (!visible) return false;
+          const r = el.getBoundingClientRect();
+          let left = r.left;
+          let top = r.top;
+          let right = r.right;
+          let bottom = r.bottom;
+          const clips = (v) => v === 'hidden' || v === 'clip';
+          for (let a = el.parentElement; a; a = a.parentElement) {
+            const cs = getComputedStyle(a);
+            const cx = clips(cs.overflowX);
+            const cy = clips(cs.overflowY);
+            if (!cx && !cy) continue;
+            const ar = a.getBoundingClientRect();
+            if (cx) {
+              left = Math.max(left, ar.left);
+              right = Math.min(right, ar.right);
+            }
+            if (cy) {
+              top = Math.max(top, ar.top);
+              bottom = Math.min(bottom, ar.bottom);
+            }
+          }
+          return right - left > 0 && bottom - top > 0;
         };
         const mounted = form ? [...form.querySelectorAll('[data-auto-match-posture]')] : [];
         const banners = mounted.filter(seen);
