@@ -1104,10 +1104,18 @@ sale proceeds, without weakening the lender's default rights.
     assets with no tracked exit need no such reservation. Paths that pay the
     lender's wallet directly (partial repayment, periodic-interest shortfall)
     are not in scope — there is no tracked vault balance to drain. The
-    held-for-lender accruals (preclose offset / obligation transfer) land on
-    a still-active loan whose lender of record can change before the claim,
-    so reserving them safely requires re-keying the reservation across every
-    lender-change path and is handled separately.
+    held-for-lender accruals — preclose offset, obligation transfer, a
+    partial internal match, and a lender share parked for a sanctioned
+    holder while the loan is live — land on a still-active loan whose
+    lender of record can change before the claim. They are reserved in
+    full the moment they land, and the reservation moves with the funds on
+    every lender change (consolidation to the current holder, or a sale of
+    the lender position), so it always sits on the vault that holds them.
+    Consolidating the lender side to its current holder is refused only
+    while some of that held VPFI is NOT reserved, because the unreserved
+    remainder would become a freely withdrawable balance in the holder's
+    vault; a held amount that is fully reserved — through whichever
+    reservation records it — must not block the holder (#2364).
 - A successful marketplace fill is a proper loan close, not a default.
   It must settle the lender, treasury, borrower residual, position NFT
   lock, and borrower VPFI rebate / forfeiture state consistently with

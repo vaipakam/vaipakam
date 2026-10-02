@@ -8,6 +8,8 @@ import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
+import {ConsolidationFacet} from "../src/facets/ConsolidationFacet.sol";
+import {LoanFacet} from "../src/facets/LoanFacet.sol";
 
 /**
  * @title  SanctionsActiveLenderFreezeTest
@@ -327,6 +329,59 @@ contract SanctionsActiveLenderFreezeTest is SetupTest {
             TestMutatorFacet(address(diamond)).getHeldForLenderEncumberedRaw(LOAN_ID),
             AMOUNT,
             "per-loan record unchanged (loan-keyed)"
+        );
+    }
+
+    /// #2364 — a VPFI lender share parked by an active Class B freeze is FULLY
+    /// reserved, but only through the dedicated active-held ledger
+    /// (`heldForLenderEncumbered`); the terminal `lenderProceedsEncumbered`
+    /// ledger stays zero. The consolidation guard used to read only the
+    /// terminal ledger, so it classed this held amount as unreserved and
+    /// refused the holder's consolidation (`ConsolidationNotAllowed`) even
+    /// after the holder was delisted. It now reads both ledgers
+    /// (`LibEncumbrance.vpfiReservedOnSide`), so the clean holder consolidates
+    /// and the held VPFI, its reservation and the anchor all move together.
+    function test_activeVpfiPark_delistedHolderCanConsolidate() public {
+        MockSanctionsList m = _installOracle();
+        TestMutatorFacet(address(diamond)).setVpfiTokenRaw(mockERC20); // principal is VPFI
+        _scaffoldActiveLoan();
+        m.setFlagged(holder, true);
+        ERC20Mock(mockERC20).mint(address(diamond), AMOUNT);
+        TestMutatorFacet(address(diamond)).callFreezeOrPayActiveLenderResident(
+            LOAN_ID, mockERC20, AMOUNT, block.timestamp
+        );
+        assertEq(
+            TestMutatorFacet(address(diamond)).getLenderProceedsEncumberedRaw(LOAN_ID),
+            0,
+            "precondition: nothing in the terminal ledger"
+        );
+        assertEq(
+            TestMutatorFacet(address(diamond)).getHeldForLenderEncumberedRaw(LOAN_ID),
+            AMOUNT,
+            "precondition: fully reserved through the active-held ledger"
+        );
+
+        m.setFlagged(holder, false); // delisted: now an ordinary clean holder
+        vm.prank(holder);
+        ConsolidationFacet(address(diamond)).consolidatePrincipalToHolder(LOAN_ID);
+
+        assertEq(
+            LoanFacet(address(diamond)).getLoanDetails(LOAN_ID).lender,
+            holder,
+            "lender side re-anchored to the holder"
+        );
+        address holderVault = TestMutatorFacet(address(diamond)).getUserVaipakamVaultRaw(holder);
+        assertEq(ERC20Mock(mockERC20).balanceOf(holderVault), AMOUNT, "held VPFI moved to the holder's vault");
+        assertEq(_lenderVaultBal(), 0, "nothing left in the departed lender's vault");
+        assertEq(
+            TestMutatorFacet(address(diamond)).getEncumberedRaw(holder, mockERC20, 0),
+            AMOUNT,
+            "the reservation followed the funds"
+        );
+        assertEq(
+            TestMutatorFacet(address(diamond)).getEncumberedRaw(storedLender, mockERC20, 0),
+            0,
+            "the departed lender is no longer reserved"
         );
     }
 }
