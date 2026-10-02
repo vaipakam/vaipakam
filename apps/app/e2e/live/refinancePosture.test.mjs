@@ -145,39 +145,23 @@ describe('refinancePostureVerdict', () => {
     });
   });
 
-  it('fails a known posture that disagrees with the chain, tagged chain-explainable', () => {
+  // ROOT DECISION (#2368 r5): a self-consistent banner that disagrees with
+  // the drive's own chain reads cannot be attributed from outside the page
+  // (lagging page provider, unsampled endpoint, flip-and-restore), so it is
+  // BLOCKED — loud, never a pass, never an accusation.
+  it('blocks — never fails, never passes — a stable chain disagreement, naming both postures', () => {
     for (const [attr, text] of [
       ['off', COPY.off],
       ['paused', COPY.paused],
     ]) {
-      // The page provider's head floor agrees with the drive's reads, so
-      // every block the page could have read carried "on".
-      const v = refinancePostureVerdict(obs({ attr, text, pageText: text, pageFloor: ON }), COPY);
-      expect(v).toMatchObject({ verdict: 'fail', failKind: 'chain', expected: 'on', observed: attr });
+      const v = refinancePostureVerdict(obs({ attr, text, pageText: text }), COPY);
+      expect(v).toMatchObject({ verdict: 'blocked', expected: 'on', observed: attr });
+      expect(v.why).toMatch(new RegExp(`stated "${attr}".*read "on"`));
     }
   });
 
-  // #2368 r2 — the page reads through its own provider, which can lag.
-  it('blocks — never fails — a mismatch the page provider\'s window could not bracket', () => {
-    for (const pageFloor of [null, undefined]) {
-      const v = refinancePostureVerdict(obs({ attr: 'off', text: COPY.off, pageText: COPY.off, pageFloor }), COPY);
-      expect(v.verdict).toBe('blocked');
-      expect(v.why).toMatch(/could not be bracketed/);
-    }
-  });
-
-  it('blocks a mismatch when the posture at the page provider\'s head floor differs', () => {
-    // A lagging page RPC correctly reading the earlier "off".
-    const v = refinancePostureVerdict(
-      obs({ attr: 'off', text: COPY.off, pageText: COPY.off, pageFloor: OFF }),
-      COPY,
-    );
-    expect(v.verdict).toBe('blocked');
-    expect(v.why).toMatch(/head floor \("off"\)/);
-  });
-
-  it('still passes a matching banner without needing a page floor', () => {
-    expect(refinancePostureVerdict(obs({ pageFloor: null }), COPY).verdict).toBe('pass');
+  it('still passes a matching banner', () => {
+    expect(refinancePostureVerdict(obs(), COPY).verdict).toBe('pass');
   });
 
   it('fails an unrecognised posture attribute', () => {

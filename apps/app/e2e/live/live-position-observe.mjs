@@ -326,11 +326,9 @@ const pub = createPublicClient({ transport: http(RPC) });
  * deliberately does not go through `discovery()`, which would end the run
  * over a read that only one assertion consumes.
  */
-async function chainPosture(atBlock = null) {
+async function chainPosture() {
   try {
-    // `atBlock` (#2368 r2): the page provider's head FLOOR, so a mismatch
-    // can be bracketed against the window the page's own reads fall in.
-    const blockNumber = atBlock ?? (await pub.getBlockNumber({ cacheTime: 0 }));
+    const blockNumber = await pub.getBlockNumber({ cacheTime: 0 });
     const read = (functionName) =>
       pub.readContract({ address: DIAMOND, abi: DIAMOND_ABI_VIEM, functionName, blockNumber });
     const [paused, autoRefinance, flags] = await Promise.all([
@@ -455,7 +453,8 @@ if (REFI_POSTURE) {
   console.log(
     sw
       ? `posture   @${sw.blockNumber}: paused=${sw.paused} autoRefinance=${sw.autoRefinance}` +
-          ` partialFill=${sw.partialFill} → the form must state "${expectedPostureFrom(sw)}"`
+          ` partialFill=${sw.partialFill} (this drive's RPC) → the form is expected to state` +
+          ` "${expectedPostureFrom(sw)}"; a page whose own provider disagrees is BLOCKED, not failed`
       : 'posture   UNREAD at startup (each judged visit re-reads it)',
   );
 }
@@ -2528,18 +2527,7 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
     pageHeadBeforeNav = sample.head;
     pageSampledBeforeNav = sample.sampled;
   }
-  // #2355 — decided before navigation, because a judged posture
-  // visit needs the page provider's pre-navigation head as well (#2368 r3).
   const judgePosture = ROLE === 'borrower' && loan !== null && refiApplicable(loan);
-  if (judgePosture) {
-    // Borrower-only, so it never shares a visit with the lender sample
-    // above. The SOUND floor `pageHead.mjs` reserves: a page `eth_call` can be
-    // served at block N before or alongside the page's first announced head
-    // N+1, so `pageHeadFloorOf` alone can sit above the block the banner was
-    // read at. The provider's head sampled before `page.goto` cannot.
-    const postureSample = await pageProviderHead();
-    pageHeadBeforeNav = postureSample.head;
-  }
   // #2355 — the chain posture BEFORE the page loads, so the observation is
   // bracketed by two reads (the second follows the scrape).
   const postureBefore = judgePosture ? await chainPosture() : null;
@@ -2594,28 +2582,11 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
   const freeHeld = await page.getByTestId('free-held-options').count();
   const refinancePosture = judgePosture ? await observeRefinancePosture(page) : null;
   const postureAfter = judgePosture ? await chainPosture() : null;
-  // #2368 r2/r3 — THE PAGE'S OWN WINDOW. The two reads above come from
-  // this drive's RPC; the page reads through its own provider, which can
-  // lag. The floor is the page provider's head sampled BEFORE navigation
-  // (the sound bound — see `pageProviderHead`), lowered further to the
-  // lowest head the page's Diamond-serving endpoints announced if that is
-  // lower. Without a pre-navigation sample there is no sound floor: the
-  // read is skipped and a mismatch stays BLOCKED rather than accused.
-  const announcedFloor = judgePosture ? pageHeadFloorOf(page) : 0n;
-  const pageFloor =
-    typeof pageHeadBeforeNav === 'bigint' && pageHeadBeforeNav > 0n
-      ? announcedFloor > 0n && announcedFloor < pageHeadBeforeNav
-        ? announcedFloor
-        : pageHeadBeforeNav
-      : 0n;
-  const postureAtPageFloor =
-    judgePosture && pageFloor > 0n ? await chainPosture(pageFloor) : null;
   const refinancePostureObs = judgePosture
     ? {
         applicable: true,
         before: postureBefore,
         after: postureAfter,
-        pageFloor: postureAtPageFloor,
         ...refinancePosture,
       }
     : null;

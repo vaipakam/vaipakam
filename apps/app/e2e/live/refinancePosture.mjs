@@ -97,8 +97,6 @@ const squash = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
  *   STORED borrower, and the chooser's own eligibility held)
  * @param {object|null} o.before  chain switches read before navigation
  * @param {object|null} o.after   chain switches read after the scrape
- * @param {object|null} [o.pageFloor] chain switches at the page provider's
- *   head floor (#2368 r2); `null` when no floor was observed
  * @param {boolean} o.formPresent  the refinance form's card rendered
  * @param {number}  o.bannerCount  VISIBLE posture banners inside the form
  * @param {number}  [o.hiddenBannerCount] banners mounted but not visible
@@ -214,37 +212,25 @@ export function refinancePostureVerdict(o, copy) {
     };
   }
   if (o.attr !== expected) {
-    // #2368 r2 — the page reads through ITS OWN provider, which can lag this
-    // drive's. A mismatch is only attributable when the posture was the same
-    // at the page provider's head floor too: then every block the page could
-    // have read carries the posture the drive expects.
-    const atPageFloor = expectedPostureFrom(o.pageFloor);
-    if (atPageFloor === null) {
-      return {
-        ...base,
-        verdict: 'blocked',
-        why:
-          `the banner stated "${o.attr}" while the chain posture was "${expected}", but the ` +
-          "page provider's own window could not be bracketed — a lagging page RPC cannot be ruled out",
-      };
-    }
-    if (atPageFloor !== expected) {
-      return {
-        ...base,
-        verdict: 'blocked',
-        why:
-          `the posture at the page provider's head floor ("${atPageFloor}") differs from the ` +
-          `drive's ("${expected}") — the page may correctly be showing either`,
-      };
-    }
-    // `chain`: a page reading ANOTHER network's Diamond would show another
-    // posture, so this is ranked with the absences the drive's wrong-chain
-    // gates outrank, never promoted above them.
+    // ROOT DECISION (#2368 r5, after three rounds on this seam): a stable,
+    // self-consistent banner that DISAGREES with this drive's chain reads is
+    // BLOCKED, never a FAIL. The page reads through its own provider, so the
+    // disagreement has explanations this drive cannot rule out from outside
+    // — a lagging page RPC, an endpoint the drive never sampled, a switch
+    // flipped and restored between samples (ABA) — and every bracketing
+    // scheme tried here left one of them open. It is still loud: exit 2,
+    // with both postures named, never a pass. What it cannot be is an
+    // accusation. The app's own mapping from switches to posture is pinned
+    // by `src/data/autoRefinancePosture.test.ts` and, for this module's
+    // expectation, by the parity test against `autoRefinancePostureFrom`.
     return {
       ...base,
-      verdict: 'fail',
-      failKind: 'chain',
-      why: `the banner stated "${o.attr}" while the chain posture was "${expected}"`,
+      verdict: 'blocked',
+      why:
+        `the banner stated "${o.attr}" while this drive's RPC read "${expected}" — a ` +
+        'disagreement this drive cannot attribute from outside the page (a lagging page ' +
+        'provider or a flip-and-restore between samples are not ruled out); investigate, ' +
+        'it is not a pass',
     };
   }
   return { ...base, verdict: 'pass', why: `stated "${expected}" in the expected words, and no other posture` };
