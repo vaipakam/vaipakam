@@ -32,6 +32,7 @@ const obs = (over = {}) => ({
   text: COPY.on,
   pageText: `Refinance this loan … ${COPY.on} … Review`,
   error: null,
+  interval: { scanned: true, changes: 0 },
   ...over,
 });
 
@@ -157,6 +158,19 @@ describe('refinancePostureVerdict', () => {
       const v = refinancePostureVerdict(obs({ attr, text, pageText: text }), COPY);
       expect(v).toMatchObject({ verdict: 'blocked', expected: 'on', observed: attr });
       expect(v.why).toMatch(new RegExp(`stated "${attr}".*read "on"`));
+    }
+  });
+
+  // #2368 r6 — an on → off → on excursion leaves both endpoint reads "on".
+  it('blocks a MATCHING banner when a switch changed between the two reads', () => {
+    const v = refinancePostureVerdict(obs({ interval: { scanned: true, changes: 2 } }), COPY);
+    expect(v.verdict).toBe('blocked');
+    expect(v.why).toMatch(/changed 2 time/);
+  });
+
+  it('blocks a matching banner when interval stability could not be scanned', () => {
+    for (const interval of [{ scanned: false }, null, undefined]) {
+      expect(refinancePostureVerdict(obs({ interval }), COPY).verdict).toBe('blocked');
     }
   });
 

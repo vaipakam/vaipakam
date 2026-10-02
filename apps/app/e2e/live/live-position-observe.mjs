@@ -87,6 +87,7 @@ import {
   createPublicClient,
   http,
   numberToHex,
+  parseAbi,
 } from 'viem';
 import {
   excursionExplains,
@@ -339,6 +340,38 @@ async function chainPosture() {
     return { paused, autoRefinance, partialFill: flags[2], blockNumber };
   } catch {
     return null;
+  }
+}
+
+/**
+ * #2368 r6 — did any posture switch CHANGE between the two bracketing
+ * reads? Endpoint samples alone cannot see an on → off → on excursion, so
+ * the Diamond's logs over (before, after] are scanned for every event the
+ * three switches emit on a write: `Paused` / `Unpaused` (LibPausable),
+ * `AutoRefinanceEnabledSet` (AdminFacet) and `PartialFillEnabledSet`
+ * (ConfigFacet). Returns `{ scanned: true, changes }`, or
+ * `{ scanned: false }` when the scan could not run — which the verdict
+ * treats as unknown stability, i.e. BLOCKED, never a pass.
+ */
+const POSTURE_EVENTS = parseAbi([
+  'event Paused(address account)',
+  'event Unpaused(address account)',
+  'event AutoRefinanceEnabledSet(bool enabled)',
+  'event PartialFillEnabledSet(bool enabled)',
+]);
+async function postureIntervalScan(before, after) {
+  if (!before || !after) return { scanned: false };
+  if (after.blockNumber <= before.blockNumber) return { scanned: true, changes: 0 };
+  try {
+    const logs = await pub.getLogs({
+      address: DIAMOND,
+      events: POSTURE_EVENTS,
+      fromBlock: before.blockNumber + 1n,
+      toBlock: after.blockNumber,
+    });
+    return { scanned: true, changes: logs.length };
+  } catch {
+    return { scanned: false };
   }
 }
 
@@ -2582,11 +2615,15 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
   const freeHeld = await page.getByTestId('free-held-options').count();
   const refinancePosture = judgePosture ? await observeRefinancePosture(page) : null;
   const postureAfter = judgePosture ? await chainPosture() : null;
+  const postureInterval = judgePosture
+    ? await postureIntervalScan(postureBefore, postureAfter)
+    : null;
   const refinancePostureObs = judgePosture
     ? {
         applicable: true,
         before: postureBefore,
         after: postureAfter,
+        interval: postureInterval,
         ...refinancePosture,
       }
     : null;
