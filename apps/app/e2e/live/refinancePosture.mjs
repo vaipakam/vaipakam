@@ -207,23 +207,24 @@ export function refinancePostureVerdict(o, copy) {
   // #2368 r6/r8/r11 — two agreeing endpoint reads do not show the posture
   // HELD in between: an on → off → on excursion leaves both samples "on".
   // Stability is established only by reading the posture at EVERY block
-  // from the page provider's measured head floor (when that is lower than
-  // the first read) through the last, and finding no difference. An
-  // unbounded page read window is unknown stability (#2368 r12). Unknown or changed is BLOCKED — for a match as
+  // from the page provider's measured head floor (when lower than the first
+  // read) through its measured ceiling (when higher than the last), and
+  // finding no difference. An unbounded page read window, at either end, is
+  // unknown stability (#2368 r12/r13). Unknown or changed is BLOCKED — for a match as
   // much as for a mismatch, so a stale banner is never certified across an
   // interval the drive could not see.
   if (!o.interval || o.interval.scanned !== true) {
     return {
       ...base,
       verdict: 'blocked',
-      why: "the posture could not be shown stable over the page's read window (the page provider's head floor was not established, or the per-block scan did not run)",
+      why: "the posture could not be shown stable over the page's read window (the page provider's head floor or ceiling was not established, or the per-block scan did not run)",
     };
   }
   if (o.interval.changes > 0) {
     return {
       ...base,
       verdict: 'blocked',
-      why: `the posture differed at ${o.interval.changes} block(s) in the scanned window (page provider floor + observation) — the page may correctly show either`,
+      why: `the posture differed at ${o.interval.changes} block(s) in the scanned window (page provider floor through ceiling) — the page may correctly show either`,
     };
   }
   if (o.attr === 'unknown') {

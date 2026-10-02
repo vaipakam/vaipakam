@@ -380,22 +380,28 @@ const POSTURE_SCAN_MAX_BLOCKS = 600n;
  * page's reads from below. The scan then starts there. No established
  * floor → the page's read window is unbounded → `scanned: false` → BLOCKED.
  */
-async function postureIntervalScan(before, after, pageFloor) {
+async function postureIntervalScan(before, after, pageFloor, pageCeiling) {
   if (!before || !after) return { scanned: false };
   if (typeof pageFloor !== 'bigint' || pageFloor <= 0n) return { scanned: false };
+  // #2368 r13 — and from ABOVE: a page provider AHEAD of this drive's can
+  // have served a block past `after`. The ceiling (asked after the scrape,
+  // highest across every endpoint the page used, sound only when all of
+  // them answered) extends the scan's top; without one, BLOCKED.
+  if (typeof pageCeiling !== 'bigint' || pageCeiling <= 0n) return { scanned: false };
   // Equal heads: a zero-length interval, nothing to scan. A LOWER second
   // head (a load-balanced RPC answering from a lagging backend, or a reorg)
   // is not a chronological interval at all, so stability is unknown
   // (#2368 r7) — never a clean zero-change result.
   if (after.blockNumber < before.blockNumber) return { scanned: false };
   const from = pageFloor < before.blockNumber ? pageFloor : before.blockNumber;
-  if (after.blockNumber - from > POSTURE_SCAN_MAX_BLOCKS) return { scanned: false };
+  const to = pageCeiling > after.blockNumber ? pageCeiling : after.blockNumber;
+  if (to - from > POSTURE_SCAN_MAX_BLOCKS) return { scanned: false };
   const want = expectedPostureFrom(before);
   const blocks = [];
   // EVERY block, the first sample's own included (#2368 r12): a reorg can
   // replace `before.blockNumber` with a canonical block of another posture
   // while the heads keep moving forward.
-  for (let n = from; n <= after.blockNumber; n++) blocks.push(n);
+  for (let n = from; n <= to; n++) blocks.push(n);
   let changes = 0;
   for (let i = 0; i < blocks.length; i += 10) {
     const reads = await Promise.all(blocks.slice(i, i + 10).map((n) => chainPosture(n)));
@@ -2659,6 +2665,18 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
   const holdCard = await page.getByTestId('sale-listing-hold-card').count();
   const freeHeld = await page.getByTestId('free-held-options').count();
   const refinancePosture = judgePosture ? await observeRefinancePosture(page) : null;
+  // #2368 r13 — the page provider's CEILING, asked after the scrape (heads do
+  // not go backwards, so it bounds every read served during it) and kept only
+  // when every Diamond-serving endpoint the page used answered — the lender
+  // path's `ceilingSound` rule.
+  let posturePageCeiling = 0n;
+  if (judgePosture) {
+    const postureCeiling = await pageProviderCeiling(page);
+    const sound =
+      postureCeiling.head > 0n &&
+      [...diamondKeysOf(page)].every((k) => postureCeiling.sampled.has(k) || isForeign(k));
+    if (sound) posturePageCeiling = postureCeiling.head;
+  }
   const postureAfter = judgePosture ? await chainPosture() : null;
   // The page's read window, bounded from below only when every endpoint it
   // used is (see `postureIntervalScan`). In-flight head parses are drained
@@ -2678,7 +2696,7 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
     }
   }
   const postureInterval = judgePosture
-    ? await postureIntervalScan(postureBefore, postureAfter, posturePageFloor)
+    ? await postureIntervalScan(postureBefore, postureAfter, posturePageFloor, posturePageCeiling)
     : null;
   const refinancePostureObs = judgePosture
     ? {
