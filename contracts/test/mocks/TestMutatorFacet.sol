@@ -2633,6 +2633,13 @@ contract TestMutatorFacet {
         return LibVaipakam.storageSlot().loanSideRewardReservedVpfi[loanId][side];
     }
 
+    /// @dev The loan side's reward-cap consumption — what the day persist
+    ///      charges for a chargeable slice (Codex #2308 r22 pins that a
+    ///      forfeited share charges none of it).
+    function loanSideRewardPaidRaw(uint256 loanId, uint8 side) external view returns (uint256) {
+        return LibVaipakam.storageSlot().loanSideRewardPaidVpfi[loanId][side];
+    }
+
     /// @dev The authoritative executable-now predicate the expiry clock reads,
     ///      exposed raw so a cell can observe it without driving the sweep.
     function entryExecutableNowRaw(uint256 id) external view returns (bool) {

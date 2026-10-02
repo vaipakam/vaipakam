@@ -380,11 +380,6 @@
             "internalType": "uint256"
           },
           {
-            "name": "lateWorkRestored",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
             "name": "restoredSeen",
             "type": "uint256",
             "internalType": "uint256"
@@ -395,7 +390,7 @@
             "internalType": "uint256"
           },
           {
-            "name": "restoredWork",
+            "name": "forcedPages",
             "type": "uint256",
             "internalType": "uint256"
           }

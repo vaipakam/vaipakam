@@ -26,6 +26,7 @@ import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibRewardCustody} from "../src/libraries/LibRewardCustody.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
+import {Vm} from "forge-std/Vm.sol";
 
 /// @title RewardStagingTest
 /// @notice #1566 transport epochs 3b-ii-A2 (#2305) — the staging record's
@@ -56,6 +57,7 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
     event StagingRecordOpened(bytes32 indexed key, address indexed user, uint8 side, uint64 day, bytes32 commitment);
     event TransportStaged(bytes32 indexed batchId, bytes32 indexed key, uint256 fresh, uint256 recycled);
     event StagingClaimantForfeited(bytes32 indexed key, address indexed user, uint256 fresh, uint256 recycled);
+    event StagingDelivered(bytes32 indexed key, address indexed user, uint256 amount, uint8 venue);
 
     function setUp() public {
         setupHelper();
@@ -529,10 +531,24 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         uint256 userFresh = r.reservedLiveUserFresh + r.epochUserFresh;
         uint256 userRecycled = r.reservedLiveUserRecycled + r.epochUserRecycled;
         assertGt(userFresh + userRecycled, 0, "fixture: a share to forfeit");
+        uint8 sideKey = uint8(LibVaipakam.RewardSide.Lender);
+        uint256 sidePaidBefore = _mut().loanSideRewardPaidRaw(LOAN, sideKey);
+        assertGt(_mut().loanSideRewardReservedRaw(LOAN, sideKey), 0, "fixture: the reservation holds the loan side");
+        vm.recordLogs();
         vm.expectEmit(true, true, false, true, address(diamond));
         emit StagingClaimantForfeited(_key(), alice, userFresh, userRecycled);
         assertTrue(_settle().resolveStagedDayPage(_key()), "the last page completes");
         assertEq(vpfi.balanceOf(alice), aliceBefore, "nothing delivered to the flagged wallet");
+        // Codex #2308 r22 — a forfeited share is not emitted to the side: the
+        // loan side's reward cap is untouched, its reservation released, and
+        // no delivery venue is announced for value that never moved.
+        assertEq(_mut().loanSideRewardPaidRaw(LOAN, sideKey), sidePaidBefore, "a forfeit charges no loan-side cap");
+        assertEq(_mut().loanSideRewardReservedRaw(LOAN, sideKey), 0, "and releases the reservation it took");
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 delivered = keccak256("StagingDelivered(bytes32,address,uint256,uint8)");
+        for (uint256 i; i < logs.length; ++i) {
+            assertTrue(logs[i].topics[0] != delivered, "no delivery is announced for a forfeit");
+        }
         assertEq(_rec().phase, uint8(LibVaipakam.StagingPhase.None), "closed, not trapped");
         (, uint256 bucketAfter, , , , , , ) = InteractionRewardsLensFacet(address(diamond)).getRecycleBackingSnapshot();
         assertEq(bucketAfter - bucketBefore, userFresh, "the forfeited fresh is absorbed into the bucket");
@@ -1111,9 +1127,10 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         vm.warp(arrivedAt[64] + 200);
         _staging().prepareStagedDay(_key()); // the restart: the chain from its head
         assertEq(_rec().lateWorkBase, 70, "the base is the count at opening, still");
-        assertEq(_rec().lateWorkRestored, 71, "the restart restored the whole chain's walk");
-        // 136 members, one link since opening, 71 restored: four pages.
-        assertEq(_rec().deadline, r.openedAt + 4 days + 3 days, "the deadline grew by the restored page");
+        assertEq(_rec().forcedPages, 2, "the restart's walk of a 71-link chain is two pages of its own");
+        // 136 members and one link since opening: three list pages; the
+        // restart's 71 links: two forced pages of their own (r22) — five.
+        assertEq(_rec().deadline, r.openedAt + 5 days + 3 days, "the deadline grew by the restart's own pages");
         // A SECOND restart — another epoch older than all — restores the
         // walk again, and the deadline grows again (Codex #2308 r10).
         vm.warp(t0 - 3000);
@@ -1121,9 +1138,35 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         _ingress().onRemitSplitAttested(CHAIN_BASE, REMITTER, 898, TINY, 0);
         vm.warp(arrivedAt[64] + 300);
         _staging().prepareStagedDay(_key());
-        assertEq(_rec().lateWorkRestored, 71 + 72, "each restart adds the chain it re-walks");
-        // 137 members, two links since opening, 143 restored: five pages.
-        assertEq(_rec().deadline, r.openedAt + 5 days + 3 days, "the second restart's pages are in the lease too");
+        assertEq(_rec().forcedPages, 4, "each restart adds the pages of the chain it re-walks");
+        // Three list pages still; 72 links re-walked: two more forced — seven.
+        assertEq(_rec().deadline, r.openedAt + 7 days + 3 days, "the second restart's pages are in the lease too");
+    }
+
+    /// @dev Codex #2308 r22 P1 — the lease counts CALLS, not items: a
+    ///      rescan forced on a record that had finished scanning is a
+    ///      transaction of its own however small, so it is a page of its own
+    ///      in the lease. Rounding every item together let a one-link
+    ///      insertion force a call the lease never counted, and the record
+    ///      could be unwound at the original deadline before an honest
+    ///      cadence took that call.
+    function test_AForcedRestart_IsALeasePageOfItsOwn_HoweverSmall() public {
+        _stagedAndScanned();
+        RewardEpochViewFacet.StagingRecordView memory r = _rec();
+        assertTrue(r.scanComplete, "fixture: nothing left to scan");
+        assertEq(r.forcedPages, 0, "fixture: no forced page yet");
+        uint64 leaseBefore = r.deadline;
+        // ONE older epoch, linked late behind the record's place: a generation
+        // move, a chain of one link — far below a page's worth of items.
+        vm.warp(arrivedAt[0] - 100);
+        _epochOfHinted(899, keccak256("older-by-one"), bytes32(0), bytes32(0), true);
+        _ingress().onRemitSplitAttested(CHAIN_BASE, REMITTER, 899, TINY, 0);
+        vm.warp(arrivedAt[WIDE - 1] + 200);
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.StagingScanIncomplete.selector, _key()));
+        _staging().reserveStagedDay(_key()); // the forced call stands between the record and its reservation
+        _staging().prepareStagedDay(_key()); // the restart: one link, one call
+        assertEq(_rec().forcedPages, 1, "one link, one page: a forced rescan is never rounded into the list's");
+        assertEq(_rec().deadline, leaseBefore + 1 days, "and the lease grew by the call it cost");
     }
 
     /// @dev A RESTORED epoch is re-offered to every standing record on its
@@ -1187,9 +1230,9 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         bv = _view().getStagingRecord(bobKey);
         assertEq(bv.restoredSeen, bv.restoredLogLength, "and the view shows the log read");
         assertEq(bv.lateGenNow, bv.lateGenSeen, "the record has caught the day's late generation");
-        // The lease counts the restorations it processed, not only those left
-        // unread (Codex #2308 r17): 65 more members of work, a later deadline.
-        assertEq(bv.restoredWork, 65, "every restoration processed is counted");
+        // The lease counts the recheck pages it took, not only the unread
+        // part (Codex #2308 r17, r22): 65 restorations, two pages of their own.
+        assertEq(bv.forcedPages, 2, "two recheck pages read the 65 restorations: each a page of its own");
         assertGt(bv.deadline, leaseBefore, "and the lease grew by the restored work");
         _staging().reserveStagedDay(bobKey);
         assertEq(_view().getStagingRecord(bobKey).phase, uint8(LibVaipakam.StagingPhase.Reserved));
@@ -1263,6 +1306,8 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         uint256 walletBefore = vpfi.balanceOf(alice);
         uint256 vaultBefore = vpfi.balanceOf(vault);
         _settle().resolveStagedDayPage(_key());
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit StagingDelivered(_key(), alice, NEED, uint8(LibVaipakam.RewardDelivery.Wallet)); // the venue reached, announced on its own (r22)
         assertTrue(_settle().resolveStagedDayPage(_key()));
         assertEq(vpfi.balanceOf(alice) - walletBefore, NEED, "paid to the wallet the claim named");
         assertEq(vpfi.balanceOf(vault), vaultBefore, "not to the vault the default would have chosen");

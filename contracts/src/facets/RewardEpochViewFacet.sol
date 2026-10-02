@@ -84,16 +84,17 @@ contract RewardEpochViewFacet {
         uint256 skippedCount;
         bool pendingOverflow;
         uint256 lateWorkBase;
-        uint256 lateWorkRestored;
         /// @dev The day's restore log (Codex #2308 r15, r16): how far this
         ///      record has read it, and how long it is now. While the two
         ///      differ the reservation refuses `StagingScanIncomplete`, and
         ///      each preparation re-offers up to one window of the difference.
         uint256 restoredSeen;
         uint256 restoredLogLength;
-        /// @dev The restore-log work processed so far, cumulative — what the
-        ///      deadline counts beside the unread part (Codex #2308 r17).
-        uint256 restoredWork;
+        /// @dev The pages forced on the record so far — a late-chain restart's
+        ///      pages, and one per call forced after the scan had completed —
+        ///      what the deadline counts beside the list's pages and the
+        ///      forced work still pending (Codex #2308 r17, r22).
+        uint256 forcedPages;
     }
 
     /// @notice The preview's dry run of `user`'s ShareOfPool days against the
@@ -219,10 +220,9 @@ contract RewardEpochViewFacet {
         v.skippedCount = r.skippedIds.length;
         v.pendingOverflow = r.pendingOverflow;
         v.lateWorkBase = r.lateWorkBase;
-        v.lateWorkRestored = r.lateWorkRestored;
         v.restoredSeen = r.restoredSeen;
         v.restoredLogLength = LibVaipakam.storageSlot().transportDayRestored[r.day].length;
-        v.restoredWork = r.restoredWork;
+        v.forcedPages = r.forcedPages;
     }
 
     /// @notice One page of the record's batches — each with the components it

@@ -8119,23 +8119,23 @@ library LibVaipakam {
         ///      from: the day's count when the record opened, so the deadline
         ///      counts links made since and never the day's history.
         uint256 lateWorkBase;
-        /// @dev The late work RESTORED by restarts: every generation move
-        ///      re-walks the chain from its head, so each adds the chain's
-        ///      count at that moment here, and the deadline counts every
-        ///      restart's pages, not only the first's (Codex #2308 r5, r10).
-        uint256 lateWorkRestored;
         /// @dev How far into the day's restore log (`transportDayRestored`)
         ///      this record has read (Codex #2308 r15): set to the log's
         ///      length when the record opens — its own first scan covers
         ///      every earlier restoration — and advanced as preparations
         ///      re-offer what was restored since.
         uint256 restoredSeen;
-        /// @dev The restore-log work this record has PROCESSED, cumulative
-        ///      (Codex #2308 r17): each preparation's re-offer page adds its
-        ///      length here as it advances `restoredSeen`, so the deadline
-        ///      counts every page of restorations — processed and unread —
-        ///      exactly as `lateWorkRestored` counts every late-chain restart.
-        uint256 restoredWork;
+        /// @dev The preparation pages this record was FORCED into beyond its
+        ///      list's scan, cumulative (Codex #2308 r5, r10, r17, r22): every
+        ///      late-chain restart adds the pages the chain it re-walks needs,
+        ///      and every preparation CALLED after the scan had completed —
+        ///      for a member the list gained, a restoration, a passed epoch
+        ///      become stageable — adds one; each at least one page, never
+        ///      rounded into another's, so the deadline counts every call a
+        ///      forced rescan cost, not the items, and a one-link insertion
+        ///      after a finished scan still lengthens the lease by the call
+        ///      it costs. A call with nothing new adds nothing.
+        uint256 forcedPages;
     }
 
     /// @notice #1566 transport epochs PR 3b — a batch's PENDING REMAINDER:

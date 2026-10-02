@@ -2723,31 +2723,64 @@ library LibRewardCustody {
         if (current != 0 && block.timestamp >= current) return; // expired: terminal
         // The work LEFT, not the day's history (Codex #2308 r3): the members
         // the day's cursor has not passed, plus the late links made since the
-        // record opened, plus the late work every restart restored — each
-        // generation move re-walks the whole chain and adds its count (Codex
-        // #2308 r5, r10) — so a mature day with thousands of exhausted
-        // members and one window left needs one page, and its lease says so,
-        // while every restart's pages are counted too.
+        // record opened, in pages — so a mature day with thousands of
+        // exhausted members and one window left needs one page, and its
+        // lease says so.
         uint256 len = s.transportBatchesByDay[r.day].length;
         uint256 passed = s.transportDayCursor[r.day];
         uint256 members = len > passed ? len - passed : 0;
         uint256 lateNow = s.transportDayLateCount[r.day];
         members += lateNow > r.lateWorkBase ? lateNow - r.lateWorkBase : 0;
-        members += r.lateWorkRestored;
-        // …plus the restore log: every restoration already re-offered and
-        // every one still unread (Codex #2308 r15, r17) — the processed part
-        // cumulatively, as the late chain's restarts are, so a page the
-        // preparation just took never drops out of the lease.
-        uint256 restoredNow = s.transportDayRestored[r.day].length;
-        members += r.restoredWork;
-        members += restoredNow > r.restoredSeen ? restoredNow - r.restoredSeen : 0;
-        uint256 pages = (members + TRANSPORT_DRAW_SCAN_CAP - 1) / TRANSPORT_DRAW_SCAN_CAP;
-        if (pages == 0) pages = 1;
+        uint256 pages = scanPagesOf(members);
+        // …plus every page FORCED on the record (Codex #2308 r5, r10, r15,
+        // r17, r22): the ones already taken, cumulatively; the restart a
+        // generation move will cost, by its chain's pages; and the call that
+        // work arriving after a completed scan will cost
+        // ({forcedScanItems}) — each as its own pages and at least one,
+        // never rounded into the list's, since a forced rescan is a call of
+        // its own however few items it walks. Rounding every item together
+        // let repeated small insertions force calls the lease never counted.
+        pages += r.forcedPages;
+        if (s.transportDayLateGen[r.day] != r.lateGenSeen) pages += scanPagesOf(lateNow);
+        uint256 forcedItems = forcedScanItems(s, r);
+        if (forcedItems != 0) pages += scanPagesOf(forcedItems);
         uint64 next = r.openedAt + uint64(pages) * STAGING_RETRY_CADENCE + STAGING_GRACE;
         if (next > current) {
             r.deadline = next;
             emit StagingDeadlineSet(key, next);
         }
+    }
+
+    /// @dev The preparation pages `items` of scan work need: one per window
+    ///      of `TRANSPORT_DRAW_SCAN_CAP`, and at least one — the unit the
+    ///      record's lease is counted in (Codex #2308 r22).
+    function scanPagesOf(uint256 items) internal pure returns (uint256 pages) {
+        pages = (items + TRANSPORT_DRAW_SCAN_CAP - 1) / TRANSPORT_DRAW_SCAN_CAP;
+        if (pages == 0) pages = 1;
+    }
+
+    /// @notice The scan work that arrived AFTER record `r`'s scan had
+    ///         completed — members the day's list gained, restorations
+    ///         logged, a passed epoch become stageable — zero while the scan
+    ///         is still running, when such work rides along with the pages
+    ///         the record owes anyway. Non-zero means the reservation refuses
+    ///         `StagingScanIncomplete` until a preparation is CALLED for it,
+    ///         and that call is forced, not the stager's own: it is counted
+    ///         in the lease as a page of its own (Codex #2308 r22), pending
+    ///         here and taken in {LibRewardStaging} when the call runs. A
+    ///         late-chain generation move is the fourth such cause and is
+    ///         counted by the pages its restart needs, separately.
+    function forcedScanItems(LibVaipakam.Storage storage s, LibVaipakam.StagingRecord storage r)
+        internal
+        view
+        returns (uint256 items)
+    {
+        if (!r.scanComplete) return 0;
+        uint256 len = s.transportBatchesByDay[r.day].length;
+        items = len > r.listCountSeen ? len - r.listCountSeen : 0;
+        uint256 restoredNow = s.transportDayRestored[r.day].length;
+        items += restoredNow > r.restoredSeen ? restoredNow - r.restoredSeen : 0;
+        if (anySkippedNowStageable(s, r)) ++items;
     }
 
     function stagingKey(address user, LibVaipakam.RewardSide side, uint256 day) internal pure returns (bytes32) {
@@ -2952,7 +2985,6 @@ library LibRewardCustody {
         assembly ("memory-safe") {
             mstore(out, n)
         }
-        r.restoredWork += to > from ? to - from : 0;
         r.restoredSeen = to;
     }
 
@@ -3112,7 +3144,7 @@ library LibRewardCustody {
             // Likewise the restore log: what was restored before now is in
             // the balances that first scan reads (Codex #2308 r15).
             r.restoredSeen = s.transportDayRestored[day].length;
-            r.restoredWork = 0;
+            r.forcedPages = 0;
         }
         stagingDeadlineRefresh(s, key, r);
     }

@@ -64,7 +64,9 @@ library LibRewardStaging {
     /// @custom:event-category state-change/reward-staging
     event StagingResolvedBatch(bytes32 indexed batchId, bytes32 indexed key, uint256 fresh, uint256 recycled);
     /// @notice The record's last page paid the day: the user's and the
-    ///         treasury's fresh and recycled, by source.
+    ///         treasury's fresh and recycled, by source. Where the user's
+    ///         share went is {StagingDelivered}'s to say — or
+    ///         {StagingClaimantForfeited}'s; this event claims no venue.
     /// @custom:event-category state-change/reward-staging
     event StagingPaid(
         bytes32 indexed key,
@@ -72,9 +74,17 @@ library LibRewardStaging {
         uint256 userFresh,
         uint256 userRecycled,
         uint256 treasuryFresh,
-        uint256 treasuryRecycled,
-        uint8 venue
+        uint256 treasuryRecycled
     );
+    /// @notice The record's user share — `amount`, every source — was
+    ///         DELIVERED to `user` at `venue`: the venue the delivery actually
+    ///         reached (the vault, or the wallet by choice or by fallback).
+    ///         Emitted only when a delivery happened; a forfeited share emits
+    ///         {StagingClaimantForfeited} instead, so no consumer reads a
+    ///         venue for value that never moved to the claimant (Codex #2308
+    ///         r22).
+    /// @custom:event-category state-change/reward-staging
+    event StagingDelivered(bytes32 indexed key, address indexed user, uint256 amount, uint8 venue);
     /// @notice The record's claimant `user` is sanctions-flagged, so the
     ///         day's user share — `fresh` and `recycled`, every source — was
     ///         FORFEITED into the recycle bucket instead of delivered, with the
@@ -210,9 +220,18 @@ library LibRewardStaging {
             r.lateSeen = bytes32(0);
             r.lateGenSeen = gen;
             // The restart re-walks the whole chain, history included: the
-            // chain's count now is work restored, and the deadline counts it
-            // for every restart, not only the first (Codex #2308 r5, r10).
-            r.lateWorkRestored += s.transportDayLateCount[r.day];
+            // pages that walk needs — at least one — are forced on the
+            // record, and the deadline counts them for every restart, not
+            // only the first (Codex #2308 r5, r10, r22).
+            r.forcedPages += LibRewardCustody.scanPagesOf(s.transportDayLateCount[r.day]);
+        } else if (LibRewardCustody.forcedScanItems(s, r) != 0) {
+            // A call FORCED after the scan had completed — the list grew, a
+            // restoration landed, a passed epoch became stageable — is a page
+            // of its own in the lease (Codex #2308 r22), however little it
+            // walks; read before this scan takes the work. A call with
+            // nothing new counts nothing: the stager cannot lengthen the
+            // lease by calling.
+            ++r.forcedPages;
         }
         (
             bytes32[] memory ids,
@@ -503,7 +522,18 @@ library LibRewardStaging {
         uint256 n = r.entryIds.length;
         LibInteractionRewards.DaySlice[] memory slices = new LibInteractionRewards.DaySlice[](n);
         for (uint256 i; i < n; ) {
-            slices[i] = LibInteractionRewards.DaySlice({amount: r.sliceAmounts[i], loanSideChargeable: r.sliceChargeable[i]});
+            // A FORFEITED share is persisted as NOT chargeable (Codex #2308
+            // r22): the loan side's reward cap bounds what is emitted to the
+            // side, and a share recycled instead of paid is not — the one
+            // rule the day pricing stamps on every forfeit's slices
+            // ({LibInteractionRewards._priceEntriesForDay}), applied here
+            // because the flag was stamped at reservation, before the
+            // claimant was flagged. The stored flag still releases the
+            // reservation it took, just below.
+            slices[i] = LibInteractionRewards.DaySlice({
+                amount: r.sliceAmounts[i],
+                loanSideChargeable: r.sliceChargeable[i] && !forfeit
+            });
             if (r.sliceChargeable[i]) {
                 s.loanSideRewardReservedVpfi[s.rewardEntries[r.entryIds[i]].loanId][sideKey] -= r.sliceAmounts[i];
             }
@@ -567,14 +597,18 @@ library LibRewardStaging {
             forfeit ? 0 : r.epochUserRecycled,
             0
         );
+        if (!forfeit && userTotal != 0) {
+            emit StagingDelivered(
+                key, user, userTotal, uint8(vaulted ? LibVaipakam.RewardDelivery.Vault : LibVaipakam.RewardDelivery.Wallet)
+            );
+        }
         emit StagingPaid(
             key,
             user,
             forfeit ? 0 : liveUserFresh + r.epochUserFresh,
             forfeit ? 0 : liveUserRecycled + r.epochUserRecycled,
             liveTreasuryFresh + r.epochTreasuryFresh,
-            r.needTreasuryRecycled,
-            uint8(vaulted ? LibVaipakam.RewardDelivery.Vault : LibVaipakam.RewardDelivery.Wallet)
+            r.needTreasuryRecycled
         );
         _close(s, key, true);
     }
