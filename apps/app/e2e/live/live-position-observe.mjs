@@ -1558,7 +1558,12 @@ if (dropped > 0) {
 // further down — the two used to answer this question separately, or not
 // at all. See the round-29 note in the sort.
 const acceptedSale = new Set();
-if (ROLE === 'lender') {
+// #2368 r9 — a posture run needs this too: PositionDetails suppresses the
+// Refinance form while a lender sale awaits completion
+// (`saleCompletionPending`), so within the named borrower's capped walk
+// those positions go last. Same probe, same classification; only the
+// requested borrower's loans are probed (OBSERVE_ADDRESS is required).
+if (ROLE === 'lender' || REFI_POSTURE) {
   // ROUND 52 P2 — THROUGH `discovery()`, so the one error this loop
   // deliberately rethrows exits BLOCKED rather than FAIL.
   //
@@ -1593,7 +1598,8 @@ if (ROLE === 'lender') {
   const saleCandidates = eligible.filter(
     (x) =>
       x.status === STATUS_ACTIVE &&
-      (!requestedAuthority || x.authority.toLowerCase() === requestedAuthority),
+      (!requestedAuthority || x.authority.toLowerCase() === requestedAuthority) &&
+      (ROLE === 'lender' || refiApplicable(x)),
   );
   await discovery('ranking loans by accepted sale', async () => {
     for (const l of saleCandidates) {
@@ -7616,9 +7622,12 @@ let observedDetails = 0;
 // #2355 — with the posture assertion requested, positions the Refinance
 // form can render on go first: a stable partition, so the chooser's own
 // order is kept within each band and only WHICH loans fill the cap moves.
+// #2368 r9 — and a position awaiting a lender sale's completion goes after
+// the usable ones: its form is correctly suppressed, so it can only BLOCK.
+const refiUsable = (l) => refiApplicable(l) && !acceptedSale.has(l.id);
 const refiFirst = (order) =>
   REFI_POSTURE
-    ? [...order.filter(refiApplicable), ...order.filter((l) => !refiApplicable(l))]
+    ? [...order.filter(refiUsable), ...order.filter((l) => !refiUsable(l))]
     : order;
 const readyFirst = refiFirst(
   walkOrderFor({
