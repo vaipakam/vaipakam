@@ -2890,7 +2890,11 @@ async function stillEligible(loan) {
   // exactly the "nothing decided minutes ago" gate and the other volatile
   // inputs already come through it. Lender-only: the borrower card is not
   // gated on the lender's sale.
-  if (ROLE === 'lender') {
+  // #2368 r10 — a posture run re-reads it too: a sale accepted after the
+  // pre-pass leaves the Refinance form correctly suppressed, so the visit
+  // could only BLOCK and would spend the cap. Skipped here as raced-out,
+  // which does not count against `OBSERVE_MAX_POSITIONS`.
+  if (ROLE === 'lender' || (REFI_POSTURE && refiApplicable(loan))) {
     const soldNow = await discovery(
       `re-reading the accepted sale on loan ${loan.id} before visiting it`,
       () => saleLockedOn(loan.lenderTokenId, loan.id, undefined, authorityNow ?? loan.authority),
