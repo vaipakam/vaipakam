@@ -251,7 +251,7 @@ on these paths, but the design flags it.)
 > written; a pre-upgrade loan's legacy record is folded in at its first sync or
 > released at its claim. The sanctions test is gone too: the funds belong to
 > the holder whether or not the holder can claim. Live loans are out of scope
-> (an open product decision).
+> (decided in #2357 — see ProjectDetailsREADME for the reasons).
 
 Encumbrance fixes the spend-as-free-balance leak but NOT the VPFI tier leak: the
 tier ring buffer is stamped from `protocolTrackedVaultBalance` (restampUserVpfi,

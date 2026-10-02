@@ -55,15 +55,24 @@ import {LibERC721} from "./LibERC721.sol";
  *         consolidation, the only re-anchor, is a no-op once a loan is
  *         terminal (`LibConsolidation.consolidateToHolder`, step 1).
  *
- *         Scope: TERMINAL loans only. A live loan whose position changed
- *         hands keeps today's behaviour — the stored party keeps credit on
- *         the live collateral until the next consolidation — because who
- *         earns tier credit on a transferred LIVE position is an open product
- *         decision (#2342, option C). The comment on
- *         `LibCloseoutFreeze._parkActiveLenderShare` records why an
- *         active-phase counter keyed to a stale stored party was dropped
- *         before; on a terminal loan that staleness cannot arise, for the
- *         reason above.
+ *         Scope: TERMINAL loans only — decided, not deferred (#2357). A
+ *         live loan whose position changed hands leaves the stored party
+ *         with tier credit on the live collateral until the next
+ *         consolidation, and that is the intended behaviour:
+ *           - the current holder can consolidate their own position at any
+ *             time (`ConsolidationFacet.consolidate*ToHolder`), which moves
+ *             the funds and with them the credit;
+ *           - on a live loan the stored party is NOT fixed, so a charge keyed
+ *             to it would go stale when consolidation or a sale re-points the
+ *             funds — the reason the comment on
+ *             `LibCloseoutFreeze._parkActiveLenderShare` gives for dropping
+ *             an active-phase counter; on a terminal loan that staleness
+ *             cannot arise, for the reason above;
+ *           - the stored party cannot spend the funds meanwhile (the lien /
+ *             active-held reservation), so only tier credit lingers.
+ *         The residual is a sanctioned holder, who cannot consolidate; it is
+ *         bounded by the loan closing, at which point this rule takes over.
+ *         ProjectDetailsREADME states the decision and its reasons.
  *
  *         Sanctions are NOT an input. They explain why a holder may be unable
  *         to claim, but the funds are owed to a different wallet either way;
