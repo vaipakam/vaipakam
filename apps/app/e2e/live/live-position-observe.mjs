@@ -326,9 +326,11 @@ const pub = createPublicClient({ transport: http(RPC) });
  * deliberately does not go through `discovery()`, which would end the run
  * over a read that only one assertion consumes.
  */
-async function chainPosture() {
+async function chainPosture(atBlock = null) {
   try {
-    const blockNumber = await pub.getBlockNumber({ cacheTime: 0 });
+    // `atBlock` (#2368 r2): the page provider's head FLOOR, so a mismatch
+    // can be bracketed against the window the page's own reads fall in.
+    const blockNumber = atBlock ?? (await pub.getBlockNumber({ cacheTime: 0 }));
     const read = (functionName) =>
       pub.readContract({ address: DIAMOND, abi: DIAMOND_ABI_VIEM, functionName, blockNumber });
     const [paused, autoRefinance, flags] = await Promise.all([
@@ -2579,8 +2581,24 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
   const freeHeld = await page.getByTestId('free-held-options').count();
   const refinancePosture = judgePosture ? await observeRefinancePosture(page) : null;
   const postureAfter = judgePosture ? await chainPosture() : null;
+  // #2368 r2 — THE PAGE'S OWN WINDOW. The two reads above come from this
+  // drive's RPC; the page reads through its own provider, which can lag.
+  // `pageHeadFloorOf` is the lowest head the page's Diamond-serving
+  // endpoints announced — a block its queries cannot predate — so the
+  // posture there, beside the two above, brackets everything the page
+  // could have read. `null` (no floor observed, or the read failed) leaves
+  // a mismatch unattributable, which the verdict treats as BLOCKED.
+  const pageFloor = judgePosture ? pageHeadFloorOf(page) : 0n;
+  const postureAtPageFloor =
+    judgePosture && pageFloor > 0n ? await chainPosture(pageFloor) : null;
   const refinancePostureObs = judgePosture
-    ? { applicable: true, before: postureBefore, after: postureAfter, ...refinancePosture }
+    ? {
+        applicable: true,
+        before: postureBefore,
+        after: postureAfter,
+        pageFloor: postureAtPageFloor,
+        ...refinancePosture,
+      }
     : null;
   const out = {
     path,

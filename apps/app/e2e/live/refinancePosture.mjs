@@ -97,6 +97,8 @@ const squash = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
  *   STORED borrower, and the chooser's own eligibility held)
  * @param {object|null} o.before  chain switches read before navigation
  * @param {object|null} o.after   chain switches read after the scrape
+ * @param {object|null} [o.pageFloor] chain switches at the page provider's
+ *   head floor (#2368 r2); `null` when no floor was observed
  * @param {boolean} o.formPresent  the refinance form's card rendered
  * @param {number}  o.bannerCount  posture banners inside the form
  * @param {string|null} o.attr     the banner's `data-auto-match-posture`
@@ -208,6 +210,29 @@ export function refinancePostureVerdict(o, copy) {
     };
   }
   if (o.attr !== expected) {
+    // #2368 r2 — the page reads through ITS OWN provider, which can lag this
+    // drive's. A mismatch is only attributable when the posture was the same
+    // at the page provider's head floor too: then every block the page could
+    // have read carries the posture the drive expects.
+    const atPageFloor = expectedPostureFrom(o.pageFloor);
+    if (atPageFloor === null) {
+      return {
+        ...base,
+        verdict: 'blocked',
+        why:
+          `the banner stated "${o.attr}" while the chain posture was "${expected}", but the ` +
+          "page provider's own window could not be bracketed — a lagging page RPC cannot be ruled out",
+      };
+    }
+    if (atPageFloor !== expected) {
+      return {
+        ...base,
+        verdict: 'blocked',
+        why:
+          `the posture at the page provider's head floor ("${atPageFloor}") differs from the ` +
+          `drive's ("${expected}") — the page may correctly be showing either`,
+      };
+    }
     // `chain`: a page reading ANOTHER network's Diamond would show another
     // posture, so this is ranked with the absences the drive's wrong-chain
     // gates outrank, never promoted above them.

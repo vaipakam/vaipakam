@@ -624,9 +624,12 @@ describe('the refinance posture banner (#2355)', () => {
     expect(p).toMatchObject({ kind: 'absence', blockable: true });
   });
 
-  it('tags a DOM-read defect as observed, but still blockable', () => {
+  // #2368 r2 — a self-consistency defect read off the rendered form is
+  // definite: no unrelated routed request or allowlist gap can explain it,
+  // so infrastructure blockers must not bury it.
+  it('tags a DOM-read defect as observed and NOT blockable', () => {
     const [p] = visitProblemKinds(borrower({ refinancePostureVerdict: missing }), 'borrower');
-    expect(p).toMatchObject({ kind: 'observed', blockable: true });
+    expect(p).toMatchObject({ kind: 'observed', blockable: false });
   });
 
   it('adds nothing for pass, blocked, or no verdict', () => {
