@@ -309,8 +309,10 @@ contract TierExclusionTest is SetupTest {
         assertEq(_tierBalance(borrowerEoa), OWN_VPFI + LOAN_COLLATERAL, "bought back: all of it counts again");
     }
 
-    /// @notice Scope (#2342 option C): a LIVE loan's transferred position is
-    ///         untouched — the stored party keeps credit until consolidation.
+    /// @notice Scope (#2342 option C, kept by decision in #2357): a LIVE
+    ///         loan's transferred position is untouched — the stored party
+    ///         keeps credit until the funds are re-anchored to the holder or
+    ///         the loan goes terminal (see `LibTierExclusion`'s scope note).
     function test_liveLoanTransfer_NoExclusion() public {
         TestMutatorFacet(address(diamond)).setVpfiTokenRaw(address(collateralAsset));
         _scaffold(OWN_VPFI);

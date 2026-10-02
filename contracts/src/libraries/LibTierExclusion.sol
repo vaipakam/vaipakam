@@ -55,15 +55,29 @@ import {LibERC721} from "./LibERC721.sol";
  *         consolidation, the only re-anchor, is a no-op once a loan is
  *         terminal (`LibConsolidation.consolidateToHolder`, step 1).
  *
- *         Scope: TERMINAL loans only. A live loan whose position changed
- *         hands keeps today's behaviour — the stored party keeps credit on
- *         the live collateral until the next consolidation — because who
- *         earns tier credit on a transferred LIVE position is an open product
- *         decision (#2342, option C). The comment on
- *         `LibCloseoutFreeze._parkActiveLenderShare` records why an
- *         active-phase counter keyed to a stale stored party was dropped
- *         before; on a terminal loan that staleness cannot arise, for the
- *         reason above.
+ *         Scope: TERMINAL loans only — decided, not deferred (#2357). A
+ *         live loan whose position changed hands leaves the stored party
+ *         with fee-tier credit on the live collateral until the funds are
+ *         re-anchored to the holder (consolidation, or a sale that
+ *         re-anchors directly), and that is the intended behaviour:
+ *           - on a live loan the stored party is NOT fixed, so a charge keyed
+ *             to it would go stale when consolidation or a sale re-points the
+ *             funds — the reason the comment on
+ *             `LibCloseoutFreeze._parkActiveLenderShare` gives for dropping
+ *             an active-phase counter; on a terminal loan that staleness
+ *             cannot arise, for the reason above;
+ *           - the stored party cannot spend the RESERVED funds meanwhile
+ *             (the collateral lien / active-held reservation), so for those
+ *             only the credit lingers. Exception: a lender-side VPFI held
+ *             amount that is not fully reserved — `_isExcludedLive` refuses
+ *             to consolidate it for that reason (open in #2365);
+ *           - sanctions are not an input (see below).
+ *         The window has NO guaranteed end, and this comment deliberately
+ *         does not enumerate when a holder can or cannot shorten it: that is
+ *         whatever `ConsolidationFacet` / `LibConsolidation.consolidateToHolder`
+ *         (pause, Tier-1 sanctions, `_isExcludedLive`) and the re-anchoring
+ *         sale paths currently allow. ProjectDetailsREADME states the
+ *         decision and its reasons.
  *
  *         Sanctions are NOT an input. They explain why a holder may be unable
  *         to claim, but the funds are owed to a different wallet either way;
