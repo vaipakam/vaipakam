@@ -57,11 +57,12 @@ import {LibERC721} from "./LibERC721.sol";
  *
  *         Scope: TERMINAL loans only — decided, not deferred (#2357). A
  *         live loan whose position changed hands leaves the stored party
- *         with tier credit on the live collateral until the next
- *         consolidation, and that is the intended behaviour:
- *           - the current holder can consolidate their own position at any
- *             time (`ConsolidationFacet.consolidate*ToHolder`), which moves
- *             the funds and with them the credit;
+ *         with credit on the live collateral until the next consolidation —
+ *         fee-tier AND staking weight, since `rollupUserDiscount` feeds both
+ *         from `tierVpfiBalance` — and that is the intended behaviour:
+ *           - in the ordinary case the current holder can consolidate their
+ *             own position at any time (`ConsolidationFacet.consolidate*
+ *             ToHolder`), which moves the funds and the credit with them;
  *           - on a live loan the stored party is NOT fixed, so a charge keyed
  *             to it would go stale when consolidation or a sale re-points the
  *             funds — the reason the comment on
@@ -69,9 +70,14 @@ import {LibERC721} from "./LibERC721.sol";
  *             an active-phase counter; on a terminal loan that staleness
  *             cannot arise, for the reason above;
  *           - the stored party cannot spend the funds meanwhile (the lien /
- *             active-held reservation), so only tier credit lingers.
- *         The residual is a sanctioned holder, who cannot consolidate; it is
- *         bounded by the loan closing, at which point this rule takes over.
+ *             active-held reservation), so only the credit lingers.
+ *         The holder CANNOT shorten it whenever consolidation is refused: a
+ *         sanctioned holder (Tier-1 strict), or any state
+ *         `LibConsolidation._isExcludedLive` excludes (FallbackPending, NFT
+ *         rentals, a bound listing / intent commit, a lender-side VPFI held
+ *         amount not fully VPFI-reserved). None of those has a fixed end:
+ *         past grace a loan is only ELIGIBLE for `triggerDefault`, which
+ *         still needs a caller and can revert (pause, sequencer health).
  *         ProjectDetailsREADME states the decision and its reasons.
  *
  *         Sanctions are NOT an input. They explain why a holder may be unable
