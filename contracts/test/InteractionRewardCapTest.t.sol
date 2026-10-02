@@ -317,7 +317,7 @@ contract InteractionRewardCapTest is SetupTest, IVaipakamErrors {
 
     // ─── Helpers ───────────────────────────────────────────────────────────
 
-    function _previewAmount(address user) internal view returns (uint256 amount) {
-        (amount,,) = _lens().previewInteractionRewards(user);
+    function _previewAmount(address user) internal returns (uint256 amount) {
+        (amount,,) = previewByExecution(user);
     }
 }

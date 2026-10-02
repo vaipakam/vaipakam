@@ -276,19 +276,12 @@ library LibRewardStaging {
         // Transport first: nothing is reserved from the live sources while
         // the day's list still has epochs no preparation has scanned, or has
         // grown since the last one did (Codex #2308 r1).
-        if (!r.scanComplete || s.transportBatchesByDay[r.day].length != r.listCountSeen) {
-            revert IVaipakamErrors.StagingScanIncomplete(key);
-        }
-        // Nor while a late link landed behind the record's place, or an epoch
-        // it passed over pending has become stageable since (Codex #2308 r2, r4).
-        if (s.transportDayLateGen[r.day] != r.lateGenSeen || LibRewardCustody.anySkippedNowStageable(s, r)) {
-            revert IVaipakamErrors.StagingScanIncomplete(key);
-        }
-        // Nor while an epoch was RESTORED on the day since the record last
-        // read the restore log (Codex #2308 r15): a restoration moves neither
-        // the list's length nor its late generation, and the restored epoch
-        // may be one this record's scan saw drained.
-        if (r.restoredSeen != s.transportDayRestored[r.day].length) {
+        // Nor while a late link landed behind the record's place, an epoch it
+        // passed over pending has become stageable since (Codex #2308 r2, r4),
+        // or an epoch was RESTORED on the day since the record last read the
+        // restore log (r15). ONE predicate, shared with the static read
+        // ({LibRewardCustody.recordScanSettled}).
+        if (!LibRewardCustody.recordScanSettled(s, r)) {
             revert IVaipakamErrors.StagingScanIncomplete(key);
         }
         (LibInteractionRewards.DayCharge memory charge, LibInteractionRewards.DaySlice[] memory slices) = _price(s, r);
@@ -670,11 +663,9 @@ library LibRewardStaging {
         LibInteractionRewards.PoolBudget memory pool = LibInteractionRewards.PoolBudget({
             fresh: LibInteractionRewards.poolRemaining(),
             recycled: LibVpfiRecycle.bucketAvailable(s),
-            deliveredFresh: LibInteractionRewards.deliveredFreshBound(s),
-            domainFresh: type(uint256).max,
-            domainRecycled: type(uint256).max
+            deliveredFresh: LibInteractionRewards.deliveredFreshBound(s)
         });
-        LibInteractionRewards.DryRunState memory dry = LibInteractionRewards._noDryRun();
+        LibInteractionRewards.DayContext memory dry = LibInteractionRewards._dayContext();
         dry.preparedOnly = true;
         dry.preparedFresh = r.stagedFresh;
         dry.preparedRecycled = r.stagedRecycled;

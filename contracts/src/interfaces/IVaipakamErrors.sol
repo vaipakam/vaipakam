@@ -337,6 +337,15 @@ interface IVaipakamErrors {
     ///         so the reservation count alone did not see it. Resolve or unwind
     ///         the records first; both are permissionless.
     error RewardCustodyActivationBlockedByStagedEarmark(uint256 staged);
+    /// @notice NOT a failure: the result of
+    ///         {RewardClaimFacet.simulateClaimInteractionRewards}, which runs
+    ///         the real claim for a user and then ALWAYS reverts with the
+    ///         figures it would have paid, so nothing it did survives and no
+    ///         transaction can claim on another's behalf through it (A2-iii,
+    ///         preview by execution). Decode it from an `eth_call`'s revert
+    ///         data; a different revert is what the claim itself would have
+    ///         reverted with.
+    error InteractionRewardsSimulation(uint256 paid, uint256 fromDay, uint256 toDay);
     /// @notice 3b-ii-A2 (Codex #2308 r13) — a reward-ROLE change cannot
     ///         straddle a staging reservation: the role decides the delivered
     ///         allowance a reserved record's payout charges, so a transition

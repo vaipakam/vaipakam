@@ -105,7 +105,7 @@ contract RewardClaimFacet is
         whenNotPaused
         returns (uint256 paid, uint256 fromDay, uint256 toDay)
     {
-        return _claimInteractionRewards(LibVaipakam.RewardDelivery.Default);
+        return _claimFor(msg.sender, LibVaipakam.RewardDelivery.Default);
     }
 
     /**
@@ -145,13 +145,47 @@ contract RewardClaimFacet is
         whenNotPaused
         returns (uint256 paid, uint256 fromDay, uint256 toDay)
     {
-        return _claimInteractionRewards(deliverTo);
+        return _claimFor(msg.sender, deliverTo);
     }
 
-    /// @dev Shared claim body. See {claimInteractionRewards} for the
-    ///      accrual/window/cap semantics and {claimInteractionRewardsTo}
-    ///      for the RL-1 delivery rules.
-    function _claimInteractionRewards(LibVaipakam.RewardDelivery deliverTo)
+    /**
+     * @notice PREVIEW BY EXECUTION (A2-iii; design question 10): run `user`'s
+     *         claim exactly as {claimInteractionRewardsTo} would — the window,
+     *         the entry walk with its staging, the caps, the delivery — and
+     *         then ALWAYS revert with {InteractionRewardsSimulation} carrying
+     *         the figures it paid, so nothing survives the call. It is the
+     *         claim itself, not a mirror of it, which is why it cannot drift
+     *         from the claim and why it cannot be a `view`: the walk writes
+     *         (a staged day, a moved cursor) before the frame reverts, and a
+     *         static context would fault on the first store.
+     *
+     *         For OBSERVATIONAL callers only: an `eth_call` from the app or
+     *         a keeper, which decodes the revert data. Permissionless by
+     *         construction — the unconditional revert is what makes it safe:
+     *         no transaction can claim on another's behalf through it, and a
+     *         transaction that calls it only burns gas. A revert other than
+     *         {InteractionRewardsSimulation} is what the claim would have
+     *         reverted with (paused, sanctioned, nothing to claim), which is
+     *         the preview's answer too. The STATIC consumers — the lens's
+     *         conservative preview, the expiry clock — keep their read-only
+     *         path ({InteractionRewardsLensFacet.getUserArmedFreshNeedWithLegs}).
+     * @param  user      The claimant to simulate.
+     * @param  deliverTo The venue the claim would name.
+     */
+    function simulateClaimInteractionRewards(address user, LibVaipakam.RewardDelivery deliverTo)
+        external
+        nonReentrant
+        whenNotPaused
+    {
+        (uint256 paid, uint256 fromDay, uint256 toDay) = _claimFor(user, deliverTo);
+        revert InteractionRewardsSimulation(paid, fromDay, toDay);
+    }
+
+    /// @dev Shared claim body for `user` — the caller on the two claim
+    ///      entries, the named account on the simulation entry (A2-iii). See
+    ///      {claimInteractionRewards} for the accrual/window/cap semantics
+    ///      and {claimInteractionRewardsTo} for the RL-1 delivery rules.
+    function _claimFor(address user, LibVaipakam.RewardDelivery deliverTo)
         private
         returns (uint256 paid, uint256 fromDay, uint256 toDay)
     {
@@ -163,7 +197,7 @@ contract RewardClaimFacet is
         // every integrator (keeper bots, third-party frontends, direct callers)
         // gets the same protection. (The sibling `sweepForfeitedInteractionRewards`
         // routes to treasury, not the caller, so it stays ungated by design.)
-        LibVaipakam._assertNotSanctioned(msg.sender);
+        LibVaipakam._assertNotSanctioned(user);
         if (s.interactionLaunchTimestamp == 0) {
             revert InteractionEmissionsNotStarted();
         }
@@ -177,7 +211,7 @@ contract RewardClaimFacet is
         // in the treasury split; PR-3c surfaces each aggregate's RECYCLED
         // and ARMED-FRESH components (governor dual accumulator) so
         // consumption can split fresh-vs-recycled below.
-        uint256 last = s.interactionLastClaimedDay[msg.sender];
+        uint256 last = s.interactionLastClaimedDay[user];
         uint256 lastFinalized = today - 1;
 
         uint256 windowReward;
@@ -197,11 +231,11 @@ contract RewardClaimFacet is
             if (any) {
                 toDay = effectiveTo;
                 windowReward = LibInteractionRewards.claimForUserWindow(
-                    msg.sender,
+                    user,
                     fromDay,
                     toDay
                 );
-                s.interactionLastClaimedDay[msg.sender] = toDay;
+                s.interactionLastClaimedDay[user] = toDay;
                 walkedWindow = true;
             }
         }
@@ -229,7 +263,7 @@ contract RewardClaimFacet is
         // One memory result (3b-ii-A): the two splits, the walk flag and the
         // epoch-paid legs, read in place — see {ClaimEntriesResult}.
         LibInteractionRewards.ClaimEntriesResult memory res = LibInteractionRewards.callClaimEntriesWalk(
-            msg.sender,
+            user,
             freshBudget,
             windowReward, // #1566 closure 2 — the window reserves delivered headroom too
             deliverTo // 3b-ii-A2 (Codex #2308 r6) — a day the walk stages carries the venue into its record
@@ -448,7 +482,7 @@ contract RewardClaimFacet is
             // delivery so the chokepoint can bound and charge it before the
             // transfer; `paid` itself includes the recycled share the bucket
             // backs and must never be the operand.
-            _deliverReward(vpfi, paid, freshPending, res.transport, deliverTo, today);
+            _deliverReward(user, vpfi, paid, freshPending, res.transport, deliverTo, today);
         }
         // Governor PR-3a/PR-3c (#1217 §4) — the forfeit's source split: the
         // FRESH-funded share is genuine absorption and credits the recycle
@@ -470,12 +504,12 @@ contract RewardClaimFacet is
             res.transport.userRecycled,
             0
         );
-        emit InteractionRewardsClaimed(msg.sender, fromDay, toDay, paid);
+        emit InteractionRewardsClaimed(user, fromDay, toDay, paid);
     }
 
     /**
-     * @dev RL-1 payout delivery. Resolves `Default` by caller shape (an
-     *      EOA-style claimant — `msg.sender.code.length == 0` — joins the
+     * @dev RL-1 payout delivery to `user`. Resolves `Default` by the
+     *      claimant's shape (an EOA-style claimant — `user.code.length == 0` — joins the
      *      loop by default; a contract caller keeps the raw transfer every
      *      pre-RL-1 integration observed), then attempts the Diamond-funded
      *      vault credit for `Vault` deliveries.
@@ -498,6 +532,7 @@ contract RewardClaimFacet is
      *      primitive is onlyDiamondInternal, running inside this frame.
      */
     function _deliverReward(
+        address user,
         address vpfi,
         uint256 amount,
         uint256 fresh,
@@ -518,7 +553,7 @@ contract RewardClaimFacet is
         bool toVault = deliverTo == LibVaipakam.RewardDelivery.Vault
             || (
                 deliverTo == LibVaipakam.RewardDelivery.Default
-                    && msg.sender.code.length == 0
+                    && user.code.length == 0
             );
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         // #1566 slice 4 PR B — on an activated deployment the payout is ONE
@@ -544,14 +579,14 @@ contract RewardClaimFacet is
             // this facet's scaling applies, so they cannot exceed the figures.
             if (
                 LibRewardCustody.callDeliverClaim(
-                    msg.sender,
+                    user,
                     fresh - tp.userFresh,
                     amount - fresh - tp.userRecycled,
                     tp.userFresh + tp.userRecycled,
                     toVault
                 )
             ) {
-                emit RewardDeliveredToVault(msg.sender, amount, claimDayId);
+                emit RewardDeliveredToVault(user, amount, claimDayId);
             }
             return;
         }
@@ -560,17 +595,17 @@ contract RewardClaimFacet is
             (bool ok, ) = address(this).call(
                 abi.encodeWithSignature(
                     "vaultCreditFromDiamondERC20(address,address,uint256)",
-                    msg.sender,
+                    user,
                     vpfi,
                     amount
                 )
             );
             if (ok) {
-                emit RewardDeliveredToVault(msg.sender, amount, claimDayId);
+                emit RewardDeliveredToVault(user, amount, claimDayId);
                 return;
             }
         }
-        IERC20(vpfi).safeTransfer(msg.sender, amount);
+        IERC20(vpfi).safeTransfer(user, amount);
     }
 
     /**

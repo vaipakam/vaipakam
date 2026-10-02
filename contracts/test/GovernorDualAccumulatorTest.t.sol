@@ -21,6 +21,7 @@ import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
 import {RewardBroadcastV2} from "../src/interfaces/IRewardMessenger.sol";
 import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
+import {RewardEpochViewFacet} from "../src/facets/RewardEpochViewFacet.sol";
 
 /**
  * @title  GovernorDualAccumulatorTest
@@ -326,7 +327,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
         uint256 needLiveOnly = _mut().userClaimFundingNeedRaw(alice);
         assertGt(needLiveOnly, earmark, "fixture: the live entry contributes");
         uint256 perEntry = needLiveOnly - earmark;
-        (, uint256 userLegsLive, uint256 treasuryLegsLive, , , , ) = _lens().getUserArmedFreshNeedWithLegs(alice);
+        (, uint256 userLegsLive, uint256 treasuryLegsLive, , , , , ) = RewardEpochViewFacet(address(diamond)).getUserArmedFreshNeedWithLegs(alice);
 
         // An identical sibling, FORFEITED. Its value still has to be funded —
         // the forfeit-credit path spends it — so it enters the same formula.
@@ -338,7 +339,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
         // leg. The combined total alone is unchanged if the preview ignored
         // the `forfeited` bit and priced both siblings as live `userLegs`, so
         // the arithmetic could be satisfied by a classification regression.
-        (, uint256 userLegsAfter, uint256 treasuryLegsAfter, , , , ) = _lens().getUserArmedFreshNeedWithLegs(alice);
+        (, uint256 userLegsAfter, uint256 treasuryLegsAfter, , , , , ) = RewardEpochViewFacet(address(diamond)).getUserArmedFreshNeedWithLegs(alice);
         assertEq(
             treasuryLegsLive,
             0,
@@ -1454,7 +1455,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
 
         uint256 pendingBefore = _mut().getUserClaimPendingUncappedRaw(alice);
         assertGt(pendingBefore, 0, "LIVE: the entry counts while claimable");
-        (uint256 previewBefore, , ) = _lens().previewInteractionRewards(alice);
+        (uint256 previewBefore, , ) = previewByExecution(alice);
         assertGt(previewBefore, 0, "LIVE: and previews while claimable");
         (, uint64 expiresBefore) = _lens().getRewardEntryExpiry(id);
         assertGt(
@@ -1483,7 +1484,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
             0,
             "a removed entry no longer inflates the executable aggregate"
         );
-        (uint256 previewAfter, , ) = _lens().previewInteractionRewards(alice);
+        (uint256 previewAfter, , ) = previewByExecution(alice);
         assertEq(previewAfter, 0, "nor the user's pending preview");
         // Codex #1699 r11 P2 — removal is terminal for the countdown too: a
         // deadline the owner can no longer act on must not keep ticking in
@@ -1529,7 +1530,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
         _sweeper().sweepExpiredInteractionRewards(ids); // stamp the clock
         _accrueExec(ids, 30 days);
 
-        uint256 needRaw = _lens().getUserArmedFreshNeed(alice);
+        uint256 needRaw = RewardEpochViewFacet(address(diamond)).getUserArmedFreshNeed(alice);
         assertGt(needRaw, 0, "LIVE: an unconstrained armed demand exists");
 
         // Near-exhaust the schedule: headroom is HALF the demand, and the
@@ -1542,11 +1543,11 @@ contract GovernorDualAccumulatorTest is SetupTest {
         _mut().setArmedFreshLedgerRaw(headroom, 0);
 
         assertEq(
-            _lens().getUserArmedFreshNeed(alice),
+            RewardEpochViewFacet(address(diamond)).getUserArmedFreshNeed(alice),
             headroom,
             "the need demands only what the schedule can still owe"
         );
-        (uint256 preview, , ) = _lens().previewInteractionRewards(alice);
+        (uint256 preview, , ) = previewByExecution(alice);
         assertEq(
             preview,
             headroom,
@@ -1577,7 +1578,9 @@ contract GovernorDualAccumulatorTest is SetupTest {
         _sweeper().sweepExpiredInteractionRewards(ids); // stamp the clock
         _accrueExec(ids, 30 days);
 
-        uint256 needRaw = _lens().getUserArmedFreshNeed(alice);
+        // The static read prices day 5 alone (A2-iii); both armed days are
+        // alike, so the two-day raw is twice this figure.
+        uint256 needRaw = 2 * RewardEpochViewFacet(address(diamond)).getUserArmedFreshNeed(alice);
         assertGt(needRaw, 0, "LIVE: a two-day armed demand exists");
 
         // Headroom covers 3/4 of the demand: the first day fits whole, the
@@ -1586,12 +1589,16 @@ contract GovernorDualAccumulatorTest is SetupTest {
         _mut().setInteractionPoolPaidOut(
             LibVaipakam.VPFI_INTERACTION_POOL_CAP - headroom
         );
+        // A2-iii: the static need reads the FIRST pending day — day 5, half
+        // the two-day raw — never a simulated two-day total; the depletion
+        // between days is the claim's own, and the preview, being the claim,
+        // quotes day one whole plus day two truncated to what the pool owes.
         assertEq(
-            _lens().getUserArmedFreshNeed(alice),
-            headroom,
-            "the two-day need depletes the budget between days"
+            RewardEpochViewFacet(address(diamond)).getUserArmedFreshNeed(alice),
+            needRaw / 2,
+            "the static need is the first day, which the headroom covers whole"
         );
-        (uint256 preview, , ) = _lens().previewInteractionRewards(alice);
+        (uint256 preview, , ) = previewByExecution(alice);
         assertEq(
             preview,
             headroom,
@@ -1625,9 +1632,9 @@ contract GovernorDualAccumulatorTest is SetupTest {
         _sweeper().sweepExpiredInteractionRewards(ids); // stamp the clock
         _accrueExec(ids, 30 days);
 
-        uint256 needAbundant = _lens().getUserArmedFreshNeed(alice);
+        uint256 needAbundant = RewardEpochViewFacet(address(diamond)).getUserArmedFreshNeed(alice);
         assertGt(needAbundant, 0, "LIVE: an armed demand exists");
-        (uint256 previewAbundant, , ) = _lens().previewInteractionRewards(alice);
+        (uint256 previewAbundant, , ) = previewByExecution(alice);
         uint256 legacy = previewAbundant - needAbundant;
         assertGt(legacy, 0, "LIVE: and a preceding legacy leg exists");
 
@@ -1638,11 +1645,11 @@ contract GovernorDualAccumulatorTest is SetupTest {
             LibVaipakam.VPFI_INTERACTION_POOL_CAP - headroom
         );
         assertEq(
-            _lens().getUserArmedFreshNeed(alice),
+            RewardEpochViewFacet(address(diamond)).getUserArmedFreshNeed(alice),
             needAbundant / 2,
             "the armed need is measured AFTER the legacy leg's reservation"
         );
-        (uint256 preview, , ) = _lens().previewInteractionRewards(alice);
+        (uint256 preview, , ) = previewByExecution(alice);
         assertEq(
             preview,
             headroom,
@@ -1674,9 +1681,9 @@ contract GovernorDualAccumulatorTest is SetupTest {
         _sweeper().sweepExpiredInteractionRewards(ids); // stamp the clock
         _accrueExec(ids, 30 days);
 
-        uint256 armedN = _lens().getUserArmedFreshNeed(alice);
+        uint256 armedN = RewardEpochViewFacet(address(diamond)).getUserArmedFreshNeed(alice);
         assertGt(armedN, 0, "LIVE: an armed demand exists");
-        (uint256 previewX, , ) = _lens().previewInteractionRewards(alice);
+        (uint256 previewX, , ) = previewByExecution(alice);
         uint256 legacyL = previewX - armedN;
         assertGt(legacyL, 0, "LIVE: and a legacy leg exists");
 
@@ -1686,7 +1693,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
         uint256 idY = _seedEntry(alice, 105, 4, 5);
         _mut().setRewardEntryForfeitedRaw(idY);
         (uint256 previewAfterForfeit, , ) =
-            _lens().previewInteractionRewards(alice);
+            previewByExecution(alice);
         assertEq(
             previewAfterForfeit,
             previewX,
@@ -1701,11 +1708,11 @@ contract GovernorDualAccumulatorTest is SetupTest {
             LibVaipakam.VPFI_INTERACTION_POOL_CAP - headroom
         );
         assertEq(
-            _lens().getUserArmedFreshNeed(alice),
+            RewardEpochViewFacet(address(diamond)).getUserArmedFreshNeed(alice),
             armedN / 2,
             "the armed need reserves the TREASURY leg alongside the user leg"
         );
-        (uint256 preview, , ) = _lens().previewInteractionRewards(alice);
+        (uint256 preview, , ) = previewByExecution(alice);
         assertEq(
             preview,
             headroom - legacyL,
@@ -1738,7 +1745,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
         _accrueExec(ids, 30 days);
         _mut().setRewardEntryForfeitedRaw(id);
 
-        uint256 armedZ = _lens().getUserArmedFreshNeed(alice);
+        uint256 armedZ = RewardEpochViewFacet(address(diamond)).getUserArmedFreshNeed(alice);
         assertGt(armedZ, 0, "LIVE: the forfeited armed leg still walks");
 
         // Headroom exactly covers the armed leg. A self-double-reservation
@@ -1747,7 +1754,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
             LibVaipakam.VPFI_INTERACTION_POOL_CAP - armedZ
         );
         assertEq(
-            _lens().getUserArmedFreshNeed(alice),
+            RewardEpochViewFacet(address(diamond)).getUserArmedFreshNeed(alice),
             armedZ,
             "an armed forfeit leg never reserves against itself"
         );
@@ -1781,7 +1788,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
 
         // Measure the RAW armed value while the entry is still claimable
         // (the need excludes forfeited entries) and the cap is neutral.
-        uint256 raw = _lens().getUserArmedFreshNeed(alice);
+        uint256 raw = RewardEpochViewFacet(address(diamond)).getUserArmedFreshNeed(alice);
         assertGt(raw, 0, "LIVE: the entry carries a raw armed value");
 
         // Bind the D1 cap BELOW the raw value, then forfeit. Base's report
@@ -2246,10 +2253,10 @@ contract GovernorDualAccumulatorTest is SetupTest {
 
         // `_armAndFinalize` disables the D1 ceiling; read the need with it off,
         // then bind it well below that and read again.
-        uint256 needRaw = _lens().getUserArmedFreshNeed(alice);
+        uint256 needRaw = RewardEpochViewFacet(address(diamond)).getUserArmedFreshNeed(alice);
         assertGt(needRaw, 0, "LIVE: the entry carries an armed demand at all");
         _mut().setDayUserSideCapRaw(5, needRaw / 4);
-        uint256 needCapped = _lens().getUserArmedFreshNeed(alice);
+        uint256 needCapped = RewardEpochViewFacet(address(diamond)).getUserArmedFreshNeed(alice);
         assertLt(needCapped, needRaw, "LIVE: the D1 ceiling actually bit");
         assertGt(needCapped, 0, "LIVE: and did not trim to nothing");
 

@@ -1487,6 +1487,44 @@ contract SetupTest is Test {
 
     // ─── #1566 slice 4 PR B — the reward custody activation fixture ──────────
 
+    /// @dev A2-iii — preview BY EXECUTION: run `user`'s claim through
+    ///      {RewardClaimFacet.simulateClaimInteractionRewards}, which always
+    ///      reverts, and decode the figures from its revert data. A revert
+    ///      other than the simulation's is what the claim itself would revert
+    ///      with (nothing to claim, a reservation, the pause), reported here
+    ///      as nothing claimable — (0, 0, 0) — exactly as the app reads it.
+    ///      Not a view: the frame writes before it reverts, so no helper
+    ///      built on it can be `view` either.
+    function previewByExecution(address user) internal returns (uint256 amount, uint256 fromDay, uint256 toDay) {
+        (, amount, fromDay, toDay) = previewByExecutionStatus(user, LibVaipakam.RewardDelivery.Default);
+    }
+
+    function previewByExecutionTo(address user, LibVaipakam.RewardDelivery venue)
+        internal
+        returns (uint256 amount, uint256 fromDay, uint256 toDay)
+    {
+        (, amount, fromDay, toDay) = previewByExecutionStatus(user, venue);
+    }
+
+    /// @dev As above, with whether the claim COMPLETED: a completed claim that
+    ///      paid the user nothing (a forfeit routed to treasury) is distinct
+    ///      from a claim the Diamond refused, and the figures alone cannot say.
+    function previewByExecutionStatus(address user, LibVaipakam.RewardDelivery venue)
+        internal
+        returns (bool completed, uint256 amount, uint256 fromDay, uint256 toDay)
+    {
+        (bool ok, bytes memory ret) = address(diamond).call(
+            abi.encodeWithSelector(RewardClaimFacet.simulateClaimInteractionRewards.selector, user, venue)
+        );
+        require(!ok, "simulation must revert");
+        if (ret.length == 100 && bytes4(ret) == bytes4(keccak256("InteractionRewardsSimulation(uint256,uint256,uint256)"))) {
+            bytes memory data = new bytes(96);
+            for (uint256 i; i < 96; ++i) data[i] = ret[i + 4];
+            (amount, fromDay, toDay) = abi.decode(data, (uint256, uint256, uint256));
+            completed = true;
+        }
+    }
+
     /// @dev Runs the per-chain activation ceremony the way the ceremony script
     ///      does, on a Diamond whose reward role is ALREADY configured (the
     ///      freeze arms at activation, so configure first): manual pause →

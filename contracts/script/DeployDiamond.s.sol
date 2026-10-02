@@ -2466,7 +2466,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///      the answer and it cannot go stale. If you find a count for this
     ///      facet anywhere, delete it rather than correct it.
     function _getInteractionRewardsLensSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](24);
+        s = new bytes4[](22);
         s[0] = InteractionRewardsLensFacet.getInteractionLaunchTimestamp.selector;
         s[1] = InteractionRewardsLensFacet.getInteractionCurrentDay.selector;
         s[2] = InteractionRewardsLensFacet.getInteractionAnnualRateBps.selector;
@@ -2490,11 +2490,10 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[17] = InteractionRewardsLensFacet.getRecycleDayMetrics.selector;
         s[18] = InteractionRewardsLensFacet.getRecycleBackingSnapshot.selector;
         s[19] = InteractionRewardsLensFacet.getRecycledCreditedPreLaunch.selector;
-        s[20] = InteractionRewardsLensFacet.getUserArmedFreshNeed.selector;
-        s[21] = InteractionRewardsLensFacet.getUserArmedFreshNeedWithLegs.selector;
+        // The three armed-need reads moved to RewardEpochViewFacet (A2-iii, EIP-170).
         // 3b-ii-A2 (#2305; Codex #2308 r5) — the reservations the settlements defer on.
-        s[22] = InteractionRewardsLensFacet.getRewardReservations.selector;
-        s[23] = InteractionRewardsLensFacet.getLoanSideRewardReserved.selector;
+        s[20] = InteractionRewardsLensFacet.getRewardReservations.selector;
+        s[21] = InteractionRewardsLensFacet.getLoanSideRewardReserved.selector;
     }
 
     /// @dev #1351 slice 2c — the CLAIM entry points, on their own facet for
@@ -2504,9 +2503,10 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](2);
+        s = new bytes4[](3);
         s[0] = RewardClaimFacet.claimInteractionRewards.selector;
         s[1] = RewardClaimFacet.claimInteractionRewardsTo.selector;
+        s[2] = RewardClaimFacet.simulateClaimInteractionRewards.selector; // A2-iii: preview by execution
     }
 
     /// @dev #1434 — the claim-horizon sweep. Its own facet because expiry now
@@ -3122,17 +3122,20 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
+        // A2-iii retired the dry run, the domain needs and the domain probe
+        // (Remove legs in RefreshAllFacetsInPlace._retiredSelectors).
         s = new bytes4[](9);
-        s[0] = RewardEpochViewFacet.getDryRunShareOfPoolDays.selector;
-        s[1] = RewardEpochViewFacet.getObligationDomainNeeds.selector;
-        s[2] = RewardEpochViewFacet.getObligationDomainListsAnEpoch.selector;
         // 3b-ii-A2 (#2305) — the staging records' reads.
-        s[3] = RewardEpochViewFacet.getStagingRecord.selector;
-        s[4] = RewardEpochViewFacet.getStagingRecordBatches.selector;
-        s[5] = RewardEpochViewFacet.getStagingRecordEntries.selector;
-        s[6] = RewardEpochViewFacet.getStagingRecordPending.selector;
-        s[7] = RewardEpochViewFacet.getStagingCooldown.selector;
-        s[8] = RewardEpochViewFacet.getStagingEncumberedCount.selector;
+        s[0] = RewardEpochViewFacet.getStagingRecord.selector;
+        s[1] = RewardEpochViewFacet.getStagingRecordBatches.selector;
+        s[2] = RewardEpochViewFacet.getStagingRecordEntries.selector;
+        s[3] = RewardEpochViewFacet.getStagingRecordPending.selector;
+        s[4] = RewardEpochViewFacet.getStagingCooldown.selector;
+        s[5] = RewardEpochViewFacet.getStagingEncumberedCount.selector;
+        // A2-iii — the static armed-need reads, hosted here (EIP-170; same selectors as on the lens before).
+        s[6] = RewardEpochViewFacet.getUserArmedFreshNeed.selector;
+        s[7] = RewardEpochViewFacet.getUserArmedFreshNeedWithLegs.selector;
+        s[8] = RewardEpochViewFacet.getRewardEntryArmedNeed.selector;
     }
 
     /// @dev 3b-ii-A2 (#2305) — the claim's entry walk, hosted apart from the

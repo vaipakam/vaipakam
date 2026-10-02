@@ -235,8 +235,9 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         (, , , c) = _epoch().getTransportDayBatches(d, 0, 100);
     }
 
-    function _preview() internal view returns (uint256 amount) {
-        (amount, , ) = InteractionRewardsLensFacet(address(diamond)).previewInteractionRewards(alice);
+    /// @dev The preview IS the claim (A2-iii): run in a reverting frame.
+    function _preview() internal returns (uint256 amount) {
+        (amount, , ) = previewByExecution(alice);
     }
 
     function _rowsSum() internal view returns (uint256 s) {
@@ -250,13 +251,8 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         LibRewardCustody.AllocRequest memory q;
         q.dayId = 1;
         q.needFresh = need;
-        q.domainFresh = type(uint256).max;
-        q.domainRecycled = type(uint256).max;
         q.poolFresh = type(uint256).max;
         q.deliveredCap = type(uint256).max;
-        q.ovIds = new bytes32[](0);
-        q.ovFresh = new uint256[](0);
-        q.ovRecycled = new uint256[](0);
         LibRewardCustody.AllocResult memory r = _epoch().getTransportAllocationForDay(q);
         return r.transportFresh;
     }
@@ -569,14 +565,14 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.InteractionPoolReservedShortfall.selector, NEED, 0.1e18));
         RewardClaimFacet(address(diamond)).claimInteractionRewards();
         assertEq(_mut().rewardEntryClaimNextDayRaw(bobEntry), 0, "nothing was written off");
-        (uint256 previewed, , ) = InteractionRewardsLensFacet(address(diamond)).previewInteractionRewards(bob);
+        (uint256 previewed, , ) = previewByExecution(bob);
         assertEq(previewed, 0, "the preview says what the claim does: nothing, while the reservation binds");
         assertFalse(_mut().entryExecutableNowRaw(bobEntry), "and the expiry clock does not count the interval");
         // The reservation unwinds: the room is bob's, in full.
         vm.warp(uint256(_rec().deadline) + 1);
         _settle().unwindStagedDayPage(_key());
         _settle().unwindStagedDayPage(_key());
-        (previewed, , ) = InteractionRewardsLensFacet(address(diamond)).previewInteractionRewards(bob);
+        (previewed, , ) = previewByExecution(bob);
         assertEq(previewed, NEED, "and the full amount once it released");
         assertTrue(_mut().entryExecutableNowRaw(bobEntry), "executable again once it released");
         uint256 bobBefore = vpfi.balanceOf(bob);
@@ -920,7 +916,7 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         vm.expectRevert(IVaipakamErrors.NoInteractionRewardsToClaim.selector);
         RewardClaimFacet(address(diamond)).claimInteractionRewards();
         assertEq(_mut().rewardEntryClaimNextDayRaw(bobEntry), 0, "the day was not persisted: nothing written off");
-        (uint256 previewed, , ) = InteractionRewardsLensFacet(address(diamond)).previewInteractionRewards(bob);
+        (uint256 previewed, , ) = previewByExecution(bob);
         assertEq(previewed, 0, "the preview says what the claim does: nothing, while the reservation binds");
         assertFalse(_mut().entryExecutableNowRaw(bobEntry), "and the expiry clock does not count the interval");
         // The reservation unwinds: the side's hard headroom is bob's, in full.
@@ -1215,6 +1211,28 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
 
     // ───────────────────────── round 6 ─────────────────────────
 
+    /// @dev A2-iii — a standing record on a lender day ends the claim there
+    ///      ({processUserSideDay} reports it staged elsewhere; the walk stops
+    ///      on every side), so the user-level read counts nothing after it —
+    ///      not even a borrower day the live sources would cover.
+    function test_AStandingRecord_EndsTheUserRead_BeforeTheBorrowerSide() public {
+        _stagedScene(); // the lender day 1 is a record's
+        _armedDay(2, NEED);
+        _mut().setKnownGlobalDailyInterest(2, 1e18, 1e18, true); // the borrower side's interest too
+        _loanSideOpen(2);
+        uint256 b = _mut().pushRewardEntry(alice, LOAN, LibVaipakam.RewardSide.Borrower, 1e18, 2);
+        _mut().closeRewardEntryRaw(b, 3);
+        _mut().userClaimFundingNeedRaw(alice); // the side cursors, as the claim advances them
+        _liveFresh(1e18); // would cover the borrower day on its own
+        (uint256 needB, ) = _mut().dayNeedsRaw(alice, LibVaipakam.RewardSide.Borrower, 2);
+        assertGt(needB, 0, "fixture: the borrower day prices");
+        (uint256 armed, , , , , bool cap, , uint256 userPaid) = RewardEpochViewFacet(address(diamond)).getUserArmedFreshNeedWithLegs(alice);
+        assertTrue(cap, "the record's day is not this claim's");
+        assertEq(armed, 0, "and nothing after it is counted");
+        assertEq(userPaid, 0);
+        assertEq(_preview(), 0, "as the claim pays nothing: it stops on the record");
+    }
+
     function test_AStandingRecord_PausesTheClaimantsExpiryClock() public {
         // A standing record implies a day wider than one window, so there is
         // no executable state of this scene to straddle: the mutation check
@@ -1406,13 +1424,16 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         _mut().setRewardEntryForfeitedRaw(bobEntry);
         _mut().userClaimFundingNeedRaw(bob);
         InteractionRewardsLensFacet lens = InteractionRewardsLensFacet(address(diamond));
-        (, , uint256 treasuryLegs, uint256 legacyFresh, , , ) = lens.getUserArmedFreshNeedWithLegs(bob);
+        (, , uint256 treasuryLegs, uint256 legacyFresh, , , , ) = RewardEpochViewFacet(address(diamond)).getUserArmedFreshNeedWithLegs(bob);
         assertGt(treasuryLegs, 0, "live: the forfeit's fresh is a treasury leg");
         assertEq(legacyFresh, treasuryLegs, "and the same figure is the legacy fresh");
         // Availability between the aggregate counted once and counted twice.
         uint256 available = treasuryLegs + treasuryLegs / 2;
         _mut().setInteractionPoolPaidOut(LibVaipakam.VPFI_INTERACTION_POOL_CAP - NEED - available);
         assertEq(_mut().poolAvailableRaw(), available);
+        // The LENS preview — the on-chain lower bound (A2-iii) — is what this
+        // cell is about: the aggregate counts the forfeit's fresh once, so it
+        // fits the availability and the preview is not deferred.
         (uint256 amount, uint256 fromDay, ) = lens.previewInteractionRewards(bob);
         assertEq(amount, 0, "a forfeit pays the user nothing");
         assertEq(fromDay, 1, "not deferred: the forfeit's fresh fits availability, counted once");

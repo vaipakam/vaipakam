@@ -136,16 +136,6 @@
             "internalType": "uint256"
           },
           {
-            "name": "domainFresh",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "domainRecycled",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
             "name": "poolFresh",
             "type": "uint256",
             "internalType": "uint256"
@@ -159,21 +149,6 @@
             "name": "bucket",
             "type": "uint256",
             "internalType": "uint256"
-          },
-          {
-            "name": "ovIds",
-            "type": "bytes32[]",
-            "internalType": "bytes32[]"
-          },
-          {
-            "name": "ovFresh",
-            "type": "uint256[]",
-            "internalType": "uint256[]"
-          },
-          {
-            "name": "ovRecycled",
-            "type": "uint256[]",
-            "internalType": "uint256[]"
           }
         ]
       }
@@ -1905,6 +1880,27 @@
       },
       {
         "name": "backingRoom",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InteractionRewardsSimulation",
+    "inputs": [
+      {
+        "name": "paid",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "fromDay",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "toDay",
         "type": "uint256",
         "internalType": "uint256"
       }

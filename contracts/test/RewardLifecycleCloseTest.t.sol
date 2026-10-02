@@ -98,8 +98,7 @@ contract RewardLifecycleCloseTest is SetupTest {
         _createLoan();
         // Warp well past the 30-day maturity; the loan is still Active (open).
         vm.warp(block.timestamp + 45 days);
-        (uint256 preview,,) =
-            InteractionRewardsLensFacet(address(diamond)).previewInteractionRewards(lender);
+        (uint256 preview,,) = previewByExecution(lender);
         assertEq(preview, 0, "no entry reward payable while the loan is open");
     }
 

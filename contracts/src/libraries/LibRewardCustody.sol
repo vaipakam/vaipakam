@@ -2339,29 +2339,18 @@ library LibRewardCustody {
         uint256 dayId;
         uint256 needFresh;
         uint256 needRecycled;
-        uint256 domainFresh;
-        uint256 domainRecycled;
         uint256 poolFresh;
         uint256 deliveredCap;
         uint256 bucket;
-        /// @dev The preview's simulation of draws already planned on earlier
-        ///      days of the same dry run, by leg (a leg counts against its
-        ///      cap's room), as a hash table over batch ids — length zero or
-        ///      a power of two, empty slots zero (Codex #2276 r12 P1) — holding
-        ///      only the entries THIS day's plan can look up (r13 P1); empty
-        ///      on the settle path.
-        bytes32[] ovIds;
-        uint256[] ovFresh;
-        uint256[] ovRecycled;
     }
 
     struct AllocResult {
         uint256 transportFresh;
         uint256 transportRecycled;
         bool capHit;
-        /// @dev The per-epoch legs the allocation would draw — what a dry run
-        ///      folds into its overlay; the settle wrapper re-derives the same
-        ///      legs from the same plan and split in the same transaction.
+        /// @dev The per-epoch legs the allocation would draw; the settle
+        ///      wrapper re-derives the same legs from the same plan and split
+        ///      in the same transaction.
         bytes32[] planIds;
         uint256[] planFresh;
         uint256[] planRecycled;
@@ -2401,39 +2390,20 @@ library LibRewardCustody {
     ///         epoch whose packet is unattested, or that lists more than one
     ///         day, is WITHHELD and counted by reason (see `withheldShared`).
     ///
-    ///         `ovIds` / `ovFresh` / `ovRecycled` is the preview's overlay
-    ///         (Codex #2276 r1 P2, typed since r4): each batch's balance and
-    ///         rooms are read net of what the overlay records for it, so a
-    ///         batch listing two days is not counted for both in one dry run.
-    ///         Empty on the settle path, where the storage the draw just
-    ///         wrote is the truth.
+    ///         Storage is the ONLY input (A2-iii): the preview that once
+    ///         mirrored planned draws through an overlay is gone — a preview
+    ///         now IS the settlement, run in a frame that reverts
+    ///         ({RewardClaimFacet.simulateClaimInteractionRewards}) — so the
+    ///         plan reads what the draws wrote and nothing simulated.
     function planTransportDraw(
         LibVaipakam.Storage storage s,
-        uint256 dayId,
-        bytes32[] memory ovIds,
-        uint256[] memory ovFresh,
-        uint256[] memory ovRecycled
+        uint256 dayId
     ) internal view returns (TransportDrawPlan memory plan) {
         // The window's source is the day's ORDER from its cursor: the list,
         // which holds every day whole (Codex #2296 items 2 and 4). One scan,
         // one source, and so no case in which a window could be a prefix of
         // one order and not of another.
         bytes32 node = _scanStart(s, dayId);
-        // A day this dry run has already settled had its cursor advanced by
-        // the live draw's prune before the next side read it (Codex #2276 r9
-        // P2): mirror that here — pass the leading epochs exhausted net of
-        // the overlay, at most one window of them, exactly the prune's bound
-        // — so the preview's later side reads what the claim's would.
-        {
-            (uint256 settled, ) = overlayOf(ovIds, ovFresh, ovRecycled, transportDaySettledKey(dayId));
-            uint256 passed;
-            while (settled != 0 && node != bytes32(0) && passed < TRANSPORT_DRAW_SCAN_CAP) {
-                (uint256 f, uint256 r) = overlayOf(ovIds, ovFresh, ovRecycled, node);
-                if (!_exhaustedNet(s, node, f, r)) break;
-                node = s.transportDayNext[dayId][node];
-                unchecked { ++passed; }
-            }
-        }
         bytes32[] memory ids = new bytes32[](TRANSPORT_DRAW_SCAN_CAP);
         uint256[] memory bals = new uint256[](TRANSPORT_DRAW_SCAN_CAP);
         uint256[] memory fRoom = new uint256[](TRANSPORT_DRAW_SCAN_CAP);
@@ -2445,10 +2415,8 @@ library LibRewardCustody {
             LibVaipakam.TransportBatch storage b = s.transportBatches[node];
             uint256 bal = b.balance;
             if (bal != 0 && b.indexedDays == b.dayCount) {
-                (uint256 ovF, uint256 ovR) = overlayOf(ovIds, ovFresh, ovRecycled, node);
-                bal = bal > ovF + ovR ? bal - (ovF + ovR) : 0;
                 if (bal == 0) {
-                    // Exhausted net of the overlay: nothing to plan or withhold.
+                    // Exhausted: nothing to plan or withhold.
                 } else if (b.dayCount > 1 || !s.ingressPackets[node].attested) {
                     // Each reason counted on its own (Codex #2276 r27 P2): an
                     // unattested shared epoch is withheld for BOTH, and a
@@ -2457,7 +2425,7 @@ library LibRewardCustody {
                     if (b.dayCount > 1) plan.withheldShared += bal;
                     if (!s.ingressPackets[node].attested) plan.withheldUnattested += bal;
                 } else {
-                    (uint256 fr, uint256 rr) = _capRooms(s, node, b, bal, ovF, ovR);
+                    (uint256 fr, uint256 rr) = _capRooms(s, node, b, bal);
                     // Arrival order: every planned epoch lists this one day.
                     uint256 key = uint256(s.ingressPackets[node].arrivedAt);
                     plan.ordinaryFresh += fr < bal ? fr : bal;
@@ -2507,9 +2475,8 @@ library LibRewardCustody {
 
     /// @dev An ATTESTED epoch's two leg rooms (only an attested epoch is
     ///      planned — Codex #2276 r26 P1): each component's RECORDED cap net of
-    ///      the packet's classification of that component, the epoch's own
-    ///      draws of it, and the overlay's planned draws of it — never above
-    ///      the balance. The two attested figures are floored independently
+    ///      the packet's classification of that component and the epoch's own
+    ///      draws of it — never above the balance. The two attested figures are floored independently
     ///      and can sum to one unit less than what landed; that unit fits
     ///      neither room and is never drawn once the split is known — it stays
     ///      in the balance for the close-out's disposition path (Codex #2276
@@ -2521,17 +2488,15 @@ library LibRewardCustody {
         LibVaipakam.Storage storage s,
         bytes32 id,
         LibVaipakam.TransportBatch storage b,
-        uint256 bal,
-        uint256 ovF,
-        uint256 ovR
+        uint256 bal
     ) private view returns (uint256 fr, uint256 rr) {
         (uint256 capF, uint256 capR) = _netCaps(s.ingressPackets[id]);
         // Net of what standing records have STAGED of each component as well
         // as what draws consumed (3b-ii-A2, #2305; Codex #2308 r1): a staged
         // leg is a claim on that component's cap, and two records reading a
         // clear counter against one cap could otherwise both take it.
-        uint256 usedF = b.consumedFresh + b.stagedFresh + ovF;
-        uint256 usedR = b.consumedRecycled + b.stagedRecycled + ovR;
+        uint256 usedF = b.consumedFresh + b.stagedFresh;
+        uint256 usedR = b.consumedRecycled + b.stagedRecycled;
         fr = capF > usedF ? capF - usedF : 0;
         rr = capR > usedR ? capR - usedR : 0;
         if (fr > bal) fr = bal;
@@ -2666,32 +2631,6 @@ library LibRewardCustody {
     function _min3(uint256 a, uint256 b, uint256 c) private pure returns (uint256 m) {
         m = a < b ? a : b;
         if (c < m) m = c;
-    }
-
-    /// @dev What the overlay records as already drawn from `id`, by leg. The
-    ///      overlay is an open-addressing HASH TABLE over batch ids (Codex
-    ///      #2276 r12 P1): its length is zero or a power of two, an empty
-    ///      slot holds zero, and a key is probed linearly from
-    ///      `uint256(key) & (length - 1)`; the dry run keeps it under half
-    ///      full, so a probe is a few reads. A chunk of thirty days each
-    ///      drawing a window of epochs was a linear scan of every prior draw
-    ///      per plan entry — quadratic in the chunk — and is now a probe.
-    function overlayOf(
-        bytes32[] memory ovIds,
-        uint256[] memory ovFresh,
-        uint256[] memory ovRecycled,
-        bytes32 id
-    ) internal pure returns (uint256 f, uint256 r) {
-        uint256 n = ovIds.length;
-        if (n == 0) return (0, 0);
-        uint256 mask = n - 1;
-        uint256 i = uint256(id) & mask;
-        while (true) {
-            bytes32 k = ovIds[i];
-            if (k == id) return (ovFresh[i], ovRecycled[i]);
-            if (k == bytes32(0)) return (0, 0);
-            i = (i + 1) & mask;
-        }
     }
 
     /// @notice What `dayId`'s epochs can fund right now, within one scan
@@ -3007,7 +2946,7 @@ library LibRewardCustody {
         LibVaipakam.TransportBatch storage b = s.transportBatches[node];
         uint256 bal = b.balance;
         if (bal == 0 || !stageable(s, node)) return live;
-        (uint256 fr, uint256 rr) = _capRooms(s, node, b, bal, 0, 0);
+        (uint256 fr, uint256 rr) = _capRooms(s, node, b, bal);
         uint256 key = uint256(s.ingressPackets[node].arrivedAt);
         uint256 k = live;
         while (k != 0 && (keys[k - 1] > key || (keys[k - 1] == key && ids[k - 1] > node))) {
@@ -3291,6 +3230,21 @@ library LibRewardCustody {
 
     /// @notice Whether any epoch the record passed over pending is stageable
     ///         now — what the reservation must not walk past.
+    /// @notice Whether record `r`'s scan is SETTLED — nothing the reservation
+    ///         would refuse `StagingScanIncomplete` for: the scan reached the
+    ///         list's end and the list has not grown since; no late link
+    ///         landed behind the record's place; no epoch it passed over
+    ///         pending has become stageable; and no restoration on its day is
+    ///         unread. The ONE statement of that rule (A2-iii), which the
+    ///         reservation refuses on the negation of; a record's day reads
+    ///         not executable to the static read whatever this says, since
+    ///         the day is the record's to settle, not the claim's.
+    function recordScanSettled(LibVaipakam.Storage storage s, LibVaipakam.StagingRecord storage r) internal view returns (bool) {
+        if (!r.scanComplete || s.transportBatchesByDay[r.day].length != r.listCountSeen) return false;
+        if (s.transportDayLateGen[r.day] != r.lateGenSeen || anySkippedNowStageable(s, r)) return false;
+        return r.restoredSeen == s.transportDayRestored[r.day].length;
+    }
+
     function anySkippedNowStageable(LibVaipakam.Storage storage s, LibVaipakam.StagingRecord storage r) internal view returns (bool) {
         uint256 n = r.skippedIds.length;
         for (uint256 i; i < n; ) {
@@ -3310,8 +3264,38 @@ library LibRewardCustody {
     {
         if (s.transportBatchesByDay[dayId].length == 0) return (0, false, 0, 0);
         TransportDrawPlan memory plan =
-            planTransportDraw(s, dayId, new bytes32[](0), new uint256[](0), new uint256[](0));
+            planTransportDraw(s, dayId);
         return (plan.available, plan.capHit, plan.withheldShared, plan.withheldUnattested);
+    }
+
+    /// @notice The ONE batch at `dayId`'s cursor — the first node after the
+    ///         day's consumption cursor — as the two leg rooms a draw could
+    ///         take from it right now, or zeros where that node is exhausted,
+    ///         not yet whole, withheld (shared or unattested) or absent.
+    /// @dev    Row 13's static coverage read (A2-iii; design question 10): the
+    ///         expiry clock, the lens's armed-need view and the conservative
+    ///         preview may not run a settlement, and may not scan either — a
+    ///         day's coverage spread over several batches cannot be summed in
+    ///         O(1) — so they read an obligation's STAGED legs plus at most
+    ///         this one batch, and read a wide unprepared day as not yet
+    ///         executable. Never over-counts: both rooms are each cap net of
+    ///         classification, consumption and staging ({_capRooms}), and the
+    ///         two together are bounded by the balance, fresh first.
+    function cursorBatchRooms(LibVaipakam.Storage storage s, uint256 dayId)
+        internal
+        view
+        returns (uint256 fr, uint256 rr)
+    {
+        if (s.transportBatchesByDay[dayId].length == 0) return (0, 0);
+        bytes32 node = _scanStart(s, dayId);
+        if (node == bytes32(0)) return (0, 0);
+        LibVaipakam.TransportBatch storage b = s.transportBatches[node];
+        uint256 bal = b.balance;
+        if (bal == 0 || b.indexedDays != b.dayCount || b.dayCount > 1 || !s.ingressPackets[node].attested) {
+            return (0, 0);
+        }
+        (fr, rr) = _capRooms(s, node, b, bal);
+        if (fr + rr > bal) rr = bal > fr ? bal - fr : 0;
     }
 
     /// @notice §5c's split of `dayId`'s cursor-visible epoch coverage across
@@ -3339,7 +3323,7 @@ library LibRewardCustody {
         AllocRequest memory q
     ) internal view returns (AllocResult memory r) {
         uint256 needFresh = q.needFresh > q.poolFresh ? q.poolFresh : q.needFresh;
-        TransportDrawPlan memory plan = planTransportDraw(s, q.dayId, q.ovIds, q.ovFresh, q.ovRecycled);
+        TransportDrawPlan memory plan = planTransportDraw(s, q.dayId);
         r.capHit = plan.capHit;
         if (plan.available == 0) return r;
         uint256 avail = plan.available;
@@ -3353,17 +3337,18 @@ library LibRewardCustody {
         uint256 tr = _min3(sR, avail, plan.ordinaryRecycled);
         avail -= tr;
         if (avail != 0) {
-            uint256 domainFresh = q.domainFresh == type(uint256).max ? needFresh : q.domainFresh;
-            uint256 domainRecycled = q.domainRecycled == type(uint256).max ? q.needRecycled : q.domainRecycled;
-            uint256 dF = domainFresh > liveF ? domainFresh - liveF : 0;
-            uint256 dR = domainRecycled > q.bucket ? domainRecycled - q.bucket : 0;
-            // The deficits NET of the mandatory draws just made (Codex #2276
-            // r4 P1): those draws already relieved each leg's deficit by
-            // exactly what they took, and choosing the residual leg on the
-            // gross figures parked coverage on a leg the other could not do
-            // without.
-            dF = dF > tf ? dF - tf : 0;
-            dR = dR > tr ? dR - tr : 0;
+            // The residual: whichever leg's own shortfall the mandatory draws
+            // left larger takes the rest first, fresh first on ties, then the
+            // other leg up to its need. The DAY is the domain (A2-iii): the
+            // gross-needs pre-pass that once widened this to the whole
+            // settlement call was a fixed point of the choice it guided, and
+            // under the round-26 rule it was inert — every drawable epoch's
+            // two rooms together never exceed its balance, so no unit can be
+            // flexible between legs and the order never changes what a leg
+            // receives. A claim spanning more than one chunk is A2-ii's
+            // DOMAIN, staged whole and challengeable, never a pre-pass.
+            uint256 dF = sF > tf ? sF - tf : 0;
+            uint256 dR = sR > tr ? sR - tr : 0;
             uint256 moreF = needFresh - tf;
             uint256 moreR = q.needRecycled - tr;
             if (dR > dF) {
@@ -3400,7 +3385,7 @@ library LibRewardCustody {
         }
         // The call's epoch-write budget (Codex #2276 r14 P1): the epochs this
         // day would write, over what the transaction's draws have written
-        // (and, in a dry run, what its simulated draws have), must fit
+        // must fit
         // `TRANSPORT_DRAW_CALL_CAP`; past it the day is reported as a cap
         // hit with no coverage, which the day primitive defers on — the walk
         // ends, the days before stand, the next call starts here.
@@ -3412,8 +3397,7 @@ library LibRewardCustody {
                 }
                 unchecked { ++k; }
             }
-            (uint256 simulated, ) = overlayOf(q.ovIds, q.ovFresh, q.ovRecycled, transportWritesKey());
-            if (_transientWrites() + simulated + writes > TRANSPORT_DRAW_CALL_CAP) {
+            if (_transientWrites() + writes > TRANSPORT_DRAW_CALL_CAP) {
                 AllocResult memory deferred;
                 deferred.capHit = true;
                 return deferred;
@@ -3463,7 +3447,7 @@ library LibRewardCustody {
     ) internal returns (bool pruned) {
         if (fresh + recycled != 0) {
             TransportDrawPlan memory plan =
-                planTransportDraw(s, dayId, new bytes32[](0), new uint256[](0), new uint256[](0));
+                planTransportDraw(s, dayId);
             TransportTakes memory t = splitTransportTakes(plan, fresh, recycled);
             if (t.coveredFresh != fresh || t.coveredRecycled != recycled) {
                 revert IVaipakamErrors.TransportDrawExceedsCoverage(
@@ -3554,37 +3538,16 @@ library LibRewardCustody {
 
     /// @dev An epoch the cursor may pass: see {pruneTransportDayCursor}.
     function _exhaustedForCursor(LibVaipakam.Storage storage s, bytes32 id) private view returns (bool) {
-        return _exhaustedNet(s, id, 0, 0);
-    }
-
-    /// @dev The same rule net of a dry run's overlay (Codex #2276 r9 P2): what
-    ///      the prune would pass after the draws the overlay records.
-    function _exhaustedNet(
-        LibVaipakam.Storage storage s,
-        bytes32 id,
-        uint256 ovF,
-        uint256 ovR
-    ) private view returns (bool) {
         // A referenced batch is never exhausted for a cursor (3b-ii-A2,
         // #2305): a standing record may unwind into it, and a cursor that had
         // passed it would never revisit what the unwind restored.
         if (s.transportBatchReferences[id] != 0) return false;
         LibVaipakam.TransportBatch storage b = s.transportBatches[id];
         uint256 bal = b.balance;
-        bal = bal > ovF + ovR ? bal - (ovF + ovR) : 0;
         if (bal == 0) return true;
         if (!s.ingressPackets[id].attested) return false;
-        (uint256 fr, uint256 rr) = _capRooms(s, id, b, bal, ovF, ovR);
+        (uint256 fr, uint256 rr) = _capRooms(s, id, b, bal);
         return fr + rr == 0;
-    }
-
-    /// @notice The overlay key under which a dry run carries how many epochs
-    ///         its simulated draws have written so far (Codex #2276 r14 P1),
-    ///         as the entry's fresh figure: the plan adds it to the
-    ///         transaction's own count so the preview stops where the claim
-    ///         would. Keyed apart from every batch id.
-    function transportWritesKey() internal pure returns (bytes32) {
-        return keccak256("vaipakam.transport.draw-writes");
     }
 
     /// @dev The epochs this transaction's draws have written so far.
@@ -3601,14 +3564,6 @@ library LibRewardCustody {
         assembly ("memory-safe") {
             tstore(slot, add(tload(slot), n))
         }
-    }
-
-    /// @notice The overlay key under which a dry run records that it settled
-    ///         `dayId` (Codex #2276 r9 P2): an entry with a fresh figure of one
-    ///         under this key tells the plan the live draw's prune has run on
-    ///         the day. Keyed apart from every batch id.
-    function transportDaySettledKey(uint256 dayId) internal pure returns (bytes32) {
-        return keccak256(abi.encode("vaipakam.transport.day-settled", dayId));
     }
 
     /// @dev The day's prune: pass up to one window of leading exhausted nodes
@@ -3661,70 +3616,11 @@ library LibRewardCustody {
         if (s.transportBatchesByDay[q.dayId].length == 0) return r;
         bytes memory ret = _selfStatic(
             abi.encodeWithSignature(
-                "getTransportAllocationForDay((uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,bytes32[],uint256[],uint256[]))",
+                "getTransportAllocationForDay((uint256,uint256,uint256,uint256,uint256,uint256))",
                 q
             )
         );
         r = abi.decode(ret, (AllocResult));
-    }
-
-    /// @dev The preview's dry run of `user`'s ShareOfPool days, through the
-    ///      epoch facet ({RewardEpochFacet.getDryRunShareOfPoolDays}); see
-    ///      {LibInteractionRewards.dryRunShareOfPoolDaysView} for why it is
-    ///      hosted there ({RewardEpochViewFacet} since Codex #2276 r2). `armedTotal` is the FULL capped armed fresh the
-    ///      chunk charges the emission cap and the armed commitment, the
-    ///      epoch-paid fresh included (the public armed need, Codex #2276 r2
-    ///      P2); `liveArmed` is the part the live delivery must fund — what
-    ///      the delivered and backing gates test. The last two are the
-    ///      walk's own readings for the expiry gates (Codex #2276 r1): the
-    ///      chunk's draw on the recycle bucket net of the epoch-paid share,
-    ///      a deferred day included, and whether a day was deferred on the
-    ///      transport scan window.
-    function callDryRunShareOfPoolDays(
-        address user,
-        uint256 deliveredCap,
-        uint256 freshBudget
-    )
-        internal
-        view
-        returns (
-            uint256 userTotal,
-            uint256 armedTotal,
-            uint256 liveArmed,
-            uint256 bucketRecycled,
-            bool capHit,
-            bool deferred
-        )
-    {
-        bytes memory ret = _selfStatic(
-            abi.encodeWithSignature(
-                "getDryRunShareOfPoolDays(address,uint256,uint256)", user, deliveredCap, freshBudget
-            )
-        );
-        (userTotal, armedTotal, liveArmed, bucketRecycled, capHit, deferred) =
-            abi.decode(ret, (uint256, uint256, uint256, uint256, bool, bool));
-    }
-
-    /// @dev The allocation DOMAIN's gross needs for `user`'s next claim call,
-    ///      through the epoch facet ({RewardEpochFacet.getObligationDomainNeeds}).
-    ///      `max` — "the day is the domain" — when no day that call could
-    ///      price has an epoch listed. That is decided by the view itself,
-    ///      from the LEDGER: it enumerates the chunk's days without pricing
-    ///      them and reads each day's index length — the slots the walk's
-    ///      per-day short-circuit reads anyway — so a chain with no epochs
-    ///      pays the call and the enumeration and no pricing, and a ledger
-    ///      that already held epochs before this release is read exactly
-    ///      right from its first block, with no counter to backfill and no
-    ///      migration (Codex #2276 r2 P1: a counter appended here read zero
-    ///      over pre-existing batches until the next admission, and on a
-    ///      chain the old wire no longer fed it stayed zero for good).
-    ///      Two reads through {RewardEpochViewFacet}: the probe first, the
-    ///      pricing only where it says a listed day is in reach.
-    function callDomainNeeds(address user) internal view returns (uint256 domainFresh, uint256 domainRecycled) {
-        bytes memory ret = _selfStatic(abi.encodeWithSignature("getObligationDomainListsAnEpoch(address)", user));
-        if (!abi.decode(ret, (bool))) return (type(uint256).max, type(uint256).max);
-        ret = _selfStatic(abi.encodeWithSignature("getObligationDomainNeeds(address)", user));
-        (domainFresh, domainRecycled) = abi.decode(ret, (uint256, uint256));
     }
 
     /// @dev A settlement's treasury and epoch legs through the epoch facet

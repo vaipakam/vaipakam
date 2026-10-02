@@ -52,6 +52,24 @@
     "stateMutability": "nonpayable"
   },
   {
+    "type": "function",
+    "name": "simulateClaimInteractionRewards",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "deliverTo",
+        "type": "uint8",
+        "internalType": "enum LibVaipakam.RewardDelivery"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
     "type": "event",
     "name": "InteractionRewardsClaimed",
     "inputs": [
@@ -1241,6 +1259,27 @@
       },
       {
         "name": "backingRoom",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InteractionRewardsSimulation",
+    "inputs": [
+      {
+        "name": "paid",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "fromDay",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "toDay",
         "type": "uint256",
         "internalType": "uint256"
       }

@@ -15,6 +15,7 @@ import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
+import {RewardEpochViewFacet} from "../src/facets/RewardEpochViewFacet.sol";
 
 /**
  * @title  RewardClaimBackingSeparationTest
@@ -311,7 +312,11 @@ contract RewardClaimBackingSeparationTest is SetupTest, IVaipakamErrors {
         // room ABOVE the real fresh figure, so the uncapped need still fit and
         // the mutation (cap removed) stayed green. Four drafts of this cell were
         // vacuous before measuring showed the gap.
-        (uint256 freshNow, , ) = _lens().previewInteractionRewards(alice);
+        // The UNCAPPED fresh entitlement (A2-iii): the execution preview is the
+        // claim and so is already truncated to the pool room; the straddle
+        // needs the figure above the room, which the lens's legacy-fresh
+        // output still reports raw.
+        (, , , uint256 freshNow, , , , ) = RewardEpochViewFacet(address(diamond)).getUserArmedFreshNeedWithLegs(alice);
         uint256 bal = vpfi.balanceOf(address(diamond));
         assertGt(freshNow, 1 ether, "fixture: entitlement exceeds the pool room");
         // room = freshNow - 1, so:
@@ -358,7 +363,7 @@ contract RewardClaimBackingSeparationTest is SetupTest, IVaipakamErrors {
         // Measured, not assumed: `_seedPayable`'s return over-states this
         // entry's own share, which is what made an earlier straddle miss by
         // 38 wei.
-        (uint256 freshNow, , ) = _lens().previewInteractionRewards(alice);
+        (uint256 freshNow, , ) = previewByExecution(alice);
         uint256 bal = vpfi.balanceOf(address(diamond));
         uint256 stranded = 5 ether;
 

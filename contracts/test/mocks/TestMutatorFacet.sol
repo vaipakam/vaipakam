@@ -1233,12 +1233,9 @@ contract TestMutatorFacet {
                 // those cases into defers. Delivered-bound behaviour is
                 // covered through the real walk instead, where the bound is
                 // read from storage.
-                deliveredFresh: type(uint256).max,
-                // 3b-ii-A — the direct primitive harness prices one day: the day is the domain.
-                domainFresh: type(uint256).max,
-                domainRecycled: type(uint256).max
+                deliveredFresh: type(uint256).max
             }),
-            LibInteractionRewards._noDryRun()
+            LibInteractionRewards._dayContext()
         );
     }
 
@@ -2613,6 +2610,17 @@ contract TestMutatorFacet {
 
     function liveFreshReservedRaw() external view returns (uint256) {
         return LibVaipakam.storageSlot().liveFreshReserved;
+    }
+
+    /// @notice A2-iii test-only — one obligation-day's gross needs, priced by
+    ///         the day primitive with no source applied; sizes fixtures where
+    ///         the retired domain view once did.
+    function dayNeedsRaw(address user, LibVaipakam.RewardSide side, uint256 d)
+        external
+        view
+        returns (uint256 needFresh, uint256 needRecycled)
+    {
+        return LibInteractionRewards.dayNeedsView(user, side, d);
     }
 
     /// @notice 3b-ii-A2 test-only (Codex #2308 r21) — stand in for a staging

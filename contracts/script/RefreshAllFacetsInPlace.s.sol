@@ -2342,7 +2342,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     ///      (removing a live function would strand it) and that the list
     ///      names the legacy seed.
     function _retiredSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](4);
+        s = new bytes4[](7);
         // #1566 slice 4 PR A (Codex #2158 r29/r30 P1) — the legacy seed took
         // only the amount; it now carries the pause epoch too, so the old
         // selector must not survive routed to bytecode that checks neither
@@ -2363,6 +2363,14 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         s[1] = bytes4(keccak256("materializeTransportBatchPageHinted(bytes32,uint256[],bytes32[])"));
         s[2] = bytes4(keccak256("epochLinkTransportDayIndex(uint256,bytes32[])"));
         s[3] = bytes4(keccak256("epochClaimEntriesWalk(address,uint256,uint256)"));
+        // - A2-iii: the dry run, the domain needs and the domain probe on the
+        //   epoch view facet are retired — a preview is the claim itself in a
+        //   reverting frame, and the static read lives on the lens. None is
+        //   routed anywhere (no chain has the view facet), so these legs are
+        //   no-ops today, stated once so they cannot become ones that matter.
+        s[4] = bytes4(keccak256("getDryRunShareOfPoolDays(address,uint256,uint256)"));
+        s[5] = bytes4(keccak256("getObligationDomainNeeds(address)"));
+        s[6] = bytes4(keccak256("getObligationDomainListsAnEpoch(address)"));
         // The four-argument vault credit is NOT retired (Codex #2276 r3 P1,
         // r14 P2): it stays on the refreshed VaultFactoryFacet as a
         // compatibility entry, in the facet's own selector list, so every

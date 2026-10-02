@@ -396,9 +396,9 @@ contract ShareOfPoolClaimWalkTest is SetupTest {
 
     // ── #1351 slice 2e — preview parity with the walk ────────────────────────
 
-    function _preview() internal view returns (uint256 amount) {
-        (amount, , ) = InteractionRewardsLensFacet(address(diamond))
-            .previewInteractionRewards(alice);
+    /// @dev The preview IS the claim (A2-iii): run in a reverting frame.
+    function _preview() internal returns (uint256 amount) {
+        (amount, , ) = previewByExecution(alice);
     }
 
     /// @dev {_loanSideOpen} for an arbitrary loan id.

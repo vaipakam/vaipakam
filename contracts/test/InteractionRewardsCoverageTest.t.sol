@@ -379,8 +379,7 @@ contract InteractionRewardsCoverageTest is SetupTest, IVaipakamErrors {
         _mut().setKnownGlobalSet(1, false);
         vm.warp(block.timestamp + 2 days + 1);
 
-        (uint256 amount, uint256 fromDay, uint256 toDay) = _lens()
-            .previewInteractionRewards(alice);
+        (uint256 amount, uint256 fromDay, uint256 toDay) = previewByExecution(alice);
         assertEq(amount, 0, "preview amount zeroed");
         assertEq(fromDay, 0, "fromDay zeroed");
         assertEq(toDay, 0, "toDay zeroed");
@@ -461,8 +460,7 @@ contract InteractionRewardsCoverageTest is SetupTest, IVaipakamErrors {
 
         vm.warp(block.timestamp + 4 days + 1);
 
-        (uint256 amount, uint256 fromDay, uint256 toDay) = _lens()
-            .previewInteractionRewards(alice);
+        (uint256 amount, uint256 fromDay, uint256 toDay) = previewByExecution(alice);
         assertEq(fromDay, 1, "preview fromDay starts at 1");
         assertEq(toDay, 2, "preview toDay stops at last finalized");
         assertEq(amount, _halfPool(1) + _halfPool(2), "preview amount matches walk");
@@ -612,7 +610,7 @@ contract InteractionRewardsCoverageTest is SetupTest, IVaipakamErrors {
 
     // ─── Helpers ─────────────────────────────────────────────────────────────
 
-    function _previewAmount(address user) internal view returns (uint256 amount) {
-        (amount,,) = _lens().previewInteractionRewards(user);
+    function _previewAmount(address user) internal returns (uint256 amount) {
+        (amount,,) = previewByExecution(user);
     }
 }

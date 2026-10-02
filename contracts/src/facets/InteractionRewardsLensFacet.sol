@@ -154,13 +154,22 @@ contract InteractionRewardsLensFacet {
     }
 
     /**
-     * @notice Preview the caller's claimable reward across the next
-     *         claim window WITHOUT mutating state. Walks the same
-     *         `[lastClaimedDay+1 .. min(today-1, lastClaimedDay + MAX)]`
-     *         range the live claim would use.
+     * @notice A CONSERVATIVE preview of `user`'s claimable reward: the
+     *         legacy window and the legacy legs exactly as the claim prices
+     *         them, plus — per side — the first pending armed day priced
+     *         against PREPARED coverage (the one batch at the day's cursor;
+     *         a day a staging record holds is the record's to settle and
+     *         counts nothing here, in any phase) and the live sources, and
+     *         stopping at the first side the claim would stop on. A LOWER
+     *         BOUND on what the claim pays, never above it
+     *         (A2-iii; design question 10): nothing is scanned and no
+     *         settlement is run, so a wide unprepared day reads as nothing
+     *         yet. The EXACT figure is the claim itself run in a reverting
+     *         frame — {RewardClaimFacet.simulateClaimInteractionRewards}
+     *         through `eth_call` — which the app's read path uses; this view
+     *         serves the static consumers ({MetricsDashboardFacet}).
      * @param user    User whose next-window claim is previewed.
-     * @return amount  VPFI wei the user would receive now
-     *                 (before pool-cap truncation at live claim).
+     * @return amount  VPFI wei the user would receive now, at least.
      * @return fromDay First day index the preview walks (inclusive).
      * @return toDay   Last day index the preview walks (inclusive).
      */
@@ -953,96 +962,5 @@ contract InteractionRewardsLensFacet {
         recoveryPositionReserved = s.rewardBudgetRecovered
             - s.rewardBudgetRedispatched
             + s.strandedReturnOverage;
-    }
-    /**
-     * @notice #1434 P1-b (Codex #1699 r4) — the user's AGGREGATE capped
-     *         armed-fresh requirement, as the claim itself computes it.
-     * @dev    Hosted here because this facet already carries the dry-run
-     *         pricing engine for the preview, so exposing it costs no extra
-     *         bytecode — whereas calling the engine directly from the expiry
-     *         path inlined it into `InteractionRewardsFacet` and blew the
-     *         EIP-170 limit by 5,037 bytes.
-     *
-     *         Grouped and D1-capped, NOT a sum of per-entry prices: entries
-     *         sharing a `(user, side, day)` ceiling would otherwise overstate
-     *         the need and pause the expiry clock on funding nobody owes.
-     *
-     *         Measured with the delivered allowance SLACK. This is what the
-     *         group needs; clamping it by the allowance it is then compared
-     *         against would be circular and report every user as exactly
-     *         affordable.
-     * @param  user The claimant.
-     * @return armed Capped armed fresh the user's open claim would consume.
-     */
-    function getUserArmedFreshNeed(address user)
-        external
-        view
-        returns (uint256 armed)
-    {
-        return LibInteractionRewards.userArmedFreshNeedView(user);
-    }
-
-    /**
-     * @notice Codex #1499 r6 P2 — the armed need together with the legacy legs
-     *         its budget is derived from.
-     * @dev    The horizon predicate reaches this by staticcall (an EIP-170
-     *         requirement, see {LibInteractionRewards}), and it needs the same
-     *         two legacy legs the walk's budget already computed. Returning
-     *         them here is what keeps that O(entries) pass to ONE per swept
-     *         entry instead of one on each side of the Diamond boundary. The
-     *         scan runs before the unarmed early return, so the duplicate was
-     *         paid on every chain rather than only on armed ones.
-     *
-     *         Additive on purpose: {getUserArmedFreshNeed} keeps its selector
-     *         and its callers, so no routed selector is retired here.
-     * @param  user The claimant.
-     *         The shape stays FLAT and the first four outputs stay where they
-     *         were (Codex #2276 r2 P2): the three readings 3b-ii-A added are
-     *         appended, so a caller regenerated against the package keeps
-     *         `armed` / `userLegs` / `treasuryLegs` / `legacyFresh` by name
-     *         and by position. The library reads the same words as one
-     *         struct ({LibInteractionRewards.ArmedNeed}, whose members are in
-     *         this order), so the gates decode one shape.
-     * @param  user The claimant.
-     * @return armed        Capped armed fresh the user's open claim would
-     *                      consume — the FULL figure, epoch-paid fresh
-     *                      included (what the emission cap and the armed
-     *                      commitment are charged).
-     * @return userLegs     Legacy legs bound for the user.
-     * @return treasuryLegs Legacy legs bound for treasury (they reserve too).
-     * @return legacyFresh  #1566 closure 2 — the FRESH part of both legacy
-     *                      legs PLUS the legacy window the claim settles
-     *                      first. The executability predicate and the sweeps
-     *                      measure the claimant's aggregate VINTAGE-BLIND fresh
-     *                      need (the live-funded armed part plus this, capped
-     *                      at the pool) against the delivered bound, because
-     *                      the claim's delivery chokepoint refuses on the
-     *                      TOTAL fresh component: a predicate that measured
-     *                      only the armed part would read a legacy-only
-     *                      claimant executable while their claim reverts, and
-     *                      run their expiry clock.
-     * @return bucketRecycled 3b-ii-A — the chunk's draw on the recycle
-     *                      bucket, net of what the epochs pay, a day the walk
-     *                      would defer included.
-     * @return capHit       3b-ii-A — a day would defer on the transport scan
-     *                      window.
-     * @return liveArmed    3b-ii-A — the part of `armed` the live delivery
-     *                      must fund; the delivered and backing gates' figure.
-     */
-    function getUserArmedFreshNeedWithLegs(address user)
-        external
-        view
-        returns (
-            uint256 armed,
-            uint256 userLegs,
-            uint256 treasuryLegs,
-            uint256 legacyFresh,
-            uint256 bucketRecycled,
-            bool capHit,
-            uint256 liveArmed
-        )
-    {
-        LibInteractionRewards.ArmedNeed memory n = LibInteractionRewards.userArmedFreshNeedWithLegsView(user);
-        return (n.armed, n.userLegs, n.treasuryLegs, n.legacyFresh, n.bucketRecycled, n.capHit, n.liveArmed);
     }
 }
