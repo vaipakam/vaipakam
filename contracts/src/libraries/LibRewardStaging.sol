@@ -97,6 +97,16 @@ library LibRewardStaging {
     /// @notice An unwind page returned `batchId`'s staged components for `key`.
     /// @custom:event-category state-change/reward-staging
     event StagingUnwoundBatch(bytes32 indexed batchId, bytes32 indexed key, uint256 fresh, uint256 recycled);
+    /// @notice Record `key` is STALE: `entryId`, one of its committed
+    ///         entries, changed lifecycle since the reservation — forfeited,
+    ///         defaulted, liquidated, expired, or closed before the day — so
+    ///         its committed destination split no longer matches what the
+    ///         live primitive would route. It is unwound, never resolved on
+    ///         that split (the ratified design's revalidation at the first
+    ///         irreversible page; Codex #2308 r23): emitted by the resolution
+    ///         page that found it, or by the unwind anyone may run at once.
+    /// @custom:event-category state-change/reward-staging
+    event StagingRecordStale(bytes32 indexed key, uint256 indexed entryId);
     /// @notice The record is gone: unwound (`paid == false`) or paid.
     /// @custom:event-category state-change/reward-staging
     event StagingRecordClosed(bytes32 indexed key, bool paid);
@@ -406,6 +416,18 @@ library LibRewardStaging {
     function resolvePage(LibVaipakam.Storage storage s, bytes32 key) internal returns (bool done) {
         LibVaipakam.StagingRecord storage r = record(s, key);
         if (r.phase == LibVaipakam.StagingPhase.Reserved) {
+            // The first irreversible page REVALIDATES the commitment against
+            // the entries' current lifecycle (Codex #2308 r23; the design's
+            // rule): a record whose split is stale is unwound here and now,
+            // never resolved on it — `_pay` would otherwise route the frozen
+            // claimant and chargeability past a forfeit, a default or a
+            // closed window the reservation never saw.
+            (bool stale, uint256 entryId) = staleEntry(s, r);
+            if (stale) {
+                emit StagingRecordStale(key, entryId);
+                r.phase = LibVaipakam.StagingPhase.Unwinding;
+                return _unwindPage(s, key, r);
+            }
             r.phase = LibVaipakam.StagingPhase.Resolving;
         } else {
             _requirePhase(key, r, LibVaipakam.StagingPhase.Resolving);
@@ -615,8 +637,39 @@ library LibRewardStaging {
 
     // ─────────────────────────────── unwind ───────────────────────────────
 
+    /// @notice Whether record `r`'s commitment is STALE — an entry of its set
+    ///         no longer valid for its day under the primitive's one rule
+    ///         ({LibInteractionRewards.entrySetDefect}: expired, processed,
+    ///         closed before the day, re-anchored), or one whose forfeit
+    ///         status changed since the reservation stamped its chargeability
+    ///         (a default or liquidation since) — and which entry. Read before
+    ///         the first irreversible page and by the unwind anyone may run
+    ///         at once (Codex #2308 r23). A record not yet reserved carries no
+    ///         slices, so only the set rule applies to it.
+    function staleEntry(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.StagingRecord storage r
+    ) internal view returns (bool stale, uint256 entryId) {
+        (bool valid, uint256 bad) =
+            LibInteractionRewards.entrySetDefect(s, r.user, r.day, r.entryIds, new uint256[](0));
+        if (!valid) return (true, bad);
+        uint256 m = r.sliceChargeable.length;
+        for (uint256 i; i < m; ) {
+            uint256 id = r.entryIds[i];
+            // Chargeable was stamped as the negation of "forfeited": equal
+            // now means the status moved under the commitment.
+            if (r.sliceChargeable[i] == LibInteractionRewards.entryForfeited(s, s.rewardEntries[id])) {
+                return (true, id);
+            }
+            unchecked { ++i; }
+        }
+        return (false, 0);
+    }
+
     /// @notice One page of unwind: past the deadline anyone, before it only
-    ///         the claimant (a voluntary cancellation). Each page returns up
+    ///         the claimant (a voluntary cancellation) — or anyone, at once,
+    ///         when the record is STALE ({staleEntry}; Codex #2308 r23), the
+    ///         finding announced. Each page returns up
     ///         to `STAGING_PAGE` batches' staged components to their balance
     ///         and releases their references; the page that returns the last
     ///         batch releases the reservation, per source, and closes the
@@ -627,12 +680,27 @@ library LibRewardStaging {
         LibVaipakam.StagingPhase p = r.phase;
         if (p == LibVaipakam.StagingPhase.Staging || p == LibVaipakam.StagingPhase.Reserved) {
             if (caller != r.user && block.timestamp < r.deadline) {
-                revert IVaipakamErrors.StagingNotExpired(key, r.deadline);
+                // A STALE record is anyone's to unwind at once, with no
+                // deadline to wait for (Codex #2308 r23; the design's rule).
+                (bool stale, uint256 entryId) = staleEntry(s, r);
+                if (!stale) revert IVaipakamErrors.StagingNotExpired(key, r.deadline);
+                emit StagingRecordStale(key, entryId);
             }
             r.phase = LibVaipakam.StagingPhase.Unwinding;
         } else {
             _requirePhase(key, r, LibVaipakam.StagingPhase.Unwinding);
         }
+        return _unwindPage(s, key, r);
+    }
+
+    /// @dev One unwind page of a record already in `Unwinding`: returns up to
+    ///      a page of staged batches, and on the last releases every
+    ///      reservation by the figure recorded for it and closes the record.
+    function _unwindPage(
+        LibVaipakam.Storage storage s,
+        bytes32 key,
+        LibVaipakam.StagingRecord storage r
+    ) private returns (bool done) {
         // From the record's cursor, releasing each (Codex #2308 r12, r13) —
         // as the resolution walks it.
         uint256 n = r.batchCount;

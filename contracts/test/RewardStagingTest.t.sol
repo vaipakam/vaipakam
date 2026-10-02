@@ -58,6 +58,7 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
     event TransportStaged(bytes32 indexed batchId, bytes32 indexed key, uint256 fresh, uint256 recycled);
     event StagingClaimantForfeited(bytes32 indexed key, address indexed user, uint256 fresh, uint256 recycled);
     event StagingDelivered(bytes32 indexed key, address indexed user, uint256 amount, uint8 venue);
+    event StagingRecordStale(bytes32 indexed key, uint256 indexed entryId);
 
     function setUp() public {
         setupHelper();
@@ -552,6 +553,61 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         assertEq(_rec().phase, uint8(LibVaipakam.StagingPhase.None), "closed, not trapped");
         (, uint256 bucketAfter, , , , , , ) = InteractionRewardsLensFacet(address(diamond)).getRecycleBackingSnapshot();
         assertEq(bucketAfter - bucketBefore, userFresh, "the forfeited fresh is absorbed into the bucket");
+    }
+
+    /// @dev Codex #2308 r23 P1 — the first irreversible page REVALIDATES the
+    ///      commitment: an entry forfeited since the reservation (a default)
+    ///      makes the record stale, and it is unwound there and then — never
+    ///      resolved on the frozen claimant and chargeability — by whoever
+    ///      called, and before any deadline.
+    function test_AReservedRecord_WhoseEntryWasForfeitedSince_IsStale_UnwoundNotResolved() public {
+        (, uint256 id) = _stagedAndScanned();
+        _liveFresh(1e18);
+        _staging().reserveStagedDay(_key());
+        uint8 sideKey = uint8(LibVaipakam.RewardSide.Lender);
+        assertGt(_mut().loanSideRewardReservedRaw(LOAN, sideKey), 0, "fixture: reserved");
+        _mut().setRewardEntryForfeitedRaw(id); // a default since the reservation
+        uint256 aliceBefore = vpfi.balanceOf(alice);
+        address anyone = makeAddr("anyone");
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit StagingRecordStale(_key(), id);
+        vm.prank(anyone);
+        bool done = _settle().resolveStagedDayPage(_key()); // the first page: an unwind page, not a resolution
+        assertEq(vpfi.balanceOf(alice), aliceBefore, "nothing paid on the stale split");
+        while (!done) {
+            assertEq(_rec().phase, uint8(LibVaipakam.StagingPhase.Unwinding), "stale: unwinding, never resolving");
+            vm.prank(anyone);
+            done = _settle().unwindStagedDayPage(_key()); // before the deadline, by a stranger
+        }
+        assertEq(_rec().phase, uint8(LibVaipakam.StagingPhase.None), "closed");
+        assertEq(_mut().loanSideRewardReservedRaw(LOAN, sideKey), 0, "the reservation it took is released");
+        assertEq(vpfi.balanceOf(alice), aliceBefore, "and still nothing paid");
+    }
+
+    /// @dev Codex #2308 r23 — the other lifecycle shape: an entry closed before
+    ///      its day (re-anchored to a new holder, say) fails the primitive's
+    ///      one set rule, so the record is stale; anyone unwinds it AT ONCE,
+    ///      with no deadline to wait for, where a healthy record would have
+    ///      refused them.
+    function test_AStaleRecord_IsAnyonesToUnwind_AtOnce() public {
+        (, uint256 id) = _stagedAndScanned();
+        _liveFresh(1e18);
+        _staging().reserveStagedDay(_key());
+        address anyone = makeAddr("anyone");
+        vm.prank(anyone);
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.StagingNotExpired.selector, _key(), _rec().deadline));
+        _settle().unwindStagedDayPage(_key()); // healthy: not theirs before the deadline
+        _mut().closeRewardEntryRaw(id, 1); // closed before its day
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit StagingRecordStale(_key(), id);
+        vm.prank(anyone);
+        bool done = _settle().unwindStagedDayPage(_key());
+        while (!done) {
+            vm.prank(anyone);
+            done = _settle().unwindStagedDayPage(_key());
+        }
+        assertEq(_rec().phase, uint8(LibVaipakam.StagingPhase.None), "unwound at once");
+        assertEq(_mut().loanSideRewardReservedRaw(LOAN, uint8(LibVaipakam.RewardSide.Lender)), 0, "released");
     }
 
     function test_AReservation_BindsAOneCallClaimAsADeferral_NotATruncation() public {

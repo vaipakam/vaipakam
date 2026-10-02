@@ -262,6 +262,25 @@
   },
   {
     "type": "event",
+    "name": "StagingRecordStale",
+    "inputs": [
+      {
+        "name": "key",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "entryId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "StagingResolvedBatch",
     "inputs": [
       {
