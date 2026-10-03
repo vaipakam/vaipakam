@@ -3322,23 +3322,24 @@ const copySource = {
       // Claims.tsx). The " + rebate" / held-proceeds suffixes are
       // composed at the call site from these catalog pieces.
       rebateAmount: tmpl('{{amount}} VPFI rebate', ['amount']),
-      heldProceedsSuffix: ' + held proceeds',
       amountWithSuffix: tmpl('{{amount}}{{suffix}}', ['amount', 'suffix']),
       feesNftBack: tmpl('{{amount}} fees + your {{nft}} back', ['amount', 'nft']),
       rentalFeesNftBack: tmpl('Rental fees + your {{nft}} back', ['nft']),
       bufferBack: tmpl('{{amount}} buffer back', ['amount']),
       principalPlusInterest: tmpl('{{amount}} {{symbol}} + interest', ['amount', 'symbol']),
       collateralLabel: tmpl('{{collateral}} collateral', ['collateral']),
-      // #2373 r2 — a fungible payout whose token details are still loading.
-      amountLoading: 'An amount (loading its details…)',
+      // #2373 r5 — an amount whose token details are still loading, or could
+      // not be read at all, written to sit inside a sentence.
+      amountLoadingInline: 'an amount (loading its details…)',
+      amountUnreadableInline: 'an amount (its token details couldn’t be read)',
+      // #2373 r5 — proceeds held for the lender, in the loan's payment asset.
+      heldFor: tmpl('{{amount}} held for you', ['amount']),
       // #2373 r2 — the borrower's frozen swap-to-repay surplus lane.
       swapSurplus: tmpl('{{amount}} left over from the swap that repaid the loan', ['amount']),
-      swapSurplusPending: 'an amount left over from the swap that repaid the loan (loading its details…)',
       // #2373 r3 — collateral still held for the borrower in a different
       // asset from the rest of the claim (a top-up made while the loan was
       // in a failed-liquidation state).
       extraCollateral: tmpl('{{amount}} of added collateral', ['amount']),
-      extraCollateralPending: 'added collateral (loading its details…)',
       // #2373 r3 — a payout the claim itself can still change.
       provisionalAmount: tmpl('{{payout}} (may change when you claim)', ['payout']),
       fallbackMayChange:
@@ -3356,9 +3357,7 @@ const copySource = {
       rental: 'Rental',
       loan: 'Loan',
       prepaidBufferBack: 'Your prepaid buffer back',
-      heldProceeds: 'Held proceeds for this loan',
       repaidFunds: 'Repaid funds',
-      heldProceedsDefault: 'Held proceeds recovered from the default',
       // UX3-005 (revised #2373 r1) — what a default recovery is, and what
       // the app cannot know about it. Never a computed shortfall: the amount
       // owed at default is not available, and the loan's current principal
@@ -3366,7 +3365,6 @@ const copySource = {
       recoveryNotComparable:
         'This is what the default settlement recovered. How it compares with what the loan still owed when it defaulted isn’t available to the app, so no shortfall is shown.',
       compareInKind: 'This is the collateral itself, not a cash amount — what it is worth depends on its market value.',
-      compareUnknownHeld: 'Part of this is held in other assets, so it can’t be stated as a single amount here.',
       surplusAfterLiquidation: 'Anything left after liquidation',
       residualAfterMatch: 'Anything left after the internal match',
       whyRentalEnded: 'The rental ended — collect your earned fees and reclaim the NFT.',

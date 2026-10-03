@@ -1654,6 +1654,14 @@ Thin-market honesty rules apply.
   never as something else, and never replaced by another lane of the same claim.
   An NFT the claim pays is named beside any other lane — a lender's in-kind
   recovery is listed together with proceeds held for them, not instead of them.
+  Proceeds held for a lender are paid in a single asset, so their amount is
+  stated like any other. An amount whose token details cannot be read at all is
+  said to be unreadable; it is never shown as still loading.
+- The confirmation keeps the same honesty as the page: while the payout is being
+  checked, could not be confirmed, or is confirmed empty, the confirmation says
+  that rather than a general description of what such a claim usually pays.
+- A position row with a claim waiting shows the loan's live status, not an
+  indexed status the chain has already moved past.
 - The payout is composed from the loan's status as the page currently knows it,
   after the live chain read has been taken into account. A loan the chain shows
   as repaid is never described as a default recovery because the indexed record

@@ -201,6 +201,52 @@ describe('probeClaim — the extra liened-collateral lane (#2373 r3)', () => {
   });
 });
 
+describe('probeClaim — the asset held proceeds are paid in (#2373 r5)', () => {
+  const lender = { ...borrowerLoan, role: 'lender', lendingAsset: USDC } as unknown as PositionLoan;
+  const withHeld = [WETH, 0n, false, 0n, 0n, 0n, 9n, false];
+
+  it('is the lending asset for an ERC-20 loan', async () => {
+    const r = await probeClaim(client({ ownerOf: ME, getClaimable: withHeld }), DIAMOND, ME, lender);
+    expect(r.kind === 'claimable' && r.loan.claim.heldAsset).toBe(USDC);
+  });
+
+  it('is the prepay asset for a rental, read from the loan', async () => {
+    const r = await probeClaim(
+      client({ ownerOf: ME, getClaimable: withHeld, getLoanDetails: { prepayAsset: WETH } }),
+      DIAMOND,
+      ME,
+      { ...lender, assetType: 1 } as PositionLoan,
+    );
+    expect(r.kind === 'claimable' && r.loan.claim.heldAsset).toBe(WETH);
+  });
+
+  it('is unknown, not guessed, when a rental read fails', async () => {
+    const r = await probeClaim(
+      client({
+        ownerOf: ME,
+        getClaimable: withHeld,
+        getLoanDetails: () => {
+          throw new Error('fetch failed');
+        },
+      }),
+      DIAMOND,
+      ME,
+      { ...lender, assetType: 1 } as PositionLoan,
+    );
+    expect(r.kind === 'claimable' && r.loan.claim.heldAsset).toBeNull();
+  });
+
+  it('is null when nothing is held', async () => {
+    const r = await probeClaim(
+      client({ ownerOf: ME, getClaimable: [USDC, 10n, false, 0n, 0n, 0n, 0n, false] }),
+      DIAMOND,
+      ME,
+      lender,
+    );
+    expect(r.kind === 'claimable' && r.loan.claim.heldAsset).toBeNull();
+  });
+});
+
 describe('probeClaim — ownership', () => {
   it('is nothing to claim when another wallet holds the position NFT', async () => {
     const r = await probeClaim(

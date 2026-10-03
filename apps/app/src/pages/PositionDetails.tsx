@@ -2460,6 +2460,18 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             ? 'ready'
             : 'checking';
 
+  // #2373 r5 — when the payout is not known, the confirmation says so
+  // (checking / could not confirm / nothing waiting) rather than falling back
+  // to a generic description that reads like an answer.
+  const claimReceiveUnknown =
+    claimPayoutState === 'checking'
+      ? copy.positions.details.youWillReceiveChecking
+      : claimPayoutState === 'unconfirmed'
+        ? copy.positions.details.payoutUnconfirmed
+        : claimPayoutState === 'none'
+          ? copy.positions.details.nothingWaiting
+          : null;
+
   // Six-row receipt for the pending position write — same shape and
   // rows as every create/accept flow (WebsiteReadme intended-behaviour).
   const actionReceipt: ReceiptData | null =
@@ -2482,6 +2494,8 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         ? {
             youReceive: borrowerClaimText
               ? borrowerClaimText.what
+              : claimReceiveUnknown
+                ? claimReceiveUnknown
               : isRental
               ? copy.positions.details.receipt.bufferBackShort
               : row.status === 'repaid'
@@ -2501,6 +2515,8 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           ? {
               youReceive: lenderClaimText
                 ? lenderClaimText.what
+                : claimReceiveUnknown
+                  ? claimReceiveUnknown
                 : isRental
                 ? copy.positions.details.receipt.rentalFeesAndNft
                 : properClose

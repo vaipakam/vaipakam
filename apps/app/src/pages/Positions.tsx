@@ -287,13 +287,14 @@ export function Positions() {
                         />
                       ) : (
                         <div className="row-list">
-                          {list.map((loan) => (
-                            <LoanRow
-                              key={keyOf(loan)}
-                              loan={loan}
-                              claim={claimWaiting ? claimByKey.get(keyOf(loan)) : undefined}
-                            />
-                          ))}
+                          {list.map((loan) => {
+                            const claim = claimWaiting ? claimByKey.get(keyOf(loan)) : undefined;
+                            // #2373 r5 — the claim probe carries the LIVE
+                            // status; render the row from it so a loan the
+                            // chain has settled is not badged Active beside
+                            // "Ready to claim" while the index catches up.
+                            return <LoanRow key={keyOf(loan)} loan={claim ?? loan} claim={claim} />;
+                          })}
                         </div>
                       )}
                     </section>

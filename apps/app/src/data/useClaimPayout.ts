@@ -47,42 +47,34 @@ export function useClaimPayoutText(
   const isRental = loan !== undefined && loan.assetType !== AssetType.ERC20;
   const principalMeta = useTokenMeta(!loan || isRental ? undefined : loan.lendingAsset);
   const collateralMeta = useTokenMeta(loan?.collateralAsset);
-  // UX-002 — getClaimable told us the exact asset + amount this claim
-  // pays out; show the NUMBER on the money-collection screen instead
-  // of "+ interest" or a description of a field. Two extra payout
-  // lanes ride the same claim transaction (Codex #1156 r1):
-  //   - lifRebate is always VPFI (18 dec) → shown numerically;
-  //   - heldForLender ACCUMULATES potentially mixed assets on-chain
-  //     (each park carries its own asset), so no single denomination
-  //     is honest → shown qualitatively, never as a number.
+  // Every lane the claim transaction pays, each with its own token. The
+  // VPFI rebate is always 18-decimal VPFI. Held proceeds are paid in ONE
+  // asset — the loan asset for an ERC-20 loan, the prepay asset for a
+  // rental (ClaimFacet withdraws the whole accumulator in `principalAsset` /
+  // `prepayAsset`) — so they are stated as an amount too (#2373 r5; an
+  // earlier comment here assumed mixed assets and showed no number).
   const claimAssetMeta = useTokenMeta(loan?.claim.asset ?? undefined);
   const surplusMeta = useTokenMeta(loan?.claim.surplus?.asset);
   const extraMeta = useTokenMeta(loan?.claim.extraCollateral?.asset);
+  const hasHeld = loan !== undefined && loan.role === 'lender' && loan.claim.heldForLender > 0n;
+  const heldMeta = useTokenMeta(hasHeld ? (loan?.claim.heldAsset ?? undefined) : undefined);
   if (!loan) return null;
-  const baseAmountStr =
-    loan.claim.amount > 0n && claimAssetMeta.data
-      ? `${formatTokenAmount(loan.claim.amount, claimAssetMeta.data.decimals)} ${claimAssetMeta.data.symbol}`
-      : null;
-  // #2373 r2 — a fungible amount whose token metadata has not loaded (or
-  // failed). It is still an AMOUNT: never let a missing symbol turn it into
-  // an in-kind description, a gross-collateral figure, or anything else the
-  // claim read did not say.
-  const amountPending = loan.claim.amount > 0n && baseAmountStr === null;
+  const labels = copy.claims.row;
+  const base = laneAmount(loan.claim.amount, claimAssetMeta);
+  // A held asset the probe could not resolve is stated as unreadable, not
+  // as loading: no read is in flight that could ever name it.
+  const held = hasHeld
+    ? laneAmount(loan.claim.heldForLender, loan.claim.heldAsset ? heldMeta : { isError: true })
+    : null;
   const rebateStr =
     loan.claim.lifRebate > 0n
-      ? copy.claims.row.rebateAmount(formatTokenAmount(loan.claim.lifRebate, 18))
+      ? labels.rebateAmount(formatTokenAmount(loan.claim.lifRebate, 18))
       : null;
-  const hasHeld = loan.role === 'lender' && loan.claim.heldForLender > 0n;
-  // Per-branch composition below (Codex #1156 r2): a blended string
-  // can't distinguish "this number IS the collateral leg" from "this
-  // is only a VPFI rebate", and a held-only lane must still surface.
   const defaulted = loan.status === 'defaulted' || loan.status === 'liquidated';
   // Claimable proper-close group: repaid or internal_matched. NOT
   // `settled` — ClaimFacet rejects Settled on both claim paths (claims
   // already consumed), and the claimables hook filters those out.
-  const properClose =
-    loan.status === 'repaid' || loan.status === 'internal_matched';
-
+  const properClose = loan.status === 'repaid' || loan.status === 'internal_matched';
   const collateralStr = collateralMeta.data
     ? `${formatTokenAmount(loan.collateralAmount, collateralMeta.data.decimals)} ${collateralMeta.data.symbol}`
     : 'collateral';
@@ -93,55 +85,42 @@ export function useClaimPayoutText(
   let note: string | undefined;
   let provisional = false;
   if (isRental) {
-    const nft = `NFT ${shortAddress(loan.lendingAsset)} #${loan.tokenId}`;
-    if (loan.role === 'lender') {
-      // getClaimable's amount is the fee payout (in the prepay asset)
-      // when fungible fees are due — show the number (Codex #1156 r2).
-      what = baseAmountStr
-        ? copy.claims.row.feesNftBack(baseAmountStr, nft)
-        : copy.claims.row.rentalFeesNftBack(nft);
-      why = copy.claims.row.whyRentalEnded;
-    } else {
-      what = baseAmountStr
-        ? copy.claims.row.bufferBack(baseAmountStr)
-        : copy.claims.row.prepaidBufferBack;
-      why = copy.claims.row.whyRentalClosed;
-    }
+    what = rentalPayoutWhat({
+      role: loan.role,
+      base,
+      held,
+      nft: `NFT ${shortAddress(loan.lendingAsset)} #${loan.tokenId}`,
+      labels,
+    });
+    why = loan.role === 'lender' ? labels.whyRentalEnded : labels.whyRentalClosed;
   } else if (loan.role === 'lender') {
-    // The lender's claim: every lane the transaction pays (#2373 r4 — the
-    // same root fix as the borrower's below; a per-branch choice dropped a
-    // non-fungible claim paid beside held proceeds).
     const kind = properClose ? 'proper' : loan.status === 'fallback_pending' ? 'fallback' : 'default';
     what = lenderPayoutWhat({
       kind,
-      base: baseAmountStr,
-      amountPending,
+      base,
       nftClaim: nftClaimLabel(loan.claim),
-      hasHeld,
+      held,
       principalPlusInterest: principalMeta.data
-        ? copy.claims.row.principalPlusInterest(
+        ? labels.principalPlusInterest(
             formatTokenAmount(loan.principal, principalMeta.data.decimals),
             principalMeta.data.symbol,
           )
         : null,
       collateral: collateralStr,
-      labels: copy.claims.row,
+      labels,
     });
     if (kind === 'proper') {
-      why =
-        loan.status === 'repaid'
-          ? copy.claims.row.whyRepaidLender
-          : copy.claims.row.whyInternalMatchLender;
+      why = loan.status === 'repaid' ? labels.whyRepaidLender : labels.whyInternalMatchLender;
     } else if (kind === 'fallback') {
-      why = copy.claims.row.whyFallbackPending;
+      why = labels.whyFallbackPending;
       // #2373 r3 (P1) — `claimAsLender` first attempts an internal match
       // (the app sends no retry-swap quotes, so that is the only rewrite it
       // can trigger), and a full or partial match pays the loan asset
       // instead. What is recorded now is therefore not a promise.
-      note = copy.claims.row.fallbackMayChange;
+      note = labels.fallbackMayChange;
       provisional = true;
     } else {
-      why = copy.claims.row.whyDefaultLender;
+      why = labels.whyDefaultLender;
       // UX3-005 — say what the recovery is and what the app cannot know
       // about it. #2373 r1 (P1): no read here carries what the loan owed
       // when it defaulted, and the loan's current principal is not what the
@@ -153,40 +132,66 @@ export function useClaimPayoutText(
         // be formatted yet: a cash recovery whose symbol is still loading
         // is not "the collateral itself".
         inKind: loan.claim.amount === 0n,
-        labels: copy.claims.row,
+        labels,
       });
     }
   } else {
-    // The borrower's claim: every lane the transaction pays (#2373 r3).
     what = borrowerPayoutWhat({
       status: loan.status,
-      base: baseAmountStr,
-      amountPending,
+      base,
       returnedNft: nftClaimLabel(loan.claim),
       rebate: rebateStr,
       // The frozen swap-to-repay surplus.
-      surplus: loan.claim.surplus
-        ? surplusMeta.data
-          ? `${formatTokenAmount(loan.claim.surplus.amount, surplusMeta.data.decimals)} ${surplusMeta.data.symbol}`
-          : 'pending'
-        : null,
+      surplus: loan.claim.surplus ? laneAmount(loan.claim.surplus.amount, surplusMeta) : null,
       // Collateral still liened in a different asset from the claim row.
       extraCollateral: loan.claim.extraCollateral
-        ? extraMeta.data
-          ? `${formatTokenAmount(loan.claim.extraCollateral.amount, extraMeta.data.decimals)} ${extraMeta.data.symbol}`
-          : 'pending'
+        ? laneAmount(loan.claim.extraCollateral.amount, extraMeta)
         : null,
       collateral: collateralStr,
-      labels: copy.claims.row,
+      labels,
     });
     why = defaulted
-      ? copy.claims.row.whyDefaultBorrower
+      ? labels.whyDefaultBorrower
       : loan.status === 'internal_matched'
-        ? copy.claims.row.whyInternalMatchBorrower
-        : copy.claims.row.whyRepaidBorrower;
+        ? labels.whyInternalMatchBorrower
+        : labels.whyRepaidBorrower;
   }
 
   return { what, why, note, provisional };
+}
+
+type RowLabels = typeof copy.claims.row;
+
+/** One fungible lane's amount, as far as the app knows it (#2373 r5 root
+ *  fix). Every lane — the claim row, the swap surplus, added collateral,
+ *  held proceeds — goes through this one type, so a lane is never left out
+ *  while its token details load, and a token whose details cannot be read
+ *  at all is said to be unreadable instead of loading forever. */
+export type LaneAmount =
+  | { kind: 'known'; text: string }
+  | { kind: 'loading' }
+  | { kind: 'unreadable' };
+
+export function laneAmount(
+  amount: bigint,
+  meta: { data?: { decimals: number; symbol: string }; isError: boolean },
+): LaneAmount | null {
+  if (amount <= 0n) return null;
+  if (meta.data) {
+    return { kind: 'known', text: `${formatTokenAmount(amount, meta.data.decimals)} ${meta.data.symbol}` };
+  }
+  return meta.isError ? { kind: 'unreadable' } : { kind: 'loading' };
+}
+
+/** The amount as words usable inside a sentence. */
+export function amountPhrase(amount: LaneAmount, labels: RowLabels): string {
+  if (amount.kind === 'known') return amount.text;
+  return amount.kind === 'loading' ? labels.amountLoadingInline : labels.amountUnreadableInline;
+}
+
+/** Join lanes into one line that opens a sentence. */
+function joinLanes(lanes: (string | null)[]): string {
+  return capitalizeFirst(lanes.filter((l): l is string => Boolean(l)).join(' + '));
 }
 
 /** The NFT a claim row pays, named — or null for a fungible claim. A
@@ -203,112 +208,93 @@ export function nftClaimLabel(claim: {
   return `NFT ${shortAddress(claim.asset)} #${claim.tokenId}${qty}`;
 }
 
-/** The lender's payout (#2373 r4). Pure, so the rule is tested rather than
- *  read. The claim row's own payout — an amount, a loading amount, or an
- *  NFT — comes first, and held proceeds are added beside it, never chosen
- *  instead of it. */
+/** A rental claim (#2373 r5). Pure. The lender's fee payout and held
+ *  proceeds are stated, or stated as loading / unreadable, never dropped. */
+export function rentalPayoutWhat(args: {
+  role: 'lender' | 'borrower';
+  base: LaneAmount | null;
+  held: LaneAmount | null;
+  nft: string;
+  labels: RowLabels;
+}): string {
+  const { labels } = args;
+  if (args.role === 'borrower') {
+    return args.base
+      ? capitalizeFirst(labels.bufferBack(amountPhrase(args.base, labels)))
+      : labels.prepaidBufferBack;
+  }
+  const main = args.base
+    ? labels.feesNftBack(amountPhrase(args.base, labels), args.nft)
+    : labels.rentalFeesNftBack(args.nft);
+  return joinLanes([main, args.held ? labels.heldFor(amountPhrase(args.held, labels)) : null]);
+}
+
+/** The lender's payout (#2373 r4/r5). Pure, so the rule is tested rather
+ *  than read. The claim row's own payout — an amount (known, loading or
+ *  unreadable) or an NFT — comes first, and held proceeds sit beside it,
+ *  never instead of it. */
 export function lenderPayoutWhat(args: {
   kind: 'proper' | 'fallback' | 'default';
-  base: string | null;
-  amountPending: boolean;
+  base: LaneAmount | null;
   nftClaim: string | null;
-  hasHeld: boolean;
+  held: LaneAmount | null;
   /** A proper close with no amount named: principal + interest, described. */
   principalPlusInterest: string | null;
   /** Describes the collateral when the claim names nothing. */
   collateral: string;
-  labels: Pick<
-    typeof copy.claims.row,
-    | 'amountWithSuffix'
-    | 'heldProceedsSuffix'
-    | 'amountLoading'
-    | 'heldProceeds'
-    | 'repaidFunds'
-    | 'collateralLabel'
-    | 'provisionalAmount'
-    | 'recoveredFromDefault'
-    | 'heldProceedsDefault'
-    | 'defaultRecovery'
-  >;
+  labels: RowLabels;
 }): string {
   const { labels } = args;
-  const held = args.hasHeld ? labels.heldProceedsSuffix : '';
-  const named = args.base ?? args.nftClaim;
+  const heldLane = args.held ? labels.heldFor(amountPhrase(args.held, labels)) : null;
+  const named = args.base?.kind === 'known' ? args.base.text : args.nftClaim;
+  const unnamedAmount = args.base && args.base.kind !== 'known' ? amountPhrase(args.base, labels) : null;
   if (args.kind === 'proper') {
-    if (named) return labels.amountWithSuffix(named, held);
-    if (args.amountPending) return labels.amountWithSuffix(labels.amountLoading, held);
-    if (args.hasHeld) return labels.heldProceeds;
+    if (named || unnamedAmount) return joinLanes([named ?? unnamedAmount, heldLane]);
+    if (heldLane) return joinLanes([heldLane]);
     return args.principalPlusInterest ?? labels.repaidFunds;
   }
   if (args.kind === 'fallback') {
     const main = named
       ? labels.collateralLabel(named)
-      : args.amountPending
-        ? labels.amountLoading
-        : labels.collateralLabel(args.collateral);
-    return labels.provisionalAmount(labels.amountWithSuffix(main, held));
+      : (unnamedAmount ?? labels.collateralLabel(args.collateral));
+    return labels.provisionalAmount(joinLanes([main, heldLane]));
   }
-  if (named) return labels.recoveredFromDefault(named, held);
-  if (args.amountPending) return labels.amountWithSuffix(labels.amountLoading, held);
-  if (args.hasHeld) return labels.heldProceedsDefault;
+  if (named) return labels.recoveredFromDefault(named, heldLane ? ` + ${heldLane}` : '');
+  if (unnamedAmount || heldLane) return joinLanes([unnamedAmount, heldLane]);
   return labels.defaultRecovery(args.collateral);
 }
 
-/** The borrower's payout as ONE list of lanes (#2373 r3 root fix). Pure,
- *  so the rule is tested rather than read. Every lane the claim transaction
- *  pays contributes a part; a lane whose token details are still loading
- *  (`'pending'`, or `amountPending` for the base) contributes a loading
- *  part rather than vanishing. The per-status branches this replaced each
- *  re-decided which lanes to show, and each review round found another lane
- *  one of them dropped. */
+/** The borrower's payout as ONE list of lanes (#2373 r3/r5). Pure. Every
+ *  lane the claim transaction pays contributes a part; a lane whose token
+ *  details are loading or unreadable says so rather than vanishing. */
 export function borrowerPayoutWhat(args: {
   status: ClaimableLoan['status'];
-  /** The claim row's formatted amount, when it has one and it loaded. */
-  base: string | null;
-  /** The claim row has an amount whose token details have not loaded. */
-  amountPending: boolean;
-  /** An NFT handed back with no fungible amount (a repaid NFT-collateral
-   *  loan) — a lane in its own right, never one a rebate may stand in for. */
+  base: LaneAmount | null;
+  /** An NFT handed back with no fungible amount — a lane in its own right,
+   *  never one a rebate may stand in for. */
   returnedNft: string | null;
   rebate: string | null;
-  surplus: string | 'pending' | null;
-  extraCollateral: string | 'pending' | null;
+  surplus: LaneAmount | null;
+  extraCollateral: LaneAmount | null;
   /** Describes the collateral when no lane names an amount. */
   collateral: string;
-  labels: Pick<
-    typeof copy.claims.row,
-    | 'collateralBackWithAmount'
-    | 'collateralBack'
-    | 'amountLoading'
-    | 'swapSurplus'
-    | 'swapSurplusPending'
-    | 'extraCollateral'
-    | 'extraCollateralPending'
-    | 'surplusAfterLiquidation'
-    | 'residualAfterMatch'
-  >;
+  labels: RowLabels;
 }): string {
   const { labels } = args;
   const lanes: string[] = [];
-  if (args.base) {
-    lanes.push(args.status === 'repaid' ? labels.collateralBackWithAmount(args.base, '') : args.base);
-  } else if (args.amountPending) {
-    lanes.push(labels.amountLoading);
+  if (args.base?.kind === 'known') {
+    lanes.push(
+      args.status === 'repaid' ? labels.collateralBackWithAmount(args.base.text, '') : args.base.text,
+    );
+  } else if (args.base) {
+    lanes.push(amountPhrase(args.base, labels));
   } else if (args.returnedNft) {
     lanes.push(labels.collateralBack(args.returnedNft));
   }
   if (args.rebate) lanes.push(args.rebate);
-  if (args.surplus) {
-    lanes.push(args.surplus === 'pending' ? labels.swapSurplusPending : labels.swapSurplus(args.surplus));
-  }
-  if (args.extraCollateral) {
-    lanes.push(
-      args.extraCollateral === 'pending'
-        ? labels.extraCollateralPending
-        : labels.extraCollateral(args.extraCollateral),
-    );
-  }
-  if (lanes.length > 0) return capitalizeFirst(lanes.join(' + '));
+  if (args.surplus) lanes.push(labels.swapSurplus(amountPhrase(args.surplus, labels)));
+  if (args.extraCollateral) lanes.push(labels.extraCollateral(amountPhrase(args.extraCollateral, labels)));
+  if (lanes.length > 0) return joinLanes(lanes);
   if (args.status === 'defaulted' || args.status === 'liquidated') return labels.surplusAfterLiquidation;
   if (args.status === 'internal_matched') return labels.residualAfterMatch;
   return labels.collateralBack(args.collateral);
@@ -320,7 +306,7 @@ function capitalizeFirst(text: string): string {
   return text.length > 0 ? text.charAt(0).toLocaleUpperCase() + text.slice(1) : text;
 }
 
-/** The line beside a defaulted lender claim (UX3-005, revised #2373 r1).
+/** The line beside a defaulted lender claim (UX3-005, revised #2373 r1/r5).
  *  Pure, so the rule is tested rather than read. It NEVER states a figure:
  *  the amount the loan owed at default is not available to the app, and
  *  the loan's current principal is not a substitute (it moves with partial
@@ -329,9 +315,10 @@ export function defaultRecoveryNote(args: {
   hasHeld: boolean;
   /** True when the recovery is the collateral itself rather than an amount. */
   inKind: boolean;
-  labels: Pick<typeof copy.claims.row, 'compareUnknownHeld' | 'compareInKind' | 'recoveryNotComparable'>;
+  labels: Pick<RowLabels, 'compareInKind' | 'recoveryNotComparable'>;
 }): string {
-  if (args.hasHeld) return args.labels.compareUnknownHeld;
-  if (args.inKind) return args.labels.compareInKind;
+  // An in-kind recovery with held proceeds beside it is not purely "the
+  // collateral itself", so it gets the general statement.
+  if (args.inKind && !args.hasHeld) return args.labels.compareInKind;
   return args.labels.recoveryNotComparable;
 }

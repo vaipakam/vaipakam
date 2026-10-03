@@ -99,6 +99,10 @@ export interface ClaimDetail {
   tokenId: bigint;
   quantity: bigint;
   heldForLender: bigint;
+  /** #2373 r5 — the ONE asset held proceeds are paid in (ClaimFacet: the
+   *  loan's `principalAsset`, or `prepayAsset` for a rental). Null when there
+   *  are none, or when a rental's prepay asset could not be read. */
+  heldAsset: string | null;
   hasRentalNftReturn: boolean;
   lifRebate: bigint;
   /** #2373 r2 — the borrower's frozen swap-to-repay surplus, a SEPARATE lane
@@ -252,6 +256,30 @@ export async function probeClaim(
       }
     }
 
+    // #2373 r5 — the asset held proceeds are paid in. An ERC-20 loan's is
+    // the lending asset already on the row; a rental's is its prepay asset,
+    // which the row does not carry, so read it — only in the rare case that
+    // proceeds are actually held. A failed read leaves it unknown, which the
+    // payout states rather than guesses.
+    let heldAsset: string | null = null;
+    if (isLender && heldForLender > 0n) {
+      if (loan.assetType === AssetType.ERC20) {
+        heldAsset = loan.lendingAsset;
+      } else {
+        try {
+          const details = (await publicClient.readContract({
+            address: diamond,
+            abi: DIAMOND_ABI_VIEM,
+            functionName: 'getLoanDetails',
+            args: [BigInt(loan.loanId)],
+          })) as { prepayAsset?: string };
+          heldAsset = details.prepayAsset ?? null;
+        } catch {
+          heldAsset = null;
+        }
+      }
+    }
+
     // Mirror ClaimFacet's actionability guard.
     const actionable =
       amount > 0n ||
@@ -274,6 +302,7 @@ export async function probeClaim(
             tokenId,
             quantity,
             heldForLender,
+            heldAsset,
             hasRentalNftReturn,
             lifRebate,
             surplus,
