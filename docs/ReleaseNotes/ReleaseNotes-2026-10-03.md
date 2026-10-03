@@ -93,7 +93,7 @@ The cause was repetition, not growth. The description was assembled by joining e
 
 The description is now built once, when the contract data is exported, with the exact copies removed: 0.65 MB instead of 2.8 MB. A removed copy is identical to the entry kept, so nothing the app, the indexer or the keepers can read or decode has changed. The indexer's own coverage checks report the same events before and after.
 
-A check now fails the build if the combined file falls out of date, or if a new part of the contract is not listed in it. The file can no longer drift from the parts it is built from. The export that produces the contract data builds the combined file before publishing anything, so if a part is unlisted the export stops with nothing changed, rather than publishing new parts beside an old combined file.
+A check now fails the build if the combined file falls out of date, or if a part the export produces is missing from the list the combined file is built from. The combined file can no longer drift from the parts that are exported. The export builds the combined file before publishing anything, so if an exported part is unlisted the export stops with nothing changed, rather than publishing new parts beside an old combined file. Which parts are exported at all is still a hand-kept list; a part left off that list is not caught by these checks.
 <!-- assembled-fragment: UX3-008-diamond-abi-union.md sha256=92918679eec3c39c94e46b9bd53f67e4fc445c609184359dda5a7714e52ddef9 -->
 
 ## Thread — The Rate Desk, Offer Book and core screens in plain words, usable by newcomers (PR #2378)

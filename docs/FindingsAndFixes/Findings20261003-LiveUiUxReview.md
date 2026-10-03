@@ -225,7 +225,10 @@ generated at export time.
 each facet's ABI repeats the shared errors and events, and about three
 quarters of the chunk was exact duplicates. The combined ABI is now built
 once, at export time, with exact duplicates removed (2.81 MB to 645 KB),
-and a package test fails if it goes stale or a facet goes unlisted. Per-route
+and a package test fails if it goes stale or an exported facet ABI is missing
+from the manifest it is built from. Which facets are exported at all is still
+the hand-kept `FACETS` list in the export script, which leaves internal facets
+out by design; a facet left off that list is not caught by these checks. Per-route
 slicing was not needed.
 
 ### UX3-009 · "Withdraw excess collateral" is specified and live on chain, with no app surface (M/L)
