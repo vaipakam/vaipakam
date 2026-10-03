@@ -13,3 +13,5 @@ Before the wallet opens, the app checks again for each thing that would make the
 - the limit has moved below the amount.
 
 When the collateral is VPFI, the page notes that the fee-discount tier may drop. All the new text is translated into the ten supported languages.
+
+German register fix: the German text for this card, and three German claim strings added with the claim-payout change (#2373), used the informal "du". The rest of the German app uses the formal "Sie", so these strings now use "Sie" too.
