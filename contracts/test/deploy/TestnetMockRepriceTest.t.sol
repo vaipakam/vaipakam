@@ -300,7 +300,7 @@ contract TestnetMockRepriceTest is TestnetMockOracleRig, RepriceTestnetMock {
     }
 
     /// @notice The counter-leg of a liquidation is priced by the venue too:
-    ///         an unset price falls back to a flat 1:1, a stale one settles
+    ///         an unset price falls back to a 1:1 base (before the multiplier), a stale one settles
     ///         at the wrong ratio. Both are reported.
     function test_venueReport_namesAnUnsetAndAStaleCounterLeg() public {
         venue.setTokenPrice(address(mUSDC), 0);
@@ -310,7 +310,7 @@ contract TestnetMockRepriceTest is TestnetMockOracleRig, RepriceTestnetMock {
         assertEq(
             d[0],
             string.concat(
-                "venue has no price for ", vm.toString(address(mUSDC)), ": a liquidation pairing it settles at a flat 1:1"
+                "venue has no price for ", vm.toString(address(mUSDC)), ": a liquidation pairing it pays a 1:1 base, then outputMultiplierBps"
             )
         );
         assertEq(

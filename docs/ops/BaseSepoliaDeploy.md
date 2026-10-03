@@ -304,8 +304,8 @@ inspect:
 
 - the venue's output-token float: a liquidation larger than the float fails;
 - the venue's price for a token outside the faucet set: its owner may have
-  set one, or there may be none (a flat 1:1 payout). The run does not inspect
-  it.
+  set one, or there may be none (a 1:1 base, before the venue's output
+  multiplier). The run does not inspect it.
 
 A clean run is therefore not a promise that a liquidation will settle
 correctly.

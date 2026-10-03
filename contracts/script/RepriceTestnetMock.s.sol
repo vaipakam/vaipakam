@@ -223,7 +223,7 @@ contract RepriceTestnetMock is Script {
             }
         }
         console.log(
-            "Not checked: the venue's output-token float, and its price for any token outside the faucet set. A liquidation can still fail on a short float; an outside token may carry a venue price its owner set, or none (a flat 1:1), and this run does not inspect it."
+            "Not checked: the venue's output-token float, and its price for any token outside the faucet set. A liquidation can still fail on a short float; an outside token may carry a venue price its owner set, or none (a 1:1 base before the multiplier), and this run does not inspect it."
         );
     }
 
@@ -362,9 +362,10 @@ contract RepriceTestnetMock is Script {
     ///         result means none of that state deviates — it does not mean a
     ///         liquidation will succeed (the output float is not knowable
     ///         here; `run()` says so).
-    /// @dev    `MockSwapAdapter.execute` pays `inputAmount * priceIn /
-    ///         priceOut * outputMultiplierBps / 10000`, falls back to a flat
-    ///         1:1 when either leg has no price, and reverts when
+    /// @dev    `MockSwapAdapter.execute` pays `base * outputMultiplierBps /
+    ///         10000`, where `base` is `inputAmount * priceIn / priceOut`, or
+    ///         `inputAmount` (a 1:1 base) when either leg has no price — the
+    ///         multiplier applies in both cases. It reverts when
     ///         `shouldRevert` is set or `restrictedTo` names another caller.
     ///         That is the complete set this reads.
     function _venueReport(RepriceTarget memory t, address[] memory assets)
@@ -414,7 +415,7 @@ contract RepriceTestnetMock is Script {
         uint256 venue8 = venue.tokenUsdPrice8(asset);
         if (venue8 == 0) {
             return string.concat(
-                "venue has no price for ", vm.toString(asset), ": a liquidation pairing it settles at a flat 1:1"
+                "venue has no price for ", vm.toString(asset), ": a liquidation pairing it pays a 1:1 base, then outputMultiplierBps"
             );
         }
         try IRepriceDiamondViews(t.diamond).getAssetPrice(asset) returns (uint256 p, uint8 d) {
