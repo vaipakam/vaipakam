@@ -3089,6 +3089,10 @@ const copySource = {
       },
       // UX3-004 — the claim's exact payout, stated above the claim button.
       youWillReceive: tmpl('You will receive: {{payout}}', ['payout']),
+      // #2373 r1 — the payout is stated as unknown rather than omitted.
+      youWillReceiveChecking: 'You will receive: checking the exact amount…',
+      payoutUnconfirmed:
+        'We couldn’t confirm the exact amount right now. Claiming still pays whatever this loan owes you on-chain.',
       actions: {
         closeRental: 'Close this rental',
         repay: 'Repay this loan',
@@ -3337,13 +3341,14 @@ const copySource = {
       heldProceeds: 'Held proceeds for this loan',
       repaidFunds: 'Repaid funds',
       heldProceedsDefault: 'Held proceeds recovered from the default',
-      // UX3-005 — recovered vs lent on a defaulted loan. Interest is never
-      // stated as owed or lost: the claim read does not carry what was due.
-      shortfallVsLent: tmpl('That is {{shortfall}} less than the {{lent}} you lent, before any interest.', ['shortfall', 'lent']),
-      coversLent: tmpl('That covers the {{lent}} you lent.', ['lent']),
-      compareInKind: 'This is the collateral itself, not a cash amount, so how it compares with what you lent depends on what it is worth.',
-      compareOtherAsset: 'This is paid in a different asset from the one you lent, so the app can’t say here how it compares.',
-      compareUnknownHeld: 'Part of this is held in other assets, so the app can’t say here how it compares with what you lent.',
+      // UX3-005 (revised #2373 r1) — what a default recovery is, and what
+      // the app cannot know about it. Never a computed shortfall: the amount
+      // owed at default is not available, and the loan's current principal
+      // is not what the current holder lent.
+      recoveryNotComparable:
+        'This is what the default settlement recovered. How it compares with what the loan still owed when it defaulted isn’t available to the app, so no shortfall is shown.',
+      compareInKind: 'This is the collateral itself, not a cash amount — what it is worth depends on its market value.',
+      compareUnknownHeld: 'Part of this is held in other assets, so it can’t be stated as a single amount here.',
       surplusAfterLiquidation: 'Anything left after liquidation',
       residualAfterMatch: 'Anything left after the internal match',
       whyRentalEnded: 'The rental ended — collect your earned fees and reclaim the NFT.',

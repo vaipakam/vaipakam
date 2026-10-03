@@ -1,47 +1,39 @@
 /**
- * UX3-005 — the recovered-vs-lent line on a defaulted lender claim.
- * Each case is the input that distinguishes one rule from its neighbour.
+ * UX3-005 (revised #2373 r1) — the line beside a defaulted lender claim.
+ * It explains the recovery and never states a figure: the amount owed at
+ * default is not available, and the loan's current principal is not what
+ * the current holder lent (partial repayment moves it; a buyer of the
+ * position never lent it).
  */
 import { describe, expect, it } from 'vitest';
 import { copy } from '../content/copy';
 import { defaultRecoveryNote } from './useClaimPayout';
 
-const fmt = (v: bigint) => `${v} WETH`;
-const base = {
-  hasHeld: false,
-  recovered: 285n,
-  sameAsset: true,
-  lent: 500n,
-  fmtLent: fmt,
-  labels: copy.claims.row,
-};
+const labels = copy.claims.row;
 
 describe('defaultRecoveryNote', () => {
-  // The live case: lent 0.005 WETH, recovered 0.00285 WETH, and the claim
-  // never said how much was lost.
-  it('states the exact shortfall for a same-asset recovery below what was lent', () => {
-    expect(defaultRecoveryNote(base)).toBe(
-      'That is 215 WETH less than the 500 WETH you lent, before any interest.',
-    );
+  it('says held proceeds cannot be stated as one amount', () => {
+    expect(defaultRecoveryNote({ hasHeld: true, inKind: false, labels })).toBe(labels.compareUnknownHeld);
   });
 
-  it('says the recovery covers what was lent when it does — and claims nothing about interest', () => {
-    expect(defaultRecoveryNote({ ...base, recovered: 500n })).toBe('That covers the 500 WETH you lent.');
+  it('says an in-kind recovery is the collateral itself, not cash', () => {
+    expect(defaultRecoveryNote({ hasHeld: false, inKind: true, labels })).toBe(labels.compareInKind);
   });
 
-  it('never compares across assets', () => {
-    expect(defaultRecoveryNote({ ...base, sameAsset: false })).toBe(copy.claims.row.compareOtherAsset);
+  it('states the unknown for a cash recovery instead of computing a shortfall', () => {
+    expect(defaultRecoveryNote({ hasHeld: false, inKind: false, labels })).toBe(labels.recoveryNotComparable);
   });
 
-  it('never compares an in-kind recovery as if it were cash', () => {
-    expect(defaultRecoveryNote({ ...base, recovered: null })).toBe(copy.claims.row.compareInKind);
-  });
-
-  it('says held proceeds make it unknowable, even when the paid leg alone would compare', () => {
-    expect(defaultRecoveryNote({ ...base, hasHeld: true })).toBe(copy.claims.row.compareUnknownHeld);
-  });
-
-  it('stays silent only while the lent asset is still loading', () => {
-    expect(defaultRecoveryNote({ ...base, fmtLent: null })).toBeUndefined();
+  // The #2373 r1 P1 defect: the note told a holder "the 500 WETH you lent",
+  // computed from the loan's current principal. No case may claim the
+  // holder lent anything, or state a number.
+  it('never tells the holder what they lent, and never states a figure, in any case', () => {
+    for (const hasHeld of [false, true]) {
+      for (const inKind of [false, true]) {
+        const note = defaultRecoveryNote({ hasHeld, inKind, labels });
+        expect(note).not.toMatch(/you lent/i);
+        expect(note).not.toMatch(/\d/);
+      }
+    }
   });
 });

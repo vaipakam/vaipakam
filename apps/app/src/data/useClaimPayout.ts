@@ -127,23 +127,16 @@ export function useClaimPayoutText(
           ? copy.claims.row.heldProceedsDefault
           : copy.claims.row.defaultRecovery(collateralStr);
       why = copy.claims.row.whyDefaultLender;
-      // UX3-005 — set what was recovered against what was lent, stating
-      // only what the reads substantiate. A same-asset recovery with no
-      // held proceeds compares exactly; anything else says WHY it cannot
-      // be compared rather than leaving the comparison out. Interest is
-      // never claimed as owed or lost here: the claim read does not carry
-      // what was due at default.
+      // UX3-005 — say what the recovery is and what the app cannot know
+      // about it. #2373 r1 (P1): an earlier version compared the recovery
+      // with `loan.principal` and called it "what you lent". That field is
+      // the loan's CURRENT principal — partial repayment and settlement
+      // move it — and a holder who bought the position never lent it at
+      // all. No read here carries what the loan owed when it defaulted, so
+      // no shortfall is computed; the note states that unknown instead.
       note = defaultRecoveryNote({
         hasHeld,
-        recovered: baseAmountStr ? loan.claim.amount : null,
-        sameAsset:
-          loan.claim.asset !== null &&
-          loan.claim.asset.toLowerCase() === loan.lendingAsset.toLowerCase(),
-        lent: BigInt(loan.principal),
-        fmtLent: principalMeta.data
-          ? (v: bigint) =>
-              `${formatTokenAmount(v, principalMeta.data!.decimals)} ${principalMeta.data!.symbol}`
-          : null,
+        inKind: !baseAmountStr,
         labels: copy.claims.row,
       });
     }
@@ -171,30 +164,18 @@ export function useClaimPayoutText(
   return { what, why, note };
 }
 
-/** The recovered-vs-lent line on a defaulted lender claim (UX3-005).
- *  Pure, so the rule is tested rather than read: an exact comparison
- *  only when the recovery is a single amount in the asset that was lent;
- *  otherwise the reason it cannot be compared. `undefined` only while the
- *  lent asset's metadata is still loading. */
+/** The line beside a defaulted lender claim (UX3-005, revised #2373 r1).
+ *  Pure, so the rule is tested rather than read. It NEVER states a figure:
+ *  the amount the loan owed at default is not available to the app, and
+ *  the loan's current principal is not a substitute (it moves with partial
+ *  repayment and settlement, and a buyer of the position never lent it). */
 export function defaultRecoveryNote(args: {
   hasHeld: boolean;
-  /** The fungible amount recovered, or null for an in-kind recovery. */
-  recovered: bigint | null;
-  sameAsset: boolean;
-  lent: bigint;
-  /** Formats an amount of the lent asset; null while metadata loads. */
-  fmtLent: ((v: bigint) => string) | null;
-  labels: Pick<
-    typeof copy.claims.row,
-    'compareUnknownHeld' | 'compareInKind' | 'compareOtherAsset' | 'shortfallVsLent' | 'coversLent'
-  >;
-}): string | undefined {
-  const { labels } = args;
-  if (args.hasHeld) return labels.compareUnknownHeld;
-  if (args.recovered === null) return labels.compareInKind;
-  if (!args.sameAsset) return labels.compareOtherAsset;
-  if (!args.fmtLent) return undefined;
-  return args.recovered < args.lent
-    ? labels.shortfallVsLent(args.fmtLent(args.lent - args.recovered), args.fmtLent(args.lent))
-    : labels.coversLent(args.fmtLent(args.lent));
+  /** True when the recovery is the collateral itself rather than an amount. */
+  inKind: boolean;
+  labels: Pick<typeof copy.claims.row, 'compareUnknownHeld' | 'compareInKind' | 'recoveryNotComparable'>;
+}): string {
+  if (args.hasHeld) return args.labels.compareUnknownHeld;
+  if (args.inKind) return args.labels.compareInKind;
+  return args.labels.recoveryNotComparable;
 }

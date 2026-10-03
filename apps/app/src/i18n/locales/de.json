@@ -1272,6 +1272,8 @@
           "partialRepaid": "Teilrückzahlung bestätigt — Sie schulden jetzt weniger."
         },
         "youWillReceive": "Sie erhalten: {{payout}}",
+        "youWillReceiveChecking": "Sie erhalten: genauer Betrag wird geprüft…",
+        "payoutUnconfirmed": "Wir konnten den genauen Betrag gerade nicht bestätigen. Das Abholen zahlt trotzdem aus, was Ihnen dieser Kredit on-chain schuldet.",
         "actions": {
           "closeRental": "Diese Vermietung schließen",
           "repay": "Diesen Kredit zurückzahlen",
@@ -1426,11 +1428,9 @@
         "heldProceeds": "Für diesen Kredit verwahrter Erlös",
         "repaidFunds": "Zurückgezahlte Mittel",
         "heldProceedsDefault": "Aus dem Ausfall zurückgewonnener verwahrter Erlös",
-        "shortfallVsLent": "Das sind {{shortfall}} weniger als die {{lent}}, die Sie verliehen haben, ohne Zinsen.",
-        "coversLent": "Das deckt die {{lent}}, die Sie verliehen haben.",
-        "compareInKind": "Das ist die Sicherheit selbst, kein Geldbetrag – wie sie sich zu Ihrem verliehenen Betrag verhält, hängt von ihrem Wert ab.",
-        "compareOtherAsset": "Dies wird in einem anderen Asset gezahlt als dem verliehenen, daher kann die App hier keinen Vergleich angeben.",
-        "compareUnknownHeld": "Ein Teil davon wird in anderen Assets gehalten, daher kann die App hier nicht sagen, wie es sich zu Ihrem verliehenen Betrag verhält.",
+        "recoveryNotComparable": "Das hat die Abwicklung des Ausfalls erzielt. Wie viel der Kredit beim Ausfall noch schuldete, liegt der App nicht vor, daher wird kein Fehlbetrag angezeigt.",
+        "compareInKind": "Das ist die Sicherheit selbst, kein Geldbetrag – ihr Wert hängt von ihrem Marktpreis ab.",
+        "compareUnknownHeld": "Ein Teil davon wird in anderen Assets gehalten und kann hier daher nicht als ein Betrag angegeben werden.",
         "surplusAfterLiquidation": "Alles, was nach der Liquidation übrig ist",
         "residualAfterMatch": "Alles, was nach dem internen Match übrig ist",
         "whyRentalEnded": "Die Vermietung ist beendet — holen Sie Ihre verdienten Gebühren ab und nehmen Sie das NFT zurück.",

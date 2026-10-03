@@ -1272,6 +1272,8 @@
           "partialRepaid": "Partial repayment confirmed — अब आप कम owe करते हैं।"
         },
         "youWillReceive": "आपको मिलेगा: {{payout}}",
+        "youWillReceiveChecking": "आपको मिलेगा: सही राशि जाँची जा रही है…",
+        "payoutUnconfirmed": "अभी हम सही राशि की पुष्टि नहीं कर सके। claim करने पर फिर भी वह राशि मिलती है जो यह loan on-chain आपको देना है।",
         "actions": {
           "closeRental": "यह rental close करें",
           "repay": "यह loan repay करें",
@@ -1426,11 +1428,9 @@
         "heldProceeds": "इस loan के लिए रोकी गई राशि",
         "repaidFunds": "चुकाई गई funds",
         "heldProceedsDefault": "default से रिकवर की गई रोकी गई राशि",
-        "shortfallVsLent": "यह आपके दिए गए {{lent}} से {{shortfall}} कम है, ब्याज को छोड़कर।",
-        "coversLent": "यह आपके दिए गए {{lent}} को पूरा करता है।",
-        "compareInKind": "यह नकद राशि नहीं, ख़ुद collateral है, इसलिए यह आपके दिए गए पैसे की तुलना में कितना है, यह उसकी क़ीमत पर निर्भर करता है।",
-        "compareOtherAsset": "यह भुगतान उस asset से अलग asset में होता है जो आपने दिया था, इसलिए app यहाँ तुलना नहीं बता सकता।",
-        "compareUnknownHeld": "इसका कुछ हिस्सा दूसरे assets में रखा है, इसलिए app यहाँ आपके दिए गए पैसे से तुलना नहीं बता सकता।",
+        "recoveryNotComparable": "यह वह राशि है जो default के निपटारे में वापस मिली। default के समय loan पर कितना बाकी था, यह app को उपलब्ध नहीं है, इसलिए कोई कमी नहीं दिखाई जाती।",
+        "compareInKind": "यह नकद राशि नहीं, ख़ुद collateral है — इसकी क़ीमत इसके बाज़ार मूल्य पर निर्भर करती है।",
+        "compareUnknownHeld": "इसका कुछ हिस्सा दूसरे assets में रखा है, इसलिए इसे यहाँ एक राशि के रूप में नहीं बताया जा सकता।",
         "surplusAfterLiquidation": "liquidation के बाद जो बचा",
         "residualAfterMatch": "internal match के बाद जो बचा",
         "whyRentalEnded": "Rental खत्म हुई — अपनी earned fees collect करें और NFT वापस लें।",

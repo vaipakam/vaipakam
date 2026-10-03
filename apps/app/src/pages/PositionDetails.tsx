@@ -77,7 +77,7 @@ import {
   type ForcedCloseInput,
 } from '../data/forcedClose';
 import { useForcedCloseReads } from '../data/useForcedClose';
-import { useMyClaimables } from '../data/claimables';
+import { useLoanClaim } from '../data/claimables';
 import { useClaimPayoutText } from '../data/useClaimPayout';
 import { ObligationTransferFlow } from '../components/ObligationTransferFlow';
 import { OffsetFlow } from '../components/OffsetFlow';
@@ -954,17 +954,14 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
    *  to `not-applicable` there and renders nothing. */
   /** UX3-004 — the exact payout of this loan's claim, stated beside the
    *  claim button and in its receipt the same way the Claims page states
-   *  it. Read from the shared claimables query (one cache with Positions
-   *  and Claims, so a visit from either adds no read), one entry per side
-   *  because a wallet can hold both position NFTs. Above the early
-   *  returns: these are hooks (#1511). */
-  const myClaimables = useMyClaimables();
-  const lenderClaimText = useClaimPayoutText(
-    myClaimables.data?.find((c) => c.loanId === loanId && c.role === 'lender'),
-  );
-  const borrowerClaimText = useClaimPayoutText(
-    myClaimables.data?.find((c) => c.loanId === loanId && c.role === 'borrower'),
-  );
+   *  it. A LOAN-SCOPED read, one per side because a wallet can hold both
+   *  position NFTs (#2373 r1: this page used to start the wallet-wide
+   *  claim scan to learn about one loan). Above the early returns: these
+   *  are hooks (#1511). */
+  const lenderClaim = useLoanClaim(loan.data ?? undefined, 'lender');
+  const borrowerClaim = useLoanClaim(loan.data ?? undefined, 'borrower');
+  const lenderClaimText = useClaimPayoutText(lenderClaim.data ?? undefined);
+  const borrowerClaimText = useClaimPayoutText(borrowerClaim.data ?? undefined);
 
   const forcedCloseReads = useForcedCloseReads({
     loanId: Number.isFinite(loanId) ? loanId : undefined,
@@ -2471,6 +2468,24 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       : action === 'claim-borrower'
         ? borrowerClaimText
         : null;
+  // #2373 r1 — an unknown payout is STATED, never silently dropped. The
+  // claim itself stays available: it pays the on-chain entitlement whatever
+  // this read managed, and blocking a payout on an informational read would
+  // trap funds behind an RPC hiccup.
+  const claimRead =
+    action === 'claim-lender'
+      ? lenderClaim
+      : action === 'claim-borrower'
+        ? borrowerClaim
+        : null;
+  const claimPayoutState: 'ready' | 'checking' | 'unconfirmed' | null =
+    claimRead === null
+      ? null
+      : claimPayoutText
+        ? 'ready'
+        : claimRead.isError || claimRead.data === null
+          ? 'unconfirmed'
+          : 'checking';
 
   // Six-row receipt for the pending position write — same shape and
   // rows as every create/accept flow (WebsiteReadme intended-behaviour).
@@ -4454,12 +4469,20 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           </section>
         ) : (
           <>
-          {claimPayoutText ? (
+          {claimPayoutState === 'ready' && claimPayoutText ? (
             <p className="claim-payout" id="claim-payout">
               {copy.positions.details.youWillReceive(claimPayoutText.what)}
               {claimPayoutText.note ? (
                 <span className="claim-payout-note">{claimPayoutText.note}</span>
               ) : null}
+            </p>
+          ) : claimPayoutState === 'checking' ? (
+            <p className="claim-payout" id="claim-payout">
+              {copy.positions.details.youWillReceiveChecking}
+            </p>
+          ) : claimPayoutState === 'unconfirmed' ? (
+            <p className="claim-payout" id="claim-payout">
+              {copy.positions.details.payoutUnconfirmed}
             </p>
           ) : null}
           <button

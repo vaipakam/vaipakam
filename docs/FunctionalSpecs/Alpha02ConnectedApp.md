@@ -1639,11 +1639,18 @@ Thin-market honesty rules apply.
   checklist, the loan's own page and its confirmation, and the positions list —
   states the same payout in the same words. A surface never asks the user to
   collect "your funds" while another surface knows the amount.
-- A lender's claim on a defaulted loan sets what was recovered against what was
-  lent. The comparison is stated exactly only when it can be: one amount, in the
-  asset that was lent, with nothing held back in other assets. Otherwise the
-  claim says why it cannot be compared. Interest is never presented as owed or
-  lost unless the app actually knows what was due.
+- While the exact payout is still being read, or if it cannot be confirmed, the
+  surface says so instead of leaving the amount out. Collecting stays available
+  either way: the claim pays the on-chain entitlement, and an informational read
+  must never stand between a user and their funds.
+- A loan's own page learns its payout from that loan alone. Opening one position
+  must not scan every position the wallet has ever held.
+- A lender's claim on a defaulted loan says what the recovery is (a cash amount,
+  the collateral itself, or partly held in other assets). A shortfall is shown
+  only against what the loan actually owed when it defaulted; until the app has
+  that figure, it says so rather than computing one. The loan's current
+  principal is never presented as what the holder lent: partial repayments
+  change it, and a holder who bought the position never lent it at all.
 - A stale indexed row must not remain actionable after the chain says it is no
   longer claimable.
 - Once a candidate has been verified on chain, an IDENTICAL candidate (same

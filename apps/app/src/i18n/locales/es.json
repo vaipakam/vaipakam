@@ -1272,6 +1272,8 @@
           "partialRepaid": "Pago parcial confirmado — ahora debes menos."
         },
         "youWillReceive": "Recibirás: {{payout}}",
+        "youWillReceiveChecking": "Recibirás: comprobando el importe exacto…",
+        "payoutUnconfirmed": "No pudimos confirmar el importe exacto ahora mismo. Reclamar sigue pagando lo que este préstamo te debe en la cadena.",
         "actions": {
           "closeRental": "Cerrar este alquiler",
           "repay": "Pagar este préstamo",
@@ -1426,11 +1428,9 @@
         "heldProceeds": "Ingresos retenidos para este préstamo",
         "repaidFunds": "Fondos reembolsados",
         "heldProceedsDefault": "Ingresos retenidos recuperados del incumplimiento",
-        "shortfallVsLent": "Son {{shortfall}} menos que los {{lent}} que prestaste, sin contar intereses.",
-        "coversLent": "Cubre los {{lent}} que prestaste.",
-        "compareInKind": "Esto es la propia garantía, no una cantidad en efectivo, así que cómo se compara con lo que prestaste depende de lo que valga.",
-        "compareOtherAsset": "Se paga en un activo distinto del que prestaste, así que la app no puede decir aquí cómo se compara.",
-        "compareUnknownHeld": "Parte de esto está retenido en otros activos, así que la app no puede decir aquí cómo se compara con lo que prestaste.",
+        "recoveryNotComparable": "Esto es lo que recuperó la liquidación por impago. La app no tiene cuánto debía aún el préstamo cuando entró en impago, así que no se muestra ninguna pérdida.",
+        "compareInKind": "Esto es la propia garantía, no una cantidad en efectivo: lo que vale depende de su valor de mercado.",
+        "compareUnknownHeld": "Parte de esto está retenido en otros activos, así que aquí no puede indicarse como una sola cantidad.",
         "surplusAfterLiquidation": "Lo que queda después de la liquidación",
         "residualAfterMatch": "Lo que queda después del match interno",
         "whyRentalEnded": "El alquiler terminó — cobra tus tarifas ganadas y recupera el NFT.",

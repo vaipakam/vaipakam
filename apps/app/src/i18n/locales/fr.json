@@ -1272,6 +1272,8 @@
           "partialRepaid": "Remboursement partiel confirmé — vous devez maintenant moins."
         },
         "youWillReceive": "Vous recevrez : {{payout}}",
+        "youWillReceiveChecking": "Vous recevrez : vérification du montant exact…",
+        "payoutUnconfirmed": "Nous n’avons pas pu confirmer le montant exact pour l’instant. Réclamer verse quand même ce que ce prêt vous doit on-chain.",
         "actions": {
           "closeRental": "Clôturer cette location",
           "repay": "Rembourser ce prêt",
@@ -1426,11 +1428,9 @@
         "heldProceeds": "Produit conservé pour ce prêt",
         "repaidFunds": "Fonds remboursés",
         "heldProceedsDefault": "Produit conservé récupéré après le défaut",
-        "shortfallVsLent": "C’est {{shortfall}} de moins que les {{lent}} que vous avez prêtés, hors intérêts.",
-        "coversLent": "Cela couvre les {{lent}} que vous avez prêtés.",
-        "compareInKind": "Il s’agit de la garantie elle-même, pas d’un montant en espèces : sa comparaison avec ce que vous avez prêté dépend de sa valeur.",
-        "compareOtherAsset": "Ceci est payé dans un autre actif que celui que vous avez prêté, l’app ne peut donc pas dire ici comment cela se compare.",
-        "compareUnknownHeld": "Une partie est détenue dans d’autres actifs, l’app ne peut donc pas dire ici comment cela se compare à ce que vous avez prêté.",
+        "recoveryNotComparable": "Voici ce que le règlement du défaut a récupéré. L’app ne dispose pas du montant que le prêt devait encore au moment du défaut, donc aucune perte n’est affichée.",
+        "compareInKind": "Il s’agit de la garantie elle-même, pas d’un montant en espèces : sa valeur dépend de son prix de marché.",
+        "compareUnknownHeld": "Une partie est détenue dans d’autres actifs, elle ne peut donc pas être indiquée ici comme un seul montant.",
         "surplusAfterLiquidation": "Ce qui reste après la liquidation",
         "residualAfterMatch": "Ce qui reste après le matching interne",
         "whyRentalEnded": "La location est terminée — récupérez vos frais gagnés et reprenez le NFT.",

@@ -1272,6 +1272,8 @@
           "partialRepaid": "一部返済が確認されました — 借入残高が減りました。"
         },
         "youWillReceive": "受け取る金額：{{payout}}",
+        "youWillReceiveChecking": "受け取る金額：正確な額を確認中…",
+        "payoutUnconfirmed": "現在、正確な金額を確認できませんでした。受け取りを行えば、このローンでオンチェーン上あなたに支払われるべき額が支払われます。",
         "actions": {
           "closeRental": "このレンタルを終了",
           "repay": "このローンを返済",
@@ -1426,11 +1428,9 @@
         "heldProceeds": "このローンの保留中の受取金",
         "repaidFunds": "返済された資金",
         "heldProceedsDefault": "デフォルトから回収された保留中の受取金",
-        "shortfallVsLent": "貸し出した {{lent}} より {{shortfall}} 少なくなります（利息は含みません）。",
-        "coversLent": "貸し出した {{lent}} をカバーしています。",
-        "compareInKind": "これは担保そのものであり現金額ではないため、貸し出した額との比較はその価値によって変わります。",
-        "compareOtherAsset": "貸し出した資産とは別の資産で支払われるため、ここでは比較できません。",
-        "compareUnknownHeld": "一部が他の資産で保管されているため、ここでは貸し出した額と比較できません。",
+        "recoveryNotComparable": "これはデフォルト時の清算で回収された額です。デフォルト時点でローンにまだ残っていた額はアプリでは分からないため、不足額は表示しません。",
+        "compareInKind": "これは現金額ではなく担保そのものです。価値は市場価格によって変わります。",
+        "compareUnknownHeld": "一部が他の資産で保管されているため、ここでは 1 つの金額として示せません。",
         "surplusAfterLiquidation": "清算後に残ったもの",
         "residualAfterMatch": "内部マッチ後に残ったもの",
         "whyRentalEnded": "レンタルが終了しました — 獲得した手数料を受け取り、NFT を取り戻してください。",

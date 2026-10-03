@@ -1272,6 +1272,8 @@
           "partialRepaid": "部分还款已确认 — 您现在欠得更少。"
         },
         "youWillReceive": "你将收到：{{payout}}",
+        "youWillReceiveChecking": "你将收到：正在确认确切金额…",
+        "payoutUnconfirmed": "目前无法确认确切金额。领取仍会支付这笔贷款在链上欠你的金额。",
         "actions": {
           "closeRental": "关闭此租赁",
           "repay": "偿还此贷款",
@@ -1426,11 +1428,9 @@
         "heldProceeds": "此贷款的托管收益",
         "repaidFunds": "已偿还资金",
         "heldProceedsDefault": "从违约中追回的托管收益",
-        "shortfallVsLent": "比你借出的 {{lent}} 少 {{shortfall}}（不含利息）。",
-        "coversLent": "已覆盖你借出的 {{lent}}。",
-        "compareInKind": "这是抵押品本身，不是现金金额，因此与你借出金额相比如何取决于它的价值。",
-        "compareOtherAsset": "这笔款项以不同于你借出的资产支付，因此应用无法在此进行比较。",
-        "compareUnknownHeld": "其中一部分以其他资产持有，因此应用无法在此说明它与你借出金额相比如何。",
+        "recoveryNotComparable": "这是违约清算收回的金额。应用无法获知贷款违约时仍欠多少，因此不显示差额。",
+        "compareInKind": "这是抵押品本身，不是现金金额——其价值取决于市场价格。",
+        "compareUnknownHeld": "其中一部分以其他资产持有，因此无法在此表示为单一金额。",
         "surplusAfterLiquidation": "清算后剩余的部分",
         "residualAfterMatch": "内部匹配后剩余的部分",
         "whyRentalEnded": "租赁已结束 — 领取您赚到的费用并取回 NFT。",
