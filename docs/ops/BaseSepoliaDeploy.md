@@ -299,7 +299,9 @@ cast call $VENUE "tokenUsdPrice8(address)(uint256)" $ASSET --rpc-url $BASE_SEPOL
 reports, without refusing, the venue state it does not write:
 
 - the venue's execution settings;
-- the venue's price for every other faucet asset, compared with the oracle's.
+- the venue's price for every other faucet asset, compared with the oracle's;
+- any OTHER enabled swap adapter on the Diamond. A liquidation may route
+  through it, and its settlement is not inspected.
 
 Each deviation is printed as a `WARNING` line, because these decide what a
 liquidation against the repriced asset actually pays. Two things it does not

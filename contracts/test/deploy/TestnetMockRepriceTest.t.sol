@@ -314,11 +314,31 @@ contract TestnetMockRepriceTest is TestnetMockOracleRig, RepriceTestnetMock {
         string[] memory d = _report(tliqTarget, _faucet());
         assertEq(d.length, 3, "three knob deviations");
         assertEq(d[0], "venue shouldRevert is on: every liquidation through it reverts");
-        assertEq(d[1], "venue outputMultiplierBps is 9000, not 10000: it pays that fraction of the fair amount");
+        assertEq(d[1], "venue outputMultiplierBps is 9000, not 10000: it pays that fraction of the base it selects (the price-ratio amount, or the 1:1 base when a leg is unpriced)");
         assertEq(
             d[2],
             string.concat(
                 "venue execute is restricted to ", vm.toString(other), ", not the Diamond: liquidations through it revert"
+            )
+        );
+    }
+
+    /// @notice Another enabled adapter may settle a liquidation at a price
+    ///         this run never touched; it is named. A disabled one is not.
+    function test_venueReport_namesAnotherEnabledAdapterButNotADisabledOne() public {
+        MockSwapAdapter other = new MockSwapAdapter("other");
+        MockSwapAdapter off = new MockSwapAdapter("off");
+        AdminFacet(address(diamond)).addSwapAdapter(address(other));
+        AdminFacet(address(diamond)).addSwapAdapter(address(off));
+        AdminFacet(address(diamond)).setSwapAdapterDisabled(address(off), true);
+        string[] memory d = _report(tliqTarget, _faucet());
+        assertEq(d.length, 1, "only the enabled one");
+        assertEq(
+            d[0],
+            string.concat(
+                "another enabled adapter ",
+                vm.toString(address(other)),
+                " is registered: a liquidation may route through it, and its settlement is not inspected"
             )
         );
     }

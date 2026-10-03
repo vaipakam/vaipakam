@@ -31,6 +31,11 @@ interface IRepriceDiamondViews {
  *         contract cannot call itself through `this` (Forge refuses
  *         `address(this)` in scripts), so the boundary has to be a contract.
  *
+ *         It also names every OTHER enabled adapter on the Diamond: a
+ *         liquidation passes a caller-ordered adapter list and a split can
+ *         use several venues, so registration of this one is not selection,
+ *         and another adapter's settlement is not inspected here.
+ *
  *         `MockSwapAdapter.execute` pays `base * outputMultiplierBps / 10000`,
  *         where `base` is `inputAmount * priceIn / priceOut`, or `inputAmount`
  *         (a 1:1 base) when either leg has no price — the multiplier applies
@@ -56,7 +61,8 @@ contract RepriceVenueReport {
         returns (string[] memory deviations)
     {
         MockSwapAdapter v = MockSwapAdapter(venue);
-        string[] memory buf = new string[](3 + 2 * assets.length);
+        address[] memory adapters = IRepriceDiamondViews(diamond).getSwapAdapters();
+        string[] memory buf = new string[](3 + 2 * assets.length + adapters.length);
         uint256 n;
         if (v.shouldRevert()) {
             buf[n++] = "venue shouldRevert is on: every liquidation through it reverts";
@@ -64,7 +70,7 @@ contract RepriceVenueReport {
         uint256 bps = v.outputMultiplierBps();
         if (bps != 10_000) {
             buf[n++] = string.concat(
-                "venue outputMultiplierBps is ", Strings.toString(bps), ", not 10000: it pays that fraction of the fair amount"
+                "venue outputMultiplierBps is ", Strings.toString(bps), ", not 10000: it pays that fraction of the base it selects (the price-ratio amount, or the 1:1 base when a leg is unpriced)"
             );
         }
         address gate = v.restrictedTo();
@@ -79,6 +85,17 @@ contract RepriceVenueReport {
                 "venue execute is restricted to ",
                 Strings.toChecksumHexString(gate),
                 ", not the Diamond: liquidations through it revert"
+            );
+        }
+        // Registration is not selection: a liquidation passes a caller-ordered
+        // adapter list and a split can use several venues, so any OTHER
+        // enabled adapter may settle it at a price this run never touched.
+        for (uint256 i; i < adapters.length; ++i) {
+            if (adapters[i] == venue || IRepriceDiamondViews(diamond).isSwapAdapterDisabled(adapters[i])) continue;
+            buf[n++] = string.concat(
+                "another enabled adapter ",
+                Strings.toChecksumHexString(adapters[i]),
+                " is registered: a liquidation may route through it, and its settlement is not inspected"
             );
         }
         (bool assetKnown, uint8 assetDecimals) = tryDecimals(asset);
