@@ -1,0 +1,175 @@
+/**
+ * Take back extra collateral (UX3-009, 2026-10-03 live review).
+ *
+ * The platform lets a borrower withdraw collateral from an open loan as
+ * long as the loan stays healthy (ProjectDetailsREADME, "Allow Borrower to
+ * Withdraw Excess Collateral"). The contract has carried that since launch
+ * (`partialWithdrawCollateral` + the `calculateMaxWithdrawable` view); the
+ * app never offered it, so a borrower whose collateral had grown in value
+ * had no way to use the surplus short of closing the loan.
+ *
+ * Two things here, both kept out of the page so the rules are tested
+ * rather than read:
+ *  - `useMaxWithdrawable` — the live ceiling, plus the one fact that
+ *    explains a ZERO ceiling (the collateral cannot be priced right now)
+ *    when the app can actually determine it;
+ *  - `classifyMaxWithdrawable` / `withdrawAmountProblem` — what the page
+ *    may say about that ceiling and about a typed amount.
+ */
+import { useQuery } from '@tanstack/react-query';
+import { usePublicClient } from 'wagmi';
+import type { PublicClient } from 'viem';
+import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
+import { useActiveChain } from '../chain/useActiveChain';
+import { tipAware } from '../chain/railHealth';
+import { isAssetIlliquidLive } from '../contracts/preflights';
+
+export interface MaxWithdrawableRead {
+  /** `calculateMaxWithdrawable` — the most collateral (token units) the
+   *  loan can release now and still meet its own health and loan-to-value
+   *  limits. */
+  max: bigint;
+  /** Whether the collateral is unpriceable right now. `undefined` when the
+   *  liquidity read itself failed — the page then says it cannot tell
+   *  WHICH reason applies rather than picking one. */
+  illiquid: boolean | undefined;
+  /** Whether the collateral is VPFI. Taking VPFI out of the vault lowers
+   *  the balance the fee-discount tier is measured on. `undefined` when
+   *  the token read failed. */
+  isVpfi: boolean | undefined;
+}
+
+export type MaxWithdrawState =
+  | { kind: 'loading' }
+  /** The ceiling could not be read — never shown as zero. */
+  | { kind: 'unconfirmed' }
+  /** Zero, and the collateral cannot be priced right now. */
+  | { kind: 'none-unpriced' }
+  /** Zero, and the collateral IS priced: the loan needs all of it. */
+  | { kind: 'none-needed' }
+  /** Zero, and the app could not tell which of the two applies. */
+  | { kind: 'none-unknown' }
+  | { kind: 'some'; max: bigint };
+
+/** Pure — what the page may state about the ceiling. A failed read is
+ *  "unconfirmed", never a zero: telling a borrower "you can take back
+ *  nothing" on a read the app did not get would be stating an outcome it
+ *  cannot substantiate. */
+export function classifyMaxWithdrawable(q: {
+  data: MaxWithdrawableRead | undefined;
+  isError: boolean;
+}): MaxWithdrawState {
+  if (q.isError) return { kind: 'unconfirmed' };
+  if (!q.data) return { kind: 'loading' };
+  if (q.data.max > 0n) return { kind: 'some', max: q.data.max };
+  if (q.data.illiquid === true) return { kind: 'none-unpriced' };
+  if (q.data.illiquid === false) return { kind: 'none-needed' };
+  return { kind: 'none-unknown' };
+}
+
+/** Pure — why a typed amount cannot be sent, or null when it can. The
+ *  ceiling is a snapshot: prices move between the read and the signature,
+ *  so an amount at or near it can still be refused on-chain. That is said
+ *  beside the input; this only rejects what is already known to fail. */
+export function withdrawAmountProblem(args: {
+  inputWei: bigint | null;
+  state: MaxWithdrawState;
+}): 'invalid' | 'no-ceiling' | 'over-max' | null {
+  if (args.inputWei === null || args.inputWei <= 0n) return 'invalid';
+  if (args.state.kind !== 'some') return 'no-ceiling';
+  if (args.inputWei > args.state.max) return 'over-max';
+  return null;
+}
+
+/** Live read of the ceiling. Enabled only for an ERC-20-collateral loan
+ *  whose indexed status is active — the contract answers zero for any
+ *  other status, and the page does not offer the action there. */
+export function useMaxWithdrawable(args: {
+  loanId: string | undefined;
+  collateralAsset: string | undefined;
+  enabled: boolean;
+}) {
+  const { readChain } = useActiveChain();
+  const publicClient = usePublicClient({ chainId: readChain.chainId });
+  return useQuery({
+    queryKey: ['maxWithdrawable', readChain.chainId, args.loanId, args.collateralAsset?.toLowerCase()],
+    enabled: args.enabled && Boolean(publicClient) && args.loanId !== undefined && Boolean(args.collateralAsset),
+    // Collateral and debt prices move; keep the ceiling fresh while the
+    // page is open rather than letting a borrower act on an old figure.
+    refetchInterval: tipAware(30_000, Boolean(readChain.wsUrl)),
+    queryFn: async (): Promise<MaxWithdrawableRead> =>
+      readMaxWithdrawable({
+        publicClient: publicClient!,
+        diamondAddress: readChain.diamondAddress,
+        loanId: BigInt(args.loanId!),
+        collateralAsset: args.collateralAsset!,
+      }),
+  });
+}
+
+/** The three reads behind `useMaxWithdrawable`. Exported for the tests.
+ *  The ceiling read is the one that matters and THROWS on failure (the
+ *  query lands in error → "unconfirmed"); the two explanatory reads
+ *  degrade to `undefined` rather than failing the whole answer. */
+export async function readMaxWithdrawable(opts: {
+  publicClient: PublicClient;
+  diamondAddress: `0x${string}`;
+  loanId: bigint;
+  collateralAsset: string;
+}): Promise<MaxWithdrawableRead> {
+  const [max, illiquid, vpfiToken] = await Promise.all([
+    opts.publicClient.readContract({
+      address: opts.diamondAddress,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'calculateMaxWithdrawable',
+      args: [opts.loanId],
+    }) as Promise<bigint>,
+    isAssetIlliquidLive({
+      publicClient: opts.publicClient,
+      diamondAddress: opts.diamondAddress,
+      asset: opts.collateralAsset,
+      failClosed: true,
+    }).catch(() => undefined),
+    (
+      opts.publicClient.readContract({
+        address: opts.diamondAddress,
+        abi: DIAMOND_ABI_VIEM,
+        functionName: 'getVPFIToken',
+      }) as Promise<string>
+    ).catch(() => undefined),
+  ]);
+  return {
+    max,
+    illiquid,
+    isVpfi:
+      vpfiToken === undefined
+        ? undefined
+        : vpfiToken.toLowerCase() === opts.collateralAsset.toLowerCase(),
+  };
+}
+
+/** Live check for a pending swap-to-repay order on the loan. While one is
+ *  live the contract refuses any collateral change (the order was sized
+ *  against the collateral as it stood). `getIntentCommit` reverts when
+ *  there is none.
+ *
+ *  Fail OPEN on a transport error: this read only lets the page say the
+ *  reason in plain words before the wallet opens — the contract still
+ *  refuses, and a refused estimate costs the borrower nothing. */
+export async function hasLiveSwapToRepayOrder(opts: {
+  publicClient: PublicClient;
+  diamondAddress: `0x${string}`;
+  loanId: bigint;
+}): Promise<boolean> {
+  try {
+    await opts.publicClient.readContract({
+      address: opts.diamondAddress,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'getIntentCommit',
+      args: [opts.loanId],
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}

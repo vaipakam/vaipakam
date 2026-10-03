@@ -1322,6 +1322,40 @@ Thin-market honesty rules apply.
 - Position rows should offer the next relevant action where one exists. A row
   with a payout waiting says what that payout is and offers to collect it.
 
+### Taking back extra collateral
+
+The platform lets a borrower withdraw collateral from an open loan as long as
+the loan stays healthy (ProjectDetailsREADME, "Allow Borrower to Withdraw Excess
+Collateral"). The app offers this to every borrower, in Basic mode, because it
+is the borrower's own money.
+
+- The surface appears for the current borrower-position holder on an open loan
+  with fungible collateral. It says plainly that taking collateral back makes
+  the loan riskier: with less collateral, a price drop reaches liquidation
+  sooner.
+- Before asking for anything, it states how much can be taken back right now,
+  from the protocol's own live limit, and keeps that figure fresh while the page
+  is open. It says that the limit moves with prices, so an amount right at the
+  limit can still be refused.
+- When nothing can be taken back, it says why, as far as the app can tell: the
+  loan needs all of its collateral, or the collateral cannot be priced right
+  now. When the app cannot tell which, it says that instead of choosing one.
+  A limit the app could not read is never shown as zero.
+- An amount above the limit is refused on the page, with the limit stated.
+- Before the wallet opens, the app re-checks what would make the protocol
+  refuse: the sanctions screen, that the wallet still holds the borrower
+  position, that the limit still covers the amount, that no sale listing of the
+  lender's position is linked to the loan, and that no swap-to-repay order is
+  pending against it. Each refusal is said in plain words. Where the app cannot
+  undo the obstacle itself (a swap-to-repay order placed with another tool), it
+  says so rather than pointing at a control that does not exist.
+- The confirmation states what arrives in the wallet, that nothing more is owed,
+  what is put at risk, and that the rest of the collateral stays locked until
+  the loan closes.
+- When the collateral is VPFI, the surface says that taking it out of the vault
+  lowers the balance the fee-discount tier is measured on, so the discount may
+  drop.
+
 ### Forced close-out of an overdue loan
 
 - A lender holding an active position whose repayment window and grace period

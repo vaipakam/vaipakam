@@ -212,6 +212,14 @@
         "fr": "."
       }
     },
+    "copy.positions.details.withdrawCollateral.max": {
+      "reason": "\"Max\" is the established French and German abbreviation on an amount field's fill-to-limit button, spelled as the English one — the same word these bundles already carry on the VPFI and Rate Desk amount fields (copy.vpfi.max, copy.desk.ticket.max). Every sibling in this section is translated, so the leaf is settled vocabulary, not a skipped string.",
+      "source": "Max",
+      "locales": [
+        "de",
+        "fr"
+      ]
+    },
     "copy.protocolConsole.bpsValue": {
       "reason": "Two interpolated values, the percent sign, and \"bps\" — the standard basis-points abbreviation this codebase uses on every fee surface, and a glossary term that stays untranslated. There is no prose here to render in another language, so a value made of the same marks is the correct localization rather than an untouched string. It is NOT invariant: German, Spanish and French insert the space their typography requires before %, and Japanese and Chinese use fullwidth parentheses — real localizations of a string whose only content is punctuation, recorded below so changing one retires the exemption instead of leaving it armed. Arabic, Hindi, Korean and Tamil correctly keep the English marks.",
       "source": "{{pct}}% ({{bps}} bps)",
