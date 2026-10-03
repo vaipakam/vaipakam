@@ -1709,7 +1709,7 @@
         "post": "Angebot veröffentlichen",
         "posting": "Wird veröffentlicht…",
         "posted": "Angebot veröffentlicht",
-        "postedNext": "Dein Angebot ist jetzt offen. Du kannst es unten unter „Deine offenen Angebote“ ändern oder stornieren, bis jemand es annimmt – ein neues Angebot muss eventuell einige Minuten offen bleiben, bevor es storniert werden kann.",
+        "postedNext": "Ihr Angebot ist jetzt offen. Sie können es unten unter „Ihre offenen Angebote“ ändern oder stornieren, bis jemand es annimmt – ein neues Angebot muss eventuell einige Minuten offen bleiben, bevor es storniert werden kann.",
         "modeLabel": "Wie veröffentlichen",
         "modeOnchain": "Jetzt veröffentlichen (Netzwerkgebühr)",
         "modeGasless": "Nur signieren (kostenlos)",
@@ -1746,7 +1746,7 @@
         "lockAtFill": "{{amount}} {{symbol}} Sicherheit — wird erst gesperrt, wenn jemand das Angebot annimmt.",
         "netYield": "Wenn jemand das Angebot annimmt und der Kredit zurückgezahlt wird, verdienen Sie nach der Protokollgebühr von {{feePct}} % auf Ihre Zinsen etwa {{net}} % pro Jahr.",
         "lifNote": "Startgebühr: {{feePct}} % des Kreditbetrags (etwa {{amount}} {{symbol}}), berechnet beim Start des Kredits.",
-        "expiryGtcSignedHint": "Ein kostenlos signiertes Angebot bleibt bis zu 7 Tage offen und läuft dann von selbst ab. Du kannst es vorher stornieren (das Stornieren kostet eine Netzwerkgebühr)."
+        "expiryGtcSignedHint": "Ein kostenlos signiertes Angebot bleibt bis zu 7 Tage offen und läuft dann von selbst ab. Sie können es vorher stornieren (das Stornieren kostet eine Netzwerkgebühr)."
       },
       "orders": {
         "loading": "Ihre offenen Orders werden geladen…",
@@ -1783,7 +1783,7 @@
         "save": "Änderungen speichern",
         "saving": "Änderung läuft…",
         "amended": "Angebot geändert.",
-        "signedTitle": "Deine signierten Angebote (dieses Paar und diese Laufzeit)",
+        "signedTitle": "Ihre signierten Angebote (dieses Paar und diese Laufzeit)",
         "signedNote": "Angebote, die Sie nur per Signatur veröffentlicht haben, für das oben gewählte Paar und die oben gewählte Kreditlaufzeit. Signierte Angebote für ein anderes Paar oder eine andere Kreditlaufzeit werden nicht angezeigt — wechseln Sie oben, um diese zu verwalten.",
         "signedCancel": "Stornieren (Netzwerkgebühr)",
         "signedCancelling": "Wird abgebrochen…",
