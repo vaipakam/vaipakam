@@ -2518,12 +2518,14 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](4);
+        selectors = new bytes4[](5);
         selectors[0] = RewardIngressFacet.onCompensationBudgetReceived.selector;
         selectors[1] = RewardIngressFacet.onCompensationDayBroadcastArrived.selector;
         selectors[2] = RewardIngressFacet.onRewardBudgetReceived.selector;
         // #1566 transport epochs PR 3a — the split attestation ingress.
         selectors[3] = RewardIngressFacet.onRemitSplitAttested.selector;
+        // 3d-1 — the rooted (d6) ingress.
+        selectors[4] = RewardIngressFacet.onRewardBudgetReceivedD6.selector;
     }
 
     /// #1566 transport epochs PR 3b — the transport epochs' ledger. Mirrors
@@ -2534,7 +2536,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](21);
+        selectors = new bytes4[](22);
         selectors[0] = RewardEpochFacet.materializeTransportBatchPage.selector;
         selectors[1] = RewardEpochFacet.parkTransportBatchRemainder.selector;
         selectors[2] = RewardEpochFacet.acknowledgeTransportBatchRemainder.selector;
@@ -2558,6 +2560,8 @@ contract HelperTest {
         selectors[18] = RewardEpochFacet.getTransportTiersForDay.selector;
         selectors[19] = RewardEpochFacet.getTransportBatchGates.selector;
         selectors[20] = RewardEpochFacet.getTransportBatchDays.selector;
+        // 3d-1 — the rooted (d6) chunk index.
+        selectors[21] = RewardEpochFacet.materializeTransportBatchChunk.selector;
     }
 
     /// 3b-ii-A (Codex #2276 r2) — the epochs' engine-inlining reads. Mirrors

@@ -8075,6 +8075,27 @@ library LibVaipakam {
         ///      the attested caps it is drawn under, and never retyped
         ///      (Codex #2276 r26 P1) — an unattested epoch is not drawn.
         uint256 drawn;
+        /// @dev 3d-1 (#1566 transport epochs, the d6 wire), appended — the
+        ///      authenticated day-list COMMITMENT a d6 delivery carries in place
+        ///      of a flat hash: a Merkle root over fixed-size indexed chunks of
+        ///      the list, with the extent the wire committed to (`dayCount`
+        ///      elements in `chunkCount` chunks). Zero for every pre-d6 packet,
+        ///      and `dayListHash` is zero for every d6 one: a packet is committed
+        ///      one way or the other, never both. On the epoch path such a
+        ///      packet keeps `freshShare == recycledShare == 0` — those two
+        ///      record what the INGRESS credited to the shared ledgers, which for
+        ///      a delivery held whole as its own epoch is nothing; the wire's
+        ///      split lives in `freshAttested` / `recycledAttested`.
+        bytes32 dayListRoot;
+        uint32 chunkCount;
+        /// @dev Which indexed chunks have landed — bit `i` set once chunk `i`
+        ///      is proven and written; the batch's `indexedDays` reaches
+        ///      `dayCount` exactly when every bit below `chunkCount` is set.
+        uint256 chunksIndexed;
+        /// @dev The era the packet was dispatched in, as the wire stated it.
+        ///      STORED, not yet validated: PR C's receive ingresses read it
+        ///      against the live era; no wire before d6 carried one.
+        uint64 intendedEra;
     }
 
     /// @notice #1566 transport epochs PR 3b — the TRANSPORT EPOCH of one

@@ -187,6 +187,74 @@
     "stateMutability": "nonpayable"
   },
   {
+    "type": "function",
+    "name": "onRewardBudgetReceivedD6",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "dayListRoot",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "elementCount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "chunkCount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "sourceChainId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "remitter",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "recycledShare",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "freshShare",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "transportMessageId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "intendedEra",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
     "type": "event",
     "name": "CompensationConfirmed",
     "inputs": [
@@ -356,6 +424,43 @@
   },
   {
     "type": "event",
+    "name": "IngressPacketDayListRooted",
+    "inputs": [
+      {
+        "name": "packetHash",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "dayListRoot",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "dayCount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "chunkCount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "intendedEra",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "IngressPacketSplitAttested",
     "inputs": [
       {
@@ -436,6 +541,73 @@
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RewardBudgetRootReceived",
+    "inputs": [
+      {
+        "name": "sourceChainId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "token",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "dayListRoot",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "dayCount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "chunkCount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "remitId",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "recycledShare",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "freshShare",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "intendedEra",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
       }
     ],
     "anonymous": false
@@ -4351,6 +4523,17 @@
   },
   {
     "type": "error",
+    "name": "TransportBatchNotRooted",
+    "inputs": [
+      {
+        "name": "batchId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "TransportBatchReferenced",
     "inputs": [
       {
@@ -4362,6 +4545,17 @@
         "name": "references",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "TransportBatchRooted",
+    "inputs": [
+      {
+        "name": "batchId",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ]
   },
@@ -4382,6 +4576,90 @@
     "inputs": [
       {
         "name": "batchId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "TransportChunkAlreadyIndexed",
+    "inputs": [
+      {
+        "name": "batchId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "chunkIndex",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "TransportChunkLengthMismatch",
+    "inputs": [
+      {
+        "name": "batchId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "chunkIndex",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "expected",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "supplied",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "TransportChunkOutOfExtent",
+    "inputs": [
+      {
+        "name": "batchId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "chunkIndex",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "chunkCount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "TransportChunkProofInvalid",
+    "inputs": [
+      {
+        "name": "batchId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "chunkIndex",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "leaf",
         "type": "bytes32",
         "internalType": "bytes32"
       }
@@ -4593,6 +4871,53 @@
         "name": "batchId",
         "type": "bytes32",
         "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "TransportRootExtentInvalid",
+    "inputs": [
+      {
+        "name": "packetHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "elementCount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "chunkCount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "TransportSplitNotWhole",
+    "inputs": [
+      {
+        "name": "packetHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "fresh",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "recycled",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ]
   },

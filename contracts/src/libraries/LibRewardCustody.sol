@@ -9,6 +9,8 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {RewardCustodyHolder} from "../RewardCustodyHolder.sol";
 import {LibDiamond} from "@diamond-3/libraries/LibDiamond.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
+import {RemitWire} from "../crosschain/RemitWire.sol";
 
 /**
  * @title LibRewardCustody — the ONE seam between the reward ledgers and the
@@ -1122,6 +1124,15 @@ library LibRewardCustody {
     /// @notice A park page checked `checkedDays` of the batch's `dayCount` listed days proven closed (3b-ii-B).
     /// @custom:event-category state-change/reward-transport
     event TransportParkPageChecked(bytes32 indexed batchId, uint32 checkedDays, uint32 dayCount);
+    /// @notice 3d-1 — a d6 delivery committed to its day list by a Merkle root over `chunkCount` indexed
+    ///         chunks of `dayCount` days, stamped with the era it was dispatched in.
+    /// @custom:event-category state-change/reward-custody
+    event IngressPacketDayListRooted(
+        bytes32 indexed packetHash, bytes32 dayListRoot, uint256 dayCount, uint256 chunkCount, uint64 intendedEra
+    );
+    /// @notice 3d-1 — one proven chunk of a rooted batch's membership was indexed.
+    /// @custom:event-category state-change/reward-custody
+    event TransportBatchChunkIndexed(bytes32 indexed batchId, uint256 chunkIndex, uint32 indexedDays, uint32 dayCount);
     /// @notice #1566 transport epochs PR 3b — a batch's parked remainder was
     ///         acknowledged, which is what makes its packet classifiable.
     /// @custom:event-category state-change/reward-custody
@@ -1398,6 +1409,40 @@ library LibRewardCustody {
         emit IngressPacketDayListRecorded(h, commitment, dayIds.length);
     }
 
+    /// @notice 3d-1 — stamp a d6 packet's ROOTED commitment: the day-list root,
+    ///         the extent it committed to and the era it was dispatched in.
+    /// @dev    The extent is validated here, once, so every later chunk call
+    ///         can trust it: a chunk count that is not the fixed-size chunking
+    ///         of the element count would let a chunk be proven at a length the
+    ///         sender never committed; more chunks than the index can mark would
+    ///         leave the membership unable to complete. A packet is committed by
+    ///         a hash OR a root, never both (`IngressPacketDayListStamped`).
+    function stampPacketDayListRoot(
+        LibVaipakam.Storage storage s,
+        bytes32 h,
+        bytes32 root,
+        uint256 elementCount,
+        uint256 chunkCount,
+        uint64 intendedEra
+    ) internal {
+        LibVaipakam.IngressPacket storage p = s.ingressPackets[h];
+        if (p.arrivedAt == 0) revert IVaipakamErrors.IngressPacketUnknown(h);
+        if (p.dayListHash != bytes32(0) || p.dayListRoot != bytes32(0)) {
+            revert IVaipakamErrors.IngressPacketDayListStamped(h);
+        }
+        if (
+            root == bytes32(0) || elementCount == 0 || chunkCount > RemitWire.D6_MAX_CHUNKS
+                || chunkCount != RemitWire.d6ChunkCount(elementCount)
+        ) {
+            revert IVaipakamErrors.TransportRootExtentInvalid(h, elementCount, chunkCount);
+        }
+        p.dayListRoot = root;
+        p.dayCount = elementCount;
+        p.chunkCount = SafeCast.toUint32(chunkCount);
+        p.intendedEra = intendedEra;
+        emit IngressPacketDayListRooted(h, root, elementCount, chunkCount, intendedEra);
+    }
+
     // ─── The transport epochs (#1566 PR 3b) ──────────────────────────────────
 
     /// @notice The largest `dayIds` fan-out the canonical chain will build a
@@ -1571,6 +1616,24 @@ library LibRewardCustody {
         // holds no epoch value for the gate to protect.
         if (untyped == 0) return bytes32(0);
         batchId = _openTransportBatch(s, p, h, dayIds.length, untyped);
+    }
+
+    /// @notice 3d-1 — open the transport epoch of a ROOTED (d6) delivery,
+    ///         holding the WHOLE delivery: both components, typed by the caps
+    ///         the wire attested, drawn by the days the root commits to.
+    /// @dev    Same opener as the untyped admission ({_openTransportBatch}), so
+    ///         every later rule — draws, staging, gates, park, release — sees
+    ///         one kind of epoch. The membership count is the stamped extent;
+    ///         the index arrives chunk by chunk.
+    function admitRootedTransportBatch(
+        LibVaipakam.Storage storage s,
+        bytes32 h,
+        uint256 amount
+    ) internal returns (bytes32 batchId) {
+        LibVaipakam.IngressPacket storage p = s.ingressPackets[h];
+        if (p.arrivedAt == 0) revert IVaipakamErrors.IngressPacketUnknown(h);
+        if (p.dayListRoot == bytes32(0)) revert IVaipakamErrors.TransportBatchNotRooted(h);
+        batchId = _openTransportBatch(s, p, h, p.dayCount, amount);
     }
 
     /// @notice #1566 transport epochs PR 3b (Codex #2232 r3) — admit the
@@ -1850,6 +1913,7 @@ library LibRewardCustody {
         if (!transportBatchExists(b)) revert IVaipakamErrors.TransportBatchUnknown(batchId);
         uint32 done = b.indexedDays;
         if (done >= b.dayCount) revert IVaipakamErrors.TransportBatchFullyIndexed(batchId);
+        if (s.ingressPackets[batchId].dayListRoot != bytes32(0)) revert IVaipakamErrors.TransportBatchRooted(batchId);
         bytes32 committed = s.ingressPackets[batchId].dayListHash;
         bytes32 supplied = keccak256(abi.encode(dayIds));
         if (supplied != committed) {
@@ -1889,16 +1953,87 @@ library LibRewardCustody {
         h.hinted = hints.length != 0;
         h.lateHinted = lateHints.length != 0;
         for (uint256 i = done; i < end; ++i) {
-            uint256 d = dayIds[i];
-            s.transportBatchesByDay[d].push(batchId);
-            s.transportBatchDays[batchId].push(d); // 3c-1: the gates read the list live
             if (h.hinted) h.prev = hints[i];
             if (h.lateHinted) h.latePrev = lateHints[i];
-            _linkIntoDay(s, d, batchId, arrived, h);
+            _indexBatchDay(s, dayIds[i], batchId, arrived, h);
         }
         indexedDays = uint32(end);
         b.indexedDays = indexedDays;
         emit TransportBatchPageIndexed(batchId, indexedDays, b.dayCount);
+    }
+
+    /// @dev The ONE writer of a batch's per-day membership — the inverse index,
+    ///      the kept list the gates read (3c-1) and the day's arrival-ordered
+    ///      link — shared by the flat-hash page and the rooted chunk (3d-1), so
+    ///      the two commitments index a day identically.
+    function _indexBatchDay(
+        LibVaipakam.Storage storage s,
+        uint256 d,
+        bytes32 batchId,
+        uint64 arrived,
+        LinkHint memory h
+    ) private {
+        s.transportBatchesByDay[d].push(batchId);
+        s.transportBatchDays[batchId].push(d);
+        _linkIntoDay(s, d, batchId, arrived, h);
+    }
+
+    /// @notice 3d-1 — index ONE proven chunk of a rooted (d6) batch's membership.
+    /// @dev    Permissionless, in any chunk order: the authority is the root the
+    ///         delivery's own ingress stamped. The chunk is checked three ways
+    ///         before a word is written — its index is inside the committed
+    ///         extent and not yet marked, its length is the one the extent
+    ///         commits to for that index (so a short or padded chunk cannot be
+    ///         proven), and its indexed leaf verifies against the root under the
+    ///         supplied proof. Each chunk's days then go through the same
+    ///         per-day writer as a flat-hash page. `indexedDays` reaches
+    ///         `dayCount` exactly when every chunk has landed, and that figure is
+    ///         what every allocation and the park already gate on — so a rooted
+    ///         epoch is spendable only when its membership is whole, by the
+    ///         existing rule rather than a new one.
+    ///
+    ///         The kept list ({LibVaipakam.Storage.transportBatchDays}) is in
+    ///         INDEXING order, which need not be list order when chunks land out
+    ///         of turn; its readers treat it as the membership SET, and none
+    ///         depends on its order.
+    function materializeTransportBatchChunk(
+        LibVaipakam.Storage storage s,
+        bytes32 batchId,
+        uint256 chunkIndex,
+        uint256[] calldata dayIds,
+        bytes32[] calldata proof,
+        bytes32[] memory hints,
+        bytes32[] memory lateHints
+    ) internal returns (uint32 indexedDays) {
+        LibVaipakam.TransportBatch storage b = s.transportBatches[batchId];
+        if (!transportBatchExists(b)) revert IVaipakamErrors.TransportBatchUnknown(batchId);
+        LibVaipakam.IngressPacket storage p = s.ingressPackets[batchId];
+        if (p.dayListRoot == bytes32(0)) revert IVaipakamErrors.TransportBatchNotRooted(batchId);
+        uint256 chunks = p.chunkCount;
+        if (chunkIndex >= chunks) revert IVaipakamErrors.TransportChunkOutOfExtent(batchId, chunkIndex, chunks);
+        uint256 bit = 1 << chunkIndex;
+        if ((p.chunksIndexed & bit) != 0) revert IVaipakamErrors.TransportChunkAlreadyIndexed(batchId, chunkIndex);
+        uint256 expected = RemitWire.d6ChunkLength(p.dayCount, chunkIndex);
+        if (dayIds.length != expected) {
+            revert IVaipakamErrors.TransportChunkLengthMismatch(batchId, chunkIndex, expected, dayIds.length);
+        }
+        bytes32 leaf = RemitWire.d6Leaf(chunkIndex, dayIds);
+        if (!MerkleProof.verifyCalldata(proof, p.dayListRoot, leaf)) {
+            revert IVaipakamErrors.TransportChunkProofInvalid(batchId, chunkIndex, leaf);
+        }
+        uint64 arrived = p.arrivedAt;
+        LinkHint memory h;
+        h.hinted = hints.length != 0;
+        h.lateHinted = lateHints.length != 0;
+        for (uint256 i; i < expected; ++i) {
+            if (h.hinted) h.prev = hints[i];
+            if (h.lateHinted) h.latePrev = lateHints[i];
+            _indexBatchDay(s, dayIds[i], batchId, arrived, h);
+        }
+        p.chunksIndexed |= bit;
+        indexedDays = b.indexedDays + uint32(expected);
+        b.indexedDays = indexedDays;
+        emit TransportBatchChunkIndexed(batchId, chunkIndex, indexedDays, b.dayCount);
     }
 
     /// @dev Where a day's scan starts: the first node AFTER its cursor in the
@@ -2173,21 +2308,35 @@ library LibRewardCustody {
         if (b.indexedDays < b.dayCount) {
             revert IVaipakamErrors.TransportBatchNotFullyIndexed(batchId, b.indexedDays, b.dayCount);
         }
-        bytes32 committed = s.ingressPackets[batchId].dayListHash;
-        bytes32 supplied = keccak256(abi.encode(dayIds));
-        if (supplied != committed) revert IVaipakamErrors.TransportDayListMismatch(batchId, committed, supplied);
+        // 3d-1 — a ROOTED batch's list is the one its proven chunks wrote
+        // (`transportBatchDays`, whole once fully indexed, which the guard
+        // above holds): it is read from storage and no list is supplied. A
+        // flat-hash batch still proves the list it supplies by its commitment.
+        bool rooted = s.ingressPackets[batchId].dayListRoot != bytes32(0);
+        uint256 count;
+        if (rooted) {
+            if (dayIds.length != 0) {
+                revert IVaipakamErrors.TransportDayListMismatch(batchId, bytes32(0), keccak256(abi.encode(dayIds)));
+            }
+            count = s.transportBatchDays[batchId].length;
+        } else {
+            bytes32 committed = s.ingressPackets[batchId].dayListHash;
+            bytes32 supplied = keccak256(abi.encode(dayIds));
+            if (supplied != committed) revert IVaipakamErrors.TransportDayListMismatch(batchId, committed, supplied);
+            count = dayIds.length;
+        }
         uint256 done = s.transportParkCursor[batchId];
         uint256 end = done + TRANSPORT_INDEX_PAGE;
-        if (end > dayIds.length) end = dayIds.length;
+        if (end > count) end = count;
         for (uint256 i = done; i < end; ) {
-            uint256 d = dayIds[i];
+            uint256 d = rooted ? s.transportBatchDays[batchId][i] : dayIds[i];
             if (!s.dayObligationsClosed[d]) revert IVaipakamErrors.TransportDayNotClosed(batchId, d);
             unchecked { ++i; }
         }
         checkedDays = uint32(end);
         s.transportParkCursor[batchId] = checkedDays;
         emit TransportParkPageChecked(batchId, checkedDays, b.dayCount);
-        if (end < dayIds.length) return (checkedDays, false, 0);
+        if (end < count) return (checkedDays, false, 0);
         amount = parkTransportRemainder(s, batchId);
         parked = true;
     }
@@ -4261,6 +4410,29 @@ library LibRewardCustody {
         // once its packet is attested, so no leg exists yet for these caps to
         // retype. A leg is typed once, by the caps it is drawn under, and the
         // custody ledgers settlement moved for it never need revisiting.
+    }
+
+    /// @notice 3d-1 — attest a packet's split FROM ITS OWN WIRE: a d6 delivery
+    ///         carries the split the sender recorded, authenticated by the
+    ///         transport, so the caps are known at ingress and no later
+    ///         attestation message is needed.
+    /// @dev    Writes the same three fields {attestPacketSplit} writes and
+    ///         emits the same event, so every reader of a packet's caps sees one
+    ///         kind of attestation. A packet is attested once: a later Base
+    ///         attestation for a d6 remit finds `attested` set and is held to
+    ///         the same figures by {attestPacketSplit}'s own guard.
+    function attestPacketFromWire(
+        LibVaipakam.Storage storage s,
+        bytes32 h,
+        uint256 fresh,
+        uint256 recycled
+    ) internal {
+        LibVaipakam.IngressPacket storage p = s.ingressPackets[h];
+        if (p.attested) revert IVaipakamErrors.IngressPacketAlreadyAttested(h);
+        p.freshAttested = fresh;
+        p.recycledAttested = recycled;
+        p.attested = true;
+        emit IngressPacketSplitAttested(h, p.remitter, p.remitId, fresh, recycled);
     }
 
     /// @notice Move `amount` of a packet's classification between components.

@@ -49,7 +49,13 @@ import {
 ///      level so the refresh script can import the same value the
 ///      deployed probe ({RewardRemittanceReceiver.WIRE_GENERATION})
 ///      returns — one definition, no literal to drift.
-uint256 constant REMIT_RECEIVER_WIRE_GENERATION = 5;
+///
+/// @dev 6 — #1566 transport epochs 3d-1: the receiver decodes the d6 (rooted)
+///      wire and forwards it through a NEW Diamond ingress; a mirror still on
+///      generation 5 would revert every d6 delivery (the tag is out of bounds
+///      as an offset), which is the fail-closed rollout posture the tag exists
+///      for — and the reason the refresh must not read it as current.
+uint256 constant REMIT_RECEIVER_WIRE_GENERATION = 6;
 
 interface IRewardBudgetIngress {
     function onRewardBudgetReceived(
@@ -63,6 +69,25 @@ interface IRewardBudgetIngress {
         uint256 freshShare,
         bytes32 transportMessageId,
         bool splitTyped
+    ) external;
+
+    /// @notice #1566 transport epochs 3d-1 — a d6 (rooted) delivery: the day
+    ///         list arrives as an authenticated commitment plus its extent, the
+    ///         split is typed on the wire, and the era the packet was
+    ///         dispatched in rides along.
+    function onRewardBudgetReceivedD6(
+        address token,
+        uint256 amount,
+        bytes32 dayListRoot,
+        uint256 elementCount,
+        uint256 chunkCount,
+        uint256 sourceChainId,
+        uint256 remitId,
+        address remitter,
+        uint256 recycledShare,
+        uint256 freshShare,
+        bytes32 transportMessageId,
+        uint64 intendedEra
     ) external;
 }
 
@@ -288,6 +313,12 @@ contract RewardRemittanceReceiver is
             _handleCompensation(sourceChainId, payload, tokens, transportMessageId);
             return;
         }
+        // #1566 transport epochs 3d-1 — the ROOTED shape: its own decode, its
+        // own Diamond ingress, the same token-delivery implementation.
+        if (head == RemitWire.REMIT_WIRE_TAG_D6) {
+            _handleRooted(sourceChainId, payload, tokens, transportMessageId);
+            return;
+        }
         if (head == RemitWire.REMIT_WIRE_TAG_D5) {
             (, dayIds, declaredTotal, remitId, remitter, recycledShare) =
                 abi.decode(
@@ -401,6 +432,67 @@ contract RewardRemittanceReceiver is
             dayIds,
             remitId
         );
+    }
+
+    /// @notice #1566 transport epochs 3d-1 — a d6 (rooted) delivery was
+    ///         forwarded into the Diamond: the delivered amount and the
+    ///         commitment it arrived under, for reconciliation against the
+    ///         sender's dispatch record.
+    event RewardBudgetRootForwarded(
+        uint256 indexed sourceChainId,
+        address indexed token,
+        uint256 amount,
+        bytes32 dayListRoot,
+        uint256 elementCount,
+        uint256 remitId
+    );
+
+    /// @dev The d6 frame. The split travels as the recycled component and the
+    ///      total; the fresh component is what is left of what ACTUALLY landed
+    ///      after the recycled share is scaled to it, so the two always sum to
+    ///      the delivered amount — the Diamond's rooted ingress requires a
+    ///      WHOLE split, because the whole delivery becomes one epoch typed by
+    ///      those two caps and a wei under no cap would be value no day could
+    ///      draw. The era word is stored by the Diamond and validated by PR C.
+    function _handleRooted(
+        uint256 sourceChainId,
+        bytes calldata payload,
+        ICrossChainMessenger.TokenAmount[] calldata tokens,
+        bytes32 transportMessageId
+    ) private {
+        (
+            ,
+            bytes32 root,
+            uint256 elementCount,
+            uint256 chunkCount,
+            uint256 declaredTotal,
+            uint256 remitId,
+            address remitter,
+            uint256 recycledShare,
+            uint256 intendedEra
+        ) = abi.decode(
+            payload, (uint256, bytes32, uint256, uint256, uint256, uint256, address, uint256, uint256)
+        );
+        (address deliveredToken, uint256 actualReceived) = _deliverTokens(tokens, declaredTotal);
+        if (actualReceived != declaredTotal && recycledShare != 0) {
+            recycledShare = Math.mulDiv(recycledShare, actualReceived, declaredTotal);
+        }
+        uint256 freshShare = actualReceived > recycledShare ? actualReceived - recycledShare : 0;
+        IRewardBudgetIngress(diamond).onRewardBudgetReceivedD6(
+            deliveredToken,
+            actualReceived,
+            root,
+            elementCount,
+            chunkCount,
+            sourceChainId,
+            remitId,
+            remitter,
+            recycledShare,
+            freshShare,
+            transportMessageId,
+            SafeCast.toUint64(intendedEra)
+        );
+        emit RewardBudgetRootForwarded(sourceChainId, deliveredToken, actualReceived, root, elementCount, remitId);
     }
 
     /// @notice #1434 P2-w2 — a P2 manual-compensation delivery was

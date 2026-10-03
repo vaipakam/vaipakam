@@ -119,6 +119,38 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
         );
     }
 
+    /// @notice 3d-1 — index ONE proven chunk of a ROOTED (d6) batch's
+    ///         membership: chunk `chunkIndex` of the committed list, with the
+    ///         Merkle proof of its indexed leaf. Any order; each chunk once.
+    /// @dev    Permissionless — the authority is the root the delivery's own
+    ///         ingress stamped. `hints` / `lateHints` are optional (empty =
+    ///         unhinted), per day of the chunk, with the meaning
+    ///         {materializeTransportBatchPageHinted} gives them; a crowded day
+    ///         that trips the unhinted walk cap is indexed with a hint, exactly
+    ///         as a flat-hash page is. The rule is
+    ///         {LibRewardCustody.materializeTransportBatchChunk}.
+    /// @return indexedDays The batch's day-index progress after this call; it
+    ///                     is whole when it equals the batch's `dayCount`,
+    ///                     which is when every chunk has landed.
+    function materializeTransportBatchChunk(
+        bytes32 batchId,
+        uint256 chunkIndex,
+        uint256[] calldata dayIds,
+        bytes32[] calldata proof,
+        bytes32[] calldata hints,
+        bytes32[] calldata lateHints
+    ) external nonReentrant returns (uint32 indexedDays) {
+        if (
+            (hints.length != 0 && hints.length != dayIds.length)
+                || (lateHints.length != 0 && lateHints.length != dayIds.length)
+        ) {
+            revert TransportDayListMismatch(batchId, bytes32(0), bytes32(0));
+        }
+        return LibRewardCustody.materializeTransportBatchChunk(
+            LibVaipakam.storageSlot(), batchId, chunkIndex, dayIds, proof, hints, lateHints
+        );
+    }
+
     /// @notice {materializeTransportBatchPage} with the predecessor named for
     ///         each day (Codex #2276 r7): `hints[i]` is the batch after which
     ///         this one belongs in day `dayIds[i]`'s ordered list, zero for the

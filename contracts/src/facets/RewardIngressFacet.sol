@@ -334,6 +334,129 @@ contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         );
     }
 
+    /// @notice 3d-1 — a d6 (rooted) reward budget landed: what arrived, the
+    ///         commitment and extent it arrived under, the split the wire typed
+    ///         and the era it was dispatched in. Whether it opened an epoch is
+    ///         {LibRewardCustody.TransportBatchAdmitted}'s fact, as for every
+    ///         other delivery.
+    /// @custom:event-category informational/reward-transport
+    event RewardBudgetRootReceived(
+        uint256 indexed sourceChainId,
+        address indexed token,
+        uint256 amount,
+        bytes32 dayListRoot,
+        uint256 dayCount,
+        uint256 chunkCount,
+        uint256 remitId,
+        uint256 recycledShare,
+        uint256 freshShare,
+        uint64 intendedEra
+    );
+
+    /**
+     * @notice Record a reward budget the {RewardRemittanceReceiver} forwarded
+     *         on the d6 (ROOTED) wire — #1566 transport epochs 3d-1.
+     * @dev    The one accounting path for a rooted delivery on an activated
+     *         custody: the WHOLE delivery becomes its own transport epoch.
+     *         Nothing is credited to the live delivered ledger or the recycle
+     *         bucket at ingress; the wire's split is recorded as the epoch's
+     *         attested caps, the delivery's value sits in the unclassified
+     *         custody row under the packet, and the days the root commits to
+     *         draw it first — under the draw, staging and gate rules every
+     *         other epoch obeys — with only the residual reaching the shared
+     *         sources. The uncounted figures grow by the whole amount for the
+     *         same reason they do for an untyped delivery: this value is in no
+     *         shared ledger, and the draws step them down as they type it. A
+     *         wire whose split does not account for the whole delivery is
+     *         refused by name: a wei under no cap would be value no day could
+     *         draw and no classification could reach.
+     *
+     *         Before custody activation the delivery's tokens rest with the
+     *         Diamond and the activation is what assigns them, so a rooted
+     *         delivery then takes the TYPED-LEDGER path exactly as a d5 one
+     *         does — the fresh component counted, the recycled one credited to
+     *         the bucket — and opens no epoch (giving it one would leave two
+     *         records claiming the same money, the rule the untyped path
+     *         states). Its commitment is still stamped: a packet's record says
+     *         what it claimed whichever path its value took.
+     *
+     *         `intendedEra` is STORED, not validated — PR C's receive rules
+     *         read it; no wire before d6 carried one.
+     */
+    function onRewardBudgetReceivedD6(
+        address token,
+        uint256 amount,
+        bytes32 dayListRoot,
+        uint256 elementCount,
+        uint256 chunkCount,
+        uint256 sourceChainId,
+        uint256 remitId,
+        address remitter,
+        uint256 recycledShare,
+        uint256 freshShare,
+        bytes32 transportMessageId,
+        uint64 intendedEra
+    ) external nonReentrant {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (msg.sender != s.rewardRemittanceReceiver) {
+            revert NotRewardRemittanceReceiver(msg.sender);
+        }
+        if (token != s.vpfiToken) {
+            revert RewardBudgetTokenMismatch(s.vpfiToken, token);
+        }
+        if (recycledShare > amount) {
+            revert RecycledShareExceedsDelivery(recycledShare, amount);
+        }
+        uint256 freshLooking = amount - recycledShare;
+        if (freshShare > freshLooking) {
+            revert FreshShareExceedsDelivery(freshShare, freshLooking);
+        }
+        s.rewardBudgetReceivedTotal += amount;
+        bool epoch = LibRewardCustody.active(s);
+        // On the epoch path the packet's declared shares stay ZERO: they record
+        // what the ingress credited to the shared ledgers, which is nothing.
+        bytes32 h = LibRewardCustody.callRecordIngressPacket(
+            sourceChainId,
+            transportMessageId,
+            LibRewardCustody.PACKET_KIND_BUDGET,
+            amount,
+            epoch ? 0 : freshShare,
+            epoch ? 0 : recycledShare,
+            remitter,
+            remitId
+        );
+        LibRewardCustody.stampPacketDayListRoot(s, h, dayListRoot, elementCount, chunkCount, intendedEra);
+        if (epoch) {
+            if (freshShare + recycledShare != amount) {
+                revert TransportSplitNotWhole(h, freshShare, recycledShare, amount);
+            }
+            LibRewardCustody.attestPacketFromWire(s, h, freshShare, recycledShare);
+            s.rewardBudgetFreshUncounted += amount;
+            LibRewardCustody.callUnclassifiedIngress(h, amount);
+            LibRewardCustody.admitRootedTransportBatch(s, h, amount);
+        } else {
+            if (freshShare != 0) s.rewardBudgetArmedFreshReceived += freshShare;
+            if (freshLooking > freshShare) s.rewardBudgetFreshUncounted += freshLooking - freshShare;
+            LibVpfiRecycle.creditCustodyRelocated(
+                remitId,
+                recycledShare,
+                LibVpfiRecycle.RecycleSource.RemittedCustodyRelocation
+            );
+        }
+        emit RewardBudgetRootReceived(
+            sourceChainId,
+            token,
+            amount,
+            dayListRoot,
+            elementCount,
+            chunkCount,
+            remitId,
+            recycledShare,
+            freshShare,
+            intendedEra
+        );
+    }
+
     // ─── #1434 P2-w2 — the classifying COMPENSATION ingress (§2.2) ────────
 
     /// @notice A P2 compensation was credited to a zeroed day's per-side

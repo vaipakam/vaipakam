@@ -3089,12 +3089,14 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](4);
+        s = new bytes4[](5);
         s[0] = RewardIngressFacet.onCompensationBudgetReceived.selector;
         s[1] = RewardIngressFacet.onCompensationDayBroadcastArrived.selector;
         s[2] = RewardIngressFacet.onRewardBudgetReceived.selector;
         // #1566 transport epochs PR 3a — the split attestation ingress.
         s[3] = RewardIngressFacet.onRemitSplitAttested.selector;
+        // 3d-1 — the rooted (d6) ingress.
+        s[4] = RewardIngressFacet.onRewardBudgetReceivedD6.selector;
     }
 
     /// #1566 transport epochs PR 3b — the transport epochs' post-ingress
@@ -3107,7 +3109,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](21);
+        s = new bytes4[](22);
         s[0] = RewardEpochFacet.materializeTransportBatchPage.selector;
         s[1] = RewardEpochFacet.parkTransportBatchRemainder.selector;
         s[2] = RewardEpochFacet.acknowledgeTransportBatchRemainder.selector;
@@ -3131,6 +3133,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[18] = RewardEpochFacet.getTransportTiersForDay.selector;
         s[19] = RewardEpochFacet.getTransportBatchGates.selector;
         s[20] = RewardEpochFacet.getTransportBatchDays.selector;
+        // 3d-1 — the rooted (d6) chunk index.
+        s[21] = RewardEpochFacet.materializeTransportBatchChunk.selector;
     }
 
     /// @dev 3b-ii-A (Codex #2276 r2) — the epochs' engine-inlining reads:

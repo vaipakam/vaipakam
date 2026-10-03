@@ -392,6 +392,26 @@
             "name": "drawn",
             "type": "uint256",
             "internalType": "uint256"
+          },
+          {
+            "name": "dayListRoot",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "chunkCount",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "chunksIndexed",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "intendedEra",
+            "type": "uint64",
+            "internalType": "uint64"
           }
         ]
       }

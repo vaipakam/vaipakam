@@ -1806,6 +1806,23 @@ interface IVaipakamErrors {
     error ClosureConservationExceeded(uint256 dayId, uint8 side, uint256 sum, uint256 total);
     /// @notice The batch lists a day not yet proven closed: its remainder cannot be parked (3b-ii-B).
     error TransportDayNotClosed(bytes32 batchId, uint256 dayId);
+    /// @notice The d6 wire's extent is not one the chain can index: no days, a chunk count that is not the
+    ///         fixed-size chunking of the element count, or more chunks than the index marks (3d-1).
+    error TransportRootExtentInvalid(bytes32 packetHash, uint256 elementCount, uint256 chunkCount);
+    /// @notice The batch's membership is committed by a root: it is indexed by proven chunks, not by the flat-hash page (3d-1).
+    error TransportBatchRooted(bytes32 batchId);
+    /// @notice The batch's membership is committed by a flat hash, not a root: it is not chunk-indexed (3d-1).
+    error TransportBatchNotRooted(bytes32 batchId);
+    /// @notice `chunkIndex` is at or past the committed chunk count (3d-1).
+    error TransportChunkOutOfExtent(bytes32 batchId, uint256 chunkIndex, uint256 chunkCount);
+    /// @notice Chunk `chunkIndex` has already been indexed (3d-1).
+    error TransportChunkAlreadyIndexed(bytes32 batchId, uint256 chunkIndex);
+    /// @notice The supplied chunk is not the committed length for its index (3d-1).
+    error TransportChunkLengthMismatch(bytes32 batchId, uint256 chunkIndex, uint256 expected, uint256 supplied);
+    /// @notice The chunk's leaf does not verify against the packet's day-list root under the supplied proof (3d-1).
+    error TransportChunkProofInvalid(bytes32 batchId, uint256 chunkIndex, bytes32 leaf);
+    /// @notice A d6 delivery held as its own epoch needs a split that accounts for the whole delivery (3d-1).
+    error TransportSplitNotWhole(bytes32 packetHash, uint256 fresh, uint256 recycled, uint256 amount);
     /// @notice The domain under `domainKey` is not in the phase this entry
     ///         needs (A2-ii).
     error StagingDomainPhaseInvalid(bytes32 domainKey, uint8 phase);

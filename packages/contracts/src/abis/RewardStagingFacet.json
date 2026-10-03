@@ -4129,6 +4129,17 @@
   },
   {
     "type": "error",
+    "name": "TransportBatchNotRooted",
+    "inputs": [
+      {
+        "name": "batchId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "TransportBatchReferenced",
     "inputs": [
       {
@@ -4140,6 +4151,17 @@
         "name": "references",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "TransportBatchRooted",
+    "inputs": [
+      {
+        "name": "batchId",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ]
   },
@@ -4160,6 +4182,90 @@
     "inputs": [
       {
         "name": "batchId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "TransportChunkAlreadyIndexed",
+    "inputs": [
+      {
+        "name": "batchId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "chunkIndex",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "TransportChunkLengthMismatch",
+    "inputs": [
+      {
+        "name": "batchId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "chunkIndex",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "expected",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "supplied",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "TransportChunkOutOfExtent",
+    "inputs": [
+      {
+        "name": "batchId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "chunkIndex",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "chunkCount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "TransportChunkProofInvalid",
+    "inputs": [
+      {
+        "name": "batchId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "chunkIndex",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "leaf",
         "type": "bytes32",
         "internalType": "bytes32"
       }
@@ -4371,6 +4477,53 @@
         "name": "batchId",
         "type": "bytes32",
         "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "TransportRootExtentInvalid",
+    "inputs": [
+      {
+        "name": "packetHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "elementCount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "chunkCount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "TransportSplitNotWhole",
+    "inputs": [
+      {
+        "name": "packetHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "fresh",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "recycled",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ]
   },

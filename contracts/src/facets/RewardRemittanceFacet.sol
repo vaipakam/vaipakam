@@ -606,14 +606,12 @@ contract RewardRemittanceFacet is
         // keccak-derived tag is far larger than any payload length, so an old
         // decoder's bounds check fails and the delivery REVERTS instead;
         // CCIP re-executes it once that mirror is upgraded. See {RemitWire}.
-        bytes memory payload = abi.encode(
-            RemitWire.REMIT_WIRE_TAG_D5,
-            fundedDays,
-            total,
-            d.remitId,
-            address(this),
-            d.recycledShare
-        );
+        //
+        // 3d-1 — built by {RemitWire.encodeD5}, the ONE encoder the fee quote
+        // also calls, so `quote == send` holds by construction rather than by
+        // two hand-kept copies agreeing.
+        bytes memory payload =
+            RemitWire.encodeD5(fundedDays, total, d.remitId, address(this), d.recycledShare);
         // #1566 slice 4 PR B — the ordinary remittance names LIVE custody:
         // its fresh share is bounded and charged against the delivered
         // ledger and leaves the live-fresh row, its recycled share leaves
@@ -1649,14 +1647,7 @@ contract RewardRemittanceFacet is
             // `total − totalFresh` IS that share: every funded day contributes
             // `slice = p.fresh + p.recycled` to `total` and `p.fresh` to
             // `totalFresh`.
-            abi.encode(
-                RemitWire.REMIT_WIRE_TAG_D5,
-                fundedDays,
-                total,
-                s.remitReservationNonce + 1,
-                address(this),
-                total - totalFresh
-            ),
+            RemitWire.encodeD5(fundedDays, total, s.remitReservationNonce + 1, address(this), total - totalFresh),
             tokens,
             REWARD_BUDGET_DEST_GAS_LIMIT
         );
