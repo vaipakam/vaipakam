@@ -1272,6 +1272,7 @@
           "partialRepaid": "تم تأكيد السداد الجزئي — أنت تدين الآن بمبلغ أقل."
         },
         "youWillReceive": "ستستلم: {{payout}}",
+        "recordedForYou": "المسجّل لك: {{payout}}",
         "youWillReceiveChecking": "ستستلم: جارٍ التحقق من المبلغ الدقيق…",
         "nothingWaiting": "لا يوجد ما ينتظر المطالبة في هذا الجانب الآن — ربما تم تحصيله بالفعل.",
         "payoutUnconfirmed": "تعذّر علينا تأكيد المبلغ الدقيق الآن. المطالبة تدفع مع ذلك ما يدين به هذا القرض لك على السلسلة.",
@@ -1422,6 +1423,10 @@
         "amountLoading": "مبلغ (جارٍ تحميل التفاصيل…)",
         "swapSurplus": "{{amount}} متبقية من المبادلة التي سددت القرض",
         "swapSurplusPending": "مبلغ متبقٍ من المبادلة التي سددت القرض (جارٍ تحميل التفاصيل…)",
+        "extraCollateral": "{{amount}} من الضمان المُضاف",
+        "extraCollateralPending": "ضمان مُضاف (جارٍ تحميل التفاصيل…)",
+        "provisionalAmount": "{{payout}} (قد يتغير عند المطالبة)",
+        "fallbackMayChange": "هذا ما هو مسجّل لك الآن. عند المطالبة، تحاول المنصة أولًا مطابقة هذا القرض مع قرض مفتوح آخر. إذا وجدت مطابقة، تتلقى أصل القرض بدلًا من ذلك عن كل هذا المبلغ أو جزء منه، لذا قد يختلف المبلغ النهائي.",
         "recoveredFromDefault": "تم استرداد {{amount}}{{held}} من default",
         "defaultRecovery": "استرداد من default — {{collateral}}",
         "collateralBack": "{{collateral}} collateral عائد",

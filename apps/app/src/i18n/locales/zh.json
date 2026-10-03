@@ -1272,6 +1272,7 @@
           "partialRepaid": "部分还款已确认 — 您现在欠得更少。"
         },
         "youWillReceive": "你将收到：{{payout}}",
+        "recordedForYou": "为你记录：{{payout}}",
         "youWillReceiveChecking": "你将收到：正在确认确切金额…",
         "nothingWaiting": "这一方目前没有待领取的内容——可能已经领取过了。",
         "payoutUnconfirmed": "目前无法确认确切金额。领取仍会支付这笔贷款在链上欠你的金额。",
@@ -1422,6 +1423,10 @@
         "amountLoading": "一笔金额（正在加载详情…）",
         "swapSurplus": "偿还贷款的兑换剩余的 {{amount}}",
         "swapSurplusPending": "偿还贷款的兑换剩余的一笔金额（正在加载详情…）",
+        "extraCollateral": "追加的抵押品 {{amount}}",
+        "extraCollateralPending": "追加的抵押品（正在加载详情…）",
+        "provisionalAmount": "{{payout}}（领取时可能变化）",
+        "fallbackMayChange": "这是目前为你记录的内容。领取时，平台会先尝试把这笔贷款与另一笔未结贷款撮合。如果找到匹配，你将改为收到贷款资产（全部或部分），因此最终到账可能不同。",
         "recoveredFromDefault": "从违约中回收 {{amount}}{{held}}",
         "defaultRecovery": "违约回收 — {{collateral}}",
         "collateralBack": "{{collateral}} 抵押品返还",

@@ -1272,6 +1272,7 @@
           "partialRepaid": "Remboursement partiel confirmé — vous devez maintenant moins."
         },
         "youWillReceive": "Vous recevrez : {{payout}}",
+        "recordedForYou": "Enregistré pour vous : {{payout}}",
         "youWillReceiveChecking": "Vous recevrez : vérification du montant exact…",
         "nothingWaiting": "Rien n’attend d’être réclamé de ce côté pour l’instant — cela a peut-être déjà été encaissé.",
         "payoutUnconfirmed": "Nous n’avons pas pu confirmer le montant exact pour l’instant. Réclamer verse quand même ce que ce prêt vous doit on-chain.",
@@ -1422,6 +1423,10 @@
         "amountLoading": "Un montant (chargement des détails…)",
         "swapSurplus": "{{amount}} restants de l’échange qui a remboursé le prêt",
         "swapSurplusPending": "un montant restant de l’échange qui a remboursé le prêt (chargement des détails…)",
+        "extraCollateral": "{{amount}} de garantie ajoutée",
+        "extraCollateralPending": "garantie ajoutée (chargement des détails…)",
+        "provisionalAmount": "{{payout}} (peut changer au moment de la réclamation)",
+        "fallbackMayChange": "Voici ce qui est enregistré pour vous en ce moment. Lorsque vous réclamez, la plateforme essaie d’abord d’associer ce prêt à un autre prêt ouvert. Si elle trouve une correspondance, vous recevez l’actif du prêt à la place, pour tout ou partie de ce montant ; le paiement final peut donc différer.",
         "recoveredFromDefault": "{{amount}}{{held}} récupéré après le défaut",
         "defaultRecovery": "Recouvrement après défaut — {{collateral}}",
         "collateralBack": "{{collateral}} de garantie rendue",

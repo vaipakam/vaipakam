@@ -3089,6 +3089,8 @@ const copySource = {
       },
       // UX3-004 — the claim's exact payout, stated above the claim button.
       youWillReceive: tmpl('You will receive: {{payout}}', ['payout']),
+      // #2373 r3 — a payout the claim itself can still change.
+      recordedForYou: tmpl('Recorded for you: {{payout}}', ['payout']),
       // #2373 r1 — the payout is stated as unknown rather than omitted.
       youWillReceiveChecking: 'You will receive: checking the exact amount…',
       nothingWaiting:
@@ -3332,6 +3334,15 @@ const copySource = {
       // #2373 r2 — the borrower's frozen swap-to-repay surplus lane.
       swapSurplus: tmpl('{{amount}} left over from the swap that repaid the loan', ['amount']),
       swapSurplusPending: 'an amount left over from the swap that repaid the loan (loading its details…)',
+      // #2373 r3 — collateral still held for the borrower in a different
+      // asset from the rest of the claim (a top-up made while the loan was
+      // in a failed-liquidation state).
+      extraCollateral: tmpl('{{amount}} of added collateral', ['amount']),
+      extraCollateralPending: 'added collateral (loading its details…)',
+      // #2373 r3 — a payout the claim itself can still change.
+      provisionalAmount: tmpl('{{payout}} (may change when you claim)', ['payout']),
+      fallbackMayChange:
+        'This is what is recorded for you right now. When you claim, the platform first tries to match this loan with another open loan. If it finds a match, you receive the loan’s asset instead, for all or part of this, so the final payout can differ.',
       recoveredFromDefault: tmpl(
         '{{amount}}{{held}} recovered from the default',
         ['amount', 'held'],

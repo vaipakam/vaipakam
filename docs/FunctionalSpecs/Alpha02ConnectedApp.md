@@ -1648,8 +1648,18 @@ Thin-market honesty rules apply.
   records for this claimant (a lender's share of a fallback settlement, not the
   whole collateral), and every separate lane the same claim pays — including a
   borrower's left-over amount from a swap that repaid the loan, which is listed
-  even when it is the only thing to collect. An amount whose token details are
-  still loading is described as an amount, never as something else.
+  even when it is the only thing to collect, and collateral added while the loan
+  was in a failed-liquidation state that the claim pays in a different asset.
+  An amount whose token details are still loading is described as an amount,
+  never as something else, and never replaced by another lane of the same claim.
+- Whether a claim is collectable is decided once. The check that runs just
+  before signing uses the same rule as the one that lists the claim, so a claim
+  the list offers is never refused by the confirmation as "nothing to claim".
+- A payout the claim itself can still change is labelled as what is recorded
+  now, not as what the user will receive, and the reason is stated beside it and
+  again at signing. A lender's claim on a fallback-settled loan is the case
+  today: claiming first tries to match the loan with another, and a match pays
+  the loan's asset instead, for all or part of the recorded amount.
 - A loan's own page learns its payout from that loan alone. Opening one position
   must not scan every position the wallet has ever held.
 - A lender's claim on a defaulted loan says what the recovery is (a cash amount,

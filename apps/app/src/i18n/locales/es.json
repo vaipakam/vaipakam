@@ -1272,6 +1272,7 @@
           "partialRepaid": "Pago parcial confirmado — ahora debes menos."
         },
         "youWillReceive": "Recibirás: {{payout}}",
+        "recordedForYou": "Registrado para ti: {{payout}}",
         "youWillReceiveChecking": "Recibirás: comprobando el importe exacto…",
         "nothingWaiting": "Ahora mismo no hay nada pendiente de reclamar en este lado; puede que ya se haya cobrado.",
         "payoutUnconfirmed": "No pudimos confirmar el importe exacto ahora mismo. Reclamar sigue pagando lo que este préstamo te debe en la cadena.",
@@ -1422,6 +1423,10 @@
         "amountLoading": "Un importe (cargando sus detalles…)",
         "swapSurplus": "{{amount}} sobrantes del swap que pagó el préstamo",
         "swapSurplusPending": "un importe sobrante del swap que pagó el préstamo (cargando sus detalles…)",
+        "extraCollateral": "{{amount}} de garantía añadida",
+        "extraCollateralPending": "garantía añadida (cargando sus detalles…)",
+        "provisionalAmount": "{{payout}} (puede cambiar al reclamar)",
+        "fallbackMayChange": "Esto es lo que está registrado para ti ahora mismo. Al reclamar, la plataforma intenta primero emparejar este préstamo con otro préstamo abierto. Si encuentra una coincidencia, recibes el activo del préstamo en su lugar, por todo o parte de esto, así que el pago final puede ser distinto.",
         "recoveredFromDefault": "{{amount}}{{held}} recuperado del default",
         "defaultRecovery": "Recuperación por default — {{collateral}}",
         "collateralBack": "{{collateral}} garantía de vuelta",

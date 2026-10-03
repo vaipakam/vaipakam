@@ -1272,6 +1272,7 @@
           "partialRepaid": "一部返済が確認されました — 借入残高が減りました。"
         },
         "youWillReceive": "受け取る金額：{{payout}}",
+        "recordedForYou": "あなたへの記録: {{payout}}",
         "youWillReceiveChecking": "受け取る金額：正確な額を確認中…",
         "nothingWaiting": "現在、こちら側で受け取れるものはありません。すでに受け取り済みの可能性があります。",
         "payoutUnconfirmed": "現在、正確な金額を確認できませんでした。受け取りを行えば、このローンでオンチェーン上あなたに支払われるべき額が支払われます。",
@@ -1422,6 +1423,10 @@
         "amountLoading": "金額（詳細を読み込み中…）",
         "swapSurplus": "ローンを返済したスワップの残り {{amount}}",
         "swapSurplusPending": "ローンを返済したスワップの残りの金額（詳細を読み込み中…）",
+        "extraCollateral": "追加された担保 {{amount}}",
+        "extraCollateralPending": "追加された担保（詳細を読み込み中…）",
+        "provisionalAmount": "{{payout}}（受け取り時に変わる可能性があります）",
+        "fallbackMayChange": "これは現時点であなたに記録されている内容です。受け取り時、プラットフォームはまずこのローンを他の未決済ローンとマッチングしようとします。マッチが見つかった場合、その全部または一部について、代わりにローンの資産を受け取るため、最終的な受取額は異なる場合があります。",
         "recoveredFromDefault": "デフォルトから {{amount}}{{held}} を回収",
         "defaultRecovery": "デフォルト回収 — {{collateral}}",
         "collateralBack": "{{collateral}} 担保返却",

@@ -1345,6 +1345,7 @@
           "partialRepaid": "Partial repayment confirmed — you now owe less."
         },
         "youWillReceive": "You will receive: {{payout}}",
+        "recordedForYou": "Recorded for you: {{payout}}",
         "youWillReceiveChecking": "You will receive: checking the exact amount…",
         "nothingWaiting": "Nothing is waiting to be claimed on this side right now — it may already have been collected.",
         "payoutUnconfirmed": "We couldn’t confirm the exact amount right now. Claiming still pays whatever this loan owes you on-chain.",
@@ -1495,6 +1496,10 @@
         "amountLoading": "An amount (loading its details…)",
         "swapSurplus": "{{amount}} left over from the swap that repaid the loan",
         "swapSurplusPending": "an amount left over from the swap that repaid the loan (loading its details…)",
+        "extraCollateral": "{{amount}} of added collateral",
+        "extraCollateralPending": "added collateral (loading its details…)",
+        "provisionalAmount": "{{payout}} (may change when you claim)",
+        "fallbackMayChange": "This is what is recorded for you right now. When you claim, the platform first tries to match this loan with another open loan. If it finds a match, you receive the loan’s asset instead, for all or part of this, so the final payout can differ.",
         "recoveredFromDefault": "{{amount}}{{held}} recovered from the default",
         "defaultRecovery": "Default recovery — {{collateral}}",
         "collateralBack": "{{collateral}} collateral back",

@@ -25,6 +25,11 @@ export interface ClaimPayoutText {
   why: string;
   /** A comparison worth stating beside the payout, when there is one. */
   note?: string;
+  /** #2373 r3 — the payout is what is RECORDED now and the claim itself can
+   *  change it (a fallback claim retries settlement first). Surfaces label it
+   *  "recorded", never "you will receive". `what` already carries the
+   *  qualifier, so a surface that ignores this flag still never promises. */
+  provisional?: boolean;
 }
 
 export function useClaimPayoutText(loan: ClaimableLoan): ClaimPayoutText;
@@ -52,6 +57,7 @@ export function useClaimPayoutText(
   //     is honest → shown qualitatively, never as a number.
   const claimAssetMeta = useTokenMeta(loan?.claim.asset ?? undefined);
   const surplusMeta = useTokenMeta(loan?.claim.surplus?.asset);
+  const extraMeta = useTokenMeta(loan?.claim.extraCollateral?.asset);
   if (!loan) return null;
   const baseAmountStr =
     loan.claim.amount > 0n && claimAssetMeta.data
@@ -84,9 +90,9 @@ export function useClaimPayoutText(
 
   let what: string;
   let why: string;
-  /** Optional one-line comparison (UX3-005); only the defaulted-lender
-   *  branch sets it today. */
+  /** Optional one-line comparison or caveat beside the payout. */
   let note: string | undefined;
+  let provisional = false;
   if (isRental) {
     const nft = `NFT ${shortAddress(loan.lendingAsset)} #${loan.tokenId}`;
     if (loan.role === 'lender') {
@@ -124,12 +130,20 @@ export function useClaimPayoutText(
       // records only that slice (the rest goes to treasury and borrower).
       // The gross collateral is the answer only when the claim names no
       // amount at all.
-      what = baseAmountStr
-        ? copy.claims.row.collateralLabel(baseAmountStr)
-        : amountPending
-          ? copy.claims.row.amountLoading
-          : copy.claims.row.collateralLabel(collateralStr);
+      what = copy.claims.row.provisionalAmount(
+        baseAmountStr
+          ? copy.claims.row.collateralLabel(baseAmountStr)
+          : amountPending
+            ? copy.claims.row.amountLoading
+            : copy.claims.row.collateralLabel(collateralStr),
+      );
       why = copy.claims.row.whyFallbackPending;
+      // #2373 r3 (P1) — `claimAsLender` first attempts an internal match
+      // (the app sends no retry-swap quotes, so that is the only rewrite it
+      // can trigger), and a full or partial match pays the loan asset
+      // instead. What is recorded now is therefore not a promise.
+      note = copy.claims.row.fallbackMayChange;
+      provisional = true;
     } else {
       // Liquid-collateral defaults settle by swap (proceeds in the
       // loan asset); in-kind paths hand over the collateral itself.
@@ -160,41 +174,106 @@ export function useClaimPayoutText(
         labels: copy.claims.row,
       });
     }
-  } else if (defaulted) {
-    // After a liquidation only a residue (if any) is claimable — never
-    // promise the full original collateral, and never say "you repaid".
-    what = baseAmountStr
-      ? copy.claims.row.amountWithSuffix(baseAmountStr, rebateStr ? ` + ${rebateStr}` : '')
-      : (rebateStr ?? copy.claims.row.surplusAfterLiquidation);
-    why = copy.claims.row.whyDefaultBorrower;
-  } else if (loan.status === 'internal_matched') {
-    // An internal match leaves the borrower a residual and/or VPFI
-    // rebate at most — never promise the full collateral back.
-    what = baseAmountStr
-      ? copy.claims.row.amountWithSuffix(baseAmountStr, rebateStr ? ` + ${rebateStr}` : '')
-      : (rebateStr ?? copy.claims.row.residualAfterMatch);
-    why = copy.claims.row.whyInternalMatchBorrower;
   } else {
-    what = baseAmountStr
-      ? copy.claims.row.collateralBackWithAmount(baseAmountStr, rebateStr ? ` + ${rebateStr}` : '')
-      : (rebateStr ?? copy.claims.row.collateralBack(collateralStr));
-    why = copy.claims.row.whyRepaidBorrower;
+    // The borrower's claim: every lane the transaction pays (#2373 r3).
+    what = borrowerPayoutWhat({
+      status: loan.status,
+      base: baseAmountStr,
+      amountPending,
+      returnedNft:
+        loan.collateralAssetType !== AssetType.ERC20 && loan.status === 'repaid'
+          ? `NFT ${shortAddress(loan.collateralAsset)} #${loan.collateralTokenId}`
+          : null,
+      rebate: rebateStr,
+      // The frozen swap-to-repay surplus.
+      surplus: loan.claim.surplus
+        ? surplusMeta.data
+          ? `${formatTokenAmount(loan.claim.surplus.amount, surplusMeta.data.decimals)} ${surplusMeta.data.symbol}`
+          : 'pending'
+        : null,
+      // Collateral still liened in a different asset from the claim row.
+      extraCollateral: loan.claim.extraCollateral
+        ? extraMeta.data
+          ? `${formatTokenAmount(loan.claim.extraCollateral.amount, extraMeta.data.decimals)} ${extraMeta.data.symbol}`
+          : 'pending'
+        : null,
+      collateral: collateralStr,
+      labels: copy.claims.row,
+    });
+    why = defaulted
+      ? copy.claims.row.whyDefaultBorrower
+      : loan.status === 'internal_matched'
+        ? copy.claims.row.whyInternalMatchBorrower
+        : copy.claims.row.whyRepaidBorrower;
   }
 
-  // #2373 r2 — the borrower's frozen swap-to-repay surplus is a separate
-  // lane the same claim pays. State it beside the rest, or on its own when
-  // it is the whole claim; while its symbol loads, say a surplus exists
-  // rather than leaving it out.
-  if (loan.role === 'borrower' && loan.claim.surplus) {
-    const surplusText = surplusMeta.data
-      ? copy.claims.row.swapSurplus(
-          `${formatTokenAmount(loan.claim.surplus.amount, surplusMeta.data.decimals)} ${surplusMeta.data.symbol}`,
-        )
-      : copy.claims.row.swapSurplusPending;
-    what = loan.claim.amount > 0n || loan.claim.lifRebate > 0n ? `${what} + ${surplusText}` : surplusText;
-  }
+  return { what, why, note, provisional };
+}
 
-  return { what, why, note };
+/** The borrower's payout as ONE list of lanes (#2373 r3 root fix). Pure,
+ *  so the rule is tested rather than read. Every lane the claim transaction
+ *  pays contributes a part; a lane whose token details are still loading
+ *  (`'pending'`, or `amountPending` for the base) contributes a loading
+ *  part rather than vanishing. The per-status branches this replaced each
+ *  re-decided which lanes to show, and each review round found another lane
+ *  one of them dropped. */
+export function borrowerPayoutWhat(args: {
+  status: ClaimableLoan['status'];
+  /** The claim row's formatted amount, when it has one and it loaded. */
+  base: string | null;
+  /** The claim row has an amount whose token details have not loaded. */
+  amountPending: boolean;
+  /** An NFT handed back with no fungible amount (a repaid NFT-collateral
+   *  loan) — a lane in its own right, never one a rebate may stand in for. */
+  returnedNft: string | null;
+  rebate: string | null;
+  surplus: string | 'pending' | null;
+  extraCollateral: string | 'pending' | null;
+  /** Describes the collateral when no lane names an amount. */
+  collateral: string;
+  labels: Pick<
+    typeof copy.claims.row,
+    | 'collateralBackWithAmount'
+    | 'collateralBack'
+    | 'amountLoading'
+    | 'swapSurplus'
+    | 'swapSurplusPending'
+    | 'extraCollateral'
+    | 'extraCollateralPending'
+    | 'surplusAfterLiquidation'
+    | 'residualAfterMatch'
+  >;
+}): string {
+  const { labels } = args;
+  const lanes: string[] = [];
+  if (args.base) {
+    lanes.push(args.status === 'repaid' ? labels.collateralBackWithAmount(args.base, '') : args.base);
+  } else if (args.amountPending) {
+    lanes.push(labels.amountLoading);
+  } else if (args.returnedNft) {
+    lanes.push(labels.collateralBack(args.returnedNft));
+  }
+  if (args.rebate) lanes.push(args.rebate);
+  if (args.surplus) {
+    lanes.push(args.surplus === 'pending' ? labels.swapSurplusPending : labels.swapSurplus(args.surplus));
+  }
+  if (args.extraCollateral) {
+    lanes.push(
+      args.extraCollateral === 'pending'
+        ? labels.extraCollateralPending
+        : labels.extraCollateral(args.extraCollateral),
+    );
+  }
+  if (lanes.length > 0) return capitalizeFirst(lanes.join(' + '));
+  if (args.status === 'defaulted' || args.status === 'liquidated') return labels.surplusAfterLiquidation;
+  if (args.status === 'internal_matched') return labels.residualAfterMatch;
+  return labels.collateralBack(args.collateral);
+}
+
+/** Upper-case the first character, so a list whose first lane is written
+ *  as a continuation ("an amount left over…") still opens a sentence. */
+function capitalizeFirst(text: string): string {
+  return text.length > 0 ? text.charAt(0).toLocaleUpperCase() + text.slice(1) : text;
 }
 
 /** The line beside a defaulted lender claim (UX3-005, revised #2373 r1).

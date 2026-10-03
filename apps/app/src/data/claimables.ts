@@ -96,6 +96,14 @@ export interface ClaimDetail {
    *  ordinary claim (`getBorrowerSurplusClaim`). Null when there is none,
    *  it was already claimed, or this is the lender side. */
   surplus: { asset: string; amount: bigint } | null;
+  /** #2373 r3 — collateral still held for the borrower in a DIFFERENT asset
+   *  from the claim row (a fallback top-up that did not cure, followed by a
+   *  successful lender retry: the row holds the loan-asset surplus while the
+   *  top-up stays liened). `claimAsBorrower` pays it as a second transfer
+   *  (`getLoanCollateralLien`). Null when there is none, or on the lender
+   *  side. It never makes a claim actionable by itself — the contract's
+   *  NothingToClaim guard does not count it. */
+  extraCollateral: { asset: string; amount: bigint } | null;
 }
 
 export interface ClaimableLoan extends PositionLoan {
@@ -205,6 +213,33 @@ export async function probeClaim(
       }
     }
 
+    // #2373 r3 — the liened collateral the claim row cannot carry because it
+    // is a different asset. Mirrors ClaimFacet: paid when the lien is live,
+    // non-zero, and not the claim row's own asset.
+    let extraCollateral: { asset: string; amount: bigint } | null = null;
+    if (!isLender) {
+      try {
+        const lien = (await publicClient.readContract({
+          address: diamond,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'getLoanCollateralLien',
+          args: [BigInt(loan.loanId)],
+        })) as { asset: string; amount: bigint; released: boolean };
+        if (
+          !lien.released &&
+          lien.amount > 0n &&
+          typeof claimAsset === 'string' &&
+          lien.asset.toLowerCase() !== claimAsset.toLowerCase()
+        ) {
+          extraCollateral = { asset: lien.asset, amount: lien.amount };
+        }
+      } catch (e) {
+        // A deployment without the view reverts → no such lane there; a
+        // transport error is a real "couldn't confirm".
+        if (!isRevert(e)) return UNCONFIRMED;
+      }
+    }
+
     // Mirror ClaimFacet's actionability guard.
     const actionable =
       amount > 0n ||
@@ -227,6 +262,7 @@ export async function probeClaim(
             hasRentalNftReturn,
             lifRebate,
             surplus,
+            extraCollateral,
           },
         })
       : NONE;

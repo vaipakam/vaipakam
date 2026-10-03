@@ -1272,6 +1272,7 @@
           "partialRepaid": "Partial repayment confirmed — अब आप कम owe करते हैं।"
         },
         "youWillReceive": "आपको मिलेगा: {{payout}}",
+        "recordedForYou": "आपके लिए दर्ज: {{payout}}",
         "youWillReceiveChecking": "आपको मिलेगा: सही राशि जाँची जा रही है…",
         "nothingWaiting": "अभी इस तरफ़ claim करने के लिए कुछ बाकी नहीं है — हो सकता है यह पहले ही ले लिया गया हो।",
         "payoutUnconfirmed": "अभी हम सही राशि की पुष्टि नहीं कर सके। claim करने पर फिर भी वह राशि मिलती है जो यह loan on-chain आपको देना है।",
@@ -1422,6 +1423,10 @@
         "amountLoading": "एक राशि (विवरण लोड हो रहा है…)",
         "swapSurplus": "loan चुकाने वाले swap से बचे {{amount}}",
         "swapSurplusPending": "loan चुकाने वाले swap से बची एक राशि (विवरण लोड हो रहा है…)",
+        "extraCollateral": "{{amount}} जोड़ा गया कोलैटरल",
+        "extraCollateralPending": "जोड़ा गया कोलैटरल (विवरण लोड हो रहे हैं…)",
+        "provisionalAmount": "{{payout}} (क्लेम करते समय बदल सकता है)",
+        "fallbackMayChange": "यह वह है जो अभी आपके लिए दर्ज है। क्लेम करते समय प्लेटफ़ॉर्म पहले इस लोन को किसी दूसरे खुले लोन से मिलाने की कोशिश करता है। मेल मिलने पर आपको इसके पूरे या कुछ हिस्से के बदले लोन वाला एसेट मिलता है, इसलिए अंतिम भुगतान अलग हो सकता है।",
         "recoveredFromDefault": "Default से {{amount}}{{held}} recovered",
         "defaultRecovery": "Default recovery — {{collateral}}",
         "collateralBack": "{{collateral}} collateral वापस",

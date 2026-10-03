@@ -45,6 +45,9 @@ const borrowerLoan = {
 
 // getClaimable with nothing on the ordinary lane.
 const emptyClaimable = [ZERO, 0n, false, 0n, 0n, 0n, 0n, false];
+// getLoanCollateralLien with no live lien.
+const noLien = { asset: ZERO, amount: 0n, released: true };
+const WETH = '0x00000000000000000000000000000000000000e1';
 
 describe('probeClaim — the borrower surplus lane', () => {
   it('lists a claim that consists ONLY of a frozen swap-to-repay surplus', async () => {
@@ -54,6 +57,7 @@ describe('probeClaim — the borrower surplus lane', () => {
         getClaimable: emptyClaimable,
         getBorrowerLifRebate: [0n, 0n],
         getBorrowerSurplusClaim: [USDC, 5_000_000n, false],
+        getLoanCollateralLien: noLien,
       }),
       DIAMOND,
       ME,
@@ -70,6 +74,7 @@ describe('probeClaim — the borrower surplus lane', () => {
         getClaimable: emptyClaimable,
         getBorrowerLifRebate: [0n, 0n],
         getBorrowerSurplusClaim: [USDC, 5_000_000n, true],
+        getLoanCollateralLien: noLien,
       }),
       DIAMOND,
       ME,
@@ -87,6 +92,7 @@ describe('probeClaim — the borrower surplus lane', () => {
         getBorrowerSurplusClaim: () => {
           throw revert();
         },
+        getLoanCollateralLien: noLien,
       }),
       DIAMOND,
       ME,
@@ -120,6 +126,78 @@ describe('probeClaim — the borrower surplus lane', () => {
       { ...borrowerLoan, role: 'lender' } as PositionLoan,
     );
     expect(r.kind === 'claimable' && r.loan.claim.surplus).toBeNull();
+  });
+});
+
+describe('probeClaim — the extra liened-collateral lane (#2373 r3)', () => {
+  const base = {
+    ownerOf: ME,
+    // The claim row carries a loan-asset surplus…
+    getClaimable: [USDC, 7_000_000n, false, 0n, 0n, 0n, 0n, false],
+    getBorrowerLifRebate: [0n, 0n],
+    getBorrowerSurplusClaim: [ZERO, 0n, false],
+  };
+
+  it('carries a live lien in a different asset as a second payout', async () => {
+    const r = await probeClaim(
+      client({ ...base, getLoanCollateralLien: { asset: WETH, amount: 3n, released: false } }),
+      DIAMOND,
+      ME,
+      borrowerLoan,
+    );
+    expect(r.kind === 'claimable' && r.loan.claim.extraCollateral).toEqual({ asset: WETH, amount: 3n });
+  });
+
+  it('does not double-count a lien that IS the claim row asset', async () => {
+    const r = await probeClaim(
+      client({
+        ...base,
+        getLoanCollateralLien: { asset: USDC.toUpperCase().replace('0X', '0x'), amount: 3n, released: false },
+      }),
+      DIAMOND,
+      ME,
+      borrowerLoan,
+    );
+    expect(r.kind === 'claimable' && r.loan.claim.extraCollateral).toBeNull();
+  });
+
+  it('ignores a released lien', async () => {
+    const r = await probeClaim(
+      client({ ...base, getLoanCollateralLien: { asset: WETH, amount: 3n, released: true } }),
+      DIAMOND,
+      ME,
+      borrowerLoan,
+    );
+    expect(r.kind === 'claimable' && r.loan.claim.extraCollateral).toBeNull();
+  });
+
+  it('never makes an otherwise-empty claim actionable (the contract does not count it)', async () => {
+    const r = await probeClaim(
+      client({
+        ...base,
+        getClaimable: emptyClaimable,
+        getLoanCollateralLien: { asset: WETH, amount: 3n, released: false },
+      }),
+      DIAMOND,
+      ME,
+      borrowerLoan,
+    );
+    expect(r.kind).toBe('none');
+  });
+
+  it('reports a transport failure on the lien read as unconfirmed', async () => {
+    const r = await probeClaim(
+      client({
+        ...base,
+        getLoanCollateralLien: () => {
+          throw new Error('fetch failed');
+        },
+      }),
+      DIAMOND,
+      ME,
+      borrowerLoan,
+    );
+    expect(r.kind).toBe('unconfirmed');
   });
 });
 

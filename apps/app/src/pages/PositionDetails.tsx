@@ -31,7 +31,6 @@ import { isPositiveDecimal, captureTxError } from '../lib/errors';
 import { useLoan } from '../data/hooks';
 import { FEE_MODE_FULL, FEE_MODE_HOLD_ONLY, useFeeEntitlement } from '../data/tariff';
 import { VPFI_DECIMALS } from '../data/vpfi';
-import { isRevert } from '../data/liveLoanRow';
 import { useLoanRisk, healthView } from '../data/risk';
 import { formatRemaining, useGraceSeconds } from '../data/grace';
 import { assertWalletNotSanctionedLive, useSanctionsCheck } from '../data/sanctions';
@@ -77,7 +76,7 @@ import {
   type ForcedCloseInput,
 } from '../data/forcedClose';
 import { useForcedCloseReads } from '../data/useForcedClose';
-import { useLoanClaim } from '../data/claimables';
+import { probeClaim, useLoanClaim } from '../data/claimables';
 import { useClaimPayoutText } from '../data/useClaimPayout';
 import { ObligationTransferFlow } from '../components/ObligationTransferFlow';
 import { OffsetFlow } from '../components/OffsetFlow';
@@ -1939,61 +1938,26 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           address,
         );
         // Entitlement preflight: claimAsBorrower reverts NothingToClaim
-        // when the record is empty — a real case for a fully-covered
-        // internal match (only a residual/rebate is borrower-claimable)
-        // and a zero-surplus liquidation. Fail with plain copy instead
-        // of a doomed wallet prompt. Best-effort: a failed READ falls
-        // through to the write (the wallet estimate still guards).
-        try {
-          const [res, rebate] = await Promise.all([
-            publicClient.readContract({
-              address: walletChain.diamondAddress,
-              abi: DIAMOND_ABI_VIEM,
-              functionName: 'getClaimable',
-              args: [BigInt(row.loanId), false],
-            }) as Promise<{
-              amount?: bigint;
-              claimed?: boolean;
-              assetType?: bigint;
-              1?: bigint;
-              2?: boolean;
-              3?: bigint;
-            }>,
-            publicClient
-              .readContract({
-                address: walletChain.diamondAddress,
-                abi: DIAMOND_ABI_VIEM,
-                functionName: 'getBorrowerLifRebate',
-                args: [BigInt(row.loanId)],
-              })
-              .then(
-                (r) =>
-                  (Array.isArray(r)
-                    ? ((r as readonly bigint[])[0] ?? 0n)
-                    : ((r as { rebateAmount?: bigint }).rebateAmount ?? 0n)),
-                (e) => {
-                  // Old ABI without the Phase-5 view REVERTS → truly no
-                  // rebate. A TRANSPORT failure must NOT read as zero —
-                  // that would falsely block a rebate-only claim — so
-                  // rethrow to the outer catch, which falls through to
-                  // the write (whose own estimate still guards).
-                  if (isRevert(e)) return 0n;
-                  throw e;
-                },
-              ),
-          ]);
-          const amount = res.amount ?? res[1] ?? 0n;
-          const alreadyClaimed = res.claimed ?? res[2] ?? false;
-          const assetType = Number(res.assetType ?? res[3] ?? 0n);
-          const actionable =
-            amount > 0n || assetType !== AssetType.ERC20 || rebate > 0n;
-          if (alreadyClaimed || !actionable) {
+        // when every lane is empty — a real case for a fully-covered
+        // internal match and a zero-surplus liquidation. Fail with plain
+        // copy instead of a doomed wallet prompt.
+        // #2373 r3 (P1) — through `probeClaim`, the SAME probe that decides
+        // whether the claim is listed and what it pays. A second, narrower
+        // copy of the actionability rule here missed the swap-surplus lane
+        // and refused a surplus-only claim the contract accepts. A probe
+        // that could not confirm falls through to the write (the wallet
+        // estimate still guards).
+        {
+          const probe = await probeClaim(
+            publicClient,
+            walletChain.diamondAddress,
+            address.toLowerCase(),
+            { ...row, role: 'borrower' },
+          );
+          if (probe.kind === 'none') {
             setError(copy.errors.nothingToClaim);
             return;
           }
-        } catch {
-          // Read failed (transport) — proceed; the write path's own
-          // estimate surfaces any revert.
         }
         setPhase('submitting');
         await write('claimAsBorrower', [BigInt(row.loanId)]);
@@ -4471,13 +4435,23 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                   </span>
                 </div>
               ) : null}
+              {action !== 'repay' && claimPayoutText?.provisional && claimPayoutText.note ? (
+                // #2373 r3 — a payout the claim itself can change (the
+                // fallback claim tries an internal match first) is said
+                // again at the moment of signing, not only on the page.
+                <div className="banner banner-warn" role="status" style={{ marginBottom: 12 }}>
+                  <span className="banner-body">{claimPayoutText.note}</span>
+                </div>
+              ) : null}
             </ConfirmReceipt>
           </section>
         ) : (
           <>
           {claimPayoutState === 'ready' && claimPayoutText ? (
             <p className="claim-payout" id="claim-payout">
-              {copy.positions.details.youWillReceive(claimPayoutText.what)}
+              {claimPayoutText.provisional
+                ? copy.positions.details.recordedForYou(claimPayoutText.what)
+                : copy.positions.details.youWillReceive(claimPayoutText.what)}
               {claimPayoutText.note ? (
                 <span className="claim-payout-note">{claimPayoutText.note}</span>
               ) : null}

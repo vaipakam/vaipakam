@@ -1272,6 +1272,7 @@
           "partialRepaid": "Teilrückzahlung bestätigt — Sie schulden jetzt weniger."
         },
         "youWillReceive": "Sie erhalten: {{payout}}",
+        "recordedForYou": "Für dich erfasst: {{payout}}",
         "youWillReceiveChecking": "Sie erhalten: genauer Betrag wird geprüft…",
         "nothingWaiting": "Auf dieser Seite wartet gerade nichts darauf, abgeholt zu werden – es wurde möglicherweise schon abgeholt.",
         "payoutUnconfirmed": "Wir konnten den genauen Betrag gerade nicht bestätigen. Das Abholen zahlt trotzdem aus, was Ihnen dieser Kredit on-chain schuldet.",
@@ -1422,6 +1423,10 @@
         "amountLoading": "Ein Betrag (Details werden geladen…)",
         "swapSurplus": "{{amount}} übrig aus dem Tausch, der den Kredit getilgt hat",
         "swapSurplusPending": "ein Betrag übrig aus dem Tausch, der den Kredit getilgt hat (Details werden geladen…)",
+        "extraCollateral": "{{amount}} hinzugefügte Sicherheit",
+        "extraCollateralPending": "hinzugefügte Sicherheit (Details werden geladen…)",
+        "provisionalAmount": "{{payout}} (kann sich beim Abholen ändern)",
+        "fallbackMayChange": "Das ist der Stand, der gerade für dich erfasst ist. Beim Abholen versucht die Plattform zuerst, diesen Kredit mit einem anderen offenen Kredit abzugleichen. Findet sie einen Treffer, erhältst du stattdessen den Vermögenswert des Kredits – für alles oder einen Teil davon –, daher kann die endgültige Auszahlung abweichen.",
         "recoveredFromDefault": "{{amount}}{{held}} aus dem Ausfall zurückgewonnen",
         "defaultRecovery": "Rückgewinnung nach Ausfall — {{collateral}}",
         "collateralBack": "{{collateral}} Sicherheit zurück",
