@@ -291,15 +291,18 @@ cast call $VENUE "tokenUsdPrice8(address)(uint256)" $ASSET --rpc-url $BASE_SEPOL
 reports, without refusing, the venue state it does not write:
 
 - the venue's execution settings;
-- the venue's price for every other faucet asset, compared with the oracle's;
+- the venue's price for every other liquid faucet asset (tLIQ, mUSDC, mWETH,
+  WETH), compared with the oracle's;
 - any OTHER enabled swap adapter on the Diamond. A liquidation may route
   through it, and its settlement is not inspected.
 
 Each deviation is printed as a `WARNING` line, because these decide what a
-liquidation against the repriced asset actually pays. Two things it does not
-inspect:
+liquidation against the repriced asset actually pays. Three things it does
+not inspect:
 
 - the venue's output-token float: a liquidation larger than the float fails;
+- the illiquid faucet tokens (tILQ, tILQ2): a liquidation transfers them in
+  kind rather than swapping them, and they carry no oracle price;
 - the venue's price for a token outside the faucet set: its owner may have
   set one, or there may be none (a 1:1 base, before the venue's output
   multiplier). The run does not inspect it.

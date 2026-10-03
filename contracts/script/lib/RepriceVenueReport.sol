@@ -175,8 +175,13 @@ contract RepriceVenueReport {
             }
             return "";
         } catch {
+            // A revert does not say why — a stale feed, a secondary-source
+            // disagreement or a missing feed all look the same here — so the
+            // cause is left unknown rather than guessed.
             return string.concat(
-                "oracle has no price for ", Strings.toChecksumHexString(asset), ": its venue price is not compared"
+                "oracle price read failed for ",
+                Strings.toChecksumHexString(asset),
+                " (cause unknown): its venue price is not compared"
             );
         }
     }

@@ -234,7 +234,7 @@ contract RepriceTestnetMock is Script {
             }
         }
         console.log(
-            "Not checked: the venue's output-token float, and its price for any token outside the faucet set. A liquidation can still fail on a short float; an outside token may carry a venue price its owner set, or none (a 1:1 base before the multiplier), and this run does not inspect it."
+            "Not checked: the venue's output-token float; its price for any token outside the liquid faucet set; and the illiquid faucet tokens (tILQ, tILQ2), which a liquidation transfers in kind rather than swaps. A liquidation can still fail on a short float; an uninspected token may carry a venue price its owner set, or none (a 1:1 base before the multiplier)."
         );
     }
 
@@ -340,7 +340,12 @@ contract RepriceTestnetMock is Script {
     }
 
     /// @notice The faucet assets the venue is expected to price: the two
-    ///         liquid tokens, mWETH where recorded, and the WETH quote.
+    ///         liquid tokens, mWETH where recorded, and the WETH quote. The
+    ///         illiquid faucet tokens are left out on purpose — a liquidation
+    ///         transfers illiquid collateral in kind instead of swapping it,
+    ///         and they carry neither an oracle nor a venue price, so they
+    ///         would only add a constant pair of warnings. `run()` names them
+    ///         as not inspected instead.
     function _faucetPricedAssets(RepriceTarget memory t) internal view returns (address[] memory assets) {
         address[4] memory found = [
             _optional(".testnetMocks.liquidToken"),
@@ -367,8 +372,15 @@ contract RepriceTestnetMock is Script {
     ///         an obsolete feed. So, in simulation only: snapshot, move the
     ///         recorded feed to a different price as its owner, require the
     ///         Diamond's price to follow, revert. Same shape as the pool probe.
+    ///
+    ///         The move is ~1 bp (plus one unit, so it is never zero): large
+    ///         enough to be seen exactly, small enough to stay inside the
+    ///         oracle's secondary-source agreement band, so a configured
+    ///         Tellor/API3/DIA source that agrees with the target does not
+    ///         make the probe revert on a divergence the real move would not
+    ///         have. (A doubled price did.)
     function _requireRecordedFeedIsWhatTheDiamondReads(RepriceTarget memory t, uint256 newPrice8) internal {
-        uint256 probe8 = newPrice8 * 2;
+        uint256 probe8 = newPrice8 + newPrice8 / 10_000 + 1;
         uint256 snap = vm.snapshotState();
         vm.prank(MockChainlinkFeed(t.feed).owner());
         MockChainlinkFeed(t.feed).setPrice(SafeCast.toInt256(probe8));
