@@ -497,7 +497,7 @@ test('gasless loop: maker posts a signed order with ONE signature (no transactio
   // and "100" holds whatever the mock's decimals are — the seeded
   // base-unit amount used the same runtime `decimals()`.
   await expect(confirm).toContainText(
-    `You lock 100 ${symbol} as collateral and receive the loan principal.`,
+    `You lock 100 ${symbol} as collateral and receive the loan amount.`,
     { timeout: 30_000 },
   );
   const baseline = await newestBorrowerLoanOrZero(borrowerAddr);
