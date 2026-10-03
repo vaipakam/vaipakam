@@ -274,7 +274,7 @@ export async function openMarketViaCustomPair(
  *  expiry chips reuse the '7d' label. */
 export async function selectTenor(page: Page, days: number): Promise<void> {
   await page
-    .getByRole('group', { name: 'Term' })
+    .getByRole('group', { name: 'Loan length' })
     .getByRole('button', { name: `${days}d`, exact: true })
     .click();
 }

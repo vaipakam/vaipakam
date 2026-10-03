@@ -32,6 +32,7 @@ import { useActiveChain } from '../chain/useActiveChain';
 import { useMode } from '../app/ModeContext';
 import { EmptyState, UnavailableState } from '../components/EmptyState';
 import { MarketFreshnessNote } from '../components/MarketFreshnessNote';
+import { offerCollateralText } from '../lib/offerCollateral';
 import { useTokenMeta } from '../contracts/erc20';
 import {
   OfferRiskBadge,
@@ -84,7 +85,11 @@ function OfferRow({ offer, risk }: { offer: IndexedOffer; risk: RiskLevel | null
   const hasCollateral =
     offer.collateralAsset.toLowerCase() !==
     '0x0000000000000000000000000000000000000000';
-  const collateralMeta = useTokenMeta(hasCollateral ? offer.collateralAsset : undefined);
+  // ERC-20 details only: an NFT has no decimals, and asking would only
+  // produce a failed read (#2378 r1).
+  const collateralMeta = useTokenMeta(
+    hasCollateral && offer.collateralAssetType === AssetType.ERC20 ? offer.collateralAsset : undefined,
+  );
 
   const notMine =
     !address || offer.creator.toLowerCase() !== address.toLowerCase();
@@ -96,6 +101,15 @@ function OfferRow({ offer, risk }: { offer: IndexedOffer; risk: RiskLevel | null
     (isRentalListing ||
       (offer.assetType === AssetType.ERC20 &&
         offer.collateralAssetType === AssetType.ERC20));
+  // #2378 r6 — why someone else's row has no button. Only for other
+  // people's offers: your own row is not takeable by you, which needs
+  // no explanation.
+  const notTakeableReason =
+    !notMine || acceptable
+      ? null
+      : BigInt(offer.amountFilled || '0') !== 0n
+        ? copy.offers.notTakeablePartial
+        : copy.offers.notTakeableNft;
   // Offer ids are PER-CHAIN — a link without the chain can resolve to
   // a different offer with the same id on another network. The deep-
   // link consumers refuse to select when this doesn't match the
@@ -131,9 +145,49 @@ function OfferRow({ offer, risk }: { offer: IndexedOffer; risk: RiskLevel | null
     : `${formatBpsAsPercent(
         isLending ? offer.interestRateBps : offer.interestRateBpsMax,
       )} ${copy.offers.yearly} · ${formatDurationDays(offer.durationDays)} · ${copy.offers.collateralLabel} ${
-        hasCollateral
-          ? (collateralMeta.data?.symbol ?? shortAddress(offer.collateralAsset))
+        offer.isSaleVehicle
+          ? // #2378 r4 — a sale vehicle's own row carries zero collateral by
+            // design: the collateral stays with the running loan being sold.
+            copy.offers.collateralOfRunningLoan
+          : hasCollateral
+          ? // UX3-007 — the AMOUNT, not just the symbol: for a lender
+            // pressing "Fund this request" it is the deciding number. The
+            // same figure the guided flow's match rows and review show.
+            // #2378 r1 — an NFT is named by token id / quantity, and an
+            // ERC-20 whose details are loading or failed says so, instead
+            // of falling back to a bare contract address.
+            offerCollateralText({
+              assetType: offer.collateralAssetType,
+              asset: offer.collateralAsset,
+              amount: offer.collateralAmount,
+              tokenId: offer.collateralTokenId,
+              quantity: offer.collateralQuantity,
+              meta: collateralMeta.data,
+              metaFailed: collateralMeta.isError,
+              // A borrower offer's indexed collateral is its committed floor.
+              floorOnly: !isLending,
+              // #2378 r8 — a lender offer's figure is its full-amount
+              // requirement; say so where it can be taken in part.
+              scalesWithAmount:
+                isLending &&
+                (BigInt(offer.amountMax || '0') > BigInt(offer.amount || '0') ||
+                  BigInt(offer.amountFilled || '0') > 0n),
+              labels: {
+                amountLoading: copy.offers.collateralAmountLoading,
+                amountRaw: copy.offers.collateralAmountRaw,
+                atLeast: copy.offers.collateralAtLeast,
+                forFullOffer: copy.offers.collateralForFullOffer,
+              },
+            })
           : copy.offers.collateralNone
+      }${
+        // UX3-007 — say so when the collateral is illiquid: on default it is
+        // handed over as-is rather than sold. Only on a POSITIVE flag — a
+        // signed off-chain row carries 0 for "not assessed", so absence is
+        // never presented as "liquid". The guided review re-checks live.
+        !offer.isSaleVehicle && hasCollateral && offer.collateralLiquidity === 1
+          ? ` · ${copy.offers.illiquidCollateralTag}`
+          : ''
       }`;
 
   // Advanced detail line: the exact numbers a DEX-versed user expects
@@ -186,6 +240,12 @@ function OfferRow({ offer, risk }: { offer: IndexedOffer; risk: RiskLevel | null
         <span className="row-sub">
           {sub} · {copy.offers.byCreator} <AddressName address={offer.creator} />
         </span>
+        {notTakeableReason ? (
+          <>
+            <br />
+            <span className="row-sub muted">{notTakeableReason}</span>
+          </>
+        ) : null}
         {isAdvanced && advancedBits.length > 0 ? (
           <>
             <br />
@@ -229,8 +289,11 @@ export function Offers() {
 
   // Basic mode ignores the power controls entirely (they aren't
   // rendered), so switching back to Basic restores the plain list.
-  const activeSide: SideFilter = isAdvanced ? side : 'all';
-  const activeSort: SortKey = isAdvanced ? sort : 'newest';
+  // Naive-user redesign — "Show" and "Sort by" are plain choices anyone
+  // can use, so they apply in Basic mode too. The raw asset-ADDRESS filter
+  // stays an Advanced tool.
+  const activeSide: SideFilter = side;
+  const activeSort: SortKey = sort;
   const activeAssetFilter = isAdvanced ? assetFilter.trim().toLowerCase() : '';
 
   const visible = useMemo(() => {
@@ -314,12 +377,11 @@ export function Offers() {
       <p className="page-lede">{copy.offers.lede}</p>
 
       {/* UX-026 — orient Basic-mode visitors landing here by URL. */}
-      <PowerSurfaceNote />
+      <PowerSurfaceNote body={copy.powerSurface.bodyOffers} />
 
       <MarketFreshnessNote />
 
-      {isAdvanced ? (
-        <div className="card" style={{ marginBottom: 16 }}>
+      <div className="card" style={{ marginBottom: 16 }}>
           <div className="cluster" style={{ flexWrap: 'wrap', gap: 12 }}>
             <div className="field" style={{ margin: 0 }}>
               <label htmlFor="book-side">{copy.offers.filters.showLabel}</label>
@@ -350,21 +412,22 @@ export function Offers() {
                 ]}
               />
             </div>
-            <div className="field" style={{ margin: 0, flex: 1, minWidth: 220 }}>
-              <label htmlFor="book-asset">{copy.offers.filters.assetLabel}</label>
-              <input
-                id="book-asset"
-                className="input"
-                placeholder={copy.offers.filters.assetPlaceholder}
-                value={assetFilter}
-                onChange={(e) => setAssetFilter(e.target.value)}
-                spellCheck={false}
-                autoComplete="off"
-              />
-            </div>
+            {isAdvanced ? (
+              <div className="field" style={{ margin: 0, flex: 1, minWidth: 220 }}>
+                <label htmlFor="book-asset">{copy.offers.filters.assetLabel}</label>
+                <input
+                  id="book-asset"
+                  className="input"
+                  placeholder={copy.offers.filters.assetPlaceholder}
+                  value={assetFilter}
+                  onChange={(e) => setAssetFilter(e.target.value)}
+                  spellCheck={false}
+                  autoComplete="off"
+                />
+              </div>
+            ) : null}
           </div>
         </div>
-      ) : null}
 
       {offers.isLoading ? (
         <EmptyState icon={LoaderCircle} title={copy.offers.loading} />

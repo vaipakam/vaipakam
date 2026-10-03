@@ -154,9 +154,10 @@ export function Desk() {
     <div className="desk-container">
       <h1 className="page-title">{copy.desk.title}</h1>
       <p className="page-lede">{copy.desk.lede}</p>
+      <HowItWorks />
 
       {/* UX-026 — orient Basic-mode visitors landing here by URL. */}
-      <PowerSurfaceNote />
+      <PowerSurfaceNote body={copy.powerSurface.body} />
 
       <MarketFreshnessNote />
 
@@ -197,6 +198,7 @@ export function Desk() {
               decimals={lendingMeta.data?.decimals}
               symbol={lendingMeta.data?.symbol}
               quotedMidBps={ladder?.midBps ?? null}
+              midFromSavedCopy={book.data?.source === 'indexer'}
               // The whole tape, not just the newest fill (#1139): sparse
               // mode draws one marker per tape fill, and the empty-copy
               // split needs to know whether older fills exist at all.
@@ -300,5 +302,49 @@ export function Desk() {
         )}
       </div>
     </div>
+  );
+}
+
+const HOW_IT_WORKS_KEY = 'app.deskHowItWorksSeen';
+
+/** Naive-user redesign — what this page is and how to use it, in four
+ *  steps. Open on a first visit, collapsed on later ones (remembered per
+ *  browser; storage failure just means it opens again). Shown in both
+ *  modes: the desk is usable by anyone, not only by traders. */
+function HowItWorks() {
+  // #2378 r2 — controlled: the page re-renders on a timer, so the
+  // element's state must follow the user's toggle, not the initial read.
+  const [open, setOpen] = useState(() => {
+    try {
+      return localStorage.getItem(HOW_IT_WORKS_KEY) !== '1';
+    } catch {
+      return true;
+    }
+  });
+  const h = copy.desk.howItWorks;
+  return (
+    <details
+      className="card how-it-works"
+      open={open}
+      onToggle={(e) => {
+        const nowOpen = (e.currentTarget as HTMLDetailsElement).open;
+        setOpen(nowOpen);
+        if (!nowOpen) {
+          try {
+            localStorage.setItem(HOW_IT_WORKS_KEY, '1');
+          } catch {
+            /* non-fatal */
+          }
+        }
+      }}
+    >
+      <summary>{h.title}</summary>
+      <ol>
+        <li>{h.step1}</li>
+        <li>{h.step2}</li>
+        <li>{h.step3}</li>
+        <li>{h.step4}</li>
+      </ol>
+    </details>
   );
 }

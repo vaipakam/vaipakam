@@ -84,17 +84,17 @@ const copySource = {
     home: {
       title: 'Vaipakam — P2P lending, borrowing & NFT rental',
       description:
-        'Lend, borrow, and rent NFTs directly with other people. Set your own terms — your assets stay in your own on-chain vault, with no pool and no middleman.',
+        'Lend, borrow, and rent NFTs directly with other people. Set your own terms — your assets stay in your own vault on the blockchain, with no pool and no middleman.',
     },
     borrow: {
       title: 'Borrow assets — Vaipakam',
       description:
-        'Lock collateral you own and receive the tokens you need. Direct person-to-person loans on terms you choose, from your own on-chain vault.',
+        'Lock collateral you own and receive the tokens you need. Direct person-to-person loans on terms you choose, from your own vault on the blockchain.',
     },
     lend: {
       title: 'Earn by lending — Vaipakam',
       description:
-        'Offer your tokens to borrowers and earn interest if they repay. Your assets stay in your own on-chain vault until a borrower accepts your terms.',
+        'Offer your tokens to borrowers and earn interest if they repay. Your assets stay in your own vault on the blockchain until a borrower accepts your terms.',
     },
     rent: {
       title: 'NFT rental — Vaipakam',
@@ -163,7 +163,7 @@ const copySource = {
 
   home: {
     assetsNote:
-      'Your assets sit in your own on-chain vault — Vaipakam never pools or holds them for you.',
+      'Your assets sit in your own vault on the blockchain — Vaipakam never pools or holds them for you.',
     title: 'What would you like to do?',
     lede: 'Pick a job to get started. You can switch to Advanced mode any time in Settings.',
     // Migrated to tmpl (translatable interpolation). Call:
@@ -662,6 +662,9 @@ const copySource = {
     // the Link step to request a new one.
     startOver: 'Start over',
     linked: 'Telegram linked — alerts for this wallet go to your chat.',
+    // UX3-013 — the browser only knows links made from it.
+    notLinkedHere:
+      'Not linked from this browser. This wallet may still be linked on another device; this browser can’t check that. To stop alerts from a link made elsewhere, use “Unlink this wallet” below.',
     unlink: 'Unlink',
     // UX-043 — a clear labelled action, not an ambiguous centered link.
     unlinkElsewhereTitle: 'Linked this wallet on another device?',
@@ -1071,9 +1074,9 @@ const copySource = {
     interestModeFullTerm:
       'Interest is full-term: the whole term’s interest applies even if the loan is repaid early.',
     interestModeProRata:
-      'Interest accrues day by day — repaying early costs less.',
+      'Interest builds up day by day — repaying early costs less.',
     interestModeProRataLender:
-      'Interest accrues day by day — if the borrower repays early, you earn less.',
+      'Interest builds up day by day — if the borrower repays early, you earn less.',
     // Linked-loan offers (position sales, preclose offsets) settle or
     // transfer an already-running loan — the fresh-loan review above
     // does NOT describe their real terms (a sale vehicle shows 0
@@ -1100,12 +1103,12 @@ const copySource = {
     saleLoanNotActive:
       'The loan behind this listing is no longer active, so this purchase can’t complete. Nothing was sent or approved.',
     saleSellerNotCovered:
-      'The seller’s standing settlement approval no longer covers completing this sale, so the purchase would fail on-chain. Nothing was sent or approved — the seller needs to restore their approval (their listing card shows a restore action).',
+      'The seller’s standing settlement approval no longer covers completing this sale, so the purchase would fail on the blockchain. Nothing was sent or approved — the seller needs to restore their approval (their listing card shows a restore action).',
     saleMaturityPassed:
       'This loan has reached its due date — the position can no longer be bought. Nothing was sent or approved.',
     saleBought: 'Position bought',
     saleBuyerNext: tmpl(
-      `You\u2019re now the lender of loan #{{loanId}} \u2014 the loan keeps running unchanged for the borrower, and their repayment comes to you. Track it under My positions; when they repay you claim the principal and the remaining interest.`,
+      `You\u2019re now the lender of loan #{{loanId}} \u2014 the loan keeps running unchanged for the borrower, and their repayment comes to you. Track it under My positions; when they repay you claim the loan amount and the remaining interest.`,
       ['loanId'],
     ),
     saleSelfBuy:
@@ -1293,7 +1296,7 @@ const copySource = {
     fullTermNote:
       'This loan uses full-term interest, so closing early still pays the whole term’s interest.',
     proRataNote:
-      'This loan accrues interest day by day, so closing early pays only what has accrued.',
+      'Interest on this loan builds up day by day, so closing early pays only what has built up so far.',
     action: 'Close early',
     confirm: 'Confirm — pay and close now',
     done:
@@ -1328,10 +1331,10 @@ const copySource = {
     options: {
       repayFull: 'Repay in full',
       repayFullDesc:
-        'Pay everything owed now — principal plus interest — and the loan closes today. Your collateral is released for you to claim.',
+        'Pay everything owed now — the loan amount plus interest — and the loan closes today. Your collateral is released for you to claim.',
       repayPartial: 'Repay part of it',
       repayPartialDesc:
-        'Pay down some of the principal now. The loan stays open, but future interest is charged on the smaller balance. You also pay the interest built up so far in the same step, so the amount leaving your wallet is more than the paydown you type.',
+        'Pay back part of the loan amount now. The loan stays open, but future interest is charged on the smaller balance. You also pay the interest built up so far in the same step, so the amount leaving your wallet is more than the paydown you type.',
       repayPartialUnavailable:
         'Not offered on this loan — the lender didn’t enable partial repayments.',
       closeEarly: 'Close early (pay and settle now)',
@@ -1344,7 +1347,7 @@ const copySource = {
       closeEarlyCostFullTerm:
         'Costs the full agreed term’s interest even though you’re closing early — that’s this loan’s interest mode.',
       closeEarlyCostProRata:
-        'This loan accrues day by day, so closing now pays only the interest built up so far.',
+        'Interest on this loan builds up day by day, so closing now pays only the interest built up so far.',
       transfer: 'Hand the loan to another borrower',
       transferDesc:
         'Pick a standing borrow request that matches this loan’s assets. That borrower takes over the debt with their own collateral; your collateral is released.',
@@ -1354,12 +1357,12 @@ const copySource = {
       offsetDesc:
         'Fund a new lending offer on the same assets. When someone accepts it, your old loan is paid off automatically and you become the lender of the new loan.',
       offsetCost:
-        'You put up fresh money to lend now — and at completion your wallet also pays off this loan in full: its principal, the interest built up so far, and any rate top-up for your current lender. Plan for two principal-sized amounts, not one.',
+        'You put up fresh money to lend now — and at completion your wallet also pays off this loan in full: its loan amount, the interest built up so far, and any rate top-up for your current lender. Plan for two loan-sized amounts, not one.',
       refinance: 'Refinance to a new lender',
       refinanceDesc:
         'Post a request for a new loan on better terms. When a lender accepts, the old loan is paid off and your collateral moves over automatically.',
       refinanceCost:
-        'The payoff is principal plus the remaining term’s interest, pulled from your wallet when a lender accepts.',
+        'The payoff is the loan amount plus the remaining term’s interest, pulled from your wallet when a lender accepts.',
       refinanceTransferredUnavailable:
         'Not available for this position — refinancing stays with the wallet that originally took the loan.',
     },
@@ -1406,7 +1409,7 @@ const copySource = {
       'Your collateral back — sent straight to your wallet in the same transaction — and you owe nothing further on this loan.',
     receiptLock: 'Nothing new.',
     receiptOwe: tmpl(
-      'About {{total}} now ({{accrued}} interest so far + {{shortfall}} rate top-up). The exact figure is computed on-chain at execution.',
+      'About {{total}} now ({{accrued}} interest so far + {{shortfall}} rate top-up). The exact figure is worked out on the blockchain when it runs.',
       ['total', 'accrued', 'shortfall'],
     ),
     receiptLose:
@@ -1465,7 +1468,7 @@ const copySource = {
       ['principal'],
     ),
     receiptOwe: tmpl(
-      'At completion, about {{completion}} is pulled from your wallet automatically — your loan’s principal plus interest so far plus any rate top-up for your current lender. The exact figure is computed on-chain when the offer is accepted.',
+      'At completion, about {{completion}} is pulled from your wallet automatically — your loan amount plus interest so far plus any rate top-up for your current lender. The exact figure is worked out on the blockchain when the offer is accepted.',
       ['completion'],
     ),
     receiptLose:
@@ -1564,7 +1567,7 @@ const copySource = {
     // interest mode, and no rate shortfall applies (it was removed —
     // full-term is the lender's maximum entitlement).
     payoffNote:
-      'The old loan’s payoff is always principal plus the full remaining term’s interest — even if the loan normally accrues day by day. That is the exiting lender’s fixed entitlement on an early exit.',
+      'The old loan’s payoff is always the loan amount plus the full remaining term’s interest — even if interest on the loan normally builds up day by day. That is the exiting lender’s fixed entitlement on an early exit.',
     walletNote: tmpl(
       `The payoff is pulled from your wallet automatically at the moment a lender accepts. The new loan’s money arrives in the same transaction, so keep about {{topUp}} spare in your wallet (the interest portion plus the new loan’s initiation fee) while the request is open.`,
       ['topUp'],
@@ -1641,7 +1644,7 @@ const copySource = {
     graceNote:
       'This loan is past its due date. A lender can still accept this request until the grace window ends, and the payoff already includes the late fee for being late (it grows a little each day).',
     lateFeeDisclosure: tmpl(
-      `If a lender accepts after the loan’s due date, the payoff grows — the late fee for being late plus interest that keeps accruing — by up to ~{{maxGrowth}} more for this request. The approval you grant covers that too, so a late acceptance can’t fail on it.`,
+      `If a lender accepts after the loan’s due date, the payoff grows — the late fee for being late plus interest that keeps building up — by up to ~{{maxGrowth}} more for this request. The approval you grant covers that too, so a late acceptance can’t fail on it.`,
       ['maxGrowth'],
     ),
     expiresAtGraceEnd: tmpl(
@@ -2594,7 +2597,7 @@ const copySource = {
       youLock: 'Nothing.',
       youMayOwe: 'Nothing beyond the network fee.',
       youCanLose:
-        'Nothing. The rental term and the grace period after it have both already passed, so there is no remaining term to give up and no rent still to accrue — the whole term was paid for up front. Your NFT never leaves your vault, and there is no shortfall for you to absorb. Until this runs, the renter keeps access they are no longer entitled to.',
+        'Nothing. The rental term and the grace period after it have both already passed, so there is no remaining term to give up and no rent still to build up — the whole term was paid for up front. Your NFT never leaves your vault, and there is no shortfall for you to absorb. Until this runs, the renter keeps access they are no longer entitled to.',
       fees: 'The network fee, plus the protocol’s share of the prepaid rent.',
       whenThisEnds:
         'The rental ends when this transaction settles. Your NFT does not move, and what was prepaid becomes claimable.',
@@ -2615,7 +2618,7 @@ const copySource = {
       // WHEN the lender is paid, which is the fact this row exists to
       // convey. Both are conditional — neither promises repayment.
       waitDescAtClose:
-        'Nothing to do — if the borrower repays, you claim the principal plus the agreed interest at the end. If they don’t, the normal default process applies and recovery can be less.',
+        'Nothing to do — if the borrower repays, you claim the loan amount plus the agreed interest at the end. If they don’t, the normal default process applies and recovery can be less.',
       // Codex r4 P2 — a partial-repay loan pays the lender DURING the
       // term even with no periodic schedule: `repayPartial` transfers
       // that share of principal plus the interest built up on it right
@@ -2623,9 +2626,9 @@ const copySource = {
       // those loans, which is the same defect the cadence split exists
       // to avoid, arriving by a second route.
       waitDescAtClosePartial:
-        'Nothing to do — if the borrower repays, you claim the principal plus the agreed interest at the end. This loan also lets them repay part of it early, and when they do, that share of the principal and the interest built up on it reach you at the time rather than at the end. If they don’t repay, the normal default process applies and recovery can be less.',
+        'Nothing to do — if the borrower repays, you claim the remaining loan amount plus the interest still owed at the end. This loan also lets them repay part of it early, and when they do, that share of the loan amount and the interest built up on it reach you at the time rather than at the end. If they don’t repay, the normal default process applies and recovery can be less.',
       waitDescPeriodic:
-        'Nothing to do — interest is paid to you on this loan’s own schedule as the borrower settles it, and you claim the principal plus whatever interest is still outstanding at the end. If they don’t repay, the normal default process applies and recovery can be less.',
+        'Nothing to do — interest is paid to you on this loan’s own schedule as the borrower settles it, and you claim the loan amount plus whatever interest is still outstanding at the end. If they don’t repay, the normal default process applies and recovery can be less.',
       waitDescChecking:
         'Nothing to do — we’re still reading this loan’s interest schedule, which decides whether you’re paid during the term or only at the end.',
       // Codex r7 P2 — a FAILED cadence read arrives as the same
@@ -2643,7 +2646,7 @@ const copySource = {
       // — and says plainly that the amount owed is unaffected, since
       // the open question is only WHEN it arrives.
       waitDescUnknown:
-        'Nothing to do — if the borrower repays, you claim the principal plus the agreed interest. We couldn’t read this loan’s interest schedule, so we can’t say here whether that reaches you during the term or only at the end. It doesn’t change what you’re owed. Reloading the page usually clears this. If they don’t repay, the normal default process applies and recovery can be less.',
+        'Nothing to do — if the borrower repays, you claim the loan amount plus the agreed interest. We couldn’t read this loan’s interest schedule, so we can’t say here whether that reaches you during the term or only at the end. It doesn’t change what you’re owed. Reloading the page usually clears this. If they don’t repay, the normal default process applies and recovery can be less.',
       waitCost: 'Costs nothing — this is the default.',
       // Waiting is only the cost-free default when nothing else can
       // fire (Codex r24 P2). While a listing of yours stands, doing
@@ -2844,7 +2847,7 @@ const copySource = {
     ),
     receiptLockNothing: 'Nothing.',
     receiptOweNothing: 'Nothing — you approve nothing and pay nothing out of pocket.',
-    receiptCanLose: 'The LARGER of the interest accrued so far or the rate difference for the remaining term — never both. Already reflected in the figure above; the exact amount is re-read live when you confirm.',
+    receiptCanLose: 'The LARGER of the interest built up so far or the rate difference for the remaining term — never both. Already reflected in the figure above; the exact amount is re-read live when you confirm.',
     receiptFees: 'The protocol’s cut comes out of the forfeited interest — never out of your payout beyond the figure shown.',
     receiptEnds: 'Immediately — your position transfers to the buyer and you’re done with this loan. The borrower’s rate and due date don’t change.',
     title: 'Exit this loan early',
@@ -2858,9 +2861,9 @@ const copySource = {
     rowReceive: tmpl(`you’d receive ~{{amount}} now`, ['amount']),
     offerRowLine: tmpl('Offer #{{id}} · {{rate}} yearly · {{duration}}', ['id', 'rate', 'duration']),
     shortfallWarn:
-      'This buyer expects a higher rate than your loan pays, and for this candidate that rate difference (not the accrued interest — you pay the larger of the two, never both) is what sets your payout.',
+      'This buyer expects a higher rate than your loan pays, and for this candidate that rate difference (not the interest built up — you pay the larger of the two, never both) is what sets your payout.',
     forfeitNote:
-      'Exiting early forfeits the interest accrued so far: it covers the protocol’s cut and, when the buyer’s rate is higher, helps bridge the difference. The figure shown already accounts for this.',
+      'Exiting early forfeits the interest built up so far: it covers the protocol’s cut and, when the buyer’s rate is higher, helps bridge the difference. The figure shown already accounts for this.',
     action: 'Review exit',
     confirm: 'Confirm — sell my position',
     done:
@@ -2923,7 +2926,7 @@ const copySource = {
       ['principal'],
     ),
     receiptYouMayOwe: tmpl(
-      'At acceptance, the settlement is pulled from your wallet: the LARGER of the interest accrued by then or the rate difference for the remaining term — never both. Right now that would be ~{{amount}} {{sym}}.',
+      'At acceptance, the settlement is pulled from your wallet: the LARGER of the interest built up by then or the rate difference for the remaining term — never both. Right now that would be ~{{amount}} {{sym}}.',
       ['amount', 'sym'],
     ),
     allowanceShortDetail: tmpl(
@@ -2950,7 +2953,7 @@ const copySource = {
     lockWarning:
       'Listing locks your lender position NFT — it can’t be transferred until the sale completes or the listing ends (cancelling unlocks it in one step; after expiry, a cleanup transaction anyone can send does). Your claim rights are unaffected.',
     approvalNote: tmpl(
-      `Listing sets a standing approval of up to {{amount}} — sized to cover settling the sale any time through the loan’s term plus a month’s headroom (the larger of interest accrued by acceptance or the rate difference). Only the actual amount is pulled, in the buyer’s own transaction; if the listing somehow outlives the headroom, the listing card warns and offers to top the approval up.`,
+      `Listing sets a standing approval of up to {{amount}} — sized to cover settling the sale any time through the loan’s term plus a month’s headroom (the larger of interest built up by acceptance or the rate difference). Only the actual amount is pulled, in the buyer’s own transaction; if the listing somehow outlives the headroom, the listing card warns and offers to top the approval up.`,
       ['amount'],
     ),
     sweetenNote:
@@ -3005,7 +3008,7 @@ const copySource = {
       ),
       collateralBackPlain: tmpl('{{collateral}} collateral back.', ['collateral']),
       owedPrincipalPlusInterest: tmpl(
-        "{{principal}} + this loan's interest. For full-term loans (the protocol default) the whole term's interest applies even when repaying early; day-by-day loans charge only what has accrued. The exact amount is read live when you confirm; the approval carries small headroom that is never spent.",
+        "{{principal}} + this loan's interest. For full-term loans (the protocol default) the whole term's interest applies even when repaying early; day-by-day loans charge only what has built up. The exact amount is read live when you confirm; the approval carries small headroom that is never spent.",
         ['principal'],
       ),
       youRent: tmpl('You rent {{nft}}', ['nft']),
@@ -3055,7 +3058,7 @@ const copySource = {
         ['amount', 'symbol'],
       ),
       partialOwe: tmpl(
-        '{{amount}} {{symbol}} now, plus the interest accrued so far (pulled together in this payment). The due date doesn’t move.',
+        '{{amount}} {{symbol}} now, plus the interest built up so far (pulled together in this payment). The due date doesn’t move.',
         ['amount', 'symbol'],
       ),
       loadingLoan: 'Loading the loan…',
@@ -3151,8 +3154,8 @@ const copySource = {
         confirm: 'Confirm — repay part',
         receiveSmallerDebt: 'Nothing now — a smaller debt.',
         loseNothingBeyondPayment: 'Nothing beyond the payment.',
-        feesAccrued: 'The protocol’s cut of the accrued interest settles inside the payment.',
-        endsPrincipalDrops: 'Your remaining principal drops immediately; interest keeps accruing on the smaller amount.',
+        feesAccrued: 'The protocol’s cut of the interest built up settles inside the payment.',
+        endsPrincipalDrops: 'Your remaining loan amount drops immediately; interest keeps building up on the smaller amount.',
       },
       phase: {
         approving: 'Approving in your wallet…',
@@ -3299,20 +3302,26 @@ const copySource = {
     // OBS-2 (#988) — shown when the page's live on-chain read is ahead
     // of the position lists (stalled/lagging indexer).
     settledAhead:
-      'This position has already closed on-chain — the status here is live. Your lists may take a moment to catch up.',
+      'This position has already closed on the blockchain — the status here is live. Your lists may take a moment to catch up.',
   },
 
   // UX-026 — orientation for a Basic-mode user landing on a power
   // surface by URL: name what it is, offer the guided path back, and
   // offer the mode switch. Dismissible; never shown in Advanced.
   powerSurface: {
-    body: 'This is a power-user screen — raw offers and live rates with less hand-holding. The guided Borrow and Lend flows cover the same actions with step-by-step explanations.',
+    // Naive-user redesign — an invitation, not a warning: anyone may use
+    // this page, and the guided flows are offered as the gentler route.
+    // #2378 r6 — no completeness claim: the signed-offer service can be
+    // unavailable or truncated, and the book can fall back to a saved copy.
+    body: 'This page shows the open offers for one pair side by side and lets you set your own rate. Prefer to be walked through it? The Borrow and Lend pages do the same things one step at a time.',
+    // #2378 r2 — the Offer Book is a different page from the Rate Desk.
+    bodyOffers: 'This page lists open offers across all pairs; open one to see its terms and take it. Prefer to be walked through it? The Borrow and Lend pages find a match for you one step at a time.',
     // Both guided flows offered (Codex #1168 r1) — a lender routed
     // into /borrow is the wrong money direction.
-    guidedBorrow: 'Guided Borrow',
-    guidedLend: 'Guided Lend',
-    enableAdvanced: 'I know what I’m doing — enable Advanced mode',
-    dismiss: 'Dismiss',
+    guidedBorrow: 'Borrow step by step',
+    guidedLend: 'Lend step by step',
+    enableAdvanced: 'Show the extra tools (Advanced mode)',
+    dismiss: 'Got it',
   },
 
   claims: {
@@ -3418,6 +3427,29 @@ const copySource = {
     yearly: 'yearly',
     collateralLabel: 'collateral',
     collateralNone: 'none',
+    // UX3-007 — shown only when the record positively flags the collateral
+    // illiquid; absence is never presented as "liquid".
+    // #2378 r2 — the flag is the offer's creation-time record; acceptance
+    // checks liquidity again and the loan follows THAT result.
+    illiquidCollateralTag: 'illiquid when posted (checked again at acceptance) — if so, handed over as-is if not repaid',
+    collateralAtLeast: tmpl('at least {{amount}}', ['amount']),
+    // #2378 r4 — a loan-position sale row carries no collateral of its own.
+    collateralOfRunningLoan: 'the collateral of the running loan being sold (not shown on this row)',
+    // #2378 r1 — an ERC-20 collateral amount whose token details are still
+    // loading, or could not be read.
+    collateralAmountLoading: tmpl('{{token}} (amount loading…)', ['token']),
+    // #2378 r8 — the recorded amount is known even when the token's details
+    // fail, so it is stated in raw base units with the failure named.
+    collateralAmountRaw: tmpl(
+      '{{amount}} base units of {{token}} (token details couldn’t be read)',
+      ['amount', 'token'],
+    ),
+    // #2378 r8 — a lender offer's collateral is the requirement at its full
+    // amount; matching scales it to the part taken.
+    collateralForFullOffer: tmpl(
+      '{{amount}} for the full offer (proportionally less for part of it)',
+      ['amount'],
+    ),
     byCreator: 'by',
     advancedPartialRepayOk: 'partial repay OK',
     advancedNoPartialRepay: 'no partial repay',
@@ -3430,20 +3462,24 @@ const copySource = {
     ctaFund: 'Fund this request',
     badgeLender: 'Lender',
     badgeBorrower: 'Borrower',
+    // #2378 r6 — someone else's row with no button says why, instead of
+    // being an unexplained dead end.
+    notTakeablePartial: 'Part of this offer is already taken, so the rest can’t be taken directly here.',
+    notTakeableNft: 'This offer uses an NFT as the loan or its collateral, which can’t be taken directly here.',
     filters: {
       showLabel: 'Show',
       sideAll: 'Everything',
-      sideLending: 'Lending offers (borrow from these)',
-      sideBorrowing: 'Borrow requests (lend to these)',
+      sideLending: 'Offers to lend (you borrow)',
+      sideBorrowing: 'Requests to borrow (you lend)',
       sideRentals: 'NFT rentals',
       sortLabel: 'Sort by',
       sortNewest: 'Newest first',
-      sortRateLow: 'Rate — low to high',
-      sortRateHigh: 'Rate — high to low',
-      sortDurationShort: 'Duration — shortest first',
-      sortDurationLong: 'Duration — longest first',
+      sortRateLow: 'Lowest rate first',
+      sortRateHigh: 'Highest rate first',
+      sortDurationShort: 'Shortest loan first',
+      sortDurationLong: 'Longest loan first',
       assetLabel: 'Filter by asset address',
-      assetPlaceholder: '0x… (any leg: principal, collateral, payment)',
+      assetPlaceholder: '0x… (any part: loan asset, collateral, payment)',
       clear: 'Clear filters',
     },
     loading: 'Loading the offer book…',
@@ -3458,7 +3494,7 @@ const copySource = {
       tail: ' flows.',
     },
     title: 'Offer Book',
-    lede: 'Open lending offers and borrow requests from other users.',
+    lede: 'Open offers across the platform, your own included: offers to lend (you can borrow from these) and requests to borrow (you can lend to these). Where someone else’s offer can be taken here, it has a button that shows exactly what you would pay or receive before you sign; the others say why they can’t.',
     emptyTitle: 'No open offers right now',
     emptyBody: 'Create your own offer and let the other side come to you.',
     // F-20260703-003 (#988) — shown by MarketFreshnessNote when the
@@ -3498,21 +3534,21 @@ const copySource = {
     midQuotedTitle: tmpl('{{bps}} bps (quoted, not executed)', ['bps']),
     marketsLoading: 'Loading markets…',
     loadMarket: 'Load market',
-    bookLoading: 'Loading the order book…',
-    cumHeadingTitle: 'Cumulative depth from the top of the side',
-    oneSidedBook: 'one-sided book',
+    bookLoading: 'Loading the offers…',
+    cumHeadingTitle: 'Total amount available up to this rate',
+    oneSidedBook: 'offers on one side only',
     // --- Rate-Desk tooltip / row scaffolds (i18n burn-down). Each
     //     composes a raw bps figure with a loan id or status; the words
     //     around the numbers are what need translating.
     lastFillTitle: tmpl('{{bps}} bps · loan #{{loanId}}', ['bps', 'loanId']),
-    tapeLoading: 'Loading recent fills…',
+    tapeLoading: 'Loading recent loans…',
     tapeRowTitle: tmpl('{{bps}} bps · loan #{{loanId}} · {{status}}', ['bps', 'loanId', 'status']),
     ladderMidTitle: tmpl('{{bps}} bps quoted mid', ['bps']),
     // The desk mid-row: "mid {rate}" plus an optional " · spread {spread}"
     // suffix — two pieces so the connector translates without the render
     // code rebuilding the whole string.
-    ladderMid: tmpl('mid {{rate}}', ['rate']),
-    ladderSpread: tmpl(' · spread {{spread}}', ['spread']),
+    ladderMid: tmpl('middle {{rate}}', ['rate']),
+    ladderSpread: tmpl(' · gap {{spread}}', ['spread']),
     // Raw indexer loan-status → localized label for the tape tooltip —
     // the one desk surface that shows the unmapped lifecycle status
     // (Positions / History collapse it through loanStateLabel instead).
@@ -3526,10 +3562,23 @@ const copySource = {
       internal_matched: 'matched',
     },
     title: 'Rate Desk',
-    lede: 'The order book for one market — read the rates, post or amend limit-rate offers, and watch your open orders and positions in one place.',
-    marketLabel: 'Market',
-    tenorLabel: 'Term',
-    customPair: 'Custom pair…',
+    lede: 'The open offers for one pair of assets on one page. See the rates other people are offering, post your own offer at the rate you want, and manage the offers you have open.',
+    // Naive-user redesign — a four-step orientation, open by default for
+    // a first visit and collapsible after.
+    howItWorks: {
+      title: 'How this page works',
+      step1: 'Pick a pair at the top: the asset being lent, and the collateral that backs the loan. Then pick how long the loan lasts.',
+      // #2378 r7 — no freshness claim: the list falls back to a saved
+      // copy when the live read fails, and says so itself.
+      step2: 'The list shows open offers. It is normally read straight from the blockchain; if that read fails, it shows a saved copy that can be a little behind, and says so. “Offers to lend” are people ready to lend at that yearly rate; “Requests to borrow” are people who want to borrow. The middle rate sits between the best of each.',
+      step3: 'To take an offer, press “Borrow this” or “Lend to this” beside it. You see exactly what you pay and receive before you sign anything.',
+      // #2378 r1 — the cancel promise is qualified: where partial fills are
+      // switched on, a new offer must stay open for a short time first.
+      step4: 'To make your own offer, fill in the form: the amount, your rate and the collateral. It waits in the list until someone takes it, and you can cancel it before then. An offer posted with a network fee can also be changed; one posted for free by signing only cannot — cancel it and post again. Sometimes a new offer has to stay open for a few minutes before you can cancel it.',
+    },
+    marketLabel: 'Pair (lend / collateral)',
+    tenorLabel: 'Loan length',
+    customPair: 'Other pair…',
     customLend: 'Loan asset address',
     customCollateral: 'Collateral asset address',
     marketsUnavailable:
@@ -3537,33 +3586,37 @@ const copySource = {
     marketsEmpty:
       'No live markets right now. Pick a pair and post the first offer with the ticket.',
     // #1247 PAG-010 — discovery serves the deepest markets only.
-    marketsTruncated:
-      'Showing the most active markets — smaller markets aren’t listed here, but you can load any pair with “Custom pair…”.',
-    pickPair: 'Pick a market to load its book.',
-    lastFill: 'Last fill',
-    quotedMid: 'Quoted mid',
-    spread: 'Spread',
+    // #2378 r3 — composed from `customPair` so the instruction always
+    // names the option the picker actually shows.
+    marketsTruncated: tmpl(
+      'Showing the most active markets — smaller markets aren’t listed here, but you can load any pair with “{{option}}”.',
+      ['option'],
+    ),
+    pickPair: 'Pick a pair to see its offers.',
+    lastFill: 'Last agreed rate',
+    quotedMid: 'Middle rate',
+    spread: 'Gap between offers',
     crossed: 'crossed',
     statUnknown: '—',
-    bookTitle: 'Order book',
-    rateHeading: 'Rate (APR %)',
-    sizeHeading: 'Size',
-    cumHeading: 'Depth',
-    asksHeading: 'Lender offers (asks)',
-    bidsHeading: 'Borrow requests (bids)',
-    bookEmpty: 'No open offers for this market yet — yours can be the first.',
+    bookTitle: 'Open offers',
+    rateHeading: 'Yearly rate (%)',
+    sizeHeading: 'Amount',
+    cumHeading: 'Running total',
+    asksHeading: 'Offers to lend',
+    bidsHeading: 'Requests to borrow',
+    bookEmpty: 'No open offers for this pair yet — yours can be the first.',
     bookUnavailable:
-      'We couldn’t load the order book right now. Please try again in a moment.',
+      'We couldn’t load the offers right now. Please try again in a moment.',
     bookIndexedCopy:
-      'Live chain read unavailable — showing the indexed copy of the book, which can lag the chain.',
-    yourOrderMark: 'Your order at this rate',
+      'We can’t read the blockchain directly right now, so this shows a saved copy of the offers, which can be a little behind.',
+    yourOrderMark: 'Your offer at this rate',
     takeAsk: 'Borrow this',
     takeBid: 'Lend to this',
     rowPrefills:
       'Tap a rate to pre-fill the ticket. Taking the top of the book goes through the same guided review as Borrow/Lend.',
-    tapeTitle: 'Recent fills',
-    tapeEmpty: 'No fills yet for this market.',
-    tapeUnavailable: 'We couldn’t load recent fills right now.',
+    tapeTitle: 'Recent loans',
+    tapeEmpty: 'No loans agreed yet for this pair.',
+    tapeUnavailable: 'We couldn’t load recent loans right now.',
     // #1131 slice B — the crossable-band previewMatch strip. Shown ONLY
     // when the contract's own previewMatch says Ok (§5.2 honesty rule:
     // bid >= ask alone is NOT matchable — range constraints can still
@@ -3598,34 +3651,34 @@ const copySource = {
     signed: {
       badge: 'Signed',
       badgeTooltip:
-        'Gasless signed order from the off-chain book — the maker signed it without a transaction, and it fills in a single on-chain transaction by whoever takes it. Signed rows always come from the order-book service, never the chain, until they fill.',
+        'A signed offer: its maker signed it without a transaction, and it becomes a loan in one transaction by whoever takes it. Signed offers are listed by the offer-book service, not read from the blockchain, until someone takes them.',
       partialBadgeTooltip:
-        'Partially matched signed order — its remainder still counts as depth and fills through the permissionless matcher, but a direct fill is no longer possible.',
+        'Part of this signed offer has been taken. The rest still counts and can be matched automatically while automatic matching is switched on, but it can no longer be taken directly.',
       rangedBadgeTooltip:
-        'Range-sized signed order — its size still counts as depth, but only the permissionless matcher can consume it in slices; there is no whole-order direct fill.',
+        'A signed offer with a size range. It still counts, but only automatic matching can take it, in parts, and only while automatic matching is switched on — it cannot be taken whole in one go.',
       fill: 'Fill',
       confirmTitle: 'Fill signed order',
       confirmLede:
         'You execute the whole fill in one transaction: your side moves from your wallet, the maker’s side from their vault, and the loan starts immediately.',
       payCollateral: tmpl(
-        `You lock {{amount}} {{symbol}} as collateral and receive the loan principal.`,
+        `You lock {{amount}} {{symbol}} as collateral and receive the loan amount.`,
         ['amount', 'symbol'],
       ),
       payPrincipal: tmpl(
-        `You fund the {{amount}} {{symbol}} loan principal.`,
+        `You lend {{amount}} {{symbol}}.`,
         ['amount', 'symbol'],
       ),
       rateLine: tmpl(`{{rate}} APR · {{days}}`, ['rate', 'days']),
       gone: 'This signed order is no longer fillable (filled, cancelled, or expired). The book will catch up shortly. Nothing was sent.',
       makerNotFunded:
-        'The maker’s vault doesn’t currently cover this order, so the fill would fail on-chain. Nothing was sent — the maker must top up their vault first.',
+        'The maker’s vault doesn’t currently cover this order, so the fill would fail on the blockchain. Nothing was sent — the maker must top up their vault first.',
       illiquid:
         'One of this order’s assets isn’t priced by the protocol right now, and this compact confirm can’t walk you through the in-kind default terms that implies. Nothing was sent.',
       // Shown only on deploys with tiered identity verification
       // enforced (never on this retail deploy, where enforcement is
       // off and the preflight passes through).
       kycBlocked:
-        'This deployment’s identity-verification rules don’t cover one side of this order at this value, so the fill would fail on-chain. Nothing was sent or approved.',
+        'This deployment’s identity-verification rules don’t cover one side of this order at this value, so the fill would fail on the blockchain. Nothing was sent or approved.',
       // Shown only on deploys with the progressive risk-access gate
       // enabled (never on this retail deploy, where the gate is off
       // and the preflight passes through after one read).
@@ -3637,12 +3690,12 @@ const copySource = {
       close: 'Close',
     },
     chart: {
-      title: 'Executed rates',
+      title: 'Rates people agreed',
       loading: 'Loading chart…',
       // §5.3 rule 5 — the header shows the last executed print, never
       // a %-change ticker.
-      lastFill: tmpl(`last fill: {{rate}} · {{ago}}`, ['rate', 'ago']),
-      lastFillNone: 'no fills yet',
+      lastFill: tmpl(`last agreed: {{rate}} · {{ago}}`, ['rate', 'ago']),
+      lastFillNone: 'no loans agreed yet',
       // Two empty states (Codex #1139 round-1 P3, tightened round 4):
       // `empty` may only claim "never filled" when the evidence covers
       // the whole history (range = all, or a confirmed-empty tape) AND
@@ -3650,27 +3703,31 @@ const copySource = {
       // range-scoped line, even at range = all (the 60 s candle-cache
       // skew window after a first fill). See chartEmptyKind.
       empty:
-        'No fills yet for this market — the chart draws only executed rates.',
-      emptyRange: 'No fills in this range — try a longer range.',
+        'No loans agreed yet for this pair — the chart only shows rates people actually agreed.',
+      emptyRange: 'No loans agreed in this period — try a longer one.',
       unavailable: 'We couldn’t load the rate history right now.',
       retry: 'Retry',
-      quotedMid: 'quoted mid',
+      quotedMid: 'middle rate',
       quotedMidHint:
-        'Dashed line = the book’s current quoted mid — a resting quote, not an executed rate.',
+        'Dashed line = the midpoint between the best offer to lend and the best request to borrow among the open offers on this page. It is worked out from those two — not a rate anyone has offered or agreed.',
+      // #2378 r6 — the ladder's saved-copy warning is hidden behind the
+      // Chart tab on mobile, so the hint carries it too.
+      quotedMidHintSaved:
+        'Dashed line = the midpoint between the best offer to lend and the best request to borrow in a saved copy of the open offers (the live read didn’t load), so it may be out of date. It is worked out from those two — not a rate anyone has offered or agreed.',
       sparseNote: tmpl(
-        'Sparse market — {{count}} fills in this range, drawn individually. Candles appear once there’s enough tape to mean something.',
+        'Few loans so far — {{count}} in this period, each drawn on its own. Bars appear once there are enough loans to summarise.',
         ['count'],
-        { one: 'Sparse market — {{count}} fill in this range, drawn individually. Candles appear once there’s enough tape to mean something.' },
+        { one: 'Few loans so far — {{count}} in this period, drawn on its own. Bars appear once there are enough loans to summarise.' },
       ),
       // #1247 PAG-009 — the server scans the newest 10,000 fills; a
       // busy market's oldest history falls off. Say so instead of
       // letting an "all" chart read as complete.
       truncatedNote:
-        'Long history — showing the most recent fills only. The oldest candles are not drawn.',
-      intervalLabel: 'Interval',
-      rangeLabel: 'Range',
+        'Long history — only the most recent loans are shown. The oldest ones are not drawn.',
+      intervalLabel: 'Each bar covers',
+      rangeLabel: 'Period shown',
       attribution: 'Charts by TradingView',
-      tooltipFills: tmpl('{{count}} fills', ['count'], { one: '{{count}} fill' }),
+      tooltipFills: tmpl('{{count}} loans', ['count'], { one: '{{count}} loan' }),
       mobileBook: 'Book',
       mobileChart: 'Chart',
       mobileViewLabel: 'Desk view',
@@ -3692,73 +3749,75 @@ const copySource = {
       rateBpsNote: 'Rates are stored in basis points (1% = 100 bps)',
       selfCollateral: 'Collateral can’t be the same token as the loan asset.',
       collateralAmount: 'Collateral amount',
-      expiryGtcTitle: 'Good-til-cancelled — rests until you cancel it',
-      expiryGttTitle: 'Good-til-time — lapses on its own at the deadline',
-      title: 'Order ticket',
+      expiryGtcTitle: 'Stays open until you cancel it',
+      // #2378 r4 — a free signed offer's signature carries a 7-day deadline.
+      expiryGtcSignedHint: 'A free signed offer stays open for up to 7 days, then expires on its own. You can cancel it sooner (cancelling needs a network fee).',
+      expiryGttTitle: 'Closes by itself at the time you pick',
+      title: 'Post an offer',
       sideLend: 'Lend',
       sideBorrow: 'Borrow',
       amountLend: 'Amount to lend',
       amountBorrow: 'Amount to borrow',
-      rateLend: 'Rate — minimum you’ll accept (APR %)',
-      rateBorrow: 'Rate — maximum you’ll pay (APR %)',
+      rateLend: 'Lowest yearly rate you’ll accept (%)',
+      rateBorrow: 'Highest yearly rate you’ll pay (%)',
       collateralRequire: 'Collateral you require',
       collateralLock: 'Collateral you lock',
       collateralFixedNote:
-        'Set by the selected market — switch markets in the header to post against a different collateral asset.',
-      expiryLabel: 'Expiry',
-      expiryGtc: 'GTC',
-      expiryCustom: 'Custom…',
-      expiryInvalid: 'The custom expiry must be a future date and time.',
+        'Set by the pair you picked — switch the pair at the top to use a different collateral asset.',
+      expiryLabel: 'How long it stays open',
+      expiryGtc: 'Until I cancel',
+      expiryCustom: 'Pick a date…',
+      expiryInvalid: 'Pick a date and time in the future.',
       expiryTooFar:
-        'The custom expiry can be at most one year ahead — the protocol caps offer expiry at 365 days out.',
-      fillModeLabel: 'Fill mode',
-      fillPartial: 'Partial',
-      fillAon: 'AON',
-      fillIoc: 'IOC',
-      fillPartialHint: 'Partial: the offer can fill in pieces down to a minimum.',
-      fillAonHint: 'All-or-nothing: fills only as one whole loan at the full amount.',
-      fillIocHint: 'Immediate-or-cancel: rests only until its expiry — an expiry is required.',
-      iocNeedsExpiry: 'IOC orders need an expiry — pick 24h, 7d, or a custom time.',
+        'An offer can stay open for at most one year — pick a date within the next 365 days.',
+      fillModeLabel: 'Can it be taken in parts?',
+      fillPartial: 'Yes, in parts',
+      fillAon: 'Only all at once',
+      fillIoc: 'Short-lived',
+      fillPartialHint: 'In parts: different people can each take a piece, down to a minimum size.',
+      fillAonHint: 'All at once: it is only taken as one whole loan, for the full amount.',
+      fillIocHint: 'Short-lived: it stays open only until the closing time you set, so it needs one.',
+      iocNeedsExpiry: 'A short-lived offer needs a closing time — pick 24h, 7d, or a date.',
       tenorNote: tmpl(
-        `Posting into the selected {{label}} market — change the term with the chips above.`,
+        `Loan length: {{label}} — change it with the buttons above.`,
         ['label'],
       ),
       overDurationCap: tmpl(
-        `The protocol currently caps offer duration at {{max}} days — pick a shorter term above.`,
+        `Loans can currently last at most {{max}} days — pick a shorter length above.`,
         ['max'],
       ),
-      post: 'Post order',
+      post: 'Post offer',
       posting: 'Posting…',
-      posted: 'Order posted',
+      posted: 'Offer posted',
       postedNext:
-        'Your offer is live on the book. Manage it under Open orders below — amend or cancel any time before it fills.',
+        'Your offer is now open. You can change or cancel it under “Your open offers” below until someone takes it — a new offer may have to stay open for a few minutes before it can be cancelled.',
       // #1131 slice D — gasless posting mode.
-      modeLabel: 'Posting',
-      modeOnchain: 'On-chain',
-      modeGasless: 'Gasless (sign only)',
+      modeLabel: 'How to post',
+      modeOnchain: 'Post now (network fee)',
+      modeGasless: 'Sign only (free)',
       modeOnchainHint:
-        'Post the offer as a transaction — funds are escrowed in your vault now.',
+        'Posts the offer with a transaction. Your funds are set aside in your vault straight away.',
       modeGaslessHint:
-        'Sign the order off-chain and post it to the book — no transaction, no gas. Funds move only when a taker fills it.',
+        'You only sign a message — no transaction and no network fee. Your funds move only when someone takes the offer.',
       gaslessEscrowNote:
-        'Nothing is escrowed when you sign — a taker’s fill pulls from your vault’s free balance at that moment. Cancelling later is an on-chain transaction (unlike posting).',
+        'Nothing is set aside when you sign. When someone takes the offer, the funds come from your vault’s free balance at that moment. Cancelling later does need a transaction, with a network fee.',
       gaslessNeedsIndexer:
-        'Gasless posting needs the order-book service, which isn’t configured right now. On-chain posting still works.',
+        'Signing only needs the offer-book service, which isn’t set up right now. “Post now” still works.',
       // #1145 round-2 — signed lender orders carry a single collateral
       // requirement, so partial slices can’t keep the contract’s
       // constant collateral-to-principal ratio; only a full fill can
       // consume them. Shown as the fill-mode note (and the disabled
       // Partial chip’s tooltip) in gasless lender mode.
       gaslessLenderAonNote:
-        'Gasless lend orders fill only as one whole loan — a signed lender order can’t be sliced on-chain, so it posts all-or-nothing. Partial stays available with on-chain posting.',
-      gaslessPost: 'Sign & post to the book',
+        'A signed lend offer can only be taken all at once, as one whole loan. To let people take it in parts, choose “Post now” instead.',
+      gaslessPost: 'Sign and post',
       gaslessPosting: 'Signing…',
       gaslessConsentRequired:
         'Review and accept the risk disclosures and terms first — for a gasless order, your signature is what records that consent.',
       gaslessPosted:
-        'Signed order posted to the book — no gas spent. It fills when a taker accepts it.',
+        'Signed offer posted — no network fee spent. It becomes a loan when someone takes it.',
       gaslessFundsWarn: tmpl(
-        `Heads up: your vault’s free balance is below the {{amount}} {{symbol}} this order commits. The fill will fail if the funds aren’t there when a taker accepts — deposit to your vault to keep the order fillable.`,
+        `Heads up: your vault has less than the {{amount}} {{symbol}} this offer needs. If the funds aren’t there when someone takes it, it will fail — add funds to your vault to keep it usable.`,
         ['amount', 'symbol'],
       ),
       gaslessRejected: tmpl(
@@ -3791,80 +3850,80 @@ const copySource = {
       blockLoading: 'Loading market details — one moment.',
       blockConsent: 'Review and accept the risk terms above to post.',
       blockGaslessService:
-        'Gasless posting needs the order-book service, which isn’t available right now — switch Posting to On-chain.',
+        'Signing only needs the offer-book service, which isn’t available right now — choose “Post now” instead.',
       // UX-016 — consent auto-clears whenever a term changes; say so
       // beside the cleared box so the un-tick doesn't read as a bug.
       consentRecheck: 'Terms changed — please re-confirm.',
       // UX-027 — Max chip + a fee/commitment summary before consent.
       max: 'Max',
-      feePreviewTitle: 'Fees & commitment',
+      feePreviewTitle: 'What this costs and sets aside',
       escrowNow: tmpl(
-        `You escrow now: {{amount}} {{symbol}}.`,
+        `Set aside now: {{amount}} {{symbol}}.`,
         ['amount', 'symbol'],
       ),
       commitAtFill: tmpl(
-        `You commit {{amount}} {{symbol}} — pulled from your vault only when a taker fills.`,
+        `{{amount}} {{symbol}} — taken from your vault only when someone takes the offer.`,
         ['amount', 'symbol'],
       ),
       lockNow: tmpl(
-        `You lock now: {{amount}} {{symbol}} as collateral.`,
+        `Locked now as collateral: {{amount}} {{symbol}}.`,
         ['amount', 'symbol'],
       ),
       lockAtFill: tmpl(
-        `You commit {{amount}} {{symbol}} collateral — locked only when a taker fills.`,
+        `{{amount}} {{symbol}} collateral — locked only when someone takes the offer.`,
         ['amount', 'symbol'],
       ),
       netYield: tmpl(
-        `Net yield ≈ {{net}}% APR after the {{feePct}}% protocol fee on the interest you earn.`,
+        `If someone takes the offer and the loan is repaid, you earn about {{net}}% a year after the {{feePct}}% protocol fee on your interest.`,
         ['net', 'feePct'],
       ),
       lifNote: tmpl(
-        `Loan initiation fee: {{feePct}}% of principal (≈ {{amount}} {{symbol}}), charged when the loan starts.`,
+        `Starting fee: {{feePct}}% of the loan amount (about {{amount}} {{symbol}}), charged when the loan starts.`,
         ['feePct', 'amount', 'symbol'],
       ),
     },
     orders: {
       loading: 'Loading your open orders…',
-      tab: 'Open orders',
-      empty: 'No open orders. Post one with the ticket.',
+      tab: 'Your open offers',
+      empty: 'You have no open offers. Post one with the form above.',
       // Partial-fill row sub-line + fill-bar tooltip.
       fillSummary: tmpl(
-        ' · filled {{filled}} ({{pct}}) · {{remaining}} left',
+        ' · taken {{filled}} ({{pct}}) · {{remaining}} left',
         ['filled', 'pct', 'remaining'],
       ),
-      filledTooltip: tmpl('{{pct}} filled', ['pct']),
-      unavailable: 'We couldn’t load your open orders right now.',
+      filledTooltip: tmpl('{{pct}} taken', ['pct']),
+      unavailable: 'We couldn’t load your open offers right now.',
       heldNotCreated: 'Held — managed by its creator',
       cancel: 'Cancel',
       cancelling: 'Cancelling…',
       cancelCooldown: tmpl(
-        `Cancel available in {{secs}}s — new unfilled offers have a short protocol cooldown.`,
+        `You can cancel in {{secs}}s — a new offer has to stay open for a short moment first.`,
         ['secs'],
       ),
-      amend: 'Amend',
-      amendTitle: 'Amend in place — same offer, same position, one transaction.',
+      amend: 'Change',
+      amendTitle: 'Change this offer in one transaction — it keeps its place.',
       amendLoadFailed:
         'We couldn’t read this offer’s live values, and amending must start from them. Please try again.',
       // Shown while the amend form reads the offer's current values.
       readingValues: 'Reading the offer’s live values…',
       // Unit hint on the rate / rate-max amend inputs.
-      rateUnit: 'bps stored on-chain',
+      rateUnit: 'stored in hundredths of a percent',
       // The amend form's dismiss button.
       close: 'Close',
-      amendMinAmount: 'Min amount',
-      amendMaxAmount: 'Max amount',
-      amendAmountAon: 'Amount (all-or-nothing)',
-      amendRate: 'Rate (APR %)',
-      amendRateMax: 'Rate max (APR %)',
+      amendMinAmount: 'Smallest amount',
+      amendMaxAmount: 'Largest amount',
+      amendAmountAon: 'Amount (taken all at once)',
+      amendRate: 'Yearly rate (%)',
+      amendRateMax: 'Highest yearly rate (%)',
       amendCollateral: 'Collateral',
-      amendCollateralMax: 'Collateral max',
+      amendCollateralMax: 'Most collateral',
       amendNoChange: 'Nothing changed yet.',
       amendMalformed:
         'Enter plain decimal numbers only — digits with an optional decimal point.',
-      amendInvalid: 'Each minimum must be at or below its maximum, and neither maximum can drop below what’s already filled.',
+      amendInvalid: 'Each smallest value must be at or below its largest, and no largest value can go below what has already been taken.',
       amendPositive: 'Amounts and collateral must be greater than zero.',
       amendGrowNote: tmpl(
-        `Growing this order locks {{amount}} {{symbol}} more from your wallet — it needs a token approval first.`,
+        `Making this offer bigger sets aside {{amount}} {{symbol}} more from your wallet — approve the token first.`,
         ['amount', 'symbol'],
       ),
       amendAllowanceLost:
@@ -3873,20 +3932,20 @@ const copySource = {
       approving: 'Approving…',
       save: 'Save changes',
       saving: 'Amending…',
-      amended: 'Order amended.',
+      amended: 'Offer changed.',
       // #1131 slice D — the wallet's own gasless signed orders.
-      signedTitle: 'Signed orders (this market)',
+      signedTitle: 'Your signed offers (this pair and loan length)',
       signedNote:
-        'Gasless signed orders you posted for the selected market. Orders for other markets don’t show here — switch the market in the header to manage them.',
-      signedCancel: 'Cancel on-chain',
+        'Offers you posted by signing only, for the pair and loan length selected above. Signed offers for another pair or loan length are not shown — switch them above to manage those.',
+      signedCancel: 'Cancel (network fee)',
       signedCancelling: 'Cancelling…',
       signedCancelNote:
-        'Posting was free, but cancelling costs gas: the only way to revoke a signature the book already holds is an on-chain transaction.',
-      signedCancelled: 'Signed order cancelled on-chain.',
+        'Posting was free, but cancelling needs a transaction with a network fee: it is the only way to withdraw a signature the offer book already holds.',
+      signedCancelled: 'Signed offer cancelled.',
       // #1247 PAG-011 — the wallet-scoped book read is still capped
       // per side; never let a clipped page read as the full set.
       signedTruncated:
-        'You have more signed orders in this market than we can list at once — this is not the complete set.',
+        'You have more signed offers for this pair than we can list at once — this is not all of them.',
     },
     positions: {
       loading: 'Loading your positions…',
@@ -3928,7 +3987,7 @@ const copySource = {
     engagedUnavailableHint:
       'To continue, untick the option above — the acceptance then proceeds without it — or try again once it’s available.',
     creatorFullBlocked:
-      'This offer carries its creator’s Full tariff commitment, which can’t complete right now, so the acceptance would be rejected on-chain. Try again later or choose another offer.',
+      'This offer carries its creator’s Full tariff commitment, which can’t complete right now, so the acceptance would be rejected by the blockchain. Try again later or choose another offer.',
     saleDisclosureChecking: 'Checking this position’s fee records…',
     saleDisclosureFailed:
       'We couldn’t read this position’s fee records right now — the sale options return once the check succeeds.',
@@ -4153,7 +4212,7 @@ const copySource = {
     approvalCleanupFailed:
       'Also: the spending approval this step asked for could not be put back. Check this token’s approvals in your wallet.',
     partialOverPrincipal:
-      'That covers the loan’s whole remaining principal. Use “Repay this loan” instead — it settles the loan properly and releases your collateral.',
+      'That covers the loan’s whole remaining amount. Use “Repay this loan” instead — it settles the loan properly and releases your collateral.',
     notAToken:
       'That address doesn’t look like a token on this network. Double-check it or pick a suggested asset.',
     // #1645 — what `OfferPreviewFacet.previewAccept` answers, in words.
@@ -4262,11 +4321,11 @@ const copySource = {
     collateralNotPriced:
       'This loan’s collateral isn’t currently priced by the protocol, so collateral top-ups aren’t available for it. Nothing was sent.',
     pastGrace:
-      'This loan is past its due date and grace window, so repayment is closed on-chain — the default process applies now. Nothing was sent.',
+      'This loan is past its due date and grace window, so repayment is closed on the blockchain — the default process applies now. Nothing was sent.',
     loanAlreadySettled:
       'This loan looks already settled on-chain — nothing was sent. Refresh in a moment to see its final state.',
     nothingToClaim:
-      'There’s nothing for this side to claim on-chain right now — the payout may be zero or already collected. Nothing was sent.',
+      'There’s nothing for this side to claim on the blockchain right now — the payout may be zero or already collected. Nothing was sent.',
     preclosePastGrace:
       'This loan is past its due date and grace window, so closing early is no longer possible — nothing was sent. The default process applies now.',
     refinancePastGrace:
@@ -4687,7 +4746,7 @@ const copySource = {
     // notes) stay composed at the call site.
     receipts: {
       buyYouReceive: tmpl(
-        'The lender position of running loan #{{loanId}}: up to ~{{interest}} interest from now to the due date if the borrower repays on time, plus the full {{principal}} principal back.',
+        'The lender position of running loan #{{loanId}}: up to ~{{interest}} interest from now to the due date if the borrower repays on time, plus the full {{principal}} back.',
         ['loanId', 'interest', 'principal'],
       ),
       buyYouLock: tmpl(

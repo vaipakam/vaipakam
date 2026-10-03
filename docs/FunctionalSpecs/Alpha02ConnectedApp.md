@@ -1106,6 +1106,12 @@ The app uses chain reads and indexed reads for different jobs.
   than silently narrowing to held positions only; a wallet with more
   participation history than one read returns folds into the page's
   recent-activity-only disclosure.
+- An Activity row states the asset and amount its transaction moved or offered
+  when the activity record carries them as normalized fields — exact, or as a
+  range for an offer that commits one — and shows no amount otherwise. It never
+  reconstructs an amount the record does not state, and never presents an NFT
+  leg as a token amount. (Not yet implemented: the record does not carry these
+  fields — tracked in #2383.)
 - Realtime push refreshes matching indexed views when available. Polling remains
   the fallback.
 - The push signal covers every class of change a holder-keyed view depends on —
@@ -1215,12 +1221,34 @@ progress.
 
 ## Offer Book
 
-- Basic mode shows a plain newest-first book.
-- Advanced mode may filter by side, asset, rate, duration, and offer type.
+- Basic mode shows a plain newest-first book, and lets anyone choose which
+  side to show and how to sort it (rate or loan length) — plain choices that need
+  no expertise. Advanced mode adds filtering by raw asset address.
+- Each offer states its collateral as an amount, not only a token name, so a
+  lender can judge an offer before opening it. When the collateral is recorded
+  as illiquid, the row says that on default it is handed over as-is rather than
+  sold. The row never presents collateral as liquid merely because nothing
+  marked it illiquid, and says the illiquid flag is the status recorded when the
+  offer was posted — acceptance checks liquidity again, and the loan follows that
+  result. NFT collateral is named by its token (and quantity, for a multi-unit
+  token); a token amount whose details are loading or could not be read says so,
+  rather than showing only a contract address. Where the shown amount is only the
+  offer's committed floor (a borrower offer can commit a range), it is stated as
+  "at least" that amount. A lender offer that can be taken in part (a range, or
+  already partly taken) states its collateral as the requirement for the full
+  offer, since a smaller take needs proportionally less. When the token's details
+  cannot be read, the recorded amount is still shown, in the token's raw base
+  units, with the failure named. A loan-position sale row says its collateral is the
+  running loan's, rather than showing the zero its own row carries.
 - A filter with no matches says the filter has no matches; it does not claim the
   whole market is empty.
 - Action labels are role-specific so the user understands whether they are
   borrowing, funding, renting, or buying a position.
+- Another user's offer that cannot be taken from this page (part of it is
+  already taken, or it uses an NFT as the loan or its collateral) says why on its
+  row, rather than showing a bare label with nothing to do. The page's
+  introduction promises the review-before-signing step only for offers that can
+  be taken here.
 - Ended offers are not actionable during indexer lag when the chain already
   shows that they ended.
 - Rows that carry risky, unknown, or unverifiable token legs show visible risk
@@ -1228,8 +1256,28 @@ progress.
 
 ## Rate Desk
 
-Rate Desk is the Advanced-mode market terminal for supported fungible-token
-markets.
+Rate Desk is the market view for supported fungible-token markets. It is open to
+every user, not only to traders: its wording avoids trading jargon, a short
+"how this page works" guide explains it on a first visit, and every choice on the
+offer form explains what the selected option means in visible text rather than
+only in a hover tooltip. A constraint that narrows a choice (a signed lend offer
+being single-fill) is stated beside that explanation, never instead of it. The
+page does not promise an offer can be cancelled "any time" where a deployment
+makes new offers wait a short while before they can be cancelled, nor that an
+offer posted for free by signing only can be changed (it can only be cancelled
+and posted again). The middle rate is described as worked out from the best
+offers on each side, never as a rate anyone has offered; when those offers come
+from a saved copy because the live read failed, the chart's description of it
+says so, since on a phone the chart can be shown without the offers list that
+carries the same warning. The page's introduction does not claim to show every
+offer for the pair, because signed offers can be unavailable or cut short, and
+the first-visit guide does not call the list current: it says the list is
+normally read from the blockchain and can fall back to a saved copy that may lag. A list scoped to the
+selected pair and loan length names both. A free signed offer's "until I cancel"
+choice says it stays open for at most seven days, because its signature
+expires. Projected earnings are stated as conditional on the offer being taken
+and repaid. Wording about automatic matching says it applies while automatic
+matching is switched on, since a deployment can switch it off.
 
 It should provide:
 
@@ -1909,6 +1957,11 @@ Thin-market honesty rules apply.
   unrelated change.
 - If no alert backend is configured, the app states that alerts are unavailable
   and sends nothing.
+- The alerts card states what this browser knows about the link: when no link was
+  made from this browser, it says so, and says that a link made on another device
+  would not show here — rather than implying the wallet is linked nowhere. It
+  does not claim alerts still reach such a link either, since this browser cannot
+  check it; it says the wallet may still be linked elsewhere.
 
 ## Notifications
 
