@@ -25,6 +25,8 @@ import {RewardSweepWalkFacet} from "../src/facets/RewardSweepWalkFacet.sol";
 import {RewardForfeitWalkFacet} from "../src/facets/RewardForfeitWalkFacet.sol";
 import {RewardStagingFacet} from "../src/facets/RewardStagingFacet.sol";
 import {RewardStagingSettleFacet} from "../src/facets/RewardStagingSettleFacet.sol";
+import {RewardStagingDomainFacet} from "../src/facets/RewardStagingDomainFacet.sol";
+import {RewardClosureFacet} from "../src/facets/RewardClosureFacet.sol";
 import {RewardCompensationDispatchFacet} from "../src/facets/RewardCompensationDispatchFacet.sol";
 import {RewardCustodyFacet} from "../src/facets/RewardCustodyFacet.sol";
 import {RewardEpochFacet} from "../src/facets/RewardEpochFacet.sol";
@@ -143,7 +145,7 @@ contract MeshThreeChainE2ETest is Test {
         private
         returns (IDiamondCut.FacetCut[] memory cuts)
     {
-        cuts = new IDiamondCut.FacetCut[](25);
+        cuts = new IDiamondCut.FacetCut[](27);
         cuts[0] = _cut(
             address(new AccessControlFacet()),
             helper.getAccessControlFacetSelectors()
@@ -258,6 +260,17 @@ contract MeshThreeChainE2ETest is Test {
         cuts[24] = _cut(
             address(new RewardRemittanceLensFacet()),
             helper.getRewardRemittanceLensFacetSelectors()
+        );
+        // 3b-ii-A2-ii / 3b-ii-B — the claim walk reaches the legacy slice's hosted
+        // gate on the domain facet by self-call, and the closure proof reads the
+        // same Diamond: carried here for the same reason as the hosts above.
+        cuts[25] = _cut(
+            address(new RewardStagingDomainFacet()),
+            helper.getRewardStagingDomainFacetSelectors()
+        );
+        cuts[26] = _cut(
+            address(new RewardClosureFacet()),
+            helper.getRewardClosureFacetSelectors()
         );
     }
 
