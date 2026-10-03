@@ -1291,18 +1291,20 @@ export function OrderTicket({
             );
           })}
         </div>
+        {/* What the selected choice means, visible (see the expiry note).
+            #2378 r1 — always shown; a signed lend offer's constraint is
+            stated BESIDE it, not instead of it, so a lender who picks
+            "Short-lived" in sign-only mode still sees what that means. */}
+        <p className="field-hint">
+          {effectiveFillMode === FILL_AON
+            ? text.fillAonHint
+            : effectiveFillMode === FILL_IOC
+              ? text.fillIocHint
+              : text.fillPartialHint}
+        </p>
         {gaslessLenderSingleFill ? (
           <p className="field-hint">{text.gaslessLenderAonNote}</p>
-        ) : (
-          // What the selected choice means, visible (see the expiry note).
-          <p className="field-hint">
-            {effectiveFillMode === FILL_AON
-              ? text.fillAonHint
-              : effectiveFillMode === FILL_IOC
-                ? text.fillIocHint
-                : text.fillPartialHint}
-          </p>
-        )}
+        ) : null}
         {iocNeedsExpiry ? (
           <p className="field-hint" style={{ color: 'var(--danger)' }}>
             {text.iocNeedsExpiry}

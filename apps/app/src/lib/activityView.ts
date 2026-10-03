@@ -169,33 +169,94 @@ export interface ActivityRowView {
   substance?: { asset: string; amount: string };
 }
 
-/** UX3-012 — the first event in a transaction that names both a lending
- *  asset and an amount. Pure; exported for the unit test. */
-export function amountSubstance(
-  bucket: IndexedActivityEvent[],
-): { asset: string; amount: string } | undefined {
-  for (const ev of bucket) {
-    let args: unknown = ev.args;
-    if (typeof args === 'string') {
-      try {
-        args = JSON.parse(args);
-      } catch {
-        continue;
-      }
+type ArgBag = Record<string, unknown>;
+type Substance = { asset: string; amount: string };
+
+const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
+const UINT = /^[0-9]+$/;
+
+function parseArgs(args: IndexedActivityEvent['args']): ArgBag | undefined {
+  let parsed: unknown = args;
+  if (typeof parsed === 'string') {
+    try {
+      parsed = JSON.parse(parsed);
+    } catch {
+      return undefined;
     }
-    if (!args || typeof args !== 'object') continue;
-    const a = args as Record<string, unknown>;
-    const asset = a.lendingAsset;
-    const amount = a.amount;
-    if (
-      typeof asset === 'string' &&
-      /^0x[0-9a-fA-F]{40}$/.test(asset) &&
-      typeof amount === 'string' &&
-      /^[0-9]+$/.test(amount) &&
-      amount !== '0'
-    ) {
-      return { asset, amount };
-    }
+  }
+  return parsed && typeof parsed === 'object' ? (parsed as ArgBag) : undefined;
+}
+
+function sub(bag: ArgBag | undefined, key: string): ArgBag | undefined {
+  const v = bag?.[key];
+  return v && typeof v === 'object' ? (v as ArgBag) : undefined;
+}
+
+/** A fungible (ERC-20) leg: `assetType` 0. Absent means the event has no
+ *  type field and names a fungible asset by construction. */
+function isFungible(assetType: unknown): boolean {
+  return assetType === undefined || Number(assetType) === 0;
+}
+
+function substanceOf(asset: unknown, amount: unknown): Substance | undefined {
+  const amountStr = typeof amount === 'number' ? String(amount) : amount;
+  return typeof asset === 'string' &&
+    ADDRESS.test(asset) &&
+    typeof amountStr === 'string' &&
+    UINT.test(amountStr) &&
+    amountStr !== '0'
+    ? { asset, amount: amountStr }
+    : undefined;
+}
+
+/** #2378 r1 — where each event kind carries its asset and amount, read from
+ *  the contract ABI rather than guessed from a common shape. An earlier
+ *  version looked for a top-level `lendingAsset` + `amount` on any event,
+ *  which matched almost nothing real: an offer's terms sit in a nested
+ *  `fields` tuple, and a loan's amount and asset are split across two
+ *  sibling events. A kind not listed here contributes nothing — the row
+ *  then shows only its id, which is honest, rather than a figure taken
+ *  from the wrong field. */
+const SUBSTANCE_READERS: Record<
+  string,
+  (args: ArgBag, siblings: Map<string, ArgBag>) => Substance | undefined
+> = {
+  // OfferCreatedDetails(offerId, creator, lendingAsset, fields{assetType, amount, …})
+  OfferCreatedDetails: (a) => {
+    const f = sub(a, 'fields');
+    return isFungible(f?.assetType) ? substanceOf(a.lendingAsset, f?.amount) : undefined;
+  },
+  // OfferCanceledDetails(…, assetType, lendingAsset, …, amount, …)
+  OfferCanceledDetails: (a) =>
+    isFungible(a.assetType) ? substanceOf(a.lendingAsset, a.amount) : undefined,
+  // LoanInitiatedDetails(loanId, lender, borrower, details{principalAsset, assetType, …})
+  // + its sibling LoanInitiated(loanId, offerId, lender, borrower, principal, …)
+  LoanInitiatedDetails: (a, siblings) => {
+    const d = sub(a, 'details');
+    return isFungible(d?.assetType)
+      ? substanceOf(d?.principalAsset, siblings.get('LoanInitiated')?.principal)
+      : undefined;
+  },
+  LenderIntentFunded: (a) => substanceOf(a.lendingAsset, a.amount),
+  LenderIntentCapitalWithdrawn: (a) => substanceOf(a.lendingAsset, a.amount),
+  LenderFundsClaimed: (a) => substanceOf(a.asset, a.amount),
+  BorrowerFundsClaimed: (a) => substanceOf(a.asset, a.amount),
+  BorrowerSurplusClaimed: (a) => substanceOf(a.asset, a.amount),
+  OfferSaleProceedsCredited: (a) => substanceOf(a.principalAsset, a.amount),
+};
+
+/** UX3-012 — the asset and amount a transaction moved or offered, from the
+ *  first event in it that a declared reader understands. Pure; exported
+ *  for the unit test. */
+export function amountSubstance(bucket: IndexedActivityEvent[]): Substance | undefined {
+  const parsed = bucket.map((ev) => [ev.kind, parseArgs(ev.args)] as const);
+  const siblings = new Map<string, ArgBag>();
+  for (const [kind, args] of parsed) if (args && !siblings.has(kind)) siblings.set(kind, args);
+  for (const [kind, args] of parsed) {
+    const read = SUBSTANCE_READERS[kind];
+    if (!read || !args) continue;
+    const found = read(args, siblings);
+    if (found) return found;
   }
   return undefined;
 }

@@ -1482,6 +1482,8 @@
       "collateralLabel": "garantía",
       "collateralNone": "ninguna",
       "illiquidCollateralTag": "se entrega tal cual si no se devuelve",
+      "collateralAmountLoading": "{{token}} (cargando la cantidad…)",
+      "collateralAmountUnreadable": "{{token}} (no se pudo leer la cantidad)",
       "byCreator": "por",
       "advancedPartialRepayOk": "pago parcial OK",
       "advancedNoPartialRepay": "sin pago parcial",
@@ -1704,7 +1706,7 @@
         "post": "Publicar oferta",
         "posting": "Publicando…",
         "posted": "Oferta publicada",
-        "postedNext": "Tu oferta está activa en el libro. Gestiónala en Órdenes abiertas abajo — modifica o cancela en cualquier momento antes de que se llene.",
+        "postedNext": "Tu oferta ya está abierta. Puedes cambiarla o cancelarla en «Tus ofertas abiertas», abajo, hasta que alguien la acepte; una oferta nueva puede tener que seguir abierta unos minutos antes de poder cancelarse.",
         "modeLabel": "Cómo publicar",
         "modeOnchain": "Publicar ahora (comisión de red)",
         "modeGasless": "Solo firmar (gratis)",
@@ -1803,7 +1805,7 @@
         "step1": "Elige un par arriba: el activo que se presta y la garantía que respalda el préstamo. Luego elige cuánto dura el préstamo.",
         "step2": "La lista muestra las ofertas abiertas ahora. «Ofertas para prestar» son personas dispuestas a prestar a esa tasa anual; «Solicitudes de préstamo» son personas que quieren pedir prestado. La tasa media está entre la mejor de cada lado.",
         "step3": "Para aceptar una oferta, pulsa «Pedir este» o «Prestar a este» a su lado. Verás exactamente lo que pagas y recibes antes de firmar nada.",
-        "step4": "Para crear tu propia oferta, completa el formulario: el importe, tu tasa y la garantía. Espera en la lista hasta que alguien la acepte, y puedes cambiarla o cancelarla en cualquier momento antes."
+        "step4": "Para crear tu propia oferta, completa el formulario: el importe, tu tasa y la garantía. Espera en la lista hasta que alguien la acepte, y puedes cambiarla o cancelarla antes de eso. A veces una oferta nueva tiene que seguir abierta unos minutos antes de que puedas cancelarla."
       }
     },
     "tariff": {

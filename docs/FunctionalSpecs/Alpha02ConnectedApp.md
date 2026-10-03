@@ -1107,9 +1107,11 @@ The app uses chain reads and indexed reads for different jobs.
   participation history than one read returns folds into the page's
   recent-activity-only disclosure.
 - An Activity row states the asset and amount its transaction moved or offered
-  whenever any event in that transaction records them, so a row reads as more
-  than an id and a time. When no event records both, the row shows no amount
-  rather than a guess.
+  whenever an event in that transaction records them, read from where each kind
+  of event actually carries them — including a loan start, whose amount and
+  asset are recorded in two separate events. An NFT leg is never stated as a
+  token amount. When no event records both, the row shows no amount rather than
+  a guess.
 - Realtime push refreshes matching indexed views when available. Polling remains
   the fallback.
 - The push signal covers every class of change a holder-keyed view depends on —
@@ -1226,7 +1228,9 @@ progress.
   lender can judge an offer before opening it. When the collateral is recorded
   as illiquid, the row says that on default it is handed over as-is rather than
   sold. The row never presents collateral as liquid merely because nothing
-  marked it illiquid.
+  marked it illiquid. NFT collateral is named by its token (and quantity, for a
+  multi-unit token); a token amount whose details are loading or could not be
+  read says so, rather than showing only a contract address.
 - A filter with no matches says the filter has no matches; it does not claim the
   whole market is empty.
 - Action labels are role-specific so the user understands whether they are
@@ -1242,7 +1246,10 @@ Rate Desk is the market view for supported fungible-token markets. It is open to
 every user, not only to traders: its wording avoids trading jargon, a short
 "how this page works" guide explains it on a first visit, and every choice on the
 offer form explains what the selected option means in visible text rather than
-only in a hover tooltip.
+only in a hover tooltip. A constraint that narrows a choice (a signed lend offer
+being single-fill) is stated beside that explanation, never instead of it. The
+page does not promise an offer can be cancelled "any time" where a deployment
+makes new offers wait a short while before they can be cancelled.
 
 It should provide:
 

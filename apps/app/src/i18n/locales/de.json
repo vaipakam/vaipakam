@@ -1482,6 +1482,8 @@
       "collateralLabel": "Sicherheit",
       "collateralNone": "keine",
       "illiquidCollateralTag": "wird bei Nichtrückzahlung unverändert übergeben",
+      "collateralAmountLoading": "{{token}} (Betrag wird geladen…)",
+      "collateralAmountUnreadable": "{{token}} (Betrag konnte nicht gelesen werden)",
       "byCreator": "von",
       "advancedPartialRepayOk": "Teilrückzahlung OK",
       "advancedNoPartialRepay": "keine Teilrückzahlung",
@@ -1704,7 +1706,7 @@
         "post": "Angebot veröffentlichen",
         "posting": "Wird veröffentlicht…",
         "posted": "Angebot veröffentlicht",
-        "postedNext": "Ihr Angebot ist live im Buch. Verwalten Sie es unten unter „Offene Orders“ — ändern oder stornieren Sie es jederzeit, bevor es ausgeführt wird.",
+        "postedNext": "Dein Angebot ist jetzt offen. Du kannst es unten unter „Deine offenen Angebote“ ändern oder stornieren, bis jemand es annimmt – ein neues Angebot muss eventuell einige Minuten offen bleiben, bevor es storniert werden kann.",
         "modeLabel": "Wie veröffentlichen",
         "modeOnchain": "Jetzt veröffentlichen (Netzwerkgebühr)",
         "modeGasless": "Nur signieren (kostenlos)",
@@ -1803,7 +1805,7 @@
         "step1": "Wählen Sie oben ein Paar: das verliehene Asset und die Sicherheit, die den Kredit absichert. Wählen Sie dann die Laufzeit des Kredits.",
         "step2": "Die Liste zeigt die gerade offenen Angebote. „Angebote zum Verleihen“ sind Personen, die zu diesem Jahreszins verleihen; „Anfragen zum Leihen“ sind Personen, die leihen möchten. Der mittlere Zins liegt zwischen dem besten Angebot jeder Seite.",
         "step3": "Um ein Angebot anzunehmen, tippen Sie daneben auf „Dieses Angebot leihen“ oder „Zu diesem Satz verleihen“. Sie sehen genau, was Sie zahlen und erhalten, bevor Sie etwas signieren.",
-        "step4": "Für ein eigenes Angebot füllen Sie das Formular aus: Betrag, Ihren Zins und die Sicherheit. Es wartet in der Liste, bis jemand es annimmt, und Sie können es bis dahin jederzeit ändern oder stornieren."
+        "step4": "Für ein eigenes Angebot füllst du das Formular aus: Betrag, deinen Zins und die Sicherheit. Es wartet in der Liste, bis jemand es annimmt, und bis dahin kannst du es ändern oder stornieren. Manchmal muss ein neues Angebot einige Minuten offen bleiben, bevor du es stornieren kannst."
       }
     },
     "tariff": {

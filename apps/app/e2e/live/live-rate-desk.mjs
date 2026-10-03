@@ -726,7 +726,7 @@ try {
     emptyCopy.waitFor({ timeout: 45_000 }),
     ladder.waitFor({ timeout: 45_000 }),
   ]);
-  if (await page.getByText(/couldn.t load the order book/i).isVisible().catch(() => false)) {
+  if (await page.getByText(/couldn.t load the offers/i).isVisible().catch(() => false)) {
     throw new Error('order book rendered UNAVAILABLE — the chain read path is down');
   }
   const bookState = (await emptyCopy.isVisible().catch(() => false))
@@ -764,13 +764,12 @@ try {
   const chartUnavailable = chartCard.getByText(
     /couldn.t load the rate history right now/i,
   );
-  // `copy.desk.chart.empty` — "No fills yet for this market — the
-  // chart draws only executed rates." (matched on its distinctive
-  // second half so the tape's similar "No fills yet…" copy can't
+  // `copy.desk.chart.empty` — "No loans agreed yet for this pair — the
+  // chart only shows rates people actually agreed." (matched on its distinctive
+  // second half so the tape's similar "No loans agreed yet…" copy can't
   // collide even if scoping ever changes).
   const chartEmptyMarket = chartCard.getByText(/chart only shows rates people actually agreed/i);
-  // `copy.desk.chart.emptyRange` — "No fills in this range — try a
-  // longer range."
+  // `copy.desk.chart.emptyRange` — "No loans agreed in this period…"
   const chartEmptyRange = chartCard.getByText(/no loans agreed in this period/i);
   // The wrapper div mounts before lightweight-charts initializes, so a
   // "drawn series" claim must see the library's actual OUTPUT — a
@@ -801,7 +800,7 @@ try {
         }`
       : (await chartEmptyMarket.isVisible().catch(() => false))
         ? 'honest market-history empty copy ("…chart draws only executed rates.")'
-        : 'honest range-scoped empty copy ("No fills in this range…")';
+        : 'honest range-scoped empty copy ("No loans agreed in this period…")';
   // The interval/range chip groups render in EVERY chart state (they
   // sit outside the tri-state branch). The Apache-2.0 TradingView
   // attribution link, by contrast, shows ONLY when a chart actually
@@ -1101,13 +1100,13 @@ try {
   // (Codex round-2 P2 #3.) The market-scoped /loans/recent route is
   // production-healthy post-migration, so the tape must resolve to
   // real fills or the honest empty copy (`copy.desk.tapeEmpty`:
-  // "No fills yet for this market.") — the unavailable copy
-  // (`copy.desk.tapeUnavailable`: "We couldn't load recent fills right
+  // "No loans agreed yet for this pair.") — the unavailable copy
+  // (`copy.desk.tapeUnavailable`: "We couldn't load recent loans right
   // now.") is a FAIL.
-  const tapeCard = page.locator('.card').filter({ hasText: 'Recent fills' }).first();
+  const tapeCard = page.locator('.card').filter({ hasText: 'Recent loans' }).first();
   await tapeCard.waitFor({ timeout: 30_000 });
   const tapeEmpty = tapeCard.getByText('No loans agreed yet for this pair.', { exact: true });
-  const tapeUnavailable = tapeCard.getByText(/couldn.t load recent fills right now/i);
+  const tapeUnavailable = tapeCard.getByText(/couldn.t load recent loans right now/i);
   const tapeRows = tapeCard.locator('.desk-tape-row');
   await pollChain(
     'the tape to resolve out of its loading state',
@@ -1129,7 +1128,7 @@ try {
     'PASS',
     tapeFillCount > 0
       ? `${tapeFillCount} fill row(s) rendered`
-      : 'honest market-scoped empty state ("No fills yet for this market.")',
+      : 'honest market-scoped empty state ("No loans agreed yet for this pair.")',
   );
 
   // ---- step 7b (phase 2, #1130): History tab — ASSERTED healthy ------

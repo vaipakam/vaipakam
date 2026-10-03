@@ -1065,7 +1065,7 @@ try {
     throw new Error('pre-state: Partial is not the active fill mode in on-chain mode');
   }
   await page
-    .getByRole('group', { name: 'Posting' })
+    .getByRole('group', { name: 'How to post' })
     .getByRole('button', { name: 'Sign only (free)', exact: true })
     .click();
   await pollFor(
@@ -1076,7 +1076,7 @@ try {
     { timeoutMs: 10_000, intervalMs: 500 },
   );
   const aonNote = page.getByText(/a signed lend offer can only be taken all at once/i);
-  const escrowNote = page.getByText(/nothing is escrowed when you sign/i);
+  const escrowNote = page.getByText(/nothing is set aside when you sign/i);
   if (!(await aonNote.first().isVisible().catch(() => false))) {
     throw new Error('gasless lender AON note not rendered after the mode switch');
   }
@@ -1106,7 +1106,7 @@ try {
     address: lenderAddr,
     blockTag: 'pending',
   });
-  const signBtn = page.getByRole('button', { name: /^sign & post to the book$/i });
+  const signBtn = page.getByRole('button', { name: /^sign and post$/i });
   await consentAndWaitEnabled(page, signBtn);
   signClicked = true; // a valid signature may exist from here on
   await signBtn.click();

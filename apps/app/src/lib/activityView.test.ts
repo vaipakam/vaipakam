@@ -184,23 +184,65 @@ describe('coalesceByTx', () => {
 
 describe('amountSubstance (UX3-012)', () => {
   const WETH = '0x4200000000000000000000000000000000000006';
-  it('takes the amount from a sibling details event when the representative carries only an id', () => {
+  const NFT = '0x00000000000000000000000000000000000000ab';
+  // Fixtures follow the contract ABI shapes (#2378 r1): the indexer stores
+  // decoded args as JSON with bigints as strings and tuples as objects.
+  it('reads an offer from the nested fields tuple of OfferCreatedDetails', () => {
     const bucket = [
-      ev({ kind: 'OfferCanceled', args: { offerId: '44' } }),
-      ev({ kind: 'OfferCanceledDetails', args: { offerId: '44', lendingAsset: WETH, amount: '200000000000000' } }),
+      ev({ kind: 'OfferCreated', args: { offerId: '44', creator: WETH, offerType: 0 } }),
+      ev({
+        kind: 'OfferCreatedDetails',
+        args: { offerId: '44', creator: WETH, lendingAsset: WETH, fields: { assetType: 0, amount: '200000000000000' } },
+      }),
     ];
     expect(amountSubstance(bucket)).toEqual({ asset: WETH, amount: '200000000000000' });
   });
 
+  it('joins a loan start from LoanInitiated.principal and LoanInitiatedDetails.details.principalAsset', () => {
+    const bucket = [
+      ev({ kind: 'LoanInitiated', args: { loanId: '7', offerId: '3', principal: '5000000000000000' } }),
+      ev({ kind: 'LoanInitiatedDetails', args: { loanId: '7', details: { principalAsset: WETH, assetType: 0 } } }),
+    ];
+    expect(amountSubstance(bucket)).toEqual({ asset: WETH, amount: '5000000000000000' });
+  });
+
+  it('reads a cancelled offer from OfferCanceledDetails', () => {
+    const bucket = [
+      ev({ kind: 'OfferCanceled', args: { offerId: '44' } }),
+      ev({ kind: 'OfferCanceledDetails', args: { offerId: '44', assetType: 0, lendingAsset: WETH, amount: '9' } }),
+    ];
+    expect(amountSubstance(bucket)).toEqual({ asset: WETH, amount: '9' });
+  });
+
   it('reads JSON-string args the same way', () => {
-    const bucket = [ev({ args: JSON.stringify({ lendingAsset: WETH, amount: '5' }) })];
+    const bucket = [
+      ev({ kind: 'LenderFundsClaimed', args: JSON.stringify({ loanId: '1', asset: WETH, amount: '5' }) }),
+    ];
     expect(amountSubstance(bucket)).toEqual({ asset: WETH, amount: '5' });
   });
 
-  it('guesses nothing when no event names both an asset and a non-zero amount', () => {
-    expect(amountSubstance([ev({ args: { offerId: '1' } })])).toBeUndefined();
-    expect(amountSubstance([ev({ args: { lendingAsset: WETH, amount: '0' } })])).toBeUndefined();
-    expect(amountSubstance([ev({ args: { lendingAsset: 'not-an-address', amount: '5' } })])).toBeUndefined();
-    expect(amountSubstance([ev({ args: '{not json' })])).toBeUndefined();
+  it('never states an NFT leg as a token amount', () => {
+    expect(
+      amountSubstance([
+        ev({ kind: 'OfferCreatedDetails', args: { lendingAsset: NFT, fields: { assetType: 1, amount: '1' } } }),
+      ]),
+    ).toBeUndefined();
+    expect(
+      amountSubstance([
+        ev({ kind: 'LoanInitiated', args: { principal: '1' } }),
+        ev({ kind: 'LoanInitiatedDetails', args: { details: { principalAsset: NFT, assetType: 1 } } }),
+      ]),
+    ).toBeUndefined();
+  });
+
+  it('guesses nothing for an undeclared kind or a shape it does not match', () => {
+    // A flat lendingAsset + amount on a kind with no declared reader.
+    expect(amountSubstance([ev({ kind: 'SomethingElse', args: { lendingAsset: WETH, amount: '5' } })])).toBeUndefined();
+    // A loan start without its sibling principal.
+    expect(
+      amountSubstance([ev({ kind: 'LoanInitiatedDetails', args: { details: { principalAsset: WETH, assetType: 0 } } })]),
+    ).toBeUndefined();
+    expect(amountSubstance([ev({ kind: 'LenderFundsClaimed', args: { asset: WETH, amount: '0' } })])).toBeUndefined();
+    expect(amountSubstance([ev({ kind: 'LenderFundsClaimed', args: '{not json' })])).toBeUndefined();
   });
 });

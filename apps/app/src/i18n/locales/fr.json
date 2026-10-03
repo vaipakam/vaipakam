@@ -1482,6 +1482,8 @@
       "collateralLabel": "garantie",
       "collateralNone": "aucune",
       "illiquidCollateralTag": "remise telle quelle si non remboursé",
+      "collateralAmountLoading": "{{token}} (chargement du montant…)",
+      "collateralAmountUnreadable": "{{token}} (montant illisible)",
       "byCreator": "par",
       "advancedPartialRepayOk": "remboursement partiel OK",
       "advancedNoPartialRepay": "pas de remboursement partiel",
@@ -1704,7 +1706,7 @@
         "post": "Publier l’offre",
         "posting": "Publication…",
         "posted": "Offre publiée",
-        "postedNext": "Votre offre est live dans le carnet. Gérez-la dans Ordres ouverts ci-dessous — modifiez ou annulez à tout moment avant son remplissage.",
+        "postedNext": "Votre offre est maintenant ouverte. Vous pouvez la modifier ou l’annuler dans « Vos offres ouvertes » ci-dessous jusqu’à ce que quelqu’un la prenne — une nouvelle offre peut devoir rester ouverte quelques minutes avant de pouvoir être annulée.",
         "modeLabel": "Mode de publication",
         "modeOnchain": "Publier maintenant (frais réseau)",
         "modeGasless": "Signer seulement (gratuit)",
@@ -1803,7 +1805,7 @@
         "step1": "Choisissez une paire en haut : l’actif prêté et la garantie qui couvre le prêt. Puis choisissez la durée du prêt.",
         "step2": "La liste montre les offres ouvertes en ce moment. « Offres de prêt » : des personnes prêtes à prêter à ce taux annuel ; « Demandes d’emprunt » : des personnes qui veulent emprunter. Le taux médian se situe entre la meilleure de chaque côté.",
         "step3": "Pour accepter une offre, appuyez sur « Emprunter ceci » ou « Prêter à ceci » à côté. Vous voyez exactement ce que vous payez et recevez avant de signer quoi que ce soit.",
-        "step4": "Pour créer votre propre offre, remplissez le formulaire : le montant, votre taux et la garantie. Elle attend dans la liste jusqu’à ce que quelqu’un la prenne, et vous pouvez la modifier ou l’annuler à tout moment avant."
+        "step4": "Pour créer votre propre offre, remplissez le formulaire : le montant, votre taux et la garantie. Elle attend dans la liste jusqu’à ce que quelqu’un la prenne, et vous pouvez la modifier ou l’annuler d’ici là. Parfois, une nouvelle offre doit rester ouverte quelques minutes avant de pouvoir être annulée."
       }
     },
     "tariff": {

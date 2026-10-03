@@ -1,4 +1,4 @@
-## Thread — The Rate Desk, Offer Book and core screens in plain words, usable by newcomers (PR #<n>)
+## Thread — The Rate Desk, Offer Book and core screens in plain words, usable by newcomers (PR #2378)
 
 The owner asked for the app to be easy for someone with no trading or crypto background, including the advanced tools. This change rewrites the most jargon-heavy surfaces and makes the advanced ones approachable, following the 2026-10-03 live review (`docs/FindingsAndFixes/Findings20261003-LiveUiUxReview.md`, UX3-007, 012 and 013).
 

@@ -3426,6 +3426,10 @@ const copySource = {
     // UX3-007 — shown only when the record positively flags the collateral
     // illiquid; absence is never presented as "liquid".
     illiquidCollateralTag: 'handed over as-is if not repaid',
+    // #2378 r1 — an ERC-20 collateral amount whose token details are still
+    // loading, or could not be read.
+    collateralAmountLoading: tmpl('{{token}} (amount loading…)', ['token']),
+    collateralAmountUnreadable: tmpl('{{token}} (amount couldn’t be read)', ['token']),
     byCreator: 'by',
     advancedPartialRepayOk: 'partial repay OK',
     advancedNoPartialRepay: 'no partial repay',
@@ -3542,7 +3546,9 @@ const copySource = {
       step1: 'Pick a pair at the top: the asset being lent, and the collateral that backs the loan. Then pick how long the loan lasts.',
       step2: 'The list shows the offers open right now. “Offers to lend” are people ready to lend at that yearly rate; “Requests to borrow” are people who want to borrow. The middle rate sits between the best of each.',
       step3: 'To take an offer, press “Borrow this” or “Lend to this” beside it. You see exactly what you pay and receive before you sign anything.',
-      step4: 'To make your own offer, fill in the form: the amount, your rate and the collateral. It waits in the list until someone takes it, and you can change or cancel it any time before then.',
+      // #2378 r1 — the cancel promise is qualified: where partial fills are
+      // switched on, a new offer must stay open for a short time first.
+      step4: 'To make your own offer, fill in the form: the amount, your rate and the collateral. It waits in the list until someone takes it, and you can change or cancel it before then. Sometimes a new offer has to stay open for a few minutes before you can cancel it.',
     },
     marketLabel: 'Pair (lend / collateral)',
     tenorLabel: 'Loan length',
@@ -3748,7 +3754,7 @@ const copySource = {
       posting: 'Posting…',
       posted: 'Offer posted',
       postedNext:
-        'Your offer is now open. You can change or cancel it under “Your open offers” below, any time before someone takes it.',
+        'Your offer is now open. You can change or cancel it under “Your open offers” below until someone takes it — a new offer may have to stay open for a few minutes before it can be cancelled.',
       // #1131 slice D — gasless posting mode.
       modeLabel: 'How to post',
       modeOnchain: 'Post now (network fee)',

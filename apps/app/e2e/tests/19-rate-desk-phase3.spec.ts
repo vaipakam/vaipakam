@@ -349,7 +349,7 @@ test('gasless loop: maker posts a signed order with ONE signature (no transactio
     .getByRole('button', { name: 'Until I cancel', exact: true })
     .click();
   await maker.page
-    .getByRole('group', { name: 'Posting' })
+    .getByRole('group', { name: 'How to post' })
     .getByRole('button', { name: 'Sign only (free)', exact: true })
     .click();
   // The escrow-reality hint must accompany the mode switch.

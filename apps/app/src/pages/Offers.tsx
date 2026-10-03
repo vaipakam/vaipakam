@@ -32,6 +32,7 @@ import { useActiveChain } from '../chain/useActiveChain';
 import { useMode } from '../app/ModeContext';
 import { EmptyState, UnavailableState } from '../components/EmptyState';
 import { MarketFreshnessNote } from '../components/MarketFreshnessNote';
+import { offerCollateralText } from '../lib/offerCollateral';
 import { useTokenMeta } from '../contracts/erc20';
 import {
   OfferRiskBadge,
@@ -84,7 +85,11 @@ function OfferRow({ offer, risk }: { offer: IndexedOffer; risk: RiskLevel | null
   const hasCollateral =
     offer.collateralAsset.toLowerCase() !==
     '0x0000000000000000000000000000000000000000';
-  const collateralMeta = useTokenMeta(hasCollateral ? offer.collateralAsset : undefined);
+  // ERC-20 details only: an NFT has no decimals, and asking would only
+  // produce a failed read (#2378 r1).
+  const collateralMeta = useTokenMeta(
+    hasCollateral && offer.collateralAssetType === AssetType.ERC20 ? offer.collateralAsset : undefined,
+  );
 
   const notMine =
     !address || offer.creator.toLowerCase() !== address.toLowerCase();
@@ -135,9 +140,22 @@ function OfferRow({ offer, risk }: { offer: IndexedOffer; risk: RiskLevel | null
           ? // UX3-007 — the AMOUNT, not just the symbol: for a lender
             // pressing "Fund this request" it is the deciding number. The
             // same figure the guided flow's match rows and review show.
-            collateralMeta.data
-            ? `${formatTokenAmount(offer.collateralAmount, collateralMeta.data.decimals)} ${collateralMeta.data.symbol}`
-            : shortAddress(offer.collateralAsset)
+            // #2378 r1 — an NFT is named by token id / quantity, and an
+            // ERC-20 whose details are loading or failed says so, instead
+            // of falling back to a bare contract address.
+            offerCollateralText({
+              assetType: offer.collateralAssetType,
+              asset: offer.collateralAsset,
+              amount: offer.collateralAmount,
+              tokenId: offer.collateralTokenId,
+              quantity: offer.collateralQuantity,
+              meta: collateralMeta.data,
+              metaFailed: collateralMeta.isError,
+              labels: {
+                amountLoading: copy.offers.collateralAmountLoading,
+                amountUnreadable: copy.offers.collateralAmountUnreadable,
+              },
+            })
           : copy.offers.collateralNone
       }${
         // UX3-007 — say so when the collateral is illiquid: on default it is
