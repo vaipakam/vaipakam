@@ -2205,10 +2205,19 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       // One pure rule for every pre-check (#2389 r2): a blocking answer
       // names its obstacle, and an unanswered one blocks with "couldn't
       // check". Tested in partialWithdraw.test.ts.
-      const block = withdrawPreflightBlock({ paused, saleState, swapOrder, liveMax, wei });
+      const block = withdrawPreflightBlock({
+        refinancePending: refinanceBlocking,
+        paused,
+        saleState,
+        swapOrder,
+        liveMax,
+        wei,
+      });
       if (block !== null) {
         setError(
-          block === 'paused'
+          block === 'refinance-pending'
+            ? t.refinancePending
+            : block === 'paused'
             ? t.paused
             : block === 'pause-unchecked'
               ? t.pauseUnchecked
@@ -3232,7 +3241,10 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       ) : null}
 
       {role === 'borrower' &&
-      row.status === 'active' &&
+      // #2389 r5 — the RECONCILED active state, as the ceiling query
+      // uses: a fallback loan the live read confirms cured to Active
+      // is open again, and the indexer must not withhold the action.
+      effectivelyActive &&
       // #2389 r1 — the indexed row can lag a repay, default or
       // liquidation made elsewhere; once the live read says the loan is
       // no longer Active the card goes, rather than telling the borrower
@@ -3258,6 +3270,15 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             <p className="muted" style={{ margin: 0 }}>
               {copy.earlyRepay.checkingInterlocks}
             </p>
+          ) : refinanceBlocking ? (
+            // #2389 r5 — the same pending-refinance interlock partial
+            // repayment and preclose apply: the request is frozen at the
+            // current collateral, so a withdrawal strands it.
+            <div className="banner banner-warn" role="alert">
+              <span className="banner-body">
+                {copy.positions.details.withdrawCollateral.refinancePending}
+              </span>
+            </div>
           ) : saleHold.data === 'live' ||
             saleHold.data === 'clearable' ||
             saleHold.data === 'accepted' ? (
@@ -3319,12 +3340,16 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                   inputMode="decimal"
                   placeholder="0.0"
                   value={withdrawInput}
+                  // #2389 r5 P1 — frozen while the review is open or a
+                  // send is in flight, so the amount on screen is always
+                  // the amount the wallet is asked to send.
+                  disabled={busy || confirmingSurface === 'withdraw-collateral'}
                   onChange={(e) => setWithdrawInput(e.target.value.trim())}
                 />
                 <button
                   type="button"
                   className="btn btn-ghost"
-                  disabled={busy}
+                  disabled={busy || confirmingSurface === 'withdraw-collateral'}
                   onClick={() =>
                     setWithdrawInput(formatUnits(maxWithdrawState.max, collateral.decimals))
                   }
@@ -3383,7 +3408,16 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                     // #2389 r4 — the same write gate as the form's button:
                     // a wallet moved to an unsupported network must land
                     // on a disabled button, not a silent no-op.
-                    disabled={!onSupportedChain || !walletClient || !publicClient || !walletChain}
+                    disabled={
+                      !onSupportedChain ||
+                      !walletClient ||
+                      !publicClient ||
+                      !walletChain ||
+                      // #2389 r5 — a ceiling that refreshed below the
+                      // reviewed amount disables the confirm, beside the
+                      // over-limit warning it already shows.
+                      withdrawProblem !== null
+                    }
                     data={{
                       // The exact amount sent, not the typed text (#2389 r3).
                       youReceive: copy.positions.details.withdrawCollateral.receive(

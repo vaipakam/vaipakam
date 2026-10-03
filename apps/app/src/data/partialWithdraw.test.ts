@@ -244,12 +244,16 @@ describe('swapToRepayOrderState', () => {
 
 describe('withdrawPreflightBlock (#2389 r2)', () => {
   const ok = {
+    refinancePending: false,
     paused: false as const,
     saleState: 'none' as const,
     swapOrder: 'none' as const,
     liveMax: 100n,
     wei: 50n,
   };
+  it('blocks while an acceptable refinance request is open (#2389 r5)', () => {
+    expect(withdrawPreflightBlock({ ...ok, refinancePending: true })).toBe('refinance-pending');
+  });
   it('blocks while the deployment is paused, and when the pause read failed (#2389 r3)', () => {
     expect(withdrawPreflightBlock({ ...ok, paused: true })).toBe('paused');
     expect(withdrawPreflightBlock({ ...ok, paused: 'unknown' })).toBe('pause-unchecked');

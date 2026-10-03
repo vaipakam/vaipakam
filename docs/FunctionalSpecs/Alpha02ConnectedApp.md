@@ -1330,7 +1330,9 @@ Collateral"). The app offers this to every borrower, in Basic mode, because it
 is the borrower's own money.
 
 - The surface appears for the current borrower-position holder on an open loan
-  with fungible collateral. When the live loan status says the loan is no longer
+  with fungible collateral, using the reconciled loan status (a loan the live read
+  confirms is open again appears even before the position lists catch up). When
+  the live loan status says the loan is no longer
   open (repaid, defaulted or liquidated elsewhere), the surface goes away, even
   if the position lists have not caught up. It says plainly that taking collateral back makes
   the loan riskier: with less collateral, a price drop reaches liquidation
@@ -1357,8 +1359,15 @@ is the borrower's own money.
   says so beside the amount, rather than presenting the withdrawal as
   unconditionally available and revealing the obstacle only at submit.
 - The confirmation's button is disabled whenever the wallet cannot send — an
-  unsupported network or no wallet client — rather than accepting a click that
-  does nothing.
+  unsupported network or no wallet client — or when the reviewed amount is no
+  longer valid (the limit fell below it), rather than accepting a click that
+  does nothing or can only fail.
+- While a review is open or a send is in flight, the amount cannot be edited: the
+  amount on screen is always the amount the wallet is asked to send.
+- While an acceptable refinance request is open on the loan, the surface says
+  that taking collateral back would make every lender's acceptance fail and
+  asks the borrower to cancel or wait — the same interlock partial repayment
+  and early close-out apply — and the pre-check refuses.
 - An open confirmation does not survive a network switch: it closes, and the
   typed amount is cleared, so a review opened on one network can never send on
   another.

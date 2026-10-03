@@ -224,6 +224,7 @@ export function withdrawCaveats(a: {
  *  not get an answer to. Order matters only for which reason is shown;
  *  any non-null result sends nothing. */
 export type WithdrawPreflightBlock =
+  | 'refinance-pending'
   | 'paused'
   | 'pause-unchecked'
   | 'sale-listed'
@@ -234,6 +235,12 @@ export type WithdrawPreflightBlock =
   | 'none-left';
 
 export function withdrawPreflightBlock(a: {
+  /** #2389 r5 — an acceptable refinance request is frozen at the loan's
+   *  CURRENT collateral, and the refinance requires the replacement
+   *  loan's collateral to equal it; a withdrawal would make every
+   *  lender's acceptance fail. True while it is (or may still be)
+   *  acceptable — the page's existing `refinanceBlocking`. */
+  refinancePending: boolean;
   /** #2389 r3 — the live pause read; 'unknown' when it failed. */
   paused: boolean | 'unknown';
   saleState: SaleListingHoldState;
@@ -241,6 +248,7 @@ export function withdrawPreflightBlock(a: {
   liveMax: bigint;
   wei: bigint;
 }): WithdrawPreflightBlock | null {
+  if (a.refinancePending) return 'refinance-pending';
   if (a.paused === true) return 'paused';
   if (a.paused !== false) return 'pause-unchecked';
   if (a.saleState === 'live' || a.saleState === 'clearable' || a.saleState === 'accepted') {
