@@ -60,16 +60,10 @@ import {RepriceVenueReport, IRepriceDiamondViews} from "./lib/RepriceVenueReport
  *           - an artifact that no longer describes the chain: the recorded
  *             pool must be the factory's live `asset/WETH` pool, and the
  *             recorded feed must be the registry's live `asset/USD` feed;
- *           - a broadcaster that does not own the feed, the pool, and (unless
- *             skipped) the venue — each is owner-gated so a public testnet's
- *             demos cannot be repriced by a passer-by;
- *           - (after the writes, in simulation) a recorded pool the oracle does
- *             not actually route through: zeroing its depth must flip the
- *             now-Liquid asset Illiquid. The Diamond exposes no view of its
- *             factory or quote list, so this is proved by behaviour, then the
- *             snapshot is restored. Run on the post-write state, it also
- *             covers a recovery run that started Illiquid;
- *           - (unless skipped) a recorded venue the Diamond does not route
+ *           - a broadcaster that does not own the feed, the pool and the
+ *             venue — each is owner-gated so a public testnet's demos cannot
+ *             be repriced by a passer-by;
+ *           - a recorded venue the Diamond does not route
  *             liquidations through: it must be in `getSwapAdapters()` and not
  *             disabled. Repricing a different adapter would leave the one the
  *             Diamond actually uses at the old price;
@@ -77,14 +71,27 @@ import {RepriceVenueReport, IRepriceDiamondViews} from "./lib/RepriceVenueReport
  *             (the pool math has no decimal term).
  *
  *         And after applying the writes in simulation, before broadcast:
- *           - the Diamond must read the new price for the asset;
- *           - the asset must read Liquid, unless `REPRICE_ALLOW_ILLIQUID=true`
- *             — whatever it read before the run. A coherent move that ends
- *             Illiquid is a depth, band or configuration limit worth seeing,
- *             not a rehearsal state to ship silently. (An earlier version
- *             refused only a Liquid-to-Illiquid TRANSITION, which let an asset
- *             already Illiquid for an unrelated reason broadcast without the
- *             opt-in.)
+ *           - the Diamond must read the new price for the asset, and the venue
+ *             must pay it;
+ *           - the asset must read Liquid, whatever it read before the run. A
+ *             coherent move that ends Illiquid is a depth, band or
+ *             configuration limit worth seeing, not a rehearsal state to ship;
+ *           - the recorded FEED must be what the Diamond reads: in simulation,
+ *             set it to a different price and require the Diamond's price to
+ *             follow, then restore. A price that merely EQUALS the target
+ *             (a restore, a repeat run) is not proof of wiring;
+ *           - the recorded POOL must be what the oracle routes through:
+ *             zeroing its depth must flip the now-Liquid asset Illiquid, then
+ *             restore. The Diamond exposes no view of its factory, registry or
+ *             quote list, so both wirings are proved by behaviour. On the
+ *             post-write state this also covers a recovery run that started
+ *             Illiquid.
+ *
+ *         There are deliberately NO opt-outs. Earlier revisions had
+ *         `REPRICE_SKIP_VENUE` and `REPRICE_ALLOW_ILLIQUID` for speculative
+ *         "deliberate mismatch" tests nobody asked for; each review round
+ *         found another way they let a weaker run through, so they were
+ *         removed rather than patched (#2372).
  *
  *         Then it REPORTS, without refusing, the venue state it does not
  *         write: the execution knobs (`shouldRevert`,
@@ -122,16 +129,6 @@ import {RepriceVenueReport, IRepriceDiamondViews} from "./lib/RepriceVenueReport
  *                                      command line (a value already in the
  *                                      environment wins over `.env`);
  *                                      unsetting it is not enough.
- *           - REPRICE_SKIP_VENUE     : optional, default false. Leave the
- *                                      venue's price where it is — only for a
- *                                      deliberate venue/oracle mismatch test.
- *           - REPRICE_ALLOW_ILLIQUID : optional, default false. See above.
- *
- *         The two opt-ins weaken what a run guarantees, and Foundry also reads
- *         them from `contracts/.env` or a stale shell export. The runbook's
- *         command therefore sets both to `false` explicitly (a variable set on
- *         the command line wins over `.env`), and the script prints a
- *         WARNING line for each one that is on.
  *
  *         Anvil first: `script/rehearse-reprice-anvil.sh` forks Base Sepolia,
  *         impersonates the mock owner and runs this script end to end.
@@ -175,13 +172,11 @@ contract RepriceTestnetMock is Script {
 
         string memory assetKey = vm.envString("REPRICE_ASSET");
         uint256 newPrice8 = vm.envUint("REPRICE_USD_E8");
-        bool skipVenue = vm.envOr("REPRICE_SKIP_VENUE", false);
-        bool allowIlliquid = vm.envOr("REPRICE_ALLOW_ILLIQUID", false);
         uint256 ownerKey = vm.envOr("MOCK_OWNER_PRIVATE_KEY", uint256(0));
         address sender = ownerKey == 0 ? msg.sender : vm.addr(ownerKey);
 
         RepriceTarget memory t = _resolveTarget(assetKey);
-        _preflight(t, sender, skipVenue);
+        _preflight(t, sender);
 
         PriceReading memory before = _read(t);
         uint160 newSpot = _targetSpot(t, newPrice8);
@@ -193,45 +188,31 @@ contract RepriceTestnetMock is Script {
         console.log("Broadcaster:  ", sender);
         console.log("Price (e8):    %s -> %s", before.oraclePrice, newPrice8);
         console.log("Pool spot:     %s -> %s", uint256(before.poolSpot), uint256(newSpot));
-        console.log("Venue (e8):    %s -> %s", before.venuePrice8, skipVenue ? before.venuePrice8 : newPrice8);
+        console.log("Venue (e8):    %s -> %s", before.venuePrice8, newPrice8);
         console.log("Liquidity:     %s (0 = Liquid, 1 = Illiquid)", uint256(before.liquidity));
 
-        if (skipVenue) console.log("WARNING: REPRICE_SKIP_VENUE is on - the liquidation venue keeps its old price");
-        if (allowIlliquid) {
-            console.log("WARNING: REPRICE_ALLOW_ILLIQUID is on - a result that reads Illiquid will still broadcast");
-        }
-        console.log("Sends 3 transactions (2 with REPRICE_SKIP_VENUE); not atomic - re-run to finish a partial run.");
+        console.log("Sends 3 transactions; not atomic - re-run to finish a partial run.");
 
         if (ownerKey == 0) vm.startBroadcast();
         else vm.startBroadcast(ownerKey);
-        _applyReprice(t, newPrice8, newSpot, skipVenue);
+        _applyReprice(t, newPrice8, newSpot);
         vm.stopBroadcast();
 
-        PriceReading memory afterReading = _verifyReprice(t, newPrice8, skipVenue, allowIlliquid);
+        PriceReading memory afterReading = _verifyReprice(t, newPrice8);
         console.log("Liquidity now: %s (0 = Liquid, 1 = Illiquid)", uint256(afterReading.liquidity));
 
-        // The route proof runs on the POST-write state, where a coherent move
-        // must read Liquid — so it also covers a recovery run that started
-        // Illiquid. Still simulation only: this is after stopBroadcast, and
-        // the probe restores its snapshot. A refusal here sends nothing,
-        // because forge broadcasts only a simulation that completed.
-        if (afterReading.liquidity == 0) {
-            _requireRecordedPoolIsTheRoute(t);
-        } else {
-            console.log(
-                "WARNING: route not proven - the asset reads Illiquid (REPRICE_ALLOW_ILLIQUID), so emptying the recorded pool cannot show the oracle depends on it"
-            );
-        }
+        // Both wiring proofs run on the POST-write state, where the asset
+        // must read Liquid (verify just required it) — so they also cover a
+        // recovery run that started Illiquid. Still simulation only: this is
+        // after stopBroadcast, and each probe restores its snapshot. A refusal
+        // here sends nothing, because forge broadcasts only a simulation that
+        // completed.
+        _requireRecordedFeedIsWhatTheDiamondReads(t, newPrice8);
+        _requireRecordedPoolIsTheRoute(t);
 
         // The venue's settlement depends on state this run does not write.
         // Report all of it that is knowable, and say what is not.
-        if (t.venue.code.length == 0) {
-            // Reachable only with REPRICE_SKIP_VENUE (preflight otherwise
-            // requires code). Say so rather than omitting the report.
-            console.log(
-                "WARNING: venue report unavailable - no code at the recorded venue, so its settlement state is not substantiated"
-            );
-        } else {
+        {
             // The report reads state this run neither writes nor controls, so
             // it must never be what stops a run: it lives in its own contract,
             // deployed here in simulation (after stopBroadcast, so nothing is
@@ -280,7 +261,7 @@ contract RepriceTestnetMock is Script {
 
     /// @notice Every check that needs no state change. Reverts with the
     ///         first one that fails, naming it.
-    function _preflight(RepriceTarget memory t, address sender, bool skipVenue) internal view {
+    function _preflight(RepriceTarget memory t, address sender) internal view {
         require(t.diamond.code.length != 0, "RepriceTestnetMock: no code at the Diamond");
         require(t.feed.code.length != 0, "RepriceTestnetMock: no code at the recorded feed");
         require(t.pool.code.length != 0, "RepriceTestnetMock: no code at the recorded pool");
@@ -311,15 +292,13 @@ contract RepriceTestnetMock is Script {
 
         require(MockChainlinkFeed(t.feed).owner() == sender, "RepriceTestnetMock: broadcaster does not own the feed");
         require(MockUniswapV3Pool(t.pool).owner() == sender, "RepriceTestnetMock: broadcaster does not own the pool");
-        if (!skipVenue) {
-            require(t.venue.code.length != 0, "RepriceTestnetMock: no code at the recorded venue");
-            require(_isRoutedVenue(t), "RepriceTestnetMock: recorded venue is not in the Diamond's live adapter list");
-            require(
-                !IRepriceDiamondViews(t.diamond).isSwapAdapterDisabled(t.venue),
-                "RepriceTestnetMock: recorded venue is registered but disabled on the Diamond"
-            );
-            require(MockSwapAdapter(t.venue).owner() == sender, "RepriceTestnetMock: broadcaster does not own the venue");
-        }
+        require(t.venue.code.length != 0, "RepriceTestnetMock: no code at the recorded venue");
+        require(_isRoutedVenue(t), "RepriceTestnetMock: recorded venue is not in the Diamond's live adapter list");
+        require(
+            !IRepriceDiamondViews(t.diamond).isSwapAdapterDisabled(t.venue),
+            "RepriceTestnetMock: recorded venue is registered but disabled on the Diamond"
+        );
+        require(MockSwapAdapter(t.venue).owner() == sender, "RepriceTestnetMock: broadcaster does not own the venue");
     }
 
     /// @notice The pool spot that agrees with `newPrice8` against WETH's
@@ -337,15 +316,15 @@ contract RepriceTestnetMock is Script {
 
     /// @notice The writes — and nothing else, so a test can drive them under
     ///         a prank exactly as the broadcast sends them.
-    function _applyReprice(RepriceTarget memory t, uint256 newPrice8, uint160 newSpot, bool skipVenue) internal {
+    function _applyReprice(RepriceTarget memory t, uint256 newPrice8, uint160 newSpot) internal {
         MockChainlinkFeed(t.feed).setPrice(SafeCast.toInt256(newPrice8));
         MockUniswapV3Pool(t.pool).setSqrtPriceX96(newSpot);
-        if (!skipVenue) MockSwapAdapter(t.venue).setTokenPrice(t.asset, newPrice8);
+        MockSwapAdapter(t.venue).setTokenPrice(t.asset, newPrice8);
     }
 
     /// @notice Check the simulated result against what a reprice must
     ///         produce, and return the reading.
-    function _verifyReprice(RepriceTarget memory t, uint256 newPrice8, bool skipVenue, bool allowIlliquid)
+    function _verifyReprice(RepriceTarget memory t, uint256 newPrice8)
         internal
         view
         returns (PriceReading memory r)
@@ -356,14 +335,8 @@ contract RepriceTestnetMock is Script {
             r.oraclePrice * 10 ** (18 - r.oracleDecimals) == newPrice8 * 10 ** (18 - REPRICE_FEED_DECIMALS),
             "RepriceTestnetMock: the Diamond does not read the new price - is it wired to this registry?"
         );
-        if (!skipVenue) {
-            require(r.venuePrice8 == newPrice8, "RepriceTestnetMock: venue price did not move");
-        }
-        if (r.liquidity != 0 && !allowIlliquid) {
-            revert(
-                "RepriceTestnetMock: the asset reads Illiquid after a coherent reprice - a depth or band limit, not a rehearsal state; set REPRICE_ALLOW_ILLIQUID=true to proceed"
-            );
-        }
+        require(r.venuePrice8 == newPrice8, "RepriceTestnetMock: venue price did not move");
+        require(r.liquidity == 0, "RepriceTestnetMock: the asset reads Illiquid after a coherent reprice - a depth, band or configuration limit, not a rehearsal state");
     }
 
     /// @notice The faucet assets the venue is expected to price: the two
@@ -384,6 +357,27 @@ contract RepriceTestnetMock is Script {
         for (uint256 i; i < found.length; ++i) {
             if (found[i] != address(0)) assets[n++] = found[i];
         }
+    }
+
+    /// @notice Prove, by behaviour, that the recorded feed is what the
+    ///         Diamond prices the asset from.
+    /// @dev    The post-write price check passes whenever the Diamond's price
+    ///         EQUALS the target — which a stale record can satisfy by
+    ///         coincidence (a restore, a repeat run) while the write landed on
+    ///         an obsolete feed. So, in simulation only: snapshot, move the
+    ///         recorded feed to a different price as its owner, require the
+    ///         Diamond's price to follow, revert. Same shape as the pool probe.
+    function _requireRecordedFeedIsWhatTheDiamondReads(RepriceTarget memory t, uint256 newPrice8) internal {
+        uint256 probe8 = newPrice8 * 2;
+        uint256 snap = vm.snapshotState();
+        vm.prank(MockChainlinkFeed(t.feed).owner());
+        MockChainlinkFeed(t.feed).setPrice(SafeCast.toInt256(probe8));
+        (uint256 p, uint8 d) = IRepriceDiamondViews(t.diamond).getAssetPrice(t.asset);
+        vm.revertToState(snap);
+        require(
+            d <= 18 && p * 10 ** (18 - d) == probe8 * 10 ** (18 - REPRICE_FEED_DECIMALS),
+            "RepriceTestnetMock: the Diamond's price does not follow the recorded feed - it reads another feed"
+        );
     }
 
     /// @notice Prove, by behaviour, that the recorded pool is what the

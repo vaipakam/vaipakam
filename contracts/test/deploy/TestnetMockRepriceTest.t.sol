@@ -6,6 +6,7 @@ import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {AdminFacet} from "../../src/facets/AdminFacet.sol";
 import {MockUniswapV3Factory, MockUniswapV3Pool} from "../../script/mocks/MockUniswapV3.sol";
 import {ERC20Mock} from "../mocks/ERC20Mock.sol";
+import {MockChainlinkFeed} from "../../script/mocks/MockChainlinkRegistry.sol";
 import {MockSwapAdapter} from "../mocks/MockSwapAdapter.sol";
 import {DeployTestnetMocks} from "../../script/DeployTestnetMocks.s.sol";
 import {RepriceTestnetMock} from "../../script/RepriceTestnetMock.s.sol";
@@ -75,7 +76,7 @@ contract TestnetMockRepriceTest is TestnetMockOracleRig, RepriceTestnetMock {
     function test_coherentReprice_staysLiquidThroughA55PercentDrawdown() public {
         uint256[5] memory steps = [uint256(1_960e8), 1_600e8, 1_200e8, 1_000e8, 900e8];
         for (uint256 i; i < steps.length; ++i) {
-            _reprice(tliqTarget, steps[i], false, false);
+            _reprice(tliqTarget, steps[i]);
             assertEq(_status(address(tLIQ)), LIQUID, "Liquid after a coherent reprice");
             (uint256 p,) = OracleFacet(address(diamond)).getAssetPrice(address(tLIQ));
             assertEq(p, steps[i], "oracle reads the new price");
@@ -89,7 +90,7 @@ contract TestnetMockRepriceTest is TestnetMockOracleRig, RepriceTestnetMock {
     }
 
     function test_coherentReprice_upwardMoveStaysLiquid() public {
-        _reprice(tliqTarget, 2_600e8, false, false);
+        _reprice(tliqTarget, 2_600e8);
         assertEq(_status(address(tLIQ)), LIQUID, "Liquid after +30%");
         (uint256 p,) = OracleFacet(address(diamond)).getAssetPrice(address(tLIQ));
         assertEq(p, 2_600e8, "oracle reads the new price");
@@ -102,17 +103,11 @@ contract TestnetMockRepriceTest is TestnetMockOracleRig, RepriceTestnetMock {
         t.asset = address(mUSDC);
         t.feed = address(musdcFeed);
         t.pool = musdcPool;
-        _reprice(t, 0.97e8, false, false); // a depeg to $0.97
+        _reprice(t, 0.97e8); // a depeg to $0.97
         assertEq(_status(address(mUSDC)), LIQUID, "mUSDC Liquid after the move");
         assertEq(_status(address(tLIQ)), LIQUID, "tLIQ untouched");
         (uint256 p,) = OracleFacet(address(diamond)).getAssetPrice(address(tLIQ));
         assertEq(p, P_TLIQ, "tLIQ price untouched");
-    }
-
-    function test_skipVenue_leavesTheVenueAtItsOldPrice() public {
-        _reprice(tliqTarget, 1_600e8, true, false);
-        assertEq(venue.tokenUsdPrice8(address(tLIQ)), P_TLIQ, "venue left at the old price");
-        assertEq(_status(address(tLIQ)), LIQUID, "feed + pool still move together");
     }
 
     // ── Pre-flight refusals ─────────────────────────────────────────────
@@ -127,12 +122,12 @@ contract TestnetMockRepriceTest is TestnetMockOracleRig, RepriceTestnetMock {
         vm.expectRevert(
             bytes("RepriceTestnetMock: the asset shares its feed with WETH - repricing it moves every pool's quote leg")
         );
-        this.preflightExt(t, address(this), false);
+        this.preflightExt(t, address(this));
     }
 
     function test_refuses_aBroadcasterThatDoesNotOwnTheMocks() public {
         vm.expectRevert(bytes("RepriceTestnetMock: broadcaster does not own the feed"));
-        this.preflightExt(tliqTarget, makeAddr("passer-by"), false);
+        this.preflightExt(tliqTarget, makeAddr("passer-by"));
     }
 
     /// @notice An artifact naming another pool for the asset no longer
@@ -141,14 +136,14 @@ contract TestnetMockRepriceTest is TestnetMockOracleRig, RepriceTestnetMock {
         RepriceTarget memory t = tliqTarget;
         t.pool = musdcPool;
         vm.expectRevert(bytes("RepriceTestnetMock: recorded pool is not the factory's live asset/WETH pool"));
-        this.preflightExt(t, address(this), false);
+        this.preflightExt(t, address(this));
     }
 
     function test_refuses_aRecordedFeedTheRegistryDoesNotReturn() public {
         RepriceTarget memory t = tliqTarget;
         t.feed = address(musdcFeed);
         vm.expectRevert(bytes("RepriceTestnetMock: recorded feed is not the registry's live asset/USD feed"));
-        this.preflightExt(t, address(this), false);
+        this.preflightExt(t, address(this));
     }
 
     /// @notice A venue the Diamond does not route through — a stale record,
@@ -159,21 +154,13 @@ contract TestnetMockRepriceTest is TestnetMockOracleRig, RepriceTestnetMock {
         RepriceTarget memory t = tliqTarget;
         t.venue = address(new MockSwapAdapter("unregistered")); // owned by this contract, too
         vm.expectRevert(bytes("RepriceTestnetMock: recorded venue is not in the Diamond's live adapter list"));
-        this.preflightExt(t, address(this), false);
+        this.preflightExt(t, address(this));
     }
 
     function test_refuses_aDisabledVenue() public {
         AdminFacet(address(diamond)).setSwapAdapterDisabled(address(venue), true);
         vm.expectRevert(bytes("RepriceTestnetMock: recorded venue is registered but disabled on the Diamond"));
-        this.preflightExt(tliqTarget, address(this), false);
-    }
-
-    /// @notice With the venue skipped, its registration is not the run's
-    ///         concern — it is not touched.
-    function test_skipVenue_doesNotRequireARoutedVenue() public {
-        RepriceTarget memory t = tliqTarget;
-        t.venue = address(new MockSwapAdapter("unregistered"));
-        this.preflightExt(t, address(this), true);
+        this.preflightExt(tliqTarget, address(this));
     }
 
     /// @notice The recorded pool IS the oracle's route in the rig: zeroing
@@ -201,7 +188,7 @@ contract TestnetMockRepriceTest is TestnetMockOracleRig, RepriceTestnetMock {
         RepriceTarget memory t = tliqTarget;
         t.factory = address(decoyFactory);
         t.pool = decoyPool;
-        this.preflightExt(t, address(this), false); // structural checks pass
+        this.preflightExt(t, address(this)); // structural checks pass
         vm.expectRevert(
             bytes(
                 "RepriceTestnetMock: the asset stays Liquid without the recorded pool - the oracle routes elsewhere, so repricing this pool would not move what it reads"
@@ -248,6 +235,32 @@ contract TestnetMockRepriceTest is TestnetMockOracleRig, RepriceTestnetMock {
         this.routeProbeExt(tliqTarget);
     }
 
+    /// @notice The real feed passes the feed probe, and the probe leaves the
+    ///         feed's price where it was.
+    function test_feedProbe_passesForTheRealFeedAndRestoresIt() public {
+        _reprice(tliqTarget, 1_600e8);
+        (uint256 p,) = OracleFacet(address(diamond)).getAssetPrice(address(tLIQ));
+        assertEq(p, 1_600e8, "probe left no trace");
+    }
+
+    /// @notice A recorded feed the Diamond does not read can satisfy the
+    ///         post-write equality by coincidence: here the Diamond's real
+    ///         feed already sits at the target (a restore or repeat run) and
+    ///         the stale record names a different feed, also at the target.
+    ///         Only the behavioural probe tells them apart.
+    function test_refuses_aRecordedFeedTheDiamondDoesNotRead() public {
+        tliqFeed.setPrice(int256(1_600e8)); // the real feed already at the target
+        MockChainlinkFeed decoyFeed = new MockChainlinkFeed(int256(1_600e8), 8);
+        RepriceTarget memory t = tliqTarget;
+        t.feed = address(decoyFeed);
+        (uint256 p,) = OracleFacet(address(diamond)).getAssetPrice(address(tLIQ));
+        assertEq(p, 1_600e8, "the equality check alone would pass");
+        vm.expectRevert(
+            bytes("RepriceTestnetMock: the Diamond's price does not follow the recorded feed - it reads another feed")
+        );
+        this.feedProbeExt(t, 1_600e8);
+    }
+
     function test_refuses_aZeroPrice() public {
         vm.expectRevert(bytes("RepriceTestnetMock: REPRICE_USD_E8 is zero"));
         this.targetSpotExt(tliqTarget, 0);
@@ -256,15 +269,14 @@ contract TestnetMockRepriceTest is TestnetMockOracleRig, RepriceTestnetMock {
     // ── Post-apply refusals ─────────────────────────────────────────────
 
     /// @notice A coherent move that still leaves the asset Illiquid is a
-    ///         depth or band limit, not a rehearsal state — refused unless
-    ///         the operator opts in. The oracle's verdict is mocked AFTER the
+    ///         depth or band limit, not a rehearsal state — always refused. The oracle's verdict is mocked AFTER the
     ///         writes: this pins the guard's logic, not a pool configuration
     ///         that happens to fail at one price.
     function test_verify_refusesASilentFlipToIlliquid() public {
         RepriceTestnetMock.PriceReading memory before = _read(tliqTarget);
         assertEq(before.liquidity, LIQUID, "seeded Liquid");
         uint160 spot = _targetSpot(tliqTarget, 1_600e8);
-        _applyReprice(tliqTarget, 1_600e8, spot, false);
+        _applyReprice(tliqTarget, 1_600e8, spot);
         vm.mockCall(
             address(diamond),
             abi.encodeWithSelector(OracleFacet.checkLiquidity.selector, address(tLIQ)),
@@ -272,29 +284,27 @@ contract TestnetMockRepriceTest is TestnetMockOracleRig, RepriceTestnetMock {
         );
         vm.expectRevert(
             bytes(
-                "RepriceTestnetMock: the asset reads Illiquid after a coherent reprice - a depth or band limit, not a rehearsal state; set REPRICE_ALLOW_ILLIQUID=true to proceed"
+                "RepriceTestnetMock: the asset reads Illiquid after a coherent reprice - a depth, band or configuration limit, not a rehearsal state"
             )
         );
-        this.verifyExt(tliqTarget, 1_600e8, false, false);
-        // Opted in, the same state passes.
-        this.verifyExt(tliqTarget, 1_600e8, false, true);
+        this.verifyExt(tliqTarget, 1_600e8);
     }
 
     /// @notice An asset ALREADY Illiquid for an unrelated reason (here the
-    ///         pool has no depth) still needs the opt-in to broadcast an
-    ///         Illiquid result. A transition-only guard let this through.
+    ///         pool has no depth) is refused too. A transition-only guard
+    ///         let this through.
     function test_verify_refusesAnIlliquidResultEvenWhenAlreadyIlliquid() public {
         MockUniswapV3Pool(tliqPool).setLiquidity(1);
         assertEq(_status(address(tLIQ)), ILLIQUID, "already Illiquid before the run");
         uint160 spot = _targetSpot(tliqTarget, 1_600e8);
-        _applyReprice(tliqTarget, 1_600e8, spot, false);
+        _applyReprice(tliqTarget, 1_600e8, spot);
         assertEq(_status(address(tLIQ)), ILLIQUID, "still Illiquid after a coherent move");
         vm.expectRevert(
             bytes(
-                "RepriceTestnetMock: the asset reads Illiquid after a coherent reprice - a depth or band limit, not a rehearsal state; set REPRICE_ALLOW_ILLIQUID=true to proceed"
+                "RepriceTestnetMock: the asset reads Illiquid after a coherent reprice - a depth, band or configuration limit, not a rehearsal state"
             )
         );
-        this.verifyExt(tliqTarget, 1_600e8, false, false);
+        this.verifyExt(tliqTarget, 1_600e8);
     }
 
     /// @notice The documented recovery: a run that stopped after the feed
@@ -303,7 +313,7 @@ contract TestnetMockRepriceTest is TestnetMockOracleRig, RepriceTestnetMock {
     function test_rerunAfterAPartialRunCompletesIt() public {
         tliqFeed.setPrice(int256(1_600e8)); // only the first transaction landed
         assertEq(_status(address(tLIQ)), ILLIQUID, "partial run reads Illiquid");
-        _reprice(tliqTarget, 1_600e8, false, false);
+        _reprice(tliqTarget, 1_600e8);
         assertEq(_status(address(tLIQ)), LIQUID, "the re-run ends Liquid");
         assertEq(venue.tokenUsdPrice8(address(tLIQ)), 1_600e8, "and the venue caught up");
     }
@@ -313,7 +323,7 @@ contract TestnetMockRepriceTest is TestnetMockOracleRig, RepriceTestnetMock {
     function test_verify_refusesWhenTheDiamondDoesNotReadTheNewPrice() public {
         RepriceTestnetMock.PriceReading memory before = _read(tliqTarget);
         uint160 spot = _targetSpot(tliqTarget, 1_600e8);
-        _applyReprice(tliqTarget, 1_600e8, spot, false);
+        _applyReprice(tliqTarget, 1_600e8, spot);
         // Stand in for a Diamond that never saw the write: put the feed AND
         // the pool back, so the asset stays Liquid and only the price check
         // can catch it (resetting the feed alone trips the Illiquid guard
@@ -324,7 +334,7 @@ contract TestnetMockRepriceTest is TestnetMockOracleRig, RepriceTestnetMock {
         vm.expectRevert(
             bytes("RepriceTestnetMock: the Diamond does not read the new price - is it wired to this registry?")
         );
-        this.verifyExt(tliqTarget, 1_600e8, false, false);
+        this.verifyExt(tliqTarget, 1_600e8);
     }
 
     // ── Venue report (state the run does not write) ─────────────────────
@@ -340,7 +350,7 @@ contract TestnetMockRepriceTest is TestnetMockOracleRig, RepriceTestnetMock {
     /// @notice The rig's venue is configured as DeployTestnetMocks configures
     ///         it, so after a coherent reprice nothing in it deviates.
     function test_venueReport_cleanVenueAfterARepriceHasNoDeviations() public {
-        _reprice(tliqTarget, 1_600e8, false, false);
+        _reprice(tliqTarget, 1_600e8);
         assertEq(_report(tliqTarget, _faucet()).length, 0, "no deviations");
     }
 
@@ -481,12 +491,13 @@ contract TestnetMockRepriceTest is TestnetMockOracleRig, RepriceTestnetMock {
         reporter.report(t.diamond, t.venue, t.asset, _faucet());
     }
 
-    /// @notice With the venue skipped, the repriced asset itself shows up as
-    ///         a deviation — the report states the mismatch the operator chose.
-    function test_venueReport_skipVenueReportsTheRepricedAsset() public {
-        _reprice(tliqTarget, 1_600e8, true, false);
+    /// @notice A stale venue price for the repriced asset itself is named
+    ///         against the oracle's — the case a venue left behind produces.
+    function test_venueReport_namesAStaleVenuePriceForTheRepricedAsset() public {
+        _reprice(tliqTarget, 1_600e8);
+        venue.setTokenPrice(address(tLIQ), P_TLIQ); // the venue left at the old price
         string[] memory d = _report(tliqTarget, _faucet());
-        assertEq(d.length, 1, "the skipped venue leg");
+        assertEq(d.length, 1, "the repriced asset's venue leg");
         assertEq(
             d[0],
             string.concat(
@@ -499,12 +510,13 @@ contract TestnetMockRepriceTest is TestnetMockOracleRig, RepriceTestnetMock {
 
     /// @dev The script's `run()` sequence minus artifact resolution and
     ///      broadcast: pre-flight, target spot, writes, verify.
-    function _reprice(RepriceTarget memory t, uint256 price8, bool skipVenue, bool allowIlliquid) internal {
-        _preflight(t, address(this), skipVenue);
+    function _reprice(RepriceTarget memory t, uint256 price8) internal {
+        _preflight(t, address(this));
         uint160 spot = _targetSpot(t, price8);
-        _applyReprice(t, price8, spot, skipVenue);
-        RepriceTestnetMock.PriceReading memory r = _verifyReprice(t, price8, skipVenue, allowIlliquid);
-        if (r.liquidity == 0) _requireRecordedPoolIsTheRoute(t);
+        _applyReprice(t, price8, spot);
+        _verifyReprice(t, price8);
+        _requireRecordedFeedIsWhatTheDiamondReads(t, price8);
+        _requireRecordedPoolIsTheRoute(t);
     }
 
     function _report(RepriceTarget memory t, address[] memory assets) internal view returns (string[] memory) {
@@ -512,22 +524,26 @@ contract TestnetMockRepriceTest is TestnetMockOracleRig, RepriceTestnetMock {
     }
 
     function repriceExt(RepriceTarget memory t, uint256 price8) external {
-        _reprice(t, price8, false, false);
+        _reprice(t, price8);
     }
 
     function routeProbeExt(RepriceTarget memory t) external {
         _requireRecordedPoolIsTheRoute(t);
     }
 
-    function preflightExt(RepriceTarget memory t, address sender, bool skipVenue) external view {
-        _preflight(t, sender, skipVenue);
+    function preflightExt(RepriceTarget memory t, address sender) external view {
+        _preflight(t, sender);
     }
 
     function targetSpotExt(RepriceTarget memory t, uint256 price8) external view returns (uint160) {
         return _targetSpot(t, price8);
     }
 
-    function verifyExt(RepriceTarget memory t, uint256 price8, bool skipVenue, bool allowIlliquid) external view {
-        _verifyReprice(t, price8, skipVenue, allowIlliquid);
+    function verifyExt(RepriceTarget memory t, uint256 price8) external view {
+        _verifyReprice(t, price8);
+    }
+
+    function feedProbeExt(RepriceTarget memory t, uint256 price8) external {
+        _requireRecordedFeedIsWhatTheDiamondReads(t, price8);
     }
 }
