@@ -1,4 +1,4 @@
-## Thread — a complete in-place refresh now removes every function the code no longer has (PR #TBD)
+## Thread — a complete in-place refresh now removes every function the code no longer has (PR #2385)
 
 When a function's signature changes, the Diamond gains the new function, but the old one keeps running the code it was last installed with until something removes it. The testnet in-place refresh used to remove these only from hand-kept lists, one per past incident, so any retirement nobody added to a list stayed callable. Base Sepolia carried eleven such functions through its complete refresh on 3 October:
 - older shapes of the offer-accept entry points;
