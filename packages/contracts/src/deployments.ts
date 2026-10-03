@@ -106,6 +106,8 @@ export interface DeploymentFacets {
   rewardForfeitWalkFacet?: HexAddress;
   /** #1566 transport epochs 3b-ii-A2 (#2305) — the staging record's settlement half (resolve, unwind, venue). */
   rewardStagingSettleFacet?: HexAddress;
+  /** #1566 transport epochs 3b-ii-A2-ii (#2305) — the multi-chunk claim domain's lifecycle entries. */
+  rewardStagingDomainFacet?: HexAddress;
   rewardReporterFacet?: HexAddress;
   riskFacet?: HexAddress;
   stakingRewardsFacet?: HexAddress;

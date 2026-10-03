@@ -45,7 +45,6 @@ contract RewardStagingFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
     /// @notice A2-ii priority-window events the staging library emits through
     ///         this facet's entries, declared here for the exported ABI.
     event TransportBatchContested(bytes32 indexed batchId, bytes32 indexed key);
-    event TransportBatchWaiterRegistered(bytes32 indexed batchId, bytes32 indexed key, uint64 openedAt);
     event TransportBatchPriorityStaged(bytes32 indexed batchId, bytes32 indexed key);
 
     // ────────────────────────── the staging lifecycle ──────────────────────────
@@ -72,46 +71,13 @@ contract RewardStagingFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         LibRewardStaging.reserve(LibVaipakam.storageSlot(), key);
     }
 
-    /// @notice Permissionless: register the record under `key` for `batchId`'s
-    ///         open priority window (A2-ii). The record must have found the
-    ///         batch contested and not have used its one priority reservation
-    ///         there; the oldest registrant by opening time stages the batch
-    ///         first once the window closes.
-    function registerForBatchWindow(bytes32 key, bytes32 batchId) external nonReentrant whenNotPaused {
-        LibRewardStaging.register(LibVaipakam.storageSlot(), key, batchId);
-    }
-
-    /// @notice The record-opening seam, hosted ONCE (A2-ii): a walk that
-    ///         prices a cap-hit day — the claim's, a forfeit's, an expiry's
-    ///         — stages the plan it found under its operation's commitment
-    ///         through this entry, by Diamond self-call
-    ///         ({LibRewardCustody.callStageDayFromPlan}), so no walk's facet
-    ///         carries the record machinery. Gated to the Diamond; no
-    ///         reentrancy guard of its own, since the caller holds the
-    ///         Diamond's.
-    function stageDayFromPlanInternal(
-        address user,
-        uint8 side,
-        uint256 day,
-        uint256[] calldata entryIds,
-        bytes32[] calldata ids,
-        uint256[] calldata fresh,
-        uint256[] calldata recycled,
-        uint8 deliverTo,
-        uint8 op
-    ) external returns (bytes32 key, uint256 staged) {
+    /// @notice A domain record's reservation, hosted here (A2-ii; EIP-170): the
+    ///         domain facet's reservation page reaches it by Diamond self-call,
+    ///         so the reservation machinery is compiled into one facet. Gated
+    ///         to the Diamond; no reentrancy guard or pause check of its own —
+    ///         the page that calls it carries both.
+    function reserveRecordInDomainInternal(bytes32 key) external returns (bool ok) {
         if (msg.sender != address(this)) revert RewardCustodyOnlyDiamondInternal(msg.sender);
-        return LibRewardCustody.stageDayFromPlan(
-            LibVaipakam.storageSlot(),
-            user,
-            LibVaipakam.RewardSide(side),
-            day,
-            entryIds,
-            ids,
-            fresh,
-            recycled,
-            LibVaipakam.RewardDelivery(deliverTo),
-            LibVaipakam.StagingOp(op)
-        );
+        return LibRewardStaging.reserveInDomain(LibVaipakam.storageSlot(), key);
     }
 }

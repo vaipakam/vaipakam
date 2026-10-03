@@ -97,6 +97,7 @@ import RewardEpochFacetABI from './RewardEpochFacet.json';
 import RewardEpochViewFacetABI from './RewardEpochViewFacet.json';
 import RewardStagingFacetABI from './RewardStagingFacet.json';
 import RewardStagingSettleFacetABI from './RewardStagingSettleFacet.json';
+import RewardStagingDomainFacetABI from './RewardStagingDomainFacet.json';
 import RepatriationFacetABI from './RepatriationFacet.json';
 import ConfigFacetABI from './ConfigFacet.json';
 import NumeraireConfigFacetABI from './NumeraireConfigFacet.json';
@@ -204,6 +205,7 @@ export {
   RewardEpochViewFacetABI,
   RewardStagingFacetABI,
   RewardStagingSettleFacetABI,
+  RewardStagingDomainFacetABI,
   RepatriationFacetABI,
   ConfigFacetABI,
   NumeraireConfigFacetABI,
@@ -308,6 +310,7 @@ export const DIAMOND_ABI = [
   ...RewardEpochViewFacetABI,
   ...RewardStagingFacetABI,
   ...RewardStagingSettleFacetABI,
+  ...RewardStagingDomainFacetABI,
   ...RepatriationFacetABI,
   ...ConfigFacetABI,
   ...NumeraireConfigFacetABI,

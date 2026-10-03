@@ -7704,6 +7704,23 @@ library LibVaipakam {
         /// @dev A2-ii — batch => obligation key => a priority reservation was
         ///      taken: NON-RENEWABLE, permanent for the obligation on the batch.
         mapping(bytes32 => mapping(bytes32 => bool)) transportBatchPriorityUsed;
+        /// @dev A2-ii — the claimant-side DOMAIN records ({StagingDomain}),
+        ///      keyed `keccak256(abi.encode(user, side))`.
+        mapping(bytes32 => StagingDomain) stagingDomains;
+        /// @dev A2-ii — domain key => loan id => the DAYS of that loan the
+        ///      domain's reserved day records carry: the proration carry the
+        ///      domain's later days count as already rewarded.
+        mapping(bytes32 => mapping(uint256 => uint32)) stagingDomainLoanDays;
+        /// @dev A2-ii — domain key => loan id => the loan-side amount the
+        ///      domain's reserved records hold: counted as PAID by the domain's
+        ///      later days, and excluded from the "another holder's reservation
+        ///      binds" test, since it is this domain's own.
+        mapping(bytes32 => mapping(uint256 => uint256)) stagingDomainLoanReserved;
+        /// @dev A2-ii — user => side => the claimant-side's entry LIFECYCLE
+        ///      VERSION, bumped by every lifecycle transition of any of the
+        ///      user's entries on that side ({LibInteractionRewards.noteEntryLifecycle}),
+        ///      so a domain's revalidation is O(1) when nothing moved.
+        mapping(address => mapping(uint8 => uint256)) rewardLifecycleVersion;
     }
 
     /// @notice 3b-ii-A2 (#2305) — one batch a staging record staged from, with
@@ -7736,6 +7753,63 @@ library LibVaipakam {
         bytes32 oldestNonceKey;
         uint64 oldestOpenedAt;
         bytes32 winnerNonceKey;
+    }
+
+    /// @notice 3b-ii-A2-ii — the lifecycle of a multi-chunk claim DOMAIN
+    ///         ({StagingDomain}): STAGING while the claim's preparation
+    ///         stages one day record per day of the extent and pays nothing;
+    ///         RESERVING while a cursor reserves each day's residual from the
+    ///         live sources and the cap headroom (a day they cannot bear stops
+    ///         the domain here, nothing paid); RESOLVING once every day is
+    ///         reserved — irrevocable, no deadline, each record pays on its
+    ///         last page in day order; UNWINDING past the deadline, on the
+    ///         claimant's cancel, or on a stale commitment. CLEARED is the
+    ///         domain's deletion once its live records reach zero.
+    enum DomainPhase {
+        None,
+        Staging,
+        Reserving,
+        Resolving,
+        Unwinding
+    }
+
+    /// @notice 3b-ii-A2-ii — one per claimant-side: a claim whose pending
+    ///         armed days exceed one settlement chunk decides as a UNIT. The
+    ///         committed extent is a SNAPSHOT — the entry set and the last day
+    ///         fixed when the staging pass begins; an entry accruing after it
+    ///         queues for the next domain — and its day records are the same
+    ///         staging records a one-day settlement opens, stamped with this
+    ///         domain's key, their deadline and unwind the domain's.
+    struct StagingDomain {
+        DomainPhase phase;
+        address user;
+        RewardSide side;
+        RewardDelivery venue;
+        bool venueSet;
+        uint64 firstDay;
+        uint64 lastDay;
+        /// @dev The preparation cursor: the last day of the extent whose
+        ///      record is opened (or that priced to nothing).
+        uint64 preparedThrough;
+        uint64 reserveCursor;
+        uint64 resolveCursor;
+        uint64 unwindCursor;
+        /// @dev The revalidation cursor over the extent's days (addendum 1).
+        uint64 revalidateCursor;
+        /// @dev Records opened and not yet closed; the extent clears at zero.
+        uint32 liveRecords;
+        uint64 openedAt;
+        uint64 deadline;
+        /// @dev The claimant-side's entry lifecycle version when the extent
+        ///      was committed (addenda 1–2): equal now means nothing moved.
+        uint256 lifecycleVersionAtCommit;
+        /// @dev The settlement chunks the extent needs — the deadline's base.
+        uint256 chunks;
+        /// @dev The day records' own lease growth, accumulated (each record's
+        ///      deadline moves are added here; the domain's deadline is its
+        ///      opening plus the chunks' cadences plus this plus the grace).
+        uint256 leaseAccum;
+        uint256[] entryIds;
     }
 
     /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss: the
@@ -8173,6 +8247,10 @@ library LibVaipakam {
         ///      after a finished scan still lengthens the lease by the call
         ///      it costs. A call with nothing new adds nothing.
         uint256 forcedPages;
+        /// @dev A2-ii — the domain this record belongs to ({StagingDomain}),
+        ///      zero for a standalone record. A domain record's deadline,
+        ///      reservation, resolution and unwind are the domain's.
+        bytes32 domainKey;
     }
 
     /// @notice #1566 transport epochs PR 3b — a batch's PENDING REMAINDER:

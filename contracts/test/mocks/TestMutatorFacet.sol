@@ -963,9 +963,11 @@ contract TestMutatorFacet {
     ///         via {LibInteractionRewards.closeLoan}; this is the test escape
     ///         hatch so a cap test can seed an entry + close it in one step.
     function closeRewardEntryRaw(uint256 id, uint32 endDay) external {
-        LibVaipakam.RewardEntry storage e = LibVaipakam.storageSlot().rewardEntries[id];
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
         e.endDay = endDay;
         e.closed = true;
+        LibInteractionRewards.noteEntryLifecycle(s, e); // the real close bumps the version (A2-ii)
     }
 
     /// @notice Governor PR-3b test-only — seed the recycle bucket + per-day
@@ -1566,7 +1568,9 @@ contract TestMutatorFacet {
     }
 
     function setRewardEntryForfeitedRaw(uint256 id) external {
-        LibVaipakam.storageSlot().rewardEntries[id].forfeited = true;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.rewardEntries[id].forfeited = true;
+        LibInteractionRewards.noteEntryLifecycle(s, s.rewardEntries[id]); // the real forfeit bumps the version (A2-ii)
     }
 
     /// @notice #1434 P2-w1 test-only — erase a day's frozen lapse clock,

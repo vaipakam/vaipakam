@@ -2,6 +2,7 @@
 pragma solidity 0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibRewardCustody} from "../libraries/LibRewardCustody.sol";
 import {LibRewardStaging} from "../libraries/LibRewardStaging.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
@@ -26,6 +27,14 @@ contract RewardStagingSettleFacet is DiamondReentrancyGuard, DiamondPausable, IV
     /// @notice A2-ii — emitted by the staging library from the unwind page this
     ///         facet hosts; declared here for the exported ABI.
     event TransportBatchWindowOpened(bytes32 indexed batchId, bytes32 indexed releasedBy, uint64 closesAt);
+    /// @notice Declared for the exported ABI: the staging library emits these
+    ///         through the record-opening seam and the registration entry this
+    ///         facet hosts (A2-ii; moved here from `RewardStagingFacet`, which
+    ///         sits within 400 bytes of EIP-170).
+    event StagingRecordOpened(bytes32 indexed key, address indexed user, uint8 side, uint64 day, bytes32 commitment);
+    event TransportStaged(bytes32 indexed batchId, bytes32 indexed key, uint256 fresh, uint256 recycled);
+    event TransportBatchWaiterRegistered(bytes32 indexed batchId, bytes32 indexed key, uint64 openedAt);
+    event TransportBatchPriorityStaged(bytes32 indexed batchId, bytes32 indexed key);
 
     /// @notice Permissionless: one page of resolution. The first page makes the
     ///         record irrevocable; the page that consumes its last batch pays
@@ -49,4 +58,67 @@ contract RewardStagingSettleFacet is DiamondReentrancyGuard, DiamondPausable, IV
         LibRewardStaging.setVenue(LibVaipakam.storageSlot(), key, msg.sender, venue);
     }
 
+    /// @notice Permissionless: register the record under `key` for `batchId`'s
+    ///         open priority window (A2-ii). The record must have found the
+    ///         batch contested and not have used its one priority reservation
+    ///         there; the oldest registrant by opening time stages the batch
+    ///         first once the window closes.
+    function registerForBatchWindow(bytes32 key, bytes32 batchId) external nonReentrant whenNotPaused {
+        LibRewardStaging.register(LibVaipakam.storageSlot(), key, batchId);
+    }
+
+    /// @notice The record-opening seam, hosted ONCE (A2-ii): a walk that
+    ///         prices a cap-hit day — the claim's, a forfeit's, an expiry's
+    ///         — stages the plan it found under its operation's commitment
+    ///         through this entry, by Diamond self-call
+    ///         ({LibRewardCustody.callStageDayFromPlan}), so no walk's facet
+    ///         carries the record machinery. Gated to the Diamond; no
+    ///         reentrancy guard of its own, since the caller holds the
+    ///         Diamond's.
+    function stageDayFromPlanInternal(
+        address user,
+        uint8 side,
+        uint256 day,
+        uint256[] calldata entryIds,
+        bytes32[] calldata ids,
+        uint256[] calldata fresh,
+        uint256[] calldata recycled,
+        uint8 deliverTo,
+        uint8 op,
+        bytes32 domainKey
+    ) external returns (bytes32 key, uint256 staged) {
+        if (msg.sender != address(this)) revert RewardCustodyOnlyDiamondInternal(msg.sender);
+        return LibRewardCustody.stageDayFromPlan(
+            LibVaipakam.storageSlot(),
+            user,
+            LibVaipakam.RewardSide(side),
+            day,
+            entryIds,
+            ids,
+            fresh,
+            recycled,
+            LibVaipakam.RewardDelivery(deliverTo),
+            LibVaipakam.StagingOp(op),
+            domainKey
+        );
+    }
+
+    /// @notice A domain record's resolution page, hosted here (A2-ii; EIP-170):
+    ///         the domain facet's resolution page reaches it by Diamond
+    ///         self-call, so the resolution machinery is compiled into one
+    ///         facet. Gated to the Diamond; no reentrancy guard or pause check
+    ///         of its own — the page that calls it carries both.
+    function resolveRecordInDomainInternal(bytes32 key) external returns (bool done) {
+        if (msg.sender != address(this)) revert RewardCustodyOnlyDiamondInternal(msg.sender);
+        return LibRewardStaging.resolvePageInDomain(LibVaipakam.storageSlot(), key);
+    }
+
+    /// @notice A domain record's unwind page, hosted here (A2-ii; EIP-170): the
+    ///         domain facet's unwind page reaches it by Diamond self-call. The
+    ///         domain decided the unwind, so the record's own deadline and
+    ///         stale-record gates do not apply here. Gated to the Diamond.
+    function unwindRecordInDomainInternal(bytes32 key) external returns (bool done) {
+        if (msg.sender != address(this)) revert RewardCustodyOnlyDiamondInternal(msg.sender);
+        return LibRewardStaging.unwindPageInDomain(LibVaipakam.storageSlot(), key);
+    }
 }

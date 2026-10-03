@@ -89,6 +89,7 @@ import {RewardEpochViewFacet} from "../src/facets/RewardEpochViewFacet.sol";
 import {RewardStagingFacet} from "../src/facets/RewardStagingFacet.sol";
 import {RewardClaimWalkFacet} from "../src/facets/RewardClaimWalkFacet.sol";
 import {RewardStagingSettleFacet} from "../src/facets/RewardStagingSettleFacet.sol";
+import {RewardStagingDomainFacet} from "../src/facets/RewardStagingDomainFacet.sol";
 import {RewardSweepWalkFacet} from "../src/facets/RewardSweepWalkFacet.sol";
 import {RewardForfeitWalkFacet} from "../src/facets/RewardForfeitWalkFacet.sol";
 import {LibPausable} from "../src/libraries/LibPausable.sol";
@@ -349,6 +350,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         RewardForfeitWalkFacet rewardForfeitWalkFacet = new RewardForfeitWalkFacet();
         // 3b-ii-A2 (#2305) — the staging record's settlement half (resolve, unwind, venue).
         RewardStagingSettleFacet rewardStagingSettleFacet = new RewardStagingSettleFacet();
+        // 3b-ii-A2-ii (#2305) — the multi-chunk claim domain's lifecycle entries.
+        RewardStagingDomainFacet rewardStagingDomainFacet = new RewardStagingDomainFacet();
         RewardCompensationDispatchFacet rewardCompensationDispatchFacet =
             new RewardCompensationDispatchFacet();
         RewardCommitmentFacet rewardCommitmentFacet = new RewardCommitmentFacet();
@@ -383,7 +386,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](87);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](88);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -466,6 +469,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         cuts[84] = _buildCut(address(rewardSweepWalkFacet), _getRewardSweepWalkSelectors());
         cuts[85] = _buildCut(address(rewardStagingSettleFacet), _getRewardStagingSettleSelectors());
         cuts[86] = _buildCut(address(rewardForfeitWalkFacet), _getRewardForfeitWalkSelectors());
+        cuts[87] = _buildCut(address(rewardStagingDomainFacet), _getRewardStagingDomainSelectors());
         cuts[26] = _buildCut(address(rewardReporterFacet), _getRewardReporterSelectors());
         cuts[27] = _buildCut(address(rewardAggregatorFacet), _getRewardAggregatorSelectors());
         cuts[28] = _buildCut(address(configFacet), _getConfigSelectors());
@@ -1136,6 +1140,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeFacet("rewardSweepWalkFacet",    address(rewardSweepWalkFacet));
         Deployments.writeFacet("rewardForfeitWalkFacet",  address(rewardForfeitWalkFacet));
         Deployments.writeFacet("rewardStagingSettleFacet", address(rewardStagingSettleFacet));
+        Deployments.writeFacet("rewardStagingDomainFacet", address(rewardStagingDomainFacet));
         Deployments.writeFacet("repatriationFacet",       address(repatriationFacet));
         Deployments.writeFacet("configFacet",             address(configFacet));
         // #394 (Codex #647 round-8 P2) — persist the carved-out NumeraireConfigFacet
@@ -3146,23 +3151,37 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](4);
+        s = new bytes4[](3);
         s[0] = RewardStagingFacet.prepareStagedDay.selector;
         s[1] = RewardStagingFacet.reserveStagedDay.selector;
-        s[2] = RewardStagingFacet.stageDayFromPlanInternal.selector; // A2-ii: the one record-opening host (Diamond-gated)
-        s[3] = RewardStagingFacet.registerForBatchWindow.selector; // A2-ii: priority-window registration
+        s[2] = RewardStagingFacet.reserveRecordInDomainInternal.selector; // A2-ii: the domain's hosted reservation step (Diamond-gated)
+        // The record-opening seam and the window registration live on the settle facet (EIP-170; A2-ii).
     }
 
     /// @dev 3b-ii-A2 (#2305) — the staging record's settlement half.
+    /// @dev 3b-ii-A2-ii (#2305) — the multi-chunk claim domain's lifecycle entries.
+    function _getRewardStagingDomainSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](5);
+        s[0] = RewardStagingDomainFacet.reserveDomainPage.selector;
+        s[1] = RewardStagingDomainFacet.resolveDomainPage.selector;
+        s[2] = RewardStagingDomainFacet.unwindDomainPage.selector;
+        s[3] = RewardStagingDomainFacet.setDomainVenue.selector;
+        s[4] = RewardStagingDomainFacet.getStagingDomain.selector;
+    }
+
     function _getRewardStagingSettleSelectors()
         internal
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](3);
+        s = new bytes4[](7);
         s[0] = RewardStagingSettleFacet.resolveStagedDayPage.selector;
         s[1] = RewardStagingSettleFacet.unwindStagedDayPage.selector;
         s[2] = RewardStagingSettleFacet.setStagingVenue.selector;
+        s[3] = RewardStagingSettleFacet.stageDayFromPlanInternal.selector; // A2-ii: the one record-opening host (Diamond-gated)
+        s[4] = RewardStagingSettleFacet.registerForBatchWindow.selector; // A2-ii: priority-window registration
+        s[5] = RewardStagingSettleFacet.resolveRecordInDomainInternal.selector; // A2-ii: the domain's hosted resolution step (Diamond-gated)
+        s[6] = RewardStagingSettleFacet.unwindRecordInDomainInternal.selector; // A2-ii: the domain's hosted unwind step (Diamond-gated)
     }
 
     /// @dev 3b-ii-A2 (#2305) — the claim's entry walk, hosted; gated to the Diamond.

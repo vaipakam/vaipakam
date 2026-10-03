@@ -799,6 +799,8 @@ interface IVaipakamErrors {
     ///         revert data (the entry point is not routed, or the Diamond's
     ///         fallback refused it).
     error RewardCustodyCallFailed();
+    /// @notice A diamond-internal reward-lifecycle hook (InteractionRewardsFacet) reverted with no data.
+    error RewardHookCallFailed();
     /// @notice #1566 slice 4 PR B — activation was attempted on a `Detached`
     ///         deployment. Its value-bearing receive ingresses do not yet
     ///         refuse by role (the intended-era gates land with slice 4 PR
@@ -1777,6 +1779,25 @@ interface IVaipakamErrors {
     error StagingPriorityUsed(bytes32 key, bytes32 batchId);
     /// @notice No registration window is open on `batchId` (A2-ii).
     error TransportBatchWindowNotOpen(bytes32 batchId);
+    /// @notice The record under `key` belongs to domain `domainKey`: its
+    ///         reservation, resolution and unwind go through the domain (A2-ii).
+    error StagingRecordInDomain(bytes32 key, bytes32 domainKey);
+    /// @notice A domain's per-record entry was reached for a record no domain holds (A2-ii).
+    error StagingRecordNotInDomain(bytes32 key);
+    /// @notice The domain under `domainKey` is not in the phase this entry
+    ///         needs (A2-ii).
+    error StagingDomainPhaseInvalid(bytes32 domainKey, uint8 phase);
+    /// @notice The domain's extent is not fully prepared: `preparedThrough`
+    ///         has not reached `lastDay` (A2-ii).
+    error StagingDomainNotPrepared(bytes32 domainKey, uint64 preparedThrough, uint64 lastDay);
+    /// @notice The domain's deadline has not passed and the caller is not its
+    ///         claimant (A2-ii).
+    error StagingDomainNotExpired(bytes32 domainKey, uint64 deadline);
+    /// @notice A new domain may not be committed for the claimant-side while
+    ///         the standing one still has live records (A2-ii).
+    error StagingDomainStanding(bytes32 domainKey, uint8 phase);
+    /// @notice Only the claimant may do this to the record or domain under `key`.
+    error StagingNotClaimant(bytes32 key, address caller);
     /// @notice The reward this settlement would pay a loan side fits the
     ///         side's lifetime cap but not what is left of it after standing
     ///         staging reservations: a deferral, retryable once a reservation

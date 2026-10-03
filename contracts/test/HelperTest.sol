@@ -89,6 +89,7 @@ import {RewardEpochViewFacet} from "../src/facets/RewardEpochViewFacet.sol";
 import {RewardStagingFacet} from "../src/facets/RewardStagingFacet.sol";
 import {RewardClaimWalkFacet} from "../src/facets/RewardClaimWalkFacet.sol";
 import {RewardStagingSettleFacet} from "../src/facets/RewardStagingSettleFacet.sol";
+import {RewardStagingDomainFacet} from "../src/facets/RewardStagingDomainFacet.sol";
 import {RewardSweepWalkFacet} from "../src/facets/RewardSweepWalkFacet.sol";
 import {RewardForfeitWalkFacet} from "../src/facets/RewardForfeitWalkFacet.sol";
 import {RewardCompensationDispatchFacet} from "../src/facets/RewardCompensationDispatchFacet.sol";
@@ -2574,24 +2575,38 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](4);
+        selectors = new bytes4[](3);
         selectors[0] = RewardStagingFacet.prepareStagedDay.selector;
         selectors[1] = RewardStagingFacet.reserveStagedDay.selector;
-        selectors[2] = RewardStagingFacet.stageDayFromPlanInternal.selector; // A2-ii
-        selectors[3] = RewardStagingFacet.registerForBatchWindow.selector; // A2-ii
+        selectors[2] = RewardStagingFacet.reserveRecordInDomainInternal.selector; // A2-ii
     }
 
     /// 3b-ii-A2 (#2305) — the staging record's settlement half. Mirrors
     /// `DeployDiamond._getRewardStagingSettleSelectors`.
+    /// 3b-ii-A2-ii (#2305) — the domain lifecycle entries. Mirrors
+    /// `DeployDiamond._getRewardStagingDomainSelectors`.
+    function getRewardStagingDomainFacetSelectors() public pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](5);
+        selectors[0] = RewardStagingDomainFacet.reserveDomainPage.selector;
+        selectors[1] = RewardStagingDomainFacet.resolveDomainPage.selector;
+        selectors[2] = RewardStagingDomainFacet.unwindDomainPage.selector;
+        selectors[3] = RewardStagingDomainFacet.setDomainVenue.selector;
+        selectors[4] = RewardStagingDomainFacet.getStagingDomain.selector;
+    }
+
     function getRewardStagingSettleFacetSelectors()
         public
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](3);
+        selectors = new bytes4[](7);
         selectors[0] = RewardStagingSettleFacet.resolveStagedDayPage.selector;
         selectors[1] = RewardStagingSettleFacet.unwindStagedDayPage.selector;
         selectors[2] = RewardStagingSettleFacet.setStagingVenue.selector;
+        selectors[3] = RewardStagingSettleFacet.stageDayFromPlanInternal.selector; // A2-ii
+        selectors[4] = RewardStagingSettleFacet.registerForBatchWindow.selector; // A2-ii
+        selectors[5] = RewardStagingSettleFacet.resolveRecordInDomainInternal.selector; // A2-ii
+        selectors[6] = RewardStagingSettleFacet.unwindRecordInDomainInternal.selector; // A2-ii
     }
 
     /// 3b-ii-A2 (#2305) — the claim walk's host. Mirrors

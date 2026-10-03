@@ -2702,9 +2702,47 @@ library LibRewardCustody {
         uint256 forcedItems = forcedScanItems(s, r);
         if (forcedItems != 0) pages += scanPagesOf(forcedItems);
         uint64 next = r.openedAt + uint64(pages) * STAGING_RETRY_CADENCE + STAGING_GRACE;
+        if (r.domainKey != bytes32(0)) {
+            // A domain record's lease is the DOMAIN's (A2-ii): its own figure
+            // is kept on the record only as the ledger of what it has added,
+            // and every upward move adds the pages to the domain's accumulator;
+            // the domain's deadline is its opening plus its chunks' cadences
+            // plus every record's pages plus one grace, upward-only while
+            // unexpired. No record of a domain expires before the domain.
+            if (next > current) {
+                uint256 contrib = uint256(next) - r.openedAt - STAGING_GRACE;
+                uint256 prev = current == 0 ? 0 : uint256(current) - r.openedAt - STAGING_GRACE;
+                r.deadline = next;
+                LibVaipakam.StagingDomain storage dom = s.stagingDomains[r.domainKey];
+                dom.leaseAccum += contrib - prev;
+                domainDeadlineRefresh(s, r.domainKey, dom);
+            }
+            return;
+        }
         if (next > current) {
             r.deadline = next;
             emit StagingDeadlineSet(key, next);
+        }
+    }
+
+    /// @notice The domain's deadline (A2-ii): opening + one cadence per chunk
+    ///         of its extent + every day record's own lease pages (accumulated
+    ///         as they grow) + one grace; moves only upward and only while it
+    ///         has not passed (addendum 7).
+    event StagingDomainDeadlineSet(bytes32 indexed domainKey, uint64 deadline);
+
+    function domainDeadlineRefresh(
+        LibVaipakam.Storage storage s,
+        bytes32 dk,
+        LibVaipakam.StagingDomain storage dom
+    ) internal {
+        s; // the storage pointer is the domain's; kept for symmetry with the record refresh
+        uint64 current = dom.deadline;
+        if (current != 0 && block.timestamp >= current) return; // expired: terminal
+        uint64 next = dom.openedAt + uint64(dom.chunks) * STAGING_RETRY_CADENCE + uint64(dom.leaseAccum) + STAGING_GRACE;
+        if (next > current) {
+            dom.deadline = next;
+            emit StagingDomainDeadlineSet(dk, next);
         }
     }
 
@@ -2738,6 +2776,11 @@ library LibRewardCustody {
         uint256 restoredNow = s.transportDayRestored[r.day].length;
         items += restoredNow > r.restoredSeen ? restoredNow - r.restoredSeen : 0;
         if (anySkippedNowStageable(s, r)) ++items;
+    }
+
+    /// @notice The claimant-side DOMAIN key (A2-ii): one domain per claimant and side.
+    function domainKey(address user, LibVaipakam.RewardSide side) internal pure returns (bytes32) {
+        return keccak256(abi.encode(user, side));
     }
 
     function stagingKey(address user, LibVaipakam.RewardSide side, uint256 day) internal pure returns (bytes32) {
@@ -3186,7 +3229,8 @@ library LibRewardCustody {
         uint256[] memory fresh,
         uint256[] memory recycled,
         LibVaipakam.RewardDelivery deliverTo,
-        LibVaipakam.StagingOp op
+        LibVaipakam.StagingOp op,
+        bytes32 domainKey
     ) internal returns (bytes32 key, uint256 staged) {
         key = stagingKey(user, side, day);
         LibVaipakam.StagingRecord storage r = s.stagingRecords[key];
@@ -3202,6 +3246,19 @@ library LibRewardCustody {
             r.user = user;
             r.side = side;
             r.op = op;
+            // A domain's day record (A2-ii): its deadline, reservation,
+            // resolution and unwind are the domain's; its pricing reads the
+            // domain's context. Stamped at opening, never changed.
+            r.domainKey = domainKey;
+            // The domain's live-record count: up at opening here, down at the
+            // record's close ({LibRewardStaging._close}); the extent clears at
+            // zero (A2-ii).
+            if (domainKey != bytes32(0)) ++s.stagingDomains[domainKey].liveRecords;
+            // A day no epoch lists has nothing to scan (A2-ii): the record is
+            // scan-complete at opening — a domain's live-only days are
+            // reservable without a preparation call each; a listed day's
+            // record scans its list as before.
+            if (s.transportBatchesByDay[day].length == 0) r.scanComplete = true;
             r.phase = LibVaipakam.StagingPhase.Staging;
             r.day = SafeCast.toUint64(day);
             r.openedAt = uint64(block.timestamp);
@@ -3217,10 +3274,13 @@ library LibRewardCustody {
         // A window with nothing stageable in it opens no record: an empty
         // record would hold nothing, reference nothing, and only stop the
         // walk on a day it could not help.
-        if (staged == 0 && opened) {
+        if (staged == 0 && opened && domainKey == bytes32(0)) {
             delete s.stagingRecords[key];
             return (key, 0);
         }
+        // A DOMAIN day with nothing to stage keeps its record (A2-ii): the
+        // day is still the domain's to reserve from the live sources and to
+        // pay in order — an empty record is the day's place in the extent.
         // Opened only once something was staged, so no indexer holds an
         // opening for a record that never stood (Codex #2308 r1 P2).
         if (opened) emit StagingRecordOpened(key, user, uint8(side), r.day, commitment);
@@ -3854,11 +3914,12 @@ library LibRewardCustody {
         uint256[] memory fresh,
         uint256[] memory recycled,
         LibVaipakam.RewardDelivery deliverTo,
-        LibVaipakam.StagingOp op
+        LibVaipakam.StagingOp op,
+        bytes32 domainKey
     ) internal returns (bytes32 key, uint256 staged) {
         bytes memory ret = _custodyReturning(
             abi.encodeWithSignature(
-                "stageDayFromPlanInternal(address,uint8,uint256,uint256[],bytes32[],uint256[],uint256[],uint8,uint8)",
+                "stageDayFromPlanInternal(address,uint8,uint256,uint256[],bytes32[],uint256[],uint256[],uint8,uint8,bytes32)",
                 user,
                 uint8(side),
                 day,
@@ -3867,7 +3928,8 @@ library LibRewardCustody {
                 fresh,
                 recycled,
                 uint8(deliverTo),
-                uint8(op)
+                uint8(op),
+                domainKey
             )
         );
         (key, staged) = abi.decode(ret, (bytes32, uint256));
@@ -3883,6 +3945,27 @@ library LibRewardCustody {
     ///      two of them can route a leg differently. `source` is a
     ///      {LibVpfiRecycle.RecycleSource}; `refId` is the forfeit's loan id,
     ///      else zero. No call when every figure is zero.
+    /// @notice The per-record operations a DOMAIN page drives (A2-ii), each
+    ///         hosted ONCE on the record facet that already inlines it and
+    ///         reached by Diamond self-call: the domain facet holds the ordering
+    ///         and the snapshot, nothing of the record machinery (EIP-170 — the
+    ///         inlined reserve, resolve and unwind paths put it 2,191 bytes over).
+    ///         Reverts bubble verbatim.
+    function callReserveRecordInDomain(bytes32 key) internal returns (bool ok) {
+        bytes memory ret = _custodyReturning(abi.encodeWithSignature("reserveRecordInDomainInternal(bytes32)", key));
+        ok = abi.decode(ret, (bool));
+    }
+
+    function callResolveRecordInDomain(bytes32 key) internal returns (bool done) {
+        bytes memory ret = _custodyReturning(abi.encodeWithSignature("resolveRecordInDomainInternal(bytes32)", key));
+        done = abi.decode(ret, (bool));
+    }
+
+    function callUnwindRecordInDomain(bytes32 key) internal returns (bool done) {
+        bytes memory ret = _custodyReturning(abi.encodeWithSignature("unwindRecordInDomainInternal(bytes32)", key));
+        done = abi.decode(ret, (bool));
+    }
+
     function callSettleLegs(
         uint8 source,
         uint256 liveFresh,

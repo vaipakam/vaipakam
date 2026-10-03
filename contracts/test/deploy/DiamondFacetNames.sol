@@ -69,7 +69,7 @@ abstract contract DiamondFacetNames {
     ///      cluster split off `RewardAggregatorFacet`, which had 32 bytes
     ///      of EIP-170 headroom — far less than one cross-facet call, the
     ///      same condition as #1780 at 30 and #1835 at 164).
-    function cutFacetNames() internal pure returns (string[87] memory) {
+    function cutFacetNames() internal pure returns (string[88] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -172,6 +172,8 @@ abstract contract DiamondFacetNames {
             "RewardForfeitWalkFacet",
             // 3b-ii-A2 (#2305) — the staging record's settlement half.
             "RewardStagingSettleFacet",
+            // 3b-ii-A2-ii (#2305) — the multi-chunk claim domain's lifecycle entries.
+            "RewardStagingDomainFacet",
             "RiskFacet",
             "RiskMatchLiquidationFacet",
             "RiskSplitLiquidationFacet",

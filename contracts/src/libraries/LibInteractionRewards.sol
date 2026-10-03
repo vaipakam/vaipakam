@@ -10,6 +10,7 @@ import {LibPausable} from "./LibPausable.sol";
 // library calls, which solc inlines — no runtime cycle.
 import {LibVpfiRecycle} from "./LibVpfiRecycle.sol";
 import {LibRewardCustody} from "./LibRewardCustody.sol";
+import {LibRewardStaging} from "./LibRewardStaging.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {OracleFacet} from "../facets/OracleFacet.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
@@ -1830,7 +1831,13 @@ library LibInteractionRewards {
             uint256[] memory work =
                 _shareOfPoolWorklist(s, user, side, false);
             if (work.length != 0) {
-                _walkSideDays(s, user, side, work, ctx, toUser, toTreasury);
+                // A side whose pending armed days exceed one chunk is a
+                // DOMAIN (A2-ii): prepared as day records and paid nothing
+                // until every day is reserved — never walked and paid in
+                // chunks. A one-chunk side settles as before.
+                if (!_prepareDomainSide(s, user, side, work, ctx)) {
+                    _walkSideDays(s, user, side, work, ctx, toUser, toTreasury);
+                }
             }
             // A day deferred on the scan window ends the whole walk (Codex
             // #2276 r7 P2): the prune it persisted is what the next call
@@ -1927,6 +1934,138 @@ library LibInteractionRewards {
         }
     }
 
+    /// @notice The claim's DOMAIN mode for one side (A2-ii, #2305): where the
+    ///         side's pending armed days exceed one settlement chunk the claim
+    ///         does not pay chunk by chunk — it opens (or continues) the
+    ///         claimant-side's domain and PREPARES it: a day record per day of
+    ///         the committed extent, each holding the day's transport
+    ///         allocation as staged legs, nothing persisted, nothing drawn,
+    ///         nothing paid; the preparation cursor advances up to one chunk
+    ///         of days per call. Reservation, resolution and unwind are the
+    ///         domain's ({LibRewardStaging} domain pages). Returns whether the
+    ///         side was handled here (true) or is a one-chunk side for the
+    ///         ordinary walk (false).
+    /// @dev    The committed extent is a SNAPSHOT (the design's r3 P1): the
+    ///         entry set and the last day are fixed when the domain opens; an
+    ///         entry accruing after it is outside and queues for the next
+    ///         domain. While the domain reserves, resolves or unwinds, the
+    ///         side is the domain's and the claim defers on it exactly as on a
+    ///         standing one-day record.
+    function _prepareDomainSide(
+        LibVaipakam.Storage storage s,
+        address user,
+        LibVaipakam.RewardSide side,
+        uint256[] memory work,
+        WalkCtx memory ctx
+    ) private returns (bool handled) {
+        bytes32 dk = LibRewardCustody.domainKey(user, side);
+        LibVaipakam.StagingDomain storage dom = s.stagingDomains[dk];
+        if (dom.phase == LibVaipakam.DomainPhase.None) {
+            (uint256 first, uint256 last) = _sideExtent(s, work);
+            if (last - first + 1 <= LibVaipakam.MAX_INTERACTION_CLAIM_DAYS) return false;
+            LibRewardStaging.openDomain(s, dk, dom, user, side, work, first, last);
+        } else if (dom.phase != LibVaipakam.DomainPhase.Staging) {
+            // Reserving, resolving or unwinding: the side is the domain's.
+            ctx.capHit = true;
+            ctx.pruned = true;
+            return true;
+        }
+        _prepareDomainDays(s, dk, dom, user, side, ctx);
+        return true;
+    }
+
+    /// @dev The side's pending extent: its lowest pending day and the last day
+    ///      any of its entries accrues (the entries are claimable, so every
+    ///      `endDay` is final).
+    function _sideExtent(LibVaipakam.Storage storage s, uint256[] memory work)
+        private
+        view
+        returns (uint256 first, uint256 last)
+    {
+        first = _lowestPendingDay(s, work);
+        for (uint256 i; i < work.length; ) {
+            uint256 e = s.rewardEntries[work[i]].endDay;
+            if (e != 0 && e - 1 > last) last = e - 1;
+            unchecked { ++i; }
+        }
+    }
+
+    /// @dev The committed entries that accrue on day `d` and have not yet
+    ///      passed it — a domain day's set. Unlike {_entriesAtDay} the entry's
+    ///      stored cursor may sit before `d`: the days between are the domain's.
+    function _entriesCoveringDay(
+        LibVaipakam.Storage storage s,
+        uint256[] memory ids,
+        uint256 d
+    ) private view returns (uint256[] memory set) {
+        uint256[] memory buf = new uint256[](ids.length);
+        uint256 n;
+        for (uint256 i; i < ids.length; ) {
+            LibVaipakam.RewardEntry storage e = s.rewardEntries[ids[i]];
+            if (!e.processed && !e.expiryBegun && d >= e.startDay && d < e.endDay && _shareOfPoolCursorDay(s, ids[i], e) <= d) {
+                buf[n++] = ids[i];
+            }
+            unchecked { ++i; }
+        }
+        set = new uint256[](n);
+        for (uint256 i; i < n; ) {
+            set[i] = buf[i];
+            unchecked { ++i; }
+        }
+    }
+
+    /// @dev One chunk of the domain's preparation: from the day after the
+    ///      preparation cursor to the extent's last day, at most `daysLeft`
+    ///      days. Each priced day becomes a day record holding its transport
+    ///      allocation — a cap-hit day too, with the window's plan, its own
+    ///      preparation completing the scan — while a day that prices to
+    ///      nothing takes its place in the extent with no record. A deferral
+    ///      for any other reason (an unready row, a shortfall, a loan side
+    ///      reserved elsewhere) pauses the preparation at that day; a day a
+    ///      record of ANOTHER commitment holds (a sweep's) stops it.
+    function _prepareDomainDays(
+        LibVaipakam.Storage storage s,
+        bytes32 dk,
+        LibVaipakam.StagingDomain storage dom,
+        address user,
+        LibVaipakam.RewardSide side,
+        WalkCtx memory ctx
+    ) private {
+        uint256 d = uint256(dom.preparedThrough) + 1;
+        uint256 last = dom.lastDay;
+        while (d <= last && ctx.daysLeft != 0) {
+            uint256[] memory set = _entriesCoveringDay(s, dom.entryIds, d);
+            if (set.length != 0) {
+                DayContext memory dc = _dayContext();
+                dc.domainKey = dk;
+                (DayCharge memory charge, ) = processUserSideDay(user, d, set, ctx.pool, dc);
+                if (charge.stagedElsewhere) {
+                    if (s.stagingRecords[LibRewardCustody.stagingKey(user, side, d)].domainKey != dk) {
+                        ctx.capHit = true; // a sweep's record holds the day: the domain waits on it
+                        break;
+                    }
+                    // the domain's own record from an earlier pass: prepared
+                } else if (!charge.advanced && !(charge.transportCapHit && charge.planIds.length != 0)) {
+                    ctx.capHit = true; // a deferral the preparation cannot resolve here: pause
+                    break;
+                } else {
+                    // Priced (or cap-hit with a plan): the day's record, holding
+                    // its allocation, stamped with the domain. Nothing is
+                    // persisted or drawn — the reservation and resolution are
+                    // the domain's.
+                    LibRewardCustody.callStageDayFromPlan(
+                        user, side, d, set, charge.planIds, charge.planFresh, charge.planRecycled, ctx.deliverTo,
+                        LibVaipakam.StagingOp.Claim, dk
+                    );
+                    ctx.pruned = true;
+                }
+            }
+            dom.preparedThrough = uint64(d);
+            unchecked { ++d; --ctx.daysLeft; }
+        }
+        LibRewardStaging.domainPrepared(s, dk, dom);
+    }
+
     /// @dev Walk one side's days, oldest first, up to the chunk budget.
     function _walkSideDays(
         LibVaipakam.Storage storage s,
@@ -1984,7 +2123,7 @@ library LibInteractionRewards {
                 if (charge.transportCapHit && charge.planIds.length != 0) {
                     (, uint256 staged) = LibRewardCustody.callStageDayFromPlan(
                         user, side, d, set, charge.planIds, charge.planFresh, charge.planRecycled, ctx.deliverTo,
-                        LibVaipakam.StagingOp.Claim
+                        LibVaipakam.StagingOp.Claim, bytes32(0)
                     );
                     // What was staged is the progress this call keeps, so a
                     // claim that could only stage returns nothing paid rather
@@ -2194,7 +2333,10 @@ library LibInteractionRewards {
             s.loanSideRewardedDays[e.loanId][sideKey] += 1;
             uint256 next = d + 1;
             s.rewardEntryClaimNextDay[id] = SafeCast.toUint64(next);
-            if (next >= e.endDay) e.processed = true;
+            if (next >= e.endDay) {
+                e.processed = true;
+                noteEntryLifecycle(s, e);
+            }
             unchecked { ++i; }
         }
         s.userSideDayPaidVpfi[user][sideKey][d] += charged;
@@ -3297,7 +3439,7 @@ library LibInteractionRewards {
             if (charge.transportCapHit && charge.planIds.length != 0) {
                 LibRewardCustody.callStageDayFromPlan(
                     e.user, e.side, d, set, charge.planIds, charge.planFresh, charge.planRecycled,
-                    LibVaipakam.RewardDelivery.Default, LibVaipakam.StagingOp.Forfeit
+                    LibVaipakam.RewardDelivery.Default, LibVaipakam.StagingOp.Forfeit, bytes32(0)
                 );
             }
             _drawAndFold(d, charge, tp); // 3b-ii-A — a cap-hit deferral prunes
@@ -3381,6 +3523,15 @@ library LibInteractionRewards {
         }
     }
 
+    /// @notice ONE place every LIFECYCLE transition of a reward entry passes
+    ///         (A2-ii): processed, closed, forfeited, expiry begun, window
+    ///         shortened. Bumps the claimant-side's lifecycle version, which a
+    ///         staging domain compares against the version at its commitment
+    ///         to know, O(1), that no entry it priced has moved (addenda 1–2).
+    function noteEntryLifecycle(LibVaipakam.Storage storage s, LibVaipakam.RewardEntry storage e) internal {
+        unchecked { ++s.rewardLifecycleVersion[e.user][uint8(e.side)]; }
+    }
+
     function _beginExpiry(
         LibVaipakam.Storage storage s,
         uint256 id,
@@ -3388,6 +3539,7 @@ library LibInteractionRewards {
     ) private {
         if (e.expiryBegun) return;
         e.expiryBegun = true;
+        noteEntryLifecycle(s, e);
         emit RewardEntryExpiryBegun(id, e.user);
     }
 
@@ -3805,6 +3957,7 @@ library LibInteractionRewards {
             expired = whole;
             freshCredited = wholeFresh;
             e.processed = true;
+            noteEntryLifecycle(s, e);
             s.rewardEntryExpiredAccum[id] += whole.total;
             s.rewardEntryExpiredRecycledAccum[id] += whole.recycled;
             emit RewardEntryExpired(
@@ -3930,7 +4083,7 @@ library LibInteractionRewards {
             if (charge.transportCapHit && charge.planIds.length != 0) {
                 LibRewardCustody.callStageDayFromPlan(
                     e.user, e.side, d, set, charge.planIds, charge.planFresh, charge.planRecycled,
-                    LibVaipakam.RewardDelivery.Default, LibVaipakam.StagingOp.Expiry
+                    LibVaipakam.RewardDelivery.Default, LibVaipakam.StagingOp.Expiry, bytes32(0)
                 );
             }
             _drawAndFold(d, charge, tp); // 3b-ii-A — a cap-hit deferral prunes
@@ -4531,7 +4684,8 @@ library LibInteractionRewards {
         address user,
         uint256 d,
         uint256[] memory entryIds,
-        bool settling
+        bool settling,
+        bytes32 domainKey
     ) internal view returns (bool valid, uint256 badId) {
         uint256 n = entryIds.length;
         if (n == 0) return (true, 0);
@@ -4540,7 +4694,17 @@ library LibInteractionRewards {
             uint256 id = entryIds[i];
             LibVaipakam.RewardEntry storage v = s.rewardEntries[id];
             if (v.user != user || v.side != side || d < v.startDay || d >= v.endDay) return (false, id);
-            if (_shareOfPoolCursorDay(s, id, v) != d) return (false, id);
+            uint256 cur = _shareOfPoolCursorDay(s, id, v);
+            if (cur != d) {
+                // Inside a committed DOMAIN (A2-ii) a day record may sit AHEAD
+                // of the entry's stored cursor: every day between is the
+                // domain's own record, prepared in order, so the entry is at
+                // `d` by the domain's preparation. Admitted only within the
+                // extent the domain has prepared (or is preparing now).
+                if (domainKey == bytes32(0)) return (false, id);
+                LibVaipakam.StagingDomain storage dom = s.stagingDomains[domainKey];
+                if (!(cur < d && cur >= dom.firstDay && d <= uint256(dom.preparedThrough) + 1)) return (false, id);
+            }
             if (settling && s.rewardEntryClaimNextDay[id] == 0 && v.startDay < s.governorCommitArmedFromDay) {
                 return (false, id);
             }
@@ -4961,7 +5125,10 @@ library LibInteractionRewards {
         }
         if (!st.priced) {
             // A zero-value window will never pay on either regime — retire it.
-            if (st.emptyWindow) e.processed = true;
+            if (st.emptyWindow) {
+                e.processed = true;
+                noteEntryLifecycle(s, e);
+            }
             return (toUser, toTreasury);
         }
 
@@ -5036,11 +5203,15 @@ library LibInteractionRewards {
             // An empty or zero-value window will never pay — retire it so it
             // stops being rescanned. A cursor-behind entry is NOT retired: it
             // can still pay once the globals finalize.
-            if (st.emptyWindow) e.processed = true;
+            if (st.emptyWindow) {
+                e.processed = true;
+                noteEntryLifecycle(s, e);
+            }
             return (toUser, toTreasury);
         }
 
         e.processed = true;
+        noteEntryLifecycle(s, e);
         if (st.forfeit) {
             _accrueForfeitArmedDays(s, id, e, st.rawSplit);
             return (toUser, toTreasury);
@@ -5445,11 +5616,11 @@ library LibInteractionRewards {
         // — nothing payable now, nothing persisted, nothing retired — where
         // the trim below is terminal. Folded into the paid figure, a
         // temporary reservation retired another holder's reward for good.
-        if (_loanSideReservedBinds(s, loanId, side, armedReward, remaining)) {
+        if (_loanSideReservedBinds(s, loanId, side, armedReward, remaining, 0)) { // the legacy slice is no domain's: no own carry
             c.stamped = false;
             c.reservedBinds = true;
             c.reservedNeeded = armedReward;
-            c.reservedAvailable = _loanSideAvailable(s, loanId, side, remaining);
+            c.reservedAvailable = _loanSideAvailable(s, loanId, side, remaining, 0);
             return (EntrySplit({total: 0, recycled: 0, armedFresh: 0}), recycleRelease, c);
         }
         if (armedReward <= remaining) {
@@ -5538,6 +5709,7 @@ library LibInteractionRewards {
         // deliberately does NOT route through here — a re-pointed entry keeps
         // accruing (its loan is still open), so it stays `closed == false`.
         e.closed = true;
+        noteEntryLifecycle(s_, e);
     }
 
     /// @dev Apply a signed delta to `deltas[day]` only when `day > frontier`.
@@ -5846,9 +6018,13 @@ library LibInteractionRewards {
         LibVaipakam.Storage storage s,
         uint256 loanId,
         uint8 sideKey,
-        uint256 hard
+        uint256 hard,
+        uint256 own
     ) private view returns (uint256) {
+        // Another holder's reservations only: the domain's own (`own`) is
+        // this settlement's, already counted as paid by the caller (A2-ii).
         uint256 reserved = s.loanSideRewardReservedVpfi[loanId][sideKey];
+        reserved = reserved > own ? reserved - own : 0;
         return hard > reserved ? hard - reserved : 0;
     }
 
@@ -5862,9 +6038,10 @@ library LibInteractionRewards {
         uint256 loanId,
         uint8 sideKey,
         uint256 v,
-        uint256 hard
+        uint256 hard,
+        uint256 own
     ) private view returns (bool) {
-        uint256 avail = _loanSideAvailable(s, loanId, sideKey, hard);
+        uint256 avail = _loanSideAvailable(s, loanId, sideKey, hard, own);
         return v > avail && avail < hard;
     }
 
@@ -5899,18 +6076,36 @@ library LibInteractionRewards {
         }
         // `e.loanId` is re-read rather than held: this helper inlines into
         // the pricing loop's frame, which is at the viaIR ceiling.
+        // Inside a DOMAIN (A2-ii) the domain's own reserved days and amounts
+        // for this loan count as rewarded and paid — they are this
+        // settlement's earlier days, not another holder's — and are excluded
+        // from the "another reservation binds" test below.
+        (uint256 ownDays, uint256 ownAmount) = _domainLoanCarry(s, dry, e.loanId);
         uint256 hard = _loanSideRewardCapEff(
-            s, e.loanId, s.loanSideRewardedDays[e.loanId][uint8(side)] + 1
+            s, e.loanId, s.loanSideRewardedDays[e.loanId][uint8(side)] + 1 + ownDays
         );
         {
             // The HARD figure: paid only. The reservation is read beside it,
             // never folded in (Codex #2308 r4 — folded in, a temporary
             // reservation retired another holder's reward for good).
-            uint256 paid = s.loanSideRewardPaidVpfi[e.loanId][uint8(side)];
+            uint256 paid = s.loanSideRewardPaidVpfi[e.loanId][uint8(side)] + ownAmount;
             hard = hard > paid ? hard - paid : 0;
         }
-        if (_loanSideReservedBinds(s, e.loanId, uint8(side), v, hard)) dry.loanSideReserved = true;
+        if (_loanSideReservedBinds(s, e.loanId, uint8(side), v, hard, ownAmount)) dry.loanSideReserved = true;
         return hard;
+    }
+
+    /// @dev The domain's own carry for `loanId` (A2-ii): the days and the
+    ///      loan-side amount its reserved day records hold; zero outside a
+    ///      domain. One read, so the pricing frame gains no stack slot.
+    function _domainLoanCarry(
+        LibVaipakam.Storage storage s,
+        DayContext memory dry,
+        uint256 loanId
+    ) private view returns (uint256 days_, uint256 amount) {
+        bytes32 dk = dry.domainKey;
+        if (dk == bytes32(0)) return (0, 0);
+        return (s.stagingDomainLoanDays[dk][loanId], s.stagingDomainLoanReserved[dk][loanId]);
     }
 
     /// @dev Apportion `budget` across `cEff` weights: floor pro-rata, then push
@@ -6283,6 +6478,11 @@ library LibInteractionRewards {
         bool preparedOnly;
         uint256 preparedFresh;
         uint256 preparedRecycled;
+        /// @dev A2-ii — the staging DOMAIN this pricing is for (zero: none):
+        ///      a day record ahead of the entries' stored cursors is admitted
+        ///      when every day between is the domain's, and the domain's own
+        ///      reserved days count as rewarded and paid for the loan-side cap.
+        bytes32 domainKey;
     }
 
     /// @dev The settling callers' context: nothing set. Internal so the test
@@ -6696,7 +6896,7 @@ library LibInteractionRewards {
         // isn't. ONE rule ({entrySetDefect}), which a staging record's
         // revalidation reads too (Codex #2308 r23).
         {
-            (bool valid, uint256 bad) = entrySetDefect(s, user, d, entryIds, !dry.preparedOnly);
+            (bool valid, uint256 bad) = entrySetDefect(s, user, d, entryIds, !dry.preparedOnly, dry.domainKey);
             if (!valid) revert IVaipakamErrors.RewardEntrySetMismatch(bad);
         }
 

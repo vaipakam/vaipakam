@@ -8,6 +8,7 @@ import {LibVpfiRecycle} from "./LibVpfiRecycle.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 /**
  * @title LibRewardStaging
@@ -110,6 +111,23 @@ library LibRewardStaging {
     /// @notice The record is gone: unwound (`paid == false`) or paid.
     /// @custom:event-category state-change/reward-staging
     event StagingRecordClosed(bytes32 indexed key, bool paid);
+    /// @notice A multi-chunk claim DOMAIN opened for `user` on `side` (A2-ii):
+    ///         its committed extent `[firstDay, lastDay]` and the settlement
+    ///         chunks it spans.
+    /// @custom:event-category state-change/reward-staging
+    event StagingDomainOpened(bytes32 indexed domainKey, address indexed user, uint8 side, uint64 firstDay, uint64 lastDay, uint256 chunks);
+    /// @notice The domain moved to `phase` ({LibVaipakam.DomainPhase}).
+    /// @custom:event-category state-change/reward-staging
+    event StagingDomainPhase(bytes32 indexed domainKey, uint8 phase);
+    /// @notice The domain's reservation cursor stopped at `day`: that day's
+    ///         live sources or cap headroom cannot bear its residual; nothing
+    ///         is paid, the days before stand reserved, the domain waits.
+    /// @custom:event-category state-change/reward-staging
+    event StagingDomainReserveStopped(bytes32 indexed domainKey, uint64 day);
+    /// @notice The domain is gone: cleared after resolving every day
+    ///         (`paid == true`) or after unwinding (`paid == false`).
+    /// @custom:event-category state-change/reward-staging
+    event StagingDomainCleared(bytes32 indexed domainKey, bool paid);
     /// @notice A non-settlement release started the obligation's cooldown:
     ///         until `until`, a claim on this key opens no record and defers
     ///         as before staging existed (Codex #2308 r7; read back through
@@ -153,6 +171,9 @@ library LibRewardStaging {
         address caller,
         LibVaipakam.RewardDelivery venue
     ) internal {
+        if (s.stagingRecords[key].domainKey != bytes32(0)) {
+            revert IVaipakamErrors.StagingRecordInDomain(key, s.stagingRecords[key].domainKey);
+        }
         LibVaipakam.StagingRecord storage r = record(s, key);
         if (caller != r.user || r.phase != LibVaipakam.StagingPhase.Staging) {
             revert IVaipakamErrors.StagingVenueNotSettable(key);
@@ -303,6 +324,25 @@ library LibRewardStaging {
     ///      headroom as encumbered, never as paid, and defers on it.
     function reserve(LibVaipakam.Storage storage s, bytes32 key) internal {
         LibVaipakam.StagingRecord storage r = record(s, key);
+        if (r.domainKey != bytes32(0)) revert IVaipakamErrors.StagingRecordInDomain(key, r.domainKey);
+        if (!_reserve(s, key, r)) revert IVaipakamErrors.StagingNotCovered(key);
+    }
+
+    /// @notice A DOMAIN record's reservation (A2-ii): the per-record step
+    ///         {reserveDomainPage} drives by Diamond self-call, hosted on the
+    ///         record facet that already inlines {_reserve}. Only a domain's
+    ///         record; a short day returns false (the page stops), never reverts.
+    function reserveInDomain(LibVaipakam.Storage storage s, bytes32 key) internal returns (bool ok) {
+        LibVaipakam.StagingRecord storage r = record(s, key);
+        if (r.domainKey == bytes32(0)) revert IVaipakamErrors.StagingRecordNotInDomain(key);
+        return _reserve(s, key, r);
+    }
+
+    /// @dev The reservation primitive (A2-ii): true when the day is covered
+    ///      and now reserved; false when the live sources or the cap headroom
+    ///      cannot bear its residual — the standalone entry reverts on that,
+    ///      the domain page STOPS on it. Every other refusal reverts as before.
+    function _reserve(LibVaipakam.Storage storage s, bytes32 key, LibVaipakam.StagingRecord storage r) private returns (bool) {
         _requirePhase(key, r, LibVaipakam.StagingPhase.Staging);
         // A record that passed more pending epochs than it tracks can only be
         // unwound: the terminal refusal, named first (Codex #2308 r2, r6).
@@ -319,7 +359,7 @@ library LibRewardStaging {
             revert IVaipakamErrors.StagingScanIncomplete(key);
         }
         (LibInteractionRewards.DayCharge memory charge, LibInteractionRewards.DaySlice[] memory slices) = _price(s, r);
-        if (!charge.advanced) revert IVaipakamErrors.StagingNotCovered(key);
+        if (!charge.advanced) return false;
 
         // The four figures the resolution pays, and the four the epochs cover.
         r.needUserFresh = charge.toUser.armedFresh;
@@ -348,15 +388,15 @@ library LibRewardStaging {
         // the pool cap over the FULL fresh leg, the backing room over the
         // live fresh, the delivered headroom over the live user fresh. Short
         // on any: not covered, nothing reserved (a deferral, not a scaling).
-        if (freshSpend > LibInteractionRewards.poolAvailable()) revert IVaipakamErrors.StagingNotCovered(key);
+        if (freshSpend > LibInteractionRewards.poolAvailable()) return false;
         if (liveUserFresh + liveTreasuryFresh > LibVpfiRecycle.freshBackingRoom(s)) {
-            revert IVaipakamErrors.StagingNotCovered(key);
+            return false;
         }
         // Both live fresh destinations charge the delivered ledger at payout
         // — the user's through the delivery, the treasury's through the
         // absorption — so both are reserved on it (Codex #2308 r1).
         if (liveUserFresh + liveTreasuryFresh > LibInteractionRewards.deliveredFreshBound(s)) {
-            revert IVaipakamErrors.StagingNotCovered(key);
+            return false;
         }
 
         // Reserve, per source, with the figure written on the record.
@@ -388,7 +428,14 @@ library LibRewardStaging {
             r.sliceAmounts[i] = slices[i].amount;
             r.sliceChargeable[i] = slices[i].loanSideChargeable;
             if (slices[i].loanSideChargeable) {
-                s.loanSideRewardReservedVpfi[s.rewardEntries[r.entryIds[i]].loanId][sideKey] += slices[i].amount;
+                uint256 loanId = s.rewardEntries[r.entryIds[i]].loanId;
+                s.loanSideRewardReservedVpfi[loanId][sideKey] += slices[i].amount;
+                if (r.domainKey != bytes32(0)) {
+                    // The domain's own carry (A2-ii): its later days count this
+                    // day as rewarded and this amount as paid for the loan side.
+                    s.stagingDomainLoanReserved[r.domainKey][loanId] += slices[i].amount;
+                    ++s.stagingDomainLoanDays[r.domainKey][loanId];
+                }
             }
             unchecked { ++i; }
         }
@@ -399,6 +446,7 @@ library LibRewardStaging {
         // transition — may straddle it.
         ++s.stagingEncumberedCount;
         emit StagingReserved(key, liveUserFresh, liveTreasuryFresh, liveUserRecycled, freshSpend);
+        return true;
     }
 
     // ─────────────────────────────── resolve ──────────────────────────────
@@ -413,6 +461,31 @@ library LibRewardStaging {
     /// @return done Whether the record was paid and closed by this page.
     function resolvePage(LibVaipakam.Storage storage s, bytes32 key) internal returns (bool done) {
         LibVaipakam.StagingRecord storage r = record(s, key);
+        if (r.domainKey != bytes32(0)) revert IVaipakamErrors.StagingRecordInDomain(key, r.domainKey);
+        return _resolvePage(s, key, r, true);
+    }
+
+    /// @notice A DOMAIN record's resolution page (A2-ii): the per-record step
+    ///         {resolveDomainPage} drives by Diamond self-call, hosted on the
+    ///         record facet that already inlines {_resolvePage}. No per-record
+    ///         revalidation — the domain revalidated its whole extent before
+    ///         resolving, and resolution is irrevocable.
+    function resolvePageInDomain(LibVaipakam.Storage storage s, bytes32 key) internal returns (bool done) {
+        LibVaipakam.StagingRecord storage r = record(s, key);
+        if (r.domainKey == bytes32(0)) revert IVaipakamErrors.StagingRecordNotInDomain(key);
+        return _resolvePage(s, key, r, false);
+    }
+
+    /// @dev One resolution page. `revalidate` runs the per-record stale check
+    ///      at the Reserved → Resolving edge; a DOMAIN revalidates its whole
+    ///      extent before entering its own resolving phase and then resolves
+    ///      its records irrevocably, so it passes false (A2-ii).
+    function _resolvePage(
+        LibVaipakam.Storage storage s,
+        bytes32 key,
+        LibVaipakam.StagingRecord storage r,
+        bool revalidate
+    ) private returns (bool done) {
         if (r.phase == LibVaipakam.StagingPhase.Reserved) {
             // The first irreversible page REVALIDATES the commitment against
             // the entries' current lifecycle (Codex #2308 r23; the design's
@@ -420,11 +493,13 @@ library LibRewardStaging {
             // never resolved on it — `_pay` would otherwise route the frozen
             // claimant and chargeability past a forfeit, a default or a
             // closed window the reservation never saw.
-            (bool stale, uint256 entryId) = staleEntry(s, r);
-            if (stale) {
-                emit StagingRecordStale(key, entryId);
-                r.phase = LibVaipakam.StagingPhase.Unwinding;
-                return _unwindPage(s, key, r);
+            if (revalidate) {
+                (bool stale, uint256 entryId) = staleEntry(s, r);
+                if (stale) {
+                    emit StagingRecordStale(key, entryId);
+                    r.phase = LibVaipakam.StagingPhase.Unwinding;
+                    return _unwindPage(s, key, r);
+                }
             }
             r.phase = LibVaipakam.StagingPhase.Resolving;
         } else {
@@ -572,7 +647,9 @@ library LibRewardStaging {
                 loanSideChargeable: r.sliceChargeable[i] && !forfeit
             });
             if (r.sliceChargeable[i]) {
-                s.loanSideRewardReservedVpfi[s.rewardEntries[r.entryIds[i]].loanId][sideKey] -= r.sliceAmounts[i];
+                uint256 loanId = s.rewardEntries[r.entryIds[i]].loanId;
+                s.loanSideRewardReservedVpfi[loanId][sideKey] -= r.sliceAmounts[i];
+                _releaseDomainCarry(s, r.domainKey, loanId, r.sliceAmounts[i]);
             }
             unchecked { ++i; }
         }
@@ -605,6 +682,12 @@ library LibRewardStaging {
         }
 
         LibVaipakam.RewardDelivery venue = r.venueSet ? r.venue : LibVaipakam.RewardDelivery.Default;
+        if (r.domainKey != bytes32(0)) {
+            // A domain's day record delivers where the DOMAIN was bound (A2-ii;
+            // addendum 5), set by the claimant before the reservation.
+            LibVaipakam.StagingDomain storage dom = s.stagingDomains[r.domainKey];
+            venue = dom.venueSet ? dom.venue : LibVaipakam.RewardDelivery.Default;
+        }
         bool toVault = venue == LibVaipakam.RewardDelivery.Vault
             || (venue == LibVaipakam.RewardDelivery.Default && user.code.length == 0);
         uint256 userTotal = liveUserFresh + liveUserRecycled + r.epochUserFresh + r.epochUserRecycled;
@@ -686,7 +769,7 @@ library LibRewardStaging {
         LibVaipakam.StagingRecord storage r
     ) internal view returns (bool stale, uint256 entryId) {
         (bool valid, uint256 bad) =
-            LibInteractionRewards.entrySetDefect(s, r.user, r.day, r.entryIds, true);
+            LibInteractionRewards.entrySetDefect(s, r.user, r.day, r.entryIds, true, r.domainKey);
         if (!valid) return (true, bad);
         uint256 m = r.sliceChargeable.length;
         for (uint256 i; i < m; ) {
@@ -741,6 +824,7 @@ library LibRewardStaging {
     /// @return done Whether the record was closed by this page.
     function unwindPage(LibVaipakam.Storage storage s, bytes32 key, address caller) internal returns (bool done) {
         LibVaipakam.StagingRecord storage r = record(s, key);
+        if (r.domainKey != bytes32(0)) revert IVaipakamErrors.StagingRecordInDomain(key, r.domainKey);
         LibVaipakam.StagingPhase p = r.phase;
         if (p == LibVaipakam.StagingPhase.Staging || p == LibVaipakam.StagingPhase.Reserved) {
             if (caller != r.user && block.timestamp < r.deadline) {
@@ -750,6 +834,24 @@ library LibRewardStaging {
                 if (!stale) revert IVaipakamErrors.StagingNotExpired(key, r.deadline);
                 emit StagingRecordStale(key, entryId);
             }
+            r.phase = LibVaipakam.StagingPhase.Unwinding;
+        } else {
+            _requirePhase(key, r, LibVaipakam.StagingPhase.Unwinding);
+        }
+        return _unwindPage(s, key, r);
+    }
+
+    /// @notice A DOMAIN record's unwind page (A2-ii): the per-record step
+    ///         {unwindDomainPage} drives by Diamond self-call, hosted on the
+    ///         record facet that already inlines {_unwindPage}. The domain
+    ///         decided the unwind (deadline, cancel or a stale record), so the
+    ///         record's own gates do not apply: a staging or reserved record is
+    ///         sent to Unwinding here.
+    function unwindPageInDomain(LibVaipakam.Storage storage s, bytes32 key) internal returns (bool done) {
+        LibVaipakam.StagingRecord storage r = record(s, key);
+        if (r.domainKey == bytes32(0)) revert IVaipakamErrors.StagingRecordNotInDomain(key);
+        LibVaipakam.StagingPhase p = r.phase;
+        if (p == LibVaipakam.StagingPhase.Staging || p == LibVaipakam.StagingPhase.Reserved) {
             r.phase = LibVaipakam.StagingPhase.Unwinding;
         } else {
             _requirePhase(key, r, LibVaipakam.StagingPhase.Unwinding);
@@ -811,7 +913,9 @@ library LibRewardStaging {
                 uint256 m = r.sliceAmounts.length;
                 for (uint256 j; j < m; ) {
                     if (r.sliceChargeable[j]) {
-                        s.loanSideRewardReservedVpfi[s.rewardEntries[r.entryIds[j]].loanId][sideKey] -= r.sliceAmounts[j];
+                        uint256 loanId = s.rewardEntries[r.entryIds[j]].loanId;
+                        s.loanSideRewardReservedVpfi[loanId][sideKey] -= r.sliceAmounts[j];
+                        _releaseDomainCarry(s, r.domainKey, loanId, r.sliceAmounts[j]);
                     }
                     unchecked { ++j; }
                 }
@@ -844,6 +948,8 @@ library LibRewardStaging {
         // An expiry's day prices as the expiry walk prices it (A2-ii): the
         // entry's share routes to the treasury legs, recycled in place.
         dry.recycleSettlement = r.op == LibVaipakam.StagingOp.Expiry;
+        // A domain's day record prices in its domain's context (A2-ii).
+        dry.domainKey = r.domainKey;
         (charge, slices) = LibInteractionRewards.processUserSideDay(r.user, r.day, r.entryIds, pool, dry);
     }
 
@@ -872,7 +978,233 @@ library LibRewardStaging {
     ///      the pending page of at most one window, and nothing that grew
     ///      across calls.
     function _close(LibVaipakam.Storage storage s, bytes32 key, bool paid) private {
+        bytes32 dk = s.stagingRecords[key].domainKey;
+        if (dk != bytes32(0)) --s.stagingDomains[dk].liveRecords; // the extent clears at zero (A2-ii)
         emit StagingRecordClosed(key, paid);
         delete s.stagingRecords[key];
+    }
+
+    // ───────────────────────── A2-ii — multi-chunk claim DOMAINS ─────────────────────────
+
+    /// @dev Days a domain page walks per call (reservation, resolution, unwind, revalidation).
+    uint256 internal constant DOMAIN_PAGE_DAYS = 8;
+
+    /// @notice Open the claimant-side's domain over the committed extent (A2-ii):
+    ///         the entry set and the last day are a SNAPSHOT; the lifecycle
+    ///         version is anchored; the deadline starts at one cadence per
+    ///         chunk plus the grace. Refused while a cleared-but-live domain
+    ///         still stands (its records must all close first).
+    function openDomain(
+        LibVaipakam.Storage storage s,
+        bytes32 dk,
+        LibVaipakam.StagingDomain storage dom,
+        address user,
+        LibVaipakam.RewardSide side,
+        uint256[] memory entryIds,
+        uint256 first,
+        uint256 last
+    ) internal {
+        if (dom.liveRecords != 0) revert IVaipakamErrors.StagingDomainStanding(dk, uint8(dom.phase));
+        dom.phase = LibVaipakam.DomainPhase.Staging;
+        dom.user = user;
+        dom.side = side;
+        dom.firstDay = SafeCast.toUint64(first);
+        dom.lastDay = SafeCast.toUint64(last);
+        dom.preparedThrough = SafeCast.toUint64(first - 1);
+        dom.reserveCursor = 0;
+        dom.resolveCursor = 0;
+        dom.unwindCursor = 0;
+        dom.revalidateCursor = 0;
+        dom.openedAt = uint64(block.timestamp);
+        dom.deadline = 0;
+        dom.lifecycleVersionAtCommit = s.rewardLifecycleVersion[user][uint8(side)];
+        dom.chunks = (last - first + 1 + LibVaipakam.MAX_INTERACTION_CLAIM_DAYS - 1) / LibVaipakam.MAX_INTERACTION_CLAIM_DAYS;
+        dom.leaseAccum = 0;
+        dom.venueSet = false;
+        dom.entryIds = entryIds;
+        emit StagingDomainOpened(dk, user, uint8(side), dom.firstDay, dom.lastDay, dom.chunks);
+        LibRewardCustody.domainDeadlineRefresh(s, dk, dom);
+    }
+
+    /// @notice A preparation chunk ended (A2-ii): the domain's deadline is
+    ///         refreshed from its chunks and its records' leases.
+    function domainPrepared(LibVaipakam.Storage storage s, bytes32 dk, LibVaipakam.StagingDomain storage dom) internal {
+        LibRewardCustody.domainDeadlineRefresh(s, dk, dom);
+    }
+
+    /// @notice The claimant binds the venue the domain's days deliver to, before
+    ///         the reservation (A2-ii; addendum 5).
+    function setDomainVenue(
+        LibVaipakam.Storage storage s,
+        bytes32 dk,
+        address caller,
+        LibVaipakam.RewardDelivery venue
+    ) internal {
+        LibVaipakam.StagingDomain storage dom = s.stagingDomains[dk];
+        if (dom.phase != LibVaipakam.DomainPhase.Staging) revert IVaipakamErrors.StagingDomainPhaseInvalid(dk, uint8(dom.phase));
+        if (caller != dom.user) revert IVaipakamErrors.StagingNotClaimant(dk, caller);
+        dom.venue = venue;
+        dom.venueSet = true;
+    }
+
+    /// @notice One RESERVING page (A2-ii), permissionless. From Staging: the
+    ///         extent must be fully prepared; the domain enters Reserving. If
+    ///         the claimant-side's lifecycle version moved since the commit,
+    ///         the extent is REVALIDATED first (a cursor, paged): a stale day
+    ///         record sends the whole domain to unwind. Then the reservation
+    ///         cursor reserves each day record in order — the live sources and
+    ///         the cap headroom debited per day, the domain's own earlier days
+    ///         counted as its own — and a day they cannot bear STOPS the cursor
+    ///         (announced; the days before stand reserved, nothing paid). Once
+    ///         every day is reserved the version is re-checked, O(1), and the
+    ///         domain enters Resolving — irrevocable.
+    /// @return done True once the domain is Resolving.
+    function reserveDomainPage(LibVaipakam.Storage storage s, bytes32 dk) internal returns (bool done) {
+        LibVaipakam.StagingDomain storage dom = s.stagingDomains[dk];
+        if (dom.phase == LibVaipakam.DomainPhase.Staging) {
+            if (dom.preparedThrough < dom.lastDay) {
+                revert IVaipakamErrors.StagingDomainNotPrepared(dk, dom.preparedThrough, dom.lastDay);
+            }
+            dom.phase = LibVaipakam.DomainPhase.Reserving;
+            dom.reserveCursor = dom.firstDay;
+            dom.revalidateCursor = dom.firstDay;
+            emit StagingDomainPhase(dk, uint8(dom.phase));
+        } else if (dom.phase != LibVaipakam.DomainPhase.Reserving) {
+            revert IVaipakamErrors.StagingDomainPhaseInvalid(dk, uint8(dom.phase));
+        }
+        if (s.rewardLifecycleVersion[dom.user][uint8(dom.side)] != dom.lifecycleVersionAtCommit) {
+            if (!_revalidateDomainPage(s, dk, dom)) return false;
+        }
+        uint256 walked;
+        while (dom.reserveCursor <= dom.lastDay && walked < DOMAIN_PAGE_DAYS) {
+            bytes32 key = LibRewardCustody.stagingKey(dom.user, dom.side, dom.reserveCursor);
+            LibVaipakam.StagingRecord storage r = s.stagingRecords[key];
+            if (r.phase == LibVaipakam.StagingPhase.Staging) {
+                // Hosted on the record facet; reached by self-call (EIP-170).
+                if (!LibRewardCustody.callReserveRecordInDomain(key)) {
+                    emit StagingDomainReserveStopped(dk, dom.reserveCursor);
+                    return false;
+                }
+            }
+            // No record (the day priced to nothing) or already reserved: on.
+            unchecked { ++dom.reserveCursor; ++walked; }
+        }
+        if (dom.reserveCursor <= dom.lastDay) return false;
+        // Every day reserved. The O(1) check at the irreversible edge
+        // (addendum 2): a lifecycle move since the walk sends the extent back
+        // through revalidation on the next call.
+        if (s.rewardLifecycleVersion[dom.user][uint8(dom.side)] != dom.lifecycleVersionAtCommit) {
+            dom.revalidateCursor = dom.firstDay;
+            return false;
+        }
+        dom.phase = LibVaipakam.DomainPhase.Resolving;
+        dom.resolveCursor = dom.firstDay;
+        emit StagingDomainPhase(dk, uint8(dom.phase));
+        return true;
+    }
+
+    /// @dev One revalidation page over the extent (addendum 1): each day
+    ///      record's commitment is re-read against its entries' current
+    ///      lifecycle; a stale one unwinds the domain. Returns true once the
+    ///      whole extent is revalidated (the version re-anchored).
+    function _revalidateDomainPage(LibVaipakam.Storage storage s, bytes32 dk, LibVaipakam.StagingDomain storage dom)
+        private
+        returns (bool)
+    {
+        uint256 walked;
+        while (dom.revalidateCursor <= dom.lastDay && walked < DOMAIN_PAGE_DAYS) {
+            bytes32 key = LibRewardCustody.stagingKey(dom.user, dom.side, dom.revalidateCursor);
+            LibVaipakam.StagingRecord storage r = s.stagingRecords[key];
+            if (r.phase != LibVaipakam.StagingPhase.None) {
+                (bool stale, uint256 entryId) = staleEntry(s, r);
+                if (stale) {
+                    emit StagingRecordStale(key, entryId);
+                    _beginDomainUnwind(dk, dom);
+                    return false;
+                }
+            }
+            unchecked { ++dom.revalidateCursor; ++walked; }
+        }
+        if (dom.revalidateCursor <= dom.lastDay) return false;
+        dom.lifecycleVersionAtCommit = s.rewardLifecycleVersion[dom.user][uint8(dom.side)];
+        return true;
+    }
+
+    /// @notice One RESOLVING page (A2-ii), permissionless: the records resolve
+    ///         in day order, each through its own pages, each paying on its
+    ///         last; the domain is irrevocable here. Cleared (deleted) once
+    ///         the cursor passes the extent and no record is live.
+    /// @return done True once the domain is cleared.
+    function resolveDomainPage(LibVaipakam.Storage storage s, bytes32 dk) internal returns (bool done) {
+        LibVaipakam.StagingDomain storage dom = s.stagingDomains[dk];
+        if (dom.phase != LibVaipakam.DomainPhase.Resolving) revert IVaipakamErrors.StagingDomainPhaseInvalid(dk, uint8(dom.phase));
+        uint256 walked;
+        while (dom.resolveCursor <= dom.lastDay && walked < DOMAIN_PAGE_DAYS) {
+            bytes32 key = LibRewardCustody.stagingKey(dom.user, dom.side, dom.resolveCursor);
+            LibVaipakam.StagingRecord storage r = s.stagingRecords[key];
+            if (r.phase != LibVaipakam.StagingPhase.None) {
+                // Hosted on the settle facet; reached by self-call (EIP-170).
+                if (!LibRewardCustody.callResolveRecordInDomain(key)) return false; // this record's next page, next call
+            }
+            unchecked { ++dom.resolveCursor; ++walked; }
+        }
+        if (dom.resolveCursor <= dom.lastDay || dom.liveRecords != 0) return false;
+        emit StagingDomainCleared(dk, true);
+        delete s.stagingDomains[dk];
+        return true;
+    }
+
+    /// @notice One UNWIND page (A2-ii): past the deadline anyone, before it
+    ///         only the claimant, while the domain is Staging or Reserving — a
+    ///         resolving domain only completes. Each day record runs its own
+    ///         paginated unwind (its provenance releases exactly what it held,
+    ///         and each returned batch opens its priority window); the domain
+    ///         is cleared once the cursor passes the extent and no record is
+    ///         live, so no new domain commits before then.
+    /// @return done True once the domain is cleared.
+    function unwindDomainPage(LibVaipakam.Storage storage s, bytes32 dk, address caller) internal returns (bool done) {
+        LibVaipakam.StagingDomain storage dom = s.stagingDomains[dk];
+        LibVaipakam.DomainPhase p = dom.phase;
+        if (p == LibVaipakam.DomainPhase.Staging || p == LibVaipakam.DomainPhase.Reserving) {
+            if (caller != dom.user && block.timestamp < dom.deadline) {
+                revert IVaipakamErrors.StagingDomainNotExpired(dk, dom.deadline);
+            }
+            _beginDomainUnwind(dk, dom);
+        } else if (p != LibVaipakam.DomainPhase.Unwinding) {
+            revert IVaipakamErrors.StagingDomainPhaseInvalid(dk, uint8(p));
+        }
+        uint256 walked;
+        while (dom.unwindCursor <= dom.lastDay && walked < DOMAIN_PAGE_DAYS) {
+            bytes32 key = LibRewardCustody.stagingKey(dom.user, dom.side, dom.unwindCursor);
+            LibVaipakam.StagingRecord storage r = s.stagingRecords[key];
+            LibVaipakam.StagingPhase rp = r.phase;
+            if (
+                rp == LibVaipakam.StagingPhase.Staging || rp == LibVaipakam.StagingPhase.Reserved
+                    || rp == LibVaipakam.StagingPhase.Unwinding
+            ) {
+                // Hosted on the settle facet (it sends a live record to Unwinding
+                // and runs one page); reached by self-call (EIP-170).
+                if (!LibRewardCustody.callUnwindRecordInDomain(key)) return false; // this record's next page, next call
+            }
+            unchecked { ++dom.unwindCursor; ++walked; }
+        }
+        if (dom.unwindCursor <= dom.lastDay || dom.liveRecords != 0) return false;
+        emit StagingDomainCleared(dk, false);
+        delete s.stagingDomains[dk];
+        return true;
+    }
+
+    function _beginDomainUnwind(bytes32 dk, LibVaipakam.StagingDomain storage dom) private {
+        dom.phase = LibVaipakam.DomainPhase.Unwinding;
+        dom.unwindCursor = dom.firstDay;
+        emit StagingDomainPhase(dk, uint8(dom.phase));
+    }
+
+    /// @dev A domain record's reservation released or persisted: the domain's
+    ///      own carry for the loan drops by the slice (A2-ii).
+    function _releaseDomainCarry(LibVaipakam.Storage storage s, bytes32 dk, uint256 loanId, uint256 amount) private {
+        if (dk == bytes32(0)) return;
+        s.stagingDomainLoanReserved[dk][loanId] -= amount;
+        --s.stagingDomainLoanDays[dk][loanId];
     }
 }

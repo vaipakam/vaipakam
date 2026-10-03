@@ -1692,7 +1692,7 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         assertEq(_view().getStagingRecord(bobKey).stagedFresh, bobStagedBefore, "during the window the rival stages nothing from the released batches");
         vm.expectEmit(true, true, false, true, address(diamond));
         emit TransportBatchWaiterRegistered(hs[0], bobKey, _view().getStagingRecord(bobKey).openedAt);
-        _staging().registerForBatchWindow(bobKey, hs[0]);
+        _settle().registerForBatchWindow(bobKey, hs[0]);
         (, oldest, , ) = _window(hs[0]);
         assertEq(oldest, bobKey, "the registrant");
         vm.warp(uint256(closesAt));
@@ -1719,10 +1719,10 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         vm.startPrank(alice);
         while (!_settle().unwindStagedDayPage(_key())) {}
         vm.stopPrank();
-        _staging().registerForBatchWindow(carolKey, hs[0]); // the younger, first
+        _settle().registerForBatchWindow(carolKey, hs[0]); // the younger, first
         (, bytes32 oldest, , ) = _window(hs[0]);
         assertEq(oldest, carolKey);
-        _staging().registerForBatchWindow(bobKey, hs[0]); // the older, second
+        _settle().registerForBatchWindow(bobKey, hs[0]); // the older, second
         (uint64 closesAt, bytes32 oldest2, , ) = _window(hs[0]);
         assertEq(oldest2, bobKey, "the running minimum of opening times: the older record");
         vm.warp(uint256(closesAt));
@@ -1747,7 +1747,7 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         vm.startPrank(alice);
         while (!_settle().unwindStagedDayPage(_key())) {}
         vm.stopPrank();
-        _staging().registerForBatchWindow(bobKey, hs[0]);
+        _settle().registerForBatchWindow(bobKey, hs[0]);
         (uint64 closesAt, , , ) = _window(hs[0]);
         vm.warp(uint256(closesAt));
         _staging().prepareStagedDay(bobKey); // bob's one reservation on hs[0]
@@ -1764,7 +1764,7 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         RewardClaimFacet(address(diamond)).claimInteractionRewards();
         _staging().prepareStagedDay(bobKey);
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.StagingPriorityUsed.selector, bobKey, hs[0]));
-        _staging().registerForBatchWindow(bobKey, hs[0]);
+        _settle().registerForBatchWindow(bobKey, hs[0]);
         vm.warp(uint256(closesAt2));
         (, , , open) = _window(hs[0]);
         assertTrue(open, "no registrant: ordinary staging resumes for everyone");
