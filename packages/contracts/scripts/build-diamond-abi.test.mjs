@@ -10,6 +10,7 @@ import {
   UNION_PATH,
   buildDiamondAbi,
   canonical,
+  classificationProblems,
   listAbiFiles,
   readFacetAbi,
   readManifest,
@@ -27,13 +28,20 @@ test('the committed union is current with the facet ABIs', () => {
 });
 
 test('every ABI in src/abis is named exactly once, as a facet or as standalone', () => {
-  const named = [...manifest.facets, ...manifest.standalone];
-  assert.equal(new Set(named).size, named.length, 'a name appears twice in diamond-facets.json');
-  const files = listAbiFiles();
-  const missing = files.filter((f) => !named.includes(f));
-  const stale = named.filter((n) => !files.includes(n));
-  assert.deepEqual(missing, [], `ABI files not classified in diamond-facets.json: ${missing.join(', ')}`);
-  assert.deepEqual(stale, [], `diamond-facets.json names ABIs that do not exist: ${stale.join(', ')}`);
+  assert.deepEqual(classificationProblems(manifest, listAbiFiles()), []);
+});
+
+test('the classification rule names each kind of drift (#2392 r1)', () => {
+  const m = { facets: ['A', 'B'], standalone: ['S'] };
+  assert.deepEqual(classificationProblems(m, ['A', 'B', 'S']), []);
+  // A facet exported but left out of the manifest — the case the export
+  // must now refuse rather than silently omit from the union.
+  assert.match(classificationProblems(m, ['A', 'B', 'S', 'New']).join('\n'), /not classified.*New/);
+  assert.match(classificationProblems(m, ['A', 'S']).join('\n'), /do not exist.*B/);
+  assert.match(
+    classificationProblems({ facets: ['A', 'A'], standalone: [] }, ['A']).join('\n'),
+    /named twice.*A/,
+  );
 });
 
 test('the union drops only exact duplicates — every facet entry is still in it', () => {

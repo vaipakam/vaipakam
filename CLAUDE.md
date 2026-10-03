@@ -529,7 +529,12 @@ and events, and the spread shipped 2.8 MB to every connected session where
 the union is 0.65 MB. `pnpm --filter @vaipakam/contracts test` fails when
 the union is stale, when an ABI file is in neither list, or when the union
 lost any facet entry — so a facet added to `FACETS` but not to the
-manifest fails CI instead of silently missing from the Diamond ABI. Do not
+manifest fails CI instead of silently missing from the Diamond ABI. The
+export applies the same check itself: it builds the union from its STAGED
+facets before publishing anything, so a manifest omission stops the export
+with nothing written, and the facets, union and `_source.json` land
+together. The provenance stamp treats the union as output, like the facet
+JSONs. Do not
 hand-edit `diamondAbi.json`; run
 `node packages/contracts/scripts/build-diamond-abi.mjs`.
 

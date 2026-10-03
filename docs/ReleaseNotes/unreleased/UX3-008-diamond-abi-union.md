@@ -6,4 +6,4 @@ The cause was repetition, not growth. The description was assembled by joining e
 
 The description is now built once, when the contract data is exported, with the exact copies removed: 0.65 MB instead of 2.8 MB. A removed copy is identical to the entry kept, so nothing the app, the indexer or the keepers can read or decode has changed. The indexer's own coverage checks report the same events before and after.
 
-A check now fails the build if the combined file falls out of date, or if a new part of the contract is not listed in it. The file can no longer drift from the parts it is built from.
+A check now fails the build if the combined file falls out of date, or if a new part of the contract is not listed in it. The file can no longer drift from the parts it is built from. The export that produces the contract data builds the combined file before publishing anything, so if a part is unlisted the export stops with nothing changed, rather than publishing new parts beside an old combined file.

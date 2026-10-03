@@ -16,10 +16,16 @@
  * compared on a canonical form (keys sorted, recursively), and the FIRST
  * occurrence is kept, so the union's order follows the manifest's.
  *
- * Run by `contracts/script/exportFrontendAbis.sh` after every ABI export.
- * `build-diamond-abi.test.mjs` fails CI when the committed union is stale.
+ * Run by `contracts/script/exportFrontendAbis.sh` against its STAGED facet
+ * ABIs, before anything is published (#2392 r1): a failure here leaves the
+ * committed bundle untouched. Every run first checks that each ABI file is
+ * classified exactly once in the manifest and that every manifest name
+ * exists, so a facet exported but left out of the manifest fails the export
+ * itself, not only the package test. `build-diamond-abi.test.mjs` fails CI
+ * when the committed union is stale.
  *
- * Usage: node packages/contracts/scripts/build-diamond-abi.mjs [--check]
+ * Usage: node packages/contracts/scripts/build-diamond-abi.mjs
+ *          [--check] [--abi-dir <dir>] [--out <file>]
  */
 import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -84,18 +90,46 @@ export function listAbiFiles(dir = ABI_DIR) {
     .sort();
 }
 
+/** Every ABI file classified exactly once, every manifest name present.
+ *  Returns the problems found; an empty list means the manifest and the
+ *  directory agree. Shared by the generator and the package test, so the
+ *  export and CI apply one rule. */
+export function classificationProblems(manifest, files) {
+  const named = [...manifest.facets, ...(manifest.standalone ?? [])];
+  const problems = [];
+  const dupes = named.filter((n, i) => named.indexOf(n) !== i);
+  if (dupes.length) problems.push(`named twice in diamond-facets.json: ${[...new Set(dupes)].join(', ')}`);
+  const missing = files.filter((f) => !named.includes(f));
+  if (missing.length) problems.push(`ABI files not classified in diamond-facets.json: ${missing.join(', ')}`);
+  const stale = named.filter((n) => !files.includes(n));
+  if (stale.length) problems.push(`diamond-facets.json names ABIs that do not exist: ${stale.join(', ')}`);
+  return problems;
+}
+
+function argValue(flag) {
+  const i = process.argv.indexOf(flag);
+  return i === -1 ? undefined : process.argv[i + 1];
+}
+
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  const { facets } = readManifest();
-  const text = serialize(buildDiamondAbi(facets));
+  const manifest = readManifest();
+  const abiDir = argValue('--abi-dir') ?? ABI_DIR;
+  const outPath = argValue('--out') ?? UNION_PATH;
+  const problems = classificationProblems(manifest, listAbiFiles(abiDir));
+  if (problems.length) {
+    for (const p of problems) console.error(p);
+    process.exit(1);
+  }
+  const text = serialize(buildDiamondAbi(manifest.facets, (n) => readFacetAbi(n, abiDir)));
   if (process.argv.includes('--check')) {
-    const current = readFileSync(UNION_PATH, 'utf8');
+    const current = readFileSync(outPath, 'utf8');
     if (current !== text) {
       console.error('src/diamondAbi.json is stale — run node packages/contracts/scripts/build-diamond-abi.mjs');
       process.exit(1);
     }
     console.log('src/diamondAbi.json is current');
   } else {
-    writeFileSync(UNION_PATH, text);
-    console.log(`wrote ${UNION_PATH}`);
+    writeFileSync(outPath, text);
+    console.log(`wrote ${outPath}`);
   }
 }
