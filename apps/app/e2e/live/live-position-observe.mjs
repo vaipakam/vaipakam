@@ -2504,6 +2504,7 @@ const {
   pageHeadFloorOf,
   floorEstablishedFor,
   pageProviderHead,
+  providerFloorFor,
   pageProviderCeiling,
   diamondKeysOf,
   isForeign,
@@ -2576,8 +2577,9 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
   // on the consumer's own condition rather than a copy of its intent, so
   // the two cannot drift into disagreeing about which visits bracket.
   let headBeforeNav = null;
-  let pageHeadBeforeNav = null;
-  let pageSampledBeforeNav = new Set();
+  // #2369 — the RAW per-endpoint sample. It becomes a floor only after the
+  // page has shown which endpoints it read from (`providerFloorFor`).
+  let pageProviderSample = null;
   if (ROLE === 'lender' && loan) {
     try {
       headBeforeNav = await pub.getBlockNumber({ cacheTime: 0 });
@@ -2588,9 +2590,7 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
     // is the only source that bounds what the page's own reads can return.
     // See `pageProviderHead`. Null on the first visit, which needs no
     // floor: the list route carries no forced-close observation.
-    const sample = await pageProviderHead();
-    pageHeadBeforeNav = sample.head;
-    pageSampledBeforeNav = sample.sampled;
+    pageProviderSample = await pageProviderHead();
   }
   const judgePosture = ROLE === 'borrower' && loan !== null && refiApplicable(loan);
   if (judgePosture) {
@@ -2600,9 +2600,7 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
     // `floorEstablishedFor` cannot bound those reads and the posture floor
     // would never be established. Borrower-only, so it never shares a visit
     // with the lender sample above.
-    const postureSample = await pageProviderHead();
-    pageHeadBeforeNav = postureSample.head;
-    pageSampledBeforeNav = postureSample.sampled;
+    pageProviderSample = await pageProviderHead();
   }
   // #2355 — the chain posture BEFORE the page loads, so the observation is
   // bracketed by two reads (the second follows the scrape).
@@ -2660,7 +2658,7 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
   // product is right about — the same class of error `stillEligible`
   // exists to avoid for the lender card.
   const forcedClose =
-    ROLE === 'lender' && loan ? await observeForcedClose(page, loan, headBeforeNav, pageHeadBeforeNav, pageSampledBeforeNav)
+    ROLE === 'lender' && loan ? await observeForcedClose(page, loan, headBeforeNav, pageProviderSample)
       : null;
   const holdCard = await page.getByTestId('sale-listing-hold-card').count();
   const freeHeld = await page.getByTestId('free-held-options').count();
@@ -2692,9 +2690,14 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
     // pending head would land below it), so it is not used at all. When
     // every endpoint is bounded, the floor is the LOWER of the
     // pre-navigation sample and the lowest announced head.
-    if (postureFloorDrained && floorEstablishedFor(page, pageSampledBeforeNav)) {
+    //
+    // #2369 — the pre-navigation sample counts only over the endpoints THIS
+    // page proved, and the establishment test is given exactly the set that
+    // floor covers, so the two cannot disagree about which endpoints it bounds.
+    const postureProviderFloor = providerFloorFor(page, pageProviderSample);
+    if (postureFloorDrained && floorEstablishedFor(page, postureProviderFloor.covered)) {
       const announced = pageHeadFloorOf(page);
-      const preNav = typeof pageHeadBeforeNav === 'bigint' ? pageHeadBeforeNav : 0n;
+      const preNav = postureProviderFloor.head;
       posturePageFloor =
         preNav > 0n && (announced === 0n || preNav < announced) ? preNav : announced;
     }
@@ -3975,7 +3978,7 @@ async function probeDefaultable(loanId, blockNumber) {
  * reserves for a PRODUCT REGRESSION. A prerequisite read that could not
  * answer is BLOCKED, never a finding about the app.
  */
-async function observeForcedClose(page, loan, headBeforeNav, pageHeadBeforeNav, pageSampledBeforeNav) {
+async function observeForcedClose(page, loan, headBeforeNav, pageProviderSample) {
   // ROUND 55 P2 — BRACKET THE OBSERVATION, because the answer that
   // validates a render must not come from after it.
   //
@@ -4072,7 +4075,11 @@ async function observeForcedClose(page, loan, headBeforeNav, pageHeadBeforeNav, 
   const preNav = typeof headBeforeNav === 'bigint' ? headBeforeNav : 0n;
   // ROUND 87 — the SOUND source, and the only one of the three that bounds
   // what the page's own reads can return. See `pageProviderHead`.
-  const pageNav = typeof pageHeadBeforeNav === 'bigint' ? pageHeadBeforeNav : 0n;
+  // #2369 — over the endpoints THIS page proved, not every endpoint the run
+  // has seen; `covered` goes to `floorEstablishedFor` below for the reason
+  // `providerFloorFor` states.
+  const pageProviderFloor = providerFloorFor(page, pageProviderSample);
+  const pageNav = pageProviderFloor.head;
   const headBefore = [announced, preNav, pageNav]
     .filter((h) => h > 0n)
     .reduce((low, h) => (low === 0n || h < low ? h : low), 0n);
@@ -4576,7 +4583,7 @@ async function observeForcedClose(page, loan, headBeforeNav, pageHeadBeforeNav, 
     floorDrained &&
     // ROUND 98 P2 — and no endpoint seen during the scrape sits below it.
     floorStillLowest &&
-    floorEstablishedFor(page, pageSampledBeforeNav) &&
+    floorEstablishedFor(page, pageProviderFloor.covered) &&
     observerCaughtUp;
   // ROUND 107 P2 — which arms were ATTEMPTED, so completion can be judged
   // per arm rather than by whichever one finished. Same conditions as the

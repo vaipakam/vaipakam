@@ -10,6 +10,7 @@ import {LibTreasuryBuyback} from "../src/libraries/LibTreasuryBuyback.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {IERC1271} from "@openzeppelin/contracts/interfaces/IERC1271.sol";
+import {LibOneTxBuybackFill} from "./helpers/LibOneTxBuybackFill.sol";
 import {IOrderMixin} from
     "@1inch/limit-order-protocol/contracts/interfaces/IOrderMixin.sol";
 
@@ -340,28 +341,19 @@ contract BuybackIntentLedgerTest is SetupTest {
         uint256 rewardsPre = _t().getRewardEmissionsBudget();
         uint256 delivered = 12_345e18;
 
-        IOrderMixin.Order memory order;
-        // preInteraction snapshots VPFI baseline.
-        vm.prank(lop);
-        _d().preInteraction(order, "", ORDER, address(0), 0, 0, 0, "");
-
-        // Simulate Fusion delivering VPFI into the diamond AND
-        // pulling the committed source token out (round-3 P1 #2
-        // verifies the source-token delta).
-        vpfi.mint(address(diamond), delivered);
-        vm.prank(address(diamond));
-        token.transfer(lop, AMOUNT);
-
+        // One fill, as the LOP settles it: preInteraction snapshots the VPFI
+        // baseline, Fusion delivers VPFI into the diamond AND pulls the
+        // committed source token out (round-3 P1 #2 verifies the
+        // source-token delta), then postInteraction reads the VPFI delta.
+        // `makingAmount` must equal the full reservation (round-2 P2 #2).
+        vpfi.mint(lop, delivered);
         vm.expectEmit(true, true, false, true, address(diamond));
         emit LibTreasuryBuyback.BuybackIntentFilled(
             ORDER, address(token), AMOUNT, delivered
         );
-
-        // postInteraction reads the VPFI delta + verifies the
-        // source-token spent (round-3 P1 #2). `makingAmount` must
-        // equal the full reservation (round-2 P2 #2).
-        vm.prank(lop);
-        _d().postInteraction(order, "", ORDER, address(0), AMOUNT, 0, 0, "");
+        LibOneTxBuybackFill.fill(
+            lop, address(diamond), ORDER, AMOUNT, address(token), AMOUNT, address(vpfi), delivered
+        );
 
         assertEq(
             _t().getRewardEmissionsBudget(),
@@ -467,17 +459,9 @@ contract BuybackIntentLedgerTest is SetupTest {
             uint64(block.timestamp + 1 hours)
         );
 
-        IOrderMixin.Order memory order;
-        vm.prank(lop);
-        _d().preInteraction(order, "", ORDER, address(0), 0, 0, 0, "");
-
         // Deliver less than the floor.
         uint256 delivered = 50e18;
-        vpfi.mint(address(diamond), delivered);
-        vm.prank(address(diamond));
-        token.transfer(lop, AMOUNT);
-
-        vm.prank(lop);
+        vpfi.mint(lop, delivered);
         vm.expectRevert(
             abi.encodeWithSelector(
                 LibTreasuryBuyback.BuybackBelowMinVpfiOut.selector,
@@ -485,7 +469,9 @@ contract BuybackIntentLedgerTest is SetupTest {
                 minVpfiOut
             )
         );
-        _d().postInteraction(order, "", ORDER, address(0), AMOUNT, 0, 0, "");
+        LibOneTxBuybackFill.fill(
+            lop, address(diamond), ORDER, AMOUNT, address(token), AMOUNT, address(vpfi), delivered
+        );
     }
 
     function test_PostInteraction_RevertWhen_SourceNotSpent() public {
@@ -495,16 +481,10 @@ contract BuybackIntentLedgerTest is SetupTest {
             ORDER, address(token), AMOUNT, 0, uint64(block.timestamp + 1 hours)
         );
 
-        IOrderMixin.Order memory order;
-        vm.prank(lop);
-        _d().preInteraction(order, "", ORDER, address(0), 0, 0, 0, "");
-
         // Deliver VPFI but DON'T burn/transfer the source token —
         // simulates a collision where the orderHash actually
         // settled an order on another maker asset.
-        vpfi.mint(address(diamond), 1e18);
-
-        vm.prank(lop);
+        vpfi.mint(lop, 1e18);
         vm.expectRevert(
             abi.encodeWithSelector(
                 LibTreasuryBuyback.BuybackSourceTokenNotSpent.selector,
@@ -512,7 +492,9 @@ contract BuybackIntentLedgerTest is SetupTest {
                 uint256(0)
             )
         );
-        _d().postInteraction(order, "", ORDER, address(0), AMOUNT, 0, 0, "");
+        LibOneTxBuybackFill.fill(
+            lop, address(diamond), ORDER, AMOUNT, address(token), 0, address(vpfi), 1e18
+        );
     }
 
     // ─── Round-3 P2 — tranche cap ────────────────────────────────────

@@ -47,6 +47,10 @@ export interface ClaimAllItem {
   args: readonly unknown[];
   /** Short, self-contained preview label (no async token metadata). */
   label: string;
+  /** The claimable loan behind a `loan-*` item, so the card can state the
+   *  exact payout once token metadata loads (UX3-004). Absent on the
+   *  rewards / vault-VPFI items, whose labels already carry their amount. */
+  loan?: ClaimableLoan;
   /** Whether the item is checked by DEFAULT. Loan proceeds + rewards
    *  are money owed → on. Vault VPFI is a balance the user parked for a
    *  fee-discount tier, so pulling it is opt-IN (withdrawing lowers the
@@ -112,6 +116,7 @@ export function buildClaimAllItems({
           loan.loanId,
           isRental ? labels.lenderRentalFeesNft : labels.lenderProceeds,
         ),
+        loan,
         defaultSelected: true,
       });
     } else {
@@ -136,6 +141,7 @@ export function buildClaimAllItems({
         functionName: 'claimAsBorrower',
         args: [BigInt(loan.loanId)],
         label: labels.itemLabel(noun, loan.loanId, borrowerWhat),
+        loan,
         defaultSelected: true,
       });
     }

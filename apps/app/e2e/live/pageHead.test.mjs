@@ -464,14 +464,16 @@ describe('the direct probes', () => {
     return t;
   }
 
-  it('pageProviderHead takes the LOWEST over the endpoints earlier pages proved', async () => {
+  it('pageProviderHead records each endpoint earlier pages proved, with no run-wide minimum', async () => {
     const calls = [];
     const t = await knownFromFirstPage(
       fetchAnswering({ [EP]: reply(1, '0x80'), [EP2]: reply(1, '0x70') }, calls),
     );
     const sample = await t.pageProviderHead();
-    expect(sample.head).toBe(112n);
-    expect([...sample.sampled].sort()).toEqual([EP, EP2].sort());
+    expect(sample.heads).toEqual(new Map([[EP, 128n], [EP2, 112n]]));
+    // #2369 — a single height across every endpoint is exactly what let an
+    // endpoint the page never used pull the floor down.
+    expect(sample).not.toHaveProperty('head');
     expect(calls.sort()).toEqual([EP, EP2].sort());
   });
 
@@ -484,16 +486,14 @@ describe('the direct probes', () => {
     ]) {
       const t = await knownFromFirstPage(fetchAnswering({ [EP]: bad, [EP2]: bad }));
       const sample = await t.pageProviderHead();
-      expect(sample.head, label).toBeNull();
-      expect(sample.sampled.size, label).toBe(0);
+      expect(sample.heads.size, label).toBe(0);
     }
   });
 
   it('pageProviderHead answers from the endpoints that did reply, naming them', async () => {
     const t = await knownFromFirstPage(fetchAnswering({ [EP]: reply(1, '0x80') }));
     const sample = await t.pageProviderHead();
-    expect(sample.head).toBe(128n);
-    expect([...sample.sampled]).toEqual([EP]);
+    expect(sample.heads).toEqual(new Map([[EP, 128n]]));
   });
 
   it('pageProviderHead asks nothing of an endpoint proven foreign since', async () => {
@@ -504,8 +504,74 @@ describe('the direct probes', () => {
     exchange(later, EP2, call(1, 'eth_chainId'), reply(1, '0x1'));
     await t.settleHeadReads(later);
     const sample = await t.pageProviderHead();
-    expect(sample.head).toBe(128n);
+    expect(sample.heads).toEqual(new Map([[EP, 128n]]));
     expect(calls).toEqual([EP]);
+  });
+
+  // #2369 — the floor for a page counts only the endpoints THAT page proved.
+  it('providerFloorFor takes the LOWEST over only the endpoints this page proved', async () => {
+    const t = await knownFromFirstPage(
+      fetchAnswering({ [EP]: reply(1, '0x80'), [EP2]: reply(1, '0x70') }),
+    );
+    const sample = await t.pageProviderHead();
+    // The detail page reads through EP alone; EP2 (lower) belonged to the
+    // earlier page and must not widen this page's floor.
+    const page = new FakePage();
+    t.watchPageHead(page);
+    exchange(page, EP, diamondRead(1), reply(1, '0x'));
+    await t.settleHeadReads(page);
+    const floor = t.providerFloorFor(page, sample);
+    expect(floor.head).toBe(128n);
+    expect([...floor.covered]).toEqual([EP]);
+  });
+
+  it('providerFloorFor still takes the lowest when the page used both', async () => {
+    const t = await knownFromFirstPage(
+      fetchAnswering({ [EP]: reply(1, '0x80'), [EP2]: reply(1, '0x70') }),
+    );
+    const sample = await t.pageProviderHead();
+    const page = new FakePage();
+    t.watchPageHead(page);
+    exchange(page, EP, diamondRead(1), reply(1, '0x'));
+    exchange(page, EP2, diamondRead(1), reply(1, '0x'));
+    await t.settleHeadReads(page);
+    const floor = t.providerFloorFor(page, sample);
+    expect(floor.head).toBe(112n);
+    expect([...floor.covered].sort()).toEqual([EP, EP2].sort());
+  });
+
+  // The load-bearing half: an endpoint sampled before navigation but first
+  // reached AFTER the floor was taken is NOT covered, so the establishment
+  // test makes it earn its bound from its own ordering — here it read before
+  // announcing, so the floor is not established.
+  it('providerFloorFor leaves out an endpoint first reached after it was taken', async () => {
+    const t = await knownFromFirstPage(
+      fetchAnswering({ [EP]: reply(1, '0x80'), [EP2]: reply(1, '0x70') }),
+    );
+    const sample = await t.pageProviderHead();
+    const page = new FakePage();
+    t.watchPageHead(page);
+    exchange(page, EP, diamondRead(1), reply(1, '0x'));
+    await t.settleHeadReads(page);
+    const floor = t.providerFloorFor(page, sample);
+    exchange(page, EP2, diamondRead(2), reply(2, '0x'));
+    await t.settleHeadReads(page);
+    expect(floor.covered.has(EP2)).toBe(false);
+    expect(t.floorEstablishedFor(page, floor.covered)).toBe(false);
+    // Whereas the raw sample's endpoint set would have waved it through.
+    expect(t.floorEstablishedFor(page, new Set(sample.heads.keys()))).toBe(true);
+  });
+
+  it('providerFloorFor is empty for a page that proved no endpoint, or no sample', async () => {
+    const t = await knownFromFirstPage(fetchAnswering({ [EP]: reply(1, '0x80') }));
+    const sample = await t.pageProviderHead();
+    const page = new FakePage();
+    t.watchPageHead(page);
+    for (const s of [sample, null]) {
+      const floor = t.providerFloorFor(page, s);
+      expect(floor.head).toBe(0n);
+      expect(floor.covered.size).toBe(0);
+    }
   });
 
   it('pageProviderCeiling takes the HIGHEST over the endpoints THIS page used', async () => {

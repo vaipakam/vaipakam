@@ -11,8 +11,7 @@ import {LibBuybackOrderValidation} from "../src/libraries/LibBuybackOrderValidat
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {IERC1271} from "@openzeppelin/contracts/interfaces/IERC1271.sol";
-import {IOrderMixin} from
-    "@1inch/limit-order-protocol/contracts/interfaces/IOrderMixin.sol";
+import {LibOneTxBuybackFill} from "./helpers/LibOneTxBuybackFill.sol";
 
 /// @dev Trivial stub for receiver / messenger slots that only need
 ///      `code.length > 0`.
@@ -145,24 +144,18 @@ contract BuybackEndToEndIntegrationTest is SetupTest {
         uint96 consumed,
         uint256 vpfiDelivered
     ) internal {
-        IOrderMixin.Order memory order;
-        // preInteraction snapshots baselines.
-        vm.prank(lop);
-        _d().preInteraction(order, "", orderHash, address(0), 0, 0, 0, "");
-        // Codex Sub 3.D round-1 P2 — LOP pulls the source token
-        // via the aggregate allowance granted at commit time. Use
-        // `transferFrom` from LOP's context so the test would
-        // regress if the commit ever stopped granting / maintaining
-        // the approval. A direct `vm.prank(diamond); transfer(...)`
-        // would have bypassed the allowance entirely.
-        vm.prank(lop);
-        usdc.transferFrom(address(diamond), lop, consumed);
-        // Solver delivers VPFI to the diamond (Fusion's makerAsset
-        // → takerAsset swap).
-        vpfi.mint(address(diamond), vpfiDelivered);
-        // postInteraction settles.
-        vm.prank(lop);
-        _d().postInteraction(order, "", orderHash, address(0), consumed, 0, 0, "");
+        // One fill, settled as the LOP settles it — inside one call (see
+        // `LibOneTxBuybackFill`): preInteraction snapshots baselines; the LOP
+        // pulls the source token via `transferFrom` against the aggregate
+        // allowance granted at commit time (Codex Sub 3.D round-1 P2 — so
+        // this regresses if the commit ever stops granting or maintaining
+        // the approval; a direct diamond-side `transfer` would bypass it);
+        // the solver delivers VPFI to the diamond (Fusion's makerAsset →
+        // takerAsset swap); postInteraction settles.
+        vpfi.mint(lop, vpfiDelivered);
+        LibOneTxBuybackFill.fill(
+            lop, address(diamond), orderHash, consumed, address(usdc), consumed, address(vpfi), vpfiDelivered
+        );
     }
 
     // ─── E2E: absorb → validated commit → two partial fills ───────

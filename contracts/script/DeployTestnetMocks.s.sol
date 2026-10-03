@@ -14,7 +14,7 @@ import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {MockChainlinkRegistry, MockChainlinkFeed} from "./mocks/MockChainlinkRegistry.sol";
 import {MockUniswapV3Factory} from "./mocks/MockUniswapV3.sol";
 import {Deployments} from "./lib/Deployments.sol";
-import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
+import {MockPoolPricing} from "./lib/MockPoolPricing.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 /**
@@ -672,28 +672,17 @@ contract DeployTestnetMocks is Script {
     ///      (default 3%) — a plain 1:1 pool would classify a differently-
     ///      priced token Illiquid.
     ///
-    ///      All faucet tokens are 18-dec, so there is NO decimal term.
-    ///      Uniswap orders token0 = min(addr); the value-balanced spot is
-    ///      `token1_per_token0 = price(token0)/price(token1)`, hence
-    ///      `sqrtPriceX96 = sqrt(price0 * 2**192 / price1)` where price0 /
-    ///      price1 are the token0 / token1 8-dec feed prices. For equal
-    ///      prices this returns ~2**96 (the old 1:1 `SQRT_PRICE_X96_ONE`),
-    ///      so mWETH/WETH stays 1:1 automatically.
-    ///
-    ///      Overflow-safe: `price0 * 2**192 ≤ ~1e13 * 6.3e57 ≈ 6e70 <
-    ///      2**256` (and `Math.mulDiv` carries the full 512-bit product
-    ///      regardless); the sqrt of a ≤~2**234 value fits well inside
-    ///      uint160.
+    ///      The math lives in {MockPoolPricing} so {RepriceTestnetMock}, which
+    ///      moves an existing pool's spot when it reprices a feed (#2314),
+    ///      cannot derive it differently from the seed written here. All
+    ///      faucet tokens are 18-dec, which is the library's precondition.
     function _poolSqrtPriceX96(
         address tokenA,
         uint256 priceA8,
         address tokenB,
         uint256 priceB8
     ) internal pure returns (uint160) {
-        (uint256 price0, uint256 price1) =
-            tokenA < tokenB ? (priceA8, priceB8) : (priceB8, priceA8);
-        uint256 ratioX192 = Math.mulDiv(price0, uint256(1) << 192, price1);
-        return SafeCast.toUint160(Math.sqrt(ratioX192));
+        return MockPoolPricing.sqrtPriceX96(tokenA, priceA8, tokenB, priceB8);
     }
 
     /// @dev True if `adapter` is already in the Diamond's registered

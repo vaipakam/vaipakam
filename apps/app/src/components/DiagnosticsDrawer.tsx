@@ -33,12 +33,12 @@
  * starts from "Checking…", never a stale healthy block. Nothing
  * polls while closed.
  */
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useAccount, usePublicClient } from 'wagmi';
-import { LifeBuoy, X } from 'lucide-react';
+import { X } from 'lucide-react';
 import { copy } from '../content/copy';
 import { SupportTicketCard } from './SupportTicketCard';
 import { useLatestAttempt } from '../lib/useLatestAttempt';
@@ -65,33 +65,32 @@ function formatAge(sec: number): string {
   return `${Math.round(sec / 3600)} h`;
 }
 
-export function DiagnosticsDrawer() {
-  const [open, setOpen] = useState(false);
-  const fabRef = useRef<HTMLButtonElement>(null);
-
-  // Restore focus to the Support button when the dialog closes — a
-  // tick later, so the panel's cleanup has removed `inert` from the
-  // app root (an inert element refuses focus).
+/** The Support drawer.
+ *
+ *  It has no launcher of its own (UX3-006, #2373 r2). A floating button
+ *  covered page content wherever it was placed — right-aligned card buttons
+ *  first (UX-007), then left-aligned text on phones, then tablet and
+ *  compact-desktop content — so Support is a navigation entry in the shell
+ *  instead, and the shell owns `open`. Focus returns to whichever entry
+ *  opened it. */
+export function DiagnosticsDrawer({
+  open,
+  onClose,
+  returnFocusRef,
+}: {
+  open: boolean;
+  onClose: () => void;
+  /** The element that opened the drawer, refocused when it closes. */
+  returnFocusRef: RefObject<HTMLElement | null>;
+}) {
+  // A tick later, so the panel's cleanup has removed `inert` from the app
+  // root first (an inert element refuses focus).
   const close = () => {
-    setOpen(false);
-    setTimeout(() => fabRef.current?.focus(), 0);
+    const target = returnFocusRef.current;
+    onClose();
+    setTimeout(() => target?.focus(), 0);
   };
-
-  return (
-    <>
-      <button
-        ref={fabRef}
-        type="button"
-        className="diag-fab"
-        aria-label={copy.diagnostics.open}
-        title={copy.diagnostics.open}
-        onClick={() => setOpen(true)}
-      >
-        <LifeBuoy aria-hidden />
-      </button>
-      {open ? <DrawerPanel onClose={close} /> : null}
-    </>
-  );
+  return open ? <DrawerPanel onClose={close} /> : null;
 }
 
 function DrawerPanel({ onClose }: { onClose: () => void }) {

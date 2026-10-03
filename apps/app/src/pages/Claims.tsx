@@ -11,15 +11,15 @@ import { usePublicClient } from 'wagmi';
 import { useQueryClient } from '@tanstack/react-query';
 import { copy } from '../content/copy';
 import { useMyClaimables, type ClaimableLoan } from '../data/claimables';
+import { useClaimPayoutText } from '../data/useClaimPayout';
 import { useInteractionRewards } from '../data/rewards';
 import { assertWalletNotSanctionedLive, useSanctionsCheck } from '../data/sanctions';
 import { useActiveChain } from '../chain/useActiveChain';
 import { useDiamondWrite } from '../contracts/diamond';
 import { EmptyState, UnavailableState } from '../components/EmptyState';
 import { ClaimAllCard } from '../components/ClaimAllCard';
-import { useTokenMeta } from '../contracts/erc20';
 import { AssetType } from '../lib/types';
-import { formatTokenAmount, shortAddress } from '../lib/format';
+import { formatTokenAmount } from '../lib/format';
 import { captureTxError } from '../lib/errors';
 import { WindowedRowList } from '../lib/visibleWindow';
 
@@ -134,113 +134,8 @@ function RewardsCard() {
 }
 
 function ClaimRow({ loan }: { loan: ClaimableLoan }) {
-  // Rentals have an NFT principal leg and often no collateral — never
-  // format them through the ERC-20 loan template.
   const isRental = loan.assetType !== AssetType.ERC20;
-  const principalMeta = useTokenMeta(isRental ? undefined : loan.lendingAsset);
-  const collateralMeta = useTokenMeta(loan.collateralAsset);
-  // UX-002 — getClaimable told us the exact asset + amount this claim
-  // pays out; show the NUMBER on the money-collection screen instead
-  // of "+ interest" or a description of a field. Two extra payout
-  // lanes ride the same claim transaction (Codex #1156 r1):
-  //   - lifRebate is always VPFI (18 dec) → shown numerically;
-  //   - heldForLender ACCUMULATES potentially mixed assets on-chain
-  //     (each park carries its own asset), so no single denomination
-  //     is honest → shown qualitatively, never as a number.
-  const claimAssetMeta = useTokenMeta(loan.claim.asset ?? undefined);
-  const baseAmountStr =
-    loan.claim.amount > 0n && claimAssetMeta.data
-      ? `${formatTokenAmount(loan.claim.amount, claimAssetMeta.data.decimals)} ${claimAssetMeta.data.symbol}`
-      : null;
-  const rebateStr =
-    loan.claim.lifRebate > 0n
-      ? copy.claims.row.rebateAmount(formatTokenAmount(loan.claim.lifRebate, 18))
-      : null;
-  const hasHeld = loan.role === 'lender' && loan.claim.heldForLender > 0n;
-  const heldSuffix = hasHeld ? copy.claims.row.heldProceedsSuffix : '';
-  // Per-branch composition below (Codex #1156 r2): a blended string
-  // can't distinguish "this number IS the collateral leg" from "this
-  // is only a VPFI rebate", and a held-only lane must still surface.
-  const defaulted = loan.status === 'defaulted' || loan.status === 'liquidated';
-  // Claimable proper-close group: repaid or internal_matched. NOT
-  // `settled` — ClaimFacet rejects Settled on both claim paths (claims
-  // already consumed), and the claimables hook filters those out.
-  const properClose =
-    loan.status === 'repaid' || loan.status === 'internal_matched';
-
-  const collateralStr = collateralMeta.data
-    ? `${formatTokenAmount(loan.collateralAmount, collateralMeta.data.decimals)} ${collateralMeta.data.symbol}`
-    : 'collateral';
-
-  let what: string;
-  let why: string;
-  if (isRental) {
-    const nft = `NFT ${shortAddress(loan.lendingAsset)} #${loan.tokenId}`;
-    if (loan.role === 'lender') {
-      // getClaimable's amount is the fee payout (in the prepay asset)
-      // when fungible fees are due — show the number (Codex #1156 r2).
-      what = baseAmountStr
-        ? copy.claims.row.feesNftBack(baseAmountStr, nft)
-        : copy.claims.row.rentalFeesNftBack(nft);
-      why = copy.claims.row.whyRentalEnded;
-    } else {
-      what = baseAmountStr
-        ? copy.claims.row.bufferBack(baseAmountStr)
-        : copy.claims.row.prepaidBufferBack;
-      why = copy.claims.row.whyRentalClosed;
-    }
-  } else if (loan.role === 'lender') {
-    if (properClose) {
-      what = baseAmountStr
-        ? copy.claims.row.amountWithSuffix(baseAmountStr, heldSuffix)
-        : hasHeld
-          ? copy.claims.row.heldProceeds
-          : principalMeta.data
-            ? copy.claims.row.principalPlusInterest(
-                formatTokenAmount(loan.principal, principalMeta.data.decimals),
-                principalMeta.data.symbol,
-              )
-            : copy.claims.row.repaidFunds;
-      why =
-        loan.status === 'repaid'
-          ? copy.claims.row.whyRepaidLender
-          : copy.claims.row.whyInternalMatchLender;
-    } else if (loan.status === 'fallback_pending') {
-      what = copy.claims.row.collateralLabel(collateralStr);
-      why = copy.claims.row.whyFallbackPending;
-    } else {
-      // Liquid-collateral defaults settle by swap (proceeds in the
-      // loan asset); in-kind paths hand over the collateral itself.
-      // getClaimable names the exact asset + amount, so show it; only
-      // when the read gave no fungible amount (pure in-kind transfer)
-      // fall back to a plain-language title.
-      what = baseAmountStr
-        ? copy.claims.row.recoveredFromDefault(baseAmountStr, heldSuffix)
-        : hasHeld
-          ? copy.claims.row.heldProceedsDefault
-          : copy.claims.row.defaultRecovery(collateralStr);
-      why = copy.claims.row.whyDefaultLender;
-    }
-  } else if (defaulted) {
-    // After a liquidation only a residue (if any) is claimable — never
-    // promise the full original collateral, and never say "you repaid".
-    what = baseAmountStr
-      ? copy.claims.row.amountWithSuffix(baseAmountStr, rebateStr ? ` + ${rebateStr}` : '')
-      : (rebateStr ?? copy.claims.row.surplusAfterLiquidation);
-    why = copy.claims.row.whyDefaultBorrower;
-  } else if (loan.status === 'internal_matched') {
-    // An internal match leaves the borrower a residual and/or VPFI
-    // rebate at most — never promise the full collateral back.
-    what = baseAmountStr
-      ? copy.claims.row.amountWithSuffix(baseAmountStr, rebateStr ? ` + ${rebateStr}` : '')
-      : (rebateStr ?? copy.claims.row.residualAfterMatch);
-    why = copy.claims.row.whyInternalMatchBorrower;
-  } else {
-    what = baseAmountStr
-      ? copy.claims.row.collateralBackWithAmount(baseAmountStr, rebateStr ? ` + ${rebateStr}` : '')
-      : (rebateStr ?? copy.claims.row.collateralBack(collateralStr));
-    why = copy.claims.row.whyRepaidBorrower;
-  }
+  const { what, why, note } = useClaimPayoutText(loan);
 
   return (
     <Link to={`/positions/${loan.loanId}`} className="item-row">
@@ -250,6 +145,12 @@ function ClaimRow({ loan }: { loan: ClaimableLoan }) {
         <span className="row-sub">
           {isRental ? copy.claims.row.rental : copy.claims.row.loan} #{loan.loanId} · {why}
         </span>
+        {note ? (
+          <>
+            <br />
+            <span className="row-sub">{note}</span>
+          </>
+        ) : null}
       </span>
       <span className="btn btn-primary btn-sm">{copy.claims.claim}</span>
     </Link>

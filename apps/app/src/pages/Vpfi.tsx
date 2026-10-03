@@ -9,7 +9,8 @@
  * When available and connected, the page shows the tracked vault
  * balance, the ACTIVE (effective) discount vs the balance-implied raw
  * tier — with a plain "warming up" note when they differ, since the
- * fee path applies a 30-day average behind a minimum-history gate —
+ * fee path applies a minimum-holding gate, a recency-weighted average
+ * and a lowest-tier-over-history clamp (three separate checks) —
  * the platform-level consent toggle, and deposit/withdraw with the
  * standard review receipt before signing.
  */

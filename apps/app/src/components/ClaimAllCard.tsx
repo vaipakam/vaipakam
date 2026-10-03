@@ -30,6 +30,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { copy } from '../content/copy';
 import type { ClaimableLoan } from '../data/claimables';
 import { useInteractionRewards } from '../data/rewards';
+import { useClaimPayoutText } from '../data/useClaimPayout';
 import { useVpfi } from '../data/vpfi';
 import { assertWalletNotSanctionedLive, useSanctionsCheck } from '../data/sanctions';
 import {
@@ -41,6 +42,7 @@ import {
 import { useActiveChain } from '../chain/useActiveChain';
 import { useDiamondWrite } from '../contracts/diamond';
 import { captureTxError } from '../lib/errors';
+import { AssetType } from '../lib/types';
 import {
   useVisibleWindow,
   ShowMoreButton,
@@ -272,7 +274,7 @@ function ClaimAllChecklist({
                 onChange={() => onToggle(item.key)}
                 disabled={disabled}
               />
-              <span>{item.label}</span>
+              {item.loan ? <LoanItemLabel loan={item.loan} /> : <span>{item.label}</span>}
             </label>
           </li>
         ))}
@@ -286,5 +288,26 @@ function ClaimAllChecklist({
         />
       </div>
     </>
+  );
+}
+
+/** A loan item's checklist label, stating the payout the same way the
+ *  claim row below does (UX3-004 — it used to say "your proceeds").
+ *  Its own component because the payout text reads token metadata, which
+ *  is a hook and so cannot run inside the pure item builder. */
+function LoanItemLabel({ loan }: { loan: ClaimableLoan }) {
+  const { what, note, provisional } = useClaimPayoutText(loan);
+  const isRental = loan.assetType !== AssetType.ERC20;
+  return (
+    <span>
+      {copy.claimAll.itemLabel(
+        isRental ? copy.claimAll.rentalNoun : copy.claimAll.loanNoun,
+        loan.loanId,
+        what,
+      )}
+      {/* #2373 r6 — a payout the claim can still change carries its reason
+          on every surface that states it, not only on the loan page. */}
+      {provisional && note ? <span className="claim-payout-note">{note}</span> : null}
+    </span>
   );
 }

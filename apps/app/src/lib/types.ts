@@ -34,3 +34,28 @@ export const LIVE_STATUS_TO_INDEXED = {
   [LoanStatus.FallbackPending]: 'fallback_pending',
   [LoanStatus.InternalMatched]: 'internal_matched',
 } as const;
+
+/** The status an indexed row should be READ as, given the live chain
+ *  status when one is in hand (OBS-2 #988). Overrides only toward MORE
+ *  settled — with ONE deliberate exception: a live Active DOES override a
+ *  `fallback_pending` row, because that state is REVERSIBLE (a borrower
+ *  cure returns the loan to Active). A live Active never resurrects a row
+ *  the indexer already closed (that direction is replica lag). An unknown
+ *  future enum value yields no override rather than a lying type.
+ *
+ *  #2373 r4 — one rule for the page's action gate AND for the claim reads
+ *  that feed its payout, so the payout is never composed from a status the
+ *  page has already moved past. */
+export function reconcileIndexedStatus<S extends string>(
+  indexed: S,
+  live: number | undefined,
+): S | (typeof LIVE_STATUS_TO_INDEXED)[LoanStatus] {
+  if (live === undefined) return indexed;
+  if (live !== LoanStatus.Active) {
+    return (
+      (LIVE_STATUS_TO_INDEXED as Record<number, (typeof LIVE_STATUS_TO_INDEXED)[LoanStatus] | undefined>)[live] ??
+      indexed
+    );
+  }
+  return indexed === 'fallback_pending' ? 'active' : indexed;
+}

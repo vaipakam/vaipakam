@@ -20,6 +20,19 @@ import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardCommitmentFacet} from "../src/facets/RewardCommitmentFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
 import {RewardBroadcastFacet} from "../src/facets/RewardBroadcastFacet.sol";
+import {RewardClaimWalkFacet} from "../src/facets/RewardClaimWalkFacet.sol";
+import {RewardSweepWalkFacet} from "../src/facets/RewardSweepWalkFacet.sol";
+import {RewardForfeitWalkFacet} from "../src/facets/RewardForfeitWalkFacet.sol";
+import {RewardStagingFacet} from "../src/facets/RewardStagingFacet.sol";
+import {RewardStagingSettleFacet} from "../src/facets/RewardStagingSettleFacet.sol";
+import {RewardCompensationDispatchFacet} from "../src/facets/RewardCompensationDispatchFacet.sol";
+import {RewardCustodyFacet} from "../src/facets/RewardCustodyFacet.sol";
+import {RewardEpochFacet} from "../src/facets/RewardEpochFacet.sol";
+import {RewardEpochViewFacet} from "../src/facets/RewardEpochViewFacet.sol";
+import {RewardIngressFacet} from "../src/facets/RewardIngressFacet.sol";
+import {RewardReconciliationFacet} from "../src/facets/RewardReconciliationFacet.sol";
+import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
+import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet.sol";
 import {VPFIToken} from "../src/token/VPFIToken.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 
@@ -130,7 +143,7 @@ contract MeshThreeChainE2ETest is Test {
         private
         returns (IDiamondCut.FacetCut[] memory cuts)
     {
-        cuts = new IDiamondCut.FacetCut[](12);
+        cuts = new IDiamondCut.FacetCut[](25);
         cuts[0] = _cut(
             address(new AccessControlFacet()),
             helper.getAccessControlFacetSelectors()
@@ -183,6 +196,68 @@ contract MeshThreeChainE2ETest is Test {
         cuts[9] = _cut(
             address(new RewardCommitmentFacet()),
             helper.getRewardCommitmentFacetSelectors()
+        );
+        // The REST OF THE REWARD FAMILY, carried whole rather than facet by
+        // facet. The reward facets reach each other by self-call — #2308
+        // hosted the claim, sweep and forfeit walks and the staging settle on
+        // facets of their own (EIP-170), and the claim walk reads the epoch
+        // view — so a Diamond holding a caller without its host reverts
+        // `FunctionDoesNotExist` mid-claim. That is how this suite was found
+        // failing, one missing host at a time. Carrying every reward-family
+        // facet `HelperTest` exposes (the set the shared `SetupTest` Diamond
+        // already routes together) ends the class rather than the instance;
+        // routing a selector changes no behaviour, which still follows storage.
+        cuts[12] = _cut(
+            address(new RewardClaimWalkFacet()),
+            helper.getRewardClaimWalkFacetSelectors()
+        );
+        cuts[13] = _cut(
+            address(new RewardSweepWalkFacet()),
+            helper.getRewardSweepWalkFacetSelectors()
+        );
+        cuts[14] = _cut(
+            address(new RewardForfeitWalkFacet()),
+            helper.getRewardForfeitWalkFacetSelectors()
+        );
+        cuts[15] = _cut(
+            address(new RewardStagingFacet()),
+            helper.getRewardStagingFacetSelectors()
+        );
+        cuts[16] = _cut(
+            address(new RewardStagingSettleFacet()),
+            helper.getRewardStagingSettleFacetSelectors()
+        );
+        cuts[17] = _cut(
+            address(new RewardCompensationDispatchFacet()),
+            helper.getRewardCompensationDispatchFacetSelectors()
+        );
+        cuts[18] = _cut(
+            address(new RewardCustodyFacet()),
+            helper.getRewardCustodyFacetSelectors()
+        );
+        cuts[19] = _cut(
+            address(new RewardEpochFacet()),
+            helper.getRewardEpochFacetSelectors()
+        );
+        cuts[20] = _cut(
+            address(new RewardEpochViewFacet()),
+            helper.getRewardEpochViewFacetSelectors()
+        );
+        cuts[21] = _cut(
+            address(new RewardIngressFacet()),
+            helper.getRewardIngressFacetSelectors()
+        );
+        cuts[22] = _cut(
+            address(new RewardReconciliationFacet()),
+            helper.getRewardReconciliationFacetSelectors()
+        );
+        cuts[23] = _cut(
+            address(new RewardRemittanceFacet()),
+            helper.getRewardRemittanceFacetSelectors()
+        );
+        cuts[24] = _cut(
+            address(new RewardRemittanceLensFacet()),
+            helper.getRewardRemittanceLensFacetSelectors()
         );
     }
 

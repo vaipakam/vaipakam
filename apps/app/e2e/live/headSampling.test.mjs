@@ -208,7 +208,10 @@ describe('the head sample waits for the readings in flight', () => {
     const decl = between(src, 'const headFloor =', 'const defaultableBefore =');
     expect(decl).toContain('pageHeadFloorOf(page)');
     expect(decl).toContain('headBeforeNav');
-    expect(decl).toContain('pageHeadBeforeNav');
+    // #2369 — the page-provider source is the per-page floor, never the raw
+    // run-wide sample.
+    expect(decl).toContain('providerFloorFor(page, pageProviderSample)');
+    expect(decl).toContain('pageNav = pageProviderFloor.head');
     expect(decl).toMatch(/\[announced, preNav, pageNav\]/);
     // The lowest, never the first available: taking any other one would
     // put the floor above a block the card could have read.
@@ -225,7 +228,7 @@ describe('the head sample waits for the readings in flight', () => {
     expect(sample).toBeLessThan(goto);
     // Uncached, for round 13's reason: a height viem answered from a cache
     // filled by an earlier visit is a number this drive already had.
-    const decl = between(src, 'headBeforeNav = await pub.getBlockNumber(', 'pageHeadBeforeNav = sample.head;');
+    const decl = between(src, 'headBeforeNav = await pub.getBlockNumber(', 'pageProviderSample = await pageProviderHead();');
     expect(decl).toContain('cacheTime: 0');
   });
 
@@ -242,7 +245,7 @@ describe('the head sample waits for the readings in flight', () => {
   // which keeps a genuinely dead endpoint loud.
   it('degrades rather than ending the run when that sample fails', () => {
     const sample = at('headBeforeNav = await pub.getBlockNumber(');
-    const decl = between(src, 'let headBeforeNav = null;', 'pageHeadBeforeNav = sample.head;');
+    const decl = between(src, 'let headBeforeNav = null;', 'pageProviderSample = await pageProviderHead();');
     expect(decl).not.toContain('discovery(');
     expect(decl).toContain('catch');
   });
@@ -440,7 +443,10 @@ describe('the head sample waits for the readings in flight', () => {
     // And the gate is actually consumed by both stability reads — with no
     // global shortcut past it, which is the round-90 finding.
     const both = between(src, 'const floorSound =', 'const attemptedResults =');
-    expect(both).toContain('floorEstablishedFor(page, pageSampledBeforeNav)');
+    // #2369 — given exactly the endpoints the floor in use covers, so an
+    // endpoint first reached after the floor was taken cannot ride on a
+    // pre-navigation height that floor never included.
+    expect(both).toContain('floorEstablishedFor(page, pageProviderFloor.covered)');
     expect(both).not.toMatch(/pageNav > 0n \|\|/);
     expect(both).toMatch(/defaultableStable =\s*\n?\s*floorSound &&/);
     expect(both).toMatch(/internalMatchStable =\s*\n?\s*floorSound &&/);
@@ -511,6 +517,17 @@ describe('the head sample waits for the readings in flight', () => {
     for (const [i, sample] of samples.entries()) {
       expect(settles[i], `sample ${i} is settled first`).toBeLessThan(sample);
     }
+  });
+
+  // #2369 — the posture floor takes the pre-navigation sample only over the
+  // endpoints THIS page proved, and hands the establishment test exactly the
+  // set that floor covers. Passing the raw sample's endpoints (or reading a
+  // run-wide minimum) is the defect this pins.
+  it('builds the posture floor from the per-page provider floor', () => {
+    const block = between(src, 'let posturePageFloor = 0n;', 'const postureInterval =');
+    expect(block).toContain('providerFloorFor(page, pageProviderSample)');
+    expect(block).toContain('floorEstablishedFor(page, postureProviderFloor.covered)');
+    expect(block).toContain('const preNav = postureProviderFloor.head;');
   });
 
   it('registers the pending parse synchronously with the event', () => {
@@ -725,7 +742,7 @@ describe('the head facts survive the projection (round 106)', () => {
     // never about is no better than one that passes on nothing.
     const fn = functionBody(
       src,
-      'async function observeForcedClose(page, loan, headBeforeNav, pageHeadBeforeNav, pageSampledBeforeNav)',
+      'async function observeForcedClose(page, loan, headBeforeNav, pageProviderSample)',
     );
     const produced = [...fn.matchAll(/^ {4}(head[A-Za-z]+):/gm)].map((m) => m[1]);
     expect(produced.length, 'the observation head fields were not found').toBeGreaterThan(4);

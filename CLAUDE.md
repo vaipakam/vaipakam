@@ -188,6 +188,24 @@ Tests are in `contracts/test/`. `HelperTest.sol` provides base utilities. `Setup
 
 Mock contracts in `contracts/test/mocks/`: `ERC20Mock`, `ERC4907Mock`, `ZeroExProxyMock`.
 
+**Transient storage does not survive between a test's top-level calls on
+forge ≥ 1.8** (measured: a two-call `tstore`/`tload` probe passes on 1.7.1 and
+fails on 1.8.3). A test that drives one on-chain TRANSACTION as several calls
+from the test body — a 1inch pre-interaction then post-interaction, two claims
+"in the same transaction" against a per-transaction budget — passed only while
+forge kept the whole test in one transient context. Drive such a flow inside
+ONE call instead: `test/helpers/LibOneTxBuybackFill.sol` does it for a buyback
+fill, and `RewardTransportEpochDrawTest._claimTwiceInOneTx` for a batched
+claim. CI's `cifast` lane does not run the top-level suites, so this shows up
+only in the full pre-deploy regression — it was found there, as 16 failures.
+
+**A test that builds its OWN Diamond from a hand-picked facet list goes stale
+when a facet is split.** `MeshThreeChainE2ETest` carried the reward facets but
+not the hosts #2308 moved their walks onto, so a claim reverted
+`FunctionDoesNotExist` mid-flow. When you split a facet or host a walk on a new
+one, grep the tests for `_buildCuts` / their own `FacetCut[]` lists, not only
+`HelperTest` and `SetupTest`.
+
 ## Deploy-sanity suite + `predeploy-check.sh`
 
 `contracts/test/deploy/` holds the **deploy-sanity suite** — static

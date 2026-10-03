@@ -5,9 +5,11 @@
  *     accept VPFI yet → the page's availability-first state)
  *   - wallet + vault balances
  *   - effective vs raw discount tier (the fee path applies the
- *     EFFECTIVE tier — a 30-day average behind a 3-day minimum-history
- *     gate — so raw > effective means "still warming up", and the UI
- *     must say so instead of promising the raw tier)
+ *     EFFECTIVE tier — a minimum-holding gate, a recency-weighted
+ *     average, and a clamp to the lowest tier over the holding's own
+ *     history, three separate checks — so raw > effective means "still
+ *     warming up", and the UI must say so instead of promising the raw
+ *     tier)
  *   - the platform-level discount consent flag
  *
  * VPFI is 18-decimals on every deploy (OFT-mesh requirement).
@@ -24,6 +26,7 @@ import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
 import { signalAware } from '../chain/railHealth';
 import { fetchProtocolConfig, protocolConfigFresh } from './indexer';
+import { copy } from '../content/copy';
 
 export const VPFI_DECIMALS = 18;
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
@@ -72,20 +75,39 @@ const fmtVpfi = (wei: bigint) =>
  *  (thresholds, VPFI wei) and 8 (discount bps) per apps/defi
  *  useProtocolConfig's BundleTuple. Falls back to the deploy defaults
  *  until the read lands. */
-// UX-035 — tiers are `held >= threshold` bands, i.e. half-open
-// intervals [min, next). The upper bound is shown as "< next" so the
-// boundary value belongs to the HIGHER tier only AND a fractional
-// holding just under the next threshold (e.g. 999.5 VPFI) still falls
-// inside its row — subtracting a whole VPFI (the pre-fix approach) left
-// that holder in no displayed range (Codex #1175). Sub-first-threshold
-// holdings (no discount) are called out separately in the page.
-const DEFAULT_TIER_ROWS: VpfiTierRow[] = [
-  { held: '100 – <1,000 VPFI', discount: '10%' },
-  { held: '1,000 – <5,000 VPFI', discount: '15%' },
-  { held: '5,000 – <20,000 VPFI', discount: '20%' },
-  { held: '20,000+ VPFI', discount: '24%' },
-];
-const DEFAULT_FLOOR_LABEL = '100';
+// UX-035 — tiers are `held >= threshold` bands, so Tiers 1 and 2 are
+// half-open intervals [min, next): the boundary value belongs to the
+// HIGHER tier, and a fractional holding just under the next threshold
+// (e.g. 999.5 VPFI) still falls inside its row (Codex #1175).
+//
+// UX3-002 (2026-10-03 live review) — Tier 3 is NOT half-open. The
+// contract treats its top threshold as INCLUSIVE: exactly 20,000 VPFI is
+// Tier 3 and Tier 4 starts strictly above it (`LibVaipakam.sol`
+// "T4 starts strictly ABOVE this"; TokenomicsTechSpec §6 tier table).
+// Rendering every band as [min, next) and the last as "min+" told a
+// holder of exactly 20,000 VPFI they would get the Tier-4 discount when
+// the contract applies Tier 3's. Sub-first-threshold holdings (no
+// discount) are called out separately in the page.
+const DEFAULT_TIER_SLOTS: TierSlots = {
+  thresholds: [100n * 10n ** 18n, 1_000n * 10n ** 18n, 5_000n * 10n ** 18n, 20_000n * 10n ** 18n],
+  discounts: [1000n, 1500n, 2000n, 2400n],
+};
+
+/** The four tier rows, labelled with the contract's own boundary rules.
+ *  Pure; exported for the unit test. Built at RENDER time from the
+ *  numbers, so a language switch relabels the table — strings cached
+ *  inside a query would not have followed it. */
+export function tierBandRows(slots: TierSlots): VpfiTierRow[] {
+  const [t1, t2, t3, t4] = slots.thresholds;
+  const pct = (bps: bigint) => `${Number(bps) / 100}%`;
+  const held = [
+    copy.vpfi.tierBandUpTo(fmtVpfi(t1), fmtVpfi(t2)),
+    copy.vpfi.tierBandUpTo(fmtVpfi(t2), fmtVpfi(t3)),
+    copy.vpfi.tierBandThrough(fmtVpfi(t3), fmtVpfi(t4)),
+    copy.vpfi.tierBandAbove(fmtVpfi(t4)),
+  ];
+  return held.map((h, i) => ({ held: h, discount: pct(slots.discounts[i as 0 | 1 | 2 | 3]) }));
+}
 
 type TierSlots = {
   thresholds: readonly [bigint, bigint, bigint, bigint];
@@ -119,10 +141,10 @@ export function useVpfiTierTable(): VpfiTierTable {
   const publicClient = usePublicClient({ chainId: readChain.chainId });
 
   const { data } = useQuery({
-    queryKey: ['vpfiTierTable', readChain.chainId],
+    queryKey: ['vpfiTierSlots', readChain.chainId],
     enabled: Boolean(publicClient),
     staleTime: 5 * 60_000,
-    queryFn: async (): Promise<VpfiTierTable> => {
+    queryFn: async (): Promise<TierSlots> => {
       // RPC read-diet PR B follow-up (#1238) — this is a pure DISPLAY
       // surface (the /vpfi tier table), so it reads the
       // indexer's config snapshot first like the fee/buffer/flag
@@ -147,19 +169,12 @@ export function useVpfiTierTable(): VpfiTierTable {
             discounts: bundle[8] as readonly [bigint, bigint, bigint, bigint],
           };
         })());
-      const pct = (bps: bigint) => `${Number(bps) / 100}%`;
-      const rows = thresholds.map((min, i) => ({
-        held:
-          i < 3
-            ? `${fmtVpfi(min)} – <${fmtVpfi(thresholds[(i + 1) as 1 | 2 | 3])} VPFI`
-            : `${fmtVpfi(min)}+ VPFI`,
-        discount: pct(discounts[i as 0 | 1 | 2 | 3]),
-      }));
-      return { rows, floorLabel: fmtVpfi(thresholds[0]) };
+      return { thresholds, discounts };
     },
   });
 
-  return data ?? { rows: DEFAULT_TIER_ROWS, floorLabel: DEFAULT_FLOOR_LABEL };
+  const slots = data ?? DEFAULT_TIER_SLOTS;
+  return { rows: tierBandRows(slots), floorLabel: fmtVpfi(slots.thresholds[0]) };
 }
 
 /** LIVE VPFI-token read for submit paths (fail closed with a retry

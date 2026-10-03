@@ -13,7 +13,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { usePublicClient } from 'wagmi';
 import { copy } from '../content/copy';
 import { useMyLoansFull, useMyOffersFull } from '../data/hooks';
-import { useMyClaimables } from '../data/claimables';
+import { useMyClaimables, type ClaimableLoan } from '../data/claimables';
 import { useActiveChain } from '../chain/useActiveChain';
 import { useDiamondWrite } from '../contracts/diamond';
 import { EmptyState, UnavailableState } from '../components/EmptyState';
@@ -168,9 +168,10 @@ export function Positions() {
   // loading/unavailable the list degrades to Active/Ended grouping —
   // it never guesses a claim.
   const claimables = useMyClaimables();
-  const claimKeys = new Set(
-    (claimables.data ?? []).map((c) => `${c.loanId}-${c.role}`),
+  const claimByKey = new Map(
+    (claimables.data ?? []).map((c): [string, ClaimableLoan] => [`${c.loanId}-${c.role}`, c]),
   );
+  const claimKeys = new Set(claimByKey.keys());
   // Current positions come from the CHAIN (authoritative, fresh this
   // block) with the indexer as the redundancy leg. Either source
   // failing means the list is served single-sourced — say so, never
@@ -280,19 +281,20 @@ export function Positions() {
                             <LoanRow
                               key={keyOf(loan)}
                               loan={loan}
-                              claimWaiting={claimWaiting}
+                              claim={claimWaiting ? claimByKey.get(keyOf(loan)) : undefined}
                             />
                           )}
                         />
                       ) : (
                         <div className="row-list">
-                          {list.map((loan) => (
-                            <LoanRow
-                              key={keyOf(loan)}
-                              loan={loan}
-                              claimWaiting={claimWaiting}
-                            />
-                          ))}
+                          {list.map((loan) => {
+                            const claim = claimWaiting ? claimByKey.get(keyOf(loan)) : undefined;
+                            // #2373 r5 — the claim probe carries the LIVE
+                            // status; render the row from it so a loan the
+                            // chain has settled is not badged Active beside
+                            // "Ready to claim" while the index catches up.
+                            return <LoanRow key={keyOf(loan)} loan={claim ?? loan} claim={claim} />;
+                          })}
                         </div>
                       )}
                     </section>

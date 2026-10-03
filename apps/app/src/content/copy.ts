@@ -3087,6 +3087,16 @@ const copySource = {
         collateralAdded: 'Collateral added — the loan is safer now.',
         partialRepaid: 'Partial repayment confirmed — you now owe less.',
       },
+      // UX3-004 — the claim's exact payout, stated above the claim button.
+      youWillReceive: tmpl('You will receive: {{payout}}', ['payout']),
+      // #2373 r3 — a payout the claim itself can still change.
+      recordedForYou: tmpl('Recorded for you: {{payout}}', ['payout']),
+      // #2373 r1 — the payout is stated as unknown rather than omitted.
+      youWillReceiveChecking: 'You will receive: checking the exact amount…',
+      nothingWaiting:
+        'Nothing is waiting to be claimed on this side right now — it may already have been collected.',
+      payoutUnconfirmed:
+        'We couldn’t confirm the exact amount right now. Claiming still pays whatever this loan owes you on-chain.',
       actions: {
         closeRental: 'Close this rental',
         repay: 'Repay this loan',
@@ -3204,7 +3214,8 @@ const copySource = {
     groupAttention: 'Needs your attention',
     groupActive: 'Active loans',
     groupEnded: 'Ended loans',
-    claimWaiting: 'Claim waiting',
+    // UX3-004 — what a waiting claim pays, on the Positions row.
+    readyToClaim: tmpl('Ready to claim: {{payout}}', ['payout']),
     // UX-050 — surface the full history for Basic users, who don't see
     // Activity in the nav.
     seeActivity: 'See your full activity history →',
@@ -3311,13 +3322,28 @@ const copySource = {
       // Claims.tsx). The " + rebate" / held-proceeds suffixes are
       // composed at the call site from these catalog pieces.
       rebateAmount: tmpl('{{amount}} VPFI rebate', ['amount']),
-      heldProceedsSuffix: ' + held proceeds',
       amountWithSuffix: tmpl('{{amount}}{{suffix}}', ['amount', 'suffix']),
       feesNftBack: tmpl('{{amount}} fees + your {{nft}} back', ['amount', 'nft']),
       rentalFeesNftBack: tmpl('Rental fees + your {{nft}} back', ['nft']),
       bufferBack: tmpl('{{amount}} buffer back', ['amount']),
       principalPlusInterest: tmpl('{{amount}} {{symbol}} + interest', ['amount', 'symbol']),
       collateralLabel: tmpl('{{collateral}} collateral', ['collateral']),
+      // #2373 r5 — an amount whose token details are still loading, or could
+      // not be read at all, written to sit inside a sentence.
+      amountLoadingInline: 'an amount (loading its details…)',
+      amountUnreadableInline: 'an amount (its token details couldn’t be read)',
+      // #2373 r5 — proceeds held for the lender, in the loan's payment asset.
+      heldFor: tmpl('{{amount}} held for you', ['amount']),
+      // #2373 r2 — the borrower's frozen swap-to-repay surplus lane.
+      swapSurplus: tmpl('{{amount}} left over from the swap that repaid the loan', ['amount']),
+      // #2373 r3 — collateral still held for the borrower in a different
+      // asset from the rest of the claim (a top-up made while the loan was
+      // in a failed-liquidation state).
+      extraCollateral: tmpl('{{amount}} of added collateral', ['amount']),
+      // #2373 r3 — a payout the claim itself can still change.
+      provisionalAmount: tmpl('{{payout}} (may change when you claim)', ['payout']),
+      fallbackMayChange:
+        'This is what is recorded for you right now. When you claim, the platform first tries to match this loan with another open loan. If it finds a match, you receive the loan’s asset instead, for all or part of this, so the final payout can differ.',
       recoveredFromDefault: tmpl(
         '{{amount}}{{held}} recovered from the default',
         ['amount', 'held'],
@@ -3331,9 +3357,14 @@ const copySource = {
       rental: 'Rental',
       loan: 'Loan',
       prepaidBufferBack: 'Your prepaid buffer back',
-      heldProceeds: 'Held proceeds for this loan',
       repaidFunds: 'Repaid funds',
-      heldProceedsDefault: 'Held proceeds recovered from the default',
+      // UX3-005 (revised #2373 r1) — what a default recovery is, and what
+      // the app cannot know about it. Never a computed shortfall: the amount
+      // owed at default is not available, and the loan's current principal
+      // is not what the current holder lent.
+      recoveryNotComparable:
+        'This is what the default settlement recovered. How it compares with what the loan still owed when it defaulted isn’t available to the app, so no shortfall is shown.',
+      compareInKind: 'This is the collateral itself, not a cash amount — what it is worth depends on its market value.',
       surplusAfterLiquidation: 'Anything left after liquidation',
       residualAfterMatch: 'Anything left after the internal match',
       whyRentalEnded: 'The rental ended — collect your earned fees and reclaim the NFT.',
@@ -3992,7 +4023,15 @@ const copySource = {
     withdrawDone: 'Withdrawal confirmed. The VPFI is back in your wallet.',
     optOutSyncFailed: 'Your opt-out is saved on this network, but syncing it to other networks didn’t go through — it will sync with your next VPFI action, or try toggling again.',
     educationTitle: 'How the discount works',
-    educationBody: 'Hold VPFI in your Vaipakam Vault and the protocol fee on eligible loans shrinks. The discount uses your average holding over the last 30 days — topping up today grows your discount gradually, not instantly.',
+    // UX3-003 — the discount is three separate checks (CLAUDE.md "VPFI Fee
+    // Discounts"): a minimum continuous-holding period, a recency-weighted
+    // average over a governance-set window (14–30 days, default 30), and a
+    // clamp to the lowest tier reached over the current holding's own
+    // history (capped at 30 days). The average and the clamp are two
+    // DIFFERENT look-backs — never describe one in the other's window. The
+    // clamp is why a top-up does not raise the discount straight away.
+    educationBody:
+      'Keep VPFI in your Vaipakam Vault and the protocol fee on eligible loans gets smaller. Three checks set your discount. First, you need to have kept VPFI in your vault without a break for a few days. Second, your average balance over the past few weeks sets the level, and recent days can count more. Third, the level can never be higher than the lowest your balance has been since you started holding, looking back up to 30 days. That third check is why adding more VPFI does not raise your discount right away: it rises once the days with a lower balance are outside that look-back.',
     offFeesSuffix: 'off eligible protocol fees',
     noSellNote: 'Vaipakam does not sell VPFI and pays no holding yield — you acquire it on the open market.',
     statusTitle: 'Your discount status',
@@ -4002,14 +4041,21 @@ const copySource = {
     activeDiscount: 'Active discount',
     noneRightNow: 'None right now',
     warmingUp: 'Warming up',
-    // "Warming up" explainer: the balance earns a bigger discount than the
-    // 30-day average currently grants. `tier` = tierOff/higherTier below;
+    // "Warming up" explainer: the current balance would earn a bigger
+    // discount than the history checks grant yet (UX3-003 — not "a 30-day
+    // average"; see educationBody). `tier` = tierOff/higherTier below;
     // `currently` = currentlyClause (or empty when no discount applies yet).
     warmingUpBody: tmpl(
-      'Your balance qualifies for {{tier}}{{currently}}, but discounts use your 30-day average — keep the balance and your active discount catches up.',
+      'Your balance today would qualify for {{tier}}{{currently}}. The discount you actually get also depends on your recent average and your lowest recent balance, so it rises only after you have kept this balance for a while.',
       ['tier', 'currently'],
     ),
     tierOff: tmpl('{{discount}} off', ['discount']),
+    // UX3-002 — tier bands in plain words, with the contract's boundary
+    // rules: Tiers 1–2 exclude their upper threshold, Tier 3 INCLUDES it,
+    // Tier 4 starts strictly above it.
+    tierBandUpTo: tmpl('{{min}} to under {{max}} VPFI', ['min', 'max']),
+    tierBandThrough: tmpl('{{min}} to {{max}} VPFI', ['min', 'max']),
+    tierBandAbove: tmpl('More than {{min}} VPFI', ['min']),
     higherTier: 'a higher tier',
     currentlyClause: tmpl(' (currently {{rate}})', ['rate']),
     consentToggle: 'Use my vaulted VPFI for fee discounts',
