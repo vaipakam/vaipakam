@@ -204,9 +204,13 @@ export async function swapToRepayOrderState(opts: {
  *    - `sale-unknown` — no sale-listing answer: the probe failed, or the
  *      deployment predates the bounded-listing check, where a legacy
  *      listing can still exist. */
-export type WithdrawCaveat = 'pause-unknown' | 'sale-unknown';
+export type WithdrawCaveat = 'pause-unknown' | 'sale-unknown' | 'refinance-elsewhere';
 
 export function withdrawCaveats(a: {
+  /** #2389 r6 — whether this page knows of a refinance request. When it
+   *  does not, one made on another device or through another tool may
+   *  still exist and cannot be discovered here, so that is stated. */
+  refinanceKnown: boolean;
   paused: boolean | undefined;
   /** `useSaleListingHold().data` once it is not resolving. */
   saleHold: SaleListingHoldState | undefined;
@@ -214,6 +218,7 @@ export function withdrawCaveats(a: {
   const out: WithdrawCaveat[] = [];
   if (a.paused === undefined) out.push('pause-unknown');
   if (a.saleHold === undefined || a.saleHold === 'unknown') out.push('sale-unknown');
+  if (!a.refinanceKnown) out.push('refinance-elsewhere');
   return out;
 }
 

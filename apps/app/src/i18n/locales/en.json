@@ -1424,6 +1424,7 @@
           "paused": "Taking back collateral is paused on this deployment right now. Your collateral stays safely locked in the loan; try again once it is unpaused.",
           "pauseUnchecked": "We couldn’t check whether this deployment is paused, so nothing was sent. Please try again in a moment.",
           "refinancePending": "A refinance request is open on this loan, and it was made for the collateral as it stands now. Taking collateral back would make every lender’s acceptance fail. Cancel the request first, or wait until it is taken or expires.",
+          "refinanceElsewhereNote": "If you have a refinance request open for this loan from another device or tool, taking collateral back makes it unfillable until you cancel it and post it again — this page can’t see requests made elsewhere.",
           "pauseUnknownNote": "We couldn’t check whether taking back collateral is paused on this deployment. It is checked again before your wallet opens.",
           "saleUnknownNote": "We couldn’t check ahead of time whether a sale listing of the lender’s position is linked to this loan. It is checked again before your wallet opens, and a linked listing blocks the withdrawal.",
           "checkFailed": "We couldn’t finish the checks before opening your wallet, so nothing was sent. Please try again in a moment.",

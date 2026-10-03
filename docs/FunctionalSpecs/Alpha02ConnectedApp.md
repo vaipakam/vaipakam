@@ -1367,7 +1367,11 @@ is the borrower's own money.
 - While an acceptable refinance request is open on the loan, the surface says
   that taking collateral back would make every lender's acceptance fail and
   asks the borrower to cancel or wait — the same interlock partial repayment
-  and early close-out apply — and the pre-check refuses.
+  and early close-out apply — and the pre-check refuses. The pre-check also
+  catches a request posted from another tab on the same device after the page
+  loaded. A request made on another device or through another tool cannot be
+  discovered by the app yet, so the surface says that, and what withdrawing would
+  do to such a request.
 - An open confirmation does not survive a network switch: it closes, and the
   typed amount is cleared, so a review opened on one network can never send on
   another.

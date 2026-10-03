@@ -103,7 +103,7 @@ import { loanSaleListingEnabled, LoanSaleFlow } from '../components/LoanSaleFlow
 import { LoanSalePendingCard } from '../components/LoanSalePendingCard';
 import { LoanKeeperCard } from '../components/LoanKeeperCard';
 import { LOCK_EARLY_WITHDRAWAL_SALE, useLoanSalePending } from '../data/loanSalePending';
-import { useRefinancePending } from '../data/refinancePending';
+import { readRefinanceMarker, useRefinancePending } from '../data/refinancePending';
 import { ZERO_ADDRESS } from '../lib/offerSchema';
 import {
   AssetType,
@@ -2139,6 +2139,10 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     // is said as a failed check — never as a transaction that "didn't go
     // through". A check's own plain-words message (a moved position, a
     // sanctions retry) is kept; anything else reads "couldn't check".
+    // A marker this page did not mount with means a request was posted
+    // in another tab after load: block until the page has verified it.
+    const liveRefiMarker = readRefinanceMarker(readChain.chainId, Number(row.loanId));
+    const newerRefinanceMarker = liveRefiMarker !== null && liveRefiMarker !== refi.offerId;
     let saleState: Awaited<ReturnType<typeof probeSaleHoldLive>> | 'unknown';
     let swapOrder: Awaited<ReturnType<typeof swapToRepayOrderState>>;
     let liveMax: bigint;
@@ -2206,7 +2210,9 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       // names its obstacle, and an unanswered one blocks with "couldn't
       // check". Tested in partialWithdraw.test.ts.
       const block = withdrawPreflightBlock({
-        refinancePending: refinanceBlocking,
+        // #2389 r6 — the page's verified state, OR a marker another tab
+        // on this device wrote after the page mounted (re-read live).
+        refinancePending: refinanceBlocking || newerRefinanceMarker,
         paused,
         saleState,
         swapOrder,
@@ -3323,13 +3329,16 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
               {/* #2389 r4 — what the card cannot vouch for is said here,
                   not discovered at submit. */}
               {withdrawCaveats({
+                refinanceKnown: refinancePending,
                 paused: maxWithdrawable.data?.paused,
                 saleHold: saleHold.data,
               }).map((c) => (
                 <p key={c} className="field-hint" style={{ marginTop: 0 }}>
                   {c === 'pause-unknown'
                     ? copy.positions.details.withdrawCollateral.pauseUnknownNote
-                    : copy.positions.details.withdrawCollateral.saleUnknownNote}
+                    : c === 'sale-unknown'
+                      ? copy.positions.details.withdrawCollateral.saleUnknownNote
+                      : copy.positions.details.withdrawCollateral.refinanceElsewhereNote}
                 </p>
               ))}
               <div className="cluster">

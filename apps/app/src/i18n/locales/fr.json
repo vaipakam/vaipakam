@@ -1351,6 +1351,7 @@
           "paused": "La récupération de garantie est en pause sur ce déploiement pour le moment. Votre garantie reste bloquée en sécurité dans le prêt ; réessayez une fois la pause levée.",
           "pauseUnchecked": "Nous n’avons pas pu vérifier si ce déploiement est en pause, donc rien n’a été envoyé. Veuillez réessayer dans un instant.",
           "refinancePending": "Une demande de refinancement est ouverte sur ce prêt, établie pour la garantie telle qu’elle est maintenant. Récupérer de la garantie ferait échouer l’acceptation de tout prêteur. Annulez d’abord la demande, ou attendez qu’elle soit acceptée ou expire.",
+          "refinanceElsewhereNote": "Si vous avez une demande de refinancement ouverte pour ce prêt depuis un autre appareil ou outil, récupérer de la garantie la rend impossible à accepter jusqu’à ce que vous l’annuliez et la publiiez à nouveau — cette page ne voit pas les demandes faites ailleurs.",
           "pauseUnknownNote": "Nous n’avons pas pu vérifier si la récupération de garantie est en pause sur ce déploiement. C’est vérifié à nouveau avant l’ouverture de votre portefeuille.",
           "saleUnknownNote": "Nous n’avons pas pu vérifier à l’avance si une mise en vente de la position du prêteur est liée à ce prêt. C’est vérifié à nouveau avant l’ouverture de votre portefeuille, et une mise en vente liée bloque le retrait.",
           "checkFailed": "Nous n’avons pas pu terminer les vérifications avant d’ouvrir votre portefeuille, donc rien n’a été envoyé. Veuillez réessayer dans un instant.",

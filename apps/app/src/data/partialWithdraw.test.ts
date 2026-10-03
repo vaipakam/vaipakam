@@ -282,13 +282,18 @@ describe('withdrawPreflightBlock (#2389 r2)', () => {
 
 describe('withdrawCaveats (#2389 r4)', () => {
   it('states nothing when both facts are known and clear', () => {
-    expect(withdrawCaveats({ paused: false, saleHold: 'none' })).toEqual([]);
+    expect(withdrawCaveats({ refinanceKnown: true, paused: false, saleHold: 'none' })).toEqual([]);
   });
   it('states an unread pause', () => {
-    expect(withdrawCaveats({ paused: undefined, saleHold: 'none' })).toEqual(['pause-unknown']);
+    expect(withdrawCaveats({ refinanceKnown: true, paused: undefined, saleHold: 'none' })).toEqual(['pause-unknown']);
   });
   it('states a missing sale-listing answer — failed probe or pre-refresh deployment', () => {
-    expect(withdrawCaveats({ paused: false, saleHold: undefined })).toEqual(['sale-unknown']);
-    expect(withdrawCaveats({ paused: false, saleHold: 'unknown' })).toEqual(['sale-unknown']);
+    expect(withdrawCaveats({ refinanceKnown: true, paused: false, saleHold: undefined })).toEqual(['sale-unknown']);
+    expect(withdrawCaveats({ refinanceKnown: true, paused: false, saleHold: 'unknown' })).toEqual(['sale-unknown']);
+  });
+  it('states that a request made elsewhere cannot be seen, when none is known here (#2389 r6)', () => {
+    expect(withdrawCaveats({ refinanceKnown: false, paused: false, saleHold: 'none' })).toEqual([
+      'refinance-elsewhere',
+    ]);
   });
 });

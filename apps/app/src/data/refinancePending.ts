@@ -39,6 +39,18 @@ import { tipAware } from '../chain/railHealth';
 
 const marker = makePendingMarkerStore('app.refinanceOffer');
 
+/** Live read of this device's refinance-request marker for a loan
+ *  (#2389 r6). `useRefinancePending` seeds from the marker once, on
+ *  mount, so a request posted from ANOTHER TAB afterwards is invisible
+ *  to its state; a write that changes the loan's collateral re-reads
+ *  the store itself just before the wallet opens. localStorage is shared
+ *  across tabs, so this sees them; a request made on another device or
+ *  through another tool is NOT discoverable (the indexer carries no
+ *  refinance tag yet) — callers say so rather than imply otherwise. */
+export function readRefinanceMarker(chainId: number, loanId: number): string | null {
+  return marker.read(chainId, loanId);
+}
+
 export interface RefinancePendingState {
   /** Loan still Active on-chain (a request on a settled loan is dead
    *  weight — cancel + revoke is the only remaining action). */

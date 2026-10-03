@@ -1351,6 +1351,7 @@
           "paused": "Recuperar garantía está en pausa en este despliegue ahora mismo. Tu garantía sigue bloqueada de forma segura en el préstamo; vuelve a intentarlo cuando se reanude.",
           "pauseUnchecked": "No pudimos comprobar si este despliegue está en pausa, así que no se envió nada. Inténtalo de nuevo en un momento.",
           "refinancePending": "Hay una solicitud de refinanciación abierta en este préstamo, hecha para la garantía tal como está ahora. Recuperar garantía haría fallar la aceptación de cualquier prestamista. Cancela primero la solicitud, o espera a que se acepte o caduque.",
+          "refinanceElsewhereNote": "Si tienes una solicitud de refinanciación abierta para este préstamo desde otro dispositivo o herramienta, recuperar garantía la deja imposible de aceptar hasta que la canceles y la vuelvas a publicar; esta página no puede ver solicitudes hechas en otro lugar.",
           "pauseUnknownNote": "No pudimos comprobar si recuperar garantía está en pausa en este despliegue. Se comprueba de nuevo antes de abrir tu billetera.",
           "saleUnknownNote": "No pudimos comprobar de antemano si hay una venta de la posición del prestamista vinculada a este préstamo. Se comprueba de nuevo antes de abrir tu billetera, y una venta vinculada bloquea la retirada.",
           "checkFailed": "No pudimos terminar las comprobaciones antes de abrir tu billetera, así que no se envió nada. Inténtalo de nuevo en un momento.",
