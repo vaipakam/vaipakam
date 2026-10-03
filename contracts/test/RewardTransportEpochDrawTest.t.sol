@@ -42,6 +42,18 @@ import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
  *         the forfeit sweep; and the design's own allocation counter-examples
  *         against the rule as the facet applies it.
  */
+/// @dev Two claims by one claimant inside ONE transaction. Runs at the
+///      claimant's address for a single call (see `_claimTwiceInOneTx`), and
+///      asks for `Vault` delivery explicitly because that is where a code-less
+///      claimant's `Default` lands — the caller has code while it runs, and the
+///      delivery venue must not change with it.
+contract ClaimTwiceInOneTx {
+    function claimTwice(address diamond) external returns (uint256 first, uint256 second) {
+        (first, , ) = RewardClaimFacet(diamond).claimInteractionRewardsTo(LibVaipakam.RewardDelivery.Vault);
+        (second, , ) = RewardClaimFacet(diamond).claimInteractionRewardsTo(LibVaipakam.RewardDelivery.Vault);
+    }
+}
+
 contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
     VPFIToken internal vpfi;
     address internal alice;
@@ -232,6 +244,17 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
     function _claim() internal returns (uint256 paid) {
         vm.prank(alice);
         (paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
+    }
+
+    /// @dev The per-transaction epoch write budget is TRANSIENT, so "batched in
+    ///      the same transaction" has to be one transaction. Two `_claim()`
+    ///      calls are not: forge 1.8 clears transient storage between a test's
+    ///      top-level calls, so the second claim met a fresh budget and paid.
+    function _claimTwiceInOneTx() internal returns (uint256 first, uint256 second) {
+        bytes memory had = alice.code;
+        vm.etch(alice, type(ClaimTwiceInOneTx).runtimeCode);
+        (first, second) = ClaimTwiceInOneTx(alice).claimTwice(address(diamond));
+        vm.etch(alice, had);
     }
 
     function _preview() internal view returns (uint256 amount) {
@@ -1616,13 +1639,16 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
             vm.warp(vm.getBlockTimestamp() + 1);
         }
         assertEq(_preview(), 2 * NEED, "the preview stops where the claim will");
-        assertEq(_claim(), 2 * NEED, "two days of sixty-four epochs each: the budget");
+        (uint256 first, uint256 second) = _claimTwiceInOneTx();
+        assertEq(first, 2 * NEED, "two days of sixty-four epochs each: the budget");
         // A settlement batched in the SAME transaction after the budget is
         // spent (Codex #2276 r15 P2): its first day defers, the earlier draws
         // are its progress, it pays nothing — and does not revert the batch.
-        assertEq(_claim(), 0, "batched after the budget: nothing paid, nothing reverted");
+        assertEq(second, 0, "batched after the budget: nothing paid, nothing reverted");
         // On chain the next claim is its own transaction and its transient
-        // count starts at zero; a test is one transaction, so clear it.
+        // count starts at zero. Forge 1.8+ already gives each top-level call a
+        // fresh transient context; the raw reset keeps this right on earlier
+        // forge, where a whole test shared one.
         _mut().resetTransportDrawWritesRaw();
         assertEq(_claim(), NEED, "the next transaction pays the third day");
     }
