@@ -1415,6 +1415,17 @@
   },
   {
     "type": "error",
+    "name": "LegacySliceNotPending",
+    "inputs": [
+      {
+        "name": "entryId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "LegacyStampQuoteMissing",
     "inputs": [
       {

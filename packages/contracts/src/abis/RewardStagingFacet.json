@@ -1,6 +1,30 @@
 [
   {
     "type": "function",
+    "name": "prepareRecordInDomainInternal",
+    "inputs": [
+      {
+        "name": "key",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "stagedFresh",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "stagedRecycled",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "prepareStagedDay",
     "inputs": [
       {
@@ -1697,6 +1721,17 @@
         "name": "receiptKey",
         "type": "bytes32",
         "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "LegacySliceNotPending",
+    "inputs": [
+      {
+        "name": "entryId",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ]
   },

@@ -1798,6 +1798,9 @@ interface IVaipakamErrors {
     error StagingDomainStanding(bytes32 domainKey, uint8 phase);
     /// @notice Only the claimant may do this to the record or domain under `key`.
     error StagingNotClaimant(bytes32 key, address caller);
+    /// @notice Entry `entryId` has no legacy slice listed by any epoch, or its
+    ///         slice domain is not in the phase this entry needs (A2-ii (c)).
+    error LegacySliceNotPending(uint256 entryId);
     /// @notice The reward this settlement would pay a loan side fits the
     ///         side's lifetime cap but not what is left of it after standing
     ///         staging reservations: a deferral, retryable once a reservation

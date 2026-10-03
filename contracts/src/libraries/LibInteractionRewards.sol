@@ -1686,12 +1686,23 @@ library LibInteractionRewards {
         uint256 backingRoom = LibVpfiRecycle.freshBackingRoom(s);
         uint256[] storage ids = s.userRewardEntryIds[user];
         uint256 len = ids.length;
+        bool anyStepped; // a legacy slice stepped: progress, even when nothing paid
+        uint256 epochLegacy; // the legacy fresh the slices' epochs funded (not the live pool's)
 
         // #1008 (S13) — the §4 cap is baked into `cumMin*Rpn18` at finalization,
         // so the claim no longer reads the ETH feed / cap ratio here.
         for (uint256 i = 0; i < len; ) {
-            (EntrySplit memory u, EntrySplit memory t) =
+            (EntrySplit memory u, EntrySplit memory t, uint256 epochFresh, bool stepped) =
                 _processEntry(s, ids[i]);
+            if (stepped) anyStepped = true; // a legacy slice moved: the claim made progress
+            if (epochFresh != 0) {
+                epochLegacy += epochFresh;
+                // The legacy slice's epoch-funded part (A2-ii (c)): a transport
+                // leg of the side the slice went to — delivered from the
+                // epochs' custody, charged to no live source.
+                if (u.total != 0) res.transport.userFresh += epochFresh;
+                else res.transport.treasuryFresh += epochFresh;
+            }
             res.toUser.total += u.total;
             res.toUser.recycled += u.recycled;
             res.toUser.armedFresh += u.armedFresh;
@@ -1712,16 +1723,19 @@ library LibInteractionRewards {
         // already spoken for, then persist cursors and D1 charges for value the
         // scaler never actually transfers — retiring the commitment while
         // dropping the payout.
+        // ... net of the part the slices' epochs funded (A2-ii (c)) — the facet
+        // nets the same legs out of the live charge, so the walk's budget and
+        // the charge agree.
         uint256 legacyFresh =
             (res.toUser.total - res.toUser.recycled) +
-            (res.toTreasury.total - res.toTreasury.recycled);
+            (res.toTreasury.total - res.toTreasury.recycled) - epochLegacy;
         (EntrySplit memory wu, EntrySplit memory wt, bool walked) =
             _walkShareOfPoolDays(
                 s, user, freshBudget, legacyFresh, windowFreshReserved, res.transport, backingRoom, deliverTo
             );
         _foldSplit(res.toUser, wu);
         _foldSplit(res.toTreasury, wt);
-        res.advancedAnyDay = walked;
+        res.advancedAnyDay = walked || anyStepped;
     }
 
     /// @dev #1351 (M2 PR-2) — the ShareOfPool day walk.
@@ -3338,10 +3352,14 @@ library LibInteractionRewards {
                 uint256 wouldCredit = preFresh > freshHeadroom ? freshHeadroom : preFresh;
                 if (wouldCredit > deliveredAllowance) return (0, 0, 0, 0);
             }
-            (, EntrySplit memory t) = _processEntryWhole(s, id);
+            (, EntrySplit memory t, uint256 ef, ) = _processEntryWhole(s, id);
             uint256 wholeFresh = t.total - t.recycled;
-            if (wholeFresh > freshHeadroom) wholeFresh = freshHeadroom;
-            return (wholeFresh, t.recycled, 0, 0);
+            // The epoch-funded part is a transport leg, absorbed in place by
+            // the host; only the LIVE part fits the headroom (A2-ii (c)).
+            uint256 live = wholeFresh - ef;
+            if (live > freshHeadroom) live = freshHeadroom;
+            tp.treasuryFresh += ef;
+            return (live + ef, t.recycled, 0, 0);
         }
 
         if (e.startDay < armedFrom && s.rewardEntryClaimNextDay[id] == 0) {
@@ -3356,6 +3374,9 @@ library LibInteractionRewards {
                     advanceCumBorrowerThrough(need);
                 }
             }
+            // The legacy slice consumes its staged epoch coverage FIRST (A2-ii (c)).
+            (bool ready, uint256 ef, ) = LibRewardCustody.callLegacySliceEpochs(id);
+            if (!ready) return (0, 0, 0, 0);
             (, EntrySplit memory tSplit, , EntryPriceState memory st) =
                 _entryPriceCore(s, id, e);
             // A loan-side staging reservation defers this bootstrap outright
@@ -3371,13 +3392,15 @@ library LibInteractionRewards {
                 // already retires that case through {_processEntryWhole}, so
                 // this was a pure divergence between the two legacy branches.
                 if (st.emptyWindow) {
-                    (, EntrySplit memory empt) = _processEntryWhole(s, id);
+                    (, EntrySplit memory empt, , ) = _processEntryWhole(s, id);
                     return (empt.total - empt.recycled, empt.recycled, 0, 0);
                 }
                 return (0, 0, 0, 0);
             }
             uint256 legacyFresh =
                 tSplit.total - tSplit.recycled - tSplit.armedFresh;
+            if (ef > legacyFresh) ef = legacyFresh;
+            legacyFresh -= ef; // the LIVE part; the epoch part rides as a transport leg below
             if (legacyFresh > freshHeadroom) {
                 // #1699 r19 P1 — the per-source rule, here too: a
                 // The monotone 69M cap terminally trims — credit what fits,
@@ -3390,7 +3413,9 @@ library LibInteractionRewards {
             // fresh outflow; a shortfall defers (no cursor stamp, no credit).
             if (legacyFresh > deliveredAllowance) return (0, 0, 0, 0);
             s.rewardEntryClaimNextDay[id] = SafeCast.toUint64(armedFrom);
-            return (legacyFresh, 0, 0, 0);
+            LibRewardCustody.callLegacySliceSettled(id);
+            tp.treasuryFresh += ef;
+            return (legacyFresh + ef, 0, 0, 0);
         }
 
         // Extend the cumulative RPN so the day rows are materialized — the
@@ -3521,6 +3546,31 @@ library LibInteractionRewards {
         if (e.processed) {
             emit RewardEntryExpired(id, e.user, s.rewardEntryExpiredAccum[id], s.rewardEntryExpiredRecycledAccum[id]);
         }
+    }
+
+    /// @notice One pre-`D*` day's share of entry `id`'s legacy slice (A2-ii (c)):
+    ///         the day's step of the MIN cumulative curve the whole-window split
+    ///         differences ({_entryWindowSplitFrom}), times the entry's per-day
+    ///         numeraire; all fresh, by the legacy regime's identity. The curve
+    ///         telescopes, so the window's days sum to at most the whole-window
+    ///         figure (floor per day), and the settlement's live part — the whole
+    ///         less what the epochs paid — is never negative. Zero until the
+    ///         side's cumulative cursor has materialized day `d`.
+    function legacyDayNeed(LibVaipakam.Storage storage s, uint256 id, uint256 d)
+        internal
+        view
+        returns (uint256 need, bool priced)
+    {
+        LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
+        if (d == 0 || d < e.startDay || d >= e.endDay) return (0, true);
+        uint256 cur = e.side == LibVaipakam.RewardSide.Lender ? s.cumLenderCursor : s.cumBorrowerCursor;
+        // Not yet priced (the cumulative curve has not reached the day): NOT
+        // zero — the caller must wait, exactly as the whole-window price does.
+        if (cur < d) return (0, false);
+        uint256 step = e.side == LibVaipakam.RewardSide.Lender
+            ? s.cumMinLenderRpn18[d] - s.cumMinLenderRpn18[d - 1]
+            : s.cumMinBorrowerRpn18[d] - s.cumMinBorrowerRpn18[d - 1];
+        return ((e.perDayNumeraire18 * step) / 1e18, true);
     }
 
     /// @notice ONE place every LIFECYCLE transition of a reward entry passes
@@ -3945,15 +3995,25 @@ library LibInteractionRewards {
         if (armedFrom == 0 || e.endDay <= armedFrom) {
             EntrySplit memory whole = st.rawSplit;
             uint256 wholeFresh = whole.total - whole.recycled;
+            // The legacy slice consumes its staged epoch coverage FIRST (A2-ii (c)).
+            (bool readyW, uint256 efW, ) = LibRewardCustody.callLegacySliceEpochs(id);
+            if (!readyW) {
+                s.rewardEntryObsBlocked[id] = true;
+                return (expired, 0, 0);
+            }
+            if (efW > wholeFresh) efW = wholeFresh;
+            uint256 liveW = wholeFresh - efW;
             // #1566 closure 2 — the delivered allowance bounds the fresh this
             // entry would credit, legacy included: the reward-absorption
             // operation refuses beyond it, and a refusal there would revert
             // the whole batch where the rule is that a shortfall DEFERS.
-            if (wholeFresh > freshHeadroom || wholeFresh > deliveredAllowance) {
+            if (liveW > freshHeadroom || liveW > deliveredAllowance) {
                 s.rewardEntryObsBlocked[id] = true;
                 return (expired, 0, 0);
             }
             _beginExpiry(s, id, e);
+            LibRewardCustody.callLegacySliceSettled(id);
+            tp.treasuryFresh += efW; // the epoch-funded part, absorbed in place by the host
             expired = whole;
             freshCredited = wholeFresh;
             e.processed = true;
@@ -3991,7 +4051,14 @@ library LibInteractionRewards {
             uint256 legacyFresh = st.rawSplit.total
                 - st.rawSplit.recycled
                 - st.rawSplit.armedFresh;
-            if (legacyFresh > freshHeadroom || legacyFresh > deliveredAllowance) {
+            // The legacy slice consumes its staged epoch coverage FIRST (A2-ii (c)).
+            (bool readyS, uint256 efS, ) = LibRewardCustody.callLegacySliceEpochs(id);
+            if (!readyS) {
+                s.rewardEntryObsBlocked[id] = true;
+                return (expired, 0, 0);
+            }
+            if (efS > legacyFresh) efS = legacyFresh;
+            if (legacyFresh - efS > freshHeadroom || legacyFresh - efS > deliveredAllowance) {
                 s.rewardEntryObsBlocked[id] = true;
                 return (expired, 0, 0);
             }
@@ -4007,6 +4074,8 @@ library LibInteractionRewards {
             // chunk moves value.
             if (legacyFresh != 0) _beginExpiry(s, id, e);
             s.rewardEntryClaimNextDay[id] = SafeCast.toUint64(armedFrom);
+            LibRewardCustody.callLegacySliceSettled(id);
+            tp.treasuryFresh += efS; // the epoch-funded part, absorbed in place by the host
             s.rewardEntryExpiredAccum[id] += legacyFresh;
             expired.total = legacyFresh;
             freshCredited = legacyFresh;
@@ -5073,17 +5142,17 @@ library LibInteractionRewards {
         uint256 id
     )
         private
-        returns (EntrySplit memory toUser, EntrySplit memory toTreasury)
+        returns (EntrySplit memory toUser, EntrySplit memory toTreasury, uint256 epochFresh, bool stepped)
     {
         LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
-        if (e.processed) return (toUser, toTreasury);
+        if (e.processed) return (toUser, toTreasury, 0, stepped);
         // #1434 (Codex #1699 r8 P1) — past the REMOVAL POINT. The expiry sweep
         // has already moved value from this entry into the recycle bucket, and
         // that is irreversible; paying the claimant from here would either
         // double-spend what was recycled or hand them a silently reduced
         // amount. `_beginExpiry` announced the removal, so this is the
         // documented "claim before removal wins" boundary, not a silent loss.
-        if (e.expiryBegun) return (toUser, toTreasury);
+        if (e.expiryBegun) return (toUser, toTreasury, 0, stepped);
 
         uint256 armedFrom = s.governorCommitArmedFromDay;
         if (armedFrom == 0 || e.endDay <= armedFrom) {
@@ -5114,9 +5183,13 @@ library LibInteractionRewards {
         if (s.rewardEntryClaimNextDay[id] != 0 || e.startDay >= armedFrom) {
             // Legacy slice already settled (cursor written), or the entry has
             // no legacy slice at all — the walk owns everything that remains.
-            return (toUser, toTreasury);
+            return (toUser, toTreasury, 0, stepped);
         }
 
+        // The legacy slice consumes its staged epoch coverage FIRST (A2-ii (c)).
+        bool ready;
+        (ready, epochFresh, stepped) = LibRewardCustody.callLegacySliceEpochs(id);
+        if (!ready) return (toUser, toTreasury, 0, stepped);
         EntryPriceState memory st;
         LoanSideCapCharge memory c;
         (, , c, st) = _entryPriceCore(s, id, e);
@@ -5128,21 +5201,25 @@ library LibInteractionRewards {
             if (st.emptyWindow) {
                 e.processed = true;
                 noteEntryLifecycle(s, e);
+                LibRewardCustody.callLegacySliceSettled(id); // a domain it opened holds nothing: dropped
             }
-            return (toUser, toTreasury);
+            return (toUser, toTreasury, 0, stepped);
         }
 
         // The legacy slice is ALL fresh by the regime identity.
         uint256 legacy =
             st.rawSplit.total - st.rawSplit.recycled - st.rawSplit.armedFresh;
+        if (epochFresh > legacy) epochFresh = legacy;
         if (st.forfeit) {
             toTreasury.total = legacy;
         } else {
             toUser.total = legacy;
         }
         // Settlement record: the walk starts at `D*`. NOT `processed` — the
-        // armed tail is still owed.
+        // armed tail is still owed. The slice's domain hands its held
+        // aggregate back to the payout's row and is gone (A2-ii (c)).
         s.rewardEntryClaimNextDay[id] = SafeCast.toUint64(armedFrom);
+        LibRewardCustody.callLegacySliceSettled(id);
     }
 
     /// @dev The WHOLE-WINDOW entry settle: flips `processed = true` and
@@ -5171,10 +5248,10 @@ library LibInteractionRewards {
         uint256 id
     )
         private
-        returns (EntrySplit memory toUser, EntrySplit memory toTreasury)
+        returns (EntrySplit memory toUser, EntrySplit memory toTreasury, uint256 epochFresh, bool stepped)
     {
         LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
-        if (e.processed) return (toUser, toTreasury);
+        if (e.processed) return (toUser, toTreasury, 0, stepped);
 
         // The ONE write a view caller cannot make, and the only reason this is
         // a wrapper rather than a mode flag on {_entryPriceCore}: extend the
@@ -5190,6 +5267,12 @@ library LibInteractionRewards {
             }
         }
 
+        // The legacy slice consumes its staged epoch coverage FIRST (A2-ii (c)):
+        // not ready — the slice's listed days are still being prepared or
+        // consumed, one step run just now — means the entry defers whole.
+        bool ready;
+        (ready, epochFresh, stepped) = LibRewardCustody.callLegacySliceEpochs(id);
+        if (!ready) return (toUser, toTreasury, 0, stepped);
         LoanSideCapCharge memory c;
         EntryPriceState memory st;
         (toUser, toTreasury, c, st) = _entryPriceCore(s, id, e);
@@ -5206,15 +5289,22 @@ library LibInteractionRewards {
             if (st.emptyWindow) {
                 e.processed = true;
                 noteEntryLifecycle(s, e);
+                LibRewardCustody.callLegacySliceSettled(id); // a domain it opened holds nothing: dropped
             }
-            return (toUser, toTreasury);
+            return (toUser, toTreasury, 0, stepped);
         }
 
         e.processed = true;
         noteEntryLifecycle(s, e);
+        // Settled: the slice's domain hands its held aggregate back to the
+        // payout's row and is gone; the caller routes `epochFresh` as the
+        // transport leg of whichever side the slice went to.
+        LibRewardCustody.callLegacySliceSettled(id);
+        uint256 wholeFresh = st.rawSplit.total - st.rawSplit.recycled;
+        if (epochFresh > wholeFresh) epochFresh = wholeFresh;
         if (st.forfeit) {
             _accrueForfeitArmedDays(s, id, e, st.rawSplit);
-            return (toUser, toTreasury);
+            return (toUser, toTreasury, epochFresh, stepped);
         }
         if (c.stamped) {
             uint8 sideW = uint8(e.side);

@@ -2575,10 +2575,11 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](3);
+        selectors = new bytes4[](4);
         selectors[0] = RewardStagingFacet.prepareStagedDay.selector;
         selectors[1] = RewardStagingFacet.reserveStagedDay.selector;
         selectors[2] = RewardStagingFacet.reserveRecordInDomainInternal.selector; // A2-ii
+        selectors[3] = RewardStagingFacet.prepareRecordInDomainInternal.selector; // A2-ii (c): the hosted preparation step (Diamond-gated)
     }
 
     /// 3b-ii-A2 (#2305) — the staging record's settlement half. Mirrors
@@ -2586,12 +2587,16 @@ contract HelperTest {
     /// 3b-ii-A2-ii (#2305) — the domain lifecycle entries. Mirrors
     /// `DeployDiamond._getRewardStagingDomainSelectors`.
     function getRewardStagingDomainFacetSelectors() public pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](5);
+        selectors = new bytes4[](9);
         selectors[0] = RewardStagingDomainFacet.reserveDomainPage.selector;
         selectors[1] = RewardStagingDomainFacet.resolveDomainPage.selector;
         selectors[2] = RewardStagingDomainFacet.unwindDomainPage.selector;
         selectors[3] = RewardStagingDomainFacet.setDomainVenue.selector;
         selectors[4] = RewardStagingDomainFacet.getStagingDomain.selector;
+        selectors[5] = RewardStagingDomainFacet.stepLegacySlice.selector; // A2-ii (c)
+        selectors[6] = RewardStagingDomainFacet.getLegacySliceDomain.selector; // A2-ii (c)
+        selectors[7] = RewardStagingDomainFacet.legacySliceEpochsInternal.selector; // A2-ii (c): the hosted gate (Diamond-gated)
+        selectors[8] = RewardStagingDomainFacet.legacySliceSettledInternal.selector; // A2-ii (c): the hosted settle (Diamond-gated)
     }
 
     function getRewardStagingSettleFacetSelectors()
@@ -2599,7 +2604,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](7);
+        selectors = new bytes4[](8);
         selectors[0] = RewardStagingSettleFacet.resolveStagedDayPage.selector;
         selectors[1] = RewardStagingSettleFacet.unwindStagedDayPage.selector;
         selectors[2] = RewardStagingSettleFacet.setStagingVenue.selector;
@@ -2607,6 +2612,7 @@ contract HelperTest {
         selectors[4] = RewardStagingSettleFacet.registerForBatchWindow.selector; // A2-ii
         selectors[5] = RewardStagingSettleFacet.resolveRecordInDomainInternal.selector; // A2-ii
         selectors[6] = RewardStagingSettleFacet.unwindRecordInDomainInternal.selector; // A2-ii
+        selectors[7] = RewardStagingSettleFacet.consumeRecordInLegacyInternal.selector; // A2-ii (c): the hosted consumption step (Diamond-gated)
     }
 
     /// 3b-ii-A2 (#2305) — the claim walk's host. Mirrors

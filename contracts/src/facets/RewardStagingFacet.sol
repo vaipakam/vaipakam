@@ -80,4 +80,13 @@ contract RewardStagingFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         if (msg.sender != address(this)) revert RewardCustodyOnlyDiamondInternal(msg.sender);
         return LibRewardStaging.reserveInDomain(LibVaipakam.storageSlot(), key);
     }
+
+    /// @notice A domain record's preparation page, hosted here (A2-ii (c);
+    ///         EIP-170): a legacy slice's preparation reaches it by Diamond
+    ///         self-call, so the scan machinery is compiled into one facet.
+    ///         Gated to the Diamond; the step that calls it carries the guards.
+    function prepareRecordInDomainInternal(bytes32 key) external returns (uint256 stagedFresh, uint256 stagedRecycled) {
+        if (msg.sender != address(this)) revert RewardCustodyOnlyDiamondInternal(msg.sender);
+        return LibRewardStaging.prepareInDomain(LibVaipakam.storageSlot(), key);
+    }
 }

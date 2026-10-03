@@ -121,4 +121,14 @@ contract RewardStagingSettleFacet is DiamondReentrancyGuard, DiamondPausable, IV
         if (msg.sender != address(this)) revert RewardCustodyOnlyDiamondInternal(msg.sender);
         return LibRewardStaging.unwindPageInDomain(LibVaipakam.storageSlot(), key);
     }
+
+    /// @notice One page of a legacy-slice record's consumption, hosted here
+    ///         (A2-ii (c); EIP-170): the slice's consumption page reaches it by
+    ///         Diamond self-call, so the batch resolution is compiled into one
+    ///         facet. Gated to the Diamond; the step that calls it carries the
+    ///         guards.
+    function consumeRecordInLegacyInternal(bytes32 key) external returns (uint256 held, bool done, bool unsettled) {
+        if (msg.sender != address(this)) revert RewardCustodyOnlyDiamondInternal(msg.sender);
+        return LibRewardStaging.consumeInLegacy(LibVaipakam.storageSlot(), key);
+    }
 }

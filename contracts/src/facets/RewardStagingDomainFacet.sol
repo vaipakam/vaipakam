@@ -32,6 +32,8 @@ contract RewardStagingDomainFacet is DiamondReentrancyGuard, DiamondPausable, IV
     event StagingDomainReserveStopped(bytes32 indexed domainKey, uint64 day);
     event StagingDomainCleared(bytes32 indexed domainKey, bool paid);
     event StagingDomainDeadlineSet(bytes32 indexed domainKey, uint64 deadline);
+    event LegacySliceConsumed(uint256 indexed entryId, uint256 epochFresh);
+    event LegacySliceDomainOpened(uint256 indexed entryId, bytes32 indexed domainKey, uint64 firstDay, uint64 lastDay);
 
     /// @notice One reservation page of the domain under `domainKey`
     ///         ({LibRewardStaging.reserveDomainPage}). Permissionless.
@@ -54,6 +56,56 @@ contract RewardStagingDomainFacet is DiamondReentrancyGuard, DiamondPausable, IV
     ///         the domain is still staging.
     function setDomainVenue(bytes32 domainKey, LibVaipakam.RewardDelivery venue) external nonReentrant {
         LibRewardStaging.setDomainVenue(LibVaipakam.storageSlot(), domainKey, msg.sender, venue);
+    }
+
+    /// @notice One step of entry `entryId`'s LEGACY-SLICE domain (A2-ii (c)):
+    ///         a preparation page while the window is not prepared, a
+    ///         consumption page once it is; permissionless, so anyone may
+    ///         drive a slice home ahead of its settlement. Reverts when the
+    ///         slice has no pending domain (not listed, or already consumed).
+    function stepLegacySlice(uint256 entryId) external nonReentrant whenNotPaused returns (bool consumed) {
+        return LibRewardStaging.legacySliceStep(LibVaipakam.storageSlot(), entryId);
+    }
+
+    /// @notice The legacy slice's gate, hosted here (A2-ii (c); EIP-170): every
+    ///         settlement site — the claim's entry loop, the forfeit sweep, the
+    ///         expiry sweep — reaches it by Diamond self-call, so the slice's
+    ///         domain machinery is compiled into one facet. Gated to the
+    ///         Diamond; no reentrancy guard or pause check of its own — the
+    ///         settlement that calls it carries both.
+    function legacySliceEpochsInternal(uint256 entryId) external returns (bool ready, uint256 epochFresh, bool stepped) {
+        if (msg.sender != address(this)) revert RewardCustodyOnlyDiamondInternal(msg.sender);
+        return LibRewardStaging.legacySliceEpochs(LibVaipakam.storageSlot(), entryId);
+    }
+
+    /// @notice The legacy slice's settle, hosted here (A2-ii (c); EIP-170): the
+    ///         settlement site that pays the slice reaches it by Diamond
+    ///         self-call right before it routes the legs. Gated to the Diamond.
+    function legacySliceSettledInternal(uint256 entryId) external {
+        if (msg.sender != address(this)) revert RewardCustodyOnlyDiamondInternal(msg.sender);
+        LibRewardStaging.legacySliceSettled(LibVaipakam.storageSlot(), entryId);
+    }
+
+    /// @notice The legacy-slice domain of `entryId`: its key, phase (0 none,
+    ///         1 preparing or consuming, 3 consumed), extent, preparation and
+    ///         consumption cursors, live records and the epoch fresh consumed.
+    function getLegacySliceDomain(uint256 entryId)
+        external
+        view
+        returns (
+            bytes32 domainKey,
+            uint8 phase,
+            uint64 firstDay,
+            uint64 lastDay,
+            uint64 preparedThrough,
+            uint64 consumeCursor,
+            uint32 liveRecords,
+            uint256 epochFresh
+        )
+    {
+        domainKey = LibRewardCustody.legacyDomainKey(entryId);
+        LibVaipakam.StagingDomain storage dom = LibVaipakam.storageSlot().stagingDomains[domainKey];
+        return (domainKey, uint8(dom.phase), dom.firstDay, dom.lastDay, dom.preparedThrough, dom.resolveCursor, dom.liveRecords, dom.aggFresh);
     }
 
     /// @notice The domain of (`user`, `side`) — every scalar it carries, and its key.

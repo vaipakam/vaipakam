@@ -7721,6 +7721,10 @@ library LibVaipakam {
         ///      user's entries on that side ({LibInteractionRewards.noteEntryLifecycle}),
         ///      so a domain's revalidation is O(1) when nothing moved.
         mapping(address => mapping(uint8 => uint256)) rewardLifecycleVersion;
+        /// @dev A2-ii (c) — how many transport batches this chain has ever
+        ///      admitted: the global short-circuit that makes the legacy
+        ///      slice's listed-day scan free on every chain without one.
+        uint256 transportBatchesAdmitted;
     }
 
     /// @notice 3b-ii-A2 (#2305) — one batch a staging record staged from, with
@@ -7810,6 +7814,18 @@ library LibVaipakam {
         ///      opening plus the chunks' cadences plus this plus the grace).
         uint256 leaseAccum;
         uint256[] entryIds;
+        /// @dev A2-ii (c) — a LEGACY-SLICE domain: the entry's pre-`D*` window,
+        ///      prepared (listed days staged) and CONSUMED into the aggregates
+        ///      below for the slice's one whole-window settlement; never
+        ///      reserved from the live sources, never unwound, no deadline.
+        bool legacy;
+        /// @dev The epoch fresh the consumed records contributed — what the
+        ///      slice's settlement pays as transport legs instead of live.
+        uint256 aggFresh;
+        /// @dev The part of `aggFresh` held in the `Resolving` custody row
+        ///      until the settlement (custody active); released to
+        ///      `Unclassified` right before the payout takes it.
+        uint256 heldAgg;
     }
 
     /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss: the
@@ -8113,7 +8129,12 @@ library LibVaipakam {
         None,
         Claim,
         Forfeit,
-        Expiry
+        Expiry,
+        /// @dev A2-ii (c) — a listed pre-`D*` day of an entry's LEGACY SLICE,
+        ///      staged for the slice's whole-window settlement to consume
+        ///      before the schedule funds it; never reserved, never paid by
+        ///      the record itself.
+        LegacySlice
     }
 
     /// @notice 3b-ii-A2 (#2305) — where a staging record stands. `Staging`:

@@ -1789,6 +1789,7 @@ library LibRewardCustody {
         // oversize batch fully indexed.
         b.dayCount = SafeCast.toUint32(count);
         p.batchId = batchId;
+        ++s.transportBatchesAdmitted; // the legacy slice's global short-circuit (A2-ii (c))
         emit TransportBatchAdmitted(batchId, h, untyped, count);
     }
 
@@ -2781,6 +2782,12 @@ library LibRewardCustody {
     /// @notice The claimant-side DOMAIN key (A2-ii): one domain per claimant and side.
     function domainKey(address user, LibVaipakam.RewardSide side) internal pure returns (bytes32) {
         return keccak256(abi.encode(user, side));
+    }
+
+    /// @notice The LEGACY-SLICE domain key (A2-ii (c)): one per entry — the
+    ///         slice's identity is the entry.
+    function legacyDomainKey(uint256 entryId) internal pure returns (bytes32) {
+        return keccak256(abi.encode("legacy-slice", entryId));
     }
 
     function stagingKey(address user, LibVaipakam.RewardSide side, uint256 day) internal pure returns (bytes32) {
@@ -3964,6 +3971,28 @@ library LibRewardCustody {
     function callUnwindRecordInDomain(bytes32 key) internal returns (bool done) {
         bytes memory ret = _custodyReturning(abi.encodeWithSignature("unwindRecordInDomainInternal(bytes32)", key));
         done = abi.decode(ret, (bool));
+    }
+
+    /// @notice The legacy slice's hosted entries (A2-ii (c)): the gate and the
+    ///         settle live on the domain facet; the per-record preparation on the
+    ///         staging facet; the per-record consumption on the settle facet.
+    ///         Every settlement site carries only these stubs. Reverts bubble.
+    function callLegacySliceEpochs(uint256 entryId) internal returns (bool ready, uint256 epochFresh, bool stepped) {
+        bytes memory ret = _custodyReturning(abi.encodeWithSignature("legacySliceEpochsInternal(uint256)", entryId));
+        (ready, epochFresh, stepped) = abi.decode(ret, (bool, uint256, bool));
+    }
+
+    function callLegacySliceSettled(uint256 entryId) internal {
+        _custody(abi.encodeWithSignature("legacySliceSettledInternal(uint256)", entryId));
+    }
+
+    function callPrepareRecordInDomain(bytes32 key) internal {
+        _custody(abi.encodeWithSignature("prepareRecordInDomainInternal(bytes32)", key));
+    }
+
+    function callConsumeRecordInLegacy(bytes32 key) internal returns (uint256 held, bool done, bool unsettled) {
+        bytes memory ret = _custodyReturning(abi.encodeWithSignature("consumeRecordInLegacyInternal(bytes32)", key));
+        (held, done, unsettled) = abi.decode(ret, (uint256, bool, bool));
     }
 
     function callSettleLegs(

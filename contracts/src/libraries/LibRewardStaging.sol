@@ -223,6 +223,13 @@ library LibRewardStaging {
         bytes32 key,
         LibVaipakam.StagingRecord storage r
     ) private view returns (uint256 askF, uint256 askR) {
+        if (r.op == LibVaipakam.StagingOp.LegacySlice) {
+            // A legacy-slice day (A2-ii (c)): the day's share of the slice,
+            // fresh only, less what the record already holds; the day
+            // primitive never prices a pre-`D*` day.
+            (uint256 needD, ) = LibInteractionRewards.legacyDayNeed(s, r.entryIds[0], r.day); // priced: the record opened on a priced day
+            return (needD > r.stagedFresh ? needD - r.stagedFresh : 0, 0);
+        }
         (LibInteractionRewards.DayCharge memory charge, ) = _price(s, r);
         if (charge.loanSideReserved) revert IVaipakamErrors.StagingNotCovered(key);
         // The fresh need is bounded by the pool's HARD headroom — the
@@ -1041,7 +1048,7 @@ library LibRewardStaging {
         LibVaipakam.RewardDelivery venue
     ) internal {
         LibVaipakam.StagingDomain storage dom = s.stagingDomains[dk];
-        if (dom.phase != LibVaipakam.DomainPhase.Staging) revert IVaipakamErrors.StagingDomainPhaseInvalid(dk, uint8(dom.phase));
+        if (dom.legacy || dom.phase != LibVaipakam.DomainPhase.Staging) revert IVaipakamErrors.StagingDomainPhaseInvalid(dk, uint8(dom.phase));
         if (caller != dom.user) revert IVaipakamErrors.StagingNotClaimant(dk, caller);
         dom.venue = venue;
         dom.venueSet = true;
@@ -1061,6 +1068,7 @@ library LibRewardStaging {
     /// @return done True once the domain is Resolving.
     function reserveDomainPage(LibVaipakam.Storage storage s, bytes32 dk) internal returns (bool done) {
         LibVaipakam.StagingDomain storage dom = s.stagingDomains[dk];
+        if (dom.legacy) revert IVaipakamErrors.StagingDomainPhaseInvalid(dk, uint8(dom.phase)); // a legacy slice has its own pages (A2-ii (c))
         if (dom.phase == LibVaipakam.DomainPhase.Staging) {
             if (dom.preparedThrough < dom.lastDay) {
                 revert IVaipakamErrors.StagingDomainNotPrepared(dk, dom.preparedThrough, dom.lastDay);
@@ -1137,6 +1145,7 @@ library LibRewardStaging {
     /// @return done True once the domain is cleared.
     function resolveDomainPage(LibVaipakam.Storage storage s, bytes32 dk) internal returns (bool done) {
         LibVaipakam.StagingDomain storage dom = s.stagingDomains[dk];
+        if (dom.legacy) revert IVaipakamErrors.StagingDomainPhaseInvalid(dk, uint8(dom.phase)); // a legacy slice has its own pages (A2-ii (c))
         if (dom.phase != LibVaipakam.DomainPhase.Resolving) revert IVaipakamErrors.StagingDomainPhaseInvalid(dk, uint8(dom.phase));
         uint256 walked;
         while (dom.resolveCursor <= dom.lastDay && walked < DOMAIN_PAGE_DAYS) {
@@ -1164,6 +1173,7 @@ library LibRewardStaging {
     /// @return done True once the domain is cleared.
     function unwindDomainPage(LibVaipakam.Storage storage s, bytes32 dk, address caller) internal returns (bool done) {
         LibVaipakam.StagingDomain storage dom = s.stagingDomains[dk];
+        if (dom.legacy) revert IVaipakamErrors.StagingDomainPhaseInvalid(dk, uint8(dom.phase)); // a legacy slice has its own pages (A2-ii (c))
         LibVaipakam.DomainPhase p = dom.phase;
         if (p == LibVaipakam.DomainPhase.Staging || p == LibVaipakam.DomainPhase.Reserving) {
             if (caller != dom.user && block.timestamp < dom.deadline) {
@@ -1206,5 +1216,254 @@ library LibRewardStaging {
         if (dk == bytes32(0)) return;
         s.stagingDomainLoanReserved[dk][loanId] -= amount;
         --s.stagingDomainLoanDays[dk][loanId];
+    }
+
+    /// @notice A DOMAIN record's preparation page (A2-ii (c)): the per-record
+    ///         step a legacy slice's preparation drives by Diamond self-call,
+    ///         hosted on the record facet that already inlines {prepare}.
+    function prepareInDomain(LibVaipakam.Storage storage s, bytes32 key)
+        internal
+        returns (uint256 stagedFresh, uint256 stagedRecycled)
+    {
+        if (s.stagingRecords[key].domainKey == bytes32(0)) revert IVaipakamErrors.StagingRecordNotInDomain(key);
+        return prepare(s, key);
+    }
+
+    /// @notice One page of a LEGACY-SLICE record's consumption (A2-ii (c)),
+    ///         hosted on the settle facet (it already inlines the batch
+    ///         resolution): a staging record whose scan is settled turns to
+    ///         Resolving with its whole staged coverage to consume; each page
+    ///         consumes up to `STAGING_PAGE` batches into `held`; the record
+    ///         closes on its last page. `unsettled` — the day's list grew past
+    ///         the record's scan — asks the caller for one more preparation
+    ///         page instead. The custody row movement for `held` is the
+    ///         caller's (the domain holds the aggregate).
+    function consumeInLegacy(LibVaipakam.Storage storage s, bytes32 key)
+        internal
+        returns (uint256 held, bool done, bool unsettled)
+    {
+        LibVaipakam.StagingRecord storage r = record(s, key);
+        if (r.domainKey == bytes32(0) || r.op != LibVaipakam.StagingOp.LegacySlice) {
+            revert IVaipakamErrors.StagingRecordNotInDomain(key);
+        }
+        if (r.phase == LibVaipakam.StagingPhase.Staging) {
+            if (!LibRewardCustody.recordScanSettled(s, r)) return (0, false, true);
+            r.consumeFreshLeft = r.stagedFresh;
+            r.consumeRecycledLeft = r.stagedRecycled;
+            r.phase = LibVaipakam.StagingPhase.Resolving;
+        } else {
+            _requirePhase(key, r, LibVaipakam.StagingPhase.Resolving);
+        }
+        uint256 n = r.batchCount;
+        uint256 i = r.resolveCursor;
+        uint256 end = i + STAGING_PAGE;
+        if (end > n) end = n;
+        while (i < end) {
+            held += _resolveBatch(s, key, r, i);
+            unchecked { ++i; }
+        }
+        r.resolveCursor = i;
+        if (i < n) return (held, false, false); // this record's next page, next call
+        _close(s, key, true);
+        return (held, true, false);
+    }
+
+    // ───────────────────────── A2-ii (c) — the LEGACY SLICE as a domain ─────────────────────────
+
+    /// @dev Days a legacy preparation or consumption page walks per call.
+    uint256 internal constant LEGACY_PAGE_DAYS = 8;
+
+    /// @notice The legacy slice of `entryId` consumed its staged coverage:
+    ///         `epochFresh` is what the slice's settlement pays as transport
+    ///         legs instead of from the live sources (A2-ii (c)).
+    /// @custom:event-category state-change/reward-staging
+    event LegacySliceConsumed(uint256 indexed entryId, uint256 epochFresh);
+    /// @notice The legacy slice's domain opened over `[firstDay, lastDay]`.
+    /// @custom:event-category state-change/reward-staging
+    event LegacySliceDomainOpened(uint256 indexed entryId, bytes32 indexed domainKey, uint64 firstDay, uint64 lastDay);
+
+    /// @dev The slice's window: from the entry's first unsettled day to the day
+    ///      before the arming (or the entry's last day, when wholly pre-`D*`).
+    function _legacyWindow(LibVaipakam.Storage storage s, uint256 id, LibVaipakam.RewardEntry storage e)
+        private
+        view
+        returns (uint256 first, uint256 last, bool any)
+    {
+        uint256 cur = s.rewardEntryClaimNextDay[id];
+        first = cur == 0 ? e.startDay : cur;
+        uint256 armedFrom = s.governorCommitArmedFromDay;
+        uint256 endExcl = e.endDay;
+        if (armedFrom != 0 && armedFrom < endExcl) endExcl = armedFrom;
+        if (endExcl == 0 || first >= endExcl) return (0, 0, false);
+        last = endExcl - 1;
+        any = true;
+    }
+
+    /// @notice The legacy slice's epoch coverage for the settlement sites
+    ///         (A2-ii (c)) — HOSTED on the domain facet, reached by every
+    ///         settlement site through {LibRewardCustody.callLegacySliceEpochs}:
+    ///         `ready` with `epochFresh == 0` when no epoch lists any day of the
+    ///         slice's window (free under the chain-wide admitted-batch
+    ///         short-circuit); `ready` with the aggregate once the slice's
+    ///         domain has consumed every listed day; otherwise NOT ready — the
+    ///         slice defers — after running ONE step of the domain (a
+    ///         preparation page, or a consumption page) so a settlement that
+    ///         keeps being called drives the slice home by itself, and anyone
+    ///         may drive it faster through the facet's step. `stepped` reports
+    ///         that the call moved the domain, so a deferring claim is progress.
+    function legacySliceEpochs(LibVaipakam.Storage storage s, uint256 id)
+        internal
+        returns (bool ready, uint256 epochFresh, bool stepped)
+    {
+        if (s.transportBatchesAdmitted == 0) return (true, 0, false);
+        LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
+        bytes32 lk = LibRewardCustody.legacyDomainKey(id);
+        LibVaipakam.StagingDomain storage dom = s.stagingDomains[lk];
+        if (dom.phase == LibVaipakam.DomainPhase.None) {
+            (uint256 first, uint256 last, bool any) = _legacyWindow(s, id, e);
+            if (!any) return (true, 0, false);
+            bool listed;
+            for (uint256 d = first; d <= last; ) {
+                if (s.transportBatchesByDay[d].length != 0) {
+                    listed = true;
+                    break;
+                }
+                unchecked { ++d; }
+            }
+            if (!listed) return (true, 0, false);
+            dom.phase = LibVaipakam.DomainPhase.Staging;
+            dom.legacy = true;
+            dom.user = e.user;
+            dom.side = e.side;
+            dom.firstDay = SafeCast.toUint64(first);
+            dom.lastDay = SafeCast.toUint64(last);
+            dom.preparedThrough = SafeCast.toUint64(first - 1);
+            dom.resolveCursor = SafeCast.toUint64(first);
+            dom.openedAt = uint64(block.timestamp);
+            dom.entryIds = new uint256[](1);
+            dom.entryIds[0] = id;
+            emit LegacySliceDomainOpened(id, lk, dom.firstDay, dom.lastDay);
+            stepped = true;
+        }
+        if (dom.phase == LibVaipakam.DomainPhase.Resolving) return (true, dom.aggFresh, stepped);
+        legacySliceStep(s, id);
+        if (dom.phase == LibVaipakam.DomainPhase.Resolving) return (true, dom.aggFresh, true);
+        return (false, 0, true);
+    }
+
+    /// @notice One step of entry `id`'s legacy-slice domain (A2-ii (c)),
+    ///         permissionless: while the extent is not prepared, a preparation
+    ///         page (up to `LEGACY_PAGE_DAYS` days: a day no epoch lists takes
+    ///         its place with no record, a listed day's record is opened and
+    ///         scans one page); once prepared, a consumption page (records in
+    ///         day order, each consumed in bounded pages — a wide day's record
+    ///         is prepared one more page instead — its batches debited into the
+    ///         domain's aggregate and the record closed). The domain is
+    ///         CONSUMED (phase Resolving) once the cursor passes the extent
+    ///         with no record live. Each per-record step runs on the record
+    ///         facet that hosts it, by Diamond self-call.
+    /// @return consumed Whether the slice's domain is now consumed.
+    function legacySliceStep(LibVaipakam.Storage storage s, uint256 id) internal returns (bool consumed) {
+        bytes32 lk = LibRewardCustody.legacyDomainKey(id);
+        LibVaipakam.StagingDomain storage dom = s.stagingDomains[lk];
+        if (!dom.legacy || dom.phase != LibVaipakam.DomainPhase.Staging) revert IVaipakamErrors.LegacySliceNotPending(id);
+        if (dom.preparedThrough < dom.lastDay) {
+            _legacyPreparePage(s, lk, dom, id);
+            return false;
+        }
+        _legacyConsumePage(s, dom);
+        if (dom.resolveCursor > dom.lastDay && dom.liveRecords == 0) {
+            dom.phase = LibVaipakam.DomainPhase.Resolving;
+            emit LegacySliceConsumed(id, dom.aggFresh);
+            return true;
+        }
+        return false;
+    }
+
+    function _legacyPreparePage(
+        LibVaipakam.Storage storage s,
+        bytes32 lk,
+        LibVaipakam.StagingDomain storage dom,
+        uint256 id
+    ) private {
+        uint256 d = uint256(dom.preparedThrough) + 1;
+        uint256 last = dom.lastDay;
+        uint256 walked;
+        while (d <= last && walked < LEGACY_PAGE_DAYS) {
+            bool listed = s.transportBatchesByDay[d].length != 0;
+            (uint256 needD, bool priced) = listed ? LibInteractionRewards.legacyDayNeed(s, id, d) : (0, true);
+            // A listed day the cumulative curve has not reached yet cannot be
+            // asked for: the page stops here, unprepared, and the settlement
+            // that drives it (which advances the curve first) comes back.
+            if (!priced) return;
+            if (listed && needD != 0) {
+                bytes32 key = LibRewardCustody.stagingKey(dom.user, dom.side, d);
+                LibVaipakam.StagingRecord storage r = s.stagingRecords[key];
+                if (r.phase == LibVaipakam.StagingPhase.None) {
+                    uint256[] memory one = new uint256[](1);
+                    one[0] = id;
+                    // The record opens through the one seam (hosted on the
+                    // settle facet), with nothing staged yet.
+                    LibRewardCustody.callStageDayFromPlan(
+                        dom.user, dom.side, d, one, new bytes32[](0), new uint256[](0), new uint256[](0),
+                        LibVaipakam.RewardDelivery.Default, LibVaipakam.StagingOp.LegacySlice, lk
+                    );
+                }
+                // Its own preparation scans one page of the day's list
+                // (hosted on the record facet).
+                if (r.phase == LibVaipakam.StagingPhase.Staging && !r.scanComplete) {
+                    LibRewardCustody.callPrepareRecordInDomain(key);
+                }
+            }
+            dom.preparedThrough = uint64(d);
+            unchecked { ++d; ++walked; }
+        }
+    }
+
+    function _legacyConsumePage(LibVaipakam.Storage storage s, LibVaipakam.StagingDomain storage dom) private {
+        uint256 walked;
+        while (dom.resolveCursor <= dom.lastDay && walked < LEGACY_PAGE_DAYS) {
+            bytes32 key = LibRewardCustody.stagingKey(dom.user, dom.side, dom.resolveCursor);
+            if (s.stagingRecords[key].phase != LibVaipakam.StagingPhase.None) {
+                // One page of the record's consumption, hosted on the settle facet.
+                (uint256 held, bool done, bool unsettled) = LibRewardCustody.callConsumeRecordInLegacy(key);
+                if (unsettled) {
+                    // A wide day: one more preparation page (hosted on the
+                    // record facet), then stop.
+                    LibRewardCustody.callPrepareRecordInDomain(key);
+                    return;
+                }
+                if (held != 0) {
+                    dom.aggFresh += held;
+                    if (LibRewardCustody.active(s)) {
+                        LibRewardCustody.hold(
+                            s, LibVaipakam.RewardCustodyRow.Unclassified, LibVaipakam.RewardCustodyRow.Resolving, held, key
+                        );
+                        dom.heldAgg += held;
+                    }
+                }
+                if (!done) return; // this record's next page, next call
+            }
+            unchecked { ++dom.resolveCursor; ++walked; }
+        }
+    }
+
+    /// @notice The slice SETTLED (A2-ii (c)) — HOSTED on the domain facet,
+    ///         reached through {LibRewardCustody.callLegacySliceSettled}: the
+    ///         held aggregate returns to the `Unclassified` row for the payout
+    ///         to take, the staged earmark it still carried is released, and
+    ///         the domain is deleted. Called by the settlement site right
+    ///         before it routes the legs; a no-op for a slice with no domain.
+    function legacySliceSettled(LibVaipakam.Storage storage s, uint256 id) internal {
+        bytes32 lk = LibRewardCustody.legacyDomainKey(id);
+        LibVaipakam.StagingDomain storage dom = s.stagingDomains[lk];
+        if (dom.phase != LibVaipakam.DomainPhase.Resolving) return;
+        if (dom.heldAgg != 0) {
+            LibRewardCustody.releaseHold(
+                s, LibVaipakam.RewardCustodyRow.Resolving, LibVaipakam.RewardCustodyRow.Unclassified, dom.heldAgg, lk
+            );
+        }
+        LibRewardCustody.releaseStagedEarmark(s, dom.aggFresh);
+        delete s.stagingDomains[lk];
     }
 }

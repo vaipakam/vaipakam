@@ -3151,22 +3151,27 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](3);
+        s = new bytes4[](4);
         s[0] = RewardStagingFacet.prepareStagedDay.selector;
         s[1] = RewardStagingFacet.reserveStagedDay.selector;
         s[2] = RewardStagingFacet.reserveRecordInDomainInternal.selector; // A2-ii: the domain's hosted reservation step (Diamond-gated)
+        s[3] = RewardStagingFacet.prepareRecordInDomainInternal.selector; // A2-ii (c): the hosted preparation step (Diamond-gated)
         // The record-opening seam and the window registration live on the settle facet (EIP-170; A2-ii).
     }
 
     /// @dev 3b-ii-A2 (#2305) — the staging record's settlement half.
     /// @dev 3b-ii-A2-ii (#2305) — the multi-chunk claim domain's lifecycle entries.
     function _getRewardStagingDomainSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](5);
+        s = new bytes4[](9);
         s[0] = RewardStagingDomainFacet.reserveDomainPage.selector;
         s[1] = RewardStagingDomainFacet.resolveDomainPage.selector;
         s[2] = RewardStagingDomainFacet.unwindDomainPage.selector;
         s[3] = RewardStagingDomainFacet.setDomainVenue.selector;
         s[4] = RewardStagingDomainFacet.getStagingDomain.selector;
+        s[5] = RewardStagingDomainFacet.stepLegacySlice.selector; // A2-ii (c)
+        s[6] = RewardStagingDomainFacet.getLegacySliceDomain.selector; // A2-ii (c)
+        s[7] = RewardStagingDomainFacet.legacySliceEpochsInternal.selector; // A2-ii (c): the hosted gate (Diamond-gated)
+        s[8] = RewardStagingDomainFacet.legacySliceSettledInternal.selector; // A2-ii (c): the hosted settle (Diamond-gated)
     }
 
     function _getRewardStagingSettleSelectors()
@@ -3174,7 +3179,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](7);
+        s = new bytes4[](8);
         s[0] = RewardStagingSettleFacet.resolveStagedDayPage.selector;
         s[1] = RewardStagingSettleFacet.unwindStagedDayPage.selector;
         s[2] = RewardStagingSettleFacet.setStagingVenue.selector;
@@ -3182,6 +3187,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[4] = RewardStagingSettleFacet.registerForBatchWindow.selector; // A2-ii: priority-window registration
         s[5] = RewardStagingSettleFacet.resolveRecordInDomainInternal.selector; // A2-ii: the domain's hosted resolution step (Diamond-gated)
         s[6] = RewardStagingSettleFacet.unwindRecordInDomainInternal.selector; // A2-ii: the domain's hosted unwind step (Diamond-gated)
+        s[7] = RewardStagingSettleFacet.consumeRecordInLegacyInternal.selector; // A2-ii (c): the hosted consumption step (Diamond-gated)
     }
 
     /// @dev 3b-ii-A2 (#2305) — the claim's entry walk, hosted; gated to the Diamond.
