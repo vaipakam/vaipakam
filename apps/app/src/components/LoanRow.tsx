@@ -67,6 +67,10 @@ export function LoanRow({
           <>
             <br />
             <span className="row-sub row-payout">{copy.positions.readyToClaim(payout.what)}</span>
+            {/* #2373 r6 — the reason a provisional payout may change. */}
+            {payout.provisional && payout.note ? (
+              <span className="row-sub claim-payout-note">{payout.note}</span>
+            ) : null}
           </>
         ) : null}
       </span>

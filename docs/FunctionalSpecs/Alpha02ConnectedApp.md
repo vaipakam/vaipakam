@@ -1659,7 +1659,8 @@ Thin-market honesty rules apply.
   said to be unreadable; it is never shown as still loading.
 - The confirmation keeps the same honesty as the page: while the payout is being
   checked, could not be confirmed, or is confirmed empty, the confirmation says
-  that rather than a general description of what such a claim usually pays.
+  that rather than a general description of what such a claim usually pays —
+  and rather than an earlier answer kept from before the latest check failed.
 - A position row with a claim waiting shows the loan's live status, not an
   indexed status the chain has already moved past.
 - The payout is composed from the loan's status as the page currently knows it,
@@ -1675,7 +1676,9 @@ Thin-market honesty rules apply.
   now, not as what the user will receive, and the reason is stated beside it and
   again at signing. A lender's claim on a fallback-settled loan is the case
   today: claiming first tries to match the loan with another, and a match pays
-  the loan's asset instead, for all or part of the recorded amount.
+  the loan's asset instead, for all or part of the recorded amount. The reason
+  travels with the payout onto every surface that states it — the
+  collect-everything checklist and the positions list as well as the loan page.
 - A loan's own page learns its payout from that loan alone. Opening one position
   must not scan every position the wallet has ever held.
 - A lender's claim on a defaulted loan says what the recovery is (a cash amount,

@@ -296,7 +296,7 @@ function ClaimAllChecklist({
  *  Its own component because the payout text reads token metadata, which
  *  is a hook and so cannot run inside the pure item builder. */
 function LoanItemLabel({ loan }: { loan: ClaimableLoan }) {
-  const { what } = useClaimPayoutText(loan);
+  const { what, note, provisional } = useClaimPayoutText(loan);
   const isRental = loan.assetType !== AssetType.ERC20;
   return (
     <span>
@@ -305,6 +305,9 @@ function LoanItemLabel({ loan }: { loan: ClaimableLoan }) {
         loan.loanId,
         what,
       )}
+      {/* #2373 r6 — a payout the claim can still change carries its reason
+          on every surface that states it, not only on the loan page. */}
+      {provisional && note ? <span className="claim-payout-note">{note}</span> : null}
     </span>
   );
 }

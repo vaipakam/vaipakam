@@ -77,7 +77,7 @@ import {
 } from '../data/forcedClose';
 import { useForcedCloseReads } from '../data/useForcedClose';
 import { probeClaim, useLoanClaim } from '../data/claimables';
-import { useClaimPayoutText } from '../data/useClaimPayout';
+import { receiptPayout, useClaimPayoutText } from '../data/useClaimPayout';
 import { ObligationTransferFlow } from '../components/ObligationTransferFlow';
 import { OffsetFlow } from '../components/OffsetFlow';
 import { OffsetPendingCard } from '../components/OffsetPendingCard';
@@ -2492,11 +2492,11 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         }
       : action === 'claim-borrower'
         ? {
-            youReceive: borrowerClaimText
-              ? borrowerClaimText.what
-              : claimReceiveUnknown
-                ? claimReceiveUnknown
-              : isRental
+            // #2373 r6 — a known-unknown state wins over retained text: a
+            // failed background refetch keeps the old data while the page
+            // already says the payout could not be confirmed.
+            youReceive: receiptPayout(claimReceiveUnknown, borrowerClaimText) ??
+              (isRental
               ? copy.positions.details.receipt.bufferBackShort
               : row.status === 'repaid'
                 ? hasCollateral
@@ -2504,7 +2504,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                   : copy.positions.details.receipt.owedNoCollateral
                 : row.status === 'internal_matched'
                   ? copy.positions.details.receipt.internalResidual
-                  : copy.positions.details.receipt.liquidationResidual,
+                  : copy.positions.details.receipt.liquidationResidual),
             youLock: copy.positions.details.receipt.nothing,
             youMayOwe: copy.positions.details.receipt.nothing,
             youCanLose: copy.positions.details.receipt.nothing,
@@ -2513,11 +2513,8 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           }
         : action === 'claim-lender'
           ? {
-              youReceive: lenderClaimText
-                ? lenderClaimText.what
-                : claimReceiveUnknown
-                  ? claimReceiveUnknown
-                : isRental
+              youReceive: receiptPayout(claimReceiveUnknown, lenderClaimText) ??
+                (isRental
                 ? copy.positions.details.receipt.rentalFeesAndNft
                 : properClose
                   ? copy.positions.details.principalPlusInterest(principalStr)
@@ -2528,7 +2525,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                     // neither specifically.
                     hasCollateral
                     ? copy.positions.details.recoveredSummary(principal?.symbol ?? copy.positions.details.loanAssetFallback, collateralStr)
-                    : copy.positions.details.receipt.recoveredNoCollateral,
+                    : copy.positions.details.receipt.recoveredNoCollateral),
               youLock: copy.positions.details.receipt.nothing,
               youMayOwe: copy.positions.details.receipt.nothing,
               youCanLose: copy.positions.details.receipt.nothing,

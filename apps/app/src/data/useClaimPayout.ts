@@ -162,6 +162,18 @@ export function useClaimPayoutText(
 
 type RowLabels = typeof copy.claims.row;
 
+/** What a claim's confirmation says it pays (#2373 r5/r6). A stated
+ *  unknown — checking, could not confirm, nothing waiting — WINS over any
+ *  payout text, because a failed background refetch keeps the previous data
+ *  while the page already reports the payout as unconfirmed. Null means the
+ *  caller falls back to its generic description (no claim read yet). */
+export function receiptPayout(
+  unknown: string | null,
+  text: Pick<ClaimPayoutText, 'what'> | null,
+): string | null {
+  return unknown ?? text?.what ?? null;
+}
+
 /** One fungible lane's amount, as far as the app knows it (#2373 r5 root
  *  fix). Every lane — the claim row, the swap surplus, added collateral,
  *  held proceeds — goes through this one type, so a lane is never left out

@@ -17,6 +17,7 @@ import {
   laneAmount,
   lenderPayoutWhat,
   nftClaimLabel,
+  receiptPayout,
   rentalPayoutWhat,
   type LaneAmount,
 } from './useClaimPayout';
@@ -245,5 +246,19 @@ describe('nftClaimLabel', () => {
   });
   it('is null when the claim names no asset', () => {
     expect(nftClaimLabel({ asset: null, assetType: 1, tokenId: 7n, quantity: 1n })).toBeNull();
+  });
+});
+
+describe('receiptPayout', () => {
+  // #2373 r6 — a failed background refetch keeps the old data; the stated
+  // unknown must still win in the confirmation.
+  it('prefers a stated unknown over retained payout text', () => {
+    expect(receiptPayout('Could not confirm', { what: '5 USDC' })).toBe('Could not confirm');
+  });
+  it('states the payout when it is known', () => {
+    expect(receiptPayout(null, { what: '5 USDC' })).toBe('5 USDC');
+  });
+  it('leaves the fallback to the caller when nothing is known', () => {
+    expect(receiptPayout(null, null)).toBeNull();
   });
 });
