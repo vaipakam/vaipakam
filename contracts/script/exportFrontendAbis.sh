@@ -92,7 +92,15 @@
 #     scripts that call this after their own build pay nothing.
 #   - Doesn't touch `index.ts` (the re-export barrel). If you add a
 #     brand-new facet, add it to FACETS below AND wire it into
-#     `packages/contracts/src/abis/index.ts` manually.
+#     `packages/contracts/src/abis/index.ts` manually, AND name it in
+#     `packages/contracts/scripts/diamond-facets.json` — under `facets` if
+#     it is cut into the Diamond, `standalone` otherwise. The combined
+#     Diamond ABI is built from that list (UX3-008), and
+#     `pnpm --filter @vaipakam/contracts test` fails on an ABI that is in
+#     neither list, so the omission is loud rather than a silently missing
+#     surface.
+#   - Rebuilds `packages/contracts/src/diamondAbi.json` (the combined,
+#     de-duplicated Diamond ABI) after publishing the per-facet files.
 
 set -euo pipefail
 
@@ -476,6 +484,11 @@ cat > "$OUT_DIR/_source.json" <<EOF
 }
 EOF
 echo "  source stamp -> $OUT_DIR/_source.json"
+
+# UX3-008 — the combined Diamond ABI is DERIVED from the files just
+# published; rebuild it here so it can never trail them. A failure is fatal:
+# a stale union would ship the previous Diamond surface to every consumer.
+node "$CONTRACTS_PKG_DIR/scripts/build-diamond-abi.mjs"
 
 echo ""
 echo "Done. Next steps:"

@@ -265,6 +265,7 @@ registering these can be correct:
 | `contracts/script/lib/FacetSelectors.sol` **+ a matching case in `contracts/test/deploy/RedeploySelectorParityTest.t.sol`** | only when the facet ALREADY HAS a getter in `FacetSelectors` — that is the condition, not "the curated scripts cut it", which is true of far more facets than the library covers (`ReplaceStaleFacets` cuts `ConfigFacet`, `OfferAcceptFacet` and others through `DeployDiamond`'s inherited getters, and those need nothing here). A brand-new facet needs a getter only if you are adding it to a curated script's set. These are ONE step, not a step and its guard: the parity test enumerates each facet BY HAND, so adding a getter without adding its case compiles happily and leaves that selector list entirely unpinned. The same list must also be updated when a covered facet gains, loses or renames an external FUNCTION — see "When you add a function to a facet" below |
 | `contracts/script/exportFrontendAbis.sh` (`FACETS=(...)`) | only if an app actually consumes the facet's ABI. Internal facets are deliberately excluded — `ReceiverFacet` is not in that array and should not be |
 | `packages/contracts/src/abis/index.ts` | only alongside the entry above — the export script does **not** touch this barrel |
+| `packages/contracts/scripts/diamond-facets.json` | only alongside the entry above — every exported ABI must be listed as a Diamond `facet` or as `standalone`; the combined Diamond ABI is built from the `facets` list, and the contracts package test fails on an unlisted file |
 
 The last two are covered in more detail in "Frontend ABI sync" **below**.
 
@@ -515,7 +516,22 @@ person doesn't lose an hour to that.
 to the `FACETS=(...)` array in
 `contracts/script/exportFrontendAbis.sh` AND wire it into the
 re-export barrel `packages/contracts/src/abis/index.ts` (the
-script does NOT touch the barrel).
+script does NOT touch the barrel) AND name it in
+`packages/contracts/scripts/diamond-facets.json` — under `facets` if
+it is cut into the Diamond, `standalone` otherwise.
+
+**The combined Diamond ABI is a generated file** (UX3-008).
+`DIAMOND_ABI` / `DIAMOND_ABI_VIEM` read `packages/contracts/src/diamondAbi.json`,
+which `exportFrontendAbis.sh` rebuilds after every export from the
+`facets` list, with exact duplicate entries removed. It is no longer a
+spread of every facet in the barrel: each facet repeats the shared errors
+and events, and the spread shipped 2.8 MB to every connected session where
+the union is 0.65 MB. `pnpm --filter @vaipakam/contracts test` fails when
+the union is stale, when an ABI file is in neither list, or when the union
+lost any facet entry — so a facet added to `FACETS` but not to the
+manifest fails CI instead of silently missing from the Diamond ABI. Do not
+hand-edit `diamondAbi.json`; run
+`node packages/contracts/scripts/build-diamond-abi.mjs`.
 
 ## Worker ABI consumption (Stage 3 split)
 
@@ -534,7 +550,9 @@ When you add a new facet that any of the Workers needs to read:
 1. Add the facet to the `FACETS=(...)` array in
    `contracts/script/exportFrontendAbis.sh`.
 2. Wire it into the re-export barrel
-   `packages/contracts/src/abis/index.ts`.
+   `packages/contracts/src/abis/index.ts`, and name it in
+   `packages/contracts/scripts/diamond-facets.json` (see "Frontend ABI
+   sync" above — the combined Diamond ABI is built from that list).
 3. Import it in the Worker that needs it (e.g.
    `apps/indexer/src/diamondAbi.ts` for indexer-side reads).
 
