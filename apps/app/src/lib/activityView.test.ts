@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  amountSubstance,
   coalesceByTx,
   humanizeKind,
   labelForKind,
@@ -178,5 +179,28 @@ describe('coalesceByTx', () => {
     ]);
     expect(borrower).toHaveLength(1);
     expect(borrower[0].label).toBe('Collateral claimed');
+  });
+});
+
+describe('amountSubstance (UX3-012)', () => {
+  const WETH = '0x4200000000000000000000000000000000000006';
+  it('takes the amount from a sibling details event when the representative carries only an id', () => {
+    const bucket = [
+      ev({ kind: 'OfferCanceled', args: { offerId: '44' } }),
+      ev({ kind: 'OfferCanceledDetails', args: { offerId: '44', lendingAsset: WETH, amount: '200000000000000' } }),
+    ];
+    expect(amountSubstance(bucket)).toEqual({ asset: WETH, amount: '200000000000000' });
+  });
+
+  it('reads JSON-string args the same way', () => {
+    const bucket = [ev({ args: JSON.stringify({ lendingAsset: WETH, amount: '5' }) })];
+    expect(amountSubstance(bucket)).toEqual({ asset: WETH, amount: '5' });
+  });
+
+  it('guesses nothing when no event names both an asset and a non-zero amount', () => {
+    expect(amountSubstance([ev({ args: { offerId: '1' } })])).toBeUndefined();
+    expect(amountSubstance([ev({ args: { lendingAsset: WETH, amount: '0' } })])).toBeUndefined();
+    expect(amountSubstance([ev({ args: { lendingAsset: 'not-an-address', amount: '5' } })])).toBeUndefined();
+    expect(amountSubstance([ev({ args: '{not json' })])).toBeUndefined();
   });
 });

@@ -662,6 +662,9 @@ const copySource = {
     // the Link step to request a new one.
     startOver: 'Start over',
     linked: 'Telegram linked — alerts for this wallet go to your chat.',
+    // UX3-013 — the browser only knows links made from it.
+    notLinkedHere:
+      'Not linked from this browser. If you linked this wallet on another device, its alerts still go there — use “Unlink this wallet” below to stop them.',
     unlink: 'Unlink',
     // UX-043 — a clear labelled action, not an ambiguous centered link.
     unlinkElsewhereTitle: 'Linked this wallet on another device?',

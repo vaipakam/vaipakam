@@ -18,7 +18,8 @@ import {
 } from '../data/indexer';
 import { EmptyState, UnavailableState } from '../components/EmptyState';
 import { MarketFreshnessNote } from '../components/MarketFreshnessNote';
-import { formatTimeAgo, shortAddress } from '../lib/format';
+import { formatTimeAgo, formatTokenAmount, shortAddress } from '../lib/format';
+import { useTokenMeta } from '../contracts/erc20';
 import { coalesceByTx, type ActivityRowView } from '../lib/activityView';
 import { signalAware } from '../chain/railHealth';
 
@@ -36,8 +37,15 @@ function ActivityRow({ row, explorer }: { row: ActivityRowView; explorer: string
     event.offerId !== null ? copy.activity.offerRef(event.offerId) : null,
   ].filter(Boolean);
 
+  // UX3-012 — what the transaction moved or offered, when it says so.
+  const substanceMeta = useTokenMeta(row.substance?.asset);
+  const substanceStr =
+    row.substance && substanceMeta.data
+      ? `${formatTokenAmount(BigInt(row.substance.amount), substanceMeta.data.decimals)} ${substanceMeta.data.symbol}`
+      : null;
   const sub = (
     <span className="row-sub">
+      {substanceStr ? `${substanceStr} · ` : ''}
       {context.length ? `${context.join(' · ')} · ` : ''}
       {formatTimeAgo(event.blockAt)}
       {hiddenCount > 0 ? copy.activity.plusMore(hiddenCount) : ''}

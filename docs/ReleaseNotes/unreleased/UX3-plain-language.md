@@ -1,0 +1,11 @@
+## Thread — The Rate Desk, Offer Book and core screens in plain words, usable by newcomers (PR #<n>)
+
+The owner asked for the app to be easy for someone with no trading or crypto background, including the advanced tools. This change rewrites the most jargon-heavy surfaces and makes the advanced ones approachable, following the 2026-10-03 live review (`docs/FindingsAndFixes/Findings20261003-LiveUiUxReview.md`, UX3-007, 012 and 013).
+
+The Rate Desk no longer speaks like a trading terminal. Choices that read "GTC", "AON" and "IOC" now read "Until I cancel", "Only all at once" and "Short-lived". "Quoted mid", "spread", "asks", "bids" and "fills" become the middle rate, the gap between offers, offers to lend, requests to borrow and agreed loans. Each choice on the offer form now explains what the selected option means in a visible line. Those explanations used to sit only in hover tooltips, which a phone never shows. A short "How this page works" guide opens on a first visit and folds away after. The note shown to Basic-mode visitors now invites them in and points to the step-by-step pages, where it used to read as a warning to stay away.
+
+The Offer Book now shows how much collateral each offer involves, not just which token. When the collateral is recorded as illiquid, the card says it would be handed over as-is if the loan is not repaid. It never calls collateral liquid just because nothing marked it otherwise. Choosing which side to show and how to sort is now available to everyone; only filtering by raw token address stays in Advanced mode.
+
+Activity rows now show the asset and amount a transaction moved or offered, whenever the transaction records them. The Alerts card now says when no Telegram link was made from this browser, and that it cannot see a link made on another device. Across the app, "principal" reads "loan amount", interest "builds up" rather than "accrues", and the commonest "on-chain" phrases read "on the blockchain".
+
+Every changed label and the new guide are translated in all ten supported languages, and the guide quotes each language's own button and heading names. Translations of reworded sentences whose meaning did not change were kept as they were. The automated browser tests and the live testnet drivers were updated to the new labels in the same change.

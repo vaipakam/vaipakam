@@ -162,6 +162,42 @@ export interface ActivityRowView {
   category: ActivityCategory;
   /** Extra events in the same transaction that this row subsumes. */
   hiddenCount: number;
+  /** UX3-012 — the asset and raw amount the transaction moved or offered,
+   *  when any event in it says so (an offer's own event carries only its
+   *  id; a sibling "details" event in the same transaction carries the
+   *  terms). Absent when no event names both — never guessed. */
+  substance?: { asset: string; amount: string };
+}
+
+/** UX3-012 — the first event in a transaction that names both a lending
+ *  asset and an amount. Pure; exported for the unit test. */
+export function amountSubstance(
+  bucket: IndexedActivityEvent[],
+): { asset: string; amount: string } | undefined {
+  for (const ev of bucket) {
+    let args: unknown = ev.args;
+    if (typeof args === 'string') {
+      try {
+        args = JSON.parse(args);
+      } catch {
+        continue;
+      }
+    }
+    if (!args || typeof args !== 'object') continue;
+    const a = args as Record<string, unknown>;
+    const asset = a.lendingAsset;
+    const amount = a.amount;
+    if (
+      typeof asset === 'string' &&
+      /^0x[0-9a-fA-F]{40}$/.test(asset) &&
+      typeof amount === 'string' &&
+      /^[0-9]+$/.test(amount) &&
+      amount !== '0'
+    ) {
+      return { asset, amount };
+    }
+  }
+  return undefined;
 }
 
 const DEFAULT_PRIORITY = 20;
@@ -203,6 +239,7 @@ export function coalesceByTx(events: IndexedActivityEvent[]): ActivityRowView[] 
       label: labelForKind(rep.kind),
       category: ACTIVITY_LABELS[rep.kind]?.category ?? 'other',
       hiddenCount: bucket.length - 1,
+      substance: amountSubstance(bucket),
     });
   }
 

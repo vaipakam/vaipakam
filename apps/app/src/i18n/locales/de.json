@@ -283,6 +283,7 @@
       "testAlertError": "Die Testbenachrichtigung konnte gerade nicht gesendet werden. Bitte versuchen Sie es gleich erneut.",
       "startOver": "Neu beginnen",
       "linked": "Telegram verknüpft — Benachrichtigungen für diese Wallet gehen an Ihren Chat.",
+      "notLinkedHere": "Nicht von diesem Browser aus verknüpft. Wenn Sie diese Wallet auf einem anderen Gerät verknüpft haben, kommen ihre Benachrichtigungen weiterhin dort an – nutzen Sie unten „Diese Wallet trennen“, um sie zu stoppen.",
       "unlink": "Verknüpfung lösen",
       "unlinkElsewhereTitle": "Diese Wallet auf einem anderen Gerät verknüpft?",
       "unlinkElsewhereBody": "Ihre Telegram-Verknüpfung liegt auf unserem Server, nicht nur in diesem Browser. Trennen Sie sie hier — bei einer gewöhnlichen Wallet stoppt das die Nachrichten überall; die Signatur einer Smart-Account-Wallet stoppt sie für das Netzwerk, das sie benennt.",

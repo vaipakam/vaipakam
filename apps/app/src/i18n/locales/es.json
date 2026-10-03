@@ -283,6 +283,7 @@
       "testAlertError": "No se pudo enviar la alerta de prueba ahora mismo. Inténtalo de nuevo en un momento.",
       "startOver": "Empezar de nuevo",
       "linked": "Telegram vinculado — las alertas para esta billetera van a tu chat.",
+      "notLinkedHere": "No vinculada desde este navegador. Si vinculaste esta billetera en otro dispositivo, sus alertas siguen llegando allí: usa «Desvincular esta billetera» abajo para detenerlas.",
       "unlink": "Desvincular",
       "unlinkElsewhereTitle": "¿Vinculaste esta billetera en otro dispositivo?",
       "unlinkElsewhereBody": "Su vínculo de Telegram vive en nuestro servidor, no solo en este navegador. Desconéctelo aquí: con un monedero ordinario eso detiene los mensajes en todas partes; la firma de un monedero de cuenta inteligente los detiene para la red que nombra.",

@@ -1106,6 +1106,10 @@ The app uses chain reads and indexed reads for different jobs.
   than silently narrowing to held positions only; a wallet with more
   participation history than one read returns folds into the page's
   recent-activity-only disclosure.
+- An Activity row states the asset and amount its transaction moved or offered
+  whenever any event in that transaction records them, so a row reads as more
+  than an id and a time. When no event records both, the row shows no amount
+  rather than a guess.
 - Realtime push refreshes matching indexed views when available. Polling remains
   the fallback.
 - The push signal covers every class of change a holder-keyed view depends on —
@@ -1215,8 +1219,14 @@ progress.
 
 ## Offer Book
 
-- Basic mode shows a plain newest-first book.
-- Advanced mode may filter by side, asset, rate, duration, and offer type.
+- Basic mode shows a plain newest-first book, and lets anyone choose which
+  side to show and how to sort it (rate or loan length) — plain choices that need
+  no expertise. Advanced mode adds filtering by raw asset address.
+- Each offer states its collateral as an amount, not only a token name, so a
+  lender can judge an offer before opening it. When the collateral is recorded
+  as illiquid, the row says that on default it is handed over as-is rather than
+  sold. The row never presents collateral as liquid merely because nothing
+  marked it illiquid.
 - A filter with no matches says the filter has no matches; it does not claim the
   whole market is empty.
 - Action labels are role-specific so the user understands whether they are
@@ -1228,8 +1238,11 @@ progress.
 
 ## Rate Desk
 
-Rate Desk is the Advanced-mode market terminal for supported fungible-token
-markets.
+Rate Desk is the market view for supported fungible-token markets. It is open to
+every user, not only to traders: its wording avoids trading jargon, a short
+"how this page works" guide explains it on a first visit, and every choice on the
+offer form explains what the selected option means in visible text rather than
+only in a hover tooltip.
 
 It should provide:
 
@@ -1909,6 +1922,9 @@ Thin-market honesty rules apply.
   unrelated change.
 - If no alert backend is configured, the app states that alerts are unavailable
   and sends nothing.
+- The alerts card states what this browser knows about the link: when no link was
+  made from this browser, it says so, and says that a link made on another device
+  would not show here — rather than implying the wallet is linked nowhere.
 
 ## Notifications
 

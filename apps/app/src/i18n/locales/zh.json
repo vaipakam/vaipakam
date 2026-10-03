@@ -283,6 +283,7 @@
       "testAlertError": "刚才无法发送测试提醒。请稍后重试。",
       "startOver": "重新开始",
       "linked": "Telegram 已链接 — 此钱包的提醒会发送到您的聊天。",
+      "notLinkedHere": "未从此浏览器关联。如果你在其他设备上关联了此钱包，提醒仍会发送到那里——请使用下方的“取消链接此钱包”停止。",
       "unlink": "取消链接",
       "unlinkElsewhereTitle": "在另一台设备上链接了此钱包？",
       "unlinkElsewhereBody": "其 Telegram 关联保存在我们的服务器上，而不仅仅是此浏览器中。在此断开——普通钱包会在所有地方停止消息；智能账户钱包的签名则停止其指定网络的消息。",

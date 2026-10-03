@@ -283,6 +283,7 @@
       "testAlertError": "Impossible d'envoyer l'alerte de test pour le moment. Réessayez dans un instant.",
       "startOver": "Recommencer",
       "linked": "Telegram lié — les alertes pour ce portefeuille vont dans votre chat.",
+      "notLinkedHere": "Non liée depuis ce navigateur. Si vous avez lié ce portefeuille sur un autre appareil, ses alertes y arrivent toujours — utilisez « Dissocier ce portefeuille » ci-dessous pour les arrêter.",
       "unlink": "Dissocier",
       "unlinkElsewhereTitle": "Vous avez lié ce portefeuille sur un autre appareil ?",
       "unlinkElsewhereBody": "Son lien Telegram vit sur notre serveur, pas seulement dans ce navigateur. Déconnectez-le ici — avec un portefeuille ordinaire, cela arrête les messages partout ; la signature d’un portefeuille de compte intelligent les arrête pour le réseau qu’elle nomme.",

@@ -301,6 +301,7 @@
       "testAlertError": "Couldn’t send the test alert just now. Please try again in a moment.",
       "startOver": "Start over",
       "linked": "Telegram linked — alerts for this wallet go to your chat.",
+      "notLinkedHere": "Not linked from this browser. If you linked this wallet on another device, its alerts still go there — use “Unlink this wallet” below to stop them.",
       "unlink": "Unlink",
       "unlinkElsewhereTitle": "Linked this wallet on another device?",
       "unlinkElsewhereBody": "Its Telegram link lives on our server, not just this browser. Disconnect it here — with an ordinary wallet that stops messages everywhere; a smart-account wallet’s signature stops them for the network it names.",

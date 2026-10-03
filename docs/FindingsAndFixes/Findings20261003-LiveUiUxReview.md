@@ -40,7 +40,7 @@ anything a signing drive reports must be read against that.
 | Batch | Findings | Status |
 | --- | --- | --- |
 | 1 — trust and accuracy (#2373) | UX3-001, 002, 003, 004, 005, 006, 010, 011, 014 | Fixed in the PR that adds this document. Each funds-facing rule is a pure function with a mutation-checked unit test (`resolveForcedCloseActive`, `tierBandRows`, `defaultRecoveryNote`). The repay spec now also drives the lender's view of a repaid loan. UX3-005 is fixed as "state the unknown": the claim says what the recovery is and that no shortfall is shown. An exact shortfall needs the amount owed at default, which the app does not have; that is tracked in #2374. |
-| 2 — plain language and approachable advanced tools | UX3-007, 012, 013, plus a wording pass over the core journeys | Next PR. |
+| 2 — plain language and approachable advanced tools | UX3-007, 012, 013, plus a wording pass over the core journeys | Fixed in the follow-up PR to #2373: Rate Desk and Offer Book in plain words, with a first-visit guide; collateral amounts and the illiquid flag on offer cards; Basic-mode filters; amounts on Activity rows; the Alerts link status; and a vocabulary pass, all in the 10 translated languages. |
 | 3 — the missing borrower feature and the bundle | UX3-009, 008 | After batch 2. |
 
 ## Site-wide health baseline
