@@ -358,6 +358,26 @@ retired selector needs an explicit `FacetCutAction.Remove` leg, the way
 `_legacyProfileRemovedSelectors()`. The library update is necessary and not
 sufficient.
 
+**The all-facets refresh is the exception, and does not need that leg**
+(#2313). `RefreshAllFacetsInPlace` derives what to remove from the loupe: after
+its cuts and migrations it removes every routed selector outside the deploy's
+selector set (`_sweepStaleRoutes`), before the reward-custody cutover stamp
+records the routing. It used to remove retirements from hand-kept lists, one
+block per incident, and Base Sepolia carried eleven unlisted ones — older
+accept entry points and reward ingress hooks — through a complete refresh.
+Two consequences follow:
+- A retired signature needs no Remove block in that script. Add one only when
+  a migration reads the still-routed selector as its completion marker (M1's
+  tariff reset is the case there today).
+- `items[]` being complete is now load-bearing in BOTH directions. A facet
+  missing from it would have its live selectors classified stale and removed,
+  not merely left on old bytecode. `RefreshScriptFacetParityTest`'s
+  selector-set equality is what holds it, so treat a red parity test as a
+  deploy blocker.
+
+The CURATED scripts above cut subsets by design and cannot use the same rule,
+so they keep their explicit legs.
+
 **`RiskPreviewFacet` has a FOURTH copy of its surface**, and it is a shell
 array: `contracts/script/rehearse-partial-refresh.sh` hard-codes
 `RISK_PREVIEW_SELECTORS`, and `assert_risk_preview_routed` iterates only that
