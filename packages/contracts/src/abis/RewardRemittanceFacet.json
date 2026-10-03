@@ -1444,6 +1444,11 @@
   },
   {
     "type": "error",
+    "name": "D6EmptyLeaves",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "DayAlreadyFinalized",
     "inputs": []
   },

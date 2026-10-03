@@ -8754,6 +8754,13 @@ library LibVaipakam {
         ///      watermark that guessed wrong would refuse a legitimate
         ///      attestation for good — a worse failure than a wasted fee.
         bool splitOnWire;
+        /// @dev 3d-2 (#1566 transport epochs, the d6 wire), appended — the
+        ///      day-list ROOT this reservation's payload committed to. The
+        ///      receive side indexes the delivery's membership by proofs against
+        ///      exactly this word, so the canonical record of what was sent
+        ///      carries the same commitment the mirror holds. Zero for every
+        ///      reservation dispatched before the rooted wire.
+        bytes32 dayListRoot;
     }
 
     /// @notice #1222 M3 B2-d2 — a mirror's receipt record for one delivered

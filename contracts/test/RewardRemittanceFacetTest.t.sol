@@ -19,6 +19,7 @@ import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {LibRewardCustody} from "../src/libraries/LibRewardCustody.sol";
 import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
 import {MockCrossChainMessenger} from "./mocks/MockCrossChainMessenger.sol";
+import {RemitWire} from "../src/crosschain/RemitWire.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 
 /**
@@ -541,16 +542,41 @@ contract RewardRemittanceFacetTest is SetupTest {
         dup[0] = 1;
         dup[1] = 1;
         remit.remitRewardBudget{value: 1 ether}(CHAIN_ARB, dup, CAP);
-        // B2-d5 — the payload leads with the wire tag (see {RemitWire}); the
-        // pre-tag prefix decode now reverts by design, which is the whole
-        // point of the tag.
-        (, uint256[] memory sentDays, uint256 sentTotal, , , ) = abi.decode(
-            ccip.sentPayload(0),
-            (uint256, uint256[], uint256, uint256, address, uint256)
-        );
-        assertEq(sentDays.length, 1, "payload carries only the funded day");
-        assertEq(sentDays[0], 1, "funded day is day 1");
+        // 3d-2 — the payload is the ROOTED (d6) shape: it names no days, it
+        // commits to them. The extent says ONE day, and the root is the root
+        // over exactly [1] — a list echoing the caller's [1, 1] would root
+        // differently.
+        (uint256 tag, bytes32 root, uint256 n, uint256 chunks, uint256 sentTotal, uint256 remitId, address remitter, , uint256 era) =
+            abi.decode(ccip.sentPayload(0), (uint256, bytes32, uint256, uint256, uint256, uint256, address, uint256, uint256));
+        assertEq(tag, RemitWire.REMIT_WIRE_TAG_D6, "the rooted wire");
+        assertEq(n, 1, "the extent names only the funded day");
+        assertEq(chunks, 1);
+        assertEq(root, RemitWire.d6Root(RemitWire.d6Chunks(_days(1))), "the root is over exactly [1]");
+        assertEq(remitter, address(diamond), "the deployment's identity rides the wire");
+        assertEq(era, 0, "the pre-registry era");
         assertGt(sentTotal, 0, "non-zero total");
+        assertEq(rlens.getRemitReservation(remitId).dayListRoot, root, "the reservation keeps the root it committed to");
+    }
+
+    /// @dev 3d-2 — a send wider than one chunk roots every funded day in
+    ///      chunk order, and the quote's total is the send's: the two are built
+    ///      by one rule.
+    function test_Remit_RootsTheFundedDays_InChunks_AndTheQuoteIsTheSend() public {
+        uint256 n = RemitWire.D6_CHUNK_DAYS + 1;
+        _finalizeDays(n);
+        uint256[] memory days_ = new uint256[](n);
+        for (uint256 i; i < n; ++i) days_[i] = i + 1;
+        (uint256 fee, uint256 quotedTotal) = remit.quoteRemittanceFee(CHAIN_ARB, days_);
+        assertGt(quotedTotal, 0, "the quote prices the batch");
+        remit.remitRewardBudget{value: fee}(CHAIN_ARB, days_, CAP);
+        (, bytes32 root, uint256 e, uint256 chunks, uint256 sentTotal, uint256 remitId, , , ) =
+            abi.decode(ccip.sentPayload(0), (uint256, bytes32, uint256, uint256, uint256, uint256, address, uint256, uint256));
+        assertEq(e, n, "every funded day is in the extent");
+        assertEq(chunks, 2, "two chunks");
+        assertEq(root, RemitWire.d6Root(RemitWire.d6Chunks(days_)), "rooted over the funded days in order");
+        assertEq(sentTotal, quotedTotal, "the quote's total is the send's");
+        assertEq(rlens.getRemitReservation(remitId).dayListRoot, root, "kept on the reservation");
+        assertEq(rlens.getRemitReservation(remitId).dayIds.length, n, "and the closed days are recorded as before");
     }
 
     // ─── mirror-side ingress: onRewardBudgetReceived (#776 PR2) ────────────
