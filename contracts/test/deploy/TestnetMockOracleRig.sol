@@ -176,6 +176,9 @@ abstract contract TestnetMockOracleRig is Test, DeployTestnetMocks {
         venue.setTokenPrice(address(mUSDC), P_MUSDC);
         venue.setTokenPrice(address(mWETH), P_MWETH);
         venue.setTokenPrice(address(weth), P_MWETH);
+        // Registered on the Diamond, so it is the venue liquidations route
+        // through — the reprice script refuses one that is not (#2314).
+        AdminFacet(address(diamond)).addSwapAdapter(address(venue));
     }
 
     function _status(address a) internal view returns (uint256) {

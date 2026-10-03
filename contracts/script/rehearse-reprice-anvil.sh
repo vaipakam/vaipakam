@@ -51,7 +51,9 @@ PORT="${REHEARSE_ANVIL_PORT:-8547}"
 RPC="http://127.0.0.1:${PORT}"
 ART="deployments/base-sepolia/addresses.json"
 
-anvil --fork-url "$BASE_SEPOLIA_RPC_URL" --port "$PORT" --silent >/dev/null 2>&1 &
+# --chain-id is explicit: Anvil's own default is 31337, and whether a fork
+# inherits the forked chain's id has varied across Anvil versions.
+anvil --fork-url "$BASE_SEPOLIA_RPC_URL" --chain-id 84532 --port "$PORT" --silent >/dev/null 2>&1 &
 ANVIL_PID=$!
 trap 'kill "$ANVIL_PID" 2>/dev/null || true' EXIT
 
@@ -89,9 +91,12 @@ impersonate() {
 }
 
 reprice() { # reprice <asset-key> <price-e8> <sender> — returns forge's exit code
+  # The two opt-ins are pinned off, so a stale export or a line in .env cannot
+  # weaken the run being rehearsed (a command-line value wins over .env).
   env -u MOCK_OWNER_PRIVATE_KEY REPRICE_ASSET="$1" REPRICE_USD_E8="$2" \
+    REPRICE_SKIP_VENUE=false REPRICE_ALLOW_ILLIQUID=false \
     forge script script/RepriceTestnetMock.s.sol \
-      --rpc-url "$RPC" --broadcast --unlocked --sender "$3" >"$LOG_DIR/reprice-$1-$2.log" 2>&1
+      --rpc-url "$RPC" --broadcast --slow --unlocked --sender "$3" >"$LOG_DIR/reprice-$1-$2.log" 2>&1
 }
 
 LOG_DIR="$(mktemp -d)"

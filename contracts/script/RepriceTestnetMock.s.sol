@@ -11,21 +11,36 @@ import {MockSwapAdapter} from "../test/mocks/MockSwapAdapter.sol";
 import {Deployments} from "./lib/Deployments.sol";
 import {MockPoolPricing} from "./lib/MockPoolPricing.sol";
 
-/// @dev The two Diamond views this script reads, declared narrowly so the
-///      script does not compile the whole OracleFacet to call them.
+/// @dev The Diamond views this script reads, declared narrowly so the script
+///      does not compile OracleFacet and AdminFacet to call them.
 ///      `checkLiquidity` returns `LibVaipakam.LiquidityStatus`, which the
 ///      ABI encodes as a uint8: 0 = Liquid, 1 = Illiquid.
-interface IOracleViews {
+interface IRepriceDiamondViews {
     function getAssetPrice(address asset) external view returns (uint256 price, uint8 decimals);
     function checkLiquidity(address asset) external view returns (uint8);
+    function getSwapAdapters() external view returns (address[] memory);
+    function isSwapAdapterDisabled(address adapter) external view returns (bool);
 }
 
 /**
  * @title RepriceTestnetMock
  * @notice Reprice a testnet faucet asset the way a real market moves: its
  *         mock Chainlink feed, the spot of its mock v3 `asset/WETH` pool,
- *         and (by default) its price on the registered mock swap venue —
- *         together, in one broadcast (#2314).
+ *         and (by default) its price on the registered mock swap venue — in
+ *         one run (#2314).
+ *
+ *         **One run is THREE transactions, and they are not atomic.** Each
+ *         mock is gated to an immutable owner EOA, so no batching contract
+ *         can make the three calls as that owner. Between the transactions,
+ *         an observer can see the feed moved while the pool has not (the
+ *         asset reads Illiquid for those blocks) or the venue still at the
+ *         old price. If a send fails part-way, the testnet is left partially
+ *         repriced. **Recovery is to re-run the same command**: every write
+ *         is a plain set to the target value, so a re-run completes whatever
+ *         did not land, and the Liquid-to-Illiquid guard below does not block
+ *         it because the partial state already reads Illiquid. Broadcast with
+ *         `--slow` so forge waits for each receipt and stops at the first
+ *         failure rather than queueing the rest.
  *
  *         Why all three. The oracle only counts a pool whose spot agrees
  *         with the feed ratio within the TWAP-consistency band (3% by
@@ -56,6 +71,10 @@ interface IOracleViews {
  *           - a broadcaster that does not own the feed, the pool, and (unless
  *             skipped) the venue — each is owner-gated so a public testnet's
  *             demos cannot be repriced by a passer-by;
+ *           - (unless skipped) a recorded venue the Diamond does not route
+ *             liquidations through: it must be in `getSwapAdapters()` and not
+ *             disabled. Repricing a different adapter would leave the one the
+ *             Diamond actually uses at the old price;
  *           - a feed not at 8 decimals, or legs at different token decimals
  *             (the pool math has no decimal term).
  *
@@ -88,6 +107,12 @@ interface IOracleViews {
  *                                      venue's price where it is — only for a
  *                                      deliberate venue/oracle mismatch test.
  *           - REPRICE_ALLOW_ILLIQUID : optional, default false. See above.
+ *
+ *         The two opt-ins weaken what a run guarantees, and Foundry also reads
+ *         them from `contracts/.env` or a stale shell export. The runbook's
+ *         command therefore sets both to `false` explicitly (a variable set on
+ *         the command line wins over `.env`), and the script prints a
+ *         WARNING line for each one that is on.
  *
  *         Anvil first: `script/rehearse-reprice-anvil.sh` forks Base Sepolia,
  *         impersonates the mock owner and runs this script end to end.
@@ -151,6 +176,12 @@ contract RepriceTestnetMock is Script {
         console.log("Pool spot:     %s -> %s", uint256(before.poolSpot), uint256(newSpot));
         console.log("Venue (e8):    %s -> %s", before.venuePrice8, skipVenue ? before.venuePrice8 : newPrice8);
         console.log("Liquidity:     %s (0 = Liquid, 1 = Illiquid)", uint256(before.liquidity));
+
+        if (skipVenue) console.log("WARNING: REPRICE_SKIP_VENUE is on - the liquidation venue keeps its old price");
+        if (allowIlliquid) {
+            console.log("WARNING: REPRICE_ALLOW_ILLIQUID is on - a result that reads Illiquid will still broadcast");
+        }
+        console.log("Sends 3 transactions (2 with REPRICE_SKIP_VENUE); not atomic - re-run to finish a partial run.");
 
         if (ownerKey == 0) vm.startBroadcast();
         else vm.startBroadcast(ownerKey);
@@ -220,6 +251,11 @@ contract RepriceTestnetMock is Script {
         require(MockUniswapV3Pool(t.pool).owner() == sender, "RepriceTestnetMock: broadcaster does not own the pool");
         if (!skipVenue) {
             require(t.venue.code.length != 0, "RepriceTestnetMock: no code at the recorded venue");
+            require(_isRoutedVenue(t), "RepriceTestnetMock: recorded venue is not in the Diamond's live adapter list");
+            require(
+                !IRepriceDiamondViews(t.diamond).isSwapAdapterDisabled(t.venue),
+                "RepriceTestnetMock: recorded venue is registered but disabled on the Diamond"
+            );
             require(MockSwapAdapter(t.venue).owner() == sender, "RepriceTestnetMock: broadcaster does not own the venue");
         }
     }
@@ -228,7 +264,7 @@ contract RepriceTestnetMock is Script {
     ///         price as the Diamond's oracle reads it.
     function _targetSpot(RepriceTarget memory t, uint256 newPrice8) internal view returns (uint160) {
         require(newPrice8 != 0, "RepriceTestnetMock: REPRICE_USD_E8 is zero");
-        (uint256 quotePrice, uint8 quoteDecimals) = IOracleViews(t.diamond).getAssetPrice(t.quote);
+        (uint256 quotePrice, uint8 quoteDecimals) = IRepriceDiamondViews(t.diamond).getAssetPrice(t.quote);
         require(quotePrice != 0, "RepriceTestnetMock: the oracle reads no WETH price");
         require(quoteDecimals <= 18, "RepriceTestnetMock: WETH price has more than 18 decimals");
         // Bring both legs to one scale; the pool math is scale-free.
@@ -270,9 +306,17 @@ contract RepriceTestnetMock is Script {
         }
     }
 
+    function _isRoutedVenue(RepriceTarget memory t) internal view returns (bool) {
+        address[] memory adapters = IRepriceDiamondViews(t.diamond).getSwapAdapters();
+        for (uint256 i; i < adapters.length; ++i) {
+            if (adapters[i] == t.venue) return true;
+        }
+        return false;
+    }
+
     function _read(RepriceTarget memory t) internal view returns (PriceReading memory r) {
-        (r.oraclePrice, r.oracleDecimals) = IOracleViews(t.diamond).getAssetPrice(t.asset);
-        r.liquidity = IOracleViews(t.diamond).checkLiquidity(t.asset);
+        (r.oraclePrice, r.oracleDecimals) = IRepriceDiamondViews(t.diamond).getAssetPrice(t.asset);
+        r.liquidity = IRepriceDiamondViews(t.diamond).checkLiquidity(t.asset);
         r.poolSpot = MockUniswapV3Pool(t.pool).sqrtPriceX96();
         if (t.venue.code.length != 0) r.venuePrice8 = MockSwapAdapter(t.venue).tokenUsdPrice8(t.asset);
     }

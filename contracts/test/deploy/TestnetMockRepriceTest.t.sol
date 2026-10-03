@@ -3,7 +3,9 @@ pragma solidity ^0.8.29;
 
 import {OracleFacet} from "../../src/facets/OracleFacet.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
+import {AdminFacet} from "../../src/facets/AdminFacet.sol";
 import {MockUniswapV3Pool} from "../../script/mocks/MockUniswapV3.sol";
+import {MockSwapAdapter} from "../mocks/MockSwapAdapter.sol";
 import {DeployTestnetMocks} from "../../script/DeployTestnetMocks.s.sol";
 import {RepriceTestnetMock} from "../../script/RepriceTestnetMock.s.sol";
 import {MockPoolPricing} from "../../script/lib/MockPoolPricing.sol";
@@ -143,6 +145,31 @@ contract TestnetMockRepriceTest is TestnetMockOracleRig, RepriceTestnetMock {
         t.feed = address(musdcFeed);
         vm.expectRevert(bytes("RepriceTestnetMock: recorded feed is not the registry's live asset/USD feed"));
         this.preflightExt(t, address(this), false);
+    }
+
+    /// @notice A venue the Diamond does not route through — a stale record,
+    ///         or another adapter the same owner deployed — would be repriced
+    ///         while liquidations keep settling on the real one at the old
+    ///         price.
+    function test_refuses_aVenueTheDiamondDoesNotRoute() public {
+        RepriceTarget memory t = tliqTarget;
+        t.venue = address(new MockSwapAdapter("unregistered")); // owned by this contract, too
+        vm.expectRevert(bytes("RepriceTestnetMock: recorded venue is not in the Diamond's live adapter list"));
+        this.preflightExt(t, address(this), false);
+    }
+
+    function test_refuses_aDisabledVenue() public {
+        AdminFacet(address(diamond)).setSwapAdapterDisabled(address(venue), true);
+        vm.expectRevert(bytes("RepriceTestnetMock: recorded venue is registered but disabled on the Diamond"));
+        this.preflightExt(tliqTarget, address(this), false);
+    }
+
+    /// @notice With the venue skipped, its registration is not the run's
+    ///         concern — it is not touched.
+    function test_skipVenue_doesNotRequireARoutedVenue() public {
+        RepriceTarget memory t = tliqTarget;
+        t.venue = address(new MockSwapAdapter("unregistered"));
+        this.preflightExt(t, address(this), true);
     }
 
     function test_refuses_aZeroPrice() public {

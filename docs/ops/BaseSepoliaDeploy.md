@@ -225,15 +225,25 @@ alone.** The faucet pool's spot is static, and the oracle only counts a pool
 whose spot agrees with the feed within the TWAP-consistency band (3% by
 default). A feed-only move past that band makes tLIQ read **Illiquid**, which
 looks exactly like a pool too shallow for the trade (#2314 was first
-misdiagnosed that way). The script moves three things together: the feed,
-the pool spot, and the registered mock swap venue's price (which sets what a
+misdiagnosed that way). The script moves three things: the feed, the pool
+spot, and the registered mock swap venue's price (which sets what a
 liquidation actually pays).
+
+**It is three transactions, not one atomic change.** Each mock belongs to a
+fixed owner wallet, so nothing can batch the three calls. For the few blocks
+between them, an observer can see tLIQ read Illiquid or the venue still at
+the old price. If a send fails part-way, the testnet is left partly
+repriced: **re-run the same command**. Every write sets the target value, so
+a re-run finishes whatever did not land. `--slow` makes forge wait for each
+receipt and stop at the first failure.
 
 It accepts `liquidToken` (tLIQ) and `liquidToken2` (mUSDC) only. mWETH shares
 its feed with WETH, so repricing it would move the quote leg of every faucet
 pool; the script refuses it. Before it broadcasts anything, it checks:
 
 - the artifact still describes the chain;
+- the venue is the one the Diamond routes liquidations through (listed and
+  not disabled);
 - the broadcaster owns the feed, the pool and the venue;
 - after the writes, the Diamond reads the new price;
 - after the writes, the asset still reads Liquid.
@@ -250,10 +260,22 @@ Then, on the testnet itself, broadcast as the mock owner (the key that ran
 
 ```bash
 REPRICE_ASSET=liquidToken REPRICE_USD_E8=160000000000 \
+REPRICE_SKIP_VENUE=false REPRICE_ALLOW_ILLIQUID=false \
 MOCK_OWNER_PRIVATE_KEY=<mock owner key> \
-forge script script/RepriceTestnetMock.s.sol --rpc-url $BASE_SEPOLIA_RPC_URL --broadcast
+forge script script/RepriceTestnetMock.s.sol --rpc-url $BASE_SEPOLIA_RPC_URL --broadcast --slow
 # or, with a hardware wallet: drop MOCK_OWNER_PRIVATE_KEY, add --ledger --sender <owner>
 ```
+
+The command sets both opt-ins to `false` on purpose. Foundry also reads them
+from `contracts/.env` and from your shell, and a value on the command line
+wins over both. Turn one on only for a deliberate test:
+
+| Flag | Effect when `true` |
+| --- | --- |
+| `REPRICE_SKIP_VENUE` | The venue keeps its old price, so a liquidation settles at the pre-move price. Use it only to test a venue/oracle mismatch. |
+| `REPRICE_ALLOW_ILLIQUID` | A result that reads Illiquid still broadcasts. Use it only to look at a depth or band limit on purpose. |
+
+The script prints a `WARNING` line for each flag that is on.
 
 The script checks the result in simulation only, not after broadcast, so
 read the live state yourself:
