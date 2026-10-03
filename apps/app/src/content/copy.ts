@@ -3721,7 +3721,7 @@ const copySource = {
       collateralRequire: 'Collateral you require',
       collateralLock: 'Collateral you lock',
       collateralFixedNote:
-        'Set by the selected market — switch markets in the header to post against a different collateral asset.',
+        'Set by the pair you picked — switch the pair at the top to use a different collateral asset.',
       expiryLabel: 'How long it stays open',
       expiryGtc: 'Until I cancel',
       expiryCustom: 'Pick a date…',
@@ -3737,7 +3737,7 @@ const copySource = {
       fillIocHint: 'Short-lived: it stays open only until the closing time you set, so it needs one.',
       iocNeedsExpiry: 'A short-lived offer needs a closing time — pick 24h, 7d, or a date.',
       tenorNote: tmpl(
-        `This offer is for a {{label}} loan — change the length with the buttons above.`,
+        `Loan length: {{label}} — change it with the buttons above.`,
         ['label'],
       ),
       overDurationCap: tmpl(
