@@ -51,6 +51,13 @@ PORT="${REHEARSE_ANVIL_PORT:-8547}"
 RPC="http://127.0.0.1:${PORT}"
 ART="deployments/base-sepolia/addresses.json"
 
+# The port must be FREE: if another node already answers on it, the launch
+# below fails while the readiness loop happily connects to that node, and the
+# rehearsal would then impersonate and write to it.
+if cast chain-id --rpc-url "$RPC" >/dev/null 2>&1; then
+  echo "rehearse-reprice-anvil: something already answers on port $PORT; set REHEARSE_ANVIL_PORT" >&2
+  exit 2
+fi
 # --chain-id is explicit: Anvil's own default is 31337, and whether a fork
 # inherits the forked chain's id has varied across Anvil versions.
 anvil --fork-url "$BASE_SEPOLIA_RPC_URL" --chain-id 84532 --port "$PORT" --silent >/dev/null 2>&1 &
@@ -61,6 +68,8 @@ for _ in $(seq 1 60); do
   cast chain-id --rpc-url "$RPC" >/dev/null 2>&1 && break
   sleep 1
 done
+# And the node that answered must be the one this script started.
+kill -0 "$ANVIL_PID" 2>/dev/null || { echo "rehearse-reprice-anvil: anvil exited on start" >&2; exit 1; }
 CHAIN_ID="$(cast chain-id --rpc-url "$RPC")"
 [[ "$CHAIN_ID" == "84532" ]] || { echo "fork reports chain id $CHAIN_ID, expected 84532" >&2; exit 1; }
 
@@ -124,6 +133,10 @@ for P in 160000000000 90000000000; do
   check "Liquid after a coherent reprice to e8 $P" "$(liquidity)" "0"
   check "the Diamond reads e8 $P" "$(oracle_price)" "$P"
   check "the venue pays e8 $P" "$(venue_price)" "$P"
+  grep -q "^  Not checked: the venue's output-token float" "$LOG_DIR/reprice-liquidToken-$P.log" \
+    && check "the run states what it does not check" "yes" "yes" \
+    || check "the run states what it does not check" "no" "yes"
+  grep -h "Venue report\|WARNING: venue\|WARNING: oracle" "$LOG_DIR/reprice-liquidToken-$P.log" | sed 's/^ */    info  /'
 done
 
 echo "[3] refusals send nothing"

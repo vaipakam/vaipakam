@@ -223,6 +223,83 @@ contract TestnetMockRepriceTest is TestnetMockOracleRig, RepriceTestnetMock {
         this.verifyExt(tliqTarget, 1_600e8, before, false, false);
     }
 
+    // ── Venue report (state the run does not write) ─────────────────────
+
+    function _faucet() internal view returns (address[] memory a) {
+        a = new address[](4);
+        a[0] = address(tLIQ);
+        a[1] = address(mUSDC);
+        a[2] = address(mWETH);
+        a[3] = address(weth);
+    }
+
+    /// @notice The rig's venue is configured as DeployTestnetMocks configures
+    ///         it, so after a coherent reprice nothing in it deviates.
+    function test_venueReport_cleanVenueAfterARepriceHasNoDeviations() public {
+        _reprice(tliqTarget, 1_600e8, false, false);
+        assertEq(_venueReport(tliqTarget, _faucet()).length, 0, "no deviations");
+    }
+
+    function test_venueReport_namesEachExecutionKnob() public {
+        venue.setShouldRevert(true);
+        venue.setOutputMultiplierBps(9_000);
+        address other = makeAddr("other-caller");
+        venue.setRestrictedTo(other);
+        string[] memory d = _venueReport(tliqTarget, _faucet());
+        assertEq(d.length, 3, "three knob deviations");
+        assertEq(d[0], "venue shouldRevert is on: every liquidation through it reverts");
+        assertEq(d[1], "venue outputMultiplierBps is 9000, not 10000: it pays that fraction of the fair amount");
+        assertEq(
+            d[2],
+            string.concat(
+                "venue execute is restricted to ", vm.toString(other), ", not the Diamond: liquidations through it revert"
+            )
+        );
+    }
+
+    /// @notice A venue gated to the Diamond itself is the deployed shape,
+    ///         not a deviation.
+    function test_venueReport_restrictedToTheDiamondIsNotADeviation() public {
+        venue.setRestrictedTo(address(diamond));
+        assertEq(_venueReport(tliqTarget, _faucet()).length, 0, "Diamond gate is normal");
+    }
+
+    /// @notice The counter-leg of a liquidation is priced by the venue too:
+    ///         an unset price falls back to a flat 1:1, a stale one settles
+    ///         at the wrong ratio. Both are reported.
+    function test_venueReport_namesAnUnsetAndAStaleCounterLeg() public {
+        venue.setTokenPrice(address(mUSDC), 0);
+        venue.setTokenPrice(address(mWETH), 2_500e8);
+        string[] memory d = _venueReport(tliqTarget, _faucet());
+        assertEq(d.length, 2, "two price deviations");
+        assertEq(
+            d[0],
+            string.concat(
+                "venue has no price for ", vm.toString(address(mUSDC)), ": a liquidation pairing it settles at a flat 1:1"
+            )
+        );
+        assertEq(
+            d[1],
+            string.concat(
+                "venue pays ", vm.toString(address(mWETH)), " at e8 250000000000 but the oracle reads 300000000000 at 8 decimals"
+            )
+        );
+    }
+
+    /// @notice With the venue skipped, the repriced asset itself shows up as
+    ///         a deviation — the report states the mismatch the operator chose.
+    function test_venueReport_skipVenueReportsTheRepricedAsset() public {
+        _reprice(tliqTarget, 1_600e8, true, false);
+        string[] memory d = _venueReport(tliqTarget, _faucet());
+        assertEq(d.length, 1, "the skipped venue leg");
+        assertEq(
+            d[0],
+            string.concat(
+                "venue pays ", vm.toString(address(tLIQ)), " at e8 200000000000 but the oracle reads 160000000000 at 8 decimals"
+            )
+        );
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────────
 
     /// @dev The script's `run()` sequence minus artifact resolution and

@@ -85,6 +85,16 @@ interface IRepriceDiamondViews {
  *             it Illiquid is a depth or band limit worth seeing, not a
  *             rehearsal state to ship silently.
  *
+ *         Then it REPORTS, without refusing, the venue state it does not
+ *         write: the execution knobs (`shouldRevert`,
+ *         `outputMultiplierBps`, `restrictedTo`) and the venue's price for
+ *         every faucet asset against the oracle's. Those decide what a
+ *         liquidation actually pays against the repriced asset, and the
+ *         script cannot fix them (mWETH/WETH cannot be repriced here). The
+ *         run also states what it cannot know at all: the venue's output
+ *         float, and tokens outside the faucet set. It never claims that a
+ *         liquidation will settle correctly.
+ *
  *         `forge script` runs the whole body in simulation first and
  *         broadcasts only if it succeeds, so every refusal above sends
  *         nothing. The post-broadcast state is NOT re-checked by this script;
@@ -190,9 +200,19 @@ contract RepriceTestnetMock is Script {
 
         PriceReading memory afterReading = _verifyReprice(t, newPrice8, before, skipVenue, allowIlliquid);
         console.log("Liquidity now: %s (0 = Liquid, 1 = Illiquid)", uint256(afterReading.liquidity));
-        if (skipVenue) {
-            console.log("REPRICE_SKIP_VENUE: the venue still pays at e8 price", afterReading.venuePrice8);
+
+        // The venue's settlement depends on state this run does not write.
+        // Report all of it that is knowable, and say what is not.
+        if (t.venue.code.length != 0) {
+            string[] memory deviations = _venueReport(t, _faucetPricedAssets(t));
+            console.log("Venue report (state this run does not write): %s deviation(s)", deviations.length);
+            for (uint256 i; i < deviations.length; ++i) {
+                console.log(string.concat("WARNING: ", deviations[i]));
+            }
         }
+        console.log(
+            "Not checked: the venue's output-token float, and tokens outside the faucet set. A liquidation can still fail on a short float, or settle at a flat 1:1 for an unpriced token."
+        );
     }
 
     /// @notice Resolve every address from this chain's deployment artifact.
@@ -306,6 +326,101 @@ contract RepriceTestnetMock is Script {
         }
     }
 
+    /// @notice The faucet assets the venue is expected to price: the two
+    ///         liquid tokens, mWETH where recorded, and the WETH quote.
+    function _faucetPricedAssets(RepriceTarget memory t) internal view returns (address[] memory assets) {
+        address[4] memory found = [
+            _optional(".testnetMocks.liquidToken"),
+            _optional(".testnetMocks.liquidToken2"),
+            _optional(".testnetMocks.mWeth"),
+            t.quote
+        ];
+        uint256 n;
+        for (uint256 i; i < found.length; ++i) {
+            if (found[i] != address(0)) ++n;
+        }
+        assets = new address[](n);
+        n = 0;
+        for (uint256 i; i < found.length; ++i) {
+            if (found[i] != address(0)) assets[n++] = found[i];
+        }
+    }
+
+    /// @notice Every way the venue would settle a liquidation differently
+    ///         from the oracle, across its WHOLE configuration: the three
+    ///         execution knobs, and its price for each of `assets`. An empty
+    ///         result means none of that state deviates — it does not mean a
+    ///         liquidation will succeed (the output float is not knowable
+    ///         here; `run()` says so).
+    /// @dev    `MockSwapAdapter.execute` pays `inputAmount * priceIn /
+    ///         priceOut * outputMultiplierBps / 10000`, falls back to a flat
+    ///         1:1 when either leg has no price, and reverts when
+    ///         `shouldRevert` is set or `restrictedTo` names another caller.
+    ///         That is the complete set this reads.
+    function _venueReport(RepriceTarget memory t, address[] memory assets)
+        internal
+        view
+        returns (string[] memory deviations)
+    {
+        MockSwapAdapter venue = MockSwapAdapter(t.venue);
+        string[] memory buf = new string[](3 + assets.length);
+        uint256 n;
+        if (venue.shouldRevert()) {
+            buf[n++] = "venue shouldRevert is on: every liquidation through it reverts";
+        }
+        uint256 bps = venue.outputMultiplierBps();
+        if (bps != 10_000) {
+            buf[n++] = string.concat(
+                "venue outputMultiplierBps is ", vm.toString(bps), ", not 10000: it pays that fraction of the fair amount"
+            );
+        }
+        address gate = venue.restrictedTo();
+        if (gate != address(0) && gate != t.diamond) {
+            buf[n++] = string.concat(
+                "venue execute is restricted to ", vm.toString(gate), ", not the Diamond: liquidations through it revert"
+            );
+        }
+        for (uint256 i; i < assets.length; ++i) {
+            string memory dev = _venuePriceDeviation(t, venue, assets[i]);
+            if (bytes(dev).length != 0) buf[n++] = dev;
+        }
+        deviations = new string[](n);
+        for (uint256 i; i < n; ++i) {
+            deviations[i] = buf[i];
+        }
+    }
+
+    function _venuePriceDeviation(RepriceTarget memory t, MockSwapAdapter venue, address asset)
+        internal
+        view
+        returns (string memory)
+    {
+        uint256 venue8 = venue.tokenUsdPrice8(asset);
+        if (venue8 == 0) {
+            return string.concat(
+                "venue has no price for ", vm.toString(asset), ": a liquidation pairing it settles at a flat 1:1"
+            );
+        }
+        try IRepriceDiamondViews(t.diamond).getAssetPrice(asset) returns (uint256 p, uint8 d) {
+            if (d > 18 || p * 10 ** (18 - d) != venue8 * 10 ** (18 - REPRICE_FEED_DECIMALS)) {
+                return string.concat(
+                    "venue pays ",
+                    vm.toString(asset),
+                    " at e8 ",
+                    vm.toString(venue8),
+                    " but the oracle reads ",
+                    vm.toString(p),
+                    " at ",
+                    vm.toString(uint256(d)),
+                    " decimals"
+                );
+            }
+            return "";
+        } catch {
+            return string.concat("oracle has no price for ", vm.toString(asset), ": its venue price is not compared");
+        }
+    }
+
     function _isRoutedVenue(RepriceTarget memory t) internal view returns (bool) {
         address[] memory adapters = IRepriceDiamondViews(t.diamond).getSwapAdapters();
         for (uint256 i; i < adapters.length; ++i) {
@@ -319,6 +434,14 @@ contract RepriceTestnetMock is Script {
         r.liquidity = IRepriceDiamondViews(t.diamond).checkLiquidity(t.asset);
         r.poolSpot = MockUniswapV3Pool(t.pool).sqrtPriceX96();
         if (t.venue.code.length != 0) r.venuePrice8 = MockSwapAdapter(t.venue).tokenUsdPrice8(t.asset);
+    }
+
+    function _optional(string memory key) private view returns (address a) {
+        // forge-lint: disable-next-line(unsafe-cheatcode)
+        string memory json = vm.readFile(Deployments.path());
+        try vm.parseJsonAddress(json, key) returns (address v) {
+            a = v;
+        } catch {}
     }
 
     /// @dev Artifact-only read. `Deployments.readAddress` falls back to a

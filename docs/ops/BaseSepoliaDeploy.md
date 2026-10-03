@@ -279,16 +279,34 @@ wins over both. Turn one on only for a deliberate test:
 The script prints a `WARNING` line for each flag that is on.
 
 The script checks the result in simulation only, not after broadcast, so
-read the live state yourself:
+read the live state yourself. Set `KEY` to the asset you repriced:
 
 ```bash
+KEY=liquidToken   # or liquidToken2 for mUSDC — the same value as REPRICE_ASSET
 DIAMOND=$(jq -r .diamond deployments/base-sepolia/addresses.json)
-TLIQ=$(jq -r .testnetMocks.liquidToken deployments/base-sepolia/addresses.json)
+ASSET=$(jq -r ".testnetMocks.$KEY" deployments/base-sepolia/addresses.json)
 VENUE=$(jq -r .testnetMocks.mockSwapAdapter deployments/base-sepolia/addresses.json)
-cast call $DIAMOND "checkLiquidity(address)(uint8)" $TLIQ --rpc-url $BASE_SEPOLIA_RPC_URL       # → 0 (Liquid)
-cast call $DIAMOND "getAssetPrice(address)(uint256,uint8)" $TLIQ --rpc-url $BASE_SEPOLIA_RPC_URL  # → the new price, 8
-cast call $VENUE "tokenUsdPrice8(address)(uint256)" $TLIQ --rpc-url $BASE_SEPOLIA_RPC_URL         # → the new price
+cast call $DIAMOND "checkLiquidity(address)(uint8)" $ASSET --rpc-url $BASE_SEPOLIA_RPC_URL       # → 0 (Liquid)
+cast call $DIAMOND "getAssetPrice(address)(uint256,uint8)" $ASSET --rpc-url $BASE_SEPOLIA_RPC_URL  # → the new price, 8
+cast call $VENUE "tokenUsdPrice8(address)(uint256)" $ASSET --rpc-url $BASE_SEPOLIA_RPC_URL         # → the new price
 ```
+
+**What a run does not prove.** It proves the three prices it writes. It also
+reports, without refusing, the venue state it does not write:
+
+- the venue's execution settings;
+- the venue's price for every other faucet asset, compared with the oracle's.
+
+Each deviation is printed as a `WARNING` line, because these decide what a
+liquidation against the repriced asset actually pays. Two things it cannot
+know at all:
+
+- the venue's output-token float: a liquidation larger than the float fails;
+- tokens outside the faucet set: they have no venue price and settle at a
+  flat 1:1.
+
+A clean run is therefore not a promise that a liquidation will settle
+correctly.
 
 **Restore the seeded price afterwards** (`REPRICE_USD_E8=200000000000` for
 tLIQ, `100000000` for mUSDC). The testnet is shared, and every faucet user
