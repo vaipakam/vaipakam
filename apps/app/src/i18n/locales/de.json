@@ -1404,7 +1404,7 @@
       "settledAhead": "Diese Position ist auf der Blockchain bereits geschlossen — der Status hier ist live. Ihre Listen brauchen eventuell einen Moment, um nachzuziehen."
     },
     "powerSurface": {
-      "body": "Diese Seite zeigt alle Angebote für ein Paar auf einmal und lässt Sie Ihren eigenen Zins festlegen. Lieber Schritt für Schritt? Die Seiten Leihen und Verleihen erledigen dasselbe mit Erklärungen.",
+      "body": "Diese Seite zeigt die offenen Angebote für ein Paar nebeneinander und lässt Sie Ihren eigenen Zins festlegen. Lieber Schritt für Schritt? Die Seiten Leihen und Verleihen erledigen dasselbe mit Erklärungen.",
       "guidedBorrow": "Schritt für Schritt leihen",
       "guidedLend": "Schritt für Schritt verleihen",
       "enableAdvanced": "Zusätzliche Werkzeuge zeigen (Erweitert-Modus)",
@@ -1496,6 +1496,8 @@
       "ctaFund": "Diese Anfrage finanzieren",
       "badgeLender": "Kreditgeber",
       "badgeBorrower": "Kreditnehmer",
+      "notTakeablePartial": "Ein Teil dieses Angebots wurde bereits angenommen, daher kann der Rest hier nicht direkt angenommen werden.",
+      "notTakeableNft": "Dieses Angebot verwendet ein NFT als Kredit oder als Sicherheit, und das kann hier nicht direkt angenommen werden.",
       "filters": {
         "showLabel": "Anzeigen",
         "sideAll": "Alles",
@@ -1524,7 +1526,7 @@
         "tail": "."
       },
       "title": "Angebotsbuch",
-      "lede": "Offene Angebote der ganzen Plattform, Ihre eigenen eingeschlossen: Angebote zum Verleihen (bei diesen können Sie leihen) und Anfragen zum Leihen (an diese können Sie verleihen). Wählen Sie das Angebot einer anderen Person, um vor dem Signieren genau zu sehen, was Sie zahlen oder erhalten würden.",
+      "lede": "Offene Angebote der ganzen Plattform, Ihre eigenen eingeschlossen: Angebote zum Verleihen (bei diesen können Sie leihen) und Anfragen zum Leihen (an diese können Sie verleihen). Wenn das Angebot einer anderen Person hier angenommen werden kann, hat es eine Schaltfläche, die vor dem Signieren genau zeigt, was Sie zahlen oder erhalten würden; bei den übrigen steht, warum das nicht geht.",
       "emptyTitle": "Derzeit keine offenen Angebote",
       "emptyBody": "Erstellen Sie Ihr eigenes Angebot und lassen Sie die Gegenseite zu Ihnen kommen.",
       "rateBand": "Zinsband {{min}}–{{max}}",
@@ -1642,7 +1644,8 @@
         "unavailable": "Der Zinsverlauf konnte gerade nicht geladen werden.",
         "retry": "Erneut versuchen",
         "quotedMid": "mittlerer Zins",
-        "quotedMidHint": "Gestrichelte Linie = die Mitte zwischen dem besten Angebot zum Verleihen und der besten Anfrage zum Leihen, die gerade offen sind. Sie wird aus diesen beiden berechnet – kein Zins, den jemand angeboten oder vereinbart hat.",
+        "quotedMidHint": "Gestrichelte Linie = die Mitte zwischen dem besten Angebot zum Verleihen und der besten Anfrage zum Leihen unter den offenen Angeboten auf dieser Seite. Sie wird aus diesen beiden berechnet – kein Zins, den jemand angeboten oder vereinbart hat.",
+        "quotedMidHintSaved": "Gestrichelte Linie = die Mitte zwischen dem besten Angebot zum Verleihen und der besten Anfrage zum Leihen in einer gespeicherten Kopie der offenen Angebote (der Live-Abruf wurde nicht geladen), daher kann sie veraltet sein. Sie wird aus diesen beiden berechnet – kein Zins, den jemand angeboten oder vereinbart hat.",
         "sparseNote_zero": "Bisher wenige Kredite — {{count}} in diesem Zeitraum, jeder einzeln gezeichnet. Balken erscheinen, sobald es genug Kredite für eine Zusammenfassung gibt.",
         "sparseNote_one": "Bisher wenige Kredite — {{count}} in diesem Zeitraum, einzeln gezeichnet. Balken erscheinen, sobald es genug Kredite für eine Zusammenfassung gibt.",
         "sparseNote_two": "Bisher wenige Kredite — {{count}} in diesem Zeitraum, jeder einzeln gezeichnet. Balken erscheinen, sobald es genug Kredite für eine Zusammenfassung gibt.",

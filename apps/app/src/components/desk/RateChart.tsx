@@ -120,6 +120,7 @@ export default function RateChart({
   decimals,
   symbol,
   quotedMidBps,
+  midFromSavedCopy,
   tape,
 }: {
   pair: DeskPair | null;
@@ -131,6 +132,11 @@ export default function RateChart({
    *  the page from the live book and passed down, so the header stat
    *  and the overlay can never disagree. */
   quotedMidBps: number | null;
+  /** True when the ladder the mid came from is the indexer's saved copy
+   *  (the live chain read failed or hit its cap). The ladder says so in
+   *  its own card, but on mobile the Chart tab hides the ladder, so the
+   *  midpoint hint must carry the same disclosure (#2378 r6). */
+  midFromSavedCopy: boolean;
   /** The market's tape (Desk.tsx already holds it for the TapePanel —
    *  passed down, never re-fetched), newest first, tri-state per the
    *  app contract. Feeds three things: the "last fill" freshness
@@ -487,7 +493,9 @@ export default function RateChart({
             <div ref={tooltipRef} className="desk-chart-tooltip" />
           </div>
           {quotedMidBps !== null ? (
-            <p className="muted desk-chart-midhint">{text.quotedMidHint}</p>
+            <p className="muted desk-chart-midhint">
+              {midFromSavedCopy ? text.quotedMidHintSaved : text.quotedMidHint}
+            </p>
           ) : null}
         </>
       )}

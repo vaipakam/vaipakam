@@ -101,6 +101,15 @@ function OfferRow({ offer, risk }: { offer: IndexedOffer; risk: RiskLevel | null
     (isRentalListing ||
       (offer.assetType === AssetType.ERC20 &&
         offer.collateralAssetType === AssetType.ERC20));
+  // #2378 r6 — why someone else's row has no button. Only for other
+  // people's offers: your own row is not takeable by you, which needs
+  // no explanation.
+  const notTakeableReason =
+    !notMine || acceptable
+      ? null
+      : BigInt(offer.amountFilled || '0') !== 0n
+        ? copy.offers.notTakeablePartial
+        : copy.offers.notTakeableNft;
   // Offer ids are PER-CHAIN — a link without the chain can resolve to
   // a different offer with the same id on another network. The deep-
   // link consumers refuse to select when this doesn't match the
@@ -224,6 +233,12 @@ function OfferRow({ offer, risk }: { offer: IndexedOffer; risk: RiskLevel | null
         <span className="row-sub">
           {sub} · {copy.offers.byCreator} <AddressName address={offer.creator} />
         </span>
+        {notTakeableReason ? (
+          <>
+            <br />
+            <span className="row-sub muted">{notTakeableReason}</span>
+          </>
+        ) : null}
         {isAdvanced && advancedBits.length > 0 ? (
           <>
             <br />

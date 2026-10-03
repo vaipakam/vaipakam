@@ -1404,7 +1404,7 @@
       "settledAhead": "Esta posición ya se cerró en la blockchain — el estado que ves aquí está en vivo. Tus listas pueden tardar un momento en actualizarse."
     },
     "powerSurface": {
-      "body": "Esta página muestra todas las ofertas de un par a la vez y te deja fijar tu propia tasa. ¿Prefieres ir paso a paso? Las páginas Pedir prestado y Prestar hacen lo mismo con explicaciones.",
+      "body": "Esta página muestra las ofertas abiertas de un par una junto a otra y te deja fijar tu propia tasa. ¿Prefieres ir paso a paso? Las páginas Pedir prestado y Prestar hacen lo mismo con explicaciones.",
       "guidedBorrow": "Pedir prestado paso a paso",
       "guidedLend": "Prestar paso a paso",
       "enableAdvanced": "Mostrar las herramientas extra (modo Avanzado)",
@@ -1496,6 +1496,8 @@
       "ctaFund": "Financiar esta solicitud",
       "badgeLender": "Prestamista",
       "badgeBorrower": "Prestatario",
+      "notTakeablePartial": "Parte de esta oferta ya se ha aceptado, así que el resto no se puede aceptar directamente aquí.",
+      "notTakeableNft": "Esta oferta usa un NFT como préstamo o como garantía, y eso no se puede aceptar directamente aquí.",
       "filters": {
         "showLabel": "Mostrar",
         "sideAll": "Todo",
@@ -1524,7 +1526,7 @@
         "tail": "."
       },
       "title": "Libro de ofertas",
-      "lede": "Ofertas abiertas de toda la plataforma, incluidas las tuyas: ofertas para prestar (puedes pedir prestado de ellas) y solicitudes para pedir prestado (puedes prestarles). Elige una de otra persona para ver exactamente lo que pagarías o recibirías antes de firmar.",
+      "lede": "Ofertas abiertas de toda la plataforma, incluidas las tuyas: ofertas para prestar (puedes pedir prestado de ellas) y solicitudes para pedir prestado (puedes prestarles). Cuando la oferta de otra persona se puede aceptar aquí, tiene un botón que muestra exactamente lo que pagarías o recibirías antes de firmar; las demás explican por qué no se puede.",
       "emptyTitle": "No hay ofertas abiertas ahora mismo",
       "emptyBody": "Crea tu propia oferta y deja que la otra parte venga a ti.",
       "rateBand": "banda de tasa {{min}}–{{max}}",
@@ -1642,7 +1644,8 @@
         "unavailable": "No pudimos cargar el historial de tasas ahora mismo.",
         "retry": "Reintentar",
         "quotedMid": "tasa media",
-        "quotedMidHint": "Línea discontinua = el punto medio entre la mejor oferta para prestar y la mejor solicitud para pedir prestado abiertas ahora. Se calcula a partir de esas dos: no es una tasa que alguien haya ofrecido o acordado.",
+        "quotedMidHint": "Línea discontinua = el punto medio entre la mejor oferta para prestar y la mejor solicitud para pedir prestado entre las ofertas abiertas de esta página. Se calcula a partir de esas dos: no es una tasa que alguien haya ofrecido o acordado.",
+        "quotedMidHintSaved": "Línea discontinua = el punto medio entre la mejor oferta para prestar y la mejor solicitud para pedir prestado en una copia guardada de las ofertas abiertas (la lectura en vivo no cargó), así que puede estar desactualizado. Se calcula a partir de esas dos: no es una tasa que alguien haya ofrecido o acordado.",
         "sparseNote_zero": "Pocos préstamos por ahora — {{count}} en este periodo, cada uno dibujado por separado. Las barras aparecen cuando hay suficientes préstamos para resumirlos.",
         "sparseNote_one": "Pocos préstamos por ahora — {{count}} en este periodo, dibujado por separado. Las barras aparecen cuando hay suficientes préstamos para resumirlos.",
         "sparseNote_two": "Pocos préstamos por ahora — {{count}} en este periodo, cada uno dibujado por separado. Las barras aparecen cuando hay suficientes préstamos para resumirlos.",

@@ -1404,7 +1404,7 @@
       "settledAhead": "Cette position est déjà clôturée sur la blockchain — l’état affiché ici est à jour. Vos listes peuvent mettre un moment à suivre."
     },
     "powerSurface": {
-      "body": "Cette page affiche toutes les offres d’une paire à la fois et vous laisse fixer votre propre taux. Vous préférez être guidé ? Les pages Emprunter et Prêter font la même chose étape par étape.",
+      "body": "Cette page affiche côte à côte les offres ouvertes d’une paire et vous laisse fixer votre propre taux. Vous préférez être guidé ? Les pages Emprunter et Prêter font la même chose étape par étape.",
       "guidedBorrow": "Emprunter étape par étape",
       "guidedLend": "Prêter étape par étape",
       "enableAdvanced": "Afficher les outils supplémentaires (mode Avancé)",
@@ -1496,6 +1496,8 @@
       "ctaFund": "Financer cette demande",
       "badgeLender": "Prêteur",
       "badgeBorrower": "Emprunteur",
+      "notTakeablePartial": "Une partie de cette offre a déjà été acceptée, le reste ne peut donc pas être accepté directement ici.",
+      "notTakeableNft": "Cette offre utilise un NFT comme prêt ou comme garantie, ce qui ne peut pas être accepté directement ici.",
       "filters": {
         "showLabel": "Afficher",
         "sideAll": "Tout",
@@ -1524,7 +1526,7 @@
         "tail": "."
       },
       "title": "Carnet d'offres",
-      "lede": "Les offres ouvertes de toute la plateforme, y compris les vôtres : offres de prêt (vous pouvez emprunter auprès d’elles) et demandes d’emprunt (vous pouvez leur prêter). Choisissez celle de quelqu’un d’autre pour voir exactement ce que vous paieriez ou recevriez avant de signer.",
+      "lede": "Les offres ouvertes de toute la plateforme, y compris les vôtres : offres de prêt (vous pouvez emprunter auprès d’elles) et demandes d’emprunt (vous pouvez leur prêter). Lorsque l’offre de quelqu’un d’autre peut être acceptée ici, elle a un bouton qui montre exactement ce que vous paieriez ou recevriez avant de signer ; les autres indiquent pourquoi ce n’est pas possible.",
       "emptyTitle": "Aucune offre ouverte pour le moment",
       "emptyBody": "Créez votre propre offre et laissez l'autre côté venir à vous.",
       "rateBand": "fourchette de taux {{min}}–{{max}}",
@@ -1642,7 +1644,8 @@
         "unavailable": "Impossible de charger l'historique des taux pour le moment.",
         "retry": "Réessayer",
         "quotedMid": "taux médian",
-        "quotedMidHint": "Ligne pointillée = le point médian entre la meilleure offre de prêt et la meilleure demande d’emprunt ouvertes en ce moment. Il est calculé à partir de ces deux valeurs — ce n’est pas un taux que quelqu’un a proposé ou accepté.",
+        "quotedMidHint": "Ligne pointillée = le point médian entre la meilleure offre de prêt et la meilleure demande d’emprunt parmi les offres ouvertes de cette page. Il est calculé à partir de ces deux valeurs — ce n’est pas un taux que quelqu’un a proposé ou accepté.",
+        "quotedMidHintSaved": "Ligne pointillée = le point médian entre la meilleure offre de prêt et la meilleure demande d’emprunt dans une copie enregistrée des offres ouvertes (la lecture en direct n’a pas chargé), il peut donc être dépassé. Il est calculé à partir de ces deux valeurs — ce n’est pas un taux que quelqu’un a proposé ou accepté.",
         "sparseNote_zero": "Peu de prêts pour l’instant — {{count}} sur cette période, chacun affiché individuellement. Les barres apparaissent dès qu’il y a assez de prêts pour les résumer.",
         "sparseNote_one": "Peu de prêts pour l’instant — {{count}} sur cette période, affiché individuellement. Les barres apparaissent dès qu’il y a assez de prêts pour les résumer.",
         "sparseNote_two": "Peu de prêts pour l’instant — {{count}} sur cette période, chacun affiché individuellement. Les barres apparaissent dès qu’il y a assez de prêts pour les résumer.",

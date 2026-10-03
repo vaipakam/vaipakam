@@ -1240,6 +1240,11 @@ progress.
   whole market is empty.
 - Action labels are role-specific so the user understands whether they are
   borrowing, funding, renting, or buying a position.
+- Another user's offer that cannot be taken from this page (part of it is
+  already taken, or it uses an NFT as the loan or its collateral) says why on its
+  row, rather than showing a bare label with nothing to do. The page's
+  introduction promises the review-before-signing step only for offers that can
+  be taken here.
 - Ended offers are not actionable during indexer lag when the chain already
   shows that they ended.
 - Rows that carry risky, unknown, or unverifiable token legs show visible risk
@@ -1257,7 +1262,11 @@ page does not promise an offer can be cancelled "any time" where a deployment
 makes new offers wait a short while before they can be cancelled, nor that an
 offer posted for free by signing only can be changed (it can only be cancelled
 and posted again). The middle rate is described as worked out from the best
-offers on each side, never as a rate anyone has offered. A list scoped to the
+offers on each side, never as a rate anyone has offered; when those offers come
+from a saved copy because the live read failed, the chart's description of it
+says so, since on a phone the chart can be shown without the offers list that
+carries the same warning. The page's introduction does not claim to show every
+offer for the pair, because signed offers can be unavailable or cut short. A list scoped to the
 selected pair and loan length names both. A free signed offer's "until I cancel"
 choice says it stays open for at most seven days, because its signature
 expires. Projected earnings are stated as conditional on the offer being taken

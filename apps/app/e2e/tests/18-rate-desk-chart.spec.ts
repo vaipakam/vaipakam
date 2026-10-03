@@ -245,7 +245,7 @@ test('a zero-fill market shows the honest empty chart; seeded fills render spars
   // Own timeout: the hint hangs off the BOOK query (the ladder mid),
   // which lands independently of the candle query that gated above.
   await expect(page.locator('.desk-chart-midhint')).toHaveText(
-    /midpoint between the best offer to lend and the best request to borrow open right now\. It is worked out from those two — not a rate anyone has offered or agreed\./,
+    /midpoint between the best offer to lend and the best request to borrow among the open offers on this page\. It is worked out from those two — not a rate anyone has offered or agreed\./,
     { timeout: 30_000 },
   );
   // UX-037 — now that a chart draws, the attribution IS present.

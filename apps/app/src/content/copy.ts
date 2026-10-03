@@ -3311,7 +3311,9 @@ const copySource = {
   powerSurface: {
     // Naive-user redesign — an invitation, not a warning: anyone may use
     // this page, and the guided flows are offered as the gentler route.
-    body: 'This page shows every offer for one pair at once and lets you set your own rate. Prefer to be walked through it? The Borrow and Lend pages do the same things one step at a time.',
+    // #2378 r6 — no completeness claim: the signed-offer service can be
+    // unavailable or truncated, and the book can fall back to a saved copy.
+    body: 'This page shows the open offers for one pair side by side and lets you set your own rate. Prefer to be walked through it? The Borrow and Lend pages do the same things one step at a time.',
     // #2378 r2 — the Offer Book is a different page from the Rate Desk.
     bodyOffers: 'This page lists open offers across all pairs; open one to see its terms and take it. Prefer to be walked through it? The Borrow and Lend pages find a match for you one step at a time.',
     // Both guided flows offered (Codex #1168 r1) — a lender routed
@@ -3449,6 +3451,10 @@ const copySource = {
     ctaFund: 'Fund this request',
     badgeLender: 'Lender',
     badgeBorrower: 'Borrower',
+    // #2378 r6 — someone else's row with no button says why, instead of
+    // being an unexplained dead end.
+    notTakeablePartial: 'Part of this offer is already taken, so the rest can’t be taken directly here.',
+    notTakeableNft: 'This offer uses an NFT as the loan or its collateral, which can’t be taken directly here.',
     filters: {
       showLabel: 'Show',
       sideAll: 'Everything',
@@ -3477,7 +3483,7 @@ const copySource = {
       tail: ' flows.',
     },
     title: 'Offer Book',
-    lede: 'Open offers across the platform, your own included: offers to lend (you can borrow from these) and requests to borrow (you can lend to these). Pick someone else’s to see exactly what you would pay or receive before you sign.',
+    lede: 'Open offers across the platform, your own included: offers to lend (you can borrow from these) and requests to borrow (you can lend to these). Where someone else’s offer can be taken here, it has a button that shows exactly what you would pay or receive before you sign; the others say why they can’t.',
     emptyTitle: 'No open offers right now',
     emptyBody: 'Create your own offer and let the other side come to you.',
     // F-20260703-003 (#988) — shown by MarketFreshnessNote when the
@@ -3690,7 +3696,11 @@ const copySource = {
       retry: 'Retry',
       quotedMid: 'middle rate',
       quotedMidHint:
-        'Dashed line = the midpoint between the best offer to lend and the best request to borrow open right now. It is worked out from those two — not a rate anyone has offered or agreed.',
+        'Dashed line = the midpoint between the best offer to lend and the best request to borrow among the open offers on this page. It is worked out from those two — not a rate anyone has offered or agreed.',
+      // #2378 r6 — the ladder's saved-copy warning is hidden behind the
+      // Chart tab on mobile, so the hint carries it too.
+      quotedMidHintSaved:
+        'Dashed line = the midpoint between the best offer to lend and the best request to borrow in a saved copy of the open offers (the live read didn’t load), so it may be out of date. It is worked out from those two — not a rate anyone has offered or agreed.',
       sparseNote: tmpl(
         'Few loans so far — {{count}} in this period, each drawn on its own. Bars appear once there are enough loans to summarise.',
         ['count'],
