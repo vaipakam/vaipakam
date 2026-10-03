@@ -18,7 +18,7 @@
  */
 import { useQuery } from '@tanstack/react-query';
 import { usePublicClient } from 'wagmi';
-import type { PublicClient } from 'viem';
+import { BaseError, ContractFunctionRevertedError, type PublicClient } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
 import { tipAware } from '../chain/railHealth';
@@ -148,19 +148,21 @@ export async function readMaxWithdrawable(opts: {
   };
 }
 
-/** Live check for a pending swap-to-repay order on the loan. While one is
- *  live the contract refuses any collateral change (the order was sized
- *  against the collateral as it stood). `getIntentCommit` reverts when
+/** Live check for a swap-to-repay order on the loan. While one is stored
+ *  the contract refuses any collateral change (the order was sized
+ *  against the collateral as it stood) — including after its deadline,
+ *  until it is cancelled. `getIntentCommit` reverts `IntentNoCommit` when
  *  there is none.
  *
- *  Fail OPEN on a transport error: this read only lets the page say the
- *  reason in plain words before the wallet opens — the contract still
- *  refuses, and a refused estimate costs the borrower nothing. */
-export async function hasLiveSwapToRepayOrder(opts: {
+ *  Three answers, not two (#2389 r1): only that specific revert means
+ *  "no order". Any other failure — transport, rate limit, decoding — is
+ *  `unknown`, and the page refuses to open the wallet on it rather than
+ *  treating an unread answer as a clear one. */
+export async function swapToRepayOrderState(opts: {
   publicClient: PublicClient;
   diamondAddress: `0x${string}`;
   loanId: bigint;
-}): Promise<boolean> {
+}): Promise<'live' | 'none' | 'unknown'> {
   try {
     await opts.publicClient.readContract({
       address: opts.diamondAddress,
@@ -168,8 +170,18 @@ export async function hasLiveSwapToRepayOrder(opts: {
       functionName: 'getIntentCommit',
       args: [opts.loanId],
     });
-    return true;
-  } catch {
-    return false;
+    return 'live';
+  } catch (err) {
+    return isIntentNoCommit(err) ? 'none' : 'unknown';
   }
+}
+
+/** True only for the contract's own "no order stored" revert. */
+export function isIntentNoCommit(err: unknown): boolean {
+  if (!(err instanceof BaseError)) return false;
+  const revert = err.walk((e) => e instanceof ContractFunctionRevertedError);
+  return (
+    revert instanceof ContractFunctionRevertedError &&
+    revert.data?.errorName === 'IntentNoCommit'
+  );
 }

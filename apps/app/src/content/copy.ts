@@ -3173,7 +3173,13 @@ const copySource = {
         lose: 'The loan has less collateral behind it, so a price drop reaches liquidation sooner. If the loan defaults, the collateral that is left is at stake.',
         ends: 'This happens immediately. The rest of your collateral stays locked until the loan closes.',
         vpfiNote: 'This collateral is VPFI. Taking it out of your vault lowers the VPFI balance your fee-discount tier is measured on, so your discount may drop.',
-        swapOrderPending: 'A swap-to-repay order is waiting on this loan, and it was sized against your collateral as it stands. Collateral can’t be taken back until that order fills, expires or is cancelled — and this app can’t cancel it for you; use the tool you placed it with.',
+        // #2389 r1 — the VPFI check failed: unknown is not "not VPFI".
+        vpfiUnknownNote: 'We couldn’t check whether this collateral is VPFI. If it is, taking it out of your vault lowers the VPFI balance your fee-discount tier is measured on, so your discount may drop.',
+        swapOrderPending: 'A swap-to-repay order is waiting on this loan, and it was sized against your collateral as it stands. Collateral can’t be taken back until that order fills or is cancelled. Reaching its deadline does not release the collateral by itself: an order that didn’t fill still has to be cancelled, which the borrower-position holder can do once the deadline has passed. This app can’t cancel it for you; use the tool you placed it with.',
+        // #2389 r1 — the order check itself failed: say so rather than
+        // treating an unread answer as "no order".
+        swapOrderUnchecked:
+          'We couldn’t check whether a swap-to-repay order is open on this loan, so nothing was sent. Please try again in a moment.',
       },
       partial: {
         title: 'Repay part of the loan',

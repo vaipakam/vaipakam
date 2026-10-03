@@ -1,4 +1,4 @@
-## Thread — Borrowers can take back collateral their loan no longer needs (PR #<n>)
+## Thread — Borrowers can take back collateral their loan no longer needs (PR #2389)
 
 The protocol has always let a borrower withdraw collateral from an open loan, as long as the loan stays healthy. The app never offered it. A borrower whose collateral had grown in value had no way to use the surplus short of closing the loan. The 2026-10-03 live review recorded this as UX3-009.
 
@@ -12,6 +12,6 @@ Before the wallet opens, the app checks again for each thing that would make the
 - a swap-to-repay order is pending against the loan (the page says this app cannot cancel it);
 - the limit has moved below the amount.
 
-When the collateral is VPFI, the page notes that the fee-discount tier may drop. All the new text is translated into the ten supported languages.
+When the collateral is VPFI, the page notes that the fee-discount tier may drop; when it can't tell whether the collateral is VPFI, it says so and gives the same caution. A swap-to-repay order that passed its deadline without filling still blocks the withdrawal until it is cancelled, and the page says so. If one of the checks can't be answered, nothing is sent and the page says it couldn't check. The card disappears once the live loan status shows the loan is no longer open, even before the lists catch up. Like repaying, taking back extra collateral works for a wallet that hasn't accepted the current Terms, because it only returns the borrower's own assets. All the new text is translated into the ten supported languages.
 
 German register fix: the German text for this card, and three German claim strings added with the claim-payout change (#2373), used the informal "du". The rest of the German app uses the formal "Sie", so these strings now use "Sie" too.

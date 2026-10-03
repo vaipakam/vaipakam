@@ -1346,7 +1346,9 @@
           "lose": "Hinter dem Kredit steht weniger Sicherheit, daher erreicht ein Preisrückgang die Liquidation früher. Fällt der Kredit aus, steht die verbleibende Sicherheit auf dem Spiel.",
           "ends": "Das passiert sofort. Der Rest Ihrer Sicherheit bleibt gesperrt, bis der Kredit geschlossen wird.",
           "vpfiNote": "Diese Sicherheit ist VPFI. Wenn Sie sie aus Ihrem Tresor nehmen, sinkt das VPFI-Guthaben, an dem Ihre Gebührenrabatt-Stufe gemessen wird – Ihr Rabatt kann also sinken.",
-          "swapOrderPending": "Auf diesem Kredit wartet eine Swap-zur-Rückzahlung-Order, die auf Ihre Sicherheit in ihrem jetzigen Stand bemessen ist. Sicherheit kann erst zurückgeholt werden, wenn diese Order ausgeführt, abgelaufen oder storniert ist – und diese App kann sie nicht für Sie stornieren; nutzen Sie das Werkzeug, mit dem Sie sie erstellt haben."
+          "vpfiUnknownNote": "Wir konnten nicht prüfen, ob diese Sicherheit VPFI ist. Falls ja, sinkt durch das Herausnehmen aus Ihrem Tresor das VPFI-Guthaben, an dem Ihre Gebührenrabatt-Stufe gemessen wird – Ihr Rabatt kann also sinken.",
+          "swapOrderPending": "Auf diesem Kredit wartet eine Swap-zur-Rückzahlung-Order, die auf Ihre Sicherheit in ihrem jetzigen Stand bemessen ist. Sicherheit kann erst zurückgeholt werden, wenn diese Order ausgeführt oder storniert ist. Das Erreichen ihrer Frist gibt die Sicherheit nicht von selbst frei: Eine nicht ausgeführte Order muss trotzdem storniert werden, was der Inhaber der Kreditnehmerposition nach Ablauf der Frist tun kann. Diese App kann sie nicht für Sie stornieren; nutzen Sie das Werkzeug, mit dem Sie sie erstellt haben.",
+          "swapOrderUnchecked": "Wir konnten nicht prüfen, ob auf diesem Kredit eine Swap-zur-Rückzahlung-Order offen ist, daher wurde nichts gesendet. Bitte versuchen Sie es gleich noch einmal."
         },
         "partial": {
           "title": "Einen Teil des Kredits zurückzahlen",

@@ -8,11 +8,13 @@ import { describe, expect, it } from 'vitest';
 import {
   ContractFunctionExecutionError,
   ContractFunctionRevertedError,
+  encodeErrorResult,
   type PublicClient,
 } from 'viem';
+import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import {
   classifyMaxWithdrawable,
-  hasLiveSwapToRepayOrder,
+  swapToRepayOrderState,
   readMaxWithdrawable,
   withdrawAmountProblem,
 } from './partialWithdraw';
@@ -174,27 +176,51 @@ describe('readMaxWithdrawable', () => {
   });
 });
 
-describe('hasLiveSwapToRepayOrder', () => {
-  it('is true when the loan has a committed order', async () => {
-    expect(
-      await hasLiveSwapToRepayOrder({
-        publicClient: client({ getIntentCommit: { maker: DIAMOND } }),
-        diamondAddress: DIAMOND,
-        loanId: 1n,
+/** The contract's own "no order stored" revert, decoded the way viem
+ *  surfaces it from a real read. */
+const noCommitRevert = () =>
+  new ContractFunctionExecutionError(
+    new ContractFunctionRevertedError({
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'getIntentCommit',
+      data: encodeErrorResult({
+        abi: DIAMOND_ABI_VIEM,
+        errorName: 'IntentNoCommit',
+        args: [1n],
       }),
-    ).toBe(true);
+    }),
+    { abi: DIAMOND_ABI_VIEM, functionName: 'getIntentCommit', args: [1n] },
+  );
+
+describe('swapToRepayOrderState', () => {
+  const read = (getIntentCommit: unknown) =>
+    swapToRepayOrderState({
+      publicClient: client({ getIntentCommit }),
+      diamondAddress: DIAMOND,
+      loanId: 1n,
+    });
+  it('is live when the loan has a stored order', async () => {
+    expect(await read({ maker: DIAMOND })).toBe('live');
   });
-  it('is false when the read reverts (no order)', async () => {
+  it('is none only on the contract’s IntentNoCommit revert', async () => {
     expect(
-      await hasLiveSwapToRepayOrder({
-        publicClient: client({
-          getIntentCommit: () => {
-            throw revert();
-          },
-        }),
-        diamondAddress: DIAMOND,
-        loanId: 1n,
+      await read(() => {
+        throw noCommitRevert();
       }),
-    ).toBe(false);
+    ).toBe('none');
+  });
+  it('is unknown on any other revert — never read as "no order" (#2389 r1)', async () => {
+    expect(
+      await read(() => {
+        throw revert();
+      }),
+    ).toBe('unknown');
+  });
+  it('is unknown on a transport failure (#2389 r1)', async () => {
+    expect(
+      await read(() => {
+        throw new Error('rpc down');
+      }),
+    ).toBe('unknown');
   });
 });

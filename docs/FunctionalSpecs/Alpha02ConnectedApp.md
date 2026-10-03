@@ -1330,7 +1330,9 @@ Collateral"). The app offers this to every borrower, in Basic mode, because it
 is the borrower's own money.
 
 - The surface appears for the current borrower-position holder on an open loan
-  with fungible collateral. It says plainly that taking collateral back makes
+  with fungible collateral. When the live loan status says the loan is no longer
+  open (repaid, defaulted or liquidated elsewhere), the surface goes away, even
+  if the position lists have not caught up. It says plainly that taking collateral back makes
   the loan riskier: with less collateral, a price drop reaches liquidation
   sooner.
 - Before asking for anything, it states how much can be taken back right now,
@@ -1348,13 +1350,22 @@ is the borrower's own money.
   lender's position is linked to the loan, and that no swap-to-repay order is
   pending against it. Each refusal is said in plain words. Where the app cannot
   undo the obstacle itself (a swap-to-repay order placed with another tool), it
-  says so rather than pointing at a control that does not exist.
+  says so rather than pointing at a control that does not exist. A swap-to-repay
+  order that reached its deadline without filling still blocks the withdrawal
+  until it is cancelled, and the surface says so rather than implying expiry
+  releases the collateral. When one of these checks cannot be answered, nothing
+  is sent and the surface says it could not check, rather than treating an
+  unread answer as a clear one.
+- Taking back extra collateral stays available to a wallet that has not accepted
+  the current Terms, like repaying and topping up: it returns the borrower's own
+  assets and opens nothing new.
 - The confirmation states what arrives in the wallet, that nothing more is owed,
   what is put at risk, and that the rest of the collateral stays locked until
   the loan closes.
 - When the collateral is VPFI, the surface says that taking it out of the vault
   lowers the balance the fee-discount tier is measured on, so the discount may
-  drop.
+  drop. When the app cannot tell whether the collateral is VPFI, it says that
+  and gives the same caution, rather than treating unknown as "not VPFI".
 
 ### Forced close-out of an overdue loan
 

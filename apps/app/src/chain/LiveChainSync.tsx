@@ -47,7 +47,7 @@ import { useActiveChain } from './useActiveChain';
  *  else (protocolFees, tokenMeta, curatedTokens, tier tables, buffers,
  *  grace seconds, nftRentalSupport, legLiquidity) is config-ish and
  *  intentionally excluded from per-block refresh. */
-const LIVE_KEYS: ReadonlySet<string> = new Set([
+export const LIVE_KEYS: ReadonlySet<string> = new Set([
   'activeOffers',
   'activity',
   'myOffers',
@@ -69,6 +69,10 @@ const LIVE_KEYS: ReadonlySet<string> = new Set([
   // action, so the tip rail must carry it — tipAware stretches its
   // interval on WS deploys on exactly this promise.
   'saleListingHold',
+  // UX3-009 (#2389 r1) — the take-back-collateral ceiling moves with
+  // prices, debt and third-party actions on the loan, so it rides the
+  // same block-driven rail as the other action gates.
+  'maxWithdrawable',
   'standingApprovals',
   'keeperConfig',
   // #1131/#1145 round-5 — the crossable band's chain reads (previewMatch
@@ -106,7 +110,7 @@ const LIVE_KEYS: ReadonlySet<string> = new Set([
  *  specific surface, so the tip-driven cost is bounded to the page
  *  actually being viewed. When the rail is DOWN, the full LIVE_KEYS
  *  blanket returns (today's behaviour, the honest fallback). */
-const TIP_KEYS: ReadonlySet<string> = new Set([
+export const TIP_KEYS: ReadonlySet<string> = new Set([
   // Detail-page cluster — owner/role/status gates on PositionDetails.
   'loanLive',
   'loanLiveStatus',
@@ -120,6 +124,9 @@ const TIP_KEYS: ReadonlySet<string> = new Set([
   'refinancePending',
   // Borrower listing-hold card action gate (#1511) — see LIVE_KEYS.
   'saleListingHold',
+  // Take-back-collateral ceiling (UX3-009) — see LIVE_KEYS. tipAware
+  // stretches its interval on WS deploys on exactly this promise.
+  'maxWithdrawable',
   // Past-due/grace banner terms (Codex #1228 r1 P3): tipAware-
   // stretched on PositionDetails, so the tip nudge must cover a keeper
   // extension restamping the terms.

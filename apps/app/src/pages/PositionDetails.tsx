@@ -81,7 +81,7 @@ import { probeClaim, useLoanClaim } from '../data/claimables';
 import { receiptPayout, useClaimPayoutText } from '../data/useClaimPayout';
 import {
   classifyMaxWithdrawable,
-  hasLiveSwapToRepayOrder,
+  swapToRepayOrderState,
   useMaxWithdrawable,
   withdrawAmountProblem,
 } from '../data/partialWithdraw';
@@ -411,11 +411,19 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // UX3-009 — the live ceiling for taking collateral back. Only the
   // current borrower-position holder may withdraw, only from an open
   // loan, and only fungible collateral has an amount to take.
+  // #2389 r1 — the live status, when it has answered, outranks the
+  // indexed row for the take-back-collateral surface.
+  const liveSaysNotActive =
+    liveStatus.data !== undefined && liveStatus.data.status !== LoanStatus.Active;
   const maxWithdrawable = useMaxWithdrawable({
     loanId: loan.data ? String(loan.data.loanId) : undefined,
     collateralAsset: loan.data?.collateralAsset,
     enabled:
-      role === 'borrower' && effectivelyActive && !loanIsRental && !collateralIsNft,
+      role === 'borrower' &&
+      effectivelyActive &&
+      !liveSaysNotActive &&
+      !loanIsRental &&
+      !collateralIsNft,
   });
   const maxWithdrawState = classifyMaxWithdrawable(maxWithdrawable);
   const withdrawInputWei = useMemo(() => {
@@ -2137,7 +2145,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           row.lenderTokenId,
           address,
         ).catch(() => 'unknown' as const),
-        hasLiveSwapToRepayOrder({
+        swapToRepayOrderState({
           publicClient,
           diamondAddress: walletChain.diamondAddress,
           loanId: BigInt(row.loanId),
@@ -2153,8 +2161,12 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         setError(copy.positions.details.withdrawCollateral.saleListed);
         return;
       }
-      if (swapOrder) {
+      if (swapOrder === 'live') {
         setError(copy.positions.details.withdrawCollateral.swapOrderPending);
+        return;
+      }
+      if (swapOrder === 'unknown') {
+        setError(copy.positions.details.withdrawCollateral.swapOrderUnchecked);
         return;
       }
       if (wei > liveMax) {
@@ -3170,6 +3182,11 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
 
       {role === 'borrower' &&
       row.status === 'active' &&
+      // #2389 r1 — the indexed row can lag a repay, default or
+      // liquidation made elsewhere; once the live read says the loan is
+      // no longer Active the card goes, rather than telling the borrower
+      // an open loan needs all its collateral.
+      !liveSaysNotActive &&
       !closedThisSession &&
       !isRental &&
       !collateralIsNft &&
@@ -3270,9 +3287,15 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                   )}
                 </p>
               ) : null}
-              {maxWithdrawable.data?.isVpfi ? (
+              {maxWithdrawable.data?.isVpfi === true ? (
                 <p className="field-hint" style={{ marginTop: 8 }}>
                   {copy.positions.details.withdrawCollateral.vpfiNote}
+                </p>
+              ) : maxWithdrawable.data && maxWithdrawable.data.isVpfi === undefined ? (
+                // #2389 r1 — the VPFI check failed; unknown is stated,
+                // never shown as "not VPFI".
+                <p className="field-hint" style={{ marginTop: 8 }}>
+                  {copy.positions.details.withdrawCollateral.vpfiUnknownNote}
                 </p>
               ) : null}
               {confirmingSurface === 'withdraw-collateral' && withdrawInputWei !== null ? (
