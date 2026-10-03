@@ -230,11 +230,10 @@ export function createPageHeadTracker({
    * own reported height. Nothing observable from outside distinguishes it.
    */
   async function pageProviderHead() {
-    let low = 0n;
-    // WHICH endpoints this bound, not only the height (round 90). A sample
-    // says nothing about an endpoint it did not ask, and the caller has to
-    // be able to tell those apart.
-    const sampled = new Set();
+    // WHICH endpoints answered, and at what height (round 90; per endpoint
+    // since #2369). A sample says nothing about an endpoint it did not ask,
+    // and the caller has to be able to tell those apart.
+    const heads = new Map();
     for (const url of knownPageRpcEndpoints) {
       try {
         const resp = await fetch(url, {
@@ -284,20 +283,57 @@ export function createPageHeadTracker({
         // rendered, and the interior scan then never looks at the state the
         // lender was actually shown.
         const seen = hexQuantity(believed);
-        if (seen === null) continue;
-        // The LOWEST across endpoints, for the reason the floor takes the
-        // lower of its sources everywhere else: this drive cannot tell which
-        // of them will serve the card's query, so the further back one is
-        // the only safe answer.
-        if (seen > 0n && (low === 0n || seen < low)) low = seen;
-        if (seen > 0n) sampled.add(url);
+        if (seen === null || seen <= 0n) continue;
+        heads.set(url, seen);
       } catch {
         // An endpoint that will not answer contributes nothing. It is not a
         // failure: the floor simply falls back to its other sources, and the
         // ordering test still decides whether those bound anything.
       }
     }
-    return { head: low === 0n ? null : low, sampled };
+    // #2369 — PER ENDPOINT, and deliberately no run-wide minimum. The set
+    // asked is every endpoint ANY earlier page proved, because before the
+    // navigation nothing says which of them this page will read from. A
+    // minimum taken over all of them lets an endpoint this page never touches
+    // — a fallback a much earlier page used — pull the floor down, widening
+    // the window for nothing. Only `providerFloorFor`, asked AFTER the page
+    // has shown which endpoints it used, turns these heights into a floor.
+    return { heads };
+  }
+
+  /**
+   * The pre-navigation floor for THIS page: the lowest pre-navigation head
+   * among the endpoints the page actually proved, and WHICH endpoints that
+   * floor covers.
+   *
+   * #2369. `pageProviderHead` samples every endpoint earlier pages proved; an
+   * endpoint this page never used bounds none of its reads, so its height has
+   * no place in the floor. The LOWEST among the ones it did use, for the
+   * reason the floor takes the lower of its sources everywhere else: this
+   * drive cannot tell which of them served the card's query.
+   *
+   * `covered` is load-bearing and is what `floorEstablishedFor` must be given.
+   * That gate counts an endpoint as bounded when the pre-navigation sample
+   * covered it, so the two have to agree on the set. An endpoint the page
+   * first reaches AFTER this is asked was sampled but is not in this floor,
+   * and must therefore earn its bound from its own announcement ordering
+   * rather than from a height the floor never included. Passing the raw
+   * sample's endpoint list instead would let it ride on that height.
+   *
+   * @returns {{head: bigint, covered: Set<string>}} `head` is `0n` when no
+   *   endpoint this page proved was sampled.
+   */
+  function providerFloorFor(page, sample) {
+    const covered = new Set();
+    let low = 0n;
+    const diamond = pageDiamondKeys.get(page);
+    if (!diamond || !sample?.heads) return { head: low, covered };
+    for (const [url, seen] of sample.heads) {
+      if (!diamond.has(url) || foreignPageRpcEndpoints.has(url)) continue;
+      if (low === 0n || seen < low) low = seen;
+      covered.add(url);
+    }
+    return { head: low, covered };
   }
 
   /**
@@ -423,6 +459,11 @@ export function createPageHeadTracker({
       // So a key counts as bounded when it was sampled before navigation OR
       // when its own announcement ordering holds. One predicate, applied per
       // endpoint, instead of a global shortcut standing in for all of them.
+      //
+      // #2369 — "sampled" means COVERED BY THE FLOOR IN USE: the caller passes
+      // `providerFloorFor(...).covered`, never every endpoint the probe
+      // asked, so a key counts here only if its pre-navigation height is in
+      // the floor being judged.
       if (sampledBeforeNav?.has(key)) {
         sawHead = true;
         continue;
@@ -1042,6 +1083,7 @@ export function createPageHeadTracker({
     pageHeadFloorOf,
     floorEstablishedFor,
     pageProviderHead,
+    providerFloorFor,
     pageProviderCeiling,
     diamondKeysOf,
     isForeign,
