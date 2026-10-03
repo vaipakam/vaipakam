@@ -498,6 +498,10 @@ describe('the head sample waits for the readings in flight', () => {
 
     // Each sample is preceded by its own settle, so neither reads a head
     // that an in-flight parse has not yet recorded (round 48).
+    // #2368 — the posture banner's drain (`postureFloorDrained`) is a third
+    // settle site, but it is a conditional expression rather than a bare
+    // `await …;` statement, so this pattern does not count it; it captures
+    // and gates on its verdict like the others.
     const settles = [...src.matchAll(/await settleHeadReads\(page\);/g)].map((m) => m.index);
     expect(settles, 'one settle per sample').toHaveLength(2);
     const samples = [...src.matchAll(/const (?:headAtRender|pageHead) = pageHeadOf\(page\);/g)].map(

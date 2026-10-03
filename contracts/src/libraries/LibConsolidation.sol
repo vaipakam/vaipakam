@@ -214,26 +214,30 @@ library LibConsolidation {
             return true;
         }
         if (isLenderSide) {
-            // #597 dependency (Codex #655 Msm + YPp): a VPFI `heldForLender`
-            // amount can be PARTIALLY reserved — preclose/offset add *unreserved*
-            // VPFI to the accumulator while a partial internal match adds
-            // *reserved* VPFI to the SAME accumulator. Any unreserved portion,
-            // once moved into the holder's vault, is a FREE, unstake-drainable
-            // balance (the holder could `withdrawVPFIFromVault` before claim). So
-            // skip unless the held VPFI is **fully reserved IN VPFI**
-            // (`reservedAsset == vpfi && reserved >= held`) — the
-            // fully-reserved case is handled safely because the lender-side lien
-            // re-key (§2 step 5) carries the reservation across with the balance.
-            // The partially- or un-reserved case waits for #597.
+            // #597 dependency (Codex #655 Msm + YPp): any UNRESERVED portion of
+            // a VPFI `heldForLender` amount, once moved into the holder's vault,
+            // is a FREE, unstake-drainable balance (the holder could
+            // `withdrawVPFIFromVault` before claim). So skip unless the held VPFI
+            // is **fully reserved IN VPFI** — the fully-reserved case is safe
+            // because the lender-side re-key (§2 step 5,
+            // `LibEncumbrance.rekeyLienToHolder`) carries BOTH reservations
+            // across with the balance.
+            //
+            // #2364 — "reserved" is the sum of BOTH ledgers a held amount can be
+            // reserved through: the `lenderProceedsEncumbered` ledger (the
+            // preclose / offset / partial-match accruals, #597) and the dedicated
+            // `heldForLenderEncumbered` ledger (an active Class B park,
+            // `LibCloseoutFreeze._parkActiveLenderShare`). Reading only the first
+            // classed a fully reserved active park as unreserved and refused a
+            // clean holder's consolidation. `vpfiReservedOnSide` is the one
+            // reader of that sum (the #2342 tier exclusion reads it too), so the
+            // two rules cannot disagree about what is reserved.
             uint256 held = s.heldForLender[loanId];
-            if (held != 0 && loan.principalAsset == s.vpfiToken) {
-                bool fullyVpfiReserved = s.lenderProceedsEncumberedAsset[
-                    loanId
-                ] ==
-                    s.vpfiToken &&
-                    s.lenderProceedsEncumbered[loanId] >= held;
-                if (!fullyVpfiReserved) return true;
-            }
+            if (
+                held != 0 &&
+                loan.principalAsset == s.vpfiToken &&
+                LibEncumbrance.vpfiReservedOnSide(loanId, true) < held
+            ) return true;
         } else {
             // Borrower-side-only locks.
             if (s.prepayListingOrderHash[loanId] != bytes32(0)) return true;
