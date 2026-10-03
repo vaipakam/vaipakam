@@ -2662,6 +2662,17 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
       : null;
   const holdCard = await page.getByTestId('sale-listing-hold-card').count();
   const freeHeld = await page.getByTestId('free-held-options').count();
+  // UX3-009 — the borrower's take-back-collateral card. INFORMATIONAL: its
+  // state depends on live prices (a zero ceiling is a correct answer), so
+  // the drive records what the card says rather than judging it.
+  const withdrawCardText =
+    ROLE === 'borrower'
+      ? await page
+          .locator('#withdraw-collateral-card #withdraw-collateral-state, #withdraw-collateral-card .banner-body')
+          .first()
+          .innerText({ timeout: 15_000 })
+          .catch(() => null)
+      : null;
   const refinancePosture = judgePosture ? await observeRefinancePosture(page) : null;
   // #2368 r14 — drain the in-flight head parses FIRST, so a Diamond-serving
   // fallback still inside the response parser is admitted before EITHER
@@ -2789,6 +2800,7 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
 
     holdCard: holdCard > 0,
     freeHeld: freeHeld > 0,
+    withdrawCard: withdrawCardText === null ? null : withdrawCardText.replace(/\s+/g, ' ').trim(),
     connected: !/Connect wallet/i.test(text.slice(0, 400)),
     // #2355 — what the banner stated, the chain on both sides of it, and the
     // verdict from its own module. `pageText` is dropped from the record:
@@ -7962,6 +7974,8 @@ for (const v of visited) {
             : '')
         : `      chooser=${v.chooser} handover=${v.handover} offset=${v.offset}` +
           ` holdCard=${v.holdCard} freeHeldBtn=${v.freeHeld}` +
+          // UX3-009 — informational; prints what the card stated.
+          `\n      withdraw-collateral: ${v.withdrawCard ?? 'absent'}` +
           // Printed on every judged visit, pass or not, so "checked and
           // fine" is distinguishable from "never looked".
           (v.refinancePostureVerdict

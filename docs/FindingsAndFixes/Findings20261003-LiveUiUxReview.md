@@ -232,6 +232,13 @@ appreciated has no way to use that from the app. This needs a product
 decision on placement (the position detail page is the natural home),
 then a CI-Anvil spec.
 
+**Status — fixed in batch 3.** The loan page carries a Basic-mode "Take back
+extra collateral" section for the borrower-position holder of an Active loan.
+It states the live ceiling, explains every zero, refuses an over-ceiling amount
+on the page, and re-checks every protocol refusal it can see before the wallet
+opens. Covered by `apps/app/e2e/tests/32-withdraw-collateral.spec.ts` (CI-Anvil)
+and `apps/app/src/data/partialWithdraw.test.ts`.
+
 ## P3 — polish
 
 - **UX3-010** On a repaid loan, "What happens next — The borrower
@@ -302,7 +309,7 @@ UI-level test at either tier. Ranked by funds risk:
 | 3 | NFT rental: list → rent → daily deduction → close → claim | contract tier only | CI-Anvil |
 | 4 | Health-factor display, low-HF warnings, liquidation outcome | contract tier only; the UI suite has no way to move a price | CI-Anvil, with a price fixture |
 | 5 | Lender early withdrawal: listing form, direct sale, buyer completion | listing seeded by direct write; form untested | CI-Anvil |
-| 6 | Withdraw excess collateral / add collateral | no surface (UX3-009) / contract tier only | product decision, then CI-Anvil |
+| 6 | Withdraw excess collateral / add collateral | `32-withdraw-collateral` (CI-Anvil, batch 3) / contract tier only | add-collateral still needs a CI-Anvil drive |
 | 7 | Sanctions banner and Tier-1 / Tier-2 gating in the UI | contract tier only | CI-Anvil |
 | 8 | Wrong network / chain switch | none | CI-Anvil |
 | 9 | VPFI deposit, withdraw, tier display | accept-path opt-in only | CI-Anvil |
