@@ -1598,7 +1598,7 @@
         "tail": " flows."
       },
       "title": "Offer Book",
-      "lede": "Every open offer from other people: offers to lend (you can borrow from these) and requests to borrow (you can lend to these). Pick one to see exactly what you would pay or receive before you sign.",
+      "lede": "Open offers across the platform, your own included: offers to lend (you can borrow from these) and requests to borrow (you can lend to these). Pick someone else’s to see exactly what you would pay or receive before you sign.",
       "emptyTitle": "No open offers right now",
       "emptyBody": "Create your own offer and let the other side come to you.",
       "rateBand": "rate band {{min}}–{{max}}",
@@ -1641,7 +1641,7 @@
         "internal_matched": "matched"
       },
       "title": "Rate Desk",
-      "lede": "Every open offer for one pair of assets on one page. See the rates other people are offering, post your own offer at the rate you want, and manage the offers you have open.",
+      "lede": "The open offers for one pair of assets on one page. See the rates other people are offering, post your own offer at the rate you want, and manage the offers you have open.",
       "howItWorks": {
         "title": "How this page works",
         "step1": "Pick a pair at the top: the asset being lent, and the collateral that backs the loan. Then pick how long the loan lasts.",
@@ -1656,7 +1656,7 @@
       "customCollateral": "Collateral asset address",
       "marketsUnavailable": "The markets list couldn’t load right now, so pair discovery is limited — enter a pair manually and the book itself can still load.",
       "marketsEmpty": "No live markets right now. Pick a pair and post the first offer with the ticket.",
-      "marketsTruncated": "Showing the most active markets — smaller markets aren’t listed here, but you can load any pair with “Custom pair…”.",
+      "marketsTruncated": "Showing the most active markets — smaller markets aren’t listed here, but you can load any pair with “{{option}}”.",
       "pickPair": "Pick a pair to see its offers.",
       "lastFill": "Last agreed rate",
       "quotedMid": "Middle rate",
@@ -2216,8 +2216,6 @@
       "plusMore": " · +{{n}} more in this transaction",
       "loanRef": "Loan #{{loanId}}",
       "offerRef": "Offer #{{offerId}}",
-      "amountLoading": "Amount loading…",
-      "amountUnreadable": "An amount of {{token}} (its details couldn’t be read)",
       "viewTx": "View transaction",
       "loadMore": "Load older activity",
       "loadingMore": "Loading…",

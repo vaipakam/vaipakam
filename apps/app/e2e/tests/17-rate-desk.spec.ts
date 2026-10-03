@@ -195,7 +195,11 @@ test('ticket posts a GTC/Partial lend order, amend reprices it in ONE modifyOffe
   const post = page.getByRole('button', { name: /^post offer$/i });
   await consentAndWaitEnabled(page, post);
   await post.click();
-  await expect(page.getByText(/offer posted/i)).toBeVisible({ timeout: 90_000 });
+  // Anchored to the ticket's confirmation ("Offer posted — …"): the
+  // first-visit guide also says "an offer posted with a network fee…",
+  // and a loose /offer posted/i matched that before the transaction
+  // landed (#2378 r3 fork-tier failure).
+  await expect(page.getByText(/^Offer posted — /)).toBeVisible({ timeout: 90_000 });
 
   // The offer landed on-chain with the ticket's exact terms.
   const offerId = await newestOfferIdFor(account.address);

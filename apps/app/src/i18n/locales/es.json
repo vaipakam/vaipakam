@@ -1524,7 +1524,7 @@
         "tail": "."
       },
       "title": "Libro de ofertas",
-      "lede": "Ofertas de préstamo abiertas y solicitudes de préstamo de otros usuarios.",
+      "lede": "Ofertas abiertas de toda la plataforma, incluidas las tuyas: ofertas para prestar (puedes pedir prestado de ellas) y solicitudes para pedir prestado (puedes prestarles). Elige una de otra persona para ver exactamente lo que pagarías o recibirías antes de firmar.",
       "emptyTitle": "No hay ofertas abiertas ahora mismo",
       "emptyBody": "Crea tu propia oferta y deja que la otra parte venga a ti.",
       "rateBand": "banda de tasa {{min}}–{{max}}",
@@ -1568,7 +1568,7 @@
         "internal_matched": "emparejado"
       },
       "title": "Mesa de tasas",
-      "lede": "El libro de órdenes para un mercado — lee las tasas, publica o modifica ofertas de tasa límite, y mira tus órdenes abiertas y posiciones en un solo lugar.",
+      "lede": "Las ofertas abiertas de un par de activos en una sola página. Mira las tasas que ofrecen otras personas, publica tu propia oferta a la tasa que quieras y gestiona las ofertas que tienes abiertas.",
       "marketLabel": "Par (préstamo / garantía)",
       "tenorLabel": "Duración del préstamo",
       "customPair": "Otro par…",
@@ -1576,7 +1576,7 @@
       "customCollateral": "Dirección del activo de garantía",
       "marketsUnavailable": "La lista de mercados no pudo cargar ahora mismo, así que el descubrimiento de pares es limitado — introduce un par manualmente y el libro en sí aún puede cargar.",
       "marketsEmpty": "No hay mercados activos ahora mismo. Elige un par y publica la primera oferta con el ticket.",
-      "marketsTruncated": "Mostrando los mercados más activos — los mercados más pequeños no aparecen aquí, pero puedes cargar cualquier par con “Par personalizado…”.",
+      "marketsTruncated": "Mostrando los mercados más activos — los mercados más pequeños no aparecen aquí, pero puedes cargar cualquier par con “{{option}}”.",
       "pickPair": "Elige un mercado para cargar su libro.",
       "lastFill": "Última tasa acordada",
       "quotedMid": "Tasa media",
@@ -2206,9 +2206,7 @@
         "Approval": "Aprobación"
       },
       "unavailableFallback": "Tus préstamos y alquileres actuales siempre están disponibles en",
-      "positionsLink": "Mis posiciones",
-      "amountLoading": "Cargando importe…",
-      "amountUnreadable": "Un importe de {{token}} (no se pudieron leer sus detalles)"
+      "positionsLink": "Mis posiciones"
     },
     "rewards": {
       "unavailable": "No pudimos comprobar tus recompensas ahora — inténtalo de nuevo en un momento.",

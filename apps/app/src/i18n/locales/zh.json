@@ -1524,7 +1524,7 @@
         "tail": " 流程相同的 review 和签名步骤。"
       },
       "title": "报价簿",
-      "lede": "其他用户的开放出借报价和借入请求。",
+      "lede": "整个平台的开放报价，包括你自己的：出借报价（你可以从中借款）和借款请求（你可以向其出借）。选择别人的一项，即可在签名前确切看到你将支付或收到多少。",
       "emptyTitle": "当前没有开放报价",
       "emptyBody": "创建自己的报价，让另一方来找您。",
       "rateBand": "利率区间 {{min}}–{{max}}",
@@ -1568,7 +1568,7 @@
         "internal_matched": "已匹配"
       },
       "title": "利率台",
-      "lede": "一个市场的订单簿 — 查看利率，发布或修改限价利率报价，并在一处查看您的开放订单和持仓。",
+      "lede": "一个资产交易对的开放报价，集中在一个页面。查看他人提供的利率，按你想要的利率发布自己的报价，并管理你的开放报价。",
       "marketLabel": "交易对（借出 / 抵押）",
       "tenorLabel": "贷款期限",
       "customPair": "其他交易对…",
@@ -1576,7 +1576,7 @@
       "customCollateral": "抵押资产地址",
       "marketsUnavailable": "市场列表当前无法加载，因此交易对发现受限 — 可手动输入交易对，簿本身仍可加载。",
       "marketsEmpty": "当前没有实时市场。选择一个交易对，并用 ticket 发布第一个报价。",
-      "marketsTruncated": "显示最活跃市场 — 较小市场不会列出，但可用“自定义交易对…”加载任意交易对。",
+      "marketsTruncated": "正在显示最活跃的市场——较小的市场不在此列出，但你可以通过“{{option}}”加载任意交易对。",
       "pickPair": "选择市场以加载其簿。",
       "lastFill": "最近成交利率",
       "quotedMid": "中间利率",
@@ -2206,9 +2206,7 @@
         "Approval": "授权"
       },
       "unavailableFallback": "您的当前贷款和租赁始终可在这里查看",
-      "positionsLink": "我的持仓",
-      "amountLoading": "正在加载金额…",
-      "amountUnreadable": "一笔 {{token}} 金额（无法读取其详情）"
+      "positionsLink": "我的持仓"
     },
     "rewards": {
       "unavailable": "我们现在无法检查您的 rewards — 请稍后重试。",

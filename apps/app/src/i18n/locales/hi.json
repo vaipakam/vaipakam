@@ -1524,7 +1524,7 @@
         "tail": " flows जैसे ही review-and-sign steps से ले जाता है।"
       },
       "title": "Offer Book",
-      "lede": "दूसरे users के open lending offers और borrow requests।",
+      "lede": "पूरे प्लेटफ़ॉर्म के खुले ऑफ़र, आपके अपने भी: उधार देने के ऑफ़र (जिनसे आप उधार ले सकते हैं) और उधार लेने के अनुरोध (जिन्हें आप उधार दे सकते हैं)। हस्ताक्षर करने से पहले आप ठीक-ठीक क्या चुकाएँगे या पाएँगे, यह देखने के लिए किसी और का ऑफ़र चुनें।",
       "emptyTitle": "अभी कोई open offers नहीं",
       "emptyBody": "अपना offer create करें और दूसरे side को आने दें।",
       "rateBand": "rate band {{min}}–{{max}}",
@@ -1568,7 +1568,7 @@
         "internal_matched": "matched"
       },
       "title": "Rate Desk",
-      "lede": "एक market की order book — rates पढ़ें, limit-rate offers post या amend करें, और अपने open orders व positions एक जगह देखें।",
+      "lede": "एसेट की एक जोड़ी के खुले ऑफ़र एक ही पेज पर। दूसरों की दरें देखें, अपनी मनचाही दर पर अपना ऑफ़र डालें, और अपने खुले ऑफ़र संभालें।",
       "marketLabel": "जोड़ी (उधार / collateral)",
       "tenorLabel": "loan की अवधि",
       "customPair": "दूसरी जोड़ी…",
@@ -1576,7 +1576,7 @@
       "customCollateral": "Collateral asset का पता",
       "marketsUnavailable": "Markets list अभी load नहीं हुई, इसलिए pair discovery limited है — pair manually enter करें और book itself फिर भी load हो सकती है।",
       "marketsEmpty": "अभी कोई live markets नहीं। Pair चुनें और ticket से पहला offer post करें।",
-      "marketsTruncated": "Most active markets दिखा रहे हैं — छोटे markets यहाँ listed नहीं, लेकिन “Custom pair…” से कोई भी pair load कर सकते हैं।",
+      "marketsTruncated": "सबसे सक्रिय बाज़ार दिखाए जा रहे हैं — छोटे बाज़ार यहाँ सूचीबद्ध नहीं हैं, लेकिन आप “{{option}}” से कोई भी जोड़ी लोड कर सकते हैं।",
       "pickPair": "Market चुनें ताकि उसका book load हो।",
       "lastFill": "पिछली तय दर",
       "quotedMid": "बीच की दर",
@@ -2206,9 +2206,7 @@
         "Approval": "Approval"
       },
       "unavailableFallback": "आपके current loans और rentals हमेशा available हैं",
-      "positionsLink": "My positions",
-      "amountLoading": "राशि लोड हो रही है…",
-      "amountUnreadable": "{{token}} की एक राशि (इसका विवरण पढ़ा नहीं जा सका)"
+      "positionsLink": "My positions"
     },
     "rewards": {
       "unavailable": "हम आपके rewards अभी check नहीं कर सके — थोड़ी देर में फिर कोशिश करें।",

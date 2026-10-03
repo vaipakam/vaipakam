@@ -1524,7 +1524,7 @@
         "tail": "."
       },
       "title": "Angebotsbuch",
-      "lede": "Offene Kreditangebote und Leihanfragen anderer Benutzer.",
+      "lede": "Offene Angebote der ganzen Plattform, deine eigenen eingeschlossen: Angebote zum Verleihen (bei denen du leihen kannst) und Anfragen zum Leihen (denen du verleihen kannst). Wähle das Angebot einer anderen Person, um vor dem Signieren genau zu sehen, was du zahlst oder erhältst.",
       "emptyTitle": "Derzeit keine offenen Angebote",
       "emptyBody": "Erstellen Sie Ihr eigenes Angebot und lassen Sie die Gegenseite zu Ihnen kommen.",
       "rateBand": "Zinsband {{min}}–{{max}}",
@@ -1568,7 +1568,7 @@
         "internal_matched": "gematcht"
       },
       "title": "Zins-Desk",
-      "lede": "Das Orderbuch für einen Markt — lesen Sie die Zinssätze, platzieren oder ändern Sie Limit-Angebote und behalten Sie Ihre offenen Orders und Positionen an einem Ort im Blick.",
+      "lede": "Die offenen Angebote für ein Asset-Paar auf einer Seite. Sieh dir die Zinsen anderer an, veröffentliche dein eigenes Angebot zu deinem Wunschzins und verwalte deine offenen Angebote.",
       "marketLabel": "Paar (Kredit / Sicherheit)",
       "tenorLabel": "Kreditlaufzeit",
       "customPair": "Anderes Paar…",
@@ -1576,7 +1576,7 @@
       "customCollateral": "Sicherheiten-Asset-Adresse",
       "marketsUnavailable": "Die Marktliste konnte gerade nicht geladen werden, daher ist die Paarsuche eingeschränkt — geben Sie ein Paar manuell ein, das Buch selbst kann trotzdem laden.",
       "marketsEmpty": "Derzeit keine aktiven Märkte. Wählen Sie ein Paar und platzieren Sie mit dem Ticket das erste Angebot.",
-      "marketsTruncated": "Angezeigt werden die aktivsten Märkte — kleinere Märkte sind hier nicht gelistet, aber über „Eigenes Paar…“ können Sie jedes Paar laden.",
+      "marketsTruncated": "Es werden die aktivsten Märkte angezeigt – kleinere Märkte sind hier nicht aufgeführt, aber du kannst jedes Paar über „{{option}}“ laden.",
       "pickPair": "Wählen Sie einen Markt, um sein Buch zu laden.",
       "lastFill": "Zuletzt vereinbarter Zins",
       "quotedMid": "Mittlerer Zins",
@@ -2206,9 +2206,7 @@
         "Approval": "Genehmigung"
       },
       "unavailableFallback": "Ihre aktuellen Kredite und Vermietungen sind jederzeit verfügbar auf",
-      "positionsLink": "Meine Positionen",
-      "amountLoading": "Betrag wird geladen…",
-      "amountUnreadable": "Ein Betrag von {{token}} (Details konnten nicht gelesen werden)"
+      "positionsLink": "Meine Positionen"
     },
     "rewards": {
       "unavailable": "Wir konnten Ihre Rewards gerade nicht prüfen — bitte versuchen Sie es gleich erneut.",

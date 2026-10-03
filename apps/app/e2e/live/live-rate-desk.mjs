@@ -673,7 +673,7 @@ try {
   // loaded summary auto-selects the most active market (Desk.tsx's
   // default-market effect), so the trigger showing a real pair label
   // proves the dropdown lists at least one market beyond the
-  // "Custom pair…" escape hatch.
+  // "Other pair…" escape hatch.
   const PAIR_PLACEHOLDER = /pick a market to load its book/i;
   const pairLabel = async () =>
     (await page.locator('#desk-pair').innerText().catch(() => '')).trim();
@@ -899,7 +899,8 @@ try {
   postAttempted = true; // a create tx may exist from here on, mined or not
   await post.click();
   // Real testnet tx (possibly approve + create, or Permit2 + create).
-  await page.getByText(/offer posted/i).waitFor({ timeout: 120_000 });
+  // Anchored — the first-visit guide also contains "offer posted".
+  await page.getByText(/^Offer posted — /).waitFor({ timeout: 120_000 });
   await snap('rate-desk-03-posted');
   record(
     `3. post lend order (${AMOUNT_WETH} WETH @ ${POST.pct}, ${COLLATERAL_TLIQ} tLIQ, GTC, Partial)`,

@@ -3475,7 +3475,7 @@ const copySource = {
       tail: ' flows.',
     },
     title: 'Offer Book',
-    lede: 'Every open offer from other people: offers to lend (you can borrow from these) and requests to borrow (you can lend to these). Pick one to see exactly what you would pay or receive before you sign.',
+    lede: 'Open offers across the platform, your own included: offers to lend (you can borrow from these) and requests to borrow (you can lend to these). Pick someone else’s to see exactly what you would pay or receive before you sign.',
     emptyTitle: 'No open offers right now',
     emptyBody: 'Create your own offer and let the other side come to you.',
     // F-20260703-003 (#988) — shown by MarketFreshnessNote when the
@@ -3543,7 +3543,7 @@ const copySource = {
       internal_matched: 'matched',
     },
     title: 'Rate Desk',
-    lede: 'Every open offer for one pair of assets on one page. See the rates other people are offering, post your own offer at the rate you want, and manage the offers you have open.',
+    lede: 'The open offers for one pair of assets on one page. See the rates other people are offering, post your own offer at the rate you want, and manage the offers you have open.',
     // Naive-user redesign — a four-step orientation, open by default for
     // a first visit and collapsible after.
     howItWorks: {
@@ -3565,8 +3565,12 @@ const copySource = {
     marketsEmpty:
       'No live markets right now. Pick a pair and post the first offer with the ticket.',
     // #1247 PAG-010 — discovery serves the deepest markets only.
-    marketsTruncated:
-      'Showing the most active markets — smaller markets aren’t listed here, but you can load any pair with “Custom pair…”.',
+    // #2378 r3 — composed from `customPair` so the instruction always
+    // names the option the picker actually shows.
+    marketsTruncated: tmpl(
+      'Showing the most active markets — smaller markets aren’t listed here, but you can load any pair with “{{option}}”.',
+      ['option'],
+    ),
     pickPair: 'Pick a pair to see its offers.',
     lastFill: 'Last agreed rate',
     quotedMid: 'Middle rate',
@@ -4568,10 +4572,6 @@ const copySource = {
     // Row context refs — the loan / offer a row belongs to.
     loanRef: tmpl(`Loan #{{loanId}}`, ['loanId']),
     offerRef: tmpl(`Offer #{{offerId}}`, ['offerId']),
-    // #2378 r2 — a recorded amount whose token details are loading or
-    // could not be read; the amount is never silently dropped.
-    amountLoading: 'Amount loading…',
-    amountUnreadable: tmpl('An amount of {{token}} (its details couldn’t be read)', ['token']),
     viewTx: 'View transaction',
     loadMore: 'Load older activity',
     loadingMore: 'Loading…',

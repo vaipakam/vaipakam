@@ -267,7 +267,7 @@ export function DeskHeader({
         // deepest markets; a market missing from the picker still
         // exists and loads via the custom-pair entry.
         <p className="muted" style={{ marginTop: 8 }}>
-          {copy.desk.marketsTruncated}
+          {copy.desk.marketsTruncated(copy.desk.customPair)}
         </p>
       ) : null}
 

@@ -1524,7 +1524,7 @@
         "tail": "."
       },
       "title": "Carnet d'offres",
-      "lede": "Offres de prêt ouvertes et demandes d'emprunt d'autres utilisateurs.",
+      "lede": "Les offres ouvertes de toute la plateforme, y compris les vôtres : offres de prêt (vous pouvez emprunter auprès d’elles) et demandes d’emprunt (vous pouvez leur prêter). Choisissez celle de quelqu’un d’autre pour voir exactement ce que vous paieriez ou recevriez avant de signer.",
       "emptyTitle": "Aucune offre ouverte pour le moment",
       "emptyBody": "Créez votre propre offre et laissez l'autre côté venir à vous.",
       "rateBand": "fourchette de taux {{min}}–{{max}}",
@@ -1568,7 +1568,7 @@
         "internal_matched": "apparié"
       },
       "title": "Bureau des taux",
-      "lede": "Le carnet d'ordres d'un marché — lisez les taux, publiez ou modifiez des offres à taux limite, et suivez vos ordres ouverts et positions au même endroit.",
+      "lede": "Les offres ouvertes pour une paire d’actifs, sur une seule page. Voyez les taux proposés par d’autres, publiez votre propre offre au taux souhaité et gérez vos offres ouvertes.",
       "marketLabel": "Paire (prêt / garantie)",
       "tenorLabel": "Durée du prêt",
       "customPair": "Autre paire…",
@@ -1576,7 +1576,7 @@
       "customCollateral": "Adresse de l'actif de garantie",
       "marketsUnavailable": "La liste des marchés n'a pas pu charger pour le moment, la découverte de paires est donc limitée — entrez une paire manuellement et le carnet pourra tout de même charger.",
       "marketsEmpty": "Aucun marché live pour le moment. Choisissez une paire et publiez la première offre avec le ticket.",
-      "marketsTruncated": "Affichage des marchés les plus actifs — les plus petits ne sont pas listés ici, mais vous pouvez charger toute paire avec “Paire personnalisée…”.",
+      "marketsTruncated": "Affichage des marchés les plus actifs — les plus petits ne sont pas listés ici, mais vous pouvez charger n’importe quelle paire avec « {{option}} ».",
       "pickPair": "Choisissez un marché pour charger son carnet.",
       "lastFill": "Dernier taux convenu",
       "quotedMid": "Taux médian",
@@ -2206,9 +2206,7 @@
         "Approval": "Approbation"
       },
       "unavailableFallback": "Vos prêts et locations actuels sont toujours disponibles dans",
-      "positionsLink": "Mes positions",
-      "amountLoading": "Montant en cours de chargement…",
-      "amountUnreadable": "Un montant de {{token}} (ses détails n’ont pas pu être lus)"
+      "positionsLink": "Mes positions"
     },
     "rewards": {
       "unavailable": "Nous n’avons pas pu vérifier vos récompenses pour l’instant — réessayez dans un moment.",

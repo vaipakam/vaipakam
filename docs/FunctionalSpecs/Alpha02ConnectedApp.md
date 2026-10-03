@@ -1107,14 +1107,11 @@ The app uses chain reads and indexed reads for different jobs.
   participation history than one read returns folds into the page's
   recent-activity-only disclosure.
 - An Activity row states the asset and amount its transaction moved or offered
-  whenever an event in that transaction records them, read from where each kind
-  of event actually carries them — including a loan start, whose amount and
-  asset are recorded in two separate events. An NFT leg is never stated as a
-  token amount. When one transaction carries several such actions, the amount
-  shown belongs to the offer or loan the row names, or none is shown. A recorded
-  amount whose token details are loading or unreadable says so rather than
-  disappearing. When no event records both, the row shows no amount rather than
-  a guess.
+  when the activity record carries them as normalized fields — exact, or as a
+  range for an offer that commits one — and shows no amount otherwise. It never
+  reconstructs an amount the record does not state, and never presents an NFT
+  leg as a token amount. (Not yet implemented: the record does not carry these
+  fields — tracked in #2383.)
 - Realtime push refreshes matching indexed views when available. Polling remains
   the fallback.
 - The push signal covers every class of change a holder-keyed view depends on —

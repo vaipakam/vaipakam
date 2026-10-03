@@ -18,8 +18,7 @@ import {
 } from '../data/indexer';
 import { EmptyState, UnavailableState } from '../components/EmptyState';
 import { MarketFreshnessNote } from '../components/MarketFreshnessNote';
-import { formatTimeAgo, formatTokenAmount, shortAddress } from '../lib/format';
-import { useTokenMeta } from '../contracts/erc20';
+import { formatTimeAgo, shortAddress } from '../lib/format';
 import { coalesceByTx, type ActivityRowView } from '../lib/activityView';
 import { signalAware } from '../chain/railHealth';
 
@@ -37,20 +36,8 @@ function ActivityRow({ row, explorer }: { row: ActivityRowView; explorer: string
     event.offerId !== null ? copy.activity.offerRef(event.offerId) : null,
   ].filter(Boolean);
 
-  // UX3-012 — what the transaction moved or offered, when it says so.
-  const substanceMeta = useTokenMeta(row.substance?.asset);
-  // #2378 r2 — a recorded amount never disappears because its token's
-  // details are slow or unreadable; the row says which.
-  const substanceStr = !row.substance
-    ? null
-    : substanceMeta.data
-      ? `${formatTokenAmount(BigInt(row.substance.amount), substanceMeta.data.decimals)} ${substanceMeta.data.symbol}`
-      : substanceMeta.isError
-        ? copy.activity.amountUnreadable(shortAddress(row.substance.asset))
-        : copy.activity.amountLoading;
   const sub = (
     <span className="row-sub">
-      {substanceStr ? `${substanceStr} · ` : ''}
       {context.length ? `${context.join(' · ')} · ` : ''}
       {formatTimeAgo(event.blockAt)}
       {hiddenCount > 0 ? copy.activity.plusMore(hiddenCount) : ''}
