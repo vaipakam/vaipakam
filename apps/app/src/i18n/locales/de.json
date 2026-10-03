@@ -1810,7 +1810,7 @@
       "howItWorks": {
         "title": "So funktioniert diese Seite",
         "step1": "Wählen Sie oben ein Paar: das verliehene Asset und die Sicherheit, die den Kredit absichert. Wählen Sie dann die Laufzeit des Kredits.",
-        "step2": "Die Liste zeigt die gerade offenen Angebote. „Angebote zum Verleihen“ sind Personen, die zu diesem Jahreszins verleihen; „Anfragen zum Leihen“ sind Personen, die leihen möchten. Der mittlere Zins liegt zwischen dem besten Angebot jeder Seite.",
+        "step2": "Die Liste zeigt offene Angebote. Sie wird normalerweise direkt aus der Blockchain gelesen; schlägt das fehl, zeigt sie eine gespeicherte Kopie, die etwas hinterherhinken kann, und weist darauf hin. „Angebote zum Verleihen“ sind Personen, die zu diesem Jahreszins verleihen; „Anfragen zum Leihen“ sind Personen, die leihen möchten. Der mittlere Zins liegt zwischen dem besten Angebot jeder Seite.",
         "step3": "Um ein Angebot anzunehmen, tippen Sie daneben auf „Dieses Angebot leihen“ oder „Zu diesem Satz verleihen“. Sie sehen genau, was Sie zahlen und erhalten, bevor Sie etwas signieren.",
         "step4": "Für ein eigenes Angebot füllen Sie das Formular aus: den Betrag, Ihren Zins und die Sicherheit. Es wartet in der Liste, bis jemand es annimmt, und bis dahin können Sie es stornieren. Ein mit Netzwerkgebühr veröffentlichtes Angebot lässt sich auch ändern; ein kostenlos nur per Signatur veröffentlichtes nicht — stornieren Sie es und veröffentlichen Sie es neu. Manchmal muss ein neues Angebot einige Minuten offen bleiben, bevor Sie es stornieren können."
       }

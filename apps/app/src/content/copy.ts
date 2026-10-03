@@ -3557,7 +3557,9 @@ const copySource = {
     howItWorks: {
       title: 'How this page works',
       step1: 'Pick a pair at the top: the asset being lent, and the collateral that backs the loan. Then pick how long the loan lasts.',
-      step2: 'The list shows the offers open right now. “Offers to lend” are people ready to lend at that yearly rate; “Requests to borrow” are people who want to borrow. The middle rate sits between the best of each.',
+      // #2378 r7 — no freshness claim: the list falls back to a saved
+      // copy when the live read fails, and says so itself.
+      step2: 'The list shows open offers. It is normally read straight from the blockchain; if that read fails, it shows a saved copy that can be a little behind, and says so. “Offers to lend” are people ready to lend at that yearly rate; “Requests to borrow” are people who want to borrow. The middle rate sits between the best of each.',
       step3: 'To take an offer, press “Borrow this” or “Lend to this” beside it. You see exactly what you pay and receive before you sign anything.',
       // #2378 r1 — the cancel promise is qualified: where partial fills are
       // switched on, a new offer must stay open for a short time first.

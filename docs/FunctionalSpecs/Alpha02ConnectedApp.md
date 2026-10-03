@@ -1266,7 +1266,9 @@ offers on each side, never as a rate anyone has offered; when those offers come
 from a saved copy because the live read failed, the chart's description of it
 says so, since on a phone the chart can be shown without the offers list that
 carries the same warning. The page's introduction does not claim to show every
-offer for the pair, because signed offers can be unavailable or cut short. A list scoped to the
+offer for the pair, because signed offers can be unavailable or cut short, and
+the first-visit guide does not call the list current: it says the list is
+normally read from the blockchain and can fall back to a saved copy that may lag. A list scoped to the
 selected pair and loan length names both. A free signed offer's "until I cancel"
 choice says it stays open for at most seven days, because its signature
 expires. Projected earnings are stated as conditional on the offer being taken

@@ -1810,7 +1810,7 @@
       "howItWorks": {
         "title": "Comment fonctionne cette page",
         "step1": "Choisissez une paire en haut : l’actif prêté et la garantie qui couvre le prêt. Puis choisissez la durée du prêt.",
-        "step2": "La liste montre les offres ouvertes en ce moment. « Offres de prêt » : des personnes prêtes à prêter à ce taux annuel ; « Demandes d’emprunt » : des personnes qui veulent emprunter. Le taux médian se situe entre la meilleure de chaque côté.",
+        "step2": "La liste montre les offres ouvertes. Elle est normalement lue directement sur la blockchain ; si cette lecture échoue, elle affiche une copie enregistrée qui peut avoir un peu de retard, et le signale. « Offres de prêt » : des personnes prêtes à prêter à ce taux annuel ; « Demandes d’emprunt » : des personnes qui veulent emprunter. Le taux médian se situe entre la meilleure de chaque côté.",
         "step3": "Pour accepter une offre, appuyez sur « Emprunter ceci » ou « Prêter à ceci » à côté. Vous voyez exactement ce que vous payez et recevez avant de signer quoi que ce soit.",
         "step4": "Pour créer votre propre offre, remplissez le formulaire : le montant, votre taux et la garantie. Elle attend dans la liste jusqu’à ce que quelqu’un la prenne, et vous pouvez l’annuler d’ici là. Une offre publiée avec des frais de réseau peut aussi être modifiée ; une offre publiée gratuitement par simple signature ne le peut pas : annulez-la et republiez-la. Parfois, une nouvelle offre doit rester ouverte quelques minutes avant de pouvoir être annulée."
       }

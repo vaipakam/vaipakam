@@ -1648,7 +1648,7 @@
       "howItWorks": {
         "title": "How this page works",
         "step1": "Pick a pair at the top: the asset being lent, and the collateral that backs the loan. Then pick how long the loan lasts.",
-        "step2": "The list shows the offers open right now. “Offers to lend” are people ready to lend at that yearly rate; “Requests to borrow” are people who want to borrow. The middle rate sits between the best of each.",
+        "step2": "The list shows open offers. It is normally read straight from the blockchain; if that read fails, it shows a saved copy that can be a little behind, and says so. “Offers to lend” are people ready to lend at that yearly rate; “Requests to borrow” are people who want to borrow. The middle rate sits between the best of each.",
         "step3": "To take an offer, press “Borrow this” or “Lend to this” beside it. You see exactly what you pay and receive before you sign anything.",
         "step4": "To make your own offer, fill in the form: the amount, your rate and the collateral. It waits in the list until someone takes it, and you can cancel it before then. An offer posted with a network fee can also be changed; one posted for free by signing only cannot — cancel it and post again. Sometimes a new offer has to stay open for a few minutes before you can cancel it."
       },

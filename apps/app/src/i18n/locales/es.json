@@ -1810,7 +1810,7 @@
       "howItWorks": {
         "title": "Cómo funciona esta página",
         "step1": "Elige un par arriba: el activo que se presta y la garantía que respalda el préstamo. Luego elige cuánto dura el préstamo.",
-        "step2": "La lista muestra las ofertas abiertas ahora. «Ofertas para prestar» son personas dispuestas a prestar a esa tasa anual; «Solicitudes de préstamo» son personas que quieren pedir prestado. La tasa media está entre la mejor de cada lado.",
+        "step2": "La lista muestra las ofertas abiertas. Normalmente se lee directamente de la blockchain; si esa lectura falla, muestra una copia guardada que puede ir un poco atrasada, y lo indica. «Ofertas para prestar» son personas dispuestas a prestar a esa tasa anual; «Solicitudes de préstamo» son personas que quieren pedir prestado. La tasa media está entre la mejor de cada lado.",
         "step3": "Para aceptar una oferta, pulsa «Pedir este» o «Prestar a este» a su lado. Verás exactamente lo que pagas y recibes antes de firmar nada.",
         "step4": "Para crear tu propia oferta, completa el formulario: el importe, tu tasa y la garantía. Espera en la lista hasta que alguien la acepte, y puedes cancelarla antes de eso. Una oferta publicada pagando la comisión de red también se puede modificar; una publicada gratis solo con firma no: cancélala y publícala de nuevo. A veces una oferta nueva tiene que seguir abierta unos minutos antes de que puedas cancelarla."
       }
