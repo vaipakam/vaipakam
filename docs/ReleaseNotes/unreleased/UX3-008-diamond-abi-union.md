@@ -1,4 +1,4 @@
-## Thread — The connected app downloads a quarter of the contract data it used to (PR #<n>)
+## Thread — The connected app downloads a quarter of the contract data it used to (PR #2392)
 
 Every connected session downloads a description of the platform's contract: which functions exist, and which errors and events it can report. The 2026-10-03 live review found this file had grown to 2.8 MB, about three and a half times its size in July. That was recorded as UX3-008.
 
