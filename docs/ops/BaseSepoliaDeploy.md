@@ -243,6 +243,9 @@ its feed with WETH, so repricing it would move the quote leg of every faucet
 pool; the script refuses it. Before it broadcasts anything, it checks:
 
 - the artifact still describes the chain;
+- the pool is the one the oracle actually reads: in simulation only, the
+  script empties the pool's depth, confirms the asset turns Illiquid, and
+  puts it back (the Diamond exposes no view of its pool configuration);
 - the venue is the one the Diamond routes liquidations through (listed and
   not disabled);
 - the broadcaster owns the feed, the pool and the venue;

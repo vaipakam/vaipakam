@@ -4,7 +4,8 @@ pragma solidity ^0.8.29;
 import {OracleFacet} from "../../src/facets/OracleFacet.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {AdminFacet} from "../../src/facets/AdminFacet.sol";
-import {MockUniswapV3Pool} from "../../script/mocks/MockUniswapV3.sol";
+import {MockUniswapV3Factory, MockUniswapV3Pool} from "../../script/mocks/MockUniswapV3.sol";
+import {ERC20Mock} from "../mocks/ERC20Mock.sol";
 import {MockSwapAdapter} from "../mocks/MockSwapAdapter.sol";
 import {DeployTestnetMocks} from "../../script/DeployTestnetMocks.s.sol";
 import {RepriceTestnetMock} from "../../script/RepriceTestnetMock.s.sol";
@@ -172,6 +173,40 @@ contract TestnetMockRepriceTest is TestnetMockOracleRig, RepriceTestnetMock {
         this.preflightExt(t, address(this), true);
     }
 
+    /// @notice The recorded pool IS the oracle's route in the rig: zeroing
+    ///         its depth flips tLIQ Illiquid, so the probe passes — and the
+    ///         snapshot puts the depth back.
+    function test_routeProbe_passesForTheRealPoolAndRestoresIt() public {
+        uint128 depth = MockUniswapV3Pool(tliqPool).liquidity();
+        _requireRecordedPoolIsTheRoute(tliqTarget);
+        assertEq(MockUniswapV3Pool(tliqPool).liquidity(), depth, "probe left no trace");
+        assertEq(_status(address(tLIQ)), LIQUID, "still Liquid");
+    }
+
+    /// @notice A decoy: a second factory the artifact could name, mapping the
+    ///         pair to a pool the oracle never consults. Every structural
+    ///         check passes against it; the behavioural probe does not.
+    function test_refuses_aRecordedPoolTheOracleDoesNotRoute() public {
+        MockUniswapV3Factory decoyFactory = new MockUniswapV3Factory();
+        address decoyPool = decoyFactory.createPool(
+            address(tLIQ),
+            address(weth),
+            3000,
+            MockPoolPricing.sqrtPriceX96(address(tLIQ), P_TLIQ, address(weth), P_MWETH),
+            MOCK_POOL_LIQUIDITY
+        );
+        RepriceTarget memory t = tliqTarget;
+        t.factory = address(decoyFactory);
+        t.pool = decoyPool;
+        this.preflightExt(t, address(this), false); // structural checks pass
+        vm.expectRevert(
+            bytes(
+                "RepriceTestnetMock: the asset stays Liquid without the recorded pool - the oracle routes elsewhere, so repricing this pool would not move what it reads"
+            )
+        );
+        this.routeProbeExt(t);
+    }
+
     function test_refuses_aZeroPrice() public {
         vm.expectRevert(bytes("RepriceTestnetMock: REPRICE_USD_E8 is zero"));
         this.targetSpotExt(tliqTarget, 0);
@@ -321,6 +356,26 @@ contract TestnetMockRepriceTest is TestnetMockOracleRig, RepriceTestnetMock {
         );
     }
 
+    /// @notice `execute` settles raw amounts, so a leg at different decimals
+    ///         mis-pays by a power of ten even at the right USD price.
+    function test_venueReport_namesADecimalsMismatch() public {
+        ERC20Mock six = new ERC20Mock("Six", "SIX", 6);
+        venue.setTokenPrice(address(six), 1e8);
+        address[] memory a = new address[](2);
+        a[0] = address(tLIQ);
+        a[1] = address(six);
+        string[] memory d = _venueReport(tliqTarget, a);
+        assertEq(d.length, 2, "decimals, then the missing oracle price");
+        assertEq(
+            d[0],
+            string.concat(
+                "venue settles ",
+                vm.toString(address(six)),
+                " (6 decimals) against the repriced asset (18) on raw amounts: the payout is off by a power of ten"
+            )
+        );
+    }
+
     /// @notice With the venue skipped, the repriced asset itself shows up as
     ///         a deviation — the report states the mismatch the operator chose.
     function test_venueReport_skipVenueReportsTheRepricedAsset() public {
@@ -344,6 +399,10 @@ contract TestnetMockRepriceTest is TestnetMockOracleRig, RepriceTestnetMock {
         uint160 spot = _targetSpot(t, price8);
         _applyReprice(t, price8, spot, skipVenue);
         _verifyReprice(t, price8, skipVenue, allowIlliquid);
+    }
+
+    function routeProbeExt(RepriceTarget memory t) external {
+        _requireRecordedPoolIsTheRoute(t);
     }
 
     function preflightExt(RepriceTarget memory t, address sender, bool skipVenue) external view {

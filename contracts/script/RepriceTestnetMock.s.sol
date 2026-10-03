@@ -72,6 +72,10 @@ interface IRepriceDiamondViews {
  *           - a broadcaster that does not own the feed, the pool, and (unless
  *             skipped) the venue — each is owner-gated so a public testnet's
  *             demos cannot be repriced by a passer-by;
+ *           - a recorded pool the oracle does not actually route through:
+ *             zeroing its depth in simulation must flip the asset Illiquid.
+ *             The Diamond exposes no view of its factory or quote list, so
+ *             this is proved by behaviour, then the snapshot is restored;
  *           - (unless skipped) a recorded venue the Diamond does not route
  *             liquidations through: it must be in `getSwapAdapters()` and not
  *             disabled. Repricing a different adapter would leave the one the
@@ -185,6 +189,7 @@ contract RepriceTestnetMock is Script {
 
         RepriceTarget memory t = _resolveTarget(assetKey);
         _preflight(t, sender, skipVenue);
+        _requireRecordedPoolIsTheRoute(t);
 
         PriceReading memory before = _read(t);
         uint160 newSpot = _targetSpot(t, newPrice8);
@@ -367,14 +372,17 @@ contract RepriceTestnetMock is Script {
     ///         `inputAmount` (a 1:1 base) when either leg has no price — the
     ///         multiplier applies in both cases. It reverts when
     ///         `shouldRevert` is set or `restrictedTo` names another caller.
-    ///         That is the complete set this reads.
+    ///         It works on raw token amounts, so it also assumes every leg
+    ///         has the same decimals; a mismatch is reported too. That is the
+    ///         complete set this reads.
     function _venueReport(RepriceTarget memory t, address[] memory assets)
         internal
         view
         returns (string[] memory deviations)
     {
         MockSwapAdapter venue = MockSwapAdapter(t.venue);
-        string[] memory buf = new string[](3 + assets.length);
+        string[] memory buf = new string[](3 + 2 * assets.length);
+        uint8 assetDecimals = IERC20Metadata(t.asset).decimals();
         uint256 n;
         if (venue.shouldRevert()) {
             buf[n++] = "venue shouldRevert is on: every liquidation through it reverts";
@@ -398,6 +406,26 @@ contract RepriceTestnetMock is Script {
             );
         }
         for (uint256 i; i < assets.length; ++i) {
+            // `execute` works on raw amounts and assumes equal decimals, so a
+            // leg at different decimals mis-pays by a power of ten whatever
+            // its USD price says.
+            try IERC20Metadata(assets[i]).decimals() returns (uint8 d) {
+                if (d != assetDecimals) {
+                    buf[n++] = string.concat(
+                        "venue settles ",
+                        vm.toString(assets[i]),
+                        " (",
+                        vm.toString(uint256(d)),
+                        " decimals) against the repriced asset (",
+                        vm.toString(uint256(assetDecimals)),
+                        ") on raw amounts: the payout is off by a power of ten"
+                    );
+                }
+            } catch {
+                buf[n++] = string.concat(
+                    "token ", vm.toString(assets[i]), " reports no decimals: its venue settlement is not substantiated"
+                );
+            }
             string memory dev = _venuePriceDeviation(t, venue, assets[i]);
             if (bytes(dev).length != 0) buf[n++] = dev;
         }
@@ -436,6 +464,33 @@ contract RepriceTestnetMock is Script {
         } catch {
             return string.concat("oracle has no price for ", vm.toString(asset), ": its venue price is not compared");
         }
+    }
+
+    /// @notice Prove, by behaviour, that the recorded pool is what the
+    ///         oracle's Liquid verdict for the asset depends on.
+    /// @dev    The Diamond exposes no view of its V3 factory or quote list,
+    ///         and the oracle routes over several factories, fee tiers and
+    ///         quote assets, so the factory check in preflight only proves
+    ///         the ARTIFACT's factory maps the pair to this pool. This
+    ///         closes the gap the way the price check does for the feed:
+    ///         in simulation only, snapshot, zero the pool's depth as its
+    ///         owner, and require the asset to read Illiquid; then revert to
+    ///         the snapshot. Nothing here is broadcast (it runs before
+    ///         `startBroadcast`, and the snapshot is restored).
+    ///
+    ///         An asset already Illiquid proves nothing this way, so it is
+    ///         skipped here and left to the Illiquid guard after the writes.
+    function _requireRecordedPoolIsTheRoute(RepriceTarget memory t) internal {
+        if (IRepriceDiamondViews(t.diamond).checkLiquidity(t.asset) != 0) return;
+        uint256 snap = vm.snapshotState();
+        vm.prank(MockUniswapV3Pool(t.pool).owner());
+        MockUniswapV3Pool(t.pool).setLiquidity(0);
+        uint8 withoutPool = IRepriceDiamondViews(t.diamond).checkLiquidity(t.asset);
+        vm.revertToState(snap);
+        require(
+            withoutPool != 0,
+            "RepriceTestnetMock: the asset stays Liquid without the recorded pool - the oracle routes elsewhere, so repricing this pool would not move what it reads"
+        );
     }
 
     function _isRoutedVenue(RepriceTarget memory t) internal view returns (bool) {
