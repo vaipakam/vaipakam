@@ -134,6 +134,9 @@ for sub in "${SUBDIRS[@]}"; do
   #     ALSO exceed the viaIR bounded-compile ceiling on current main (even a
   #     single Seaport file trips "Variable size N too deep" — full build only,
   #     #601/#603), so absent that URL they must not be compiled here at all.
+  #   • *LiveFork* sources also need FORK_URL_BASE_SEPOLIA: they exercise the
+  #     DEPLOYED Base Sepolia Diamond on a fork (e.g. the #2355 refinance
+  #     check). Unlike Seaport they compile within the bounded ceiling.
   #   • the mainnet-fork sources (Oracle / Permit2 / Liquidation) need
   #     FORK_URL_MAINNET; they DO compile+skip cleanly in a bounded chunk.
   # A file whose URL is unset is dropped (still "covered" by the exhaustiveness
@@ -145,7 +148,7 @@ for sub in "${SUBDIRS[@]}"; do
     kept=()
     for stem in "${SUBFILES[@]}"; do
       case "$stem" in
-        *Seaport*)
+        *Seaport*|*LiveFork*)
           if [ -n "${FORK_URL_BASE_SEPOLIA:-}" ]; then kept+=("$stem")
           else echo "  fork: skip $stem (needs FORK_URL_BASE_SEPOLIA)"; fi ;;
         *)

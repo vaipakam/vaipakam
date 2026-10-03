@@ -1,4 +1,4 @@
-## Thread — Base Sepolia refreshed to current main; #2355's refinance fix is live there (PR #<n>)
+## Thread — Base Sepolia refreshed to current main; #2355's refinance fix is live there (PR #2379)
 
 The Base Sepolia Diamond now runs current main (`f8176ea06`). Its last refresh was in mid-September. Every facet was replaced in place, and the vault template, the reward custody holder and the proxy implementations were updated with them. The Diamond address did not change. The deployment record for Base Sepolia, and the consolidated copy the apps and workers read, now describe the live Diamond.
 
@@ -14,3 +14,5 @@ Three things are stated rather than implied:
 - **Reward claims and remittances are refused on Base Sepolia until the separate reward-custody activation ceremony runs.** On the canonical chain the new code allows only what custody has received, which is nothing until it is funded. This is a consequence of shipping main, not of #2355, and the ceremony needs its own operator answers.
 - Selectors retired from the code over time are never removed by an in-place refresh, so eleven of them still route to old implementations (tracked in #2313). Every current function routes to the new code.
 - The first attempt stopped mid-broadcast on a transient RPC error, after the pause and some implementation deployments but before any facet change. It rewrote the deployment record with addresses that were never put into service. The record was restored before the rerun, and the gap is tracked in #2377.
+
+The refinance fix is proven on the deployed code, not only by bytecode comparison. On a fork of the live Diamond, with automatic matching switched off on the fork only, a lender's direct accept of a refinance request completes the refinance. The same scenario against the Diamond as it stood before this refresh fails exactly as the fix intended to stop it failing. That check also found that a refinance of a loan backed by illiquid collateral cannot complete on the current code, because the post-refinance risk check has no branch for illiquid collateral the way loan opening does. That is a separate, older defect, recorded in #2380 for a decision.
