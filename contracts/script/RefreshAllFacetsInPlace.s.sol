@@ -2346,7 +2346,10 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     ///      (removing a live function would strand it) and that the list
     ///      names the legacy seed.
     function _retiredSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](9);
+        s = new bytes4[](10);
+        // 3b-ii-B — the park gained the batch's day list (the release gate re-supplies it, paged);
+        // the one-argument shape that refused everyone is retired.
+        s[9] = bytes4(keccak256("parkTransportBatchRemainder(bytes32)"));
         // A2-ii — the claim-only leg settle, replaced by `epochSettleLegs(uint8,...)` by source.
         s[7] = bytes4(keccak256("epochSettleClaimLegs(uint256,uint256,uint256,uint256,uint256)"));
         // A2-ii — the obligation-keyed cooldown view, replaced by the batch-keyed `getTransportBatchWindow(bytes32)`.

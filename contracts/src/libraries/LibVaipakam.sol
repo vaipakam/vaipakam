@@ -7733,6 +7733,9 @@ library LibVaipakam {
         mapping(bytes32 => ClosureWalk) closureWalks;
         /// @dev 3b-ii-B — the last walk nonce each starter used.
         mapping(address => uint64) closureWalkNonce;
+        /// @dev 3b-ii-B — how many of a batch's listed days the park has checked
+        ///      closed so far (the park is paged like the index was).
+        mapping(bytes32 => uint32) transportParkCursor;
     }
 
     /// @notice 3b-ii-A2 (#2305) — one batch a staging record staged from, with

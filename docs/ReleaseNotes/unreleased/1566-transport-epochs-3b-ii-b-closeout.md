@@ -11,3 +11,13 @@
 **Published.** Whether a day is proven closed, each walk's cursors, sums and completeness, a starter's nonce, and whether a given entry counts as terminated on a day are readable; a walk's opening, each page and the day's closure each emit an event. The entries live on their own facet.
 
 **Spec:** TokenomicsTechSpec, the transport-epoch bullets (fifth change: the closure proof).
+
+## Thread — an old-wire delivery's remainder is released only once every day it listed is proven closed (#1566 transport epochs 3b-ii-B, the release gate)
+
+**Problem.** The first transport-epoch cut shipped the release shut to everyone: the rule — refuse a batch that still lists an outstanding obligation — could not be checked until obligations were tracked per day, and a release the chain cannot check is an earmark spent on the caller's word (#2258, the owner's Reading B).
+
+**What changed.** Parking a batch's remainder is now the release gate, and it is open. The caller re-supplies the batch's whole day list, checked against the commitment recorded when the delivery arrived exactly as its indexing was, and from the batch's own cursor one page of listed days at a time must each be proven closed by the closure proof above; the first day still open refuses the page by name and nothing is applied. When the cursor reaches the end the remainder parks — still refused while any staging record references the batch or the batch is not fully indexed. Parking is mechanical and permissionless: the remainder moves into a holding of the same batch under the same membership, nothing becomes spendable, and what makes it valid is state, not the caller.
+
+**The acknowledgment is the administrator's.** Releasing the parked remainder — after which the batch's delivery passes the classification gate — is the operator disposition the design names, gated accordingly; it is one-way and refused twice. The one-argument park entry that refused everyone is retired.
+
+**Spec:** TokenomicsTechSpec, the transport-epoch bullets (fifth change: the release).

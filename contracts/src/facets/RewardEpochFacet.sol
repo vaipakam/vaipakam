@@ -177,32 +177,30 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
     ///         must exist and its membership must be whole. 3b-ii adds §5c's
     ///         remaining condition — a batch with outstanding staging
     ///         references cannot be retired — to the same place.
-    /// @return amount What was parked.
-    function parkTransportBatchRemainder(bytes32 batchId)
+    /// @param  batchId The batch whose remainder is parked.
+    /// @param  dayIds  The batch's WHOLE day list (checked against its commitment).
+    /// @return checkedDays How many listed days the park has now checked closed.
+    /// @return parked      Whether this page completed the park.
+    /// @return amount      What was parked (on the completing page).
+    function parkTransportBatchRemainder(bytes32 batchId, uint256[] calldata dayIds)
         external
         nonReentrant
-        returns (uint256 amount)
+        returns (uint32 checkedDays, bool parked, uint256 amount)
     {
-        // #2258 (owner decision 2026-09-20) — NOT AVAILABLE in 3b-i, to
-        // anyone, checked before anything else so the answer is the same for
-        // an admin, a stranger and an unknown id: the release does not exist
-        // yet. The design's rule for this act — refuse a batch that still
-        // lists an outstanding obligation — cannot be tested until 3b-ii
-        // tracks obligations per day, and a release the chain cannot check is
-        // an earmark spent on the caller's say-so. The library function this
-        // will call is written and tested (through the test-only raw entry);
-        // only the door is shut.
-        amount; // the return exists for 3b-ii's shape; nothing reaches it
-        revert TransportReleaseNotYetAvailable(batchId);
+        // 3b-ii-B (#1566; #2258 Reading B) — THE RELEASE GATE, now checkable:
+        // every listed day must be proven closed (its obligations all
+        // terminated — {RewardClosureFacet}) and no staging reference may
+        // stand; the day list is re-supplied against the 3a commitment and the
+        // check is paged with a per-batch cursor like the index was. State,
+        // not the caller, makes the release valid — permissionless.
+        return LibRewardCustody.parkTransportRemainderPage(LibVaipakam.storageSlot(), batchId, dayIds);
     }
 
-    /// @notice Record the acknowledgment that RELEASES a batch.
-    ///         NOT OFFERED IN THIS CUT — this entry refuses every caller, the
-    ///         administrator included. In particular the `ADMIN_ROLE` gate the
-    ///         dev note below argues for is ABSENT from this cut's signature on
-    ///         purpose, so that the refusal is uniform; do not read that
-    ///         paragraph as a description of who may call this today. Nobody
-    ///         may.
+    /// @notice Record the acknowledgment that RELEASES a batch — ADMIN (3b-ii-B).
+    ///         (3b-i shipped this entry shut to everyone, the administrator
+    ///         included, so the refusal was uniform while the release could
+    ///         not yet be checked; the park's day-closure gate now exists, so
+    ///         the door is open and the gate the note below argues for is on.)
     /// @dev    After this, and only after this, the batch's packet passes the
     ///         classification gate: {LibRewardCustody.authenticatedFresh} then
     ///         derives the bound a classification reads from the packet's
@@ -244,13 +242,12 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
     function acknowledgeTransportBatchRemainder(bytes32 batchId)
         external
         nonReentrant
+        onlyRole(LibAccessControl.ADMIN_ROLE)
     {
-        // #2258 — as above. The `onlyRole(ADMIN_ROLE)` gate this act carries
-        // in 3b-ii (the acknowledgment is an operator disposition; parking is
-        // not) is deliberately absent here so the refusal is uniform: a
-        // stranger and the admin both learn the release does not exist yet,
-        // rather than one of them learning they lack a role for it.
-        revert TransportReleaseNotYetAvailable(batchId);
+        // 3b-ii-B — the disposition, gated as the note above argues: a parked,
+        // unacknowledged remainder becomes RELEASED, and the batch's packet
+        // passes the classification gate from here on.
+        LibRewardCustody.acknowledgeTransportRemainder(LibVaipakam.storageSlot(), batchId);
     }
 
     /// @notice 3b-ii-A2 (#2305) — a batch's STAGED components and the count of

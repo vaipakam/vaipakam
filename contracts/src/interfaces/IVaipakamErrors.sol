@@ -1804,6 +1804,8 @@ interface IVaipakamErrors {
     error ClosureEntryOpen(uint256 dayId, uint256 entryId);
     /// @notice The visited entries' per-day sum exceeds the day's folded side total: the day's records disagree.
     error ClosureConservationExceeded(uint256 dayId, uint8 side, uint256 sum, uint256 total);
+    /// @notice The batch lists a day not yet proven closed: its remainder cannot be parked (3b-ii-B).
+    error TransportDayNotClosed(bytes32 batchId, uint256 dayId);
     /// @notice The domain under `domainKey` is not in the phase this entry
     ///         needs (A2-ii).
     error StagingDomainPhaseInvalid(bytes32 domainKey, uint8 phase);

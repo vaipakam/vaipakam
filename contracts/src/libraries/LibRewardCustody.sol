@@ -1119,6 +1119,9 @@ library LibRewardCustody {
     ///         was parked under the batch's key, still bound by its membership.
     /// @custom:event-category state-change/reward-custody
     event TransportRemainderParked(bytes32 indexed batchId, uint256 amount, bytes32 dayListHash);
+    /// @notice A park page checked `checkedDays` of the batch's `dayCount` listed days proven closed (3b-ii-B).
+    /// @custom:event-category state-change/reward-transport
+    event TransportParkPageChecked(bytes32 indexed batchId, uint32 checkedDays, uint32 dayCount);
     /// @notice #1566 transport epochs PR 3b — a batch's parked remainder was
     ///         acknowledged, which is what makes its packet classifiable.
     /// @custom:event-category state-change/reward-custody
@@ -2149,6 +2152,45 @@ library LibRewardCustody {
     ///         packet and {authenticatedFresh} derives the classification's
     ///         bound from the packet's immutable attested caps NET of what the
     ///         batch's own transport legs already spent.
+    /// @notice 3b-ii-B — the RELEASE GATE: one page of the park. The caller re-supplies
+    ///         the batch's whole day list, checked against the 3a commitment exactly
+    ///         as the index was; from the batch's park cursor, up to
+    ///         `TRANSPORT_INDEX_PAGE` listed days must each be proven closed (every
+    ///         obligation covering them terminated — {LibRewardClosure}), or the page
+    ///         refuses naming the first open day and applies nothing. When the cursor
+    ///         reaches the list's end the remainder parks through
+    ///         {parkTransportRemainder}, which still refuses a batch with a standing
+    ///         staging reference or one not fully indexed. Permissionless: what makes
+    ///         the release valid is STATE, not the caller.
+    function parkTransportRemainderPage(
+        LibVaipakam.Storage storage s,
+        bytes32 batchId,
+        uint256[] calldata dayIds
+    ) internal returns (uint32 checkedDays, bool parked, uint256 amount) {
+        LibVaipakam.TransportBatch storage b = s.transportBatches[batchId];
+        if (!transportBatchExists(b)) revert IVaipakamErrors.TransportBatchUnknown(batchId);
+        if (b.indexedDays < b.dayCount) {
+            revert IVaipakamErrors.TransportBatchNotFullyIndexed(batchId, b.indexedDays, b.dayCount);
+        }
+        bytes32 committed = s.ingressPackets[batchId].dayListHash;
+        bytes32 supplied = keccak256(abi.encode(dayIds));
+        if (supplied != committed) revert IVaipakamErrors.TransportDayListMismatch(batchId, committed, supplied);
+        uint256 done = s.transportParkCursor[batchId];
+        uint256 end = done + TRANSPORT_INDEX_PAGE;
+        if (end > dayIds.length) end = dayIds.length;
+        for (uint256 i = done; i < end; ) {
+            uint256 d = dayIds[i];
+            if (!s.dayObligationsClosed[d]) revert IVaipakamErrors.TransportDayNotClosed(batchId, d);
+            unchecked { ++i; }
+        }
+        checkedDays = uint32(end);
+        s.transportParkCursor[batchId] = checkedDays;
+        emit TransportParkPageChecked(batchId, checkedDays, b.dayCount);
+        if (end < dayIds.length) return (checkedDays, false, 0);
+        amount = parkTransportRemainder(s, batchId);
+        parked = true;
+    }
+
     function acknowledgeTransportRemainder(
         LibVaipakam.Storage storage s,
         bytes32 batchId

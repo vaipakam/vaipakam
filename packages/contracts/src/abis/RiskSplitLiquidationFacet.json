@@ -4176,6 +4176,22 @@
   },
   {
     "type": "error",
+    "name": "TransportDayNotClosed",
+    "inputs": [
+      {
+        "name": "batchId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "TransportDrawExceedsCoverage",
     "inputs": [
       {

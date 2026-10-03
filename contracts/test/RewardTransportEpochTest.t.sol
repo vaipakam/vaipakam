@@ -18,6 +18,7 @@ import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibRewardRemitDispatch} from "../src/libraries/LibRewardRemitDispatch.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
+import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
 
 /**
  * @title RewardTransportEpochTest
@@ -714,37 +715,41 @@ contract RewardTransportEpochTest is SetupTest, IVaipakamErrors {
         assertEq(parked, 0, "the entry is emptied exactly");
     }
 
-    /// #2258 (owner decision 2026-09-20) — the RELEASE IS NOT AVAILABLE in
-    /// 3b-i, to anyone. §5c requires classification to refuse a batch that
-    /// still lists an outstanding obligation, and 3b-i has no per-day figure to
-    /// test that with; a release the chain cannot check is an earmark spent on
-    /// the caller's say-so. Both entries refuse FIRST — the admin, a stranger
-    /// and an unknown id all get the same answer — while the library
-    /// machinery behind them stays reachable through the test-only raw entry,
+    /// 3b-ii-B — the RELEASE IS A GATE, not a shut door (3b-i shipped both
+    /// entries refusing everyone because the rule could not be checked). The
+    /// park is open to anyone and refuses BY NAME while a listed day is not
+    /// proven closed — the same answer for the administrator and a stranger —
+    /// and the acknowledgment is the administrator's disposition: a stranger
+    /// is refused by role, the administrator by state while nothing is parked.
+    /// The library machinery stays reachable through the test-only raw entry,
     /// which is how every lifecycle test above still runs.
-    function test_Release_IsNotAvailableInThisCut_ForAnyone() public {
+    function test_Release_IsGatedOnClosedDays_NotShut() public {
         bytes32 h = _untyped(6e18, 2, 12, keccak256("shut"));
-        address[2] memory callers = [address(this), makeAddr("stranger")];
+        uint256[] memory list = _days(2);
+        address stranger = makeAddr("stranger");
+        address[2] memory callers = [address(this), stranger];
         for (uint256 i; i < callers.length; ++i) {
             vm.prank(callers[i]);
-            vm.expectRevert(abi.encodeWithSelector(TransportReleaseNotYetAvailable.selector, h));
-            _epoch().parkTransportBatchRemainder(h);
-            vm.prank(callers[i]);
-            vm.expectRevert(abi.encodeWithSelector(TransportReleaseNotYetAvailable.selector, h));
-            _epoch().acknowledgeTransportBatchRemainder(h);
+            vm.expectRevert(abi.encodeWithSelector(TransportDayNotClosed.selector, h, 1));
+            _epoch().parkTransportBatchRemainder(h, list);
         }
-        // Refused before it looks: an id no delivery opened gets the same
-        // answer, not `TransportBatchUnknown`.
+        vm.prank(stranger);
+        vm.expectRevert(
+            abi.encodeWithSelector(LibAccessControl.AccessControlUnauthorizedAccount.selector, stranger, LibAccessControl.ADMIN_ROLE)
+        );
+        _epoch().acknowledgeTransportBatchRemainder(h);
+        vm.expectRevert(abi.encodeWithSelector(TransportRemainderNotParked.selector, h));
+        _epoch().acknowledgeTransportBatchRemainder(h);
+        // An id no delivery opened is refused by name.
         bytes32 nobody = keccak256("nobody");
-        vm.expectRevert(abi.encodeWithSelector(TransportReleaseNotYetAvailable.selector, nobody));
-        _epoch().parkTransportBatchRemainder(nobody);
-        // And therefore nothing can be classified early: the gate still holds
-        // because no production path can open it.
+        vm.expectRevert(abi.encodeWithSelector(TransportBatchUnknown.selector, nobody));
+        _epoch().parkTransportBatchRemainder(nobody, list);
+        // Nothing released: the gate holds until every listed day is proven closed.
         ( , , , , , bool released) = _epoch().getTransportBatch(h);
-        assertFalse(released, "no production path releases a batch in 3b-i");
-        // The machinery exists and is the 3b-ii implementation — the raw entry
-        // proves it, and every lifecycle test in this suite runs through it.
-        assertEq(_mut().releaseTransportBatchRaw(h), 6e18, "the library release works, behind the door");
+        assertFalse(released, "no production path releases a batch with an open listed day");
+        // The machinery exists — the raw entry proves it, and every lifecycle
+        // test in this suite runs through it.
+        assertEq(_mut().releaseTransportBatchRaw(h), 6e18, "the library release works behind the gate");
     }
 
     /// The library's own refusals, unchanged and reached raw: an unknown id is
