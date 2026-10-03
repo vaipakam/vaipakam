@@ -41,7 +41,7 @@ anything a signing drive reports must be read against that.
 | --- | --- | --- |
 | 1 — trust and accuracy (#2373) | UX3-001, 002, 003, 004, 005, 006, 010, 011, 014 | Fixed in the PR that adds this document. Each funds-facing rule is a pure function with a mutation-checked unit test (`resolveForcedCloseActive`, `tierBandRows`, `defaultRecoveryNote`). The repay spec now also drives the lender's view of a repaid loan. UX3-005 is fixed as "state the unknown": the claim says what the recovery is and that no shortfall is shown. An exact shortfall needs the amount owed at default, which the app does not have; that is tracked in #2374. |
 | 2 — plain language and approachable advanced tools (#2378) | UX3-007, 012, 013, plus a wording pass over the core journeys | Fixed in #2378, with two parts still open: amounts on Activity rows (withdrawn from the app and moved to the indexer as #2383) and the loan-to-value on Offer Book cards (UX3-007's third fact, #2384). What shipped: Rate Desk and Offer Book in plain words, with a first-visit guide; collateral amounts and the illiquid flag on offer cards; Basic-mode filters; the Alerts link status; and a vocabulary pass, all in the 10 translated languages. |
-| 3 — the missing borrower feature and the bundle | UX3-009, 008 | After batch 2. |
+| 3 — the missing borrower feature and the bundle | UX3-009, 008 | Fixed. UX3-009 in #2389: the loan page's "Take back extra collateral" card, with every refusal the protocol would make checked before the wallet opens and every unknown stated rather than implied. Three gaps it found are tracked separately: refinance requests made on another device are not discoverable yet (#2391), the ladder does not yet disclose missing signed offers (#2386), and other money inputs still round typed amounts instead of refusing extra decimals (#2390). UX3-008 in #2392: the combined contract ABI is built once with exact duplicates removed, 2.81 MB to 645 KB. |
 
 ## Site-wide health baseline
 
@@ -221,6 +221,13 @@ driver is facet growth, which `exportFrontendAbis.sh` exports in full.
 Options: per-route ABI slices, or event-only / function-only subsets
 generated at export time.
 
+**Status — fixed in #2392.** The cause was repetition rather than growth:
+each facet's ABI repeats the shared errors and events, and about three
+quarters of the chunk was exact duplicates. The combined ABI is now built
+once, at export time, with exact duplicates removed (2.81 MB to 645 KB),
+and a package test fails if it goes stale or a facet goes unlisted. Per-route
+slicing was not needed.
+
 ### UX3-009 · "Withdraw excess collateral" is specified and live on chain, with no app surface (M/L)
 
 `ProjectDetailsREADME.md` § "Allow Borrower to Withdraw Excess
@@ -232,7 +239,7 @@ appreciated has no way to use that from the app. This needs a product
 decision on placement (the position detail page is the natural home),
 then a CI-Anvil spec.
 
-**Status — fixed in batch 3.** The loan page carries a Basic-mode "Take back
+**Status — fixed in #2389.** The loan page carries a Basic-mode "Take back
 extra collateral" section for the borrower-position holder of an Active loan.
 It states the live ceiling, explains every zero, refuses an over-ceiling amount
 on the page, and re-checks every protocol refusal it can see before the wallet
