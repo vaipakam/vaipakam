@@ -3087,6 +3087,8 @@ const copySource = {
         collateralAdded: 'Collateral added — the loan is safer now.',
         partialRepaid: 'Partial repayment confirmed — you now owe less.',
       },
+      // UX3-004 — the claim's exact payout, stated above the claim button.
+      youWillReceive: tmpl('You will receive: {{payout}}', ['payout']),
       actions: {
         closeRental: 'Close this rental',
         repay: 'Repay this loan',
@@ -3204,7 +3206,8 @@ const copySource = {
     groupAttention: 'Needs your attention',
     groupActive: 'Active loans',
     groupEnded: 'Ended loans',
-    claimWaiting: 'Claim waiting',
+    // UX3-004 — what a waiting claim pays, on the Positions row.
+    readyToClaim: tmpl('Ready to claim: {{payout}}', ['payout']),
     // UX-050 — surface the full history for Basic users, who don't see
     // Activity in the nav.
     seeActivity: 'See your full activity history →',
@@ -3334,6 +3337,13 @@ const copySource = {
       heldProceeds: 'Held proceeds for this loan',
       repaidFunds: 'Repaid funds',
       heldProceedsDefault: 'Held proceeds recovered from the default',
+      // UX3-005 — recovered vs lent on a defaulted loan. Interest is never
+      // stated as owed or lost: the claim read does not carry what was due.
+      shortfallVsLent: tmpl('That is {{shortfall}} less than the {{lent}} you lent, before any interest.', ['shortfall', 'lent']),
+      coversLent: tmpl('That covers the {{lent}} you lent.', ['lent']),
+      compareInKind: 'This is the collateral itself, not a cash amount, so how it compares with what you lent depends on what it is worth.',
+      compareOtherAsset: 'This is paid in a different asset from the one you lent, so the app can’t say here how it compares.',
+      compareUnknownHeld: 'Part of this is held in other assets, so the app can’t say here how it compares with what you lent.',
       surplusAfterLiquidation: 'Anything left after liquidation',
       residualAfterMatch: 'Anything left after the internal match',
       whyRentalEnded: 'The rental ended — collect your earned fees and reclaim the NFT.',
@@ -3992,7 +4002,15 @@ const copySource = {
     withdrawDone: 'Withdrawal confirmed. The VPFI is back in your wallet.',
     optOutSyncFailed: 'Your opt-out is saved on this network, but syncing it to other networks didn’t go through — it will sync with your next VPFI action, or try toggling again.',
     educationTitle: 'How the discount works',
-    educationBody: 'Hold VPFI in your Vaipakam Vault and the protocol fee on eligible loans shrinks. The discount uses your average holding over the last 30 days — topping up today grows your discount gradually, not instantly.',
+    // UX3-003 — the discount is three separate checks (CLAUDE.md "VPFI Fee
+    // Discounts"): a minimum continuous-holding period, a recency-weighted
+    // average over a governance-set window (14–30 days, default 30), and a
+    // clamp to the lowest tier reached over the current holding's own
+    // history (capped at 30 days). The average and the clamp are two
+    // DIFFERENT look-backs — never describe one in the other's window. The
+    // clamp is why a top-up does not raise the discount straight away.
+    educationBody:
+      'Keep VPFI in your Vaipakam Vault and the protocol fee on eligible loans gets smaller. Three checks set your discount. First, you need to have kept VPFI in your vault without a break for a few days. Second, your average balance over the past few weeks sets the level, and recent days can count more. Third, the level can never be higher than the lowest your balance has been since you started holding, looking back up to 30 days. That third check is why adding more VPFI does not raise your discount right away: it rises once the days with a lower balance are outside that look-back.',
     offFeesSuffix: 'off eligible protocol fees',
     noSellNote: 'Vaipakam does not sell VPFI and pays no holding yield — you acquire it on the open market.',
     statusTitle: 'Your discount status',
@@ -4002,14 +4020,21 @@ const copySource = {
     activeDiscount: 'Active discount',
     noneRightNow: 'None right now',
     warmingUp: 'Warming up',
-    // "Warming up" explainer: the balance earns a bigger discount than the
-    // 30-day average currently grants. `tier` = tierOff/higherTier below;
+    // "Warming up" explainer: the current balance would earn a bigger
+    // discount than the history checks grant yet (UX3-003 — not "a 30-day
+    // average"; see educationBody). `tier` = tierOff/higherTier below;
     // `currently` = currentlyClause (or empty when no discount applies yet).
     warmingUpBody: tmpl(
-      'Your balance qualifies for {{tier}}{{currently}}, but discounts use your 30-day average — keep the balance and your active discount catches up.',
+      'Your balance today would qualify for {{tier}}{{currently}}. The discount you actually get also depends on your recent average and your lowest recent balance, so it rises only after you have kept this balance for a while.',
       ['tier', 'currently'],
     ),
     tierOff: tmpl('{{discount}} off', ['discount']),
+    // UX3-002 — tier bands in plain words, with the contract's boundary
+    // rules: Tiers 1–2 exclude their upper threshold, Tier 3 INCLUDES it,
+    // Tier 4 starts strictly above it.
+    tierBandUpTo: tmpl('{{min}} to under {{max}} VPFI', ['min', 'max']),
+    tierBandThrough: tmpl('{{min}} to {{max}} VPFI', ['min', 'max']),
+    tierBandAbove: tmpl('More than {{min}} VPFI', ['min']),
     higherTier: 'a higher tier',
     currentlyClause: tmpl(' (currently {{rate}})', ['rate']),
     consentToggle: 'Use my vaulted VPFI for fee discounts',

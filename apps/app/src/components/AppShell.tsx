@@ -28,6 +28,7 @@ import {
   Settings,
   BookOpen,
   Droplets,
+  LifeBuoy,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { getDeployment } from '@vaipakam/contracts/deployments';
@@ -160,6 +161,8 @@ export function AppShell() {
   // destination is in moreIsActive, so highlighting it there is correct.
   // Self-limiting — the seen-path key commits with the reset.
   const [moreOpen, setMoreOpen] = useState(false);
+  const [supportOpen, setSupportOpen] = useState(false);
+  const moreTabRef = useRef<HTMLButtonElement>(null);
   const [seenPathname, setSeenPathname] = useState(pathname);
   if (seenPathname !== pathname) {
     setSeenPathname(pathname);
@@ -235,7 +238,9 @@ export function AppShell() {
           <span className="brand-mark" aria-hidden>
             V
           </span>
-          Vaipakam
+          {/* UX3-011 — visually hidden on phones (still the link's name for
+              assistive tech) so the network chip can show its name there. */}
+          <span className="brand-name">Vaipakam</span>
         </NavLink>
         <div className="shell-topbar-spacer" />
         {/* UX-013 — a persistent network indicator when connected: the
@@ -351,7 +356,11 @@ export function AppShell() {
       {/* Support drawer: connection health + report-a-problem, on
           every page (#1028 item 4). Fixed-positioned; probes run only
           while it is open. */}
-      <DiagnosticsDrawer />
+      <DiagnosticsDrawer
+        open={supportOpen}
+        onOpenChange={setSupportOpen}
+        returnFocusRef={moreTabRef}
+      />
 
       {moreOpen ? (
         <>
@@ -374,6 +383,19 @@ export function AppShell() {
                 {copy.chrome.nav[item.labelKey]}
               </NavLink>
             ))}
+            {/* UX3-006 — Support lives here on phones, where a floating
+                button would cover page content. */}
+            <button
+              type="button"
+              className="more-sheet-item"
+              onClick={() => {
+                setMoreOpen(false);
+                setSupportOpen(true);
+              }}
+            >
+              <LifeBuoy aria-hidden />
+              {copy.diagnostics.title}
+            </button>
             <div className="more-sheet-mode">
               <ModeSwitch />
             </div>
@@ -398,6 +420,7 @@ export function AppShell() {
         {/* UX-011 — a real More menu, not a Settings alias: every
             destination without a tab is one tap away. */}
         <button
+          ref={moreTabRef}
           type="button"
           className={`tabbar-item ${moreOpen || moreIsActive ? 'active' : ''}`}
           aria-haspopup="true"

@@ -35,6 +35,14 @@ change on `main` (#2355, 2026-09-29), so the review describes current
 contracts (owner, 2026-10-03). Read-side findings are about the app;
 anything a signing drive reports must be read against that.
 
+## Status ledger
+
+| Batch | Findings | Status |
+| --- | --- | --- |
+| 1 — trust and accuracy (this PR) | UX3-001, 002, 003, 004, 005, 006, 010, 011, 014 | Fixed in the PR that adds this document. Each funds-facing rule is a pure function with a mutation-checked unit test (`resolveForcedCloseActive`, `tierBandRows`, `defaultRecoveryNote`). The repay spec now also drives the lender's view of a repaid loan. |
+| 2 — plain language and approachable advanced tools | UX3-007, 012, 013, plus a wording pass over the core journeys | Next PR. |
+| 3 — the missing borrower feature and the bundle | UX3-009, 008 | After batch 2. |
+
 ## Site-wide health baseline
 
 - **95 of 95 route visits loaded**, with zero HTTP ≥ 400, zero
@@ -404,7 +412,32 @@ VPFI as a yield or price surface (RL-6).
 
 ## Live driver batch
 
-_Results are appended when the batch completes._
+`run-live-batch.mjs` against `https://app.vaipakam.com`, 2026-10-03,
+with the dev test wallets. **13 PASS, 3 FAIL, 0 BLOCKED.**
+
+| Driver | Verdict | What it means |
+| --- | --- | --- |
+| live-alerts-link | PASS | |
+| live-collateral-precheck | PASS | |
+| live-connect-telemetry | FAIL | Environment. The one failing step is "WalletConnect relay initializes": no relay socket exchanged a frame. Inside the review sandbox, whose egress proxy re-signs TLS, every WebSocket fails the same way (the indexer socket too). The telemetry assertions themselves all passed: no beacons on load or when the modal opens. Re-run outside the sandbox to close it. |
+| live-desk-i18n-capture | PASS | |
+| live-dryrun-review | PASS | |
+| live-killswitch-regression | PASS | |
+| live-position-observe | PASS | |
+| live-rate-desk | PASS | |
+| live-recover-locales | PASS | all nine translated locales serve and render `/recover` in their own language |
+| live-recover | FAIL | **Possibly real, on `vaipakam.com`, not the app.** The Help link to the Advanced User Guide resolves (HTTP 200, the `#stuck-recovery.what` anchor exists), but after navigating, the attested heading sat 31,282 px down the page instead of below the fixed header. The deep link opened the guide at the top rather than at the section the signed declaration points to. Re-run first, since a late-loading page can do this; if it repeats, it is a marketing-site defect. |
+| live-risk-access | PASS | |
+| live-role-journeys | PASS | |
+| live-rpc-audit | PASS | |
+| live-signed-book | FAIL | Environment: a transient indexer ingest lag. Steps 1–6 passed: a gasless signed offer was posted with one signature and no transaction, landed on the wire and both UI surfaces, and was cancelled on chain. The final step timed out waiting for the indexer to drop the cancelled row; the driver itself diagnosed the production ingest cursor as stalled (at block 47,630,236, cancel at 47,630,244, no advance for 546 s against a 300 s scan cadence). Minutes later the cursor was at 47,630,639 against a chain head of 47,630,734, inside its cadence again. Re-run. |
+| live-support-ticket | PASS | |
+| live-ux-sweep | PASS | 95 of 95 route visits loaded |
+
+**Side effects on the shared testnet.** The signing drivers act with the dev
+test wallets: live-signed-book posted and then cancelled one gasless signed
+offer (WETH/tLIQ, 60 days); live-support-ticket sent one clearly marked
+test ticket. Nothing was left open.
 
 ## Re-running this review
 

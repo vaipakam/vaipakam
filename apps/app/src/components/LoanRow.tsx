@@ -7,18 +7,22 @@ import { loanStateView, loanStateLabel } from '../lib/loanState';
 import { useTokenMeta } from '../contracts/erc20';
 import { AssetType } from '../lib/types';
 import type { PositionLoan } from '../data/hooks';
+import type { ClaimableLoan } from '../data/claimables';
+import { useClaimPayoutText } from '../data/useClaimPayout';
 import { healthView, useLoanRisk } from '../data/risk';
 
 export function LoanRow({
   loan,
-  claimWaiting,
+  claim,
 }: {
   loan: PositionLoan;
-  /** UX-024 — chain-confirmed unclaimed payout on this side (from
-   *  useMyClaimables); renders an explicit "Claim waiting" chip so a
-   *  defaulted/repaid row with money on the table says so. */
-  claimWaiting?: boolean;
+  /** UX-024 — the chain-confirmed unclaimed payout on this side (from
+   *  useMyClaimables), so a defaulted/repaid row with money on the table
+   *  says so. UX3-004/UX3-014 — the row states WHAT is waiting and offers
+   *  the Claim action, as the Claims page does, instead of a bare chip. */
+  claim?: ClaimableLoan;
 }) {
+  const payout = useClaimPayoutText(claim);
   const isRental = loan.assetType !== AssetType.ERC20;
   const principalMeta = useTokenMeta(isRental ? undefined : loan.lendingAsset);
   const view = loanStateView(loan);
@@ -59,10 +63,13 @@ export function LoanRow({
             ? copy.positions.rowRental(loan.loanId)
             : copy.positions.rowLoan(loan.loanId, formatBpsAsPercent(loan.interestRateBps))}
         </span>
+        {payout ? (
+          <>
+            <br />
+            <span className="row-sub row-payout">{copy.positions.readyToClaim(payout.what)}</span>
+          </>
+        ) : null}
       </span>
-      {claimWaiting ? (
-        <span className="badge badge-ok">{copy.positions.claimWaiting}</span>
-      ) : null}
       {healthOverrides && health ? (
         <span
           className={`badge badge-${health.badge}`}
@@ -77,6 +84,7 @@ export function LoanRow({
       ) : (
         <span className={`badge badge-${view.badge}`}>{loanStateLabel(view, copy.loanState)}</span>
       )}
+      {claim ? <span className="btn btn-primary btn-sm">{copy.claims.claim}</span> : null}
     </Link>
   );
 }

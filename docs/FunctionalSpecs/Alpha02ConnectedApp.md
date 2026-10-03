@@ -157,7 +157,9 @@ including people who never will.
 - Wallet connection should make the active address and network clear.
 - Unsupported networks show a plain switch-network state.
 - Supported networks should still be named clearly because offers, loans,
-  faucet assets, vault balances, and claims are chain-specific.
+  faucet assets, vault balances, and claims are chain-specific. That holds at
+  every screen width: on a phone the network is still shown by name, not only
+  by a coloured indicator.
 - A failed or rejected network switch remains visible until the user dismisses
   it or a newer clear state replaces it.
 - Display names may be shown for convenience, but names never decide asset
@@ -1258,11 +1260,19 @@ Thin-market honesty rules apply.
   prior holder.
 - More-settled chain state overrides stale indexed state.
 - A terminal loan never presents live obligation actions such as repayment.
+- A terminal loan also never presents checks or warnings that only make sense
+  for an open loan — for example the lender's forced close-out, or a
+  "still checking whether this loan can be closed out" state. Whichever source
+  first shows the loan is settled is enough to retire them, because a settled
+  loan cannot become open again.
+- A loan's outcome is styled as a warning only when it was adverse (a default
+  or liquidation). A loan that closed normally reads as settled, not as a risk.
 - Fallback-pending loans remain visible as active because the borrower may still
   cure them before the lender finalizes the fallback.
 - Past-due loan pages show the grace window and the consequence of inaction.
 - Health and risk labels escalate when collateral health is poor.
-- Position rows should offer the next relevant action where one exists.
+- Position rows should offer the next relevant action where one exists. A row
+  with a payout waiting says what that payout is and offers to collect it.
 
 ### Forced close-out of an overdue loan
 
@@ -1625,6 +1635,15 @@ Thin-market honesty rules apply.
 - A claim attached to a purchased position is discoverable by the current holder
   even if that holder was not an original loan party.
 - Claim rows show the amount or asset the user can receive when knowable.
+- Every surface that offers a claim — the claims list, the collect-everything
+  checklist, the loan's own page and its confirmation, and the positions list —
+  states the same payout in the same words. A surface never asks the user to
+  collect "your funds" while another surface knows the amount.
+- A lender's claim on a defaulted loan sets what was recovered against what was
+  lent. The comparison is stated exactly only when it can be: one amount, in the
+  asset that was lent, with nothing held back in other assets. Otherwise the
+  claim says why it cannot be compared. Interest is never presented as owed or
+  lost unless the app actually knows what was due.
 - A stale indexed row must not remain actionable after the chain says it is no
   longer claimable.
 - Once a candidate has been verified on chain, an IDENTICAL candidate (same
@@ -1700,6 +1719,15 @@ Thin-market honesty rules apply.
   model as other value-moving flows.
 - Withdrawals cap at free balance, not total balance.
 - Discount consent is explicit and visually prominent.
+- The tier table states each band's boundaries exactly as the protocol applies
+  them, including which tier an amount sitting exactly on a threshold belongs
+  to. A holder must never be shown a better discount than the protocol would
+  apply to their balance.
+- The explanation of how the discount is earned names every check that decides
+  it: a minimum period of continuous holding, the recent average balance, and a
+  cap at the lowest level the holding has reached over its own history. It
+  never presents one look-back period as the whole rule, and it says plainly
+  why topping up does not raise the discount straight away.
 
 ### Full VPFI Tariff Opt-In
 
@@ -1895,6 +1923,9 @@ Thin-market honesty rules apply.
 - Full wallet addresses are not included in health details.
 - If ticket submission fails, the app offers an email fallback and must not
   claim a ticket number it did not receive.
+- Support is reachable from every page without covering page content. On a
+  phone it lives in the More menu; a floating launcher is used only where there
+  is empty margin for it.
 
 ## Operational Kill Switch
 

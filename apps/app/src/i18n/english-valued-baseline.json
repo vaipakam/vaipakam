@@ -1528,12 +1528,6 @@
       "hi"
     ]
   },
-  "copy.positions.claimWaiting": {
-    "source": "Claim waiting",
-    "locales": [
-      "hi"
-    ]
-  },
   "copy.positions.details.addCollateral.button": {
     "source": "Add",
     "locales": [

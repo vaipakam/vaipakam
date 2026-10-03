@@ -434,3 +434,44 @@ export function canSubmitFromApp(readiness: ForcedCloseReadiness): boolean {
 export function shouldRenderForcedClose(readiness: ForcedCloseReadiness): boolean {
   return readiness !== 'not-applicable';
 }
+
+/** The `active` input to {@link decideForcedClose}, reconciled from the
+ *  page's three sources of loan status (UX3-001, 2026-10-03 live review).
+ *
+ *  - The viewer must hold the lender position; anything else is a fact
+ *    about the viewer, not the loan, and hides the card.
+ *  - A CHAIN status that is known and not Active hides it: a settled loan
+ *    has nothing to force.
+ *  - An INDEXED status that is terminal hides it too. Terminal statuses
+ *    are absorbing, so an indexer that reports one can only be ahead of
+ *    the chain reads, never wrong. More to the point, the reads behind
+ *    `aggregateActive` are not even enabled for such a loan, so deferring
+ *    to them meant waiting on an answer that could never arrive: a repaid
+ *    loan painted "still checking whether this loan can be closed out"
+ *    indefinitely, on a page that stated two rows above that nothing was
+ *    owed.
+ *  - Otherwise the aggregate decides, and an unread aggregate stays
+ *    `undefined` — UNKNOWN, never not-applicable (round 65 P2). That rule
+ *    is intact: it governs reads that are enabled and have not answered,
+ *    which is a different state from reads that will never run.
+ *
+ *  `fallback_pending` is deliberately NOT terminal here. It can cure back
+ *  to Active, so an unread chain status on such a loan is a genuine
+ *  unknown. */
+export function resolveForcedCloseActive(args: {
+  isLenderHolder: boolean;
+  /** True when the chain status is known and is not Active; false when
+   *  it is known to be Active; undefined while unread. */
+  chainStatusSettled: boolean | undefined;
+  /** True when the page's loan row — the indexed row with any live chain
+   *  reading folded in — carries a terminal status (anything other than
+   *  `active` or `fallback_pending`). */
+  indexedStatusTerminal: boolean;
+  /** The aggregate's own `active` reading. */
+  aggregateActive: boolean | undefined;
+}): boolean | undefined {
+  if (!args.isLenderHolder) return false;
+  if (args.chainStatusSettled === true) return false;
+  if (args.indexedStatusTerminal) return false;
+  return args.aggregateActive;
+}

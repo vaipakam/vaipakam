@@ -73,9 +73,12 @@ import { ForcedCloseCard } from '../components/ForcedCloseCard';
 import {
   decideForcedClose,
   forcedCloseWithoutMatch,
+  resolveForcedCloseActive,
   type ForcedCloseInput,
 } from '../data/forcedClose';
 import { useForcedCloseReads } from '../data/useForcedClose';
+import { useMyClaimables } from '../data/claimables';
+import { useClaimPayoutText } from '../data/useClaimPayout';
 import { ObligationTransferFlow } from '../components/ObligationTransferFlow';
 import { OffsetFlow } from '../components/OffsetFlow';
 import { OffsetPendingCard } from '../components/OffsetPendingCard';
@@ -949,6 +952,20 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
    *  judgement from the reconciled status later. A loan the indexer
    *  believes is active but the chain has since closed simply resolves
    *  to `not-applicable` there and renders nothing. */
+  /** UX3-004 — the exact payout of this loan's claim, stated beside the
+   *  claim button and in its receipt the same way the Claims page states
+   *  it. Read from the shared claimables query (one cache with Positions
+   *  and Claims, so a visit from either adds no read), one entry per side
+   *  because a wallet can hold both position NFTs. Above the early
+   *  returns: these are hooks (#1511). */
+  const myClaimables = useMyClaimables();
+  const lenderClaimText = useClaimPayoutText(
+    myClaimables.data?.find((c) => c.loanId === loanId && c.role === 'lender'),
+  );
+  const borrowerClaimText = useClaimPayoutText(
+    myClaimables.data?.find((c) => c.loanId === loanId && c.role === 'borrower'),
+  );
+
   const forcedCloseReads = useForcedCloseReads({
     loanId: Number.isFinite(loanId) ? loanId : undefined,
     // A rental's collateral leg is an NFT and `checkLiquidity` is an
@@ -1438,12 +1455,26 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
    *  paint "still checking" over a position that is settled. Where the
    *  page's status is Active or unread, the aggregate's own status
    *  decides, so every state the card actually renders was resolved from
-   *  the block it names. */
-  const forcedCloseActive = !isLenderHolder
-    ? false
-    : resolvedLoanStatus !== undefined && resolvedLoanStatus !== LoanStatus.Active
-      ? false
-      : forcedCloseReads.active;
+   *  the block it names.
+   *
+   *  UX3-001 (2026-10-03 live review): the chain-status half of this gate
+   *  alone did NOT hold. The status reads behind `resolvedLoanStatus` are
+   *  themselves only enabled for an active loan, so on a loan the indexer
+   *  already records as repaid every one stayed unread, the gate fell
+   *  through to an aggregate that is disabled for the same reason, and the
+   *  card said "still checking" for as long as the page was open. The row's
+   *  own terminal status now closes it too — see
+   *  `resolveForcedCloseActive` for why that is safe. */
+  const forcedCloseActive = resolveForcedCloseActive({
+    isLenderHolder,
+    chainStatusSettled:
+      resolvedLoanStatus === undefined
+        ? undefined
+        : resolvedLoanStatus !== LoanStatus.Active,
+    indexedStatusTerminal:
+      row.status !== 'active' && row.status !== 'fallback_pending',
+    aggregateActive: forcedCloseReads.active,
+  });
   const forcedCloseInput: ForcedCloseInput = {
     active: forcedCloseActive,
     defaultable: forcedCloseReads.defaultable,
@@ -2434,6 +2465,13 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
               : copy.positions.details.actions.claimRecovered
           : null;
 
+  const claimPayoutText =
+    action === 'claim-lender'
+      ? lenderClaimText
+      : action === 'claim-borrower'
+        ? borrowerClaimText
+        : null;
+
   // Six-row receipt for the pending position write — same shape and
   // rows as every create/accept flow (WebsiteReadme intended-behaviour).
   const actionReceipt: ReceiptData | null =
@@ -2454,7 +2492,9 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         }
       : action === 'claim-borrower'
         ? {
-            youReceive: isRental
+            youReceive: borrowerClaimText
+              ? borrowerClaimText.what
+              : isRental
               ? copy.positions.details.receipt.bufferBackShort
               : row.status === 'repaid'
                 ? hasCollateral
@@ -2471,7 +2511,9 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           }
         : action === 'claim-lender'
           ? {
-              youReceive: isRental
+              youReceive: lenderClaimText
+                ? lenderClaimText.what
+                : isRental
                 ? copy.positions.details.receipt.rentalFeesAndNft
                 : properClose
                   ? copy.positions.details.principalPlusInterest(principalStr)
@@ -2705,7 +2747,17 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
               </dd>
             </div>
           ) : null}
-          <div className="receipt-row receipt-risk">
+          {/* UX3-010 — the risk colour reads as a warning, so it stays on
+              the "if nothing happens" consequence and on an adverse outcome
+              (default, liquidation), and comes off a loan that closed
+              normally: "The borrower repaid" is not a warning. */}
+          <div
+            className={`receipt-row ${
+              loanOver && row.status !== 'defaulted' && row.status !== 'liquidated'
+                ? ''
+                : 'receipt-risk'
+            }`}
+          >
             <dt>{loanOver ? copy.positions.details.labels.whatNext : copy.positions.details.labels.ifNothing}</dt>
             <dd>
               {loanOver
@@ -4401,6 +4453,15 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             </ConfirmReceipt>
           </section>
         ) : (
+          <>
+          {claimPayoutText ? (
+            <p className="claim-payout" id="claim-payout">
+              {copy.positions.details.youWillReceive(claimPayoutText.what)}
+              {claimPayoutText.note ? (
+                <span className="claim-payout-note">{claimPayoutText.note}</span>
+              ) : null}
+            </p>
+          ) : null}
           <button
             type="button"
             id="repay-action"
@@ -4414,6 +4475,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           >
             {actionLabel}
           </button>
+          </>
         )
       ) : role === 'unverified' ? (
         <div className="banner banner-warn" role="alert">
