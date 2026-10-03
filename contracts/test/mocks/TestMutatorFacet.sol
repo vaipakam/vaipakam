@@ -2718,4 +2718,21 @@ contract TestMutatorFacet {
         s.lenderPerDayDeltaNumeraire18[day] += lenderDelta;
         s.borrowerPerDayDeltaNumeraire18[day] += borrowerDelta;
     }
+
+    /// @dev 3b-ii-B test-only — mark an entry settled whole (or not), the first of
+    ///      the proof's two termination facts.
+    function setRewardEntryProcessedRaw(uint256 id, bool processed) external {
+        LibVaipakam.storageSlot().rewardEntries[id].processed = processed;
+    }
+
+    /// @dev 3b-ii-B test-only — stand an OPEN legacy-slice domain for `entryId`
+    ///      over `[firstDay, lastDay]`, as A2-ii (c) opens one, without the epochs.
+    function setLegacyDomainOpenRaw(uint256 entryId, uint64 firstDay, uint64 lastDay) external {
+        LibVaipakam.StagingDomain storage dom =
+            LibVaipakam.storageSlot().stagingDomains[LibRewardCustody.legacyDomainKey(entryId)];
+        dom.phase = LibVaipakam.DomainPhase.Staging;
+        dom.legacy = true;
+        dom.firstDay = firstDay;
+        dom.lastDay = lastDay;
+    }
 }

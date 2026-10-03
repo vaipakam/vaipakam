@@ -90,6 +90,7 @@ import {RewardStagingFacet} from "../src/facets/RewardStagingFacet.sol";
 import {RewardClaimWalkFacet} from "../src/facets/RewardClaimWalkFacet.sol";
 import {RewardStagingSettleFacet} from "../src/facets/RewardStagingSettleFacet.sol";
 import {RewardStagingDomainFacet} from "../src/facets/RewardStagingDomainFacet.sol";
+import {RewardClosureFacet} from "../src/facets/RewardClosureFacet.sol";
 import {RewardSweepWalkFacet} from "../src/facets/RewardSweepWalkFacet.sol";
 import {RewardForfeitWalkFacet} from "../src/facets/RewardForfeitWalkFacet.sol";
 import {LibPausable} from "../src/libraries/LibPausable.sol";
@@ -352,6 +353,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         RewardStagingSettleFacet rewardStagingSettleFacet = new RewardStagingSettleFacet();
         // 3b-ii-A2-ii (#2305) — the multi-chunk claim domain's lifecycle entries.
         RewardStagingDomainFacet rewardStagingDomainFacet = new RewardStagingDomainFacet();
+        // 3b-ii-B (#1566) — the per-day closure proof.
+        RewardClosureFacet rewardClosureFacet = new RewardClosureFacet();
         RewardCompensationDispatchFacet rewardCompensationDispatchFacet =
             new RewardCompensationDispatchFacet();
         RewardCommitmentFacet rewardCommitmentFacet = new RewardCommitmentFacet();
@@ -386,7 +389,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](88);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](89);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -470,6 +473,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         cuts[85] = _buildCut(address(rewardStagingSettleFacet), _getRewardStagingSettleSelectors());
         cuts[86] = _buildCut(address(rewardForfeitWalkFacet), _getRewardForfeitWalkSelectors());
         cuts[87] = _buildCut(address(rewardStagingDomainFacet), _getRewardStagingDomainSelectors());
+        cuts[88] = _buildCut(address(rewardClosureFacet), _getRewardClosureSelectors());
         cuts[26] = _buildCut(address(rewardReporterFacet), _getRewardReporterSelectors());
         cuts[27] = _buildCut(address(rewardAggregatorFacet), _getRewardAggregatorSelectors());
         cuts[28] = _buildCut(address(configFacet), _getConfigSelectors());
@@ -1141,6 +1145,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeFacet("rewardForfeitWalkFacet",  address(rewardForfeitWalkFacet));
         Deployments.writeFacet("rewardStagingSettleFacet", address(rewardStagingSettleFacet));
         Deployments.writeFacet("rewardStagingDomainFacet", address(rewardStagingDomainFacet));
+        Deployments.writeFacet("rewardClosureFacet", address(rewardClosureFacet));
         Deployments.writeFacet("repatriationFacet",       address(repatriationFacet));
         Deployments.writeFacet("configFacet",             address(configFacet));
         // #394 (Codex #647 round-8 P2) — persist the carved-out NumeraireConfigFacet
@@ -3163,6 +3168,17 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     /// @dev 3b-ii-A2 (#2305) — the staging record's settlement half.
+    /// @dev 3b-ii-B (#1566) — the per-day closure proof.
+    function _getRewardClosureSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](6);
+        s[0] = RewardClosureFacet.startDayClosure.selector;
+        s[1] = RewardClosureFacet.proveDayClosurePage.selector;
+        s[2] = RewardClosureFacet.isDayObligationsClosed.selector;
+        s[3] = RewardClosureFacet.getClosureWalk.selector;
+        s[4] = RewardClosureFacet.getClosureWalkNonce.selector;
+        s[5] = RewardClosureFacet.isEntryTerminatedOn.selector;
+    }
+
     /// @dev 3b-ii-A2-ii (#2305) — the multi-chunk claim domain's lifecycle entries.
     function _getRewardStagingDomainSelectors() internal pure returns (bytes4[] memory s) {
         s = new bytes4[](9);

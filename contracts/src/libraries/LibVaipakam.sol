@@ -7725,6 +7725,14 @@ library LibVaipakam {
         ///      admitted: the global short-circuit that makes the legacy
         ///      slice's listed-day scan free on every chain without one.
         uint256 transportBatchesAdmitted;
+        /// @dev 3b-ii-B — a day every obligation covering which has TERMINATED,
+        ///      proven once by a completed closure walk. A monotone fact of a
+        ///      past day (no entry can begin or stop covering it), so irreversible.
+        mapping(uint256 => bool) dayObligationsClosed;
+        /// @dev 3b-ii-B — closure walks by `LibRewardClosure.walkKey(day, starter, nonce)`.
+        mapping(bytes32 => ClosureWalk) closureWalks;
+        /// @dev 3b-ii-B — the last walk nonce each starter used.
+        mapping(address => uint64) closureWalkNonce;
     }
 
     /// @notice 3b-ii-A2 (#2305) — one batch a staging record staged from, with
@@ -7784,6 +7792,26 @@ library LibVaipakam {
     ///         queues for the next domain — and its day records are the same
     ///         staging records a one-day settlement opens, stamped with this
     ///         domain's key, their deadline and unwind the domain's.
+    /// @dev 3b-ii-B — one per-day CLOSURE WALK, keyed (day, starter, nonce): the
+    ///      starter's own proof that every obligation covering `day` has
+    ///      terminated. Per-side cursors (last entry id visited) and conservation
+    ///      sums (Σ perDayNumeraire18 of the visited entries); a side is complete
+    ///      when its sum equals the day's folded side total; the walk completes
+    ///      when both are, stamping the day. A walk that omitted an id can never
+    ///      complete (the cursor only advances) and is simply abandoned.
+    struct ClosureWalk {
+        address starter;
+        uint64 day;
+        uint64 nonce;
+        bool lenderComplete;
+        bool borrowerComplete;
+        bool completed;
+        uint256 lenderCursor;
+        uint256 borrowerCursor;
+        uint256 lenderConservation;
+        uint256 borrowerConservation;
+    }
+
     struct StagingDomain {
         DomainPhase phase;
         address user;

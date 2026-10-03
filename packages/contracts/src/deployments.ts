@@ -108,6 +108,8 @@ export interface DeploymentFacets {
   rewardStagingSettleFacet?: HexAddress;
   /** #1566 transport epochs 3b-ii-A2-ii (#2305) — the multi-chunk claim domain's lifecycle entries. */
   rewardStagingDomainFacet?: HexAddress;
+  /** #1566 transport epochs 3b-ii-B — the per-day closure proof. */
+  rewardClosureFacet?: HexAddress;
   rewardReporterFacet?: HexAddress;
   riskFacet?: HexAddress;
   stakingRewardsFacet?: HexAddress;

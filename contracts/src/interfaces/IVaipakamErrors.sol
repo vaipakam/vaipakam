@@ -1784,6 +1784,26 @@ interface IVaipakamErrors {
     error StagingRecordInDomain(bytes32 key, bytes32 domainKey);
     /// @notice A domain's per-record entry was reached for a record no domain holds (A2-ii).
     error StagingRecordNotInDomain(bytes32 key);
+
+    // ── 3b-ii-B: the per-day closure proof ──
+    /// @notice The day has not elapsed on this chain's clock: no closure can be proven for it.
+    error ClosureDayNotElapsed(uint256 dayId);
+    /// @notice The chain has not closed the day itself yet (no local report): its side totals are not final.
+    error ClosureDayNotLocallyClosed(uint256 dayId);
+    /// @notice The interest fold has not reached the day on at least one side (#2277): catch it up first.
+    error ClosureFrontierShort(uint256 dayId, uint256 lenderFrontier, uint256 borrowerFrontier);
+    /// @notice The day is already proven closed.
+    error ClosureDayAlreadyClosed(uint256 dayId);
+    /// @notice No walk under this key (never started, or not this caller's).
+    error ClosureWalkUnknown(bytes32 key);
+    /// @notice Entry ids must strictly ascend past the walk's side cursor.
+    error ClosureEntriesNotAscending(uint256 entryId);
+    /// @notice The entry is not of this side or does not cover the day.
+    error ClosureEntryNotCovering(uint256 dayId, uint256 entryId);
+    /// @notice The entry still stands on the day: not settled past it, or a staging record / legacy domain holds it.
+    error ClosureEntryOpen(uint256 dayId, uint256 entryId);
+    /// @notice The visited entries' per-day sum exceeds the day's folded side total: the day's records disagree.
+    error ClosureConservationExceeded(uint256 dayId, uint8 side, uint256 sum, uint256 total);
     /// @notice The domain under `domainKey` is not in the phase this entry
     ///         needs (A2-ii).
     error StagingDomainPhaseInvalid(bytes32 domainKey, uint8 phase);

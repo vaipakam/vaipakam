@@ -90,6 +90,7 @@ import {RewardStagingFacet} from "../src/facets/RewardStagingFacet.sol";
 import {RewardClaimWalkFacet} from "../src/facets/RewardClaimWalkFacet.sol";
 import {RewardStagingSettleFacet} from "../src/facets/RewardStagingSettleFacet.sol";
 import {RewardStagingDomainFacet} from "../src/facets/RewardStagingDomainFacet.sol";
+import {RewardClosureFacet} from "../src/facets/RewardClosureFacet.sol";
 import {RewardSweepWalkFacet} from "../src/facets/RewardSweepWalkFacet.sol";
 import {RewardForfeitWalkFacet} from "../src/facets/RewardForfeitWalkFacet.sol";
 import {RewardCompensationDispatchFacet} from "../src/facets/RewardCompensationDispatchFacet.sol";
@@ -106,7 +107,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](248); // A2-iii +3 raw (attested caps, ledger reservation, day needs); 3b-ii-A2 r22 +loanSideRewardPaidRaw; #2342 +setLegacyFrozenVpfiRaw; 3b-ii-A2 +13 raw reads +5 raw writes; #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1, then -1 with the pre-list scene (Codex #2296 items 2 and 4); r26 +1 flexible caps; 3b-ii-A2 r21 +1 ledger reservation
+        selectors = new bytes4[](250); // A2-iii +3 raw (attested caps, ledger reservation, day needs); 3b-ii-A2 r22 +loanSideRewardPaidRaw; #2342 +setLegacyFrozenVpfiRaw; 3b-ii-A2 +13 raw reads +5 raw writes; #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1, then -1 with the pre-list scene (Codex #2296 items 2 and 4); r26 +1 flexible caps; 3b-ii-A2 r21 +1 ledger reservation
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -545,6 +546,8 @@ contract HelperTest {
         // #2342 — seed a pre-upgrade swap-freeze tier record for the fold test.
         selectors[n++] = TestMutatorFacet.setLegacyFrozenVpfiRaw.selector;
         selectors[n++] = TestMutatorFacet.setInterestFoldDeltaRaw.selector; // #2277
+        selectors[n++] = TestMutatorFacet.setRewardEntryProcessedRaw.selector; // 3b-ii-B
+        selectors[n++] = TestMutatorFacet.setLegacyDomainOpenRaw.selector; // 3b-ii-B
         // #951 v2 (Codex #959 bind-to-live) — setSaleListingCollateralRaw removed
         // with the snapshot mapping; the accept binds `>=` live collateral.
         // #687-B: the former tail entries ([83]-[87]: setBackstopAbsorbCashRaw,
@@ -2588,6 +2591,17 @@ contract HelperTest {
 
     /// 3b-ii-A2 (#2305) — the staging record's settlement half. Mirrors
     /// `DeployDiamond._getRewardStagingSettleSelectors`.
+    /// 3b-ii-B (#1566) — the per-day closure proof. Mirrors `DeployDiamond._getRewardClosureSelectors`.
+    function getRewardClosureFacetSelectors() public pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](6);
+        selectors[0] = RewardClosureFacet.startDayClosure.selector;
+        selectors[1] = RewardClosureFacet.proveDayClosurePage.selector;
+        selectors[2] = RewardClosureFacet.isDayObligationsClosed.selector;
+        selectors[3] = RewardClosureFacet.getClosureWalk.selector;
+        selectors[4] = RewardClosureFacet.getClosureWalkNonce.selector;
+        selectors[5] = RewardClosureFacet.isEntryTerminatedOn.selector;
+    }
+
     /// 3b-ii-A2-ii (#2305) — the domain lifecycle entries. Mirrors
     /// `DeployDiamond._getRewardStagingDomainSelectors`.
     function getRewardStagingDomainFacetSelectors() public pure returns (bytes4[] memory selectors) {
