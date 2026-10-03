@@ -1351,6 +1351,14 @@ is the borrower's own money.
   will be sent.
 - When the deployment is paused, the surface says withdrawals are paused instead
   of offering the form, and the pre-check refuses to open the wallet.
+- When the surface shows an amount but could not read a fact the pre-check
+  depends on — whether the deployment is paused, or whether a sale listing is
+  linked (including on a deployment too old to answer that ahead of time) — it
+  says so beside the amount, rather than presenting the withdrawal as
+  unconditionally available and revealing the obstacle only at submit.
+- The confirmation's button is disabled whenever the wallet cannot send — an
+  unsupported network or no wallet client — rather than accepting a click that
+  does nothing.
 - An open confirmation does not survive a network switch: it closes, and the
   typed amount is cleared, so a review opened on one network can never send on
   another.

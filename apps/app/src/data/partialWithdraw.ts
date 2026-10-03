@@ -195,6 +195,28 @@ export async function swapToRepayOrderState(opts: {
   }
 }
 
+/** Pure — what the card cannot vouch for while it shows an amount
+ *  (#2389 r4). The pre-check re-reads every one of these before the
+ *  wallet opens and blocks on any it cannot answer; the card must not
+ *  meanwhile present the withdrawal as unconditionally available. Each
+ *  unknown is STATED beside the amount rather than hidden until submit:
+ *    - `pause-unknown` — the pause read failed;
+ *    - `sale-unknown` — no sale-listing answer: the probe failed, or the
+ *      deployment predates the bounded-listing check, where a legacy
+ *      listing can still exist. */
+export type WithdrawCaveat = 'pause-unknown' | 'sale-unknown';
+
+export function withdrawCaveats(a: {
+  paused: boolean | undefined;
+  /** `useSaleListingHold().data` once it is not resolving. */
+  saleHold: SaleListingHoldState | undefined;
+}): WithdrawCaveat[] {
+  const out: WithdrawCaveat[] = [];
+  if (a.paused === undefined) out.push('pause-unknown');
+  if (a.saleHold === undefined || a.saleHold === 'unknown') out.push('sale-unknown');
+  return out;
+}
+
 /** Pure — the decision the page makes from its live pre-checks, just
  *  before the wallet opens (#2389 r2). One rule for every check: a
  *  blocking answer names its obstacle, and an UNANSWERED check blocks

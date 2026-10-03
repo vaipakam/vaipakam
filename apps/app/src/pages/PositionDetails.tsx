@@ -85,6 +85,7 @@ import {
   classifyMaxWithdrawable,
   swapToRepayOrderState,
   withdrawPreflightBlock,
+  withdrawCaveats,
   useMaxWithdrawable,
   withdrawAmountProblem,
 } from '../data/partialWithdraw';
@@ -3298,6 +3299,18 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
               <p className="field-hint" style={{ marginTop: 0 }}>
                 {copy.positions.details.withdrawCollateral.availableNote}
               </p>
+              {/* #2389 r4 — what the card cannot vouch for is said here,
+                  not discovered at submit. */}
+              {withdrawCaveats({
+                paused: maxWithdrawable.data?.paused,
+                saleHold: saleHold.data,
+              }).map((c) => (
+                <p key={c} className="field-hint" style={{ marginTop: 0 }}>
+                  {c === 'pause-unknown'
+                    ? copy.positions.details.withdrawCollateral.pauseUnknownNote
+                    : copy.positions.details.withdrawCollateral.saleUnknownNote}
+                </p>
+              ))}
               <div className="cluster">
                 <input
                   aria-label={copy.positions.details.withdrawCollateral.amountAria}
@@ -3367,6 +3380,10 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                     confirmLabel={copy.positions.details.withdrawCollateral.confirm}
                     onBack={() => setConfirmingSurface(null)}
                     onConfirm={() => void runWithdrawCollateral()}
+                    // #2389 r4 — the same write gate as the form's button:
+                    // a wallet moved to an unsupported network must land
+                    // on a disabled button, not a silent no-op.
+                    disabled={!onSupportedChain || !walletClient || !publicClient || !walletChain}
                     data={{
                       // The exact amount sent, not the typed text (#2389 r3).
                       youReceive: copy.positions.details.withdrawCollateral.receive(

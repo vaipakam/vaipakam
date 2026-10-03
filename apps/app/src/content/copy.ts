@@ -3184,6 +3184,12 @@ const copySource = {
           'Taking back collateral is paused on this deployment right now. Your collateral stays safely locked in the loan; try again once it is unpaused.',
         pauseUnchecked:
           'We couldn’t check whether this deployment is paused, so nothing was sent. Please try again in a moment.',
+        // #2389 r4 — facts the card could not read ahead of time; each
+        // is re-checked before the wallet opens.
+        pauseUnknownNote:
+          'We couldn’t check whether taking back collateral is paused on this deployment. It is checked again before your wallet opens.',
+        saleUnknownNote:
+          'We couldn’t check ahead of time whether a sale listing of the lender’s position is linked to this loan. It is checked again before your wallet opens, and a linked listing blocks the withdrawal.',
         // #2389 r3 — a pre-check failed in a way with no plain-words
         // reason of its own. The wallet never opened.
         checkFailed:

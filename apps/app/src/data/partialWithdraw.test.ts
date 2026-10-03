@@ -16,6 +16,7 @@ import {
   classifyMaxWithdrawable,
   swapToRepayOrderState,
   withdrawPreflightBlock,
+  withdrawCaveats,
   readMaxWithdrawable,
   withdrawAmountProblem,
 } from './partialWithdraw';
@@ -272,5 +273,18 @@ describe('withdrawPreflightBlock (#2389 r2)', () => {
     expect(withdrawPreflightBlock({ ...ok, wei: 101n })).toBe('over-max');
     expect(withdrawPreflightBlock({ ...ok, liveMax: 0n, wei: 1n })).toBe('none-left');
     expect(withdrawPreflightBlock({ ...ok, wei: 100n })).toBeNull();
+  });
+});
+
+describe('withdrawCaveats (#2389 r4)', () => {
+  it('states nothing when both facts are known and clear', () => {
+    expect(withdrawCaveats({ paused: false, saleHold: 'none' })).toEqual([]);
+  });
+  it('states an unread pause', () => {
+    expect(withdrawCaveats({ paused: undefined, saleHold: 'none' })).toEqual(['pause-unknown']);
+  });
+  it('states a missing sale-listing answer — failed probe or pre-refresh deployment', () => {
+    expect(withdrawCaveats({ paused: false, saleHold: undefined })).toEqual(['sale-unknown']);
+    expect(withdrawCaveats({ paused: false, saleHold: 'unknown' })).toEqual(['sale-unknown']);
   });
 });
