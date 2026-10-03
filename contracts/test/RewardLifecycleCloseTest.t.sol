@@ -3,6 +3,9 @@
 pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
+import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {VPFIToken} from "../src/token/VPFIToken.sol";
+import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
@@ -22,8 +25,23 @@ import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
  *             original contracted endDay.
  */
 contract RewardLifecycleCloseTest is SetupTest {
+    VPFIToken internal vpfi;
+
     function setUp() public {
         setupHelper();
+        // #2308 routes the reward preview through the backing position, which
+        // names an unset VPFI token (`RecycleBackingTokenUnset`) rather than
+        // reading a code-less address. A deployment always configures the
+        // token, so this suite does too — the same wiring every other
+        // preview-reading suite performs.
+        VPFIToken impl = new VPFIToken();
+        ERC1967Proxy proxy = new ERC1967Proxy(
+            address(impl),
+            abi.encodeCall(VPFIToken.initialize, (address(this), address(this), address(this)))
+        );
+        vpfi = VPFIToken(address(proxy));
+        VPFITokenFacet(address(diamond)).setCanonicalVPFIChain(true);
+        VPFITokenFacet(address(diamond)).setVPFIToken(address(vpfi));
         // Start interaction emissions so loan origination registers entries.
         InteractionRewardsFacet(address(diamond)).setInteractionLaunchTimestamp(
             block.timestamp

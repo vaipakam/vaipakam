@@ -11,8 +11,7 @@ import {LibBuybackOrderValidation} from "../src/libraries/LibBuybackOrderValidat
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {IERC1271} from "@openzeppelin/contracts/interfaces/IERC1271.sol";
-import {IOrderMixin} from
-    "@1inch/limit-order-protocol/contracts/interfaces/IOrderMixin.sol";
+import {LibOneTxBuybackFill} from "./helpers/LibOneTxBuybackFill.sol";
 
 /// @dev Trivial stub contract.
 contract _Stub {}
@@ -234,19 +233,12 @@ contract BuybackValidatedCommitTest is SetupTest {
         uint96 firstFill = AMOUNT / 2;
         uint96 secondFill = AMOUNT - firstFill;
 
-        IOrderMixin.Order memory order;
-
         // ── First partial fill ──────────────────────────────────
-        vm.prank(lop);
-        _d().preInteraction(order, "", orderHash, address(0), 0, 0, 0, "");
-
         // Deliver VPFI proportional + simulate source-token pull.
-        vpfi.mint(address(diamond), 50e18);
-        vm.prank(address(diamond));
-        token.transfer(lop, firstFill);
-
-        vm.prank(lop);
-        _d().postInteraction(order, "", orderHash, address(0), firstFill, 0, 0, "");
+        vpfi.mint(lop, 50e18);
+        LibOneTxBuybackFill.fill(
+            lop, address(diamond), orderHash, firstFill, address(token), firstFill, address(vpfi), 50e18
+        );
 
         // Still Pending after partial.
         LibVaipakam.BuybackOrderInfo memory info = _t().getBuybackOrder(orderHash);
@@ -255,15 +247,10 @@ contract BuybackValidatedCommitTest is SetupTest {
         assertEq(_t().getOrderHashKind(orderHash), LibVaipakam.ORDER_KIND_BUYBACK);
 
         // ── Second (final) partial fill ─────────────────────────
-        vm.prank(lop);
-        _d().preInteraction(order, "", orderHash, address(0), 0, 0, 0, "");
-
-        vpfi.mint(address(diamond), 51e18);
-        vm.prank(address(diamond));
-        token.transfer(lop, secondFill);
-
-        vm.prank(lop);
-        _d().postInteraction(order, "", orderHash, address(0), secondFill, 0, 0, "");
+        vpfi.mint(lop, 51e18);
+        LibOneTxBuybackFill.fill(
+            lop, address(diamond), orderHash, secondFill, address(token), secondFill, address(vpfi), 51e18
+        );
 
         // Now Filled.
         info = _t().getBuybackOrder(orderHash);
@@ -285,14 +272,10 @@ contract BuybackValidatedCommitTest is SetupTest {
 
         // One partial fill of 40% of AMOUNT.
         uint96 partialAmount = (AMOUNT * 40) / 100;
-        IOrderMixin.Order memory order;
-        vm.prank(lop);
-        _d().preInteraction(order, "", orderHash, address(0), 0, 0, 0, "");
-        vpfi.mint(address(diamond), 40e18);
-        vm.prank(address(diamond));
-        token.transfer(lop, partialAmount);
-        vm.prank(lop);
-        _d().postInteraction(order, "", orderHash, address(0), partialAmount, 0, 0, "");
+        vpfi.mint(lop, 40e18);
+        LibOneTxBuybackFill.fill(
+            lop, address(diamond), orderHash, partialAmount, address(token), partialAmount, address(vpfi), 40e18
+        );
 
         // Warp past expiry.
         vm.warp(uint256(expiresAt) + 1);
@@ -336,14 +319,10 @@ contract BuybackValidatedCommitTest is SetupTest {
         );
 
         // Full fill.
-        IOrderMixin.Order memory order;
-        vm.prank(lop);
-        _d().preInteraction(order, "", orderHash, address(0), 0, 0, 0, "");
-        vpfi.mint(address(diamond), 100e18);
-        vm.prank(address(diamond));
-        token.transfer(lop, AMOUNT);
-        vm.prank(lop);
-        _d().postInteraction(order, "", orderHash, address(0), AMOUNT, 0, 0, "");
+        vpfi.mint(lop, 100e18);
+        LibOneTxBuybackFill.fill(
+            lop, address(diamond), orderHash, AMOUNT, address(token), AMOUNT, address(vpfi), 100e18
+        );
 
         // Filled → invalid.
         assertEq(_d().isValidSignature(orderHash, ""), bytes4(0xffffffff));
@@ -387,28 +366,17 @@ contract BuybackValidatedCommitTest is SetupTest {
             orderHash, tpl, AMOUNT, uint256(minVpfiOut), expiresAt
         );
 
-        IOrderMixin.Order memory order;
-
         // First half — deliver 60 VPFI. Cumulative required for half:
         // floor(100e18 * 500e6 / 1000e6) = 50e18. 60e18 >= 50e18. OK.
-        vm.prank(lop);
-        _d().preInteraction(order, "", orderHash, address(0), 0, 0, 0, "");
-        vpfi.mint(address(diamond), 60e18);
-        vm.prank(address(diamond));
-        token.transfer(lop, AMOUNT / 2);
-        vm.prank(lop);
-        _d().postInteraction(order, "", orderHash, address(0), AMOUNT / 2, 0, 0, "");
+        vpfi.mint(lop, 60e18);
+        LibOneTxBuybackFill.fill(
+            lop, address(diamond), orderHash, AMOUNT / 2, address(token), AMOUNT / 2, address(vpfi), 60e18
+        );
 
         // Second half — deliver only 30 VPFI. Cumulative required at
         // full consumed: floor(100e18 * 1000e6 / 1000e6) = 100e18.
         // Total delivered: 60 + 30 = 90e18. 90e18 < 100e18 → reject.
-        vm.prank(lop);
-        _d().preInteraction(order, "", orderHash, address(0), 0, 0, 0, "");
-        vpfi.mint(address(diamond), 30e18);
-        vm.prank(address(diamond));
-        token.transfer(lop, AMOUNT / 2);
-
-        vm.prank(lop);
+        vpfi.mint(lop, 30e18);
         vm.expectRevert(
             abi.encodeWithSelector(
                 LibTreasuryBuyback.BuybackBelowMinVpfiOut.selector,
@@ -416,6 +384,8 @@ contract BuybackValidatedCommitTest is SetupTest {
                 uint128(100e18)
             )
         );
-        _d().postInteraction(order, "", orderHash, address(0), AMOUNT / 2, 0, 0, "");
+        LibOneTxBuybackFill.fill(
+            lop, address(diamond), orderHash, AMOUNT / 2, address(token), AMOUNT / 2, address(vpfi), 30e18
+        );
     }
 }

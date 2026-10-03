@@ -10,8 +10,7 @@ import {LibTreasuryBuyback} from "../src/libraries/LibTreasuryBuyback.sol";
 import {LibBuybackOrderValidation} from "../src/libraries/LibBuybackOrderValidation.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
-import {IOrderMixin} from
-    "@1inch/limit-order-protocol/contracts/interfaces/IOrderMixin.sol";
+import {LibOneTxBuybackFill} from "./helpers/LibOneTxBuybackFill.sol";
 
 contract _Stub {}
 contract _MockLOP {
@@ -123,14 +122,10 @@ contract BuybackPriorityRouterTest is SetupTest {
             orderHash, tpl, AMOUNT_IN, 1, expiresAt
         );
 
-        IOrderMixin.Order memory order;
-        vm.prank(lop);
-        _d().preInteraction(order, "", orderHash, address(0), 0, 0, 0, "");
-        vm.prank(lop);
-        usdc.transferFrom(address(diamond), lop, AMOUNT_IN);
-        vpfi.mint(address(diamond), delivered);
-        vm.prank(lop);
-        _d().postInteraction(order, "", orderHash, address(0), AMOUNT_IN, 0, 0, "");
+        vpfi.mint(lop, delivered);
+        LibOneTxBuybackFill.fill(
+            lop, address(diamond), orderHash, AMOUNT_IN, address(usdc), AMOUNT_IN, address(vpfi), delivered
+        );
         return orderHash;
     }
 
@@ -149,17 +144,13 @@ contract BuybackPriorityRouterTest is SetupTest {
             orderHash, tpl, AMOUNT_IN, 1, expiresAt
         );
 
-        IOrderMixin.Order memory order;
-        vm.prank(lop);
-        _d().preInteraction(order, "", orderHash, address(0), 0, 0, 0, "");
-        vm.prank(lop);
-        usdc.transferFrom(address(diamond), lop, AMOUNT_IN);
-        vpfi.mint(address(diamond), delivered);
-        vm.prank(lop);
+        vpfi.mint(lop, delivered);
         // Selector-only match — the error carries (delivered, toRewards,
         // toKeepers, overflow) args that vary per test config.
         vm.expectPartialRevert(LibTreasuryBuyback.BuybackOverflowNotAllowed.selector);
-        _d().postInteraction(order, "", orderHash, address(0), AMOUNT_IN, 0, 0, "");
+        LibOneTxBuybackFill.fill(
+            lop, address(diamond), orderHash, AMOUNT_IN, address(usdc), AMOUNT_IN, address(vpfi), delivered
+        );
     }
 
     // ─── #687-C: zero targets → any delivery overflows → revert ───
