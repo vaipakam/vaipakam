@@ -217,6 +217,60 @@ cast call $DIAMOND "checkLiquidity(address)(uint8)" $MWBTC --rpc-url $BASE_SEPOL
 Chainlink + real UniswapV3 (factory `0x33128a8fC17869897dcE68Ed026d694621f6FDfD`),
 not mocks. Real-DEX deploys jump straight from §2 to §3.
 
+## 2.6. Repricing a faucet asset for a drawdown rehearsal (testnet-only)
+
+To rehearse a health-factor drop or a liquidation on testnet, reprice the
+faucet asset with `RepriceTestnetMock.s.sol`. **Never move the mock feed
+alone.** The faucet pool's spot is static, and the oracle only counts a pool
+whose spot agrees with the feed within the TWAP-consistency band (3% by
+default). A feed-only move past that band makes tLIQ read **Illiquid**, which
+looks exactly like a pool too shallow for the trade (#2314 was first
+misdiagnosed that way). The script moves three things together: the feed,
+the pool spot, and the registered mock swap venue's price (which sets what a
+liquidation actually pays).
+
+It accepts `liquidToken` (tLIQ) and `liquidToken2` (mUSDC) only. mWETH shares
+its feed with WETH, so repricing it would move the quote leg of every faucet
+pool; the script refuses it. Before it broadcasts anything, it checks:
+
+- the artifact still describes the chain;
+- the broadcaster owns the feed, the pool and the venue;
+- after the writes, the Diamond reads the new price;
+- after the writes, the asset still reads Liquid.
+
+**Rehearse on an Anvil fork first.** The rehearsal changes nothing on the
+testnet:
+
+```bash
+cd contracts && bash script/rehearse-reprice-anvil.sh
+```
+
+Then, on the testnet itself, broadcast as the mock owner (the key that ran
+`DeployTestnetMocks`). Prices are in 8 decimals, so `160000000000` is $1,600:
+
+```bash
+REPRICE_ASSET=liquidToken REPRICE_USD_E8=160000000000 \
+MOCK_OWNER_PRIVATE_KEY=<mock owner key> \
+forge script script/RepriceTestnetMock.s.sol --rpc-url $BASE_SEPOLIA_RPC_URL --broadcast
+# or, with a hardware wallet: drop MOCK_OWNER_PRIVATE_KEY, add --ledger --sender <owner>
+```
+
+The script checks the result in simulation only, not after broadcast, so
+read the live state yourself:
+
+```bash
+DIAMOND=$(jq -r .diamond deployments/base-sepolia/addresses.json)
+TLIQ=$(jq -r .testnetMocks.liquidToken deployments/base-sepolia/addresses.json)
+VENUE=$(jq -r .testnetMocks.mockSwapAdapter deployments/base-sepolia/addresses.json)
+cast call $DIAMOND "checkLiquidity(address)(uint8)" $TLIQ --rpc-url $BASE_SEPOLIA_RPC_URL       # → 0 (Liquid)
+cast call $DIAMOND "getAssetPrice(address)(uint256,uint8)" $TLIQ --rpc-url $BASE_SEPOLIA_RPC_URL  # → the new price, 8
+cast call $VENUE "tokenUsdPrice8(address)(uint256)" $TLIQ --rpc-url $BASE_SEPOLIA_RPC_URL         # → the new price
+```
+
+**Restore the seeded price afterwards** (`REPRICE_USD_E8=200000000000` for
+tLIQ, `100000000` for mUSDC). The testnet is shared, and every faucet user
+sees a rehearsal price until it is put back.
+
 ---
 
 ## 3. Deploy canonical VPFI stack (Base only)
