@@ -154,6 +154,7 @@ export function Desk() {
     <div className="desk-container">
       <h1 className="page-title">{copy.desk.title}</h1>
       <p className="page-lede">{copy.desk.lede}</p>
+      <HowItWorks />
 
       {/* UX-026 — orient Basic-mode visitors landing here by URL. */}
       <PowerSurfaceNote />
@@ -300,5 +301,45 @@ export function Desk() {
         )}
       </div>
     </div>
+  );
+}
+
+const HOW_IT_WORKS_KEY = 'app.deskHowItWorksSeen';
+
+/** Naive-user redesign — what this page is and how to use it, in four
+ *  steps. Open on a first visit, collapsed on later ones (remembered per
+ *  browser; storage failure just means it opens again). Shown in both
+ *  modes: the desk is usable by anyone, not only by traders. */
+function HowItWorks() {
+  const [open] = useState(() => {
+    try {
+      return localStorage.getItem(HOW_IT_WORKS_KEY) !== '1';
+    } catch {
+      return true;
+    }
+  });
+  const h = copy.desk.howItWorks;
+  return (
+    <details
+      className="card how-it-works"
+      open={open}
+      onToggle={(e) => {
+        if (!(e.currentTarget as HTMLDetailsElement).open) {
+          try {
+            localStorage.setItem(HOW_IT_WORKS_KEY, '1');
+          } catch {
+            /* non-fatal */
+          }
+        }
+      }}
+    >
+      <summary>{h.title}</summary>
+      <ol>
+        <li>{h.step1}</li>
+        <li>{h.step2}</li>
+        <li>{h.step3}</li>
+        <li>{h.step4}</li>
+      </ol>
+    </details>
   );
 }

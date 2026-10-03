@@ -2618,3 +2618,18 @@ a.item-row:hover {
   font-weight: 400;
   color: var(--text-muted);
 }
+
+/* Naive-user redesign — the collapsible "How this page works" guide. */
+.how-it-works {
+  margin-bottom: var(--space-4);
+}
+.how-it-works summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.how-it-works ol {
+  margin: var(--space-3) 0 0;
+  padding-left: 1.25rem;
+  display: grid;
+  gap: var(--space-2);
+}

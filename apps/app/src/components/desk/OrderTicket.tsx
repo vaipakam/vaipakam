@@ -1236,6 +1236,11 @@ export function OrderTicket({
             </button>
           ))}
         </div>
+        {/* Naive-user redesign — what the selected choice means, visible
+            (the chip tooltips alone are invisible on touch screens). */}
+        <p className="field-hint">
+          {expiry === 'gtc' ? text.expiryGtcTitle : text.expiryGttTitle}
+        </p>
         {expiry === 'custom' ? (
           <input
             className="input"
@@ -1286,13 +1291,22 @@ export function OrderTicket({
             );
           })}
         </div>
+        {gaslessLenderSingleFill ? (
+          <p className="field-hint">{text.gaslessLenderAonNote}</p>
+        ) : (
+          // What the selected choice means, visible (see the expiry note).
+          <p className="field-hint">
+            {effectiveFillMode === FILL_AON
+              ? text.fillAonHint
+              : effectiveFillMode === FILL_IOC
+                ? text.fillIocHint
+                : text.fillPartialHint}
+          </p>
+        )}
         {iocNeedsExpiry ? (
           <p className="field-hint" style={{ color: 'var(--danger)' }}>
             {text.iocNeedsExpiry}
           </p>
-        ) : null}
-        {gaslessLenderSingleFill ? (
-          <p className="field-hint">{text.gaslessLenderAonNote}</p>
         ) : null}
       </div>
 
@@ -1325,10 +1339,12 @@ export function OrderTicket({
         {postMode === 'gasless' ? (
           <p className="field-hint">
             {indexerConfigured()
-              ? text.gaslessEscrowNote
+              ? `${text.modeGaslessHint} ${text.gaslessEscrowNote}`
               : text.gaslessNeedsIndexer}
           </p>
-        ) : null}
+        ) : (
+          <p className="field-hint">{text.modeOnchainHint}</p>
+        )}
       </div>
 
       <p className="muted" style={{ fontSize: '0.8rem' }}>

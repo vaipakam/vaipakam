@@ -3306,13 +3306,15 @@ const copySource = {
   // surface by URL: name what it is, offer the guided path back, and
   // offer the mode switch. Dismissible; never shown in Advanced.
   powerSurface: {
-    body: 'This is a power-user screen — raw offers and live rates with less hand-holding. The guided Borrow and Lend flows cover the same actions with step-by-step explanations.',
+    // Naive-user redesign — an invitation, not a warning: anyone may use
+    // this page, and the guided flows are offered as the gentler route.
+    body: 'This page shows every offer for one pair at once and lets you set your own rate. Prefer to be walked through it? The Borrow and Lend pages do the same things one step at a time.',
     // Both guided flows offered (Codex #1168 r1) — a lender routed
     // into /borrow is the wrong money direction.
-    guidedBorrow: 'Guided Borrow',
-    guidedLend: 'Guided Lend',
-    enableAdvanced: 'I know what I’m doing — enable Advanced mode',
-    dismiss: 'Dismiss',
+    guidedBorrow: 'Borrow step by step',
+    guidedLend: 'Lend step by step',
+    enableAdvanced: 'Show the extra tools (Advanced mode)',
+    dismiss: 'Got it',
   },
 
   claims: {
@@ -3418,6 +3420,9 @@ const copySource = {
     yearly: 'yearly',
     collateralLabel: 'collateral',
     collateralNone: 'none',
+    // UX3-007 — shown only when the record positively flags the collateral
+    // illiquid; absence is never presented as "liquid".
+    illiquidCollateralTag: 'handed over as-is if not repaid',
     byCreator: 'by',
     advancedPartialRepayOk: 'partial repay OK',
     advancedNoPartialRepay: 'no partial repay',
@@ -3433,15 +3438,15 @@ const copySource = {
     filters: {
       showLabel: 'Show',
       sideAll: 'Everything',
-      sideLending: 'Lending offers (borrow from these)',
-      sideBorrowing: 'Borrow requests (lend to these)',
+      sideLending: 'Offers to lend (you borrow)',
+      sideBorrowing: 'Requests to borrow (you lend)',
       sideRentals: 'NFT rentals',
       sortLabel: 'Sort by',
       sortNewest: 'Newest first',
-      sortRateLow: 'Rate — low to high',
-      sortRateHigh: 'Rate — high to low',
-      sortDurationShort: 'Duration — shortest first',
-      sortDurationLong: 'Duration — longest first',
+      sortRateLow: 'Lowest rate first',
+      sortRateHigh: 'Highest rate first',
+      sortDurationShort: 'Shortest loan first',
+      sortDurationLong: 'Longest loan first',
       assetLabel: 'Filter by asset address',
       assetPlaceholder: '0x… (any leg: principal, collateral, payment)',
       clear: 'Clear filters',
@@ -3458,7 +3463,7 @@ const copySource = {
       tail: ' flows.',
     },
     title: 'Offer Book',
-    lede: 'Open lending offers and borrow requests from other users.',
+    lede: 'Every open offer from other people: offers to lend (you can borrow from these) and requests to borrow (you can lend to these). Pick one to see exactly what you would pay or receive before you sign.',
     emptyTitle: 'No open offers right now',
     emptyBody: 'Create your own offer and let the other side come to you.',
     // F-20260703-003 (#988) — shown by MarketFreshnessNote when the
@@ -3498,21 +3503,21 @@ const copySource = {
     midQuotedTitle: tmpl('{{bps}} bps (quoted, not executed)', ['bps']),
     marketsLoading: 'Loading markets…',
     loadMarket: 'Load market',
-    bookLoading: 'Loading the order book…',
-    cumHeadingTitle: 'Cumulative depth from the top of the side',
-    oneSidedBook: 'one-sided book',
+    bookLoading: 'Loading the offers…',
+    cumHeadingTitle: 'Total amount available up to this rate',
+    oneSidedBook: 'offers on one side only',
     // --- Rate-Desk tooltip / row scaffolds (i18n burn-down). Each
     //     composes a raw bps figure with a loan id or status; the words
     //     around the numbers are what need translating.
     lastFillTitle: tmpl('{{bps}} bps · loan #{{loanId}}', ['bps', 'loanId']),
-    tapeLoading: 'Loading recent fills…',
+    tapeLoading: 'Loading recent loans…',
     tapeRowTitle: tmpl('{{bps}} bps · loan #{{loanId}} · {{status}}', ['bps', 'loanId', 'status']),
     ladderMidTitle: tmpl('{{bps}} bps quoted mid', ['bps']),
     // The desk mid-row: "mid {rate}" plus an optional " · spread {spread}"
     // suffix — two pieces so the connector translates without the render
     // code rebuilding the whole string.
-    ladderMid: tmpl('mid {{rate}}', ['rate']),
-    ladderSpread: tmpl(' · spread {{spread}}', ['spread']),
+    ladderMid: tmpl('middle {{rate}}', ['rate']),
+    ladderSpread: tmpl(' · gap {{spread}}', ['spread']),
     // Raw indexer loan-status → localized label for the tape tooltip —
     // the one desk surface that shows the unmapped lifecycle status
     // (Positions / History collapse it through loanStateLabel instead).
@@ -3526,10 +3531,19 @@ const copySource = {
       internal_matched: 'matched',
     },
     title: 'Rate Desk',
-    lede: 'The order book for one market — read the rates, post or amend limit-rate offers, and watch your open orders and positions in one place.',
-    marketLabel: 'Market',
-    tenorLabel: 'Term',
-    customPair: 'Custom pair…',
+    lede: 'Every open offer for one pair of assets on one page. See the rates other people are offering, post your own offer at the rate you want, and manage the offers you have open.',
+    // Naive-user redesign — a four-step orientation, open by default for
+    // a first visit and collapsible after.
+    howItWorks: {
+      title: 'How this page works',
+      step1: 'Pick a pair at the top: the asset being lent, and the collateral that backs the loan. Then pick how long the loan lasts.',
+      step2: 'The list shows the offers open right now. “Offers to lend” are people ready to lend at that yearly rate; “Requests to borrow” are people who want to borrow. The middle rate sits between the best of each.',
+      step3: 'To take an offer, press “Borrow this” or “Lend to this” beside it. You see exactly what you pay and receive before you sign anything.',
+      step4: 'To make your own offer, fill in the form: the amount, your rate and the collateral. It waits in the list until someone takes it, and you can change or cancel it any time before then.',
+    },
+    marketLabel: 'Pair (lend / collateral)',
+    tenorLabel: 'Loan length',
+    customPair: 'Other pair…',
     customLend: 'Loan asset address',
     customCollateral: 'Collateral asset address',
     marketsUnavailable:
@@ -3539,31 +3553,31 @@ const copySource = {
     // #1247 PAG-010 — discovery serves the deepest markets only.
     marketsTruncated:
       'Showing the most active markets — smaller markets aren’t listed here, but you can load any pair with “Custom pair…”.',
-    pickPair: 'Pick a market to load its book.',
-    lastFill: 'Last fill',
-    quotedMid: 'Quoted mid',
-    spread: 'Spread',
+    pickPair: 'Pick a pair to see its offers.',
+    lastFill: 'Last agreed rate',
+    quotedMid: 'Middle rate',
+    spread: 'Gap between offers',
     crossed: 'crossed',
     statUnknown: '—',
-    bookTitle: 'Order book',
-    rateHeading: 'Rate (APR %)',
-    sizeHeading: 'Size',
-    cumHeading: 'Depth',
-    asksHeading: 'Lender offers (asks)',
-    bidsHeading: 'Borrow requests (bids)',
-    bookEmpty: 'No open offers for this market yet — yours can be the first.',
+    bookTitle: 'Open offers',
+    rateHeading: 'Yearly rate (%)',
+    sizeHeading: 'Amount',
+    cumHeading: 'Running total',
+    asksHeading: 'Offers to lend',
+    bidsHeading: 'Requests to borrow',
+    bookEmpty: 'No open offers for this pair yet — yours can be the first.',
     bookUnavailable:
-      'We couldn’t load the order book right now. Please try again in a moment.',
+      'We couldn’t load the offers right now. Please try again in a moment.',
     bookIndexedCopy:
-      'Live chain read unavailable — showing the indexed copy of the book, which can lag the chain.',
-    yourOrderMark: 'Your order at this rate',
+      'We can’t read the blockchain directly right now, so this shows a saved copy of the offers, which can be a little behind.',
+    yourOrderMark: 'Your offer at this rate',
     takeAsk: 'Borrow this',
     takeBid: 'Lend to this',
     rowPrefills:
       'Tap a rate to pre-fill the ticket. Taking the top of the book goes through the same guided review as Borrow/Lend.',
-    tapeTitle: 'Recent fills',
-    tapeEmpty: 'No fills yet for this market.',
-    tapeUnavailable: 'We couldn’t load recent fills right now.',
+    tapeTitle: 'Recent loans',
+    tapeEmpty: 'No loans agreed yet for this pair.',
+    tapeUnavailable: 'We couldn’t load recent loans right now.',
     // #1131 slice B — the crossable-band previewMatch strip. Shown ONLY
     // when the contract's own previewMatch says Ok (§5.2 honesty rule:
     // bid >= ask alone is NOT matchable — range constraints can still
@@ -3598,11 +3612,11 @@ const copySource = {
     signed: {
       badge: 'Signed',
       badgeTooltip:
-        'Gasless signed order from the off-chain book — the maker signed it without a transaction, and it fills in a single on-chain transaction by whoever takes it. Signed rows always come from the order-book service, never the chain, until they fill.',
+        'A signed offer: its maker signed it without a transaction, and it becomes a loan in one transaction by whoever takes it. Signed offers are listed by the offer-book service, not read from the blockchain, until someone takes them.',
       partialBadgeTooltip:
-        'Partially matched signed order — its remainder still counts as depth and fills through the permissionless matcher, but a direct fill is no longer possible.',
+        'Part of this signed offer has been taken. The rest still counts and can still be matched automatically, but it can no longer be taken directly.',
       rangedBadgeTooltip:
-        'Range-sized signed order — its size still counts as depth, but only the permissionless matcher can consume it in slices; there is no whole-order direct fill.',
+        'A signed offer with a size range. It still counts, but only the automatic matcher can take it, in parts — it cannot be taken whole in one go.',
       fill: 'Fill',
       confirmTitle: 'Fill signed order',
       confirmLede:
@@ -3637,12 +3651,12 @@ const copySource = {
       close: 'Close',
     },
     chart: {
-      title: 'Executed rates',
+      title: 'Rates people agreed',
       loading: 'Loading chart…',
       // §5.3 rule 5 — the header shows the last executed print, never
       // a %-change ticker.
-      lastFill: tmpl(`last fill: {{rate}} · {{ago}}`, ['rate', 'ago']),
-      lastFillNone: 'no fills yet',
+      lastFill: tmpl(`last agreed: {{rate}} · {{ago}}`, ['rate', 'ago']),
+      lastFillNone: 'no loans agreed yet',
       // Two empty states (Codex #1139 round-1 P3, tightened round 4):
       // `empty` may only claim "never filled" when the evidence covers
       // the whole history (range = all, or a confirmed-empty tape) AND
@@ -3650,27 +3664,27 @@ const copySource = {
       // range-scoped line, even at range = all (the 60 s candle-cache
       // skew window after a first fill). See chartEmptyKind.
       empty:
-        'No fills yet for this market — the chart draws only executed rates.',
-      emptyRange: 'No fills in this range — try a longer range.',
+        'No loans agreed yet for this pair — the chart only shows rates people actually agreed.',
+      emptyRange: 'No loans agreed in this period — try a longer one.',
       unavailable: 'We couldn’t load the rate history right now.',
       retry: 'Retry',
-      quotedMid: 'quoted mid',
+      quotedMid: 'middle rate',
       quotedMidHint:
-        'Dashed line = the book’s current quoted mid — a resting quote, not an executed rate.',
+        'Dashed line = the middle of the offers open right now. It is an asking rate, not a rate anyone has agreed.',
       sparseNote: tmpl(
-        'Sparse market — {{count}} fills in this range, drawn individually. Candles appear once there’s enough tape to mean something.',
+        'Few loans so far — {{count}} in this period, each drawn on its own. Bars appear once there are enough loans to summarise.',
         ['count'],
-        { one: 'Sparse market — {{count}} fill in this range, drawn individually. Candles appear once there’s enough tape to mean something.' },
+        { one: 'Few loans so far — {{count}} in this period, drawn on its own. Bars appear once there are enough loans to summarise.' },
       ),
       // #1247 PAG-009 — the server scans the newest 10,000 fills; a
       // busy market's oldest history falls off. Say so instead of
       // letting an "all" chart read as complete.
       truncatedNote:
-        'Long history — showing the most recent fills only. The oldest candles are not drawn.',
-      intervalLabel: 'Interval',
-      rangeLabel: 'Range',
+        'Long history — only the most recent loans are shown. The oldest ones are not drawn.',
+      intervalLabel: 'Each bar covers',
+      rangeLabel: 'Period shown',
       attribution: 'Charts by TradingView',
-      tooltipFills: tmpl('{{count}} fills', ['count'], { one: '{{count}} fill' }),
+      tooltipFills: tmpl('{{count}} loans', ['count'], { one: '{{count}} loan' }),
       mobileBook: 'Book',
       mobileChart: 'Chart',
       mobileViewLabel: 'Desk view',
@@ -3692,73 +3706,73 @@ const copySource = {
       rateBpsNote: 'Rates are stored in basis points (1% = 100 bps)',
       selfCollateral: 'Collateral can’t be the same token as the loan asset.',
       collateralAmount: 'Collateral amount',
-      expiryGtcTitle: 'Good-til-cancelled — rests until you cancel it',
-      expiryGttTitle: 'Good-til-time — lapses on its own at the deadline',
-      title: 'Order ticket',
+      expiryGtcTitle: 'Stays open until you cancel it',
+      expiryGttTitle: 'Closes by itself at the time you pick',
+      title: 'Post an offer',
       sideLend: 'Lend',
       sideBorrow: 'Borrow',
       amountLend: 'Amount to lend',
       amountBorrow: 'Amount to borrow',
-      rateLend: 'Rate — minimum you’ll accept (APR %)',
-      rateBorrow: 'Rate — maximum you’ll pay (APR %)',
+      rateLend: 'Lowest yearly rate you’ll accept (%)',
+      rateBorrow: 'Highest yearly rate you’ll pay (%)',
       collateralRequire: 'Collateral you require',
       collateralLock: 'Collateral you lock',
       collateralFixedNote:
         'Set by the selected market — switch markets in the header to post against a different collateral asset.',
-      expiryLabel: 'Expiry',
-      expiryGtc: 'GTC',
-      expiryCustom: 'Custom…',
-      expiryInvalid: 'The custom expiry must be a future date and time.',
+      expiryLabel: 'How long it stays open',
+      expiryGtc: 'Until I cancel',
+      expiryCustom: 'Pick a date…',
+      expiryInvalid: 'Pick a date and time in the future.',
       expiryTooFar:
-        'The custom expiry can be at most one year ahead — the protocol caps offer expiry at 365 days out.',
-      fillModeLabel: 'Fill mode',
-      fillPartial: 'Partial',
-      fillAon: 'AON',
-      fillIoc: 'IOC',
-      fillPartialHint: 'Partial: the offer can fill in pieces down to a minimum.',
-      fillAonHint: 'All-or-nothing: fills only as one whole loan at the full amount.',
-      fillIocHint: 'Immediate-or-cancel: rests only until its expiry — an expiry is required.',
-      iocNeedsExpiry: 'IOC orders need an expiry — pick 24h, 7d, or a custom time.',
+        'An offer can stay open for at most one year — pick a date within the next 365 days.',
+      fillModeLabel: 'Can it be taken in parts?',
+      fillPartial: 'Yes, in parts',
+      fillAon: 'Only all at once',
+      fillIoc: 'Short-lived',
+      fillPartialHint: 'In parts: different people can each take a piece, down to a minimum size.',
+      fillAonHint: 'All at once: it is only taken as one whole loan, for the full amount.',
+      fillIocHint: 'Short-lived: it stays open only until the closing time you set, so it needs one.',
+      iocNeedsExpiry: 'A short-lived offer needs a closing time — pick 24h, 7d, or a date.',
       tenorNote: tmpl(
-        `Posting into the selected {{label}} market — change the term with the chips above.`,
+        `This offer is for a {{label}} loan — change the length with the buttons above.`,
         ['label'],
       ),
       overDurationCap: tmpl(
-        `The protocol currently caps offer duration at {{max}} days — pick a shorter term above.`,
+        `Loans can currently last at most {{max}} days — pick a shorter length above.`,
         ['max'],
       ),
-      post: 'Post order',
+      post: 'Post offer',
       posting: 'Posting…',
-      posted: 'Order posted',
+      posted: 'Offer posted',
       postedNext:
-        'Your offer is live on the book. Manage it under Open orders below — amend or cancel any time before it fills.',
+        'Your offer is now open. You can change or cancel it under “Your open offers” below, any time before someone takes it.',
       // #1131 slice D — gasless posting mode.
-      modeLabel: 'Posting',
-      modeOnchain: 'On-chain',
-      modeGasless: 'Gasless (sign only)',
+      modeLabel: 'How to post',
+      modeOnchain: 'Post now (network fee)',
+      modeGasless: 'Sign only (free)',
       modeOnchainHint:
-        'Post the offer as a transaction — funds are escrowed in your vault now.',
+        'Posts the offer with a transaction. Your funds are set aside in your vault straight away.',
       modeGaslessHint:
-        'Sign the order off-chain and post it to the book — no transaction, no gas. Funds move only when a taker fills it.',
+        'You only sign a message — no transaction and no network fee. Your funds move only when someone takes the offer.',
       gaslessEscrowNote:
-        'Nothing is escrowed when you sign — a taker’s fill pulls from your vault’s free balance at that moment. Cancelling later is an on-chain transaction (unlike posting).',
+        'Nothing is set aside when you sign. When someone takes the offer, the funds come from your vault’s free balance at that moment. Cancelling later does need a transaction, with a network fee.',
       gaslessNeedsIndexer:
-        'Gasless posting needs the order-book service, which isn’t configured right now. On-chain posting still works.',
+        'Signing only needs the offer-book service, which isn’t set up right now. “Post now” still works.',
       // #1145 round-2 — signed lender orders carry a single collateral
       // requirement, so partial slices can’t keep the contract’s
       // constant collateral-to-principal ratio; only a full fill can
       // consume them. Shown as the fill-mode note (and the disabled
       // Partial chip’s tooltip) in gasless lender mode.
       gaslessLenderAonNote:
-        'Gasless lend orders fill only as one whole loan — a signed lender order can’t be sliced on-chain, so it posts all-or-nothing. Partial stays available with on-chain posting.',
-      gaslessPost: 'Sign & post to the book',
+        'A signed lend offer can only be taken all at once, as one whole loan. To let people take it in parts, choose “Post now” instead.',
+      gaslessPost: 'Sign and post',
       gaslessPosting: 'Signing…',
       gaslessConsentRequired:
         'Review and accept the risk disclosures and terms first — for a gasless order, your signature is what records that consent.',
       gaslessPosted:
-        'Signed order posted to the book — no gas spent. It fills when a taker accepts it.',
+        'Signed offer posted — no network fee spent. It becomes a loan when someone takes it.',
       gaslessFundsWarn: tmpl(
-        `Heads up: your vault’s free balance is below the {{amount}} {{symbol}} this order commits. The fill will fail if the funds aren’t there when a taker accepts — deposit to your vault to keep the order fillable.`,
+        `Heads up: your vault has less than the {{amount}} {{symbol}} this offer needs. If the funds aren’t there when someone takes it, it will fail — add funds to your vault to keep it usable.`,
         ['amount', 'symbol'],
       ),
       gaslessRejected: tmpl(
@@ -3791,80 +3805,80 @@ const copySource = {
       blockLoading: 'Loading market details — one moment.',
       blockConsent: 'Review and accept the risk terms above to post.',
       blockGaslessService:
-        'Gasless posting needs the order-book service, which isn’t available right now — switch Posting to On-chain.',
+        'Signing only needs the offer-book service, which isn’t available right now — choose “Post now” instead.',
       // UX-016 — consent auto-clears whenever a term changes; say so
       // beside the cleared box so the un-tick doesn't read as a bug.
       consentRecheck: 'Terms changed — please re-confirm.',
       // UX-027 — Max chip + a fee/commitment summary before consent.
       max: 'Max',
-      feePreviewTitle: 'Fees & commitment',
+      feePreviewTitle: 'What this costs and sets aside',
       escrowNow: tmpl(
-        `You escrow now: {{amount}} {{symbol}}.`,
+        `Set aside now: {{amount}} {{symbol}}.`,
         ['amount', 'symbol'],
       ),
       commitAtFill: tmpl(
-        `You commit {{amount}} {{symbol}} — pulled from your vault only when a taker fills.`,
+        `{{amount}} {{symbol}} — taken from your vault only when someone takes the offer.`,
         ['amount', 'symbol'],
       ),
       lockNow: tmpl(
-        `You lock now: {{amount}} {{symbol}} as collateral.`,
+        `Locked now as collateral: {{amount}} {{symbol}}.`,
         ['amount', 'symbol'],
       ),
       lockAtFill: tmpl(
-        `You commit {{amount}} {{symbol}} collateral — locked only when a taker fills.`,
+        `{{amount}} {{symbol}} collateral — locked only when someone takes the offer.`,
         ['amount', 'symbol'],
       ),
       netYield: tmpl(
-        `Net yield ≈ {{net}}% APR after the {{feePct}}% protocol fee on the interest you earn.`,
+        `After the {{feePct}}% protocol fee on your interest, you earn about {{net}}% a year.`,
         ['net', 'feePct'],
       ),
       lifNote: tmpl(
-        `Loan initiation fee: {{feePct}}% of principal (≈ {{amount}} {{symbol}}), charged when the loan starts.`,
+        `Starting fee: {{feePct}}% of the loan amount (about {{amount}} {{symbol}}), charged when the loan starts.`,
         ['feePct', 'amount', 'symbol'],
       ),
     },
     orders: {
       loading: 'Loading your open orders…',
-      tab: 'Open orders',
-      empty: 'No open orders. Post one with the ticket.',
+      tab: 'Your open offers',
+      empty: 'You have no open offers. Post one with the form above.',
       // Partial-fill row sub-line + fill-bar tooltip.
       fillSummary: tmpl(
-        ' · filled {{filled}} ({{pct}}) · {{remaining}} left',
+        ' · taken {{filled}} ({{pct}}) · {{remaining}} left',
         ['filled', 'pct', 'remaining'],
       ),
-      filledTooltip: tmpl('{{pct}} filled', ['pct']),
-      unavailable: 'We couldn’t load your open orders right now.',
+      filledTooltip: tmpl('{{pct}} taken', ['pct']),
+      unavailable: 'We couldn’t load your open offers right now.',
       heldNotCreated: 'Held — managed by its creator',
       cancel: 'Cancel',
       cancelling: 'Cancelling…',
       cancelCooldown: tmpl(
-        `Cancel available in {{secs}}s — new unfilled offers have a short protocol cooldown.`,
+        `You can cancel in {{secs}}s — a new offer has to stay open for a short moment first.`,
         ['secs'],
       ),
-      amend: 'Amend',
-      amendTitle: 'Amend in place — same offer, same position, one transaction.',
+      amend: 'Change',
+      amendTitle: 'Change this offer in one transaction — it keeps its place.',
       amendLoadFailed:
         'We couldn’t read this offer’s live values, and amending must start from them. Please try again.',
       // Shown while the amend form reads the offer's current values.
       readingValues: 'Reading the offer’s live values…',
       // Unit hint on the rate / rate-max amend inputs.
-      rateUnit: 'bps stored on-chain',
+      rateUnit: 'stored in hundredths of a percent',
       // The amend form's dismiss button.
       close: 'Close',
-      amendMinAmount: 'Min amount',
-      amendMaxAmount: 'Max amount',
-      amendAmountAon: 'Amount (all-or-nothing)',
-      amendRate: 'Rate (APR %)',
-      amendRateMax: 'Rate max (APR %)',
+      amendMinAmount: 'Smallest amount',
+      amendMaxAmount: 'Largest amount',
+      amendAmountAon: 'Amount (taken all at once)',
+      amendRate: 'Yearly rate (%)',
+      amendRateMax: 'Highest yearly rate (%)',
       amendCollateral: 'Collateral',
-      amendCollateralMax: 'Collateral max',
+      amendCollateralMax: 'Most collateral',
       amendNoChange: 'Nothing changed yet.',
       amendMalformed:
         'Enter plain decimal numbers only — digits with an optional decimal point.',
-      amendInvalid: 'Each minimum must be at or below its maximum, and neither maximum can drop below what’s already filled.',
+      amendInvalid: 'Each smallest value must be at or below its largest, and no largest value can go below what has already been taken.',
       amendPositive: 'Amounts and collateral must be greater than zero.',
       amendGrowNote: tmpl(
-        `Growing this order locks {{amount}} {{symbol}} more from your wallet — it needs a token approval first.`,
+        `Making this offer bigger sets aside {{amount}} {{symbol}} more from your wallet — approve the token first.`,
         ['amount', 'symbol'],
       ),
       amendAllowanceLost:
@@ -3873,20 +3887,20 @@ const copySource = {
       approving: 'Approving…',
       save: 'Save changes',
       saving: 'Amending…',
-      amended: 'Order amended.',
+      amended: 'Offer changed.',
       // #1131 slice D — the wallet's own gasless signed orders.
-      signedTitle: 'Signed orders (this market)',
+      signedTitle: 'Your signed offers (this pair)',
       signedNote:
-        'Gasless signed orders you posted for the selected market. Orders for other markets don’t show here — switch the market in the header to manage them.',
-      signedCancel: 'Cancel on-chain',
+        'Offers you posted by signing only, for the pair selected above. Signed offers for other pairs are not shown — switch the pair to manage them.',
+      signedCancel: 'Cancel (network fee)',
       signedCancelling: 'Cancelling…',
       signedCancelNote:
-        'Posting was free, but cancelling costs gas: the only way to revoke a signature the book already holds is an on-chain transaction.',
-      signedCancelled: 'Signed order cancelled on-chain.',
+        'Posting was free, but cancelling needs a transaction with a network fee: it is the only way to withdraw a signature the offer book already holds.',
+      signedCancelled: 'Signed offer cancelled.',
       // #1247 PAG-011 — the wallet-scoped book read is still capped
       // per side; never let a clipped page read as the full set.
       signedTruncated:
-        'You have more signed orders in this market than we can list at once — this is not the complete set.',
+        'You have more signed offers for this pair than we can list at once — this is not all of them.',
     },
     positions: {
       loading: 'Loading your positions…',

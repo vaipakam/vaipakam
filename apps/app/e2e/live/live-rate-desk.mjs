@@ -531,7 +531,7 @@ async function consentAndWaitEnabled(page, button, timeoutMs = 90_000) {
 
 async function selectTenor(page, days) {
   await page
-    .getByRole('group', { name: 'Term' })
+    .getByRole('group', { name: 'Loan length' })
     .getByRole('button', { name: `${days}d`, exact: true })
     .click();
 }
@@ -720,7 +720,7 @@ try {
   await selectTenor(page, tenor);
   // The book is the CHAIN-read path — it must resolve to a real state
   // (empty copy or ladder rows), never the unavailable copy.
-  const emptyCopy = page.getByText(/no open offers for this market yet/i);
+  const emptyCopy = page.getByText(/no open offers for this pair yet/i);
   const ladder = page.locator('.desk-ladder');
   await Promise.race([
     emptyCopy.waitFor({ timeout: 45_000 }),
@@ -768,10 +768,10 @@ try {
   // chart draws only executed rates." (matched on its distinctive
   // second half so the tape's similar "No fills yet…" copy can't
   // collide even if scoping ever changes).
-  const chartEmptyMarket = chartCard.getByText(/chart draws only executed rates/i);
+  const chartEmptyMarket = chartCard.getByText(/chart only shows rates people actually agreed/i);
   // `copy.desk.chart.emptyRange` — "No fills in this range — try a
   // longer range."
-  const chartEmptyRange = chartCard.getByText(/no fills in this range/i);
+  const chartEmptyRange = chartCard.getByText(/no loans agreed in this period/i);
   // The wrapper div mounts before lightweight-charts initializes, so a
   // "drawn series" claim must see the library's actual OUTPUT — a
   // <canvas> child — not just the container (Codex #1143 round-1 P2:
@@ -807,8 +807,8 @@ try {
   // attribution link, by contrast, shows ONLY when a chart actually
   // draws (UX-037) — asserted state-aware below.
   for (const [groupName, chips] of [
-    ['Interval', ['1h', '4h', '1d']],
-    ['Range', ['7d', '30d', '90d', 'all']],
+    ['Each bar covers', ['1h', '4h', '1d']],
+    ['Period shown', ['7d', '30d', '90d', 'all']],
   ]) {
     for (const chip of chips) {
       const chipBtn = chartCard
@@ -876,12 +876,12 @@ try {
   }
   await page.locator('#desk-collateral-amount').fill(COLLATERAL_TLIQ);
   await page
-    .getByRole('group', { name: 'Expiry' })
-    .getByRole('button', { name: 'GTC', exact: true })
+    .getByRole('group', { name: 'How long it stays open' })
+    .getByRole('button', { name: 'Until I cancel', exact: true })
     .click();
   await page
-    .getByRole('group', { name: 'Fill mode' })
-    .getByRole('button', { name: 'Partial', exact: true })
+    .getByRole('group', { name: 'Can it be taken in parts?' })
+    .getByRole('button', { name: 'Yes, in parts', exact: true })
     .click();
 
   // Block first, index-total second: a create can't mine between the
@@ -895,12 +895,12 @@ try {
   // restored after cancel.
   wethBeforePost = await erc20Read(WETH, 'balanceOf', [lenderAddr]);
 
-  const post = page.getByRole('button', { name: /^post order$/i });
+  const post = page.getByRole('button', { name: /^post offer$/i });
   await consentAndWaitEnabled(page, post);
   postAttempted = true; // a create tx may exist from here on, mined or not
   await post.click();
   // Real testnet tx (possibly approve + create, or Permit2 + create).
-  await page.getByText(/order posted/i).waitFor({ timeout: 120_000 });
+  await page.getByText(/offer posted/i).waitFor({ timeout: 120_000 });
   await snap('rate-desk-03-posted');
   record(
     `3. post lend order (${AMOUNT_WETH} WETH @ ${POST.pct}, ${COLLATERAL_TLIQ} tLIQ, GTC, Partial)`,
@@ -1017,7 +1017,7 @@ try {
   }
 
   // ---- step 6: amend in place (ONE modifyOffer, same offer id) ------
-  await ordersRow().getByRole('button', { name: /amend/i }).click();
+  await ordersRow().getByRole('button', { name: /^change$/i }).click();
   const rateInput = page.locator(`#amend-${offerId}-rate`);
   await pollChain(
     'amend form to seed from the live getOffer read',
@@ -1106,7 +1106,7 @@ try {
   // now.") is a FAIL.
   const tapeCard = page.locator('.card').filter({ hasText: 'Recent fills' }).first();
   await tapeCard.waitFor({ timeout: 30_000 });
-  const tapeEmpty = tapeCard.getByText('No fills yet for this market.', { exact: true });
+  const tapeEmpty = tapeCard.getByText('No loans agreed yet for this pair.', { exact: true });
   const tapeUnavailable = tapeCard.getByText(/couldn.t load recent fills right now/i);
   const tapeRows = tapeCard.locator('.desk-tape-row');
   await pollChain(
@@ -1231,7 +1231,7 @@ try {
   );
   // Restore the Open orders tab for step 8 and re-anchor on this run's
   // offer row before touching its cancel button.
-  await tabsCard.getByRole('button', { name: 'Open orders', exact: true }).click();
+  await tabsCard.getByRole('button', { name: 'Your open offers', exact: true }).click();
   await ordersRow().waitFor({ timeout: 30_000 });
 
   // ---- step 8: wait out the REAL cooldown, then cancel ---------------

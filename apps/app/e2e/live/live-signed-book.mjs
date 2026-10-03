@@ -633,7 +633,7 @@ async function consentAndWaitEnabled(page, button, timeoutMs = 90_000) {
 
 async function selectTenor(page, days) {
   await page
-    .getByRole('group', { name: 'Term' })
+    .getByRole('group', { name: 'Loan length' })
     .getByRole('button', { name: `${days}d`, exact: true })
     .click();
 }
@@ -1037,7 +1037,7 @@ try {
   await page.locator('#desk-custom-coll').fill(TLIQ);
   await page.getByRole('button', { name: 'Load market' }).click();
   await selectTenor(page, tenor);
-  const emptyCopy = page.getByText(/no open offers for this market yet/i);
+  const emptyCopy = page.getByText(/no open offers for this pair yet/i);
   const ladder = page.locator('.desk-ladder');
   await Promise.race([
     emptyCopy.waitFor({ timeout: 45_000 }),
@@ -1049,8 +1049,8 @@ try {
   await page.locator('#desk-rate').fill(POST.text);
   await page.locator('#desk-collateral-amount').fill(COLLATERAL_TLIQ);
   await page
-    .getByRole('group', { name: 'Expiry' })
-    .getByRole('button', { name: 'GTC', exact: true })
+    .getByRole('group', { name: 'How long it stays open' })
+    .getByRole('button', { name: 'Until I cancel', exact: true })
     .click();
 
   // The AON-forcing observation needs the PRE-state pinned: in on-chain
@@ -1058,15 +1058,15 @@ try {
   // gasless as the lender must auto-flip it to AON and disable the
   // Partial chip (a ranged/sliceable lender signed order can never pass
   // the matcher's constant-ratio check; #1145 round-2).
-  const fillGroup = page.getByRole('group', { name: 'Fill mode' });
-  const partialChip = fillGroup.getByRole('button', { name: 'Partial', exact: true });
-  const aonChip = fillGroup.getByRole('button', { name: 'AON', exact: true });
+  const fillGroup = page.getByRole('group', { name: 'Can it be taken in parts?' });
+  const partialChip = fillGroup.getByRole('button', { name: 'Yes, in parts', exact: true });
+  const aonChip = fillGroup.getByRole('button', { name: 'Only all at once', exact: true });
   if (!/\bactive\b/.test((await partialChip.getAttribute('class')) ?? '')) {
     throw new Error('pre-state: Partial is not the active fill mode in on-chain mode');
   }
   await page
     .getByRole('group', { name: 'Posting' })
-    .getByRole('button', { name: 'Gasless (sign only)', exact: true })
+    .getByRole('button', { name: 'Sign only (free)', exact: true })
     .click();
   await pollFor(
     'the gasless lender AON auto-flip',
@@ -1075,7 +1075,7 @@ try {
       (await partialChip.isDisabled()),
     { timeoutMs: 10_000, intervalMs: 500 },
   );
-  const aonNote = page.getByText(/gasless lend orders fill only as one whole loan/i);
+  const aonNote = page.getByText(/a signed lend offer can only be taken all at once/i);
   const escrowNote = page.getByText(/nothing is escrowed when you sign/i);
   if (!(await aonNote.first().isVisible().catch(() => false))) {
     throw new Error('gasless lender AON note not rendered after the mode switch');
@@ -1114,7 +1114,7 @@ try {
   // assets, chain-time deadline anchor, vault preflight) + one
   // EIP-712 signature + one POST — generous but far below tx time.
   await page
-    .getByText(/signed order posted to the book — no gas spent/i)
+    .getByText(/signed offer posted — no network fee spent/i)
     .waitFor({ timeout: 90_000 });
   const sendsAfter = rpcLog.filter((m) => m === 'eth_sendTransaction').length;
   const typedSignsAfter = rpcLog.filter((m) => m === 'eth_signTypedData_v4').length;
@@ -1144,7 +1144,7 @@ try {
   // vault free balance covers the commitment.
   if (
     await page
-      .getByText(/vault.s free balance is below/i)
+      .getByText(/your vault has less than the/i)
       .isVisible()
       .catch(() => false)
   ) {
@@ -1274,10 +1274,10 @@ try {
   // UI: the own-signed block in Open orders — market-scoped, with the
   // Signed chip, the short order hash, and the on-chain cancel armed.
   const shortHash = `${orderHash.slice(0, 6)}…${orderHash.slice(-4)}`;
-  await page.getByText('Signed orders (this market)').waitFor({ timeout: 30_000 });
+  await page.getByText('Your signed offers (this pair)').waitFor({ timeout: 30_000 });
   const signedRowUi = page.locator('.item-row').filter({ hasText: shortHash });
   await signedRowUi.waitFor({ timeout: 30_000 });
-  const cancelBtn = signedRowUi.getByRole('button', { name: 'Cancel on-chain' });
+  const cancelBtn = signedRowUi.getByRole('button', { name: 'Cancel (network fee)' });
   await cancelBtn.waitFor({ timeout: 15_000 });
   // Phase-3 slice B honesty note: the crossable-band previewMatch strip
   // must be ABSENT on this un-crossed book (rendering it would violate
@@ -1383,7 +1383,7 @@ try {
   const cancelSubmittedAt = Date.now();
   await cancelBtn.click();
   await page
-    .getByText(/signed order cancelled on-chain/i)
+    .getByText(/signed offer cancelled/i)
     .waitFor({ timeout: 150_000 });
   const cancelledEvt = requireAbiMember('SignedOfferCancelled', 'event');
   const cancelLogs = await pollFor(
@@ -1920,7 +1920,7 @@ try {
   // step 7 from the Node observer. A tab flip nudges a remount refetch
   // (staleTime 15 s) to keep the assert snappy.
   await page.getByRole('button', { name: 'Positions', exact: true }).click();
-  await page.getByRole('button', { name: 'Open orders', exact: true }).click();
+  await page.getByRole('button', { name: 'Your open offers', exact: true }).click();
   await pollFor(
     'the cancelled signed row to leave the ladder and the own-signed block',
     async () =>

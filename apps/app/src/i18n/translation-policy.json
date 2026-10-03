@@ -176,54 +176,6 @@
       ],
       "invariant": true
     },
-    "copy.desk.ticket.expiryGtc": {
-      "reason": "GTC — standard order-duration acronym, used untranslated on trading surfaces in every locale.",
-      "source": "GTC",
-      "locales": [
-        "ar",
-        "de",
-        "es",
-        "fr",
-        "hi",
-        "ja",
-        "ko",
-        "ta",
-        "zh"
-      ],
-      "invariant": true
-    },
-    "copy.desk.ticket.fillAon": {
-      "reason": "AON — standard fill-type acronym, used untranslated on trading surfaces in every locale.",
-      "source": "AON",
-      "locales": [
-        "ar",
-        "de",
-        "es",
-        "fr",
-        "hi",
-        "ja",
-        "ko",
-        "ta",
-        "zh"
-      ],
-      "invariant": true
-    },
-    "copy.desk.ticket.fillIoc": {
-      "reason": "IOC — standard fill-type acronym, used untranslated on trading surfaces in every locale.",
-      "source": "IOC",
-      "locales": [
-        "ar",
-        "de",
-        "es",
-        "fr",
-        "hi",
-        "ja",
-        "ko",
-        "ta",
-        "zh"
-      ],
-      "invariant": true
-    },
     "copy.diagnostics.title": {
       "reason": "'Support' is the ordinary German and French noun for this, spelled as the English one. The evidence is the sibling in each bundle: copy.diagnostics.open reads 'Support und Verbindungsprüfung' in German and 'Support et vérification de connexion' in French, so each locale uses the word inside a sentence it did translate — settled vocabulary, not an untouched string. Spanish is deliberately absent: it says 'Soporte', and Hindi stays in the shrinkable baseline because it owes a Devanagari rendering.",
       "source": "Support",

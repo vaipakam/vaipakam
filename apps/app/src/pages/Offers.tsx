@@ -132,8 +132,19 @@ function OfferRow({ offer, risk }: { offer: IndexedOffer; risk: RiskLevel | null
         isLending ? offer.interestRateBps : offer.interestRateBpsMax,
       )} ${copy.offers.yearly} · ${formatDurationDays(offer.durationDays)} · ${copy.offers.collateralLabel} ${
         hasCollateral
-          ? (collateralMeta.data?.symbol ?? shortAddress(offer.collateralAsset))
+          ? // UX3-007 — the AMOUNT, not just the symbol: for a lender
+            // pressing "Fund this request" it is the deciding number. The
+            // same figure the guided flow's match rows and review show.
+            collateralMeta.data
+            ? `${formatTokenAmount(offer.collateralAmount, collateralMeta.data.decimals)} ${collateralMeta.data.symbol}`
+            : shortAddress(offer.collateralAsset)
           : copy.offers.collateralNone
+      }${
+        // UX3-007 — say so when the collateral is illiquid: on default it is
+        // handed over as-is rather than sold. Only on a POSITIVE flag — a
+        // signed off-chain row carries 0 for "not assessed", so absence is
+        // never presented as "liquid". The guided review re-checks live.
+        hasCollateral && offer.collateralLiquidity === 1 ? ` · ${copy.offers.illiquidCollateralTag}` : ''
       }`;
 
   // Advanced detail line: the exact numbers a DEX-versed user expects
@@ -229,8 +240,11 @@ export function Offers() {
 
   // Basic mode ignores the power controls entirely (they aren't
   // rendered), so switching back to Basic restores the plain list.
-  const activeSide: SideFilter = isAdvanced ? side : 'all';
-  const activeSort: SortKey = isAdvanced ? sort : 'newest';
+  // Naive-user redesign — "Show" and "Sort by" are plain choices anyone
+  // can use, so they apply in Basic mode too. The raw asset-ADDRESS filter
+  // stays an Advanced tool.
+  const activeSide: SideFilter = side;
+  const activeSort: SortKey = sort;
   const activeAssetFilter = isAdvanced ? assetFilter.trim().toLowerCase() : '';
 
   const visible = useMemo(() => {
@@ -318,8 +332,7 @@ export function Offers() {
 
       <MarketFreshnessNote />
 
-      {isAdvanced ? (
-        <div className="card" style={{ marginBottom: 16 }}>
+      <div className="card" style={{ marginBottom: 16 }}>
           <div className="cluster" style={{ flexWrap: 'wrap', gap: 12 }}>
             <div className="field" style={{ margin: 0 }}>
               <label htmlFor="book-side">{copy.offers.filters.showLabel}</label>
@@ -350,21 +363,22 @@ export function Offers() {
                 ]}
               />
             </div>
-            <div className="field" style={{ margin: 0, flex: 1, minWidth: 220 }}>
-              <label htmlFor="book-asset">{copy.offers.filters.assetLabel}</label>
-              <input
-                id="book-asset"
-                className="input"
-                placeholder={copy.offers.filters.assetPlaceholder}
-                value={assetFilter}
-                onChange={(e) => setAssetFilter(e.target.value)}
-                spellCheck={false}
-                autoComplete="off"
-              />
-            </div>
+            {isAdvanced ? (
+              <div className="field" style={{ margin: 0, flex: 1, minWidth: 220 }}>
+                <label htmlFor="book-asset">{copy.offers.filters.assetLabel}</label>
+                <input
+                  id="book-asset"
+                  className="input"
+                  placeholder={copy.offers.filters.assetPlaceholder}
+                  value={assetFilter}
+                  onChange={(e) => setAssetFilter(e.target.value)}
+                  spellCheck={false}
+                  autoComplete="off"
+                />
+              </div>
+            ) : null}
           </div>
         </div>
-      ) : null}
 
       {offers.isLoading ? (
         <EmptyState icon={LoaderCircle} title={copy.offers.loading} />
