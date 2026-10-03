@@ -3178,6 +3178,9 @@ const copySource = {
         swapOrderPending: 'A swap-to-repay order is waiting on this loan, and it was sized against your collateral as it stands. Collateral can’t be taken back until that order fills or is cancelled. Reaching its deadline does not release the collateral by itself: an order that didn’t fill still has to be cancelled, which the borrower-position holder can do once the deadline has passed. This app can’t cancel it for you; use the tool you placed it with.',
         // #2389 r1 — the order check itself failed: say so rather than
         // treating an unread answer as "no order".
+        // #2389 r2 — the sale-listing check itself failed.
+        saleUnchecked:
+          'We couldn’t check whether a sale listing of the lender’s position is linked to this loan, so nothing was sent. Please try again in a moment.',
         swapOrderUnchecked:
           'We couldn’t check whether a swap-to-repay order is open on this loan, so nothing was sent. Please try again in a moment.',
       },

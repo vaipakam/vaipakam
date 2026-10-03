@@ -57,6 +57,7 @@ import {
   formatDate,
   formatDurationDays,
   formatTokenAmount,
+  formatTokenAmountDown,
   fullTermInterest,
   shortAddress,
 } from '../lib/format';
@@ -82,6 +83,7 @@ import { receiptPayout, useClaimPayoutText } from '../data/useClaimPayout';
 import {
   classifyMaxWithdrawable,
   swapToRepayOrderState,
+  withdrawPreflightBlock,
   useMaxWithdrawable,
   withdrawAmountProblem,
 } from '../data/partialWithdraw';
@@ -2137,7 +2139,8 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         }),
         // A sale listing (live, ended-but-uncleared, or accepted) keeps
         // the loan linked and the contract refuses the withdrawal. A
-        // probe that cannot answer is left to the contract.
+        // probe that cannot answer stops the flow (#2389 r2) — an
+        // unanswered pre-check sends nothing.
         probeSaleHoldLive(
           publicClient,
           walletChain.diamondAddress,
@@ -2157,27 +2160,30 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           args: [BigInt(row.loanId)],
         }) as Promise<bigint>,
       ]);
-      if (saleState === 'live' || saleState === 'clearable' || saleState === 'accepted') {
-        setError(copy.positions.details.withdrawCollateral.saleListed);
-        return;
-      }
-      if (swapOrder === 'live') {
-        setError(copy.positions.details.withdrawCollateral.swapOrderPending);
-        return;
-      }
-      if (swapOrder === 'unknown') {
-        setError(copy.positions.details.withdrawCollateral.swapOrderUnchecked);
-        return;
-      }
-      if (wei > liveMax) {
+      // One pure rule for every pre-check (#2389 r2): a blocking answer
+      // names its obstacle, and an unanswered one blocks with "couldn't
+      // check". Tested in partialWithdraw.test.ts.
+      const block = withdrawPreflightBlock({ saleState, swapOrder, liveMax, wei });
+      if (block !== null) {
+        const t = copy.positions.details.withdrawCollateral;
         setError(
-          liveMax > 0n
-            ? copy.positions.details.withdrawCollateral.overMax(
-                `${formatTokenAmount(liveMax, collateralMeta.data.decimals)} ${collateralMeta.data.symbol}`,
-              )
-            : copy.positions.details.withdrawCollateral.noneUnknown,
+          block === 'sale-listed'
+            ? t.saleListed
+            : block === 'sale-unchecked'
+              ? t.saleUnchecked
+              : block === 'swap-order'
+                ? t.swapOrderPending
+                : block === 'swap-unchecked'
+                  ? t.swapOrderUnchecked
+                  : block === 'over-max'
+                    ? t.overMax(
+                        `${formatTokenAmountDown(liveMax, collateralMeta.data.decimals)} ${collateralMeta.data.symbol}`,
+                      )
+                    : t.noneUnknown,
         );
-        void queryClient.invalidateQueries({ queryKey: ['maxWithdrawable'] });
+        if (block === 'over-max' || block === 'none-left') {
+          void queryClient.invalidateQueries({ queryKey: ['maxWithdrawable'] });
+        }
         return;
       }
       setPhase('submitting');
@@ -3238,7 +3244,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             <>
               <p id="withdraw-collateral-state" style={{ marginTop: 0 }}>
                 {copy.positions.details.withdrawCollateral.available(
-                  `${formatTokenAmount(maxWithdrawState.max, collateral.decimals)} ${collateral.symbol}`,
+                  `${formatTokenAmountDown(maxWithdrawState.max, collateral.decimals)} ${collateral.symbol}`,
                 )}
               </p>
               <p className="field-hint" style={{ marginTop: 0 }}>
@@ -3283,7 +3289,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
               {withdrawProblem === 'over-max' ? (
                 <p className="field-hint" style={{ color: 'var(--danger)', marginTop: 8 }}>
                   {copy.positions.details.withdrawCollateral.overMax(
-                    `${formatTokenAmount(maxWithdrawState.max, collateral.decimals)} ${collateral.symbol}`,
+                    `${formatTokenAmountDown(maxWithdrawState.max, collateral.decimals)} ${collateral.symbol}`,
                   )}
                 </p>
               ) : null}

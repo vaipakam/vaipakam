@@ -1348,6 +1348,7 @@
           "vpfiNote": "Esta garantía es VPFI. Sacarla de tu bóveda reduce el saldo de VPFI con el que se mide tu nivel de descuento en comisiones, así que tu descuento puede bajar.",
           "vpfiUnknownNote": "No pudimos comprobar si esta garantía es VPFI. Si lo es, sacarla de tu bóveda reduce el saldo de VPFI con el que se mide tu nivel de descuento en comisiones, así que tu descuento puede bajar.",
           "swapOrderPending": "Hay una orden de swap para pagar pendiente en este préstamo, calculada sobre tu garantía tal como está. No se puede recuperar garantía hasta que esa orden se ejecute o se cancele. Llegar a su plazo no libera la garantía por sí solo: una orden que no se ejecutó todavía tiene que cancelarse, y quien tenga la posición de prestatario puede hacerlo una vez pasado el plazo. Esta app no puede cancelarla por ti; usa la herramienta con la que la creaste.",
+          "saleUnchecked": "No pudimos comprobar si hay una venta de la posición del prestamista vinculada a este préstamo, así que no se envió nada. Inténtalo de nuevo en un momento.",
           "swapOrderUnchecked": "No pudimos comprobar si hay una orden de swap para pagar abierta en este préstamo, así que no se envió nada. Inténtalo de nuevo en un momento."
         },
         "partial": {

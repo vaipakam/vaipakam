@@ -15,6 +15,7 @@ import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import {
   classifyMaxWithdrawable,
   swapToRepayOrderState,
+  withdrawPreflightBlock,
   readMaxWithdrawable,
   withdrawAmountProblem,
 } from './partialWithdraw';
@@ -222,5 +223,29 @@ describe('swapToRepayOrderState', () => {
         throw new Error('rpc down');
       }),
     ).toBe('unknown');
+  });
+});
+
+describe('withdrawPreflightBlock (#2389 r2)', () => {
+  const ok = { saleState: 'none' as const, swapOrder: 'none' as const, liveMax: 100n, wei: 50n };
+  it('sends when every check answered clear and the amount fits', () => {
+    expect(withdrawPreflightBlock(ok)).toBeNull();
+  });
+  it('blocks on a linked sale listing in any of its states', () => {
+    for (const saleState of ['live', 'clearable', 'accepted'] as const) {
+      expect(withdrawPreflightBlock({ ...ok, saleState }), saleState).toBe('sale-listed');
+    }
+  });
+  it('blocks when the sale-listing check could not answer', () => {
+    expect(withdrawPreflightBlock({ ...ok, saleState: 'unknown' })).toBe('sale-unchecked');
+  });
+  it('blocks on a stored swap order, and when that check could not answer', () => {
+    expect(withdrawPreflightBlock({ ...ok, swapOrder: 'live' })).toBe('swap-order');
+    expect(withdrawPreflightBlock({ ...ok, swapOrder: 'unknown' })).toBe('swap-unchecked');
+  });
+  it('blocks an amount over the live limit, naming whether any is left', () => {
+    expect(withdrawPreflightBlock({ ...ok, wei: 101n })).toBe('over-max');
+    expect(withdrawPreflightBlock({ ...ok, liveMax: 0n, wei: 1n })).toBe('none-left');
+    expect(withdrawPreflightBlock({ ...ok, wei: 100n })).toBeNull();
   });
 });

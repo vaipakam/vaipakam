@@ -1338,7 +1338,9 @@ is the borrower's own money.
 - Before asking for anything, it states how much can be taken back right now,
   from the protocol's own live limit, and keeps that figure fresh while the page
   is open. It says that the limit moves with prices, so an amount right at the
-  limit can still be refused.
+  limit can still be refused. The limit is never displayed above its true value:
+  a figure shortened for display is rounded down, so typing what the page states
+  is always within the limit.
 - When nothing can be taken back, it says why, as far as the app can tell: the
   loan needs all of its collateral, or the collateral cannot be priced right
   now. When the app cannot tell which, it says that instead of choosing one.

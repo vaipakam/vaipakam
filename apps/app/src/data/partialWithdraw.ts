@@ -23,6 +23,7 @@ import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
 import { tipAware } from '../chain/railHealth';
 import { isAssetIlliquidLive } from '../contracts/preflights';
+import type { SaleListingHoldState } from './saleListingHold';
 
 export interface MaxWithdrawableRead {
   /** `calculateMaxWithdrawable` — the most collateral (token units) the
@@ -174,6 +175,36 @@ export async function swapToRepayOrderState(opts: {
   } catch (err) {
     return isIntentNoCommit(err) ? 'none' : 'unknown';
   }
+}
+
+/** Pure — the decision the page makes from its live pre-checks, just
+ *  before the wallet opens (#2389 r2). One rule for every check: a
+ *  blocking answer names its obstacle, and an UNANSWERED check blocks
+ *  too, with "couldn't check" — never a send on a question the app did
+ *  not get an answer to. Order matters only for which reason is shown;
+ *  any non-null result sends nothing. */
+export type WithdrawPreflightBlock =
+  | 'sale-listed'
+  | 'sale-unchecked'
+  | 'swap-order'
+  | 'swap-unchecked'
+  | 'over-max'
+  | 'none-left';
+
+export function withdrawPreflightBlock(a: {
+  saleState: SaleListingHoldState;
+  swapOrder: 'live' | 'none' | 'unknown';
+  liveMax: bigint;
+  wei: bigint;
+}): WithdrawPreflightBlock | null {
+  if (a.saleState === 'live' || a.saleState === 'clearable' || a.saleState === 'accepted') {
+    return 'sale-listed';
+  }
+  if (a.saleState !== 'none') return 'sale-unchecked';
+  if (a.swapOrder === 'live') return 'swap-order';
+  if (a.swapOrder !== 'none') return 'swap-unchecked';
+  if (a.wei > a.liveMax) return a.liveMax > 0n ? 'over-max' : 'none-left';
+  return null;
 }
 
 /** True only for the contract's own "no order stored" revert. */

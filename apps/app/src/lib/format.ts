@@ -27,6 +27,29 @@ export function formatTokenAmount(
   });
 }
 
+/** An UPPER BOUND for display (#2389 r2) — truncated, never rounded, so
+ *  the figure shown is never above the true one. `formatTokenAmount`
+ *  rounds to nearest, which turns a ceiling of 1.23456 into "1.2346": a
+ *  borrower who typed what the page stated would be refused for asking
+ *  more than the limit. Same shape as `formatTokenAmount` (grouped
+ *  integer part, `maxFraction` decimals, four significant digits below
+ *  one), computed on the exact decimal string rather than via Number. */
+export function formatTokenAmountDown(
+  raw: bigint,
+  decimals: number,
+  maxFraction = 4,
+): string {
+  if (raw < 0n) return `-${formatTokenAmountDown(-raw, decimals, maxFraction)}`;
+  const [int, frac = ''] = formatUnits(raw, decimals).split('.');
+  const keep =
+    int === '0' && raw !== 0n
+      ? frac.search(/[1-9]/) + 4 // four significant digits below one
+      : maxFraction;
+  const f = frac.slice(0, keep).replace(/0+$/, '');
+  const intText = BigInt(int).toLocaleString('en-US');
+  return f ? `${intText}.${f}` : intText;
+}
+
 /** LOSSLESS decimal string for pre-filling inputs (Max buttons).
  *  Never round-trips through Number — 18-decimal balances lose
  *  precision past ~15 significant digits and can round UP above the
