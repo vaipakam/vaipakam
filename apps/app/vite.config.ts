@@ -132,8 +132,8 @@ export default defineConfig(({ mode, command }) => {
         // Cloudflare plugin narrows `output.manualChunks` to the
         // function signature.
         manualChunks(id: string) {
-          // UX2-008 — isolate the combined Diamond ABI (all 60+ facet
-          // JSONs spread into `DIAMOND_ABI_VIEM`, ~761 kB uncompressed)
+          // UX2-008 — isolate the combined Diamond ABI (`DIAMOND_ABI_VIEM`;
+          // ~648 kB uncompressed since UX3-008 de-duplicated it)
           // into its OWN chunk. It's imported by always-on shell code
           // (sanctions screening, indexer sync) so it can't be deferred
           // off first paint without lazy-loading security machinery, but
@@ -146,7 +146,12 @@ export default defineConfig(({ mode, command }) => {
           // vendor splits below (UX-005). Matched before the node_modules
           // branch because the workspace package resolves via a symlink,
           // not under node_modules.
-          if (/[\\/]packages[\\/]contracts[\\/]src[\\/]abis[\\/]/.test(id)) {
+          // UX3-008 — the combined ABI is now `src/diamondAbi.json`, a
+          // de-duplicated union built at export time, beside `src/abis/`
+          // rather than inside it; both belong in this chunk.
+          if (
+            /[\\/]packages[\\/]contracts[\\/]src[\\/](abis[\\/]|diamondAbi\.json)/.test(id)
+          ) {
             return 'contract-abis';
           }
           if (id.includes('node_modules')) {

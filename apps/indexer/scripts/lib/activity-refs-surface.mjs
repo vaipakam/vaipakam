@@ -334,67 +334,29 @@ export function deriveActivityRefsSurface() {
     .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
 
   /**
-   * `import FooABI from './Foo.json'` → identifier -> filename. Either quote
-   * style: a member whose import this cannot read becomes an unresolved
-   * spread, which is a hard failure rather than a silent omission.
+   * UX3-008 — `DIAMOND_ABI` is the de-duplicated union `../diamondAbi.json`,
+   * built at export time from `scripts/diamond-facets.json` and pinned fresh
+   * by `pnpm --filter @vaipakam/contracts test`. That file IS what EVENT_ABI
+   * decodes, so coverage reads it directly — there is no member list left to
+   * resolve, and so no member that could silently drop out of coverage.
+   *
+   * The barrel must still say so in the one shape this can read: an import of
+   * `../diamondAbi.json` and `export const DIAMOND_ABI = <that import>;`.
+   * Anything else — the spread array coming back, an extra entry appended, a
+   * different file — fails here rather than letting events into the decoded
+   * set that coverage cannot see.
    */
-  const importedFile = new Map();
-  for (const m of barrelSrc.matchAll(
-    /import\s+([A-Za-z0-9_]+)\s+from\s+['"]\.\/([^'"]+\.json)['"]/g,
-  )) {
-    importedFile.set(m[1], m[2]);
-  }
-
-  const diamondBlock = barrelSrc.match(/export const DIAMOND_ABI\s*=\s*\[([\s\S]*?)\n\]/);
-  if (!diamondBlock) {
+  const unionImport = barrelSrc.match(
+    /import\s+([A-Za-z0-9_]+)\s+from\s+['"]\.\.\/diamondAbi\.json['"]/,
+  );
+  const assigned = barrelSrc.match(/export const DIAMOND_ABI\s*=\s*([^;\n]+);/);
+  if (!unionImport || !assigned || assigned[1].trim() !== unionImport[1]) {
     throw new Error(
-      '[activity-refs surface] could not locate the DIAMOND_ABI array in the abis barrel.\n' +
+      '[activity-refs surface] could not locate DIAMOND_ABI as the diamondAbi.json union in the abis barrel.\n' +
         'If it was restructured, update this derivation — do not delete the check.',
     );
   }
-  /**
-   * Every spread must resolve to a file (Codex round-3 P2) — losing ONE facet
-   * silently drops every reference-bearing event in it out of coverage. And
-   * the array may contain NOTHING BUT spreads (Codex round-15 P2): a direct
-   * element is decoded by EVENT_ABI at runtime while this derivation cannot
-   * see it, so removing every spread must leave only separators behind.
-   */
-  const memberFiles = [];
-  const unresolvedMembers = [];
-  for (const m of diamondBlock[1].matchAll(/\.\.\.([A-Za-z0-9_]+)/g)) {
-    const file = importedFile.get(m[1]);
-    if (file) memberFiles.push(file);
-    else unresolvedMembers.push(m[1]);
-  }
-  const abiResidue = diamondBlock[1].replace(/\.\.\.[A-Za-z0-9_]+/g, '').trim();
-  if (/[^\s,]/.test(abiResidue)) {
-    throw new Error(
-      '[activity-refs surface] DIAMOND_ABI contains entries that are not spreads of an\n' +
-        '  imported ABI file, so this derivation cannot tell what events they carry while\n' +
-        '  EVENT_ABI still decodes them:\n' +
-        abiResidue
-          .split('\n')
-          .map((l) => l.trim())
-          .filter((l) => /[^\s,]/.test(l))
-          .map((l) => `    ${l.length > 160 ? `${l.slice(0, 157)}…` : l}`)
-          .join('\n') +
-        '\n  Move the entry into an ABI JSON and spread it, or teach this derivation to read\n' +
-        '  it — do not let an event into the decoded set that coverage cannot see.',
-    );
-  }
-  if (unresolvedMembers.length) {
-    throw new Error(
-      `[activity-refs surface] ${unresolvedMembers.length} DIAMOND_ABI member(s) could not be\n` +
-        '  resolved to an ABI file, so their events would silently leave coverage:\n' +
-        unresolvedMembers.map((id) => `    ...${id}`).join('\n') +
-        "\n  Each must be a `import X from './X.json'` this derivation can follow.",
-    );
-  }
-  if (memberFiles.length === 0) {
-    throw new Error(
-      '[activity-refs surface] resolved zero DIAMOND_ABI members — refusing to pass vacuously.',
-    );
-  }
+  const memberFiles = ['../diamondAbi.json'];
 
   /** eventName -> Set<field> */
   const carries = new Map();
