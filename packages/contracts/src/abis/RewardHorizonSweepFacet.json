@@ -1,6 +1,30 @@
 [
   {
     "type": "function",
+    "name": "retireZeroPricedRemainders",
+    "inputs": [
+      {
+        "name": "entryIds",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "retiredCount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "settledTotal",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "sweepExpiredInteractionRewards",
     "inputs": [
       {

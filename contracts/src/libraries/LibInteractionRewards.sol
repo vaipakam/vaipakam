@@ -1537,6 +1537,38 @@ library LibInteractionRewards {
     ///      on `RewardSweepWalkFacet`, where the walk is hosted; the legs the
     ///      walk folds are returned and copied back, so the caller's struct
     ///      reads as the inlined walk left it.
+    /// @dev 3b-ii-B (B-6) — the retirement's hosted walk entry, on the forfeit-walk facet
+    ///      (the sweep walk's facet has no room). Same shape as the sweep's stub.
+    function callRetireZeroPricedRemainderWalk(
+        uint256 id,
+        uint256 freshHeadroom,
+        uint256 deliveredAllowance,
+        TransportLegs memory tp
+    ) internal returns (bool retired, EntrySplit memory expired, uint256 freshCredited, uint256 armedDelivered) {
+        (bool ok, bytes memory ret) = address(this).call(
+            abi.encodeWithSignature(
+                "epochRetireZeroPricedRemainder(uint256,uint256,uint256,(uint256,uint256,uint256,uint256))",
+                id,
+                freshHeadroom,
+                deliveredAllowance,
+                tp
+            )
+        );
+        if (!ok) {
+            if (ret.length == 0) revert IVaipakamErrors.RewardCustodyCallFailed();
+            assembly ("memory-safe") {
+                revert(add(ret, 0x20), mload(ret))
+            }
+        }
+        TransportLegs memory legs;
+        (retired, expired, freshCredited, armedDelivered, legs) =
+            abi.decode(ret, (bool, EntrySplit, uint256, uint256, TransportLegs));
+        tp.userFresh = legs.userFresh;
+        tp.userRecycled = legs.userRecycled;
+        tp.treasuryFresh = legs.treasuryFresh;
+        tp.treasuryRecycled = legs.treasuryRecycled;
+    }
+
     function callSweepExpiredEntryWalk(
         uint256 id,
         uint256 freshHeadroom,
@@ -4082,6 +4114,25 @@ library LibInteractionRewards {
             return (expired, freshCredited, 0);
         }
 
+        return _settleExpiredDay(s, id, e, freshHeadroom, deliveredAllowance, tp);
+    }
+
+    /// @dev 3b-ii-B — THE single-armed-day settle of an entry at its cursor day: the
+    ///      expiry sweep's tail, and the zero-priced remainder's retirement
+    ///      ({retireZeroPricedRemainder}) — both terminal accountings route through
+    ///      this one body so they cannot drift. The day primitive prices the day
+    ///      with the recycle settlement on, a cap-hit deferral stages the plan it
+    ///      found (A2-ii) and prunes, a fresh shortfall defers while the removal
+    ///      has not begun, and a settled day persists, folds its draws and is
+    ///      recorded as expired.
+    function _settleExpiredDay(
+        LibVaipakam.Storage storage s,
+        uint256 id,
+        LibVaipakam.RewardEntry storage e,
+        uint256 freshHeadroom,
+        uint256 deliveredAllowance,
+        TransportLegs memory tp
+    ) private returns (EntrySplit memory expired, uint256 freshCredited, uint256 armedDelivered) {
         uint256 d = _shareOfPoolCursorDay(s, id, e);
         if (d >= e.endDay) return (expired, 0, 0);
 
@@ -4261,6 +4312,78 @@ library LibInteractionRewards {
         // Only an ARMED day draws on delivered funding — the same filter the
         // walk's paid-side write applies, for the same reason.
         armedDelivered = _isArmedDay(s, d) ? freshCredited : 0;
+    }
+
+    /// @notice 3b-ii-B (B-6) — the permissionless RETIREMENT of a zero-priced remainder.
+    ///         A CLOSED, non-forfeited entry whose remaining window prices to nothing
+    ///         payable is never `processed` by itself: the expiry sweep returns before
+    ///         its clock (nothing pool-capped payable) and its owner has nothing to
+    ///         claim — so the per-day closure proof would refuse its days for ever.
+    ///         Two shapes, tested by TWO predicates (Codex #2274 r7 P1 — a retirement
+    ///         keyed on "unpriced" alone would retire raw dust and leave every
+    ///         cap-exhausted entry, its days and its batches unclosable):
+    ///         (i) an EMPTY window — closed before it began, or the pricing core's
+    ///             empty-window mark — owes nothing and never will: marked processed,
+    ///             nothing moves;
+    ///         (ii) a remainder the LOAN-SIDE CAP trims to a zero user split while its
+    ///              raw split stands still carries its armed entitlement and the
+    ///              commitment behind it: the day primitive's ordinary terminal
+    ///              accounting runs for it — the expiry sweep's own single-day settle
+    ///              — one day per call; `_persistDay` marks it processed when the
+    ///              cursor passes the window.
+    ///         Anything else — not yet priceable, payable, open, forfeited, a
+    ///         staging reservation binding — is left alone (`retired == false`, no
+    ///         revert: a batch must not abort on a sibling). The proof's termination
+    ///         test stays "processed, or the claim cursor past the day".
+    /// @return retired Whether this call moved the entry (marked processed, or settled a day).
+    function retireZeroPricedRemainder(
+        uint256 id,
+        uint256 freshHeadroom,
+        uint256 deliveredAllowance,
+        TransportLegs memory tp
+    ) internal returns (bool retired, EntrySplit memory expired, uint256 freshCredited, uint256 armedDelivered) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
+        if (e.processed || e.user == address(0) || !e.closed) return (false, expired, 0, 0);
+        if (e.forfeited || _entryTerminalForfeit(s, e)) return (false, expired, 0, 0);
+        if (e.startDay >= e.endDay) {
+            _retireEmpty(s, id, e);
+            return (true, expired, 0, 0);
+        }
+        // The price needs the cumulative curve through the window's last day, as
+        // every settling caller advances it (bounded; may not reach — then wait).
+        uint256 need = e.endDay - 1;
+        uint256 cursor = e.side == LibVaipakam.RewardSide.Lender ? s.cumLenderCursor : s.cumBorrowerCursor;
+        if (cursor < need) {
+            cursor = e.side == LibVaipakam.RewardSide.Lender
+                ? advanceCumLenderThrough(need)
+                : advanceCumBorrowerThrough(need);
+            if (cursor < need) return (false, expired, 0, 0);
+        }
+        (EntrySplit memory toUser, , , EntryPriceState memory st) = _entryPriceCore(s, id, e);
+        if (!st.priced) {
+            if (st.emptyWindow) {
+                _retireEmpty(s, id, e);
+                return (true, expired, 0, 0);
+            }
+            return (false, expired, 0, 0); // not priceable yet: NOT empty
+        }
+        if (st.forfeit || st.deferred) return (false, expired, 0, 0);
+        // Payable to its owner, or not a cap-trimmed remainder: the claimant's, not ours.
+        if (toUser.total != 0 || st.rawSplit.total == 0) return (false, expired, 0, 0);
+        uint64 before = s.rewardEntryClaimNextDay[id];
+        (expired, freshCredited, armedDelivered) = _settleExpiredDay(s, id, e, freshHeadroom, deliveredAllowance, tp);
+        retired = e.processed || s.rewardEntryClaimNextDay[id] != before;
+    }
+
+    /// @notice A zero-priced remainder's EMPTY window was retired (B-6): nothing paid, nothing owed.
+    /// @custom:event-category state-change/reward-entry
+    event RewardEntryRetiredEmpty(uint256 indexed entryId);
+
+    function _retireEmpty(LibVaipakam.Storage storage s, uint256 id, LibVaipakam.RewardEntry storage e) private {
+        e.processed = true;
+        noteEntryLifecycle(s, e);
+        emit RewardEntryRetiredEmpty(id);
     }
 
     /// @notice RL-3 — UX view: the entry's horizon state for the

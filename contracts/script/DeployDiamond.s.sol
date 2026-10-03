@@ -2549,8 +2549,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](1);
+        s = new bytes4[](2);
         s[0] = RewardHorizonSweepFacet.sweepExpiredInteractionRewards.selector;
+        s[1] = RewardHorizonSweepFacet.retireZeroPricedRemainders.selector; // 3b-ii-B (B-6)
     }
 
     function _getRewardReporterSelectors() internal pure returns (bytes4[] memory s) {
@@ -3235,8 +3236,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](1);
+        s = new bytes4[](2);
         s[0] = RewardForfeitWalkFacet.epochSweepForfeitedByLoanId.selector;
+        s[1] = RewardForfeitWalkFacet.epochRetireZeroPricedRemainder.selector; // 3b-ii-B (B-6): the retirement's hosted walk (Diamond-gated)
     }
 
     /// #1434 P2-w4 — the compensation dispatch pair.

@@ -2179,9 +2179,10 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](1);
+        selectors = new bytes4[](2);
         selectors[0] =
             RewardHorizonSweepFacet.sweepExpiredInteractionRewards.selector;
+        selectors[1] = RewardHorizonSweepFacet.retireZeroPricedRemainders.selector; // 3b-ii-B (B-6)
         return selectors;
     }
 
@@ -2662,8 +2663,9 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](1);
+        selectors = new bytes4[](2);
         selectors[0] = RewardForfeitWalkFacet.epochSweepForfeitedByLoanId.selector;
+        selectors[1] = RewardForfeitWalkFacet.epochRetireZeroPricedRemainder.selector; // 3b-ii-B (B-6)
     }
 
     /// #1434 P2-w4 — the remittance read surface (lens split). Mirrors

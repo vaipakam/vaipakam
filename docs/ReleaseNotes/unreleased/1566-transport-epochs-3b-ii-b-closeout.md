@@ -21,3 +21,15 @@
 **The acknowledgment is the administrator's.** Releasing the parked remainder — after which the batch's delivery passes the classification gate — is the operator disposition the design names, gated accordingly; it is one-way and refused twice. The one-argument park entry that refused everyone is retired.
 
 **Spec:** TokenomicsTechSpec, the transport-epoch bullets (fifth change: the release).
+
+## Thread — a remainder that owes nothing payable can be retired by anyone, so its days can close (#1566 transport epochs 3b-ii-B, the zero-priced retirement)
+
+**Problem.** A closed, non-forfeited reward entry whose remaining window prices to nothing payable was never marked settled: the expiry sweep returns before starting its clock when nothing is payable, and the owner has nothing to claim. The closure proof tests "settled, or part-claimed past the day", so such an entry would have refused its days — and every delivery listing them — for ever, over an obligation that owes nothing.
+
+**What changed.** Anyone may now retire such remainders, through the same entry family as the expiry sweep and with the same budgets. Two shapes are distinguished, by two tests, never one: a window that is empty — closed before it began, or priced to no value at all — is marked settled with nothing moving; a remainder the loan-side reward ceiling trims to a zero payout while its raw entitlement still stands runs the expiry sweep's own terminal accounting for one day per call — the ceiling's truncate-and-consume, which retires the commitment behind the raw entitlement and persists the day — until the window is done. A retirement keyed on "unpriced" alone would have retired raw dust and left every cap-exhausted entry, its days and its deliveries unclosable; so a closed window that merely is not yet priceable is left alone, as is anything payable, open or forfeited. The proof's termination test is unchanged.
+
+**One body for the terminal day.** The expiry sweep's single-day settle is now the one routine both the sweep and the retirement run, so the two cannot drift.
+
+**Follow-ups recorded, not built.** Repatriation of an UNTYPED released remainder (the design names it as the exit for a remainder no evidence can classify) has no path today — the existing repatriation moves typed recycled value — and needs a canonical-side untyped return leg; recorded as an owner question (#2376). Batch-bound replacement funding has nothing to clear under the owner's reading, since the park already requires every listed day proven closed.
+
+**Spec:** TokenomicsTechSpec, the transport-epoch bullets (fifth change: the retirement).

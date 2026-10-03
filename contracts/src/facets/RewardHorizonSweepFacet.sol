@@ -229,6 +229,18 @@ contract RewardHorizonSweepFacet is
         // The comment below already promised this retirement happens "even
         // when the pool cap truncated the creditable fresh". This is the
         // guard that was contradicting it.
+        expiredTotal = _settleSweepTotals(s, paidOut, t, tp);
+    }
+
+    /// @dev The sweep's post-loop settle, shared with the retirement (B-6): the pool
+    ///      reservation check, the paid-out and armed-commitment bookkeeping, and
+    ///      the one leg settle under the expired-reward source.
+    function _settleSweepTotals(
+        LibVaipakam.Storage storage s,
+        uint256 paidOut,
+        SweepTotals memory t,
+        LibInteractionRewards.TransportLegs memory tp
+    ) private returns (uint256 total) {
         if (t.fresh + t.recycled == 0 && t.armedFresh == 0) return 0;
 
         // Fresh share: consumes the 69M pool (tokens leave the fresh
@@ -271,6 +283,56 @@ contract RewardHorizonSweepFacet is
             0,
             0
         );
-        expiredTotal = t.fresh + t.recycled;
+        total = t.fresh + t.recycled;
+    }
+
+    /// @notice 3b-ii-B (B-6) — retire ZERO-PRICED remainders, permissionless: for each
+    ///         entry, if it is closed, not forfeited, and its remaining window prices
+    ///         to nothing payable — an empty window, or one the loan-side cap trims to
+    ///         a zero user split while its raw split stands — the entry is retired
+    ///         (marked processed, or one day of it settled through the expiry
+    ///         sweep's own terminal accounting; repeat until processed). Anything
+    ///         payable, open, forfeited or not yet priceable is left as it is. Same
+    ///         budgets and the same settle as the expiry sweep.
+    /// @return retiredCount How many of `entryIds` this call moved.
+    /// @return settledTotal What the settled days routed (fresh and recycled).
+    function retireZeroPricedRemainders(uint256[] calldata entryIds)
+        external
+        nonReentrant
+        whenNotPaused
+        returns (uint256 retiredCount, uint256 settledTotal)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (s.interactionLaunchTimestamp == 0) revert InteractionEmissionsNotStarted();
+        if (s.vpfiToken == address(0)) revert VPFITokenNotSet();
+        uint256 paidOut = s.interactionPoolPaidOut;
+        uint256 headroom;
+        {
+            uint256 reserved = paidOut + s.rewardBudgetRemittedGlobal;
+            headroom = LibVaipakam.VPFI_INTERACTION_POOL_CAP > reserved
+                ? LibVaipakam.VPFI_INTERACTION_POOL_CAP - reserved
+                : 0;
+        }
+        uint256 allowance = LibInteractionRewards.deliveredFreshBound(s);
+        {
+            uint256 backingCap = LibVpfiRecycle.freshBackingRoom(s);
+            if (backingCap < allowance) allowance = backingCap;
+        }
+        SweepTotals memory t;
+        LibInteractionRewards.TransportLegs memory tp;
+        for (uint256 i = 0; i < entryIds.length; ) {
+            uint256 tBefore = tp.treasuryFresh + tp.userFresh;
+            (bool retired, LibInteractionRewards.EntrySplit memory ex, uint256 freshCredited, ) =
+                LibInteractionRewards.callRetireZeroPricedRemainderWalk(entryIds[i], headroom, allowance, tp);
+            if (retired) ++retiredCount;
+            headroom -= freshCredited;
+            uint256 liveFresh = freshCredited - (tp.treasuryFresh + tp.userFresh - tBefore);
+            allowance = allowance > liveFresh ? allowance - liveFresh : 0;
+            t.fresh += freshCredited;
+            t.recycled += ex.recycled;
+            t.armedFresh += ex.armedFresh;
+            unchecked { ++i; }
+        }
+        settledTotal = _settleSweepTotals(s, paidOut, t, tp);
     }
 }
