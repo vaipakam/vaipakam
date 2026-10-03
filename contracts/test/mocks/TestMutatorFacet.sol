@@ -2707,4 +2707,15 @@ contract TestMutatorFacet {
     function consumeRecycleBucketRaw(uint256 amount) external {
         LibVpfiRecycle.consume(amount, false, 0);
     }
+
+    /// @dev #2277 test-only — add to the interest fold's per-day DELTAS at `day`
+    ///      (what {LibInteractionRewards.registerLoan} writes through
+    ///      `_applyDelta`), so a cell can give the fold something to fold
+    ///      without driving a loan: a +x at day d and nothing after means
+    ///      every day from d carries x of open per-day interest.
+    function setInterestFoldDeltaRaw(uint256 day, int256 lenderDelta, int256 borrowerDelta) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.lenderPerDayDeltaNumeraire18[day] += lenderDelta;
+        s.borrowerPerDayDeltaNumeraire18[day] += borrowerDelta;
+    }
 }

@@ -1,6 +1,30 @@
 [
   {
     "type": "function",
+    "name": "advanceInterestFrontiers",
+    "inputs": [
+      {
+        "name": "through",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "lenderFrontier",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "borrowerFrontier",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "armedFreshPaidSeeded",
     "inputs": [],
     "outputs": [
@@ -110,6 +134,24 @@
         "name": "",
         "type": "bool",
         "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getInterestFrontiers",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "lenderFrontier",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "borrowerFrontier",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -745,6 +787,31 @@
   },
   {
     "type": "event",
+    "name": "InterestFrontiersAdvanced",
+    "inputs": [
+      {
+        "name": "through",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "lenderFrontier",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "borrowerFrontier",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "KnownGlobalInterestSet",
     "inputs": [
       {
@@ -1163,6 +1230,27 @@
     "type": "error",
     "name": "ChainDayAlreadyReported",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ChainReportFrontierShort",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "lenderFrontier",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "borrowerFrontier",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",

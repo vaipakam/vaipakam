@@ -115,6 +115,15 @@ contract RewardReporterFacet is
         uint256 commitReleasedCumulative18;
     }
 
+    /// @notice The interest fold was advanced through `through` (or as far as one
+    ///         call reaches): the two per-side frontiers after the call (#2277).
+    event InterestFrontiersAdvanced(uint256 through, uint256 lenderFrontier, uint256 borrowerFrontier);
+
+    /// @notice `closeDay(dayId)` refused: the interest fold has not reached the
+    ///         day on at least one side, so its totals are not yet final. Catch
+    ///         the fold up with {advanceInterestFrontiers} and retry (#2277).
+    error ChainReportFrontierShort(uint256 dayId, uint256 lenderFrontier, uint256 borrowerFrontier);
+
     /// @notice Emitted when the local chain reports its day-`D` interest
     ///         totals — directly to aggregator storage on Base, or via
     ///         the messenger on a mirror.
@@ -206,6 +215,16 @@ contract RewardReporterFacet is
         // the legacy per-day counters.
         LibInteractionRewards.advanceLenderThrough(dayId);
         LibInteractionRewards.advanceBorrowerThrough(dayId);
+        // #2277 — the fold must have REACHED the day before its totals are read.
+        // Each advance is clamped at MAX_FRONTIER_ADVANCE_DAYS per call, so after
+        // a gap wider than that the two slots below are still zero or partial;
+        // stamping would ship a false report ONCE and the stamp would make it
+        // irreversible. Refuse by name instead — the advance above rolls back
+        // with the revert, and {advanceInterestFrontiers} catches the fold up
+        // in bounded, permissionless calls until this passes.
+        if (s.lenderFrontierDay < dayId || s.borrowerFrontierDay < dayId) {
+            revert ChainReportFrontierShort(dayId, s.lenderFrontierDay, s.borrowerFrontierDay);
+        }
 
         uint256 lenderNumeraire18 = s.totalLenderInterestNumeraire18[dayId];
         uint256 borrowerNumeraire18 = s.totalBorrowerInterestNumeraire18[dayId];
@@ -285,6 +304,40 @@ contract RewardReporterFacet is
      *      would permanently strip that day's extra fields
      *      (`chainReportSentAt` blocks a resend).
      */
+    /// @notice Catch the interest fold up through a strictly-past day — permissionless
+    ///         and resumable (#2277; the 3b-ii closure proof's frontier condition
+    ///         relies on it too). Each call advances each side's frontier by at
+    ///         most `MAX_FRONTIER_ADVANCE_DAYS`; repeat until both frontiers reach
+    ///         `through`, after which {closeDay} passes for every day up to it.
+    ///         Bounded to days that have elapsed, exactly as {closeDay} is: a
+    ///         frontier run ahead of the clock would make the delta writer drop
+    ///         the start and end of every loan registered afterwards — false
+    ///         totals, false reports, false closure proofs.
+    /// @return lenderFrontier   The lender-side frontier after this call.
+    /// @return borrowerFrontier The borrower-side frontier after this call.
+    function advanceInterestFrontiers(uint256 through)
+        external
+        nonReentrant
+        whenNotPaused
+        returns (uint256 lenderFrontier, uint256 borrowerFrontier)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        (uint256 today, bool active) = LibInteractionRewards.currentDayOrZero();
+        if (!active || through >= today) revert RewardDayNotElapsed();
+        LibInteractionRewards.advanceLenderThrough(through);
+        LibInteractionRewards.advanceBorrowerThrough(through);
+        lenderFrontier = s.lenderFrontierDay;
+        borrowerFrontier = s.borrowerFrontierDay;
+        emit InterestFrontiersAdvanced(through, lenderFrontier, borrowerFrontier);
+    }
+
+    /// @notice The interest fold's two per-side frontiers: the last day whose
+    ///         per-side total is final (#2277).
+    function getInterestFrontiers() external view returns (uint256 lenderFrontier, uint256 borrowerFrontier) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        return (s.lenderFrontierDay, s.borrowerFrontierDay);
+    }
+
     function _dispatchChainReport(
         address messenger,
         uint256 dayId,
