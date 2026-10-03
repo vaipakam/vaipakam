@@ -228,9 +228,11 @@ contract RewardClaimFacet is
 
         // One memory result (3b-ii-A): the two splits, the walk flag and the
         // epoch-paid legs, read in place — see {ClaimEntriesResult}.
-        LibInteractionRewards.ClaimEntriesResult memory res = LibInteractionRewards.claimForUserEntries(
-            msg.sender, freshBudget, windowReward, // #1566 closure 2 — the window reserves delivered headroom too
-            LibVpfiRecycle.freshBackingRoom(s)
+        LibInteractionRewards.ClaimEntriesResult memory res = LibInteractionRewards.callClaimEntriesWalk(
+            msg.sender,
+            freshBudget,
+            windowReward, // #1566 closure 2 — the window reserves delivered headroom too
+            deliverTo // 3b-ii-A2 (Codex #2308 r6) — a day the walk stages carries the venue into its record
         );
         uint256 entryReward = res.toUser.total;
         uint256 treasuryDelta = res.toTreasury.total;
@@ -406,6 +408,16 @@ contract RewardClaimFacet is
         // subtractions are the guard that the walk bounded them.
         uint256 payableFresh =
             freshPending + freshTreasury - res.transport.userFresh - res.transport.treasuryFresh;
+        // A standing staging reservation binds as a DEFERRAL, never as the
+        // lifetime truncation above (3b-ii-A2, #2305; Codex #2308 r2): what
+        // fits the hard figure but not the available one waits for the
+        // reservation to resolve or unwind, and nothing is written off.
+        {
+            uint256 available = LibInteractionRewards.poolAvailable();
+            if (freshPending + freshTreasury > available) {
+                revert InteractionPoolReservedShortfall(freshPending + freshTreasury, available);
+            }
+        }
         if (payableFresh > backingRoom) {
             revert InteractionRewardBackingShort(payableFresh, backingRoom);
         }

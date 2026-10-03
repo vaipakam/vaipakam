@@ -724,6 +724,11 @@
         "name": "restitution",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "resolving",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -1763,6 +1768,28 @@
     "type": "error",
     "name": "RecycleBackingTokenUnset",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodyActivationBlockedByStagedEarmark",
+    "inputs": [
+      {
+        "name": "staged",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodyActivationBlockedByStagedRecords",
+    "inputs": [
+      {
+        "name": "encumbered",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",

@@ -1444,9 +1444,9 @@ contract RewardAggregatorFacet is
     function _recycleFundable(
         LibVaipakam.Storage storage s
     ) internal view returns (uint256) {
-        uint256 reserved =
-            s.outstandingCommitRecycled + s.recycleKeeperBudget;
-        return s.recycleBucket > reserved ? s.recycleBucket - reserved : 0;
+        // ONE figure with the repatriation and the reattribution (Codex
+        // #2308 r11): net of the staging reservation as well.
+        return LibVpfiRecycle.bucketFundable(s);
     }
 
     /// @notice Governor PR-3b — read a finalized day's stamped pool

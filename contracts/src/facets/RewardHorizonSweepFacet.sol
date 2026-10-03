@@ -177,7 +177,7 @@ contract RewardHorizonSweepFacet is
                 uint256 freshCredited,
                 /* armedDelivered — the engine's per-day attribution; the
                    allowance depletes by the fresh credited (#1566 closure 2) */
-            ) = LibInteractionRewards.sweepExpiredEntry(
+            ) = LibInteractionRewards.callSweepExpiredEntryWalk(
                 entryIds[i], headroom, allowance, tp
             );
             headroom -= freshCredited;
@@ -232,6 +232,13 @@ contract RewardHorizonSweepFacet is
 
         // Fresh share: consumes the 69M pool (tokens leave the fresh
         // budget) exactly like a forfeit — already per-entry capped above.
+        // A staging reservation binds as a deferral, never a truncation
+        // (3b-ii-A2, #2305): the batch waits rather than spend headroom a
+        // standing record holds.
+        {
+            uint256 available = LibInteractionRewards.poolAvailable();
+            if (t.fresh > available) revert InteractionPoolReservedShortfall(t.fresh, available);
+        }
         s.interactionPoolPaidOut = paidOut + t.fresh;
         // Every swept entry is terminally `processed`, so its ENTIRE armed
         // fresh commitment retires here even when the pool cap truncated the

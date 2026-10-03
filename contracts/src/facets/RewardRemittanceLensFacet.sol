@@ -314,7 +314,12 @@ contract RewardRemittanceLensFacet {
      *                   inside the walk). The field keeps its historical
      *                   "Armed" name; renaming a storage field is a layout
      *                   event the provenance walker gates on.
-     * @return remaining Delivered-less-paid allowance still spendable.
+     * @return remaining Delivered-less-paid allowance still spendable — and
+     *                   since 3b-ii-A2 (#2305) less what staging records have
+     *                   RESERVED of it as well, which `paid` does not carry;
+     *                   the reserved figure itself is on
+     *                   {InteractionRewardsLensFacet.getRewardReservations}
+     *                   (Codex #2308 r5).
      */
     function getDeliveredFreshBound()
         external

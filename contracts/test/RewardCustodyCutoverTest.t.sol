@@ -261,6 +261,25 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         assertFalse(_custody().rewardCustodyActivated(), "not activated");
     }
 
+    /// Any STAGED epoch value blocks activation, not only a reservation
+    /// (Codex #2308 r18): a record merely `Staging` earmarks Diamond-held VPFI
+    /// the relocation would strand. Straddled: one wei earmarked refuses with
+    /// the figure named; the earmark cleared, the same ceremony activates.
+    function test_Activation_RefusesWhileAnyEpochValueIsStaged() public {
+        _becomeCanonical();
+        _custody().bindRewardCustodyHolder();
+        _admin().pause();
+        uint64 epoch = _epoch();
+        _custody().rebaseArmedFreshPaid(0, epoch);
+        _mut().setStagedEpochTotalRaw(1);
+        vm.expectRevert(abi.encodeWithSelector(RewardCustodyActivationBlockedByStagedEarmark.selector, uint256(1)));
+        _custody().activateRewardCustody(epoch, false);
+        assertFalse(_custody().rewardCustodyActivated(), "not activated");
+        _mut().setStagedEpochTotalRaw(0);
+        _custody().activateRewardCustody(epoch, false);
+        assertTrue(_custody().rewardCustodyActivated(), "activated once nothing is staged");
+    }
+
     /// The ceremony's gates, each straddled: unpaused refuses; a stale epoch
     /// refuses; an unconsumed rebase refuses; the live epoch under the manual
     /// pause with the rebase consumed activates — once.
@@ -3175,12 +3194,12 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
 
     function test_Ledger_ReportsActivationAndEveryRow() public {
         _becomeCanonical();
-        (bool activated0, bool frozen0, , , , , , , , ) = _custody().rewardCustodyLedger();
+        (bool activated0, bool frozen0, , , , , , , , , ) = _custody().rewardCustodyLedger();
         assertFalse(activated0, "inactive");
         assertFalse(frozen0, "unfrozen");
         activateRewardCustodyForTest(address(vpfi), 5e18);
         _mut().creditRecycleRaw(LibVpfiRecycle.RecycleSource.ForfeitedReward, 0, 2e18);
-        (bool activated, bool frozen, uint256 live, uint256 recycled, , , , , , ) = _custody().rewardCustodyLedger();
+        (bool activated, bool frozen, uint256 live, uint256 recycled, , , , , , , ) = _custody().rewardCustodyLedger();
         assertTrue(activated, "active");
         assertTrue(frozen, "frozen");
         assertEq(live, 3e18, "live");
@@ -3189,5 +3208,22 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         assertTrue(known, "readable");
         assertEq(held, 5e18, "held");
         assertEq(attributed, 5e18, "fully attributed");
+    }
+
+    /// @dev 3b-ii-A2 (Codex #2308 r7, r13) — the activation refuses while any
+    ///      staging record holds a reservation; the count is written raw here,
+    ///      its maintenance being the staging suite's to prove.
+    function test_Activation_RefusesWhileAStagingRecordResolves() public {
+        _becomeMirror();
+        _admin().pause();
+        _custody().bindRewardCustodyHolder();
+        uint64 epoch = _epoch();
+        _custody().rebaseArmedFreshPaid(6e18, epoch);
+        _mut().setStagingEncumberedCountRaw(1);
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.RewardCustodyActivationBlockedByStagedRecords.selector, uint256(1)));
+        _custody().activateRewardCustody(epoch, false);
+        _mut().setStagingEncumberedCountRaw(0);
+        _custody().activateRewardCustody(epoch, false);
+        _admin().unpause();
     }
 }

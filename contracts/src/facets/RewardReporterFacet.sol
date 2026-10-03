@@ -1354,9 +1354,19 @@ contract RewardReporterFacet is
         LibVaipakam.Storage storage s,
         LibVaipakam.RewardRole next
     ) private view {
-        if (!s.rewardRoleChangesFrozen) return;
         LibVaipakam.RewardRole current = LibVaipakam.rewardRole(s);
-        if (next != current) revert IVaipakamErrors.RewardRoleChangeFrozen(uint8(current), uint8(next));
+        if (next == current) return; // not a change at all
+        // A role change moves the DELIVERED ALLOWANCE a reserved record's
+        // payout charges — `Unconfigured` is unbounded, a configured role is
+        // not — so it may not straddle a staging reservation (3b-ii-A2; Codex
+        // #2308 r13). The same counter the custody activation reads: one
+        // posture rule, every posture gate. Settle or unwind first; both are
+        // permissionless.
+        if (s.stagingEncumberedCount != 0) {
+            revert IVaipakamErrors.RewardRoleChangeBlockedByStagedRecords(s.stagingEncumberedCount);
+        }
+        if (!s.rewardRoleChangesFrozen) return;
+        revert IVaipakamErrors.RewardRoleChangeFrozen(uint8(current), uint8(next));
     }
 
     /// @dev Retire the delivered-fresh residual (`received - paid`) whenever

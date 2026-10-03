@@ -665,7 +665,9 @@ contract RewardRemittanceFacet is
         plan.closedSlices = new uint256[](n);
         plan.residuals = new uint256[](n);
         plan.st.armedFrom = s.governorCommitArmedFromDay;
-        plan.st.bucketLeft = s.recycleBucket;
+        // Net of what staging records have reserved (Codex #2308 r11): a
+        // remit may not send a resolving record's recycled backing away.
+        plan.st.bucketLeft = LibVpfiRecycle.bucketAvailable(s);
         plan.st.outRecycledLeft = s.outstandingCommitRecycled;
         for (uint256 i; i < n; ) {
             uint256 dayId = dayIds[i];

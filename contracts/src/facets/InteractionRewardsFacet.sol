@@ -128,7 +128,7 @@ contract InteractionRewardsFacet is
                the paid ledger is charged by {LibVpfiRecycle.absorbRewardFresh}
                with the fresh share that actually moves, so this facet has no
                use for it */
-        ) = LibInteractionRewards.sweepForfeitedByLoanId(
+        ) = LibInteractionRewards.callSweepForfeitedWalk(
             loanId, headroom, allowance, tp
         );
         // r18 P2 — NO unconditional exhaustion revert: a zero-liability
@@ -138,6 +138,13 @@ contract InteractionRewardsFacet is
         swept = freshCredited + recycledReleased;
         if (swept == 0 && armedOwed == 0) return 0;
 
+        // A staging reservation binds as a deferral, never a truncation
+        // (3b-ii-A2, #2305): the whole batch waits rather than spend headroom
+        // a standing record holds.
+        {
+            uint256 available = LibInteractionRewards.poolAvailable();
+            if (freshCredited > available) revert InteractionPoolReservedShortfall(freshCredited, available);
+        }
         s.interactionPoolPaidOut = paidOut + freshCredited;
         // The commitment retires by what each chunk OWED (cappedOff
         // included) — never merely what moved (the r10 rule).

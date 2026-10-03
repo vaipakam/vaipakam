@@ -861,6 +861,22 @@ contract RewardCustodyFacet is DiamondAccessControl {
         LibPausable.requireManuallyPaused();
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (s.rewardCustodyActivated) revert IVaipakamErrors.RewardCustodyAlreadyActivated();
+        // Nothing in flight may straddle the cutover (3b-ii-A2; Codex #2308
+        // r7, r13): a resolving record's consumed epoch value rests in this
+        // balance under no attribution until its last page pays it, and a
+        // reserved record's reservations were taken against this balance. One
+        // counter, read by every posture gate — the reward-ROLE change reads
+        // it too.
+        if (s.stagingEncumberedCount != 0) {
+            revert IVaipakamErrors.RewardCustodyActivationBlockedByStagedRecords(s.stagingEncumberedCount);
+        }
+        // …nor any STAGED value (Codex #2308 r18): the earmark is what this
+        // relocation would strand, and it stands from a record's first staged
+        // page — a merely `Staging` record holds no reservation, so the count
+        // above cannot see it. Read the figure itself, not a proxy for it.
+        if (s.stagedEpochTotal != 0) {
+            revert IVaipakamErrors.RewardCustodyActivationBlockedByStagedEarmark(s.stagedEpochTotal);
+        }
         uint64 liveEpoch = LibPausable.pauseTransitions();
         if (pauseEpoch != liveEpoch) {
             revert IVaipakamErrors.RewardCustodyActivationStalePauseEpoch(pauseEpoch, liveEpoch);
@@ -1576,7 +1592,8 @@ contract RewardCustodyFacet is DiamondAccessControl {
             uint256 pendingSurplus,
             uint256 intent,
             uint256 unclassified,
-            uint256 restitution
+            uint256 restitution,
+            uint256 resolving
         )
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
@@ -1590,6 +1607,8 @@ contract RewardCustodyFacet is DiamondAccessControl {
         intent = s.rewardCustodyRows[LibVaipakam.RewardCustodyRow.Intent];
         unclassified = s.rewardCustodyRows[LibVaipakam.RewardCustodyRow.Unclassified];
         restitution = s.rewardCustodyRows[LibVaipakam.RewardCustodyRow.Restitution];
+        // 3b-ii-A2 (#2305) — the hold between a staged record's pages.
+        resolving = s.rewardCustodyRows[LibVaipakam.RewardCustodyRow.Resolving];
     }
 
     /// @notice The delivered-fresh ledger's two counters, raw. The bound
