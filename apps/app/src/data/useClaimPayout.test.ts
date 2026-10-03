@@ -7,7 +7,12 @@
  */
 import { describe, expect, it } from 'vitest';
 import { copy } from '../content/copy';
-import { borrowerPayoutWhat, defaultRecoveryNote } from './useClaimPayout';
+import {
+  borrowerPayoutWhat,
+  defaultRecoveryNote,
+  lenderPayoutWhat,
+  nftClaimLabel,
+} from './useClaimPayout';
 
 const labels = copy.claims.row;
 
@@ -112,5 +117,69 @@ describe('borrowerPayoutWhat', () => {
     expect(borrowerPayoutWhat(base)).toBe(labels.surplusAfterLiquidation);
     expect(borrowerPayoutWhat({ ...base, status: 'internal_matched' })).toBe(labels.residualAfterMatch);
     expect(borrowerPayoutWhat({ ...base, status: 'repaid' })).toBe(labels.collateralBack('1 WETH'));
+  });
+});
+
+/** #2373 r4 — the lender's payout: the claim row's own payout first, held
+ *  proceeds beside it, never instead of it. */
+describe('lenderPayoutWhat', () => {
+  const base = {
+    base: null,
+    amountPending: false,
+    nftClaim: null,
+    hasHeld: false,
+    principalPlusInterest: null,
+    collateral: '1 WETH',
+    labels,
+  };
+
+  it('keeps a non-fungible default recovery beside held proceeds', () => {
+    const what = lenderPayoutWhat({ ...base, kind: 'default', nftClaim: 'NFT 0xab…cd #7', hasHeld: true });
+    expect(what).toBe(labels.recoveredFromDefault('NFT 0xab…cd #7', labels.heldProceedsSuffix));
+    expect(what).not.toBe(labels.heldProceedsDefault);
+  });
+
+  it('keeps a loading amount beside held proceeds, in every kind', () => {
+    for (const kind of ['proper', 'fallback', 'default'] as const) {
+      const what = lenderPayoutWhat({ ...base, kind, amountPending: true, hasHeld: true });
+      expect(what).toContain(labels.amountLoading);
+      expect(what).toContain(labels.heldProceedsSuffix.trim().replace(/^\+\s*/, ''));
+    }
+  });
+
+  it('names held proceeds alone only when the claim row names nothing', () => {
+    expect(lenderPayoutWhat({ ...base, kind: 'default', hasHeld: true })).toBe(labels.heldProceedsDefault);
+    expect(lenderPayoutWhat({ ...base, kind: 'proper', hasHeld: true })).toBe(labels.heldProceeds);
+  });
+
+  it('marks every fallback payout as provisional', () => {
+    for (const args of [{ base: '2 WETH' }, { amountPending: true }, {}, { nftClaim: 'NFT 0xab…cd #7' }]) {
+      const what = lenderPayoutWhat({ ...base, kind: 'fallback', ...args });
+      expect(what).toBe(labels.provisionalAmount(what.slice(0, what.lastIndexOf(' ('))));
+    }
+  });
+
+  it('states a repaid amount, or describes principal plus interest when none is named', () => {
+    expect(lenderPayoutWhat({ ...base, kind: 'proper', base: '5 USDC' })).toBe('5 USDC');
+    expect(lenderPayoutWhat({ ...base, kind: 'proper', principalPlusInterest: '5 USDC + interest' })).toBe(
+      '5 USDC + interest',
+    );
+    expect(lenderPayoutWhat({ ...base, kind: 'proper' })).toBe(labels.repaidFunds);
+  });
+});
+
+describe('nftClaimLabel', () => {
+  const nft = '0x00000000000000000000000000000000000000ab';
+  it('is null for a fungible claim', () => {
+    expect(nftClaimLabel({ asset: nft, assetType: 0, tokenId: 0n, quantity: 0n })).toBeNull();
+  });
+  it('names an ERC-721 claim by token id', () => {
+    expect(nftClaimLabel({ asset: nft, assetType: 1, tokenId: 7n, quantity: 1n })).toMatch(/^NFT .+ #7$/);
+  });
+  it('adds the quantity for a multi-unit ERC-1155 claim', () => {
+    expect(nftClaimLabel({ asset: nft, assetType: 2, tokenId: 7n, quantity: 3n })).toMatch(/#7 ×3$/);
+  });
+  it('is null when the claim names no asset', () => {
+    expect(nftClaimLabel({ asset: null, assetType: 1, tokenId: 7n, quantity: 1n })).toBeNull();
   });
 });

@@ -70,12 +70,16 @@ interface ClaimableTuple {
   amount?: bigint;
   claimed?: boolean;
   assetType?: bigint;
+  tokenId?: bigint;
+  quantity?: bigint;
   heldForLender?: bigint;
   hasRentalNftReturn?: boolean;
   0?: string;
   1?: bigint;
   2?: boolean;
   3?: bigint;
+  4?: bigint;
+  5?: bigint;
   6?: bigint;
   7?: boolean;
 }
@@ -88,6 +92,12 @@ interface ClaimableTuple {
 export interface ClaimDetail {
   asset: string | null;
   amount: bigint;
+  /** #2373 r4 — the claim row's own asset type, token id and quantity
+   *  (`getClaimable`). A non-fungible claim pays an NFT with `amount == 0`,
+   *  so without these the payout cannot name it beside another lane. */
+  assetType: number;
+  tokenId: bigint;
+  quantity: bigint;
   heldForLender: bigint;
   hasRentalNftReturn: boolean;
   lifRebate: bigint;
@@ -162,6 +172,8 @@ export async function probeClaim(
     const amount = res.amount ?? res[1] ?? 0n;
     const claimed = res.claimed ?? res[2] ?? false;
     const assetType = Number(res.assetType ?? res[3] ?? 0n);
+    const tokenId = res.tokenId ?? res[4] ?? 0n;
+    const quantity = res.quantity ?? res[5] ?? 0n;
     const heldForLender = res.heldForLender ?? res[6] ?? 0n;
     const hasRentalNftReturn = res.hasRentalNftReturn ?? res[7] ?? false;
 
@@ -258,6 +270,9 @@ export async function probeClaim(
                 ? claimAsset
                 : null,
             amount,
+            assetType,
+            tokenId,
+            quantity,
             heldForLender,
             hasRentalNftReturn,
             lifRebate,

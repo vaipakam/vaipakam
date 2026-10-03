@@ -96,7 +96,7 @@ import { useRefinancePending } from '../data/refinancePending';
 import { ZERO_ADDRESS } from '../lib/offerSchema';
 import {
   AssetType,
-  LIVE_STATUS_TO_INDEXED,
+  reconcileIndexedStatus,
   LoanStatus,
 } from '../lib/types';
 import { tipAware } from '../chain/railHealth';
@@ -957,8 +957,21 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
    *  position NFTs (#2373 r1: this page used to start the wallet-wide
    *  claim scan to learn about one loan). Above the early returns: these
    *  are hooks (#1511). */
-  const lenderClaim = useLoanClaim(loan.data ?? undefined, 'lender');
-  const borrowerClaim = useLoanClaim(loan.data ?? undefined, 'borrower');
+  // #2373 r4 (P1) — the claim reads carry the RECONCILED status, the same
+  // one the page's badge and action gate use below, so a payout is never
+  // composed from an indexed status the chain has already moved past (a
+  // repaid loan read as "recovered from the default").
+  const claimLoan = loan.data
+    ? {
+        ...loan.data,
+        status: reconcileIndexedStatus(
+          loan.data.status,
+          liveStatus.data === undefined ? undefined : Number(liveStatus.data.status),
+        ),
+      }
+    : undefined;
+  const lenderClaim = useLoanClaim(claimLoan, 'lender');
+  const borrowerClaim = useLoanClaim(claimLoan, 'borrower');
   const lenderClaimText = useClaimPayoutText(lenderClaim.data ?? undefined);
   const borrowerClaimText = useClaimPayoutText(borrowerClaim.data ?? undefined);
 
@@ -1001,23 +1014,13 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // and the claim paths re-check live at submit anyway).
   // Indexed as a plain number map so an unknown FUTURE enum value
   // yields undefined (→ no override) instead of a lying type.
-  const liveOverride =
-    liveStatus.data === undefined
-      ? undefined
-      : liveStatus.data.status !== LoanStatus.Active
-        ? (
-            LIVE_STATUS_TO_INDEXED as Record<
-              number,
-              (typeof LIVE_STATUS_TO_INDEXED)[LoanStatus] | undefined
-            >
-          )[liveStatus.data.status]
-        : loan.data.status === 'fallback_pending'
-          ? ('active' as const)
-          : undefined;
-  const statusIsReconciled =
-    liveOverride !== undefined && liveOverride !== loan.data.status;
+  const reconciledStatus = reconcileIndexedStatus(
+    loan.data.status,
+    liveStatus.data === undefined ? undefined : Number(liveStatus.data.status),
+  );
+  const statusIsReconciled = reconciledStatus !== loan.data.status;
   const row = statusIsReconciled
-    ? { ...loan.data, status: liveOverride! }
+    ? { ...loan.data, status: reconciledStatus }
     : loan.data;
   const view = loanStateView(row);
   const isRental = row.assetType !== AssetType.ERC20;
@@ -4400,10 +4403,19 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                 !onSupportedChain ||
                 !walletClient ||
                 !publicClient ||
-                (action !== 'repay' && !sanctionsClear)
+                (action !== 'repay' && !sanctionsClear) ||
+                // #2373 r4 — a confirmation opened while the claim was still
+                // being checked must stand down if the read then confirms
+                // there is nothing to collect.
+                (action !== 'repay' && claimPayoutState === 'none')
               }
               data={actionReceipt}
             >
+              {action !== 'repay' && claimPayoutState === 'none' ? (
+                <div className="banner banner-warn" role="status" style={{ marginBottom: 12 }}>
+                  <span className="banner-body">{copy.positions.details.nothingWaiting}</span>
+                </div>
+              ) : null}
               {action === 'repay' && refinancePending && !isRental ? (
                 // Repay stays open with a pending refinance request
                 // (it's the safety valve — never block it), but the

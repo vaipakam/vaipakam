@@ -1652,6 +1652,14 @@ Thin-market honesty rules apply.
   was in a failed-liquidation state that the claim pays in a different asset.
   An amount whose token details are still loading is described as an amount,
   never as something else, and never replaced by another lane of the same claim.
+  An NFT the claim pays is named beside any other lane — a lender's in-kind
+  recovery is listed together with proceeds held for them, not instead of them.
+- The payout is composed from the loan's status as the page currently knows it,
+  after the live chain read has been taken into account. A loan the chain shows
+  as repaid is never described as a default recovery because the indexed record
+  has not caught up.
+- A confirmation that was opened while the claim was still being checked stands
+  down, and says why, if the check then confirms there is nothing to collect.
 - Whether a claim is collectable is decided once. The check that runs just
   before signing uses the same rule as the one that lists the claim, so a claim
   the list offers is never refused by the confirmation as "nothing to claim".
