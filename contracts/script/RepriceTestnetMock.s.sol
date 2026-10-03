@@ -63,10 +63,12 @@ import {RepriceVenueReport, IRepriceDiamondViews} from "./lib/RepriceVenueReport
  *           - a broadcaster that does not own the feed, the pool, and (unless
  *             skipped) the venue — each is owner-gated so a public testnet's
  *             demos cannot be repriced by a passer-by;
- *           - a recorded pool the oracle does not actually route through:
- *             zeroing its depth in simulation must flip the asset Illiquid.
- *             The Diamond exposes no view of its factory or quote list, so
- *             this is proved by behaviour, then the snapshot is restored;
+ *           - (after the writes, in simulation) a recorded pool the oracle does
+ *             not actually route through: zeroing its depth must flip the
+ *             now-Liquid asset Illiquid. The Diamond exposes no view of its
+ *             factory or quote list, so this is proved by behaviour, then the
+ *             snapshot is restored. Run on the post-write state, it also
+ *             covers a recovery run that started Illiquid;
  *           - (unless skipped) a recorded venue the Diamond does not route
  *             liquidations through: it must be in `getSwapAdapters()` and not
  *             disabled. Repricing a different adapter would leave the one the
@@ -180,7 +182,6 @@ contract RepriceTestnetMock is Script {
 
         RepriceTarget memory t = _resolveTarget(assetKey);
         _preflight(t, sender, skipVenue);
-        _requireRecordedPoolIsTheRoute(t);
 
         PriceReading memory before = _read(t);
         uint160 newSpot = _targetSpot(t, newPrice8);
@@ -209,9 +210,28 @@ contract RepriceTestnetMock is Script {
         PriceReading memory afterReading = _verifyReprice(t, newPrice8, skipVenue, allowIlliquid);
         console.log("Liquidity now: %s (0 = Liquid, 1 = Illiquid)", uint256(afterReading.liquidity));
 
+        // The route proof runs on the POST-write state, where a coherent move
+        // must read Liquid — so it also covers a recovery run that started
+        // Illiquid. Still simulation only: this is after stopBroadcast, and
+        // the probe restores its snapshot. A refusal here sends nothing,
+        // because forge broadcasts only a simulation that completed.
+        if (afterReading.liquidity == 0) {
+            _requireRecordedPoolIsTheRoute(t);
+        } else {
+            console.log(
+                "WARNING: route not proven - the asset reads Illiquid (REPRICE_ALLOW_ILLIQUID), so emptying the recorded pool cannot show the oracle depends on it"
+            );
+        }
+
         // The venue's settlement depends on state this run does not write.
         // Report all of it that is knowable, and say what is not.
-        if (t.venue.code.length != 0) {
+        if (t.venue.code.length == 0) {
+            // Reachable only with REPRICE_SKIP_VENUE (preflight otherwise
+            // requires code). Say so rather than omitting the report.
+            console.log(
+                "WARNING: venue report unavailable - no code at the recorded venue, so its settlement state is not substantiated"
+            );
+        } else {
             // The report reads state this run neither writes nor controls, so
             // it must never be what stops a run: it lives in its own contract,
             // deployed here in simulation (after stopBroadcast, so nothing is
@@ -375,13 +395,20 @@ contract RepriceTestnetMock is Script {
     ///         closes the gap the way the price check does for the feed:
     ///         in simulation only, snapshot, zero the pool's depth as its
     ///         owner, and require the asset to read Illiquid; then revert to
-    ///         the snapshot. Nothing here is broadcast (it runs before
-    ///         `startBroadcast`, and the snapshot is restored).
+    ///         the snapshot. Nothing here is broadcast (`run()` calls it after
+    ///         `stopBroadcast`, and the snapshot is restored).
     ///
-    ///         An asset already Illiquid proves nothing this way, so it is
-    ///         skipped here and left to the Illiquid guard after the writes.
+    ///         It needs the asset to read Liquid to begin with — emptying a
+    ///         pool cannot show a dependency of an asset already Illiquid —
+    ///         so it refuses rather than passing silently in that state.
+    ///         `run()` calls it on the post-write state, where a coherent move
+    ///         must read Liquid, which also covers a recovery run that
+    ///         started Illiquid.
     function _requireRecordedPoolIsTheRoute(RepriceTarget memory t) internal {
-        if (IRepriceDiamondViews(t.diamond).checkLiquidity(t.asset) != 0) return;
+        require(
+            IRepriceDiamondViews(t.diamond).checkLiquidity(t.asset) == 0,
+            "RepriceTestnetMock: the route cannot be proved while the asset reads Illiquid"
+        );
         uint256 snap = vm.snapshotState();
         vm.prank(MockUniswapV3Pool(t.pool).owner());
         MockUniswapV3Pool(t.pool).setLiquidity(0);

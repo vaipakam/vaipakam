@@ -210,6 +210,44 @@ contract TestnetMockRepriceTest is TestnetMockOracleRig, RepriceTestnetMock {
         this.routeProbeExt(t);
     }
 
+    /// @notice The recovery case a pre-write probe skipped: the asset starts
+    ///         Illiquid (feed moved alone), the artifact names a decoy pool,
+    ///         and the Diamond's REAL pool already sits at the target. After
+    ///         the writes everything reads coherent through the real pool —
+    ///         only the post-write probe on the recorded (decoy) pool exposes
+    ///         that the run repriced the wrong pool.
+    function test_refuses_aDecoyPoolEvenWhenTheRunStartsIlliquid() public {
+        // The real pool already at the $1,600 target; the feed still at $2,000.
+        MockUniswapV3Pool(tliqPool).setSqrtPriceX96(
+            MockPoolPricing.sqrtPriceX96(address(tLIQ), 1_600e8, address(weth), P_MWETH)
+        );
+        assertEq(_status(address(tLIQ)), ILLIQUID, "starts Illiquid");
+        MockUniswapV3Factory decoyFactory = new MockUniswapV3Factory();
+        address decoyPool = decoyFactory.createPool(
+            address(tLIQ),
+            address(weth),
+            3000,
+            MockPoolPricing.sqrtPriceX96(address(tLIQ), P_TLIQ, address(weth), P_MWETH),
+            MOCK_POOL_LIQUIDITY
+        );
+        RepriceTarget memory t = tliqTarget;
+        t.factory = address(decoyFactory);
+        t.pool = decoyPool;
+        vm.expectRevert(
+            bytes(
+                "RepriceTestnetMock: the asset stays Liquid without the recorded pool - the oracle routes elsewhere, so repricing this pool would not move what it reads"
+            )
+        );
+        this.repriceExt(t, 1_600e8);
+    }
+
+    function test_routeProbe_refusesWhileIlliquidRatherThanPassing() public {
+        tliqFeed.setPrice(int256(1_600e8));
+        assertEq(_status(address(tLIQ)), ILLIQUID, "Illiquid");
+        vm.expectRevert(bytes("RepriceTestnetMock: the route cannot be proved while the asset reads Illiquid"));
+        this.routeProbeExt(tliqTarget);
+    }
+
     function test_refuses_aZeroPrice() public {
         vm.expectRevert(bytes("RepriceTestnetMock: REPRICE_USD_E8 is zero"));
         this.targetSpotExt(tliqTarget, 0);
@@ -465,11 +503,16 @@ contract TestnetMockRepriceTest is TestnetMockOracleRig, RepriceTestnetMock {
         _preflight(t, address(this), skipVenue);
         uint160 spot = _targetSpot(t, price8);
         _applyReprice(t, price8, spot, skipVenue);
-        _verifyReprice(t, price8, skipVenue, allowIlliquid);
+        RepriceTestnetMock.PriceReading memory r = _verifyReprice(t, price8, skipVenue, allowIlliquid);
+        if (r.liquidity == 0) _requireRecordedPoolIsTheRoute(t);
     }
 
     function _report(RepriceTarget memory t, address[] memory assets) internal view returns (string[] memory) {
         return reporter.report(t.diamond, t.venue, t.asset, assets);
+    }
+
+    function repriceExt(RepriceTarget memory t, uint256 price8) external {
+        _reprice(t, price8, false, false);
     }
 
     function routeProbeExt(RepriceTarget memory t) external {
