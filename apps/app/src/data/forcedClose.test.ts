@@ -15,6 +15,7 @@ import {
   canSubmitFromApp,
   decideForcedClose,
   forcedCloseWithoutMatch,
+  resolveForcedCloseActive,
   shouldRenderForcedClose,
   type ForcedCloseInput,
 } from './forcedClose';
@@ -583,5 +584,44 @@ describe('decideForcedClose — an unread active status', () => {
     expect(decideForcedClose({ ...base, active: false })).toBe(
       'not-applicable',
     );
+  });
+});
+
+describe('resolveForcedCloseActive — which loans the card applies to (UX3-001)', () => {
+  const open = {
+    isLenderHolder: true,
+    chainStatusSettled: undefined,
+    indexedStatusTerminal: false,
+    aggregateActive: undefined,
+  } as const;
+
+  it('hides the card for a viewer who does not hold the lender position', () => {
+    expect(resolveForcedCloseActive({ ...open, isLenderHolder: false, aggregateActive: true })).toBe(false);
+  });
+
+  it('hides it when the chain status is known and settled', () => {
+    expect(resolveForcedCloseActive({ ...open, chainStatusSettled: true, aggregateActive: true })).toBe(false);
+  });
+
+  // The live defect: a repaid loan whose chain status reads never ran (they
+  // are enabled for active loans only) and whose aggregate is disabled for
+  // the same reason. Before the fix this returned `undefined`, which
+  // `decideForcedClose` maps to `unknown`, and the card painted "still
+  // checking" indefinitely.
+  it('hides it for a loan the row already records as terminal, even with every chain read unread', () => {
+    const active = resolveForcedCloseActive({ ...open, indexedStatusTerminal: true });
+    expect(active).toBe(false);
+    expect(decideForcedClose({ ...base, active })).toBe('not-applicable');
+  });
+
+  it('keeps an unread status UNKNOWN on a loan that is not terminal (round 65 P2 stays intact)', () => {
+    const active = resolveForcedCloseActive(open);
+    expect(active).toBeUndefined();
+    expect(decideForcedClose({ ...base, active })).toBe('unknown');
+  });
+
+  it('defers to the aggregate once the chain says the loan is still active', () => {
+    expect(resolveForcedCloseActive({ ...open, chainStatusSettled: false, aggregateActive: true })).toBe(true);
+    expect(resolveForcedCloseActive({ ...open, chainStatusSettled: false, aggregateActive: false })).toBe(false);
   });
 });

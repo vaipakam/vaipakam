@@ -157,7 +157,9 @@ including people who never will.
 - Wallet connection should make the active address and network clear.
 - Unsupported networks show a plain switch-network state.
 - Supported networks should still be named clearly because offers, loans,
-  faucet assets, vault balances, and claims are chain-specific.
+  faucet assets, vault balances, and claims are chain-specific. That holds at
+  every screen width: on a phone the network is still shown by name, not only
+  by a coloured indicator.
 - A failed or rejected network switch remains visible until the user dismisses
   it or a newer clear state replaces it.
 - Display names may be shown for convenience, but names never decide asset
@@ -1258,11 +1260,19 @@ Thin-market honesty rules apply.
   prior holder.
 - More-settled chain state overrides stale indexed state.
 - A terminal loan never presents live obligation actions such as repayment.
+- A terminal loan also never presents checks or warnings that only make sense
+  for an open loan — for example the lender's forced close-out, or a
+  "still checking whether this loan can be closed out" state. Whichever source
+  first shows the loan is settled is enough to retire them, because a settled
+  loan cannot become open again.
+- A loan's outcome is styled as a warning only when it was adverse (a default
+  or liquidation). A loan that closed normally reads as settled, not as a risk.
 - Fallback-pending loans remain visible as active because the borrower may still
   cure them before the lender finalizes the fallback.
 - Past-due loan pages show the grace window and the consequence of inaction.
 - Health and risk labels escalate when collateral health is poor.
-- Position rows should offer the next relevant action where one exists.
+- Position rows should offer the next relevant action where one exists. A row
+  with a payout waiting says what that payout is and offers to collect it.
 
 ### Forced close-out of an overdue loan
 
@@ -1625,6 +1635,58 @@ Thin-market honesty rules apply.
 - A claim attached to a purchased position is discoverable by the current holder
   even if that holder was not an original loan party.
 - Claim rows show the amount or asset the user can receive when knowable.
+- Every surface that offers a claim — the claims list, the collect-everything
+  checklist, the loan's own page and its confirmation, and the positions list —
+  states the same payout in the same words. A surface never asks the user to
+  collect "your funds" while another surface knows the amount.
+- While the exact payout is still being read, or if it cannot be confirmed, the
+  surface says so instead of leaving the amount out. Collecting stays available
+  either way: the claim pays the on-chain entitlement, and an informational read
+  must never stand between a user and their funds. When the read confirms there
+  is nothing on that side, the surface says so and does not offer to collect.
+- A payout is described by what the claim actually pays: the amount the protocol
+  records for this claimant (a lender's share of a fallback settlement, not the
+  whole collateral), and every separate lane the same claim pays — including a
+  borrower's left-over amount from a swap that repaid the loan, which is listed
+  even when it is the only thing to collect, and collateral added while the loan
+  was in a failed-liquidation state that the claim pays in a different asset.
+  An amount whose token details are still loading is described as an amount,
+  never as something else, and never replaced by another lane of the same claim.
+  An NFT the claim pays is named beside any other lane — a lender's in-kind
+  recovery is listed together with proceeds held for them, not instead of them.
+  Proceeds held for a lender are paid in a single asset, so their amount is
+  stated like any other. An amount whose token details cannot be read at all is
+  said to be unreadable; it is never shown as still loading.
+- The confirmation keeps the same honesty as the page: while the payout is being
+  checked, could not be confirmed, or is confirmed empty, the confirmation says
+  that rather than a general description of what such a claim usually pays —
+  and rather than an earlier answer kept from before the latest check failed.
+- A position row with a claim waiting shows the loan's live status, not an
+  indexed status the chain has already moved past.
+- The payout is composed from the loan's status as the page currently knows it,
+  after the live chain read has been taken into account. A loan the chain shows
+  as repaid is never described as a default recovery because the indexed record
+  has not caught up.
+- A confirmation that was opened while the claim was still being checked stands
+  down, and says why, if the check then confirms there is nothing to collect.
+- Whether a claim is collectable is decided once. The check that runs just
+  before signing uses the same rule as the one that lists the claim, so a claim
+  the list offers is never refused by the confirmation as "nothing to claim".
+- A payout the claim itself can still change is labelled as what is recorded
+  now, not as what the user will receive, and the reason is stated beside it and
+  again at signing. A lender's claim on a fallback-settled loan is the case
+  today: claiming first tries to match the loan with another, and a match pays
+  the loan's asset instead, for all or part of the recorded amount. The reason
+  travels with the payout onto every surface that states it — the
+  collect-everything checklist and the positions list as well as the loan page.
+- A loan's own page learns its payout from that loan alone. Opening one position
+  must not scan every position the wallet has ever held.
+- A lender's claim on a defaulted loan says what the recovery is (a cash amount,
+  the collateral itself, or partly held in other assets). A shortfall is shown
+  only against what the loan actually owed when it defaulted; until the app has
+  that figure, it says so rather than computing one. The loan's current
+  principal is never presented as what the holder lent: partial repayments
+  change it, and a holder who bought the position never lent it at all.
 - A stale indexed row must not remain actionable after the chain says it is no
   longer claimable.
 - Once a candidate has been verified on chain, an IDENTICAL candidate (same
@@ -1700,6 +1762,15 @@ Thin-market honesty rules apply.
   model as other value-moving flows.
 - Withdrawals cap at free balance, not total balance.
 - Discount consent is explicit and visually prominent.
+- The tier table states each band's boundaries exactly as the protocol applies
+  them, including which tier an amount sitting exactly on a threshold belongs
+  to. A holder must never be shown a better discount than the protocol would
+  apply to their balance.
+- The explanation of how the discount is earned names every check that decides
+  it: a minimum period of continuous holding, the recent average balance, and a
+  cap at the lowest level the holding has reached over its own history. It
+  never presents one look-back period as the whole rule, and it says plainly
+  why topping up does not raise the discount straight away.
 
 ### Full VPFI Tariff Opt-In
 
@@ -1895,6 +1966,9 @@ Thin-market honesty rules apply.
 - Full wallet addresses are not included in health details.
 - If ticket submission fails, the app offers an email fallback and must not
   claim a ticket number it did not receive.
+- Support is reachable from every page without covering page content: it is a
+  navigation entry (the side navigation on wide screens, the More menu on
+  phones), never a floating button over the page.
 
 ## Operational Kill Switch
 

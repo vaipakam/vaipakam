@@ -381,14 +381,33 @@ a.notif-row-unread:hover {
   white-space: nowrap;
 }
 
-/* The chain name is supporting context — hide it wherever the wallet
- * chip needs the room; the dot remains. 560px (not the previous
- * 400px): with the name shown the header's intrinsic width still
- * exceeded viewports in the 400–560px band even after the phone-tier
- * trims below, so the old threshold only moved the overflow. */
+/* Phones (UX3-011, 2026-10-03 live review). The chain name used to be
+ * hidden here to stop the header overflowing (UX2-001), which left a
+ * bare green dot that says nothing about WHICH network — the one thing
+ * the chip exists to say (UX-013). The app name beside the logo is the
+ * least informative item in the header, so it is the one that gives up
+ * its room: visually hidden (it stays the link's accessible name), and
+ * the network name keeps an ellipsis as a backstop. */
 @media (max-width: 560px) {
+  .shell-brand .brand-name {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+  }
+  .net-chip {
+    min-width: 0;
+  }
   .net-chip-name {
-    display: none;
+    display: inline-block;
+    min-width: 0;
+    max-width: 12ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 }
 
@@ -522,6 +541,18 @@ button.tabbar-item {
   font-weight: 500;
 }
 
+/* UX3-006 — the Support entry is a button (it opens a drawer, it does
+   not navigate); match the link items. */
+button.more-sheet-item {
+  width: 100%;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: inherit;
+  text-align: left;
+}
+
 .more-sheet-item svg {
   width: 18px;
   height: 18px;
@@ -645,6 +676,17 @@ button.tabbar-item {
     color: var(--text-body);
     font-weight: 500;
     font-size: 0.95rem;
+  }
+
+  /* UX3-006 — the Support entry is a button (it opens a drawer); match
+     the link items. */
+  button.sidenav-item {
+    width: 100%;
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-family: inherit;
+    text-align: left;
   }
 
   .sidenav-item svg {
@@ -1584,50 +1626,11 @@ a.item-row:hover {
   }
 }
 
-/* Support drawer (#1028 item 4) — the app's first slide-over. The FAB
-   sits above the phone tab bar; the drawer is a right-side panel on
-   wide screens and near-full-width on phones. */
-.diag-fab {
-  position: fixed;
-  /* Phones: bottom-LEFT. List-card CTAs (Claim / Use this offer) are
-     right-aligned, so a right-side FAB always covers whichever card's
-     button is scrolled into its zone and steals the tap (UX-007).
-     Nothing interactive lives bottom-left above the tab bar. Desktop
-     (min-width block below) returns it to the conventional right. */
-  left: var(--space-4);
-  /* Clear the fixed tab bar on phones. */
-  bottom: calc(72px + env(safe-area-inset-bottom) + var(--space-3));
-  z-index: 40;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
-  border: 1px solid var(--border);
-  background: var(--surface-raised);
-  color: var(--text-muted);
-  box-shadow: var(--shadow-card);
-  cursor: pointer;
-}
-
-.diag-fab:hover {
-  color: var(--brand);
-}
-
-.diag-fab svg {
-  width: 22px;
-  height: 22px;
-}
-
-@media (min-width: 720px) {
-  .diag-fab {
-    left: auto;
-    right: var(--space-4);
-    bottom: var(--space-4);
-  }
-}
-
+/* Support drawer (#1028 item 4) — the app's first slide-over: a right-side
+   panel on wide screens, near-full-width on phones. It has no floating
+   launcher (UX3-006, #2373 r2): Support is a nav entry — the sidebar on wide
+   screens, the More sheet on phones — because a fixed button covered page
+   content at every width it was tried. */
 .diag-overlay {
   position: fixed;
   inset: 0;
@@ -2599,4 +2602,19 @@ a.item-row:hover {
   color: var(--text-muted);
   font-size: 0.875rem;
   max-width: 72ch;
+}
+
+/* UX3-004 — a claim's exact payout, stated above the claim button. */
+.claim-payout {
+  margin: 0 0 8px;
+  font-weight: 600;
+}
+.row-payout {
+  font-weight: 600;
+}
+.claim-payout-note {
+  display: block;
+  margin-top: 4px;
+  font-weight: 400;
+  color: var(--text-muted);
 }

@@ -358,13 +358,6 @@
       "ko"
     ]
   },
-  "copy.claims.row.heldProceedsSuffix": {
-    "source": " + held proceeds",
-    "locales": [
-      "hi",
-      "ko"
-    ]
-  },
   "copy.claims.row.loan": {
     "source": "Loan",
     "locales": [
@@ -1524,12 +1517,6 @@
   },
   "copy.offers.yearly": {
     "source": "yearly",
-    "locales": [
-      "hi"
-    ]
-  },
-  "copy.positions.claimWaiting": {
-    "source": "Claim waiting",
     "locales": [
       "hi"
     ]

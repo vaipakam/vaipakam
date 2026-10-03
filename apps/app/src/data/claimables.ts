@@ -47,6 +47,7 @@
  */
 import { useQuery } from '@tanstack/react-query';
 import { usePublicClient } from 'wagmi';
+import type { PublicClient } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
 import { AssetType } from '../lib/types';
@@ -69,12 +70,16 @@ interface ClaimableTuple {
   amount?: bigint;
   claimed?: boolean;
   assetType?: bigint;
+  tokenId?: bigint;
+  quantity?: bigint;
   heldForLender?: bigint;
   hasRentalNftReturn?: boolean;
   0?: string;
   1?: bigint;
   2?: boolean;
   3?: bigint;
+  4?: bigint;
+  5?: bigint;
   6?: bigint;
   7?: boolean;
 }
@@ -87,13 +92,228 @@ interface ClaimableTuple {
 export interface ClaimDetail {
   asset: string | null;
   amount: bigint;
+  /** #2373 r4 — the claim row's own asset type, token id and quantity
+   *  (`getClaimable`). A non-fungible claim pays an NFT with `amount == 0`,
+   *  so without these the payout cannot name it beside another lane. */
+  assetType: number;
+  tokenId: bigint;
+  quantity: bigint;
   heldForLender: bigint;
+  /** #2373 r5 — the ONE asset held proceeds are paid in (ClaimFacet: the
+   *  loan's `principalAsset`, or `prepayAsset` for a rental). Null when there
+   *  are none, or when a rental's prepay asset could not be read. */
+  heldAsset: string | null;
   hasRentalNftReturn: boolean;
   lifRebate: bigint;
+  /** #2373 r2 — the borrower's frozen swap-to-repay surplus, a SEPARATE lane
+   *  in the principal asset that `claimAsBorrower` pays alongside the
+   *  ordinary claim (`getBorrowerSurplusClaim`). Null when there is none,
+   *  it was already claimed, or this is the lender side. */
+  surplus: { asset: string; amount: bigint } | null;
+  /** #2373 r3 — collateral still held for the borrower in a DIFFERENT asset
+   *  from the claim row (a fallback top-up that did not cure, followed by a
+   *  successful lender retry: the row holds the loan-asset surplus while the
+   *  top-up stays liened). `claimAsBorrower` pays it as a second transfer
+   *  (`getLoanCollateralLien`). Null when there is none, or on the lender
+   *  side. It never makes a claim actionable by itself — the contract's
+   *  NothingToClaim guard does not count it. */
+  extraCollateral: { asset: string; amount: bigint } | null;
 }
 
 export interface ClaimableLoan extends PositionLoan {
   claim: ClaimDetail;
+}
+
+/** The verdict of one claim probe. `unconfirmed` is a transport failure —
+ *  "couldn't confirm", never a "not claimable". */
+export type ClaimProbe =
+  | { kind: 'claimable'; loan: ClaimableLoan }
+  | { kind: 'none' }
+  | { kind: 'unconfirmed' };
+const NONE: ClaimProbe = { kind: 'none' };
+const UNCONFIRMED: ClaimProbe = { kind: 'unconfirmed' };
+const claimable = (loan: ClaimableLoan): ClaimProbe => ({ kind: 'claimable', loan });
+
+/** Probe ONE candidate: does `me` still hold this side's position NFT,
+ *  and what does `getClaimable` say it pays? The single implementation
+ *  behind both the wallet-wide claim list and the loan page's own read
+ *  (UX3-004 round 1 — the loan page must not scan the whole wallet to
+ *  learn about one loan). */
+export async function probeClaim(
+  publicClient: PublicClient,
+  diamond: `0x${string}`,
+  me: string,
+  loan: PositionLoan,
+): Promise<ClaimProbe> {
+  const isLender = loan.role === 'lender';
+  const tokenId = isLender ? loan.lenderTokenId : loan.borrowerTokenId;
+
+  // 1. Does the wallet still hold this side's position NFT? A
+  //    sold position isn't ours to claim; a burned one (revert)
+  //    means the loan fully settled — nothing to claim either.
+  try {
+    const owner = (await publicClient.readContract({
+      address: diamond,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'ownerOf',
+      args: [BigInt(tokenId)],
+    })) as string;
+    if (owner.toLowerCase() !== me) return NONE;
+  } catch (e) {
+    if (isRevert(e)) return NONE;
+    return UNCONFIRMED;
+  }
+
+  // 2. Authoritative claimable probe + Phase-5 borrower rebate.
+  try {
+    const res = (await publicClient.readContract({
+      address: diamond,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'getClaimable',
+      args: [BigInt(loan.loanId), isLender],
+    })) as ClaimableTuple;
+    const claimAsset = res.asset ?? res[0] ?? null;
+    const amount = res.amount ?? res[1] ?? 0n;
+    const claimed = res.claimed ?? res[2] ?? false;
+    const assetType = Number(res.assetType ?? res[3] ?? 0n);
+    const tokenId = res.tokenId ?? res[4] ?? 0n;
+    const quantity = res.quantity ?? res[5] ?? 0n;
+    const heldForLender = res.heldForLender ?? res[6] ?? 0n;
+    const hasRentalNftReturn = res.hasRentalNftReturn ?? res[7] ?? false;
+
+    let lifRebate = 0n;
+    if (!isLender) {
+      try {
+        const rebate = (await publicClient.readContract({
+          address: diamond,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'getBorrowerLifRebate',
+          args: [BigInt(loan.loanId)],
+        })) as readonly [bigint, bigint] | { rebateAmount?: bigint };
+        lifRebate = Array.isArray(rebate)
+          ? (rebate[0] ?? 0n)
+          : ((rebate as { rebateAmount?: bigint }).rebateAmount ?? 0n);
+      } catch (e) {
+        // Old ABI without the Phase-5 view reverts → treat as no
+        // rebate; a transport error is a real "couldn't confirm".
+        if (!isRevert(e)) return UNCONFIRMED;
+      }
+    }
+
+    // #2373 r2 — the frozen swap-to-repay surplus. A claim can consist of
+    // ONLY this lane (a full swap-to-repay that consumed all the collateral
+    // leaves `amount == 0`); ClaimFacet keeps the loan claimable for it, so
+    // the actionability guard below must count it or that claim is never
+    // listed.
+    let surplus: { asset: string; amount: bigint } | null = null;
+    if (!isLender) {
+      try {
+        const sc = (await publicClient.readContract({
+          address: diamond,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'getBorrowerSurplusClaim',
+          args: [BigInt(loan.loanId)],
+        })) as readonly [string, bigint, boolean];
+        const [sAsset, sAmount, sClaimed] = sc;
+        if (
+          !sClaimed &&
+          sAmount > 0n &&
+          sAsset !== '0x0000000000000000000000000000000000000000'
+        ) {
+          surplus = { asset: sAsset, amount: sAmount };
+        }
+      } catch (e) {
+        // A deployment without the view reverts → no surplus lane there; a
+        // transport error is a real "couldn't confirm".
+        if (!isRevert(e)) return UNCONFIRMED;
+      }
+    }
+
+    // #2373 r3 — the liened collateral the claim row cannot carry because it
+    // is a different asset. Mirrors ClaimFacet: paid when the lien is live,
+    // non-zero, and not the claim row's own asset.
+    let extraCollateral: { asset: string; amount: bigint } | null = null;
+    if (!isLender) {
+      try {
+        const lien = (await publicClient.readContract({
+          address: diamond,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'getLoanCollateralLien',
+          args: [BigInt(loan.loanId)],
+        })) as { asset: string; amount: bigint; released: boolean };
+        if (
+          !lien.released &&
+          lien.amount > 0n &&
+          typeof claimAsset === 'string' &&
+          lien.asset.toLowerCase() !== claimAsset.toLowerCase()
+        ) {
+          extraCollateral = { asset: lien.asset, amount: lien.amount };
+        }
+      } catch (e) {
+        // A deployment without the view reverts → no such lane there; a
+        // transport error is a real "couldn't confirm".
+        if (!isRevert(e)) return UNCONFIRMED;
+      }
+    }
+
+    // #2373 r5 — the asset held proceeds are paid in. An ERC-20 loan's is
+    // the lending asset already on the row; a rental's is its prepay asset,
+    // which the row does not carry, so read it — only in the rare case that
+    // proceeds are actually held. A failed read leaves it unknown, which the
+    // payout states rather than guesses.
+    let heldAsset: string | null = null;
+    if (isLender && heldForLender > 0n) {
+      if (loan.assetType === AssetType.ERC20) {
+        heldAsset = loan.lendingAsset;
+      } else {
+        try {
+          const details = (await publicClient.readContract({
+            address: diamond,
+            abi: DIAMOND_ABI_VIEM,
+            functionName: 'getLoanDetails',
+            args: [BigInt(loan.loanId)],
+          })) as { prepayAsset?: string };
+          heldAsset = details.prepayAsset ?? null;
+        } catch {
+          heldAsset = null;
+        }
+      }
+    }
+
+    // Mirror ClaimFacet's actionability guard.
+    const actionable =
+      amount > 0n ||
+      assetType !== AssetType.ERC20 ||
+      heldForLender > 0n ||
+      hasRentalNftReturn ||
+      lifRebate > 0n ||
+      surplus !== null;
+    return !claimed && actionable
+      ? claimable({
+          ...loan,
+          claim: {
+            asset:
+              typeof claimAsset === 'string' &&
+              claimAsset !== '0x0000000000000000000000000000000000000000'
+                ? claimAsset
+                : null,
+            amount,
+            assetType,
+            tokenId,
+            quantity,
+            heldForLender,
+            heldAsset,
+            hasRentalNftReturn,
+            lifRebate,
+            surplus,
+            extraCollateral,
+          },
+        })
+      : NONE;
+  } catch (e) {
+    if (isRevert(e)) return NONE;
+    return UNCONFIRMED;
+  }
 }
 
 /** Claimable loans for the connected wallet, tagged with role.
@@ -430,95 +650,12 @@ export function useMyClaimables() {
           // Only a CLEAN verdict is memoizable: a transport failure is
           // "couldn't confirm", never a cacheable "not claimable".
           let clean = true;
-          const verdict = await (async (): Promise<ClaimableLoan | null> => {
-            const isLender = loan.role === 'lender';
-            const tokenId = isLender ? loan.lenderTokenId : loan.borrowerTokenId;
-
-            // 1. Does the wallet still hold this side's position NFT? A
-            //    sold position isn't ours to claim; a burned one (revert)
-            //    means the loan fully settled — nothing to claim either.
-            try {
-              const owner = (await publicClient.readContract({
-                address: diamond,
-                abi: DIAMOND_ABI_VIEM,
-                functionName: 'ownerOf',
-                args: [BigInt(tokenId)],
-              })) as string;
-              if (owner.toLowerCase() !== me) return null;
-            } catch (e) {
-              if (isRevert(e)) return null;
-              transportFailed = true;
-              clean = false;
-              return null;
-            }
-
-            // 2. Authoritative claimable probe + Phase-5 borrower rebate.
-            try {
-              const res = (await publicClient.readContract({
-                address: diamond,
-                abi: DIAMOND_ABI_VIEM,
-                functionName: 'getClaimable',
-                args: [BigInt(loan.loanId), isLender],
-              })) as ClaimableTuple;
-              const claimAsset = res.asset ?? res[0] ?? null;
-              const amount = res.amount ?? res[1] ?? 0n;
-              const claimed = res.claimed ?? res[2] ?? false;
-              const assetType = Number(res.assetType ?? res[3] ?? 0n);
-              const heldForLender = res.heldForLender ?? res[6] ?? 0n;
-              const hasRentalNftReturn = res.hasRentalNftReturn ?? res[7] ?? false;
-
-              let lifRebate = 0n;
-              if (!isLender) {
-                try {
-                  const rebate = (await publicClient.readContract({
-                    address: diamond,
-                    abi: DIAMOND_ABI_VIEM,
-                    functionName: 'getBorrowerLifRebate',
-                    args: [BigInt(loan.loanId)],
-                  })) as readonly [bigint, bigint] | { rebateAmount?: bigint };
-                  lifRebate = Array.isArray(rebate)
-                    ? (rebate[0] ?? 0n)
-                    : ((rebate as { rebateAmount?: bigint }).rebateAmount ?? 0n);
-                } catch (e) {
-                  // Old ABI without the Phase-5 view reverts → treat as no
-                  // rebate; a transport error is a real "couldn't confirm".
-                  if (!isRevert(e)) {
-                    transportFailed = true;
-                    clean = false;
-                  }
-                }
-              }
-
-              // Mirror ClaimFacet's actionability guard.
-              const actionable =
-                amount > 0n ||
-                assetType !== AssetType.ERC20 ||
-                heldForLender > 0n ||
-                hasRentalNftReturn ||
-                lifRebate > 0n;
-              return !claimed && actionable
-                ? ({
-                    ...loan,
-                    claim: {
-                      asset:
-                        typeof claimAsset === 'string' &&
-                        claimAsset !== '0x0000000000000000000000000000000000000000'
-                          ? claimAsset
-                          : null,
-                      amount,
-                      heldForLender,
-                      hasRentalNftReturn,
-                      lifRebate,
-                    },
-                  } satisfies ClaimableLoan)
-                : null;
-            } catch (e) {
-              if (isRevert(e)) return null;
-              transportFailed = true;
-              clean = false;
-              return null;
-            }
-          })();
+          const probe = await probeClaim(publicClient, diamond, me, loan);
+          if (probe.kind === 'unconfirmed') {
+            transportFailed = true;
+            clean = false;
+          }
+          const verdict = probe.kind === 'claimable' ? probe.loan : null;
           // Cache only when the pass was CLEAN and the rail was
           // healthy when it started: a verdict captured while
           // invalidation signals were absent must not become readable
@@ -537,3 +674,55 @@ export function useMyClaimables() {
     },
   });
 }
+
+/** One loan's claim on one side, for the loan page (UX3-004, #2373 round 1).
+ *
+ *  The loan page used to call {@link useMyClaimables} — the whole wallet's
+ *  claim scan, up to its 2,000-position ceiling — to learn about one loan.
+ *  This probes only this loan's side: one `ownerOf`, and `getClaimable`
+ *  only if the wallet holds that side's position NFT.
+ *
+ *  Deliberately NOT gated on the loan's status. The page's reconciled
+ *  status is resolved below its early returns, and gating on the indexed
+ *  status instead would recreate UX3-001: a read disabled on a lagging row
+ *  leaves the payout "checking" for good. An active loan simply probes to
+ *  "nothing claimable".
+ *
+ *  `data`: the claimable loan, or `null` when there is nothing to claim on
+ *  this side. An unconfirmable read is an ERROR, never a `null` — "couldn't
+ *  confirm" is not "nothing to claim". Shares the `claimables` key root, so
+ *  every existing invalidation after a claim reaches it too. */
+export function useLoanClaim(
+  loan: IndexedLoanForClaim | undefined,
+  role: 'lender' | 'borrower',
+) {
+  const { readChain, address } = useActiveChain();
+  const publicClient = usePublicClient({ chainId: readChain.chainId });
+  const me = address?.toLowerCase();
+  return useQuery({
+    queryKey: [
+      'claimables',
+      'loan',
+      readChain.chainId,
+      me,
+      loan?.loanId,
+      role,
+      loan?.status,
+      loan?.lenderTokenId,
+      loan?.borrowerTokenId,
+    ],
+    enabled: Boolean(publicClient && me && loan),
+    staleTime: 30_000,
+    queryFn: async (): Promise<ClaimableLoan | null> => {
+      const probe = await probeClaim(publicClient!, readChain.diamondAddress, me!, {
+        ...loan!,
+        role,
+      });
+      if (probe.kind === 'unconfirmed') throw new Error('claim read could not be confirmed');
+      return probe.kind === 'claimable' ? probe.loan : null;
+    },
+  });
+}
+
+/** The indexed loan row a loan-scoped claim probe starts from. */
+export type IndexedLoanForClaim = Omit<PositionLoan, 'role'>;
