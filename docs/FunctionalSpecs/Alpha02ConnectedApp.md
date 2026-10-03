@@ -1322,6 +1322,91 @@ Thin-market honesty rules apply.
 - Position rows should offer the next relevant action where one exists. A row
   with a payout waiting says what that payout is and offers to collect it.
 
+### Taking back extra collateral
+
+The platform lets a borrower withdraw collateral from an open loan as long as
+the loan stays healthy (ProjectDetailsREADME, "Allow Borrower to Withdraw Excess
+Collateral"). The app offers this to every borrower, in Basic mode, because it
+is the borrower's own money.
+
+- The surface appears for the current borrower-position holder on an open loan
+  with fungible collateral, using the reconciled loan status (a loan the live read
+  confirms is open again appears even before the position lists catch up). When
+  the live loan status says the loan is no longer
+  open (repaid, defaulted or liquidated elsewhere), the surface goes away, even
+  if the position lists have not caught up. A fact the surface depends on — who
+  holds the borrower position, whether the loan is open — counts only while its
+  latest read succeeded: a read that failed to refresh is treated as unknown, never
+  as its last answer. If the collateral token's details cannot be read, the
+  surface stays and says so, rather than disappearing. It says plainly that taking collateral back makes
+  the loan riskier: with less collateral, a price drop reaches liquidation
+  sooner.
+- Before asking for anything, it states how much can be taken back right now,
+  from the protocol's own live limit, and keeps that figure fresh while the page
+  is open. It says that the limit moves with prices, so an amount right at the
+  limit can still be refused. The limit is never displayed above its true value:
+  a figure shortened for display is rounded down, so typing what the page states
+  is always within the limit.
+- When nothing can be taken back, it says why, as far as the app can tell: the
+  loan needs all of its collateral, or the collateral cannot be priced right
+  now. When the app cannot tell which, it says that instead of choosing one.
+  A limit the app could not read is never shown as zero. A zero is explained only
+  once the live loan status confirms the loan is open, since a closed loan also
+  reads zero; until then the surface says the loan's status could not be
+  confirmed.
+- An amount above the limit is refused on the page, with the limit stated. An
+  amount with more decimal places than the token has is refused and named, never
+  rounded into a different amount; the confirmation states the exact amount that
+  will be sent.
+- When the deployment is paused, the surface says withdrawals are paused instead
+  of offering the form, and the pre-check refuses to open the wallet.
+- When the surface shows an amount but could not read a fact the pre-check
+  depends on — whether the deployment is paused, or whether a sale listing is
+  linked (including on a deployment too old to answer that ahead of time) — it
+  says so beside the amount, rather than presenting the withdrawal as
+  unconditionally available and revealing the obstacle only at submit.
+- The confirmation's button is disabled whenever the wallet cannot send — an
+  unsupported network or no wallet client — or when the reviewed amount is no
+  longer valid (the limit fell below it), rather than accepting a click that
+  does nothing or can only fail.
+- While a review is open or a send is in flight, the amount cannot be edited: the
+  amount on screen is always the amount the wallet is asked to send.
+- While an acceptable refinance request is open on the loan, the surface says
+  that taking collateral back would make every lender's acceptance fail and
+  asks the borrower to cancel or wait — the same interlock partial repayment
+  and early close-out apply — and the pre-check refuses. The pre-check also
+  catches a request posted from another tab on the same device after the page
+  loaded. A request made on another device or through another tool cannot be
+  discovered by the app yet, so the surface says that, and what withdrawing would
+  do to such a request.
+- An open confirmation does not survive a network switch or a change of
+  connected account: it closes, and the typed amount is cleared, so a review
+  opened on one network or under one wallet can never send on another.
+- A pre-check that fails is reported as a check that could not finish — the
+  wallet never opened and nothing was spent — never as a failed transaction.
+- Before the wallet opens, the app re-checks what would make the protocol
+  refuse: the sanctions screen, that the wallet still holds the borrower
+  position, that the limit still covers the amount, that no sale listing of the
+  lender's position is linked to the loan, and that no swap-to-repay order is
+  pending against it. Each refusal is said in plain words. Where the app cannot
+  undo the obstacle itself (a swap-to-repay order placed with another tool), it
+  says so rather than pointing at a control that does not exist. A swap-to-repay
+  order that reached its deadline without filling still blocks the withdrawal
+  until it is cancelled, and the surface says so rather than implying expiry
+  releases the collateral. When one of these checks cannot be answered, nothing
+  is sent and the surface says it could not check, rather than treating an
+  unread answer as a clear one.
+- Taking back extra collateral stays available to a wallet that has not accepted
+  the current Terms, like repaying and topping up: it returns the borrower's own
+  assets and opens nothing new.
+- The confirmation states what arrives in the wallet, that nothing more is owed,
+  what is put at risk, and that the rest of the collateral stays locked until
+  the loan closes.
+- When the collateral is VPFI, the surface says that taking it out of the vault
+  lowers the balance the fee-discount tier is measured on, so the discount may
+  drop. When the app cannot tell whether the collateral is VPFI, it says that
+  and gives the same caution, rather than treating unknown as "not VPFI".
+
 ### Forced close-out of an overdue loan
 
 - A lender holding an active position whose repayment window and grace period

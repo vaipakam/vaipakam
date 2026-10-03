@@ -68,6 +68,9 @@ export const RECEIPT_FLOOR_ROOTS: readonly string[] = [
   // write that settles the loan) must flip the hold card promptly in
   // every tab.
   'saleListingHold',
+  // Take-back-collateral ceiling (UX3-009, #2389 r1): an own repay,
+  // top-up or withdrawal moves it, in every tab.
+  'maxWithdrawable',
   // Risk-access page (#671/#728 port, Codex #1517 r1): tier / strict
   // writes need the delayed second read — a lagging public RPC can
   // serve the pre-write snapshot to the immediate refetch, and a user

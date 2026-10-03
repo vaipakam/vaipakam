@@ -17,17 +17,19 @@ import {
   useState,
 } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { CircleCheck, LoaderCircle, ShieldPlus, ShieldQuestion } from 'lucide-react';
+import { CircleCheck, LoaderCircle, ShieldMinus, ShieldPlus, ShieldQuestion } from 'lucide-react';
 import { usePublicClient, useWalletClient } from 'wagmi';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   BaseError,
   ContractFunctionRevertedError,
   ContractFunctionZeroDataError,
+  formatUnits,
   parseUnits,
 } from 'viem';
 import { copy } from '../content/copy';
 import { isPositiveDecimal, captureTxError } from '../lib/errors';
+import { freshData } from '../lib/freshData';
 import { useLoan } from '../data/hooks';
 import { FEE_MODE_FULL, FEE_MODE_HOLD_ONLY, useFeeEntitlement } from '../data/tariff';
 import { VPFI_DECIMALS } from '../data/vpfi';
@@ -56,6 +58,8 @@ import {
   formatDate,
   formatDurationDays,
   formatTokenAmount,
+  formatTokenAmountDown,
+  parseExactUnits,
   fullTermInterest,
   shortAddress,
 } from '../lib/format';
@@ -78,6 +82,14 @@ import {
 import { useForcedCloseReads } from '../data/useForcedClose';
 import { probeClaim, useLoanClaim } from '../data/claimables';
 import { receiptPayout, useClaimPayoutText } from '../data/useClaimPayout';
+import {
+  classifyMaxWithdrawable,
+  swapToRepayOrderState,
+  withdrawPreflightBlock,
+  withdrawCaveats,
+  useMaxWithdrawable,
+  withdrawAmountProblem,
+} from '../data/partialWithdraw';
 import { ObligationTransferFlow } from '../components/ObligationTransferFlow';
 import { OffsetFlow } from '../components/OffsetFlow';
 import { OffsetPendingCard } from '../components/OffsetPendingCard';
@@ -92,7 +104,7 @@ import { loanSaleListingEnabled, LoanSaleFlow } from '../components/LoanSaleFlow
 import { LoanSalePendingCard } from '../components/LoanSalePendingCard';
 import { LoanKeeperCard } from '../components/LoanKeeperCard';
 import { LOCK_EARLY_WITHDRAWAL_SALE, useLoanSalePending } from '../data/loanSalePending';
-import { useRefinancePending } from '../data/refinancePending';
+import { readRefinanceMarker, useRefinancePending } from '../data/refinancePending';
 import { ZERO_ADDRESS } from '../lib/offerSchema';
 import {
   AssetType,
@@ -107,6 +119,7 @@ type Action = 'repay' | 'claim-borrower' | 'claim-lender' | null;
 type ConfirmSurface =
   | 'action'
   | 'collateral'
+  | 'withdraw-collateral'
   | 'partial'
   | 'preclose'
   | 'refinance'
@@ -160,6 +173,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   const [error, setError] = useState<string | null>(null);
   const [doneMessage, setDoneMessage] = useState<string | null>(null);
   const [collateralInput, setCollateralInput] = useState('');
+  const [withdrawInput, setWithdrawInput] = useState('');
   const [partialInput, setPartialInput] = useState('');
   // A successful claim doesn't change the indexer row's status, so
   // without this latch the button would re-enable and invite a
@@ -296,6 +310,19 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     address !== undefined &&
     nftOwners.data.lenderOwner.toLowerCase() === address.toLowerCase();
 
+  /** #2389 r8 — the borrower-side twin of `isLenderHolder`, for the
+   *  take-back-collateral surface: a failed refetch DISQUALIFIES the
+   *  cached owner set (TanStack keeps it through the error), so a wallet
+   *  that just transferred the borrower position is not shown a
+   *  withdrawal it can no longer make. Scoped to that surface for the
+   *  same reason `isLenderHolder` is scoped to the sale path. */
+  const freshBorrowerOwner = freshData(nftOwners)?.borrowerOwner;
+  const isBorrowerHolder =
+    freshBorrowerOwner !== undefined &&
+    freshBorrowerOwner !== 'burned' &&
+    address !== undefined &&
+    freshBorrowerOwner.toLowerCase() === address.toLowerCase();
+
   const role: 'lender' | 'borrower' | 'viewer' | 'checking' | 'unverified' =
     useMemo(() => {
       const row = loan.data;
@@ -398,6 +425,57 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     loan.data?.loanId,
     Boolean(loan.data && effectivelyActive && !loanIsRental),
   );
+
+  // UX3-009 — the live ceiling for taking collateral back. Only the
+  // current borrower-position holder may withdraw, only from an open
+  // loan, and only fungible collateral has an amount to take.
+  // #2389 r1 — the live status, when it has answered, outranks the
+  // indexed row for the take-back-collateral surface.
+  const liveSaysNotActive =
+    liveStatus.data !== undefined && liveStatus.data.status !== LoanStatus.Active;
+  const maxWithdrawable = useMaxWithdrawable({
+    loanId: loan.data ? String(loan.data.loanId) : undefined,
+    collateralAsset: loan.data?.collateralAsset,
+    enabled:
+      isBorrowerHolder &&
+      effectivelyActive &&
+      !liveSaysNotActive &&
+      !loanIsRental &&
+      !collateralIsNft,
+  });
+  const maxWithdrawState = classifyMaxWithdrawable({
+    data: maxWithdrawable.data,
+    isError: maxWithdrawable.isError,
+    // A failed refetch disqualifies a cached Active (#2389 r8): TanStack
+    // keeps the old data through the error, and the loan may have closed.
+    liveActive: freshData(liveStatus)?.status === LoanStatus.Active,
+  });
+  // #2389 r7 — the take-back review is ACCOUNT-scoped as well as
+  // chain-scoped: a review opened under one wallet must not reappear,
+  // one click from sending, after switching to another account (say the
+  // new holder of the borrower position). Render-phase adjustment, like
+  // the chain reset, so no frame commits carrying the old review.
+  const [withdrawAccount, setWithdrawAccount] = useState(address);
+  if (withdrawAccount !== address) {
+    setWithdrawAccount(address);
+    setWithdrawInput('');
+    setConfirmingSurface((sfc) => (sfc === 'withdraw-collateral' ? null : sfc));
+  }
+  // #2389 r3 — parsed EXACTLY: a rounded parse would let the receipt
+  // state one amount while the contract moves another.
+  const withdrawParsed = useMemo(
+    () =>
+      collateralMeta.data
+        ? parseExactUnits(withdrawInput, collateralMeta.data.decimals)
+        : ('invalid' as const),
+    [withdrawInput, collateralMeta.data],
+  );
+  const withdrawInputWei =
+    typeof withdrawParsed === 'bigint' && withdrawParsed > 0n ? withdrawParsed : null;
+  const withdrawProblem = withdrawAmountProblem({
+    parsed: withdrawParsed,
+    state: maxWithdrawState,
+  });
 
   // Sanctions: addCollateral and both claim paths screen msg.sender on
   // chain — gate them BEFORE the approval/click so a flagged wallet
@@ -588,9 +666,17 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     // explicitly rather than clearing the slot unconditionally —
     // other surfaces own their own reset, and this block has no
     // standing to discard theirs.
+    // #2389 r3 P1 — the take-back-collateral review is chain-scoped for
+    // the same reason: carried across a switch onto the same loan id on
+    // another chain, it is one click from withdrawing collateral there.
+    // Its typed amount goes with it — the destination token can have
+    // different decimals.
     setConfirmingSurface((sfc) =>
-      sfc === 'sale-teardown' || sfc === 'forced-close' ? null : sfc,
+      sfc === 'sale-teardown' || sfc === 'forced-close' || sfc === 'withdraw-collateral'
+        ? null
+        : sfc,
     );
+    setWithdrawInput('');
   }
   // The ref advances in a LAYOUT effect, not a passive one (Codex #1683 r1).
   // I had argued the guard and the state it protects must move together, so
@@ -2060,6 +2146,153 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     }
   }
 
+  /** UX3-009 — take back collateral the loan no longer needs. Every
+   *  refusal the contract would make that the app can see beforehand is
+   *  checked live here and said in plain words; the rest (a price move
+   *  that lowers the ceiling between the read and the signature) the
+   *  contract refuses at estimate time, before anything is paid. */
+  async function runWithdrawCollateral() {
+    if (
+      !address ||
+      !walletChain ||
+      !walletClient ||
+      !publicClient ||
+      !collateralMeta.data ||
+      withdrawInputWei === null
+    ) {
+      return;
+    }
+    setPhase('pending');
+    setError(null);
+    const t = copy.positions.details.withdrawCollateral;
+    const wei = withdrawInputWei;
+    // PRE-CHECKS (#2389 r3). Nothing here opens the wallet, so a failure
+    // is said as a failed check — never as a transaction that "didn't go
+    // through". A check's own plain-words message (a moved position, a
+    // sanctions retry) is kept; anything else reads "couldn't check".
+    // A marker this page did not mount with means a request was posted
+    // in another tab after load: block until the page has verified it.
+    const liveRefiMarker = readRefinanceMarker(readChain.chainId, Number(row.loanId));
+    const newerRefinanceMarker = liveRefiMarker !== null && liveRefiMarker !== refi.offerId;
+    let saleState: Awaited<ReturnType<typeof probeSaleHoldLive>> | 'unknown';
+    let swapOrder: Awaited<ReturnType<typeof swapToRepayOrderState>>;
+    let liveMax: bigint;
+    let paused: boolean | 'unknown';
+    try {
+      // partialWithdrawCollateral screens msg.sender (Tier-1) and pays
+      // the CURRENT borrower-position holder — re-check both live. The
+      // sanctions read fails CLOSED here: every pre-check follows one
+      // rule, and an unanswered one sends nothing.
+      await assertWalletNotSanctionedLive(
+        publicClient,
+        walletChain.diamondAddress,
+        address,
+        { failClosed: true },
+      );
+      [, saleState, swapOrder, liveMax, paused] = await Promise.all([
+        assertPositionNftHeldLive({
+          publicClient,
+          diamondAddress: walletChain.diamondAddress,
+          tokenId: row.borrowerTokenId,
+          expectedOwner: address,
+        }),
+        // A sale listing (live, ended-but-uncleared, or accepted) keeps
+        // the loan linked and the contract refuses the withdrawal. A
+        // probe that cannot answer stops the flow (#2389 r2) — an
+        // unanswered pre-check sends nothing.
+        probeSaleHoldLive(
+          publicClient,
+          walletChain.diamondAddress,
+          Number(row.loanId),
+          row.lenderTokenId,
+          address,
+        ).catch(() => 'unknown' as const),
+        swapToRepayOrderState({
+          publicClient,
+          diamondAddress: walletChain.diamondAddress,
+          loanId: BigInt(row.loanId),
+        }),
+        publicClient.readContract({
+          address: walletChain.diamondAddress,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'calculateMaxWithdrawable',
+          args: [BigInt(row.loanId)],
+        }) as Promise<bigint>,
+        // The withdrawal is refused while the deployment is paused.
+        (
+          publicClient.readContract({
+            address: walletChain.diamondAddress,
+            abi: DIAMOND_ABI_VIEM,
+            functionName: 'paused',
+          }) as Promise<boolean>
+        ).catch(() => 'unknown' as const),
+      ]);
+    } catch (err) {
+      setError(
+        captureTxError(err, {
+          message: err instanceof BaseError ? t.checkFailed : (err as Error)?.message || t.checkFailed,
+        }),
+      );
+      setPhase(null);
+      return;
+    }
+    try {
+      // One pure rule for every pre-check (#2389 r2): a blocking answer
+      // names its obstacle, and an unanswered one blocks with "couldn't
+      // check". Tested in partialWithdraw.test.ts.
+      const block = withdrawPreflightBlock({
+        // #2389 r6 — the page's verified state, OR a marker another tab
+        // on this device wrote after the page mounted (re-read live).
+        refinancePending: refinanceBlocking || newerRefinanceMarker,
+        paused,
+        saleState,
+        swapOrder,
+        liveMax,
+        wei,
+      });
+      if (block !== null) {
+        setError(
+          block === 'refinance-pending'
+            ? t.refinancePending
+            : block === 'paused'
+            ? t.paused
+            : block === 'pause-unchecked'
+              ? t.pauseUnchecked
+              : block === 'sale-listed'
+            ? t.saleListed
+            : block === 'sale-unchecked'
+              ? t.saleUnchecked
+              : block === 'swap-order'
+                ? t.swapOrderPending
+                : block === 'swap-unchecked'
+                  ? t.swapOrderUnchecked
+                  : block === 'over-max'
+                    ? t.overMax(
+                        `${formatTokenAmountDown(liveMax, collateralMeta.data.decimals)} ${collateralMeta.data.symbol}`,
+                      )
+                    : t.noneUnknown,
+        );
+        if (block === 'over-max' || block === 'none-left') {
+          void queryClient.invalidateQueries({ queryKey: ['maxWithdrawable'] });
+        }
+        return;
+      }
+      setPhase('submitting');
+      await write('partialWithdrawCollateral', [BigInt(row.loanId), wei]);
+      setDoneMessage(copy.positions.details.done.collateralWithdrawn);
+      setWithdrawInput('');
+      setConfirmingSurface(null);
+      void queryClient.invalidateQueries({ queryKey: ['loan'] });
+      void queryClient.invalidateQueries({ queryKey: ['loanRisk'] });
+      void queryClient.invalidateQueries({ queryKey: ['maxWithdrawable'] });
+      void queryClient.invalidateQueries({ queryKey: ['vpfi'] });
+    } catch (err) {
+      setError(captureTxError(err));
+    } finally {
+      setPhase(null);
+    }
+  }
+
   async function runPartialRepay() {
     if (!address || !walletChain || !walletClient || !publicClient || !principalMeta.data) return;
     // Accepted-sale completion window (Codex #1511 r4 P1 + r5 P1):
@@ -3041,6 +3274,218 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
               </ConfirmReceipt>
             </div>
           ) : null}
+        </section>
+      ) : null}
+
+      {isBorrowerHolder &&
+      // #2389 r5 — the RECONCILED active state, as the ceiling query
+      // uses: a fallback loan the live read confirms cured to Active
+      // is open again, and the indexer must not withhold the action.
+      effectivelyActive &&
+      // #2389 r1 — the indexed row can lag a repay, default or
+      // liquidation made elsewhere; once the live read says the loan is
+      // no longer Active the card goes, rather than telling the borrower
+      // an open loan needs all its collateral.
+      !liveSaysNotActive &&
+      !closedThisSession &&
+      !isRental &&
+      !collateralIsNft &&
+      hasCollateral &&
+      // #2389 r8 — a token-details failure keeps the card, with that
+      // said, rather than making the borrower's action vanish.
+      (collateral || collateralMeta.isError) ? (
+        // UX3-009 — take back collateral the loan no longer needs. Shown
+        // in Basic mode: it is the borrower's own money, and the spec
+        // offers it to every borrower, not only to advanced users.
+        <section className="card" id="withdraw-collateral-card">
+          <div className="card-title">
+            <ShieldMinus aria-hidden />
+            <h3 style={{ margin: 0 }}>{copy.positions.details.withdrawCollateral.title}</h3>
+          </div>
+          {!collateral ? (
+            <p className="muted" id="withdraw-collateral-state" style={{ margin: 0 }}>
+              {copy.positions.details.withdrawCollateral.metaUnavailable}
+            </p>
+          ) : (
+          <>
+          <p className="muted">
+            {copy.positions.details.withdrawCollateral.blurb(collateral.symbol)}
+          </p>
+          {saleHoldResolving ? (
+            <p className="muted" style={{ margin: 0 }}>
+              {copy.earlyRepay.checkingInterlocks}
+            </p>
+          ) : refinanceBlocking ? (
+            // #2389 r5 — the same pending-refinance interlock partial
+            // repayment and preclose apply: the request is frozen at the
+            // current collateral, so a withdrawal strands it.
+            <div className="banner banner-warn" role="alert">
+              <span className="banner-body">
+                {copy.positions.details.withdrawCollateral.refinancePending}
+              </span>
+            </div>
+          ) : saleHold.data === 'live' ||
+            saleHold.data === 'clearable' ||
+            saleHold.data === 'accepted' ? (
+            // The contract refuses a withdrawal while ANY listing is
+            // linked to the loan — live, ended-but-uncleared, or
+            // accepted. The sale-hold card above explains which.
+            <div className="banner banner-warn" role="status">
+              <span className="banner-body">
+                {copy.positions.details.withdrawCollateral.saleListed}
+              </span>
+            </div>
+          ) : maxWithdrawState.kind === 'loading' ? (
+            <p className="muted" id="withdraw-collateral-state" style={{ margin: 0 }}>
+              {copy.positions.details.withdrawCollateral.checking}
+            </p>
+          ) : maxWithdrawState.kind === 'paused' ? (
+            <p className="muted" id="withdraw-collateral-state" style={{ margin: 0 }}>
+              {copy.positions.details.withdrawCollateral.paused}
+            </p>
+          ) : maxWithdrawState.kind === 'unconfirmed' ? (
+            <p className="muted" id="withdraw-collateral-state" style={{ margin: 0 }}>
+              {copy.positions.details.withdrawCollateral.unconfirmed}
+            </p>
+          ) : maxWithdrawState.kind !== 'some' ? (
+            <p className="muted" id="withdraw-collateral-state" style={{ margin: 0 }}>
+              {maxWithdrawState.kind === 'none-needed'
+                ? copy.positions.details.withdrawCollateral.noneNeeded
+                : maxWithdrawState.kind === 'none-unpriced'
+                  ? copy.positions.details.withdrawCollateral.noneUnpriced
+                  : maxWithdrawState.kind === 'none-status-unconfirmed'
+                    ? copy.positions.details.withdrawCollateral.noneStatusUnconfirmed
+                    : copy.positions.details.withdrawCollateral.noneUnknown}
+            </p>
+          ) : (
+            <>
+              <p id="withdraw-collateral-state" style={{ marginTop: 0 }}>
+                {copy.positions.details.withdrawCollateral.available(
+                  `${formatTokenAmountDown(maxWithdrawState.max, collateral.decimals)} ${collateral.symbol}`,
+                )}
+              </p>
+              <p className="field-hint" style={{ marginTop: 0 }}>
+                {copy.positions.details.withdrawCollateral.availableNote}
+              </p>
+              {/* #2389 r4 — what the card cannot vouch for is said here,
+                  not discovered at submit. */}
+              {withdrawCaveats({
+                refinanceKnown: refinancePending,
+                paused: maxWithdrawable.data?.paused,
+                saleHold: saleHold.data,
+              }).map((c) => (
+                <p key={c} className="field-hint" style={{ marginTop: 0 }}>
+                  {c === 'pause-unknown'
+                    ? copy.positions.details.withdrawCollateral.pauseUnknownNote
+                    : c === 'sale-unknown'
+                      ? copy.positions.details.withdrawCollateral.saleUnknownNote
+                      : copy.positions.details.withdrawCollateral.refinanceElsewhereNote}
+                </p>
+              ))}
+              <div className="cluster">
+                <input
+                  aria-label={copy.positions.details.withdrawCollateral.amountAria}
+                  className="input"
+                  style={{ flex: 1 }}
+                  inputMode="decimal"
+                  placeholder="0.0"
+                  value={withdrawInput}
+                  // #2389 r5 P1 — frozen while the review is open or a
+                  // send is in flight, so the amount on screen is always
+                  // the amount the wallet is asked to send.
+                  disabled={busy || confirmingSurface === 'withdraw-collateral'}
+                  onChange={(e) => setWithdrawInput(e.target.value.trim())}
+                />
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  disabled={busy || confirmingSurface === 'withdraw-collateral'}
+                  onClick={() =>
+                    setWithdrawInput(formatUnits(maxWithdrawState.max, collateral.decimals))
+                  }
+                >
+                  {copy.positions.details.withdrawCollateral.max}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  disabled={
+                    busy ||
+                    !onSupportedChain ||
+                    !walletClient ||
+                    !publicClient ||
+                    !sanctionsClear ||
+                    withdrawProblem !== null
+                  }
+                  onClick={() => setConfirmingSurface('withdraw-collateral')}
+                >
+                  {copy.positions.details.withdrawCollateral.button}
+                </button>
+              </div>
+              {withdrawProblem === 'too-precise' ? (
+                <p className="field-hint" style={{ color: 'var(--danger)', marginTop: 8 }}>
+                  {copy.positions.details.withdrawCollateral.tooPrecise(
+                    collateral.symbol,
+                    String(collateral.decimals),
+                  )}
+                </p>
+              ) : null}
+              {withdrawProblem === 'over-max' ? (
+                <p className="field-hint" style={{ color: 'var(--danger)', marginTop: 8 }}>
+                  {copy.positions.details.withdrawCollateral.overMax(
+                    `${formatTokenAmountDown(maxWithdrawState.max, collateral.decimals)} ${collateral.symbol}`,
+                  )}
+                </p>
+              ) : null}
+              {maxWithdrawable.data?.isVpfi === true ? (
+                <p className="field-hint" style={{ marginTop: 8 }}>
+                  {copy.positions.details.withdrawCollateral.vpfiNote}
+                </p>
+              ) : maxWithdrawable.data && maxWithdrawable.data.isVpfi === undefined ? (
+                // #2389 r1 — the VPFI check failed; unknown is stated,
+                // never shown as "not VPFI".
+                <p className="field-hint" style={{ marginTop: 8 }}>
+                  {copy.positions.details.withdrawCollateral.vpfiUnknownNote}
+                </p>
+              ) : null}
+              {confirmingSurface === 'withdraw-collateral' && withdrawInputWei !== null ? (
+                <div style={{ marginTop: 16 }}>
+                  <ConfirmReceipt
+                    busy={busy}
+                    confirmLabel={copy.positions.details.withdrawCollateral.confirm}
+                    onBack={() => setConfirmingSurface(null)}
+                    onConfirm={() => void runWithdrawCollateral()}
+                    // #2389 r4 — the same write gate as the form's button:
+                    // a wallet moved to an unsupported network must land
+                    // on a disabled button, not a silent no-op.
+                    disabled={
+                      !onSupportedChain ||
+                      !walletClient ||
+                      !publicClient ||
+                      !walletChain ||
+                      // #2389 r5 — a ceiling that refreshed below the
+                      // reviewed amount disables the confirm, beside the
+                      // over-limit warning it already shows.
+                      withdrawProblem !== null
+                    }
+                    data={{
+                      // The exact amount sent, not the typed text (#2389 r3).
+                      youReceive: copy.positions.details.withdrawCollateral.receive(
+                        `${formatUnits(withdrawInputWei, collateral.decimals)} ${collateral.symbol}`,
+                      ),
+                      youLock: copy.positions.details.withdrawCollateral.lockNothing,
+                      youMayOwe: copy.positions.details.withdrawCollateral.oweNothingMore,
+                      youCanLose: copy.positions.details.withdrawCollateral.lose,
+                      fees: copy.positions.details.receipt.feesNone,
+                      whenThisEnds: copy.positions.details.withdrawCollateral.ends,
+                    }}
+                  />
+                </div>
+              ) : null}
+            </>
+          )}
+          </>
+          )}
         </section>
       ) : null}
 

@@ -3088,6 +3088,7 @@ const copySource = {
         rentalClosed: 'Rental closed. Any refundable buffer is ready — claim it from the Claim Center.',
         repaid: 'Repayment confirmed. Your collateral is ready — claim it below or from the Claim Center.',
         collateralAdded: 'Collateral added — the loan is safer now.',
+        collateralWithdrawn: 'Collateral taken back — it’s in your wallet now.',
         partialRepaid: 'Partial repayment confirmed — you now owe less.',
       },
       // UX3-004 — the claim's exact payout, stated above the claim button.
@@ -3145,6 +3146,78 @@ const copySource = {
         loseNormal: 'The added amount joins the existing collateral — it’s at stake the same way if the loan defaults.',
         endsImmediately: 'The top-up applies immediately.',
         fallbackWarn: 'This loan is in a failed-liquidation state. Adding collateral only brings it back to Active if the top-up restores the required health level — otherwise the lender can still claim, and the added collateral is at stake too. Repaying in full always cures. If unsure, repay instead.',
+      },
+      // UX3-009 — take back collateral the loan no longer needs.
+      withdrawCollateral: {
+        title: 'Take back extra collateral',
+        blurb: tmpl(
+          'If your {{symbol}} collateral is worth more than this loan needs, you can take the extra back to your wallet. The loan stays open, but it becomes riskier: with less collateral, a price drop brings liquidation closer.',
+          ['symbol'],
+        ),
+        available: tmpl('You can take back up to {{amount}} right now.', ['amount']),
+        availableNote: 'This limit moves with prices. An amount right at the limit can be refused if prices change before your transaction goes through, so leave some room.',
+        checking: 'Checking how much you can take back…',
+        unconfirmed: 'We couldn’t check how much you can take back right now. Try again in a moment.',
+        noneNeeded: 'Right now the loan needs all of its collateral, so there is nothing extra to take back. This can change if the collateral’s price rises or you repay part of the loan.',
+        noneUnpriced: 'There is no reliable price for this collateral right now, so none of it can be taken back. Taking collateral back only works while the collateral can be priced.',
+        // #2389 r8 — the token's details failed: the card stays, saying so.
+        metaUnavailable:
+          'We couldn’t read this collateral token’s details (its symbol and decimal places), so amounts can’t be shown or taken back right now. Please try again in a moment.',
+        // #2389 r7 — zero while the loan's live status is unconfirmed.
+        noneStatusUnconfirmed:
+          'Nothing can be taken back right now, and we couldn’t confirm this loan’s current status — it may have closed. Please check again in a moment.',
+        noneUnknown: 'Nothing can be taken back right now. Either the loan needs all of its collateral or the collateral can’t be priced at the moment — we couldn’t tell which.',
+        saleListed: 'Taking collateral back is on hold while the lender’s sale listing for this loan is in place — a buyer takes the loan on as it stands. The note about the listing on this page says when the hold ends.',
+        amountAria: 'Collateral amount to take back',
+        max: 'Max',
+        button: 'Take back',
+        overMax: tmpl('That is more than you can take back right now (up to {{amount}}).', ['amount']),
+        confirm: 'Confirm — take back collateral',
+        receive: tmpl('{{amount}} back in your wallet.', ['amount']),
+        lockNothing: 'Nothing new.',
+        oweNothingMore: 'Nothing more — what you owe doesn’t change.',
+        lose: 'The loan has less collateral behind it, so a price drop reaches liquidation sooner. If the loan defaults, the collateral that is left is at stake.',
+        ends: 'This happens immediately. The rest of your collateral stays locked until the loan closes.',
+        vpfiNote: 'This collateral is VPFI. Taking it out of your vault lowers the VPFI balance your fee-discount tier is measured on, so your discount may drop.',
+        // #2389 r1 — the VPFI check failed: unknown is not "not VPFI".
+        vpfiUnknownNote: 'We couldn’t check whether this collateral is VPFI. If it is, taking it out of your vault lowers the VPFI balance your fee-discount tier is measured on, so your discount may drop.',
+        swapOrderPending: 'A swap-to-repay order is waiting on this loan, and it was sized against your collateral as it stands. Collateral can’t be taken back until that order fills or is cancelled. Reaching its deadline does not release the collateral by itself: an order that didn’t fill still has to be cancelled, which the borrower-position holder can do once the deadline has passed. This app can’t cancel it for you; use the tool you placed it with.',
+        // #2389 r1 — the order check itself failed: say so rather than
+        // treating an unread answer as "no order".
+        // #2389 r3 — the deployment's pause switch: the withdrawal is
+        // refused while it is on, so the card says so instead of a form.
+        paused:
+          'Taking back collateral is paused on this deployment right now. Your collateral stays safely locked in the loan; try again once it is unpaused.',
+        pauseUnchecked:
+          'We couldn’t check whether this deployment is paused, so nothing was sent. Please try again in a moment.',
+        // #2389 r5 — the pending-refinance interlock.
+        refinancePending:
+          'A refinance request is open on this loan, and it was made for the collateral as it stands now. Taking collateral back would make every lender’s acceptance fail. Cancel the request first, or wait until it is taken or expires.',
+        // #2389 r6 — a refinance request made on another device or tool
+        // cannot be discovered here; say what withdrawing would do to it.
+        refinanceElsewhereNote:
+          'If you have a refinance request open for this loan from another device or tool, taking collateral back makes it unfillable until you cancel it and post it again — this page can’t see requests made elsewhere.',
+        // #2389 r4 — facts the card could not read ahead of time; each
+        // is re-checked before the wallet opens.
+        pauseUnknownNote:
+          'We couldn’t check whether taking back collateral is paused on this deployment. It is checked again before your wallet opens.',
+        saleUnknownNote:
+          'We couldn’t check ahead of time whether a sale listing of the lender’s position is linked to this loan. It is checked again before your wallet opens, and a linked listing blocks the withdrawal.',
+        // #2389 r3 — a pre-check failed in a way with no plain-words
+        // reason of its own. The wallet never opened.
+        checkFailed:
+          'We couldn’t finish the checks before opening your wallet, so nothing was sent. Please try again in a moment.',
+        // #2389 r3 — more decimals than the token has: refused, never
+        // rounded into a different amount.
+        tooPrecise: tmpl(
+          '{{symbol}} can’t be split that finely — use at most {{decimals}} decimal places.',
+          ['symbol', 'decimals'],
+        ),
+        // #2389 r2 — the sale-listing check itself failed.
+        saleUnchecked:
+          'We couldn’t check whether a sale listing of the lender’s position is linked to this loan, so nothing was sent. Please try again in a moment.',
+        swapOrderUnchecked:
+          'We couldn’t check whether a swap-to-repay order is open on this loan, so nothing was sent. Please try again in a moment.',
       },
       partial: {
         title: 'Repay part of the loan',
