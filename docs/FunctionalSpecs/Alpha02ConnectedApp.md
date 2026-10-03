@@ -1642,7 +1642,14 @@ Thin-market honesty rules apply.
 - While the exact payout is still being read, or if it cannot be confirmed, the
   surface says so instead of leaving the amount out. Collecting stays available
   either way: the claim pays the on-chain entitlement, and an informational read
-  must never stand between a user and their funds.
+  must never stand between a user and their funds. When the read confirms there
+  is nothing on that side, the surface says so and does not offer to collect.
+- A payout is described by what the claim actually pays: the amount the protocol
+  records for this claimant (a lender's share of a fallback settlement, not the
+  whole collateral), and every separate lane the same claim pays — including a
+  borrower's left-over amount from a swap that repaid the loan, which is listed
+  even when it is the only thing to collect. An amount whose token details are
+  still loading is described as an amount, never as something else.
 - A loan's own page learns its payout from that loan alone. Opening one position
   must not scan every position the wallet has ever held.
 - A lender's claim on a defaulted loan says what the recovery is (a cash amount,
@@ -1930,9 +1937,9 @@ Thin-market honesty rules apply.
 - Full wallet addresses are not included in health details.
 - If ticket submission fails, the app offers an email fallback and must not
   claim a ticket number it did not receive.
-- Support is reachable from every page without covering page content. On a
-  phone it lives in the More menu; a floating launcher is used only where there
-  is empty margin for it.
+- Support is reachable from every page without covering page content: it is a
+  navigation entry (the side navigation on wide screens, the More menu on
+  phones), never a floating button over the page.
 
 ## Operational Kill Switch
 

@@ -91,6 +91,11 @@ export interface ClaimDetail {
   heldForLender: bigint;
   hasRentalNftReturn: boolean;
   lifRebate: bigint;
+  /** #2373 r2 — the borrower's frozen swap-to-repay surplus, a SEPARATE lane
+   *  in the principal asset that `claimAsBorrower` pays alongside the
+   *  ordinary claim (`getBorrowerSurplusClaim`). Null when there is none,
+   *  it was already claimed, or this is the lender side. */
+  surplus: { asset: string; amount: bigint } | null;
 }
 
 export interface ClaimableLoan extends PositionLoan {
@@ -171,13 +176,43 @@ export async function probeClaim(
       }
     }
 
+    // #2373 r2 — the frozen swap-to-repay surplus. A claim can consist of
+    // ONLY this lane (a full swap-to-repay that consumed all the collateral
+    // leaves `amount == 0`); ClaimFacet keeps the loan claimable for it, so
+    // the actionability guard below must count it or that claim is never
+    // listed.
+    let surplus: { asset: string; amount: bigint } | null = null;
+    if (!isLender) {
+      try {
+        const sc = (await publicClient.readContract({
+          address: diamond,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'getBorrowerSurplusClaim',
+          args: [BigInt(loan.loanId)],
+        })) as readonly [string, bigint, boolean];
+        const [sAsset, sAmount, sClaimed] = sc;
+        if (
+          !sClaimed &&
+          sAmount > 0n &&
+          sAsset !== '0x0000000000000000000000000000000000000000'
+        ) {
+          surplus = { asset: sAsset, amount: sAmount };
+        }
+      } catch (e) {
+        // A deployment without the view reverts → no surplus lane there; a
+        // transport error is a real "couldn't confirm".
+        if (!isRevert(e)) return UNCONFIRMED;
+      }
+    }
+
     // Mirror ClaimFacet's actionability guard.
     const actionable =
       amount > 0n ||
       assetType !== AssetType.ERC20 ||
       heldForLender > 0n ||
       hasRentalNftReturn ||
-      lifRebate > 0n;
+      lifRebate > 0n ||
+      surplus !== null;
     return !claimed && actionable
       ? claimable({
           ...loan,
@@ -191,6 +226,7 @@ export async function probeClaim(
             heldForLender,
             hasRentalNftReturn,
             lifRebate,
+            surplus,
           },
         })
       : NONE;

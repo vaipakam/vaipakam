@@ -1273,6 +1273,7 @@
         },
         "youWillReceive": "ستستلم: {{payout}}",
         "youWillReceiveChecking": "ستستلم: جارٍ التحقق من المبلغ الدقيق…",
+        "nothingWaiting": "لا يوجد ما ينتظر المطالبة في هذا الجانب الآن — ربما تم تحصيله بالفعل.",
         "payoutUnconfirmed": "تعذّر علينا تأكيد المبلغ الدقيق الآن. المطالبة تدفع مع ذلك ما يدين به هذا القرض لك على السلسلة.",
         "actions": {
           "closeRental": "أغلق هذا التأجير",
@@ -1418,6 +1419,9 @@
         "bufferBack": "{{amount}} buffer عائد",
         "principalPlusInterest": "{{amount}} {{symbol}} + فائدة",
         "collateralLabel": "{{collateral}} collateral",
+        "amountLoading": "مبلغ (جارٍ تحميل التفاصيل…)",
+        "swapSurplus": "{{amount}} متبقية من المبادلة التي سددت القرض",
+        "swapSurplusPending": "مبلغ متبقٍ من المبادلة التي سددت القرض (جارٍ تحميل التفاصيل…)",
         "recoveredFromDefault": "تم استرداد {{amount}}{{held}} من default",
         "defaultRecovery": "استرداد من default — {{collateral}}",
         "collateralBack": "{{collateral}} collateral عائد",

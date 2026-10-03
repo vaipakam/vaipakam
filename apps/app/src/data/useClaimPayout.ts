@@ -51,11 +51,17 @@ export function useClaimPayoutText(
   //     (each park carries its own asset), so no single denomination
   //     is honest → shown qualitatively, never as a number.
   const claimAssetMeta = useTokenMeta(loan?.claim.asset ?? undefined);
+  const surplusMeta = useTokenMeta(loan?.claim.surplus?.asset);
   if (!loan) return null;
   const baseAmountStr =
     loan.claim.amount > 0n && claimAssetMeta.data
       ? `${formatTokenAmount(loan.claim.amount, claimAssetMeta.data.decimals)} ${claimAssetMeta.data.symbol}`
       : null;
+  // #2373 r2 — a fungible amount whose token metadata has not loaded (or
+  // failed). It is still an AMOUNT: never let a missing symbol turn it into
+  // an in-kind description, a gross-collateral figure, or anything else the
+  // claim read did not say.
+  const amountPending = loan.claim.amount > 0n && baseAmountStr === null;
   const rebateStr =
     loan.claim.lifRebate > 0n
       ? copy.claims.row.rebateAmount(formatTokenAmount(loan.claim.lifRebate, 18))
@@ -113,7 +119,16 @@ export function useClaimPayoutText(
           ? copy.claims.row.whyRepaidLender
           : copy.claims.row.whyInternalMatchLender;
     } else if (loan.status === 'fallback_pending') {
-      what = copy.claims.row.collateralLabel(collateralStr);
+      // #2373 r2 — the lender's SLICE: when the fallback is oracle-priced
+      // and the collateral exceeds the lender's entitlement, getClaimable
+      // records only that slice (the rest goes to treasury and borrower).
+      // The gross collateral is the answer only when the claim names no
+      // amount at all.
+      what = baseAmountStr
+        ? copy.claims.row.collateralLabel(baseAmountStr)
+        : amountPending
+          ? copy.claims.row.amountLoading
+          : copy.claims.row.collateralLabel(collateralStr);
       why = copy.claims.row.whyFallbackPending;
     } else {
       // Liquid-collateral defaults settle by swap (proceeds in the
@@ -123,9 +138,11 @@ export function useClaimPayoutText(
       // fall back to a plain-language title.
       what = baseAmountStr
         ? copy.claims.row.recoveredFromDefault(baseAmountStr, heldSuffix)
-        : hasHeld
-          ? copy.claims.row.heldProceedsDefault
-          : copy.claims.row.defaultRecovery(collateralStr);
+        : amountPending
+          ? copy.claims.row.amountLoading
+          : hasHeld
+            ? copy.claims.row.heldProceedsDefault
+            : copy.claims.row.defaultRecovery(collateralStr);
       why = copy.claims.row.whyDefaultLender;
       // UX3-005 — say what the recovery is and what the app cannot know
       // about it. #2373 r1 (P1): an earlier version compared the recovery
@@ -136,7 +153,10 @@ export function useClaimPayoutText(
       // no shortfall is computed; the note states that unknown instead.
       note = defaultRecoveryNote({
         hasHeld,
-        inKind: !baseAmountStr,
+        // #2373 r2 — from the RAW claim, not from whether the amount could
+        // be formatted yet: a cash recovery whose symbol is still loading
+        // is not "the collateral itself".
+        inKind: loan.claim.amount === 0n,
         labels: copy.claims.row,
       });
     }
@@ -159,6 +179,19 @@ export function useClaimPayoutText(
       ? copy.claims.row.collateralBackWithAmount(baseAmountStr, rebateStr ? ` + ${rebateStr}` : '')
       : (rebateStr ?? copy.claims.row.collateralBack(collateralStr));
     why = copy.claims.row.whyRepaidBorrower;
+  }
+
+  // #2373 r2 — the borrower's frozen swap-to-repay surplus is a separate
+  // lane the same claim pays. State it beside the rest, or on its own when
+  // it is the whole claim; while its symbol loads, say a surplus exists
+  // rather than leaving it out.
+  if (loan.role === 'borrower' && loan.claim.surplus) {
+    const surplusText = surplusMeta.data
+      ? copy.claims.row.swapSurplus(
+          `${formatTokenAmount(loan.claim.surplus.amount, surplusMeta.data.decimals)} ${surplusMeta.data.symbol}`,
+        )
+      : copy.claims.row.swapSurplusPending;
+    what = loan.claim.amount > 0n || loan.claim.lifRebate > 0n ? `${what} + ${surplusText}` : surplusText;
   }
 
   return { what, why, note };

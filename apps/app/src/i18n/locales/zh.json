@@ -1273,6 +1273,7 @@
         },
         "youWillReceive": "你将收到：{{payout}}",
         "youWillReceiveChecking": "你将收到：正在确认确切金额…",
+        "nothingWaiting": "这一方目前没有待领取的内容——可能已经领取过了。",
         "payoutUnconfirmed": "目前无法确认确切金额。领取仍会支付这笔贷款在链上欠你的金额。",
         "actions": {
           "closeRental": "关闭此租赁",
@@ -1418,6 +1419,9 @@
         "bufferBack": "{{amount}} buffer 返还",
         "principalPlusInterest": "{{amount}} {{symbol}} + 利息",
         "collateralLabel": "{{collateral}} 抵押品",
+        "amountLoading": "一笔金额（正在加载详情…）",
+        "swapSurplus": "偿还贷款的兑换剩余的 {{amount}}",
+        "swapSurplusPending": "偿还贷款的兑换剩余的一笔金额（正在加载详情…）",
         "recoveredFromDefault": "从违约中回收 {{amount}}{{held}}",
         "defaultRecovery": "违约回收 — {{collateral}}",
         "collateralBack": "{{collateral}} 抵押品返还",

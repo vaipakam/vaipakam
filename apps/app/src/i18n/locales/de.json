@@ -1273,6 +1273,7 @@
         },
         "youWillReceive": "Sie erhalten: {{payout}}",
         "youWillReceiveChecking": "Sie erhalten: genauer Betrag wird geprüft…",
+        "nothingWaiting": "Auf dieser Seite wartet gerade nichts darauf, abgeholt zu werden – es wurde möglicherweise schon abgeholt.",
         "payoutUnconfirmed": "Wir konnten den genauen Betrag gerade nicht bestätigen. Das Abholen zahlt trotzdem aus, was Ihnen dieser Kredit on-chain schuldet.",
         "actions": {
           "closeRental": "Diese Vermietung schließen",
@@ -1418,6 +1419,9 @@
         "bufferBack": "{{amount}} Puffer zurück",
         "principalPlusInterest": "{{amount}} {{symbol}} + Zinsen",
         "collateralLabel": "{{collateral}} Sicherheit",
+        "amountLoading": "Ein Betrag (Details werden geladen…)",
+        "swapSurplus": "{{amount}} übrig aus dem Tausch, der den Kredit getilgt hat",
+        "swapSurplusPending": "ein Betrag übrig aus dem Tausch, der den Kredit getilgt hat (Details werden geladen…)",
         "recoveredFromDefault": "{{amount}}{{held}} aus dem Ausfall zurückgewonnen",
         "defaultRecovery": "Rückgewinnung nach Ausfall — {{collateral}}",
         "collateralBack": "{{collateral}} Sicherheit zurück",

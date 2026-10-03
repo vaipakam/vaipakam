@@ -1273,6 +1273,7 @@
         },
         "youWillReceive": "Recibirás: {{payout}}",
         "youWillReceiveChecking": "Recibirás: comprobando el importe exacto…",
+        "nothingWaiting": "Ahora mismo no hay nada pendiente de reclamar en este lado; puede que ya se haya cobrado.",
         "payoutUnconfirmed": "No pudimos confirmar el importe exacto ahora mismo. Reclamar sigue pagando lo que este préstamo te debe en la cadena.",
         "actions": {
           "closeRental": "Cerrar este alquiler",
@@ -1418,6 +1419,9 @@
         "bufferBack": "{{amount}} buffer de vuelta",
         "principalPlusInterest": "{{amount}} {{symbol}} + intereses",
         "collateralLabel": "{{collateral}} garantía",
+        "amountLoading": "Un importe (cargando sus detalles…)",
+        "swapSurplus": "{{amount}} sobrantes del swap que pagó el préstamo",
+        "swapSurplusPending": "un importe sobrante del swap que pagó el préstamo (cargando sus detalles…)",
         "recoveredFromDefault": "{{amount}}{{held}} recuperado del default",
         "defaultRecovery": "Recuperación por default — {{collateral}}",
         "collateralBack": "{{collateral}} garantía de vuelta",

@@ -1273,6 +1273,7 @@
         },
         "youWillReceive": "Vous recevrez : {{payout}}",
         "youWillReceiveChecking": "Vous recevrez : vérification du montant exact…",
+        "nothingWaiting": "Rien n’attend d’être réclamé de ce côté pour l’instant — cela a peut-être déjà été encaissé.",
         "payoutUnconfirmed": "Nous n’avons pas pu confirmer le montant exact pour l’instant. Réclamer verse quand même ce que ce prêt vous doit on-chain.",
         "actions": {
           "closeRental": "Clôturer cette location",
@@ -1418,6 +1419,9 @@
         "bufferBack": "{{amount}} de buffer rendu",
         "principalPlusInterest": "{{amount}} {{symbol}} + intérêts",
         "collateralLabel": "Garantie {{collateral}}",
+        "amountLoading": "Un montant (chargement des détails…)",
+        "swapSurplus": "{{amount}} restants de l’échange qui a remboursé le prêt",
+        "swapSurplusPending": "un montant restant de l’échange qui a remboursé le prêt (chargement des détails…)",
         "recoveredFromDefault": "{{amount}}{{held}} récupéré après le défaut",
         "defaultRecovery": "Recouvrement après défaut — {{collateral}}",
         "collateralBack": "{{collateral}} de garantie rendue",

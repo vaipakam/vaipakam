@@ -1346,6 +1346,7 @@
         },
         "youWillReceive": "You will receive: {{payout}}",
         "youWillReceiveChecking": "You will receive: checking the exact amount…",
+        "nothingWaiting": "Nothing is waiting to be claimed on this side right now — it may already have been collected.",
         "payoutUnconfirmed": "We couldn’t confirm the exact amount right now. Claiming still pays whatever this loan owes you on-chain.",
         "actions": {
           "closeRental": "Close this rental",
@@ -1491,6 +1492,9 @@
         "bufferBack": "{{amount}} buffer back",
         "principalPlusInterest": "{{amount}} {{symbol}} + interest",
         "collateralLabel": "{{collateral}} collateral",
+        "amountLoading": "An amount (loading its details…)",
+        "swapSurplus": "{{amount}} left over from the swap that repaid the loan",
+        "swapSurplusPending": "an amount left over from the swap that repaid the loan (loading its details…)",
         "recoveredFromDefault": "{{amount}}{{held}} recovered from the default",
         "defaultRecovery": "Default recovery — {{collateral}}",
         "collateralBack": "{{collateral}} collateral back",

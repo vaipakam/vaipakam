@@ -38,7 +38,7 @@ import { createPortal } from 'react-dom';
 import { useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useAccount, usePublicClient } from 'wagmi';
-import { LifeBuoy, X } from 'lucide-react';
+import { X } from 'lucide-react';
 import { copy } from '../content/copy';
 import { SupportTicketCard } from './SupportTicketCard';
 import { useLatestAttempt } from '../lib/useLatestAttempt';
@@ -65,55 +65,32 @@ function formatAge(sec: number): string {
   return `${Math.round(sec / 3600)} h`;
 }
 
-/** The Support drawer and its desktop launcher.
+/** The Support drawer.
  *
- *  `open` is owned by the shell (UX3-006, 2026-10-03 live review): on
- *  phones the floating launcher sat over whatever scrolled beneath it —
- *  a claim's loan label, the Rate Desk's last-fill value — so phones now
- *  reach Support from the tab bar's More sheet and the floating button is
- *  shown on wide screens only, where it sits in an empty margin. */
+ *  It has no launcher of its own (UX3-006, #2373 r2). A floating button
+ *  covered page content wherever it was placed — right-aligned card buttons
+ *  first (UX-007), then left-aligned text on phones, then tablet and
+ *  compact-desktop content — so Support is a navigation entry in the shell
+ *  instead, and the shell owns `open`. Focus returns to whichever entry
+ *  opened it. */
 export function DiagnosticsDrawer({
   open,
-  onOpenChange,
+  onClose,
   returnFocusRef,
 }: {
   open: boolean;
-  onOpenChange: (open: boolean) => void;
-  /** Where focus goes back to when the drawer was opened from outside —
-   *  the More tab, since the sheet entry that opened it is gone by then. */
-  returnFocusRef?: RefObject<HTMLElement | null>;
+  onClose: () => void;
+  /** The element that opened the drawer, refocused when it closes. */
+  returnFocusRef: RefObject<HTMLElement | null>;
 }) {
-  const fabRef = useRef<HTMLButtonElement>(null);
-  const openedByFab = useRef(false);
-
-  // Restore focus to whatever opened the dialog — a tick later, so the
-  // panel's cleanup has removed `inert` from the app root (an inert
-  // element refuses focus).
+  // A tick later, so the panel's cleanup has removed `inert` from the app
+  // root first (an inert element refuses focus).
   const close = () => {
-    const target = openedByFab.current ? fabRef.current : (returnFocusRef?.current ?? null);
-    openedByFab.current = false;
-    onOpenChange(false);
+    const target = returnFocusRef.current;
+    onClose();
     setTimeout(() => target?.focus(), 0);
   };
-
-  return (
-    <>
-      <button
-        ref={fabRef}
-        type="button"
-        className="diag-fab"
-        aria-label={copy.diagnostics.open}
-        title={copy.diagnostics.open}
-        onClick={() => {
-          openedByFab.current = true;
-          onOpenChange(true);
-        }}
-      >
-        <LifeBuoy aria-hidden />
-      </button>
-      {open ? <DrawerPanel onClose={close} /> : null}
-    </>
-  );
+  return open ? <DrawerPanel onClose={close} /> : null;
 }
 
 function DrawerPanel({ onClose }: { onClose: () => void }) {

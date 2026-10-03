@@ -1273,6 +1273,7 @@
         },
         "youWillReceive": "நீங்கள் பெறுவது: {{payout}}",
         "youWillReceiveChecking": "நீங்கள் பெறுவது: சரியான தொகை சரிபார்க்கப்படுகிறது…",
+        "nothingWaiting": "இப்போது இந்தப் பக்கத்தில் பெற எதுவும் காத்திருக்கவில்லை — ஏற்கெனவே பெறப்பட்டிருக்கலாம்.",
         "payoutUnconfirmed": "இப்போது சரியான தொகையை உறுதிப்படுத்த முடியவில்லை. பெற்றுக்கொண்டால், இந்தக் கடன் on-chain-ல் உங்களுக்குச் செலுத்த வேண்டியதே செலுத்தப்படும்.",
         "actions": {
           "closeRental": "இந்த வாடகையை மூடு",
@@ -1418,6 +1419,9 @@
         "bufferBack": "{{amount}} இடையகம் திரும்ப",
         "principalPlusInterest": "{{amount}} {{symbol}} + வட்டி",
         "collateralLabel": "{{collateral}} பிணையம்",
+        "amountLoading": "ஒரு தொகை (விவரங்கள் ஏற்றப்படுகின்றன…)",
+        "swapSurplus": "கடனைத் திருப்பிச் செலுத்திய swap-இல் மீதமான {{amount}}",
+        "swapSurplusPending": "கடனைத் திருப்பிச் செலுத்திய swap-இல் மீதமான ஒரு தொகை (விவரங்கள் ஏற்றப்படுகின்றன…)",
         "recoveredFromDefault": "தவறுதலிலிருந்து {{amount}}{{held}} மீட்கப்பட்டது",
         "defaultRecovery": "தவறுதல் மீட்பு — {{collateral}}",
         "collateralBack": "{{collateral}} பிணையம் திரும்ப",

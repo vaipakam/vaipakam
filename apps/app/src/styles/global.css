@@ -678,6 +678,17 @@ button.more-sheet-item {
     font-size: 0.95rem;
   }
 
+  /* UX3-006 — the Support entry is a button (it opens a drawer); match
+     the link items. */
+  button.sidenav-item {
+    width: 100%;
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-family: inherit;
+    text-align: left;
+  }
+
   .sidenav-item svg {
     width: 18px;
     height: 18px;
@@ -1615,50 +1626,11 @@ a.item-row:hover {
   }
 }
 
-/* Support drawer (#1028 item 4) — the app's first slide-over. The FAB
-   sits above the phone tab bar; the drawer is a right-side panel on
-   wide screens and near-full-width on phones. */
-.diag-fab {
-  /* UX3-006 — hidden on phones: a fixed button there always covers
-     whatever scrolls beneath it (a claim's loan label, the Rate Desk's
-     last-fill value). Phones reach Support from the More sheet; the
-     min-width block below shows this launcher on wide screens only. */
-  display: none;
-  position: fixed;
-  /* History: UX-007 moved it bottom-LEFT on phones because a right-side
-     button covered right-aligned card CTAs; UX3-006 found the left side
-     covered left-aligned text instead, which is why phones no longer show
-     it at all. */
-  z-index: 40;
-  align-items: center;
-  justify-content: center;
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
-  border: 1px solid var(--border);
-  background: var(--surface-raised);
-  color: var(--text-muted);
-  box-shadow: var(--shadow-card);
-  cursor: pointer;
-}
-
-.diag-fab:hover {
-  color: var(--brand);
-}
-
-.diag-fab svg {
-  width: 22px;
-  height: 22px;
-}
-
-@media (min-width: 720px) {
-  .diag-fab {
-    display: flex;
-    right: var(--space-4);
-    bottom: var(--space-4);
-  }
-}
-
+/* Support drawer (#1028 item 4) — the app's first slide-over: a right-side
+   panel on wide screens, near-full-width on phones. It has no floating
+   launcher (UX3-006, #2373 r2): Support is a nav entry — the sidebar on wide
+   screens, the More sheet on phones — because a fixed button covered page
+   content at every width it was tried. */
 .diag-overlay {
   position: fixed;
   inset: 0;

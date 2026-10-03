@@ -163,6 +163,7 @@ export function AppShell() {
   const [moreOpen, setMoreOpen] = useState(false);
   const [supportOpen, setSupportOpen] = useState(false);
   const moreTabRef = useRef<HTMLButtonElement>(null);
+  const supportOpenerRef = useRef<HTMLElement | null>(null);
   const [seenPathname, setSeenPathname] = useState(pathname);
   if (seenPathname !== pathname) {
     setSeenPathname(pathname);
@@ -289,6 +290,23 @@ export function AppShell() {
               {copy.chrome.nav[item.labelKey]}
             </NavLink>
           ))}
+          {/* UX3-006 (#2373 r2) — Support is a navigation entry at every
+              width: here on wide screens, in the More sheet on phones. A
+              floating launcher covered page content at every width it was
+              tried. The accessible name keeps the full description, which
+              contains the visible "Support". */}
+          <button
+            type="button"
+            className="sidenav-item"
+            aria-label={copy.diagnostics.open}
+            onClick={(e) => {
+              supportOpenerRef.current = e.currentTarget;
+              setSupportOpen(true);
+            }}
+          >
+            <LifeBuoy aria-hidden />
+            {copy.diagnostics.title}
+          </button>
           {/* UX-011 — the mode switch lives where the nav lives, so
               discovering Advanced never requires finding Settings. */}
           <div className="sidenav-footer">
@@ -358,8 +376,8 @@ export function AppShell() {
           while it is open. */}
       <DiagnosticsDrawer
         open={supportOpen}
-        onOpenChange={setSupportOpen}
-        returnFocusRef={moreTabRef}
+        onClose={() => setSupportOpen(false)}
+        returnFocusRef={supportOpenerRef}
       />
 
       {moreOpen ? (
@@ -388,7 +406,11 @@ export function AppShell() {
             <button
               type="button"
               className="more-sheet-item"
+              aria-label={copy.diagnostics.open}
               onClick={() => {
+                // The sheet entry disappears with the sheet, so focus
+                // returns to the More tab that opened it.
+                supportOpenerRef.current = moreTabRef.current;
                 setMoreOpen(false);
                 setSupportOpen(true);
               }}

@@ -2478,14 +2478,20 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       : action === 'claim-borrower'
         ? borrowerClaim
         : null;
-  const claimPayoutState: 'ready' | 'checking' | 'unconfirmed' | null =
+  // #2373 r2 — a read that CONFIRMED there is nothing on this side
+  // (`data === null`) is not a read that failed. It gets its own state, and
+  // the claim button stands down rather than offer a transaction the
+  // preflight would refuse.
+  const claimPayoutState: 'ready' | 'checking' | 'unconfirmed' | 'none' | null =
     claimRead === null
       ? null
-      : claimPayoutText
-        ? 'ready'
-        : claimRead.isError || claimRead.data === null
-          ? 'unconfirmed'
-          : 'checking';
+      : claimRead.isError
+        ? 'unconfirmed'
+        : claimRead.data === null
+          ? 'none'
+          : claimPayoutText
+            ? 'ready'
+            : 'checking';
 
   // Six-row receipt for the pending position write — same shape and
   // rows as every create/accept flow (WebsiteReadme intended-behaviour).
@@ -4484,6 +4490,10 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             <p className="claim-payout" id="claim-payout">
               {copy.positions.details.payoutUnconfirmed}
             </p>
+          ) : claimPayoutState === 'none' ? (
+            <p className="claim-payout" id="claim-payout">
+              {copy.positions.details.nothingWaiting}
+            </p>
           ) : null}
           <button
             type="button"
@@ -4492,7 +4502,8 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             disabled={
               busy ||
               !onSupportedChain ||
-              (action !== 'repay' && !sanctionsClear)
+              (action !== 'repay' && !sanctionsClear) ||
+              claimPayoutState === 'none'
             }
             onClick={() => setConfirmingSurface('action')}
           >

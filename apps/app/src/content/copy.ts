@@ -3091,6 +3091,8 @@ const copySource = {
       youWillReceive: tmpl('You will receive: {{payout}}', ['payout']),
       // #2373 r1 — the payout is stated as unknown rather than omitted.
       youWillReceiveChecking: 'You will receive: checking the exact amount…',
+      nothingWaiting:
+        'Nothing is waiting to be claimed on this side right now — it may already have been collected.',
       payoutUnconfirmed:
         'We couldn’t confirm the exact amount right now. Claiming still pays whatever this loan owes you on-chain.',
       actions: {
@@ -3325,6 +3327,11 @@ const copySource = {
       bufferBack: tmpl('{{amount}} buffer back', ['amount']),
       principalPlusInterest: tmpl('{{amount}} {{symbol}} + interest', ['amount', 'symbol']),
       collateralLabel: tmpl('{{collateral}} collateral', ['collateral']),
+      // #2373 r2 — a fungible payout whose token details are still loading.
+      amountLoading: 'An amount (loading its details…)',
+      // #2373 r2 — the borrower's frozen swap-to-repay surplus lane.
+      swapSurplus: tmpl('{{amount}} left over from the swap that repaid the loan', ['amount']),
+      swapSurplusPending: 'an amount left over from the swap that repaid the loan (loading its details…)',
       recoveredFromDefault: tmpl(
         '{{amount}}{{held}} recovered from the default',
         ['amount', 'held'],

@@ -1273,6 +1273,7 @@
         },
         "youWillReceive": "आपको मिलेगा: {{payout}}",
         "youWillReceiveChecking": "आपको मिलेगा: सही राशि जाँची जा रही है…",
+        "nothingWaiting": "अभी इस तरफ़ claim करने के लिए कुछ बाकी नहीं है — हो सकता है यह पहले ही ले लिया गया हो।",
         "payoutUnconfirmed": "अभी हम सही राशि की पुष्टि नहीं कर सके। claim करने पर फिर भी वह राशि मिलती है जो यह loan on-chain आपको देना है।",
         "actions": {
           "closeRental": "यह rental close करें",
@@ -1418,6 +1419,9 @@
         "bufferBack": "{{amount}} buffer वापस",
         "principalPlusInterest": "{{amount}} {{symbol}} + interest",
         "collateralLabel": "{{collateral}} collateral",
+        "amountLoading": "एक राशि (विवरण लोड हो रहा है…)",
+        "swapSurplus": "loan चुकाने वाले swap से बचे {{amount}}",
+        "swapSurplusPending": "loan चुकाने वाले swap से बची एक राशि (विवरण लोड हो रहा है…)",
         "recoveredFromDefault": "Default से {{amount}}{{held}} recovered",
         "defaultRecovery": "Default recovery — {{collateral}}",
         "collateralBack": "{{collateral}} collateral वापस",
