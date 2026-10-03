@@ -97,15 +97,39 @@ contract RewardEpochViewFacet {
         uint256 forcedPages;
     }
 
-    /// @notice The cooldown a non-settlement release put on `(user, side,
-    ///         day)`: until this timestamp a claim on the day opens no record
-    ///         and defers as before staging existed; zero when none stands
-    ///         (Codex #2308 r7). The key is {LibRewardCustody.stagingKey}'s.
-    function getStagingCooldown(address user, LibVaipakam.RewardSide side, uint256 day) external view returns (uint64 until) {
-        until = LibVaipakam.storageSlot().stagingCooldownUntil[LibRewardCustody.stagingKey(user, side, day)];
-        // Passed is none: the claim path reads `block.timestamp < until`, and
-        // this reads the same lifecycle (Codex #2308 r9).
-        if (until <= block.timestamp) until = 0;
+    /// @notice `batchId`'s priority window (A2-ii, replacing A2-i's
+    ///         obligation-keyed cooldown): when it closes, who released into
+    ///         it, the oldest registrant and its record's opening time, whether
+    ///         a priority reservation is taken and still held, and whether
+    ///         ORDINARY staging from the batch is admitted now (a stranger's
+    ///         read of {LibRewardCustody.stageableFor}). `closesAt == 0` means
+    ///         no release ever touched the batch.
+    function getTransportBatchWindow(bytes32 batchId)
+        external
+        view
+        returns (
+            uint64 closesAt,
+            bytes32 releasedBy,
+            bytes32 oldestKey,
+            uint64 oldestOpenedAt,
+            bool priorityHeld,
+            bool ordinaryOpen
+        )
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.TransportBatchWindow storage w = s.transportBatchWindows[batchId];
+        closesAt = w.closesAt;
+        releasedBy = w.releasedBy;
+        oldestKey = w.oldestKey;
+        oldestOpenedAt = w.oldestOpenedAt;
+        priorityHeld = w.winnerNonceKey != bytes32(0) && s.stagingBatchIndexPlusOne[w.winnerNonceKey][batchId] != 0;
+        (ordinaryOpen, ) = LibRewardCustody.stageableFor(s, batchId, bytes32(0));
+    }
+
+    /// @notice Whether the obligation under `key` has used its one priority
+    ///         reservation on `batchId` — permanent (A2-ii).
+    function isTransportBatchPriorityUsed(bytes32 batchId, bytes32 key) external view returns (bool) {
+        return LibVaipakam.storageSlot().transportBatchPriorityUsed[batchId][key];
     }
 
     /// @notice How many staging records hold a live RESERVATION — reserved or

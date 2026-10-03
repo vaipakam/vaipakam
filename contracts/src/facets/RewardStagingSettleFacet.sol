@@ -23,6 +23,10 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
  *      are refreshed together.
  */
 contract RewardStagingSettleFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors {
+    /// @notice A2-ii — emitted by the staging library from the unwind page this
+    ///         facet hosts; declared here for the exported ABI.
+    event TransportBatchWindowOpened(bytes32 indexed batchId, bytes32 indexed releasedBy, uint64 closesAt);
+
     /// @notice Permissionless: one page of resolution. The first page makes the
     ///         record irrevocable; the page that consumes its last batch pays
     ///         the day and closes the record.

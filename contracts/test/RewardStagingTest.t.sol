@@ -858,15 +858,20 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
             assertEq(refs, 0);
         }
         _assertConserved(hs);
-        // A non-settlement release starts the obligation's cooldown: the
-        // next claim opens no record and defers as A1 did, the restored
-        // coverage being the window's meanwhile; past it, it stages again.
+        // A non-settlement release puts a priority WINDOW on each batch it
+        // restored (A2-ii) — not a cooldown on the obligation: the next claim
+        // finds every batch of the day suspended, so it has nothing to stage
+        // and opens no record; past the window, it stages the day again.
         vm.prank(alice);
         (bool ok, ) = address(diamond).call(abi.encodeWithSelector(RewardClaimFacet.claimInteractionRewards.selector));
         ok; // deferred: no record either way
-        assertEq(_rec().phase, uint8(LibVaipakam.StagingPhase.None), "no record during the cooldown");
+        assertEq(_rec().phase, uint8(LibVaipakam.StagingPhase.None), "no record: the released batches are the window's");
+        (uint64 closesAt, bytes32 releasedBy, , , , bool ordinaryOpen) = _view().getTransportBatchWindow(hs[0]);
+        assertEq(closesAt, uint64(block.timestamp) + 3 days, "the window closes one grace after the release");
+        assertEq(releasedBy, _key(), "and names the releaser");
+        assertFalse(ordinaryOpen, "ordinary staging suspended meanwhile");
         vm.warp(block.timestamp + 3 days + 1);
-        assertEq(_claim(), 0, "past the cooldown the claim stages the window again");
+        assertEq(_claim(), 0, "past the window the claim stages the day again");
         assertEq(_rec().batchCount, 64);
     }
 
@@ -1271,6 +1276,14 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         // The blocker is readable (Codex #2308 r16): 65 restorations unread.
         RewardEpochViewFacet.StagingRecordView memory bv = _view().getStagingRecord(bobKey);
         assertEq(bv.restoredLogLength - bv.restoredSeen, 65, "the view names the unread restorations");
+        // A2-ii: each restored batch carries a priority window; the record's
+        // re-check stops at the first windowed restoration and leaves it
+        // UNREAD, so the reservation keeps refusing and nothing is passed over.
+        (uint256 sfW, ) = _staging().prepareStagedDay(bobKey);
+        assertEq(sfW, 0, "nothing staged while the windows stand");
+        bv = _view().getStagingRecord(bobKey);
+        assertEq(bv.restoredLogLength - bv.restoredSeen, 65, "and all of them still unread");
+        vm.warp(block.timestamp + 3 days + 1); // the windows close with no registrant: ordinary staging resumes
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.StagingScanIncomplete.selector, bobKey));
         _staging().reserveStagedDay(bobKey);
         (uint256 sf, ) = _staging().prepareStagedDay(bobKey);
@@ -1559,7 +1572,10 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
 
     // ───────────────────────── round 7 ─────────────────────────
 
-    event StagingCooldownSet(bytes32 indexed key, uint64 until);
+    event TransportBatchWindowOpened(bytes32 indexed batchId, bytes32 indexed releasedBy, uint64 closesAt);
+    event TransportBatchContested(bytes32 indexed batchId, bytes32 indexed key);
+    event TransportBatchWaiterRegistered(bytes32 indexed batchId, bytes32 indexed key, uint64 openedAt);
+    event TransportBatchPriorityStaged(bytes32 indexed batchId, bytes32 indexed key);
 
     function test_AReservedRecord_IsCounted_ForEveryPostureGate() public {
         _stagedAndScanned();
@@ -1574,24 +1590,209 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         assertEq(_mut().stagingEncumberedCountRaw(), 0, "released with the payout");
     }
 
-    function test_TheCooldown_IsPublished() public {
-        _stagedAndScanned();
+    function test_TheWindow_IsPublished() public {
+        (bytes32[] memory hs, ) = _stagedAndScanned();
         uint64 deadline = _rec().deadline;
-        assertEq(_view().getStagingCooldown(alice, LibVaipakam.RewardSide.Lender, 1), 0, "none before a release");
+        (uint64 closesAt, , , , , bool ordinaryOpen) = _view().getTransportBatchWindow(hs[0]);
+        assertEq(closesAt, 0, "no release ever touched the batch");
+        assertTrue(ordinaryOpen);
         vm.warp(uint256(deadline) + 1);
-        _settle().unwindStagedDayPage(_key());
         uint64 until = uint64(block.timestamp) + 3 days;
-        vm.expectEmit(true, false, false, true);
-        emit StagingCooldownSet(_key(), until);
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit TransportBatchWindowOpened(hs[0], _key(), until);
+        _settle().unwindStagedDayPage(_key());
         assertTrue(_settle().unwindStagedDayPage(_key()));
-        assertEq(_view().getStagingCooldown(alice, LibVaipakam.RewardSide.Lender, 1), until, "read back");
+        (closesAt, , , , , ordinaryOpen) = _view().getTransportBatchWindow(hs[0]);
+        assertEq(closesAt, until, "read back");
+        assertFalse(ordinaryOpen, "suspended while the window stands");
         vm.warp(uint256(until));
-        assertEq(_view().getStagingCooldown(alice, LibVaipakam.RewardSide.Lender, 1), 0, "passed is none, as the claim path reads it");
-        vm.warp(uint256(until) - 1);
-        vm.prank(alice);
-        (bool ok, ) = address(diamond).call(abi.encodeWithSelector(RewardClaimFacet.claimInteractionRewards.selector));
-        ok; // deferred either way: the cooldown is what says why
-        assertEq(_rec().phase, uint8(LibVaipakam.StagingPhase.None), "no record while the published cooldown stands");
+        (, , , , , ordinaryOpen) = _view().getTransportBatchWindow(hs[0]);
+        assertTrue(ordinaryOpen, "closed with no registrant: ordinary staging resumes at once");
+    }
+
+    // ───────── A2-ii (d): the priority window — contested marks, registration, the one reservation ─────────
+
+    /// @dev An ATTESTED, fully fresh epoch on day 1 — stageable at once.
+    function _epochAttested(uint256 remitId, bytes32 id) internal returns (bytes32 h) {
+        h = _epochOf(TINY, remitId, id);
+        _ingress().onRemitSplitAttested(CHAIN_BASE, REMITTER, remitId, TINY, 0);
+    }
+
+    /// @dev An attested epoch OLDER than the whole wide day, linked late, so a
+    ///      fresh walk's window meets it first — the one epoch a rival's claim
+    ///      can stage past the 65 another record holds (the restored-epoch
+    ///      cell's recipe).
+    function _olderEpoch(uint256 remitId, bytes32 id) internal returns (bytes32 h) {
+        // The cheatcode read, not `block.timestamp`: viaIR reorders the latter
+        // past the warp, and the restore then warps BACK to the old time.
+        uint256 now_ = vm.getBlockTimestamp();
+        vm.warp(arrivedAt[0] - 2000 - remitId);
+        h = _epochOfHinted(remitId, id, bytes32(0), bytes32(0), true);
+        _ingress().onRemitSplitAttested(CHAIN_BASE, REMITTER, remitId, TINY, 0);
+        vm.warp(now_);
+    }
+
+    /// @dev A second claimant on alice's day whose claim opens a record: an
+    ///      extra attested epoch (`remitId`) gives its walk one epoch to stage
+    ///      past the 65 alice's record holds, so the cap hit opens the record;
+    ///      its first preparation then finds alice's batches CONTESTED.
+    function _rival(string memory name, uint64 loanId, uint256 remitId) internal returns (address who, bytes32 key) {
+        who = makeAddr(name);
+        _mut().setFeeEntitlementRaw(
+            loanId,
+            LibVaipakam.FeeEntitlement({
+                borrowerMode: LibVaipakam.FeeEntitlementMode.None,
+                lenderMode: LibVaipakam.FeeEntitlementMode.None,
+                openDays: 1,
+                rewardHaircutBpsAtOpen: 0,
+                borrowerTariffPaid: 0,
+                lenderTariffPaid: 0,
+                cStarOpen: 0,
+                loanSideRewardCapOpen: type(uint128).max
+            })
+        );
+        uint256 e = _mut().pushRewardEntry(who, loanId, LibVaipakam.RewardSide.Lender, 1e18, 1);
+        _mut().closeRewardEntryRaw(e, 2);
+        _mut().userClaimFundingNeedRaw(who);
+        _olderEpoch(remitId, keccak256(abi.encode("rival-epoch", remitId)));
+        vm.prank(who);
+        RewardClaimFacet(address(diamond)).claimInteractionRewards();
+        key = keccak256(abi.encode(who, LibVaipakam.RewardSide.Lender, uint256(1)));
+        assertEq(_view().getStagingRecord(key).phase, uint8(LibVaipakam.StagingPhase.Staging), "fixture: the rival's record stands");
+    }
+
+    function _window(bytes32 h) internal view returns (uint64 closesAt, bytes32 oldestKey, bool priorityHeld, bool ordinaryOpen) {
+        (closesAt, , oldestKey, , priorityHeld, ordinaryOpen) = _view().getTransportBatchWindow(h);
+    }
+
+    /// @dev A2-ii — a rival's preparation that ends short marks every batch it
+    ///      met fully held by another record as CONTESTED; alice's cancel then
+    ///      opens each restored batch's window, during which the rival stages
+    ///      nothing from them; it registers; and once the window closes it
+    ///      takes the batch as its ONE priority reservation, burning the mark
+    ///      and holding the batch against every other stager.
+    function test_TheWindow_ServesTheRegistrant_OnceItCloses() public {
+        (bytes32[] memory hs, ) = _stagedAndScanned();
+        (, bytes32 bobKey) = _rival("staging-bob", 78, 900);
+        vm.recordLogs();
+        _staging().prepareStagedDay(bobKey); // the scan: alice's 65 are contested
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 contestedTopic = keccak256("TransportBatchContested(bytes32,bytes32)");
+        uint256 marks;
+        for (uint256 i; i < logs.length; ++i) if (logs[i].topics[0] == contestedTopic) ++marks;
+        assertGt(marks, 0, "the short record found alice's batches contested");
+        uint256 bobStagedBefore = _view().getStagingRecord(bobKey).stagedFresh;
+        // Alice cancels: every batch restored opens its window.
+        vm.startPrank(alice);
+        while (!_settle().unwindStagedDayPage(_key())) {}
+        vm.stopPrank();
+        (uint64 closesAt, bytes32 oldest, , bool ordinaryOpen) = _window(hs[0]);
+        assertGt(closesAt, block.timestamp); assertEq(oldest, bytes32(0)); assertFalse(ordinaryOpen);
+        _staging().prepareStagedDay(bobKey);
+        assertEq(_view().getStagingRecord(bobKey).stagedFresh, bobStagedBefore, "during the window the rival stages nothing from the released batches");
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit TransportBatchWaiterRegistered(hs[0], bobKey, _view().getStagingRecord(bobKey).openedAt);
+        _staging().registerForBatchWindow(bobKey, hs[0]);
+        (, oldest, , ) = _window(hs[0]);
+        assertEq(oldest, bobKey, "the registrant");
+        vm.warp(uint256(closesAt));
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit TransportBatchPriorityStaged(hs[0], bobKey);
+        _staging().prepareStagedDay(bobKey);
+        assertTrue(_view().isTransportBatchPriorityUsed(hs[0], bobKey), "the one reservation, burnt");
+        (, , bool held, bool open) = _window(hs[0]);
+        assertTrue(held, "and held"); assertFalse(open, "ordinary staging waits while the holder holds");
+        (uint256 sf, , uint256 refs) = _staged(hs[0]);
+        assertEq(sf, TINY, "the whole batch, staged by the registrant"); assertEq(refs, 1);
+        _assertConserved(hs);
+    }
+
+    /// @dev A2-ii — the oldest RECORD wins, not the first to register: the
+    ///      younger rival registers first and still loses to the older one.
+    function test_TheOldestRegistrant_Wins_NotTheFirstToRegister() public {
+        (bytes32[] memory hs, ) = _stagedAndScanned();
+        (, bytes32 bobKey) = _rival("staging-bob", 78, 900);
+        vm.warp(block.timestamp + 1 hours);
+        (, bytes32 carolKey) = _rival("staging-carol", 79, 901);
+        _staging().prepareStagedDay(bobKey);
+        _staging().prepareStagedDay(carolKey);
+        vm.startPrank(alice);
+        while (!_settle().unwindStagedDayPage(_key())) {}
+        vm.stopPrank();
+        _staging().registerForBatchWindow(carolKey, hs[0]); // the younger, first
+        (, bytes32 oldest, , ) = _window(hs[0]);
+        assertEq(oldest, carolKey);
+        _staging().registerForBatchWindow(bobKey, hs[0]); // the older, second
+        (uint64 closesAt, bytes32 oldest2, , ) = _window(hs[0]);
+        assertEq(oldest2, bobKey, "the running minimum of opening times: the older record");
+        vm.warp(uint256(closesAt));
+        _staging().prepareStagedDay(carolKey); // the other released batches, unregistered, are hers to take ordinarily —
+        (uint256 f0, , uint256 refs0) = _staged(hs[0]);
+        assertEq(f0 + refs0, 0, "but not the registered one: the younger waits on it");
+        _staging().prepareStagedDay(bobKey);
+        assertTrue(_view().isTransportBatchPriorityUsed(hs[0], bobKey), "the older takes it");
+        (f0, , refs0) = _staged(hs[0]);
+        assertEq(f0, TINY); assertEq(refs0, 1);
+        assertFalse(_view().isTransportBatchPriorityUsed(hs[0], carolKey));
+    }
+
+    /// @dev A2-ii — NON-RENEWABLE: a registrant whose reservation unwinds is
+    ///      permanently out of priority mode on that batch, so the alternation
+    ///      of two controlled obligations burns each once and ordinary
+    ///      staging resumes for everyone.
+    function test_PriorityMode_IsNonRenewable_SoTheAlternationIsBounded() public {
+        (bytes32[] memory hs, ) = _stagedAndScanned();
+        (, bytes32 bobKey) = _rival("staging-bob", 78, 900);
+        _staging().prepareStagedDay(bobKey);
+        vm.startPrank(alice);
+        while (!_settle().unwindStagedDayPage(_key())) {}
+        vm.stopPrank();
+        _staging().registerForBatchWindow(bobKey, hs[0]);
+        (uint64 closesAt, , , ) = _window(hs[0]);
+        vm.warp(uint256(closesAt));
+        _staging().prepareStagedDay(bobKey); // bob's one reservation on hs[0]
+        assertTrue(_view().isTransportBatchPriorityUsed(hs[0], bobKey));
+        // Bob unwinds: the batch returns, a new window opens, bob is out.
+        RewardEpochViewFacet.StagingRecordView memory br = _view().getStagingRecord(bobKey);
+        vm.warp(uint256(br.deadline) + 1);
+        while (!_settle().unwindStagedDayPage(bobKey)) {}
+        (uint64 closesAt2, bytes32 oldest, , bool open) = _window(hs[0]);
+        assertGt(closesAt2, block.timestamp); assertEq(oldest, bytes32(0)); assertFalse(open);
+        // A fresh bob record on the same obligation finds nothing to register: used.
+        _olderEpoch(902, keccak256("bob-reopen"));
+        vm.prank(makeAddr("staging-bob"));
+        RewardClaimFacet(address(diamond)).claimInteractionRewards();
+        _staging().prepareStagedDay(bobKey);
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.StagingPriorityUsed.selector, bobKey, hs[0]));
+        _staging().registerForBatchWindow(bobKey, hs[0]);
+        vm.warp(uint256(closesAt2));
+        (, , , open) = _window(hs[0]);
+        assertTrue(open, "no registrant: ordinary staging resumes for everyone");
+    }
+
+    /// @dev A2-ii — the releaser may not re-take what it released, and is not
+    ///      barred from anything else: its next claim stages a fresh epoch of
+    ///      the day at once (no obligation cooldown), and takes the released
+    ///      batches only once their windows have closed with no registrant.
+    function test_TheReleaser_StagesElsewhereAtOnce_AndTheReleasedBatchesOnlyAfterTheWindow() public {
+        (bytes32[] memory hs, ) = _stagedAndScanned();
+        vm.startPrank(alice);
+        while (!_settle().unwindStagedDayPage(_key())) {}
+        vm.stopPrank();
+        bytes32 fresh = _olderEpoch(903, keccak256("after-the-release"));
+        assertEq(_claim(), 0, "the claim re-opens a record at once");
+        assertEq(_rec().phase, uint8(LibVaipakam.StagingPhase.Staging));
+        (uint256 sf, , ) = _staged(fresh);
+        assertEq(sf, TINY, "and stages the fresh epoch");
+        (uint256 sf0, , ) = _staged(hs[0]);
+        assertEq(sf0, 0, "but none of what it released");
+        (uint64 closesAt, , , ) = _window(hs[0]);
+        vm.warp(uint256(closesAt));
+        _staging().prepareStagedDay(_key());
+        _staging().prepareStagedDay(_key());
+        (sf0, , ) = _staged(hs[0]);
+        assertEq(sf0, TINY, "past the window, with no registrant, it stages them again");
+        _assertConserved(hs);
     }
 
     // ───────────────────────── round 8 ─────────────────────────

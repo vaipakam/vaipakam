@@ -3124,13 +3124,14 @@ contract DeployDiamond is Script, ArtifactRootBase {
     {
         // A2-iii retired the dry run, the domain needs and the domain probe
         // (Remove legs in RefreshAllFacetsInPlace._retiredSelectors).
-        s = new bytes4[](9);
+        s = new bytes4[](10);
         // 3b-ii-A2 (#2305) — the staging records' reads.
         s[0] = RewardEpochViewFacet.getStagingRecord.selector;
         s[1] = RewardEpochViewFacet.getStagingRecordBatches.selector;
         s[2] = RewardEpochViewFacet.getStagingRecordEntries.selector;
         s[3] = RewardEpochViewFacet.getStagingRecordPending.selector;
-        s[4] = RewardEpochViewFacet.getStagingCooldown.selector;
+        s[4] = RewardEpochViewFacet.getTransportBatchWindow.selector; // A2-ii: replaces getStagingCooldown (Remove leg in RefreshAllFacetsInPlace)
+        s[9] = RewardEpochViewFacet.isTransportBatchPriorityUsed.selector; // A2-ii
         s[5] = RewardEpochViewFacet.getStagingEncumberedCount.selector;
         // A2-iii — the static armed-need reads, hosted here (EIP-170; same selectors as on the lens before).
         s[6] = RewardEpochViewFacet.getUserArmedFreshNeed.selector;
@@ -3145,10 +3146,11 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](3);
+        s = new bytes4[](4);
         s[0] = RewardStagingFacet.prepareStagedDay.selector;
         s[1] = RewardStagingFacet.reserveStagedDay.selector;
         s[2] = RewardStagingFacet.stageDayFromPlanInternal.selector; // A2-ii: the one record-opening host (Diamond-gated)
+        s[3] = RewardStagingFacet.registerForBatchWindow.selector; // A2-ii: priority-window registration
     }
 
     /// @dev 3b-ii-A2 (#2305) — the staging record's settlement half.

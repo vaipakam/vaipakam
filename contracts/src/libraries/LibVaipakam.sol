@@ -7642,6 +7642,10 @@ library LibVaipakam {
         ///      closed record's entries; and until when a new record may not
         ///      open after a non-settlement release.
         mapping(bytes32 => uint256) stagingNonce;
+        /// @dev RETIRED by A2-ii: the obligation-keyed cooldown A2-i set at an
+        ///      unwind. The design's cooldown is keyed to the BATCH
+        ///      (`transportBatchWindows`); this slot stays allocated, never
+        ///      read, per the append-only layout rule.
         mapping(bytes32 => uint64) stagingCooldownUntil;
         /// @dev Per (key, nonce): a batch's position in the record's list plus
         ///      one, and whether it was passed over untyped — both O(1).
@@ -7691,6 +7695,15 @@ library LibVaipakam {
         ///      finds, and reserves nothing while an entry is unread, so a
         ///      restored epoch is never skipped for live funding.
         mapping(uint256 => bytes32[]) transportDayRestored;
+        /// @dev A2-ii — the batch-keyed priority window ({TransportBatchWindow}).
+        mapping(bytes32 => TransportBatchWindow) transportBatchWindows;
+        /// @dev A2-ii — record nonce key => batch => the record found the batch
+        ///      CONTESTED (fully held by other records while it stayed short),
+        ///      so it may register for that batch's window.
+        mapping(bytes32 => mapping(bytes32 => bool)) transportBatchWaiting;
+        /// @dev A2-ii — batch => obligation key => a priority reservation was
+        ///      taken: NON-RENEWABLE, permanent for the obligation on the batch.
+        mapping(bytes32 => mapping(bytes32 => bool)) transportBatchPriorityUsed;
     }
 
     /// @notice 3b-ii-A2 (#2305) — one batch a staging record staged from, with
@@ -7699,6 +7712,30 @@ library LibVaipakam {
         bytes32 id;
         uint256 fresh;
         uint256 recycled;
+    }
+
+    /// @notice 3b-ii-A2-ii — the PRIORITY WINDOW a non-settlement release (an
+    ///         unwind page returning a record's staged coverage) puts on a
+    ///         transport batch. Until `closesAt` ordinary staging from the
+    ///         batch is suspended for every record — the releaser included —
+    ///         while a one-call draw consumes the restored coverage directly.
+    ///         Meanwhile the records that found the batch CONTESTED register,
+    ///         and the oldest registrant by its record's opening time (a
+    ///         running minimum: encounter order never decides) stages the
+    ///         batch first once the window closes — ONE priority reservation
+    ///         ever per obligation and batch. Ordinary leases resume once that
+    ///         reservation has resolved or unwound (its unwind opens the next
+    ///         window), or once the right lapses untaken. This is what bounds
+    ///         the two-obligation hostage: unwind-and-restage alternation burns
+    ///         each controlled obligation once, and the oldest honest waiter
+    ///         is served at every burn.
+    struct TransportBatchWindow {
+        uint64 closesAt;
+        bytes32 releasedBy;
+        bytes32 oldestKey;
+        bytes32 oldestNonceKey;
+        uint64 oldestOpenedAt;
+        bytes32 winnerNonceKey;
     }
 
     /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss: the

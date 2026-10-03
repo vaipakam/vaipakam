@@ -115,7 +115,11 @@ library LibRewardStaging {
     ///         as before staging existed (Codex #2308 r7; read back through
     ///         {RewardEpochViewFacet.getStagingCooldown}).
     /// @custom:event-category state-change/reward-staging
-    event StagingCooldownSet(bytes32 indexed key, uint64 until);
+    /// @notice The record under `key` (opened at `openedAt`) registered for
+    ///         `batchId`'s open priority window; the oldest registrant stages
+    ///         the batch first once the window closes (A2-ii).
+    /// @custom:event-category state-change/reward-staging
+    event TransportBatchWaiterRegistered(bytes32 indexed batchId, bytes32 indexed key, uint64 openedAt);
 
     // ────────────────────────────── constants ─────────────────────────────
 
@@ -226,7 +230,8 @@ library LibRewardStaging {
         // bumped the day's late generation: restart the late walk from the
         // chain's head (Codex #2308 r2).
         uint256 gen = s.transportDayLateGen[r.day];
-        if (gen != r.lateGenSeen) {
+        bool restart = gen != r.lateGenSeen;
+        if (restart) {
             r.lateSeen = bytes32(0);
             r.lateGenSeen = gen;
             // The restart re-walks the whole chain, history included: the
@@ -234,28 +239,21 @@ library LibRewardStaging {
             // record, and the deadline counts them for every restart, not
             // only the first (Codex #2308 r5, r10, r22).
             r.forcedPages += LibRewardCustody.scanPagesOf(s.transportDayLateCount[r.day]);
-        } else if (LibRewardCustody.forcedScanItems(s, r) != 0) {
-            // A call FORCED after the scan had completed — the list grew, a
-            // restoration landed, a passed epoch became stageable — is a page
-            // of its own in the lease (Codex #2308 r22), however little it
-            // walks; read before this scan takes the work. A call with
-            // nothing new counts nothing: the stager cannot lengthen the
-            // lease by calling.
-            ++r.forcedPages;
         }
-        (
-            bytes32[] memory ids,
-            uint256[] memory fresh,
-            uint256[] memory recycled,
-            bytes32 lastNode,
-            bytes32 lastLate,
-            bool complete,
-            bytes32[] memory skipped
-        ) = LibRewardCustody.planTakesForRecord(
-            s, r.day, r.continuationNode, r.lateSeen, askF, askR, LibRewardCustody.recheckPage(s, r)
+        // A call FORCED after the scan had completed — the list grew, a
+        // restoration landed, a passed epoch became stageable — is a page of
+        // its own in the lease (Codex #2308 r22), however little it walks. It
+        // counts only when the call CONSUMED forced work (the figure fell): a
+        // call that could act on nothing — every restoration still withheld by
+        // its window, say — counts nothing, so the stager cannot lengthen the
+        // lease by calling (A2-ii).
+        uint256 forcedBefore = restart ? 0 : LibRewardCustody.forcedScanItems(s, r);
+        LibRewardCustody.RecordTakes memory p = LibRewardCustody.planTakesForRecord(
+            s, r.day, r.continuationNode, r.lateSeen, askF, askR, LibRewardCustody.recheckPage(s, r),
+            LibRewardCustody.recordNonceKey(key, r.nonce)
         );
-        if (lastNode != bytes32(0)) r.continuationNode = lastNode;
-        if (lastLate != bytes32(0)) r.lateSeen = lastLate;
+        if (p.lastNode != bytes32(0)) r.continuationNode = p.lastNode;
+        if (p.lastLate != bytes32(0)) r.lateSeen = p.lastLate;
         // Every remembered epoch re-checked stageable this time is forgotten
         // FIRST, staged or not: it was offered, and it will not be offered
         // twice. Then the epochs this scan passed over pending — untyped, or
@@ -268,19 +266,26 @@ library LibRewardStaging {
             LibRewardCustody.forgetSkippedIfStageable(s, key, r, rechecked[k]);
             unchecked { ++k; }
         }
-        for (uint256 k; k < skipped.length; ) {
-            LibRewardCustody.noteSkipped(s, key, r, skipped[k]);
+        for (uint256 k; k < p.skipped.length; ) {
+            LibRewardCustody.noteSkipped(s, key, r, p.skipped[k]);
             unchecked { ++k; }
         }
         // The scan reached the end of the day's list: the reservation may
         // proceed as long as the list has not grown since.
-        r.scanComplete = complete;
-        if (complete) r.listCountSeen = s.transportBatchesByDay[r.day].length;
+        r.scanComplete = p.complete;
+        if (p.complete) r.listCountSeen = s.transportBatchesByDay[r.day].length;
+        if (forcedBefore != 0 && LibRewardCustody.forcedScanItems(s, r) < forcedBefore) ++r.forcedPages;
         // The page that overflowed the pending count stages nothing: the
         // record is unwindable from here, and nothing more is referenced
         // for it (Codex #2308 r6).
-        if (r.pendingOverflow || ids.length == 0) return (0, 0);
-        return LibRewardCustody.stageTakes(s, key, r, ids, fresh, recycled);
+        if (r.pendingOverflow || p.ids.length == 0) {
+            // Nothing to take this page, and the record is short: every
+            // contested epoch it passed is one it may register on (A2-ii).
+            LibRewardCustody.noteContested(s, key, r, p.contested);
+            return (0, 0);
+        }
+        (stagedFresh, stagedRecycled) = LibRewardCustody.stageTakes(s, key, r, p.ids, p.fresh, p.recycled);
+        if (askF + askR > stagedFresh + stagedRecycled) LibRewardCustody.noteContested(s, key, r, p.contested);
     }
 
     // ─────────────────────────────── reserve ──────────────────────────────
@@ -702,6 +707,29 @@ library LibRewardStaging {
         return (false, 0);
     }
 
+    /// @notice Register record `key` for `batchId`'s open priority window
+    ///         (A2-ii): the record must stand in staging, must have found the
+    ///         batch contested, and must not have used its one priority
+    ///         reservation on the batch. The oldest registrant by the record's
+    ///         opening time wins — a running minimum, so neither the order of
+    ///         registration nor the order a scan met the batch decides.
+    ///         Permissionless: anyone may register a record.
+    function register(LibVaipakam.Storage storage s, bytes32 key, bytes32 batchId) internal {
+        LibVaipakam.StagingRecord storage r = record(s, key);
+        _requirePhase(key, r, LibVaipakam.StagingPhase.Staging);
+        bytes32 nk = LibRewardCustody.recordNonceKey(key, r.nonce);
+        if (s.transportBatchPriorityUsed[batchId][key]) revert IVaipakamErrors.StagingPriorityUsed(key, batchId);
+        if (!s.transportBatchWaiting[nk][batchId]) revert IVaipakamErrors.StagingNotWaiting(key, batchId);
+        LibVaipakam.TransportBatchWindow storage w = s.transportBatchWindows[batchId];
+        if (w.closesAt == 0 || block.timestamp >= w.closesAt) revert IVaipakamErrors.TransportBatchWindowNotOpen(batchId);
+        if (w.oldestNonceKey == bytes32(0) || r.openedAt < w.oldestOpenedAt) {
+            w.oldestKey = key;
+            w.oldestNonceKey = nk;
+            w.oldestOpenedAt = r.openedAt;
+        }
+        emit TransportBatchWaiterRegistered(batchId, key, r.openedAt);
+    }
+
     /// @notice One page of unwind: past the deadline anyone, before it only
     ///         the claimant (a voluntary cancellation) — or anyone, at once,
     ///         when the record is STALE ({staleEntry}; Codex #2308 r23), the
@@ -757,6 +785,9 @@ library LibRewardStaging {
             LibRewardCustody.releaseStagedEarmark(s, bf + br);
             emit StagingUnwoundBatch(id, key, bf, br);
             LibRewardCustody.offerRestored(s, r.day, id);
+            // A non-settlement release: the batch's priority window opens, the
+            // releaser barred from re-taking what it returned (A2-ii).
+            LibRewardCustody.openBatchWindow(s, id, key);
             r.stagedFresh -= bf;
             r.stagedRecycled -= br;
             LibRewardCustody.releaseStagedBatchAt(s, key, r, i);
@@ -785,12 +816,8 @@ library LibRewardStaging {
                     unchecked { ++j; }
                 }
             }
-            // A non-settlement release: the same obligation may not open a
-            // new record until the cooldown passes; the restored coverage is
-            // the window's meanwhile.
-            uint64 until = uint64(block.timestamp) + LibRewardCustody.STAGING_GRACE;
-            s.stagingCooldownUntil[key] = until;
-            emit StagingCooldownSet(key, until);
+            // No obligation cooldown (A2-ii): each batch this unwind restored
+            // carries its own priority window, opened page by page above.
             _close(s, key, false);
             done = true;
         }

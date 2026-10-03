@@ -1155,6 +1155,18 @@ library LibRewardCustody {
     ///         logged for every standing record of that day to re-offer.
     /// @custom:event-category state-change/reward-staging
     event TransportDayRestored(uint256 indexed dayId, bytes32 indexed batchId);
+    /// @notice A non-settlement release by the record under `releasedBy` opened
+    ///         (or re-opened) `batchId`'s priority window, closing at `closesAt`
+    ///         (A2-ii, {LibVaipakam.TransportBatchWindow}).
+    event TransportBatchWindowOpened(bytes32 indexed batchId, bytes32 indexed releasedBy, uint64 closesAt);
+    /// @notice The record under `key` found `batchId` contested — fully held by
+    ///         other records while the record stayed short — and may register
+    ///         for the batch's next priority window (A2-ii).
+    event TransportBatchContested(bytes32 indexed batchId, bytes32 indexed key);
+    /// @notice The record under `key` took its one priority reservation on
+    ///         `batchId` (A2-ii): ordinary staging of the batch resumes once the
+    ///         record no longer holds it.
+    event TransportBatchPriorityStaged(bytes32 indexed batchId, bytes32 indexed key);
     /// @notice A packet's split was attested and a classification it already
     ///         carried exceeds a component's recorded cap by these amounts
     ///         (Codex #2276 r15 P1) — a divergence recorded for the
@@ -2268,6 +2280,12 @@ library LibRewardCustody {
         ///      the live, fully indexed epochs it passed over UNTYPED, for the
         ///      record to remember and re-check.
         bytes32[] skipped;
+        /// @dev A2-ii — set by {planTransportDrawForRecord} only: the epochs it
+        ///      passed that are CONTESTED for this record — whole and typed,
+        ///      but with every unit held by other records' staging — for the
+        ///      record to register on when it ends its scan short.
+        bytes32[] contested;
+        uint256 contestedCount;
         /// @dev Each drawable epoch's effective balance (net of the overlay)
         ///      and the ROOM each of its packet's two attested component caps
         ///      leaves it (Codex #2276 r4 P1: a cap covers classification PLUS
@@ -2747,6 +2765,97 @@ library LibRewardCustody {
         return s.ingressPackets[batchId].attested && b.indexedDays == b.dayCount && b.dayCount == 1;
     }
 
+    /// @notice Whether the record under nonce key `nk` may stage from `batchId`
+    ///         NOW — the batch intrinsically stageable ({stageable}) AND its
+    ///         priority window ({LibVaipakam.TransportBatchWindow}) admitting
+    ///         this record — and whether that admission is the window's one
+    ///         PRIORITY reservation (A2-ii). The ONE rule every staging read
+    ///         applies (the planner, the take, the skipped re-checks); a draw
+    ///         never reads it, since a one-call draw consumes restored coverage
+    ///         directly. `nk == 0` reads as a stranger: ordinary admission only.
+    ///         - no window ever opened: ordinary;
+    ///         - window open (`now < closesAt`): nobody stages — the releaser
+    ///           cannot re-take what it released, and waiters register;
+    ///         - window closed, a registrant standing (its record alive on that
+    ///           nonce, its right unused, within one cadence of the close):
+    ///           only the registrant, as priority;
+    ///         - the priority reservation taken and still held: only its
+    ///           holder; ordinary resumes when the hold is gone (a resolution
+    ///           consumes it, an unwind restores it and opens the next window);
+    ///         - otherwise ordinary.
+    function stageableFor(LibVaipakam.Storage storage s, bytes32 batchId, bytes32 nk)
+        internal
+        view
+        returns (bool ok, bool priority)
+    {
+        if (!stageable(s, batchId)) return (false, false);
+        LibVaipakam.TransportBatchWindow storage w = s.transportBatchWindows[batchId];
+        uint64 closesAt = w.closesAt;
+        if (closesAt == 0) return (true, false);
+        if (block.timestamp < closesAt) return (false, false);
+        bytes32 winner = w.winnerNonceKey;
+        if (winner == bytes32(0)) {
+            bytes32 oldest = w.oldestNonceKey;
+            if (oldest != bytes32(0) && _priorityRightStands(s, w, batchId)) return (nk == oldest, nk == oldest);
+        } else if (s.stagingBatchIndexPlusOne[winner][batchId] != 0) {
+            return (nk == winner, false);
+        }
+        return (true, false);
+    }
+
+    /// @dev The window's oldest registrant may still take its reservation: the
+    ///      obligation unused on this batch, its record alive on the registered
+    ///      nonce and still staging, and the close not a cadence old (an
+    ///      untaken right LAPSES, so a vanished registrant never holds a batch).
+    function _priorityRightStands(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.TransportBatchWindow storage w,
+        bytes32 batchId
+    ) private view returns (bool) {
+        bytes32 key = w.oldestKey;
+        if (s.transportBatchPriorityUsed[batchId][key]) return false;
+        LibVaipakam.StagingRecord storage r = s.stagingRecords[key];
+        if (r.phase != LibVaipakam.StagingPhase.Staging || recordNonceKey(key, r.nonce) != w.oldestNonceKey) return false;
+        return block.timestamp < uint256(w.closesAt) + STAGING_RETRY_CADENCE;
+    }
+
+    /// @notice A NON-SETTLEMENT release of `batchId`'s staged coverage by the
+    ///         record under `key` opens (or re-opens) the batch's priority
+    ///         window: one grace from now, registrants reset, the releaser
+    ///         recorded (A2-ii). Called from the unwind page beside
+    ///         {offerRestored}, never from a resolution — a resolution is the
+    ///         settlement itself, and its surplus return is not a release.
+    function openBatchWindow(LibVaipakam.Storage storage s, bytes32 batchId, bytes32 key) internal {
+        LibVaipakam.TransportBatchWindow storage w = s.transportBatchWindows[batchId];
+        w.closesAt = uint64(block.timestamp) + STAGING_GRACE;
+        w.releasedBy = key;
+        w.oldestKey = bytes32(0);
+        w.oldestNonceKey = bytes32(0);
+        w.oldestOpenedAt = 0;
+        w.winnerNonceKey = bytes32(0);
+        emit TransportBatchWindowOpened(batchId, key, w.closesAt);
+    }
+
+    /// @notice Record `r` (under `key`) ended a preparation short with these
+    ///         CONTESTED batches passed: mark each so the record may register
+    ///         for its window (A2-ii). Idempotent per record and batch.
+    function noteContested(
+        LibVaipakam.Storage storage s,
+        bytes32 key,
+        LibVaipakam.StagingRecord storage r,
+        bytes32[] memory contested
+    ) internal {
+        bytes32 nk = recordNonceKey(key, r.nonce);
+        for (uint256 i; i < contested.length; ) {
+            bytes32 id = contested[i];
+            if (!s.transportBatchWaiting[nk][id]) {
+                s.transportBatchWaiting[nk][id] = true;
+                emit TransportBatchContested(id, key);
+            }
+            unchecked { ++i; }
+        }
+    }
+
     /// @notice The plan for a RECORD's resume: the day's late chain past what
     ///         the record has seen, then the list from its continuation (the
     ///         day's cursor start when it has none), one window in all, only
@@ -2759,9 +2868,11 @@ library LibRewardCustody {
         uint256 dayId,
         bytes32 fromNode,
         bytes32 lateSeen,
-        bytes32[] memory extraIds
+        bytes32[] memory extraIds,
+        bytes32 nk
     ) internal view returns (TransportDrawPlan memory plan) {
         uint256 cap = TRANSPORT_DRAW_SCAN_CAP + extraIds.length;
+        plan.contested = new bytes32[](cap);
         bytes32[] memory ids = new bytes32[](cap);
         uint256[] memory bals = new uint256[](cap);
         uint256[] memory fRoom = new uint256[](cap);
@@ -2777,7 +2888,7 @@ library LibRewardCustody {
         // one page, not counted against the window — {_planAdd} skips one
         // still pending).
         for (uint256 k; k < extraIds.length; ) {
-            live = _planAdd(s, extraIds[k], ids, bals, fRoom, rRoom, keys, live, plan);
+            live = _planAdd(s, extraIds[k], nk, ids, bals, fRoom, rRoom, keys, live, plan);
             unchecked { ++k; }
         }
         // The late chain first — but only the epochs that sort AHEAD of the
@@ -2796,8 +2907,12 @@ library LibRewardCustody {
                 // re-checks already offered is passed here, not planned twice
                 // — a restarted chain walk meets the re-checked epochs again.
                 if (_keyBefore(s, s.ingressPackets[node].arrivedAt, node, fromNode) && !_among(extraIds, node)) {
+                    if (_windowBlocks(s, node, nk)) {
+                        plan.capHit = true; // the scan stops here; the resume starts at this link
+                        break;
+                    }
                     if (_pendingCandidate(s, node)) skipped[nSkipped++] = node;
-                    else live = _planAdd(s, node, ids, bals, fRoom, rRoom, keys, live, plan);
+                    else live = _planAdd(s, node, nk, ids, bals, fRoom, rRoom, keys, live, plan);
                 }
                 plan.lastLate = node;
                 node = s.transportDayLateNext[dayId][node];
@@ -2816,8 +2931,12 @@ library LibRewardCustody {
         }
         while (node != bytes32(0) && seen < TRANSPORT_DRAW_SCAN_CAP) {
             if (!_among(extraIds, node)) {
+                if (_windowBlocks(s, node, nk)) {
+                    plan.capHit = true; // the scan stops here; the resume starts at this node
+                    break;
+                }
                 if (_pendingCandidate(s, node)) skipped[nSkipped++] = node;
-                else live = _planAdd(s, node, ids, bals, fRoom, rRoom, keys, live, plan);
+                else live = _planAdd(s, node, nk, ids, bals, fRoom, rRoom, keys, live, plan);
             }
             plan.lastNode = node;
             node = s.transportDayNext[dayId][node];
@@ -2836,12 +2955,30 @@ library LibRewardCustody {
         plan.bals = bals;
         plan.freshRoom = fRoom;
         plan.recycledRoom = rRoom;
+        bytes32[] memory contested = plan.contested;
+        uint256 nContested = plan.contestedCount;
+        assembly ("memory-safe") {
+            mstore(contested, nContested)
+        }
     }
 
     /// @notice The takes for a record's resume: {planTransportDrawForRecord}
     ///         split for the ask, in one frame that holds no record pointer —
     ///         the split's own frame is wide, and a caller holding the key and
     ///         the record beside it is what pushed viaIR past the stack.
+    /// @notice One preparation page's result for a record (A2-ii: one struct,
+    ///         so the record's scan frame holds one pointer, not eight locals).
+    struct RecordTakes {
+        bytes32[] ids;
+        uint256[] fresh;
+        uint256[] recycled;
+        bytes32 lastNode;
+        bytes32 lastLate;
+        bool complete;
+        bytes32[] skipped;
+        bytes32[] contested;
+    }
+
     function planTakesForRecord(
         LibVaipakam.Storage storage s,
         uint256 dayId,
@@ -2849,31 +2986,21 @@ library LibRewardCustody {
         bytes32 lateSeen,
         uint256 askF,
         uint256 askR,
-        bytes32[] memory extraIds
-    )
-        internal
-        view
-        returns (
-            bytes32[] memory ids,
-            uint256[] memory fresh,
-            uint256[] memory recycled,
-            bytes32 lastNode,
-            bytes32 lastLate,
-            bool complete,
-            bytes32[] memory skipped
-        )
-    {
-        TransportDrawPlan memory plan = planTransportDrawForRecord(s, dayId, fromNode, lateSeen, extraIds);
+        bytes32[] memory extraIds,
+        bytes32 nk
+    ) internal view returns (RecordTakes memory out) {
+        TransportDrawPlan memory plan = planTransportDrawForRecord(s, dayId, fromNode, lateSeen, extraIds, nk);
         if (plan.ids.length != 0) {
             TransportTakes memory t = splitTransportTakes(plan, askF, askR);
-            ids = plan.ids;
-            fresh = t.fresh;
-            recycled = t.recycled;
+            out.ids = plan.ids;
+            out.fresh = t.fresh;
+            out.recycled = t.recycled;
         }
-        lastNode = plan.lastNode;
-        lastLate = plan.lastLate;
-        complete = !plan.capHit;
-        skipped = plan.skipped;
+        out.lastNode = plan.lastNode;
+        out.lastLate = plan.lastLate;
+        out.complete = !plan.capHit;
+        out.contested = plan.contested;
+        out.skipped = plan.skipped;
     }
 
     /// @notice Remember an epoch the record's own scan passed over pending.
@@ -2916,8 +3043,17 @@ library LibRewardCustody {
             out[n++] = r.skippedIds[i];
             unchecked { ++i; }
         }
+        bytes32 nk = recordNonceKey(stagingKey(r.user, r.side, r.day), r.nonce);
         for (uint256 i = from; i < to; ) {
             bytes32 id = log[i];
+            // A restoration the record cannot stage yet for its window stays
+            // UNREAD (A2-ii): the page ends here, the reservation keeps
+            // refusing on it, and the next preparation re-reads it once the
+            // window admits the record — nothing restored is ever passed over.
+            if (_windowBlocks(s, id, nk)) {
+                to = i;
+                break;
+            }
             if (!_amongFirst(out, n, id)) out[n++] = id;
             unchecked { ++i; }
         }
@@ -2960,6 +3096,28 @@ library LibRewardCustody {
         return b.balance != 0 && b.dayCount == 1 && !stageable(s, node);
     }
 
+    /// @dev A batch the record under `nk` could stage but for its priority
+    ///      window ({stageableFor}): the record's scan STOPS at it — the page is
+    ///      incomplete, the continuation stays before it, and the resume meets
+    ///      it again once the window admits the record (A2-ii). Not a pending
+    ///      candidate: the bounded skipped list is for epochs still untyped or
+    ///      incomplete, and a day's worth of windowed batches would overflow it.
+    function _windowBlocks(LibVaipakam.Storage storage s, bytes32 node, bytes32 nk) private view returns (bool) {
+        if (s.transportBatches[node].balance == 0 || !stageable(s, node)) return false;
+        (bool ok, ) = stageableFor(s, node, nk);
+        return !ok;
+    }
+
+    /// @dev A batch CONTESTED for the record under `nk` (A2-ii): typed, whole
+    ///      and single-day, but every unit of it held by OTHER records' staging
+    ///      — nothing for this record to take now, and the one it may register
+    ///      on for the batch's next window.
+    function _contestedFor(LibVaipakam.Storage storage s, bytes32 node, bytes32 nk) private view returns (bool) {
+        LibVaipakam.TransportBatch storage b = s.transportBatches[node];
+        return b.balance == 0 && b.stagedFresh + b.stagedRecycled != 0 && stageable(s, node)
+            && s.stagingBatchIndexPlusOne[nk][node] == 0;
+    }
+
     /// @dev One candidate into the record plan: live and stageable (attested,
     ///      whole, one day), rooms from its caps, sorted by the plan's key
     ///      exactly as {planTransportDraw} sorts — oldest arrival, batch id
@@ -2967,6 +3125,7 @@ library LibRewardCustody {
     function _planAdd(
         LibVaipakam.Storage storage s,
         bytes32 node,
+        bytes32 nk,
         bytes32[] memory ids,
         uint256[] memory bals,
         uint256[] memory fRoom,
@@ -2977,7 +3136,12 @@ library LibRewardCustody {
     ) private view returns (uint256) {
         LibVaipakam.TransportBatch storage b = s.transportBatches[node];
         uint256 bal = b.balance;
-        if (bal == 0 || !stageable(s, node)) return live;
+        if (bal == 0) {
+            if (_contestedFor(s, node, nk)) plan.contested[plan.contestedCount++] = node;
+            return live;
+        }
+        (bool ok, ) = stageableFor(s, node, nk);
+        if (!ok) return live;
         (uint256 fr, uint256 rr) = _capRooms(s, node, b, bal);
         uint256 key = uint256(s.ingressPackets[node].arrivedAt);
         uint256 k = live;
@@ -3029,16 +3193,10 @@ library LibRewardCustody {
         bytes32 commitment = stagingCommitment(entryIds, op);
         bool opened;
         if (r.phase == LibVaipakam.StagingPhase.None) {
-            // After a non-settlement release the same obligation may not open
-            // a record again until the cooldown has passed (Codex #2308 r2):
-            // the restored coverage is the window's, directly consumable by
-            // every other obligation meanwhile. The batch-keyed window and
-            // priority mode of the design are A2-ii's (#2305).
-            // The cooldown is published: set with `StagingCooldownSet` at the
-            // release and read back through the epoch view's
-            // `getStagingCooldown`, so this silent deferral is never a state a
-            // client cannot name (Codex #2308 r7).
-            if (block.timestamp < s.stagingCooldownUntil[key]) return (key, 0);
+            // No obligation-keyed cooldown since A2-ii: a release puts a
+            // window on the BATCH it released ({openBatchWindow}), so the same
+            // obligation may open a record again at once and stage the day's
+            // other epochs; what it released is the window's.
             opened = true;
             r.nonce = ++s.stagingNonce[key];
             r.user = user;
@@ -3123,7 +3281,16 @@ library LibRewardCustody {
             uint256 br = recycled[k];
             if (bf + br != 0) {
                 bytes32 id = ids[k];
-                if (stageable(s, id)) {
+                (bool ok, bool priority) = stageableFor(s, id, recordNonceKey(key, r.nonce));
+                if (ok) {
+                    if (priority) {
+                        // The window's ONE priority reservation, taken: burnt
+                        // for this obligation on this batch for good, and held
+                        // against every other stager until this record lets go.
+                        s.transportBatchPriorityUsed[id][key] = true;
+                        s.transportBatchWindows[id].winnerNonceKey = recordNonceKey(key, r.nonce);
+                        emit TransportBatchPriorityStaged(id, key);
+                    }
                     LibVaipakam.TransportBatch storage b = s.transportBatches[id];
                     b.balance -= bf + br;
                     b.stagedFresh += bf;
@@ -3268,7 +3435,8 @@ library LibRewardCustody {
     ///         it needs no further revisit (Codex #2308 r3).
     function forgetSkippedIfStageable(LibVaipakam.Storage storage s, bytes32 key, LibVaipakam.StagingRecord storage r, bytes32 id) internal {
         bytes32 nk = recordNonceKey(key, r.nonce);
-        if (s.stagingSkippedSeen[nk][id] && stageable(s, id)) _forgetSkipped(s, nk, r, id);
+        (bool ok, ) = stageableFor(s, id, nk);
+        if (s.stagingSkippedSeen[nk][id] && ok) _forgetSkipped(s, nk, r, id);
     }
 
     /// @notice Whether any epoch the record passed over pending is stageable
@@ -3290,8 +3458,10 @@ library LibRewardCustody {
 
     function anySkippedNowStageable(LibVaipakam.Storage storage s, LibVaipakam.StagingRecord storage r) internal view returns (bool) {
         uint256 n = r.skippedIds.length;
+        bytes32 nk = recordNonceKey(stagingKey(r.user, r.side, r.day), r.nonce);
         for (uint256 i; i < n; ) {
-            if (stageable(s, r.skippedIds[i])) return true;
+            (bool ok, ) = stageableFor(s, r.skippedIds[i], nk);
+            if (ok) return true;
             unchecked { ++i; }
         }
         return false;

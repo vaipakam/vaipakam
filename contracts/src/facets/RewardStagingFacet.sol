@@ -42,6 +42,11 @@ contract RewardStagingFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
     ///         #2308 r17).
     /// @custom:event-category state-change/reward-staging
     event StagingRecordOpened(bytes32 indexed key, address indexed user, uint8 side, uint64 day, bytes32 commitment);
+    /// @notice A2-ii priority-window events the staging library emits through
+    ///         this facet's entries, declared here for the exported ABI.
+    event TransportBatchContested(bytes32 indexed batchId, bytes32 indexed key);
+    event TransportBatchWaiterRegistered(bytes32 indexed batchId, bytes32 indexed key, uint64 openedAt);
+    event TransportBatchPriorityStaged(bytes32 indexed batchId, bytes32 indexed key);
 
     // ────────────────────────── the staging lifecycle ──────────────────────────
 
@@ -65,6 +70,15 @@ contract RewardStagingFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
     ///         paid; the record is `Reserved`, still unwindable.
     function reserveStagedDay(bytes32 key) external nonReentrant whenNotPaused {
         LibRewardStaging.reserve(LibVaipakam.storageSlot(), key);
+    }
+
+    /// @notice Permissionless: register the record under `key` for `batchId`'s
+    ///         open priority window (A2-ii). The record must have found the
+    ///         batch contested and not have used its one priority reservation
+    ///         there; the oldest registrant by opening time stages the batch
+    ///         first once the window closes.
+    function registerForBatchWindow(bytes32 key, bytes32 batchId) external nonReentrant whenNotPaused {
+        LibRewardStaging.register(LibVaipakam.storageSlot(), key, batchId);
     }
 
     /// @notice The record-opening seam, hosted ONCE (A2-ii): a walk that

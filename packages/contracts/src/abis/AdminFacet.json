@@ -4352,6 +4352,22 @@
   },
   {
     "type": "error",
+    "name": "StagingNotWaiting",
+    "inputs": [
+      {
+        "name": "key",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "batchId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "StagingPendingOverflow",
     "inputs": [
       {
@@ -4374,6 +4390,22 @@
         "name": "phase",
         "type": "uint8",
         "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "StagingPriorityUsed",
+    "inputs": [
+      {
+        "name": "key",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "batchId",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ]
   },
@@ -4659,6 +4691,17 @@
   {
     "type": "error",
     "name": "TransportBatchUnknown",
+    "inputs": [
+      {
+        "name": "batchId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "TransportBatchWindowNotOpen",
     "inputs": [
       {
         "name": "batchId",

@@ -2553,12 +2553,13 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](9);
+        selectors = new bytes4[](10);
         selectors[0] = RewardEpochViewFacet.getStagingRecord.selector;
         selectors[1] = RewardEpochViewFacet.getStagingRecordBatches.selector;
         selectors[2] = RewardEpochViewFacet.getStagingRecordEntries.selector;
         selectors[3] = RewardEpochViewFacet.getStagingRecordPending.selector;
-        selectors[4] = RewardEpochViewFacet.getStagingCooldown.selector;
+        selectors[4] = RewardEpochViewFacet.getTransportBatchWindow.selector; // A2-ii
+        selectors[9] = RewardEpochViewFacet.isTransportBatchPriorityUsed.selector; // A2-ii
         selectors[5] = RewardEpochViewFacet.getStagingEncumberedCount.selector;
         // A2-iii — the static armed-need reads, hosted here (EIP-170).
         selectors[6] = RewardEpochViewFacet.getUserArmedFreshNeed.selector;
@@ -2573,10 +2574,11 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](3);
+        selectors = new bytes4[](4);
         selectors[0] = RewardStagingFacet.prepareStagedDay.selector;
         selectors[1] = RewardStagingFacet.reserveStagedDay.selector;
         selectors[2] = RewardStagingFacet.stageDayFromPlanInternal.selector; // A2-ii
+        selectors[3] = RewardStagingFacet.registerForBatchWindow.selector; // A2-ii
     }
 
     /// 3b-ii-A2 (#2305) — the staging record's settlement half. Mirrors

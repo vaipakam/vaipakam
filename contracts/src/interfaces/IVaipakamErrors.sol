@@ -1769,6 +1769,14 @@ interface IVaipakamErrors {
     ///         whole — than it tracks; it can only be unwound, and the day
     ///         stays draw-only for them.
     error StagingPendingOverflow(bytes32 key);
+    /// @notice The record under `key` never found `batchId` contested, so it
+    ///         may not register for the batch's priority window (A2-ii).
+    error StagingNotWaiting(bytes32 key, bytes32 batchId);
+    /// @notice The obligation under `key` already took its one priority
+    ///         reservation on `batchId` — non-renewable (A2-ii).
+    error StagingPriorityUsed(bytes32 key, bytes32 batchId);
+    /// @notice No registration window is open on `batchId` (A2-ii).
+    error TransportBatchWindowNotOpen(bytes32 batchId);
     /// @notice The reward this settlement would pay a loan side fits the
     ///         side's lifetime cap but not what is left of it after standing
     ///         staging reservations: a deferral, retryable once a reservation

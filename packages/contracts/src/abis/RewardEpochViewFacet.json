@@ -55,35 +55,6 @@
   },
   {
     "type": "function",
-    "name": "getStagingCooldown",
-    "inputs": [
-      {
-        "name": "user",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "side",
-        "type": "uint8",
-        "internalType": "enum LibVaipakam.RewardSide"
-      },
-      {
-        "name": "day",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "until",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "getStagingEncumberedCount",
     "inputs": [],
     "outputs": [
@@ -465,6 +436,50 @@
   },
   {
     "type": "function",
+    "name": "getTransportBatchWindow",
+    "inputs": [
+      {
+        "name": "batchId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "closesAt",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "releasedBy",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "oldestKey",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "oldestOpenedAt",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "priorityHeld",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "ordinaryOpen",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getUserArmedFreshNeed",
     "inputs": [
       {
@@ -532,6 +547,30 @@
         "name": "userPaid",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "isTransportBatchPriorityUsed",
+    "inputs": [
+      {
+        "name": "batchId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "key",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
       }
     ],
     "stateMutability": "view"
