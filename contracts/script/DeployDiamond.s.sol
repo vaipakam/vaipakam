@@ -3107,7 +3107,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](18);
+        s = new bytes4[](21);
         s[0] = RewardEpochFacet.materializeTransportBatchPage.selector;
         s[1] = RewardEpochFacet.parkTransportBatchRemainder.selector;
         s[2] = RewardEpochFacet.acknowledgeTransportBatchRemainder.selector;
@@ -3127,6 +3127,10 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[16] = RewardEpochFacet.getTransportDayScanIds.selector;
         // 3b-ii-A2 (#2305) — the staged terms' read.
         s[17] = RewardEpochFacet.getTransportBatchStaged.selector;
+        // 3c-1 — the two gates' views.
+        s[18] = RewardEpochFacet.getTransportTiersForDay.selector;
+        s[19] = RewardEpochFacet.getTransportBatchGates.selector;
+        s[20] = RewardEpochFacet.getTransportBatchDays.selector;
     }
 
     /// @dev 3b-ii-A (Codex #2276 r2) — the epochs' engine-inlining reads:

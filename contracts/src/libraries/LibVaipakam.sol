@@ -7736,6 +7736,11 @@ library LibVaipakam {
         /// @dev 3b-ii-B — how many of a batch's listed days the park has checked
         ///      closed so far (the park is paged like the index was).
         mapping(bytes32 => uint32) transportParkCursor;
+        /// @dev 3c-1 — the days a batch listed, kept as its membership is indexed
+        ///      (beside the inverse index), so the two allocation gates read each
+        ///      listed day's arrival and closure LIVE. Empty for a batch indexed
+        ///      before this field existed: such a batch is withheld as contested.
+        mapping(bytes32 => uint256[]) transportBatchDays;
     }
 
     /// @notice 3b-ii-A2 (#2305) — one batch a staging record staged from, with

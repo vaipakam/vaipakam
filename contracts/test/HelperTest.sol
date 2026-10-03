@@ -107,7 +107,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](250); // A2-iii +3 raw (attested caps, ledger reservation, day needs); 3b-ii-A2 r22 +loanSideRewardPaidRaw; #2342 +setLegacyFrozenVpfiRaw; 3b-ii-A2 +13 raw reads +5 raw writes; #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1, then -1 with the pre-list scene (Codex #2296 items 2 and 4); r26 +1 flexible caps; 3b-ii-A2 r21 +1 ledger reservation
+        selectors = new bytes4[](251); // A2-iii +3 raw (attested caps, ledger reservation, day needs); 3b-ii-A2 r22 +loanSideRewardPaidRaw; #2342 +setLegacyFrozenVpfiRaw; 3b-ii-A2 +13 raw reads +5 raw writes; #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1, then -1 with the pre-list scene (Codex #2296 items 2 and 4); r26 +1 flexible caps; 3b-ii-A2 r21 +1 ledger reservation
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -548,6 +548,7 @@ contract HelperTest {
         selectors[n++] = TestMutatorFacet.setInterestFoldDeltaRaw.selector; // #2277
         selectors[n++] = TestMutatorFacet.setRewardEntryProcessedRaw.selector; // 3b-ii-B
         selectors[n++] = TestMutatorFacet.setLegacyDomainOpenRaw.selector; // 3b-ii-B
+        selectors[n++] = TestMutatorFacet.clearTransportBatchDaysRaw.selector; // 3c-1
         // #951 v2 (Codex #959 bind-to-live) — setSaleListingCollateralRaw removed
         // with the snapshot mapping; the accept binds `>=` live collateral.
         // #687-B: the former tail entries ([83]-[87]: setBackstopAbsorbCashRaw,
@@ -2533,7 +2534,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](18);
+        selectors = new bytes4[](21);
         selectors[0] = RewardEpochFacet.materializeTransportBatchPage.selector;
         selectors[1] = RewardEpochFacet.parkTransportBatchRemainder.selector;
         selectors[2] = RewardEpochFacet.acknowledgeTransportBatchRemainder.selector;
@@ -2553,6 +2554,10 @@ contract HelperTest {
         selectors[15] = RewardEpochFacet.getTransportDayIndex.selector;
         selectors[16] = RewardEpochFacet.getTransportDayScanIds.selector;
         selectors[17] = RewardEpochFacet.getTransportBatchStaged.selector;
+        // 3c-1 — the two gates' views.
+        selectors[18] = RewardEpochFacet.getTransportTiersForDay.selector;
+        selectors[19] = RewardEpochFacet.getTransportBatchGates.selector;
+        selectors[20] = RewardEpochFacet.getTransportBatchDays.selector;
     }
 
     /// 3b-ii-A (Codex #2276 r2) — the epochs' engine-inlining reads. Mirrors

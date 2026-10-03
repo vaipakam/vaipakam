@@ -25,6 +25,8 @@ import {LibVpfiRecycle} from "../src/libraries/LibVpfiRecycle.sol";
 import {LibRewardCustody} from "../src/libraries/LibRewardCustody.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
+import {RewardClosureFacet} from "../src/facets/RewardClosureFacet.sol";
+import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
 
 /**
  * @title RewardTransportEpochDrawTest
@@ -591,9 +593,9 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         _mut().parkTransportBatchRaw(c);
         assertEq(_balance(a) + _balance(b) + _balance(c), 0);
         assertEq(_cursor(1), 0, "day 1's index still lists the husks");
-        (uint256 avail, bool capHit, uint256 wShared, ) = _epoch().getTransportCoverageForDay(1);
+        (uint256 avail, bool capHit, uint256 wContested, ) = _epoch().getTransportCoverageForDay(1);
         assertEq(avail, 0);
-        assertEq(wShared, 0, "an exhausted husk is not withheld");
+        assertEq(wContested, 0, "an exhausted husk is not withheld");
         assertFalse(capHit);
         _epoch().epochPruneTransportDayCursor(1);
         assertEq(_cursor(1), 3, "pruned");
@@ -654,12 +656,12 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         bytes32 h = keccak256(abi.encode(uint256(CHAIN_BASE), id));
         _attest(1, 1, 0);
         assertEq(_epoch().materializeTransportBatchPage(h, days_), 32, "first page");
-        (uint256 avail, , uint256 wShared, ) = _epoch().getTransportCoverageForDay(1);
-        assertEq(avail + wShared, 0, "day 1 sees nothing of a half-indexed epoch");
+        (uint256 avail, , uint256 wContested, ) = _epoch().getTransportCoverageForDay(1);
+        assertEq(avail + wContested, 0, "day 1 sees nothing of a half-indexed epoch");
         assertEq(_epoch().materializeTransportBatchPage(h, days_), 40, "second page: whole");
-        (avail, , wShared, ) = _epoch().getTransportCoverageForDay(1);
+        (avail, , wContested, ) = _epoch().getTransportCoverageForDay(1);
         assertEq(avail, 0, "a shared epoch is never drawable");
-        assertEq(wShared, 10e18, "but whole, it is counted as withheld");
+        assertEq(wContested, 10e18, "but whole, it is counted as withheld");
     }
 
     /// @dev The executability gates net the recycled upper bound by what the
@@ -753,9 +755,9 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
     function test_AnUnattestedEpoch_IsWithheld_UntilItsSplitIsAttested() public {
         _scene(NEED);
         bytes32 h = _epochRaw(10e18, _one(1), 9, keccak256("unattested"));
-        (uint256 avail, , uint256 wShared, uint256 wUnattested) = _epoch().getTransportCoverageForDay(1);
+        (uint256 avail, , uint256 wContested, uint256 wUnattested) = _epoch().getTransportCoverageForDay(1);
         assertEq(avail, 0, "nothing is drawable");
-        assertEq(wShared, 0);
+        assertEq(wContested, 0);
         assertEq(wUnattested, 10e18, "withheld for its attestation");
         assertEq(_preview(), 0, "the preview prices nothing");
         vm.expectRevert(IVaipakamErrors.NoInteractionRewardsToClaim.selector);
@@ -773,29 +775,123 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         assertEq(lf, NEED, "on the fresh leg its attested room allows");
     }
 
-    /// @dev An epoch listing more than one day is WITHHELD, by name, until
-    ///      the contested-allocation machinery lands (Codex #2276 r26 P1): a
-    ///      draw on it for one day is contested whenever another listed day
-    ///      carries an unmet obligation, which nothing here can rule out.
-    function test_ASharedEpoch_IsWithheld_EvenWhenAttested() public {
-        _scene(NEED);
+    /// @dev 3c-1 (#2318, option A) — a shared epoch whose OTHER listed day has
+    ///      ARRIVED and still carries an obligation not proven terminated is
+    ///      CONTESTED: withheld, by name, from this day's draw. Here day 2 is
+    ///      armed and stamped (arrived) and alice's entry still covers it.
+    ///      Unattested and contested are reported each on its own.
+    function test_ASharedEpoch_IsContested_WhileAnotherArrivedDayIsOpen() public {
+        _armedDay(1, NEED);
+        _armedDay(2, NEED); // day 2 has ARRIVED
+        _mut().setGovernorCommitArmedFromDayRaw(1);
+        _loanSideOpen(2);
+        _entry(1, 3); // covers day 2: an obligation the proof has not closed
+        _mut().setArmedFreshLedgerRaw(0, 0);
+        _mut().userClaimFundingNeedRaw(alice);
         bytes32 h = _epochOf(10e18, _two(1, 2), 11, keccak256("shared"));
-        (uint256 avail, , uint256 wShared, uint256 wUnattested) = _epoch().getTransportCoverageForDay(1);
+        (uint256 avail, , uint256 wContested, uint256 wUnattested) = _epoch().getTransportCoverageForDay(1);
         assertEq(avail, 0, "nothing is drawable");
-        assertEq(wShared, 10e18, "withheld as shared");
+        assertEq(wContested, 10e18, "withheld as contested");
         assertEq(wUnattested, 0, "and not for want of an attestation");
-        // Unattested AND shared: withheld for both reasons, each reported
-        // (Codex #2276 r27 P2) — a pending attestation is never hidden.
+        // Unattested AND contested: each reported (Codex #2276 r27 P2).
         _epochRaw(3e18, _two(1, 2), 12, keccak256("shared-unattested"));
-        (avail, , wShared, wUnattested) = _epoch().getTransportCoverageForDay(1);
+        (avail, , wContested, wUnattested) = _epoch().getTransportCoverageForDay(1);
         assertEq(avail, 0);
-        assertEq(wShared, 13e18, "both shared epochs");
+        assertEq(wContested, 13e18, "both contested");
         assertEq(wUnattested, 3e18, "and the unattested one's pending attestation");
         vm.expectRevert(IVaipakamErrors.NoInteractionRewardsToClaim.selector);
         _claim();
         assertEq(_balance(h), 10e18, "the claim took nothing from it");
         (uint256 lf, uint256 lr) = _legs(h);
         assertEq(lf + lr, 0, "and typed no leg");
+    }
+
+    /// @dev 3c-1 — a shared epoch whose other listed day is ARRIVED and PROVEN
+    ///      CLOSED is uncontested: it is planned as ordinary and pays day 1
+    ///      first, exactly like a one-day epoch. Day 2 carries no obligation,
+    ///      so once the chain closes it the proof completes at its start.
+    function test_ASharedEpoch_WhoseOtherDayIsProvenClosed_IsOrdinary() public {
+        _scene(NEED); // alice's entry covers day 1 only
+        _armedDay(2, NEED); // day 2: arrived, no obligation
+        bytes32 h = _epochOf(10e18, _two(1, 2), 11, keccak256("shared-closed"));
+        (uint256 avail, , uint256 wContested, ) = _epoch().getTransportCoverageForDay(1);
+        assertEq(avail, 0, "day 2 is arrived but not yet proven closed: contested");
+        assertEq(wContested, 10e18);
+        _closeDayLocally(2);
+        (, , bool closed) = RewardClosureFacet(address(diamond)).startDayClosure(2);
+        assertTrue(closed, "no obligation covers day 2: proven closed at the start");
+        (avail, , wContested, ) = _epoch().getTransportCoverageForDay(1);
+        assertEq(wContested, 0, "no longer contested");
+        assertEq(avail, 10e18, "drawable as ordinary");
+        assertEq(_claim(), NEED, "paid from the epoch, transport-first");
+        (uint256 lf, ) = _legs(h);
+        assertEq(lf, NEED);
+    }
+
+    /// @dev 3c-1 — the NECESSITY tier (design 2480–2506, revived from #2276
+    ///      r26 with the contested gate beside it): a shared epoch whose other
+    ///      listed day has NOT arrived is drawn LAST, only for the gap live
+    ///      funding cannot cover. Live pays day 1; the epoch is left whole.
+    function test_ASharedEpochWithAnUnarrivedDay_IsDrawnLast_WhenLiveCanPay() public {
+        _scene(NEED); // day 2 is never stamped: unarrived
+        _liveOf(1e18, _one(1), 1, keccak256("live"));
+        bytes32 h = _epochOf(10e18, _two(1, 2), 2, keccak256("shared"));
+        (uint256 avail, , uint256 wContested, ) = _epoch().getTransportCoverageForDay(1);
+        assertEq(wContested, 0, "an unarrived day does not contest");
+        assertEq(avail, 10e18, "it is available - as necessity");
+        (uint256 ordinary, uint256 necessity) = _epoch().getTransportTiersForDay(1);
+        assertEq(ordinary, 0); assertEq(necessity, 10e18);
+        uint256 liveBefore = _row(LibVaipakam.RewardCustodyRow.LiveFresh);
+        assertEq(_claim(), NEED);
+        (uint256 lf, uint256 lr) = _legs(h);
+        assertEq(lf + lr, 0, "the shared epoch is spared for its unarrived day");
+        assertEq(liveBefore - _row(LibVaipakam.RewardCustodyRow.LiveFresh), NEED, "live paid day 1");
+    }
+
+    /// @dev ...and drawn when it is the ONLY way to pay (necessity, not
+    ///      exclusion): no live delivery, so day 1 is funded from the shared
+    ///      epoch for exactly its gap.
+    function test_ASharedEpochWithAnUnarrivedDay_StillPays_WhenNothingElseCan() public {
+        _scene(NEED);
+        bytes32 h = _epochOf(10e18, _two(1, 2), 2, keccak256("shared-only"));
+        assertEq(_claim(), NEED, "the day is paid from the shared epoch");
+        (uint256 lf, ) = _legs(h);
+        assertEq(lf, NEED, "for exactly the day's gap");
+        assertEq(_balance(h), 10e18 - NEED, "and the rest stays for the unarrived day");
+    }
+
+    /// @dev 3c-1 — the necessity tier is never STAGED: a record (the wide-day
+    ///      path) stages only ordinary epochs, since the live shortfall the
+    ///      necessity tier may serve is known at reservation, not at staging.
+    ///      The one-call path above is the only reader of that tier.
+    function test_ANecessityTierEpoch_IsNotStageable() public {
+        _scene(NEED);
+        bytes32 h = _epochOf(10e18, _two(1, 2), 2, keccak256("shared"));
+        (uint8 gates, bool stageable) = _epoch().getTransportBatchGates(h);
+        assertEq(gates, 8, "necessity"); assertFalse(stageable, "necessity: not stageable");
+        _armedDay(2, NEED);
+        _closeDayLocally(2);
+        RewardClosureFacet(address(diamond)).startDayClosure(2);
+        (gates, stageable) = _epoch().getTransportBatchGates(h);
+        assertEq(gates, 0); assertTrue(stageable, "ordinary once day 2 is arrived and closed");
+    }
+
+    /// @dev 3c-1 — an epoch wider than the fan-out cap, or one indexed before
+    ///      its day list was kept, cannot have its gates read on a hot path:
+    ///      it is withheld as contested, conservatively.
+    function test_AnOversizeOrListlessEpoch_IsWithheld() public {
+        _scene(NEED);
+        bytes32 h = _epochOf(10e18, _two(1, 2), 2, keccak256("listless"));
+        _mut().clearTransportBatchDaysRaw(h);
+        (uint256 avail, , uint256 wContested, ) = _epoch().getTransportCoverageForDay(1);
+        assertEq(avail, 0); assertEq(wContested, 10e18, "list unknown: withheld");
+        uint256[] memory wide = new uint256[](33);
+        for (uint256 i; i < 33; ++i) wide[i] = i + 1;
+        bytes32 w = _epochOf(5e18, wide, 3, keccak256("oversize"));
+        _epoch().materializeTransportBatchPage(w, wide); // the 33rd day: a second index page
+        (avail, , wContested, ) = _epoch().getTransportCoverageForDay(1);
+        assertEq(wContested, 15e18, "oversize: withheld too");
+        assertEq(avail, 0);
     }
 
     /// @dev A classification correction never retypes a drawn leg (Codex
@@ -1483,11 +1579,11 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         assertEq(lf + lr, drawn, "and equals the epoch's two legs");
     }
 
-    /// @dev A wider epoch is withheld while a single-day one pays (Codex
-    ///      #2276 r26 P1): X lists days 1 and 2, Y lists day 1 only, X indexed
-    ///      first. Day 1 spends Y; X is drawn for neither day — a draw on it is
-    ///      contested whenever the other listed day carries an unmet
-    ///      obligation — so day 2, which only X could fund, defers.
+    /// @dev A wider epoch is withheld while a single-day one pays: X lists
+    ///      days 1 and 2, Y lists day 1 only, X indexed first. Day 2 has ARRIVED
+    ///      and alice's entry still covers it, so a draw on X for day 1 is
+    ///      CONTESTED (3c-1): day 1 spends Y; X is drawn for neither day and
+    ///      stands whole until day 2 settles and is proven closed.
     function test_AWiderEpoch_IsWithheld_WhileTheSingleDayEpochPays() public {
         _armedDay(1, NEED);
         _armedDay(2, NEED);
@@ -1504,8 +1600,21 @@ contract RewardTransportEpochDrawTest is SetupTest, IVaipakamErrors {
         (uint256 yf, ) = _legs(y);
         assertEq(yf, NEED, "day 1 spent Y");
         assertEq(xf + xr, 0, "X was drawn for neither day");
-        assertEq(_balance(x), NEED, "and stands whole for the contested machinery");
+        assertEq(_balance(x), NEED, "and stands whole while day 2's obligation is open");
     }
+
+    /// @dev The chain closes `d` itself: its report stamp is the closure proof's
+    ///      first condition. A mirror's close dispatches the day's report through
+    ///      the messenger, so one is installed (the mock records the send).
+    function _closeDayLocally(uint256 d) internal {
+        if (address(_closeMessenger) == address(0)) {
+            _closeMessenger = new MockRewardMessenger(address(diamond));
+            RewardReporterFacet(address(diamond)).setRewardMessenger(address(_closeMessenger));
+        }
+        RewardReporterFacet(address(diamond)).closeDay(d);
+    }
+
+    MockRewardMessenger internal _closeMessenger;
 
     // ─── the allocation rule, on the design's own cases ─────────────────────
 

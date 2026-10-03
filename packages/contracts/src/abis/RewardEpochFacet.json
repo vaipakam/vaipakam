@@ -245,6 +245,49 @@
   },
   {
     "type": "function",
+    "name": "getTransportBatchDays",
+    "inputs": [
+      {
+        "name": "batchId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "days_",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getTransportBatchGates",
+    "inputs": [
+      {
+        "name": "batchId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "gates",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "stageable",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getTransportBatchLegs",
     "inputs": [
       {
@@ -318,7 +361,7 @@
         "internalType": "bool"
       },
       {
-        "name": "withheldShared",
+        "name": "withheldContested",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -489,6 +532,30 @@
       },
       {
         "name": "debited",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getTransportTiersForDay",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "ordinary",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "necessity",
         "type": "uint256",
         "internalType": "uint256"
       }

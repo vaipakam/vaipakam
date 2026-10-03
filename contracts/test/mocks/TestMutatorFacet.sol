@@ -2735,4 +2735,10 @@ contract TestMutatorFacet {
         dom.firstDay = firstDay;
         dom.lastDay = lastDay;
     }
+
+    /// @dev 3c-1 test-only — forget a batch's kept day list, the state of a
+    ///      batch indexed before the list was kept (withheld as contested).
+    function clearTransportBatchDaysRaw(bytes32 batchId) external {
+        delete LibVaipakam.storageSlot().transportBatchDays[batchId];
+    }
 }

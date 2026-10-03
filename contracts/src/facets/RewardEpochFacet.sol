@@ -601,9 +601,31 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
     function getTransportCoverageForDay(uint256 dayId)
         external
         view
-        returns (uint256 available, bool capHit, uint256 withheldShared, uint256 withheldUnattested)
+        returns (uint256 available, bool capHit, uint256 withheldContested, uint256 withheldUnattested)
     {
         return LibRewardCustody.transportCoverageForDay(LibVaipakam.storageSlot(), dayId);
+    }
+
+    /// @notice 3c-1 — a day's plannable rooms by tier: `ordinary` pays transport-first;
+    ///         `necessity` (epochs with an unarrived listed day) is drawn last, only
+    ///         for the shortfall the live sources and the bucket leave.
+    function getTransportTiersForDay(uint256 dayId) external view returns (uint256 ordinary, uint256 necessity) {
+        return LibRewardCustody.transportTiersForDay(LibVaipakam.storageSlot(), dayId);
+    }
+
+    /// @notice 3c-1 — the gates a batch is admitted through, as flags (0 = ordinary;
+    ///         1 unattested, 2 unindexed, 4 contested, 8 necessity), and whether a
+    ///         staging record may stage from it (ordinary only).
+    function getTransportBatchGates(bytes32 batchId) external view returns (uint8 gates, bool stageable) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        gates = LibRewardCustody.batchGates(s, batchId, s.transportBatches[batchId]);
+        stageable = gates == 0;
+    }
+
+    /// @notice 3c-1 — whether the batch's listed days have been kept (false for a
+    ///         batch indexed before the list existed: it is withheld as contested).
+    function getTransportBatchDays(bytes32 batchId) external view returns (uint256[] memory days_) {
+        return LibVaipakam.storageSlot().transportBatchDays[batchId];
     }
 
     /// @notice What `dayId`'s epochs would pay of an obligation's two legs,
