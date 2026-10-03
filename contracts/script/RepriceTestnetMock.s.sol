@@ -95,9 +95,12 @@ interface IRepriceDiamondViews {
  *         every faucet asset against the oracle's. Those decide what a
  *         liquidation actually pays against the repriced asset, and the
  *         script cannot fix them (mWETH/WETH cannot be repriced here). The
- *         run also states what it cannot know at all: the venue's output
- *         float, and tokens outside the faucet set. It never claims that a
- *         liquidation will settle correctly.
+ *         run also states what it does not inspect: the venue's output float,
+ *         and its price for any token outside the faucet set (which may be
+ *         set by the owner or absent — the mapping is open). It never claims
+ *         that a liquidation will settle correctly. An UNGATED venue
+ *         (`restrictedTo == 0`) is reported too: the adapter is funded, so an
+ *         open execute lets anyone drain its float.
  *
  *         `forge script` runs the whole body in simulation first and
  *         broadcasts only if it succeeds, so every refusal above sends
@@ -220,7 +223,7 @@ contract RepriceTestnetMock is Script {
             }
         }
         console.log(
-            "Not checked: the venue's output-token float, and tokens outside the faucet set. A liquidation can still fail on a short float, or settle at a flat 1:1 for an unpriced token."
+            "Not checked: the venue's output-token float, and its price for any token outside the faucet set. A liquidation can still fail on a short float; an outside token may carry a venue price its owner set, or none (a flat 1:1), and this run does not inspect it."
         );
     }
 
@@ -382,7 +385,13 @@ contract RepriceTestnetMock is Script {
             );
         }
         address gate = venue.restrictedTo();
-        if (gate != address(0) && gate != t.diamond) {
+        if (gate == address(0)) {
+            // Not a pricing deviation but an operational one: the adapter is
+            // funded, so an open execute is a public pot (anyone can approve
+            // a junk input token and drain the output float). The deploy
+            // gates it to the Diamond for exactly that reason.
+            buf[n++] = "venue execute is open to any caller: anyone can drain its output float (the deploy gates it to the Diamond)";
+        } else if (gate != t.diamond) {
             buf[n++] = string.concat(
                 "venue execute is restricted to ", vm.toString(gate), ", not the Diamond: liquidations through it revert"
             );

@@ -179,6 +179,9 @@ abstract contract TestnetMockOracleRig is Test, DeployTestnetMocks {
         // Registered on the Diamond, so it is the venue liquidations route
         // through — the reprice script refuses one that is not (#2314).
         AdminFacet(address(diamond)).addSwapAdapter(address(venue));
+        // And gated to the Diamond, as the deploy gates it: an open execute
+        // on a funded adapter is a public pot.
+        venue.setRestrictedTo(address(diamond));
     }
 
     function _status(address a) internal view returns (uint256) {

@@ -299,12 +299,13 @@ reports, without refusing, the venue state it does not write:
 - the venue's price for every other faucet asset, compared with the oracle's.
 
 Each deviation is printed as a `WARNING` line, because these decide what a
-liquidation against the repriced asset actually pays. Two things it cannot
-know at all:
+liquidation against the repriced asset actually pays. Two things it does not
+inspect:
 
 - the venue's output-token float: a liquidation larger than the float fails;
-- tokens outside the faucet set: they have no venue price and settle at a
-  flat 1:1.
+- the venue's price for a token outside the faucet set: its owner may have
+  set one, or there may be none (a flat 1:1 payout). The run does not inspect
+  it.
 
 A clean run is therefore not a promise that a liquidation will settle
 correctly.

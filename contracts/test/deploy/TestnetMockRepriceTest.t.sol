@@ -285,11 +285,18 @@ contract TestnetMockRepriceTest is TestnetMockOracleRig, RepriceTestnetMock {
         );
     }
 
-    /// @notice A venue gated to the Diamond itself is the deployed shape,
-    ///         not a deviation.
-    function test_venueReport_restrictedToTheDiamondIsNotADeviation() public {
-        venue.setRestrictedTo(address(diamond));
-        assertEq(_venueReport(tliqTarget, _faucet()).length, 0, "Diamond gate is normal");
+    /// @notice An ungated venue is reported: the adapter is funded, so an
+    ///         open execute lets anyone drain its output float. (The clean
+    ///         case above already runs with the Diamond gate, the deployed
+    ///         shape, and reports nothing.)
+    function test_venueReport_namesAnOpenGate() public {
+        venue.setRestrictedTo(address(0));
+        string[] memory d = _venueReport(tliqTarget, _faucet());
+        assertEq(d.length, 1, "one deviation");
+        assertEq(
+            d[0],
+            "venue execute is open to any caller: anyone can drain its output float (the deploy gates it to the Diamond)"
+        );
     }
 
     /// @notice The counter-leg of a liquidation is priced by the venue too:
