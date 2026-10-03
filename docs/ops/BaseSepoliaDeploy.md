@@ -227,7 +227,8 @@ default). A feed-only move past that band makes tLIQ read **Illiquid**, which
 looks exactly like a pool too shallow for the trade (#2314 was first
 misdiagnosed that way). The script moves three things: the feed, the pool
 spot, and the registered mock swap venue's price (which sets what a
-liquidation actually pays).
+liquidation actually pays). The venue moves unless `REPRICE_SKIP_VENUE` is
+set; the documented command below pins it off.
 
 **It is three transactions, not one atomic change.** Each mock belongs to a
 fixed owner wallet, so nothing can batch the three calls. For the few blocks
