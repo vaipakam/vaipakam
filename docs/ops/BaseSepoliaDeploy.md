@@ -243,14 +243,16 @@ its feed with WETH, so repricing it would move the quote leg of every faucet
 pool; the script refuses it. Before it broadcasts anything, it checks:
 
 - the artifact still describes the chain;
-- the venue is the one the Diamond routes liquidations through (listed and
-  not disabled);
+- the venue is registered and enabled on the Diamond. That makes it
+  available, not selected: a liquidation passes its own adapter list, so
+  another enabled adapter may still settle it. The venue report names any;
 - the broadcaster owns the feed, the pool and the venue;
 - after the writes, the Diamond reads the new price and the venue pays it;
 - after the writes, the asset reads Liquid;
-- the feed is the one the Diamond reads: in simulation only, the script moves
-  the feed to a different price, confirms the Diamond's price follows, and
-  puts it back. A price that merely equals the target is not proof;
+- the feed is the one the Diamond reads: in simulation only, the script
+  nudges the feed about 1 bp up (or down, if up is rejected), confirms the
+  Diamond's price follows, and puts it back. A price that merely equals the
+  target is not proof;
 - the pool is the one the oracle reads: in simulation only, the script
   empties the pool's depth, confirms the asset turns Illiquid, and puts it
   back. The Diamond exposes no view of its feed or pool configuration, so
@@ -282,10 +284,16 @@ KEY=liquidToken   # or liquidToken2 for mUSDC — the same value as REPRICE_ASSE
 DIAMOND=$(jq -r .diamond deployments/base-sepolia/addresses.json)
 ASSET=$(jq -r ".testnetMocks.$KEY" deployments/base-sepolia/addresses.json)
 VENUE=$(jq -r .testnetMocks.mockSwapAdapter deployments/base-sepolia/addresses.json)
+POOL=$(jq -r ".testnetMocks.${KEY}WethPool" deployments/base-sepolia/addresses.json)
 cast call $DIAMOND "checkLiquidity(address)(uint8)" $ASSET --rpc-url $BASE_SEPOLIA_RPC_URL       # → 0 (Liquid)
 cast call $DIAMOND "getAssetPrice(address)(uint256,uint8)" $ASSET --rpc-url $BASE_SEPOLIA_RPC_URL  # → the new price, 8
 cast call $VENUE "tokenUsdPrice8(address)(uint256)" $ASSET --rpc-url $BASE_SEPOLIA_RPC_URL         # → the new price
+cast call $POOL "sqrtPriceX96()(uint160)" --rpc-url $BASE_SEPOLIA_RPC_URL                          # → the right-hand value of the script's "Pool spot:" line
 ```
+
+Read the pool too. For a move inside the consistency band, the old pool spot
+can still read Liquid, so the first three reads alone do not show that the pool
+write landed.
 
 **What a run does not prove.** It proves the three prices it writes. It also
 reports, without refusing, the venue state it does not write:

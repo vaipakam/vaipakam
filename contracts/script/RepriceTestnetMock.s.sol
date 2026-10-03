@@ -63,10 +63,11 @@ import {RepriceVenueReport, IRepriceDiamondViews} from "./lib/RepriceVenueReport
  *           - a broadcaster that does not own the feed, the pool and the
  *             venue — each is owner-gated so a public testnet's demos cannot
  *             be repriced by a passer-by;
- *           - a recorded venue the Diamond does not route
- *             liquidations through: it must be in `getSwapAdapters()` and not
- *             disabled. Repricing a different adapter would leave the one the
- *             Diamond actually uses at the old price;
+ *           - a recorded venue that is not registered and enabled on the
+ *             Diamond (`getSwapAdapters()`, not disabled). Registered is not
+ *             SELECTED: a liquidation passes its own adapter list, so another
+ *             enabled adapter may still settle it — the venue report names
+ *             any such adapter;
  *           - a feed not at 8 decimals, or legs at different token decimals
  *             (the pool math has no decimal term).
  *
@@ -373,23 +374,41 @@ contract RepriceTestnetMock is Script {
     ///         recorded feed to a different price as its owner, require the
     ///         Diamond's price to follow, revert. Same shape as the pool probe.
     ///
-    ///         The move is ~1 bp (plus one unit, so it is never zero): large
-    ///         enough to be seen exactly, small enough to stay inside the
-    ///         oracle's secondary-source agreement band, so a configured
-    ///         Tellor/API3/DIA source that agrees with the target does not
-    ///         make the probe revert on a divergence the real move would not
-    ///         have. (A doubled price did.)
+    ///         The nudge is ~1 bp (plus one unit, so it is never zero),
+    ///         tried upward and then downward: large enough to be seen
+    ///         exactly, small enough that one direction stays inside the
+    ///         oracle's secondary-source agreement band whenever the target
+    ///         did. (A doubled price, and then a one-sided nudge, could both
+    ///         abort a valid run on a divergence the real move did not have.)
     function _requireRecordedFeedIsWhatTheDiamondReads(RepriceTarget memory t, uint256 newPrice8) internal {
-        uint256 probe8 = newPrice8 + newPrice8 / 10_000 + 1;
+        // Try a nudge UP, then DOWN. A secondary source sitting exactly at the
+        // agreement limit on one side of the target rejects a nudge that way
+        // but accepts the other, so one of the two is always inside the band
+        // whenever the target itself was accepted. Either following proves
+        // the wiring; a revert on one side is not evidence against it.
+        uint256 nudge = newPrice8 / 10_000 + 1;
+        bool follows = _feedFollows(t, newPrice8 + nudge);
+        if (!follows && newPrice8 > nudge) follows = _feedFollows(t, newPrice8 - nudge);
+        require(
+            follows,
+            "RepriceTestnetMock: the Diamond's price does not follow the recorded feed - it reads another feed"
+        );
+    }
+
+    /// @dev One probe: snapshot, set the recorded feed to `probe8` as its
+    ///      owner, read the Diamond's price, revert. True only if the
+    ///      Diamond read returned exactly `probe8`; a reverting read (for
+    ///      example a secondary-source divergence) is false, not an error.
+    function _feedFollows(RepriceTarget memory t, uint256 probe8) internal returns (bool follows) {
         uint256 snap = vm.snapshotState();
         vm.prank(MockChainlinkFeed(t.feed).owner());
         MockChainlinkFeed(t.feed).setPrice(SafeCast.toInt256(probe8));
-        (uint256 p, uint8 d) = IRepriceDiamondViews(t.diamond).getAssetPrice(t.asset);
+        try IRepriceDiamondViews(t.diamond).getAssetPrice(t.asset) returns (uint256 p, uint8 d) {
+            follows = d <= 18 && p * 10 ** (18 - d) == probe8 * 10 ** (18 - REPRICE_FEED_DECIMALS);
+        } catch {
+            follows = false;
+        }
         vm.revertToState(snap);
-        require(
-            d <= 18 && p * 10 ** (18 - d) == probe8 * 10 ** (18 - REPRICE_FEED_DECIMALS),
-            "RepriceTestnetMock: the Diamond's price does not follow the recorded feed - it reads another feed"
-        );
     }
 
     /// @notice Prove, by behaviour, that the recorded pool is what the

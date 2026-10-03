@@ -8,10 +8,10 @@ Before sending anything, the script refuses in these cases:
 
 - The deployment record no longer matches the chain.
 - The sender does not own the mocks.
-- The swap venue is not the one the Diamond actually sends liquidations to.
+- The swap venue is not registered and enabled on the Diamond. (Registered is not the same as chosen: another enabled venue could still handle a liquidation, and the report names any.)
 - The Diamond would not read the new price, or the venue would not pay it.
 - The asset would read as illiquid even after the full move.
-- The feed is not the one the Diamond actually reads. The script checks this in a dry run: it moves the feed to a different price and confirms the Diamond's price follows.
+- The feed is not the one the Diamond actually reads. The script checks this in a dry run: it nudges the feed up, or down if needed, and confirms the Diamond's price follows.
 - The pool is not the one the oracle actually reads. The script checks this in a dry run too: it empties the pool and confirms the asset turns illiquid.
 
 The script has no switches for skipping any of this.

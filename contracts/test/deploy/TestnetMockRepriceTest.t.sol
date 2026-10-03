@@ -14,6 +14,32 @@ import {MockPoolPricing} from "../../script/lib/MockPoolPricing.sol";
 import {RepriceVenueReport} from "../../script/lib/RepriceVenueReport.sol";
 import {TestnetMockOracleRig} from "./TestnetMockOracleRig.sol";
 
+/// @dev A feed that refuses to report above a ceiling — stands in for an
+///      oracle that rejects a price on ONE side of the target (a secondary
+///      source at the agreement limit), which a one-sided probe trips over.
+contract CeilingFeed {
+    address public immutable owner;
+    int256 public price;
+    int256 public immutable ceiling;
+    uint8 public constant decimals = 8;
+
+    constructor(int256 _price, int256 _ceiling) {
+        owner = msg.sender;
+        price = _price;
+        ceiling = _ceiling;
+    }
+
+    function setPrice(int256 p) external {
+        require(msg.sender == owner, "not owner");
+        price = p;
+    }
+
+    function latestRoundData() external view returns (uint80, int256, uint256, uint256, uint80) {
+        require(price <= ceiling, "CeilingFeed: above the ceiling");
+        return (1, price, block.timestamp, block.timestamp, 1);
+    }
+}
+
 /**
  * @title TestnetMockRepriceTest
  * @notice Drives {RepriceTestnetMock}'s checks and writes against the real
@@ -259,6 +285,19 @@ contract TestnetMockRepriceTest is TestnetMockOracleRig, RepriceTestnetMock {
             bytes("RepriceTestnetMock: the Diamond's price does not follow the recorded feed - it reads another feed")
         );
         this.feedProbeExt(t, 1_600e8);
+    }
+
+    /// @notice An oracle that rejects a nudge UP (a source at its limit on
+    ///         that side) must not abort a valid run: the probe tries DOWN
+    ///         and proves the wiring there.
+    function test_feedProbe_triesTheOtherDirectionWhenOneIsRejected() public {
+        CeilingFeed feed = new CeilingFeed(int256(1_600e8), int256(1_600e8));
+        registry.setFeed(address(tLIQ), USD_DENOM, address(feed));
+        RepriceTarget memory t = tliqTarget;
+        t.feed = address(feed);
+        (uint256 p,) = OracleFacet(address(diamond)).getAssetPrice(address(tLIQ));
+        assertEq(p, 1_600e8, "the Diamond reads the ceiling feed at the target");
+        this.feedProbeExt(t, 1_600e8); // up is rejected, down follows
     }
 
     function test_refuses_aZeroPrice() public {

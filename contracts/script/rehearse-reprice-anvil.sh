@@ -131,7 +131,13 @@ cast send "$FEED" "setPrice(int256)" "$SEED_PRICE" --unlocked --from "$OWNER" --
 check "restoring the feed restores Liquid" "$(liquidity)" "0"
 
 echo "[2] RepriceTestnetMock as the mock owner"
-for P in 160000000000 90000000000; do
+# Relative to the fork's starting price, like the contrast move above: an
+# earlier rehearsal may have left the live price anywhere, and a fixed target
+# would then be a no-op or a different drawdown than the one claimed.
+STEP_20=$(( SEED_PRICE * 80 / 100 ))
+STEP_55=$(( SEED_PRICE * 45 / 100 ))
+echo "  drawdown steps from e8 $SEED_PRICE: -20% -> $STEP_20, -55% -> $STEP_55"
+for P in "$STEP_20" "$STEP_55"; do
   if reprice liquidToken "$P" "$OWNER"; then
     check "script run at e8 $P" "ok" "ok"
   else
