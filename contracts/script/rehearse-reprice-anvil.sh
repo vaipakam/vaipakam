@@ -100,9 +100,12 @@ impersonate() {
 }
 
 reprice() { # reprice <asset-key> <price-e8> <sender> — returns forge's exit code
-  # The two opt-ins are pinned off, so a stale export or a line in .env cannot
-  # weaken the run being rehearsed (a command-line value wins over .env).
-  env -u MOCK_OWNER_PRIVATE_KEY REPRICE_ASSET="$1" REPRICE_USD_E8="$2" \
+  # Pinned on the command line, because a value already in the environment
+  # wins over the `.env` Forge loads by itself — unsetting would not be enough:
+  #   - the two opt-ins off, so neither can weaken the run being rehearsed;
+  #   - MOCK_OWNER_PRIVATE_KEY=0, so the script broadcasts as --sender and the
+  #     owner/stranger identities below are the ones actually tested.
+  MOCK_OWNER_PRIVATE_KEY=0 REPRICE_ASSET="$1" REPRICE_USD_E8="$2" \
     REPRICE_SKIP_VENUE=false REPRICE_ALLOW_ILLIQUID=false \
     forge script script/RepriceTestnetMock.s.sol \
       --rpc-url "$RPC" --broadcast --slow --unlocked --sender "$3" >"$LOG_DIR/reprice-$1-$2.log" 2>&1

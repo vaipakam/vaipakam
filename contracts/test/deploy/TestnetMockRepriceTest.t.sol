@@ -199,9 +199,37 @@ contract TestnetMockRepriceTest is TestnetMockOracleRig, RepriceTestnetMock {
                 "RepriceTestnetMock: the asset reads Illiquid after a coherent reprice - a depth or band limit, not a rehearsal state; set REPRICE_ALLOW_ILLIQUID=true to proceed"
             )
         );
-        this.verifyExt(tliqTarget, 1_600e8, before, false, false);
+        this.verifyExt(tliqTarget, 1_600e8, false, false);
         // Opted in, the same state passes.
-        this.verifyExt(tliqTarget, 1_600e8, before, false, true);
+        this.verifyExt(tliqTarget, 1_600e8, false, true);
+    }
+
+    /// @notice An asset ALREADY Illiquid for an unrelated reason (here the
+    ///         pool has no depth) still needs the opt-in to broadcast an
+    ///         Illiquid result. A transition-only guard let this through.
+    function test_verify_refusesAnIlliquidResultEvenWhenAlreadyIlliquid() public {
+        MockUniswapV3Pool(tliqPool).setLiquidity(1);
+        assertEq(_status(address(tLIQ)), ILLIQUID, "already Illiquid before the run");
+        uint160 spot = _targetSpot(tliqTarget, 1_600e8);
+        _applyReprice(tliqTarget, 1_600e8, spot, false);
+        assertEq(_status(address(tLIQ)), ILLIQUID, "still Illiquid after a coherent move");
+        vm.expectRevert(
+            bytes(
+                "RepriceTestnetMock: the asset reads Illiquid after a coherent reprice - a depth or band limit, not a rehearsal state; set REPRICE_ALLOW_ILLIQUID=true to proceed"
+            )
+        );
+        this.verifyExt(tliqTarget, 1_600e8, false, false);
+    }
+
+    /// @notice The documented recovery: a run that stopped after the feed
+    ///         write leaves the asset Illiquid; re-running the same reprice
+    ///         completes it and passes every check with no opt-in.
+    function test_rerunAfterAPartialRunCompletesIt() public {
+        tliqFeed.setPrice(int256(1_600e8)); // only the first transaction landed
+        assertEq(_status(address(tLIQ)), ILLIQUID, "partial run reads Illiquid");
+        _reprice(tliqTarget, 1_600e8, false, false);
+        assertEq(_status(address(tLIQ)), LIQUID, "the re-run ends Liquid");
+        assertEq(venue.tokenUsdPrice8(address(tLIQ)), 1_600e8, "and the venue caught up");
     }
 
     /// @notice If the Diamond does not read the price just written — a
@@ -220,7 +248,7 @@ contract TestnetMockRepriceTest is TestnetMockOracleRig, RepriceTestnetMock {
         vm.expectRevert(
             bytes("RepriceTestnetMock: the Diamond does not read the new price - is it wired to this registry?")
         );
-        this.verifyExt(tliqTarget, 1_600e8, before, false, false);
+        this.verifyExt(tliqTarget, 1_600e8, false, false);
     }
 
     // ── Venue report (state the run does not write) ─────────────────────
@@ -306,10 +334,9 @@ contract TestnetMockRepriceTest is TestnetMockOracleRig, RepriceTestnetMock {
     ///      broadcast: pre-flight, target spot, writes, verify.
     function _reprice(RepriceTarget memory t, uint256 price8, bool skipVenue, bool allowIlliquid) internal {
         _preflight(t, address(this), skipVenue);
-        RepriceTestnetMock.PriceReading memory before = _read(t);
         uint160 spot = _targetSpot(t, price8);
         _applyReprice(t, price8, spot, skipVenue);
-        _verifyReprice(t, price8, before, skipVenue, allowIlliquid);
+        _verifyReprice(t, price8, skipVenue, allowIlliquid);
     }
 
     function preflightExt(RepriceTarget memory t, address sender, bool skipVenue) external view {
@@ -320,13 +347,7 @@ contract TestnetMockRepriceTest is TestnetMockOracleRig, RepriceTestnetMock {
         return _targetSpot(t, price8);
     }
 
-    function verifyExt(
-        RepriceTarget memory t,
-        uint256 price8,
-        RepriceTestnetMock.PriceReading memory before,
-        bool skipVenue,
-        bool allowIlliquid
-    ) external view {
-        _verifyReprice(t, price8, before, skipVenue, allowIlliquid);
+    function verifyExt(RepriceTarget memory t, uint256 price8, bool skipVenue, bool allowIlliquid) external view {
+        _verifyReprice(t, price8, skipVenue, allowIlliquid);
     }
 }

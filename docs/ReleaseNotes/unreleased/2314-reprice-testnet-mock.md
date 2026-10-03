@@ -12,6 +12,8 @@ Before sending anything, the script refuses in these cases:
 - The Diamond would not read the new price.
 - The asset would read as illiquid even after the full move. This one can be overridden deliberately.
 
+After the move, the script also reports, without refusing, the swap venue's other settings and the venue's price for every faucet asset, compared with the oracle's. These decide what a liquidation actually pays, and the script does not write them. It also says what it cannot check at all: how much of the payout token the venue holds, and tokens outside the faucet set. A clean run is therefore not a promise that a liquidation will settle correctly.
+
 A companion rehearsal runs the script against a local copy of the live testnet, playing the real mock owner, and checks the outcome before anyone touches the shared testnet. The Base Sepolia runbook has a new section covering both and reminds operators to restore the seeded price afterwards. On testnet the script has not yet been run by anyone; it needs the mock owner's key.
 
 Closes #2314.

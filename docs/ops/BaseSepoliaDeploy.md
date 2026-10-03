@@ -264,7 +264,8 @@ REPRICE_ASSET=liquidToken REPRICE_USD_E8=160000000000 \
 REPRICE_SKIP_VENUE=false REPRICE_ALLOW_ILLIQUID=false \
 MOCK_OWNER_PRIVATE_KEY=<mock owner key> \
 forge script script/RepriceTestnetMock.s.sol --rpc-url $BASE_SEPOLIA_RPC_URL --broadcast --slow
-# or, with a hardware wallet: drop MOCK_OWNER_PRIVATE_KEY, add --ledger --sender <owner>
+# or, with a hardware wallet: set MOCK_OWNER_PRIVATE_KEY=0 and add --ledger --sender <owner>
+#   (0, not unset: Forge loads contracts/.env itself, and a key there would win)
 ```
 
 The command sets both opt-ins to `false` on purpose. Foundry also reads them

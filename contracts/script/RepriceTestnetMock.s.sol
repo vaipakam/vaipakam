@@ -37,8 +37,9 @@ interface IRepriceDiamondViews {
  *         old price. If a send fails part-way, the testnet is left partially
  *         repriced. **Recovery is to re-run the same command**: every write
  *         is a plain set to the target value, so a re-run completes whatever
- *         did not land, and the Liquid-to-Illiquid guard below does not block
- *         it because the partial state already reads Illiquid. Broadcast with
+ *         did not land and ends in the same state as an uninterrupted run —
+ *         Liquid, so the Illiquid guard below does not stand in its way.
+ *         Broadcast with
  *         `--slow` so forge waits for each receipt and stops at the first
  *         failure rather than queueing the rest.
  *
@@ -80,10 +81,13 @@ interface IRepriceDiamondViews {
  *
  *         And after applying the writes in simulation, before broadcast:
  *           - the Diamond must read the new price for the asset;
- *           - an asset that read Liquid before must still read Liquid, unless
- *             `REPRICE_ALLOW_ILLIQUID=true`. A coherent move that still flips
- *             it Illiquid is a depth or band limit worth seeing, not a
- *             rehearsal state to ship silently.
+ *           - the asset must read Liquid, unless `REPRICE_ALLOW_ILLIQUID=true`
+ *             — whatever it read before the run. A coherent move that ends
+ *             Illiquid is a depth, band or configuration limit worth seeing,
+ *             not a rehearsal state to ship silently. (An earlier version
+ *             refused only a Liquid-to-Illiquid TRANSITION, which let an asset
+ *             already Illiquid for an unrelated reason broadcast without the
+ *             opt-in.)
  *
  *         Then it REPORTS, without refusing, the venue state it does not
  *         write: the execution knobs (`shouldRevert`,
@@ -106,13 +110,18 @@ interface IRepriceDiamondViews {
  *                                      (`160000000000` = $1,600).
  *           - MOCK_OWNER_PRIVATE_KEY : optional. The key that owns the mocks
  *                                      (on Base Sepolia, the mock deployer).
- *                                      Unset, the script broadcasts as
+ *                                      Unset or `0`, the script broadcasts as
  *                                      `--sender` — with `--unlocked` on an
  *                                      Anvil fork that has impersonated the
  *                                      owner, or with `--account` /
  *                                      `--ledger` on a real chain. A dedicated
  *                                      name, so Foundry's automatic `.env`
  *                                      load cannot pick an unrelated key.
+ *                                      Forge loads `.env` itself, so for a
+ *                                      `--sender` run set it to `0` on the
+ *                                      command line (a value already in the
+ *                                      environment wins over `.env`);
+ *                                      unsetting it is not enough.
  *           - REPRICE_SKIP_VENUE     : optional, default false. Leave the
  *                                      venue's price where it is — only for a
  *                                      deliberate venue/oracle mismatch test.
@@ -198,7 +207,7 @@ contract RepriceTestnetMock is Script {
         _applyReprice(t, newPrice8, newSpot, skipVenue);
         vm.stopBroadcast();
 
-        PriceReading memory afterReading = _verifyReprice(t, newPrice8, before, skipVenue, allowIlliquid);
+        PriceReading memory afterReading = _verifyReprice(t, newPrice8, skipVenue, allowIlliquid);
         console.log("Liquidity now: %s (0 = Liquid, 1 = Illiquid)", uint256(afterReading.liquidity));
 
         // The venue's settlement depends on state this run does not write.
@@ -303,13 +312,11 @@ contract RepriceTestnetMock is Script {
 
     /// @notice Check the simulated result against what a reprice must
     ///         produce, and return the reading.
-    function _verifyReprice(
-        RepriceTarget memory t,
-        uint256 newPrice8,
-        PriceReading memory before,
-        bool skipVenue,
-        bool allowIlliquid
-    ) internal view returns (PriceReading memory r) {
+    function _verifyReprice(RepriceTarget memory t, uint256 newPrice8, bool skipVenue, bool allowIlliquid)
+        internal
+        view
+        returns (PriceReading memory r)
+    {
         r = _read(t);
         require(r.oracleDecimals <= 18, "RepriceTestnetMock: oracle price has more than 18 decimals");
         require(
@@ -319,7 +326,7 @@ contract RepriceTestnetMock is Script {
         if (!skipVenue) {
             require(r.venuePrice8 == newPrice8, "RepriceTestnetMock: venue price did not move");
         }
-        if (before.liquidity == 0 && r.liquidity != 0 && !allowIlliquid) {
+        if (r.liquidity != 0 && !allowIlliquid) {
             revert(
                 "RepriceTestnetMock: the asset reads Illiquid after a coherent reprice - a depth or band limit, not a rehearsal state; set REPRICE_ALLOW_ILLIQUID=true to proceed"
             );
