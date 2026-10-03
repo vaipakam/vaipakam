@@ -38,6 +38,11 @@ export interface MaxWithdrawableRead {
    *  the balance the fee-discount tier is measured on. `undefined` when
    *  the token read failed. */
   isVpfi: boolean | undefined;
+  /** #2389 r3 — the deployment's pause switch. The ceiling view stays
+   *  readable while paused, but the withdrawal itself is refused, so a
+   *  paused deployment is said instead of offering a doomed form.
+   *  `undefined` when the read failed. */
+  paused: boolean | undefined;
 }
 
 export type MaxWithdrawState =
@@ -50,6 +55,8 @@ export type MaxWithdrawState =
   | { kind: 'none-needed' }
   /** Zero, and the app could not tell which of the two applies. */
   | { kind: 'none-unknown' }
+  /** The deployment is paused: withdrawals are refused right now. */
+  | { kind: 'paused' }
   | { kind: 'some'; max: bigint };
 
 /** Pure — what the page may state about the ceiling. A failed read is
@@ -62,6 +69,7 @@ export function classifyMaxWithdrawable(q: {
 }): MaxWithdrawState {
   if (q.isError) return { kind: 'unconfirmed' };
   if (!q.data) return { kind: 'loading' };
+  if (q.data.paused === true) return { kind: 'paused' };
   if (q.data.max > 0n) return { kind: 'some', max: q.data.max };
   if (q.data.illiquid === true) return { kind: 'none-unpriced' };
   if (q.data.illiquid === false) return { kind: 'none-needed' };
@@ -73,12 +81,14 @@ export function classifyMaxWithdrawable(q: {
  *  so an amount at or near it can still be refused on-chain. That is said
  *  beside the input; this only rejects what is already known to fail. */
 export function withdrawAmountProblem(args: {
-  inputWei: bigint | null;
+  /** `parseExactUnits` of the typed text — never a rounded parse. */
+  parsed: bigint | 'invalid' | 'too-precise';
   state: MaxWithdrawState;
-}): 'invalid' | 'no-ceiling' | 'over-max' | null {
-  if (args.inputWei === null || args.inputWei <= 0n) return 'invalid';
+}): 'invalid' | 'too-precise' | 'no-ceiling' | 'over-max' | null {
+  if (args.parsed === 'too-precise') return 'too-precise';
+  if (args.parsed === 'invalid' || args.parsed <= 0n) return 'invalid';
   if (args.state.kind !== 'some') return 'no-ceiling';
-  if (args.inputWei > args.state.max) return 'over-max';
+  if (args.parsed > args.state.max) return 'over-max';
   return null;
 }
 
@@ -118,7 +128,7 @@ export async function readMaxWithdrawable(opts: {
   loanId: bigint;
   collateralAsset: string;
 }): Promise<MaxWithdrawableRead> {
-  const [max, illiquid, vpfiToken] = await Promise.all([
+  const [max, illiquid, vpfiToken, paused] = await Promise.all([
     opts.publicClient.readContract({
       address: opts.diamondAddress,
       abi: DIAMOND_ABI_VIEM,
@@ -138,6 +148,13 @@ export async function readMaxWithdrawable(opts: {
         functionName: 'getVPFIToken',
       }) as Promise<string>
     ).catch(() => undefined),
+    (
+      opts.publicClient.readContract({
+        address: opts.diamondAddress,
+        abi: DIAMOND_ABI_VIEM,
+        functionName: 'paused',
+      }) as Promise<boolean>
+    ).catch(() => undefined),
   ]);
   return {
     max,
@@ -146,6 +163,7 @@ export async function readMaxWithdrawable(opts: {
       vpfiToken === undefined
         ? undefined
         : vpfiToken.toLowerCase() === opts.collateralAsset.toLowerCase(),
+    paused,
   };
 }
 
@@ -184,6 +202,8 @@ export async function swapToRepayOrderState(opts: {
  *  not get an answer to. Order matters only for which reason is shown;
  *  any non-null result sends nothing. */
 export type WithdrawPreflightBlock =
+  | 'paused'
+  | 'pause-unchecked'
   | 'sale-listed'
   | 'sale-unchecked'
   | 'swap-order'
@@ -192,11 +212,15 @@ export type WithdrawPreflightBlock =
   | 'none-left';
 
 export function withdrawPreflightBlock(a: {
+  /** #2389 r3 — the live pause read; 'unknown' when it failed. */
+  paused: boolean | 'unknown';
   saleState: SaleListingHoldState;
   swapOrder: 'live' | 'none' | 'unknown';
   liveMax: bigint;
   wei: bigint;
 }): WithdrawPreflightBlock | null {
+  if (a.paused === true) return 'paused';
+  if (a.paused !== false) return 'pause-unchecked';
   if (a.saleState === 'live' || a.saleState === 'clearable' || a.saleState === 'accepted') {
     return 'sale-listed';
   }

@@ -1345,7 +1345,17 @@ is the borrower's own money.
   loan needs all of its collateral, or the collateral cannot be priced right
   now. When the app cannot tell which, it says that instead of choosing one.
   A limit the app could not read is never shown as zero.
-- An amount above the limit is refused on the page, with the limit stated.
+- An amount above the limit is refused on the page, with the limit stated. An
+  amount with more decimal places than the token has is refused and named, never
+  rounded into a different amount; the confirmation states the exact amount that
+  will be sent.
+- When the deployment is paused, the surface says withdrawals are paused instead
+  of offering the form, and the pre-check refuses to open the wallet.
+- An open confirmation does not survive a network switch: it closes, and the
+  typed amount is cleared, so a review opened on one network can never send on
+  another.
+- A pre-check that fails is reported as a check that could not finish — the
+  wallet never opened and nothing was spent — never as a failed transaction.
 - Before the wallet opens, the app re-checks what would make the protocol
   refuse: the sanctions screen, that the wallet still holds the borrower
   position, that the limit still covers the amount, that no sale listing of the

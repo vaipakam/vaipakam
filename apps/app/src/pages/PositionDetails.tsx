@@ -58,6 +58,7 @@ import {
   formatDurationDays,
   formatTokenAmount,
   formatTokenAmountDown,
+  parseExactUnits,
   fullTermInterest,
   shortAddress,
 } from '../lib/format';
@@ -428,17 +429,19 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       !collateralIsNft,
   });
   const maxWithdrawState = classifyMaxWithdrawable(maxWithdrawable);
-  const withdrawInputWei = useMemo(() => {
-    if (!collateralMeta.data || !isPositiveDecimal(withdrawInput)) return null;
-    try {
-      const wei = parseUnits(withdrawInput, collateralMeta.data.decimals);
-      return wei > 0n ? wei : null;
-    } catch {
-      return null;
-    }
-  }, [withdrawInput, collateralMeta.data]);
+  // #2389 r3 — parsed EXACTLY: a rounded parse would let the receipt
+  // state one amount while the contract moves another.
+  const withdrawParsed = useMemo(
+    () =>
+      collateralMeta.data
+        ? parseExactUnits(withdrawInput, collateralMeta.data.decimals)
+        : ('invalid' as const),
+    [withdrawInput, collateralMeta.data],
+  );
+  const withdrawInputWei =
+    typeof withdrawParsed === 'bigint' && withdrawParsed > 0n ? withdrawParsed : null;
   const withdrawProblem = withdrawAmountProblem({
-    inputWei: withdrawInputWei,
+    parsed: withdrawParsed,
     state: maxWithdrawState,
   });
 
@@ -631,9 +634,17 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     // explicitly rather than clearing the slot unconditionally —
     // other surfaces own their own reset, and this block has no
     // standing to discard theirs.
+    // #2389 r3 P1 — the take-back-collateral review is chain-scoped for
+    // the same reason: carried across a switch onto the same loan id on
+    // another chain, it is one click from withdrawing collateral there.
+    // Its typed amount goes with it — the destination token can have
+    // different decimals.
     setConfirmingSurface((sfc) =>
-      sfc === 'sale-teardown' || sfc === 'forced-close' ? null : sfc,
+      sfc === 'sale-teardown' || sfc === 'forced-close' || sfc === 'withdraw-collateral'
+        ? null
+        : sfc,
     );
+    setWithdrawInput('');
   }
   // The ref advances in a LAYOUT effect, not a passive one (Codex #1683 r1).
   // I had argued the guard and the state it protects must move together, so
@@ -2121,16 +2132,28 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     }
     setPhase('pending');
     setError(null);
+    const t = copy.positions.details.withdrawCollateral;
+    const wei = withdrawInputWei;
+    // PRE-CHECKS (#2389 r3). Nothing here opens the wallet, so a failure
+    // is said as a failed check — never as a transaction that "didn't go
+    // through". A check's own plain-words message (a moved position, a
+    // sanctions retry) is kept; anything else reads "couldn't check".
+    let saleState: Awaited<ReturnType<typeof probeSaleHoldLive>> | 'unknown';
+    let swapOrder: Awaited<ReturnType<typeof swapToRepayOrderState>>;
+    let liveMax: bigint;
+    let paused: boolean | 'unknown';
     try {
-      const wei = withdrawInputWei;
       // partialWithdrawCollateral screens msg.sender (Tier-1) and pays
-      // the CURRENT borrower-position holder — re-check both live.
+      // the CURRENT borrower-position holder — re-check both live. The
+      // sanctions read fails CLOSED here: every pre-check follows one
+      // rule, and an unanswered one sends nothing.
       await assertWalletNotSanctionedLive(
         publicClient,
         walletChain.diamondAddress,
         address,
+        { failClosed: true },
       );
-      const [, saleState, swapOrder, liveMax] = await Promise.all([
+      [, saleState, swapOrder, liveMax, paused] = await Promise.all([
         assertPositionNftHeldLive({
           publicClient,
           diamondAddress: walletChain.diamondAddress,
@@ -2159,15 +2182,36 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           functionName: 'calculateMaxWithdrawable',
           args: [BigInt(row.loanId)],
         }) as Promise<bigint>,
+        // The withdrawal is refused while the deployment is paused.
+        (
+          publicClient.readContract({
+            address: walletChain.diamondAddress,
+            abi: DIAMOND_ABI_VIEM,
+            functionName: 'paused',
+          }) as Promise<boolean>
+        ).catch(() => 'unknown' as const),
       ]);
+    } catch (err) {
+      setError(
+        captureTxError(err, {
+          message: err instanceof BaseError ? t.checkFailed : (err as Error)?.message || t.checkFailed,
+        }),
+      );
+      setPhase(null);
+      return;
+    }
+    try {
       // One pure rule for every pre-check (#2389 r2): a blocking answer
       // names its obstacle, and an unanswered one blocks with "couldn't
       // check". Tested in partialWithdraw.test.ts.
-      const block = withdrawPreflightBlock({ saleState, swapOrder, liveMax, wei });
+      const block = withdrawPreflightBlock({ paused, saleState, swapOrder, liveMax, wei });
       if (block !== null) {
-        const t = copy.positions.details.withdrawCollateral;
         setError(
-          block === 'sale-listed'
+          block === 'paused'
+            ? t.paused
+            : block === 'pause-unchecked'
+              ? t.pauseUnchecked
+              : block === 'sale-listed'
             ? t.saleListed
             : block === 'sale-unchecked'
               ? t.saleUnchecked
@@ -3228,6 +3272,10 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             <p className="muted" id="withdraw-collateral-state" style={{ margin: 0 }}>
               {copy.positions.details.withdrawCollateral.checking}
             </p>
+          ) : maxWithdrawState.kind === 'paused' ? (
+            <p className="muted" id="withdraw-collateral-state" style={{ margin: 0 }}>
+              {copy.positions.details.withdrawCollateral.paused}
+            </p>
           ) : maxWithdrawState.kind === 'unconfirmed' ? (
             <p className="muted" id="withdraw-collateral-state" style={{ margin: 0 }}>
               {copy.positions.details.withdrawCollateral.unconfirmed}
@@ -3286,6 +3334,14 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                   {copy.positions.details.withdrawCollateral.button}
                 </button>
               </div>
+              {withdrawProblem === 'too-precise' ? (
+                <p className="field-hint" style={{ color: 'var(--danger)', marginTop: 8 }}>
+                  {copy.positions.details.withdrawCollateral.tooPrecise(
+                    collateral.symbol,
+                    String(collateral.decimals),
+                  )}
+                </p>
+              ) : null}
               {withdrawProblem === 'over-max' ? (
                 <p className="field-hint" style={{ color: 'var(--danger)', marginTop: 8 }}>
                   {copy.positions.details.withdrawCollateral.overMax(
@@ -3312,8 +3368,9 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                     onBack={() => setConfirmingSurface(null)}
                     onConfirm={() => void runWithdrawCollateral()}
                     data={{
+                      // The exact amount sent, not the typed text (#2389 r3).
                       youReceive: copy.positions.details.withdrawCollateral.receive(
-                        `${withdrawInput} ${collateral.symbol}`,
+                        `${formatUnits(withdrawInputWei, collateral.decimals)} ${collateral.symbol}`,
                       ),
                       youLock: copy.positions.details.withdrawCollateral.lockNothing,
                       youMayOwe: copy.positions.details.withdrawCollateral.oweNothingMore,

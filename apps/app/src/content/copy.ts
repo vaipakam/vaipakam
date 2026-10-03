@@ -3178,6 +3178,22 @@ const copySource = {
         swapOrderPending: 'A swap-to-repay order is waiting on this loan, and it was sized against your collateral as it stands. Collateral can’t be taken back until that order fills or is cancelled. Reaching its deadline does not release the collateral by itself: an order that didn’t fill still has to be cancelled, which the borrower-position holder can do once the deadline has passed. This app can’t cancel it for you; use the tool you placed it with.',
         // #2389 r1 — the order check itself failed: say so rather than
         // treating an unread answer as "no order".
+        // #2389 r3 — the deployment's pause switch: the withdrawal is
+        // refused while it is on, so the card says so instead of a form.
+        paused:
+          'Taking back collateral is paused on this deployment right now. Your collateral stays safely locked in the loan; try again once it is unpaused.',
+        pauseUnchecked:
+          'We couldn’t check whether this deployment is paused, so nothing was sent. Please try again in a moment.',
+        // #2389 r3 — a pre-check failed in a way with no plain-words
+        // reason of its own. The wallet never opened.
+        checkFailed:
+          'We couldn’t finish the checks before opening your wallet, so nothing was sent. Please try again in a moment.',
+        // #2389 r3 — more decimals than the token has: refused, never
+        // rounded into a different amount.
+        tooPrecise: tmpl(
+          '{{symbol}} can’t be split that finely — use at most {{decimals}} decimal places.',
+          ['symbol', 'decimals'],
+        ),
         // #2389 r2 — the sale-listing check itself failed.
         saleUnchecked:
           'We couldn’t check whether a sale listing of the lender’s position is linked to this loan, so nothing was sent. Please try again in a moment.',

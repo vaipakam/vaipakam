@@ -49,7 +49,7 @@ describe('classifyMaxWithdrawable', () => {
     // Even when stale data from an earlier poll is still in hand.
     expect(
       classifyMaxWithdrawable({
-        data: { max: 0n, illiquid: false, isVpfi: false },
+        data: { max: 0n, illiquid: false, isVpfi: false, paused: false },
         isError: true,
       }),
     ).toEqual({ kind: 'unconfirmed' });
@@ -64,7 +64,7 @@ describe('classifyMaxWithdrawable', () => {
   it('states a positive ceiling as an amount', () => {
     expect(
       classifyMaxWithdrawable({
-        data: { max: 5n, illiquid: false, isVpfi: false },
+        data: { max: 5n, illiquid: false, isVpfi: false, paused: false },
         isError: false,
       }),
     ).toEqual({ kind: 'some', max: 5n });
@@ -72,7 +72,7 @@ describe('classifyMaxWithdrawable', () => {
 
   it('names the reason for a zero ceiling only when it was determined', () => {
     const zero = (illiquid: boolean | undefined) =>
-      classifyMaxWithdrawable({ data: { max: 0n, illiquid, isVpfi: false }, isError: false });
+      classifyMaxWithdrawable({ data: { max: 0n, illiquid, isVpfi: false, paused: false }, isError: false });
     expect(zero(true)).toEqual({ kind: 'none-unpriced' });
     expect(zero(false)).toEqual({ kind: 'none-needed' });
     expect(zero(undefined)).toEqual({ kind: 'none-unknown' });
@@ -82,15 +82,15 @@ describe('classifyMaxWithdrawable', () => {
 describe('withdrawAmountProblem', () => {
   const some = { kind: 'some', max: 100n } as const;
   it('accepts an amount up to and including the ceiling', () => {
-    expect(withdrawAmountProblem({ inputWei: 1n, state: some })).toBeNull();
-    expect(withdrawAmountProblem({ inputWei: 100n, state: some })).toBeNull();
+    expect(withdrawAmountProblem({ parsed: 1n, state: some })).toBeNull();
+    expect(withdrawAmountProblem({ parsed: 100n, state: some })).toBeNull();
   });
   it('refuses an amount over the ceiling', () => {
-    expect(withdrawAmountProblem({ inputWei: 101n, state: some })).toBe('over-max');
+    expect(withdrawAmountProblem({ parsed: 101n, state: some })).toBe('over-max');
   });
   it('refuses an empty or zero amount', () => {
-    expect(withdrawAmountProblem({ inputWei: null, state: some })).toBe('invalid');
-    expect(withdrawAmountProblem({ inputWei: 0n, state: some })).toBe('invalid');
+    expect(withdrawAmountProblem({ parsed: 'invalid', state: some })).toBe('invalid');
+    expect(withdrawAmountProblem({ parsed: 0n, state: some })).toBe('invalid');
   });
   it('refuses any amount while there is no confirmed positive ceiling', () => {
     for (const state of [
@@ -100,8 +100,22 @@ describe('withdrawAmountProblem', () => {
       { kind: 'none-unpriced' },
       { kind: 'none-unknown' },
     ] as const) {
-      expect(withdrawAmountProblem({ inputWei: 1n, state })).toBe('no-ceiling');
+      expect(withdrawAmountProblem({ parsed: 1n, state })).toBe('no-ceiling');
     }
+  });
+  it('names an amount with more decimals than the token has (#2389 r3)', () => {
+    expect(withdrawAmountProblem({ parsed: 'too-precise', state: some })).toBe('too-precise');
+  });
+});
+
+describe('classifyMaxWithdrawable — pause (#2389 r3)', () => {
+  it('says the deployment is paused even when the ceiling reads positive', () => {
+    expect(
+      classifyMaxWithdrawable({
+        data: { max: 5n, illiquid: false, isVpfi: false, paused: true },
+        isError: false,
+      }),
+    ).toEqual({ kind: 'paused' });
   });
 });
 
@@ -115,9 +129,10 @@ describe('readMaxWithdrawable', () => {
         calculateMaxWithdrawable: 42n,
         checkLiquidity: 0,
         getVPFIToken: VPFI,
+        paused: false,
       }),
     });
-    expect(r).toEqual({ max: 42n, illiquid: false, isVpfi: false });
+    expect(r).toEqual({ max: 42n, illiquid: false, isVpfi: false, paused: false });
   });
 
   it('recognises VPFI collateral', async () => {
@@ -227,7 +242,17 @@ describe('swapToRepayOrderState', () => {
 });
 
 describe('withdrawPreflightBlock (#2389 r2)', () => {
-  const ok = { saleState: 'none' as const, swapOrder: 'none' as const, liveMax: 100n, wei: 50n };
+  const ok = {
+    paused: false as const,
+    saleState: 'none' as const,
+    swapOrder: 'none' as const,
+    liveMax: 100n,
+    wei: 50n,
+  };
+  it('blocks while the deployment is paused, and when the pause read failed (#2389 r3)', () => {
+    expect(withdrawPreflightBlock({ ...ok, paused: true })).toBe('paused');
+    expect(withdrawPreflightBlock({ ...ok, paused: 'unknown' })).toBe('pause-unchecked');
+  });
   it('sends when every check answered clear and the amount fits', () => {
     expect(withdrawPreflightBlock(ok)).toBeNull();
   });

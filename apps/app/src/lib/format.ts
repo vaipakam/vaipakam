@@ -50,6 +50,23 @@ export function formatTokenAmountDown(
   return f ? `${intText}.${f}` : intText;
 }
 
+/** Parse a typed decimal amount into base units WITHOUT rounding
+ *  (#2389 r3). viem's `parseUnits` rounds a value with more fractional
+ *  digits than the token has — `0.0000009` at six decimals becomes one
+ *  base unit — so a confirmation that echoes the typed text would state
+ *  an amount the contract does not move. Excess precision is refused
+ *  instead, and named, so the amount confirmed is the amount sent. */
+export function parseExactUnits(
+  value: string,
+  decimals: number,
+): bigint | 'invalid' | 'too-precise' {
+  const m = /^(\d*)(?:\.(\d*))?$/.exec(value.trim());
+  if (!m || (m[1] === '' && (m[2] ?? '') === '')) return 'invalid';
+  const frac = (m[2] ?? '').replace(/0+$/, '');
+  if (frac.length > decimals) return 'too-precise';
+  return BigInt((m[1] || '0') + frac.padEnd(decimals, '0'));
+}
+
 /** LOSSLESS decimal string for pre-filling inputs (Max buttons).
  *  Never round-trips through Number — 18-decimal balances lose
  *  precision past ~15 significant digits and can round UP above the
