@@ -116,13 +116,19 @@ echo "Fork of Base Sepolia at block $(cast block-number --rpc-url "$RPC"); forge
 echo "tLIQ $TLIQ  mock owner $OWNER"
 
 SEED_PRICE="$(feed_price)"
+# The contrast move is RELATIVE to whatever the fork starts at — an earlier
+# rehearsal may have left the live price anywhere, so a hard-coded target
+# could land inside the TWAP-consistency band (3% by default) and never show
+# the #2314 shape. -20% of the current price is far past the default band; a
+# band raised past 20% would make check [1] fail loudly, not pass silently.
+FEED_ONLY_PRICE=$(( SEED_PRICE * 80 / 100 ))
 echo "[0] baseline"
-check "tLIQ reads Liquid at the seeded price" "$(liquidity)" "0"
+check "tLIQ reads Liquid at the fork's current price (e8 $SEED_PRICE)" "$(liquidity)" "0"
 
 echo "[1] feed-only move (the #2314 shape)"
 impersonate "$OWNER"
-cast send "$FEED" "setPrice(int256)" 160000000000 --unlocked --from "$OWNER" --rpc-url "$RPC" >/dev/null
-check "feed-only -20% reads Illiquid" "$(liquidity)" "1"
+cast send "$FEED" "setPrice(int256)" "$FEED_ONLY_PRICE" --unlocked --from "$OWNER" --rpc-url "$RPC" >/dev/null
+check "feed-only -20% (e8 $SEED_PRICE -> $FEED_ONLY_PRICE) reads Illiquid" "$(liquidity)" "1"
 cast send "$FEED" "setPrice(int256)" "$SEED_PRICE" --unlocked --from "$OWNER" --rpc-url "$RPC" >/dev/null
 check "restoring the feed restores Liquid" "$(liquidity)" "0"
 
