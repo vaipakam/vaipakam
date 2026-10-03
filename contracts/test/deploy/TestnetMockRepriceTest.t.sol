@@ -10,6 +10,7 @@ import {MockSwapAdapter} from "../mocks/MockSwapAdapter.sol";
 import {DeployTestnetMocks} from "../../script/DeployTestnetMocks.s.sol";
 import {RepriceTestnetMock} from "../../script/RepriceTestnetMock.s.sol";
 import {MockPoolPricing} from "../../script/lib/MockPoolPricing.sol";
+import {RepriceVenueReport} from "../../script/lib/RepriceVenueReport.sol";
 import {TestnetMockOracleRig} from "./TestnetMockOracleRig.sol";
 
 /**
@@ -35,9 +36,11 @@ contract TestnetMockRepriceTest is TestnetMockOracleRig, RepriceTestnetMock {
     uint256 constant ILLIQUID = uint256(LibVaipakam.LiquidityStatus.Illiquid);
 
     RepriceTarget internal tliqTarget;
+    RepriceVenueReport internal reporter;
 
     function setUp() public override {
         super.setUp();
+        reporter = new RepriceVenueReport();
         tliqTarget = RepriceTarget({
             diamond: address(diamond),
             asset: address(tLIQ),
@@ -300,7 +303,7 @@ contract TestnetMockRepriceTest is TestnetMockOracleRig, RepriceTestnetMock {
     ///         it, so after a coherent reprice nothing in it deviates.
     function test_venueReport_cleanVenueAfterARepriceHasNoDeviations() public {
         _reprice(tliqTarget, 1_600e8, false, false);
-        assertEq(_venueReport(tliqTarget, _faucet()).length, 0, "no deviations");
+        assertEq(_report(tliqTarget, _faucet()).length, 0, "no deviations");
     }
 
     function test_venueReport_namesEachExecutionKnob() public {
@@ -308,7 +311,7 @@ contract TestnetMockRepriceTest is TestnetMockOracleRig, RepriceTestnetMock {
         venue.setOutputMultiplierBps(9_000);
         address other = makeAddr("other-caller");
         venue.setRestrictedTo(other);
-        string[] memory d = _venueReport(tliqTarget, _faucet());
+        string[] memory d = _report(tliqTarget, _faucet());
         assertEq(d.length, 3, "three knob deviations");
         assertEq(d[0], "venue shouldRevert is on: every liquidation through it reverts");
         assertEq(d[1], "venue outputMultiplierBps is 9000, not 10000: it pays that fraction of the fair amount");
@@ -326,7 +329,7 @@ contract TestnetMockRepriceTest is TestnetMockOracleRig, RepriceTestnetMock {
     ///         shape, and reports nothing.)
     function test_venueReport_namesAnOpenGate() public {
         venue.setRestrictedTo(address(0));
-        string[] memory d = _venueReport(tliqTarget, _faucet());
+        string[] memory d = _report(tliqTarget, _faucet());
         assertEq(d.length, 1, "one deviation");
         assertEq(
             d[0],
@@ -340,7 +343,7 @@ contract TestnetMockRepriceTest is TestnetMockOracleRig, RepriceTestnetMock {
     function test_venueReport_namesAnUnsetAndAStaleCounterLeg() public {
         venue.setTokenPrice(address(mUSDC), 0);
         venue.setTokenPrice(address(mWETH), 2_500e8);
-        string[] memory d = _venueReport(tliqTarget, _faucet());
+        string[] memory d = _report(tliqTarget, _faucet());
         assertEq(d.length, 2, "two price deviations");
         assertEq(
             d[0],
@@ -364,7 +367,7 @@ contract TestnetMockRepriceTest is TestnetMockOracleRig, RepriceTestnetMock {
         address[] memory a = new address[](2);
         a[0] = address(tLIQ);
         a[1] = address(six);
-        string[] memory d = _venueReport(tliqTarget, a);
+        string[] memory d = _report(tliqTarget, a);
         assertEq(d.length, 2, "decimals, then the missing oracle price");
         assertEq(
             d[0],
@@ -385,7 +388,7 @@ contract TestnetMockRepriceTest is TestnetMockOracleRig, RepriceTestnetMock {
         a[0] = address(tLIQ);
         a[1] = noCode;
         a[2] = address(registry); // has code, has no decimals()
-        string[] memory d = _venueReport(tliqTarget, a);
+        string[] memory d = _report(tliqTarget, a);
         assertEq(
             d[0],
             string.concat("token ", vm.toString(noCode), " reports no decimals: its venue settlement is not substantiated")
@@ -408,11 +411,23 @@ contract TestnetMockRepriceTest is TestnetMockOracleRig, RepriceTestnetMock {
         assertTrue(sawRegistry, "a contract without decimals() is reported too");
     }
 
+    /// @notice The report REVERTS for a venue that is not a MockSwapAdapter —
+    ///         which is exactly why `run()` calls it, in its own contract,
+    ///         behind one `try` and states "venue report unavailable" instead
+    ///         of aborting. This pins the premise of that catch: if the entry
+    ///         ever stopped reverting here, the catch would be dead code.
+    function test_venueReport_revertsForANonAdapterVenueSoRunMustCatchIt() public {
+        RepriceTarget memory t = tliqTarget;
+        t.venue = address(registry); // has code, is not a MockSwapAdapter
+        vm.expectRevert();
+        reporter.report(t.diamond, t.venue, t.asset, _faucet());
+    }
+
     /// @notice With the venue skipped, the repriced asset itself shows up as
     ///         a deviation — the report states the mismatch the operator chose.
     function test_venueReport_skipVenueReportsTheRepricedAsset() public {
         _reprice(tliqTarget, 1_600e8, true, false);
-        string[] memory d = _venueReport(tliqTarget, _faucet());
+        string[] memory d = _report(tliqTarget, _faucet());
         assertEq(d.length, 1, "the skipped venue leg");
         assertEq(
             d[0],
@@ -431,6 +446,10 @@ contract TestnetMockRepriceTest is TestnetMockOracleRig, RepriceTestnetMock {
         uint160 spot = _targetSpot(t, price8);
         _applyReprice(t, price8, spot, skipVenue);
         _verifyReprice(t, price8, skipVenue, allowIlliquid);
+    }
+
+    function _report(RepriceTarget memory t, address[] memory assets) internal view returns (string[] memory) {
+        return reporter.report(t.diamond, t.venue, t.asset, assets);
     }
 
     function routeProbeExt(RepriceTarget memory t) external {

@@ -10,17 +10,8 @@ import {MockUniswapV3Factory, MockUniswapV3Pool} from "./mocks/MockUniswapV3.sol
 import {MockSwapAdapter} from "../test/mocks/MockSwapAdapter.sol";
 import {Deployments} from "./lib/Deployments.sol";
 import {MockPoolPricing} from "./lib/MockPoolPricing.sol";
+import {RepriceVenueReport, IRepriceDiamondViews} from "./lib/RepriceVenueReport.sol";
 
-/// @dev The Diamond views this script reads, declared narrowly so the script
-///      does not compile OracleFacet and AdminFacet to call them.
-///      `checkLiquidity` returns `LibVaipakam.LiquidityStatus`, which the
-///      ABI encodes as a uint8: 0 = Liquid, 1 = Illiquid.
-interface IRepriceDiamondViews {
-    function getAssetPrice(address asset) external view returns (uint256 price, uint8 decimals);
-    function checkLiquidity(address asset) external view returns (uint8);
-    function getSwapAdapters() external view returns (address[] memory);
-    function isSwapAdapterDisabled(address adapter) external view returns (bool);
-}
 
 /**
  * @title RepriceTestnetMock
@@ -221,10 +212,24 @@ contract RepriceTestnetMock is Script {
         // The venue's settlement depends on state this run does not write.
         // Report all of it that is knowable, and say what is not.
         if (t.venue.code.length != 0) {
-            string[] memory deviations = _venueReport(t, _faucetPricedAssets(t));
-            console.log("Venue report (state this run does not write): %s deviation(s)", deviations.length);
-            for (uint256 i; i < deviations.length; ++i) {
-                console.log(string.concat("WARNING: ", deviations[i]));
+            // The report reads state this run neither writes nor controls, so
+            // it must never be what stops a run: it lives in its own contract,
+            // deployed here in simulation (after stopBroadcast, so nothing is
+            // sent), and any read that fails inside it is caught as ONE stated
+            // outcome rather than each new shape needing its own guard. The
+            // writes have already been checked by _verifyReprice above.
+            RepriceVenueReport reporter = new RepriceVenueReport();
+            try reporter.report(t.diamond, t.venue, t.asset, _faucetPricedAssets(t)) returns (
+                string[] memory deviations
+            ) {
+                console.log("Venue report (state this run does not write): %s deviation(s)", deviations.length);
+                for (uint256 i; i < deviations.length; ++i) {
+                    console.log(string.concat("WARNING: ", deviations[i]));
+                }
+            } catch {
+                console.log(
+                    "WARNING: venue report unavailable - a read of the venue or a faucet token failed, so its settlement state is not substantiated"
+                );
             }
         }
         console.log(
@@ -358,128 +363,6 @@ contract RepriceTestnetMock is Script {
         n = 0;
         for (uint256 i; i < found.length; ++i) {
             if (found[i] != address(0)) assets[n++] = found[i];
-        }
-    }
-
-    /// @notice Every way the venue would settle a liquidation differently
-    ///         from the oracle, across its WHOLE configuration: the three
-    ///         execution knobs, and its price for each of `assets`. An empty
-    ///         result means none of that state deviates — it does not mean a
-    ///         liquidation will succeed (the output float is not knowable
-    ///         here; `run()` says so).
-    /// @dev    `MockSwapAdapter.execute` pays `base * outputMultiplierBps /
-    ///         10000`, where `base` is `inputAmount * priceIn / priceOut`, or
-    ///         `inputAmount` (a 1:1 base) when either leg has no price — the
-    ///         multiplier applies in both cases. It reverts when
-    ///         `shouldRevert` is set or `restrictedTo` names another caller.
-    ///         It works on raw token amounts, so it also assumes every leg
-    ///         has the same decimals; a mismatch is reported too. That is the
-    ///         complete set this reads.
-    function _venueReport(RepriceTarget memory t, address[] memory assets)
-        internal
-        view
-        returns (string[] memory deviations)
-    {
-        MockSwapAdapter venue = MockSwapAdapter(t.venue);
-        string[] memory buf = new string[](3 + 2 * assets.length);
-        uint8 assetDecimals = IERC20Metadata(t.asset).decimals();
-        uint256 n;
-        if (venue.shouldRevert()) {
-            buf[n++] = "venue shouldRevert is on: every liquidation through it reverts";
-        }
-        uint256 bps = venue.outputMultiplierBps();
-        if (bps != 10_000) {
-            buf[n++] = string.concat(
-                "venue outputMultiplierBps is ", vm.toString(bps), ", not 10000: it pays that fraction of the fair amount"
-            );
-        }
-        address gate = venue.restrictedTo();
-        if (gate == address(0)) {
-            // Not a pricing deviation but an operational one: the adapter is
-            // funded, so an open execute is a public pot (anyone can approve
-            // a junk input token and drain the output float). The deploy
-            // gates it to the Diamond for exactly that reason.
-            buf[n++] = "venue execute is open to any caller: anyone can drain its output float (the deploy gates it to the Diamond)";
-        } else if (gate != t.diamond) {
-            buf[n++] = string.concat(
-                "venue execute is restricted to ", vm.toString(gate), ", not the Diamond: liquidations through it revert"
-            );
-        }
-        for (uint256 i; i < assets.length; ++i) {
-            // `execute` works on raw amounts and assumes equal decimals, so a
-            // leg at different decimals mis-pays by a power of ten whatever
-            // its USD price says.
-            (bool known, uint8 d) = _tryDecimals(assets[i]);
-            if (!known) {
-                buf[n++] = string.concat(
-                    "token ", vm.toString(assets[i]), " reports no decimals: its venue settlement is not substantiated"
-                );
-            } else if (d != assetDecimals) {
-                buf[n++] = string.concat(
-                    "venue settles ",
-                    vm.toString(assets[i]),
-                    " (",
-                    vm.toString(uint256(d)),
-                    " decimals) against the repriced asset (",
-                    vm.toString(uint256(assetDecimals)),
-                    ") on raw amounts: the payout is off by a power of ten"
-                );
-            }
-            string memory dev = _venuePriceDeviation(t, venue, assets[i]);
-            if (bytes(dev).length != 0) buf[n++] = dev;
-        }
-        deviations = new string[](n);
-        for (uint256 i; i < n; ++i) {
-            deviations[i] = buf[i];
-        }
-    }
-
-    /// @notice A token's decimals, or `known == false` when they cannot be
-    ///         read: no code, a reverting call, or malformed return data.
-    /// @dev    A high-level `try IERC20Metadata(t).decimals()` does NOT catch
-    ///         a code-less address or a short return — those revert in the
-    ///         caller, outside the `catch`, and would abort the whole run. So
-    ///         this is a low-level `staticcall` with a length check, the
-    ///         pattern `OracleFacet._tryTokenDecimals` uses. Unlike that
-    ///         helper, it does not default to 18: the venue report exists to
-    ///         state an unknown, not to paper over one.
-    function _tryDecimals(address token) internal view returns (bool known, uint8 d) {
-        if (token.code.length == 0) return (false, 0);
-        (bool ok, bytes memory data) = token.staticcall(abi.encodeWithSignature("decimals()"));
-        if (!ok || data.length < 32) return (false, 0);
-        uint256 raw = abi.decode(data, (uint256));
-        if (raw > type(uint8).max) return (false, 0);
-        return (true, uint8(raw));
-    }
-
-    function _venuePriceDeviation(RepriceTarget memory t, MockSwapAdapter venue, address asset)
-        internal
-        view
-        returns (string memory)
-    {
-        uint256 venue8 = venue.tokenUsdPrice8(asset);
-        if (venue8 == 0) {
-            return string.concat(
-                "venue has no price for ", vm.toString(asset), ": a liquidation pairing it pays a 1:1 base, then outputMultiplierBps"
-            );
-        }
-        try IRepriceDiamondViews(t.diamond).getAssetPrice(asset) returns (uint256 p, uint8 d) {
-            if (d > 18 || p * 10 ** (18 - d) != venue8 * 10 ** (18 - REPRICE_FEED_DECIMALS)) {
-                return string.concat(
-                    "venue pays ",
-                    vm.toString(asset),
-                    " at e8 ",
-                    vm.toString(venue8),
-                    " but the oracle reads ",
-                    vm.toString(p),
-                    " at ",
-                    vm.toString(uint256(d)),
-                    " decimals"
-                );
-            }
-            return "";
-        } catch {
-            return string.concat("oracle has no price for ", vm.toString(asset), ": its venue price is not compared");
         }
     }
 
