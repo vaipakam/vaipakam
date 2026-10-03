@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# FIRST statement, before ANY assignment: the baseline `load_env_file`
+# compares each `.env` name against (#1932 / #1938 — `.env` is read as data,
+# never sourced).
+__lenv_baseline="$(declare -p $(compgen -v) 2>/dev/null)"
 # rehearse-reprice-anvil.sh — dress rehearsal of RepriceTestnetMock.s.sol on
 # an Anvil fork of Base Sepolia, before anyone runs it against the testnet
 # itself (#2314).
@@ -15,14 +19,16 @@
 # Usage (from contracts/):
 #   bash script/rehearse-reprice-anvil.sh
 #
-# Needs BASE_SEPOLIA_RPC_URL — taken from the environment, else from
-# contracts/.env. It is never printed: Anvil echoes its fork URL on start-up,
-# so Anvil's own output goes to /dev/null, not to a log.
+# Needs BASE_SEPOLIA_RPC_URL — taken from the environment, else read from
+# contracts/.env as data (lib/load-env.sh; the file is never sourced). It is
+# never printed: Anvil echoes its fork URL on start-up, so Anvil's own output
+# goes to /dev/null, not to a log.
 #
 # Writes nothing outside the fork. The fork is discarded on exit.
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR/.."
 
 for tool in forge anvil cast jq; do
   command -v "$tool" >/dev/null 2>&1 || {
@@ -31,9 +37,10 @@ for tool in forge anvil cast jq; do
   }
 done
 
+# shellcheck source=lib/load-env.sh
+source "$SCRIPT_DIR/lib/load-env.sh"
 if [[ -z "${BASE_SEPOLIA_RPC_URL:-}" && -f .env ]]; then
-  # shellcheck disable=SC1091
-  BASE_SEPOLIA_RPC_URL="$(set -a; . ./.env >/dev/null 2>&1; printf '%s' "${BASE_SEPOLIA_RPC_URL:-}")"
+  load_env_file .env || { echo "rehearse-reprice-anvil: could not read contracts/.env" >&2; exit 2; }
 fi
 if [[ -z "${BASE_SEPOLIA_RPC_URL:-}" ]]; then
   echo "rehearse-reprice-anvil: BASE_SEPOLIA_RPC_URL is not set (env or contracts/.env)" >&2

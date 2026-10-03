@@ -183,7 +183,13 @@ contract TestnetMockRepriceTest is TestnetMockOracleRig, RepriceTestnetMock {
         RepriceTestnetMock.PriceReading memory before = _read(tliqTarget);
         uint160 spot = _targetSpot(tliqTarget, 1_600e8);
         _applyReprice(tliqTarget, 1_600e8, spot, false);
-        tliqFeed.setPrice(int256(P_TLIQ)); // stands in for an unwired feed
+        // Stand in for a Diamond that never saw the write: put the feed AND
+        // the pool back, so the asset stays Liquid and only the price check
+        // can catch it (resetting the feed alone trips the Illiquid guard
+        // instead, which is a different refusal).
+        tliqFeed.setPrice(int256(P_TLIQ));
+        MockUniswapV3Pool(tliqPool).setSqrtPriceX96(before.poolSpot);
+        assertEq(_status(address(tLIQ)), LIQUID, "still Liquid, so only the price check can refuse");
         vm.expectRevert(
             bytes("RepriceTestnetMock: the Diamond does not read the new price - is it wired to this registry?")
         );
