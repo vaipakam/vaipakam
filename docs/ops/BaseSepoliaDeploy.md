@@ -217,6 +217,111 @@ cast call $DIAMOND "checkLiquidity(address)(uint8)" $MWBTC --rpc-url $BASE_SEPOL
 Chainlink + real UniswapV3 (factory `0x33128a8fC17869897dcE68Ed026d694621f6FDfD`),
 not mocks. Real-DEX deploys jump straight from §2 to §3.
 
+## 2.6. Repricing a faucet asset for a drawdown rehearsal (testnet-only)
+
+To rehearse a health-factor drop or a liquidation on testnet, reprice the
+faucet asset with `RepriceTestnetMock.s.sol`. **Never move the mock feed
+alone.** The faucet pool's spot is static, and the oracle only counts a pool
+whose spot agrees with the feed within the TWAP-consistency band (3% by
+default). A feed-only move past that band makes tLIQ read **Illiquid**, which
+looks exactly like a pool too shallow for the trade (#2314 was first
+misdiagnosed that way). The script moves three things: the feed, the pool
+spot, and the registered mock swap venue's price (which sets what a
+liquidation actually pays). It has no opt-outs: every run moves all three
+and must end Liquid.
+
+**It is three transactions, not one atomic change.** Each mock belongs to a
+fixed owner wallet, so nothing can batch the three calls. For the few blocks
+between them, an observer can see tLIQ read Illiquid or the venue still at
+the old price. If a send fails part-way, the testnet is left partly
+repriced: **re-run the same command**. Every write sets the target value, so
+a re-run finishes whatever did not land. `--slow` makes forge wait for each
+receipt and stop at the first failure.
+
+It accepts `liquidToken` (tLIQ) and `liquidToken2` (mUSDC) only. mWETH shares
+its feed with WETH, so repricing it would move the quote leg of every faucet
+pool; the script refuses it. Before it broadcasts anything, it checks:
+
+- the artifact still describes the chain;
+- the venue is registered and enabled on the Diamond. That makes it
+  available, not selected: a liquidation passes its own adapter list, so
+  another enabled adapter may still settle it. The venue report names any;
+- the broadcaster owns the feed, the pool and the venue;
+- after the writes, the Diamond reads the new price and the venue pays it;
+- after the writes, the asset reads Liquid;
+- the feed is the one the Diamond reads: in simulation only, the script
+  nudges the feed about 1 bp up (or down, if up is rejected), confirms the
+  Diamond's price follows, and puts it back. A price that merely equals the
+  target is not proof;
+- the pool is the one the oracle reads: in simulation only, the script
+  empties the pool's depth, confirms the asset turns Illiquid, and puts it
+  back. The Diamond exposes no view of its feed or pool configuration, so
+  both are proved by behaviour.
+
+**Rehearse on an Anvil fork first.** The rehearsal changes nothing on the
+testnet:
+
+```bash
+cd contracts && bash script/rehearse-reprice-anvil.sh
+```
+
+Then, on the testnet itself, broadcast as the mock owner (the key that ran
+`DeployTestnetMocks`). Prices are in 8 decimals, so `160000000000` is $1,600:
+
+```bash
+REPRICE_ASSET=liquidToken REPRICE_USD_E8=160000000000 \
+MOCK_OWNER_PRIVATE_KEY=<mock owner key> \
+forge script script/RepriceTestnetMock.s.sol --rpc-url $BASE_SEPOLIA_RPC_URL --broadcast --slow
+# or, with a hardware wallet: set MOCK_OWNER_PRIVATE_KEY=0 and add --ledger --sender <owner>
+#   (0, not unset: Forge loads contracts/.env itself, and a key there would win)
+```
+
+The script checks the result in simulation only, not after broadcast, so
+read the live state yourself. Set `KEY` to the asset you repriced:
+
+```bash
+KEY=liquidToken   # or liquidToken2 for mUSDC — the same value as REPRICE_ASSET
+DIAMOND=$(jq -r .diamond deployments/base-sepolia/addresses.json)
+ASSET=$(jq -r ".testnetMocks.$KEY" deployments/base-sepolia/addresses.json)
+VENUE=$(jq -r .testnetMocks.mockSwapAdapter deployments/base-sepolia/addresses.json)
+POOL=$(jq -r ".testnetMocks.${KEY}WethPool" deployments/base-sepolia/addresses.json)
+cast call $DIAMOND "checkLiquidity(address)(uint8)" $ASSET --rpc-url $BASE_SEPOLIA_RPC_URL       # → 0 (Liquid)
+cast call $DIAMOND "getAssetPrice(address)(uint256,uint8)" $ASSET --rpc-url $BASE_SEPOLIA_RPC_URL  # → the new price, 8
+cast call $VENUE "tokenUsdPrice8(address)(uint256)" $ASSET --rpc-url $BASE_SEPOLIA_RPC_URL         # → the new price
+cast call $POOL "sqrtPriceX96()(uint160)" --rpc-url $BASE_SEPOLIA_RPC_URL                          # → the right-hand value of the script's "Pool spot:" line
+```
+
+Read the pool too. For a move inside the consistency band, the old pool spot
+can still read Liquid, so the first three reads alone do not show that the pool
+write landed.
+
+**What a run does not prove.** It proves the three prices it writes. It also
+reports, without refusing, the venue state it does not write:
+
+- the venue's execution settings;
+- the venue's price for every other liquid faucet asset (tLIQ, mUSDC, mWETH,
+  WETH), compared with the oracle's;
+- any OTHER enabled swap adapter on the Diamond. A liquidation may route
+  through it, and its settlement is not inspected.
+
+Each deviation is printed as a `WARNING` line, because these decide what a
+liquidation against the repriced asset actually pays. Three things it does
+not inspect:
+
+- the venue's output-token float: a liquidation larger than the float fails;
+- the illiquid faucet tokens (tILQ, tILQ2): a liquidation transfers them in
+  kind rather than swapping them, and they carry no oracle price;
+- the venue's price for a token outside the faucet set: its owner may have
+  set one, or there may be none (a 1:1 base, before the venue's output
+  multiplier). The run does not inspect it.
+
+A clean run is therefore not a promise that a liquidation will settle
+correctly.
+
+**Restore the seeded price afterwards** (`REPRICE_USD_E8=200000000000` for
+tLIQ, `100000000` for mUSDC). The testnet is shared, and every faucet user
+sees a rehearsal price until it is put back.
+
 ---
 
 ## 3. Deploy canonical VPFI stack (Base only)
