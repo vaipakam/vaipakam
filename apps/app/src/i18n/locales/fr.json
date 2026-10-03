@@ -1533,7 +1533,8 @@
       "unavailable": "Impossible de charger le carnet d'offres pour le moment. Réessayez dans un instant.",
       "lenderOffer": "Offre de prêt",
       "borrowerOffer": "Demande d'emprunt",
-      "collateralAtLeast": "au moins {{amount}}"
+      "collateralAtLeast": "au moins {{amount}}",
+      "collateralOfRunningLoan": "la garantie du prêt en cours vendu (non affichée sur cette ligne)"
     },
     "desk": {
       "tenorLiveTitle": "{{tenor}} — offres actives dans le carnet",
@@ -1613,8 +1614,8 @@
       "signed": {
         "badge": "Signé",
         "badgeTooltip": "Ordre signé gasless depuis le carnet off-chain — le maker l'a signé sans transaction, et il se remplit en une seule transaction on-chain par celui qui le prend. Les lignes signées viennent toujours du service de carnet d'ordres, jamais de la chaîne, jusqu'à leur exécution.",
-        "partialBadgeTooltip": "Ordre signé partiellement matché — son reste compte encore dans la profondeur et se remplit via le matcher permissionless, mais un remplissage direct n'est plus possible.",
-        "rangedBadgeTooltip": "Ordre signé à taille en plage — sa taille compte encore dans la profondeur, mais seul le matcher permissionless peut le consommer par tranches ; aucun remplissage direct de l'ordre entier.",
+        "partialBadgeTooltip": "Une partie de cette offre signée a été prise. Le reste compte toujours et peut être apparié automatiquement tant que l’appariement automatique est activé, mais il ne peut plus être pris directement.",
+        "rangedBadgeTooltip": "Une offre signée avec une fourchette de taille. Elle compte toujours, mais seul l’appariement automatique peut la prendre, par parties, et seulement tant qu’il est activé — elle ne peut pas être prise en entier d’un coup.",
         "fill": "Remplir",
         "confirmTitle": "Remplir l'ordre signé",
         "confirmLede": "Vous exécutez tout le remplissage en une transaction : votre côté bouge depuis votre portefeuille, le côté maker depuis son vault, et le prêt démarre immédiatement.",
@@ -1743,8 +1744,9 @@
         "commitAtFill": "Vous engagez {{amount}} {{symbol}} — prélevé depuis votre vault uniquement lorsqu’un preneur remplit l’offre.",
         "lockNow": "Vous verrouillez maintenant : {{amount}} {{symbol}} en garantie.",
         "lockAtFill": "Vous engagez {{amount}} {{symbol}} de garantie — verrouillés uniquement lorsqu’un preneur remplit.",
-        "netYield": "Rendement net ≈ {{net}} % APR après les {{feePct}} % de frais protocole sur les intérêts gagnés.",
-        "lifNote": "Frais d’initialisation du prêt : {{feePct}} % du principal (≈ {{amount}} {{symbol}}), facturés au démarrage du prêt."
+        "netYield": "Si quelqu’un prend l’offre et que le prêt est remboursé, vous gagnez environ {{net}} % par an après les frais de protocole de {{feePct}} % sur vos intérêts.",
+        "lifNote": "Frais d’initialisation du prêt : {{feePct}} % du principal (≈ {{amount}} {{symbol}}), facturés au démarrage du prêt.",
+        "expiryGtcSignedHint": "Une offre signée gratuitement reste ouverte jusqu’à 7 jours, puis expire d’elle-même. Vous pouvez l’annuler avant (l’annulation coûte des frais de réseau)."
       },
       "orders": {
         "loading": "Chargement de vos ordres ouverts…",

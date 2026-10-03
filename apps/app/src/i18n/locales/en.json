@@ -1557,6 +1557,7 @@
       "collateralNone": "none",
       "illiquidCollateralTag": "illiquid when posted (checked again at acceptance) — if so, handed over as-is if not repaid",
       "collateralAtLeast": "at least {{amount}}",
+      "collateralOfRunningLoan": "the collateral of the running loan being sold (not shown on this row)",
       "collateralAmountLoading": "{{token}} (amount loading…)",
       "collateralAmountUnreadable": "{{token}} (amount couldn’t be read)",
       "byCreator": "by",
@@ -1693,8 +1694,8 @@
       "signed": {
         "badge": "Signed",
         "badgeTooltip": "A signed offer: its maker signed it without a transaction, and it becomes a loan in one transaction by whoever takes it. Signed offers are listed by the offer-book service, not read from the blockchain, until someone takes them.",
-        "partialBadgeTooltip": "Part of this signed offer has been taken. The rest still counts and can still be matched automatically, but it can no longer be taken directly.",
-        "rangedBadgeTooltip": "A signed offer with a size range. It still counts, but only the automatic matcher can take it, in parts — it cannot be taken whole in one go.",
+        "partialBadgeTooltip": "Part of this signed offer has been taken. The rest still counts and can be matched automatically while automatic matching is switched on, but it can no longer be taken directly.",
+        "rangedBadgeTooltip": "A signed offer with a size range. It still counts, but only automatic matching can take it, in parts, and only while automatic matching is switched on — it cannot be taken whole in one go.",
         "fill": "Fill",
         "confirmTitle": "Fill signed order",
         "confirmLede": "You execute the whole fill in one transaction: your side moves from your wallet, the maker’s side from their vault, and the loan starts immediately.",
@@ -1759,6 +1760,7 @@
         "selfCollateral": "Collateral can’t be the same token as the loan asset.",
         "collateralAmount": "Collateral amount",
         "expiryGtcTitle": "Stays open until you cancel it",
+        "expiryGtcSignedHint": "A free signed offer stays open for up to 7 days, then expires on its own. You can cancel it sooner (cancelling needs a network fee).",
         "expiryGttTitle": "Closes by itself at the time you pick",
         "title": "Post an offer",
         "sideLend": "Lend",
@@ -1823,7 +1825,7 @@
         "commitAtFill": "{{amount}} {{symbol}} — taken from your vault only when someone takes the offer.",
         "lockNow": "Locked now as collateral: {{amount}} {{symbol}}.",
         "lockAtFill": "{{amount}} {{symbol}} collateral — locked only when someone takes the offer.",
-        "netYield": "After the {{feePct}}% protocol fee on your interest, you earn about {{net}}% a year.",
+        "netYield": "If someone takes the offer and the loan is repaid, you earn about {{net}}% a year after the {{feePct}}% protocol fee on your interest.",
         "lifNote": "Starting fee: {{feePct}}% of the loan amount (about {{amount}} {{symbol}}), charged when the loan starts."
       },
       "orders": {

@@ -1533,7 +1533,8 @@
       "unavailable": "当前无法加载报价簿。请稍后重试。",
       "lenderOffer": "出借报价",
       "borrowerOffer": "借入请求",
-      "collateralAtLeast": "至少 {{amount}}"
+      "collateralAtLeast": "至少 {{amount}}",
+      "collateralOfRunningLoan": "所出售的进行中贷款的抵押品（此行未显示）"
     },
     "desk": {
       "tenorLiveTitle": "{{tenor}} — 订单簿上的实时报价",
@@ -1613,8 +1614,8 @@
       "signed": {
         "badge": "已签名",
         "badgeTooltip": "来自链下簿的 gasless 签名订单 — maker 无需交易即可签名，由接受者通过单笔链上交易成交。签名行在成交前始终来自订单簿服务，而不是链。",
-        "partialBadgeTooltip": "部分匹配的签名订单 — 其剩余部分仍计入深度，并通过 permissionless matcher 成交，但直接 fill 已不再可能。",
-        "rangedBadgeTooltip": "范围规模签名订单 — 其规模仍计入深度，但只有 permissionless matcher 可分片消耗；没有整单直接 fill。",
+        "partialBadgeTooltip": "此签名报价已被部分接受。剩余部分仍然有效，在自动撮合开启期间可被自动撮合，但已无法再被直接接受。",
+        "rangedBadgeTooltip": "带金额范围的签名报价。它仍然有效，但只能由自动撮合分部分接受，且仅在自动撮合开启期间——无法一次性整体接受。",
         "fill": "执行",
         "confirmTitle": "Fill 签名订单",
         "confirmLede": "您在一笔交易中执行整个 fill：您的一侧从钱包移动，maker 的一侧从其 vault 移动，贷款立即开始。",
@@ -1743,8 +1744,9 @@
         "commitAtFill": "你承诺 {{amount}} {{symbol}} — 只有 taker 成交时才从 vault 拉取。",
         "lockNow": "你现在锁定: {{amount}} {{symbol}} 作为抵押品。",
         "lockAtFill": "你承诺 {{amount}} {{symbol}} 抵押品 — 仅在 taker 成交时锁定。",
-        "netYield": "扣除你赚取利息上 {{feePct}}% 协议费后，净收益率 ≈ {{net}}% APR。",
-        "lifNote": "贷款发起费: 本金的 {{feePct}}%（≈ {{amount}} {{symbol}}），贷款开始时收取。"
+        "netYield": "如果有人接受报价且贷款得到偿还，扣除利息部分 {{feePct}}% 的协议费后，你每年约赚 {{net}}%。",
+        "lifNote": "贷款发起费: 本金的 {{feePct}}%（≈ {{amount}} {{symbol}}），贷款开始时收取。",
+        "expiryGtcSignedHint": "免费签名报价最多保持开放 7 天，之后会自动过期。你也可以提前取消（取消需要支付网络费）。"
       },
       "orders": {
         "loading": "正在加载您的未完成订单…",

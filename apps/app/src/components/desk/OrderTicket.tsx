@@ -1239,7 +1239,15 @@ export function OrderTicket({
         {/* Naive-user redesign — what the selected choice means, visible
             (the chip tooltips alone are invisible on touch screens). */}
         <p className="field-hint">
-          {expiry === 'gtc' ? text.expiryGtcTitle : text.expiryGttTitle}
+          {expiry === 'gtc'
+            ? // #2378 r4 — a free signed offer cannot stay open indefinitely:
+              // its signature carries a 7-day deadline (see
+              // GASLESS_GTC_DEADLINE_SECONDS), so say that instead of
+              // "until you cancel".
+              postMode === 'gasless'
+              ? text.expiryGtcSignedHint
+              : text.expiryGtcTitle
+            : text.expiryGttTitle}
         </p>
         {expiry === 'custom' ? (
           <input

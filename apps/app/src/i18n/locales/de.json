@@ -1533,7 +1533,8 @@
       "unavailable": "Wir konnten das Angebotsbuch gerade nicht laden. Bitte versuchen Sie es gleich noch einmal.",
       "lenderOffer": "Kreditangebot",
       "borrowerOffer": "Leihanfrage",
-      "collateralAtLeast": "mindestens {{amount}}"
+      "collateralAtLeast": "mindestens {{amount}}",
+      "collateralOfRunningLoan": "die Sicherheit des laufenden Kredits, der verkauft wird (in dieser Zeile nicht angezeigt)"
     },
     "desk": {
       "tenorLiveTitle": "{{tenor}} — Live-Angebote im Orderbuch",
@@ -1613,8 +1614,8 @@
       "signed": {
         "badge": "Signiert",
         "badgeTooltip": "Gaslose signierte Order aus dem Off-Chain-Buch — der Maker hat sie ohne Transaktion signiert, und wer sie annimmt, führt sie in einer einzigen On-Chain-Transaktion aus. Signierte Zeilen stammen immer aus dem Orderbuch-Dienst, nie von der Chain, bis sie ausgeführt werden.",
-        "partialBadgeTooltip": "Teilweise gematchte signierte Order — ihr Rest zählt weiterhin als Tiefe und wird über den öffentlichen Matcher ausgeführt, eine direkte Ausführung ist aber nicht mehr möglich.",
-        "rangedBadgeTooltip": "Signierte Order mit Größenspanne — ihre Größe zählt weiterhin als Tiefe, aber nur der öffentliche Matcher kann sie in Teilstücken verbrauchen; eine direkte Ausführung der ganzen Order gibt es nicht.",
+        "partialBadgeTooltip": "Ein Teil dieses signierten Angebots wurde angenommen. Der Rest zählt weiter und kann automatisch zugeordnet werden, solange die automatische Zuordnung eingeschaltet ist, aber er kann nicht mehr direkt angenommen werden.",
+        "rangedBadgeTooltip": "Ein signiertes Angebot mit einer Größenspanne. Es zählt weiter, aber nur die automatische Zuordnung kann es annehmen, in Teilen und nur solange sie eingeschaltet ist – als Ganzes in einem Schritt geht es nicht.",
         "fill": "Ausführen",
         "confirmTitle": "Signierte Order ausführen",
         "confirmLede": "Sie führen die gesamte Ausführung in einer Transaktion aus: Ihre Seite kommt aus Ihrer Wallet, die Seite des Makers aus dessen Vault, und der Kredit startet sofort.",
@@ -1743,8 +1744,9 @@
         "commitAtFill": "Sie verpflichten {{amount}} {{symbol}} — aus Ihrem Vault nur gezogen, wenn ein Abnehmer füllt.",
         "lockNow": "Sie sperren jetzt: {{amount}} {{symbol}} als Sicherheit.",
         "lockAtFill": "Sie verpflichten {{amount}} {{symbol}} Sicherheit — gesperrt nur, wenn ein Abnehmer füllt.",
-        "netYield": "Nettorendite ≈ {{net}} % APR nach der Protokollgebühr von {{feePct}} % auf die verdienten Zinsen.",
-        "lifNote": "Kreditinitialisierungsgebühr: {{feePct}} % des Kreditbetrags (≈ {{amount}} {{symbol}}), berechnet beim Kreditstart."
+        "netYield": "Wenn jemand das Angebot annimmt und der Kredit zurückgezahlt wird, verdienst du nach der Protokollgebühr von {{feePct}} % auf deine Zinsen etwa {{net}} % pro Jahr.",
+        "lifNote": "Kreditinitialisierungsgebühr: {{feePct}} % des Kreditbetrags (≈ {{amount}} {{symbol}}), berechnet beim Kreditstart.",
+        "expiryGtcSignedHint": "Ein kostenlos signiertes Angebot bleibt bis zu 7 Tage offen und läuft dann von selbst ab. Du kannst es vorher stornieren (das Stornieren kostet eine Netzwerkgebühr)."
       },
       "orders": {
         "loading": "Ihre offenen Orders werden geladen…",

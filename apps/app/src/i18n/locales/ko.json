@@ -1533,7 +1533,8 @@
       "unavailable": "지금 오퍼북을 불러올 수 없습니다. 잠시 후 다시 시도해 주세요.",
       "lenderOffer": "대출 오퍼",
       "borrowerOffer": "차입 요청",
-      "collateralAtLeast": "최소 {{amount}}"
+      "collateralAtLeast": "최소 {{amount}}",
+      "collateralOfRunningLoan": "판매되는 진행 중 대출의 담보(이 행에는 표시되지 않음)"
     },
     "desk": {
       "tenorLiveTitle": "{{tenor}} — book의 live offers",
@@ -1613,8 +1614,8 @@
       "signed": {
         "badge": "서명됨",
         "badgeTooltip": "오프체인 오더북의 무가스 서명 주문 — 메이커가 트랜잭션 없이 서명했으며, 이를 취하는 누구든 단일 온체인 트랜잭션으로 체결합니다. 서명된 행은 체결되기 전까지 항상 체인이 아니라 오더북 서비스에서 옵니다.",
-        "partialBadgeTooltip": "부분 매칭된 서명 주문 — 남은 부분은 여전히 깊이로 집계되고 무허가 매처를 통해 체결되지만, 직접 체결은 더 이상 불가능합니다.",
-        "rangedBadgeTooltip": "범위 규모의 서명 주문 — 그 규모는 여전히 깊이로 집계되지만, 무허가 매처만이 이를 조각으로 소진할 수 있으며, 주문 전체를 직접 체결할 수는 없습니다.",
+        "partialBadgeTooltip": "이 서명 제안의 일부가 이미 체결되었습니다. 나머지는 계속 유효하며 자동 매칭이 켜져 있는 동안 자동으로 매칭될 수 있지만, 더 이상 직접 받을 수는 없습니다.",
+        "rangedBadgeTooltip": "금액 범위가 있는 서명 제안입니다. 계속 유효하지만 자동 매칭만 나누어 받을 수 있으며, 자동 매칭이 켜져 있는 동안에만 가능합니다. 한 번에 전체를 받을 수는 없습니다.",
         "fill": "체결",
         "confirmTitle": "서명 주문 체결",
         "confirmLede": "전체 체결을 하나의 트랜잭션으로 실행합니다: 회원님 쪽은 지갑에서, 메이커 쪽은 그들의 Vault에서 이동하며, 대출이 즉시 시작됩니다.",
@@ -1743,8 +1744,9 @@
         "commitAtFill": "{{amount}} {{symbol}}를 commit합니다. taker가 fill할 때만 vault에서 pull됩니다.",
         "lockNow": "지금 lock: {{amount}} {{symbol}}를 collateral로.",
         "lockAtFill": "{{amount}} {{symbol}} collateral을 commit합니다. taker가 fill할 때만 lock됩니다.",
-        "netYield": "earned interest에 대한 {{feePct}}% protocol fee 후 net yield ≈ {{net}}% APR.",
-        "lifNote": "loan initiation fee: principal의 {{feePct}}%(≈ {{amount}} {{symbol}}), loan 시작 시 부과됩니다."
+        "netYield": "누군가 제안을 받고 대출이 상환되면, 이자에 대한 {{feePct}}% 프로토콜 수수료를 뺀 뒤 연 약 {{net}}%를 법니다.",
+        "lifNote": "loan initiation fee: principal의 {{feePct}}%(≈ {{amount}} {{symbol}}), loan 시작 시 부과됩니다.",
+        "expiryGtcSignedHint": "무료 서명 제안은 최대 7일 동안 열려 있다가 자동으로 만료됩니다. 그 전에 취소할 수도 있습니다(취소에는 네트워크 수수료가 듭니다)."
       },
       "orders": {
         "loading": "열려 있는 주문 불러오는 중…",

@@ -1533,7 +1533,8 @@
       "unavailable": "No pudimos cargar el libro de ofertas ahora mismo. Inténtalo de nuevo en un momento.",
       "lenderOffer": "Oferta de préstamo",
       "borrowerOffer": "Solicitud de préstamo",
-      "collateralAtLeast": "al menos {{amount}}"
+      "collateralAtLeast": "al menos {{amount}}",
+      "collateralOfRunningLoan": "la garantía del préstamo en curso que se vende (no se muestra en esta fila)"
     },
     "desk": {
       "tenorLiveTitle": "{{tenor}} — ofertas activas en el libro",
@@ -1613,8 +1614,8 @@
       "signed": {
         "badge": "Firmada",
         "badgeTooltip": "Orden firmada sin gas del libro off-chain — el creador la firmó sin transacción, y se llena en una sola transacción on-chain por quien la toma. Las filas firmadas siempre vienen del servicio de libro de órdenes, nunca de la cadena, hasta que se llenan.",
-        "partialBadgeTooltip": "Orden firmada parcialmente emparejada — su remanente aún cuenta como profundidad y se llena mediante el matcher sin permisos, pero el llenado directo ya no es posible.",
-        "rangedBadgeTooltip": "Orden firmada de tamaño por rango — su tamaño aún cuenta como profundidad, pero solo el matcher sin permisos puede consumirla en porciones; no hay llenado directo de orden completa.",
+        "partialBadgeTooltip": "Ya se tomó parte de esta oferta firmada. El resto sigue contando y puede emparejarse automáticamente mientras el emparejamiento automático esté activado, pero ya no se puede tomar directamente.",
+        "rangedBadgeTooltip": "Una oferta firmada con un rango de tamaño. Sigue contando, pero solo el emparejamiento automático puede tomarla, por partes, y solo mientras esté activado; no se puede tomar entera de una vez.",
         "fill": "Llenar",
         "confirmTitle": "Llenar orden firmada",
         "confirmLede": "Ejecutas todo el llenado en una transacción: tu lado se mueve desde tu billetera, el lado del creador desde su vault, y el préstamo empieza de inmediato.",
@@ -1743,8 +1744,9 @@
         "commitAtFill": "Comprometes {{amount}} {{symbol}} — se toma de tu vault solo cuando un tomador llena.",
         "lockNow": "Bloqueas ahora: {{amount}} {{symbol}} como garantía.",
         "lockAtFill": "Comprometes {{amount}} {{symbol}} de garantía — bloqueados solo cuando un tomador llena.",
-        "netYield": "Rendimiento neto ≈ {{net}}% APR después de la comisión de protocolo de {{feePct}}% sobre los intereses que ganas.",
-        "lifNote": "Comisión de iniciación del préstamo: {{feePct}}% del principal (≈ {{amount}} {{symbol}}), cobrada cuando el préstamo empieza."
+        "netYield": "Si alguien acepta la oferta y el préstamo se devuelve, ganas alrededor de un {{net}}% al año tras la comisión del protocolo del {{feePct}}% sobre tus intereses.",
+        "lifNote": "Comisión de iniciación del préstamo: {{feePct}}% del principal (≈ {{amount}} {{symbol}}), cobrada cuando el préstamo empieza.",
+        "expiryGtcSignedHint": "Una oferta firmada gratis sigue abierta hasta 7 días y luego caduca sola. Puedes cancelarla antes (cancelar requiere una comisión de red)."
       },
       "orders": {
         "loading": "Cargando tus órdenes abiertas…",

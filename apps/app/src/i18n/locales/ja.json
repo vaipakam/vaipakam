@@ -1533,7 +1533,8 @@
       "unavailable": "現在オファーブックを読み込めませんでした。少し待って再試行してください。",
       "lenderOffer": "貸付オファー",
       "borrowerOffer": "借入リクエスト",
-      "collateralAtLeast": "最低 {{amount}}"
+      "collateralAtLeast": "最低 {{amount}}",
+      "collateralOfRunningLoan": "売却される進行中のローンの担保（この行には表示されません）"
     },
     "desk": {
       "tenorLiveTitle": "{{tenor}} — 板上のライブオファー",
@@ -1613,8 +1614,8 @@
       "signed": {
         "badge": "署名済み",
         "badgeTooltip": "オフチェーンブックからの gasless 署名注文です — maker はトランザクションなしで署名し、取る人が 1 回のオンチェーントランザクションで埋めます。署名済み行は約定するまで常に注文ブックサービス由来で、チェーン由来ではありません。",
-        "partialBadgeTooltip": "部分的にマッチした署名注文です — 残りは引き続き深さとして数えられ、permissionless matcher で埋まりますが、直接 fill はもうできません。",
-        "rangedBadgeTooltip": "範囲サイズの署名注文です — サイズは深さとして数えられますが、permissionless matcher だけが分割消費できます。全体を直接 fill する方法はありません。",
+        "partialBadgeTooltip": "この署名済みオファーの一部はすでに受けられています。残りは引き続き有効で、自動マッチングがオンの間は自動でマッチングされますが、直接受けることはできなくなりました。",
+        "rangedBadgeTooltip": "金額に幅のある署名済みオファーです。引き続き有効ですが、受けられるのは自動マッチングによる分割のみで、自動マッチングがオンの間に限ります。一度に全額を受けることはできません。",
         "fill": "Fill",
         "confirmTitle": "署名済み注文を fill",
         "confirmLede": "1 回のトランザクションで fill 全体を実行します: あなた側はウォレットから、maker 側は vault から移動し、ローンはすぐ開始されます。",
@@ -1743,8 +1744,9 @@
         "commitAtFill": "{{amount}} {{symbol}} をコミットします — テイカーが約定した時だけ vault から引き落とされます。",
         "lockNow": "今ロックします: {{amount}} {{symbol}} を担保として。",
         "lockAtFill": "{{amount}} {{symbol}} の担保をコミットします — テイカーが約定した時だけロックされます。",
-        "netYield": "獲得利息への {{feePct}}% プロトコル手数料後の純利回り ≈ {{net}}% APR。",
-        "lifNote": "ローン開始手数料: 元本の {{feePct}}%（≈ {{amount}} {{symbol}}）、ローン開始時に請求されます。"
+        "netYield": "誰かがオファーを受け、ローンが返済された場合、利息に対する {{feePct}}% のプロトコル手数料を差し引いて年約 {{net}}% を得ます。",
+        "lifNote": "ローン開始手数料: 元本の {{feePct}}%（≈ {{amount}} {{symbol}}）、ローン開始時に請求されます。",
+        "expiryGtcSignedHint": "無料の署名オファーは最長7日間公開され、その後自動的に期限切れになります。それより前にキャンセルもできます（キャンセルにはネットワーク手数料がかかります）。"
       },
       "orders": {
         "loading": "未決済注文を読み込み中…",

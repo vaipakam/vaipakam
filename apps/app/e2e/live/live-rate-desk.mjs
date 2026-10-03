@@ -674,7 +674,9 @@ try {
   // default-market effect), so the trigger showing a real pair label
   // proves the dropdown lists at least one market beyond the
   // "Other pair…" escape hatch.
-  const PAIR_PLACEHOLDER = /pick a market to load its book/i;
+  // The picker's placeholder (copy.desk.pickPair) — matched so a still-
+  // loading markets summary is never mistaken for an auto-selected pair.
+  const PAIR_PLACEHOLDER = /pick a pair to see its offers/i;
   const pairLabel = async () =>
     (await page.locator('#desk-pair').innerText().catch(() => '')).trim();
   await pollChain(

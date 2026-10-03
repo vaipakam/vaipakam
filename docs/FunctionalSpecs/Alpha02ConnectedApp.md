@@ -1234,7 +1234,8 @@ progress.
   token); a token amount whose details are loading or could not be read says so,
   rather than showing only a contract address. Where the shown amount is only the
   offer's committed floor (a borrower offer can commit a range), it is stated as
-  "at least" that amount.
+  "at least" that amount. A loan-position sale row says its collateral is the
+  running loan's, rather than showing the zero its own row carries.
 - A filter with no matches says the filter has no matches; it does not claim the
   whole market is empty.
 - Action labels are role-specific so the user understands whether they are
@@ -1257,7 +1258,11 @@ makes new offers wait a short while before they can be cancelled, nor that an
 offer posted for free by signing only can be changed (it can only be cancelled
 and posted again). The middle rate is described as worked out from the best
 offers on each side, never as a rate anyone has offered. A list scoped to the
-selected pair and loan length names both.
+selected pair and loan length names both. A free signed offer's "until I cancel"
+choice says it stays open for at most seven days, because its signature
+expires. Projected earnings are stated as conditional on the offer being taken
+and repaid. Wording about automatic matching says it applies while automatic
+matching is switched on, since a deployment can switch it off.
 
 It should provide:
 

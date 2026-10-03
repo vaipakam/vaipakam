@@ -1533,7 +1533,8 @@
       "unavailable": "अभी offer book load नहीं कर सके। थोड़ी देर में try करें।",
       "lenderOffer": "Lending offer",
       "borrowerOffer": "Borrow request",
-      "collateralAtLeast": "कम से कम {{amount}}"
+      "collateralAtLeast": "कम से कम {{amount}}",
+      "collateralOfRunningLoan": "बेचे जा रहे चालू लोन का कोलैटरल (इस पंक्ति में नहीं दिखाया गया)"
     },
     "desk": {
       "tenorLiveTitle": "{{tenor}} — book पर live offers",
@@ -1613,8 +1614,8 @@
       "signed": {
         "badge": "Signed",
         "badgeTooltip": "Off-chain book से gasless signed order — maker ने transaction के बिना sign किया, और जो take करे वह single on-chain transaction में fill करता है। Signed rows fill होने तक हमेशा order-book service से आते हैं, chain से नहीं।",
-        "partialBadgeTooltip": "Partially matched signed order — उसका remainder depth में count होता है और permissionless matcher से fill होता है, लेकिन direct fill अब possible नहीं।",
-        "rangedBadgeTooltip": "Range-sized signed order — size depth में count होता है, लेकिन सिर्फ permissionless matcher slices में consume कर सकता है; whole-order direct fill नहीं है।",
+        "partialBadgeTooltip": "इस हस्ताक्षरित ऑफ़र का कुछ हिस्सा लिया जा चुका है। बाकी अब भी गिना जाता है और स्वचालित मिलान चालू रहने तक अपने आप मिलाया जा सकता है, लेकिन अब इसे सीधे नहीं लिया जा सकता।",
+        "rangedBadgeTooltip": "आकार की सीमा वाला हस्ताक्षरित ऑफ़र। यह अब भी गिना जाता है, लेकिन इसे केवल स्वचालित मिलान ही हिस्सों में ले सकता है, और केवल तब जब वह चालू हो — इसे एक बार में पूरा नहीं लिया जा सकता।",
         "fill": "Fill",
         "confirmTitle": "Signed order fill करें",
         "confirmLede": "आप पूरा fill एक transaction में execute करते हैं: आपका side wallet से move होता है, maker का side उसके vault से, और loan तुरंत शुरू होता है।",
@@ -1743,8 +1744,9 @@
         "commitAtFill": "आप {{amount}} {{symbol}} commit करते हैं — taker fill करने पर ही आपके vault से pulled।",
         "lockNow": "आप अभी lock करते हैं: {{amount}} {{symbol}} collateral के रूप में।",
         "lockAtFill": "आप {{amount}} {{symbol}} collateral commit करते हैं — taker fill करने पर ही lock।",
-        "netYield": "आपके earned interest पर {{feePct}}% protocol fee के बाद net yield ≈ {{net}}% APR।",
-        "lifNote": "Loan initiation fee: principal का {{feePct}}% (≈ {{amount}} {{symbol}}), loan शुरू होने पर charged।"
+        "netYield": "अगर कोई ऑफ़र ले लेता है और लोन चुका दिया जाता है, तो आपके ब्याज पर {{feePct}}% प्रोटोकॉल शुल्क के बाद आप सालाना लगभग {{net}}% कमाते हैं।",
+        "lifNote": "Loan initiation fee: principal का {{feePct}}% (≈ {{amount}} {{symbol}}), loan शुरू होने पर charged।",
+        "expiryGtcSignedHint": "मुफ़्त हस्ताक्षरित ऑफ़र 7 दिनों तक खुला रहता है, फिर अपने आप समाप्त हो जाता है। आप इसे पहले भी रद्द कर सकते हैं (रद्द करने में नेटवर्क शुल्क लगता है)।"
       },
       "orders": {
         "loading": "आपकी open orders लोड हो रही हैं…",

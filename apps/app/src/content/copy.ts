@@ -3431,6 +3431,8 @@ const copySource = {
     // checks liquidity again and the loan follows THAT result.
     illiquidCollateralTag: 'illiquid when posted (checked again at acceptance) — if so, handed over as-is if not repaid',
     collateralAtLeast: tmpl('at least {{amount}}', ['amount']),
+    // #2378 r4 — a loan-position sale row carries no collateral of its own.
+    collateralOfRunningLoan: 'the collateral of the running loan being sold (not shown on this row)',
     // #2378 r1 — an ERC-20 collateral amount whose token details are still
     // loading, or could not be read.
     collateralAmountLoading: tmpl('{{token}} (amount loading…)', ['token']),
@@ -3632,9 +3634,9 @@ const copySource = {
       badgeTooltip:
         'A signed offer: its maker signed it without a transaction, and it becomes a loan in one transaction by whoever takes it. Signed offers are listed by the offer-book service, not read from the blockchain, until someone takes them.',
       partialBadgeTooltip:
-        'Part of this signed offer has been taken. The rest still counts and can still be matched automatically, but it can no longer be taken directly.',
+        'Part of this signed offer has been taken. The rest still counts and can be matched automatically while automatic matching is switched on, but it can no longer be taken directly.',
       rangedBadgeTooltip:
-        'A signed offer with a size range. It still counts, but only the automatic matcher can take it, in parts — it cannot be taken whole in one go.',
+        'A signed offer with a size range. It still counts, but only automatic matching can take it, in parts, and only while automatic matching is switched on — it cannot be taken whole in one go.',
       fill: 'Fill',
       confirmTitle: 'Fill signed order',
       confirmLede:
@@ -3725,6 +3727,8 @@ const copySource = {
       selfCollateral: 'Collateral can’t be the same token as the loan asset.',
       collateralAmount: 'Collateral amount',
       expiryGtcTitle: 'Stays open until you cancel it',
+      // #2378 r4 — a free signed offer's signature carries a 7-day deadline.
+      expiryGtcSignedHint: 'A free signed offer stays open for up to 7 days, then expires on its own. You can cancel it sooner (cancelling needs a network fee).',
       expiryGttTitle: 'Closes by itself at the time you pick',
       title: 'Post an offer',
       sideLend: 'Lend',
@@ -3847,7 +3851,7 @@ const copySource = {
         ['amount', 'symbol'],
       ),
       netYield: tmpl(
-        `After the {{feePct}}% protocol fee on your interest, you earn about {{net}}% a year.`,
+        `If someone takes the offer and the loan is repaid, you earn about {{net}}% a year after the {{feePct}}% protocol fee on your interest.`,
         ['net', 'feePct'],
       ),
       lifNote: tmpl(

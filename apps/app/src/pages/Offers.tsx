@@ -136,7 +136,11 @@ function OfferRow({ offer, risk }: { offer: IndexedOffer; risk: RiskLevel | null
     : `${formatBpsAsPercent(
         isLending ? offer.interestRateBps : offer.interestRateBpsMax,
       )} ${copy.offers.yearly} · ${formatDurationDays(offer.durationDays)} · ${copy.offers.collateralLabel} ${
-        hasCollateral
+        offer.isSaleVehicle
+          ? // #2378 r4 — a sale vehicle's own row carries zero collateral by
+            // design: the collateral stays with the running loan being sold.
+            copy.offers.collateralOfRunningLoan
+          : hasCollateral
           ? // UX3-007 — the AMOUNT, not just the symbol: for a lender
             // pressing "Fund this request" it is the deciding number. The
             // same figure the guided flow's match rows and review show.
@@ -165,7 +169,9 @@ function OfferRow({ offer, risk }: { offer: IndexedOffer; risk: RiskLevel | null
         // handed over as-is rather than sold. Only on a POSITIVE flag — a
         // signed off-chain row carries 0 for "not assessed", so absence is
         // never presented as "liquid". The guided review re-checks live.
-        hasCollateral && offer.collateralLiquidity === 1 ? ` · ${copy.offers.illiquidCollateralTag}` : ''
+        !offer.isSaleVehicle && hasCollateral && offer.collateralLiquidity === 1
+          ? ` · ${copy.offers.illiquidCollateralTag}`
+          : ''
       }`;
 
   // Advanced detail line: the exact numbers a DEX-versed user expects
