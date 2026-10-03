@@ -996,7 +996,7 @@ try {
   const blockedNow = await cancelBtn.isDisabled();
   const cooldownTitle = await cancelBtn.getAttribute('title');
   await snap('rate-desk-04-own-order');
-  if (blockedNow && /cancel available in \d+s/i.test(cooldownTitle ?? '')) {
+  if (blockedNow && /you can cancel in \d+s/i.test(cooldownTitle ?? '')) {
     record(
       '5. own order in ladder + Open orders; cancel gated by cooldown',
       'PASS',

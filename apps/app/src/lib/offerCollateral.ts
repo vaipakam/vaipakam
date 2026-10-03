@@ -23,10 +23,18 @@ export function offerCollateralText(args: {
    *  offer can commit a collateral range, and the row does not carry the
    *  ceiling yet — #2382). The figure is then stated as "at least". */
   floorOnly?: boolean;
+  /** #2378 r8 — a LENDER offer's collateral is the requirement at its full
+   *  amount, and matching scales it to the part taken. Where the offer can
+   *  be taken in part (a range, or already partly taken), the figure is
+   *  stated as the full-offer requirement rather than as exact. */
+  scalesWithAmount?: boolean;
   labels: {
     amountLoading: (token: string) => string;
-    amountUnreadable: (token: string) => string;
+    /** #2378 r8 — token details failed: the recorded amount is still known,
+     *  so it is stated in raw base units with the failure named. */
+    amountRaw: (amount: string, token: string) => string;
     atLeast: (amount: string) => string;
+    forFullOffer: (amount: string) => string;
   };
 }): string {
   const token = shortAddress(args.asset);
@@ -35,9 +43,15 @@ export function offerCollateralText(args: {
     const qty = BigInt(args.quantity);
     return `${qty > 1n ? `${qty} × ` : ''}NFT ${token} #${args.tokenId}`;
   }
+  let text: string;
   if (args.meta) {
-    const text = `${formatTokenAmount(BigInt(args.amount), args.meta.decimals)} ${args.meta.symbol}`;
-    return args.floorOnly ? args.labels.atLeast(text) : text;
+    text = `${formatTokenAmount(BigInt(args.amount), args.meta.decimals)} ${args.meta.symbol}`;
+  } else if (args.metaFailed) {
+    text = args.labels.amountRaw(BigInt(args.amount).toString(), token);
+  } else {
+    return args.labels.amountLoading(token);
   }
-  return args.metaFailed ? args.labels.amountUnreadable(token) : args.labels.amountLoading(token);
+  if (args.floorOnly) return args.labels.atLeast(text);
+  if (args.scalesWithAmount) return args.labels.forFullOffer(text);
+  return text;
 }

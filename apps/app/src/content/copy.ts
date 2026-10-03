@@ -664,7 +664,7 @@ const copySource = {
     linked: 'Telegram linked — alerts for this wallet go to your chat.',
     // UX3-013 — the browser only knows links made from it.
     notLinkedHere:
-      'Not linked from this browser. If you linked this wallet on another device, its alerts still go there — use “Unlink this wallet” below to stop them.',
+      'Not linked from this browser. This wallet may still be linked on another device; this browser can’t check that. To stop alerts from a link made elsewhere, use “Unlink this wallet” below.',
     unlink: 'Unlink',
     // UX-043 — a clear labelled action, not an ambiguous centered link.
     unlinkElsewhereTitle: 'Linked this wallet on another device?',
@@ -2626,7 +2626,7 @@ const copySource = {
       // those loans, which is the same defect the cadence split exists
       // to avoid, arriving by a second route.
       waitDescAtClosePartial:
-        'Nothing to do — if the borrower repays, you claim the loan amount plus the agreed interest at the end. This loan also lets them repay part of it early, and when they do, that share of the loan amount and the interest built up on it reach you at the time rather than at the end. If they don’t repay, the normal default process applies and recovery can be less.',
+        'Nothing to do — if the borrower repays, you claim the remaining loan amount plus the interest still owed at the end. This loan also lets them repay part of it early, and when they do, that share of the loan amount and the interest built up on it reach you at the time rather than at the end. If they don’t repay, the normal default process applies and recovery can be less.',
       waitDescPeriodic:
         'Nothing to do — interest is paid to you on this loan’s own schedule as the borrower settles it, and you claim the loan amount plus whatever interest is still outstanding at the end. If they don’t repay, the normal default process applies and recovery can be less.',
       waitDescChecking:
@@ -3438,7 +3438,18 @@ const copySource = {
     // #2378 r1 — an ERC-20 collateral amount whose token details are still
     // loading, or could not be read.
     collateralAmountLoading: tmpl('{{token}} (amount loading…)', ['token']),
-    collateralAmountUnreadable: tmpl('{{token}} (amount couldn’t be read)', ['token']),
+    // #2378 r8 — the recorded amount is known even when the token's details
+    // fail, so it is stated in raw base units with the failure named.
+    collateralAmountRaw: tmpl(
+      '{{amount}} base units of {{token}} (token details couldn’t be read)',
+      ['amount', 'token'],
+    ),
+    // #2378 r8 — a lender offer's collateral is the requirement at its full
+    // amount; matching scales it to the part taken.
+    collateralForFullOffer: tmpl(
+      '{{amount}} for the full offer (proportionally less for part of it)',
+      ['amount'],
+    ),
     byCreator: 'by',
     advancedPartialRepayOk: 'partial repay OK',
     advancedNoPartialRepay: 'no partial repay',

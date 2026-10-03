@@ -6,8 +6,9 @@ import { offerCollateralText } from './offerCollateral';
 const asset = '0x00000000000000000000000000000000000000ab';
 const labels = {
   amountLoading: (t: string) => `${t} (amount loading…)`,
-  amountUnreadable: (t: string) => `${t} (amount couldn’t be read)`,
+  amountRaw: (a: string, t: string) => `${a} base units of ${t} (token details couldn’t be read)`,
   atLeast: (a: string) => `at least ${a}`,
+  forFullOffer: (a: string) => `${a} for the full offer (proportionally less for part of it)`,
 };
 const base = { asset, amount: '0', tokenId: '0', quantity: '0', meta: undefined, metaFailed: false, labels };
 
@@ -35,10 +36,20 @@ describe('offerCollateralText', () => {
       }),
     ).toBe('at least 150 tLIQ');
   });
-  it('says an ERC-20 amount is loading, or could not be read — never a bare address', () => {
-    const loading = offerCollateralText({ ...base, assetType: 0, amount: '5' });
-    const failed = offerCollateralText({ ...base, assetType: 0, amount: '5', metaFailed: true });
-    expect(loading).toContain('amount loading');
-    expect(failed).toContain('couldn’t be read');
+  it('says an ERC-20 amount is loading — never a bare address', () => {
+    expect(offerCollateralText({ ...base, assetType: 0, amount: '5' })).toContain('amount loading');
+  });
+  it('keeps the recorded amount, in raw base units, when token details fail (#2378 r8)', () => {
+    const failed = offerCollateralText({ ...base, assetType: 0, amount: '5000', metaFailed: true });
+    expect(failed).toMatch(/^5000 base units of .+ \(token details couldn’t be read\)$/);
+  });
+  it('states a part-takeable lender offer as the full-offer requirement (#2378 r8)', () => {
+    const meta = { decimals: 18, symbol: 'tLIQ' };
+    const amount = '150000000000000000000';
+    expect(offerCollateralText({ ...base, assetType: 0, amount, meta, scalesWithAmount: true })).toBe(
+      '150 tLIQ for the full offer (proportionally less for part of it)',
+    );
+    // An offer that can only be taken whole states the figure as exact.
+    expect(offerCollateralText({ ...base, assetType: 0, amount, meta, scalesWithAmount: false })).toBe('150 tLIQ');
   });
 });

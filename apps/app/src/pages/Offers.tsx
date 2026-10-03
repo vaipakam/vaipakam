@@ -166,10 +166,17 @@ function OfferRow({ offer, risk }: { offer: IndexedOffer; risk: RiskLevel | null
               metaFailed: collateralMeta.isError,
               // A borrower offer's indexed collateral is its committed floor.
               floorOnly: !isLending,
+              // #2378 r8 — a lender offer's figure is its full-amount
+              // requirement; say so where it can be taken in part.
+              scalesWithAmount:
+                isLending &&
+                (BigInt(offer.amountMax || '0') > BigInt(offer.amount || '0') ||
+                  BigInt(offer.amountFilled || '0') > 0n),
               labels: {
                 amountLoading: copy.offers.collateralAmountLoading,
-                amountUnreadable: copy.offers.collateralAmountUnreadable,
+                amountRaw: copy.offers.collateralAmountRaw,
                 atLeast: copy.offers.collateralAtLeast,
+                forFullOffer: copy.offers.collateralForFullOffer,
               },
             })
           : copy.offers.collateralNone
