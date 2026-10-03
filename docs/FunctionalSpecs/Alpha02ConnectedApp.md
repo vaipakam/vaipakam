@@ -1334,7 +1334,11 @@ is the borrower's own money.
   confirms is open again appears even before the position lists catch up). When
   the live loan status says the loan is no longer
   open (repaid, defaulted or liquidated elsewhere), the surface goes away, even
-  if the position lists have not caught up. It says plainly that taking collateral back makes
+  if the position lists have not caught up. A fact the surface depends on — who
+  holds the borrower position, whether the loan is open — counts only while its
+  latest read succeeded: a read that failed to refresh is treated as unknown, never
+  as its last answer. If the collateral token's details cannot be read, the
+  surface stays and says so, rather than disappearing. It says plainly that taking collateral back makes
   the loan riskier: with less collateral, a price drop reaches liquidation
   sooner.
 - Before asking for anything, it states how much can be taken back right now,

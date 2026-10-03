@@ -3160,6 +3160,9 @@ const copySource = {
         unconfirmed: 'We couldn’t check how much you can take back right now. Try again in a moment.',
         noneNeeded: 'Right now the loan needs all of its collateral, so there is nothing extra to take back. This can change if the collateral’s price rises or you repay part of the loan.',
         noneUnpriced: 'There is no reliable price for this collateral right now, so none of it can be taken back. Taking collateral back only works while the collateral can be priced.',
+        // #2389 r8 — the token's details failed: the card stays, saying so.
+        metaUnavailable:
+          'We couldn’t read this collateral token’s details (its symbol and decimal places), so amounts can’t be shown or taken back right now. Please try again in a moment.',
         // #2389 r7 — zero while the loan's live status is unconfirmed.
         noneStatusUnconfirmed:
           'Nothing can be taken back right now, and we couldn’t confirm this loan’s current status — it may have closed. Please check again in a moment.',

@@ -29,6 +29,7 @@ import {
 } from 'viem';
 import { copy } from '../content/copy';
 import { isPositiveDecimal, captureTxError } from '../lib/errors';
+import { freshData } from '../lib/freshData';
 import { useLoan } from '../data/hooks';
 import { FEE_MODE_FULL, FEE_MODE_HOLD_ONLY, useFeeEntitlement } from '../data/tariff';
 import { VPFI_DECIMALS } from '../data/vpfi';
@@ -309,6 +310,19 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     address !== undefined &&
     nftOwners.data.lenderOwner.toLowerCase() === address.toLowerCase();
 
+  /** #2389 r8 — the borrower-side twin of `isLenderHolder`, for the
+   *  take-back-collateral surface: a failed refetch DISQUALIFIES the
+   *  cached owner set (TanStack keeps it through the error), so a wallet
+   *  that just transferred the borrower position is not shown a
+   *  withdrawal it can no longer make. Scoped to that surface for the
+   *  same reason `isLenderHolder` is scoped to the sale path. */
+  const freshBorrowerOwner = freshData(nftOwners)?.borrowerOwner;
+  const isBorrowerHolder =
+    freshBorrowerOwner !== undefined &&
+    freshBorrowerOwner !== 'burned' &&
+    address !== undefined &&
+    freshBorrowerOwner.toLowerCase() === address.toLowerCase();
+
   const role: 'lender' | 'borrower' | 'viewer' | 'checking' | 'unverified' =
     useMemo(() => {
       const row = loan.data;
@@ -423,7 +437,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     loanId: loan.data ? String(loan.data.loanId) : undefined,
     collateralAsset: loan.data?.collateralAsset,
     enabled:
-      role === 'borrower' &&
+      isBorrowerHolder &&
       effectivelyActive &&
       !liveSaysNotActive &&
       !loanIsRental &&
@@ -432,7 +446,9 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   const maxWithdrawState = classifyMaxWithdrawable({
     data: maxWithdrawable.data,
     isError: maxWithdrawable.isError,
-    liveActive: liveStatus.data?.status === LoanStatus.Active,
+    // A failed refetch disqualifies a cached Active (#2389 r8): TanStack
+    // keeps the old data through the error, and the loan may have closed.
+    liveActive: freshData(liveStatus)?.status === LoanStatus.Active,
   });
   // #2389 r7 — the take-back review is ACCOUNT-scoped as well as
   // chain-scoped: a review opened under one wallet must not reappear,
@@ -3261,7 +3277,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         </section>
       ) : null}
 
-      {role === 'borrower' &&
+      {isBorrowerHolder &&
       // #2389 r5 — the RECONCILED active state, as the ceiling query
       // uses: a fallback loan the live read confirms cured to Active
       // is open again, and the indexer must not withhold the action.
@@ -3275,7 +3291,9 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       !isRental &&
       !collateralIsNft &&
       hasCollateral &&
-      collateral ? (
+      // #2389 r8 — a token-details failure keeps the card, with that
+      // said, rather than making the borrower's action vanish.
+      (collateral || collateralMeta.isError) ? (
         // UX3-009 — take back collateral the loan no longer needs. Shown
         // in Basic mode: it is the borrower's own money, and the spec
         // offers it to every borrower, not only to advanced users.
@@ -3284,6 +3302,12 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             <ShieldMinus aria-hidden />
             <h3 style={{ margin: 0 }}>{copy.positions.details.withdrawCollateral.title}</h3>
           </div>
+          {!collateral ? (
+            <p className="muted" id="withdraw-collateral-state" style={{ margin: 0 }}>
+              {copy.positions.details.withdrawCollateral.metaUnavailable}
+            </p>
+          ) : (
+          <>
           <p className="muted">
             {copy.positions.details.withdrawCollateral.blurb(collateral.symbol)}
           </p>
@@ -3459,6 +3483,8 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                 </div>
               ) : null}
             </>
+          )}
+          </>
           )}
         </section>
       ) : null}

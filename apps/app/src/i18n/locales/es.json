@@ -1333,6 +1333,7 @@
           "unconfirmed": "No pudimos comprobar cuánto puedes recuperar ahora mismo. Inténtalo de nuevo en un momento.",
           "noneNeeded": "Ahora mismo el préstamo necesita toda su garantía, así que no hay nada sobrante que recuperar. Esto puede cambiar si sube el precio de la garantía o si pagas parte del préstamo.",
           "noneUnpriced": "Ahora mismo no hay un precio fiable para esta garantía, así que no se puede recuperar nada. Recuperar garantía solo funciona mientras la garantía se pueda valorar.",
+          "metaUnavailable": "No pudimos leer los datos de este token de garantía (su símbolo y sus decimales), así que ahora mismo no se pueden mostrar ni recuperar cantidades. Inténtalo de nuevo en un momento.",
           "noneStatusUnconfirmed": "No se puede recuperar nada ahora mismo y no pudimos confirmar el estado actual de este préstamo: puede que se haya cerrado. Vuelve a comprobarlo en un momento.",
           "noneUnknown": "Ahora mismo no se puede recuperar nada. O el préstamo necesita toda su garantía, o la garantía no se puede valorar en este momento; no pudimos saber cuál de las dos.",
           "saleListed": "Recuperar garantía está en pausa mientras siga vigente el anuncio de venta de este préstamo publicado por el prestamista: un comprador asume el préstamo tal como está. La nota sobre el anuncio en esta página indica cuándo termina la pausa.",

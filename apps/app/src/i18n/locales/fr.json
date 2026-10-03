@@ -1333,6 +1333,7 @@
           "unconfirmed": "Nous n’avons pas pu vérifier combien vous pouvez récupérer pour le moment. Réessayez dans un instant.",
           "noneNeeded": "Pour l’instant, le prêt a besoin de toute sa garantie : il n’y a rien en trop à récupérer. Cela peut changer si le prix de la garantie monte ou si vous remboursez une partie du prêt.",
           "noneUnpriced": "Il n’existe pas de prix fiable pour cette garantie en ce moment, donc rien ne peut être récupéré. Récupérer de la garantie n’est possible que tant qu’elle peut être évaluée.",
+          "metaUnavailable": "Nous n’avons pas pu lire les détails de ce jeton de garantie (son symbole et ses décimales), donc les montants ne peuvent pas être affichés ni récupérés pour le moment. Veuillez réessayer dans un instant.",
           "noneStatusUnconfirmed": "Rien ne peut être récupéré pour le moment, et nous n’avons pas pu confirmer l’état actuel de ce prêt — il est peut-être clôturé. Veuillez revérifier dans un instant.",
           "noneUnknown": "Rien ne peut être récupéré pour le moment. Soit le prêt a besoin de toute sa garantie, soit la garantie ne peut pas être évaluée en ce moment — nous n’avons pas pu déterminer lequel.",
           "saleListed": "La récupération de garantie est suspendue tant que l’annonce de vente de ce prêt publiée par le prêteur est en place — un acheteur reprend le prêt tel quel. La note sur l’annonce, sur cette page, indique quand la suspension prend fin.",

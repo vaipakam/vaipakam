@@ -1406,6 +1406,7 @@
           "unconfirmed": "We couldn’t check how much you can take back right now. Try again in a moment.",
           "noneNeeded": "Right now the loan needs all of its collateral, so there is nothing extra to take back. This can change if the collateral’s price rises or you repay part of the loan.",
           "noneUnpriced": "There is no reliable price for this collateral right now, so none of it can be taken back. Taking collateral back only works while the collateral can be priced.",
+          "metaUnavailable": "We couldn’t read this collateral token’s details (its symbol and decimal places), so amounts can’t be shown or taken back right now. Please try again in a moment.",
           "noneStatusUnconfirmed": "Nothing can be taken back right now, and we couldn’t confirm this loan’s current status — it may have closed. Please check again in a moment.",
           "noneUnknown": "Nothing can be taken back right now. Either the loan needs all of its collateral or the collateral can’t be priced at the moment — we couldn’t tell which.",
           "saleListed": "Taking collateral back is on hold while the lender’s sale listing for this loan is in place — a buyer takes the loan on as it stands. The note about the listing on this page says when the hold ends.",
