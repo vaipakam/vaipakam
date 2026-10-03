@@ -8,10 +8,6 @@ import {console} from "forge-std/console.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {IDiamondLoupe} from "@diamond-3/interfaces/IDiamondLoupe.sol";
 import {Deployments} from "./lib/Deployments.sol";
-// #1503 item 28 — for `retiredResidentPayoutSelector()` only. The retired
-// signature is defined once there so this script and `RedeployFacets` cannot
-// drift apart on which selector to Remove.
-import {FacetSelectors} from "./lib/FacetSelectors.sol";
 import {DeployDiamond} from "./DeployDiamond.s.sol";
 import {DiamondLoupeFacet} from "../src/facets/DiamondLoupeFacet.sol";
 import {OwnershipFacet} from "../src/facets/OwnershipFacet.sol";
@@ -125,7 +121,7 @@ import {
 import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
 
 /// @dev #1662 r8 — the per-receipt attribution watermark, armed in the
-///      same paused block that retires the unattributed selectors.
+///      same paused run that removes the unattributed selectors.
 ///      The companion `IRecycleComposition` canonical probe was removed in
 ///      r11 when arming became unconditional; nothing else read it.
 /// @dev #1434 P1-b — the paid-side migration seed, invoked INSIDE the paused
@@ -185,10 +181,18 @@ interface IOwnable {
  *         do a FRESH `DeployDiamond` instead. Per owner policy (2026-06-19),
  *         mainnet rollouts are ALWAYS fresh; this in-place path is testnet-only.
  *
- * @dev SCOPE: selectors are Replaced/Added, never Removed. A selector that was
- *         deleted from the codebase stays routed to its old (stale) facet — the
- *         same behaviour as the prior catch-up scripts. Acceptable on testnet;
- *         a fresh deploy is the clean slate if that matters.
+ * @dev SCOPE: a complete refresh leaves the Diamond routing EXACTLY the deploy's
+ *         selector set. Current selectors are Replaced or Added; every other
+ *         routed selector — a signature retired from the code, still pointed at
+ *         the bytecode it was last cut with — is Removed by {_sweepStaleRoutes},
+ *         derived from the loupe rather than from a list (#2313). Until #2313
+ *         this note read "never Removed", with retirements handled one
+ *         hand-listed block at a time; Base Sepolia carried eleven unlisted ones
+ *         through the 2026-10-03 refresh. The sweep is only as safe as `items[]`
+ *         is complete: a facet missing from it would have its live selectors
+ *         classified stale. `refresh()`'s count require and
+ *         `RefreshScriptFacetParityTest` (selector-set equality with the
+ *         deployed Diamond) are what hold that.
  *
  *         Env: ADMIN_PRIVATE_KEY (must be the Diamond's current ERC-173 owner
  *         — the admin account after the deployer->admin handover). The script
@@ -507,7 +511,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         // Codex #2232 r3 — ordering, and it is the whole of the fix. The
         // widened ingress is installed by the FIRST cut batch (it is hoisted
         // above), while the receiver upgrade used to sit after every batch,
-        // after `_removeRetired`, and after the M1 migration. Between those
+        // after the retired-selector removal, and after the M1 migration. Between those
         // transactions an old-wire delivery finds a generation-4 receiver
         // still calling the routed 9-argument selector — which SUCCEEDS
         // against the previous ingress bytecode and opens no transport epoch.
@@ -591,14 +595,10 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             _sendBatch(diamond, cuts, batchStart, nCuts);
         }
 
-        // Retired selectors are REMOVED (Codex #2158 r30 P1): a signature
-        // change creates a new selector, and the lists above only Add or
-        // Replace — so the OLD selector would stay routed to the OLD facet
-        // bytecode, the split Diamond by the opposite door (CLAUDE.md: "a
-        // retired selector needs an explicit Remove leg"). Each is removed
-        // only if the loupe still routes it, and the loupe is asked again
-        // afterwards so a removal that did not take is loud.
-        _removeRetired(diamond, loupe);
+        // Retired selectors are NOT removed here. {_sweepStaleRoutes} removes
+        // every route this deploy no longer installs, after the migrations
+        // below that read a retired selector as their completion marker
+        // (#2313).
 
         // Recycling M1 (#1346) — one-time notification-tariff migration.
         // M1 changed the notification fee from a numeraire-denominated value
@@ -612,10 +612,11 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         // retired selector and reset the slot to 0 (→ the new 0.5-VPFI
         // default). Gated on the old selector still being routed so this runs
         // EXACTLY ONCE — a later refresh (selector already gone) skips it and
-        // never wipes a deliberately-set VPFI tariff. This is the one place
-        // this script Removes a selector (see the SCOPE note above); it is
-        // required because the selector's storage SEMANTICS changed, not just
-        // its implementation.
+        // never wipes a deliberately-set VPFI tariff. This block removes its
+        // own selector rather than leaving it to {_sweepStaleRoutes}, because
+        // the selector's storage SEMANTICS changed, not just its
+        // implementation: the routed selector is the migration's completion
+        // marker, and the reset must land before it goes.
         bytes4 oldSetNumeraire = bytes4(
             keccak256(
                 "setNumeraire(address,address,bytes32,bytes32,uint256,uint256,uint256,uint256)"
@@ -766,8 +767,8 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         // Two facts about this script make the un-migrated state SILENTLY
         // WRONG rather than merely stale:
         //
-        //   1. it Replaces/Adds but never Removes (see the SCOPE note), so the
-        //      retired 6-arg selector stays routed to the OLD facet bytecode;
+        //   1. a signature change leaves the retired 6-arg selector routed to
+        //      the OLD facet bytecode until something Removes it;
         //   2. it refreshes DIAMOND FACETS only — the mirror-side
         //      `RewardRemittanceReceiver` is a standalone UUPS proxy and was
         //      never upgraded here.
@@ -827,114 +828,16 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         // call is a no-op on a normal run and the sweep for an interrupted
         // one — and a rerun re-enters it exactly as before.
         _removeRetiredIngress(diamond, loupe);
-        // #1566 closure 2 cutover PR 1 — the Base-side stranded-return
-        // ingress gained the same parameter, and the Diamond-releasing
-        // `custodyUncreditFresh` retired with the in-holder unwind. Both are
-        // Removed only where routed (an unrouted Remove reverts the cut).
-        {
-            bytes4 oldStranded8 = bytes4(
-                keccak256("onStrandedReturnReceived(address,uint256,uint256,uint32,address,uint256,uint256,uint256)")
-            );
-            bytes4 oldUncredit = bytes4(keccak256("custodyUncreditFresh(uint256)"));
-            bool routedS8 = loupe.facetAddress(oldStranded8) != address(0);
-            bool routedU = loupe.facetAddress(oldUncredit) != address(0);
-            if (routedS8 || routedU) {
-                bytes4[] memory rmCutover = new bytes4[]((routedS8 ? 1 : 0) + (routedU ? 1 : 0));
-                uint256 j;
-                if (routedS8) rmCutover[j++] = oldStranded8;
-                if (routedU) rmCutover[j++] = oldUncredit;
-                IDiamondCut.FacetCut[] memory rmCutoverCut = new IDiamondCut.FacetCut[](1);
-                rmCutoverCut[0] = IDiamondCut.FacetCut({
-                    facetAddress: address(0),
-                    action: IDiamondCut.FacetCutAction.Remove,
-                    functionSelectors: rmCutover
-                });
-                IDiamondCut(diamond).diamondCut(rmCutoverCut, address(0), "");
-                console.log(
-                    "cutover PR 1: removed retired 8-arg onStrandedReturnReceived / custodyUncreditFresh selectors"
-                );
-            }
-        }
-
-        // ─── #1434 P2-w6 (#1662 r4) — retire the UNATTRIBUTED recovery
-        //     wrappers ───────────────────────────────────────────────────
+        // ─── #1434 P2-w6 (#1662 r4) — the UNATTRIBUTED recovery wrappers ───
         //
-        // w6 gave both `…FromRecovery` wrappers a `sourceRemitId`, which
-        // CHANGES their selectors. This script Replaces and Adds but never
-        // Removes (see the SCOPE note), so the old four-argument selectors
-        // would stay routed to the PREVIOUS facet and remain callable —
-        // debiting the pooled recovery position while updating no
-        // per-receipt ledger. That is precisely the accounting the new
-        // argument exists to enforce: an unattributed draw leaves the
-        // nominal source receipt's credit intact, so the same value can be
-        // spent a second time through the new wrapper once another receipt
-        // replenishes the pool.
-        //
-        // Removed only when actually routed — a Diamond that never carried
-        // them (a fresh deploy, or a rerun after this block) has nothing to
-        // Remove, and asking the cut to Remove an unrouted selector reverts,
-        // which would abort the whole refresh.
+        // w6 gave both `…FromRecovery` wrappers a `sourceRemitId`, and round 10
+        // dropped the import entry point's `quarantineObserved`: three
+        // selector changes. Their old selectors are removed by
+        // {_sweepStaleRoutes} (#2313); what stays here is the arming, which
+        // no removal can do.
         {
-            bytes4 oldManualFromRecovery = bytes4(
-                keccak256(
-                    "remitManualBudgetFromRecovery(uint32,uint256,uint256,uint256)"
-                )
-            );
-            bytes4 oldSupplementalFromRecovery = bytes4(
-                keccak256(
-                    "remitSupplementalBudgetFromRecovery(uint32,uint256,uint256,uint256)"
-                )
-            );
-            // #1662 r11 — the round-9 FOUR-argument import entry point
-            // belongs in this same removal. Round 10 dropped its
-            // `quarantineObserved` argument, which only ADDS the new
-            // three-argument selector: an in-place refresh leaves the old
-            // one routed to the old facet bytecode, where stale tooling can
-            // still call it, write the supposedly deleted storage slot and
-            // emit the four-argument event the exported ABI no longer
-            // describes. Changing a signature is a REMOVE plus an Add, and
-            // the omission is invisible until someone calls the ghost.
-            bytes4 oldImport4 = bytes4(
-                keccak256(
-                    "importOutstandingCompensation(uint32,address,uint256,bool)"
-                )
-            );
-            bool routedManual =
-                loupe.facetAddress(oldManualFromRecovery) != address(0);
-            bool routedSupp =
-                loupe.facetAddress(oldSupplementalFromRecovery) != address(0);
-            bool routedImport4 =
-                loupe.facetAddress(oldImport4) != address(0);
-            if (routedManual || routedSupp || routedImport4) {
-                bytes4[] memory rmRecovery = new bytes4[](
-                    (routedManual ? 1 : 0) + (routedSupp ? 1 : 0)
-                        + (routedImport4 ? 1 : 0)
-                );
-                uint256 j;
-                if (routedManual) {
-                    rmRecovery[j] = oldManualFromRecovery;
-                    ++j;
-                }
-                if (routedSupp) {
-                    rmRecovery[j] = oldSupplementalFromRecovery;
-                    ++j;
-                }
-                if (routedImport4) rmRecovery[j] = oldImport4;
-                IDiamondCut.FacetCut[] memory rmRecoveryCut =
-                    new IDiamondCut.FacetCut[](1);
-                rmRecoveryCut[0] = IDiamondCut.FacetCut({
-                    facetAddress: address(0),
-                    action: IDiamondCut.FacetCutAction.Remove,
-                    functionSelectors: rmRecovery
-                });
-                IDiamondCut(diamond).diamondCut(rmRecoveryCut, address(0), "");
-                console.log(
-                    "P2-w6: removed retired recovery selectors (FromRecovery + 4-arg import)"
-                );
-            }
-
             // #1662 r8 — ARM per-receipt attribution in the SAME paused
-            // block that retires the unattributed selectors. Removing the
+            // run that retires the unattributed selectors. Removing the
             // selectors stops new unattributed writes; it repairs nothing
             // existing. Until the watermark is armed, a pre-upgrade
             // receipt whose credit was already spent still reads as fully
@@ -1052,108 +955,6 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             _probeUpgradeTransportSatellites(diamond);
         }
 
-        // ─── #1434 P2-w2 (#1634 r2) — retire the 3-arg manual remit ─────────
-        //
-        // `remitManualBudget` changed from (uint32,uint256,uint256) to the
-        // per-side (uint32,uint256,uint256,uint256) shape, so its SELECTOR
-        // changed — and this script Replaces/Adds but never Removes (SCOPE
-        // note above). The retired selector would stay routed to the OLD
-        // facet bytecode: an admin on stale tooling could still close a
-        // day and dispatch the legacy d5 ordinary-remit payload, which the
-        // upgraded mirror books through `onRewardBudgetReceived` instead
-        // of the compensation classifier — no compensated pools, no
-        // recovery reservation, while Base considers the compensation
-        // sent. Remove it so stale tooling FAILS CLOSED. Gated on the old
-        // selector being routed (the standing idempotent-rerun pattern).
-        {
-            bytes4 oldManualRemit3 = bytes4(
-                keccak256("remitManualBudget(uint32,uint256,uint256)")
-            );
-            if (loupe.facetAddress(oldManualRemit3) != address(0)) {
-                bytes4[] memory rmManual = new bytes4[](1);
-                rmManual[0] = oldManualRemit3;
-                IDiamondCut.FacetCut[] memory rmManualCut =
-                    new IDiamondCut.FacetCut[](1);
-                rmManualCut[0] = IDiamondCut.FacetCut({
-                    facetAddress: address(0),
-                    action: IDiamondCut.FacetCutAction.Remove,
-                    functionSelectors: rmManual
-                });
-                IDiamondCut(diamond).diamondCut(rmManualCut, address(0), "");
-                console.log(
-                    "P2-w2: removed retired remitManualBudget(uint32,uint256,uint256) selector"
-                );
-            }
-        }
-
-        // ─── #1503 PR-A — listing lifecycle: retire the 3-arg selector ──────
-        //
-        // PR-A changed `createLoanSaleOffer` from 3 args to 4 (the mandatory
-        // `listingSeconds` window), so its SELECTOR changed. This script
-        // Replaces/Adds but never Removes (SCOPE note above), which would
-        // leave the retired 3-arg selector routed to the PREVIOUS facet
-        // bytecode — a direct caller could keep creating expiry-free GTC
-        // listings, bypassing both the mandatory window and the
-        // relist-cooldown gate and preserving the indefinite borrower freeze
-        // the change exists to eliminate (Codex #1505 r1 P1). Remove it
-        // explicitly. No companion state migration is needed: listings
-        // created through the old selector BEFORE this refresh are handled
-        // structurally — `teardownStaleSaleListing` admits a linked sale
-        // vehicle with the GTC sentinel (`expiresAt == 0`) to immediate
-        // permissionless teardown, and the accept path refuses any sale fill
-        // at/past the linked loan's live maturity. Gated on the old selector
-        // still being routed, so this runs exactly once.
-        bytes4 oldCreateLoanSaleOffer = bytes4(
-            keccak256("createLoanSaleOffer(uint256,uint256,bool)")
-        );
-        if (loupe.facetAddress(oldCreateLoanSaleOffer) != address(0)) {
-            bytes4[] memory rmSale = new bytes4[](1);
-            rmSale[0] = oldCreateLoanSaleOffer;
-            IDiamondCut.FacetCut[] memory rmSaleCut =
-                new IDiamondCut.FacetCut[](1);
-            rmSaleCut[0] = IDiamondCut.FacetCut({
-                facetAddress: address(0),
-                action: IDiamondCut.FacetCutAction.Remove,
-                functionSelectors: rmSale
-            });
-            IDiamondCut(diamond).diamondCut(rmSaleCut, address(0), "");
-            console.log(
-                "#1503 PR-A: removed retired 3-arg createLoanSaleOffer selector"
-            );
-        }
-
-        // ─── #1503 item 28 — retire the 3-arg resident-payout selector ──────
-        //
-        // `freezeOrPayActiveLenderResident` gained a fourth argument (the
-        // paid-through boundary the seller's forfeiture window is measured
-        // from), so its selector changed. `_split` Adds the 4-arg one, but this
-        // script never Removes (SCOPE note above), which would leave the retired
-        // 3-arg selector routed to the PREVIOUS `EncumbranceMutateFacet` — a
-        // live entry point on stale bytecode that pays lenders WITHOUT writing
-        // the mark, so the next sale charges the seller again for interest they
-        // already received. The script would report every facet refreshed while
-        // that path stayed on the old implementation. `RedeployFacets` already
-        // carries this Remove; the all-facets refresh needs it for the same
-        // reason. Gated on the old selector still being routed, so it runs
-        // exactly once and a rerun is a no-op.
-        bytes4 oldResidentPayout =
-            FacetSelectors.retiredResidentPayoutSelector();
-        if (loupe.facetAddress(oldResidentPayout) != address(0)) {
-            bytes4[] memory rmResident = new bytes4[](1);
-            rmResident[0] = oldResidentPayout;
-            IDiamondCut.FacetCut[] memory rmResidentCut =
-                new IDiamondCut.FacetCut[](1);
-            rmResidentCut[0] = IDiamondCut.FacetCut({
-                facetAddress: address(0),
-                action: IDiamondCut.FacetCutAction.Remove,
-                functionSelectors: rmResident
-            });
-            IDiamondCut(diamond).diamondCut(rmResidentCut, address(0), "");
-            console.log(
-                "#1503 item 28: removed retired 3-arg freezeOrPayActiveLenderResident selector"
-            );
-        }
-
         // Post-cut verification: every canonical selector must route to its
         // fresh implementation. Runs BEFORE the unpause (still inside the
         // broadcast; these are view calls) so a failed refresh stays frozen.
@@ -1164,6 +965,16 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             }
         }
         console.log("Verified: all selectors route to the fresh implementations.");
+
+        // ─── #2313 — no stale route survives a complete refresh ───────────
+        //
+        // Every selector this deploy installs now routes to this run's
+        // implementations (verified just above). Anything else the loupe
+        // still routes is a retired signature pointed at older bytecode.
+        // {_sweepStaleRoutes} removes all of it, derived from the loupe and
+        // not from a list, before the custody cutover stamp records the
+        // routing.
+        _sweepStaleRoutes(diamond, loupe, items);
 
         // ─── #1434 P1-b (Codex #1699 r3 P1) — SEED THE PAID SIDE WHILE PAUSED ──
         //
@@ -1491,12 +1302,15 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             _getInteractionRewardsSelectors()
         );
         // #1351 slice 2c — the CLAIM entry points moved off
-        // InteractionRewardsFacet (EIP-170). This script only Replace/Adds the
-        // selectors it lists and NEVER removes omitted ones, so without this
-        // item an in-place refresh of a pre-split diamond would leave
-        // `claimInteractionRewards*` routed at the OLD implementation while
-        // every other reward facet moved forward — users silently claiming
-        // through stale code that bypasses the ShareOfPool walk entirely.
+        // InteractionRewardsFacet (EIP-170). This script routes only the
+        // selectors it lists. Without this item an in-place refresh of a
+        // pre-split diamond would have left `claimInteractionRewards*` routed
+        // at the OLD implementation while every other reward facet moved
+        // forward — users silently claiming through stale code that bypasses
+        // the ShareOfPool walk entirely. Since #2313 the omission would be
+        // worse and louder: {_sweepStaleRoutes} would classify those live
+        // selectors as stale and remove them, which is why the parity test
+        // pins `items[]` to the deployed Diamond's selector set.
         items[67] = Item(
             "rewardClaimFacet",
             address(new RewardClaimFacet()),
@@ -2336,69 +2150,126 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         }
     }
 
-    /// @dev Selectors this refresh RETIRES: signatures this upgrade changed on
-    ///      a facet that is live somewhere. `RefreshScriptFacetParityTest`
-    ///      pins that none of them is routed by the current DeployDiamond
-    ///      (removing a live function would strand it) and that the list
-    ///      names the legacy seed.
-    function _retiredSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](4);
-        // #1566 slice 4 PR A (Codex #2158 r29/r30 P1) — the legacy seed took
-        // only the amount; it now carries the pause epoch too, so the old
-        // selector must not survive routed to bytecode that checks neither
-        // the manual pause, the epoch, nor the cap.
-        s[0] = bytes4(keccak256("seedArmedFreshPaid(uint256)"));
-        // Retired selectors need an explicit Remove leg: merely dropping one
-        // from the facet's cut list would leave its OLD route pointed at the
-        // stale implementation wherever it were routed. No chain routes any
-        // of these three (none has the epoch facet at all), so each leg is a
-        // no-op today and is here so it cannot become one that matters.
-        // - #1566 3b-ii-A (Codex #2296 items 2 and 4): the pre-list catch-up
-        //   link is gone with the read path it served.
-        // - 3b-ii-A2 (#2305; Codex #2308 r6): the hinted index entry gained
-        //   `lateHints` and the claim walk's host entry gained the delivery
-        //   venue, so their earlier shapes are retired; a stale hinted entry
-        //   would link an epoch into the list without the late chain a
-        //   standing record scans.
-        s[1] = bytes4(keccak256("materializeTransportBatchPageHinted(bytes32,uint256[],bytes32[])"));
-        s[2] = bytes4(keccak256("epochLinkTransportDayIndex(uint256,bytes32[])"));
-        s[3] = bytes4(keccak256("epochClaimEntriesWalk(address,uint256,uint256)"));
-        // The four-argument vault credit is NOT retired (Codex #2276 r3 P1,
-        // r14 P2): it stays on the refreshed VaultFactoryFacet as a
-        // compatibility entry, in the facet's own selector list, so every
-        // refresh re-routes it to the new implementation and a settle facet
-        // from before the epoch leg keeps delivering to the vault.
+    /// @notice The routes a COMPLETE refresh must not leave behind: every
+    ///         selector the loupe routes that this run did not install, with
+    ///         the implementation it still points at.
+    /// @dev    #2313. Derived from the loupe, not from a list. A signature
+    ///         change ADDS a new selector and leaves the old one routed to the
+    ///         previous bytecode: the split Diamond by the opposite door. This
+    ///         script used to remove such selectors from hand-kept lists, one
+    ///         block per incident, and a retirement nobody listed stayed
+    ///         routed. Base Sepolia carried eleven of them through a complete
+    ///         refresh on 2026-10-03, among them older shapes of the accept
+    ///         entry points and four reward ingress hooks.
+    ///
+    ///         The rule needs no list because a complete refresh has just
+    ///         installed the deploy's whole selector set
+    ///         (`RefreshScriptFacetParityTest` pins `items[]` to it): every
+    ///         selector routed to one of this run's implementations is
+    ///         current, and every other selector is stale. Two exceptions:
+    ///         - `diamondCut` is installed by the Diamond's constructor,
+    ///           outside every `cuts[]` list, and is never stale. On THIS
+    ///           Diamond the exception is unreachable: the constructor maps
+    ///           the selector without registering a facet address, so
+    ///           `facets()` never lists it (a mutation removing the exception
+    ///           leaves every test green for that reason). It stays because
+    ///           removing `diamondCut` would end the Diamond's upgradability
+    ///           for good, and a loupe that did enumerate it must not make
+    ///           that one step away;
+    ///         - a CURRENT selector found off this run's implementations
+    ///           means the cut did not land as built. That is a refusal, not
+    ///           a removal, because removing it would unroute a live function.
+    ///
+    ///         `internal view` so a probe can assert the classification
+    ///         without broadcasting.
+    function _staleRoutes(IDiamondLoupe loupe, Item[] memory items)
+        internal
+        view
+        returns (bytes4[] memory stale, address[] memory staleFrom)
+    {
+        IDiamondLoupe.Facet[] memory live = loupe.facets();
+        uint256 total;
+        for (uint256 i; i < live.length; ++i) total += live[i].functionSelectors.length;
+        bytes4[] memory sels = new bytes4[](total);
+        address[] memory from = new address[](total);
+        uint256 n;
+        for (uint256 i; i < live.length; ++i) {
+            if (_isItemImpl(items, live[i].facetAddress)) continue;
+            for (uint256 j; j < live[i].functionSelectors.length; ++j) {
+                bytes4 sel = live[i].functionSelectors[j];
+                if (sel == IDiamondCut.diamondCut.selector) continue;
+                require(
+                    !_isItemSelector(items, sel),
+                    "RefreshAllFacetsInPlace: a current selector is routed off this run's implementations"
+                );
+                sels[n] = sel;
+                from[n] = live[i].facetAddress;
+                ++n;
+            }
+        }
+        stale = new bytes4[](n);
+        staleFrom = new address[](n);
+        for (uint256 i; i < n; ++i) {
+            stale[i] = sels[i];
+            staleFrom[i] = from[i];
+        }
     }
 
-    /// @dev Remove every retired selector the loupe still routes, in one cut,
-    ///      and verify through the loupe that none remains.
-    function _removeRetired(address diamond, IDiamondLoupe loupe) private {
-        bytes4[] memory retired = _retiredSelectors();
-        bytes4[] memory routed = new bytes4[](retired.length);
-        uint256 n;
-        for (uint256 i; i < retired.length; ++i) {
-            if (loupe.facetAddress(retired[i]) != address(0)) routed[n++] = retired[i];
-        }
-        if (n == 0) {
-            console.log("retired selectors: none routed on this Diamond - nothing to remove");
+    /// @dev Remove every route {_staleRoutes} finds, in selector-budgeted
+    ///      batches, naming each one before it goes. Then ask the loupe again,
+    ///      so a removal that did not take is loud.
+    ///
+    ///      Runs after every selector-gated migration above. M1's tariff
+    ///      reset uses its still-routed retired selector as the completion
+    ///      marker, so sweeping earlier would skip that migration for good. It also runs before the custody
+    ///      cutover stamp, which records the routing as it stands. A stamp
+    ///      taken with a retired reward hook still routed would attest exactly
+    ///      the routing the stamp exists to exclude.
+    function _sweepStaleRoutes(address diamond, IDiamondLoupe loupe, Item[] memory items) internal {
+        (bytes4[] memory stale, address[] memory staleFrom) = _staleRoutes(loupe, items);
+        if (stale.length == 0) {
+            console.log("stale routes: none - the Diamond routes exactly the deploy's selector set");
             return;
         }
-        bytes4[] memory toRemove = new bytes4[](n);
-        for (uint256 i; i < n; ++i) toRemove[i] = routed[i];
-        IDiamondCut.FacetCut[] memory cut = new IDiamondCut.FacetCut[](1);
-        cut[0] = IDiamondCut.FacetCut({
-            facetAddress: address(0),
-            action: IDiamondCut.FacetCutAction.Remove,
-            functionSelectors: toRemove
-        });
-        IDiamondCut(diamond).diamondCut(cut, address(0), "");
-        for (uint256 i; i < n; ++i) {
+        console.log("stale routes: removing", stale.length, "selector(s) this deploy no longer installs:");
+        for (uint256 i; i < stale.length; ++i) {
+            console.log("  ", vm.toString(abi.encodePacked(stale[i])), "was routed to", staleFrom[i]);
+        }
+        for (uint256 start; start < stale.length; start += SELECTOR_BUDGET) {
+            uint256 end = start + SELECTOR_BUDGET < stale.length ? start + SELECTOR_BUDGET : stale.length;
+            bytes4[] memory batch = new bytes4[](end - start);
+            for (uint256 i = start; i < end; ++i) batch[i - start] = stale[i];
+            IDiamondCut.FacetCut[] memory cut = new IDiamondCut.FacetCut[](1);
+            cut[0] = IDiamondCut.FacetCut({
+                facetAddress: address(0),
+                action: IDiamondCut.FacetCutAction.Remove,
+                functionSelectors: batch
+            });
+            IDiamondCut(diamond).diamondCut(cut, address(0), "");
+        }
+        for (uint256 i; i < stale.length; ++i) {
             require(
-                loupe.facetAddress(toRemove[i]) == address(0),
-                "RefreshAllFacetsInPlace: a retired selector is still routed after the Remove cut"
+                loupe.facetAddress(stale[i]) == address(0),
+                "RefreshAllFacetsInPlace: a stale route is still routed after the Remove cut"
             );
         }
-        console.log("retired selectors removed (verified unrouted):", n);
+        console.log("stale routes removed (verified unrouted):", stale.length);
+    }
+
+    function _isItemImpl(Item[] memory items, address impl) private pure returns (bool) {
+        for (uint256 i; i < items.length; ++i) {
+            if (items[i].impl == impl) return true;
+        }
+        return false;
+    }
+
+    function _isItemSelector(Item[] memory items, bytes4 sel) private pure returns (bool) {
+        for (uint256 i; i < items.length; ++i) {
+            for (uint256 j; j < items[i].selectors.length; ++j) {
+                if (items[i].selectors[j] == sel) return true;
+            }
+        }
+        return false;
     }
 
     /// @dev A bool getter probed without reverting the run when it is not
