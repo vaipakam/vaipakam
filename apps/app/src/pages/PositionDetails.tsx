@@ -429,7 +429,22 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       !loanIsRental &&
       !collateralIsNft,
   });
-  const maxWithdrawState = classifyMaxWithdrawable(maxWithdrawable);
+  const maxWithdrawState = classifyMaxWithdrawable({
+    data: maxWithdrawable.data,
+    isError: maxWithdrawable.isError,
+    liveActive: liveStatus.data?.status === LoanStatus.Active,
+  });
+  // #2389 r7 — the take-back review is ACCOUNT-scoped as well as
+  // chain-scoped: a review opened under one wallet must not reappear,
+  // one click from sending, after switching to another account (say the
+  // new holder of the borrower position). Render-phase adjustment, like
+  // the chain reset, so no frame commits carrying the old review.
+  const [withdrawAccount, setWithdrawAccount] = useState(address);
+  if (withdrawAccount !== address) {
+    setWithdrawAccount(address);
+    setWithdrawInput('');
+    setConfirmingSurface((sfc) => (sfc === 'withdraw-collateral' ? null : sfc));
+  }
   // #2389 r3 — parsed EXACTLY: a rounded parse would let the receipt
   // state one amount while the contract moves another.
   const withdrawParsed = useMemo(
@@ -3314,7 +3329,9 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                 ? copy.positions.details.withdrawCollateral.noneNeeded
                 : maxWithdrawState.kind === 'none-unpriced'
                   ? copy.positions.details.withdrawCollateral.noneUnpriced
-                  : copy.positions.details.withdrawCollateral.noneUnknown}
+                  : maxWithdrawState.kind === 'none-status-unconfirmed'
+                    ? copy.positions.details.withdrawCollateral.noneStatusUnconfirmed
+                    : copy.positions.details.withdrawCollateral.noneUnknown}
             </p>
           ) : (
             <>

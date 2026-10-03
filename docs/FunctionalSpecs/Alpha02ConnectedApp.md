@@ -1346,7 +1346,10 @@ is the borrower's own money.
 - When nothing can be taken back, it says why, as far as the app can tell: the
   loan needs all of its collateral, or the collateral cannot be priced right
   now. When the app cannot tell which, it says that instead of choosing one.
-  A limit the app could not read is never shown as zero.
+  A limit the app could not read is never shown as zero. A zero is explained only
+  once the live loan status confirms the loan is open, since a closed loan also
+  reads zero; until then the surface says the loan's status could not be
+  confirmed.
 - An amount above the limit is refused on the page, with the limit stated. An
   amount with more decimal places than the token has is refused and named, never
   rounded into a different amount; the confirmation states the exact amount that
@@ -1372,9 +1375,9 @@ is the borrower's own money.
   loaded. A request made on another device or through another tool cannot be
   discovered by the app yet, so the surface says that, and what withdrawing would
   do to such a request.
-- An open confirmation does not survive a network switch: it closes, and the
-  typed amount is cleared, so a review opened on one network can never send on
-  another.
+- An open confirmation does not survive a network switch or a change of
+  connected account: it closes, and the typed amount is cleared, so a review
+  opened on one network or under one wallet can never send on another.
 - A pre-check that fails is reported as a check that could not finish — the
   wallet never opened and nothing was spent — never as a failed transaction.
 - Before the wallet opens, the app re-checks what would make the protocol

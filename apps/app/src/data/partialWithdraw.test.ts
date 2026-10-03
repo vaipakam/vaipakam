@@ -44,20 +44,20 @@ function client(reads: Reads): PublicClient {
 
 describe('classifyMaxWithdrawable', () => {
   it('never reports a failed read as zero', () => {
-    expect(classifyMaxWithdrawable({ data: undefined, isError: true })).toEqual({
+    expect(classifyMaxWithdrawable({ data: undefined, isError: true, liveActive: true })).toEqual({
       kind: 'unconfirmed',
     });
     // Even when stale data from an earlier poll is still in hand.
     expect(
       classifyMaxWithdrawable({
         data: { max: 0n, illiquid: false, isVpfi: false, paused: false },
-        isError: true,
+        isError: true, liveActive: true,
       }),
     ).toEqual({ kind: 'unconfirmed' });
   });
 
   it('is loading until the first answer', () => {
-    expect(classifyMaxWithdrawable({ data: undefined, isError: false })).toEqual({
+    expect(classifyMaxWithdrawable({ data: undefined, isError: false, liveActive: true })).toEqual({
       kind: 'loading',
     });
   });
@@ -66,14 +66,14 @@ describe('classifyMaxWithdrawable', () => {
     expect(
       classifyMaxWithdrawable({
         data: { max: 5n, illiquid: false, isVpfi: false, paused: false },
-        isError: false,
+        isError: false, liveActive: true,
       }),
     ).toEqual({ kind: 'some', max: 5n });
   });
 
   it('names the reason for a zero ceiling only when it was determined', () => {
     const zero = (illiquid: boolean | undefined) =>
-      classifyMaxWithdrawable({ data: { max: 0n, illiquid, isVpfi: false, paused: false }, isError: false });
+      classifyMaxWithdrawable({ data: { max: 0n, illiquid, isVpfi: false, paused: false }, isError: false, liveActive: true });
     expect(zero(true)).toEqual({ kind: 'none-unpriced' });
     expect(zero(false)).toEqual({ kind: 'none-needed' });
     expect(zero(undefined)).toEqual({ kind: 'none-unknown' });
@@ -114,7 +114,7 @@ describe('classifyMaxWithdrawable — pause (#2389 r3)', () => {
     expect(
       classifyMaxWithdrawable({
         data: { max: 5n, illiquid: false, isVpfi: false, paused: true },
-        isError: false,
+        isError: false, liveActive: true,
       }),
     ).toEqual({ kind: 'paused' });
   });
@@ -295,5 +295,22 @@ describe('withdrawCaveats (#2389 r4)', () => {
     expect(withdrawCaveats({ refinanceKnown: false, paused: false, saleHold: 'none' })).toEqual([
       'refinance-elsewhere',
     ]);
+  });
+});
+
+describe('classifyMaxWithdrawable — live status (#2389 r7)', () => {
+  const zero = { max: 0n, illiquid: false, isVpfi: false, paused: false };
+  it('gives no reason for a zero until the live status confirms Active', () => {
+    expect(classifyMaxWithdrawable({ data: zero, isError: false, liveActive: false })).toEqual({
+      kind: 'none-status-unconfirmed',
+    });
+    expect(classifyMaxWithdrawable({ data: zero, isError: false, liveActive: true })).toEqual({
+      kind: 'none-needed',
+    });
+  });
+  it('trusts a positive ceiling without the live status — the contract answers zero for a closed loan', () => {
+    expect(
+      classifyMaxWithdrawable({ data: { ...zero, max: 5n }, isError: false, liveActive: false }),
+    ).toEqual({ kind: 'some', max: 5n });
   });
 });

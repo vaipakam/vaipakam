@@ -1333,6 +1333,7 @@
           "unconfirmed": "Wir konnten gerade nicht prüfen, wie viel Sie zurückholen können. Versuchen Sie es gleich noch einmal.",
           "noneNeeded": "Im Moment braucht der Kredit seine gesamte Sicherheit, es gibt also nichts Überschüssiges zurückzuholen. Das kann sich ändern, wenn der Preis der Sicherheit steigt oder Sie einen Teil des Kredits zurückzahlen.",
           "noneUnpriced": "Für diese Sicherheit gibt es gerade keinen verlässlichen Preis, daher kann nichts zurückgeholt werden. Sicherheit zurückholen geht nur, solange sie bewertet werden kann.",
+          "noneStatusUnconfirmed": "Im Moment lässt sich nichts zurückholen, und wir konnten den aktuellen Status dieses Kredits nicht bestätigen – er ist möglicherweise geschlossen. Bitte prüfen Sie es gleich noch einmal.",
           "noneUnknown": "Im Moment kann nichts zurückgeholt werden. Entweder braucht der Kredit seine gesamte Sicherheit, oder die Sicherheit kann gerade nicht bewertet werden – wir konnten nicht feststellen, was davon zutrifft.",
           "saleListed": "Das Zurückholen von Sicherheit ist pausiert, solange das Verkaufsangebot des Kreditgebers für diesen Kredit besteht – ein Käufer übernimmt den Kredit so, wie er ist. Der Hinweis zum Angebot auf dieser Seite sagt, wann die Pause endet.",
           "amountAria": "Betrag der Sicherheit zum Zurückholen",

@@ -55,6 +55,10 @@ export type MaxWithdrawState =
   | { kind: 'none-needed' }
   /** Zero, and the app could not tell which of the two applies. */
   | { kind: 'none-unknown' }
+  /** Zero while the loan's live status is unconfirmed: the contract
+   *  also answers zero for a loan that has closed, so no reason can be
+   *  given until the status is known. */
+  | { kind: 'none-status-unconfirmed' }
   /** The deployment is paused: withdrawals are refused right now. */
   | { kind: 'paused' }
   | { kind: 'some'; max: bigint };
@@ -66,11 +70,17 @@ export type MaxWithdrawState =
 export function classifyMaxWithdrawable(q: {
   data: MaxWithdrawableRead | undefined;
   isError: boolean;
+  /** #2389 r7 — true only once the live loan-status read has answered
+   *  Active. A positive ceiling proves the loan is open by itself (the
+   *  contract answers zero for any other status); a ZERO does not, so
+   *  its reason is given only on a confirmed Active status. */
+  liveActive: boolean;
 }): MaxWithdrawState {
   if (q.isError) return { kind: 'unconfirmed' };
   if (!q.data) return { kind: 'loading' };
   if (q.data.paused === true) return { kind: 'paused' };
   if (q.data.max > 0n) return { kind: 'some', max: q.data.max };
+  if (!q.liveActive) return { kind: 'none-status-unconfirmed' };
   if (q.data.illiquid === true) return { kind: 'none-unpriced' };
   if (q.data.illiquid === false) return { kind: 'none-needed' };
   return { kind: 'none-unknown' };
