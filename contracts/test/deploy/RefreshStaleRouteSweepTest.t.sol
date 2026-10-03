@@ -144,8 +144,14 @@ contract RefreshStaleRouteSweepTest is Test {
     /// the classification refuses instead.
     function test_CurrentSelectorOffThisRunsImplementations_Refuses() public {
         address old = address(new RetiredShapesFacet());
+        // Any current selector will do, except the loupe's and ownership's:
+        // moving those would break the read or the cut this test drives.
+        address loupeFacet = loupe.facetAddress(IDiamondLoupe.facets.selector);
+        address ownershipFacet = loupe.facetAddress(OwnershipFacet.owner.selector);
+        uint256 k;
+        while (postCut[k].impl == loupeFacet || postCut[k].impl == ownershipFacet) ++k;
         bytes4[] memory moved = new bytes4[](1);
-        moved[0] = postCut[0].selectors[0];
+        moved[0] = postCut[k].selectors[0];
         _cut(old, IDiamondCut.FacetCutAction.Replace, moved);
 
         vm.expectRevert(bytes("RefreshAllFacetsInPlace: a current selector is routed off this run's implementations"));

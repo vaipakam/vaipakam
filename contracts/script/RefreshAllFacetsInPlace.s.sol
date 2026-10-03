@@ -2168,7 +2168,14 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     ///         selector routed to one of this run's implementations is
     ///         current, and every other selector is stale. Two exceptions:
     ///         - `diamondCut` is installed by the Diamond's constructor,
-    ///           outside every `cuts[]` list, and is never stale;
+    ///           outside every `cuts[]` list, and is never stale. On THIS
+    ///           Diamond the exception is unreachable: the constructor maps
+    ///           the selector without registering a facet address, so
+    ///           `facets()` never lists it (a mutation removing the exception
+    ///           leaves every test green for that reason). It stays because
+    ///           removing `diamondCut` would end the Diamond's upgradability
+    ///           for good, and a loupe that did enumerate it must not make
+    ///           that one step away;
     ///         - a CURRENT selector found off this run's implementations
     ///           means the cut did not land as built. That is a refusal, not
     ///           a removal, because removing it would unroute a live function.
@@ -2226,7 +2233,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         }
         console.log("stale routes: removing", stale.length, "selector(s) this deploy no longer installs:");
         for (uint256 i; i < stale.length; ++i) {
-            console.log("  ", vm.toString(stale[i]), "was routed to", staleFrom[i]);
+            console.log("  ", vm.toString(abi.encodePacked(stale[i])), "was routed to", staleFrom[i]);
         }
         for (uint256 start; start < stale.length; start += SELECTOR_BUDGET) {
             uint256 end = start + SELECTOR_BUDGET < stale.length ? start + SELECTOR_BUDGET : stale.length;
