@@ -266,9 +266,15 @@ export function lenderPayoutWhat(args: {
     return args.principalPlusInterest ?? labels.repaidFunds;
   }
   if (args.kind === 'fallback') {
+    // #2373 r7 (P1) — the gross collateral describes the claim only when
+    // NOTHING else is recorded. A partial internal match can scale the
+    // lender's slice to zero and leave the proceeds held (ClaimFacet keeps
+    // that state on purpose); then the claim transfers no collateral, and
+    // naming it beside the held proceeds would promise an asset that never
+    // moves.
     const main = named
       ? labels.collateralLabel(named)
-      : (unnamedAmount ?? labels.collateralLabel(args.collateral));
+      : (unnamedAmount ?? (heldLane ? null : labels.collateralLabel(args.collateral)));
     return labels.provisionalAmount(joinLanes([main, heldLane]));
   }
   if (named) return labels.recoveredFromDefault(named, heldLane ? ` + ${heldLane}` : '');

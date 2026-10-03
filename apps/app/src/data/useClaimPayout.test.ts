@@ -188,6 +188,14 @@ describe('lenderPayoutWhat', () => {
     expect(lenderPayoutWhat({ ...base, kind: 'proper', held: known('3 USDC') })).toBe(labels.heldFor('3 USDC'));
   });
 
+  // #2373 r7 — a partial internal match can leave a fallback claim with a
+  // zero slice and only held proceeds; no collateral moves then.
+  it('does not name collateral on a held-only fallback claim', () => {
+    const what = lenderPayoutWhat({ ...base, kind: 'fallback', held: known('3 USDC') });
+    expect(what).toBe(labels.provisionalAmount(labels.heldFor('3 USDC')));
+    expect(what).not.toContain(labels.collateralLabel('1 WETH'));
+  });
+
   it('marks every fallback payout as provisional', () => {
     for (const args of [{ base: known('2 WETH') }, { base: loading }, {}, { nftClaim: 'NFT 0xab…cd #7' }]) {
       const what = lenderPayoutWhat({ ...base, kind: 'fallback', ...args });
