@@ -3002,6 +3002,16 @@ library LibRewardCustody {
     ///         extend the standing one, and stage the plan's legs into it.
     ///         Called by the claim's entry walk on a cap-hit deferral — on the
     ///         host, never inlined into a settle facet.
+    /// @notice Open or extend the staging record for (`user`, `side`, `day`)
+    ///         under operation `op` from a priced plan — the claim's (A2-i),
+    ///         or a forfeit's or an expiry's (A2-ii: a sweep's wide day is
+    ///         staged exactly as a claim's, under its own commitment, so the
+    ///         same record machinery prepares, reserves and resolves it and
+    ///         a sweep on a claim's day, or a claim on a sweep's, is refused
+    ///         by the commitment). Hosted ONCE on `RewardStagingFacet` behind
+    ///         a Diamond-gated entry and reached by {callStageDayFromPlan}:
+    ///         the walks' hosts cannot all carry it (the expiry walk's facet
+    ///         has under 3 KB of EIP-170 room).
     function stageDayFromPlan(
         LibVaipakam.Storage storage s,
         address user,
@@ -3011,11 +3021,12 @@ library LibRewardCustody {
         bytes32[] memory ids,
         uint256[] memory fresh,
         uint256[] memory recycled,
-        LibVaipakam.RewardDelivery deliverTo
+        LibVaipakam.RewardDelivery deliverTo,
+        LibVaipakam.StagingOp op
     ) internal returns (bytes32 key, uint256 staged) {
         key = stagingKey(user, side, day);
         LibVaipakam.StagingRecord storage r = s.stagingRecords[key];
-        bytes32 commitment = stagingCommitment(entryIds, LibVaipakam.StagingOp.Claim);
+        bytes32 commitment = stagingCommitment(entryIds, op);
         bool opened;
         if (r.phase == LibVaipakam.StagingPhase.None) {
             // After a non-settlement release the same obligation may not open
@@ -3032,7 +3043,7 @@ library LibRewardCustody {
             r.nonce = ++s.stagingNonce[key];
             r.user = user;
             r.side = side;
-            r.op = LibVaipakam.StagingOp.Claim;
+            r.op = op;
             r.phase = LibVaipakam.StagingPhase.Staging;
             r.day = SafeCast.toUint64(day);
             r.openedAt = uint64(block.timestamp);
@@ -3655,15 +3666,55 @@ library LibRewardCustody {
         r = abi.decode(ret, (AllocResult));
     }
 
-    /// @dev A settlement's treasury and epoch legs through the epoch facet
-    ///      ({RewardEpochFacet.epochSettleClaimLegs}): the live-funded fresh
-    ///      absorbed through the bounding operation, the epoch-funded legs
-    ///      recycled in place, the recycled commitment released for the
-    ///      treasury's recycled AND for the user's epoch-paid recycled — the
-    ///      latter without a bucket debit, since the bucket never paid it
-    ///      (Codex #2276 r1). Hosted off `RewardClaimFacet` and
-    ///      `InteractionRewardsFacet` for their EIP-170 headroom.
-    function callSettleClaimLegs(
+    /// @dev {drawTransportForDay} through the epoch facet. With both legs zero
+    ///      it is the PRUNE (a cap-hit deferral); `prune` is what asks for
+    ///      that, so an ordinary day with nothing to draw makes no call.
+    ///      Returns whether the day's cursor MOVED — persisted progress the
+    ///      claim must keep even when it paid nothing (Codex #2276 r4 P2).
+    /// @dev The record-opening seam ({stageDayFromPlan}) by Diamond self-call
+    ///      to its one host, `RewardStagingFacet.stageDayFromPlanInternal`
+    ///      (A2-ii): a walk stages a cap-hit day without inlining the record
+    ///      machinery into its own facet.
+    function callStageDayFromPlan(
+        address user,
+        LibVaipakam.RewardSide side,
+        uint256 day,
+        uint256[] memory entryIds,
+        bytes32[] memory ids,
+        uint256[] memory fresh,
+        uint256[] memory recycled,
+        LibVaipakam.RewardDelivery deliverTo,
+        LibVaipakam.StagingOp op
+    ) internal returns (bytes32 key, uint256 staged) {
+        bytes memory ret = _custodyReturning(
+            abi.encodeWithSignature(
+                "stageDayFromPlanInternal(address,uint8,uint256,uint256[],bytes32[],uint256[],uint256[],uint8,uint8)",
+                user,
+                uint8(side),
+                day,
+                entryIds,
+                ids,
+                fresh,
+                recycled,
+                uint8(deliverTo),
+                uint8(op)
+            )
+        );
+        (key, staged) = abi.decode(ret, (bytes32, uint256));
+    }
+
+    /// @dev The leg settle for a close-out of any operation (A2-ii): the
+    ///      live-funded fresh absorbed under `source`, the epoch-funded legs
+    ///      recycled in place, the treasury's recycled commitment released,
+    ///      the user's epoch-paid recycled retired without a bucket debit —
+    ///      ONE implementation on the epoch facet
+    ///      ({RewardEpochFacet.epochSettleLegs}) for the claim, the forfeit
+    ///      sweep, the expiry sweep and every staged record's payout, so no
+    ///      two of them can route a leg differently. `source` is a
+    ///      {LibVpfiRecycle.RecycleSource}; `refId` is the forfeit's loan id,
+    ///      else zero. No call when every figure is zero.
+    function callSettleLegs(
+        uint8 source,
         uint256 liveFresh,
         uint256 epochLegs,
         uint256 treasuryRecycledRelease,
@@ -3673,7 +3724,8 @@ library LibRewardCustody {
         if (liveFresh + epochLegs + treasuryRecycledRelease + userEpochRecycled == 0) return;
         _custody(
             abi.encodeWithSignature(
-                "epochSettleClaimLegs(uint256,uint256,uint256,uint256,uint256)",
+                "epochSettleLegs(uint8,uint256,uint256,uint256,uint256,uint256)",
+                source,
                 liveFresh,
                 epochLegs,
                 treasuryRecycledRelease,
@@ -3683,11 +3735,6 @@ library LibRewardCustody {
         );
     }
 
-    /// @dev {drawTransportForDay} through the epoch facet. With both legs zero
-    ///      it is the PRUNE (a cap-hit deferral); `prune` is what asks for
-    ///      that, so an ordinary day with nothing to draw makes no call.
-    ///      Returns whether the day's cursor MOVED — persisted progress the
-    ///      claim must keep even when it paid nothing (Codex #2276 r4 P2).
     function callDrawTransportForDay(
         uint256 dayId,
         uint256 fresh,

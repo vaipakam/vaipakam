@@ -438,40 +438,7 @@ library LibRewardStaging {
         if (end > n) end = n;
         uint256 held;
         while (i < end) {
-            LibVaipakam.StagedBatch storage sb = LibRewardCustody.stagedBatchAt(s, key, r, i);
-            bytes32 id = sb.id;
-            uint256 bf = sb.fresh;
-            uint256 br = sb.recycled;
-            LibVaipakam.TransportBatch storage b = s.transportBatches[id];
-            // Consume only what the reservation assigned; a staged amount
-            // beyond it goes back to the epoch here, never consumed unpaid
-            // (Codex #2308 r1).
-            uint256 cf = bf > r.consumeFreshLeft ? r.consumeFreshLeft : bf;
-            uint256 cr = br > r.consumeRecycledLeft ? r.consumeRecycledLeft : br;
-            r.consumeFreshLeft -= cf;
-            r.consumeRecycledLeft -= cr;
-            b.stagedFresh -= bf;
-            b.stagedRecycled -= br;
-            b.consumedFresh += cf;
-            b.consumedRecycled += cr;
-            if (bf - cf + br - cr != 0) {
-                b.balance += bf - cf + br - cr;
-                // Back in its batch, so out of the staged earmark. The
-                // CONSUMED share stays earmarked: it is still owed to the
-                // claimant until the last page pays it (Codex #2308 r14).
-                LibRewardCustody.releaseStagedEarmark(s, bf - cf + br - cr);
-                emit StagingUnwoundBatch(id, key, bf - cf, br - cr);
-                LibRewardCustody.offerRestored(s, r.day, id);
-            }
-            if (cf + cr != 0) LibRewardCustody.spendUntypedForDraw(s, id, cf + cr);
-            s.transportBatchReferences[id] -= 1;
-            held += cf + cr;
-            emit StagingResolvedBatch(id, key, cf, cr);
-            // The record no longer holds this batch's components, and the
-            // Diamond's staged earmark no longer covers them (Codex #2308 r13).
-            r.stagedFresh -= bf;
-            r.stagedRecycled -= br;
-            LibRewardCustody.releaseStagedBatchAt(s, key, r, i);
+            held += _resolveBatch(s, key, r, i);
             unchecked { ++i; }
         }
         r.resolveCursor = i;
@@ -487,6 +454,54 @@ library LibRewardStaging {
         }
     }
 
+    /// @dev One batch of a resolution page, in a frame of its own (the page
+    ///      loop's locals overflowed `resolvePage`'s viaIR stack once the
+    ///      close-out routed by operation, A2-ii): consume what the
+    ///      reservation assigned, return the rest to the batch's balance and
+    ///      re-offer it, release the reference and the record's slot.
+    /// @return consumed The epoch value this batch contributed to the day.
+    function _resolveBatch(
+        LibVaipakam.Storage storage s,
+        bytes32 key,
+        LibVaipakam.StagingRecord storage r,
+        uint256 i
+    ) private returns (uint256 consumed) {
+        LibVaipakam.StagedBatch storage sb = LibRewardCustody.stagedBatchAt(s, key, r, i);
+        bytes32 id = sb.id;
+        uint256 bf = sb.fresh;
+        uint256 br = sb.recycled;
+        LibVaipakam.TransportBatch storage b = s.transportBatches[id];
+        // Consume only what the reservation assigned; a staged amount
+        // beyond it goes back to the epoch here, never consumed unpaid
+        // (Codex #2308 r1).
+        uint256 cf = bf > r.consumeFreshLeft ? r.consumeFreshLeft : bf;
+        uint256 cr = br > r.consumeRecycledLeft ? r.consumeRecycledLeft : br;
+        r.consumeFreshLeft -= cf;
+        r.consumeRecycledLeft -= cr;
+        b.stagedFresh -= bf;
+        b.stagedRecycled -= br;
+        b.consumedFresh += cf;
+        b.consumedRecycled += cr;
+        if (bf - cf + br - cr != 0) {
+            b.balance += bf - cf + br - cr;
+            // Back in its batch, so out of the staged earmark. The
+            // CONSUMED share stays earmarked: it is still owed to the
+            // claimant until the last page pays it (Codex #2308 r14).
+            LibRewardCustody.releaseStagedEarmark(s, bf - cf + br - cr);
+            emit StagingUnwoundBatch(id, key, bf - cf, br - cr);
+            LibRewardCustody.offerRestored(s, r.day, id);
+        }
+        if (cf + cr != 0) LibRewardCustody.spendUntypedForDraw(s, id, cf + cr);
+        s.transportBatchReferences[id] -= 1;
+        consumed = cf + cr;
+        emit StagingResolvedBatch(id, key, cf, cr);
+        // The record no longer holds this batch's components, and the
+        // Diamond's staged earmark no longer covers them (Codex #2308 r13).
+        r.stagedFresh -= bf;
+        r.stagedRecycled -= br;
+        LibRewardCustody.releaseStagedBatchAt(s, key, r, i);
+    }
+
     /// @dev The last page. Every hold returns to the row it came from, every
     ///      reserved counter converts to paid, and the day is settled by the
     ///      A1 claim's own primitives for one day: persistence, the pool and
@@ -497,6 +512,7 @@ library LibRewardStaging {
         uint256 liveTreasuryFresh = r.reservedLiveTreasuryFresh;
         uint256 liveUserRecycled = r.reservedLiveUserRecycled;
         uint256 freshSpend = r.reservedPoolCap;
+        LibVaipakam.StagingOp op = r.op;
         // A claimant flagged by the sanctions oracle is not paid: reward VPFI
         // not yet delivered to a flagged wallet is FORFEITED, while value
         // already in their vault stays frozen there (owner decision
@@ -505,7 +521,8 @@ library LibRewardStaging {
         // does, into the recycle bucket, so this page cannot fail for it and
         // the record can never be trapped in `Resolving` (Codex #2308 r18,
         // r21: a vault-only delivery reverted for a claimant with no vault).
-        bool forfeit = LibVaipakam.isSanctionedAddress(user);
+        // A sweep's record (A2-ii) carries no user share to begin with.
+        bool forfeit = op == LibVaipakam.StagingOp.Claim && LibVaipakam.isSanctionedAddress(user);
         // What the pages CONSUMED of the epochs is paid out below, so it
         // leaves the staged earmark here and not a page earlier (Codex #2308
         // r14): the budget the reservation assigned, less what the batches
@@ -555,8 +572,19 @@ library LibRewardStaging {
             unchecked { ++i; }
         }
 
+        // A staged EXPIRY day performs, at its payout, what the expiry walk
+        // performs for a day it settles (A2-ii): the removal point begins on
+        // the first day that credits, before the day persists.
+        if (op == LibVaipakam.StagingOp.Expiry && r.needTreasuryFresh + r.needTreasuryRecycled != 0) {
+            LibInteractionRewards.beginExpiry(s, r.entryIds[0], s.rewardEntries[r.entryIds[0]]);
+        }
         // The A1 claim's settlement, for one day.
         LibInteractionRewards._persistDay(s, user, r.side, r.day, r.entryIds, slices);
+        if (op == LibVaipakam.StagingOp.Expiry) {
+            LibInteractionRewards.recordExpiredDay(
+                s, r.entryIds[0], r.needTreasuryFresh + r.needTreasuryRecycled + r.cappedOffFresh, r.needTreasuryRecycled
+            );
+        }
         s.interactionPoolPaidOut += freshSpend;
         // The commitment retires by the full figure, the capped-off fresh
         // included, as the ordinary claim retires it.
@@ -596,7 +624,16 @@ library LibRewardStaging {
         uint256 forfeitLive = forfeit ? liveUserFresh : 0;
         uint256 forfeitEpoch = forfeit ? r.epochUserFresh + r.epochUserRecycled : 0;
         uint256 forfeitRecycled = forfeit ? liveUserRecycled + r.epochUserRecycled : 0;
-        LibRewardCustody.callSettleClaimLegs(
+        // The close-out's legs, by operation (A2-ii): a claim's and a
+        // forfeit's treasury legs absorb as forfeited reward (the forfeit
+        // under its loan's id, as the sweep records it), an expiry's as
+        // expired reward — through the ONE settle every close-out uses.
+        LibRewardCustody.callSettleLegs(
+            uint8(
+                op == LibVaipakam.StagingOp.Expiry
+                    ? LibVpfiRecycle.RecycleSource.ExpiredReward
+                    : LibVpfiRecycle.RecycleSource.ForfeitedReward
+            ),
             liveTreasuryFresh + forfeitLive,
             r.epochTreasuryFresh + r.epochTreasuryRecycled + forfeitEpoch,
             // The treasury's whole recycled figure — the claim path's own
@@ -610,7 +647,7 @@ library LibRewardStaging {
             // can no longer drift apart if that ever changes.
             r.needTreasuryRecycled + r.cappedOffRecycled + forfeitRecycled,
             forfeit ? 0 : r.epochUserRecycled,
-            0
+            op == LibVaipakam.StagingOp.Forfeit ? s.rewardEntries[r.entryIds[0]].loanId : 0
         );
         if (!forfeit && userTotal != 0) {
             emit StagingDelivered(
@@ -649,9 +686,15 @@ library LibRewardStaging {
         uint256 m = r.sliceChargeable.length;
         for (uint256 i; i < m; ) {
             uint256 id = r.entryIds[i];
-            // Chargeable was stamped as the negation of "forfeited": equal
-            // now means the status moved under the commitment.
-            if (r.sliceChargeable[i] == LibInteractionRewards.entryForfeited(s, s.rewardEntries[id])) {
+            // Chargeable was stamped as the negation of "routes to the
+            // treasury" under this record's operation: equal now means the
+            // entry's status moved under the commitment.
+            if (
+                r.sliceChargeable[i]
+                    == LibInteractionRewards.entryRoutesToTreasury(
+                        s, s.rewardEntries[id], r.op == LibVaipakam.StagingOp.Expiry
+                    )
+            ) {
                 return (true, id);
             }
             unchecked { ++i; }
@@ -771,6 +814,9 @@ library LibRewardStaging {
         dry.preparedOnly = true;
         dry.preparedFresh = r.stagedFresh;
         dry.preparedRecycled = r.stagedRecycled;
+        // An expiry's day prices as the expiry walk prices it (A2-ii): the
+        // entry's share routes to the treasury legs, recycled in place.
+        dry.recycleSettlement = r.op == LibVaipakam.StagingOp.Expiry;
         (charge, slices) = LibInteractionRewards.processUserSideDay(r.user, r.day, r.entryIds, pool, dry);
     }
 

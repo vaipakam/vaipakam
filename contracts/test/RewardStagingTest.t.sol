@@ -27,6 +27,8 @@ import {LibRewardCustody} from "../src/libraries/LibRewardCustody.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {Vm} from "forge-std/Vm.sol";
+import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
+import {RewardHorizonSweepFacet} from "../src/facets/RewardHorizonSweepFacet.sol";
 
 /// @title RewardStagingTest
 /// @notice #1566 transport epochs 3b-ii-A2 (#2305) — the staging record's
@@ -1314,6 +1316,129 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
     ///      ({processUserSideDay} reports it staged elsewhere; the walk stops
     ///      on every side), so the user-level read counts nothing after it —
     ///      not even a borrower day the live sources would cover.
+    // ───────── A2-ii (a): a sweep's wide day is staged like a claim's ─────────
+
+    function _epochOnDay(uint256 amount, uint256 d, uint256 remitId, bytes32 id) internal returns (bytes32 h) {
+        _ingress().onRewardBudgetReceived(address(vpfi), amount, _one(d), CHAIN_BASE, remitId, REMITTER, 0, 0, id, false);
+        h = keccak256(abi.encode(uint256(CHAIN_BASE), id));
+        _epoch().materializeTransportBatchPage(h, _one(d));
+        _ingress().onRemitSplitAttested(CHAIN_BASE, REMITTER, remitId, amount, 0);
+    }
+
+    /// @dev A wide day on `d`: more attested epochs than one window scans.
+    function _wideDayOn(uint256 d, uint256 salt) internal {
+        uint256 t0 = block.timestamp;
+        for (uint256 i; i < WIDE; ++i) {
+            vm.warp(t0 + 10 * (i + 1));
+            _epochOnDay(TINY, d, salt + i, keccak256(abi.encode("wide", d, salt, i)));
+        }
+    }
+
+    function _bucket() internal view returns (uint256 b) {
+        (, b, , , , , , ) = InteractionRewardsLensFacet(address(diamond)).getRecycleBackingSnapshot();
+    }
+
+    function _resolveAll(bytes32 key) internal {
+        while (!_settle().resolveStagedDayPage(key)) {}
+    }
+
+    /// @dev A2-ii — a forfeit sweep's wide day is STAGED like a claim's: the
+    ///      sweep pays nothing, a record stands under the forfeit's own
+    ///      commitment, and its resolution routes the day as the sweep would
+    ///      — to the bucket as forfeited reward, charging no loan-side cap.
+    function test_AForfeitSweepsWideDay_IsStaged_AndResolvesAsAForfeit() public {
+        uint256 id = _scene();
+        _mut().setRewardEntryForfeitedRaw(id);
+        _mut().setLoanActiveLenderEntryId(LOAN, id);
+        _wideDay(true);
+        uint256 bucketBefore = _bucket();
+        assertEq(InteractionRewardsFacet(address(diamond)).sweepForfeitedInteractionRewards(LOAN), 0, "deferred: the wide day is staged, not swept short");
+        RewardEpochViewFacet.StagingRecordView memory r = _rec();
+        assertEq(r.phase, uint8(LibVaipakam.StagingPhase.Staging), "a record stands");
+        assertEq(r.op, uint8(LibVaipakam.StagingOp.Forfeit), "under the forfeit's own commitment");
+        _staging().prepareStagedDay(_key());
+        _staging().prepareStagedDay(_key());
+        _liveFresh(1e18);
+        _staging().reserveStagedDay(_key());
+        r = _rec();
+        assertEq(r.reservedLiveUserFresh + r.epochUserFresh + r.reservedLiveUserRecycled + r.epochUserRecycled, 0, "no user share: a forfeit routes to the treasury legs");
+        uint256 treasuryFresh = r.reservedLiveTreasuryFresh + r.epochTreasuryFresh;
+        assertGt(treasuryFresh, 0, "fixture: the day's forfeit leg");
+        uint256 paidBefore = _mut().loanSideRewardPaidRaw(LOAN, uint8(LibVaipakam.RewardSide.Lender));
+        _resolveAll(_key());
+        assertEq(_rec().phase, uint8(LibVaipakam.StagingPhase.None), "resolved and closed");
+        assertEq(_bucket() - bucketBefore, treasuryFresh, "the forfeited day absorbed into the bucket, as the sweep absorbs it");
+        assertEq(_mut().loanSideRewardPaidRaw(LOAN, uint8(LibVaipakam.RewardSide.Lender)), paidBefore, "a forfeit charges no loan-side cap");
+        assertEq(InteractionRewardsFacet(address(diamond)).sweepForfeitedInteractionRewards(LOAN), 0, "nothing left to sweep: the day is settled");
+    }
+
+    /// @dev A2-ii — an expiry's wide day is staged too: once the removal
+    ///      point has begun on a day the live sources settled, a later wide
+    ///      day stages under the expiry's commitment and resolves as the
+    ///      sweep would — the expired totals recorded, the entry's expiry
+    ///      announced on its last day, the value absorbed as expired reward.
+    function test_AnExpirysWideDay_IsStaged_AndResolvesAsExpired() public {
+        _armedDay(1, NEED);
+        _armedDay(2, NEED);
+        _mut().setGovernorCommitArmedFromDayRaw(1);
+        _loanSideOpen(2);
+        uint256 id = _entry(1, 3);
+        _mut().setArmedFreshLedgerRaw(0, 0);
+        _mut().userClaimFundingNeedRaw(alice);
+        ConfigFacet(address(diamond)).setRewardClaimHorizonDays(180);
+        _liveFresh(1e18);
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = id;
+        RewardHorizonSweepFacet sweep = RewardHorizonSweepFacet(address(diamond));
+        assertEq(sweep.sweepExpiredInteractionRewards(ids), 0, "stamps only");
+        uint256 swept;
+        for (uint256 k; k < 60 && swept == 0; ++k) {
+            vm.warp(vm.getBlockTimestamp() + 7 days);
+            swept = sweep.sweepExpiredInteractionRewards(ids);
+        }
+        assertGt(swept, 0, "fixture: the removal point began on day 1, settled from the live sources");
+        assertTrue(_mut().getRewardEntryExpiryBegunRaw(id), "fixture: expiry begun");
+        _wideDayOn(2, 300);
+        uint256 bucketBefore = _bucket();
+        assertEq(sweep.sweepExpiredInteractionRewards(ids), 0, "day 2 is wide: staged, not swept short");
+        bytes32 key2 = keccak256(abi.encode(alice, LibVaipakam.RewardSide.Lender, uint256(2)));
+        RewardEpochViewFacet.StagingRecordView memory r = _view().getStagingRecord(key2);
+        assertEq(r.phase, uint8(LibVaipakam.StagingPhase.Staging), "a record stands on day 2");
+        assertEq(r.op, uint8(LibVaipakam.StagingOp.Expiry), "under the expiry's own commitment");
+        _staging().prepareStagedDay(key2);
+        _staging().prepareStagedDay(key2);
+        _staging().reserveStagedDay(key2);
+        r = _view().getStagingRecord(key2);
+        assertEq(r.reservedLiveUserFresh + r.epochUserFresh, 0, "an expiry pays the user nothing");
+        uint256 treasuryFresh = r.reservedLiveTreasuryFresh + r.epochTreasuryFresh;
+        assertGt(treasuryFresh, 0, "fixture: the day's expired leg");
+        vm.recordLogs();
+        _resolveAll(key2);
+        assertEq(_view().getStagingRecord(key2).phase, uint8(LibVaipakam.StagingPhase.None), "resolved and closed");
+        assertEq(_bucket() - bucketBefore, treasuryFresh, "absorbed as expired reward");
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 expiredTopic = keccak256("RewardEntryExpired(uint256,address,uint256,uint256)");
+        bool announced;
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].topics[0] == expiredTopic) announced = true;
+        }
+        assertTrue(announced, "the entry's expiry is announced on its last day, from the record's payout");
+        assertEq(sweep.sweepExpiredInteractionRewards(ids), 0, "nothing left to sweep");
+    }
+
+    /// @dev A2-ii — a sweep on a day a CLAIM's record holds defers on the
+    ///      record (the day is the record's to settle) and opens no second
+    ///      record under its own commitment.
+    function test_ASweepOnADayAClaimRecordHolds_Defers() public {
+        (, uint256 id) = _stagedScene();
+        _mut().setRewardEntryForfeitedRaw(id);
+        _mut().setLoanActiveLenderEntryId(LOAN, id);
+        assertEq(InteractionRewardsFacet(address(diamond)).sweepForfeitedInteractionRewards(LOAN), 0, "deferred on the claim's record");
+        RewardEpochViewFacet.StagingRecordView memory r = _rec();
+        assertEq(r.op, uint8(LibVaipakam.StagingOp.Claim), "the claim's record stands, unchanged");
+        assertEq(r.phase, uint8(LibVaipakam.StagingPhase.Staging));
+    }
+
     function test_AStandingRecord_EndsTheUserRead_BeforeTheBorrowerSide() public {
         _stagedScene(); // the lender day 1 is a record's
         _armedDay(2, NEED);

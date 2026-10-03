@@ -80,8 +80,13 @@
   },
   {
     "type": "function",
-    "name": "epochSettleClaimLegs",
+    "name": "epochSettleLegs",
     "inputs": [
+      {
+        "name": "source",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
       {
         "name": "liveFresh",
         "type": "uint256",

@@ -638,7 +638,8 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
     /// @dev    Hosted here for `RewardClaimFacet`'s and
     ///         `InteractionRewardsFacet`'s EIP-170 headroom (3b-ii-A); the
     ///         operations are the callers' own, unchanged.
-    function epochSettleClaimLegs(
+    function epochSettleLegs(
+        uint8 source,
         uint256 liveFresh,
         uint256 epochLegs,
         uint256 treasuryRecycledRelease,
@@ -646,10 +647,11 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
         uint256 refId
     ) external {
         _requireDiamondInternal();
-        LibVpfiRecycle.absorbRewardFresh(LibVpfiRecycle.RecycleSource.ForfeitedReward, refId, liveFresh);
-        LibVpfiRecycle.absorbTransportFunded(LibVpfiRecycle.RecycleSource.ForfeitedReward, refId, epochLegs);
+        LibVpfiRecycle.RecycleSource src = LibVpfiRecycle.RecycleSource(source);
+        LibVpfiRecycle.absorbRewardFresh(src, refId, liveFresh);
+        LibVpfiRecycle.absorbTransportFunded(src, refId, epochLegs);
         if (treasuryRecycledRelease > 0) {
-            LibVpfiRecycle.releaseCommitment(LibVpfiRecycle.RecycleSource.ForfeitedReward, refId, treasuryRecycledRelease);
+            LibVpfiRecycle.releaseCommitment(src, refId, treasuryRecycledRelease);
         }
         if (userEpochRecycled > 0) {
             LibVpfiRecycle.releaseCommitment(LibVpfiRecycle.RecycleSource.TransportPaidClaim, refId, userEpochRecycled);

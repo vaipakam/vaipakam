@@ -8,6 +8,7 @@ import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessCont
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
+import {LibRewardCustody} from "../libraries/LibRewardCustody.sol";
 
 /**
  * @title  RewardHorizonSweepFacet
@@ -258,23 +259,18 @@ contract RewardHorizonSweepFacet is
         // legs recycle in place from the epochs' custody (§5c); see the
         // forfeit sweep for why the user legs are folded in.
         uint256 epochFresh = tp.treasuryFresh + tp.userFresh;
-        if (t.fresh > epochFresh) {
-            LibVpfiRecycle.absorbRewardFresh(
-                LibVpfiRecycle.RecycleSource.ExpiredReward,
-                0,
-                t.fresh - epochFresh
-            );
-        }
-        LibVpfiRecycle.absorbTransportFunded(
-            LibVpfiRecycle.RecycleSource.ExpiredReward, 0, epochFresh + tp.treasuryRecycled + tp.userRecycled
+        // ONE leg settle for every close-out (A2-ii): the live-funded fresh
+        // absorbed as expired reward, the epoch-funded legs recycled in
+        // place, the recycled commitment released — the same implementation
+        // the forfeit, the claim and a staged expiry day's payout use.
+        LibRewardCustody.callSettleLegs(
+            uint8(LibVpfiRecycle.RecycleSource.ExpiredReward),
+            t.fresh > epochFresh ? t.fresh - epochFresh : 0,
+            epochFresh + tp.treasuryRecycled + tp.userRecycled,
+            t.recycled,
+            0,
+            0
         );
-        if (t.recycled > 0) {
-            LibVpfiRecycle.releaseCommitment(
-                LibVpfiRecycle.RecycleSource.ExpiredReward,
-                0,
-                t.recycled
-            );
-        }
         expiredTotal = t.fresh + t.recycled;
     }
 }

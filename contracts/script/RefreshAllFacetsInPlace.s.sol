@@ -2342,7 +2342,9 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     ///      (removing a live function would strand it) and that the list
     ///      names the legacy seed.
     function _retiredSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](7);
+        s = new bytes4[](8);
+        // A2-ii — the claim-only leg settle, replaced by `epochSettleLegs(uint8,...)` by source.
+        s[7] = bytes4(keccak256("epochSettleClaimLegs(uint256,uint256,uint256,uint256,uint256)"));
         // #1566 slice 4 PR A (Codex #2158 r29/r30 P1) — the legacy seed took
         // only the amount; it now carries the pause epoch too, so the old
         // selector must not survive routed to bytecode that checks neither

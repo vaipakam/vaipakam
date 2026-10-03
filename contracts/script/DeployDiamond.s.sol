@@ -3106,7 +3106,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[9] = RewardEpochFacet.epochDrawForDay.selector;
         s[10] = RewardEpochFacet.epochPruneTransportDayCursor.selector;
         s[11] = RewardEpochFacet.getTransportAllocationForDay.selector;
-        s[12] = RewardEpochFacet.epochSettleClaimLegs.selector;
+        s[12] = RewardEpochFacet.epochSettleLegs.selector; // A2-ii: one leg settle, by source (was epochSettleClaimLegs)
         s[13] = RewardEpochFacet.materializeTransportBatchPageHinted.selector;
         s[14] = RewardEpochFacet.getTransportDayBatchesFrom.selector;
         s[15] = RewardEpochFacet.getTransportDayIndex.selector;
@@ -3145,9 +3145,10 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](2);
+        s = new bytes4[](3);
         s[0] = RewardStagingFacet.prepareStagedDay.selector;
         s[1] = RewardStagingFacet.reserveStagedDay.selector;
+        s[2] = RewardStagingFacet.stageDayFromPlanInternal.selector; // A2-ii: the one record-opening host (Diamond-gated)
     }
 
     /// @dev 3b-ii-A2 (#2305) — the staging record's settlement half.

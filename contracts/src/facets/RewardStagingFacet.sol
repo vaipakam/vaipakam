@@ -7,6 +7,7 @@ import {LibRewardStaging} from "../libraries/LibRewardStaging.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
+import {LibRewardCustody} from "../libraries/LibRewardCustody.sol";
 
 /**
  * @title RewardStagingFacet
@@ -66,4 +67,37 @@ contract RewardStagingFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         LibRewardStaging.reserve(LibVaipakam.storageSlot(), key);
     }
 
+    /// @notice The record-opening seam, hosted ONCE (A2-ii): a walk that
+    ///         prices a cap-hit day — the claim's, a forfeit's, an expiry's
+    ///         — stages the plan it found under its operation's commitment
+    ///         through this entry, by Diamond self-call
+    ///         ({LibRewardCustody.callStageDayFromPlan}), so no walk's facet
+    ///         carries the record machinery. Gated to the Diamond; no
+    ///         reentrancy guard of its own, since the caller holds the
+    ///         Diamond's.
+    function stageDayFromPlanInternal(
+        address user,
+        uint8 side,
+        uint256 day,
+        uint256[] calldata entryIds,
+        bytes32[] calldata ids,
+        uint256[] calldata fresh,
+        uint256[] calldata recycled,
+        uint8 deliverTo,
+        uint8 op
+    ) external returns (bytes32 key, uint256 staged) {
+        if (msg.sender != address(this)) revert RewardCustodyOnlyDiamondInternal(msg.sender);
+        return LibRewardCustody.stageDayFromPlan(
+            LibVaipakam.storageSlot(),
+            user,
+            LibVaipakam.RewardSide(side),
+            day,
+            entryIds,
+            ids,
+            fresh,
+            recycled,
+            LibVaipakam.RewardDelivery(deliverTo),
+            LibVaipakam.StagingOp(op)
+        );
+    }
 }

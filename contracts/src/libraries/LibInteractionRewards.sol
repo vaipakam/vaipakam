@@ -1982,8 +1982,9 @@ library LibInteractionRewards {
                 // a record for this day, and the day waits, unpaid, for the
                 // call that can cover it. Any other deferral touches nothing.
                 if (charge.transportCapHit && charge.planIds.length != 0) {
-                    (, uint256 staged) = LibRewardCustody.stageDayFromPlan(
-                        s, user, side, d, set, charge.planIds, charge.planFresh, charge.planRecycled, ctx.deliverTo
+                    (, uint256 staged) = LibRewardCustody.callStageDayFromPlan(
+                        user, side, d, set, charge.planIds, charge.planFresh, charge.planRecycled, ctx.deliverTo,
+                        LibVaipakam.StagingOp.Claim
                     );
                     // What was staged is the progress this call keeps, so a
                     // claim that could only stage returns nothing paid rather
@@ -3289,6 +3290,16 @@ library LibInteractionRewards {
         // row) credits nothing and stays retryable — the engine's native
         // satisfiable-wait shape.
         if (!charge.advanced) {
+            // A2-ii — a sweep's wide day is STAGED like a claim's: the plan
+            // the window found moves into a record under the forfeit's own
+            // commitment, prepared, reserved and resolved by the same
+            // machinery, its close-out routed to the bucket as a forfeit.
+            if (charge.transportCapHit && charge.planIds.length != 0) {
+                LibRewardCustody.callStageDayFromPlan(
+                    e.user, e.side, d, set, charge.planIds, charge.planFresh, charge.planRecycled,
+                    LibVaipakam.RewardDelivery.Default, LibVaipakam.StagingOp.Forfeit
+                );
+            }
             _drawAndFold(d, charge, tp); // 3b-ii-A — a cap-hit deferral prunes
             return (0, 0, 0, 0);
         }
@@ -3339,6 +3350,35 @@ library LibInteractionRewards {
         tp.userRecycled += charge.transportUser.recycled;
         tp.treasuryFresh += charge.transportTreasury.armedFresh;
         tp.treasuryRecycled += charge.transportTreasury.recycled;
+    }
+
+    /// @notice The removal point begins for entry `id` — exposed for a
+    ///         staged expiry day's payout (A2-ii), which performs the day
+    ///         the expiry walk would have, when the record resolves.
+    function beginExpiry(
+        LibVaipakam.Storage storage s,
+        uint256 id,
+        LibVaipakam.RewardEntry storage e
+    ) internal {
+        _beginExpiry(s, id, e);
+    }
+
+    /// @notice An expired day's bookkeeping, ONE place for the expiry walk
+    ///         and for a staged expiry day's payout (A2-ii): the entry's
+    ///         expired totals grow by the day's, and the entry's expiry is
+    ///         announced once its last day is settled.
+    function recordExpiredDay(
+        LibVaipakam.Storage storage s,
+        uint256 id,
+        uint256 total,
+        uint256 recycled
+    ) internal {
+        s.rewardEntryExpiredAccum[id] += total;
+        s.rewardEntryExpiredRecycledAccum[id] += recycled;
+        LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
+        if (e.processed) {
+            emit RewardEntryExpired(id, e.user, s.rewardEntryExpiredAccum[id], s.rewardEntryExpiredRecycledAccum[id]);
+        }
     }
 
     function _beginExpiry(
@@ -3884,6 +3924,15 @@ library LibInteractionRewards {
         // state — the claimant already served the full window, so this is a
         // protocol-side crediting constraint, never a fresh accrual.
         if (!charge.advanced) {
+            // A2-ii — an expiry's wide day is STAGED like a claim's, under
+            // the expiry's own commitment; its close-out records the expired
+            // day and absorbs as expired reward ({LibRewardStaging}).
+            if (charge.transportCapHit && charge.planIds.length != 0) {
+                LibRewardCustody.callStageDayFromPlan(
+                    e.user, e.side, d, set, charge.planIds, charge.planFresh, charge.planRecycled,
+                    LibVaipakam.RewardDelivery.Default, LibVaipakam.StagingOp.Expiry
+                );
+            }
             _drawAndFold(d, charge, tp); // 3b-ii-A — a cap-hit deferral prunes
             s.rewardEntryObsBlocked[id] = true;
             return (expired, 0, 0);
@@ -3986,19 +4035,10 @@ library LibInteractionRewards {
         // an unexplained final chunk — and every indexer and notification
         // consumer reading that face value would under-report. Accumulate here
         // and emit the sum below; the event's documented meaning is unchanged.
-        s.rewardEntryExpiredAccum[id] += expired.total;
-        s.rewardEntryExpiredRecycledAccum[id] += expired.recycled;
+        recordExpiredDay(s, id, expired.total, expired.recycled);
         // Only an ARMED day draws on delivered funding — the same filter the
         // walk's paid-side write applies, for the same reason.
         armedDelivered = _isArmedDay(s, d) ? freshCredited : 0;
-        if (e.processed) {
-            emit RewardEntryExpired(
-                id,
-                e.user,
-                s.rewardEntryExpiredAccum[id],
-                s.rewardEntryExpiredRecycledAccum[id]
-            );
-        }
     }
 
     /// @notice RL-3 — UX view: the entry's horizon state for the
@@ -4432,18 +4472,23 @@ library LibInteractionRewards {
         return e.forfeited || _entryTerminalForfeit(s, e);
     }
 
-    /// @notice Whether entry `e`'s share routes to the treasury — forfeited
-    ///         by its own flag or by its loan's terminal state — the SAME
-    ///         predicate the day pricing stamps a slice's `loanSideChargeable`
-    ///         from ({_priceEntriesForDay}: chargeable is its negation). A
-    ///         staging record reads it to find a commitment whose destination
-    ///         split no longer matches what the primitive would route (Codex
-    ///         #2308 r23); exposed, not re-derived.
-    function entryForfeited(
+    /// @notice Whether entry `e`'s share routes to the TREASURY legs — the
+    ///         entry forfeited, by its own flag or by its loan's terminal
+    ///         state, or the settlement an expiry's (`recycleSettlement`),
+    ///         which recycles in place — the ONE predicate the day pricing
+    ///         stamps a slice's `loanSideChargeable` from
+    ///         ({_priceEntriesForDay}: chargeable is its negation), and the
+    ///         one a staging record's revalidation reads to find a commitment
+    ///         whose destination split no longer matches what the primitive
+    ///         would route (Codex #2308 r23). An expiry's record passes its
+    ///         operation here, so a healthy expiry day never reads stale for
+    ///         the chargeability its own pricing stamped (A2-ii).
+    function entryRoutesToTreasury(
         LibVaipakam.Storage storage s,
-        LibVaipakam.RewardEntry storage e
+        LibVaipakam.RewardEntry storage e,
+        bool recycleSettlement
     ) internal view returns (bool) {
-        return _isForfeited(s, e);
+        return _isForfeited(s, e) || recycleSettlement;
     }
 
     /// @notice The ONE validity rule for a `(user, day)` transfer set, as the
@@ -6372,7 +6417,7 @@ library LibInteractionRewards {
             // re-derived the D1 obligation by hand — three rounds of review,
             // three different wrong quantities. It now asks the one component
             // that owns the concept.
-            bool isForfeit = _isForfeited(s, e) || dry.recycleSettlement;
+            bool isForfeit = entryRoutesToTreasury(s, e, dry.recycleSettlement);
             slices[i].loanSideChargeable = !isForfeit;
             if (isForfeit) {
                 cEff[i] = v;

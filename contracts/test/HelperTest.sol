@@ -2538,7 +2538,7 @@ contract HelperTest {
         selectors[9] = RewardEpochFacet.epochDrawForDay.selector;
         selectors[10] = RewardEpochFacet.epochPruneTransportDayCursor.selector;
         selectors[11] = RewardEpochFacet.getTransportAllocationForDay.selector;
-        selectors[12] = RewardEpochFacet.epochSettleClaimLegs.selector;
+        selectors[12] = RewardEpochFacet.epochSettleLegs.selector; // A2-ii
         selectors[13] = RewardEpochFacet.materializeTransportBatchPageHinted.selector;
         selectors[14] = RewardEpochFacet.getTransportDayBatchesFrom.selector;
         selectors[15] = RewardEpochFacet.getTransportDayIndex.selector;
@@ -2573,9 +2573,10 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](2);
+        selectors = new bytes4[](3);
         selectors[0] = RewardStagingFacet.prepareStagedDay.selector;
         selectors[1] = RewardStagingFacet.reserveStagedDay.selector;
+        selectors[2] = RewardStagingFacet.stageDayFromPlanInternal.selector; // A2-ii
     }
 
     /// 3b-ii-A2 (#2305) — the staging record's settlement half. Mirrors

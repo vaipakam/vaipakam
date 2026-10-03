@@ -495,9 +495,10 @@ contract RewardClaimFacet is
         // reach no delivered-ledger charge (§5c); and the USER's epoch-paid
         // recycled retires its commitment without a bucket debit, since the
         // bucket never paid it. The operations are hosted on the epoch facet
-        // ({epochSettleClaimLegs}) because this facet has no room to inline
+        // ({epochSettleLegs}) because this facet has no room to inline
         // them; the wrapper makes no call when every figure is zero.
-        LibRewardCustody.callSettleClaimLegs(
+        LibRewardCustody.callSettleLegs(
+            uint8(LibVpfiRecycle.RecycleSource.ForfeitedReward),
             freshTreasury - res.transport.treasuryFresh,
             res.transport.treasuryFresh + res.transport.treasuryRecycled,
             forfeitRecycled,
