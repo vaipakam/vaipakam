@@ -24,6 +24,13 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+for tool in forge anvil cast jq; do
+  command -v "$tool" >/dev/null 2>&1 || {
+    echo "rehearse-reprice-anvil: '$tool' is not on PATH (needs forge, anvil, cast and jq)" >&2
+    exit 2
+  }
+done
+
 if [[ -z "${BASE_SEPOLIA_RPC_URL:-}" && -f .env ]]; then
   # shellcheck disable=SC1091
   BASE_SEPOLIA_RPC_URL="$(set -a; . ./.env >/dev/null 2>&1; printf '%s' "${BASE_SEPOLIA_RPC_URL:-}")"
