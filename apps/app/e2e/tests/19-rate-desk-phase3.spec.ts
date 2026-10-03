@@ -466,7 +466,7 @@ test('gasless loop: maker posts a signed order with ONE signature (no transactio
   // driven — cancelling would kill the fill half of this loop; the
   // cancel path is the live driver's follow-up per COVERAGE.md).
   await expect(
-    maker.page.getByText('Your signed offers (this pair)'),
+    maker.page.getByText('Your signed offers (this pair and loan length)'),
   ).toBeVisible({ timeout: 30_000 });
   const signedBlockRow = maker.page
     .locator('.item-row')

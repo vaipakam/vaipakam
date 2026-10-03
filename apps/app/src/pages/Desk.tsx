@@ -157,7 +157,7 @@ export function Desk() {
       <HowItWorks />
 
       {/* UX-026 — orient Basic-mode visitors landing here by URL. */}
-      <PowerSurfaceNote />
+      <PowerSurfaceNote body={copy.powerSurface.body} />
 
       <MarketFreshnessNote />
 
@@ -311,7 +311,9 @@ const HOW_IT_WORKS_KEY = 'app.deskHowItWorksSeen';
  *  browser; storage failure just means it opens again). Shown in both
  *  modes: the desk is usable by anyone, not only by traders. */
 function HowItWorks() {
-  const [open] = useState(() => {
+  // #2378 r2 — controlled: the page re-renders on a timer, so the
+  // element's state must follow the user's toggle, not the initial read.
+  const [open, setOpen] = useState(() => {
     try {
       return localStorage.getItem(HOW_IT_WORKS_KEY) !== '1';
     } catch {
@@ -324,7 +326,9 @@ function HowItWorks() {
       className="card how-it-works"
       open={open}
       onToggle={(e) => {
-        if (!(e.currentTarget as HTMLDetailsElement).open) {
+        const nowOpen = (e.currentTarget as HTMLDetailsElement).open;
+        setOpen(nowOpen);
+        if (!nowOpen) {
           try {
             localStorage.setItem(HOW_IT_WORKS_KEY, '1');
           } catch {

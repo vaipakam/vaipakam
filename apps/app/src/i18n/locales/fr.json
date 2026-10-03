@@ -1408,7 +1408,8 @@
       "guidedBorrow": "Emprunter étape par étape",
       "guidedLend": "Prêter étape par étape",
       "enableAdvanced": "Afficher les outils supplémentaires (mode Avancé)",
-      "dismiss": "Compris"
+      "dismiss": "Compris",
+      "bodyOffers": "Cette page liste les offres ouvertes sur toutes les paires ; ouvrez-en une pour voir ses conditions et la prendre. Vous préférez être guidé ? Les pages Emprunter et Prêter vous trouvent une correspondance étape par étape."
     },
     "claims": {
       "checking": "Recherche des droits à réclamer…",
@@ -1481,7 +1482,7 @@
       "yearly": "annuel",
       "collateralLabel": "garantie",
       "collateralNone": "aucune",
-      "illiquidCollateralTag": "remise telle quelle si non remboursé",
+      "illiquidCollateralTag": "illiquide lors de la publication (revérifiée à l’acceptation) — si c’est le cas, remise telle quelle en cas de non-remboursement",
       "collateralAmountLoading": "{{token}} (chargement du montant…)",
       "collateralAmountUnreadable": "{{token}} (montant illisible)",
       "byCreator": "par",
@@ -1531,7 +1532,8 @@
       "staleList": "Cette liste a été mise à jour il y a {{age}} et peut être en retard — de nouvelles offres peuvent exister sans être affichées. Revenez bientôt.",
       "unavailable": "Impossible de charger le carnet d'offres pour le moment. Réessayez dans un instant.",
       "lenderOffer": "Offre de prêt",
-      "borrowerOffer": "Demande d'emprunt"
+      "borrowerOffer": "Demande d'emprunt",
+      "collateralAtLeast": "au moins {{amount}}"
     },
     "desk": {
       "tenorLiveTitle": "{{tenor}} — offres actives dans le carnet",
@@ -1639,7 +1641,7 @@
         "unavailable": "Impossible de charger l'historique des taux pour le moment.",
         "retry": "Réessayer",
         "quotedMid": "taux médian",
-        "quotedMidHint": "Ligne pointillée = cours moyen coté actuel du carnet — une cotation au repos, pas un taux exécuté.",
+        "quotedMidHint": "Ligne pointillée = le point médian entre la meilleure offre de prêt et la meilleure demande d’emprunt ouvertes en ce moment. Il est calculé à partir de ces deux valeurs — ce n’est pas un taux que quelqu’un a proposé ou accepté.",
         "sparseNote_zero": "Marché peu liquide — {{count}} exécutions dans cette plage, dessinées individuellement. Les chandeliers apparaissent lorsqu’il y a assez d’historique pour avoir du sens.",
         "sparseNote_one": "Marché peu liquide — {{count}} exécution dans cette plage, dessinée individuellement. Les chandeliers apparaissent lorsqu’il y a assez d’historique pour avoir du sens.",
         "sparseNote_two": "Marché peu liquide — {{count}} exécutions dans cette plage, dessinées individuellement. Les chandeliers apparaissent lorsqu’il y a assez d’historique pour avoir du sens.",
@@ -1779,8 +1781,8 @@
         "save": "Enregistrer les modifications",
         "saving": "Modification…",
         "amended": "Ordre modifié.",
-        "signedTitle": "Ordres signés (ce marché)",
-        "signedNote": "Ordres signés gasless que vous avez publiés pour le marché sélectionné. Les ordres d'autres marchés ne s'affichent pas ici — changez de marché dans l'en-tête pour les gérer.",
+        "signedTitle": "Vos offres signées (cette paire et cette durée)",
+        "signedNote": "Les offres que vous avez publiées par simple signature, pour la paire et la durée de prêt choisies ci-dessus. Les offres signées d’une autre paire ou d’une autre durée ne sont pas affichées — changez-les ci-dessus pour les gérer.",
         "signedCancel": "Annuler on-chain",
         "signedCancelling": "Annulation…",
         "signedCancelNote": "La publication était gratuite, mais l'annulation coûte du gas : le seul moyen de révoquer une signature déjà détenue par le carnet est une transaction on-chain.",
@@ -1805,7 +1807,7 @@
         "step1": "Choisissez une paire en haut : l’actif prêté et la garantie qui couvre le prêt. Puis choisissez la durée du prêt.",
         "step2": "La liste montre les offres ouvertes en ce moment. « Offres de prêt » : des personnes prêtes à prêter à ce taux annuel ; « Demandes d’emprunt » : des personnes qui veulent emprunter. Le taux médian se situe entre la meilleure de chaque côté.",
         "step3": "Pour accepter une offre, appuyez sur « Emprunter ceci » ou « Prêter à ceci » à côté. Vous voyez exactement ce que vous payez et recevez avant de signer quoi que ce soit.",
-        "step4": "Pour créer votre propre offre, remplissez le formulaire : le montant, votre taux et la garantie. Elle attend dans la liste jusqu’à ce que quelqu’un la prenne, et vous pouvez la modifier ou l’annuler d’ici là. Parfois, une nouvelle offre doit rester ouverte quelques minutes avant de pouvoir être annulée."
+        "step4": "Pour créer votre propre offre, remplissez le formulaire : le montant, votre taux et la garantie. Elle attend dans la liste jusqu’à ce que quelqu’un la prenne, et vous pouvez l’annuler d’ici là. Une offre publiée avec des frais de réseau peut aussi être modifiée ; une offre publiée gratuitement par simple signature ne le peut pas : annulez-la et republiez-la. Parfois, une nouvelle offre doit rester ouverte quelques minutes avant de pouvoir être annulée."
       }
     },
     "tariff": {
@@ -2204,7 +2206,9 @@
         "Approval": "Approbation"
       },
       "unavailableFallback": "Vos prêts et locations actuels sont toujours disponibles dans",
-      "positionsLink": "Mes positions"
+      "positionsLink": "Mes positions",
+      "amountLoading": "Montant en cours de chargement…",
+      "amountUnreadable": "Un montant de {{token}} (ses détails n’ont pas pu être lus)"
     },
     "rewards": {
       "unavailable": "Nous n’avons pas pu vérifier vos récompenses pour l’instant — réessayez dans un moment.",

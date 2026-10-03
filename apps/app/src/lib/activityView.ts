@@ -219,7 +219,7 @@ function substanceOf(asset: unknown, amount: unknown): Substance | undefined {
  *  from the wrong field. */
 const SUBSTANCE_READERS: Record<
   string,
-  (args: ArgBag, siblings: Map<string, ArgBag>) => Substance | undefined
+  (args: ArgBag, sibling: (kind: string) => ArgBag | undefined) => Substance | undefined
 > = {
   // OfferCreatedDetails(offerId, creator, lendingAsset, fields{assetType, amount, …})
   OfferCreatedDetails: (a) => {
@@ -231,10 +231,10 @@ const SUBSTANCE_READERS: Record<
     isFungible(a.assetType) ? substanceOf(a.lendingAsset, a.amount) : undefined,
   // LoanInitiatedDetails(loanId, lender, borrower, details{principalAsset, assetType, …})
   // + its sibling LoanInitiated(loanId, offerId, lender, borrower, principal, …)
-  LoanInitiatedDetails: (a, siblings) => {
+  LoanInitiatedDetails: (a, sibling) => {
     const d = sub(a, 'details');
     return isFungible(d?.assetType)
-      ? substanceOf(d?.principalAsset, siblings.get('LoanInitiated')?.principal)
+      ? substanceOf(d?.principalAsset, sibling('LoanInitiated')?.principal)
       : undefined;
   },
   LenderIntentFunded: (a) => substanceOf(a.lendingAsset, a.amount),
@@ -245,20 +245,50 @@ const SUBSTANCE_READERS: Record<
   OfferSaleProceedsCredited: (a) => substanceOf(a.principalAsset, a.amount),
 };
 
-/** UX3-012 — the asset and amount a transaction moved or offered, from the
- *  first event in it that a declared reader understands. Pure; exported
- *  for the unit test. */
-export function amountSubstance(bucket: IndexedActivityEvent[]): Substance | undefined {
-  const parsed = bucket.map((ev) => [ev.kind, parseArgs(ev.args)] as const);
-  const siblings = new Map<string, ArgBag>();
-  for (const [kind, args] of parsed) if (args && !siblings.has(kind)) siblings.set(kind, args);
-  for (const [kind, args] of parsed) {
-    const read = SUBSTANCE_READERS[kind];
+/** UX3-012 — the asset and amount a transaction moved or offered, read by
+ *  the declared readers above. Pure; exported for the unit test.
+ *
+ *  #2378 r2 — one transaction can carry several monetary actions (a
+ *  batched multicall opening several offers or loans). The amount shown
+ *  beside a row must belong to the offer or loan that row names, so:
+ *   - a sibling join pairs events of the SAME loan / offer only;
+ *   - with a representative given, the amount comes from the event that
+ *     shares its loan or offer id;
+ *   - otherwise several different amounts mean no amount is shown, rather
+ *     than one chosen by event order. */
+export function amountSubstance(
+  bucket: IndexedActivityEvent[],
+  representative?: Pick<IndexedActivityEvent, 'loanId' | 'offerId'>,
+): Substance | undefined {
+  const parsed = bucket.map((ev) => ({ ev, args: parseArgs(ev.args) }));
+  const found: { ev: IndexedActivityEvent; substance: Substance }[] = [];
+  for (const { ev, args } of parsed) {
+    const read = SUBSTANCE_READERS[ev.kind];
     if (!read || !args) continue;
-    const found = read(args, siblings);
-    if (found) return found;
+    const sibling = (kind: string) =>
+      parsed.find(
+        (p) =>
+          p.ev.kind === kind &&
+          p.ev.loanId === ev.loanId &&
+          p.ev.offerId === ev.offerId,
+      )?.args;
+    const substance = read(args, sibling);
+    if (substance) found.push({ ev, substance });
   }
-  return undefined;
+  if (found.length === 0) return undefined;
+  const hasId = representative && (representative.loanId !== null || representative.offerId !== null);
+  if (hasId) {
+    const match = found.find(
+      (f) =>
+        (representative.loanId !== null && f.ev.loanId === representative.loanId) ||
+        (representative.offerId !== null && f.ev.offerId === representative.offerId),
+    );
+    if (match) return match.substance;
+  }
+  const first = found[0].substance;
+  return found.every((f) => f.substance.asset === first.asset && f.substance.amount === first.amount)
+    ? first
+    : undefined;
 }
 
 const DEFAULT_PRIORITY = 20;
@@ -300,7 +330,7 @@ export function coalesceByTx(events: IndexedActivityEvent[]): ActivityRowView[] 
       label: labelForKind(rep.kind),
       category: ACTIVITY_LABELS[rep.kind]?.category ?? 'other',
       hiddenCount: bucket.length - 1,
-      substance: amountSubstance(bucket),
+      substance: amountSubstance(bucket, rep),
     });
   }
 

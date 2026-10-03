@@ -151,9 +151,12 @@ function OfferRow({ offer, risk }: { offer: IndexedOffer; risk: RiskLevel | null
               quantity: offer.collateralQuantity,
               meta: collateralMeta.data,
               metaFailed: collateralMeta.isError,
+              // A borrower offer's indexed collateral is its committed floor.
+              floorOnly: !isLending,
               labels: {
                 amountLoading: copy.offers.collateralAmountLoading,
                 amountUnreadable: copy.offers.collateralAmountUnreadable,
+                atLeast: copy.offers.collateralAtLeast,
               },
             })
           : copy.offers.collateralNone
@@ -346,7 +349,7 @@ export function Offers() {
       <p className="page-lede">{copy.offers.lede}</p>
 
       {/* UX-026 — orient Basic-mode visitors landing here by URL. */}
-      <PowerSurfaceNote />
+      <PowerSurfaceNote body={copy.powerSurface.bodyOffers} />
 
       <MarketFreshnessNote />
 

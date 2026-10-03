@@ -1408,7 +1408,8 @@
       "guidedBorrow": "단계별로 빌리기",
       "guidedLend": "단계별로 빌려주기",
       "enableAdvanced": "추가 도구 보기(고급 모드)",
-      "dismiss": "알겠어요"
+      "dismiss": "알겠어요",
+      "bodyOffers": "이 페이지는 모든 페어의 열린 제안을 보여 줍니다. 하나를 열어 조건을 보고 받을 수 있습니다. 단계별 안내가 좋으신가요? 빌리기·빌려주기 페이지가 한 단계씩 맞는 상대를 찾아 줍니다."
     },
     "claims": {
       "checking": "청구 항목 확인 중…",
@@ -1481,7 +1482,7 @@
       "yearly": "연간",
       "collateralLabel": "담보",
       "collateralNone": "없음",
-      "illiquidCollateralTag": "상환되지 않으면 그대로 넘겨집니다",
+      "illiquidCollateralTag": "등록 시 비유동(수락 시 다시 확인) — 그렇다면 상환되지 않을 때 그대로 넘겨집니다",
       "collateralAmountLoading": "{{token}} (수량 불러오는 중…)",
       "collateralAmountUnreadable": "{{token}} (수량을 읽을 수 없음)",
       "byCreator": "작성자",
@@ -1531,7 +1532,8 @@
       "staleList": "이 list는 {{age}} 전에 마지막으로 update되어 뒤처질 수 있습니다. 표시되지 않는 새 offers가 있을 수 있습니다. 잠시 후 확인하세요.",
       "unavailable": "지금 오퍼북을 불러올 수 없습니다. 잠시 후 다시 시도해 주세요.",
       "lenderOffer": "대출 오퍼",
-      "borrowerOffer": "차입 요청"
+      "borrowerOffer": "차입 요청",
+      "collateralAtLeast": "최소 {{amount}}"
     },
     "desk": {
       "tenorLiveTitle": "{{tenor}} — book의 live offers",
@@ -1639,7 +1641,7 @@
         "unavailable": "지금 금리 이력을 불러올 수 없습니다.",
         "retry": "다시 시도",
         "quotedMid": "중간 이율",
-        "quotedMidHint": "점선 = 오더북의 현재 호가 중간값 — 체결된 금리가 아니라 대기 중인 호가입니다.",
+        "quotedMidHint": "점선 = 지금 열려 있는 가장 좋은 대출 제안과 가장 좋은 차입 요청의 중간값입니다. 이 둘로 계산한 값이며, 누군가 제시하거나 합의한 이율이 아닙니다.",
         "sparseNote_zero": "sparse market — 이 범위의 {{count}} fills를 개별로 표시했습니다. 의미 있는 tape가 충분해지면 candles가 나타납니다.",
         "sparseNote_one": "sparse market — 이 범위의 {{count}} fill을 개별로 표시했습니다. 의미 있는 tape가 충분해지면 candles가 나타납니다.",
         "sparseNote_two": "sparse market — 이 범위의 {{count}} fills를 개별로 표시했습니다. 의미 있는 tape가 충분해지면 candles가 나타납니다.",
@@ -1779,8 +1781,8 @@
         "save": "변경사항 저장",
         "saving": "수정 중…",
         "amended": "주문이 수정되었습니다.",
-        "signedTitle": "서명된 주문 (이 마켓)",
-        "signedNote": "선택한 마켓에 대해 등록한 가스리스 서명 주문입니다. 다른 마켓의 주문은 여기 표시되지 않습니다 — 관리하려면 헤더에서 마켓을 전환하세요.",
+        "signedTitle": "내 서명 제안(이 페어와 기간)",
+        "signedNote": "위에서 고른 페어와 대출 기간에 대해 서명만으로 올린 제안입니다. 다른 페어나 기간의 서명 제안은 표시되지 않으니 위에서 바꿔 관리하세요.",
         "signedCancel": "온체인에서 취소",
         "signedCancelling": "취소 중…",
         "signedCancelNote": "등록은 무료였지만 취소에는 가스가 듭니다: 오퍼북이 이미 보유한 서명을 철회하는 유일한 방법은 온체인 트랜잭션입니다.",
@@ -1805,7 +1807,7 @@
         "step1": "맨 위에서 쌍을 고르세요: 빌려주는 자산과 대출을 뒷받침하는 담보입니다. 그런 다음 대출 기간을 고르세요.",
         "step2": "목록에는 지금 열려 있는 제안이 표시됩니다. ‘빌려주기 제안’은 그 연이율로 빌려줄 사람들이고, ‘빌리기 요청’은 빌리고 싶은 사람들입니다. 중간 이율은 양쪽의 가장 좋은 제안 사이에 있습니다.",
         "step3": "제안을 받으려면 옆의 ‘이것을 차입’ 또는 ‘이것에 대출’을 누르세요. 서명하기 전에 내는 금액과 받는 금액을 정확히 볼 수 있습니다.",
-        "step4": "직접 제안을 올리려면 양식에 금액, 이율, 담보를 입력하세요. 누군가 받을 때까지 목록에서 기다리며, 그 전에는 변경하거나 취소할 수 있습니다. 새 제안은 취소할 수 있게 되기까지 몇 분 동안 열려 있어야 할 때가 있습니다."
+        "step4": "직접 제안을 올리려면 양식에 금액, 이율, 담보를 입력하세요. 누군가 받을 때까지 목록에서 기다리며, 그 전에는 취소할 수 있습니다. 네트워크 수수료를 내고 올린 제안은 변경도 할 수 있지만, 서명만으로 무료로 올린 제안은 변경할 수 없으니 취소하고 다시 올리세요. 새 제안은 취소할 수 있게 되기까지 몇 분 동안 열려 있어야 할 때가 있습니다."
       }
     },
     "tariff": {
@@ -2204,7 +2206,9 @@
         "Approval": "승인"
       },
       "unavailableFallback": "현재 대출과 임대는 항상 다음에서 확인할 수 있습니다",
-      "positionsLink": "내 포지션"
+      "positionsLink": "내 포지션",
+      "amountLoading": "금액 불러오는 중…",
+      "amountUnreadable": "{{token}} 금액(세부 정보를 읽을 수 없음)"
     },
     "rewards": {
       "unavailable": "지금 보상을 확인할 수 없습니다 — 잠시 후 다시 시도하세요.",

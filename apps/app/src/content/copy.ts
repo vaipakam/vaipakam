@@ -3312,6 +3312,8 @@ const copySource = {
     // Naive-user redesign — an invitation, not a warning: anyone may use
     // this page, and the guided flows are offered as the gentler route.
     body: 'This page shows every offer for one pair at once and lets you set your own rate. Prefer to be walked through it? The Borrow and Lend pages do the same things one step at a time.',
+    // #2378 r2 — the Offer Book is a different page from the Rate Desk.
+    bodyOffers: 'This page lists open offers across all pairs; open one to see its terms and take it. Prefer to be walked through it? The Borrow and Lend pages find a match for you one step at a time.',
     // Both guided flows offered (Codex #1168 r1) — a lender routed
     // into /borrow is the wrong money direction.
     guidedBorrow: 'Borrow step by step',
@@ -3425,7 +3427,10 @@ const copySource = {
     collateralNone: 'none',
     // UX3-007 — shown only when the record positively flags the collateral
     // illiquid; absence is never presented as "liquid".
-    illiquidCollateralTag: 'handed over as-is if not repaid',
+    // #2378 r2 — the flag is the offer's creation-time record; acceptance
+    // checks liquidity again and the loan follows THAT result.
+    illiquidCollateralTag: 'illiquid when posted (checked again at acceptance) — if so, handed over as-is if not repaid',
+    collateralAtLeast: tmpl('at least {{amount}}', ['amount']),
     // #2378 r1 — an ERC-20 collateral amount whose token details are still
     // loading, or could not be read.
     collateralAmountLoading: tmpl('{{token}} (amount loading…)', ['token']),
@@ -3548,7 +3553,7 @@ const copySource = {
       step3: 'To take an offer, press “Borrow this” or “Lend to this” beside it. You see exactly what you pay and receive before you sign anything.',
       // #2378 r1 — the cancel promise is qualified: where partial fills are
       // switched on, a new offer must stay open for a short time first.
-      step4: 'To make your own offer, fill in the form: the amount, your rate and the collateral. It waits in the list until someone takes it, and you can change or cancel it before then. Sometimes a new offer has to stay open for a few minutes before you can cancel it.',
+      step4: 'To make your own offer, fill in the form: the amount, your rate and the collateral. It waits in the list until someone takes it, and you can cancel it before then. An offer posted with a network fee can also be changed; one posted for free by signing only cannot — cancel it and post again. Sometimes a new offer has to stay open for a few minutes before you can cancel it.',
     },
     marketLabel: 'Pair (lend / collateral)',
     tenorLabel: 'Loan length',
@@ -3679,7 +3684,7 @@ const copySource = {
       retry: 'Retry',
       quotedMid: 'middle rate',
       quotedMidHint:
-        'Dashed line = the middle of the offers open right now. It is an asking rate, not a rate anyone has agreed.',
+        'Dashed line = the midpoint between the best offer to lend and the best request to borrow open right now. It is worked out from those two — not a rate anyone has offered or agreed.',
       sparseNote: tmpl(
         'Few loans so far — {{count}} in this period, each drawn on its own. Bars appear once there are enough loans to summarise.',
         ['count'],
@@ -3898,9 +3903,9 @@ const copySource = {
       saving: 'Amending…',
       amended: 'Offer changed.',
       // #1131 slice D — the wallet's own gasless signed orders.
-      signedTitle: 'Your signed offers (this pair)',
+      signedTitle: 'Your signed offers (this pair and loan length)',
       signedNote:
-        'Offers you posted by signing only, for the pair selected above. Signed offers for other pairs are not shown — switch the pair to manage them.',
+        'Offers you posted by signing only, for the pair and loan length selected above. Signed offers for another pair or loan length are not shown — switch them above to manage those.',
       signedCancel: 'Cancel (network fee)',
       signedCancelling: 'Cancelling…',
       signedCancelNote:
@@ -4563,6 +4568,10 @@ const copySource = {
     // Row context refs — the loan / offer a row belongs to.
     loanRef: tmpl(`Loan #{{loanId}}`, ['loanId']),
     offerRef: tmpl(`Offer #{{offerId}}`, ['offerId']),
+    // #2378 r2 — a recorded amount whose token details are loading or
+    // could not be read; the amount is never silently dropped.
+    amountLoading: 'Amount loading…',
+    amountUnreadable: tmpl('An amount of {{token}} (its details couldn’t be read)', ['token']),
     viewTx: 'View transaction',
     loadMore: 'Load older activity',
     loadingMore: 'Loading…',

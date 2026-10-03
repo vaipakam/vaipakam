@@ -19,7 +19,15 @@ export function offerCollateralText(args: {
   meta: { decimals: number; symbol: string } | undefined;
   /** The token-details read failed (as opposed to still loading). */
   metaFailed: boolean;
-  labels: { amountLoading: (token: string) => string; amountUnreadable: (token: string) => string };
+  /** #2378 r2 — the indexed amount is only the offer's FLOOR (a borrower
+   *  offer can commit a collateral range, and the row does not carry the
+   *  ceiling yet — #2382). The figure is then stated as "at least". */
+  floorOnly?: boolean;
+  labels: {
+    amountLoading: (token: string) => string;
+    amountUnreadable: (token: string) => string;
+    atLeast: (amount: string) => string;
+  };
 }): string {
   const token = shortAddress(args.asset);
   if (args.assetType === AssetType.ERC721) return `NFT ${token} #${args.tokenId}`;
@@ -27,6 +35,9 @@ export function offerCollateralText(args: {
     const qty = BigInt(args.quantity);
     return `${qty > 1n ? `${qty} × ` : ''}NFT ${token} #${args.tokenId}`;
   }
-  if (args.meta) return `${formatTokenAmount(BigInt(args.amount), args.meta.decimals)} ${args.meta.symbol}`;
+  if (args.meta) {
+    const text = `${formatTokenAmount(BigInt(args.amount), args.meta.decimals)} ${args.meta.symbol}`;
+    return args.floorOnly ? args.labels.atLeast(text) : text;
+  }
   return args.metaFailed ? args.labels.amountUnreadable(token) : args.labels.amountLoading(token);
 }

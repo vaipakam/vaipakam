@@ -245,4 +245,31 @@ describe('amountSubstance (UX3-012)', () => {
     expect(amountSubstance([ev({ kind: 'LenderFundsClaimed', args: { asset: WETH, amount: '0' } })])).toBeUndefined();
     expect(amountSubstance([ev({ kind: 'LenderFundsClaimed', args: '{not json' })])).toBeUndefined();
   });
+
+  // #2378 r2 — a batched transaction opening several offers or loans.
+  describe('several monetary actions in one transaction', () => {
+    const created = (offerId: number, amount: string) =>
+      ev({
+        kind: 'OfferCreatedDetails',
+        offerId,
+        logIndex: offerId,
+        args: { lendingAsset: WETH, fields: { assetType: 0, amount } },
+      });
+    it('shows the amount of the offer the row names', () => {
+      const bucket = [created(2, '200'), created(1, '100')];
+      expect(amountSubstance(bucket, { offerId: 1, loanId: null })).toEqual({ asset: WETH, amount: '100' });
+      expect(amountSubstance(bucket, { offerId: 2, loanId: null })).toEqual({ asset: WETH, amount: '200' });
+    });
+    it('shows no amount rather than one picked by event order when it cannot tell', () => {
+      expect(amountSubstance([created(2, '200'), created(1, '100')])).toBeUndefined();
+    });
+    it('pairs a loan start with the principal of the same loan', () => {
+      const bucket = [
+        ev({ kind: 'LoanInitiated', loanId: 8, args: { principal: '800' } }),
+        ev({ kind: 'LoanInitiated', loanId: 7, args: { principal: '700' } }),
+        ev({ kind: 'LoanInitiatedDetails', loanId: 7, args: { details: { principalAsset: WETH, assetType: 0 } } }),
+      ];
+      expect(amountSubstance(bucket, { loanId: 7, offerId: null })).toEqual({ asset: WETH, amount: '700' });
+    });
+  });
 });

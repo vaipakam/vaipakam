@@ -1408,7 +1408,8 @@
       "guidedBorrow": "Schritt für Schritt leihen",
       "guidedLend": "Schritt für Schritt verleihen",
       "enableAdvanced": "Zusätzliche Werkzeuge zeigen (Erweitert-Modus)",
-      "dismiss": "Verstanden"
+      "dismiss": "Verstanden",
+      "bodyOffers": "Diese Seite listet offene Angebote aller Paare; öffne eines, um seine Bedingungen zu sehen und es anzunehmen. Lieber Schritt für Schritt? Die Seiten Leihen und Verleihen finden für dich ein passendes Angebot."
     },
     "claims": {
       "checking": "Ansprüche werden geprüft…",
@@ -1481,7 +1482,7 @@
       "yearly": "jährlich",
       "collateralLabel": "Sicherheit",
       "collateralNone": "keine",
-      "illiquidCollateralTag": "wird bei Nichtrückzahlung unverändert übergeben",
+      "illiquidCollateralTag": "bei Veröffentlichung illiquide (bei Annahme erneut geprüft) – dann wird sie bei Nichtrückzahlung unverändert übergeben",
       "collateralAmountLoading": "{{token}} (Betrag wird geladen…)",
       "collateralAmountUnreadable": "{{token}} (Betrag konnte nicht gelesen werden)",
       "byCreator": "von",
@@ -1531,7 +1532,8 @@
       "staleList": "Diese Liste wurde zuletzt vor {{age}} aktualisiert und kann hinterherhinken — neue Angebote können existieren, die noch nicht angezeigt werden. Schauen Sie in Kürze wieder vorbei.",
       "unavailable": "Wir konnten das Angebotsbuch gerade nicht laden. Bitte versuchen Sie es gleich noch einmal.",
       "lenderOffer": "Kreditangebot",
-      "borrowerOffer": "Leihanfrage"
+      "borrowerOffer": "Leihanfrage",
+      "collateralAtLeast": "mindestens {{amount}}"
     },
     "desk": {
       "tenorLiveTitle": "{{tenor}} — Live-Angebote im Orderbuch",
@@ -1639,7 +1641,7 @@
         "unavailable": "Der Zinsverlauf konnte gerade nicht geladen werden.",
         "retry": "Erneut versuchen",
         "quotedMid": "mittlerer Zins",
-        "quotedMidHint": "Gestrichelte Linie = der aktuell quotierte Mittelkurs — eine ruhende Quotierung, kein ausgeführter Zinssatz.",
+        "quotedMidHint": "Gestrichelte Linie = die Mitte zwischen dem besten Angebot zum Verleihen und der besten Anfrage zum Leihen, die gerade offen sind. Sie wird aus diesen beiden berechnet – kein Zins, den jemand angeboten oder vereinbart hat.",
         "sparseNote_zero": "Dünner Markt — {{count}} Füllungen in diesem Bereich, einzeln gezeichnet. Kerzen erscheinen, sobald genug Handelsdaten für Aussagekraft vorhanden sind.",
         "sparseNote_one": "Dünner Markt — {{count}} Füllung in diesem Bereich, einzeln gezeichnet. Kerzen erscheinen, sobald genug Handelsdaten für Aussagekraft vorhanden sind.",
         "sparseNote_two": "Dünner Markt — {{count}} Füllungen in diesem Bereich, einzeln gezeichnet. Kerzen erscheinen, sobald genug Handelsdaten für Aussagekraft vorhanden sind.",
@@ -1779,8 +1781,8 @@
         "save": "Änderungen speichern",
         "saving": "Änderung läuft…",
         "amended": "Order geändert.",
-        "signedTitle": "Signierte Orders (dieser Markt)",
-        "signedNote": "Gaslose signierte Orders, die Sie für den ausgewählten Markt gepostet haben. Orders für andere Märkte erscheinen hier nicht — wechseln Sie den Markt in der Kopfzeile, um sie zu verwalten.",
+        "signedTitle": "Deine signierten Angebote (dieses Paar und diese Laufzeit)",
+        "signedNote": "Angebote, die du nur per Signatur veröffentlicht hast, für das oben gewählte Paar und die Laufzeit. Signierte Angebote für ein anderes Paar oder eine andere Laufzeit werden nicht angezeigt – wechsle oben, um sie zu verwalten.",
         "signedCancel": "On-chain abbrechen",
         "signedCancelling": "Wird abgebrochen…",
         "signedCancelNote": "Das Posten war kostenlos, das Stornieren kostet aber Gas: Eine Signatur, die das Buch bereits hält, lässt sich nur mit einer On-Chain-Transaktion widerrufen.",
@@ -1805,7 +1807,7 @@
         "step1": "Wählen Sie oben ein Paar: das verliehene Asset und die Sicherheit, die den Kredit absichert. Wählen Sie dann die Laufzeit des Kredits.",
         "step2": "Die Liste zeigt die gerade offenen Angebote. „Angebote zum Verleihen“ sind Personen, die zu diesem Jahreszins verleihen; „Anfragen zum Leihen“ sind Personen, die leihen möchten. Der mittlere Zins liegt zwischen dem besten Angebot jeder Seite.",
         "step3": "Um ein Angebot anzunehmen, tippen Sie daneben auf „Dieses Angebot leihen“ oder „Zu diesem Satz verleihen“. Sie sehen genau, was Sie zahlen und erhalten, bevor Sie etwas signieren.",
-        "step4": "Für ein eigenes Angebot füllst du das Formular aus: Betrag, deinen Zins und die Sicherheit. Es wartet in der Liste, bis jemand es annimmt, und bis dahin kannst du es ändern oder stornieren. Manchmal muss ein neues Angebot einige Minuten offen bleiben, bevor du es stornieren kannst."
+        "step4": "Für ein eigenes Angebot füllst du das Formular aus: Betrag, deinen Zins und die Sicherheit. Es wartet in der Liste, bis jemand es annimmt, und bis dahin kannst du es stornieren. Ein mit Netzwerkgebühr veröffentlichtes Angebot lässt sich auch ändern; ein kostenlos nur per Signatur veröffentlichtes nicht – storniere es und veröffentliche es neu. Manchmal muss ein neues Angebot einige Minuten offen bleiben, bevor du es stornieren kannst."
       }
     },
     "tariff": {
@@ -2204,7 +2206,9 @@
         "Approval": "Genehmigung"
       },
       "unavailableFallback": "Ihre aktuellen Kredite und Vermietungen sind jederzeit verfügbar auf",
-      "positionsLink": "Meine Positionen"
+      "positionsLink": "Meine Positionen",
+      "amountLoading": "Betrag wird geladen…",
+      "amountUnreadable": "Ein Betrag von {{token}} (Details konnten nicht gelesen werden)"
     },
     "rewards": {
       "unavailable": "Wir konnten Ihre Rewards gerade nicht prüfen — bitte versuchen Sie es gleich erneut.",

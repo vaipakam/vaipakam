@@ -1274,7 +1274,7 @@ try {
   // UI: the own-signed block in Open orders — market-scoped, with the
   // Signed chip, the short order hash, and the on-chain cancel armed.
   const shortHash = `${orderHash.slice(0, 6)}…${orderHash.slice(-4)}`;
-  await page.getByText('Your signed offers (this pair)').waitFor({ timeout: 30_000 });
+  await page.getByText('Your signed offers (this pair and loan length)').waitFor({ timeout: 30_000 });
   const signedRowUi = page.locator('.item-row').filter({ hasText: shortHash });
   await signedRowUi.waitFor({ timeout: 30_000 });
   const cancelBtn = signedRowUi.getByRole('button', { name: 'Cancel (network fee)' });

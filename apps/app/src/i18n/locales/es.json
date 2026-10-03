@@ -1408,7 +1408,8 @@
       "guidedBorrow": "Pedir prestado paso a paso",
       "guidedLend": "Prestar paso a paso",
       "enableAdvanced": "Mostrar las herramientas extra (modo Avanzado)",
-      "dismiss": "Entendido"
+      "dismiss": "Entendido",
+      "bodyOffers": "Esta página muestra las ofertas abiertas de todos los pares; abre una para ver sus condiciones y aceptarla. ¿Prefieres que te guíen? Las páginas Pedir prestado y Prestar te buscan una coincidencia paso a paso."
     },
     "claims": {
       "checking": "Comprobando reclamos…",
@@ -1481,7 +1482,7 @@
       "yearly": "anual",
       "collateralLabel": "garantía",
       "collateralNone": "ninguna",
-      "illiquidCollateralTag": "se entrega tal cual si no se devuelve",
+      "illiquidCollateralTag": "ilíquida al publicarse (se vuelve a comprobar al aceptar) — si lo es, se entrega tal cual si no se devuelve",
       "collateralAmountLoading": "{{token}} (cargando la cantidad…)",
       "collateralAmountUnreadable": "{{token}} (no se pudo leer la cantidad)",
       "byCreator": "por",
@@ -1531,7 +1532,8 @@
       "staleList": "Esta lista se actualizó hace {{age}} y puede estar atrasada — pueden existir ofertas nuevas que no se muestran. Vuelve en breve.",
       "unavailable": "No pudimos cargar el libro de ofertas ahora mismo. Inténtalo de nuevo en un momento.",
       "lenderOffer": "Oferta de préstamo",
-      "borrowerOffer": "Solicitud de préstamo"
+      "borrowerOffer": "Solicitud de préstamo",
+      "collateralAtLeast": "al menos {{amount}}"
     },
     "desk": {
       "tenorLiveTitle": "{{tenor}} — ofertas activas en el libro",
@@ -1639,7 +1641,7 @@
         "unavailable": "No pudimos cargar el historial de tasas ahora mismo.",
         "retry": "Reintentar",
         "quotedMid": "tasa media",
-        "quotedMidHint": "Línea discontinua = punto medio cotizado actual del libro — una cotización en reposo, no una tasa ejecutada.",
+        "quotedMidHint": "Línea discontinua = el punto medio entre la mejor oferta para prestar y la mejor solicitud para pedir prestado abiertas ahora. Se calcula a partir de esas dos: no es una tasa que alguien haya ofrecido o acordado.",
         "sparseNote_zero": "Mercado escaso — {{count}} llenados en este rango, dibujados individualmente. Las velas aparecen cuando hay suficiente historial para que signifiquen algo.",
         "sparseNote_one": "Mercado escaso — {{count}} llenado en este rango, dibujado individualmente. Las velas aparecen cuando hay suficiente historial para que signifiquen algo.",
         "sparseNote_two": "Mercado escaso — {{count}} llenados en este rango, dibujados individualmente. Las velas aparecen cuando hay suficiente historial para que signifiquen algo.",
@@ -1779,8 +1781,8 @@
         "save": "Guardar cambios",
         "saving": "Modificando…",
         "amended": "Orden modificada.",
-        "signedTitle": "Órdenes firmadas (este mercado)",
-        "signedNote": "Órdenes firmadas sin gas que publicaste para el mercado seleccionado. Las órdenes de otros mercados no se muestran aquí — cambia el mercado en el encabezado para gestionarlas.",
+        "signedTitle": "Tus ofertas firmadas (este par y este plazo)",
+        "signedNote": "Ofertas que publicaste solo con firma, para el par y el plazo del préstamo elegidos arriba. Las ofertas firmadas de otro par o plazo no se muestran: cámbialos arriba para gestionarlas.",
         "signedCancel": "Cancelar on-chain",
         "signedCancelling": "Cancelando…",
         "signedCancelNote": "Publicar fue gratis, pero cancelar cuesta gas: la única forma de revocar una firma que el libro ya tiene es una transacción on-chain.",
@@ -1805,7 +1807,7 @@
         "step1": "Elige un par arriba: el activo que se presta y la garantía que respalda el préstamo. Luego elige cuánto dura el préstamo.",
         "step2": "La lista muestra las ofertas abiertas ahora. «Ofertas para prestar» son personas dispuestas a prestar a esa tasa anual; «Solicitudes de préstamo» son personas que quieren pedir prestado. La tasa media está entre la mejor de cada lado.",
         "step3": "Para aceptar una oferta, pulsa «Pedir este» o «Prestar a este» a su lado. Verás exactamente lo que pagas y recibes antes de firmar nada.",
-        "step4": "Para crear tu propia oferta, completa el formulario: el importe, tu tasa y la garantía. Espera en la lista hasta que alguien la acepte, y puedes cambiarla o cancelarla antes de eso. A veces una oferta nueva tiene que seguir abierta unos minutos antes de que puedas cancelarla."
+        "step4": "Para crear tu propia oferta, completa el formulario: el importe, tu tasa y la garantía. Espera en la lista hasta que alguien la acepte, y puedes cancelarla antes de eso. Una oferta publicada pagando la comisión de red también se puede modificar; una publicada gratis solo con firma no: cancélala y publícala de nuevo. A veces una oferta nueva tiene que seguir abierta unos minutos antes de que puedas cancelarla."
       }
     },
     "tariff": {
@@ -2204,7 +2206,9 @@
         "Approval": "Aprobación"
       },
       "unavailableFallback": "Tus préstamos y alquileres actuales siempre están disponibles en",
-      "positionsLink": "Mis posiciones"
+      "positionsLink": "Mis posiciones",
+      "amountLoading": "Cargando importe…",
+      "amountUnreadable": "Un importe de {{token}} (no se pudieron leer sus detalles)"
     },
     "rewards": {
       "unavailable": "No pudimos comprobar tus recompensas ahora — inténtalo de nuevo en un momento.",

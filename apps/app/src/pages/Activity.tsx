@@ -39,10 +39,15 @@ function ActivityRow({ row, explorer }: { row: ActivityRowView; explorer: string
 
   // UX3-012 — what the transaction moved or offered, when it says so.
   const substanceMeta = useTokenMeta(row.substance?.asset);
-  const substanceStr =
-    row.substance && substanceMeta.data
+  // #2378 r2 — a recorded amount never disappears because its token's
+  // details are slow or unreadable; the row says which.
+  const substanceStr = !row.substance
+    ? null
+    : substanceMeta.data
       ? `${formatTokenAmount(BigInt(row.substance.amount), substanceMeta.data.decimals)} ${substanceMeta.data.symbol}`
-      : null;
+      : substanceMeta.isError
+        ? copy.activity.amountUnreadable(shortAddress(row.substance.asset))
+        : copy.activity.amountLoading;
   const sub = (
     <span className="row-sub">
       {substanceStr ? `${substanceStr} · ` : ''}

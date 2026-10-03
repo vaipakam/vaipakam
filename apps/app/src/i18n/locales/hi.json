@@ -1408,7 +1408,8 @@
       "guidedBorrow": "कदम-दर-कदम borrow करें",
       "guidedLend": "कदम-दर-कदम lend करें",
       "enableAdvanced": "अतिरिक्त tools दिखाएँ (Advanced mode)",
-      "dismiss": "समझ गया"
+      "dismiss": "समझ गया",
+      "bodyOffers": "यह पेज सभी जोड़ियों के खुले ऑफ़र दिखाता है; किसी को खोलकर उसकी शर्तें देखें और उसे लें। कदम-दर-कदम चलना पसंद है? उधार लें और उधार दें पेज एक-एक कदम में आपके लिए मेल ढूँढते हैं।"
     },
     "claims": {
       "checking": "क्लेम जांचे जा रहे हैं…",
@@ -1481,7 +1482,7 @@
       "yearly": "yearly",
       "collateralLabel": "collateral",
       "collateralNone": "none",
-      "illiquidCollateralTag": "न चुकाने पर जैसा है वैसा सौंप दिया जाता है",
+      "illiquidCollateralTag": "पोस्ट करते समय इलिक्विड (स्वीकार करते समय फिर जाँचा जाता है) — अगर ऐसा है, तो न चुकाने पर जैसा है वैसा सौंप दिया जाता है",
       "collateralAmountLoading": "{{token}} (राशि लोड हो रही है…)",
       "collateralAmountUnreadable": "{{token}} (राशि पढ़ी नहीं जा सकी)",
       "byCreator": "द्वारा",
@@ -1531,7 +1532,8 @@
       "staleList": "यह list {{age}} पहले updated हुई थी और पीछे हो सकती है — नए offers मौजूद हो सकते हैं जो अभी दिखते नहीं। थोड़ी देर बाद check करें।",
       "unavailable": "अभी offer book load नहीं कर सके। थोड़ी देर में try करें।",
       "lenderOffer": "Lending offer",
-      "borrowerOffer": "Borrow request"
+      "borrowerOffer": "Borrow request",
+      "collateralAtLeast": "कम से कम {{amount}}"
     },
     "desk": {
       "tenorLiveTitle": "{{tenor}} — book पर live offers",
@@ -1639,7 +1641,7 @@
         "unavailable": "अभी rate history load नहीं कर सके।",
         "retry": "Retry",
         "quotedMid": "बीच की दर",
-        "quotedMidHint": "Dashed line = book का current quoted mid — resting quote, executed rate नहीं।",
+        "quotedMidHint": "डैश वाली रेखा = अभी खुले सबसे अच्छे उधार देने के ऑफ़र और सबसे अच्छे उधार लेने के अनुरोध के बीच का मध्य बिंदु। यह इन दोनों से निकाला गया है — यह कोई ऐसी दर नहीं जो किसी ने दी या तय की हो।",
         "sparseNote_zero": "Sparse market — इस range में {{count}} fills हैं, individual draw किए गए। Meaningful data होने पर candles दिखेंगी।",
         "sparseNote_one": "Sparse market — इस range में {{count}} fill है, individual draw किया गया। Meaningful data होने पर candles दिखेंगी।",
         "sparseNote_two": "Sparse market — इस range में {{count}} fills हैं, individual draw किए गए। Meaningful data होने पर candles दिखेंगी।",
@@ -1779,8 +1781,8 @@
         "save": "Changes save करें",
         "saving": "Amending…",
         "amended": "offer बदल दिया गया।",
-        "signedTitle": "Signed orders (यह market)",
-        "signedNote": "Selected market के लिए आपके posted gasless signed orders. Other markets के orders नहीं दिखते — manage करने के लिए header में market switch करें।",
+        "signedTitle": "आपके हस्ताक्षरित ऑफ़र (यह जोड़ी और यह अवधि)",
+        "signedNote": "ऊपर चुनी गई जोड़ी और लोन अवधि के लिए, सिर्फ़ हस्ताक्षर से डाले गए ऑफ़र। किसी दूसरी जोड़ी या अवधि के हस्ताक्षरित ऑफ़र नहीं दिखाए जाते — उन्हें संभालने के लिए ऊपर बदलें।",
         "signedCancel": "रद्द करें (network fee)",
         "signedCancelling": "Cancelling…",
         "signedCancelNote": "Posting free थी, लेकिन cancelling gas cost करती है: book के पास held signature revoke करने का only way on-chain transaction है।",
@@ -1805,7 +1807,7 @@
         "step1": "ऊपर एक जोड़ी चुनें: जो asset उधार दिया जाता है, और जो collateral loan को सुरक्षित करता है। फिर चुनें कि loan कितने समय का है।",
         "step2": "सूची अभी खुले offers दिखाती है। “उधार देने के offers” वे लोग हैं जो उस सालाना दर पर उधार देने को तैयार हैं; “उधार लेने के अनुरोध” वे लोग हैं जो उधार लेना चाहते हैं। बीच की दर दोनों तरफ़ के सबसे अच्छे offer के बीच होती है।",
         "step3": "किसी offer को लेने के लिए उसके पास “यह borrow करें” या “इसे lend करें” दबाएँ। कुछ भी sign करने से पहले आप ठीक-ठीक देखते हैं कि आप क्या देंगे और क्या पाएँगे।",
-        "step4": "अपना ऑफ़र बनाने के लिए फ़ॉर्म भरें: राशि, आपकी दर और कोलैटरल। यह तब तक सूची में रहता है जब तक कोई इसे ले न ले, और उससे पहले आप इसे बदल या रद्द कर सकते हैं। कभी-कभी नए ऑफ़र को रद्द करने से पहले कुछ मिनट खुला रहना पड़ता है।"
+        "step4": "अपना ऑफ़र बनाने के लिए फ़ॉर्म भरें: राशि, आपकी दर और कोलैटरल। यह तब तक सूची में रहता है जब तक कोई इसे ले न ले, और उससे पहले आप इसे रद्द कर सकते हैं। नेटवर्क शुल्क देकर डाला गया ऑफ़र बदला भी जा सकता है; सिर्फ़ हस्ताक्षर से मुफ़्त डाला गया ऑफ़र नहीं — उसे रद्द करके फिर से डालें। कभी-कभी नए ऑफ़र को रद्द करने से पहले कुछ मिनट खुला रहना पड़ता है।"
       }
     },
     "tariff": {
@@ -2204,7 +2206,9 @@
         "Approval": "Approval"
       },
       "unavailableFallback": "आपके current loans और rentals हमेशा available हैं",
-      "positionsLink": "My positions"
+      "positionsLink": "My positions",
+      "amountLoading": "राशि लोड हो रही है…",
+      "amountUnreadable": "{{token}} की एक राशि (इसका विवरण पढ़ा नहीं जा सका)"
     },
     "rewards": {
       "unavailable": "हम आपके rewards अभी check नहीं कर सके — थोड़ी देर में फिर कोशिश करें।",

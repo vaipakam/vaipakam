@@ -1408,7 +1408,8 @@
       "guidedBorrow": "一步步借款",
       "guidedLend": "一步步出借",
       "enableAdvanced": "显示额外工具（高级模式）",
-      "dismiss": "知道了"
+      "dismiss": "知道了",
+      "bodyOffers": "此页面列出所有交易对的开放报价；打开一个即可查看条款并接受。想一步步来？“借款”和“出借”页面会逐步为你找到匹配。"
     },
     "claims": {
       "checking": "正在检查可领取项…",
@@ -1481,7 +1482,7 @@
       "yearly": "年化",
       "collateralLabel": "抵押品",
       "collateralNone": "无",
-      "illiquidCollateralTag": "若未还款则原样移交",
+      "illiquidCollateralTag": "发布时为非流动（接受时会重新检查）——若是，未还款时将原样移交",
       "collateralAmountLoading": "{{token}}（正在加载数量…）",
       "collateralAmountUnreadable": "{{token}}（无法读取数量）",
       "byCreator": "由",
@@ -1531,7 +1532,8 @@
       "staleList": "此列表上次更新于 {{age}} 前，可能落后 — 可能有未显示的新报价。请稍后再查看。",
       "unavailable": "当前无法加载报价簿。请稍后重试。",
       "lenderOffer": "出借报价",
-      "borrowerOffer": "借入请求"
+      "borrowerOffer": "借入请求",
+      "collateralAtLeast": "至少 {{amount}}"
     },
     "desk": {
       "tenorLiveTitle": "{{tenor}} — 订单簿上的实时报价",
@@ -1639,7 +1641,7 @@
         "unavailable": "当前无法加载利率历史。",
         "retry": "重试",
         "quotedMid": "中间利率",
-        "quotedMidHint": "虚线 = 簿当前报价中间价 — 是静置报价，不是成交利率。",
+        "quotedMidHint": "虚线 = 当前最佳出借报价与最佳借款请求之间的中点。它由这两者计算得出——不是任何人报出或达成的利率。",
         "sparseNote_zero": "市场稀疏 — 此范围内有 {{count}} 笔成交，已单独绘制。成交数据足够有意义后会显示蜡烛图。",
         "sparseNote_one": "市场稀疏 — 此范围内有 {{count}} 笔成交，已单独绘制。成交数据足够有意义后会显示蜡烛图。",
         "sparseNote_two": "市场稀疏 — 此范围内有 {{count}} 笔成交，已单独绘制。成交数据足够有意义后会显示蜡烛图。",
@@ -1779,8 +1781,8 @@
         "save": "保存更改",
         "saving": "修改中…",
         "amended": "订单已修改。",
-        "signedTitle": "签名订单（此市场）",
-        "signedNote": "您为所选市场发布的 gasless 签名订单。其他市场的订单不会显示 — 请在页头切换市场以管理它们。",
+        "signedTitle": "你的签名报价（此交易对和期限）",
+        "signedNote": "你仅凭签名发布的、针对上方所选交易对和贷款期限的报价。其他交易对或期限的签名报价不会显示——请在上方切换以管理它们。",
         "signedCancel": "链上取消",
         "signedCancelling": "取消中…",
         "signedCancelNote": "发布是免费的，但取消需要 gas：撤销簿中已持有签名的唯一方式是链上交易。",
@@ -1805,7 +1807,7 @@
         "step1": "在顶部选择一个交易对：被借出的资产，以及为贷款提供担保的抵押品。然后选择贷款期限。",
         "step2": "列表显示当前开放的报价。“出借报价”是愿意按该年利率出借的人；“借款请求”是想要借款的人。中间利率位于双方最优报价之间。",
         "step3": "要接受报价，请按旁边的“借入此项”或“出借给此项”。在签署任何内容之前，你会看到确切的支付和收到金额。",
-        "step4": "要发布自己的报价，请填写表单：金额、你的利率和抵押品。它会在列表中等待，直到有人接受；在此之前你可以修改或取消。有时新报价需要保持开放几分钟后才能取消。"
+        "step4": "要发布自己的报价，请填写表单：金额、你的利率和抵押品。它会在列表中等待，直到有人接受；在此之前你可以取消。支付网络费发布的报价还可以修改；仅凭签名免费发布的报价不能修改——请取消后重新发布。有时新报价需要保持开放几分钟后才能取消。"
       }
     },
     "tariff": {
@@ -2204,7 +2206,9 @@
         "Approval": "授权"
       },
       "unavailableFallback": "您的当前贷款和租赁始终可在这里查看",
-      "positionsLink": "我的持仓"
+      "positionsLink": "我的持仓",
+      "amountLoading": "正在加载金额…",
+      "amountUnreadable": "一笔 {{token}} 金额（无法读取其详情）"
     },
     "rewards": {
       "unavailable": "我们现在无法检查您的 rewards — 请稍后重试。",
