@@ -409,21 +409,20 @@ contract RepriceTestnetMock is Script {
             // `execute` works on raw amounts and assumes equal decimals, so a
             // leg at different decimals mis-pays by a power of ten whatever
             // its USD price says.
-            try IERC20Metadata(assets[i]).decimals() returns (uint8 d) {
-                if (d != assetDecimals) {
-                    buf[n++] = string.concat(
-                        "venue settles ",
-                        vm.toString(assets[i]),
-                        " (",
-                        vm.toString(uint256(d)),
-                        " decimals) against the repriced asset (",
-                        vm.toString(uint256(assetDecimals)),
-                        ") on raw amounts: the payout is off by a power of ten"
-                    );
-                }
-            } catch {
+            (bool known, uint8 d) = _tryDecimals(assets[i]);
+            if (!known) {
                 buf[n++] = string.concat(
                     "token ", vm.toString(assets[i]), " reports no decimals: its venue settlement is not substantiated"
+                );
+            } else if (d != assetDecimals) {
+                buf[n++] = string.concat(
+                    "venue settles ",
+                    vm.toString(assets[i]),
+                    " (",
+                    vm.toString(uint256(d)),
+                    " decimals) against the repriced asset (",
+                    vm.toString(uint256(assetDecimals)),
+                    ") on raw amounts: the payout is off by a power of ten"
                 );
             }
             string memory dev = _venuePriceDeviation(t, venue, assets[i]);
@@ -433,6 +432,24 @@ contract RepriceTestnetMock is Script {
         for (uint256 i; i < n; ++i) {
             deviations[i] = buf[i];
         }
+    }
+
+    /// @notice A token's decimals, or `known == false` when they cannot be
+    ///         read: no code, a reverting call, or malformed return data.
+    /// @dev    A high-level `try IERC20Metadata(t).decimals()` does NOT catch
+    ///         a code-less address or a short return — those revert in the
+    ///         caller, outside the `catch`, and would abort the whole run. So
+    ///         this is a low-level `staticcall` with a length check, the
+    ///         pattern `OracleFacet._tryTokenDecimals` uses. Unlike that
+    ///         helper, it does not default to 18: the venue report exists to
+    ///         state an unknown, not to paper over one.
+    function _tryDecimals(address token) internal view returns (bool known, uint8 d) {
+        if (token.code.length == 0) return (false, 0);
+        (bool ok, bytes memory data) = token.staticcall(abi.encodeWithSignature("decimals()"));
+        if (!ok || data.length < 32) return (false, 0);
+        uint256 raw = abi.decode(data, (uint256));
+        if (raw > type(uint8).max) return (false, 0);
+        return (true, uint8(raw));
     }
 
     function _venuePriceDeviation(RepriceTarget memory t, MockSwapAdapter venue, address asset)

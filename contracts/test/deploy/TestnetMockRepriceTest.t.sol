@@ -376,6 +376,38 @@ contract TestnetMockRepriceTest is TestnetMockOracleRig, RepriceTestnetMock {
         );
     }
 
+    /// @notice An artifact entry with no code behind it — or a contract with
+    ///         no `decimals()` — is reported as unknown; it must not abort the
+    ///         run (a high-level try/catch would revert outside the catch).
+    function test_venueReport_namesUnreadableDecimalsWithoutReverting() public {
+        address noCode = makeAddr("no-code");
+        address[] memory a = new address[](3);
+        a[0] = address(tLIQ);
+        a[1] = noCode;
+        a[2] = address(registry); // has code, has no decimals()
+        string[] memory d = _venueReport(tliqTarget, a);
+        assertEq(
+            d[0],
+            string.concat("token ", vm.toString(noCode), " reports no decimals: its venue settlement is not substantiated")
+        );
+        bool sawRegistry;
+        for (uint256 i; i < d.length; ++i) {
+            if (
+                keccak256(bytes(d[i]))
+                    == keccak256(
+                        bytes(
+                            string.concat(
+                                "token ",
+                                vm.toString(address(registry)),
+                                " reports no decimals: its venue settlement is not substantiated"
+                            )
+                        )
+                    )
+            ) sawRegistry = true;
+        }
+        assertTrue(sawRegistry, "a contract without decimals() is reported too");
+    }
+
     /// @notice With the venue skipped, the repriced asset itself shows up as
     ///         a deviation — the report states the mismatch the operator chose.
     function test_venueReport_skipVenueReportsTheRepricedAsset() public {
