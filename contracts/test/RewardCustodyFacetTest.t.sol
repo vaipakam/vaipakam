@@ -997,6 +997,10 @@ contract RewardCustodyFacetTest is SetupTest {
     ///      NOT history-free: a zero rebase must not close the door, or a
     ///      later direct promotion to Canonical would expose the stale
     ///      received side as headroom with no way to install the baseline.
+    ///      Slice 4 PR C-1 closes that hole by construction: EVERY effective
+    ///      role change retires the live era, levelling paid up to the stale
+    ///      received side first, so the chain leaves Detached with zero
+    ///      headroom; the guard still has to stay open for the baseline.
     function test_Rebase_Detached_WithReceivedHistoryKeepsTheGuardOpen() public {
         _becomeDetached();
         _mut().setArmedFreshLedgerRaw(800 ether, 0);
@@ -1013,19 +1017,21 @@ contract RewardCustodyFacetTest is SetupTest {
         _custody().rebaseArmedFreshPaid(0, _epoch());
         assertFalse(_custody().armedFreshPaidRebased(), "guard stays open");
 
-        // Promoted DIRECTLY to Canonical (never through Mirror, so no
-        // residual retirement levels the counters on the way): the baseline
-        // can still be installed because the guard stayed open.
+        // Promoted DIRECTLY to Canonical. The promotion is an effective role
+        // change, so it retires the live era (PR C-1) and levels paid up to the
+        // stale received side before anything else: the stale side is kept as
+        // history, it is no headroom, and the baseline can still be installed
+        // because the guard stayed open.
         vm.chainId(CHAIN_BASE);
         _rep().setIsCanonicalRewardChain(true);
         assertEq(uint8(_rep().getRewardRole()), uint8(LibVaipakam.RewardRole.Canonical));
         (uint256 receivedBefore, uint256 paidBefore) = _custody().armedFreshLedger();
-        assertEq(receivedBefore, 800 ether, "direct promotion left the stale received side in place");
-        assertEq(paidBefore, 0);
+        assertEq(receivedBefore, 800 ether, "the stale received side is kept as history");
+        assertEq(paidBefore, 800 ether, "the era retirement levelled paid to it: no stale headroom");
         _custody().rebaseArmedFreshPaid(0, _epoch());
         (uint256 received, uint256 paid) = _custody().armedFreshLedger();
-        assertEq(paid, 0);
-        assertEq(received, 0, "canonical: received levelled to paid, the stale headroom is gone");
+        assertEq(paid, 800 ether, "a rebase never lowers the paid counter");
+        assertEq(received, 800 ether, "canonical: received levelled to paid, still no headroom");
         assertTrue(_custody().armedFreshPaidRebased());
     }
 
