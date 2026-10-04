@@ -1,4 +1,4 @@
-## Thread — Base Sepolia no longer routes the eleven functions its code had retired (PR #TBD)
+## Thread — Base Sepolia no longer routes the eleven functions its code had retired (PR #2400)
 
 Base Sepolia was refreshed in place once more on 4 October (paused briefly from 03:00 to 03:07 UTC), using the refresh change from #2385. That change removes every function the current code no longer has. Base Sepolia had still routed eleven of them, each to the code it was last installed with:
 - older shapes of the offer-accept entry points;
