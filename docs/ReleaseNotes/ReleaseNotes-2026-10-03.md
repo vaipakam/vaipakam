@@ -4,12 +4,13 @@ A day of two halves. On the contract side, reward claims too large for one
 read are now staged and completed rather than abandoned, a complete in-place
 refresh removes every function the code no longer has, the testnet drawdown
 rehearsal moves the pool and the venue together with the price feed, and Base
-Sepolia was refreshed to current main. On the app side, the 2026-10-03 live
-review's findings shipped in four batches: every claim and loan surface states
-what it knows and what it does not; the Rate Desk and Offer Book read in plain
-words and are usable by newcomers; borrowers can take back collateral their
-loan no longer needs; and the connected app downloads a quarter of the
-contract data it used to.
+Sepolia was refreshed to current main. On the app side, four batches of
+fixes from the 2026-10-03 live review shipped: every claim and loan surface
+states what it knows and what it does not; the Rate Desk and Offer Book read in
+plain words and are usable by newcomers; borrowers can take back collateral
+their loan no longer needs; and the connected app downloads a quarter of the
+contract data it used to. Two parts of that review are still open: amounts on
+Activity rows (#2383) and the loan-to-value on Offer Book cards (#2384).
 
 ## Thread — transport epochs 3b-ii-A2-i: a deferred claim day is staged, not abandoned (PR #2308)
 
