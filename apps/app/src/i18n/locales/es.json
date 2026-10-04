@@ -1520,6 +1520,14 @@
       "collateralLabel": "garantía",
       "collateralNone": "ninguna",
       "illiquidCollateralTag": "ilíquida al publicarse (se vuelve a comprobar al aceptar) — si lo es, se entrega tal cual si no se devuelve",
+      "collateralAtLeast": "al menos {{amount}}",
+      "ltvValue": "préstamo sobre valor {{pct}} (el valor del préstamo como proporción del de la garantía)",
+      "ltvValueRanged": "préstamo sobre valor {{pct}} con los importes mostrados (el valor del préstamo como proporción del de la garantía); una ejecución de otro tamaño puede diferir",
+      "ltvIlliquid": "el préstamo sobre valor no se calcula: una de las partes se considera ilíquida (sin un precio fiable o con muy poca negociación), así que el protocolo no le asigna valor",
+      "ltvTooSmall": "el préstamo sobre valor no se puede calcular con este tamaño: el valor de una de las partes se redondea a nada",
+      "ltvUnknown": "no se pudo comprobar el préstamo sobre valor ahora mismo",
+      "ltvLoading": "comprobando el préstamo sobre valor…",
+      "collateralOfRunningLoan": "la garantía del préstamo en curso que se vende (no se muestra en esta fila)",
       "collateralAmountLoading": "{{token}} (cargando la cantidad…)",
       "collateralAmountRaw": "{{amount}} unidades base de {{token}} (no se pudieron leer los datos del token)",
       "collateralForFullOffer": "{{amount}} para la oferta completa (proporcionalmente menos para una parte)",
@@ -1572,9 +1580,7 @@
       "staleList": "Esta lista se actualizó hace {{age}} y puede estar atrasada — pueden existir ofertas nuevas que no se muestran. Vuelve en breve.",
       "unavailable": "No pudimos cargar el libro de ofertas ahora mismo. Inténtalo de nuevo en un momento.",
       "lenderOffer": "Oferta de préstamo",
-      "borrowerOffer": "Solicitud de préstamo",
-      "collateralAtLeast": "al menos {{amount}}",
-      "collateralOfRunningLoan": "la garantía del préstamo en curso que se vende (no se muestra en esta fila)"
+      "borrowerOffer": "Solicitud de préstamo"
     },
     "desk": {
       "tenorLiveTitle": "{{tenor}} — ofertas activas en el libro",

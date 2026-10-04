@@ -1520,6 +1520,14 @@
       "collateralLabel": "Sicherheit",
       "collateralNone": "keine",
       "illiquidCollateralTag": "bei Veröffentlichung illiquide (bei Annahme erneut geprüft) – dann wird sie bei Nichtrückzahlung unverändert übergeben",
+      "collateralAtLeast": "mindestens {{amount}}",
+      "ltvValue": "Beleihungsquote {{pct}} (der Wert des Kredits als Anteil am Wert der Sicherheit)",
+      "ltvValueRanged": "Beleihungsquote {{pct}} bei den angezeigten Beträgen (der Wert des Kredits als Anteil am Wert der Sicherheit) – eine Ausführung anderer Größe kann abweichen",
+      "ltvIlliquid": "Beleihungsquote wird nicht berechnet – eine Seite gilt als illiquide (kein verlässlicher Preis oder zu wenig Handel), daher setzt das Protokoll ihren Wert mit null an",
+      "ltvTooSmall": "Beleihungsquote lässt sich bei dieser Größe nicht berechnen – der Wert einer Seite rundet auf null",
+      "ltvUnknown": "Beleihungsquote konnte gerade nicht geprüft werden",
+      "ltvLoading": "Beleihungsquote wird geprüft…",
+      "collateralOfRunningLoan": "die Sicherheit des laufenden Kredits, der verkauft wird (in dieser Zeile nicht angezeigt)",
       "collateralAmountLoading": "{{token}} (Betrag wird geladen…)",
       "collateralAmountRaw": "{{amount}} Basiseinheiten von {{token}} (Token-Details konnten nicht gelesen werden)",
       "collateralForFullOffer": "{{amount}} für das gesamte Angebot (anteilig weniger für einen Teil davon)",
@@ -1572,9 +1580,7 @@
       "staleList": "Diese Liste wurde zuletzt vor {{age}} aktualisiert und kann hinterherhinken — neue Angebote können existieren, die noch nicht angezeigt werden. Schauen Sie in Kürze wieder vorbei.",
       "unavailable": "Wir konnten das Angebotsbuch gerade nicht laden. Bitte versuchen Sie es gleich noch einmal.",
       "lenderOffer": "Kreditangebot",
-      "borrowerOffer": "Leihanfrage",
-      "collateralAtLeast": "mindestens {{amount}}",
-      "collateralOfRunningLoan": "die Sicherheit des laufenden Kredits, der verkauft wird (in dieser Zeile nicht angezeigt)"
+      "borrowerOffer": "Leihanfrage"
     },
     "desk": {
       "tenorLiveTitle": "{{tenor}} — Live-Angebote im Orderbuch",

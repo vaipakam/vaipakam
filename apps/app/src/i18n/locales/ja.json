@@ -1520,6 +1520,14 @@
       "collateralLabel": "担保",
       "collateralNone": "なし",
       "illiquidCollateralTag": "出品時は非流動（受諾時に再確認）— その場合、返済されなければそのまま引き渡されます",
+      "collateralAtLeast": "最低 {{amount}}",
+      "ltvValue": "担保掛目 {{pct}}（担保価値に対する融資価値の割合）",
+      "ltvValueRanged": "表示された数量での担保掛目 {{pct}}（担保価値に対する融資価値の割合）。別の数量で約定すると異なる場合があります",
+      "ltvIlliquid": "担保掛目は算出されません。一方が流動性なし（信頼できる価格がない、または取引が少なすぎる）と扱われ、プロトコル上の価値がゼロになるためです",
+      "ltvTooSmall": "この数量では担保掛目を算出できません。一方の価値が丸めてゼロになります",
+      "ltvUnknown": "担保掛目を今は確認できませんでした",
+      "ltvLoading": "担保掛目を確認中…",
+      "collateralOfRunningLoan": "売却される進行中のローンの担保（この行には表示されません）",
       "collateralAmountLoading": "{{token}}（数量を読み込み中…）",
       "collateralAmountRaw": "{{token}} の基本単位で {{amount}}（トークンの詳細を読み取れませんでした）",
       "collateralForFullOffer": "オファー全額に対して {{amount}}（一部だけなら比例して少なくなります）",
@@ -1572,9 +1580,7 @@
       "staleList": "このリストの最終更新は {{age}} 前で、遅れている可能性があります — 表示されていない新しいオファーがあるかもしれません。しばらくして確認してください。",
       "unavailable": "現在オファーブックを読み込めませんでした。少し待って再試行してください。",
       "lenderOffer": "貸付オファー",
-      "borrowerOffer": "借入リクエスト",
-      "collateralAtLeast": "最低 {{amount}}",
-      "collateralOfRunningLoan": "売却される進行中のローンの担保（この行には表示されません）"
+      "borrowerOffer": "借入リクエスト"
     },
     "desk": {
       "tenorLiveTitle": "{{tenor}} — 板上のライブオファー",
