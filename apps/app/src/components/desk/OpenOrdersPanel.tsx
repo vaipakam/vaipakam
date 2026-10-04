@@ -22,7 +22,6 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Inbox, LoaderCircle, Pencil } from 'lucide-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { usePublicClient, useWalletClient } from 'wagmi';
-import { parseUnits } from 'viem';
 import { copy } from '../../content/copy';
 import { useActiveChain } from '../../chain/useActiveChain';
 import {
@@ -67,12 +66,15 @@ import { WindowedRowList } from '../../lib/visibleWindow';
 import { percentToBps, MAX_INTEREST_BPS } from '../../lib/offerSchema';
 import {
   exactAmountString,
+  exactUnitsOrNull,
   formatBpsAsPercent,
   formatDate,
   formatDurationDays,
   formatTokenAmount,
+  parseExactUnits,
   shortAddress,
 } from '../../lib/format';
+import { AmountPrecisionHint } from '../AmountPrecisionHint';
 import type { IndexedOffer } from '../../data/indexer';
 
 const text = copy.desk.orders;
@@ -178,8 +180,8 @@ function AmendForm({
   }
 
   // Strict decimal gate — the same `isPlainDecimal` rule the
-  // OrderTicket's inputs enforce. viem's parseUnits throws on letters
-  // (fail closed already) but ACCEPTS a leading minus, and the rate
+  // OrderTicket's inputs enforce. The exact amount parse refuses letters
+  // and a leading minus already (fail closed), but the rate
   // fields are parseFloat-backed — so '-5' / '11abc' / '5%' must be
   // rejected here, not silently coerced. Amount-style fields may be
   // empty (the parser below treats empty as '0').
@@ -200,13 +202,24 @@ function AmendForm({
       return null;
     }
     try {
-      const amount = parseUnits(fields.amount || '0', lendDec);
-      const amountMax = parseUnits(fields.amountMax || '0', lendDec);
+      // #2390 — exact: a field finer than its token is refused (its hint
+      // names it), never rounded into a different on-chain amount.
+      const amount = exactUnitsOrNull(fields.amount || '0', lendDec);
+      const amountMax = exactUnitsOrNull(fields.amountMax || '0', lendDec);
       const rate = pctToBpsStrict(fields.rate);
       const rateMax = pctToBpsStrict(fields.rateMax);
-      const collateral = parseUnits(fields.collateral || '0', collDec);
-      const collateralMax = parseUnits(fields.collateralMax || '0', collDec);
-      if (rate === null || rateMax === null) return null;
+      const collateral = exactUnitsOrNull(fields.collateral || '0', collDec);
+      const collateralMax = exactUnitsOrNull(fields.collateralMax || '0', collDec);
+      if (
+        amount === null ||
+        amountMax === null ||
+        collateral === null ||
+        collateralMax === null ||
+        rate === null ||
+        rateMax === null
+      ) {
+        return null;
+      }
       return {
         amount,
         amountMax,
@@ -503,25 +516,35 @@ function AmendForm({
       return next;
     });
 
-  type AmendInput = [keyof NonNullable<typeof fields>, string, string];
+  // [field, label, unit, token decimals — undefined for the rate fields,
+  // which carry no token precision].
+  type AmendInput = [keyof NonNullable<typeof fields>, string, string, number | undefined];
   const inputs: readonly AmendInput[] = [
     [
       'amount',
       isAon ? text.amendAmountAon : text.amendMinAmount,
       lendingMeta.data?.symbol ?? '',
+      lendDec,
     ],
     // AON size is single-value — the min field above drives both.
     ...(isAon
       ? []
-      : ([['amountMax', text.amendMaxAmount, lendingMeta.data?.symbol ?? '']] as AmendInput[])),
-    ['rate', text.amendRate, text.rateUnit],
-    ['rateMax', text.amendRateMax, text.rateUnit],
-    ['collateral', text.amendCollateral, collateralMeta.data?.symbol ?? ''],
+      : ([
+          ['amountMax', text.amendMaxAmount, lendingMeta.data?.symbol ?? '', lendDec],
+        ] as AmendInput[])),
+    ['rate', text.amendRate, text.rateUnit, undefined],
+    ['rateMax', text.amendRateMax, text.rateUnit, undefined],
+    ['collateral', text.amendCollateral, collateralMeta.data?.symbol ?? '', collDec],
     // Lender collateral is single-value — the field above drives both.
     ...(isLenderRow
       ? []
       : ([
-          ['collateralMax', text.amendCollateralMax, collateralMeta.data?.symbol ?? ''],
+          [
+            'collateralMax',
+            text.amendCollateralMax,
+            collateralMeta.data?.symbol ?? '',
+            collDec,
+          ],
         ] as AmendInput[])),
   ];
 
@@ -531,7 +554,7 @@ function AmendForm({
         {text.amendTitle}
       </p>
       <div className="desk-amend-grid">
-        {inputs.map(([key, label, unit]) => (
+        {inputs.map(([key, label, unit, decimals]) => (
           <div className="field" style={{ margin: 0 }} key={key}>
             <label htmlFor={`amend-${offer.offerId}-${key}`}>{label}</label>
             <input
@@ -541,6 +564,11 @@ function AmendForm({
               title={unit}
               value={fields[key] as string}
               onChange={(e) => setField(key, e.target.value)}
+            />
+            <AmountPrecisionHint
+              value={fields[key] as string}
+              decimals={decimals}
+              symbol={unit}
             />
           </div>
         ))}
@@ -812,12 +840,18 @@ function FullTariffArmForm({
         setError(copy.tariff.maxCStarRequired);
         return;
       }
-      try {
-        ceiling = parseUnits(fields.ceiling, VPFI_DECIMALS);
-      } catch {
+      // #2390 — exact: a ceiling finer than VPFI's precision is refused
+      // and named, never rounded into a different authorization.
+      const exact = parseExactUnits(fields.ceiling, VPFI_DECIMALS);
+      if (exact === 'too-precise') {
+        setError(copy.common.amountTooPrecise('VPFI', String(VPFI_DECIMALS)));
+        return;
+      }
+      if (exact === 'invalid') {
         setError(copy.tariff.maxCStarRequired);
         return;
       }
+      ceiling = exact;
       if (ceiling <= 0n) {
         setError(copy.tariff.maxCStarRequired);
         return;
@@ -957,6 +991,11 @@ function FullTariffArmForm({
               style={{ display: 'block', marginTop: 4, width: '100%' }}
             />
           </label>
+          <AmountPrecisionHint
+            value={fields.ceiling}
+            decimals={VPFI_DECIMALS}
+            symbol="VPFI"
+          />
           <p className="muted" style={{ margin: '4px 0 0', fontSize: '0.8rem' }}>
             {copy.tariff.maxCStarHelp}
           </p>

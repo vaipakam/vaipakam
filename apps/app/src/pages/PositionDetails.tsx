@@ -25,7 +25,6 @@ import {
   ContractFunctionRevertedError,
   ContractFunctionZeroDataError,
   formatUnits,
-  parseUnits,
 } from 'viem';
 import { copy } from '../content/copy';
 import { isPositiveDecimal, captureTxError } from '../lib/errors';
@@ -58,6 +57,7 @@ import {
   formatDate,
   formatDurationDays,
   formatTokenAmount,
+  exactUnitsOrNull,
   formatTokenAmountDown,
   parseExactUnits,
   fullTermInterest,
@@ -65,6 +65,7 @@ import {
 } from '../lib/format';
 import { flowDisabled } from '../lib/killSwitch';
 import { loanStateView, loanStateLabel } from '../lib/loanState';
+import { AmountPrecisionHint } from '../components/AmountPrecisionHint';
 import { EmptyState, UnavailableState } from '../components/EmptyState';
 import { type ReceiptData } from '../components/ReviewReceipt';
 import { ConfirmReceipt } from '../components/ConfirmReceipt';
@@ -888,25 +889,18 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   const principalBalance = useTokenBalance(
     loanIsRental ? undefined : loan.data?.lendingAsset,
   );
+  // #2390 — parsed EXACTLY: more decimals than the token has is refused
+  // (AmountPrecisionHint names it), never rounded into another amount.
   const collateralInputWei = useMemo(() => {
     if (!collateralMeta.data || !isPositiveDecimal(collateralInput)) return null;
-    try {
-      const wei = parseUnits(collateralInput, collateralMeta.data.decimals);
-      // A positive decimal below the token's precision parses to 0 wei
-      // — the contract rejects zero amounts, so treat it as invalid.
-      return wei > 0n ? wei : null;
-    } catch {
-      return null;
-    }
+    const wei = exactUnitsOrNull(collateralInput, collateralMeta.data.decimals);
+    // The contract rejects zero amounts.
+    return wei !== null && wei > 0n ? wei : null;
   }, [collateralInput, collateralMeta.data]);
   const partialInputWei = useMemo(() => {
     if (!principalMeta.data || !isPositiveDecimal(partialInput)) return null;
-    try {
-      const wei = parseUnits(partialInput, principalMeta.data.decimals);
-      return wei > 0n ? wei : null;
-    } catch {
-      return null;
-    }
+    const wei = exactUnitsOrNull(partialInput, principalMeta.data.decimals);
+    return wei !== null && wei > 0n ? wei : null;
   }, [partialInput, principalMeta.data]);
   // Minute tick so a countdown left on screen stays honest.
   const [nowSec, setNowSec] = useState(() => Math.floor(Date.now() / 1000));
@@ -2083,10 +2077,12 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     : '…';
   async function runAddCollateral() {
     if (!address || !walletChain || !walletClient || !publicClient || !collateralMeta.data) return;
+    // #2390 — the exact amount the receipt showed; never re-parsed here.
+    const wei = collateralInputWei;
+    if (wei === null) return;
     setPhase('pending');
     setError(null);
     try {
-      const wei = parseUnits(collateralInput, collateralMeta.data.decimals);
       // addCollateral screens msg.sender — re-screen live before the
       // approval (the page gate is a cached read).
       await assertWalletNotSanctionedLive(
@@ -2295,6 +2291,9 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
 
   async function runPartialRepay() {
     if (!address || !walletChain || !walletClient || !publicClient || !principalMeta.data) return;
+    // #2390 — the exact amount the receipt showed; never re-parsed here.
+    const wei = partialInputWei;
+    if (wei === null) return;
     // Accepted-sale completion window (Codex #1511 r4 P1 + r5 P1):
     // the buyer funded the ACCEPTED principal — a partial now changes
     // it under the in-flight purchase. Cached fast-path + LIVE
@@ -2315,7 +2314,6 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     }
     setError(null);
     try {
-      const wei = parseUnits(partialInput, principalMeta.data.decimals);
       // repayPartial pulls MORE than the typed amount: the accrued
       // interest to now (lender + treasury split) rides along in the
       // same transferFrom set. Approve and balance-check the full pull
@@ -3209,6 +3207,11 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
               {copy.positions.details.addCollateral.button}
             </button>
           </div>
+          <AmountPrecisionHint
+            value={collateralInput}
+            decimals={collateral.decimals}
+            symbol={collateral.symbol}
+          />
           {collateralOverBalance ? (
             <p className="field-hint" style={{ color: 'var(--danger)', marginTop: 8 }}>
               {collateralInputWei !== null && collateralBalance.data !== undefined
@@ -3422,14 +3425,11 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                   {copy.positions.details.withdrawCollateral.button}
                 </button>
               </div>
-              {withdrawProblem === 'too-precise' ? (
-                <p className="field-hint" style={{ color: 'var(--danger)', marginTop: 8 }}>
-                  {copy.positions.details.withdrawCollateral.tooPrecise(
-                    collateral.symbol,
-                    String(collateral.decimals),
-                  )}
-                </p>
-              ) : null}
+              <AmountPrecisionHint
+                value={withdrawInput}
+                decimals={collateral.decimals}
+                symbol={collateral.symbol}
+              />
               {withdrawProblem === 'over-max' ? (
                 <p className="field-hint" style={{ color: 'var(--danger)', marginTop: 8 }}>
                   {copy.positions.details.withdrawCollateral.overMax(
@@ -3571,6 +3571,11 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
               {copy.positions.details.partial.button}
             </button>
           </div>
+          <AmountPrecisionHint
+            value={partialInput}
+            decimals={principal.decimals}
+            symbol={principal.symbol}
+          />
           {partialOverBalance ? (
             <p className="field-hint" style={{ color: 'var(--danger)', marginTop: 8 }}>
               {partialInputWei !== null && principalBalance.data !== undefined

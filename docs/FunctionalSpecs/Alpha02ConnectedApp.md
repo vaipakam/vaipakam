@@ -1157,6 +1157,20 @@ The receipt should answer:
 - what fees apply; and
 - when the position or obligation ends.
 
+### Typed amounts are sent exactly as typed
+
+Every amount a user types into a value-moving form is the amount the
+transaction carries, to the token's smallest unit. A token can only be divided
+as finely as its own decimal places allow, so an amount with more decimal
+places than that cannot be sent as typed. Such an amount is refused, never
+rounded up or down into a nearby figure, and the form says why: it names the
+token and the number of decimal places it accepts. Until the amount is fixed,
+the step or button that would act on it stays unavailable.
+
+This holds for every money input, including amounts the user never sees again
+before signing (such as a fee ceiling), because a rounded figure would mean
+the review states one amount while the contract moves another.
+
 Consent is collected against the terms actually shown. If a material term,
 warning, selected offer, selected listing, or disclosed risk changes after
 consent, consent is cleared and the user is told to review again.
