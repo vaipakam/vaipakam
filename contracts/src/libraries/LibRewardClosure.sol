@@ -156,6 +156,10 @@ library LibRewardClosure {
         if (!(w.lenderComplete && w.borrowerComplete)) return false;
         w.completed = true;
         s.dayObligationsClosed[w.day] = true;
+        // slice 4 PR C-1 — the era the day was live in has one more day proven
+        // closed; an era is free of outstanding reward liability exactly when
+        // every day of its span is (the registry's terminal condition).
+        ++s.custodyEras[LibRewardCustody.custodyEraOfDay(s, w.day)].daysClosed;
         emit DayObligationsClosed(w.day, w.starter, w.nonce);
         key; // the walk is reachable by its key; nothing else to record
         return true;

@@ -84,6 +84,24 @@ library LibRewardCustody {
     ///               re-attribution.
     /// @custom:event-category state-change/reward-custody
     event RewardCustodyRowDebited(uint8 indexed row, uint256 amount, address to);
+    /// @notice Slice 4 PR C-1 — the live era was RETIRED at a role change: `carried` moved from the live-fresh
+    ///         row into the era's holder row (in-holder), and the baseline was levelled so the next era opens with
+    ///         no headroom and `openingDeficit` still owed.
+    /// @custom:event-category state-change/reward-custody
+    event CustodyEraRetired(uint64 indexed era, uint256 carried, uint256 openingDeficit, uint64 boundaryDay);
+    /// @notice Slice 4 PR C-1 — era `era` opened as the live era; `boundaryDay` is its first reward day.
+    /// @custom:event-category state-change/reward-custody
+    event CustodyEraOpened(uint64 indexed era, uint64 boundaryDay);
+    /// @notice Slice 4 PR C-1 — `amount` left era `era`'s holder row at finalization: into the live/restitution rows
+    ///         under the deficit split, or into PENDING SURPLUS (`toPending`) while the chain is Detached.
+    /// @custom:event-category state-change/reward-custody
+    event CustodyEraReleased(uint64 indexed era, uint256 amount, bool toPending);
+    /// @notice Slice 4 PR C-1 — era `era` is terminal: its counters read zero and its row was released.
+    /// @custom:event-category state-change/reward-custody
+    event CustodyEraClosed(uint64 indexed era);
+    /// @notice Slice 4 PR C-1 — `amount` of PENDING SURPLUS was credited to the live baseline under the deficit split.
+    /// @custom:event-category state-change/reward-custody
+    event CustodyPendingSurplusDrained(uint256 amount, uint256 toLive, uint256 toRestitution);
 
     /// @notice Fresh funding was credited to the delivered ledger's received
     ///         side, and its custody attributed under the §5c deficit split.
@@ -269,6 +287,7 @@ library LibRewardCustody {
         for (uint256 i = 0; i <= last; ++i) {
             total += s.rewardCustodyRows[LibVaipakam.RewardCustodyRow(i)];
         }
+        total += s.custodyEraRowsTotal; // slice 4 PR C-1: the retired eras' rows are attributed custody too
     }
 
     /// @notice The bound holder and the configured token, or a named refusal
@@ -929,13 +948,146 @@ library LibRewardCustody {
         LibVaipakam.Storage storage s,
         uint256 amount
     ) internal returns (uint256 toLive, uint256 toRestitution) {
+        return creditFreshSplit(s, amount, 0);
+    }
+
+    /// @notice The ONE fresh credit under the §5c deficit split — writer 1 (a
+    ///         measured ingress, `origin` 0) and the two in-holder writers of
+    ///         slice 4 PR C-1 (the era-terminal release and the pending-surplus
+    ///         drain, `origin` 1) all raise `received` and allocate here, so the
+    ///         rule that the deficit's cover is never headroom has one body.
+    function creditFreshSplit(
+        LibVaipakam.Storage storage s,
+        uint256 amount,
+        uint8 origin
+    ) internal returns (uint256 toLive, uint256 toRestitution) {
         if (amount == 0) return (0, 0);
         (toLive, toRestitution) = freshSplit(s, amount);
         uint256 received = s.rewardBudgetArmedFreshReceived;
         s.rewardBudgetArmedFreshReceived = received + amount;
-        credit(s, LibVaipakam.RewardCustodyRow.LiveFresh, toLive, 0);
-        credit(s, LibVaipakam.RewardCustodyRow.Restitution, toRestitution, 0);
+        credit(s, LibVaipakam.RewardCustodyRow.LiveFresh, toLive, origin);
+        credit(s, LibVaipakam.RewardCustodyRow.Restitution, toRestitution, origin);
         emit RewardCustodyFreshCredited(amount, toLive, toRestitution, received + amount);
+    }
+
+    // ── Slice 4 PR C-1 — the custody era registry ──
+
+    /// @notice Retire the live era at an EFFECTIVE role change and open the
+    ///         next: the live-fresh row moves, in-holder, into the retiring
+    ///         era's holder row — custody the obligations accrued in that era
+    ///         may still consume (PR C-2) and nothing else may — and the
+    ///         delivered counters are levelled so the new baseline opens with
+    ///         no headroom; a `paid > received` deficit is NOT erased, it is
+    ///         the new era's opening deficit, covered first by its first credit.
+    /// @dev    Design §5d rows 8–10. Before custody activation the holder has
+    ///         no rows: the counters are levelled as before and the registry is
+    ///         untouched, so the backfill (PR C-5) finds every pre-activation
+    ///         figure in era 0. The carried amount is the live ROW — the
+    ///         custody — and the headroom counter is levelled to match; the
+    ///         two agree on an activated chain (`invariant_LiveRowIsTheBound`),
+    ///         and where they would not the custody is the fact.
+    ///         Staging reservations are excluded by the setter's gate
+    ///         (`stagingEncumberedCount == 0`), so no reserved headroom straddles
+    ///         the change.
+    function retireCustodyEraOnRoleChange(LibVaipakam.Storage storage s, uint64 boundaryDay) internal {
+        uint256 received = s.rewardBudgetArmedFreshReceived;
+        uint256 paid = s.rewardBudgetArmedFreshPaid;
+        uint256 deficit = paid > received ? paid - received : 0;
+        if (paid < received) s.rewardBudgetArmedFreshPaid = received;
+        if (!active(s)) return;
+        uint64 era = s.custodyEraCurrent;
+        uint256 carried = s.rewardCustodyRows[LibVaipakam.RewardCustodyRow.LiveFresh];
+        if (carried != 0) {
+            uint256 have = _debitRow(s, LibVaipakam.RewardCustodyRow.LiveFresh, carried);
+            _recordOutflow(s, LibVaipakam.RewardCustodyRow.LiveFresh, have, carried, false, false);
+            emit RewardCustodyRowDebited(uint8(LibVaipakam.RewardCustodyRow.LiveFresh), carried, address(0));
+            s.custodyEras[era].holderRow += carried;
+            s.custodyEraRowsTotal += carried;
+        }
+        emit CustodyEraRetired(era, carried, deficit, boundaryDay);
+        uint64 next = era + 1;
+        s.custodyEraCurrent = next;
+        LibVaipakam.CustodyEra storage opened = s.custodyEras[next];
+        opened.boundaryDay = boundaryDay;
+        opened.openedAt = uint64(block.timestamp);
+        opened.openingDeficit = deficit;
+        emit CustodyEraOpened(next, boundaryDay);
+    }
+
+    /// @notice Writer 2 of 3 — release a RETIRED era's holder row once the era
+    ///         is terminal: both counters zero. On an active role the amount is
+    ///         credited to the live baseline under the deficit split; while
+    ///         Detached it goes to PENDING SURPLUS (never RECOVERY: a recovery
+    ///         dispatch must not be able to draw a surplus), drained later by
+    ///         writer 3 once an active era exists.
+    /// @dev    DARK until the backfill (PR C-5) sets `custodyEraBackfillComplete`:
+    ///         until history is assigned, two zero counters mean "not yet
+    ///         counted", not "nothing owed". The parked-broadcast lane's
+    ///         emptiness (PR C-4) joins the terminal condition when it exists.
+    function finalizeCustodyEra(LibVaipakam.Storage storage s, uint64 era, LibVaipakam.RewardRole role)
+        internal
+        returns (uint256 amount, bool toPending)
+    {
+        if (!s.custodyEraBackfillComplete) revert IVaipakamErrors.CustodyEraBackfillPending();
+        uint64 current = s.custodyEraCurrent;
+        if (era > current) revert IVaipakamErrors.CustodyEraUnknown(era);
+        if (era == current) revert IVaipakamErrors.CustodyEraLive(era);
+        LibVaipakam.CustodyEra storage e = s.custodyEras[era];
+        if (e.terminal) revert IVaipakamErrors.CustodyEraAlreadyFinalized(era);
+        uint256 span = custodyEraSpan(s, era);
+        if (e.daysClosed < span || e.openClassification != 0) {
+            revert IVaipakamErrors.CustodyEraNotTerminal(era, e.daysClosed, span, e.openClassification);
+        }
+        e.terminal = true;
+        amount = e.holderRow;
+        if (amount != 0) {
+            e.holderRow = 0;
+            s.custodyEraRowsTotal -= amount;
+            if (role == LibVaipakam.RewardRole.Detached) {
+                credit(s, LibVaipakam.RewardCustodyRow.PendingSurplus, amount, 1);
+                toPending = true;
+            } else {
+                creditFreshSplit(s, amount, 1);
+            }
+        }
+        emit CustodyEraReleased(era, amount, toPending);
+        emit CustodyEraClosed(era);
+    }
+
+    /// @notice How many reward days a RETIRED era spans: from its boundary day
+    ///         to the next era's. The live era has no upper boundary yet.
+    function custodyEraSpan(LibVaipakam.Storage storage s, uint64 era) internal view returns (uint256) {
+        if (era >= s.custodyEraCurrent) return 0;
+        return uint256(s.custodyEras[era + 1].boundaryDay) - uint256(s.custodyEras[era].boundaryDay);
+    }
+
+    /// @dev The deepest the day→era scan walks; role changes are rare, so the
+    ///      registry stays short, and a pathological one must not stall a claim.
+    uint256 internal constant CUSTODY_ERA_SCAN_CAP = 64;
+
+    /// @notice The era `dayId` was live in: the newest era whose boundary day is
+    ///         at or before it; era 0 holds every earlier day.
+    function custodyEraOfDay(LibVaipakam.Storage storage s, uint256 dayId) internal view returns (uint64 era) {
+        era = s.custodyEraCurrent;
+        uint256 steps;
+        while (era != 0) {
+            if (s.custodyEras[era].boundaryDay <= dayId) return era;
+            if (++steps > CUSTODY_ERA_SCAN_CAP) revert IVaipakamErrors.CustodyEraScanExceeded(dayId);
+            unchecked { --era; }
+        }
+    }
+
+    /// @notice Writer 3 of 3 — credit PENDING SURPLUS to the live baseline
+    ///         under the deficit split, once an active era exists. The caller
+    ///         holds the role check; the split is the same body as every other
+    ///         fresh credit.
+    function drainPendingSurplus(LibVaipakam.Storage storage s, uint256 amount) internal {
+        if (amount == 0) revert IVaipakamErrors.InvalidAmount();
+        uint256 have = _debitRow(s, LibVaipakam.RewardCustodyRow.PendingSurplus, amount);
+        _recordOutflow(s, LibVaipakam.RewardCustodyRow.PendingSurplus, have, amount, false, true);
+        emit RewardCustodyRowDebited(uint8(LibVaipakam.RewardCustodyRow.PendingSurplus), amount, address(0));
+        (uint256 toLive, uint256 toRestitution) = creditFreshSplit(s, amount, 1);
+        emit CustodyPendingSurplusDrained(amount, toLive, toRestitution);
     }
 
     /// @notice The §5c deficit split, in ONE place: of a fresh credit of
@@ -1075,8 +1227,9 @@ library LibRewardCustody {
     ///         body. A caller-supplied era that does not exist refuses here
     ///         rather than reading an empty era-keyed queue beside the
     ///         global custody figures as if it were one (Codex #2206 r9).
-    function requireKnownEra(uint64 era) internal pure {
-        if (era != PRE_BACKFILL_ERA) revert IVaipakamErrors.ReconciliationUnknownEra(era);
+    function requireKnownEra(uint64 era) internal view {
+        // Slice 4 PR C-1 — the registry answers: every era up to the live one exists.
+        if (era > LibVaipakam.storageSlot().custodyEraCurrent) revert IVaipakamErrors.ReconciliationUnknownEra(era);
     }
     uint8 internal constant PACKET_KIND_STRANDED_RETURN = 3;
     uint8 internal constant PACKET_KIND_CEREMONY_INFLOW = 4;

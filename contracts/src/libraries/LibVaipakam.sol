@@ -936,8 +936,11 @@ library LibVaipakam {
      *           payout row: what enters it leaves only to a destination the
      *           record names or back to the row it came from.
      *
-     *         Retired-ERA rows (one per era) are a separate, era-keyed
-     *         mapping that lands with the era registry (slice 4 PR C).
+     *         Retired-ERA rows (one per era) live in
+     *         `Storage.custodyEras[era].holderRow` (slice 4 PR C-1), summed
+     *         by `custodyEraRowsTotal` into the attributed total; they are
+     *         written only by the role-change carry-forward and the
+     *         era-terminal release.
      */
     enum RewardCustodyRow {
         LiveFresh,
@@ -7741,6 +7744,20 @@ library LibVaipakam {
         ///      listed day's arrival and closure LIVE. Empty for a batch indexed
         ///      before this field existed: such a batch is withheld as contested.
         mapping(bytes32 => uint256[]) transportBatchDays;
+        /// @dev Slice 4 PR C-1 (#1566) — the custody era registry. Era 0 is
+        ///      the pre-registry era every existing figure keys
+        ///      (`LibRewardCustody.PRE_BACKFILL_ERA`); a role change on an
+        ///      activated custody retires the live era and opens the next.
+        ///      NOT the reporter's `rewardEra*` / `dayClockEra` family, which
+        ///      tracks the canonical DEPLOYMENT a day's clock came from.
+        uint64 custodyEraCurrent;
+        mapping(uint64 => CustodyEra) custodyEras;
+        /// @dev Σ `custodyEras[*].holderRow` — kept as a counter so the
+        ///      attributed total stays one read, never a scan over eras.
+        uint256 custodyEraRowsTotal;
+        /// @dev Set by the backfill (PR C-5) once history is assigned to
+        ///      eras; the terminal writers are dark until then.
+        bool custodyEraBackfillComplete;
     }
 
     /// @notice 3b-ii-A2 (#2305) — one batch a staging record staged from, with
@@ -7818,6 +7835,36 @@ library LibVaipakam {
         uint256 borrowerCursor;
         uint256 lenderConservation;
         uint256 borrowerConservation;
+    }
+
+    /// @notice Slice 4 PR C-1 (#1566) — one CUSTODY ERA: the span of a chain's
+    ///         reward role between two role changes. The live era is
+    ///         `Storage.custodyEraCurrent`; every earlier era is RETIRED and
+    ///         holds, in `holderRow`, the live-fresh custody it carried at the
+    ///         change — consumable by the obligations accrued in it (PR C-2)
+    ///         and released only when the era is terminal (writer 2).
+    /// @dev    Two counters make the terminal condition. `daysClosed` is how
+    ///         many of the era's days the per-day CLOSURE PROOF (3b-ii-B) has
+    ///         proven closed — "every obligation covering the day has
+    ///         terminated" — written where that proof flips a day's flag, so an
+    ///         era is free of outstanding reward liability exactly when every
+    ///         day of its span is proven closed; nothing is written on the
+    ///         entry-creation path, whose host has no byte margin left.
+    ///         `openClassification` counts packets stamped into the era whose
+    ///         classification is not final (written by PR C-3; history by the
+    ///         backfill, PR C-5). Until the backfill declares history assigned
+    ///         (`custodyEraBackfillComplete`) the terminal writers refuse rather
+    ///         than read zeros as "nothing owed". `openingDeficit` is what the
+    ///         retiring baseline owed (`paid - received`) when this era opened —
+    ///         carried, not erased, so the first credit covers it first (§5c).
+    struct CustodyEra {
+        uint256 holderRow;
+        uint256 daysClosed;
+        uint256 openClassification;
+        uint256 openingDeficit;
+        uint64 boundaryDay;
+        uint64 openedAt;
+        bool terminal;
     }
 
     struct StagingDomain {

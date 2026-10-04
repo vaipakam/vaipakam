@@ -23,6 +23,7 @@ interface ICompensationDayHook {
 }
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {LibVpfiRecycle} from "../libraries/LibVpfiRecycle.sol";
+import {LibRewardCustody} from "../libraries/LibRewardCustody.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 /// @notice #1222 M3 B1 (Codex #1413 r3) — the pre-widening sender shape, the
@@ -1346,6 +1347,7 @@ contract RewardReporterFacet is
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint32 old = s.baseChainId;
         bool wasMirror = LibVaipakam.isMirrorRewardChain(s);
+        LibVaipakam.RewardRole before = LibVaipakam.rewardRole(s); // PR C-1: the carry-forward keys on the four-state role
         // #1566 slice 4 PR B (design §5c/§5d) — a mirror's authenticated
         // source is never rebound DIRECTLY to a different one: the old
         // residual must retire and delayed packets from the old source must
@@ -1385,7 +1387,7 @@ contract RewardReporterFacet is
         // whose backing was already spent. One helper, called on the
         // EFFECTIVE role predicate, so a third role input can never repeat
         // this by construction.
-        _retireDeliveredResidualOnRoleChange(s, wasMirror);
+        _retireDeliveredResidualOnRoleChange(s, before);
         emit RewardReporterConfigUpdated(
             // forge-lint: disable-next-line(unsafe-typecast)
             bytes32("baseChainId"),
@@ -1434,15 +1436,26 @@ contract RewardReporterFacet is
     ///      transition and re-attachment.
     ///      Shared by every setter that feeds the role predicate, so the
     ///      check IS the operation and a new role input inherits it.
+    ///
+    ///      Slice 4 PR C-1 (#1566) — the retirement is now the ERA CARRY-FORWARD
+    ///      ({LibRewardCustody.retireCustodyEraOnRoleChange}) and it runs on
+    ///      every effective change of the four-state role, not only of the
+    ///      mirror predicate: Canonical→Detached and Detached→Canonical change
+    ///      the bound as much as a mirror transition does. A first
+    ///      configuration (Unconfigured → anything) retires nothing: there is
+    ///      no era to close. The live-fresh custody is carried into the
+    ///      retiring era's row rather than left behind a levelled counter, so
+    ///      what the old era delivered stays consumable by the obligations it
+    ///      accrued (PR C-2) and reaches live headroom only through the era's
+    ///      terminal release.
     function _retireDeliveredResidualOnRoleChange(
         LibVaipakam.Storage storage s,
-        bool wasMirror
+        LibVaipakam.RewardRole before
     ) private {
-        if (wasMirror == LibVaipakam.isMirrorRewardChain(s)) return;
-        uint256 received = s.rewardBudgetArmedFreshReceived;
-        if (s.rewardBudgetArmedFreshPaid < received) {
-            s.rewardBudgetArmedFreshPaid = received;
-        }
+        LibVaipakam.RewardRole current = LibVaipakam.rewardRole(s);
+        if (before == current || before == LibVaipakam.RewardRole.Unconfigured) return;
+        (uint256 today, ) = LibInteractionRewards.currentDayOrZero();
+        LibRewardCustody.retireCustodyEraOnRoleChange(s, SafeCast.toUint64(today));
     }
 
     /// @notice Flip this Diamond's canonical-reward-chain flag.
@@ -1453,7 +1466,7 @@ contract RewardReporterFacet is
     ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         bool old = s.isCanonicalRewardChain;
-        bool wasMirror = LibVaipakam.isMirrorRewardChain(s);
+        LibVaipakam.RewardRole before = LibVaipakam.rewardRole(s); // PR C-1: the carry-forward keys on the four-state role
         // #1566 slice 4 PR B — the role freeze, on the would-be role (a
         // false→false write on a never-configured deployment resolves
         // `Unconfigured` again and is not a change).
@@ -1517,7 +1530,7 @@ contract RewardReporterFacet is
         // because mirror-ness has two inputs and `setBaseChainId` mutates
         // the other one. Guarding each knob's own delta re-created the
         // one-fix-two-sites defect r2 already catalogued.
-        _retireDeliveredResidualOnRoleChange(s, wasMirror);
+        _retireDeliveredResidualOnRoleChange(s, before);
         emit RewardReporterConfigUpdated(
             // forge-lint: disable-next-line(unsafe-typecast)
             bytes32("isCanonicalRewardChain"),

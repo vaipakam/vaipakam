@@ -110,6 +110,8 @@ export interface DeploymentFacets {
   rewardStagingDomainFacet?: HexAddress;
   /** #1566 transport epochs 3b-ii-B — the per-day closure proof. */
   rewardClosureFacet?: HexAddress;
+  /** #1566 slice 4 PR C-1 — the custody era registry. */
+  rewardEraFacet?: HexAddress;
   rewardReporterFacet?: HexAddress;
   riskFacet?: HexAddress;
   stakingRewardsFacet?: HexAddress;

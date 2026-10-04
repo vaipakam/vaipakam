@@ -1846,4 +1846,19 @@ interface IVaipakamErrors {
     ///         resolves or unwinds — never a trim, which only the lifetime
     ///         cap may cause (3b-ii-A2; Codex #2308 r4).
     error LoanSideReservedShortfall(uint256 loanId, uint8 side, uint256 needed, uint256 available);
+    /// @notice Era `era` is not in the custody era registry: above the live era (slice 4 PR C-1).
+    error CustodyEraUnknown(uint64 era);
+    /// @notice History has not been assigned to eras yet (the backfill, PR C-5): the terminal writers stay dark until it is.
+    error CustodyEraBackfillPending();
+    /// @notice Era `era` is the live era: it cannot be finalized while open.
+    error CustodyEraLive(uint64 era);
+    /// @notice Era `era` is not terminal: `daysClosed` of its `span` days are proven closed, and `openClassification`
+    ///         packets stamped into it are not finally classified.
+    error CustodyEraNotTerminal(uint64 era, uint256 daysClosed, uint256 span, uint256 openClassification);
+    /// @notice The era registry is too deep to resolve `dayId`'s era within the scan cap.
+    error CustodyEraScanExceeded(uint256 dayId);
+    /// @notice Era `era` was already finalized.
+    error CustodyEraAlreadyFinalized(uint64 era);
+    /// @notice The pending-surplus drain needs an ACTIVE role (Canonical or Mirror); the chain's role is `role`.
+    error CustodyPendingSurplusNeedsActiveRole(uint8 role);
 }

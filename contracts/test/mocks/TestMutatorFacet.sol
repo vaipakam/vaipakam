@@ -2741,4 +2741,19 @@ contract TestMutatorFacet {
     function clearTransportBatchDaysRaw(bytes32 batchId) external {
         delete LibVaipakam.storageSlot().transportBatchDays[batchId];
     }
+
+    /// @dev slice 4 PR C-1 test-only — declare the backfill done so the dark
+    ///      era writers can be exercised before PR C-5 exists.
+    function setCustodyEraBackfillCompleteRaw(bool done) external {
+        LibVaipakam.storageSlot().custodyEraBackfillComplete = done;
+    }
+
+    /// @dev slice 4 PR C-1 test-only — stand an era's two terminal counters (the
+    ///      closure proof and PR C-3 write them) so the condition can be tested
+    ///      on both sides.
+    function setCustodyEraCountersRaw(uint64 era, uint256 daysClosed, uint256 openClassification) external {
+        LibVaipakam.CustodyEra storage e = LibVaipakam.storageSlot().custodyEras[era];
+        e.daysClosed = daysClosed;
+        e.openClassification = openClassification;
+    }
 }

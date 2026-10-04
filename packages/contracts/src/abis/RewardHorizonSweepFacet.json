@@ -924,6 +924,92 @@
   },
   {
     "type": "error",
+    "name": "CustodyEraAlreadyFinalized",
+    "inputs": [
+      {
+        "name": "era",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CustodyEraBackfillPending",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CustodyEraLive",
+    "inputs": [
+      {
+        "name": "era",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CustodyEraNotTerminal",
+    "inputs": [
+      {
+        "name": "era",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "daysClosed",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "span",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "openClassification",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CustodyEraScanExceeded",
+    "inputs": [
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CustodyEraUnknown",
+    "inputs": [
+      {
+        "name": "era",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CustodyPendingSurplusNeedsActiveRole",
+    "inputs": [
+      {
+        "name": "role",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "DayAlreadyFinalized",
     "inputs": []
   },

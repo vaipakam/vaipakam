@@ -157,6 +157,7 @@ import {RewardClaimWalkFacet} from "../src/facets/RewardClaimWalkFacet.sol";
 import {RewardStagingSettleFacet} from "../src/facets/RewardStagingSettleFacet.sol";
 import {RewardStagingDomainFacet} from "../src/facets/RewardStagingDomainFacet.sol";
 import {RewardClosureFacet} from "../src/facets/RewardClosureFacet.sol";
+import {RewardEraFacet} from "../src/facets/RewardEraFacet.sol";
 import {RewardSweepWalkFacet} from "../src/facets/RewardSweepWalkFacet.sol";
 import {RewardForfeitWalkFacet} from "../src/facets/RewardForfeitWalkFacet.sol";
 import {RewardCompensationDispatchFacet} from "../src/facets/RewardCompensationDispatchFacet.sol";
@@ -360,6 +361,7 @@ contract SetupTest is Test {
     RewardStagingSettleFacet rewardStagingSettleFacet;
     RewardStagingDomainFacet rewardStagingDomainFacet;
     RewardClosureFacet rewardClosureFacet;
+    RewardEraFacet rewardEraFacet;
     RewardCompensationDispatchFacet rewardCompensationDispatchFacet;
     RewardCommitmentFacet rewardCommitmentFacet;
     RepatriationFacet repatriationFacet;
@@ -492,6 +494,7 @@ contract SetupTest is Test {
         rewardStagingSettleFacet = new RewardStagingSettleFacet();
         rewardStagingDomainFacet = new RewardStagingDomainFacet();
         rewardClosureFacet = new RewardClosureFacet();
+        rewardEraFacet = new RewardEraFacet();
         rewardCompensationDispatchFacet = new RewardCompensationDispatchFacet();
         rewardCommitmentFacet = new RewardCommitmentFacet();
         repatriationFacet = new RepatriationFacet();
@@ -524,7 +527,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](90);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](91);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -872,6 +875,12 @@ contract SetupTest is Test {
             facetAddress: address(rewardClosureFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getRewardClosureFacetSelectors()
+        });
+        // slice 4 PR C-1 (#1566) — the custody era registry (slot 90).
+        cuts[90] = IDiamondCut.FacetCut({
+            facetAddress: address(rewardEraFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getRewardEraFacetSelectors()
         });
         // #1306 follow-up — read-only lens facet (view/getter surface split
         // off InteractionRewardsFacet for EIP-170 headroom; shared storage).
