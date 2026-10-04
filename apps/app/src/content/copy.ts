@@ -3733,8 +3733,13 @@ const copySource = {
         'Still loading signed offers — for now the rates shown come only from offers posted on the blockchain, so the best rates and the middle rate may be missing some signed offers.',
       depthUnavailable:
         'We couldn’t load signed offers from the offer-book service, so this shows only offers posted on the blockchain. The best rates and the middle rate may be missing some signed offers.',
+      // #2398 r4 — no positive claim about what WAS included: a kept row
+      // can expire before the next refresh while the next one is unfetched.
       depthPartial:
-        'Not every signed offer may be loaded. The best-priced signed offers on each side are included, but the amounts shown — even at the best rate — and the running totals may leave some out.',
+        'Not every signed offer may be loaded, so the rates and amounts shown — even at the best rate — and the running totals may leave some out.',
+      // #2398 r4 — a deployment fact, not an outage.
+      depthUnconfigured:
+        'Signed offers aren’t available on this deployment — its offer-book service isn’t set up — so this shows only offers posted on the blockchain.',
       rangedBadgeTooltip:
         'A signed offer with a size range. It still counts, but only automatic matching can take it, in parts, and only while automatic matching is switched on — it cannot be taken whole in one go.',
       fill: 'Fill',

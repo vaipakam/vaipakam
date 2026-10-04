@@ -1300,11 +1300,14 @@ offers list and the chart all draw on the same merged offers, and on a phone the
 list or the chart can be on screen alone. While signed offers are still loading,
 or when the service could not provide them, the note says the rates shown come
 only from offers posted on the blockchain and that the best rates and the middle
-rate may be missing signed offers. When the
+rate may be missing signed offers. A deployment that has no offer-book service
+set up says that instead — signed offers are not available there at all — so a
+standing configuration is never presented as a temporary failure. When the
 service may not have returned every signed offer — it says it cut some, or does
-not say whether it did — the note says so without calling any level complete:
-the service keeps the best-priced signed offers on each side, but more of them
-can share the best rate, so even the best rate's amount can be short. A signed
+not say whether it did — the note says the rates and amounts shown, even at the
+best rate, and the running totals may leave some out. It makes no claim about
+which signed offers were included: even the best-priced ones the service kept
+can expire before the next refresh while the next-best stays unfetched. A signed
 offer that could not be refreshed is treated as missing, never shown from an
 earlier read, because it may have been taken or cancelled since. Whenever the
 signed offers are anything short of complete, an empty offers list says there

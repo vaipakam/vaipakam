@@ -14,9 +14,10 @@ loading or could not be loaded, the note says the rates shown come only from
 offers posted on the blockchain, and an offers list that is empty on the
 blockchain no longer claims the market has no offers. When the service may not
 have returned every signed offer — it says it cut some, or an older service
-does not say — the note says so without calling any rate complete: the best
-priced signed offers on each side are always included, but more of them can
-share the best rate, so even that rate's amount can be short. A signed book
+does not say — the note says the rates and amounts shown, even at the best
+rate, may leave some out, and claims nothing about which ones were included. A
+deployment with no offer-book service set up says so plainly, rather than
+looking like a temporary failure. A signed book
 whose latest refresh failed is treated as missing instead of merging the last
 copy the page saw, since those orders may have been taken or cancelled since.
 

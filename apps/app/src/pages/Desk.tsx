@@ -35,6 +35,7 @@ import { MarketFreshnessNote } from '../components/MarketFreshnessNote';
 import { DeskHeader } from '../components/desk/DeskHeader';
 import { RateLadder } from '../components/desk/RateLadder';
 import { signedDepthOf } from '../data/signedDepth';
+import { indexerConfigured } from '../data/indexer';
 import { OrderTicket } from '../components/desk/OrderTicket';
 import { TapePanel } from '../components/desk/TapePanel';
 import { OpenOrdersPanel } from '../components/desk/OpenOrdersPanel';
@@ -144,7 +145,7 @@ export function Desk() {
       address,
     );
   }, [book.data, signedBook.data, days, address, readChain.chainId, nowSec]);
-  const signedDepth = signedDepthOf(signedBook);
+  const signedDepth = signedDepthOf(signedBook, indexerConfigured());
 
   const lastFill = tape.data === undefined ? undefined : (tape.data?.[0] ?? null);
 
@@ -190,9 +191,11 @@ export function Desk() {
         <p className="muted" role="status" data-testid="desk-signed-depth">
           {signedDepth === 'loading'
             ? copy.desk.signed.depthLoading
-            : signedDepth === 'unavailable'
-              ? copy.desk.signed.depthUnavailable
-              : copy.desk.signed.depthPartial}
+            : signedDepth === 'unconfigured'
+              ? copy.desk.signed.depthUnconfigured
+              : signedDepth === 'unavailable'
+                ? copy.desk.signed.depthUnavailable
+                : copy.desk.signed.depthPartial}
         </p>
       ) : null}
 
