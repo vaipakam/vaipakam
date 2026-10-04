@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
+import {LibServiceCapacity} from "../libraries/LibServiceCapacity.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
@@ -549,11 +550,11 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         }
 
         // ── Auth: keeper-side bit + Tier-1 sanctions on all parties ──
-        LibAuth.requireKeeperFor(
+        if (LibAuth.requireKeeperFor(
             LibVaipakam.KEEPER_ACTION_EXTEND,
             loan,
             /* lenderSide */ false
-        );
+        )) LibServiceCapacity.chargeKeeper(); // #1219 — one keeper action
         LibVaipakam._assertNotSanctioned(msg.sender);
         address borrowerNftOwner = LibERC721.ownerOf(loan.borrowerTokenId);
         address lenderNftOwner = LibERC721.ownerOf(loan.lenderTokenId);

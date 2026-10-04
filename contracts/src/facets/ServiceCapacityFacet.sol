@@ -67,6 +67,60 @@ contract ServiceCapacityFacet is DiamondReentrancyGuard, DiamondPausable, Diamon
         return LibServiceCapacity.withdraw(LibVaipakam.storageSlot(), role, msg.sender, amount);
     }
 
+    // ─── slice 2 — the limiter ───
+
+    /// @notice Set `role`'s capacity curve (ADMIN; governance later). Every figure
+    ///         positive and the free tier at least one action; bumps the curve
+    ///         epoch, so every bucket resets at its next touch.
+    function setCapacityCurve(uint8 role, uint256 freeTier, uint256 freeRatePerSec, uint256 bondAt4x, uint256 classCost)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        LibServiceCapacity.setCurve(LibVaipakam.storageSlot(), role, freeTier, freeRatePerSec, bondAt4x, classCost);
+    }
+
+    /// @notice The spend every charged route reaches by Diamond self-call
+    ///         ({LibServiceCapacity.charge}): settle the actor's bucket and take the
+    ///         cost of `units` executed items, or refuse by name. Gated to the
+    ///         Diamond; the caller holds the reentrancy guard and the pause.
+    function capacitySpendInternal(uint8 role, address actor, uint256 units, bool freeOnly) external {
+        if (msg.sender != address(this)) revert RewardCustodyOnlyDiamondInternal(msg.sender);
+        LibServiceCapacity.spend(LibVaipakam.storageSlot(), role, actor, units, freeOnly);
+    }
+
+    /// @notice Bind `adapter`'s fills to `operator` (ADMIN) — for adapters created
+    ///         before the factory wrote the binding; the factory writes it at
+    ///         creation for every new adapter.
+    function setAdapterOperator(address adapter, address operator) external onlyRole(LibAccessControl.ADMIN_ROLE) {
+        LibVaipakam.storageSlot().adapterOperator[adapter] = operator;
+        emit LibServiceCapacity.AdapterOperatorBound(adapter, operator);
+    }
+
+    /// @notice `role`'s curve; `epoch == 0` means the role's limiter is dark.
+    function getCapacityCurve(uint8 role) external view returns (LibVaipakam.CapacityCurve memory) {
+        return LibVaipakam.storageSlot().capacityCurves[role];
+    }
+
+    /// @notice `actor`'s stored `role` bucket (the raw record; see {previewCapacity} for the settled figure).
+    function getCapacityBucket(uint8 role, address actor) external view returns (LibVaipakam.CapacityBucket memory) {
+        return LibVaipakam.storageSlot().capacityBuckets[role][actor];
+    }
+
+    /// @notice What `actor`'s `role` bucket holds now, and the rate and ceiling
+    ///         the actor's current deposit buys; `dark` when the role's curve is unset.
+    function previewCapacity(uint8 role, address actor)
+        external
+        view
+        returns (uint256 accrued, uint256 rate, uint256 ceiling, bool dark)
+    {
+        return LibServiceCapacity.accruedNow(LibVaipakam.storageSlot(), role, actor);
+    }
+
+    /// @notice The operator `adapter`'s fills are charged to (zero = unbound).
+    function getAdapterOperator(address adapter) external view returns (address) {
+        return LibVaipakam.storageSlot().adapterOperator[adapter];
+    }
+
     /// @notice Whether the channel is enabled.
     function isServiceCapacityEnabled() external view returns (bool) {
         return LibVaipakam.storageSlot().serviceCapacityEnabled;

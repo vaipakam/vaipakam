@@ -10,6 +10,7 @@ import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
+import {LibServiceCapacity} from "../libraries/LibServiceCapacity.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
@@ -588,9 +589,9 @@ contract LenderIntentFacet is
         LibFacet.requireAssetNotPaused(io.lendingAsset);
         LibFacet.requireAssetNotPaused(io.collateralAsset);
         // Authorize the roller for the owner (owner-self or an AUTO_ROLL keeper).
-        LibAuth.requireKeeperForPrincipal(
+        if (LibAuth.requireKeeperForPrincipal(
             LibVaipakam.KEEPER_ACTION_AUTO_ROLL, io.owner
-        );
+        )) LibServiceCapacity.chargeKeeper(); // #1219 — one keeper action
 
         // The lender claim (principal + interest) must be present, unconsumed,
         // and the intent's plain ERC-20 lending asset.

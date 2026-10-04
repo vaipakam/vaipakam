@@ -241,6 +241,25 @@
   },
   {
     "type": "event",
+    "name": "AdapterOperatorBound",
+    "inputs": [
+      {
+        "name": "adapter",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "operator",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "AggregatorAdapterCreated",
     "inputs": [
       {

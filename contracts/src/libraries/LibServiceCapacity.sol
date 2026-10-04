@@ -6,6 +6,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {RewardCustodyHolder} from "../RewardCustodyHolder.sol";
+import {LibFacet} from "./LibFacet.sol";
 
 /**
  * @title  LibServiceCapacity — #1219 (S-4): service capacity deposits, slice 1 —
@@ -84,6 +85,204 @@ library LibServiceCapacity {
     /// @notice An authoritative clean read healed `party`'s stale persisted sanctions marker.
     /// @custom:event-category state-change/service-capacity
     event ServiceCapacitySanctionsMarkerHealed(address indexed party);
+    /// @notice `role`'s capacity curve was set (slice 2); `epoch` is the new curve epoch every bucket must re-settle under.
+    /// @custom:event-category informational/config
+    event CapacityCurveSet(uint8 indexed role, uint256 freeTier, uint256 freeRatePerSec, uint256 bondAt4x, uint256 classCost, uint64 epoch);
+    /// @notice `actor` spent `cost` of `role` capacity for one executed item; the bucket now holds `balanceAfter` (units x 1e18).
+    /// @custom:event-category state-change/service-capacity
+    event CapacitySpent(uint8 indexed role, address indexed actor, uint256 cost, uint256 balanceAfter);
+    /// @notice `actor`'s `role` bucket was RESET to empty because its curve was retuned (epoch `fromEpoch` -> `toEpoch`).
+    /// @custom:event-category state-change/service-capacity
+    event CapacityBucketReset(uint8 indexed role, address indexed actor, uint64 fromEpoch, uint64 toEpoch);
+    /// @notice `adapter`'s fills are charged to `operator` (actor rule 2).
+    /// @custom:event-category informational/config
+    event AdapterOperatorBound(address indexed adapter, address indexed operator);
+
+    // ─── slice 2 — the limiter ───
+
+    /// @notice Set `role`'s curve (ADMIN). Floors: every figure positive and
+    ///         `freeTier >= classCost`, so a zero-deposit operator can always
+    ///         complete one action — the permissionless baseline the whole design
+    ///         preserves. Bumps the curve epoch: every bucket settled under the old
+    ///         curve resets at its next touch (the conservative branch).
+    function setCurve(LibVaipakam.Storage storage s, uint8 role, uint256 freeTier, uint256 freeRatePerSec, uint256 bondAt4x, uint256 classCost)
+        internal
+    {
+        requireRole(role);
+        if (freeTier == 0 || freeRatePerSec == 0 || bondAt4x == 0 || classCost == 0 || freeTier < classCost) {
+            revert IVaipakamErrors.ServiceCapacityCurveInvalid(role);
+        }
+        LibVaipakam.CapacityCurve storage c = s.capacityCurves[role];
+        c.freeTier = freeTier;
+        c.freeRatePerSec = freeRatePerSec;
+        c.bondAt4x = bondAt4x;
+        c.classCost = classCost;
+        c.epoch += 1;
+        emit CapacityCurveSet(role, freeTier, freeRatePerSec, bondAt4x, classCost, c.epoch);
+    }
+
+    /// @dev The actor's eligible (armed) deposit for `role` in the live rotation epoch.
+    function eligibleOf(LibVaipakam.Storage storage s, uint8 role, address actor) internal view returns (uint256) {
+        return s.serviceDeposits[role][actor][s.vpfiRotationEpoch].eligibleAmount;
+    }
+
+    /// @dev The curve at `bond`: rate and ceiling grow LINEARLY from 1× at zero to
+    ///      4× at `bondAt4x` and are flat beyond it — continuous, no threshold, no
+    ///      minimum (rounding DOWN never creates one: a zero bond is exactly the
+    ///      free tier). `rate = free × (bondAt4x + 3 × min(bond, bondAt4x)) / bondAt4x`.
+    function curveAt(LibVaipakam.CapacityCurve storage c, uint256 bond) internal view returns (uint256 rate, uint256 ceiling) {
+        uint256 b = bond < c.bondAt4x ? bond : c.bondAt4x;
+        uint256 num = c.bondAt4x + 3 * b;
+        rate = (c.freeRatePerSec * num) / c.bondAt4x;
+        ceiling = (c.freeTier * num) / c.bondAt4x;
+    }
+
+    /// @notice What `actor`'s `role` bucket holds NOW: settled from its own last
+    ///         touch at its own rate, clamped to its own ceiling; zero if the
+    ///         bucket is unseen or belongs to a retired curve epoch. Pure view.
+    function accruedNow(LibVaipakam.Storage storage s, uint8 role, address actor)
+        internal
+        view
+        returns (uint256 accrued, uint256 rate, uint256 ceiling, bool dark)
+    {
+        LibVaipakam.CapacityCurve storage c = s.capacityCurves[role];
+        if (c.epoch == 0) return (0, 0, 0, true);
+        (rate, ceiling) = curveAt(c, eligibleOf(s, role, actor));
+        LibVaipakam.CapacityBucket storage b = s.capacityBuckets[role][actor];
+        if (!b.seen) return (c.classCost < ceiling ? c.classCost : ceiling, rate, ceiling, false);
+        if (b.curveEpoch != c.epoch) return (0, rate, ceiling, false);
+        uint256 raw = uint256(b.balance) + rate * (block.timestamp - b.lastTouch);
+        accrued = raw < ceiling ? raw : ceiling;
+    }
+
+    /// @notice Settle `actor`'s `role` bucket to now under the CURRENT curve and
+    ///         deposit: an unseen bucket starts with ONE free action (the floor; a
+    ///         refused spend reverts, so a first touch could never persist an empty
+    ///         start, and the design's zero-deposit operator must complete one
+    ///         action); a bucket on an older curve epoch RESETS to empty (event);
+    ///         otherwise it accrues at its own rate
+    ///         from its own last touch and is clamped to its own ceiling — so any
+    ///         change of capacity (deposit up or down, retune) is settled under the
+    ///         OLD terms by the previous touch and re-clamped under the new ones
+    ///         here, never silently re-credited.
+    function settle(LibVaipakam.Storage storage s, uint8 role, address actor, LibVaipakam.CapacityCurve storage c, bool freeOnly)
+        internal
+        returns (LibVaipakam.CapacityBucket storage b, uint256 ceiling)
+    {
+        b = s.capacityBuckets[role][actor];
+        uint256 rate;
+        (rate, ceiling) = curveAt(c, freeOnly ? 0 : eligibleOf(s, role, actor));
+        if (!b.seen) {
+            b.seen = true;
+            b.balance = uint128(c.classCost < ceiling ? c.classCost : ceiling);
+        } else if (b.curveEpoch != c.epoch) {
+            emit CapacityBucketReset(role, actor, b.curveEpoch, c.epoch);
+            b.balance = 0;
+        } else {
+            uint256 raw = uint256(b.balance) + rate * (block.timestamp - b.lastTouch);
+            b.balance = uint128(raw < ceiling ? raw : ceiling);
+        }
+        b.lastTouch = uint64(block.timestamp);
+        b.curveEpoch = c.epoch;
+    }
+
+    /// @notice Spend `units` executed items of `role` capacity by `actor`. With
+    ///         the role's curve UNSET the limiter is dark and this is a no-op — the
+    ///         permissionless baseline stands untouched on a fresh deployment.
+    ///         Admission control: refused by name when the settled bucket cannot
+    ///         cover the cost, so an admitted action is charged exactly once and a
+    ///         reverting action is not charged at all.
+    function spend(LibVaipakam.Storage storage s, uint8 role, address actor, uint256 units, bool freeOnly) internal {
+        requireRole(role);
+        LibVaipakam.CapacityCurve storage c = s.capacityCurves[role];
+        if (c.epoch == 0 || units == 0) return;
+        (LibVaipakam.CapacityBucket storage b, ) = settle(s, role, actor, c, freeOnly);
+        uint256 cost = c.classCost * units;
+        uint256 have = b.balance;
+        if (have < cost) revert IVaipakamErrors.ServiceCapacityExhausted(role, actor, cost, have);
+        b.balance = uint128(have - cost);
+        emit CapacitySpent(role, actor, cost, have - cost);
+    }
+
+    /// @notice Settle `actor`'s bucket under its current deposit — called by the
+    ///         deposit paths when the deposit changes, so elapsed credit is settled
+    ///         under the OLD capacity before the new one applies (the design's
+    ///         fourth-site rule). A no-op while the role's limiter is dark.
+    function settleOnDepositChange(LibVaipakam.Storage storage s, uint8 role, address actor) internal {
+        LibVaipakam.CapacityCurve storage c = s.capacityCurves[role];
+        if (c.epoch == 0) return;
+        settle(s, role, actor, c, false);
+    }
+
+    /// @notice The compact gate every charged route calls: ONE self-call into the
+    ///         capacity facet, so the bucket arithmetic is compiled into that facet
+    ///         alone and a gated facet pays only this encoding. Reverts bubble
+    ///         typed, so `ServiceCapacityExhausted` reaches the caller by name.
+    ///         DARK (no curve for the role) means no charge AND no self-call: a
+    ///         fresh deployment pays nothing per fill or action, and a Diamond that
+    ///         has not routed the capacity facet is not broken by the gate.
+    function charge(uint8 role, address actor, bool freeOnly) internal {
+        if (LibVaipakam.storageSlot().capacityCurves[role].epoch == 0) return;
+        LibFacet.crossFacetCall(
+            abi.encodeWithSignature("capacitySpendInternal(uint8,address,uint256,bool)", role, actor, uint256(1), freeOnly),
+            IVaipakamErrors.ServiceCapacityCallFailed.selector
+        );
+    }
+
+    /// @dev The keeper-route gate: the keeper that acted (never the owner acting alone) pays one action.
+    function chargeKeeper() internal {
+        charge(uint8(LibVaipakam.ServiceCapacityRole.Keeper), msg.sender, false);
+    }
+
+    /// @dev The solver-route gate for a direct solver: one fill at the solver's own capacity.
+    function chargeSolver(address actor) internal {
+        charge(uint8(LibVaipakam.ServiceCapacityRole.Solver), actor, false);
+    }
+
+    bytes32 internal constant BACKSTOP_INITIATOR_TSLOT = keccak256("vaipakam.service-capacity.backstop-initiator");
+
+    /// @dev Actor rule 3 — `backstopFill` records its caller in TRANSIENT storage
+    ///      before the vault's fill, so the inner `matchIntent` can charge the OUTER
+    ///      initiator's free tier instead of the shared vault (EIP-1153: per-tx,
+    ///      free at tx end, no vault ABI change).
+    function setBackstopInitiator(address who) internal {
+        bytes32 slot = BACKSTOP_INITIATOR_TSLOT;
+        assembly ("memory-safe") {
+            tstore(slot, who)
+        }
+    }
+
+    function takeBackstopInitiator() internal returns (address who) {
+        bytes32 slot = BACKSTOP_INITIATOR_TSLOT;
+        assembly ("memory-safe") {
+            who := tload(slot)
+            tstore(slot, 0)
+        }
+    }
+
+    /// @notice The solver-route charge for `matchIntent`, resolving the ACTOR by
+    ///         route (the design's four rules): (1) a direct solver pays at its own
+    ///         capacity; (2) a registered adapter's fill is charged to the operator
+    ///         bound to it at creation — an adapter with no binding pays at its OWN
+    ///         free tier (never a bypass; the admin binds legacy adapters before a
+    ///         curve is set); (3) the backstop vault's fill is charged to the OUTER
+    ///         initiator's FREE tier, deposit ignored, so no user can exhaust a
+    ///         shared quota and rotation buys only the permissionless baseline.
+    function chargeIntentFill(LibVaipakam.Storage storage s) internal {
+        uint8 solver = uint8(LibVaipakam.ServiceCapacityRole.Solver);
+        if (msg.sender == s.backstopVault) {
+            address initiator = takeBackstopInitiator();
+            charge(solver, initiator == address(0) ? msg.sender : initiator, true);
+            return;
+        }
+        if (s.isAggregatorAdapter[msg.sender]) {
+            address op = s.adapterOperator[msg.sender];
+            if (op == address(0)) charge(solver, msg.sender, true);
+            else charge(solver, op, false);
+            return;
+        }
+        charge(solver, msg.sender, false);
+    }
 
     /// @dev `role` must be a capacity role.
     function requireRole(uint8 role) internal pure {
@@ -138,6 +337,7 @@ library LibServiceCapacity {
             d.rotationEpoch = epoch;
         }
         d.state = LibVaipakam.ServiceDepositState.Active;
+        settleOnDepositChange(s, role, operator); // elapsed credit under the OLD capacity, before the raise
         _pull(token, operator, escrow, amount);
         d.amount += amount;
         d.eligibleAmount = d.amount;
@@ -182,6 +382,7 @@ library LibServiceCapacity {
                 emit ServiceCapacitySanctionsMarkerHealed(operator);
             }
         }
+        settleOnDepositChange(s, role, operator); // elapsed credit under the OLD capacity; the decrease clamps at the next touch
         bool released;
         if (d.state == LibVaipakam.ServiceDepositState.SanctionsParked) {
             // The clean read releases the PARKED cap, never more; a further

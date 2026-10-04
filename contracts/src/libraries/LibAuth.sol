@@ -95,11 +95,14 @@ library LibAuth {
         uint16 action,
         LibVaipakam.Loan storage loan,
         bool lenderSide
-    ) internal view {
-        if (msg.sender == address(this)) return;
+    ) internal view returns (bool keeperActed) {
+        // #1219 (S-4) — reports whether a KEEPER acted (true) rather than the
+        // position's owner or the Diamond itself (false): the capacity limiter
+        // charges a keeper's action, never an owner acting on their own position.
+        if (msg.sender == address(this)) return false;
         uint256 tokenId = lenderSide ? loan.lenderTokenId : loan.borrowerTokenId;
         address nftOwner = IERC721(address(this)).ownerOf(tokenId);
-        if (msg.sender == nftOwner) return;
+        if (msg.sender == nftOwner) return false;
         // #633 — global delegated-keeper pause. The owner short-circuit above
         // means owners can still act on their own positions; only third-party
         // keepers are frozen.
@@ -112,6 +115,7 @@ library LibAuth {
             !s.loanKeeperEnabled[loan.id][msg.sender] ||
             (s.approvedKeeperActions[nftOwner][msg.sender] & action) == 0
         ) revert IVaipakamErrors.KeeperAccessRequired();
+        return true;
     }
 
     /// @notice #393 v1-c — PRE-loan keeper authorization, keyed by the PRINCIPAL
@@ -128,10 +132,13 @@ library LibAuth {
     function requireKeeperForPrincipal(uint16 action, address principal)
         internal
         view
+        returns (bool keeperActed)
     {
         if (!isKeeperForPrincipal(msg.sender, action, principal)) {
             revert IVaipakamErrors.KeeperAccessRequired();
         }
+        // #1219 (S-4) — true only when a KEEPER acted for the principal.
+        return msg.sender != principal && msg.sender != address(this);
     }
 
     /// @notice Non-reverting twin of {requireKeeperForPrincipal}: reports

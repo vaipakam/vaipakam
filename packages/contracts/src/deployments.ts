@@ -114,6 +114,8 @@ export interface DeploymentFacets {
   rewardEraFacet?: HexAddress;
   /** #1219 (S-4) — service capacity deposits. */
   serviceCapacityFacet?: HexAddress;
+  /** #1219 (S-4) — the standing-intent fill, split out of OfferMatchFacet (EIP-170). */
+  offerMatchIntentFacet?: HexAddress;
   rewardReporterFacet?: HexAddress;
   riskFacet?: HexAddress;
   stakingRewardsFacet?: HexAddress;

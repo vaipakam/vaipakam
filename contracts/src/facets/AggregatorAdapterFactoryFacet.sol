@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibServiceCapacity} from "../libraries/LibServiceCapacity.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
@@ -174,6 +175,11 @@ contract AggregatorAdapterFactoryFacet is
         );
         s.isAggregatorAdapter[adapter] = true;
         s.adapterVersion[adapter] = s.currentAdapterVersion;
+        // #1219 (S-4) — the adapter's fills are charged to the keeper it names
+        // (actor rule 2: the operator bound at registration, never the adapter
+        // contract and never its outer caller).
+        s.adapterOperator[adapter] = keeper;
+        emit LibServiceCapacity.AdapterOperatorBound(adapter, keeper);
         emit AggregatorAdapterCreated(
             principal,
             adapter,

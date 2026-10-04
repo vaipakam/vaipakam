@@ -3680,6 +3680,22 @@
   },
   {
     "type": "error",
+    "name": "ServiceCapacityCallFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ServiceCapacityCurveInvalid",
+    "inputs": [
+      {
+        "name": "role",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "ServiceCapacityDisabled",
     "inputs": []
   },
@@ -3692,6 +3708,32 @@
     "type": "error",
     "name": "ServiceCapacityEscrowNotBound",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ServiceCapacityExhausted",
+    "inputs": [
+      {
+        "name": "role",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "actor",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "cost",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "have",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",

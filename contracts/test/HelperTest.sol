@@ -93,6 +93,7 @@ import {RewardStagingDomainFacet} from "../src/facets/RewardStagingDomainFacet.s
 import {RewardClosureFacet} from "../src/facets/RewardClosureFacet.sol";
 import {RewardEraFacet} from "../src/facets/RewardEraFacet.sol";
 import {ServiceCapacityFacet} from "../src/facets/ServiceCapacityFacet.sol";
+import {OfferMatchIntentFacet} from "../src/facets/OfferMatchIntentFacet.sol";
 import {RewardSweepWalkFacet} from "../src/facets/RewardSweepWalkFacet.sol";
 import {RewardForfeitWalkFacet} from "../src/facets/RewardForfeitWalkFacet.sol";
 import {RewardCompensationDispatchFacet} from "../src/facets/RewardCompensationDispatchFacet.sol";
@@ -710,11 +711,10 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](4);
+        selectors = new bytes4[](3);
         selectors[0] = OfferMatchFacet.matchOffers.selector;
         selectors[1] = OfferMatchFacet.previewMatch.selector;
         selectors[2] = OfferMatchFacet.matchSignedOffer.selector;
-        selectors[3] = OfferMatchFacet.matchIntent.selector;
         return selectors;
     }
 
@@ -2638,7 +2638,7 @@ contract HelperTest {
 
     /// #1219 (S-4) — service capacity deposits. Mirrors `DeployDiamond._getServiceCapacitySelectors`.
     function getServiceCapacityFacetSelectors() public pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](7);
+        selectors = new bytes4[](14);
         selectors[0] = ServiceCapacityFacet.bindServiceCapacityEscrow.selector;
         selectors[1] = ServiceCapacityFacet.setServiceCapacityEnabled.selector;
         selectors[2] = ServiceCapacityFacet.postCapacityDeposit.selector;
@@ -2646,6 +2646,19 @@ contract HelperTest {
         selectors[4] = ServiceCapacityFacet.isServiceCapacityEnabled.selector;
         selectors[5] = ServiceCapacityFacet.getCapacityDeposit.selector;
         selectors[6] = ServiceCapacityFacet.getServiceCapacityEscrow.selector;
+        selectors[7] = ServiceCapacityFacet.setCapacityCurve.selector;
+        selectors[8] = ServiceCapacityFacet.capacitySpendInternal.selector;
+        selectors[9] = ServiceCapacityFacet.setAdapterOperator.selector;
+        selectors[10] = ServiceCapacityFacet.getCapacityCurve.selector;
+        selectors[11] = ServiceCapacityFacet.getCapacityBucket.selector;
+        selectors[12] = ServiceCapacityFacet.previewCapacity.selector;
+        selectors[13] = ServiceCapacityFacet.getAdapterOperator.selector;
+    }
+
+    /// #1219 (S-4) — the standing-intent fill, split out of OfferMatchFacet. Mirrors `DeployDiamond._getOfferMatchIntentSelectors`.
+    function getOfferMatchIntentFacetSelectors() public pure returns (bytes4[] memory selectors) {
+        selectors = new bytes4[](1);
+        selectors[0] = OfferMatchIntentFacet.matchIntent.selector;
     }
 
     /// 3b-ii-B (#1566) — the per-day closure proof. Mirrors `DeployDiamond._getRewardClosureSelectors`.

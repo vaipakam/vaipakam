@@ -93,6 +93,7 @@ import {RewardStagingDomainFacet} from "../src/facets/RewardStagingDomainFacet.s
 import {RewardClosureFacet} from "../src/facets/RewardClosureFacet.sol";
 import {RewardEraFacet} from "../src/facets/RewardEraFacet.sol";
 import {ServiceCapacityFacet} from "../src/facets/ServiceCapacityFacet.sol";
+import {OfferMatchIntentFacet} from "../src/facets/OfferMatchIntentFacet.sol";
 import {RewardSweepWalkFacet} from "../src/facets/RewardSweepWalkFacet.sol";
 import {RewardForfeitWalkFacet} from "../src/facets/RewardForfeitWalkFacet.sol";
 import {LibPausable} from "../src/libraries/LibPausable.sol";
@@ -360,6 +361,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // slice 4 PR C-1 (#1566) — the custody era registry.
         RewardEraFacet rewardEraFacet = new RewardEraFacet();
         ServiceCapacityFacet serviceCapacityFacet = new ServiceCapacityFacet();
+        OfferMatchIntentFacet offerMatchIntentFacet = new OfferMatchIntentFacet();
         RewardCompensationDispatchFacet rewardCompensationDispatchFacet =
             new RewardCompensationDispatchFacet();
         RewardCommitmentFacet rewardCommitmentFacet = new RewardCommitmentFacet();
@@ -394,7 +396,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](91);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](92);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -481,6 +483,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         cuts[88] = _buildCut(address(rewardClosureFacet), _getRewardClosureSelectors());
         cuts[89] = _buildCut(address(rewardEraFacet), _getRewardEraSelectors());
         cuts[90] = _buildCut(address(serviceCapacityFacet), _getServiceCapacitySelectors());
+        cuts[91] = _buildCut(address(offerMatchIntentFacet), _getOfferMatchIntentSelectors());
         cuts[26] = _buildCut(address(rewardReporterFacet), _getRewardReporterSelectors());
         cuts[27] = _buildCut(address(rewardAggregatorFacet), _getRewardAggregatorSelectors());
         cuts[28] = _buildCut(address(configFacet), _getConfigSelectors());
@@ -1155,6 +1158,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeFacet("rewardClosureFacet", address(rewardClosureFacet));
         Deployments.writeFacet("rewardEraFacet", address(rewardEraFacet));
         Deployments.writeFacet("serviceCapacityFacet", address(serviceCapacityFacet));
+        Deployments.writeFacet("offerMatchIntentFacet", address(offerMatchIntentFacet));
         Deployments.writeFacet("repatriationFacet",       address(repatriationFacet));
         Deployments.writeFacet("configFacet",             address(configFacet));
         // #394 (Codex #647 round-8 P2) — persist the carved-out NumeraireConfigFacet
@@ -1690,18 +1694,17 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///      matching surface. Carved out of OfferFacet to bring it
     ///      under EIP-170; same selectors, separate facet.
     function _getOfferMatchSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](4);
+        s = new bytes4[](3);
         // `matchOffers` is the write entry bots submit; `previewMatch`
         // is the structured-error view they consult before
         // submitting. `matchSignedOffer` (#396 v0.6) is the keeper entry
         // for filling a signed off-chain offer against an on-chain
-        // counterparty. `matchIntent` (#393 v1-b) fills a lender's
-        // standing intent. All gated on the `partialFillEnabled` master
-        // flag inside the facet body.
+        // counterparty. `matchIntent` (#393 v1-b) lives on
+        // OfferMatchIntentFacet since the #1219 host split (EIP-170). All
+        // gated on the `partialFillEnabled` master flag inside the facet body.
         s[0] = OfferMatchFacet.matchOffers.selector;
         s[1] = OfferMatchFacet.previewMatch.selector;
         s[2] = OfferMatchFacet.matchSignedOffer.selector;
-        s[3] = OfferMatchFacet.matchIntent.selector;
     }
 
     /// @dev OfferCancelFacet — cancellation + read views carved out of
@@ -3218,7 +3221,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
     /// #1219 (S-4) — service capacity deposits (slice 1).
     function _getServiceCapacitySelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](7);
+        s = new bytes4[](14);
         s[0] = ServiceCapacityFacet.bindServiceCapacityEscrow.selector;
         s[1] = ServiceCapacityFacet.setServiceCapacityEnabled.selector;
         s[2] = ServiceCapacityFacet.postCapacityDeposit.selector;
@@ -3226,6 +3229,20 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[4] = ServiceCapacityFacet.isServiceCapacityEnabled.selector;
         s[5] = ServiceCapacityFacet.getCapacityDeposit.selector;
         s[6] = ServiceCapacityFacet.getServiceCapacityEscrow.selector;
+        // slice 2 — the limiter.
+        s[7] = ServiceCapacityFacet.setCapacityCurve.selector;
+        s[8] = ServiceCapacityFacet.capacitySpendInternal.selector;
+        s[9] = ServiceCapacityFacet.setAdapterOperator.selector;
+        s[10] = ServiceCapacityFacet.getCapacityCurve.selector;
+        s[11] = ServiceCapacityFacet.getCapacityBucket.selector;
+        s[12] = ServiceCapacityFacet.previewCapacity.selector;
+        s[13] = ServiceCapacityFacet.getAdapterOperator.selector;
+    }
+
+    /// #1219 (S-4) — the standing-intent fill, split out of OfferMatchFacet (EIP-170 host split).
+    function _getOfferMatchIntentSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](1);
+        s[0] = OfferMatchIntentFacet.matchIntent.selector;
     }
 
     /// @dev 3b-ii-B (#1566) — the per-day closure proof.

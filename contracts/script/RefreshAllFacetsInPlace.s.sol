@@ -98,6 +98,7 @@ import {RewardStagingDomainFacet} from "../src/facets/RewardStagingDomainFacet.s
 import {RewardClosureFacet} from "../src/facets/RewardClosureFacet.sol";
 import {RewardEraFacet} from "../src/facets/RewardEraFacet.sol";
 import {ServiceCapacityFacet} from "../src/facets/ServiceCapacityFacet.sol";
+import {OfferMatchIntentFacet} from "../src/facets/OfferMatchIntentFacet.sol";
 import {RewardSweepWalkFacet} from "../src/facets/RewardSweepWalkFacet.sol";
 import {RewardForfeitWalkFacet} from "../src/facets/RewardForfeitWalkFacet.sol";
 import {LibPausable} from "../src/libraries/LibPausable.sol";
@@ -237,7 +238,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     // (#1434) landed on either side of one merge.
     // 74 -> 75: OfferAcceptFeeFacet (#1835) — the borrower-LIF charge split
     // off OfferAcceptFacet, which was 164 bytes under EIP-170.
-    uint256 public constant EXPECTED_FACETS = 91;
+    uint256 public constant EXPECTED_FACETS = 92;
 
     function refresh() external {
         uint256 cid = block.chainid;
@@ -1573,6 +1574,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         items[88] = Item("rewardClosureFacet", address(new RewardClosureFacet()), _getRewardClosureSelectors());
         items[89] = Item("rewardEraFacet", address(new RewardEraFacet()), _getRewardEraSelectors());
         items[90] = Item("serviceCapacityFacet", address(new ServiceCapacityFacet()), _getServiceCapacitySelectors());
+        items[91] = Item("offerMatchIntentFacet", address(new OfferMatchIntentFacet()), _getOfferMatchIntentSelectors());
         items[26] = Item("rewardReporterFacet", address(new RewardReporterFacet()), _getRewardReporterSelectors());
         // #1222 M3 B3 — `getChainRecycledLedger` /
         // `getChainDailyRecycledCredit` moved here from ConfigFacet (EIP-170).

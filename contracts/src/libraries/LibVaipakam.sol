@@ -7799,6 +7799,14 @@ library LibVaipakam {
         /// @dev Σ principal the escrow holds per rotation epoch — the fourth
         ///      tracked VPFI balance class, published by the facet.
         mapping(uint64 => uint256) serviceDepositEscrowByEpoch;
+        /// @dev role → its capacity curve (slice 2). Unset = that role's limiter is dark.
+        mapping(uint8 => CapacityCurve) capacityCurves;
+        /// @dev (role, actor) → the capacity bucket (slice 2).
+        mapping(uint8 => mapping(address => CapacityBucket)) capacityBuckets;
+        /// @dev adapter → the operator identity its fills are charged to (actor
+        ///      rule 2): written by the adapter factory at creation (the keeper it
+        ///      names), overridable by the admin for adapters created before this.
+        mapping(address => address) adapterOperator;
     }
 
     /// @notice 3b-ii-A2 (#2305) — one batch a staging record staged from, with
@@ -7869,6 +7877,39 @@ library LibVaipakam {
         uint256 amount;
         uint256 eligibleAmount;
         uint256 parkedRequest;
+    }
+
+    /// @notice #1219 (S-4) — one role's capacity CURVE. `freeTier` is the free
+    ///         bucket's capacity (cost units, 1e18-scaled) — the permissionless
+    ///         baseline, floored at one `classCost` so a zero-deposit operator can
+    ///         always complete one action; `freeRatePerSec` its refill rate
+    ///         (units × 1e18 per second); `bondAt4x` the deposit (VPFI wei) at which
+    ///         the rate and ceiling reach 4× the free tier; `classCost` what one
+    ///         executed fill or action costs (units × 1e18; one class per role in
+    ///         v1). `epoch` increments on every retune — a bucket on an older epoch
+    ///         is RESET (the design's conservative branch: pre-retune credit is
+    ///         forfeited, never silently re-credited under the new capacity). All
+    ///         zero = the role's limiter is DARK: no charge, no refusal.
+    struct CapacityCurve {
+        uint256 freeTier;
+        uint256 freeRatePerSec;
+        uint256 bondAt4x;
+        uint256 classCost;
+        uint64 epoch;
+    }
+
+    /// @notice #1219 (S-4) — one `(role, actor)` capacity BUCKET: its balance
+    ///         (units × 1e18), when it was last touched, and the curve epoch it
+    ///         last settled under. An unseen bucket starts with exactly ONE free
+    ///         action at its first touch — the permissionless floor every operator
+    ///         has, never deposit-derived credit, so a fresh address buys no burst
+    ///         — then accrues at the actor's OWN rate from its OWN last touch and
+    ///         is clamped to the actor's OWN ceiling.
+    struct CapacityBucket {
+        uint128 balance;
+        uint64 lastTouch;
+        uint64 curveEpoch;
+        bool seen;
     }
 
     /// @notice 3b-ii-A2-ii — the lifecycle of a multi-chunk claim DOMAIN

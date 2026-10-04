@@ -1904,4 +1904,10 @@ interface IVaipakamErrors {
     error ServiceCapacityMoveUnverified(uint256 expected, uint256 moved);
     /// @notice The configured sanctions oracle was unavailable for `party`: every deposit mutation defers (fail-closed) and persists nothing.
     error ServiceCapacitySanctionsUnavailable(address party);
+    /// @notice A curve parameter violates a floor: every figure positive and `freeTier >= classCost` (one free action, always).
+    error ServiceCapacityCurveInvalid(uint8 role);
+    /// @notice `actor`'s bucket for `role` holds `have` (units x 1e18), less than the `cost` of this action: admission refused.
+    error ServiceCapacityExhausted(uint8 role, address actor, uint256 cost, uint256 have);
+    /// @notice The capacity spend self-call failed without revert data (the capacity facet is not routed, or ran out of gas).
+    error ServiceCapacityCallFailed();
 }

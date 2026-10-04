@@ -101,6 +101,7 @@ import RewardStagingDomainFacetABI from './RewardStagingDomainFacet.json';
 import RewardClosureFacetABI from './RewardClosureFacet.json';
 import RewardEraFacetABI from './RewardEraFacet.json';
 import ServiceCapacityFacetABI from './ServiceCapacityFacet.json';
+import OfferMatchIntentFacetABI from './OfferMatchIntentFacet.json';
 import RepatriationFacetABI from './RepatriationFacet.json';
 import ConfigFacetABI from './ConfigFacet.json';
 import NumeraireConfigFacetABI from './NumeraireConfigFacet.json';
@@ -212,6 +213,7 @@ export {
   RewardClosureFacetABI,
   RewardEraFacetABI,
   ServiceCapacityFacetABI,
+  OfferMatchIntentFacetABI,
   RepatriationFacetABI,
   ConfigFacetABI,
   NumeraireConfigFacetABI,
@@ -320,6 +322,7 @@ export const DIAMOND_ABI = [
   ...RewardClosureFacetABI,
   ...RewardEraFacetABI,
   ...ServiceCapacityFacetABI,
+  ...OfferMatchIntentFacetABI,
   ...RepatriationFacetABI,
   ...ConfigFacetABI,
   ...NumeraireConfigFacetABI,
