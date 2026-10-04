@@ -41,6 +41,8 @@ import {
   type OfferRiskLevel as RiskLevel,
 } from '../components/TokenRiskBadge';
 import { useBookTokenSecurity } from '../data/tokenSecurity';
+import { ltvLegs, offerLtv, type OfferLtv } from '../data/offerLtv';
+import { useAssetPricing } from '../data/useAssetPricing';
 import { ShowMoreButton, useVisibleWindow } from '../lib/visibleWindow';
 import { AssetType } from '../lib/types';
 import {
@@ -72,7 +74,33 @@ function rateOf(offer: IndexedOffer): number | null {
     : offer.interestRateBpsMax;
 }
 
-function OfferRow({ offer, risk }: { offer: IndexedOffer; risk: RiskLevel | null }) {
+function ltvText(ltv: OfferLtv): string | null {
+  switch (ltv.kind) {
+    case 'value': {
+      const pct = formatBpsAsPercent(Number(ltv.bps));
+      return ltv.bound === 'atMost' ? copy.offers.ltvAtMost(pct) : copy.offers.ltvValue(pct);
+    }
+    case 'unpriced':
+      return copy.offers.ltvUnpriced;
+    case 'unknown':
+      return copy.offers.ltvUnknown;
+    case 'loading':
+      return copy.offers.ltvLoading;
+    case 'none':
+      return null;
+  }
+}
+
+function OfferRow({
+  offer,
+  risk,
+  ltv,
+}: {
+  offer: IndexedOffer;
+  risk: RiskLevel | null;
+  /** #2384 — the card's loan-to-value, resolved for the visible page. */
+  ltv: OfferLtv;
+}) {
   const { address } = useActiveChain();
   const { isAdvanced } = useMode();
   const isLending = offer.offerType === 0;
@@ -188,7 +216,7 @@ function OfferRow({ offer, risk }: { offer: IndexedOffer; risk: RiskLevel | null
         !offer.isSaleVehicle && hasCollateral && offer.collateralLiquidity === 1
           ? ` · ${copy.offers.illiquidCollateralTag}`
           : ''
-      }`;
+      }${ltvText(ltv) ? ` · ${ltvText(ltv)}` : ''}`;
 
   // Advanced detail line: the exact numbers a DEX-versed user expects
   // to see before clicking through — id, rate, expiry, range bounds.
@@ -363,6 +391,14 @@ export function Offers() {
     [bookWindow.shown],
   );
   const verdicts = useBookTokenSecurity(screenLegs);
+  // #2384 — one batched pricing read for the ERC-20 legs on the visible
+  // WINDOW (it grows with Show-more, like the badge screen above).
+  const pricing = useAssetPricing(
+    bookWindow.shown.flatMap((o) => {
+      const legs = ltvLegs(o);
+      return legs ? [legs.lending, legs.collateral] : [];
+    }),
+  );
 
   // Only ROW-REMOVING controls count (sort can never empty a list),
   // and the filter-empty copy may only ever appear when the unfiltered
@@ -474,6 +510,7 @@ export function Offers() {
                 key={o.offerId}
                 offer={o}
                 risk={offerRiskLevel(o, verdicts)}
+                ltv={offerLtv(o, pricing)}
               />
             ))}
           </div>

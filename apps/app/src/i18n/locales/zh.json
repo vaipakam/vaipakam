@@ -1520,6 +1520,13 @@
       "collateralLabel": "抵押品",
       "collateralNone": "无",
       "illiquidCollateralTag": "发布时为非流动（接受时会重新检查）——若是，未还款时将原样移交",
+      "collateralAtLeast": "至少 {{amount}}",
+      "ltvValue": "贷款价值比 {{pct}}",
+      "ltvAtMost": "贷款价值比最高 {{pct}}",
+      "ltvUnpriced": "无法计算贷款价值比（其中一方没有可靠价格）",
+      "ltvUnknown": "暂时无法核实贷款价值比",
+      "ltvLoading": "正在核实贷款价值比…",
+      "collateralOfRunningLoan": "所出售的进行中贷款的抵押品（此行未显示）",
       "collateralAmountLoading": "{{token}}（正在加载数量…）",
       "collateralAmountRaw": "{{token}} 的 {{amount}} 个基本单位（无法读取代币详情）",
       "collateralForFullOffer": "整笔报价需 {{amount}}（只取一部分则按比例减少）",
@@ -1572,9 +1579,7 @@
       "staleList": "此列表上次更新于 {{age}} 前，可能落后 — 可能有未显示的新报价。请稍后再查看。",
       "unavailable": "当前无法加载报价簿。请稍后重试。",
       "lenderOffer": "出借报价",
-      "borrowerOffer": "借入请求",
-      "collateralAtLeast": "至少 {{amount}}",
-      "collateralOfRunningLoan": "所出售的进行中贷款的抵押品（此行未显示）"
+      "borrowerOffer": "借入请求"
     },
     "desk": {
       "tenorLiveTitle": "{{tenor}} — 订单簿上的实时报价",

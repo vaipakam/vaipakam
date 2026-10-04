@@ -3500,6 +3500,15 @@ const copySource = {
     // checks liquidity again and the loan follows THAT result.
     illiquidCollateralTag: 'illiquid when posted (checked again at acceptance) — if so, handed over as-is if not repaid',
     collateralAtLeast: tmpl('at least {{amount}}', ['amount']),
+    // #2384 (UX3-007) — the loan-to-value the card can substantiate, from
+    // the protocol's live oracle prices; each unknown is named, never
+    // shown as a figure. A borrow request's collateral is a floor, so its
+    // ratio is a ceiling.
+    ltvValue: tmpl('loan-to-value {{pct}}', ['pct']),
+    ltvAtMost: tmpl('loan-to-value at most {{pct}}', ['pct']),
+    ltvUnpriced: 'loan-to-value can’t be worked out (one side has no reliable price)',
+    ltvUnknown: 'loan-to-value couldn’t be checked right now',
+    ltvLoading: 'checking loan-to-value…',
     // #2378 r4 — a loan-position sale row carries no collateral of its own.
     collateralOfRunningLoan: 'the collateral of the running loan being sold (not shown on this row)',
     // #2378 r1 — an ERC-20 collateral amount whose token details are still

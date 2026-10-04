@@ -1520,6 +1520,13 @@
       "collateralLabel": "Sicherheit",
       "collateralNone": "keine",
       "illiquidCollateralTag": "bei Veröffentlichung illiquide (bei Annahme erneut geprüft) – dann wird sie bei Nichtrückzahlung unverändert übergeben",
+      "collateralAtLeast": "mindestens {{amount}}",
+      "ltvValue": "Beleihungsquote {{pct}}",
+      "ltvAtMost": "Beleihungsquote höchstens {{pct}}",
+      "ltvUnpriced": "Beleihungsquote lässt sich nicht berechnen (für eine Seite gibt es keinen verlässlichen Preis)",
+      "ltvUnknown": "Beleihungsquote konnte gerade nicht geprüft werden",
+      "ltvLoading": "Beleihungsquote wird geprüft…",
+      "collateralOfRunningLoan": "die Sicherheit des laufenden Kredits, der verkauft wird (in dieser Zeile nicht angezeigt)",
       "collateralAmountLoading": "{{token}} (Betrag wird geladen…)",
       "collateralAmountRaw": "{{amount}} Basiseinheiten von {{token}} (Token-Details konnten nicht gelesen werden)",
       "collateralForFullOffer": "{{amount}} für das gesamte Angebot (anteilig weniger für einen Teil davon)",
@@ -1572,9 +1579,7 @@
       "staleList": "Diese Liste wurde zuletzt vor {{age}} aktualisiert und kann hinterherhinken — neue Angebote können existieren, die noch nicht angezeigt werden. Schauen Sie in Kürze wieder vorbei.",
       "unavailable": "Wir konnten das Angebotsbuch gerade nicht laden. Bitte versuchen Sie es gleich noch einmal.",
       "lenderOffer": "Kreditangebot",
-      "borrowerOffer": "Leihanfrage",
-      "collateralAtLeast": "mindestens {{amount}}",
-      "collateralOfRunningLoan": "die Sicherheit des laufenden Kredits, der verkauft wird (in dieser Zeile nicht angezeigt)"
+      "borrowerOffer": "Leihanfrage"
     },
     "desk": {
       "tenorLiveTitle": "{{tenor}} — Live-Angebote im Orderbuch",

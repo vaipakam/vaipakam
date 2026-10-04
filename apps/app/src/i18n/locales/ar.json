@@ -1520,6 +1520,13 @@
       "collateralLabel": "ضمان",
       "collateralNone": "لا يوجد",
       "illiquidCollateralTag": "غير سائل عند النشر (يُعاد فحصه عند القبول) — إن كان كذلك، يُسلَّم كما هو إذا لم يُسدَّد",
+      "collateralAtLeast": "{{amount}} على الأقل",
+      "ltvValue": "نسبة القرض إلى القيمة {{pct}}",
+      "ltvAtMost": "نسبة القرض إلى القيمة بحد أقصى {{pct}}",
+      "ltvUnpriced": "لا يمكن حساب نسبة القرض إلى القيمة (أحد الطرفين ليس له سعر موثوق)",
+      "ltvUnknown": "تعذّر التحقق من نسبة القرض إلى القيمة حاليًا",
+      "ltvLoading": "جارٍ التحقق من نسبة القرض إلى القيمة…",
+      "collateralOfRunningLoan": "ضمان القرض الجاري المُباع (غير معروض في هذا الصف)",
       "collateralAmountLoading": "{{token}} (جارٍ تحميل المقدار…)",
       "collateralAmountRaw": "{{amount}} وحدة أساسية من {{token}} (تعذّرت قراءة تفاصيل الرمز)",
       "collateralForFullOffer": "{{amount}} للعرض كاملًا (أقل بالتناسب لجزء منه)",
@@ -1572,9 +1579,7 @@
       "staleList": "تم تحديث هذه القائمة قبل {{age}} وقد تكون متأخرة — قد توجد عروض جديدة لا تظهر بعد. تحقق قريبا.",
       "unavailable": "تعذّر علينا تحميل دفتر العروض الآن. يرجى المحاولة مجددًا بعد لحظة.",
       "lenderOffer": "عرض إقراض",
-      "borrowerOffer": "طلب اقتراض",
-      "collateralAtLeast": "{{amount}} على الأقل",
-      "collateralOfRunningLoan": "ضمان القرض الجاري المُباع (غير معروض في هذا الصف)"
+      "borrowerOffer": "طلب اقتراض"
     },
     "desk": {
       "tenorLiveTitle": "{{tenor}} — عروض مباشرة في book",

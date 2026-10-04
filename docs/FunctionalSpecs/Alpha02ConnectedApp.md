@@ -1238,6 +1238,16 @@ progress.
 - Basic mode shows a plain newest-first book, and lets anyone choose which
   side to show and how to sort it (rate or loan length) — plain choices that need
   no expertise. Advanced mode adds filtering by raw asset address.
+- Each token-for-token offer states its loan-to-value: the loan's value as a
+  share of the collateral's, worked out from the protocol's live oracle prices,
+  each side valued by its own token's precision. A borrow request's collateral
+  is the least it commits, so its figure is stated as the most the ratio can
+  be. When either side has no reliable price (it is illiquid, or its value comes
+  to nothing) the row says the ratio can't be worked out; when a price could not
+  be read it says the ratio couldn't be checked right now; while the prices are
+  loading it says so. It never shows a figure it cannot back, and never a 0%
+  that only means "unknown". Rentals, offers with an NFT on either side, offers
+  with no collateral, and loan-position sales state no ratio.
 - Each offer states its collateral as an amount, not only a token name, so a
   lender can judge an offer before opening it. When the collateral is recorded
   as illiquid, the row says that on default it is handed over as-is rather than

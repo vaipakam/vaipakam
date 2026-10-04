@@ -1520,6 +1520,13 @@
       "collateralLabel": "garantía",
       "collateralNone": "ninguna",
       "illiquidCollateralTag": "ilíquida al publicarse (se vuelve a comprobar al aceptar) — si lo es, se entrega tal cual si no se devuelve",
+      "collateralAtLeast": "al menos {{amount}}",
+      "ltvValue": "préstamo sobre valor {{pct}}",
+      "ltvAtMost": "préstamo sobre valor como máximo {{pct}}",
+      "ltvUnpriced": "el préstamo sobre valor no se puede calcular (una de las partes no tiene un precio fiable)",
+      "ltvUnknown": "no se pudo comprobar el préstamo sobre valor ahora mismo",
+      "ltvLoading": "comprobando el préstamo sobre valor…",
+      "collateralOfRunningLoan": "la garantía del préstamo en curso que se vende (no se muestra en esta fila)",
       "collateralAmountLoading": "{{token}} (cargando la cantidad…)",
       "collateralAmountRaw": "{{amount}} unidades base de {{token}} (no se pudieron leer los datos del token)",
       "collateralForFullOffer": "{{amount}} para la oferta completa (proporcionalmente menos para una parte)",
@@ -1572,9 +1579,7 @@
       "staleList": "Esta lista se actualizó hace {{age}} y puede estar atrasada — pueden existir ofertas nuevas que no se muestran. Vuelve en breve.",
       "unavailable": "No pudimos cargar el libro de ofertas ahora mismo. Inténtalo de nuevo en un momento.",
       "lenderOffer": "Oferta de préstamo",
-      "borrowerOffer": "Solicitud de préstamo",
-      "collateralAtLeast": "al menos {{amount}}",
-      "collateralOfRunningLoan": "la garantía del préstamo en curso que se vende (no se muestra en esta fila)"
+      "borrowerOffer": "Solicitud de préstamo"
     },
     "desk": {
       "tenorLiveTitle": "{{tenor}} — ofertas activas en el libro",

@@ -1520,6 +1520,13 @@
       "collateralLabel": "collateral",
       "collateralNone": "none",
       "illiquidCollateralTag": "पोस्ट करते समय इलिक्विड (स्वीकार करते समय फिर जाँचा जाता है) — अगर ऐसा है, तो न चुकाने पर जैसा है वैसा सौंप दिया जाता है",
+      "collateralAtLeast": "कम से कम {{amount}}",
+      "ltvValue": "लोन-टू-वैल्यू {{pct}}",
+      "ltvAtMost": "लोन-टू-वैल्यू ज़्यादा से ज़्यादा {{pct}}",
+      "ltvUnpriced": "लोन-टू-वैल्यू निकाला नहीं जा सकता (एक तरफ़ का कोई भरोसेमंद मूल्य नहीं है)",
+      "ltvUnknown": "लोन-टू-वैल्यू अभी जाँचा नहीं जा सका",
+      "ltvLoading": "लोन-टू-वैल्यू जाँचा जा रहा है…",
+      "collateralOfRunningLoan": "बेचे जा रहे चालू लोन का कोलैटरल (इस पंक्ति में नहीं दिखाया गया)",
       "collateralAmountLoading": "{{token}} (राशि लोड हो रही है…)",
       "collateralAmountRaw": "{{token}} की {{amount}} base units (token का विवरण पढ़ा नहीं जा सका)",
       "collateralForFullOffer": "पूरे ऑफ़र के लिए {{amount}} (उसके एक हिस्से के लिए अनुपात में कम)",
@@ -1572,9 +1579,7 @@
       "staleList": "यह list {{age}} पहले updated हुई थी और पीछे हो सकती है — नए offers मौजूद हो सकते हैं जो अभी दिखते नहीं। थोड़ी देर बाद check करें।",
       "unavailable": "अभी offer book load नहीं कर सके। थोड़ी देर में try करें।",
       "lenderOffer": "Lending offer",
-      "borrowerOffer": "Borrow request",
-      "collateralAtLeast": "कम से कम {{amount}}",
-      "collateralOfRunningLoan": "बेचे जा रहे चालू लोन का कोलैटरल (इस पंक्ति में नहीं दिखाया गया)"
+      "borrowerOffer": "Borrow request"
     },
     "desk": {
       "tenorLiveTitle": "{{tenor}} — book पर live offers",
