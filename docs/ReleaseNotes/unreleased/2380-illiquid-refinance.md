@@ -1,4 +1,4 @@
-## Thread — a loan backed by illiquid collateral can now be refinanced, with both parties' consent (PR #TBD)
+## Thread — a loan backed by illiquid collateral can now be refinanced, with both parties' consent (PR #2401)
 
 Refinancing a loan whose collateral is illiquid used to fail every time. The new lender's acceptance opened the replacement loan and paid off the old one. Then the refinance's final risk check asked for a loan-to-value ratio and a health factor, figures the platform never computes for an illiquid asset because it values that asset at zero. The whole transaction reverted. This surfaced on a copy of the live Base Sepolia deployment in #2355's verification, as #2380.
 
