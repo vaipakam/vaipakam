@@ -18,7 +18,7 @@
  *     job (`principalCeiling` subtracts `amountFilled`) but is named here so
  *     the contract is visible at the comparison.
  */
-import { parseUnits } from 'viem';
+import { exactUnitsOrNull } from '../../lib/format';
 import { isPlainDecimal } from '../../lib/errors';
 import { VPFI_DECIMALS } from '../../data/vpfi';
 
@@ -29,12 +29,10 @@ export function armedCeilingOf(fields: {
   ceiling: string;
 } | null): bigint | undefined {
   if (!fields?.full || !isPlainDecimal(fields.ceiling)) return undefined;
-  try {
-    const v = parseUnits(fields.ceiling, VPFI_DECIMALS);
-    return v > 0n ? v : undefined;
-  } catch {
-    return undefined;
-  }
+  // #2390 — exact: a ceiling finer than VPFI's precision expresses no
+  // authorization (Save refuses it by name), so it arms nothing here.
+  const v = exactUnitsOrNull(fields.ceiling, VPFI_DECIMALS);
+  return v !== null && v > 0n ? v : undefined;
 }
 
 /** True when the form should warn that the live quote has already passed the

@@ -19,7 +19,7 @@ import { CircleCheck, Coins, LoaderCircle } from 'lucide-react';
 import { useModal } from 'connectkit';
 import { usePublicClient, useWalletClient } from 'wagmi';
 import { useQueryClient } from '@tanstack/react-query';
-import { encodeFunctionData, parseUnits } from 'viem';
+import { encodeFunctionData } from 'viem';
 import { getDeployment } from '@vaipakam/contracts/deployments';
 import { copy } from '../content/copy';
 import { useActiveChain } from '../chain/useActiveChain';
@@ -34,6 +34,7 @@ import {
   useTermsBlockNonExitWrites,
 } from '../contracts/diamond';
 import { SimulationPreview } from '../components/SimulationPreview';
+import { AmountPrecisionHint } from '../components/AmountPrecisionHint';
 import type { TxSimInput } from '../contracts/useTxSimulation';
 import { ensureAllowance } from '../contracts/erc20';
 import {
@@ -41,7 +42,12 @@ import {
   usePermit2Signing,
 } from '../contracts/usePermit2Signing';
 import { readAllowance } from '../lib/submitProgress';
-import { exactAmountString, formatBpsAsPercent, formatTokenAmount } from '../lib/format';
+import {
+  exactAmountString,
+  exactUnitsOrNull,
+  formatBpsAsPercent,
+  formatTokenAmount,
+} from '../lib/format';
 import { isPositiveDecimal, captureTxError } from '../lib/errors';
 import { flowDisabled } from '../lib/killSwitch';
 import { ReviewReceipt, type ReceiptData } from '../components/ReviewReceipt';
@@ -110,11 +116,8 @@ export function Vpfi() {
 
   const amountWei = useMemo(() => {
     if (!isPositiveDecimal(amount)) return null;
-    try {
-      return parseUnits(amount, VPFI_DECIMALS);
-    } catch {
-      return null;
-    }
+    // #2390 — exact: excess precision is refused, never rounded.
+    return exactUnitsOrNull(amount, VPFI_DECIMALS);
   }, [amount]);
 
   // Withdrawals above the FREE balance revert (encumbered VPFI backs
@@ -753,6 +756,11 @@ export function Vpfi() {
                     )}
                 {overMax ? copy.vpfi.overMaxHint : ''}
               </span>
+              <AmountPrecisionHint
+                value={amount}
+                decimals={VPFI_DECIMALS}
+                symbol="VPFI"
+              />
             </div>
 
             {reviewing && receipt ? (

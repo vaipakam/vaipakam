@@ -3207,12 +3207,6 @@ const copySource = {
         // reason of its own. The wallet never opened.
         checkFailed:
           'We couldn’t finish the checks before opening your wallet, so nothing was sent. Please try again in a moment.',
-        // #2389 r3 — more decimals than the token has: refused, never
-        // rounded into a different amount.
-        tooPrecise: tmpl(
-          '{{symbol}} can’t be split that finely — use at most {{decimals}} decimal places.',
-          ['symbol', 'decimals'],
-        ),
         // #2389 r2 — the sale-listing check itself failed.
         saleUnchecked:
           'We couldn’t check whether a sale listing of the lender’s position is linked to this loan, so nothing was sent. Please try again in a moment.',
@@ -4989,6 +4983,13 @@ const copySource = {
     networkFallback: tmpl('network #{{id}}', ['id']),
     // Fallback shown when a value (e.g. the connected chain id) is not known.
     unknown: 'unknown',
+    // #2389 r3 / #2390 — a typed amount with more decimals than the token
+    // has. Refused, never rounded into a different amount; shared by every
+    // money input through AmountPrecisionHint.
+    amountTooPrecise: tmpl(
+      '{{symbol}} can’t be split that finely — use at most {{decimals}} decimal places.',
+      ['symbol', 'decimals'],
+    ),
   },
   stepNav: {
     progressAria: 'Progress',

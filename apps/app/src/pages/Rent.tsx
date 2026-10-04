@@ -23,12 +23,13 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { CircleCheck, Images, KeyRound, LoaderCircle } from 'lucide-react';
 import { usePublicClient, useWalletClient } from 'wagmi';
 import { useQueryClient } from '@tanstack/react-query';
-import { encodeFunctionData, parseUnits } from 'viem';
+import { encodeFunctionData } from 'viem';
 import { copy } from '../content/copy';
 import {
   disablePermit2ForSession,
   usePermit2Signing,
 } from '../contracts/usePermit2Signing';
+import { AmountPrecisionHint } from '../components/AmountPrecisionHint';
 import { ConsentLabel } from '../components/ConsentLabel';
 import { SelectMenu } from '../components/SelectMenu';
 import { useActiveChain } from '../chain/useActiveChain';
@@ -84,6 +85,7 @@ import {
 } from '../lib/offerSchema';
 import { AssetType } from '../lib/types';
 import {
+  exactUnitsOrNull,
   formatBpsAsPercent,
   formatDurationDays,
   formatTokenAmount,
@@ -146,12 +148,10 @@ function ListNftFlow() {
   const rentalSupport = useNftRentalSupport(contract, standardEnum);
 
   const dailyFeeWei = useMemo(() => {
-    if (!prepayMeta.data || !dailyFee || Number(dailyFee) <= 0) return null;
-    try {
-      return parseUnits(dailyFee, prepayMeta.data.decimals);
-    } catch {
-      return null;
-    }
+    if (!prepayMeta.data) return null;
+    // #2390 — exact: excess precision is refused, never rounded.
+    const wei = exactUnitsOrNull(dailyFee, prepayMeta.data.decimals);
+    return wei !== null && wei > 0n ? wei : null;
   }, [dailyFee, prepayMeta.data]);
 
   // Live createOffer duration cap (OfferDurationExceedsCap) — filter
@@ -522,6 +522,13 @@ function ListNftFlow() {
             <span className="field-hint">
               {copy.rent.bufferNote(formatBpsAsPercent(bufferBps))}
             </span>
+            {prepayMeta.data ? (
+              <AmountPrecisionHint
+                value={dailyFee}
+                decimals={prepayMeta.data.decimals}
+                symbol={prepayMeta.data.symbol}
+              />
+            ) : null}
           </div>
           <div className="field">
             <label htmlFor="rent-duration">{copy.rent.durationLabel}</label>

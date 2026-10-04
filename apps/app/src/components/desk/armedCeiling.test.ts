@@ -18,6 +18,9 @@ describe('armedCeilingOf', () => {
     // own guard rejects it (#1700 r2 hit exactly this in a spec).
     expect(armedCeilingOf({ full: true, ceiling: '1e-17' })).toBeUndefined();
   });
+  it('is undefined for a ceiling finer than VPFI’s 18 decimals — refused, never rounded (#2390)', () => {
+    expect(armedCeilingOf({ full: true, ceiling: '1.0000000000000000001' })).toBeUndefined();
+  });
   it('treats zero as no ceiling — the contract requires a positive one', () => {
     expect(armedCeilingOf({ full: true, ceiling: '0' })).toBeUndefined();
   });

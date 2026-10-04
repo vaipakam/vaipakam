@@ -20,7 +20,7 @@
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { usePublicClient, useWalletClient } from 'wagmi';
-import { parseEventLogs, parseUnits } from 'viem';
+import { parseEventLogs } from 'viem';
 import { copy } from '../content/copy';
 import { isPositiveDecimal, captureTxError } from '../lib/errors';
 import { flowDisabled } from '../lib/killSwitch';
@@ -45,7 +45,13 @@ import { LOCK_PRECLOSE_OFFSET } from '../data/offsetPending';
 import { LOCK_EARLY_WITHDRAWAL_SALE } from '../data/loanSalePending';
 import type { IndexedLoan } from '../data/indexer';
 import { MAX_INTEREST_BPS, percentToBps } from '../lib/offerSchema';
-import { exactAmountString, formatTokenAmount } from '../lib/format';
+import {
+  exactAmountString,
+  exactUnitsOrNull,
+  formatTokenAmount,
+  isTooPrecise,
+} from '../lib/format';
+import { AmountPrecisionHint } from './AmountPrecisionHint';
 import { ConfirmReceipt } from './ConfirmReceipt';
 import type { TokenMeta } from '../contracts/erc20';
 
@@ -141,7 +147,7 @@ export function OffsetFlow({
     String(maxDurationDays),
   );
   // exactAmountString, not formatTokenAmount: the display formatter's
-  // thousands separators don't parse back through parseUnits.
+  // thousands separators don’t parse back through parseExactUnits.
   const [collateralInput, setCollateralInput] = useState(() =>
     collateralMeta
       ? exactAmountString(live.collateralAmount, collateralMeta.decimals)
@@ -175,12 +181,11 @@ export function OffsetFlow({
   const collateralWei = (() => {
     if (collateralIsNft) return live.collateralAmount;
     if (!isPositiveDecimal(collateralInput)) return null;
-    try {
-      return parseUnits(collateralInput, collateralMeta.decimals);
-    } catch {
-      return null;
-    }
+    // #2390 — exact: excess precision is refused, never rounded.
+    return exactUnitsOrNull(collateralInput, collateralMeta.decimals);
   })();
+  const collateralTooPrecise =
+    !collateralIsNft && isTooPrecise(collateralInput, collateralMeta.decimals);
   const collateralValid =
     collateralWei !== null && collateralWei >= live.collateralAmount;
 
@@ -517,7 +522,12 @@ export function OffsetFlow({
             disabled={busy}
             aria-label={copy.offset.collateralLabel(collateralMeta!.symbol)}
           />
-          {!collateralValid && collateralInput !== '' ? (
+          <AmountPrecisionHint
+            value={collateralInput}
+            decimals={collateralMeta!.decimals}
+            symbol={collateralMeta!.symbol}
+          />
+          {!collateralValid && collateralInput !== '' && !collateralTooPrecise ? (
             <span className="field-hint" style={{ color: 'var(--danger)' }}>
               {copy.offset.collateralMin(
                 formatTokenAmount(

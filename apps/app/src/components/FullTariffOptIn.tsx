@@ -20,7 +20,6 @@
 import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { usePublicClient } from 'wagmi';
-import { parseUnits } from 'viem';
 import type { Address } from 'viem';
 import { copy } from '../content/copy';
 import { useActiveChain } from '../chain/useActiveChain';
@@ -32,7 +31,13 @@ import {
 } from '../data/tariff';
 import { VPFI_DECIMALS } from '../data/vpfi';
 import { isCeilingOvertaken, shouldBlockOnCeiling } from './fullTariffCeiling';
-import { exactAmountString, formatTokenAmount } from '../lib/format';
+import {
+  exactAmountString,
+  exactUnitsOrNull,
+  formatTokenAmount,
+  isTooPrecise,
+} from '../lib/format';
+import { AmountPrecisionHint } from './AmountPrecisionHint';
 import { isPlainDecimal } from '../lib/errors';
 
 export interface FullTariffChoice {
@@ -162,11 +167,9 @@ export function FullTariffOptIn({
 
   const ceiling = useMemo(() => {
     if (ceilingText === null || !isPlainDecimal(ceilingText)) return undefined;
-    try {
-      return parseUnits(ceilingText, VPFI_DECIMALS);
-    } catch {
-      return undefined;
-    }
+    // #2390 — exact: a ceiling finer than VPFI's precision authorizes
+    // nothing (AmountPrecisionHint names it), never a rounded figure.
+    return exactUnitsOrNull(ceilingText, VPFI_DECIMALS) ?? undefined;
   }, [ceilingText]);
 
   // #1694 — the ceiling is seeded ONCE from the first quote (plus headroom)
@@ -374,7 +377,12 @@ export function FullTariffOptIn({
           <p className="muted" style={{ margin: '4px 0 0', fontSize: '0.8rem' }}>
             {copy.tariff.maxCStarHelp}
           </p>
-          {ceilingInvalid ? (
+          <AmountPrecisionHint
+            value={ceilingText}
+            decimals={VPFI_DECIMALS}
+            symbol="VPFI"
+          />
+          {ceilingInvalid && !isTooPrecise(ceilingText ?? '', VPFI_DECIMALS) ? (
             <p
               className="muted"
               role="alert"

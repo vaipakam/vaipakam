@@ -1430,7 +1430,6 @@
           "pauseUnknownNote": "We couldn’t check whether taking back collateral is paused on this deployment. It is checked again before your wallet opens.",
           "saleUnknownNote": "We couldn’t check ahead of time whether a sale listing of the lender’s position is linked to this loan. It is checked again before your wallet opens, and a linked listing blocks the withdrawal.",
           "checkFailed": "We couldn’t finish the checks before opening your wallet, so nothing was sent. Please try again in a moment.",
-          "tooPrecise": "{{symbol}} can’t be split that finely — use at most {{decimals}} decimal places.",
           "saleUnchecked": "We couldn’t check whether a sale listing of the lender’s position is linked to this loan, so nothing was sent. Please try again in a moment.",
           "swapOrderUnchecked": "We couldn’t check whether a swap-to-repay order is open on this loan, so nothing was sent. Please try again in a moment."
         },
@@ -2476,7 +2475,8 @@
       "tryAgain": "Try again",
       "waitingForWallet": "Waiting for wallet…",
       "networkFallback": "network #{{id}}",
-      "unknown": "unknown"
+      "unknown": "unknown",
+      "amountTooPrecise": "{{symbol}} can’t be split that finely — use at most {{decimals}} decimal places."
     },
     "stepNav": {
       "progressAria": "Progress",

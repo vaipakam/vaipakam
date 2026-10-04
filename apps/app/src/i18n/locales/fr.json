@@ -1357,7 +1357,6 @@
           "pauseUnknownNote": "Nous n’avons pas pu vérifier si la récupération de garantie est en pause sur ce déploiement. C’est vérifié à nouveau avant l’ouverture de votre portefeuille.",
           "saleUnknownNote": "Nous n’avons pas pu vérifier à l’avance si une mise en vente de la position du prêteur est liée à ce prêt. C’est vérifié à nouveau avant l’ouverture de votre portefeuille, et une mise en vente liée bloque le retrait.",
           "checkFailed": "Nous n’avons pas pu terminer les vérifications avant d’ouvrir votre portefeuille, donc rien n’a été envoyé. Veuillez réessayer dans un instant.",
-          "tooPrecise": "{{symbol}} ne peut pas être divisé aussi finement — utilisez au plus {{decimals}} décimales.",
           "saleUnchecked": "Nous n’avons pas pu vérifier si une mise en vente de la position du prêteur est liée à ce prêt, donc rien n’a été envoyé. Veuillez réessayer dans un instant.",
           "swapOrderUnchecked": "Nous n’avons pas pu vérifier si un ordre de swap pour rembourser est ouvert sur ce prêt, donc rien n’a été envoyé. Veuillez réessayer dans un instant."
         },
@@ -2403,7 +2402,8 @@
       "tryAgain": "Réessayer",
       "waitingForWallet": "En attente du wallet…",
       "networkFallback": "réseau #{{id}}",
-      "unknown": "inconnu"
+      "unknown": "inconnu",
+      "amountTooPrecise": "{{symbol}} ne peut pas être divisé aussi finement — utilisez au plus {{decimals}} décimales."
     },
     "stepNav": {
       "progressAria": "Progression",

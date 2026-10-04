@@ -1357,7 +1357,6 @@
           "pauseUnknownNote": "No pudimos comprobar si recuperar garantía está en pausa en este despliegue. Se comprueba de nuevo antes de abrir tu billetera.",
           "saleUnknownNote": "No pudimos comprobar de antemano si hay una venta de la posición del prestamista vinculada a este préstamo. Se comprueba de nuevo antes de abrir tu billetera, y una venta vinculada bloquea la retirada.",
           "checkFailed": "No pudimos terminar las comprobaciones antes de abrir tu billetera, así que no se envió nada. Inténtalo de nuevo en un momento.",
-          "tooPrecise": "{{symbol}} no se puede dividir tanto: usa como máximo {{decimals}} decimales.",
           "saleUnchecked": "No pudimos comprobar si hay una venta de la posición del prestamista vinculada a este préstamo, así que no se envió nada. Inténtalo de nuevo en un momento.",
           "swapOrderUnchecked": "No pudimos comprobar si hay una orden de swap para pagar abierta en este préstamo, así que no se envió nada. Inténtalo de nuevo en un momento."
         },
@@ -2403,7 +2402,8 @@
       "tryAgain": "Intentar de nuevo",
       "waitingForWallet": "Esperando la billetera…",
       "networkFallback": "red #{{id}}",
-      "unknown": "desconocido"
+      "unknown": "desconocido",
+      "amountTooPrecise": "{{symbol}} no se puede dividir tanto: usa como máximo {{decimals}} decimales."
     },
     "stepNav": {
       "progressAria": "Progreso",

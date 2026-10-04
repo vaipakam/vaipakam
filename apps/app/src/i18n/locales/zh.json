@@ -1357,7 +1357,6 @@
           "pauseUnknownNote": "我们无法确认此部署是否暂停了取回抵押品。在打开你的钱包之前会再次检查。",
           "saleUnknownNote": "我们无法事先确认这笔贷款是否关联了出借人头寸的出售挂单。在打开你的钱包之前会再次检查，若有关联的挂单，取回将被阻止。",
           "checkFailed": "我们无法在打开你的钱包之前完成检查，因此没有发送任何内容。请稍后再试。",
-          "tooPrecise": "{{symbol}} 不能分得这么细——最多使用 {{decimals}} 位小数。",
           "saleUnchecked": "我们无法确认这笔贷款是否关联了出借人头寸的出售挂单，因此没有发送任何内容。请稍后再试。",
           "swapOrderUnchecked": "我们无法确认这笔贷款上是否有未结的换币还款订单，因此没有发送任何内容。请稍后再试。"
         },
@@ -2403,7 +2402,8 @@
       "tryAgain": "重试",
       "waitingForWallet": "等待钱包…",
       "networkFallback": "网络 #{{id}}",
-      "unknown": "未知"
+      "unknown": "未知",
+      "amountTooPrecise": "{{symbol}} 不能分得这么细——最多使用 {{decimals}} 位小数。"
     },
     "stepNav": {
       "progressAria": "进度",

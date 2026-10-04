@@ -33,6 +33,7 @@ import {
 } from '../../contracts/usePermit2Signing';
 import { useTxSimulation, type TxSimInput } from '../../contracts/useTxSimulation';
 import { SimulationPreview } from '../SimulationPreview';
+import { AmountPrecisionHint } from '../AmountPrecisionHint';
 import { CollateralPrecheck } from '../CollateralPrecheck';
 import { ConsentLabel } from '../ConsentLabel';
 import {
@@ -410,8 +411,14 @@ export function OrderTicket({
   // this only aligns the canPost gate with what submit enforces).
   // While the fee read is in flight the hook already falls back to
   // the static default.
+  // #2390 — with the legs' decimals, an amount finer than its token is a
+  // named error (shown under the field), never rounded at payload time.
   const formError = validateOfferForm(form, {
     maxDurationDays: fees.maxOfferDurationDays,
+    decimals: {
+      lending: lendingMeta.data?.decimals,
+      collateral: collateralMeta.data?.decimals,
+    },
   });
 
   /** The desk's fill-mode/expiry overrides on the shared payload:
@@ -1138,6 +1145,13 @@ export function OrderTicket({
             clearConsentOnEdit();
           }}
         />
+        {lendingMeta.data ? (
+          <AmountPrecisionHint
+            value={amount}
+            decimals={lendingMeta.data.decimals}
+            symbol={lendingMeta.data.symbol}
+          />
+        ) : null}
       </div>
 
       <div className="field">
@@ -1207,6 +1221,13 @@ export function OrderTicket({
             clearConsentOnEdit();
           }}
         />
+        {collateralMeta.data ? (
+          <AmountPrecisionHint
+            value={collateralAmount}
+            decimals={collateralMeta.data.decimals}
+            symbol={collateralMeta.data.symbol}
+          />
+        ) : null}
       </div>
 
       <div className="field">

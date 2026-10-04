@@ -1357,7 +1357,6 @@
           "pauseUnknownNote": "Wir konnten nicht prüfen, ob das Zurückholen von Sicherheiten auf diesem Deployment pausiert ist. Das wird vor dem Öffnen Ihrer Wallet erneut geprüft.",
           "saleUnknownNote": "Wir konnten nicht vorab prüfen, ob ein Verkaufsangebot für die Position des Kreditgebers mit diesem Kredit verknüpft ist. Das wird vor dem Öffnen Ihrer Wallet erneut geprüft, und ein verknüpftes Angebot blockiert die Entnahme.",
           "checkFailed": "Wir konnten die Prüfungen vor dem Öffnen Ihrer Wallet nicht abschließen, daher wurde nichts gesendet. Bitte versuchen Sie es gleich noch einmal.",
-          "tooPrecise": "{{symbol}} lässt sich nicht so fein aufteilen – verwenden Sie höchstens {{decimals}} Nachkommastellen.",
           "saleUnchecked": "Wir konnten nicht prüfen, ob ein Verkaufsangebot für die Position des Kreditgebers mit diesem Kredit verknüpft ist, daher wurde nichts gesendet. Bitte versuchen Sie es gleich noch einmal.",
           "swapOrderUnchecked": "Wir konnten nicht prüfen, ob auf diesem Kredit eine Swap-zur-Rückzahlung-Order offen ist, daher wurde nichts gesendet. Bitte versuchen Sie es gleich noch einmal."
         },
@@ -2403,7 +2402,8 @@
       "tryAgain": "Erneut versuchen",
       "waitingForWallet": "Warten auf die Wallet…",
       "networkFallback": "Netzwerk #{{id}}",
-      "unknown": "unbekannt"
+      "unknown": "unbekannt",
+      "amountTooPrecise": "{{symbol}} lässt sich nicht so fein aufteilen – verwenden Sie höchstens {{decimals}} Nachkommastellen."
     },
     "stepNav": {
       "progressAria": "Fortschritt",

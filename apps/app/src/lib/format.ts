@@ -67,6 +67,22 @@ export function parseExactUnits(
   return BigInt((m[1] || '0') + frac.padEnd(decimals, '0'));
 }
 
+/** `parseExactUnits` for call sites that only need "an amount, or none"
+ *  (#2390). Malformed and too-precise both come back `null` — the input
+ *  renders `AmountPrecisionHint` to say which, so the reason is never
+ *  lost, only kept out of the arithmetic. */
+export function exactUnitsOrNull(value: string, decimals: number): bigint | null {
+  const r = parseExactUnits(value, decimals);
+  return typeof r === 'bigint' ? r : null;
+}
+
+/** True when `value` is a well-formed amount carrying more decimals than
+ *  the token has — the one case a form must name rather than call
+ *  "invalid", since the fix (drop digits) is different. */
+export function isTooPrecise(value: string, decimals: number): boolean {
+  return parseExactUnits(value, decimals) === 'too-precise';
+}
+
 /** LOSSLESS decimal string for pre-filling inputs (Max buttons).
  *  Never round-trips through Number — 18-decimal balances lose
  *  precision past ~15 significant digits and can round UP above the

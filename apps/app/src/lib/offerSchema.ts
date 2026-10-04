@@ -1,5 +1,5 @@
 import { defaultGraceSeconds, formatGraceSeconds } from './grace';
-import { parseUnits } from 'viem';
+import { isTooPrecise, parseExactUnits } from './format';
 import { AssetType } from './types';
 
 /**
@@ -260,6 +260,8 @@ export interface CreateOfferPayload {
 export type OfferFormError =
   | { code: 'lendingAssetInvalid' }
   | { code: 'amountNonPositive' }
+  | { code: 'amountTooPrecise'; decimals: number }
+  | { code: 'collateralTooPrecise'; decimals: number }
   | { code: 'rateNegative' }
   | { code: 'durationOutOfRange'; min: number; max: number }
   | { code: 'nftTokenIdRequired' }
@@ -282,14 +284,33 @@ export type OfferFormError =
  * governance-raised cap doesn't dead-lock posting a longer tenor
  * (Codex #1134 round-2 P2). Omitted ⇒ the static
  * `MAX_OFFER_DURATION_DAYS`, so the guided flows are unchanged.
+ *
+ * `opts.decimals` (#2390) — the ERC-20 legs' live `decimals()`. When a
+ * leg's decimals are known, an amount with more fractional digits than
+ * that token has is refused (`amountTooPrecise` / `collateralTooPrecise`)
+ * rather than left for the payload stage to round into a different
+ * figure. Unknown decimals skip the check; `toCreateOfferPayload` still
+ * refuses such an amount once it is given the decimals to scale by.
  */
 export function validateOfferForm(
   s: OfferFormState,
-  opts?: { maxDurationDays?: number },
+  opts?: { maxDurationDays?: number; decimals?: OfferPayloadDecimals },
 ): OfferFormError | null {
   const maxDurationDays = opts?.maxDurationDays ?? MAX_OFFER_DURATION_DAYS;
   if (!ADDRESS_RE.test(s.lendingAsset)) return { code: 'lendingAssetInvalid' };
   if (!s.amount || Number(s.amount) <= 0) return { code: 'amountNonPositive' };
+  const lendDec = opts?.decimals?.lending;
+  if (s.assetType === 'erc20' && lendDec !== undefined && isTooPrecise(s.amount, lendDec)) {
+    return { code: 'amountTooPrecise', decimals: lendDec };
+  }
+  const collDec = opts?.decimals?.collateral;
+  if (
+    s.collateralAssetType === 'erc20' &&
+    collDec !== undefined &&
+    isTooPrecise(s.collateralAmount, collDec)
+  ) {
+    return { code: 'collateralTooPrecise', decimals: collDec };
+  }
   if (s.interestRate === '' || Number(s.interestRate) < 0) return { code: 'rateNegative' };
   const duration = Number(s.durationDays);
   if (!Number.isFinite(duration) || duration < MIN_OFFER_DURATION_DAYS || duration > maxDurationDays) {
@@ -313,7 +334,7 @@ export function validateOfferForm(
   // be ≥ the corresponding minimum. Empty bounds auto-collapse and
   // are not validated. Numeric comparison here is fine because both
   // fields share units and parseFloat tolerates the input shape (the
-  // payload-stage `parseUnits` is the integer-precision conversion).
+  // payload-stage `parseExactUnits` is the integer-precision conversion).
   if (s.amountMax.trim() !== '' && Number(s.amountMax) < Number(s.amount)) {
     return { code: 'amountMaxBelowMin' };
   }
@@ -421,6 +442,29 @@ export interface OfferPayloadDecimals {
  * give the loan the right terms whichever side direct-accepts. The
  * canonical mapping is now safe.
  */
+/** Thrown by {@link toCreateOfferPayload} when an ERC-20 amount cannot be
+ *  scaled exactly — malformed, or carrying more decimals than the token. */
+export class OfferAmountError extends Error {
+  readonly leg: 'lending' | 'collateral';
+  readonly reason: 'invalid' | 'too-precise';
+  constructor(leg: 'lending' | 'collateral', reason: 'invalid' | 'too-precise') {
+    super(`offer ${leg} amount is ${reason}`);
+    this.name = 'OfferAmountError';
+    this.leg = leg;
+    this.reason = reason;
+  }
+}
+
+function exactOfferAmount(
+  value: string,
+  decimals: number,
+  leg: 'lending' | 'collateral',
+): bigint {
+  const r = parseExactUnits(value, decimals);
+  if (typeof r !== 'bigint') throw new OfferAmountError(leg, r);
+  return r;
+}
+
 export function toCreateOfferPayload(
   s: OfferFormState,
   decimals: OfferPayloadDecimals = {},
@@ -428,12 +472,16 @@ export function toCreateOfferPayload(
   const lendingDecimals = decimals.lending ?? 18;
   const collateralDecimals = decimals.collateral ?? 18;
 
+  // #2390 — ERC-20 amounts scale EXACTLY. viem's parseUnits rounds a
+  // value with more decimals than the token has, so the offer would
+  // carry a figure other than the one typed and reviewed; refusing here
+  // is the backstop behind validateOfferForm's named error.
   const collateralWei = s.collateralAssetType === 'erc20'
-    ? parseUnits(s.collateralAmount || '0', collateralDecimals)
+    ? exactOfferAmount(s.collateralAmount || '0', collateralDecimals, 'collateral')
     : BigInt(s.collateralAmount || '0');
 
   const lendingAmount = s.assetType === 'erc20'
-    ? parseUnits(s.amount, lendingDecimals)
+    ? exactOfferAmount(s.amount, lendingDecimals, 'lending')
     : BigInt(s.amount);
 
   const rateBps = percentToBps(s.interestRate) ?? 0;
