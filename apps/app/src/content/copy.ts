@@ -3672,6 +3672,10 @@ const copySource = {
     asksHeading: 'Offers to lend',
     bidsHeading: 'Requests to borrow',
     bookEmpty: 'No open offers for this pair yet — yours can be the first.',
+    // #2386 r1 — empty on chain while signed offers are unknown: "no
+    // open offers" could be false, so say only what was checked.
+    bookEmptySignedUnknown:
+      'No offers posted on the blockchain for this pair yet. Signed offers aren’t included right now, so there may be some.',
     bookUnavailable:
       'We couldn’t load the offers right now. Please try again in a moment.',
     bookIndexedCopy:
@@ -3721,13 +3725,15 @@ const copySource = {
         'A signed offer: its maker signed it without a transaction, and it becomes a loan in one transaction by whoever takes it. Signed offers are listed by the offer-book service, not read from the blockchain, until someone takes them.',
       partialBadgeTooltip:
         'Part of this signed offer has been taken. The rest still counts and can be matched automatically while automatic matching is switched on, but it can no longer be taken directly.',
-      // #2386 — the ladder states what it knows about the signed book.
+      // #2386 — one note at the top of the market states what the page
+      // knows about the signed book (the header, list and chart all show
+      // rates drawn from it).
       depthLoading:
-        'Still loading signed offers — for now this shows only offers posted on the blockchain.',
+        'Still loading signed offers — for now the rates shown come only from offers posted on the blockchain.',
       depthUnavailable:
-        'We couldn’t load signed offers from the offer-book service, so this shows only offers posted on the blockchain. The best rates here may be missing some signed offers.',
-      depthTruncated:
-        'There are more signed offers than we load. The best-priced ones on each side are included, so the best rates are complete, but deeper rates and running totals leave some out.',
+        'We couldn’t load signed offers from the offer-book service, so this shows only offers posted on the blockchain. The best rates and the middle rate may be missing some signed offers.',
+      depthPartial:
+        'Not every signed offer may be loaded. The best-priced signed offers on each side are included, but the amounts shown — even at the best rate — and the running totals may leave some out.',
       rangedBadgeTooltip:
         'A signed offer with a size range. It still counts, but only automatic matching can take it, in parts, and only while automatic matching is switched on — it cannot be taken whole in one go.',
       fill: 'Fill',
@@ -3786,12 +3792,6 @@ const copySource = {
         'Dashed line = the midpoint between the best offer to lend and the best request to borrow among the open offers on this page. It is worked out from those two — not a rate anyone has offered or agreed.',
       // #2378 r6 — the ladder's saved-copy warning is hidden behind the
       // Chart tab on mobile, so the hint carries it too.
-      // #2386 — the ladder's signed-book warning is hidden behind the
-      // Chart tab on mobile, so the midpoint hint repeats it.
-      quotedMidSignedMissing:
-        'Signed offers couldn’t be loaded, so this midpoint leaves them out.',
-      quotedMidSignedLoading:
-        'Signed offers are still loading, so this midpoint leaves them out for now.',
       quotedMidHintSaved:
         'Dashed line = the midpoint between the best offer to lend and the best request to borrow in a saved copy of the open offers (the live read didn’t load), so it may be out of date. It is worked out from those two — not a rate anyone has offered or agreed.',
       sparseNote: tmpl(

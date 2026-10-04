@@ -1,22 +1,23 @@
 ## Thread — Rate Desk says when signed offers are missing (PR #<n>)
 
 The Rate Desk merges free signed offers, which live with the offer-book
-service rather than on the blockchain, into the same list as on-chain offers.
-When that service did not answer, the list quietly fell back to on-chain
+service rather than on the blockchain, into the same view as on-chain offers.
+When that service did not answer, the page quietly fell back to on-chain
 offers only and looked complete. When the service had more signed offers than
-it returns, the list ignored that too. In both cases the best rates and the
-middle rate could leave signed offers out with nothing on the page saying so.
+it returns, the page ignored that too. In both cases the best rates and the
+middle rate could leave signed offers out with nothing saying so.
 
-The offers list now carries a short note in each case. While signed offers are
-loading or could not be loaded, it says the list shows only offers posted on
-the blockchain and that its best rates may be missing some signed ones. The
-chart's description of the middle rate says the same, because on a phone the
-chart can be shown without the list. When the service cut its answer short,
-the note says so and explains what that means: the service always keeps the
-best-priced signed offers on each side, so the best rates and the middle rate
-are complete, and only deeper rates and running totals leave some out. A
-signed book whose latest refresh failed is now treated as missing instead of
-merging the last copy the page saw, since those orders may have been taken or
-cancelled in the meantime.
+The market now carries one short note above all of its views — the header's
+middle rate, the offers list and the chart all draw on the same offers, and on
+a phone the list or the chart can be shown alone. While signed offers are
+loading or could not be loaded, the note says the rates shown come only from
+offers posted on the blockchain, and an offers list that is empty on the
+blockchain no longer claims the market has no offers. When the service may not
+have returned every signed offer — it says it cut some, or an older service
+does not say — the note says so without calling any rate complete: the best
+priced signed offers on each side are always included, but more of them can
+share the best rate, so even that rate's amount can be short. A signed book
+whose latest refresh failed is treated as missing instead of merging the last
+copy the page saw, since those orders may have been taken or cancelled since.
 
 Closes #2386.

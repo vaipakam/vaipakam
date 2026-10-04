@@ -184,6 +184,20 @@ export function Desk() {
         lastFill={lastFill}
       />
 
+      {/* #2386 — one note for the whole market, above every view: the
+          header's middle rate, the offers list and the chart all draw on
+          the merged book, and on a phone either list or chart can be on
+          screen alone. */}
+      {pair !== null && signedDepth !== 'complete' ? (
+        <p className="muted" role="status" data-testid="desk-signed-depth">
+          {signedDepth === 'loading'
+            ? copy.desk.signed.depthLoading
+            : signedDepth === 'unavailable'
+              ? copy.desk.signed.depthUnavailable
+              : copy.desk.signed.depthPartial}
+        </p>
+      ) : null}
+
       <div
         className={`desk-main${mobileView === 'chart' ? ' desk-mobile-chart' : ''}`}
       >
@@ -206,7 +220,6 @@ export function Desk() {
               symbol={lendingMeta.data?.symbol}
               quotedMidBps={ladder?.midBps ?? null}
               midFromSavedCopy={book.data?.source === 'indexer'}
-              signedDepth={signedDepth}
               // The whole tape, not just the newest fill (#1139): sparse
               // mode draws one marker per tape fill, and the empty-copy
               // split needs to know whether older fills exist at all.

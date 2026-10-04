@@ -1610,6 +1610,13 @@
       },
       "title": "Zins-Desk",
       "lede": "Die offenen Angebote für ein Asset-Paar auf einer Seite. Sehen Sie die Zinsen, die andere anbieten, veröffentlichen Sie Ihr eigenes Angebot zu dem Zins, den Sie möchten, und verwalten Sie Ihre offenen Angebote.",
+      "howItWorks": {
+        "title": "So funktioniert diese Seite",
+        "step1": "Wählen Sie oben ein Paar: das verliehene Asset und die Sicherheit, die den Kredit absichert. Wählen Sie dann die Laufzeit des Kredits.",
+        "step2": "Die Liste zeigt offene Angebote. Sie wird normalerweise direkt aus der Blockchain gelesen; schlägt das fehl, zeigt sie eine gespeicherte Kopie, die etwas hinterherhinken kann, und weist darauf hin. „Angebote zum Verleihen“ sind Personen, die zu diesem Jahreszins verleihen; „Anfragen zum Leihen“ sind Personen, die leihen möchten. Der mittlere Zins liegt zwischen dem besten Angebot jeder Seite.",
+        "step3": "Um ein Angebot anzunehmen, tippen Sie daneben auf „Dieses Angebot leihen“ oder „Zu diesem Satz verleihen“. Sie sehen genau, was Sie zahlen und erhalten, bevor Sie etwas signieren.",
+        "step4": "Für ein eigenes Angebot füllen Sie das Formular aus: den Betrag, Ihren Zins und die Sicherheit. Es wartet in der Liste, bis jemand es annimmt, und bis dahin können Sie es stornieren. Ein mit Netzwerkgebühr veröffentlichtes Angebot lässt sich auch ändern; ein kostenlos nur per Signatur veröffentlichtes nicht — stornieren Sie es und veröffentlichen Sie es neu. Manchmal muss ein neues Angebot einige Minuten offen bleiben, bevor Sie es stornieren können."
+      },
       "marketLabel": "Paar (Kredit / Sicherheit)",
       "tenorLabel": "Kreditlaufzeit",
       "customPair": "Anderes Paar…",
@@ -1631,6 +1638,7 @@
       "asksHeading": "Angebote zum Verleihen",
       "bidsHeading": "Anfragen zum Leihen",
       "bookEmpty": "Für dieses Paar gibt es noch keine offenen Angebote — Ihres kann das erste sein.",
+      "bookEmptySignedUnknown": "Für dieses Paar sind noch keine Angebote auf der Blockchain veröffentlicht. Signierte Angebote sind derzeit nicht berücksichtigt, es kann also welche geben.",
       "bookUnavailable": "Wir konnten die Angebote gerade nicht laden. Bitte versuchen Sie es gleich noch einmal.",
       "bookIndexedCopy": "Wir können die Blockchain gerade nicht direkt lesen, daher sehen Sie eine gespeicherte Kopie der Angebote, die etwas hinterherhinken kann.",
       "yourOrderMark": "Ihr Angebot zu diesem Zins",
@@ -1655,9 +1663,9 @@
         "badge": "Signiert",
         "badgeTooltip": "Ein signiertes Angebot: Sein Ersteller hat es ohne Transaktion signiert, und es wird in einer einzigen Transaktion durch die Person, die es annimmt, zum Kredit. Signierte Angebote werden vom Angebotsdienst aufgelistet und nicht von der Blockchain gelesen, bis jemand sie annimmt.",
         "partialBadgeTooltip": "Ein Teil dieses signierten Angebots wurde angenommen. Der Rest zählt weiter und kann automatisch zugeordnet werden, solange die automatische Zuordnung eingeschaltet ist, aber er kann nicht mehr direkt angenommen werden.",
-        "depthLoading": "Signierte Angebote werden noch geladen – vorerst sehen Sie nur Angebote, die auf der Blockchain veröffentlicht sind.",
-        "depthUnavailable": "Wir konnten die signierten Angebote nicht vom Angebotsbuch-Dienst laden, daher sehen Sie nur Angebote, die auf der Blockchain veröffentlicht sind. Bei den besten Zinssätzen hier können signierte Angebote fehlen.",
-        "depthTruncated": "Es gibt mehr signierte Angebote, als wir laden. Die preislich besten auf jeder Seite sind enthalten, die besten Zinssätze sind also vollständig, aber bei weiter entfernten Zinssätzen und den laufenden Summen fehlen einige.",
+        "depthLoading": "Signierte Angebote werden noch geladen – vorerst stammen die angezeigten Zinssätze nur aus Angeboten, die auf der Blockchain veröffentlicht sind.",
+        "depthUnavailable": "Wir konnten die signierten Angebote nicht vom Angebotsbuch-Dienst laden, daher sehen Sie nur Angebote, die auf der Blockchain veröffentlicht sind. Bei den besten Zinssätzen und beim mittleren Zinssatz können signierte Angebote fehlen.",
+        "depthPartial": "Möglicherweise sind nicht alle signierten Angebote geladen. Die preislich besten signierten Angebote auf jeder Seite sind enthalten, aber bei den angezeigten Beträgen – auch beim besten Zinssatz – und bei den laufenden Summen können einige fehlen.",
         "rangedBadgeTooltip": "Ein signiertes Angebot mit einer Größenspanne. Es zählt weiter, aber nur die automatische Zuordnung kann es annehmen, in Teilen und nur solange sie eingeschaltet ist – als Ganzes in einem Schritt geht es nicht.",
         "fill": "Ausführen",
         "confirmTitle": "Signierte Order ausführen",
@@ -1686,8 +1694,6 @@
         "retry": "Erneut versuchen",
         "quotedMid": "mittlerer Zins",
         "quotedMidHint": "Gestrichelte Linie = die Mitte zwischen dem besten Angebot zum Verleihen und der besten Anfrage zum Leihen unter den offenen Angeboten auf dieser Seite. Sie wird aus diesen beiden berechnet – kein Zins, den jemand angeboten oder vereinbart hat.",
-        "quotedMidSignedMissing": "Signierte Angebote konnten nicht geladen werden, daher sind sie in diesem Mittelwert nicht enthalten.",
-        "quotedMidSignedLoading": "Signierte Angebote werden noch geladen, daher sind sie in diesem Mittelwert vorerst nicht enthalten.",
         "quotedMidHintSaved": "Gestrichelte Linie = die Mitte zwischen dem besten Angebot zum Verleihen und der besten Anfrage zum Leihen in einer gespeicherten Kopie der offenen Angebote (der Live-Abruf wurde nicht geladen), daher kann sie veraltet sein. Sie wird aus diesen beiden berechnet – kein Zins, den jemand angeboten oder vereinbart hat.",
         "sparseNote_zero": "Bisher wenige Kredite — {{count}} in diesem Zeitraum, jeder einzeln gezeichnet. Balken erscheinen, sobald es genug Kredite für eine Zusammenfassung gibt.",
         "sparseNote_one": "Bisher wenige Kredite — {{count}} in diesem Zeitraum, einzeln gezeichnet. Balken erscheinen, sobald es genug Kredite für eine Zusammenfassung gibt.",
@@ -1849,13 +1855,6 @@
         "daysLeft": "{{days}} Tg. übrig",
         "daysOverdue": "{{days}} Tg. überfällig",
         "partialRepayOk": " · Teilrückzahlung möglich"
-      },
-      "howItWorks": {
-        "title": "So funktioniert diese Seite",
-        "step1": "Wählen Sie oben ein Paar: das verliehene Asset und die Sicherheit, die den Kredit absichert. Wählen Sie dann die Laufzeit des Kredits.",
-        "step2": "Die Liste zeigt offene Angebote. Sie wird normalerweise direkt aus der Blockchain gelesen; schlägt das fehl, zeigt sie eine gespeicherte Kopie, die etwas hinterherhinken kann, und weist darauf hin. „Angebote zum Verleihen“ sind Personen, die zu diesem Jahreszins verleihen; „Anfragen zum Leihen“ sind Personen, die leihen möchten. Der mittlere Zins liegt zwischen dem besten Angebot jeder Seite.",
-        "step3": "Um ein Angebot anzunehmen, tippen Sie daneben auf „Dieses Angebot leihen“ oder „Zu diesem Satz verleihen“. Sie sehen genau, was Sie zahlen und erhalten, bevor Sie etwas signieren.",
-        "step4": "Für ein eigenes Angebot füllen Sie das Formular aus: den Betrag, Ihren Zins und die Sicherheit. Es wartet in der Liste, bis jemand es annimmt, und bis dahin können Sie es stornieren. Ein mit Netzwerkgebühr veröffentlichtes Angebot lässt sich auch ändern; ein kostenlos nur per Signatur veröffentlichtes nicht — stornieren Sie es und veröffentlichen Sie es neu. Manchmal muss ein neues Angebot einige Minuten offen bleiben, bevor Sie es stornieren können."
       }
     },
     "tariff": {

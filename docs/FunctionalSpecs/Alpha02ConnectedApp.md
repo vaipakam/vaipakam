@@ -1294,14 +1294,18 @@ and repaid. Wording about automatic matching says it applies while automatic
 matching is switched on, since a deployment can switch it off.
 
 Signed offers come from the offer-book service rather than the blockchain, so
-the offers list says when it is showing without them. While they are still
-loading, or when the service could not provide them, the list says it shows only
-offers posted on the blockchain and that its best rates may be missing signed
-offers; the chart's description of the middle rate says the same, because on a
-phone the chart can be shown without the list. When there are more signed
-offers than the page loads, the list says so. In that case the page still has
-the best-priced signed offers on each side, so it says the best rates are
-complete and only deeper rates and running totals leave some out. A signed
+the page says when it is showing a market without all of them. One note, above
+every view of the market, carries this, because the header's middle rate, the
+offers list and the chart all draw on the same merged offers, and on a phone the
+list or the chart can be on screen alone. While signed offers are still loading,
+or when the service could not provide them, the note says the rates shown come
+only from offers posted on the blockchain and that the best rates and the middle
+rate may be missing signed offers; an offers list that is empty on the
+blockchain then says only that, never that the market has no offers. When the
+service may not have returned every signed offer — it says it cut some, or does
+not say whether it did — the note says so without calling any level complete:
+the service keeps the best-priced signed offers on each side, but more of them
+can share the best rate, so even the best rate's amount can be short. A signed
 offer that could not be refreshed is treated as missing, never shown from an
 earlier read, because it may have been taken or cancelled since.
 

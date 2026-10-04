@@ -337,7 +337,10 @@ export function useDeskSignedBook(
     refetchInterval: idleAware(REFRESH_MS),
     queryFn: async (): Promise<{
       offers: IndexedSignedOffer[];
-      truncated: boolean;
+      /** `null` when the Worker did not report the flag (an older
+       *  deploy) — not knowing whether depth was cut is not the same as
+       *  knowing it was not (#2386 r1). */
+      truncated: boolean | null;
     } | null> => {
       if (!indexerConfigured()) return null;
       const res = await fetchSignedOffers(
@@ -356,7 +359,10 @@ export function useDeskSignedBook(
       // Codex #1269 r2 — carry the per-side truncation flag so the
       // own-orders view can say when a maker's set was clipped instead
       // of rendering a partial page as "all your orders".
-      return { offers: res.offers, truncated: res.truncated === true };
+      return {
+        offers: res.offers,
+        truncated: typeof res.truncated === 'boolean' ? res.truncated : null,
+      };
     },
   });
 }

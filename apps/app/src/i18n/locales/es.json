@@ -1610,6 +1610,13 @@
       },
       "title": "Mesa de tasas",
       "lede": "Las ofertas abiertas de un par de activos en una sola página. Mira las tasas que ofrecen otras personas, publica tu propia oferta a la tasa que quieras y gestiona las ofertas que tienes abiertas.",
+      "howItWorks": {
+        "title": "Cómo funciona esta página",
+        "step1": "Elige un par arriba: el activo que se presta y la garantía que respalda el préstamo. Luego elige cuánto dura el préstamo.",
+        "step2": "La lista muestra las ofertas abiertas. Normalmente se lee directamente de la blockchain; si esa lectura falla, muestra una copia guardada que puede ir un poco atrasada, y lo indica. «Ofertas para prestar» son personas dispuestas a prestar a esa tasa anual; «Solicitudes de préstamo» son personas que quieren pedir prestado. La tasa media está entre la mejor de cada lado.",
+        "step3": "Para aceptar una oferta, pulsa «Pedir este» o «Prestar a este» a su lado. Verás exactamente lo que pagas y recibes antes de firmar nada.",
+        "step4": "Para crear tu propia oferta, completa el formulario: el importe, tu tasa y la garantía. Espera en la lista hasta que alguien la acepte, y puedes cancelarla antes de eso. Una oferta publicada pagando la comisión de red también se puede modificar; una publicada gratis solo con firma no: cancélala y publícala de nuevo. A veces una oferta nueva tiene que seguir abierta unos minutos antes de que puedas cancelarla."
+      },
       "marketLabel": "Par (préstamo / garantía)",
       "tenorLabel": "Duración del préstamo",
       "customPair": "Otro par…",
@@ -1631,6 +1638,7 @@
       "asksHeading": "Ofertas para prestar",
       "bidsHeading": "Solicitudes de préstamo",
       "bookEmpty": "Aún no hay ofertas abiertas para este par — la tuya puede ser la primera.",
+      "bookEmptySignedUnknown": "Todavía no hay ofertas publicadas en la blockchain para este par. Las ofertas firmadas no están incluidas ahora mismo, así que puede que haya alguna.",
       "bookUnavailable": "No pudimos cargar las ofertas ahora mismo. Inténtalo de nuevo en un momento.",
       "bookIndexedCopy": "Ahora mismo no podemos leer la blockchain directamente, así que mostramos una copia guardada de las ofertas, que puede estar algo desactualizada.",
       "yourOrderMark": "Tu oferta a esta tasa",
@@ -1655,9 +1663,9 @@
         "badge": "Firmada",
         "badgeTooltip": "Una oferta firmada: quien la creó la firmó sin hacer una transacción, y se convierte en préstamo con una sola transacción de quien la acepte. Las ofertas firmadas las muestra el servicio de ofertas, no se leen de la blockchain, hasta que alguien las acepta.",
         "partialBadgeTooltip": "Ya se tomó parte de esta oferta firmada. El resto sigue contando y puede emparejarse automáticamente mientras el emparejamiento automático esté activado, pero ya no se puede tomar directamente.",
-        "depthLoading": "Todavía se están cargando las ofertas firmadas; por ahora solo se muestran las ofertas publicadas en la blockchain.",
-        "depthUnavailable": "No pudimos cargar las ofertas firmadas desde el servicio del libro de ofertas, así que solo se muestran las ofertas publicadas en la blockchain. Puede que a las mejores tasas de aquí les falten algunas ofertas firmadas.",
-        "depthTruncated": "Hay más ofertas firmadas de las que cargamos. Se incluyen las de mejor precio de cada lado, así que las mejores tasas están completas, pero en las tasas más alejadas y en los totales acumulados faltan algunas.",
+        "depthLoading": "Todavía se están cargando las ofertas firmadas; por ahora las tasas que se muestran provienen solo de ofertas publicadas en la blockchain.",
+        "depthUnavailable": "No pudimos cargar las ofertas firmadas desde el servicio del libro de ofertas, así que solo se muestran las ofertas publicadas en la blockchain. Puede que a las mejores tasas y a la tasa media les falten algunas ofertas firmadas.",
+        "depthPartial": "Puede que no se hayan cargado todas las ofertas firmadas. Se incluyen las ofertas firmadas de mejor precio de cada lado, pero en los importes mostrados (incluso en la mejor tasa) y en los totales acumulados puede faltar alguna.",
         "rangedBadgeTooltip": "Una oferta firmada con un rango de tamaño. Sigue contando, pero solo el emparejamiento automático puede tomarla, por partes, y solo mientras esté activado; no se puede tomar entera de una vez.",
         "fill": "Llenar",
         "confirmTitle": "Llenar orden firmada",
@@ -1686,8 +1694,6 @@
         "retry": "Reintentar",
         "quotedMid": "tasa media",
         "quotedMidHint": "Línea discontinua = el punto medio entre la mejor oferta para prestar y la mejor solicitud para pedir prestado entre las ofertas abiertas de esta página. Se calcula a partir de esas dos: no es una tasa que alguien haya ofrecido o acordado.",
-        "quotedMidSignedMissing": "No se pudieron cargar las ofertas firmadas, así que este punto medio no las incluye.",
-        "quotedMidSignedLoading": "Las ofertas firmadas todavía se están cargando, así que por ahora este punto medio no las incluye.",
         "quotedMidHintSaved": "Línea discontinua = el punto medio entre la mejor oferta para prestar y la mejor solicitud para pedir prestado en una copia guardada de las ofertas abiertas (la lectura en vivo no cargó), así que puede estar desactualizado. Se calcula a partir de esas dos: no es una tasa que alguien haya ofrecido o acordado.",
         "sparseNote_zero": "Pocos préstamos por ahora — {{count}} en este periodo, cada uno dibujado por separado. Las barras aparecen cuando hay suficientes préstamos para resumirlos.",
         "sparseNote_one": "Pocos préstamos por ahora — {{count}} en este periodo, dibujado por separado. Las barras aparecen cuando hay suficientes préstamos para resumirlos.",
@@ -1849,13 +1855,6 @@
         "daysLeft": "{{days}} d restantes",
         "daysOverdue": "{{days}} d de retraso",
         "partialRepayOk": " · reembolso parcial permitido"
-      },
-      "howItWorks": {
-        "title": "Cómo funciona esta página",
-        "step1": "Elige un par arriba: el activo que se presta y la garantía que respalda el préstamo. Luego elige cuánto dura el préstamo.",
-        "step2": "La lista muestra las ofertas abiertas. Normalmente se lee directamente de la blockchain; si esa lectura falla, muestra una copia guardada que puede ir un poco atrasada, y lo indica. «Ofertas para prestar» son personas dispuestas a prestar a esa tasa anual; «Solicitudes de préstamo» son personas que quieren pedir prestado. La tasa media está entre la mejor de cada lado.",
-        "step3": "Para aceptar una oferta, pulsa «Pedir este» o «Prestar a este» a su lado. Verás exactamente lo que pagas y recibes antes de firmar nada.",
-        "step4": "Para crear tu propia oferta, completa el formulario: el importe, tu tasa y la garantía. Espera en la lista hasta que alguien la acepte, y puedes cancelarla antes de eso. Una oferta publicada pagando la comisión de red también se puede modificar; una publicada gratis solo con firma no: cancélala y publícala de nuevo. A veces una oferta nueva tiene que seguir abierta unos minutos antes de que puedas cancelarla."
       }
     },
     "tariff": {
