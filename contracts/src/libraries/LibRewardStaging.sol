@@ -381,13 +381,17 @@ library LibRewardStaging {
         // retired at payout as the ordinary claim retires it.
         r.cappedOffFresh = charge.cappedOff.armedFresh;
         r.cappedOffRecycled = charge.cappedOff.recycled;
+        // PR C-2 — the era legs the price found, held against the era's row below.
+        r.eraId = charge.eraId;
+        r.eraUserFresh = charge.eraUser.armedFresh;
+        r.eraTreasuryFresh = charge.eraTreasury.armedFresh;
         // What the resolution may consume of the staged components; the
         // rest returns to its epochs page by page.
         r.consumeFreshLeft = r.epochUserFresh + r.epochTreasuryFresh;
         r.consumeRecycledLeft = r.epochUserRecycled + r.epochTreasuryRecycled;
 
-        uint256 liveUserFresh = r.needUserFresh - r.epochUserFresh;
-        uint256 liveTreasuryFresh = r.needTreasuryFresh - r.epochTreasuryFresh;
+        uint256 liveUserFresh = r.needUserFresh - r.epochUserFresh - r.eraUserFresh;
+        uint256 liveTreasuryFresh = r.needTreasuryFresh - r.epochTreasuryFresh - r.eraTreasuryFresh;
         uint256 liveUserRecycled = r.needUserRecycled - r.epochUserRecycled;
         uint256 freshSpend = r.needUserFresh + r.needTreasuryFresh;
 
@@ -411,6 +415,7 @@ library LibRewardStaging {
         s.liveFreshReserved += liveUserFresh + liveTreasuryFresh;
         s.rewardBudgetArmedFreshReserved += liveUserFresh + liveTreasuryFresh;
         s.recycleBucketReserved += liveUserRecycled;
+        LibRewardCustody.holdCustodyEra(s, r.eraId, r.eraUserFresh + r.eraTreasuryFresh);
         // The hold is a custody-row move; while custody is inactive the
         // Diamond's balance backs the payout as it backs a claim's, and the
         // recycled residual is reserved by count alone (Codex #2308 r3).
@@ -637,6 +642,10 @@ library LibRewardStaging {
         s.liveFreshReserved -= liveUserFresh + liveTreasuryFresh;
         s.rewardBudgetArmedFreshReserved -= liveUserFresh + liveTreasuryFresh;
         s.recycleBucketReserved -= liveUserRecycled;
+        // PR C-2 — the held era legs are consumed: released from the hold and drawn
+        // into the live row, where the payout and the absorption below take them.
+        LibRewardCustody.releaseCustodyEraHold(s, r.eraId, r.eraUserFresh + r.eraTreasuryFresh);
+        LibRewardCustody.callEraDrawForDay(r.eraId, r.day, r.eraUserFresh + r.eraTreasuryFresh);
         uint8 sideKey = uint8(r.side);
         uint256 n = r.entryIds.length;
         LibInteractionRewards.DaySlice[] memory slices = new LibInteractionRewards.DaySlice[](n);
@@ -697,11 +706,11 @@ library LibRewardStaging {
         }
         bool toVault = venue == LibVaipakam.RewardDelivery.Vault
             || (venue == LibVaipakam.RewardDelivery.Default && user.code.length == 0);
-        uint256 userTotal = liveUserFresh + liveUserRecycled + r.epochUserFresh + r.epochUserRecycled;
+        uint256 userTotal = liveUserFresh + liveUserRecycled + r.epochUserFresh + r.epochUserRecycled + r.eraUserFresh;
         bool vaulted;
         if (forfeit) {
             emit StagingClaimantForfeited(
-                key, user, liveUserFresh + r.epochUserFresh, liveUserRecycled + r.epochUserRecycled
+                key, user, liveUserFresh + r.epochUserFresh + r.eraUserFresh, liveUserRecycled + r.epochUserRecycled
             );
         } else if (userTotal != 0 && !LibRewardCustody.active(s)) {
             // Custody inactive: the Diamond's balance pays, as it pays a
@@ -710,7 +719,7 @@ library LibRewardStaging {
             vaulted = _payFromDiamond(s, user, userTotal, toVault);
         } else if (userTotal != 0) {
             vaulted = LibRewardCustody.callDeliverClaim(
-                user, liveUserFresh, liveUserRecycled, r.epochUserFresh + r.epochUserRecycled, toVault
+                user, liveUserFresh + r.eraUserFresh, liveUserRecycled, r.epochUserFresh + r.epochUserRecycled, toVault
             );
         }
         // A forfeited claimant's share joins the treasury's forfeit legs, by
@@ -742,6 +751,8 @@ library LibRewardStaging {
             // can no longer drift apart if that ever changes.
             r.needTreasuryRecycled + r.cappedOffRecycled + forfeitRecycled,
             forfeit ? 0 : r.epochUserRecycled,
+            // PR C-2 - the treasury's era legs (and the user's, when forfeited): era-funded, absorbed by the host.
+            r.eraTreasuryFresh + (forfeit ? r.eraUserFresh : 0),
             op == LibVaipakam.StagingOp.Forfeit ? s.rewardEntries[r.entryIds[0]].loanId : 0
         );
         if (!forfeit && userTotal != 0) {
@@ -752,9 +763,9 @@ library LibRewardStaging {
         emit StagingPaid(
             key,
             user,
-            forfeit ? 0 : liveUserFresh + r.epochUserFresh,
+            forfeit ? 0 : liveUserFresh + r.epochUserFresh + r.eraUserFresh,
             forfeit ? 0 : liveUserRecycled + r.epochUserRecycled,
-            liveTreasuryFresh + r.epochTreasuryFresh,
+            liveTreasuryFresh + r.epochTreasuryFresh + r.eraTreasuryFresh,
             r.needTreasuryRecycled
         );
         _close(s, key, true);
@@ -913,6 +924,7 @@ library LibRewardStaging {
                 s.liveFreshReserved -= r.reservedLiveUserFresh + r.reservedLiveTreasuryFresh;
                 s.rewardBudgetArmedFreshReserved -= r.reservedLiveUserFresh + r.reservedLiveTreasuryFresh;
                 s.recycleBucketReserved -= r.reservedLiveUserRecycled;
+                LibRewardCustody.releaseCustodyEraHold(s, r.eraId, r.eraUserFresh + r.eraTreasuryFresh); // PR C-2
                 LibRewardCustody.releaseHold(
                     s, LibVaipakam.RewardCustodyRow.Resolving, LibVaipakam.RewardCustodyRow.Recycled, r.heldRecycled, key
                 );
@@ -952,6 +964,8 @@ library LibRewardStaging {
         dry.preparedOnly = true;
         dry.preparedFresh = r.stagedFresh;
         dry.preparedRecycled = r.stagedRecycled;
+        dry.eraPrepared = r.wasReserved;
+        dry.preparedEraFresh = r.eraUserFresh + r.eraTreasuryFresh;
         // An expiry's day prices as the expiry walk prices it (A2-ii): the
         // entry's share routes to the treasury legs, recycled in place.
         dry.recycleSettlement = r.op == LibVaipakam.StagingOp.Expiry;

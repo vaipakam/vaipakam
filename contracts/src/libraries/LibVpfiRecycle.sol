@@ -279,6 +279,22 @@ library LibVpfiRecycle {
         _credit(source, refId, amount, CreditOrigin.Unclassified);
     }
 
+    /// @notice PR C-2 — fresh absorbed into the bucket that a RETIRED era's row funded.
+    /// @custom:event-category state-change/reward-custody
+    event VpfiRecycledEraFunded(uint8 source, uint256 refId, uint256 amount);
+
+    /// @notice PR C-2 — absorb ERA-FUNDED fresh into the bucket: custody a retired
+    ///         era's row funded for this obligation, moved into the live row by the
+    ///         day's era draw. Not charged to the delivered bound — the era already
+    ///         delivered it — and counted apart from live-funded absorption, so the
+    ///         bucket's composition names it.
+    function absorbEraFunded(RecycleSource source, uint256 refId, uint256 amount) internal {
+        if (amount == 0) return;
+        LibVaipakam.storageSlot().recycleEraFundedCumulative += amount;
+        emit VpfiRecycledEraFunded(uint8(source), refId, amount);
+        _credit(source, refId, amount, CreditOrigin.EraFunded);
+    }
+
     /// @notice 3b-ii-A2 (#2305) — {absorbTransportFunded} for epoch legs a
     ///         staging record's batch pages already hold in `Resolving`: the
     ///         same in-holder absorption, from the hold instead of from
@@ -324,7 +340,11 @@ library LibVpfiRecycle {
         /// @dev 3b-ii-A2 (#2305) — an epoch's value a staging record's batch
         ///      pages already moved into the `Resolving` hold, absorbed from
         ///      there on the record's last page.
-        Resolving
+        Resolving,
+        /// @dev PR C-2 — fresh a RETIRED era's row funded, moved into the live
+        ///      row by the day's era draw: the same row move as `LiveFresh`,
+        ///      counted apart and charged to no delivered bound.
+        EraFunded
     }
 
     /// @dev The delta check every non-reward inflow operation performs: the
@@ -382,7 +402,7 @@ library LibVpfiRecycle {
                 // generic primitive, so the second origin costs no facet a
                 // second encode (this function is inlined into fourteen).
                 LibRewardCustody.callMove(
-                    origin == CreditOrigin.LiveFresh
+                    origin == CreditOrigin.LiveFresh || origin == CreditOrigin.EraFunded
                         ? LibVaipakam.RewardCustodyRow.LiveFresh
                         : origin == CreditOrigin.Resolving
                             ? LibVaipakam.RewardCustodyRow.Resolving

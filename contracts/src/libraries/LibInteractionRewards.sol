@@ -94,6 +94,10 @@ library LibInteractionRewards {
         uint256 userRecycled;
         uint256 treasuryFresh;
         uint256 treasuryRecycled;
+        /// @dev PR C-2 — the ERA-funded fresh legs (a retired era's row paid
+        ///      them; charged to no delivered bound), by destination.
+        uint256 userEraFresh;
+        uint256 treasuryEraFresh;
     }
 
     /// @notice What {claimForUserEntries} settles, as ONE memory result.
@@ -1547,7 +1551,7 @@ library LibInteractionRewards {
     ) internal returns (bool retired, EntrySplit memory expired, uint256 freshCredited, uint256 armedDelivered) {
         (bool ok, bytes memory ret) = address(this).call(
             abi.encodeWithSignature(
-                "epochRetireZeroPricedRemainder(uint256,uint256,uint256,(uint256,uint256,uint256,uint256))",
+                "epochRetireZeroPricedRemainder(uint256,uint256,uint256,(uint256,uint256,uint256,uint256,uint256,uint256))",
                 id,
                 freshHeadroom,
                 deliveredAllowance,
@@ -1567,6 +1571,8 @@ library LibInteractionRewards {
         tp.userRecycled = legs.userRecycled;
         tp.treasuryFresh = legs.treasuryFresh;
         tp.treasuryRecycled = legs.treasuryRecycled;
+        tp.userEraFresh = legs.userEraFresh;
+        tp.treasuryEraFresh = legs.treasuryEraFresh;
     }
 
     function callSweepExpiredEntryWalk(
@@ -1577,7 +1583,7 @@ library LibInteractionRewards {
     ) internal returns (EntrySplit memory expired, uint256 freshCredited, uint256 armedDelivered) {
         (bool ok, bytes memory ret) = address(this).call(
             abi.encodeWithSignature(
-                "epochSweepExpiredEntry(uint256,uint256,uint256,(uint256,uint256,uint256,uint256))",
+                "epochSweepExpiredEntry(uint256,uint256,uint256,(uint256,uint256,uint256,uint256,uint256,uint256))",
                 id,
                 freshHeadroom,
                 deliveredAllowance,
@@ -1597,6 +1603,8 @@ library LibInteractionRewards {
         tp.userRecycled = legs.userRecycled;
         tp.treasuryFresh = legs.treasuryFresh;
         tp.treasuryRecycled = legs.treasuryRecycled;
+        tp.userEraFresh = legs.userEraFresh;
+        tp.treasuryEraFresh = legs.treasuryEraFresh;
     }
 
     /// @dev 3b-ii-A2 (#2305; Codex #2308 r4) — {sweepForfeitedByLoanId} reached
@@ -1611,7 +1619,7 @@ library LibInteractionRewards {
     ) internal returns (uint256 freshCredited, uint256 recycledReleased, uint256 armedOwed, uint256 armedDelivered) {
         (bool ok, bytes memory ret) = address(this).call(
             abi.encodeWithSignature(
-                "epochSweepForfeitedByLoanId(uint256,uint256,uint256,(uint256,uint256,uint256,uint256))",
+                "epochSweepForfeitedByLoanId(uint256,uint256,uint256,(uint256,uint256,uint256,uint256,uint256,uint256))",
                 loanId,
                 freshHeadroom,
                 deliveredAllowance,
@@ -1631,6 +1639,8 @@ library LibInteractionRewards {
         tp.userRecycled = legs.userRecycled;
         tp.treasuryFresh = legs.treasuryFresh;
         tp.treasuryRecycled = legs.treasuryRecycled;
+        tp.userEraFresh = legs.userEraFresh;
+        tp.treasuryEraFresh = legs.treasuryEraFresh;
     }
 
     /// @dev 3b-ii-A2 (#2305) — {claimForUserEntries} reached through the
@@ -1866,7 +1876,9 @@ library LibInteractionRewards {
             pruned: false,
             capHit: false,
             daysLeft: LibVaipakam.MAX_INTERACTION_CLAIM_DAYS,
-            transport: TransportLegs({userFresh: 0, userRecycled: 0, treasuryFresh: 0, treasuryRecycled: 0}),
+            transport: TransportLegs({
+                userFresh: 0, userRecycled: 0, treasuryFresh: 0, treasuryRecycled: 0, userEraFresh: 0, treasuryEraFresh: 0
+            }),
             deliverTo: deliverTo
         });
 
@@ -1898,6 +1910,8 @@ library LibInteractionRewards {
         tp.userRecycled += ctx.transport.userRecycled;
         tp.treasuryFresh += ctx.transport.treasuryFresh;
         tp.treasuryRecycled += ctx.transport.treasuryRecycled;
+        tp.userEraFresh += ctx.transport.userEraFresh;
+        tp.treasuryEraFresh += ctx.transport.treasuryEraFresh;
     }
 
     /// @dev Entries of `user` on `side` that still owe ShareOfPool days.
@@ -2843,7 +2857,7 @@ library LibInteractionRewards {
         drawnFresh = charge.transportUser.armedFresh + charge.transportTreasury.armedFresh;
         drawnRecycled = charge.transportUser.recycled + charge.transportTreasury.recycled;
         uint256 gross = charge.toUser.armedFresh + charge.toTreasury.armedFresh;
-        uint256 live = gross - drawnFresh;
+        uint256 live = gross - drawnFresh - (charge.eraUser.armedFresh + charge.eraTreasury.armedFresh); // PR C-2
         need.armed += gross;
         need.liveArmed += live;
         need.bucketRecycled += charge.bucketRecycled;
@@ -3549,6 +3563,14 @@ library LibInteractionRewards {
         tp.userRecycled += charge.transportUser.recycled;
         tp.treasuryFresh += charge.transportTreasury.armedFresh;
         tp.treasuryRecycled += charge.transportTreasury.recycled;
+        // slice 4 PR C-2 — the era draw, per day, into the live row for the
+        // payout or absorption that follows; folded by destination.
+        uint256 eraFresh = charge.eraUser.armedFresh + charge.eraTreasury.armedFresh;
+        if (eraFresh != 0) {
+            LibRewardCustody.callEraDrawForDay(charge.eraId, d, eraFresh);
+            tp.userEraFresh += charge.eraUser.armedFresh;
+            tp.treasuryEraFresh += charge.eraTreasury.armedFresh;
+        }
     }
 
     /// @notice The removal point begins for entry `id` — exposed for a
@@ -6594,6 +6616,13 @@ library LibInteractionRewards {
         ///      transport-first rule. The settle wrapper prunes the day's
         ///      cursor on its way out so the next attempt sees a fresh window.
         bool transportCapHit;
+        /// @dev PR C-2 — the era the day was live in, what its row funds of the
+        ///      day's fresh after the epochs, and that figure split by
+        ///      destination like the transport legs.
+        uint64 eraId;
+        uint256 eraFresh;
+        EntrySplit eraUser;
+        EntrySplit eraTreasury;
     }
 
     /// @notice The caller's REMAINING pool, per funding source.
@@ -6696,6 +6725,10 @@ library LibInteractionRewards {
         ///      when every day between is the domain's, and the domain's own
         ///      reserved days count as rewarded and paid for the loan-side cap.
         bytes32 domainKey;
+        /// @dev PR C-2 — a reserved staging record's re-price reads its HELD era
+        ///      legs rather than allocating anew; a first pricing allocates live.
+        bool eraPrepared;
+        uint256 preparedEraFresh;
     }
 
     /// @dev The settling callers' context: nothing set. Internal so the test
@@ -6904,6 +6937,50 @@ library LibInteractionRewards {
     ///      recycle-bucket credit — at terminal exhaustion the bucket only
     ///      loses potential refill). Within a pass, worklist index order —
     ///      deterministic because the caller's transfer set is.
+    /// @dev PR C-2 — the era the day was live in funds what the epochs did not,
+    ///      up to its row's room; only the rest is held against the live bound
+    ///      (`deliveredCapForDay` is raised by the era share exactly as by the
+    ///      transport share). A day in the LIVE era finds no room — its custody
+    ///      IS the live row — so with one era every figure is unchanged. A
+    ///      reserved staging record's re-price reads the era legs it holds. Its
+    ///      own frame because {processUserSideDay} is at the viaIR stack ceiling.
+    function _applyEraTerm(
+        uint256 d,
+        DayContext memory dry,
+        DayCharge memory charge,
+        uint256 transportFresh
+    ) private view {
+        uint256 needFresh = charge.needFresh;
+        if (needFresh <= transportFresh) return;
+        uint256 eraNeed = needFresh - transportFresh;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        charge.eraId = LibRewardCustody.custodyEraOfDay(s, d);
+        charge.eraFresh = dry.preparedOnly && dry.eraPrepared
+            ? (dry.preparedEraFresh < eraNeed ? dry.preparedEraFresh : eraNeed)
+            : LibRewardCustody.callEraAllocateForDay(s, charge.eraId, eraNeed);
+        if (charge.eraFresh != 0 && charge.deliveredCapForDay != type(uint256).max) {
+            charge.deliveredCapForDay += charge.eraFresh;
+        }
+    }
+
+    /// @dev PR C-2 — the era legs split like the transport legs: the user's fresh
+    ///      net of its transport part first, the treasury's the rest, each capped
+    ///      by what the attribution kept. Its own frame, for the same reason.
+    function _splitEraLegs(DayCharge memory charge, EntrySplit memory user_, EntrySplit memory treas_) private pure {
+        uint256 ef = charge.eraFresh;
+        uint256 userRoom = user_.armedFresh > charge.transportUser.armedFresh
+            ? user_.armedFresh - charge.transportUser.armedFresh
+            : 0;
+        uint256 ue = ef < userRoom ? ef : userRoom;
+        uint256 treasRoom = treas_.armedFresh > charge.transportTreasury.armedFresh
+            ? treas_.armedFresh - charge.transportTreasury.armedFresh
+            : 0;
+        uint256 te = ef - ue < treasRoom ? ef - ue : treasRoom;
+        charge.eraUser = EntrySplit({total: ue, recycled: 0, armedFresh: ue});
+        charge.eraTreasury = EntrySplit({total: te, recycled: 0, armedFresh: te});
+        charge.eraFresh = ue + te;
+    }
+
     function _attributeLegs(
         DaySlice[] memory slices,
         uint256[] memory amounts,
@@ -7295,6 +7372,9 @@ library LibInteractionRewards {
                 charge.deliveredCapForDay += transportFresh;
             }
         }
+        // slice 4 PR C-2 — the ERA term (§5c order: transport → era → live), in
+        // its own frame: this function sits at the viaIR stack ceiling.
+        _applyEraTerm(d, dry, charge, transportFresh);
         (
             EntrySplit memory user_,
             EntrySplit memory treas_,
@@ -7392,6 +7472,7 @@ library LibInteractionRewards {
             ur = transportRecycled - ur;
             charge.transportTreasury = EntrySplit({total: uf + ur, recycled: ur, armedFresh: uf});
         }
+        _splitEraLegs(charge, user_, treas_); // slice 4 PR C-2 — the era legs, by destination
         // The day's draw on the bucket — the user's recycled leg net of what
         // the epochs pay of it — recorded ahead of BOTH deferral tests below,
         // so a deferred day reports the draw it could not make: the dry run

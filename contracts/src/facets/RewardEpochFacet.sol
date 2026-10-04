@@ -695,12 +695,14 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
         uint256 epochLegs,
         uint256 treasuryRecycledRelease,
         uint256 userEpochRecycled,
+        uint256 eraFunded,
         uint256 refId
     ) external {
         _requireDiamondInternal();
         LibVpfiRecycle.RecycleSource src = LibVpfiRecycle.RecycleSource(source);
         LibVpfiRecycle.absorbRewardFresh(src, refId, liveFresh);
         LibVpfiRecycle.absorbTransportFunded(src, refId, epochLegs);
+        LibVpfiRecycle.absorbEraFunded(src, refId, eraFunded); // PR C-2 - era-funded: its own class, no bound charge
         if (treasuryRecycledRelease > 0) {
             LibVpfiRecycle.releaseCommitment(src, refId, treasuryRecycledRelease);
         }

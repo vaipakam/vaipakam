@@ -108,6 +108,11 @@
         "internalType": "uint256"
       },
       {
+        "name": "eraFunded",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
         "name": "refId",
         "type": "uint256",
         "internalType": "uint256"
@@ -953,6 +958,31 @@
       },
       {
         "name": "dayId",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "VpfiRecycledEraFunded",
+    "inputs": [
+      {
+        "name": "source",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      },
+      {
+        "name": "refId",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "amount",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -1929,6 +1959,27 @@
       },
       {
         "name": "openClassification",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "CustodyEraRoomShort",
+    "inputs": [
+      {
+        "name": "era",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "room",
         "type": "uint256",
         "internalType": "uint256"
       }

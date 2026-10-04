@@ -1103,6 +1103,27 @@
   },
   {
     "type": "error",
+    "name": "CustodyEraRoomShort",
+    "inputs": [
+      {
+        "name": "era",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "room",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "CustodyEraScanExceeded",
     "inputs": [
       {

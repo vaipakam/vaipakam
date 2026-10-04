@@ -2606,13 +2606,16 @@ contract HelperTest {
     /// `DeployDiamond._getRewardStagingSettleSelectors`.
     /// slice 4 PR C-1 (#1566) — the custody era registry. Mirrors `DeployDiamond._getRewardEraSelectors`.
     function getRewardEraFacetSelectors() public pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](6);
+        selectors = new bytes4[](8);
         selectors[0] = RewardEraFacet.getCustodyEraCurrent.selector;
         selectors[1] = RewardEraFacet.getCustodyEra.selector;
         selectors[2] = RewardEraFacet.getCustodyEraRowsTotal.selector;
         selectors[3] = RewardEraFacet.isCustodyEraBackfillComplete.selector;
         selectors[4] = RewardEraFacet.finalizeCustodyEra.selector;
         selectors[5] = RewardEraFacet.drainPendingSurplus.selector;
+        // PR C-2 — the era term of a day's fresh.
+        selectors[6] = RewardEraFacet.getCustodyEraAllocationForDay.selector;
+        selectors[7] = RewardEraFacet.eraDrawForDay.selector;
     }
 
     /// 3b-ii-B (#1566) — the per-day closure proof. Mirrors `DeployDiamond._getRewardClosureSelectors`.

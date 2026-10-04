@@ -102,6 +102,10 @@ library LibRewardCustody {
     /// @notice Slice 4 PR C-1 — `amount` of PENDING SURPLUS was credited to the live baseline under the deficit split.
     /// @custom:event-category state-change/reward-custody
     event CustodyPendingSurplusDrained(uint256 amount, uint256 toLive, uint256 toRestitution);
+    /// @notice PR C-2 — `amount` of era `era`'s row funded day `dayId`'s obligations: moved in-holder into the
+    ///         live-fresh row for the payout or absorption that follows, charged to no delivered bound.
+    /// @custom:event-category state-change/reward-custody
+    event CustodyEraDrawn(uint64 indexed era, uint256 indexed dayId, uint256 amount);
 
     /// @notice Fresh funding was credited to the delivered ledger's received
     ///         side, and its custody attributed under the §5c deficit split.
@@ -1088,6 +1092,49 @@ library LibRewardCustody {
         emit RewardCustodyRowDebited(uint8(LibVaipakam.RewardCustodyRow.PendingSurplus), amount, address(0));
         (uint256 toLive, uint256 toRestitution) = creditFreshSplit(s, amount, 1);
         emit CustodyPendingSurplusDrained(amount, toLive, toRestitution);
+    }
+
+    // ── Slice 4 PR C-2 — the era term of a day's fresh ──
+
+    /// @notice What a RETIRED era's row can still fund: the row net of standing
+    ///         staging holds. The live era has no row — its custody IS the live
+    ///         row — and a finalized era has released its row.
+    function custodyEraRoom(LibVaipakam.Storage storage s, uint64 era) internal view returns (uint256) {
+        if (era >= s.custodyEraCurrent) return 0;
+        LibVaipakam.CustodyEra storage e = s.custodyEras[era];
+        if (e.terminal) return 0;
+        uint256 row = e.holderRow;
+        uint256 held = e.stagedFresh;
+        return row > held ? row - held : 0;
+    }
+
+    /// @notice Fund `amount` of day `dayId`'s fresh from era `era`: an in-holder
+    ///         move era row → live-fresh row, so the payout or absorption that
+    ///         follows leaves the holder from the live row exactly as a
+    ///         live-funded one does, while the delivered bound is charged only for
+    ///         what the live era funded (the caller's arithmetic, rows 2 and 6).
+    function drawCustodyEraForDay(LibVaipakam.Storage storage s, uint64 era, uint256 dayId, uint256 amount) internal {
+        if (amount == 0) return;
+        uint256 room = custodyEraRoom(s, era);
+        if (amount > room) revert IVaipakamErrors.CustodyEraRoomShort(era, amount, room);
+        s.custodyEras[era].holderRow -= amount;
+        s.custodyEraRowsTotal -= amount;
+        credit(s, LibVaipakam.RewardCustodyRow.LiveFresh, amount, 1);
+        emit CustodyEraDrawn(era, dayId, amount);
+    }
+
+    /// @notice Hold `amount` of era `era`'s room for a staging record; released by
+    ///         the record's resolve (consumed) or unwind (restored).
+    function holdCustodyEra(LibVaipakam.Storage storage s, uint64 era, uint256 amount) internal {
+        if (amount == 0) return;
+        uint256 room = custodyEraRoom(s, era);
+        if (amount > room) revert IVaipakamErrors.CustodyEraRoomShort(era, amount, room);
+        s.custodyEras[era].stagedFresh += amount;
+    }
+
+    function releaseCustodyEraHold(LibVaipakam.Storage storage s, uint64 era, uint256 amount) internal {
+        if (amount == 0) return;
+        s.custodyEras[era].stagedFresh -= amount;
     }
 
     /// @notice The §5c deficit split, in ONE place: of a fresh credit of
@@ -4379,7 +4426,11 @@ library LibRewardCustody {
     ///      sweep, the expiry sweep and every staged record's payout, so no
     ///      two of them can route a leg differently. `source` is a
     ///      {LibVpfiRecycle.RecycleSource}; `refId` is the forfeit's loan id,
-    ///      else zero. No call when every figure is zero.
+    ///      else zero. PR C-2 — `eraFunded` is the close-out's era-funded
+    ///      fresh, absorbed as its own class with no bound charge; it rides
+    ///      this one call so that no close-out inlines the recycle credit
+    ///      (the settle facet has no room for it). No call when every figure
+    ///      is zero.
     /// @notice The per-record operations a DOMAIN page drives (A2-ii), each
     ///         hosted ONCE on the record facet that already inlines it and
     ///         reached by Diamond self-call: the domain facet holds the ordering
@@ -4429,17 +4480,19 @@ library LibRewardCustody {
         uint256 epochLegs,
         uint256 treasuryRecycledRelease,
         uint256 userEpochRecycled,
+        uint256 eraFunded,
         uint256 refId
     ) internal {
-        if (liveFresh + epochLegs + treasuryRecycledRelease + userEpochRecycled == 0) return;
+        if (liveFresh + epochLegs + treasuryRecycledRelease + userEpochRecycled + eraFunded == 0) return;
         _custody(
             abi.encodeWithSignature(
-                "epochSettleLegs(uint8,uint256,uint256,uint256,uint256,uint256)",
+                "epochSettleLegs(uint8,uint256,uint256,uint256,uint256,uint256,uint256)",
                 source,
                 liveFresh,
                 epochLegs,
                 treasuryRecycledRelease,
                 userEpochRecycled,
+                eraFunded,
                 refId
             )
         );
@@ -4456,6 +4509,25 @@ library LibRewardCustody {
             abi.encodeWithSignature("epochDrawForDay(uint256,uint256,uint256)", dayId, fresh, recycled)
         );
         pruned = abi.decode(ret, (bool));
+    }
+
+    /// @dev PR C-2 — the era allocation for a day: a VIEW on {RewardEraFacet},
+    ///      reached by staticcall from the pricing primitive like the transport
+    ///      allocation, so no pricing host inlines the registry read.
+    function callEraAllocateForDay(LibVaipakam.Storage storage s, uint64 era, uint256 need)
+        internal
+        view
+        returns (uint256 eraFresh)
+    {
+        if (need == 0 || era >= s.custodyEraCurrent) return 0;
+        bytes memory ret = _selfStatic(abi.encodeWithSignature("getCustodyEraAllocationForDay(uint64,uint256)", era, need));
+        eraFresh = abi.decode(ret, (uint256));
+    }
+
+    /// @dev PR C-2 — the per-day era draw, hosted on {RewardEraFacet}.
+    function callEraDrawForDay(uint64 era, uint256 dayId, uint256 amount) internal {
+        if (amount == 0) return;
+        _custody(abi.encodeWithSignature("eraDrawForDay(uint64,uint256,uint256)", era, dayId, amount));
     }
 
     /// @dev {RewardCustodyFacet.custodyDeliverClaim}: the claim's three legs to

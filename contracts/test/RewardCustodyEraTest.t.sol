@@ -12,6 +12,9 @@ import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
 import {RewardReconciliationFacet} from "../src/facets/RewardReconciliationFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
+import {RewardClaimFacet} from "../src/facets/RewardClaimFacet.sol";
+import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
+import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {RewardClosureFacet} from "../src/facets/RewardClosureFacet.sol";
 import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
@@ -36,6 +39,11 @@ contract RewardCustodyEraTest is SetupTest, IVaipakamErrors {
 
     event CustodyEraRetired(uint64 indexed era, uint256 carried, uint256 openingDeficit, uint64 boundaryDay);
     event CustodyEraOpened(uint64 indexed era, uint64 boundaryDay);
+    event CustodyEraDrawn(uint64 indexed era, uint256 indexed dayId, uint256 amount);
+
+    address internal alice;
+    uint64 internal constant LOAN = 77;
+    uint256 internal constant NEED = 0.4e18;
 
     function setUp() public {
         setupHelper();
@@ -94,6 +102,54 @@ contract RewardCustodyEraTest is SetupTest, IVaipakamErrors {
     ///      an empty storage and answer zero).
     function _today() internal view returns (uint64 d) {
         d = uint64((block.timestamp - launch) / 1 days);
+    }
+
+    // ─── PR C-2: the draw suite's armed-day scene, on day `d` ───
+    function _armedDay(uint256 d, uint256 cap) internal {
+        _mut().setDayPoolStampRaw(d, uint128(2e18), 0);
+        _mut().setKnownGlobalDailyInterest(d, 1e18, 0, true);
+        _mut().setDayCapThreshold18(d, type(uint256).max);
+        _mut().setDayCapModeRaw(d, 1);
+        _mut().setDayUserSideCapRaw(d, cap);
+    }
+
+    function _scene(uint256 d, uint256 cap) internal returns (uint256 id) {
+        if (alice == address(0)) alice = makeAddr("era-alice");
+        _armedDay(d, cap);
+        _mut().setGovernorCommitArmedFromDayRaw(1);
+        _mut().setFeeEntitlementRaw(
+            LOAN,
+            LibVaipakam.FeeEntitlement({
+                borrowerMode: LibVaipakam.FeeEntitlementMode.None,
+                lenderMode: LibVaipakam.FeeEntitlementMode.None,
+                openDays: 1,
+                rewardHaircutBpsAtOpen: 0,
+                borrowerTariffPaid: 0,
+                lenderTariffPaid: 0,
+                cStarOpen: 0,
+                loanSideRewardCapOpen: type(uint128).max
+            })
+        );
+        id = _mut().pushRewardEntry(alice, LOAN, LibVaipakam.RewardSide.Lender, 1e18, uint32(d));
+        _mut().closeRewardEntryRaw(id, uint32(d + 1));
+        _mut().userClaimFundingNeedRaw(alice);
+    }
+
+    function _claim() internal returns (uint256 paid) {
+        vm.prank(alice);
+        (paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
+    }
+
+    /// @dev Activate with `fund` live, then retire the live era and come back: the
+    ///      chain is a mirror again, era 0 holds `fund`, the live row is empty and
+    ///      the baseline has no headroom.
+    function _retireIntoEraZero(uint256 fund) internal {
+        activateRewardCustodyForTest(address(vpfi), fund);
+        _detach();
+        _reattach();
+        assertEq(_era().getCustodyEraCurrent(), 2, "fixture: two transitions");
+        assertEq(_era().getCustodyEra(0).holderRow, fund, "fixture: era 0 holds the carry");
+        assertEq(_live(), 0, "fixture: no live custody");
     }
 
     // ─── cells ───
@@ -278,5 +334,73 @@ contract RewardCustodyEraTest is SetupTest, IVaipakamErrors {
         assertEq(paid, 3e18, "levelled as before");
         assertEq(_era().getCustodyEraCurrent(), 0, "no era opened");
         assertEq(_era().getCustodyEraRowsTotal(), 0);
+    }
+
+    // ─── PR C-2: the era term of a day's fresh ───
+
+    /// @dev An obligation accrued in a retired era is paid from that era's row —
+    ///      drawn into the live row for the payout — and the live bound is charged
+    ///      nothing: the era delivered it before.
+    function test_AClaimOnAnOldEraDay_DrawsTheEraRow_NotTheLiveBound() public {
+        _scene(1, NEED);
+        _retireIntoEraZero(7e18);
+        (uint256 receivedBefore, uint256 paidBefore) = _ledger();
+        uint256 aliceBefore = vpfi.balanceOf(alice);
+        uint256 attributedBefore = _attributed();
+
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit CustodyEraDrawn(0, 1, NEED);
+        assertEq(_claim(), NEED, "paid in full from the retired era");
+
+        assertEq(vpfi.balanceOf(alice) - aliceBefore, NEED, "delivered");
+        assertEq(_era().getCustodyEra(0).holderRow, 7e18 - NEED, "era 0 fell by the draw");
+        assertEq(_era().getCustodyEraRowsTotal(), 7e18 - NEED);
+        assertEq(_live(), 0, "the live row only passed it through");
+        (uint256 received, uint256 paid) = _ledger();
+        assertEq(received, receivedBefore, "received untouched");
+        assertEq(paid, paidBefore, "the delivered bound is NOT charged for era-funded fresh");
+        assertEq(attributedBefore - _attributed(), NEED, "attributed custody fell by exactly the payout");
+    }
+
+    /// @dev An obligation on a day AFTER the boundary belongs to the live era, whose
+    ///      custody is the live row: with no live headroom it defers, and the retired
+    ///      era's row is not touched; fund the live row and it pays.
+    function test_AnObligationAfterTheBoundary_CannotDrawTheRetiredEra() public {
+        _retireIntoEraZero(7e18);
+        uint64 boundary = _era().getCustodyEra(2).boundaryDay;
+        vm.warp(block.timestamp + 1 days); // the boundary day has passed: claimable
+        // Every day before the boundary is an ordinary armed day with no entry
+        // of the claimant's: the side cursor advances only through stamped,
+        // finalized days, and it must reach the boundary day to price it.
+        for (uint256 g = 1; g < boundary; ++g) _armedDay(g, NEED);
+        _scene(boundary, NEED);
+        // No live headroom and no retired era for this day: the claim DEFERS,
+        // which with nothing else moving surfaces as the empty-claim revert.
+        vm.prank(alice);
+        vm.expectRevert(IVaipakamErrors.NoInteractionRewardsToClaim.selector);
+        RewardClaimFacet(address(diamond)).claimInteractionRewards();
+        assertEq(_era().getCustodyEra(0).holderRow, 7e18, "era 0 untouched");
+        fundRewardPoolForTest(address(vpfi), 1e18);
+        assertEq(_claim(), NEED, "funded live: pays");
+        assertEq(_era().getCustodyEra(0).holderRow, 7e18, "still untouched");
+    }
+
+    /// @dev A forfeited old-era entry is swept into the bucket as ERA-funded: the
+    ///      era row funds it, the bucket grows, the delivered bound is not charged,
+    ///      and the absorption is counted apart.
+    function test_AForfeitedOldEraEntry_IsAbsorbedAsEraFunded() public {
+        uint256 id = _scene(1, NEED);
+        _retireIntoEraZero(7e18);
+        _mut().setRewardEntryForfeitedRaw(id);
+        _mut().setLoanActiveLenderEntryId(LOAN, id); // the sweep enumerates the loan's active entries
+        (, uint256 paidBefore) = _ledger();
+        uint256 bucketBefore = ConfigFacet(address(diamond)).getRecycleBucket();
+        uint256 swept = InteractionRewardsFacet(address(diamond)).sweepForfeitedInteractionRewards(LOAN);
+        assertGt(swept, 0, "swept");
+        assertEq(ConfigFacet(address(diamond)).getRecycleBucket() - bucketBefore, swept, "the bucket grew by the sweep");
+        assertEq(7e18 - _era().getCustodyEra(0).holderRow, swept, "era 0 funded it");
+        (, uint256 paid) = _ledger();
+        assertEq(paid, paidBefore, "no live bound charge for era-funded absorption");
+        assertEq(_live(), 0, "the live row only passed it through");
     }
 }

@@ -172,7 +172,7 @@ contract RewardHorizonSweepFacet is
         // 3b-ii-A — the epoch-paid legs the sweep draws, absorbed net below.
         LibInteractionRewards.TransportLegs memory tp;
         for (uint256 i = 0; i < entryIds.length; ) {
-            uint256 tBefore = tp.treasuryFresh + tp.userFresh;
+            uint256 tBefore = tp.treasuryFresh + tp.userFresh + tp.treasuryEraFresh + tp.userEraFresh;
             (
                 LibInteractionRewards.EntrySplit memory ex,
                 uint256 freshCredited,
@@ -190,7 +190,8 @@ contract RewardHorizonSweepFacet is
             // credited figure is already the cap-trimmed amount that moves.)
             // 3b-ii-A — and NET of the epoch-paid fresh, which the delivered
             // ledger never received.
-            uint256 liveFresh = freshCredited - (tp.treasuryFresh + tp.userFresh - tBefore);
+            uint256 liveFresh =
+                freshCredited - (tp.treasuryFresh + tp.userFresh + tp.treasuryEraFresh + tp.userEraFresh - tBefore);
             allowance = allowance > liveFresh ? allowance - liveFresh : 0;
             t.fresh += freshCredited;
             t.recycled += ex.recycled;
@@ -271,16 +272,18 @@ contract RewardHorizonSweepFacet is
         // legs recycle in place from the epochs' custody (§5c); see the
         // forfeit sweep for why the user legs are folded in.
         uint256 epochFresh = tp.treasuryFresh + tp.userFresh;
+        uint256 eraFresh = tp.treasuryEraFresh + tp.userEraFresh; // PR C-2: era-funded, absorbed by the hosted settle with no bound charge
         // ONE leg settle for every close-out (A2-ii): the live-funded fresh
         // absorbed as expired reward, the epoch-funded legs recycled in
         // place, the recycled commitment released — the same implementation
         // the forfeit, the claim and a staged expiry day's payout use.
         LibRewardCustody.callSettleLegs(
             uint8(LibVpfiRecycle.RecycleSource.ExpiredReward),
-            t.fresh > epochFresh ? t.fresh - epochFresh : 0,
+            t.fresh > epochFresh + eraFresh ? t.fresh - epochFresh - eraFresh : 0,
             epochFresh + tp.treasuryRecycled + tp.userRecycled,
             t.recycled,
             0,
+            eraFresh, // PR C-2 - the era-funded legs: absorbed by the host, no bound charge
             0
         );
         total = t.fresh + t.recycled;
@@ -321,12 +324,13 @@ contract RewardHorizonSweepFacet is
         SweepTotals memory t;
         LibInteractionRewards.TransportLegs memory tp;
         for (uint256 i = 0; i < entryIds.length; ) {
-            uint256 tBefore = tp.treasuryFresh + tp.userFresh;
+            uint256 tBefore = tp.treasuryFresh + tp.userFresh + tp.treasuryEraFresh + tp.userEraFresh;
             (bool retired, LibInteractionRewards.EntrySplit memory ex, uint256 freshCredited, ) =
                 LibInteractionRewards.callRetireZeroPricedRemainderWalk(entryIds[i], headroom, allowance, tp);
             if (retired) ++retiredCount;
             headroom -= freshCredited;
-            uint256 liveFresh = freshCredited - (tp.treasuryFresh + tp.userFresh - tBefore);
+            uint256 liveFresh =
+                freshCredited - (tp.treasuryFresh + tp.userFresh + tp.treasuryEraFresh + tp.userEraFresh - tBefore);
             allowance = allowance > liveFresh ? allowance - liveFresh : 0;
             t.fresh += freshCredited;
             t.recycled += ex.recycled;

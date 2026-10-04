@@ -1861,4 +1861,6 @@ interface IVaipakamErrors {
     error CustodyEraAlreadyFinalized(uint64 era);
     /// @notice The pending-surplus drain needs an ACTIVE role (Canonical or Mirror); the chain's role is `role`.
     error CustodyPendingSurplusNeedsActiveRole(uint8 role);
+    /// @notice Era `era`'s row can fund `room`, less than `amount` (PR C-2).
+    error CustodyEraRoomShort(uint64 era, uint256 amount, uint256 room);
 }

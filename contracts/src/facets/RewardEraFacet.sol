@@ -72,4 +72,18 @@ contract RewardEraFacet is DiamondReentrancyGuard, IVaipakamErrors {
         }
         LibRewardCustody.drainPendingSurplus(s, amount);
     }
+
+    /// @notice PR C-2 — what era `era`'s row can fund of `need` for one day: the
+    ///         view the pricing primitive reads after the transport allocation.
+    function getCustodyEraAllocationForDay(uint64 era, uint256 need) external view returns (uint256) {
+        uint256 room = LibRewardCustody.custodyEraRoom(LibVaipakam.storageSlot(), era);
+        return need < room ? need : room;
+    }
+
+    /// @notice PR C-2 — fund day `dayId` from era `era` (Diamond-internal: the
+    ///         walk's per-day settle seam). The rule is {LibRewardCustody.drawCustodyEraForDay}.
+    function eraDrawForDay(uint64 era, uint256 dayId, uint256 amount) external {
+        if (msg.sender != address(this)) revert RewardCustodyOnlyDiamondInternal(msg.sender);
+        LibRewardCustody.drawCustodyEraForDay(LibVaipakam.storageSlot(), era, dayId, amount);
+    }
 }

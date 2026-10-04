@@ -7758,6 +7758,9 @@ library LibVaipakam {
         /// @dev Set by the backfill (PR C-5) once history is assigned to
         ///      eras; the terminal writers are dark until then.
         bool custodyEraBackfillComplete;
+        /// @dev PR C-2 — Σ fresh absorbed into the recycle bucket that a RETIRED
+        ///      era's row funded (counted apart from live-funded absorption).
+        uint256 recycleEraFundedCumulative;
     }
 
     /// @notice 3b-ii-A2 (#2305) — one batch a staging record staged from, with
@@ -7865,6 +7868,10 @@ library LibVaipakam {
         uint64 boundaryDay;
         uint64 openedAt;
         bool terminal;
+        /// @dev PR C-2 — era custody HELD by standing staging reservations (the
+        ///      records' era legs): the era's room nets it; a resolve consumes it
+        ///      and an unwind restores it.
+        uint256 stagedFresh;
     }
 
     struct StagingDomain {
@@ -8376,6 +8383,11 @@ library LibVaipakam {
         ///      zero for a standalone record. A domain record's deadline,
         ///      reservation, resolution and unwind are the domain's.
         bytes32 domainKey;
+        /// @dev PR C-2 — the era the record's day was live in and the era legs
+        ///      it holds, user and treasury, reserved against that era's row.
+        uint64 eraId;
+        uint256 eraUserFresh;
+        uint256 eraTreasuryFresh;
     }
 
     /// @notice #1566 transport epochs PR 3b — a batch's PENDING REMAINDER:

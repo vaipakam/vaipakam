@@ -499,10 +499,12 @@ contract RewardClaimFacet is
         // them; the wrapper makes no call when every figure is zero.
         LibRewardCustody.callSettleLegs(
             uint8(LibVpfiRecycle.RecycleSource.ForfeitedReward),
-            freshTreasury - res.transport.treasuryFresh,
+            // PR C-2 - the live-funded part only: the treasury's era legs are the era-funded leg below.
+            freshTreasury - res.transport.treasuryFresh - res.transport.treasuryEraFresh,
             res.transport.treasuryFresh + res.transport.treasuryRecycled,
             forfeitRecycled,
             res.transport.userRecycled,
+            res.transport.treasuryEraFresh,
             0
         );
         emit InteractionRewardsClaimed(user, fromDay, toDay, paid);
@@ -548,8 +550,11 @@ contract RewardClaimFacet is
         // bound in the walk, which is precisely the over-draw this closes.
         // 3b-ii-A — the delivered ledger is charged for the LIVE-paid fresh
         // only; the epoch-paid share was never delivered to it.
+        // PR C-2 — the delivered bound is charged only for what the LIVE era
+        // funded: the epochs' legs and the retired eras' legs were delivered
+        // before and are already in the holder (rows 2/6 of the role matrix).
         LibInteractionRewards.chargeDeliveredFresh(
-            LibVaipakam.storageSlot(), fresh - tp.userFresh
+            LibVaipakam.storageSlot(), fresh - tp.userFresh - tp.userEraFresh
         );
         bool toVault = deliverTo == LibVaipakam.RewardDelivery.Vault
             || (

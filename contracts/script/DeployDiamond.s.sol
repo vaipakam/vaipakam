@@ -3184,13 +3184,16 @@ contract DeployDiamond is Script, ArtifactRootBase {
     /// @dev 3b-ii-A2 (#2305) — the staging record's settlement half.
     /// @dev slice 4 PR C-1 (#1566) — the custody era registry.
     function _getRewardEraSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](6);
+        s = new bytes4[](8);
         s[0] = RewardEraFacet.getCustodyEraCurrent.selector;
         s[1] = RewardEraFacet.getCustodyEra.selector;
         s[2] = RewardEraFacet.getCustodyEraRowsTotal.selector;
         s[3] = RewardEraFacet.isCustodyEraBackfillComplete.selector;
         s[4] = RewardEraFacet.finalizeCustodyEra.selector;
         s[5] = RewardEraFacet.drainPendingSurplus.selector;
+        // PR C-2 — the era term of a day's fresh.
+        s[6] = RewardEraFacet.getCustodyEraAllocationForDay.selector;
+        s[7] = RewardEraFacet.eraDrawForDay.selector;
     }
 
     /// @dev 3b-ii-B (#1566) — the per-day closure proof.
