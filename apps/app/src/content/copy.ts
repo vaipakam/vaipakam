@@ -1690,10 +1690,10 @@ const copySource = {
     // #2406 r4 — the viewer's own scan (they are not the holder) hit its
     // page cap, so a request they posted could exist unseen.
     ownScanCapped:
-      'This wallet has posted more offers since this loan’s offer was made than we can check here. If it posted a refinance request for this loan while it held the borrower position, this page can’t show it: you can cancel it under “Your open offers” on the Rate Desk, then remove the token approval it relied on under “Standing token approvals” in Settings (Advanced mode) if nothing else needs it.',
+      'This wallet has posted more offers since this loan’s offer was made than we can check here. If it posted a refinance request for this loan while it held the borrower position, this page can’t show it. If it is still open, you can cancel it under “Your open offers” on the Rate Desk (an expired request is not listed there); either way, remove the token approval it relied on under “Standing token approvals” in Settings (Advanced mode) if nothing else needs it.',
     // #2406 r5 — the viewer's own scan failed (may answer on retry).
     ownScanFailed:
-      'We couldn’t check this wallet’s own offers just now. If it posted a refinance request for this loan while it held the borrower position, this page can’t show it yet — try again in a moment, or cancel it under “Your open offers” on the Rate Desk, then remove the token approval it relied on under “Standing token approvals” in Settings (Advanced mode) if nothing else needs it.',
+      'We couldn’t check this wallet’s own offers just now. If it posted a refinance request for this loan while it held the borrower position, this page can’t show it yet — try again in a moment. If it is still open, you can cancel it under “Your open offers” on the Rate Desk (an expired request is not listed there); either way, remove the token approval it relied on under “Standing token approvals” in Settings (Advanced mode) if nothing else needs it.',
     repayWarnPending:
       'A refinance request is still live for this loan. Repaying settles the loan, after which the request can never complete — cancel it from its card afterwards (that also removes its standing payoff approval); until then it just sits until it expires.',
   },

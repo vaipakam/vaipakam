@@ -171,11 +171,18 @@ export function useRefinancePending(
   const holderScan: RefinanceDiscovery | undefined = holderQuery.isError
     ? { kind: 'unknown', reason: 'failed' }
     : holderQuery.data;
-  // The own scan only names a request for cleanup — its failure blocks
-  // nothing, so it is simply absent.
-  const ownScan: RefinanceDiscovery | undefined =
-    ownTarget === undefined || ownQuery.isError ? undefined : ownQuery.data;
-  const { offerId, fromOwnScan } = resolveNamedRequest({ holderScan, ownScan, markerId });
+  // #2406 r6 — NAMING reads the last scan that ANSWERED (a failed refetch
+  // keeps the previous data): a request already found keeps its card and
+  // its cancel-and-revoke action through a data-source error, as the spec
+  // requires of the pending view. The CHECK still reads that failure as
+  // unknown (`holderScan` above), so the surfaces a request would strand
+  // hold back meanwhile. The own scan only ever names a request for
+  // cleanup; its failure blocks nothing.
+  const { offerId: candidateId, fromOwnScan } = resolveNamedRequest({
+    holderScan: holderQuery.data,
+    ownScan: ownTarget === undefined ? undefined : ownQuery.data,
+    markerId,
+  });
 
   const seedKey = `${readChain.chainId}:${loanId}`;
   const [seededFor, setSeededFor] = useState(seedKey);
@@ -206,10 +213,10 @@ export function useRefinancePending(
       'refinancePending',
       readChain.chainId,
       loanId,
-      offerId,
+      candidateId,
       address?.toLowerCase(),
     ],
-    enabled: Boolean(readClient) && offerId !== null && Boolean(principalAsset),
+    enabled: Boolean(readClient) && candidateId !== null && Boolean(principalAsset),
     // RPC read-diet PR A — pending-card accept gate: tip-nudged per
     // block on WS deploys (§4.1.2), so the interval is only the net.
     refetchInterval: tipAware(30_000, Boolean(readChain.wsUrl)),
@@ -221,7 +228,7 @@ export function useRefinancePending(
             address: diamond,
             abi: DIAMOND_ABI_VIEM,
             functionName: 'getOfferDetails',
-            args: [BigInt(offerId!)],
+            args: [BigInt(candidateId!)],
           }) as Promise<{
             creator: string;
             accepted: boolean;
@@ -345,8 +352,11 @@ export function useRefinancePending(
   return {
     /** Non-null while a request is known — from this device's marker or
      *  from on-chain discovery (state may still be loading). See
-     *  `resolveNamedRequest` for which one is named. */
-    offerId,
+     *  `resolveNamedRequest` for which one is named. Null once the chain
+     *  has VERIFIED the named record gone (cancelled, or another loan's):
+     *  a last-known scan kept through a failed refetch must not keep
+     *  naming a request the chain says no longer exists (#2406 r6). */
+    offerId: query.data === 'gone' ? null : candidateId,
     /** The named request came from the viewer's own scan (they are not the
      *  holder): shown for cleanup, never blocking. */
     fromOwnScan,

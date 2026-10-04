@@ -3094,7 +3094,11 @@ Its intended behaviour, as the test oracle for this surface:
   The request is found on chain from the borrower-position holder's own
   offers, so a request posted from another device or tool shows here
   too, with its cancel action, to the wallet that posted it; this device's
-  own record of a request it just posted only speeds that up. A wallet
+  own record of a request it just posted only speeds that up. A request
+  the search has already found stays named, with its cancel action, when
+  a later search fails — the surfaces it would strand hold back
+  meanwhile — and stops being named only once the chain confirms it is
+  gone. A wallet
   that posted a request and then transferred the position, or whose loan
   has settled, is shown that request from any device too — only the
   poster can cancel it and remove its payoff approval. When that search
@@ -3102,8 +3106,10 @@ Its intended behaviour, as the test oracle for this surface:
   posted more offers since the loan's own offer than one search reads —
   the page says it cannot show such a request (and, for a failure, that
   a later try may) and names the manual cleanup (cancel it from the
-  wallet's open offers, then remove the token approval it relied on if
-  nothing else needs it), rather than staying silent. This depends only
+  wallet's open offers if it is still open — an expired request is not
+  listed there, and the page says so — and, either way, remove the token
+  approval it relied on if nothing else needs it), rather than staying
+  silent. This depends only
   on that search, not on any other role the wallet holds in the loan. An expired
   request is still shown so it can be cancelled and its approval removed,
   and the card outlives the loan's settlement for the same reason. A new
