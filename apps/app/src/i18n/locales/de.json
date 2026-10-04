@@ -811,6 +811,7 @@
       "multiStepNote": "Das Einstellen erfordert bis zu drei Wallet-Bestätigungen (Leitplanken, Ablöse-Freigabe, die Anfrage selbst). Wenn Sie mittendrin aufhören, bleiben die früheren Schritte on-chain bestehen, bis Sie das Einstellen abschließen oder stornieren — die Stornierung entfernt auch die Freigabe.",
       "partialBlockedByPending": "Für diesen Kredit ist eine Refinanzierungsanfrage aktiv. Eine Teilrückzahlung würde den Betrag ändern und die Anfrage dauerhaft unannehmbar machen — stornieren Sie zuerst die Refinanzierungsanfrage.",
       "precloseBlockedByPending": "Für diesen Kredit ist eine Refinanzierungsanfrage aktiv. Ein vorzeitiges Schließen würde sie ins Leere laufen lassen — stornieren Sie zuerst die Refinanzierungsanfrage.",
+      "uncheckedBlocks": "Wir konnten nicht prüfen, ob für diesen Kredit eine Refinanzierungsanfrage offen ist, daher sind Änderungen am Kredit hier vorerst zurückgestellt – eine Anfrage für den Kredit in seinem jetzigen Zustand würde sonst unbrauchbar. Bitte versuchen Sie es gleich noch einmal.",
       "repayWarnPending": "Für diesen Kredit ist noch eine Refinanzierungsanfrage aktiv. Die Rückzahlung schließt den Kredit ab; danach kann die Anfrage nie mehr abgeschlossen werden — stornieren Sie sie anschließend über ihre Karte (das entfernt auch ihre bestehende Ablöse-Freigabe); bis dahin liegt sie einfach da, bis sie abläuft."
     },
     "approvals": {
@@ -1353,7 +1354,7 @@
           "paused": "Das Zurückholen von Sicherheiten ist auf diesem Deployment gerade pausiert. Ihre Sicherheit bleibt sicher im Kredit gesperrt; versuchen Sie es erneut, sobald die Pause aufgehoben ist.",
           "pauseUnchecked": "Wir konnten nicht prüfen, ob dieses Deployment pausiert ist, daher wurde nichts gesendet. Bitte versuchen Sie es gleich noch einmal.",
           "refinancePending": "Für diesen Kredit ist eine Refinanzierungsanfrage offen, die für die Sicherheit in ihrem jetzigen Stand gestellt wurde. Sicherheit zurückzuholen würde jede Annahme durch einen Kreditgeber scheitern lassen. Stornieren Sie zuerst die Anfrage oder warten Sie, bis sie angenommen wird oder abläuft.",
-          "refinanceElsewhereNote": "Falls Sie für diesen Kredit von einem anderen Gerät oder Werkzeug aus eine Refinanzierungsanfrage offen haben, macht das Zurückholen von Sicherheit sie unannehmbar, bis Sie sie stornieren und neu stellen – diese Seite kann anderswo gestellte Anfragen nicht sehen.",
+          "refinanceUnchecked": "Wir konnten nicht prüfen, ob für diesen Kredit eine Refinanzierungsanfrage offen ist, daher wurde nichts gesendet. Bitte versuchen Sie es gleich noch einmal.",
           "pauseUnknownNote": "Wir konnten nicht prüfen, ob das Zurückholen von Sicherheiten auf diesem Deployment pausiert ist. Das wird vor dem Öffnen Ihrer Wallet erneut geprüft.",
           "saleUnknownNote": "Wir konnten nicht vorab prüfen, ob ein Verkaufsangebot für die Position des Kreditgebers mit diesem Kredit verknüpft ist. Das wird vor dem Öffnen Ihrer Wallet erneut geprüft, und ein verknüpftes Angebot blockiert die Entnahme.",
           "checkFailed": "Wir konnten die Prüfungen vor dem Öffnen Ihrer Wallet nicht abschließen, daher wurde nichts gesendet. Bitte versuchen Sie es gleich noch einmal.",

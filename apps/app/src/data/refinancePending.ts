@@ -7,9 +7,13 @@
  * partial-repay interlock through ALL of those windows, or a lender
  * can accept a request the page no longer admits exists.
  *
- * The marker is device-local (localStorage — the indexer has no
- * column for the refinance tag yet) and every render of the pending
- * surface verifies it against the chain in one batch: the offer
+ * #2391 — the request is DISCOVERED ON CHAIN from the current
+ * borrower-position holder's own offers (`refinanceDiscovery.ts`), so one
+ * made on another device or through another tool is found too. The
+ * device-local marker stays as a fast-path hint (it names this device's
+ * request before the next discovery poll). Whichever names the request,
+ * every render of the pending surface verifies it against the chain in
+ * one batch: the offer
  * record (cancel DELETES it → zeroed creator self-heals the marker),
  * the LIVE loan (payoff recomputed from chain, never a cached prop),
  * LIVE fees (the top-up figure must track a governance retune), the
@@ -31,6 +35,7 @@ import {
   refinancePayoffOf,
 } from '../contracts/loanLive';
 import { readGraceSecondsLive } from '../contracts/preflights';
+import { discoverRefinanceRequest, type RefinanceDiscovery } from './refinanceDiscovery';
 import { readLiveProtocolFees } from './fees';
 import { ZERO_ADDRESS } from '../lib/offerSchema';
 import { makePendingMarkerStore } from '../lib/pendingMarker';
@@ -44,9 +49,8 @@ const marker = makePendingMarkerStore('app.refinanceOffer');
  *  mount, so a request posted from ANOTHER TAB afterwards is invisible
  *  to its state; a write that changes the loan's collateral re-reads
  *  the store itself just before the wallet opens. localStorage is shared
- *  across tabs, so this sees them; a request made on another device or
- *  through another tool is NOT discoverable (the indexer carries no
- *  refinance tag yet) — callers say so rather than imply otherwise. */
+ *  across tabs, so this sees them. A request made on another device or
+ *  through another tool is found by on-chain discovery instead (#2391). */
 export function readRefinanceMarker(chainId: number, loanId: number): string | null {
   return marker.read(chainId, loanId);
 }
@@ -88,13 +92,50 @@ export interface RefinancePendingState {
 export function useRefinancePending(
   loanId: number,
   principalAsset: `0x${string}` | undefined,
+  /** #2391 — the CURRENT borrower-position holder (a fresh read; the
+   *  page's `freshData(nftOwners)`), whose open offers are searched for a
+   *  request. `undefined` while unknown; `'burned'` when the position is
+   *  gone (no request can be settled then). */
+  holder: string | 'burned' | undefined,
 ) {
   const { readChain, address } = useActiveChain();
   const readClient = usePublicClient({ chainId: readChain.chainId });
   const queryClient = useQueryClient();
-  const [offerId, setOfferId] = useState<string | null>(() =>
+  const [markerId, setMarkerId] = useState<string | null>(() =>
     marker.read(readChain.chainId, loanId),
   );
+
+  // #2391 — on-chain discovery: the holder's open (then expired) offers
+  // tagged for this loan. Tri-state like every read: undefined while
+  // loading, 'unknown' when a scan failed or was cut short.
+  const discoveryQuery = useQuery({
+    queryKey: [
+      'refinancePending',
+      'discovery',
+      readChain.chainId,
+      loanId,
+      holder === 'burned' ? 'burned' : holder?.toLowerCase(),
+    ],
+    enabled: Boolean(readClient) && holder !== undefined,
+    refetchInterval: tipAware(60_000, Boolean(readChain.wsUrl)),
+    queryFn: async (): Promise<RefinanceDiscovery> =>
+      holder === 'burned' || holder === undefined
+        ? { kind: 'none' }
+        : discoverRefinanceRequest({
+            client: readClient!,
+            diamond: readChain.diamondAddress,
+            loanId: BigInt(loanId),
+            holder: holder as `0x${string}`,
+          }),
+  });
+  // A failed refetch is an unknown, not the last answer heard.
+  const discovery: RefinanceDiscovery | undefined = discoveryQuery.isError
+    ? { kind: 'unknown' }
+    : discoveryQuery.data;
+  // This device's marker first (verified below like any other source),
+  // then whatever the chain says the holder has open.
+  const offerId =
+    markerId ?? (discovery?.kind === 'found' ? discovery.offerId : null);
 
   // Re-seed when the (chain, loan) identity changes, as a render-phase
   // ADJUSTMENT rather than in an effect (#1520) — same reasoning as
@@ -106,20 +147,25 @@ export function useRefinancePending(
   const [seededFor, setSeededFor] = useState(seedKey);
   if (seededFor !== seedKey) {
     setSeededFor(seedKey);
-    setOfferId(marker.read(readChain.chainId, loanId));
+    setMarkerId(marker.read(readChain.chainId, loanId));
   }
 
   const remember = useCallback(
     (id: string) => {
       marker.write(readChain.chainId, loanId, id);
-      setOfferId(id);
+      setMarkerId(id);
     },
     [readChain.chainId, loanId],
   );
   const clear = useCallback(() => {
     marker.write(readChain.chainId, loanId, null);
-    setOfferId(null);
-  }, [readChain.chainId, loanId]);
+    setMarkerId(null);
+    // A request found by discovery is cleared by the chain, not the marker:
+    // re-scan so a cancelled one stops being named.
+    void queryClient.invalidateQueries({
+      queryKey: ['refinancePending', 'discovery', readChain.chainId, loanId],
+    });
+  }, [readChain.chainId, loanId, queryClient]);
 
   const query = useQuery({
     queryKey: [
@@ -262,8 +308,13 @@ export function useRefinancePending(
   }, [query.data, clear]);
 
   return {
-    /** Non-null while a marker exists (state may still be loading). */
+    /** Non-null while a request is known — from this device's marker or
+     *  from on-chain discovery (state may still be loading). */
     offerId,
+    /** #2391 — the on-chain discovery verdict. `unknown` (a scan failed or
+     *  was cut short) with no marker means a request COULD exist unseen:
+     *  surfaces it would strand fail closed. `undefined` while loading. */
+    discovery,
     /** Live-verified state; undefined while loading or errored. */
     state: query.data === 'gone' ? undefined : query.data,
     remember,

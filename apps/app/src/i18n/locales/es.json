@@ -811,6 +811,7 @@
       "multiStepNote": "Publicar requiere hasta tres confirmaciones de billetera (límites, aprobación de pago, la solicitud). Si te detienes a mitad de camino, los pasos anteriores quedan on-chain hasta que termines de publicar o canceles — cancelar también elimina la aprobación.",
       "partialBlockedByPending": "Hay una solicitud de refinanciación activa para este préstamo. Un pago parcial cambiaría el monto y haría que esa solicitud fuera permanentemente inaceptable — cancela primero la solicitud de refinanciación.",
       "precloseBlockedByPending": "Hay una solicitud de refinanciación activa para este préstamo. Cerrarlo antes ahora la dejaría varada — cancela primero la solicitud de refinanciación.",
+      "uncheckedBlocks": "No pudimos comprobar si hay una solicitud de refinanciación abierta en este préstamo, así que por ahora no se puede modificar el préstamo aquí: una solicitud hecha para el préstamo tal como está quedaría inservible. Inténtalo de nuevo en un momento.",
       "repayWarnPending": "Una solicitud de refinanciación sigue activa para este préstamo. Pagar liquida el préstamo, tras lo cual la solicitud nunca podrá completarse — cancélala luego desde su tarjeta (eso también elimina su aprobación permanente de pago); hasta entonces simplemente queda allí hasta vencer."
     },
     "approvals": {
@@ -1353,7 +1354,7 @@
           "paused": "Recuperar garantía está en pausa en este despliegue ahora mismo. Tu garantía sigue bloqueada de forma segura en el préstamo; vuelve a intentarlo cuando se reanude.",
           "pauseUnchecked": "No pudimos comprobar si este despliegue está en pausa, así que no se envió nada. Inténtalo de nuevo en un momento.",
           "refinancePending": "Hay una solicitud de refinanciación abierta en este préstamo, hecha para la garantía tal como está ahora. Recuperar garantía haría fallar la aceptación de cualquier prestamista. Cancela primero la solicitud, o espera a que se acepte o caduque.",
-          "refinanceElsewhereNote": "Si tienes una solicitud de refinanciación abierta para este préstamo desde otro dispositivo o herramienta, recuperar garantía la deja imposible de aceptar hasta que la canceles y la vuelvas a publicar; esta página no puede ver solicitudes hechas en otro lugar.",
+          "refinanceUnchecked": "No pudimos comprobar si hay una solicitud de refinanciación abierta en este préstamo, así que no se envió nada. Inténtalo de nuevo en un momento.",
           "pauseUnknownNote": "No pudimos comprobar si recuperar garantía está en pausa en este despliegue. Se comprueba de nuevo antes de abrir tu billetera.",
           "saleUnknownNote": "No pudimos comprobar de antemano si hay una venta de la posición del prestamista vinculada a este préstamo. Se comprueba de nuevo antes de abrir tu billetera, y una venta vinculada bloquea la retirada.",
           "checkFailed": "No pudimos terminar las comprobaciones antes de abrir tu billetera, así que no se envió nada. Inténtalo de nuevo en un momento.",

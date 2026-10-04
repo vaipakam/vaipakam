@@ -829,6 +829,7 @@
       "multiStepNote": "Posting takes up to three wallet confirmations (guardrails, payoff approval, the request itself). If you stop partway, the earlier steps stay in place on-chain until you finish posting or cancel — cancelling also removes the approval.",
       "partialBlockedByPending": "A refinance request is live for this loan. A partial repayment would change the amount and make that request permanently unacceptable — cancel the refinance request first.",
       "precloseBlockedByPending": "A refinance request is live for this loan. Closing early now would strand it — cancel the refinance request first.",
+      "uncheckedBlocks": "We couldn’t check whether a refinance request is open on this loan, so changing the loan here is held back for now — a request made for the loan as it stands would be stranded. Please try again in a moment.",
       "repayWarnPending": "A refinance request is still live for this loan. Repaying settles the loan, after which the request can never complete — cancel it from its card afterwards (that also removes its standing payoff approval); until then it just sits until it expires."
     },
     "approvals": {
@@ -1426,7 +1427,7 @@
           "paused": "Taking back collateral is paused on this deployment right now. Your collateral stays safely locked in the loan; try again once it is unpaused.",
           "pauseUnchecked": "We couldn’t check whether this deployment is paused, so nothing was sent. Please try again in a moment.",
           "refinancePending": "A refinance request is open on this loan, and it was made for the collateral as it stands now. Taking collateral back would make every lender’s acceptance fail. Cancel the request first, or wait until it is taken or expires.",
-          "refinanceElsewhereNote": "If you have a refinance request open for this loan from another device or tool, taking collateral back makes it unfillable until you cancel it and post it again — this page can’t see requests made elsewhere.",
+          "refinanceUnchecked": "We couldn’t check whether a refinance request is open on this loan, so nothing was sent. Please try again in a moment.",
           "pauseUnknownNote": "We couldn’t check whether taking back collateral is paused on this deployment. It is checked again before your wallet opens.",
           "saleUnknownNote": "We couldn’t check ahead of time whether a sale listing of the lender’s position is linked to this loan. It is checked again before your wallet opens, and a linked listing blocks the withdrawal.",
           "checkFailed": "We couldn’t finish the checks before opening your wallet, so nothing was sent. Please try again in a moment.",

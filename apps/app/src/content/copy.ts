@@ -1661,6 +1661,11 @@ const copySource = {
       'A refinance request is live for this loan. A partial repayment would change the amount and make that request permanently unacceptable — cancel the refinance request first.',
     precloseBlockedByPending:
       'A refinance request is live for this loan. Closing early now would strand it — cancel the refinance request first.',
+    // #2391 — requests are found on chain from the borrower's own offers;
+    // when that check could not answer, the surfaces a request would be
+    // stranded by hold back rather than guess "none".
+    uncheckedBlocks:
+      'We couldn’t check whether a refinance request is open on this loan, so changing the loan here is held back for now — a request made for the loan as it stands would be stranded. Please try again in a moment.',
     repayWarnPending:
       'A refinance request is still live for this loan. Repaying settles the loan, after which the request can never complete — cancel it from its card afterwards (that also removes its standing payoff approval); until then it just sits until it expires.',
   },
@@ -3193,10 +3198,10 @@ const copySource = {
         // #2389 r5 — the pending-refinance interlock.
         refinancePending:
           'A refinance request is open on this loan, and it was made for the collateral as it stands now. Taking collateral back would make every lender’s acceptance fail. Cancel the request first, or wait until it is taken or expires.',
-        // #2389 r6 — a refinance request made on another device or tool
-        // cannot be discovered here; say what withdrawing would do to it.
-        refinanceElsewhereNote:
-          'If you have a refinance request open for this loan from another device or tool, taking collateral back makes it unfillable until you cancel it and post it again — this page can’t see requests made elsewhere.',
+        // #2391 — the live on-chain check for a refinance request did not
+        // answer before the wallet would open.
+        refinanceUnchecked:
+          'We couldn’t check whether a refinance request is open on this loan, so nothing was sent. Please try again in a moment.',
         // #2389 r4 — facts the card could not read ahead of time; each
         // is re-checked before the wallet opens.
         pauseUnknownNote:

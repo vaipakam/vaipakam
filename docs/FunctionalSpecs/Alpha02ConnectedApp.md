@@ -1424,11 +1424,15 @@ is the borrower's own money.
 - While an acceptable refinance request is open on the loan, the surface says
   that taking collateral back would make every lender's acceptance fail and
   asks the borrower to cancel or wait — the same interlock partial repayment
-  and early close-out apply — and the pre-check refuses. The pre-check also
-  catches a request posted from another tab on the same device after the page
-  loaded. A request made on another device or through another tool cannot be
-  discovered by the app yet, so the surface says that, and what withdrawing would
-  do to such a request.
+  and early close-out apply — and the pre-check refuses. A request is found
+  wherever it was made — on another device or through another tool — because
+  the app looks for it on chain among the current borrower-position holder's
+  own offers, the only ones the protocol will settle; the pre-check repeats that
+  search just before the wallet opens. When the search cannot answer (it failed,
+  or the holder has more offers than one search covers), the surfaces a request
+  would be stranded by — taking collateral back, partial repayment and early
+  close-out — hold back and say they could not check, rather than assume there
+  is none.
 - An open confirmation does not survive a network switch or a change of
   connected account: it closes, and the typed amount is cleared, so a review
   opened on one network or under one wallet can never send on another.
@@ -3066,9 +3070,11 @@ Its intended behaviour, as the test oracle for this surface:
   repayment and close-early are held off with an explanation —
   either would strand the request — and the full-repayment review
   warns that the request survives settlement until cancelled. The
-  pending marker is device-local: another device posting a second
-  request for the same loan is possible and each device tracks only
-  its own. Loans on a periodic interest schedule carry a visible
+  request is found on chain from the borrower-position holder's own
+  offers, so a request posted from another device or tool shows here
+  too, with its cancel action; this device's own record of a request it
+  just posted only speeds that up. An expired request is still shown so
+  it can be cancelled and its approval removed. Loans on a periodic interest schedule carry a visible
   warning that an overdue period blocks completion until settled.
 - The borrower of an active ERC-20 loan sees, in BOTH interface
   modes, one chooser surface that names every early-repayment path

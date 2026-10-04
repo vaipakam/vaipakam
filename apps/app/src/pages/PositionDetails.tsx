@@ -106,6 +106,7 @@ import { LoanSalePendingCard } from '../components/LoanSalePendingCard';
 import { LoanKeeperCard } from '../components/LoanKeeperCard';
 import { LOCK_EARLY_WITHDRAWAL_SALE, useLoanSalePending } from '../data/loanSalePending';
 import { readRefinanceMarker, useRefinancePending } from '../data/refinancePending';
+import { discoverRefinanceRequest } from '../data/refinanceDiscovery';
 import { ZERO_ADDRESS } from '../lib/offerSchema';
 import {
   AssetType,
@@ -494,8 +495,22 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     loanIsRental || !loan.data
       ? undefined
       : (loan.data.lendingAsset as `0x${string}`),
+    // #2391 — the CURRENT borrower-position holder, whose own open offers
+    // are searched on chain. A rental has no refinance path ('burned' =
+    // nothing to search).
+    loanIsRental ? 'burned' : freshBorrowerOwner,
   );
   const refinancePending = refi.offerId !== null;
+  /** #2391 — whether the page KNOWS there is no request it cannot see.
+   *  'checking' while discovery loads; 'unchecked' when it failed, was cut
+   *  short, or the holder read itself failed — a request could exist
+   *  unseen, so the surfaces it would strand hold back (fail closed). */
+  const refiDiscoveryState: 'settled' | 'checking' | 'unchecked' =
+    refinancePending || refi.discovery?.kind === 'none'
+      ? 'settled'
+      : refi.discovery?.kind === 'unknown' || nftOwners.isError
+        ? 'unchecked'
+        : 'checking';
   // The partial/preclose interlocks exist to protect an ACCEPTABLE
   // request from being stranded by a changed principal or a settled
   // loan. An EXPIRED request can't be accepted by anyone, so it stops
@@ -2174,6 +2189,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     let swapOrder: Awaited<ReturnType<typeof swapToRepayOrderState>>;
     let liveMax: bigint;
     let paused: boolean | 'unknown';
+    let liveRefi: Awaited<ReturnType<typeof discoverRefinanceRequest>>;
     try {
       // partialWithdrawCollateral screens msg.sender (Tier-1) and pays
       // the CURRENT borrower-position holder — re-check both live. The
@@ -2185,7 +2201,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         address,
         { failClosed: true },
       );
-      [, saleState, swapOrder, liveMax, paused] = await Promise.all([
+      [, saleState, swapOrder, liveMax, paused, liveRefi] = await Promise.all([
         assertPositionNftHeldLive({
           publicClient,
           diamondAddress: walletChain.diamondAddress,
@@ -2222,6 +2238,15 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             functionName: 'paused',
           }) as Promise<boolean>
         ).catch(() => 'unknown' as const),
+        // #2391 — a request made on another device since the page last
+        // polled: discover it live, from the holder's own offers (the
+        // holder is `address`, asserted just above in the same batch).
+        discoverRefinanceRequest({
+          client: publicClient,
+          diamond: walletChain.diamondAddress,
+          loanId: BigInt(row.loanId),
+          holder: address,
+        }),
       ]);
     } catch (err) {
       setError(
@@ -2240,6 +2265,12 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         // #2389 r6 — the page's verified state, OR a marker another tab
         // on this device wrote after the page mounted (re-read live).
         refinancePending: refinanceBlocking || newerRefinanceMarker,
+        refinanceDiscovery:
+          liveRefi.kind === 'unknown'
+            ? 'unknown'
+            : liveRefi.kind === 'found' && liveRefi.open
+              ? 'open'
+              : 'none',
         paused,
         saleState,
         swapOrder,
@@ -2250,6 +2281,8 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         setError(
           block === 'refinance-pending'
             ? t.refinancePending
+            : block === 'refinance-unchecked'
+            ? t.refinanceUnchecked
             : block === 'paused'
             ? t.paused
             : block === 'pause-unchecked'
@@ -3318,6 +3351,16 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             <p className="muted" style={{ margin: 0 }}>
               {copy.earlyRepay.checkingInterlocks}
             </p>
+          ) : refiDiscoveryState === 'checking' ? (
+            // #2391 — on-chain discovery has not answered yet.
+            <p className="muted" style={{ margin: 0 }}>
+              {copy.earlyRepay.checkingInterlocks}
+            </p>
+          ) : refiDiscoveryState === 'unchecked' ? (
+            // #2391 — a request could exist unseen; hold back.
+            <div className="banner banner-warn" role="alert">
+              <span className="banner-body">{copy.refinance.uncheckedBlocks}</span>
+            </div>
           ) : refinanceBlocking ? (
             // #2389 r5 — the same pending-refinance interlock partial
             // repayment and preclose apply: the request is frozen at the
@@ -3373,16 +3416,13 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
               {/* #2389 r4 — what the card cannot vouch for is said here,
                   not discovered at submit. */}
               {withdrawCaveats({
-                refinanceKnown: refinancePending,
                 paused: maxWithdrawable.data?.paused,
                 saleHold: saleHold.data,
               }).map((c) => (
                 <p key={c} className="field-hint" style={{ marginTop: 0 }}>
                   {c === 'pause-unknown'
                     ? copy.positions.details.withdrawCollateral.pauseUnknownNote
-                    : c === 'sale-unknown'
-                      ? copy.positions.details.withdrawCollateral.saleUnknownNote
-                      : copy.positions.details.withdrawCollateral.refinanceElsewhereNote}
+                    : copy.positions.details.withdrawCollateral.saleUnknownNote}
                 </p>
               ))}
               <div className="cluster">
@@ -3526,6 +3566,16 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
               <span className="banner-body">
                 {copy.saleHold.completionPaused}
               </span>
+            </div>
+          ) : refiDiscoveryState === 'checking' ? (
+            // #2391 — on-chain discovery has not answered yet.
+            <p className="muted" style={{ margin: 0 }}>
+              {copy.earlyRepay.checkingInterlocks}
+            </p>
+          ) : refiDiscoveryState === 'unchecked' ? (
+            // #2391 — a request could exist unseen; hold back.
+            <div className="banner banner-warn" role="alert">
+              <span className="banner-body">{copy.refinance.uncheckedBlocks}</span>
             </div>
           ) : refinanceBlocking ? (
             // A live refinance request is frozen at the CURRENT
@@ -3704,6 +3754,16 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
               <span className="banner-body">
                 {copy.offset.blockedOtherPaths}
               </span>
+            </div>
+          ) : refiDiscoveryState === 'checking' ? (
+            // #2391 — on-chain discovery has not answered yet.
+            <p className="muted" style={{ margin: 0 }}>
+              {copy.earlyRepay.checkingInterlocks}
+            </p>
+          ) : refiDiscoveryState === 'unchecked' ? (
+            // #2391 — a request could exist unseen; hold back.
+            <div className="banner banner-warn" role="alert">
+              <span className="banner-body">{copy.refinance.uncheckedBlocks}</span>
             </div>
           ) : refinanceBlocking ? (
             // A live refinance request is frozen against THIS loan —

@@ -245,6 +245,7 @@ describe('swapToRepayOrderState', () => {
 describe('withdrawPreflightBlock (#2389 r2)', () => {
   const ok = {
     refinancePending: false,
+    refinanceDiscovery: 'none' as const,
     paused: false as const,
     saleState: 'none' as const,
     swapOrder: 'none' as const,
@@ -253,6 +254,10 @@ describe('withdrawPreflightBlock (#2389 r2)', () => {
   };
   it('blocks while an acceptable refinance request is open (#2389 r5)', () => {
     expect(withdrawPreflightBlock({ ...ok, refinancePending: true })).toBe('refinance-pending');
+  });
+  it('blocks on a request the live on-chain discovery found, and when it could not answer (#2391)', () => {
+    expect(withdrawPreflightBlock({ ...ok, refinanceDiscovery: 'open' })).toBe('refinance-pending');
+    expect(withdrawPreflightBlock({ ...ok, refinanceDiscovery: 'unknown' })).toBe('refinance-unchecked');
   });
   it('blocks while the deployment is paused, and when the pause read failed (#2389 r3)', () => {
     expect(withdrawPreflightBlock({ ...ok, paused: true })).toBe('paused');
@@ -282,19 +287,14 @@ describe('withdrawPreflightBlock (#2389 r2)', () => {
 
 describe('withdrawCaveats (#2389 r4)', () => {
   it('states nothing when both facts are known and clear', () => {
-    expect(withdrawCaveats({ refinanceKnown: true, paused: false, saleHold: 'none' })).toEqual([]);
+    expect(withdrawCaveats({ paused: false, saleHold: 'none' })).toEqual([]);
   });
   it('states an unread pause', () => {
-    expect(withdrawCaveats({ refinanceKnown: true, paused: undefined, saleHold: 'none' })).toEqual(['pause-unknown']);
+    expect(withdrawCaveats({ paused: undefined, saleHold: 'none' })).toEqual(['pause-unknown']);
   });
   it('states a missing sale-listing answer — failed probe or pre-refresh deployment', () => {
-    expect(withdrawCaveats({ refinanceKnown: true, paused: false, saleHold: undefined })).toEqual(['sale-unknown']);
-    expect(withdrawCaveats({ refinanceKnown: true, paused: false, saleHold: 'unknown' })).toEqual(['sale-unknown']);
-  });
-  it('states that a request made elsewhere cannot be seen, when none is known here (#2389 r6)', () => {
-    expect(withdrawCaveats({ refinanceKnown: false, paused: false, saleHold: 'none' })).toEqual([
-      'refinance-elsewhere',
-    ]);
+    expect(withdrawCaveats({ paused: false, saleHold: undefined })).toEqual(['sale-unknown']);
+    expect(withdrawCaveats({ paused: false, saleHold: 'unknown' })).toEqual(['sale-unknown']);
   });
 });
 
