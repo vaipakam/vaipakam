@@ -114,7 +114,9 @@ import { discoverRefinanceRequest } from '../data/refinanceDiscovery';
 import {
   liveRefinanceVerdict,
   refinanceInterlock,
+  repayRefinanceDecision,
   type RefinanceCheck,
+  type RepayNotice,
 } from '../data/refinanceInterlock';
 import { ZERO_ADDRESS } from '../lib/offerSchema';
 import {
@@ -232,12 +234,16 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // repay button and the close-early card would re-appear and invite
   // a second, reverting submit (LoanNotActive).
   const [closedThisSession, setClosedThisSession] = useState(false);
-  // #2406 r4 — what the full-repayment review must warn about because a
-  // live check at confirm time found it, after the page's last poll said
-  // nothing: 'pending' (an open request) or 'unchecked' (the check could
-  // not answer). Once set, the next confirm shows the warning and repays —
-  // repayment is held back at most once, never blocked.
-  const [repayRefiNotice, setRepayRefiNotice] = useState<'pending' | 'unchecked' | null>(null);
+  // #2406 r4/r5 — what the LAST confirm-time live check found that the
+  // page's poll had not: 'pending' (an open request) or 'unchecked' (the
+  // check could not answer). It only adds to what the review shows; every
+  // confirm re-checks live and replaces it (`repayRefinanceDecision`), and
+  // it is keyed to the chain, account and loan it was found for, so a
+  // switch drops it rather than carrying a stale warning across.
+  const [repayRefiLatch, setRepayRefiLatch] = useState<{
+    key: string;
+    notice: RepayNotice;
+  } | null>(null);
   // Lender-side sibling of closedThisSession: after a successful
   // position sale the indexer still shows this wallet as lender for
   // a window — the latch lives on the PAGE so an EarlyExitFlow
@@ -569,6 +575,18 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   });
   const refinanceBlocking = refiLock.blocking;
   const refiCheck: RefinanceCheck = refiLock.check;
+  // #2406 r4/r5 — what the full-repayment review shows about a refinance
+  // request: the page's own verdict, plus whatever the last confirm-time
+  // live check found for THIS chain, account and loan.
+  const repayLatchKey = `${readChain.chainId}:${address?.toLowerCase() ?? ''}:${loanId}`;
+  const repayRefiNotice: RepayNotice =
+    repayRefiLatch?.key === repayLatchKey ? repayRefiLatch.notice : null;
+  const repayShown: RepayNotice =
+    refinanceBlocking || repayRefiNotice === 'pending'
+      ? 'pending'
+      : refiCheck !== 'settled' || repayRefiNotice === 'unchecked'
+        ? 'unchecked'
+        : null;
 
   // Lender-side sibling: a live Option-2 sale listing. Existence is
   // the CHAIN's say-so (positionLock on the lender NFT), so a listing
@@ -1981,15 +1999,13 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         setError(blocked);
         return;
       }
-      // #2406 r4 — the review the user just confirmed said nothing about a
-      // refinance request (the page's last poll found none), but one could
-      // have been posted from another device since. Check live; if one is
-      // found, or the check cannot answer, stop ONCE so the review can say
-      // what repaying does to it — the next confirm repays. Repayment is
-      // the safety valve: it is never refused, only disclosed first.
-      const reviewWarned =
-        refinanceBlocking || refiCheck !== 'settled' || repayRefiNotice !== null;
-      if (!isRental && !reviewWarned && loan.data) {
+      // #2406 r4/r5 — a request could have been posted from another device
+      // since the page's last poll. EVERY confirm checks live; when what the
+      // review showed does not cover what that check found, stop so the
+      // review can say what repaying does to it — the next confirm repays
+      // unless the answer changed again. Repayment is the safety valve: it
+      // is never refused, only disclosed first (`repayRefinanceDecision`).
+      if (!isRental && loan.data) {
         const verdict = liveRefinanceVerdict(
           await discoverRefinanceRequest({
             client: publicClient,
@@ -2004,8 +2020,9 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                 : address,
           }),
         );
-        if (verdict !== 'clear') {
-          setRepayRefiNotice(verdict === 'open' ? 'pending' : 'unchecked');
+        const decision = repayRefinanceDecision(repayShown, verdict);
+        setRepayRefiLatch({ key: repayLatchKey, notice: decision.notice });
+        if (!decision.proceed) {
           void queryClient.invalidateQueries({
             queryKey: refinanceDiscoveryKey(readChain.chainId, loanId),
           });
@@ -5021,12 +5038,17 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           onCleared={refi.clear}
           onDone={setDoneMessage}
         />
-      ) : refi.ownScanCapped && !isRental && !isLenderHolder ? (
-        // #2406 r4 — this wallet's own scan was cut short by its page cap:
-        // a request it posted while holding the borrower position could
-        // exist unseen. Say so, and name the manual cleanup.
+      ) : refi.ownScanUnresolved !== null && !isRental ? (
+        // #2406 r4/r5 — this wallet's own scan failed or was cut short by
+        // its page cap: a request it posted while holding the borrower
+        // position could exist unseen. Say so, and name the manual cleanup.
+        // Keyed on the scan alone, not on the viewer's other roles.
         <div className="banner banner-warn" role="status">
-          <span className="banner-body">{copy.refinance.ownScanCapped}</span>
+          <span className="banner-body">
+            {refi.ownScanUnresolved === 'capped'
+              ? copy.refinance.ownScanCapped
+              : copy.refinance.ownScanFailed}
+          </span>
         </div>
       ) : null}
 
@@ -5116,7 +5138,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
               ) : null}
               {action === 'repay' &&
               !isRental &&
-              (refinanceBlocking || refiCheck !== 'settled' || repayRefiNotice !== null) ? (
+              repayShown !== null ? (
                 // Repay stays open with a pending refinance request
                 // (it's the safety valve — never block it), but the
                 // request's fate must be stated before signing. #2406 r3 —
@@ -5125,7 +5147,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                 // expired request is not live; its own card covers cleanup.
                 <div className="banner banner-warn" role="alert" style={{ marginBottom: 12 }}>
                   <span className="banner-body">
-                    {refinanceBlocking || repayRefiNotice === 'pending'
+                    {repayShown === 'pending'
                       ? copy.refinance.repayWarnPending
                       : copy.refinance.repayWarnUnchecked}
                   </span>

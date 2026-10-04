@@ -5,7 +5,9 @@ import { describe, expect, it } from 'vitest';
 import type { RefinanceDiscovery } from './refinanceDiscovery';
 import {
   liveRefinanceVerdict,
+  ownScanUnresolved,
   refinanceInterlock,
+  repayRefinanceDecision,
   resolveNamedRequest,
 } from './refinanceInterlock';
 
@@ -78,6 +80,16 @@ describe('refinanceInterlock — blocking', () => {
       }).blocking,
     ).toBe(false);
   });
+  it('a request the holder scan already found EXPIRED stays non-blocking while verification fails (r5)', () => {
+    expect(
+      refinanceInterlock({ ...base, offerId: '9', state: undefined, holderScan: expired('9') }).blocking,
+    ).toBe(false);
+    // …but only for THAT request: an expired verdict on a different one
+    // does not clear a request still being verified.
+    expect(
+      refinanceInterlock({ ...base, offerId: '7', state: undefined, holderScan: expired('9') }).blocking,
+    ).toBe(true);
+  });
   it("the holder's open request still blocks when the viewer's own request is the one named", () => {
     expect(
       refinanceInterlock({
@@ -143,3 +155,35 @@ describe('liveRefinanceVerdict', () => {
     expect(liveRefinanceVerdict(capped)).toBe('capped');
   });
 });
+
+describe('ownScanUnresolved (r4/r5)', () => {
+  it('reports a failed or capped own scan, and nothing for an answered one', () => {
+    expect(ownScanUnresolved('error')).toBe('failed');
+    expect(ownScanUnresolved(failed)).toBe('failed');
+    expect(ownScanUnresolved(capped)).toBe('capped');
+    expect(ownScanUnresolved(none)).toBeNull();
+    expect(ownScanUnresolved(expired('4'))).toBeNull();
+    expect(ownScanUnresolved(undefined)).toBeNull();
+  });
+});
+
+describe('repayRefinanceDecision (r4/r5) — every confirm re-checks', () => {
+  it('proceeds on a clear check whatever the review showed, and drops a stale notice', () => {
+    expect(repayRefinanceDecision('pending', 'clear')).toEqual({ proceed: true, notice: null });
+    expect(repayRefinanceDecision(null, 'clear')).toEqual({ proceed: true, notice: null });
+  });
+  it('stops once when the review said nothing and a request (or no answer) turns up', () => {
+    expect(repayRefinanceDecision(null, 'open')).toEqual({ proceed: false, notice: 'pending' });
+    expect(repayRefinanceDecision(null, 'unchecked')).toEqual({ proceed: false, notice: 'unchecked' });
+    expect(repayRefinanceDecision(null, 'capped')).toEqual({ proceed: false, notice: 'unchecked' });
+  });
+  it('an "unconfirmed" warning does not cover a request now found open', () => {
+    expect(repayRefinanceDecision('unchecked', 'open')).toEqual({ proceed: false, notice: 'pending' });
+  });
+  it('proceeds when the warning shown covers what the check found', () => {
+    expect(repayRefinanceDecision('pending', 'open').proceed).toBe(true);
+    expect(repayRefinanceDecision('pending', 'unchecked').proceed).toBe(true);
+    expect(repayRefinanceDecision('unchecked', 'capped').proceed).toBe(true);
+  });
+});
+

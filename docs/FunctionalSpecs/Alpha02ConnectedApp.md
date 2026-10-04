@@ -3080,10 +3080,15 @@ Its intended behaviour, as the test oracle for this surface:
   stays available (it is the safety valve) but says that a request
   could exist, posted from another device, and that repaying would
   strand it too. Because the page's search runs on a cadence, a review
-  that said nothing is checked again when it is confirmed: if a request
-  turns up, or that check cannot answer, nothing is sent that time and
-  the review now says what repaying would do — the next confirmation
-  repays. Repayment is held back at most once, never refused. Only an acceptable request is live: one that has
+  is checked again every time it is confirmed: when what the review
+  showed does not cover what that check found (a request turned up, or
+  the check could not answer, after the review said nothing; or a
+  request is now open after the review said only that the check had not
+  answered), nothing is sent that time and the review now says what
+  repaying would do — the next confirmation repays unless the answer has
+  changed again. A warning from an earlier check is dropped once a later
+  check comes back clear, and never carries across a change of network,
+  account or loan. Repayment is never refused, only disclosed first. Only an acceptable request is live: one that has
   expired, whose loan is past grace, or whose poster no longer holds
   the borrower position can never be filled, so it holds nothing back.
   The request is found on chain from the borrower-position holder's own
@@ -3092,18 +3097,28 @@ Its intended behaviour, as the test oracle for this surface:
   own record of a request it just posted only speeds that up. A wallet
   that posted a request and then transferred the position, or whose loan
   has settled, is shown that request from any device too — only the
-  poster can cancel it and remove its payoff approval. When that wallet
-  has posted more offers since the loan's own offer than one search
-  reads, the page says it cannot show such a request and names the
-  manual cleanup (cancel it from the wallet's open offers, then remove
-  the token approval it relied on if nothing else needs it), rather
-  than staying silent. An expired
+  poster can cancel it and remove its payoff approval. When that search
+  of the wallet's own offers cannot answer — it failed, or the wallet has
+  posted more offers since the loan's own offer than one search reads —
+  the page says it cannot show such a request (and, for a failure, that
+  a later try may) and names the manual cleanup (cancel it from the
+  wallet's open offers, then remove the token approval it relied on if
+  nothing else needs it), rather than staying silent. This depends only
+  on that search, not on any other role the wallet holds in the loan. An expired
   request is still shown so it can be cancelled and its approval removed,
   and the card outlives the loan's settlement for the same reason. A new
-  request cannot be posted while one is open — the protocol accepts
-  several, and taking one leaves the others impossible to fill — and the
-  form waits until the search has answered, checking again just before
-  posting. An expired request does not hold the form back. Loans on a periodic interest schedule carry a visible
+  request is not posted while the app can see one open — the protocol
+  accepts several, and taking one leaves the others impossible to fill —
+  and the form waits until the search has answered, checking again just
+  before posting. That check cannot stop two devices that both pass it in
+  the same moment: both requests can then be posted, sharing one payoff
+  approval, and taking either leaves the other impossible to fill. The
+  page names one open request at a time; once it is taken or cancelled,
+  the other is found and shown so it can be cancelled too. An on-chain
+  limit of one request per loan is tracked with #2407. An expired request
+  does not hold the form back, and a request the search has already found
+  expired stays treated as expired even when the page's fuller check of
+  it cannot finish. Loans on a periodic interest schedule carry a visible
   warning that an overdue period blocks completion until settled.
 - The borrower of an active ERC-20 loan sees, in BOTH interface
   modes, one chooser surface that names every early-repayment path

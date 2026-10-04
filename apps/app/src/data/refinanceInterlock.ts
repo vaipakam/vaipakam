@@ -81,16 +81,24 @@ export function refinanceInterlock(a: {
     a.holder === undefined
       ? true
       : a.holder !== 'burned' && creator.toLowerCase() === a.holder.toLowerCase();
+  const h = a.holderScan;
+  // #2406 r5 — the holder's scan has already judged THIS request expired.
+  // That verdict stands while the richer verification loads or fails (its
+  // batch also reads fees, balances and allowances, any of which can fail
+  // for reasons unrelated to the request): a failed side-read must not turn
+  // a request the chain says has expired back into a live one.
+  const scanSaysExpired =
+    h?.kind === 'found' && !h.open && h.offerId === a.offerId;
   const namedBlocking =
     a.offerId !== null &&
     (a.state === undefined
       ? // Still verifying: block, unless it is known to be the viewer's
-        // own request on a position they no longer hold.
-        !a.fromOwnScan
+        // own request on a position they no longer hold, or the holder's
+        // scan already found it expired.
+        !a.fromOwnScan && !scanSaysExpired
       : creatorIsHolder(a.state.creator) && !a.state.expired && !a.state.pastGrace);
   // An open request the holder's scan found that the page is NOT naming
   // (the viewer's own request is named instead) still blocks.
-  const h = a.holderScan;
   const holderOpen = h?.kind === 'found' && h.open ? h.offerId : null;
   const blocking = namedBlocking || (holderOpen !== null && holderOpen !== a.offerId);
 
@@ -112,3 +120,39 @@ export function liveRefinanceVerdict(
   if (d.kind === 'unknown') return d.reason === 'capped' ? 'capped' : 'unchecked';
   return 'clear';
 }
+
+/** #2406 r4/r5 — the viewer's OWN scan (run only when they are not the
+ *  holder) did not answer: it failed, or hit its page cap. Either way a
+ *  request this wallet posted could survive unseen with its payoff
+ *  approval, so the page says so and names the manual cleanup. Keyed on
+ *  the scan alone — not on the viewer's other roles, which say nothing
+ *  about whether they once held the borrower position (r5). */
+export function ownScanUnresolved(
+  scan: RefinanceDiscovery | 'error' | undefined,
+): 'failed' | 'capped' | null {
+  if (scan === 'error') return 'failed';
+  if (scan?.kind === 'unknown') return scan.reason;
+  return null;
+}
+
+/** What a full-repayment review showed about a refinance request. */
+export type RepayNotice = 'pending' | 'unchecked' | null;
+
+/** #2406 r4/r5 — the confirm-time decision for a full repayment. Every
+ *  confirm re-checks live (a latch that skipped the check went stale once a
+ *  request was cancelled or a failed read recovered, r5). The repayment
+ *  proceeds when what the review SHOWED covers what the live check found —
+ *  a found open request is covered only by the "request is live" warning,
+ *  an unanswered check by either warning, a clear check by anything (a
+ *  warning shown is then merely conservative). Otherwise it stops once and
+ *  the review shows `notice`; repayment is never refused outright. */
+export function repayRefinanceDecision(
+  shown: RepayNotice,
+  live: 'clear' | 'open' | 'unchecked' | 'capped',
+): { proceed: boolean; notice: RepayNotice } {
+  const needed: RepayNotice = live === 'clear' ? null : live === 'open' ? 'pending' : 'unchecked';
+  const covered =
+    needed === null || shown === 'pending' || (shown === 'unchecked' && needed === 'unchecked');
+  return { proceed: covered, notice: needed };
+}
+

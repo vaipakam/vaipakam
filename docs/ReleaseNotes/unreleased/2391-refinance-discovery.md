@@ -32,11 +32,15 @@ early close-out or a full repayment stops after its token approval was
 granted — for instance because a last check found a refinance request, or
 the transaction failed — the approval is now put back to what it was, as the
 handover and refinance flows already did, and a failure to do so is said.
-A full-repayment review that said nothing about a request is checked again
-when confirmed; if one turns up, the review says so first and the next
-confirmation repays. A wallet whose own offers are too many to search is
-told the page cannot show a request it may have posted, and how to clean it
-up by hand.
+A full-repayment review is checked again every time it is confirmed; if
+the check finds something the review did not say, the review says it first
+and the next confirmation repays, and a warning from an earlier check is
+dropped once a later one comes back clear. A wallet whose own offers could
+not be searched — the search failed, or there are too many — is told the
+page cannot show a request it may have posted, and how to clean it up by
+hand. Two devices posting a refinance request at the same moment can still
+both succeed; the specification says so, and the second is shown for
+cancelling once the first is gone.
 Each of those actions repeats the search just before the wallet opens. One
 narrow race remains and is stated in the specification: a request posted in
 the moments between that last check and the transaction being mined, since the

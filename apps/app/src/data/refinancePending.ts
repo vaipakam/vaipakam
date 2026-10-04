@@ -36,7 +36,7 @@ import {
 } from '../contracts/loanLive';
 import { readGraceSecondsLive } from '../contracts/preflights';
 import { discoverRefinanceRequest, type RefinanceDiscovery } from './refinanceDiscovery';
-import { resolveNamedRequest } from './refinanceInterlock';
+import { ownScanUnresolved, resolveNamedRequest } from './refinanceInterlock';
 import { readLiveProtocolFees } from './fees';
 import { ZERO_ADDRESS } from '../lib/offerSchema';
 import { makePendingMarkerStore } from '../lib/pendingMarker';
@@ -350,11 +350,14 @@ export function useRefinancePending(
     /** The named request came from the viewer's own scan (they are not the
      *  holder): shown for cleanup, never blocking. */
     fromOwnScan,
-    /** #2406 r4 — the viewer's OWN scan (run when they are not the holder)
-     *  hit its page cap: a request they posted could exist unseen, so the
-     *  page says so and names the manual cleanup rather than staying
-     *  silent. Never blocks — the contract will not settle such a request. */
-    ownScanCapped: ownScan?.kind === 'unknown' && ownScan.reason === 'capped',
+    /** #2406 r4/r5 — the viewer's OWN scan (run when they are not the
+     *  holder) failed or hit its page cap: a request they posted could
+     *  exist unseen, so the page says so and names the manual cleanup
+     *  rather than staying silent. Never blocks — the contract will not
+     *  settle such a request. */
+    ownScanUnresolved: ownScanUnresolved(
+      ownTarget === undefined ? undefined : ownQuery.isError ? 'error' : ownQuery.data,
+    ),
     /** #2391 — the holder's on-chain discovery verdict, which decides
      *  whether the page KNOWS (`refinanceInterlock`). `undefined` while
      *  loading. */
