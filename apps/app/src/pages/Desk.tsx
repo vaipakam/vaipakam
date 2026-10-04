@@ -34,6 +34,8 @@ import { useActiveChain } from '../chain/useActiveChain';
 import { MarketFreshnessNote } from '../components/MarketFreshnessNote';
 import { DeskHeader } from '../components/desk/DeskHeader';
 import { RateLadder } from '../components/desk/RateLadder';
+import { signedDepthOf } from '../data/signedDepth';
+import { freshData } from '../lib/freshData';
 import { OrderTicket } from '../components/desk/OrderTicket';
 import { TapePanel } from '../components/desk/TapePanel';
 import { OpenOrdersPanel } from '../components/desk/OpenOrdersPanel';
@@ -121,6 +123,7 @@ export function Desk() {
   // the clock advances, not only when the book refetches.
   const nowSec = useNowSec();
 
+  const freshSigned = freshData(signedBook);
   const ladder = useMemo(() => {
     if (!Array.isArray(book.data?.rows)) return null;
     // #1131 slice D — merge the gasless signed book ADDITIVELY: signed
@@ -130,7 +133,10 @@ export function Desk() {
     // same rate levels. An unavailable/loading signed book merges
     // nothing — the ladder degrades to chain-only rather than blanking;
     // the per-row "Signed" badge carries the indexer-sourced honesty.
-    const signedRows = (signedBook.data?.offers ?? [])
+    // #2386 — fresh data only: a cached signed order behind a failed
+    // refetch may have been taken or cancelled, and `signedDepth` then
+    // tells the reader signed offers are missing rather than stale.
+    const signedRows = (freshSigned?.offers ?? [])
       .map((r) => signedRowToDeskRow(r, readChain.chainId, nowSec))
       .filter((r): r is DeskBookRow => r !== null);
     return buildLadder(
@@ -139,7 +145,8 @@ export function Desk() {
       nowSec,
       address,
     );
-  }, [book.data, signedBook.data, days, address, readChain.chainId, nowSec]);
+  }, [book.data, freshSigned, days, address, readChain.chainId, nowSec]);
+  const signedDepth = signedDepthOf(signedBook);
 
   const lastFill = tape.data === undefined ? undefined : (tape.data?.[0] ?? null);
 
@@ -199,6 +206,7 @@ export function Desk() {
               symbol={lendingMeta.data?.symbol}
               quotedMidBps={ladder?.midBps ?? null}
               midFromSavedCopy={book.data?.source === 'indexer'}
+              signedDepth={signedDepth}
               // The whole tape, not just the newest fill (#1139): sparse
               // mode draws one marker per tape fill, and the empty-copy
               // split needs to know whether older fills exist at all.
@@ -228,6 +236,7 @@ export function Desk() {
               loading={book.isLoading}
               unavailable={!book.isLoading && book.data === null}
               source={book.data?.source ?? null}
+              signedDepth={signedDepth}
               decimals={lendingMeta.data?.decimals}
               symbol={lendingMeta.data?.symbol}
               chainId={readChain.chainId}

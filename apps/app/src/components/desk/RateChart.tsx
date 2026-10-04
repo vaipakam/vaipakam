@@ -42,6 +42,7 @@ import { copy } from '../../content/copy';
 import { useTheme, type ResolvedTheme } from '../../app/ThemeContext';
 import { UnavailableState } from '../EmptyState';
 import { useDeskCandles, type DeskPair } from '../../data/desk';
+import type { SignedDepth } from '../../data/signedDepth';
 import type {
   CandleInterval,
   CandleRange,
@@ -121,6 +122,7 @@ export default function RateChart({
   symbol,
   quotedMidBps,
   midFromSavedCopy,
+  signedDepth,
   tape,
 }: {
   pair: DeskPair | null;
@@ -137,6 +139,11 @@ export default function RateChart({
    *  its own card, but on mobile the Chart tab hides the ladder, so the
    *  midpoint hint must carry the same disclosure (#2378 r6). */
   midFromSavedCopy: boolean;
+  /** #2386 — the ladder's signed-book state. Only `loading` and
+   *  `unavailable` leave signed offers out of the midpoint: truncation
+   *  keeps the best-priced signed offers per side, so the best rates
+   *  (and so the midpoint) stay complete. */
+  signedDepth: SignedDepth;
   /** The market's tape (Desk.tsx already holds it for the TapePanel —
    *  passed down, never re-fetched), newest first, tri-state per the
    *  app contract. Feeds three things: the "last fill" freshness
@@ -495,6 +502,11 @@ export default function RateChart({
           {quotedMidBps !== null ? (
             <p className="muted desk-chart-midhint">
               {midFromSavedCopy ? text.quotedMidHintSaved : text.quotedMidHint}
+              {signedDepth === 'unavailable'
+                ? ` ${text.quotedMidSignedMissing}`
+                : signedDepth === 'loading'
+                  ? ` ${text.quotedMidSignedLoading}`
+                  : null}
             </p>
           ) : null}
         </>

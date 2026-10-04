@@ -1293,6 +1293,18 @@ expires. Projected earnings are stated as conditional on the offer being taken
 and repaid. Wording about automatic matching says it applies while automatic
 matching is switched on, since a deployment can switch it off.
 
+Signed offers come from the offer-book service rather than the blockchain, so
+the offers list says when it is showing without them. While they are still
+loading, or when the service could not provide them, the list says it shows only
+offers posted on the blockchain and that its best rates may be missing signed
+offers; the chart's description of the middle rate says the same, because on a
+phone the chart can be shown without the list. When there are more signed
+offers than the page loads, the list says so. In that case the page still has
+the best-priced signed offers on each side, so it says the best rates are
+complete and only deeper rates and running totals leave some out. A signed
+offer that could not be refreshed is treated as missing, never shown from an
+earlier read, because it may have been taken or cancelled since.
+
 It should provide:
 
 - a selected market by lending asset, collateral asset, and duration;

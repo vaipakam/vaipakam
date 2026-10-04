@@ -43,6 +43,7 @@ import {
   type LadderLevel,
 } from '../../data/desk';
 import { MatchBand } from './MatchBand';
+import type { SignedDepth } from '../../data/signedDepth';
 import { SignedFillConfirm } from './SignedFillConfirm';
 
 const MAX_LEVELS = 12;
@@ -185,6 +186,7 @@ export function RateLadder({
   loading,
   unavailable,
   source,
+  signedDepth,
   decimals,
   symbol,
   chainId,
@@ -195,6 +197,8 @@ export function RateLadder({
   loading: boolean;
   unavailable: boolean;
   source: 'chain' | 'indexer' | null;
+  /** #2386 — what the merged ladder knows about the signed book. */
+  signedDepth: SignedDepth;
   decimals: number | undefined;
   symbol: string | undefined;
   chainId: number;
@@ -285,6 +289,15 @@ export function RateLadder({
       {source === 'indexer' ? (
         <p className="muted" style={{ marginBottom: 8 }}>
           {copy.desk.bookIndexedCopy}
+        </p>
+      ) : null}
+      {signedDepth !== 'complete' ? (
+        <p className="muted" style={{ marginBottom: 8 }} data-testid="desk-signed-depth">
+          {signedDepth === 'loading'
+            ? copy.desk.signed.depthLoading
+            : signedDepth === 'unavailable'
+              ? copy.desk.signed.depthUnavailable
+              : copy.desk.signed.depthTruncated}
         </p>
       ) : null}
       {empty ? (
