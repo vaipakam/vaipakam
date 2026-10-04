@@ -209,7 +209,16 @@ was ever filed as a divergence.
 
 ## Partial repayment vs. a standing refinance request — the hold is device-local (2026-08-07, #1589 r3)
 
-**Status:** open — needs a human intent decision.
+**Status:** resolved by code, 2026-10-04 (#2391, PR #2406) — the code was
+brought to the spec's original intent (the hold applies wherever the borrower
+is signed in); the spec was not rewritten to match the code. The app now finds
+a refinance request on chain among the current borrower-position holder's own
+offers (bounded by the loan's own offer id), so partial repayment, preclose,
+obligation handover, offset and taking collateral back are held from any
+device, and an unanswerable search holds them too. What remains is the race
+no client check can close — a request posted between the app's last check and
+the transaction mining — since `repayPartial` still carries no on-chain
+refinance guard; the spec states that race. The original entry follows.
 
 The connected app holds partial repayment while another arrangement is pinned
 to the loan's outstanding amount. Two of those holds are answered by the chain

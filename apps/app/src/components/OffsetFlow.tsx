@@ -26,7 +26,7 @@ import { isPositiveDecimal, captureTxError } from '../lib/errors';
 import { flowDisabled } from '../lib/killSwitch';
 import { useActiveChain } from '../chain/useActiveChain';
 import { DIAMOND_ABI_VIEM, useDiamondWrite, useTermsBlockNonExitWrites } from '../contracts/diamond';
-import { ensureAllowance } from '../contracts/erc20';
+import { ensureAllowance, trackApproval } from '../contracts/erc20';
 import {
   assertAssetNotPausedLive,
   assertErc20BalanceLive,
@@ -85,6 +85,7 @@ export function OffsetFlow({
   onPosted,
   busy,
   setBusy,
+  preSubmitBlock,
 }: {
   row: IndexedLoan;
   live: LoanLive;
@@ -101,6 +102,12 @@ export function OffsetFlow({
   onPosted: (offerId: string) => void;
   busy: boolean;
   setBusy: (b: boolean) => void;
+  /** #2406 r1 — the page's live borrower-settlement gate (a linked sale
+   *  acceptance, or a refinance request found on chain), run on entry
+   *  and again immediately before the write. An offset settles this loan
+   *  when taken, so it would strand either. Returns a message to show, or
+   *  null to proceed. */
+  preSubmitBlock?: () => Promise<string | null>;
 }) {
   const { address, walletChain, onSupportedChain } = useActiveChain();
   const { data: walletClient } = useWalletClient();
@@ -245,7 +252,34 @@ export function OffsetFlow({
     }
     setBusy(true);
     setError(null);
+    // #2406 r3/r4 — what this attempt's approval did, so a submit stopped
+    // after it mined (a late gate, or the write failing) puts it back
+    // rather than leaving a principal-plus-completion permission behind
+    // with no offset offer to use or cancel (`trackApproval`).
+    const approval = trackApproval();
+    const unwindApproval = async () => {
+      const ok = await approval.unwind({
+        publicClient,
+        walletClient,
+        owner: address,
+        spender: walletChain.diamondAddress,
+      });
+      if (!ok) {
+        setError((prior) =>
+          prior
+            ? `${prior} ${copy.errors.approvalCleanupFailed}`
+            : copy.errors.approvalCleanupFailed,
+        );
+      }
+    };
     try {
+      if (preSubmitBlock) {
+        const blocked = await preSubmitBlock();
+        if (blocked) {
+          setError(blocked);
+          return;
+        }
+      }
       // offsetWithNewOffer is Tier-1 — live re-screen before anything
       // can mine.
       await assertWalletNotSanctionedLive(
@@ -409,6 +443,7 @@ export function OffsetFlow({
         owner: address,
         spender: walletChain.diamondAddress,
         amount: liveLoan.principal + liveBound,
+        ...approval.hooks(liveLoan.principalAsset),
       });
       // Codex #1539 r1 — `ensureAllowance` can add its OWN approval
       // transaction and wallet-confirm window between the early
@@ -425,7 +460,19 @@ export function OffsetFlow({
         loanEndTimeOf(liveLoan)
       ) {
         setError(copy.offset.onlyBeforeDue);
+        await unwindApproval();
         return;
+      }
+      // LATE re-gate, as the handover flow does: approvals and reads above
+      // can take a while, and a request posted meanwhile must still stop
+      // the write — and give back the approval it no longer needs.
+      if (preSubmitBlock) {
+        const blockedLate = await preSubmitBlock();
+        if (blockedLate) {
+          setError(blockedLate);
+          await unwindApproval();
+          return;
+        }
       }
       const { receipt } = await write('offsetWithNewOffer', [
         BigInt(row.loanId),
@@ -452,6 +499,7 @@ export function OffsetFlow({
       void queryClient.invalidateQueries({ queryKey: ['activeOffers'] });
     } catch (err) {
       setError(captureTxError(err));
+      await unwindApproval();
     } finally {
       setBusy(false);
     }

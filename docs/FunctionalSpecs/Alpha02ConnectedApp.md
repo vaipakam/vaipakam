@@ -1424,11 +1424,23 @@ is the borrower's own money.
 - While an acceptable refinance request is open on the loan, the surface says
   that taking collateral back would make every lender's acceptance fail and
   asks the borrower to cancel or wait — the same interlock partial repayment
-  and early close-out apply — and the pre-check refuses. The pre-check also
-  catches a request posted from another tab on the same device after the page
-  loaded. A request made on another device or through another tool cannot be
-  discovered by the app yet, so the surface says that, and what withdrawing would
-  do to such a request.
+  and early close-out apply — and the pre-check refuses. A request is found
+  wherever it was made — on another device or through another tool — because
+  the app looks for it on chain among the current borrower-position holder's
+  own offers, the only ones the protocol will settle; the pre-check repeats that
+  search just before the wallet opens. When the search cannot answer, the
+  surfaces a request would be stranded by — taking collateral back, partial
+  repayment, early close-out, obligation handover and offset — hold back and
+  say why, rather than assume there is none, and say which of two reasons
+  applies: the search failed (it may answer on a later try), or the holder has
+  posted more offers since the loan's own offer was made than one search reads
+  (a retry will not help, so the surface does not suggest one, and says full
+  repayment stays open). Such a search still reads the newest offers, so an
+  open request among them is found and shown as usual — only a search that
+  found no open request in what it read is reported as unable to answer. The bound is the loan's own offer, which can be older
+  than the loan itself, because the chain records no start for a loan that
+  later events do not rewrite; an on-chain index from a loan to its requests
+  would remove the search, and is tracked with #2407.
 - An open confirmation does not survive a network switch or a change of
   connected account: it closes, and the typed amount is cleared, so a review
   opened on one network or under one wallet can never send on another.
@@ -3065,10 +3077,56 @@ Its intended behaviour, as the test oracle for this surface:
   the standing payoff approval. While a request is live, partial
   repayment and close-early are held off with an explanation —
   either would strand the request — and the full-repayment review
-  warns that the request survives settlement until cancelled. The
-  pending marker is device-local: another device posting a second
-  request for the same loan is possible and each device tracks only
-  its own. Loans on a periodic interest schedule carry a visible
+  warns that the request survives settlement until cancelled. While
+  the search for a request has not answered, the full-repayment review
+  stays available (it is the safety valve) but says that a request
+  could exist, posted from another device, and that repaying would
+  strand it too. Because the page's search runs on a cadence, a review
+  is checked again every time it is confirmed: when what the review
+  showed does not cover what that check found (a request turned up, or
+  the check could not answer, after the review said nothing; or a
+  request is now open after the review said only that the check had not
+  answered), nothing is sent that time and the review now says what
+  repaying would do — the next confirmation repays unless the answer has
+  changed again. A warning from an earlier check is dropped once a later
+  check comes back clear, and never carries across a change of network,
+  account or loan. Repayment is never refused, only disclosed first. Only an acceptable request is live: one that has
+  expired, whose loan is past grace, or whose poster no longer holds
+  the borrower position can never be filled, so it holds nothing back.
+  The request is found on chain from the borrower-position holder's own
+  offers, so a request posted from another device or tool shows here
+  too, with its cancel action, to the wallet that posted it; this device's
+  own record of a request it just posted only speeds that up. A request
+  the search has already found stays named, with its cancel action, when
+  a later search fails — the surfaces it would strand hold back
+  meanwhile — and stops being named only once the chain confirms it is
+  gone. A wallet
+  that posted a request and then transferred the position, or whose loan
+  has settled, is shown that request from any device too — only the
+  poster can cancel it and remove its payoff approval. When that search
+  of the wallet's own offers cannot answer — it failed, or the wallet has
+  posted more offers since the loan's own offer than one search reads —
+  the page says it cannot show such a request (and, for a failure, that
+  a later try may) and names the manual cleanup (cancel it from the
+  wallet's open offers if it is still open — an expired request is not
+  listed there, and the page says so — and, either way, remove the token
+  approval it relied on if nothing else needs it), rather than staying
+  silent. This depends only
+  on that search, not on any other role the wallet holds in the loan. An expired
+  request is still shown so it can be cancelled and its approval removed,
+  and the card outlives the loan's settlement for the same reason. A new
+  request is not posted while the app can see one open — the protocol
+  accepts several, and taking one leaves the others impossible to fill —
+  and the form waits until the search has answered, checking again just
+  before posting. That check cannot stop two devices that both pass it in
+  the same moment: both requests can then be posted, sharing one payoff
+  approval, and taking either leaves the other impossible to fill. The
+  page names one open request at a time; once it is taken or cancelled,
+  the other is found and shown so it can be cancelled too. An on-chain
+  limit of one request per loan is tracked with #2407. An expired request
+  does not hold the form back, and a request the search has already found
+  expired stays treated as expired even when the page's fuller check of
+  it cannot finish. Loans on a periodic interest schedule carry a visible
   warning that an overdue period blocks completion until settled.
 - The borrower of an active ERC-20 loan sees, in BOTH interface
   modes, one chooser surface that names every early-repayment path
@@ -3092,22 +3150,34 @@ Its intended behaviour, as the test oracle for this surface:
   refused rather than quietly settling the loan. Because a partial
   changes the outstanding amount, it is held while another arrangement
   is pinned to that amount, and the reason is stated rather than the
-  option vanishing. Two of those holds are answered by the chain and so
-  hold wherever the borrower is signed in: a live offset, and a sale a
-  buyer has already accepted. The third — a standing refinance request
-  — is currently remembered only on the device that posted it, so a
-  borrower acting from a second device is not held back from a partial
-  that would leave that request permanently unacceptable. That
-  limitation is a known divergence from the intent, recorded in
-  `_CodeVsDocsAudit.md`, and is stated here rather than described as a
-  guarantee the product does not yet make.
+  option vanishing. All three holds are answered by the chain and so
+  hold wherever the borrower is signed in: a live offset, a sale a buyer
+  has already accepted, and a standing refinance request (found among
+  the current borrower-position holder's own offers). When the search
+  for a refinance request cannot answer, the partial is held too, with
+  that reason. Each borrower action that would change or settle the
+  loan — a partial, early close-out, an obligation handover, an offset,
+  taking collateral back — repeats the search just before the wallet
+  opens. What no check made before signing can rule out is a request
+  posted in the moments between that last check and the transaction
+  being mined; the protocol does not refuse a partial on its own when a
+  request is standing, so that narrow race remains and is stated here
+  rather than described as a guarantee (an on-chain guard is tracked as
+  #2407). When one of those last checks — or any other check made after
+  the token approval — stops the action, the approval it granted is put
+  back to what it was before (best effort, and only if nothing else has
+  changed it since), and a failure to put it back is said alongside the
+  reason, never left silent. The same holds when the transaction itself
+  fails.
   The chooser never submits anything itself: in Advanced mode each
   path leads to its own tool with its own review; in Basic mode the
   advanced paths share one explicit, clearly labelled action that
   switches the interface to Advanced in place — the mode change is
   always the user's own choice, never a side effect. Paths that
   cannot currently apply (past the due date, held by a live linked
-  request, or one the position doesn't qualify for — refinancing on a
+  request, held while the search for a refinance request has not
+  answered — which says whether it is still checking, failed, or cannot
+  cover every offer — or one the position doesn't qualify for — refinancing on a
   position acquired on the secondary market stays with the original
   borrower) say so instead of disappearing silently; a
   past-the-due-date unavailability is judged only from chain-anchored
@@ -3249,7 +3319,12 @@ Its intended behaviour, as the test oracle for this surface:
   wallet only makes the acceptance fail; nothing is taken). The
   token approval granted at posting is sized to the largest pull any
   completion could make, and the quoted keep-available figure states
-  that bound. A live offset gets a standing view driven by the
+  that bound. If posting stops after that approval was granted but
+  before the offer was posted — a last check found a refinance request,
+  the due date came too close, or the posting itself failed — the
+  approval is put back to what it was before (best effort, and only if
+  nothing else has changed it since), and a failure to put it back is
+  said alongside the reason posting stopped, never left silent. A live offset gets a standing view driven by the
   chain's own lock record — an offset made on another device still
   shows — with the linked offer's identity when known, warnings when
   the standing approval or wallet balance no longer covers the

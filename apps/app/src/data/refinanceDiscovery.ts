@@ -1,0 +1,203 @@
+/**
+ * #2391 — find a loan's refinance request ON CHAIN, wherever it was made.
+ *
+ * Until now the loan page learned of a request only from a device-local
+ * marker, so one posted on another device or through another tool was
+ * invisible, and partial repayment, preclose, handover, offset and taking
+ * back collateral could strand it. The chain already has what is needed:
+ *
+ *  - a refinance request is fillable only when its creator is the loan's
+ *    CURRENT borrower-position holder (`RefinanceFacet` checks
+ *    `offer.creator == ownerOf(borrowerTokenId)`), so the holder's own
+ *    offers are the complete search space;
+ *  - a request names `refinanceTargetLoanId`, which cannot exist before
+ *    the loan does, so every request has an offer id GREATER than the
+ *    loan's own `offerId`. Offer ids are assigned in order and each
+ *    wallet's offer index is appended in creation order, so paging the
+ *    holder's index NEWEST-FIRST and stopping at that boundary is a
+ *    complete search — bounded by what the holder has posted SINCE the
+ *    loan began, not by their whole history (#2406 r1: the by-state view
+ *    walks every offer the wallet ever made, which an RPC call-gas limit
+ *    can refuse for a high-volume wallet);
+ *  - `MetricsFacet.getUserOffersPaginated` is an O(limit) slice that also
+ *    returns the total, and `getOfferDetails` carries each offer's
+ *    `refinanceTargetLoanId`, expiry and acceptance.
+ *
+ * No indexer column and no migration (which would carry the #1149
+ * deploy-ordering hazard). An OPEN request wins over an expired one (an
+ * expired one is still returned, so it can be cancelled and its approval
+ * removed). Hitting the page cap before the boundary, or any failed read,
+ * is `unknown` — the surfaces a request would strand then fail closed —
+ * and the two are told apart (#2406 r3): a failed read may answer on the
+ * next try, a cap overrun will not, so the page must not say "try again".
+ *
+ * The boundary is the loan's SOURCE offer id, which can be older than the
+ * loan itself (an offer may stand open for a while before it is taken).
+ * It is the tightest boundary the chain offers: no field records when a
+ * loan began that later events do not re-stamp (a handover or an in-place
+ * extension rewrites the loan's start), and a re-stamped start could fall
+ * after a request still fillable. A dedicated loan-to-request index on
+ * chain would remove the scan entirely; that belongs with #2407.
+ */
+import type { PublicClient } from 'viem';
+import { DIAMOND_ABI_VIEM } from '../contracts/diamond';
+
+/** Offers read per page, and pages read at most, newest first. A holder
+ *  who posted more than PAGE × MAX_PAGES offers since the loan began gets
+ *  `unknown`, never a partial "none". */
+export const DISCOVERY_PAGE = 100;
+export const DISCOVERY_MAX_PAGES = 3;
+
+const ZERO = '0x0000000000000000000000000000000000000000';
+
+export type RefinanceDiscovery =
+  | { kind: 'found'; offerId: string; open: boolean }
+  | { kind: 'none' }
+  /** `failed`: a read did not answer (may on retry). `capped`: the holder
+   *  has posted more offers since the boundary than one scan reads. */
+  | { kind: 'unknown'; reason: 'failed' | 'capped' };
+
+export interface OfferFacts {
+  id: bigint;
+  creator: string;
+  accepted: boolean;
+  refinanceTargetLoanId: bigint;
+  /** Unix seconds; 0 = good until cancelled. */
+  expiresAt: bigint;
+}
+
+/** Pick the request among `offers`: the newest OPEN one for `loanId` made
+ *  by `holder`, else the newest expired one, else none. A cancelled offer
+ *  is deleted (zeroed creator) and never matches. */
+export function selectRequest(
+  loanId: bigint,
+  holder: string,
+  offers: readonly OfferFacts[],
+  nowSec: bigint,
+): RefinanceDiscovery {
+  const h = holder.toLowerCase();
+  let open: bigint | null = null;
+  let expired: bigint | null = null;
+  for (const o of offers) {
+    if (o.accepted) continue;
+    if (o.creator === ZERO || o.creator.toLowerCase() !== h) continue;
+    if (o.refinanceTargetLoanId !== loanId) continue;
+    const isOpen = o.expiresAt === 0n || o.expiresAt > nowSec;
+    if (isOpen) {
+      if (open === null || o.id > open) open = o.id;
+    } else if (expired === null || o.id > expired) {
+      expired = o.id;
+    }
+  }
+  if (open !== null) return { kind: 'found', offerId: open.toString(), open: true };
+  if (expired !== null) return { kind: 'found', offerId: expired.toString(), open: false };
+  return { kind: 'none' };
+}
+
+/** The holder's offer ids created after `sinceOfferId`, newest pages
+ *  first. `complete` is false when the cap was hit before the boundary —
+ *  the ids read are then the NEWEST ones, and only older offers are
+ *  unread (#2406 r7: what was read is still evidence). */
+export async function candidateIds(
+  readTotal: () => Promise<bigint>,
+  readPage: (offset: bigint, limit: bigint) => Promise<readonly bigint[]>,
+  sinceOfferId: bigint,
+): Promise<{ ids: bigint[]; complete: boolean }> {
+  const total = await readTotal();
+  const page = BigInt(DISCOVERY_PAGE);
+  const out: bigint[] = [];
+  let end = total;
+  for (let i = 0; i < DISCOVERY_MAX_PAGES && end > 0n; i++) {
+    const offset = end > page ? end - page : 0n;
+    const ids = await readPage(offset, end - offset);
+    for (const id of ids) if (id > sinceOfferId) out.push(id);
+    // The oldest id on this page at or below the boundary means every
+    // older one is too: the search is complete.
+    if (ids.length > 0 && ids[0]! <= sinceOfferId) return { ids: out, complete: true };
+    end = offset;
+  }
+  return { ids: out, complete: end === 0n };
+}
+
+/** #2406 r7 — the verdict from the offers a scan read. A complete scan's
+ *  selection is final. An incomplete one (the page cap was hit) read the
+ *  NEWEST offers, so an OPEN request among them is conclusive — any
+ *  unread offer is older, and an open request is preferred over every
+ *  expired one — and is returned; anything less (only an expired request,
+ *  or none) could be outranked by an unread open one, so it is `capped`. */
+export function resolveScan(
+  loanId: bigint,
+  holder: string,
+  offers: readonly OfferFacts[],
+  nowSec: bigint,
+  complete: boolean,
+): RefinanceDiscovery {
+  const selected = selectRequest(loanId, holder, offers, nowSec);
+  if (complete) return selected;
+  if (selected.kind === 'found' && selected.open) return selected;
+  return { kind: 'unknown', reason: 'capped' };
+}
+
+/** Live discovery — used by the polling hook and re-run just before any
+ *  borrower action a request would be stranded by. */
+export async function discoverRefinanceRequest(opts: {
+  client: PublicClient;
+  diamond: `0x${string}`;
+  loanId: bigint;
+  /** The loan's own offer id — every request for it is newer. */
+  sinceOfferId: bigint;
+  holder: `0x${string}`;
+}): Promise<RefinanceDiscovery> {
+  const { client, diamond, holder } = opts;
+  try {
+    const { ids, complete } = await candidateIds(
+      async () => {
+        const [, total] = (await client.readContract({
+          address: diamond,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'getUserOffersPaginated',
+          args: [holder, 0n, 0n],
+        })) as readonly [readonly bigint[], bigint];
+        return total;
+      },
+      async (offset, limit) => {
+        const [page] = (await client.readContract({
+          address: diamond,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'getUserOffersPaginated',
+          args: [holder, offset, limit],
+        })) as readonly [readonly bigint[], bigint];
+        return page;
+      },
+      opts.sinceOfferId,
+    );
+    if (ids.length === 0) return complete ? { kind: 'none' } : { kind: 'unknown', reason: 'capped' };
+    const [details, block] = await Promise.all([
+      client.multicall({
+        allowFailure: false,
+        contracts: ids.map((id) => ({
+          address: diamond,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'getOfferDetails',
+          args: [id],
+        })) as never,
+      }),
+      client.getBlock({ blockTag: 'latest' }),
+    ]);
+    const offers = (details as unknown as {
+      creator: string;
+      accepted: boolean;
+      refinanceTargetLoanId: bigint;
+      expiresAt: bigint;
+    }[]).map((d, i) => ({
+      id: ids[i]!,
+      creator: d.creator,
+      accepted: d.accepted,
+      refinanceTargetLoanId: d.refinanceTargetLoanId,
+      expiresAt: d.expiresAt,
+    }));
+    return resolveScan(opts.loanId, holder, offers, block.timestamp, complete);
+  } catch {
+    return { kind: 'unknown', reason: 'failed' };
+  }
+}

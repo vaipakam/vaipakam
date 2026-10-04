@@ -214,21 +214,19 @@ export async function swapToRepayOrderState(opts: {
  *    - `sale-unknown` — no sale-listing answer: the probe failed, or the
  *      deployment predates the bounded-listing check, where a legacy
  *      listing can still exist. */
-export type WithdrawCaveat = 'pause-unknown' | 'sale-unknown' | 'refinance-elsewhere';
+export type WithdrawCaveat = 'pause-unknown' | 'sale-unknown';
 
 export function withdrawCaveats(a: {
-  /** #2389 r6 — whether this page knows of a refinance request. When it
-   *  does not, one made on another device or through another tool may
-   *  still exist and cannot be discovered here, so that is stated. */
-  refinanceKnown: boolean;
   paused: boolean | undefined;
   /** `useSaleListingHold().data` once it is not resolving. */
   saleHold: SaleListingHoldState | undefined;
 }): WithdrawCaveat[] {
+  // #2391 — no refinance caveat any more: a request made on another device
+  // or tool is DISCOVERED on chain, and an unanswered discovery blocks the
+  // card (fail closed) rather than living on as a note.
   const out: WithdrawCaveat[] = [];
   if (a.paused === undefined) out.push('pause-unknown');
   if (a.saleHold === undefined || a.saleHold === 'unknown') out.push('sale-unknown');
-  if (!a.refinanceKnown) out.push('refinance-elsewhere');
   return out;
 }
 
@@ -240,6 +238,8 @@ export function withdrawCaveats(a: {
  *  any non-null result sends nothing. */
 export type WithdrawPreflightBlock =
   | 'refinance-pending'
+  | 'refinance-unchecked'
+  | 'refinance-capped'
   | 'paused'
   | 'pause-unchecked'
   | 'sale-listed'
@@ -256,6 +256,11 @@ export function withdrawPreflightBlock(a: {
    *  lender's acceptance fail. True while it is (or may still be)
    *  acceptable — the page's existing `refinanceBlocking`. */
   refinancePending: boolean;
+  /** #2391 — the live on-chain discovery re-run just before the wallet
+   *  opens (`liveRefinanceVerdict`). A scan that did not answer blocks
+   *  like any other unanswered check; one cut short by the page cap
+   *  (#2406 r3) blocks with its own reason, since a retry will not help. */
+  refinanceDiscovery: 'open' | 'clear' | 'unchecked' | 'capped';
   /** #2389 r3 — the live pause read; 'unknown' when it failed. */
   paused: boolean | 'unknown';
   saleState: SaleListingHoldState;
@@ -263,7 +268,9 @@ export function withdrawPreflightBlock(a: {
   liveMax: bigint;
   wei: bigint;
 }): WithdrawPreflightBlock | null {
-  if (a.refinancePending) return 'refinance-pending';
+  if (a.refinancePending || a.refinanceDiscovery === 'open') return 'refinance-pending';
+  if (a.refinanceDiscovery === 'unchecked') return 'refinance-unchecked';
+  if (a.refinanceDiscovery === 'capped') return 'refinance-capped';
   if (a.paused === true) return 'paused';
   if (a.paused !== false) return 'pause-unchecked';
   if (a.saleState === 'live' || a.saleState === 'clearable' || a.saleState === 'accepted') {

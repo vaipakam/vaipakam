@@ -1661,6 +1661,39 @@ const copySource = {
       'A refinance request is live for this loan. A partial repayment would change the amount and make that request permanently unacceptable — cancel the refinance request first.',
     precloseBlockedByPending:
       'A refinance request is live for this loan. Closing early now would strand it — cancel the refinance request first.',
+    // #2406 r1 — the live check just before a borrower action that would
+    // change or settle the loan found an open request.
+    // #2406 r2 — posting a second request while one is already open.
+    alreadyOpen:
+      'A refinance request is already open on this loan — perhaps from another device — so nothing was posted. Cancel it first, or wait until it is taken or expires: a second request would leave one of them impossible to fill.',
+    liveBlocksSettlement:
+      'A refinance request is open on this loan. This would change or settle the loan and leave the request impossible to fill, so nothing was sent — cancel the refinance request first.',
+    // #2391 — requests are found on chain from the borrower's own offers;
+    // when that check could not answer, the surfaces a request would be
+    // stranded by hold back rather than guess "none".
+    uncheckedBlocks:
+      'We couldn’t check whether a refinance request is open on this loan, so changing the loan here is held back for now — a request made for the loan as it stands would be stranded. Please try again in a moment.',
+    // #2406 r3 — the check was cut short by its page cap, which a retry
+    // will not change, so it must not say "try again".
+    cappedBlocks:
+      'This wallet has posted more offers since this loan’s offer was made than we can check here, so we can’t confirm that no refinance request is open on this loan. Changing the loan here is held back — a request made for the loan as it stands would be stranded. Full repayment stays open.',
+    // #2406 r3 — a chooser row whose card is held back by an open request.
+    heldByPending:
+      'A refinance request is open on this loan, and this would leave it impossible to fill — cancel the refinance request first.',
+    // #2406 r3 — the full-repayment review while the check has not answered.
+    repayWarnUnchecked:
+      'We haven’t confirmed whether a refinance request is open on this loan — one may have been posted from another device. If one is, repaying settles the loan and the request can never complete; cancel it afterwards from the wallet that posted it, which also removes its standing payoff approval.',
+    // #2406 r4 — the confirm-time live check found a request (or could not
+    // answer) after the review had said nothing; the review now says it.
+    repayRecheck:
+      'We just checked again and a refinance request may be open on this loan, so nothing was sent yet. The review now says what repaying would do to it — confirm again to repay.',
+    // #2406 r4 — the viewer's own scan (they are not the holder) hit its
+    // page cap, so a request they posted could exist unseen.
+    ownScanCapped:
+      'This wallet has posted more offers since this loan’s offer was made than we can check here. If it posted a refinance request for this loan while it held the borrower position, this page can’t show it. If it is still open, you can cancel it under “Your open offers” on the Rate Desk (an expired request is not listed there); either way, remove the token approval it relied on under “Standing token approvals” in Settings (Advanced mode) if nothing else needs it.',
+    // #2406 r5 — the viewer's own scan failed (may answer on retry).
+    ownScanFailed:
+      'We couldn’t check this wallet’s own offers just now. If it posted a refinance request for this loan while it held the borrower position, this page can’t show it yet — try again in a moment. If it is still open, you can cancel it under “Your open offers” on the Rate Desk (an expired request is not listed there); either way, remove the token approval it relied on under “Standing token approvals” in Settings (Advanced mode) if nothing else needs it.',
     repayWarnPending:
       'A refinance request is still live for this loan. Repaying settles the loan, after which the request can never complete — cancel it from its card afterwards (that also removes its standing payoff approval); until then it just sits until it expires.',
   },
@@ -3193,10 +3226,10 @@ const copySource = {
         // #2389 r5 — the pending-refinance interlock.
         refinancePending:
           'A refinance request is open on this loan, and it was made for the collateral as it stands now. Taking collateral back would make every lender’s acceptance fail. Cancel the request first, or wait until it is taken or expires.',
-        // #2389 r6 — a refinance request made on another device or tool
-        // cannot be discovered here; say what withdrawing would do to it.
-        refinanceElsewhereNote:
-          'If you have a refinance request open for this loan from another device or tool, taking collateral back makes it unfillable until you cancel it and post it again — this page can’t see requests made elsewhere.',
+        // #2391 — the live on-chain check for a refinance request did not
+        // answer before the wallet would open.
+        refinanceUnchecked:
+          'We couldn’t check whether a refinance request is open on this loan, so nothing was sent. Please try again in a moment.',
         // #2389 r4 — facts the card could not read ahead of time; each
         // is re-checked before the wallet opens.
         pauseUnknownNote:
