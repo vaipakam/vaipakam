@@ -86,4 +86,18 @@ contract RewardEraFacet is DiamondReentrancyGuard, IVaipakamErrors {
         if (msg.sender != address(this)) revert RewardCustodyOnlyDiamondInternal(msg.sender);
         LibRewardCustody.drawCustodyEraForDay(LibVaipakam.storageSlot(), era, dayId, amount);
     }
+
+    /// @notice PR C-3 — count packet `h` open in the live era (Diamond-internal: the
+    ///         unclassified ingress). The rule is {LibRewardCustody.countEraOpen}.
+    function eraCountOpen(bytes32 h) external {
+        if (msg.sender != address(this)) revert RewardCustodyOnlyDiamondInternal(msg.sender);
+        LibRewardCustody.countEraOpen(LibVaipakam.storageSlot(), h);
+    }
+
+    /// @notice PR C-3 — note a classification exit of packet `h` (Diamond-internal:
+    ///         the four exits). The rule is {LibRewardCustody.noteClassificationExit}.
+    function eraNoteClassificationExit(bytes32 h) external {
+        if (msg.sender != address(this)) revert RewardCustodyOnlyDiamondInternal(msg.sender);
+        LibRewardCustody.noteClassificationExit(LibVaipakam.storageSlot(), h);
+    }
 }

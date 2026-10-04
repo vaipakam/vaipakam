@@ -220,13 +220,24 @@ contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         // recorded BEFORE any share moves so the record describes the
         // whole landing (a replayed stamp, or a second packet for a receipt
         // already delivered, refuses whole).
+        // PR C-3 — an era-less wire landing after this chain's role changed is
+        // placed by the days it lists, since the era of a day is defined
+        // (custodyEraOfDay): every day at or after the live era's boundary is
+        // the live era's, taken as before; any day before it is a retired era's,
+        // and the delivery is QUARANTINED like a retired-era rooted one —
+        // recorded with no credited shares (nothing reaches a shared ledger),
+        // held unclassified under the packet, no epoch. A list of no days names
+        // no retired obligation and funds the live era. The design's
+        // drain-and-freeze precondition makes the quarantine the delayed case.
+        bool legacyQuarantine = LibRewardCustody.active(s) && s.custodyEraCurrent != 0
+            && !LibRewardCustody.listedDaysAreLive(s, dayIds);
         bytes32 h = LibRewardCustody.callRecordIngressPacket(
             sourceChainId,
             transportMessageId,
             LibRewardCustody.PACKET_KIND_BUDGET,
             amount,
-            freshShare,
-            recycledShare,
+            legacyQuarantine ? 0 : freshShare,
+            legacyQuarantine ? 0 : recycledShare,
             remitter,
             remitId
         );
@@ -236,6 +247,13 @@ contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         // event, so a packet landing before that ledger exists is still
         // admissible on the strength of the chain's own record.
         LibRewardCustody.stampPacketDayList(s, h, dayIds);
+        if (legacyQuarantine) {
+            s.rewardBudgetFreshUncounted += amount;
+            LibRewardCustody.callUnclassifiedIngress(h, amount);
+            LibRewardCustody.markEraQuarantined(s, h, 0);
+            emit RewardBudgetReceived(sourceChainId, token, amount, dayIds, remitId, recycledShare, freshShare);
+            return;
+        }
         // #1566 transport epochs PR 3b — the UNTYPED delivery opens its
         // transport epoch here, in the same transaction as the record and the
         // commitment, so the obligations it names can reach it and nothing
@@ -426,7 +444,19 @@ contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
             remitId
         );
         LibRewardCustody.stampPacketDayListRoot(s, h, dayListRoot, elementCount, chunkCount, intendedEra);
-        if (epoch) {
+        // PR C-3 — the INTENDED ERA against the live one (design: retry or
+        // quarantine). Ahead of us: the sender has transitioned and we have not
+        // — revert, and the transport re-delivers after the local transition.
+        // Behind us: dispatched for an era already retired here — held whole,
+        // unclassified, under the packet (no epoch, no ledger credit, no
+        // attestation) until evidence classifies it through reconciliation.
+        if (intendedEra > s.custodyEraCurrent) revert CustodyEraAhead(intendedEra, s.custodyEraCurrent);
+        bool quarantine = epoch && intendedEra < s.custodyEraCurrent;
+        if (quarantine) {
+            s.rewardBudgetFreshUncounted += amount;
+            LibRewardCustody.callUnclassifiedIngress(h, amount);
+            LibRewardCustody.markEraQuarantined(s, h, intendedEra);
+        } else if (epoch) {
             if (freshShare + recycledShare != amount) {
                 revert TransportSplitNotWhole(h, freshShare, recycledShare, amount);
             }

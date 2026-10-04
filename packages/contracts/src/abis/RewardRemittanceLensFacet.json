@@ -412,6 +412,26 @@
             "name": "intendedEra",
             "type": "uint64",
             "internalType": "uint64"
+          },
+          {
+            "name": "custodyEra",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "eraCounted",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "classificationFinal",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "eraQuarantined",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       }

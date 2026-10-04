@@ -8150,6 +8150,20 @@ library LibVaipakam {
         ///      STORED, not yet validated: PR C's receive ingresses read it
         ///      against the live era; no wire before d6 carried one.
         uint64 intendedEra;
+        /// @dev PR C-3 — the custody era the packet was counted into, and the
+        ///      registry's view of it: `eraCounted` once unclassified value is
+        ///      attributed under the packet (the ingress from this slice on; the
+        ///      backfill for history), `classificationFinal` once nothing is left
+        ///      unclassified under it — the era's open-classification count rises
+        ///      and falls with those two marks, each at most once per opening.
+        ///      `eraQuarantined`: the wire's intended era was already retired
+        ///      here (or the wire carried none after a transition) — held
+        ///      unclassified under the packet, no epoch, no ledger credit, no
+        ///      attestation; classified by evidence through reconciliation.
+        uint64 custodyEra;
+        bool eraCounted;
+        bool classificationFinal;
+        bool eraQuarantined;
     }
 
     /// @notice #1566 transport epochs PR 3b — the TRANSPORT EPOCH of one
