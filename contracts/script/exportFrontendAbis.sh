@@ -261,8 +261,7 @@ FACETS=(
   "BackstopVaultImplementation"
   # #594 — standalone holder-only consolidation entry points
   # (consolidateCollateralToHolder / consolidatePrincipalToHolder) + the
-  # ConsolidationNotAllowed error. ReceiverFacet is internal plumbing (no
-  # frontend/keeper consumer), so it is intentionally NOT exported.
+  # ConsolidationNotAllowed error.
   "ConsolidationFacet"
   # #671 — self-sovereign progressive risk-access setters + EIP-712
   # self-submit + views (the frontend pre-flights the gate + drives the
@@ -337,6 +336,26 @@ FACETS=(
   # T-087 Sub 2.D — protocol-funded mirror broadcast orchestrator.
   # Admin / budget surface + the rollup-driven trigger.
   "ProtocolBroadcastFacet"
+  # #2394 (owner decision 2026-10-04) — EVERY facet cut into the Diamond is
+  # exported, internal ones included, so the combined Diamond ABI decodes
+  # every event and error the Diamond can emit. Leaving these out dropped
+  # RewardSweepWalkFacet's reward-expiry events (undecodable by the indexer,
+  # whose event ABI is derived from the union), ReceiverFacet's
+  # UnexpectedNFTReceipt revert, and the role/ownership events. Listing an
+  # internal function in an ABI authorizes nothing. The deploy-sanity suite's
+  # ExportedFacetParityTest holds diamond-facets.json's `facets` equal to
+  # cutFacetNames(), so a facet cut later cannot be left off silently.
+  # DiamondCutFacet is installed by the VaipakamDiamond constructor rather
+  # than through cuts[], but it is one of the Diamond's facets
+  # (facetAddresses() lists it) and carries the DiamondCut event.
+  "DiamondCutFacet"
+  "AccessControlFacet"
+  "OwnershipFacet"
+  "ReceiverFacet"
+  "OfferAcceptFeeFacet"
+  "RewardClaimWalkFacet"
+  "RewardForfeitWalkFacet"
+  "RewardSweepWalkFacet"
   # FlashLoanLiquidationPath.md Phase 3 — standalone reference
   # receiver contract for `RiskFacet.triggerLiquidationDiscounted`.
   # NOT a diamond facet, so deliberately NOT spread into

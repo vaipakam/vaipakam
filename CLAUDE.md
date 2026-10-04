@@ -255,6 +255,9 @@ path or a guardrail:
 | `contracts/test/HelperTest.sol` | the test-side Diamond build |
 | `contracts/test/SetupTest.t.sol` | shared test setup |
 | `packages/contracts/src/deployments.ts` | a field on the `Deployment` type — mandatory as soon as `DeployDiamond` writes the new key |
+| `contracts/script/exportFrontendAbis.sh` (`FACETS=(...)`) | the facet's exported ABI JSON. **Every** Diamond facet is exported, internal ones included (#2394) |
+| `packages/contracts/src/abis/index.ts` | the re-export barrel — the export script does **not** touch it |
+| `packages/contracts/scripts/diamond-facets.json` | `facets` — the combined Diamond ABI is built from it. `contracts/test/deploy/ExportedFacetParityTest` fails unless it equals `cutFacetNames()` plus `DiamondCutFacet`, so an omission is a red deploy-sanity check. More in "Frontend ABI sync" **below** |
 
 **Conditional** — required only when the stated condition holds, so *not*
 registering these can be correct:
@@ -263,11 +266,17 @@ registering these can be correct:
 | --- | --- |
 | `contracts/script/RedeployFacets.s.sol` | only if the facet belongs to one of that script's curated refresh families — it is a *curated* partial refresh, not an all-facets one |
 | `contracts/script/lib/FacetSelectors.sol` **+ a matching case in `contracts/test/deploy/RedeploySelectorParityTest.t.sol`** | only when the facet ALREADY HAS a getter in `FacetSelectors` — that is the condition, not "the curated scripts cut it", which is true of far more facets than the library covers (`ReplaceStaleFacets` cuts `ConfigFacet`, `OfferAcceptFacet` and others through `DeployDiamond`'s inherited getters, and those need nothing here). A brand-new facet needs a getter only if you are adding it to a curated script's set. These are ONE step, not a step and its guard: the parity test enumerates each facet BY HAND, so adding a getter without adding its case compiles happily and leaves that selector list entirely unpinned. The same list must also be updated when a covered facet gains, loses or renames an external FUNCTION — see "When you add a function to a facet" below |
-| `contracts/script/exportFrontendAbis.sh` (`FACETS=(...)`) | only if an app actually consumes the facet's ABI. Internal facets are deliberately excluded — `ReceiverFacet` is not in that array and should not be |
-| `packages/contracts/src/abis/index.ts` | only alongside the entry above — the export script does **not** touch this barrel |
-| `packages/contracts/scripts/diamond-facets.json` | only alongside the entry above — every exported ABI must be listed as a Diamond `facet` or as `standalone`; the combined Diamond ABI is built from the `facets` list, and the contracts package test fails on an unlisted file |
 
-The last two are covered in more detail in "Frontend ABI sync" **below**.
+The export registrations used to sit in this conditional table ("only if an
+app actually consumes the facet's ABI", with `ReceiverFacet` recorded as
+deliberately excluded). **That rule is retired (owner decision 2026-10-04,
+#2394)** and the three rows are in the ALWAYS table above: a facet carries
+its events and errors as well as its functions, and leaving an "internal"
+facet out had dropped `RewardSweepWalkFacet`'s reward-expiry events (which
+the indexer, deriving its event ABI from the union, could not decode),
+`ReceiverFacet`'s `UnexpectedNFTReceipt` revert, and the role/ownership
+events from the combined Diamond ABI. Listing an internal function in an ABI
+authorizes nothing. Do not reintroduce an exclusion list.
 
 **Two of these do not fail loudly, so do not rely on a red check:**
 
@@ -478,9 +487,10 @@ PR as the contract change.
 
 The frontend imports per-facet ABI JSONs from
 `packages/contracts/src/abis/`. Unlike the keeper-bot, the frontend
-imports the **full** Diamond surface (currently 27 facets — see the
-`FACETS=(...)` list in `contracts/script/exportFrontendAbis.sh`),
-so essentially every facet edit needs a re-export.
+imports the **full** Diamond surface — every facet the Diamond has,
+internal ones included (#2394; see the `FACETS=(...)` list in
+`contracts/script/exportFrontendAbis.sh`), so essentially every facet
+edit needs a re-export.
 
 **When you change ANY facet selector** (rename, add/remove
 parameters, change struct shape, etc.), run:

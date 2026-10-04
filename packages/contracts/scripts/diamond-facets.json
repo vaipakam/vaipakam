@@ -1,5 +1,5 @@
 {
-  "_readme": "The facets whose ABIs make up the combined Diamond ABI (`DIAMOND_ABI`), and the standalone contracts whose ABIs ship in the same directory but are NOT Diamond facets. scripts/build-diamond-abi.mjs builds src/diamondAbi.json from `facets` with exact duplicates removed. Every ABI JSON in src/abis must be named in exactly one list \u2014 scripts/build-diamond-abi.test.mjs enforces it, so a new facet cannot be left out of the Diamond ABI silently.",
+  "_readme": "The facets whose ABIs make up the combined Diamond ABI (`DIAMOND_ABI`), and the standalone contracts whose ABIs ship in the same directory but are NOT Diamond facets. scripts/build-diamond-abi.mjs builds src/diamondAbi.json from `facets` with exact duplicates removed. Every ABI JSON in src/abis must be named in exactly one list — scripts/build-diamond-abi.test.mjs enforces it, so a new facet cannot be left out of the Diamond ABI silently.",
   "facets": [
     "OfferCreateFacet",
     "SignedOfferFacet",
@@ -80,7 +80,15 @@
     "NFTPrepayListingFacet",
     "NFTPrepayDutchListingFacet",
     "NFTPrepayListingAtomicFacet",
-    "NFTPrepayAutoListFacet"
+    "NFTPrepayAutoListFacet",
+    "AccessControlFacet",
+    "OwnershipFacet",
+    "ReceiverFacet",
+    "OfferAcceptFeeFacet",
+    "RewardClaimWalkFacet",
+    "RewardForfeitWalkFacet",
+    "RewardSweepWalkFacet",
+    "DiamondCutFacet"
   ],
   "standalone": [
     "AggregatorAdapterImplementation",

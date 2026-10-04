@@ -47,6 +47,10 @@ fs_permissions = [
   # artifacts (`out/<Facet>.sol/<Facet>.json`) to introspect each
   # facet's `methodIdentifiers`. Read-only — the build artifact tree.
   { access = "read", path = "./out/" },
+  # #2394 — test/deploy/ExportedFacetParityTest reads the combined-ABI
+  # facet manifest to hold it equal to the Diamond's facet set. Read-only,
+  # and this one file only.
+  { access = "read", path = "../packages/contracts/scripts/diamond-facets.json" },
 ]
 
 [profile.coverage]
@@ -283,6 +287,7 @@ fs_permissions = [
   { access = "read-write", path = "./deployments/" },
   { access = "read", path = "./script/" },
   { access = "read", path = "./out/" },
+  { access = "read", path = "../packages/contracts/scripts/diamond-facets.json" },
 ]
 
 [fuzz]
