@@ -823,64 +823,9 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             }
         }
 
-        // Post-refinance LTV + HF gates. Mirrors
-        // `LoanFacet._checkInitialLtvAndHf` exactly so refinance can't
-        // admit a position that would have been rejected at init —
-        // both regimes (depth-tiered ON / OFF) must agree.
-        //
-        // Regime OFF (default / pre-flip): today's gate — `LTV ≤
-        // assetRiskParams.loanInitMaxLtvBps` and `HF ≥ 1.5e18`.
-        //
-        // Regime ON (post-flip per chain): cap LTV at
-        // `min(loanInitMaxLtvBps, effectiveTierMaxInitLtvBps[effectiveTier(
-        // collateral)])` and relax HF floor to `≥ 1e18` (tier cap is
-        // the binding buffer; see LoanFacet for full rationale).
-        bytes memory ltvResult = LibFacet.crossFacetStaticCall(
-            abi.encodeWithSelector(RiskFacet.calculateLTV.selector, newLoanId),
-            LTVCalculationFailed.selector
-        );
-        uint256 newLtv = abi.decode(ltvResult, (uint256));
-        // #394 Lever A (Codex #647 round-4) — compare against the replacement
-        // loan's SNAPSHOTTED admission init-LTV cap (acceptOffer stored it when
-        // it admitted `newLoan`; the snapshot already encodes the tiered
-        // `min(assetCap, tierCap)` vs non-tiered `assetCap` branch), NOT a
-        // freshly-recomputed live asset/tier cap. Re-deriving live would make a
-        // governance / tier-cache tightening between accept and `refinanceLoan`
-        // retroactive, stranding an accepted replacement loan the borrower can't
-        // close into — exactly the race the HF gate below also closes.
-        uint256 cap = LibVaipakam.effectiveLoanInitLtvCapBps(
-            newLoan.initLtvCapBpsAtInit,
-            s.assetRiskParams[oldLoan.collateralAsset].loanInitMaxLtvBps
-        );
-        if (newLtv > cap) {
-            // Preserve the regime-specific error (cosmetic; the cap value is the
-            // load-bearing part and comes from the snapshot either way).
-            if (LibVaipakam.cfgDepthTieredLtvEnabled()) {
-                revert IVaipakamErrors.InitLtvAboveTier(newLtv, cap);
-            }
-            revert LTVExceeded();
-        }
-
-        bytes memory hfResult = LibFacet.crossFacetStaticCall(
-            abi.encodeWithSelector(
-                RiskFacet.calculateHealthFactor.selector,
-                newLoanId
-            ),
-            HealthFactorCalculationFailed.selector
-        );
-        uint256 newHf = abi.decode(hfResult, (uint256));
-        // #394 Lever A (Codex #647 round-2 P2) — `acceptOffer` already created
-        // and ADMITTED `newLoan`, snapshotting the (branch-aware) floor it was
-        // gated at onto `newLoan.minHealthFactorAtInit`. Compare against THAT
-        // snapshot, not the live `minHealthFactor()` knob: re-reading the live
-        // knob here would make a governance retune between accept and
-        // `refinanceLoan` retroactive — a replacement loan accepted at HF ≥ 1.5
-        // could revert if the floor were raised to 1.8 first, stranding the
-        // borrower with an accepted replacement they cannot close into. The
-        // snapshot already encodes the tiered (1e18) vs non-tiered branch.
-        uint256 hfFloor =
-            LibVaipakam.effectiveLoanMinHealthFactor(newLoan.minHealthFactorAtInit);
-        if (newHf < hfFloor) revert HealthFactorTooLow();
+        // Post-refinance LTV + HF gates — the same branches the replacement
+        // loan was admitted under at acceptance (#2380).
+        _requirePostRolloverRisk(newLoanId, newLoan, oldLoan.collateralAsset);
 
         // Update old loan NFTs: mark lender NFT as Loan Repaid
         LibFacet.crossFacetCall(
@@ -1016,5 +961,98 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             ),
             bytes4(0)
         );
+    }
+
+    /**
+     * @dev The post-rollover risk gate, branch for branch the one the
+     *      replacement loan was admitted under at acceptance
+     *      (`LoanFacet`'s initiation gate), so refinance can neither admit a
+     *      position initiation would reject nor reject one it admitted.
+     *
+     *      #2380 — the CONSENTED-ILLIQUID branch. Initiation skips the LTV and
+     *      health-factor checks when either leg is not liquid AND both parties
+     *      gave the illiquid risk-and-terms consent: an illiquid leg is valued
+     *      at zero, so there is no LTV or health factor to compute, and the
+     *      consent is what admits the loan instead. Refinance used to run the
+     *      checks unconditionally and so reverted `IlliquidLoanNoRiskMath` on
+     *      every such replacement, after the payoff had run. The branch reads
+     *      the replacement loan's OWN stamps — the liquidity of each leg and
+     *      `riskAndTermsConsentFromBoth`, which acceptance wrote from exactly
+     *      the values initiation tested — so it re-derives nothing live: a
+     *      liquidity change between acceptance and here cannot strand a
+     *      replacement the borrower was admitted into, the same race the
+     *      snapshotted caps below close for the liquid branch.
+     *
+     *      A replacement that is not fully liquid WITHOUT mutual consent falls
+     *      through to the checks and reverts there, as initiation would have.
+     *      The exiting lender gives no consent: they are paid out in full.
+     */
+    function _requirePostRolloverRisk(
+        uint256 newLoanId,
+        LibVaipakam.Loan storage newLoan,
+        address oldCollateralAsset
+    ) private view {
+        bool bothLiquid = newLoan.principalLiquidity == LibVaipakam.LiquidityStatus.Liquid &&
+            newLoan.collateralLiquidity == LibVaipakam.LiquidityStatus.Liquid;
+        if (!bothLiquid && newLoan.riskAndTermsConsentFromBoth) return;
+
+        // Mirrors
+        // `LoanFacet._checkInitialLtvAndHf` exactly so refinance can't
+        // admit a position that would have been rejected at init —
+        // both regimes (depth-tiered ON / OFF) must agree.
+        //
+        // Regime OFF (default / pre-flip): today's gate — `LTV ≤
+        // assetRiskParams.loanInitMaxLtvBps` and `HF ≥ 1.5e18`.
+        //
+        // Regime ON (post-flip per chain): cap LTV at
+        // `min(loanInitMaxLtvBps, effectiveTierMaxInitLtvBps[effectiveTier(
+        // collateral)])` and relax HF floor to `≥ 1e18` (tier cap is
+        // the binding buffer; see LoanFacet for full rationale).
+        bytes memory ltvResult = LibFacet.crossFacetStaticCall(
+            abi.encodeWithSelector(RiskFacet.calculateLTV.selector, newLoanId),
+            LTVCalculationFailed.selector
+        );
+        uint256 newLtv = abi.decode(ltvResult, (uint256));
+        // #394 Lever A (Codex #647 round-4) — compare against the replacement
+        // loan's SNAPSHOTTED admission init-LTV cap (acceptOffer stored it when
+        // it admitted `newLoan`; the snapshot already encodes the tiered
+        // `min(assetCap, tierCap)` vs non-tiered `assetCap` branch), NOT a
+        // freshly-recomputed live asset/tier cap. Re-deriving live would make a
+        // governance / tier-cache tightening between accept and `refinanceLoan`
+        // retroactive, stranding an accepted replacement loan the borrower can't
+        // close into — exactly the race the HF gate below also closes.
+        uint256 cap = LibVaipakam.effectiveLoanInitLtvCapBps(
+            newLoan.initLtvCapBpsAtInit,
+            LibVaipakam.storageSlot().assetRiskParams[oldCollateralAsset].loanInitMaxLtvBps
+        );
+        if (newLtv > cap) {
+            // Preserve the regime-specific error (cosmetic; the cap value is the
+            // load-bearing part and comes from the snapshot either way).
+            if (LibVaipakam.cfgDepthTieredLtvEnabled()) {
+                revert IVaipakamErrors.InitLtvAboveTier(newLtv, cap);
+            }
+            revert LTVExceeded();
+        }
+
+        bytes memory hfResult = LibFacet.crossFacetStaticCall(
+            abi.encodeWithSelector(
+                RiskFacet.calculateHealthFactor.selector,
+                newLoanId
+            ),
+            HealthFactorCalculationFailed.selector
+        );
+        uint256 newHf = abi.decode(hfResult, (uint256));
+        // #394 Lever A (Codex #647 round-2 P2) — `acceptOffer` already created
+        // and ADMITTED `newLoan`, snapshotting the (branch-aware) floor it was
+        // gated at onto `newLoan.minHealthFactorAtInit`. Compare against THAT
+        // snapshot, not the live `minHealthFactor()` knob: re-reading the live
+        // knob here would make a governance retune between accept and
+        // `refinanceLoan` retroactive — a replacement loan accepted at HF ≥ 1.5
+        // could revert if the floor were raised to 1.8 first, stranding the
+        // borrower with an accepted replacement they cannot close into. The
+        // snapshot already encodes the tiered (1e18) vs non-tiered branch.
+        uint256 hfFloor =
+            LibVaipakam.effectiveLoanMinHealthFactor(newLoan.minHealthFactorAtInit);
+        if (newHf < hfFloor) revert HealthFactorTooLow();
     }
 }
