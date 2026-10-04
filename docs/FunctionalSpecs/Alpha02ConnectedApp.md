@@ -1435,7 +1435,9 @@ is the borrower's own money.
   applies: the search failed (it may answer on a later try), or the holder has
   posted more offers since the loan's own offer was made than one search reads
   (a retry will not help, so the surface does not suggest one, and says full
-  repayment stays open). The bound is the loan's own offer, which can be older
+  repayment stays open). Such a search still reads the newest offers, so an
+  open request among them is found and shown as usual — only a search that
+  found no open request in what it read is reported as unable to answer. The bound is the loan's own offer, which can be older
   than the loan itself, because the chain records no start for a loan that
   later events do not rewrite; an on-chain index from a loan to its requests
   would remove the search, and is tracked with #2407.

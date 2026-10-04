@@ -141,16 +141,25 @@ export function useRefinancePending(
     ),
     enabled: enabled && Boolean(readClient) && loanOfferId !== undefined,
     refetchInterval: idleAware(60_000),
-    queryFn: async (): Promise<RefinanceDiscovery> =>
-      target === undefined || loanOfferId === undefined
-        ? { kind: 'none' }
-        : discoverRefinanceRequest({
-            client: readClient!,
-            diamond: readChain.diamondAddress,
-            loanId: BigInt(loanId),
-            sinceOfferId: BigInt(loanOfferId),
-            holder: target as `0x${string}`,
-          }),
+    queryFn: async (): Promise<RefinanceDiscovery> => {
+      if (target === undefined || loanOfferId === undefined) return { kind: 'none' };
+      const result = await discoverRefinanceRequest({
+        client: readClient!,
+        diamond: readChain.diamondAddress,
+        loanId: BigInt(loanId),
+        sinceOfferId: BigInt(loanOfferId),
+        holder: target as `0x${string}`,
+      });
+      // #2406 r7 — a FAILED scan rejects, so the query keeps its last
+      // answer as `data` (naming a request already found keeps its card)
+      // and reports `isError` (the check reads it as unknown). Returned as
+      // data it would have overwritten that answer. A capped scan is a real
+      // answer and resolves.
+      if (result.kind === 'unknown' && result.reason === 'failed') {
+        throw new Error('refinance discovery failed');
+      }
+      return result;
+    },
   });
   const holderAddr = holder === undefined || holder === 'burned' ? undefined : holder;
   // A burned position has no holder whose request could be filled: nothing

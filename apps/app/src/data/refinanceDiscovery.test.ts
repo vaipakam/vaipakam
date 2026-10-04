@@ -5,6 +5,7 @@ import {
   DISCOVERY_MAX_PAGES,
   DISCOVERY_PAGE,
   candidateIds,
+  resolveScan,
   selectRequest,
   type OfferFacts,
 } from './refinanceDiscovery';
@@ -77,15 +78,17 @@ function index(total: number) {
 describe('candidateIds — bounded, newest-first, stops at the loan (r1)', () => {
   it('returns only offers newer than the loan, reading one page when the boundary is on it', async () => {
     const ix = index(250);
-    expect(await candidateIds(ix.readTotal, ix.readPage, 240n)).toEqual(
-      Array.from({ length: 10 }, (_, i) => BigInt(241 + i)),
-    );
+    expect(await candidateIds(ix.readTotal, ix.readPage, 240n)).toEqual({
+      ids: Array.from({ length: 10 }, (_, i) => BigInt(241 + i)),
+      complete: true,
+    });
     expect(ix.reads).toEqual([[150n, 100n]]);
   });
   it('pages further back until it crosses the boundary', async () => {
     const ix = index(250);
-    const ids = await candidateIds(ix.readTotal, ix.readPage, 120n);
+    const { ids, complete } = await candidateIds(ix.readTotal, ix.readPage, 120n);
     expect(ids).toHaveLength(130);
+    expect(complete).toBe(true);
     expect(ix.reads).toEqual([
       [150n, 100n],
       [50n, 100n],
@@ -93,16 +96,48 @@ describe('candidateIds — bounded, newest-first, stops at the loan (r1)', () =>
   });
   it('is complete when it reaches the start of the index', async () => {
     const ix = index(30);
-    expect(await candidateIds(ix.readTotal, ix.readPage, 0n)).toHaveLength(30);
+    expect(await candidateIds(ix.readTotal, ix.readPage, 0n)).toMatchObject({ complete: true });
+    expect((await candidateIds(ix.readTotal, ix.readPage, 0n)).ids).toHaveLength(30);
   });
-  it('is null (unknown) — never a partial list — when the page cap is hit first', async () => {
+  it('is marked INCOMPLETE — never a partial list passed off as whole — when the page cap is hit first', async () => {
     const cap = DISCOVERY_PAGE * DISCOVERY_MAX_PAGES;
     const ix = index(cap + 50);
-    expect(await candidateIds(ix.readTotal, ix.readPage, 10n)).toBeNull();
+    const r = await candidateIds(ix.readTotal, ix.readPage, 10n);
+    expect(r.complete).toBe(false);
+    // …and what WAS read is the newest offers, kept as evidence (r7).
+    expect(r.ids).toHaveLength(cap);
+    expect(r.ids).toContain(BigInt(cap + 50));
+    expect(r.ids).not.toContain(50n);
     expect(ix.reads).toHaveLength(DISCOVERY_MAX_PAGES);
   });
   it('is an empty, complete list for a holder with no offers', async () => {
     const ix = index(0);
-    expect(await candidateIds(ix.readTotal, ix.readPage, 5n)).toEqual([]);
+    expect(await candidateIds(ix.readTotal, ix.readPage, 5n)).toEqual({ ids: [], complete: true });
   });
 });
+
+describe('resolveScan (r7) — an incomplete scan still counts what it read', () => {
+  it('a complete scan returns its selection as is', () => {
+    expect(resolveScan(7n, HOLDER, [req(4n, { expiresAt: NOW - 1n })], NOW, true)).toEqual({
+      kind: 'found',
+      offerId: '4',
+      open: false,
+    });
+    expect(resolveScan(7n, HOLDER, [], NOW, true)).toEqual({ kind: 'none' });
+  });
+  it('an OPEN request among the newest offers is conclusive even when the scan was capped', () => {
+    expect(resolveScan(7n, HOLDER, [req(400n)], NOW, false)).toEqual({
+      kind: 'found',
+      offerId: '400',
+      open: true,
+    });
+  });
+  it('a capped scan that found only an expired request, or nothing, is capped', () => {
+    expect(resolveScan(7n, HOLDER, [req(400n, { expiresAt: NOW - 1n })], NOW, false)).toEqual({
+      kind: 'unknown',
+      reason: 'capped',
+    });
+    expect(resolveScan(7n, HOLDER, [], NOW, false)).toEqual({ kind: 'unknown', reason: 'capped' });
+  });
+});
+

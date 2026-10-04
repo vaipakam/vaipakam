@@ -95,12 +95,14 @@ export function selectRequest(
 }
 
 /** The holder's offer ids created after `sinceOfferId`, newest pages
- *  first, or null when the cap was hit before the boundary (incomplete). */
+ *  first. `complete` is false when the cap was hit before the boundary —
+ *  the ids read are then the NEWEST ones, and only older offers are
+ *  unread (#2406 r7: what was read is still evidence). */
 export async function candidateIds(
   readTotal: () => Promise<bigint>,
   readPage: (offset: bigint, limit: bigint) => Promise<readonly bigint[]>,
   sinceOfferId: bigint,
-): Promise<bigint[] | null> {
+): Promise<{ ids: bigint[]; complete: boolean }> {
   const total = await readTotal();
   const page = BigInt(DISCOVERY_PAGE);
   const out: bigint[] = [];
@@ -111,10 +113,29 @@ export async function candidateIds(
     for (const id of ids) if (id > sinceOfferId) out.push(id);
     // The oldest id on this page at or below the boundary means every
     // older one is too: the search is complete.
-    if (ids.length > 0 && ids[0]! <= sinceOfferId) return out;
+    if (ids.length > 0 && ids[0]! <= sinceOfferId) return { ids: out, complete: true };
     end = offset;
   }
-  return end === 0n ? out : null;
+  return { ids: out, complete: end === 0n };
+}
+
+/** #2406 r7 — the verdict from the offers a scan read. A complete scan's
+ *  selection is final. An incomplete one (the page cap was hit) read the
+ *  NEWEST offers, so an OPEN request among them is conclusive — any
+ *  unread offer is older, and an open request is preferred over every
+ *  expired one — and is returned; anything less (only an expired request,
+ *  or none) could be outranked by an unread open one, so it is `capped`. */
+export function resolveScan(
+  loanId: bigint,
+  holder: string,
+  offers: readonly OfferFacts[],
+  nowSec: bigint,
+  complete: boolean,
+): RefinanceDiscovery {
+  const selected = selectRequest(loanId, holder, offers, nowSec);
+  if (complete) return selected;
+  if (selected.kind === 'found' && selected.open) return selected;
+  return { kind: 'unknown', reason: 'capped' };
 }
 
 /** Live discovery — used by the polling hook and re-run just before any
@@ -129,7 +150,7 @@ export async function discoverRefinanceRequest(opts: {
 }): Promise<RefinanceDiscovery> {
   const { client, diamond, holder } = opts;
   try {
-    const ids = await candidateIds(
+    const { ids, complete } = await candidateIds(
       async () => {
         const [, total] = (await client.readContract({
           address: diamond,
@@ -150,8 +171,7 @@ export async function discoverRefinanceRequest(opts: {
       },
       opts.sinceOfferId,
     );
-    if (ids === null) return { kind: 'unknown', reason: 'capped' };
-    if (ids.length === 0) return { kind: 'none' };
+    if (ids.length === 0) return complete ? { kind: 'none' } : { kind: 'unknown', reason: 'capped' };
     const [details, block] = await Promise.all([
       client.multicall({
         allowFailure: false,
@@ -176,7 +196,7 @@ export async function discoverRefinanceRequest(opts: {
       refinanceTargetLoanId: d.refinanceTargetLoanId,
       expiresAt: d.expiresAt,
     }));
-    return selectRequest(opts.loanId, holder, offers, block.timestamp);
+    return resolveScan(opts.loanId, holder, offers, block.timestamp, complete);
   } catch {
     return { kind: 'unknown', reason: 'failed' };
   }
