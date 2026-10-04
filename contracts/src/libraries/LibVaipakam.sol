@@ -7777,6 +7777,28 @@ library LibVaipakam {
         uint256 custodyEraBackfillPacketsSupplied;
         uint256 custodyEraBackfillPacketsCounted;
         uint256 custodyEraBackfillPacketsAttested;
+        // ── #1219 (S-4) — service capacity deposits, DARK behind `serviceCapacityEnabled` ──
+        /// @dev The channel's switch (admin now, governance later). While false,
+        ///      posting is refused; withdrawals and the permissionless free tier
+        ///      stand — the disabled path is the LAUNCH path, since VPFI is
+        ///      earn-only and a required deposit would make the gated roles
+        ///      unreachable (owner, 2026-08-03).
+        bool serviceCapacityEnabled;
+        /// @dev The deposit escrow: a `RewardCustodyHolder` instance bound once,
+        ///      moving tokens only at the Diamond's instruction. NEVER the reward
+        ///      holder and never this contract's own balance — the delivered-funding
+        ///      bound is the remedy for new custody classes, not another
+        ///      subtraction in `backingPosition`, and deposits must not commingle
+        ///      with LIF custody or reward budgets.
+        address serviceCapacityEscrow;
+        /// @dev The VPFI rotation epoch deposits are keyed by: 0 until the first
+        ///      rotation under this regime (slice 3 bumps and archives it).
+        uint64 vpfiRotationEpoch;
+        /// @dev `(role, operator, rotationEpoch)` → the deposit record.
+        mapping(uint8 => mapping(address => mapping(uint64 => ServiceCapacityDeposit))) serviceDeposits;
+        /// @dev Σ principal the escrow holds per rotation epoch — the fourth
+        ///      tracked VPFI balance class, published by the facet.
+        mapping(uint64 => uint256) serviceDepositEscrowByEpoch;
     }
 
     /// @notice 3b-ii-A2 (#2305) — one batch a staging record staged from, with
@@ -7809,6 +7831,44 @@ library LibVaipakam {
         bytes32 oldestNonceKey;
         uint64 oldestOpenedAt;
         bytes32 winnerNonceKey;
+    }
+
+    /// @notice #1219 (S-4) — the state of an operator's service capacity deposit:
+    ///         `None` (no record), `Active`, or `SanctionsParked` — a withdrawal
+    ///         parked by the FIRST authoritative sanctions flag, released only by
+    ///         an authoritative clean read (frozen funds are never seized).
+    enum ServiceDepositState {
+        None,
+        Active,
+        SanctionsParked
+    }
+
+    /// @notice #1219 (S-4) — the roles a capacity deposit may buy throughput for.
+    ///         `Solver` is the matcher / solver family (match fills); `Keeper` the
+    ///         granted `KEEPER_ACTION_*` family. A deposit is per `(role, address)`.
+    enum ServiceCapacityRole {
+        Solver,
+        Keeper
+    }
+
+    /// @notice #1219 (S-4) — an operator's SERVICE CAPACITY DEPOSIT for one role in
+    ///         one VPFI rotation epoch: a refundable, non-yielding, non-confiscatable
+    ///         deposit that buys operational capacity above the permissionless free
+    ///         tier (the capacity curve is the next slice). It is never a bond: v1
+    ///         has no slash, nothing is ever at risk, and nothing is unlocked by a
+    ///         threshold.
+    /// @dev    `rotationEpoch` is the partition KEY and `token` its attribute
+    ///         (A -> B -> A is two epochs). `eligibleAmount` is the ARMED balance
+    ///         the capacity rules read — equal to `amount` while no arming fee
+    ///         exists. `parkedRequest` is the CAP of a sanctions-parked withdrawal,
+    ///         never a promise: the release pays `min(parkedRequest, principal)`.
+    struct ServiceCapacityDeposit {
+        address token;
+        uint64 rotationEpoch;
+        ServiceDepositState state;
+        uint256 amount;
+        uint256 eligibleAmount;
+        uint256 parkedRequest;
     }
 
     /// @notice 3b-ii-A2-ii — the lifecycle of a multi-chunk claim DOMAIN

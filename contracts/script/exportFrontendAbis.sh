@@ -304,6 +304,7 @@ FACETS=(
   "RewardStagingDomainFacet"
   "RewardClosureFacet"
   "RewardEraFacet"
+  "ServiceCapacityFacet"
   "RepatriationFacet"
   "RiskFacet"
   "RiskMatchLiquidationFacet"

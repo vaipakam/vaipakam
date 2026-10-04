@@ -92,6 +92,7 @@ import {RewardStagingSettleFacet} from "../src/facets/RewardStagingSettleFacet.s
 import {RewardStagingDomainFacet} from "../src/facets/RewardStagingDomainFacet.sol";
 import {RewardClosureFacet} from "../src/facets/RewardClosureFacet.sol";
 import {RewardEraFacet} from "../src/facets/RewardEraFacet.sol";
+import {ServiceCapacityFacet} from "../src/facets/ServiceCapacityFacet.sol";
 import {RewardSweepWalkFacet} from "../src/facets/RewardSweepWalkFacet.sol";
 import {RewardForfeitWalkFacet} from "../src/facets/RewardForfeitWalkFacet.sol";
 import {LibPausable} from "../src/libraries/LibPausable.sol";
@@ -358,6 +359,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         RewardClosureFacet rewardClosureFacet = new RewardClosureFacet();
         // slice 4 PR C-1 (#1566) — the custody era registry.
         RewardEraFacet rewardEraFacet = new RewardEraFacet();
+        ServiceCapacityFacet serviceCapacityFacet = new ServiceCapacityFacet();
         RewardCompensationDispatchFacet rewardCompensationDispatchFacet =
             new RewardCompensationDispatchFacet();
         RewardCommitmentFacet rewardCommitmentFacet = new RewardCommitmentFacet();
@@ -392,7 +394,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](90);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](91);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -478,6 +480,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         cuts[87] = _buildCut(address(rewardStagingDomainFacet), _getRewardStagingDomainSelectors());
         cuts[88] = _buildCut(address(rewardClosureFacet), _getRewardClosureSelectors());
         cuts[89] = _buildCut(address(rewardEraFacet), _getRewardEraSelectors());
+        cuts[90] = _buildCut(address(serviceCapacityFacet), _getServiceCapacitySelectors());
         cuts[26] = _buildCut(address(rewardReporterFacet), _getRewardReporterSelectors());
         cuts[27] = _buildCut(address(rewardAggregatorFacet), _getRewardAggregatorSelectors());
         cuts[28] = _buildCut(address(configFacet), _getConfigSelectors());
@@ -1151,6 +1154,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeFacet("rewardStagingDomainFacet", address(rewardStagingDomainFacet));
         Deployments.writeFacet("rewardClosureFacet", address(rewardClosureFacet));
         Deployments.writeFacet("rewardEraFacet", address(rewardEraFacet));
+        Deployments.writeFacet("serviceCapacityFacet", address(serviceCapacityFacet));
         Deployments.writeFacet("repatriationFacet",       address(repatriationFacet));
         Deployments.writeFacet("configFacet",             address(configFacet));
         // #394 (Codex #647 round-8 P2) — persist the carved-out NumeraireConfigFacet
@@ -3210,6 +3214,18 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[15] = RewardEraFacet.completeCustodyEraBackfill.selector;
         s[16] = RewardEraFacet.getCustodyEraBackfill.selector;
         s[17] = RewardEraFacet.getIngressPacketHashes.selector;
+    }
+
+    /// #1219 (S-4) — service capacity deposits (slice 1).
+    function _getServiceCapacitySelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](7);
+        s[0] = ServiceCapacityFacet.bindServiceCapacityEscrow.selector;
+        s[1] = ServiceCapacityFacet.setServiceCapacityEnabled.selector;
+        s[2] = ServiceCapacityFacet.postCapacityDeposit.selector;
+        s[3] = ServiceCapacityFacet.withdrawCapacityDeposit.selector;
+        s[4] = ServiceCapacityFacet.isServiceCapacityEnabled.selector;
+        s[5] = ServiceCapacityFacet.getCapacityDeposit.selector;
+        s[6] = ServiceCapacityFacet.getServiceCapacityEscrow.selector;
     }
 
     /// @dev 3b-ii-B (#1566) — the per-day closure proof.

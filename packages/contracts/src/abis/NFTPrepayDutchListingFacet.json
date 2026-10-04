@@ -4147,6 +4147,85 @@
   },
   {
     "type": "error",
+    "name": "ServiceCapacityDisabled",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ServiceCapacityEscrowAlreadyBound",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ServiceCapacityEscrowNotBound",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ServiceCapacityInsufficient",
+    "inputs": [
+      {
+        "name": "role",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "operator",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "have",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "want",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ServiceCapacityMoveUnverified",
+    "inputs": [
+      {
+        "name": "expected",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "moved",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ServiceCapacityRoleUnknown",
+    "inputs": [
+      {
+        "name": "role",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ServiceCapacitySanctionsUnavailable",
+    "inputs": [
+      {
+        "name": "party",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "ShortLapseClockAlreadyArmed",
     "inputs": [
       {

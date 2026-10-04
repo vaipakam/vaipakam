@@ -1888,4 +1888,20 @@ interface IVaipakamErrors {
     error CustodyEraBackfillStalePauseEpoch(uint64 stated, uint64 live);
     /// @notice No packet is recorded under `packetHash`.
     error CustodyEraBackfillPacketUnknown(bytes32 packetHash);
+
+    // ── #1219 (S-4) — service capacity deposits ──
+    /// @notice The service capacity deposit channel is dark: posting is refused (withdrawals stand).
+    error ServiceCapacityDisabled();
+    /// @notice `role` is not a capacity role.
+    error ServiceCapacityRoleUnknown(uint8 role);
+    /// @notice The deposit escrow holder is not bound yet.
+    error ServiceCapacityEscrowNotBound();
+    /// @notice The deposit escrow holder is already bound.
+    error ServiceCapacityEscrowAlreadyBound();
+    /// @notice The deposit `(role, operator)` holds `have`, less than the `want` asked.
+    error ServiceCapacityInsufficient(uint8 role, address operator, uint256 have, uint256 want);
+    /// @notice A token move of `expected` changed the destination's balance by `moved`.
+    error ServiceCapacityMoveUnverified(uint256 expected, uint256 moved);
+    /// @notice The configured sanctions oracle was unavailable for `party`: every deposit mutation defers (fail-closed) and persists nothing.
+    error ServiceCapacitySanctionsUnavailable(address party);
 }

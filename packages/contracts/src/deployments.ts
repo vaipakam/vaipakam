@@ -112,6 +112,8 @@ export interface DeploymentFacets {
   rewardClosureFacet?: HexAddress;
   /** #1566 slice 4 PR C-1 — the custody era registry. */
   rewardEraFacet?: HexAddress;
+  /** #1219 (S-4) — service capacity deposits. */
+  serviceCapacityFacet?: HexAddress;
   rewardReporterFacet?: HexAddress;
   riskFacet?: HexAddress;
   stakingRewardsFacet?: HexAddress;

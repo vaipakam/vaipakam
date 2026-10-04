@@ -911,6 +911,17 @@ Integration surface:
 
 ---
 
+### 6c. Service Capacity Deposits (S-4) — Dark
+
+An operator — a solver or matcher, or a keeper acting under granted actions — may post VPFI as a **service capacity deposit** for one role. The deposit is an operational capacity deposit: it is refundable at will, it earns nothing, it is never described as earning anything, and it is never at risk — version one has no slash of any kind. It is not a bond, not staking, and not a condition of participation: no role requires a deposit, and the permissionless free tier stands whether or not one is posted.
+
+- **Custody.** The principal lives in an escrow of its own, a holder that moves tokens only at the platform's instruction. It is never commingled with loan-initiation-fee custody, with reward budgets, or with the platform's own balance, and reward payouts never read it.
+- **Records.** A deposit is kept per role, per operator and per VPFI rotation epoch, with the armed balance beside the principal (equal to it while no arming fee exists). The escrow's total for the live epoch is published. Every post, raise, withdrawal, park and release emits an event carrying the resulting balance.
+- **Withdrawal** is immediate.
+- **Dark by default.** The channel ships disabled. While disabled, posting is refused by name; withdrawals always work; the free tier is unaffected. Enabling it is a deliberate later act by the admin (governance later), gated on VPFI being widely enough distributed that the roles it raises remain contestable.
+- **Sanctions.** Every value-moving selector screens the operator with the registry-aware three-way read. A first authoritative flag on a post is a committed refusal that moves nothing and persists the flag; a first flag on a withdrawal parks the request, capped to the principal, and pays nothing. With the flag persisted, the next call reverts as elsewhere on the Tier-1 surface. An oracle outage defers every mutation and persists nothing; the first clean read after recovery lets the same calls through. A clean read heals a stale flag and releases a parked deposit's cap. Frozen funds are never seized.
+- **Later slices.** The capacity curve (continuous, no minimum, a ceiling of four times the free tier per role and address), the free tier sized per action class, the gating of the match and keeper routes charging the right actor, the arming fee as a governance-set shape with a positive floor, and the rotation-epoch archival.
+
 ## 7. Removed Staking-Yield Program
 
 The protocol does **not** pay a VPFI staking yield in Phase 1. The former
