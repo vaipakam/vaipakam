@@ -120,6 +120,16 @@ import NFTPrepayListingAtomicFacetABI from './NFTPrepayListingAtomicFacet.json';
 // `autoListAtFloorOnGrace` entry point. Sibling facet sharing
 // LibVaipakam storage with the other three prepay-listing facets.
 import NFTPrepayAutoListFacetABI from './NFTPrepayAutoListFacet.json';
+// #2394 — internal facets, exported so the Diamond ABI decodes every event
+// and error the Diamond can emit (owner decision 2026-10-04).
+import DiamondCutFacetABI from './DiamondCutFacet.json';
+import AccessControlFacetABI from './AccessControlFacet.json';
+import OwnershipFacetABI from './OwnershipFacet.json';
+import ReceiverFacetABI from './ReceiverFacet.json';
+import OfferAcceptFeeFacetABI from './OfferAcceptFeeFacet.json';
+import RewardClaimWalkFacetABI from './RewardClaimWalkFacet.json';
+import RewardForfeitWalkFacetABI from './RewardForfeitWalkFacet.json';
+import RewardSweepWalkFacetABI from './RewardSweepWalkFacet.json';
 // FlashLoanLiquidationPath.md Phase 3 — standalone reference
 // receiver. Named export only; deliberately NOT spread into
 // DIAMOND_ABI below (it's not part of the diamond's selector set).
@@ -213,6 +223,14 @@ export {
   NFTPrepayDutchListingFacetABI,
   NFTPrepayListingAtomicFacetABI,
   NFTPrepayAutoListFacetABI,
+  DiamondCutFacetABI,
+  AccessControlFacetABI,
+  OwnershipFacetABI,
+  ReceiverFacetABI,
+  OfferAcceptFeeFacetABI,
+  RewardClaimWalkFacetABI,
+  RewardForfeitWalkFacetABI,
+  RewardSweepWalkFacetABI,
   FlashLoanLiquidatorABI,
   RiskPremiumRateModelABI,
 };
