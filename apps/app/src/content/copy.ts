@@ -3501,12 +3501,21 @@ const copySource = {
     illiquidCollateralTag: 'illiquid when posted (checked again at acceptance) — if so, handed over as-is if not repaid',
     collateralAtLeast: tmpl('at least {{amount}}', ['amount']),
     // #2384 (UX3-007) — the loan-to-value the card can substantiate, from
-    // the protocol's live oracle prices; each unknown is named, never
-    // shown as a figure. A borrow request's collateral is a floor, so its
-    // ratio is a ceiling.
-    ltvValue: tmpl('loan-to-value {{pct}}', ['pct']),
-    ltvAtMost: tmpl('loan-to-value at most {{pct}}', ['pct']),
-    ltvUnpriced: 'loan-to-value can’t be worked out (one side has no reliable price)',
+    // the protocol's live oracle prices, with its one-clause definition
+    // (WebsiteReadme: jargon at a funds decision carries one). The figure
+    // is the ratio AT THE AMOUNTS SHOWN — never claimed as a bound across
+    // fills (#2404 r1); each unknown is named, never shown as a figure.
+    ltvValue: tmpl(
+      'loan-to-value {{pct}} (the loan’s value as a share of the collateral’s)',
+      ['pct'],
+    ),
+    ltvValueRanged: tmpl(
+      'loan-to-value {{pct}} at the amounts shown (the loan’s value as a share of the collateral’s) — a fill of another size can differ',
+      ['pct'],
+    ),
+    ltvIlliquid:
+      'loan-to-value isn’t worked out — one side is treated as illiquid (no reliable price or too little trading), so the protocol gives it no value',
+    ltvTooSmall: 'loan-to-value can’t be worked out at this size — one side’s value rounds to nothing',
     ltvUnknown: 'loan-to-value couldn’t be checked right now',
     ltvLoading: 'checking loan-to-value…',
     // #2378 r4 — a loan-position sale row carries no collateral of its own.

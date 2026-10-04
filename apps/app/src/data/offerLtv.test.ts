@@ -26,29 +26,57 @@ const offer = (over: Partial<Parameters<typeof offerLtv>[0]> = {}) => ({
 
 describe('offerLtv', () => {
   it('values each leg by its own token decimals — mixed-decimal pairs are right (#2403)', () => {
-    expect(offerLtv(offer(), PRICED)).toEqual({ kind: 'value', bps: 5000n, bound: 'exact' });
+    // A single-size lend offer: amount == amountMax, nothing taken.
+    expect(offerLtv(offer({ amount: '1000000000' }), PRICED)).toEqual({
+      kind: 'value',
+      bps: 5000n,
+      ranged: false,
+    });
   });
-  it('uses the lend offer’s full amount, and states a borrow request’s figure as a ceiling', () => {
-    expect(offerLtv(offer({ offerType: 1, amount: '500000000' }), PRICED)).toEqual({
+  it('marks a ranged or part-taken lend offer — a fill of another size can differ (r1)', () => {
+    expect(offerLtv(offer(), PRICED)).toEqual({ kind: 'value', bps: 5000n, ranged: true });
+    expect(
+      offerLtv(offer({ amount: '1000000000', amountFilled: '1' }), PRICED),
+    ).toEqual({ kind: 'value', bps: 5000n, ranged: true });
+  });
+  it('never presents a borrow request’s figure as exact or as a ceiling (r1)', () => {
+    // Single-size on purpose (amount == amountMax, nothing taken), so the
+    // only thing marking it is its being a borrow request — the floor
+    // collateral whose ceiling the row does not carry.
+    expect(
+      offerLtv(offer({ offerType: 1, amount: '500000000', amountMax: '500000000' }), PRICED),
+    ).toEqual({
       kind: 'value',
       bps: 2500n,
-      bound: 'atMost',
+      ranged: true,
     });
   });
   it('keeps precision for small offers instead of flooring to 0%', () => {
     // 1 USDC against 0.001 WETH ($2) → 50%, not a whole-dollar 0.
     expect(
-      offerLtv(offer({ amountMax: '1000000', collateralAmount: '1000000000000000' }), PRICED),
-    ).toEqual({ kind: 'value', bps: 5000n, bound: 'exact' });
+      offerLtv(
+        offer({ amount: '1000000', amountMax: '1000000', collateralAmount: '1000000000000000' }),
+        PRICED,
+      ),
+    ).toEqual({ kind: 'value', bps: 5000n, ranged: false });
   });
-  it('says a leg can’t be priced when it is illiquid, whatever the other read did', () => {
+  it('says too small — never 0% — when EITHER side’s value rounds to nothing (r1)', () => {
+    // A sub-cent, 18-decimal lending token: 1 base unit values to 0.
+    const m = new Map(PRICED);
+    m.set(USDC, { kind: 'priced', price: 1n, feedDecimals: 8, tokenDecimals: 18 });
+    expect(offerLtv(offer({ amount: '1', amountMax: '1' }), m)).toEqual({ kind: 'tooSmall' });
+    const c = new Map(PRICED);
+    c.set(WETH, { kind: 'priced', price: 1n, feedDecimals: 8, tokenDecimals: 18 });
+    expect(offerLtv(offer({ collateralAmount: '1' }), c)).toEqual({ kind: 'tooSmall' });
+  });
+  it('names an illiquid leg as such, whatever the other read did (r1)', () => {
     const m = new Map(PRICED);
     m.set(WETH, { kind: 'illiquid' });
-    expect(offerLtv(offer(), m)).toEqual({ kind: 'unpriced' });
+    expect(offerLtv(offer(), m)).toEqual({ kind: 'illiquid' });
     m.set(USDC, { kind: 'failed' });
-    expect(offerLtv(offer(), m)).toEqual({ kind: 'unpriced' });
+    expect(offerLtv(offer(), m)).toEqual({ kind: 'illiquid' });
   });
-  it('says unknown — not unpriced — when a read failed', () => {
+  it('says unknown — not illiquid — when a read failed', () => {
     const m = new Map(PRICED);
     m.set(USDC, { kind: 'failed' });
     expect(offerLtv(offer(), m)).toEqual({ kind: 'unknown' });

@@ -78,10 +78,12 @@ function ltvText(ltv: OfferLtv): string | null {
   switch (ltv.kind) {
     case 'value': {
       const pct = formatBpsAsPercent(Number(ltv.bps));
-      return ltv.bound === 'atMost' ? copy.offers.ltvAtMost(pct) : copy.offers.ltvValue(pct);
+      return ltv.ranged ? copy.offers.ltvValueRanged(pct) : copy.offers.ltvValue(pct);
     }
-    case 'unpriced':
-      return copy.offers.ltvUnpriced;
+    case 'illiquid':
+      return copy.offers.ltvIlliquid;
+    case 'tooSmall':
+      return copy.offers.ltvTooSmall;
     case 'unknown':
       return copy.offers.ltvUnknown;
     case 'loading':

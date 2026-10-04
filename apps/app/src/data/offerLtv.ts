@@ -11,16 +11,25 @@
  * keeps small offers from flooring to a whole-dollar value of 0, which
  * would print a confident "0%".
  *
- * What a card can say, and why each is distinct:
- *  - `value`      — both legs priced; `bound: 'atMost'` for a borrow
- *                   request, whose collateral is a FLOOR (more collateral
- *                   only lowers the ratio), `'exact'` for a lend offer,
- *                   whose collateral requirement scales with the amount
- *                   taken so the ratio holds for any fill.
- *  - `unpriced`   — a leg is illiquid (valued at 0 by the protocol, so no
- *                   ratio exists) or its value comes to nothing.
- *  - `unknown`    — a read failed (a stale feed, a provider error). Not
- *                   "can't be priced": nothing is known either way.
+ * What a card can say, and why each is distinct (#2404 r1):
+ *  - `value`      — the ratio AT THE AMOUNTS THE CARD SHOWS (a lend offer's
+ *                   full amount and the collateral that full amount needs;
+ *                   a borrow request's amount and committed collateral).
+ *                   It claims no bound across fills: a ranged or part-taken
+ *                   offer can be filled at another size, the matcher rounds
+ *                   a part-fill's collateral down, and a borrow request's
+ *                   collateral is only a floor — so `ranged` marks rows where
+ *                   a fill of another size can carry a different ratio, and
+ *                   the card says so instead of calling the figure exact or
+ *                   a ceiling.
+ *  - `illiquid`   — the protocol treats a leg as illiquid (no reliable price
+ *                   OR too little trading — its liquidity check covers both)
+ *                   and so gives it no value; no ratio exists. The card names
+ *                   both possible causes, since it cannot tell which.
+ *  - `tooSmall`   — both legs are priced but one side's value rounds to
+ *                   nothing at this size; a "0%" would be a fiction.
+ *  - `unknown`    — a read failed (a stale feed, a provider error). Nothing
+ *                   is known either way.
  *  - `loading`    — the reads have not answered.
  *  - `none`       — the row has no ratio to state: a rental, an NFT leg,
  *                   no collateral, or a sale vehicle (its collateral is
@@ -36,8 +45,9 @@ export type AssetPricing =
   | { kind: 'failed' };
 
 export type OfferLtv =
-  | { kind: 'value'; bps: bigint; bound: 'exact' | 'atMost' }
-  | { kind: 'unpriced' }
+  | { kind: 'value'; bps: bigint; ranged: boolean }
+  | { kind: 'illiquid' }
+  | { kind: 'tooSmall' }
   | { kind: 'unknown' }
   | { kind: 'loading' }
   | { kind: 'none' };
@@ -76,7 +86,8 @@ function valueOf(amount: bigint, p: Extract<AssetPricing, { kind: 'priced' }>): 
  * facts; `undefined` while loading, `null` when the whole batch failed).
  */
 export function offerLtv(
-  offer: Parameters<typeof ltvLegs>[0] & Pick<IndexedOffer, 'amount' | 'amountMax'>,
+  offer: Parameters<typeof ltvLegs>[0] &
+    Pick<IndexedOffer, 'amount' | 'amountMax'> & { amountFilled?: string },
   pricing: ReadonlyMap<string, AssetPricing> | null | undefined,
 ): OfferLtv {
   const legs = ltvLegs(offer);
@@ -88,17 +99,27 @@ export function offerLtv(
   if (!lend || !coll) return { kind: 'loading' };
   // An illiquid leg settles the question whatever the other read did:
   // the protocol values it at 0, so no ratio exists.
-  if (lend.kind === 'illiquid' || coll.kind === 'illiquid') return { kind: 'unpriced' };
+  if (lend.kind === 'illiquid' || coll.kind === 'illiquid') return { kind: 'illiquid' };
   if (lend.kind === 'failed' || coll.kind === 'failed') return { kind: 'unknown' };
   const isLender = offer.offerType === 0;
-  const borrowed = BigInt((isLender ? offer.amountMax : offer.amount) || '0');
+  const amount = BigInt(offer.amount || '0');
+  const amountMax = BigInt(offer.amountMax || '0');
+  // The amount the card's title shows: a lend offer's full size, a borrow
+  // request's requested amount.
+  const borrowed = isLender ? amountMax : amount;
+  const borrowedValue = valueOf(borrowed, lend);
   const collateralValue = valueOf(BigInt(offer.collateralAmount), coll);
-  if (collateralValue === 0n) return { kind: 'unpriced' };
-  return {
-    kind: 'value',
-    bps: (valueOf(borrowed, lend) * 10_000n) / collateralValue,
-    bound: isLender ? 'exact' : 'atMost',
-  };
+  // Either side rounding to nothing would print a fictional 0% (or divide
+  // by zero) — say the size is too small to work out instead.
+  if (borrowedValue === 0n || collateralValue === 0n) return { kind: 'tooSmall' };
+  // A fill of another size can carry another ratio when the lend offer is
+  // a range or already part-taken (the matcher scales and rounds down the
+  // collateral), and for EVERY borrow request: its collateral is a floor
+  // and the indexed row does not carry its ceiling (#2382), so the card
+  // cannot know a fill will use exactly the amounts shown.
+  const ranged =
+    !isLender || amountMax > amount || BigInt(offer.amountFilled || '0') > 0n;
+  return { kind: 'value', bps: (borrowedValue * 10_000n) / collateralValue, ranged };
 }
 
 /** One batched read per asset: liquidity verdict, oracle price, token
