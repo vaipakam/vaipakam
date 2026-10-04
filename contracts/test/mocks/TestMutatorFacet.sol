@@ -2756,4 +2756,15 @@ contract TestMutatorFacet {
         e.daysClosed = daysClosed;
         e.openClassification = openClassification;
     }
+
+    /// @dev slice 4 PR C-5 test-only — forget a packet's era count, the state of
+    ///      a packet recorded before the count existed (the backfill's input).
+    function uncountPacketEraRaw(bytes32 h) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.IngressPacket storage p = s.ingressPackets[h];
+        if (p.eraCounted && !p.classificationFinal) --s.custodyEras[p.custodyEra].openClassification;
+        p.eraCounted = false;
+        p.classificationFinal = false;
+        p.custodyEra = 0;
+    }
 }

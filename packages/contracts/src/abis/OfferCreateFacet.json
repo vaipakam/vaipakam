@@ -2019,8 +2019,50 @@
   },
   {
     "type": "error",
+    "name": "CustodyEraBackfillAlreadyComplete",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CustodyEraBackfillAlreadyStarted",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CustodyEraBackfillNotStarted",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CustodyEraBackfillPacketUnknown",
+    "inputs": [
+      {
+        "name": "packetHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "CustodyEraBackfillPending",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CustodyEraBackfillStalePauseEpoch",
+    "inputs": [
+      {
+        "name": "stated",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "live",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
   },
   {
     "type": "error",

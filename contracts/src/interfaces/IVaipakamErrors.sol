@@ -1878,4 +1878,14 @@ interface IVaipakamErrors {
     error ParkedBroadcastQuarantineOnly(uint256 id);
     /// @notice Era `era` still carries `count` parked broadcasts: it is not terminal.
     error CustodyEraParkedOpen(uint64 era, uint256 count);
+    /// @notice The history backfill has not been started (PR C-5).
+    error CustodyEraBackfillNotStarted();
+    /// @notice The history backfill was already started.
+    error CustodyEraBackfillAlreadyStarted();
+    /// @notice The history backfill was already completed.
+    error CustodyEraBackfillAlreadyComplete();
+    /// @notice The stated pause epoch `stated` is not the live one `live`: the backfill call is stale.
+    error CustodyEraBackfillStalePauseEpoch(uint64 stated, uint64 live);
+    /// @notice No packet is recorded under `packetHash`.
+    error CustodyEraBackfillPacketUnknown(bytes32 packetHash);
 }

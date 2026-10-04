@@ -1,6 +1,48 @@
 [
   {
     "type": "function",
+    "name": "backfillCustodyEraPacketsPage",
+    "inputs": [
+      {
+        "name": "pauseEpoch",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "hashes",
+        "type": "bytes32[]",
+        "internalType": "bytes32[]"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "counted",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "completeCustodyEraBackfill",
+    "inputs": [
+      {
+        "name": "pauseEpoch",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "attestedPacketCount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "drainPendingSurplus",
     "inputs": [
       {
@@ -172,6 +214,39 @@
   },
   {
     "type": "function",
+    "name": "getCustodyEraBackfill",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "started",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "complete",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "supplied",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "counted",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "attested",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getCustodyEraCurrent",
     "inputs": [],
     "outputs": [
@@ -209,6 +284,35 @@
     "outputs": [
       {
         "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getIngressPacketHashes",
+    "inputs": [
+      {
+        "name": "from",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "limit",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "page",
+        "type": "bytes32[]",
+        "internalType": "bytes32[]"
+      },
+      {
+        "name": "total",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -286,6 +390,19 @@
   },
   {
     "type": "function",
+    "name": "startCustodyEraBackfill",
+    "inputs": [
+      {
+        "name": "pauseEpoch",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "tombstoneParkedBroadcast",
     "inputs": [
       {
@@ -301,6 +418,56 @@
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "event",
+    "name": "CustodyEraBackfillCompleted",
+    "inputs": [
+      {
+        "name": "attested",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "supplied",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "counted",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "CustodyEraBackfillPacketsPaged",
+    "inputs": [
+      {
+        "name": "supplied",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "counted",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "CustodyEraBackfillStarted",
+    "inputs": [],
+    "anonymous": false
   },
   {
     "type": "event",
@@ -1453,8 +1620,50 @@
   },
   {
     "type": "error",
+    "name": "CustodyEraBackfillAlreadyComplete",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CustodyEraBackfillAlreadyStarted",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CustodyEraBackfillNotStarted",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CustodyEraBackfillPacketUnknown",
+    "inputs": [
+      {
+        "name": "packetHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "CustodyEraBackfillPending",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CustodyEraBackfillStalePauseEpoch",
+    "inputs": [
+      {
+        "name": "stated",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "live",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
   },
   {
     "type": "error",
@@ -1664,6 +1873,11 @@
         "internalType": "uint32"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "ExpectedManualPause",
+    "inputs": []
   },
   {
     "type": "error",

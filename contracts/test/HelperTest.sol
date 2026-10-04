@@ -108,7 +108,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](253); // A2-iii +3 raw (attested caps, ledger reservation, day needs); 3b-ii-A2 r22 +loanSideRewardPaidRaw; #2342 +setLegacyFrozenVpfiRaw; 3b-ii-A2 +13 raw reads +5 raw writes; #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1, then -1 with the pre-list scene (Codex #2296 items 2 and 4); r26 +1 flexible caps; 3b-ii-A2 r21 +1 ledger reservation
+        selectors = new bytes4[](254); // A2-iii +3 raw (attested caps, ledger reservation, day needs); 3b-ii-A2 r22 +loanSideRewardPaidRaw; #2342 +setLegacyFrozenVpfiRaw; 3b-ii-A2 +13 raw reads +5 raw writes; #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1, then -1 with the pre-list scene (Codex #2296 items 2 and 4); r26 +1 flexible caps; 3b-ii-A2 r21 +1 ledger reservation
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -552,6 +552,7 @@ contract HelperTest {
         selectors[n++] = TestMutatorFacet.clearTransportBatchDaysRaw.selector; // 3c-1
         selectors[n++] = TestMutatorFacet.setCustodyEraBackfillCompleteRaw.selector; // PR C-1
         selectors[n++] = TestMutatorFacet.setCustodyEraCountersRaw.selector; // PR C-1
+        selectors[n++] = TestMutatorFacet.uncountPacketEraRaw.selector; // PR C-5
         // #951 v2 (Codex #959 bind-to-live) — setSaleListingCollateralRaw removed
         // with the snapshot mapping; the accept binds `>=` live collateral.
         // #687-B: the former tail entries ([83]-[87]: setBackstopAbsorbCashRaw,
@@ -2609,7 +2610,7 @@ contract HelperTest {
     /// `DeployDiamond._getRewardStagingSettleSelectors`.
     /// slice 4 PR C-1 (#1566) — the custody era registry. Mirrors `DeployDiamond._getRewardEraSelectors`.
     function getRewardEraFacetSelectors() public pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](13);
+        selectors = new bytes4[](18);
         selectors[0] = RewardEraFacet.getCustodyEraCurrent.selector;
         selectors[1] = RewardEraFacet.getCustodyEra.selector;
         selectors[2] = RewardEraFacet.getCustodyEraRowsTotal.selector;
@@ -2626,6 +2627,12 @@ contract HelperTest {
         selectors[10] = RewardEraFacet.getParkedBroadcast.selector;
         selectors[11] = RewardEraFacet.getCustodyEraParkedOpen.selector;
         selectors[12] = RewardEraFacet.tombstoneParkedBroadcast.selector;
+        // PR C-5 — the history backfill.
+        selectors[13] = RewardEraFacet.startCustodyEraBackfill.selector;
+        selectors[14] = RewardEraFacet.backfillCustodyEraPacketsPage.selector;
+        selectors[15] = RewardEraFacet.completeCustodyEraBackfill.selector;
+        selectors[16] = RewardEraFacet.getCustodyEraBackfill.selector;
+        selectors[17] = RewardEraFacet.getIngressPacketHashes.selector;
     }
 
     /// 3b-ii-B (#1566) — the per-day closure proof. Mirrors `DeployDiamond._getRewardClosureSelectors`.

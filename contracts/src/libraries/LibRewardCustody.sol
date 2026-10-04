@@ -126,6 +126,16 @@ library LibRewardCustody {
     /// @notice PR C-4 — parked broadcast `id` passed the gate on retry and was applied.
     /// @custom:event-category state-change/reward-custody
     event ParkedBroadcastApplied(uint256 indexed id);
+    /// @notice PR C-5 — the history backfill started.
+    /// @custom:event-category state-change/reward-custody
+    event CustodyEraBackfillStarted();
+    /// @notice PR C-5 — one page of history packets was assigned: `supplied` hashes, `counted` of them open.
+    /// @custom:event-category state-change/reward-custody
+    event CustodyEraBackfillPacketsPaged(uint256 supplied, uint256 counted);
+    /// @notice PR C-5 — history is assigned: the operator attested `attested` packets against `supplied` supplied
+    ///         (`counted` open); the role freeze is lifted.
+    /// @custom:event-category state-change/reward-custody
+    event CustodyEraBackfillCompleted(uint256 attested, uint256 supplied, uint256 counted);
 
     /// @notice Fresh funding was credited to the delivered ledger's received
     ///         side, and its custody attributed under the §5c deficit split.
@@ -379,7 +389,10 @@ library LibRewardCustody {
     ) internal {
         if (amount == 0) return;
         s.rewardCustodyRows[r] += amount;
-        if (!s.rewardRoleChangesFrozen) s.rewardRoleChangesFrozen = true;
+        // The freeze means "value attributed, history not yet assigned": once
+        // the backfill has run (PR C-5) the carry-forward makes a transition
+        // safe and a credit no longer re-arms it.
+        if (!s.custodyEraBackfillComplete && !s.rewardRoleChangesFrozen) s.rewardRoleChangesFrozen = true;
         emit RewardCustodyRowCredited(uint8(r), amount, origin);
     }
 
@@ -1247,6 +1260,74 @@ library LibRewardCustody {
         pb.status = 2;
         --s.custodyEraParkedOpen[pb.custodyEraAtReceipt];
         emit ParkedBroadcastApplied(id);
+    }
+
+    // ── Slice 4 PR C-5 — the history backfill ──
+
+    /// @notice The era live at time `ts`: the newest era opened at or before it (era 0 for every earlier time).
+    function custodyEraAtTime(LibVaipakam.Storage storage s, uint64 ts) internal view returns (uint64 era) {
+        era = s.custodyEraCurrent;
+        uint256 steps;
+        while (era != 0) {
+            if (s.custodyEras[era].openedAt <= ts) return era;
+            if (++steps > CUSTODY_ERA_SCAN_CAP) revert IVaipakamErrors.CustodyEraScanExceeded(ts);
+            unchecked { --era; }
+        }
+    }
+
+    function startCustodyEraBackfill(LibVaipakam.Storage storage s) internal {
+        if (s.custodyEraBackfillComplete) revert IVaipakamErrors.CustodyEraBackfillAlreadyComplete();
+        if (s.custodyEraBackfillStarted) revert IVaipakamErrors.CustodyEraBackfillAlreadyStarted();
+        s.custodyEraBackfillStarted = true;
+        emit CustodyEraBackfillStarted();
+    }
+
+    /// @notice Assign one page of history packets: each is placed in the era live
+    ///         at its receipt; one with unclassified value standing is counted
+    ///         open there, one with none is marked counted and final. A packet
+    ///         already counted (recorded since PR C-3) is left alone.
+    function backfillCustodyEraPacketsPage(LibVaipakam.Storage storage s, bytes32[] calldata hashes)
+        internal
+        returns (uint256 counted)
+    {
+        if (!s.custodyEraBackfillStarted) revert IVaipakamErrors.CustodyEraBackfillNotStarted();
+        if (s.custodyEraBackfillComplete) revert IVaipakamErrors.CustodyEraBackfillAlreadyComplete();
+        uint256 n = hashes.length;
+        for (uint256 i; i < n; ) {
+            bytes32 h = hashes[i];
+            LibVaipakam.IngressPacket storage p = s.ingressPackets[h];
+            if (p.arrivedAt == 0) revert IVaipakamErrors.CustodyEraBackfillPacketUnknown(h);
+            if (!p.eraCounted) {
+                uint64 era = custodyEraAtTime(s, p.arrivedAt);
+                p.custodyEra = era;
+                p.eraCounted = true;
+                if (p.unclassified != 0) {
+                    p.classificationFinal = false;
+                    ++s.custodyEras[era].openClassification;
+                    unchecked { ++counted; }
+                    emit IngressPacketEraCounted(h, era);
+                } else {
+                    p.classificationFinal = true;
+                }
+            }
+            unchecked { ++i; }
+        }
+        s.custodyEraBackfillPacketsSupplied += n;
+        s.custodyEraBackfillPacketsCounted += counted;
+        emit CustodyEraBackfillPacketsPaged(n, counted);
+    }
+
+    /// @notice Declare history assigned and lift the role freeze. The operator
+    ///         attests the number of history packets (from the recorded ingress
+    ///         events); it is recorded beside the number supplied — an
+    ///         acknowledgment, like the park's, not an on-chain proof.
+    function completeCustodyEraBackfill(LibVaipakam.Storage storage s, uint256 attested) internal {
+        if (!s.custodyEraBackfillStarted) revert IVaipakamErrors.CustodyEraBackfillNotStarted();
+        if (s.custodyEraBackfillComplete) revert IVaipakamErrors.CustodyEraBackfillAlreadyComplete();
+        s.custodyEraBackfillPacketsAttested = attested;
+        s.custodyEraBackfillComplete = true;
+        s.rewardRoleChangesFrozen = false;
+        emit CustodyEraBackfillCompleted(attested, s.custodyEraBackfillPacketsSupplied, s.custodyEraBackfillPacketsCounted);
     }
 
     /// @notice The operator's recorded disposition of a parked entry the gate refuses.
@@ -4892,6 +4973,7 @@ library LibRewardCustody {
             rec.remitter = remitter;
             rec.packetHash = h;
         }
+        s.ingressPacketHashes.push(h); // PR C-5: packets are enumerable from here on
         emit IngressPacketRecorded(h, sourceChainId, kind, actualReceived, remitter, remitId);
     }
 

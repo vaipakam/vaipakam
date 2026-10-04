@@ -15,6 +15,9 @@ import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol
 import {RewardClaimFacet} from "../src/facets/RewardClaimFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {RewardBroadcastV2} from "../src/interfaces/IRewardMessenger.sol";
+import {RewardIngressFacet} from "../src/facets/RewardIngressFacet.sol";
+import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet.sol";
+import {LibPausable} from "../src/libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {RewardClosureFacet} from "../src/facets/RewardClosureFacet.sol";
 import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
@@ -72,6 +75,7 @@ contract RewardCustodyEraTest is SetupTest, IVaipakamErrors {
     /// @dev Stand era 0 as liability-free: every day of its span proven closed (raw).
     function _closeEra0Days() internal { _mut().setCustodyEraCountersRaw(0, _span0(), 0); }
     function _rep() internal view returns (RewardReporterFacet) { return RewardReporterFacet(address(diamond)); }
+    function _rlens() internal view returns (RewardRemittanceLensFacet) { return RewardRemittanceLensFacet(address(diamond)); }
     function _mut() internal view returns (TestMutatorFacet) { return TestMutatorFacet(address(diamond)); }
     function _row(LibVaipakam.RewardCustodyRow r) internal view returns (uint256) { return _custody().rewardCustodyRow(r); }
     function _live() internal view returns (uint256) { return _row(LibVaipakam.RewardCustodyRow.LiveFresh); }
@@ -335,6 +339,121 @@ contract RewardCustodyEraTest is SetupTest, IVaipakamErrors {
         assertEq(paid, 3e18, "levelled as before");
         assertEq(_era().getCustodyEraCurrent(), 0, "no era opened");
         assertEq(_era().getCustodyEraRowsTotal(), 0);
+    }
+
+    // ─── PR C-5: the history backfill ───
+    address internal constant REMITTER_BF = address(0xBA5E);
+
+    function _pauseEpoch() internal view returns (uint64 epoch) {
+        (, , , epoch) = LibPausable.decodePausableSlot(vm.load(address(diamond), LibPausable.PAUSABLE_STORAGE_POSITION));
+    }
+
+    /// @dev An untyped delivery (its value lands unclassified under the packet), then
+    ///      its era count forgotten raw: the state of a packet recorded before the count.
+    function _historyPacket(uint256 amount, uint256 remitId, bytes32 id) internal returns (bytes32 h) {
+        uint256[] memory one = new uint256[](1);
+        one[0] = 1;
+        RewardRemittanceFacet(address(diamond)).setRewardRemittanceReceiver(address(this));
+        // The receiver has already moved the delivery's tokens into the Diamond
+        // when it calls the ingress; on an active custody the ingress moves them
+        // on into the holder, so the Diamond must hold them first.
+        vpfi.mint(address(this), amount);
+        vpfi.transfer(address(diamond), amount);
+        RewardIngressFacet(address(diamond)).onRewardBudgetReceived(
+            address(vpfi), amount, one, CHAIN_BASE, remitId, REMITTER_BF, 0, 0, id, false
+        );
+        h = keccak256(abi.encode(uint256(CHAIN_BASE), id));
+        _mut().uncountPacketEraRaw(h);
+    }
+
+    /// @dev The whole backfill: history packets assigned by receipt time, completion
+    ///      lifts the freeze, a credit no longer re-arms it, and a role change then
+    ///      needs no raw unfreeze.
+    function test_TheBackfill_AssignsHistory_AndLiftsTheFreeze() public {
+        activateRewardCustodyForTest(address(vpfi), 1e18);
+        bytes32 h = _historyPacket(2e18, 41, keccak256("bf-1"));
+        assertEq(_era().getCustodyEra(0).openClassification, 0, "fixture: not counted");
+        assertFalse(_rlens().getIngressPacket(h).eraCounted);
+        AdminFacet(address(diamond)).pause();
+        uint64 epoch = _pauseEpoch();
+        bytes32[] memory hs = new bytes32[](1);
+        hs[0] = h;
+        vm.expectRevert(CustodyEraBackfillNotStarted.selector);
+        _era().backfillCustodyEraPacketsPage(epoch, hs);
+        _era().startCustodyEraBackfill(epoch);
+        vm.expectRevert(CustodyEraBackfillAlreadyStarted.selector);
+        _era().startCustodyEraBackfill(epoch);
+        assertEq(_era().backfillCustodyEraPacketsPage(epoch, hs), 1, "one packet counted open");
+        LibVaipakam.IngressPacket memory p = _rlens().getIngressPacket(h);
+        assertTrue(p.eraCounted);
+        assertEq(p.custodyEra, 0, "placed in the era live at its receipt");
+        assertEq(_era().getCustodyEra(0).openClassification, 1);
+        assertEq(_era().backfillCustodyEraPacketsPage(epoch, hs), 0, "a counted packet is left alone");
+        bytes32[] memory unknown = new bytes32[](1);
+        unknown[0] = keccak256("nope");
+        vm.expectRevert(abi.encodeWithSelector(CustodyEraBackfillPacketUnknown.selector, keccak256("nope")));
+        _era().backfillCustodyEraPacketsPage(epoch, unknown);
+        vm.expectRevert(abi.encodeWithSelector(CustodyEraBackfillStalePauseEpoch.selector, epoch + 1, epoch));
+        _era().completeCustodyEraBackfill(epoch + 1, 1);
+        _era().completeCustodyEraBackfill(epoch, 1);
+        (bool started, bool complete, uint256 supplied, uint256 counted, uint256 attested) = _era().getCustodyEraBackfill();
+        assertTrue(started && complete);
+        assertEq(supplied, 2, "two pages supplied one hash each");
+        assertEq(counted, 1);
+        assertEq(attested, 1);
+        assertFalse(_mut().getRewardRoleChangesFrozenRaw(), "the freeze is lifted");
+        vm.expectRevert(CustodyEraBackfillAlreadyComplete.selector);
+        _era().completeCustodyEraBackfill(epoch, 1);
+        AdminFacet(address(diamond)).unpause();
+        fundRewardPoolForTest(address(vpfi), 1e18);
+        assertFalse(_mut().getRewardRoleChangesFrozenRaw(), "a credit no longer re-arms the freeze");
+        _rep().setBaseChainId(0); // no raw unfreeze needed any more
+        assertEq(_era().getCustodyEraCurrent(), 1, "the role change ran the carry-forward");
+    }
+
+    /// @dev A history packet is placed by its RECEIPT TIME, not by the live era at
+    ///      backfill: one received before a transition belongs to the retired era.
+    function test_TheBackfill_PlacesAPacketByItsReceiptTime() public {
+        activateRewardCustodyForTest(address(vpfi), 1e18);
+        bytes32 early = _historyPacket(2e18, 42, keccak256("bf-early"));
+        vm.warp(block.timestamp + 1 hours);
+        _detach(); // era 1 opens now
+        vm.warp(block.timestamp + 1 hours);
+        bytes32 late = _historyPacket(3e18, 43, keccak256("bf-late"));
+        AdminFacet(address(diamond)).pause();
+        uint64 epoch = _pauseEpoch();
+        _era().startCustodyEraBackfill(epoch);
+        bytes32[] memory hs = new bytes32[](2);
+        hs[0] = early;
+        hs[1] = late;
+        assertEq(_era().backfillCustodyEraPacketsPage(epoch, hs), 2);
+        assertEq(_rlens().getIngressPacket(early).custodyEra, 0, "received in era 0");
+        assertEq(_rlens().getIngressPacket(late).custodyEra, 1, "received in era 1");
+        assertEq(_era().getCustodyEra(0).openClassification, 1);
+        assertEq(_era().getCustodyEra(1).openClassification, 1);
+    }
+
+    /// @dev The backfill is an operator act under the manual pause.
+    function test_TheBackfill_RequiresThePauseAndTheAdmin() public {
+        activateRewardCustodyForTest(address(vpfi), 1e18);
+        vm.expectRevert();
+        _era().startCustodyEraBackfill(0); // not paused
+        AdminFacet(address(diamond)).pause();
+        uint64 epoch = _pauseEpoch();
+        vm.prank(makeAddr("stranger"));
+        vm.expectRevert();
+        _era().startCustodyEraBackfill(epoch);
+    }
+
+    /// @dev Packets recorded from now on are enumerable.
+    function test_PacketsRecordedNow_AreListed() public {
+        activateRewardCustodyForTest(address(vpfi), 1e18);
+        (bytes32[] memory page0, uint256 total0) = _era().getIngressPacketHashes(0, 10);
+        bytes32 h = _historyPacket(1e18, 44, keccak256("bf-list"));
+        (bytes32[] memory page, uint256 total) = _era().getIngressPacketHashes(0, 10);
+        assertEq(total, total0 + 1, "one more packet listed");
+        assertEq(page[page.length - 1], h, "the newest is last");
+        assertEq(page0.length, total0);
     }
 
     // ─── PR C-4: the parked-message lane ───

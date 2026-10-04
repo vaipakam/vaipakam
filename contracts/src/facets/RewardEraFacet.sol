@@ -5,6 +5,7 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibRewardCustody} from "../libraries/LibRewardCustody.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
+import {LibPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 
 /**
@@ -118,5 +119,72 @@ contract RewardEraFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaipak
     ///         waiting on a message it cannot route.
     function tombstoneParkedBroadcast(uint256 id, bytes32 reason) external onlyRole(LibAccessControl.ADMIN_ROLE) {
         LibRewardCustody.tombstoneParkedBroadcast(LibVaipakam.storageSlot(), id, reason);
+    }
+
+    // ── PR C-5 — the history backfill (ADMIN, under the manual pause, pause-epoch-checked) ──
+
+    /// @dev The stated pause epoch must be the live one, so a call prepared against
+    ///      one pause cannot land under a later one (the rebase's rule).
+    function _requireBackfillPause(uint64 pauseEpoch) private view {
+        LibPausable.requireManuallyPaused();
+        uint64 live = LibPausable.pauseTransitions();
+        if (pauseEpoch != live) revert CustodyEraBackfillStalePauseEpoch(pauseEpoch, live);
+    }
+
+    /// @notice Start the history backfill.
+    function startCustodyEraBackfill(uint64 pauseEpoch) external onlyRole(LibAccessControl.ADMIN_ROLE) {
+        _requireBackfillPause(pauseEpoch);
+        LibRewardCustody.startCustodyEraBackfill(LibVaipakam.storageSlot());
+    }
+
+    /// @notice Assign one page of history packets (hashes from the recorded ingress events).
+    function backfillCustodyEraPacketsPage(uint64 pauseEpoch, bytes32[] calldata hashes)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+        returns (uint256 counted)
+    {
+        _requireBackfillPause(pauseEpoch);
+        return LibRewardCustody.backfillCustodyEraPacketsPage(LibVaipakam.storageSlot(), hashes);
+    }
+
+    /// @notice Declare history assigned and lift the role freeze; `attestedPacketCount` is the operator's count of
+    ///         history packets, recorded beside the number supplied.
+    function completeCustodyEraBackfill(uint64 pauseEpoch, uint256 attestedPacketCount)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        _requireBackfillPause(pauseEpoch);
+        LibRewardCustody.completeCustodyEraBackfill(LibVaipakam.storageSlot(), attestedPacketCount);
+    }
+
+    /// @notice The backfill's record.
+    function getCustodyEraBackfill()
+        external
+        view
+        returns (bool started, bool complete, uint256 supplied, uint256 counted, uint256 attested)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        return (
+            s.custodyEraBackfillStarted,
+            s.custodyEraBackfillComplete,
+            s.custodyEraBackfillPacketsSupplied,
+            s.custodyEraBackfillPacketsCounted,
+            s.custodyEraBackfillPacketsAttested
+        );
+    }
+
+    /// @notice Packets recorded since this slice, by hash — a page of the list.
+    function getIngressPacketHashes(uint256 from, uint256 limit)
+        external
+        view
+        returns (bytes32[] memory page, uint256 total)
+    {
+        bytes32[] storage all = LibVaipakam.storageSlot().ingressPacketHashes;
+        total = all.length;
+        if (from >= total) return (new bytes32[](0), total);
+        uint256 n = total - from;
+        if (n > limit) n = limit;
+        page = new bytes32[](n);
+        for (uint256 i; i < n; ++i) page[i] = all[from + i];
     }
 }

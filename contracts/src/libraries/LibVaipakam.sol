@@ -7766,6 +7766,17 @@ library LibVaipakam {
         mapping(uint256 => ParkedBroadcast) parkedBroadcasts;
         uint256 parkedBroadcastCount;
         mapping(uint64 => uint256) custodyEraParkedOpen;
+        /// @dev PR C-5 — every packet recorded from this slice on, by hash, so
+        ///      packets are enumerable; the ones before are the backfill's
+        ///      operator-supplied list.
+        bytes32[] ingressPacketHashes;
+        /// @dev PR C-5 — the history backfill's record: started, how many packet
+        ///      hashes the operator supplied and how many were counted open, and
+        ///      the count the operator attested complete at completion.
+        bool custodyEraBackfillStarted;
+        uint256 custodyEraBackfillPacketsSupplied;
+        uint256 custodyEraBackfillPacketsCounted;
+        uint256 custodyEraBackfillPacketsAttested;
     }
 
     /// @notice 3b-ii-A2 (#2305) — one batch a staging record staged from, with
