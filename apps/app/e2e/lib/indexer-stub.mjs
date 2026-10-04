@@ -759,7 +759,16 @@ async function handleSignedOffersGet(url, json) {
       expiresAt: Number(r.order.expiresAt),
       deadline: Number(r.order.deadline),
     }));
-  return json(200, { chainId: CHAIN_ID, offers });
+  // #2398 — the worker reports `truncated` (per-side cap of 100), and the
+  // app treats an UNREPORTED flag as "may be partial", so the stub must
+  // send it like the worker does. Computed from the same per-side counts
+  // the worker caps on; a fork run's book never approaches the cap, so
+  // this is false in practice and the rows above are never clipped.
+  const SIDE_CAP = 100;
+  const asks = offers.filter((r) => Number(r.order.offerType) === 0).length;
+  const bids = offers.length - asks;
+  const truncated = asks > SIDE_CAP || bids > SIDE_CAP;
+  return json(200, { chainId: CHAIN_ID, offers, truncated });
 }
 
 async function handler(req, res) {

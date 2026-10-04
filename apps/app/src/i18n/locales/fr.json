@@ -1610,6 +1610,13 @@
       },
       "title": "Bureau des taux",
       "lede": "Les offres ouvertes pour une paire d’actifs, sur une seule page. Voyez les taux proposés par d’autres, publiez votre propre offre au taux souhaité et gérez vos offres ouvertes.",
+      "howItWorks": {
+        "title": "Comment fonctionne cette page",
+        "step1": "Choisissez une paire en haut : l’actif prêté et la garantie qui couvre le prêt. Puis choisissez la durée du prêt.",
+        "step2": "La liste montre les offres ouvertes. Elle est normalement lue directement sur la blockchain ; si cette lecture échoue, elle affiche une copie enregistrée qui peut avoir un peu de retard, et le signale. « Offres de prêt » : des personnes prêtes à prêter à ce taux annuel ; « Demandes d’emprunt » : des personnes qui veulent emprunter. Le taux médian se situe entre la meilleure de chaque côté.",
+        "step3": "Pour accepter une offre, appuyez sur « Emprunter ceci » ou « Prêter à ceci » à côté. Vous voyez exactement ce que vous payez et recevez avant de signer quoi que ce soit.",
+        "step4": "Pour créer votre propre offre, remplissez le formulaire : le montant, votre taux et la garantie. Elle attend dans la liste jusqu’à ce que quelqu’un la prenne, et vous pouvez l’annuler d’ici là. Une offre publiée avec des frais de réseau peut aussi être modifiée ; une offre publiée gratuitement par simple signature ne le peut pas : annulez-la et republiez-la. Parfois, une nouvelle offre doit rester ouverte quelques minutes avant de pouvoir être annulée."
+      },
       "marketLabel": "Paire (prêt / garantie)",
       "tenorLabel": "Durée du prêt",
       "customPair": "Autre paire…",
@@ -1631,6 +1638,7 @@
       "asksHeading": "Offres de prêt",
       "bidsHeading": "Demandes d’emprunt",
       "bookEmpty": "Aucune offre ouverte pour cette paire pour l’instant — la vôtre peut être la première.",
+      "bookEmptySignedUnknown": "Aucune offre à afficher pour cette paire pour le moment. Toutes les offres signées n’ont pas pu être vérifiées, il peut donc y en avoir.",
       "bookUnavailable": "Nous n’avons pas pu charger les offres pour le moment. Veuillez réessayer dans un instant.",
       "bookIndexedCopy": "Nous ne pouvons pas lire directement la blockchain pour le moment : ceci affiche donc une copie enregistrée des offres, qui peut avoir un peu de retard.",
       "yourOrderMark": "Votre offre à ce taux",
@@ -1655,6 +1663,10 @@
         "badge": "Signé",
         "badgeTooltip": "Une offre signée : son auteur l’a signée sans transaction, et elle devient un prêt en une seule transaction effectuée par la personne qui la prend. Les offres signées sont listées par le service du carnet d’offres, et non lues sur la blockchain, jusqu’à ce que quelqu’un les prenne.",
         "partialBadgeTooltip": "Une partie de cette offre signée a été prise. Le reste compte toujours et peut être apparié automatiquement tant que l’appariement automatique est activé, mais il ne peut plus être pris directement.",
+        "depthLoading": "Les offres signées sont encore en cours de chargement — pour l’instant, les taux affichés proviennent uniquement des offres publiées sur la blockchain, donc il peut manquer des offres signées aux meilleurs taux et au taux médian.",
+        "depthUnavailable": "Nous n’avons pas pu charger les offres signées depuis le service du carnet d’offres, donc seules les offres publiées sur la blockchain sont affichées. Il peut manquer des offres signées aux meilleurs taux et au taux médian.",
+        "depthPartial": "Toutes les offres signées ne sont peut-être pas chargées, donc les taux et montants affichés — même au meilleur taux — et les totaux cumulés peuvent en omettre certaines.",
+        "depthUnconfigured": "Les offres signées ne sont pas disponibles sur ce déploiement — son service de carnet d’offres n’est pas configuré —, donc seules les offres publiées sur la blockchain sont affichées.",
         "rangedBadgeTooltip": "Une offre signée avec une fourchette de taille. Elle compte toujours, mais seul l’appariement automatique peut la prendre, par parties, et seulement tant qu’il est activé — elle ne peut pas être prise en entier d’un coup.",
         "fill": "Remplir",
         "confirmTitle": "Remplir l'ordre signé",
@@ -1844,13 +1856,6 @@
         "daysLeft": "{{days}} j restants",
         "daysOverdue": "{{days}} j de retard",
         "partialRepayOk": " · remboursement partiel possible"
-      },
-      "howItWorks": {
-        "title": "Comment fonctionne cette page",
-        "step1": "Choisissez une paire en haut : l’actif prêté et la garantie qui couvre le prêt. Puis choisissez la durée du prêt.",
-        "step2": "La liste montre les offres ouvertes. Elle est normalement lue directement sur la blockchain ; si cette lecture échoue, elle affiche une copie enregistrée qui peut avoir un peu de retard, et le signale. « Offres de prêt » : des personnes prêtes à prêter à ce taux annuel ; « Demandes d’emprunt » : des personnes qui veulent emprunter. Le taux médian se situe entre la meilleure de chaque côté.",
-        "step3": "Pour accepter une offre, appuyez sur « Emprunter ceci » ou « Prêter à ceci » à côté. Vous voyez exactement ce que vous payez et recevez avant de signer quoi que ce soit.",
-        "step4": "Pour créer votre propre offre, remplissez le formulaire : le montant, votre taux et la garantie. Elle attend dans la liste jusqu’à ce que quelqu’un la prenne, et vous pouvez l’annuler d’ici là. Une offre publiée avec des frais de réseau peut aussi être modifiée ; une offre publiée gratuitement par simple signature ne le peut pas : annulez-la et republiez-la. Parfois, une nouvelle offre doit rester ouverte quelques minutes avant de pouvoir être annulée."
       }
     },
     "tariff": {

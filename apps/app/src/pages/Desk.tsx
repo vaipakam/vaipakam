@@ -34,6 +34,8 @@ import { useActiveChain } from '../chain/useActiveChain';
 import { MarketFreshnessNote } from '../components/MarketFreshnessNote';
 import { DeskHeader } from '../components/desk/DeskHeader';
 import { RateLadder } from '../components/desk/RateLadder';
+import { signedDepthOf } from '../data/signedDepth';
+import { indexerConfigured } from '../data/indexer';
 import { OrderTicket } from '../components/desk/OrderTicket';
 import { TapePanel } from '../components/desk/TapePanel';
 import { OpenOrdersPanel } from '../components/desk/OpenOrdersPanel';
@@ -130,6 +132,9 @@ export function Desk() {
     // same rate levels. An unavailable/loading signed book merges
     // nothing — the ladder degrades to chain-only rather than blanking;
     // the per-row "Signed" badge carries the indexer-sourced honesty.
+    // #2386 — the hook returns fresh data only (a cached signed order
+    // behind a failed refetch may have been taken or cancelled), and
+    // `signedDepth` then tells the reader signed offers are missing.
     const signedRows = (signedBook.data?.offers ?? [])
       .map((r) => signedRowToDeskRow(r, readChain.chainId, nowSec))
       .filter((r): r is DeskBookRow => r !== null);
@@ -140,6 +145,7 @@ export function Desk() {
       address,
     );
   }, [book.data, signedBook.data, days, address, readChain.chainId, nowSec]);
+  const signedDepth = signedDepthOf(signedBook, indexerConfigured());
 
   const lastFill = tape.data === undefined ? undefined : (tape.data?.[0] ?? null);
 
@@ -176,6 +182,22 @@ export function Desk() {
         ladder={ladder}
         lastFill={lastFill}
       />
+
+      {/* #2386 — one note for the whole market, above every view: the
+          header's middle rate, the offers list and the chart all draw on
+          the merged book, and on a phone either list or chart can be on
+          screen alone. */}
+      {pair !== null && signedDepth !== 'complete' ? (
+        <p className="muted" role="status" data-testid="desk-signed-depth">
+          {signedDepth === 'loading'
+            ? copy.desk.signed.depthLoading
+            : signedDepth === 'unconfigured'
+              ? copy.desk.signed.depthUnconfigured
+              : signedDepth === 'unavailable'
+                ? copy.desk.signed.depthUnavailable
+                : copy.desk.signed.depthPartial}
+        </p>
+      ) : null}
 
       <div
         className={`desk-main${mobileView === 'chart' ? ' desk-mobile-chart' : ''}`}
@@ -228,6 +250,7 @@ export function Desk() {
               loading={book.isLoading}
               unavailable={!book.isLoading && book.data === null}
               source={book.data?.source ?? null}
+              signedDepth={signedDepth}
               decimals={lendingMeta.data?.decimals}
               symbol={lendingMeta.data?.symbol}
               chainId={readChain.chainId}

@@ -3672,6 +3672,11 @@ const copySource = {
     asksHeading: 'Offers to lend',
     bidsHeading: 'Requests to borrow',
     bookEmpty: 'No open offers for this pair yet — yours can be the first.',
+    // #2386 r1/r3 — empty while the signed book is anything but complete
+    // (loading, unavailable, or possibly cut short): "no open offers"
+    // could be false, so say only what could be checked.
+    bookEmptySignedUnknown:
+      'No offers to show for this pair right now. Not every signed offer could be checked, so there may be some.',
     bookUnavailable:
       'We couldn’t load the offers right now. Please try again in a moment.',
     bookIndexedCopy:
@@ -3721,6 +3726,20 @@ const copySource = {
         'A signed offer: its maker signed it without a transaction, and it becomes a loan in one transaction by whoever takes it. Signed offers are listed by the offer-book service, not read from the blockchain, until someone takes them.',
       partialBadgeTooltip:
         'Part of this signed offer has been taken. The rest still counts and can be matched automatically while automatic matching is switched on, but it can no longer be taken directly.',
+      // #2386 — one note at the top of the market states what the page
+      // knows about the signed book (the header, list and chart all show
+      // rates drawn from it).
+      depthLoading:
+        'Still loading signed offers — for now the rates shown come only from offers posted on the blockchain, so the best rates and the middle rate may be missing some signed offers.',
+      depthUnavailable:
+        'We couldn’t load signed offers from the offer-book service, so this shows only offers posted on the blockchain. The best rates and the middle rate may be missing some signed offers.',
+      // #2398 r4 — no positive claim about what WAS included: a kept row
+      // can expire before the next refresh while the next one is unfetched.
+      depthPartial:
+        'Not every signed offer may be loaded, so the rates and amounts shown — even at the best rate — and the running totals may leave some out.',
+      // #2398 r4 — a deployment fact, not an outage.
+      depthUnconfigured:
+        'Signed offers aren’t available on this deployment — its offer-book service isn’t set up — so this shows only offers posted on the blockchain.',
       rangedBadgeTooltip:
         'A signed offer with a size range. It still counts, but only automatic matching can take it, in parts, and only while automatic matching is switched on — it cannot be taken whole in one go.',
       fill: 'Fill',
