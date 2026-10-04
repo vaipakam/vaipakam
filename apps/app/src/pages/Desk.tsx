@@ -35,7 +35,6 @@ import { MarketFreshnessNote } from '../components/MarketFreshnessNote';
 import { DeskHeader } from '../components/desk/DeskHeader';
 import { RateLadder } from '../components/desk/RateLadder';
 import { signedDepthOf } from '../data/signedDepth';
-import { freshData } from '../lib/freshData';
 import { OrderTicket } from '../components/desk/OrderTicket';
 import { TapePanel } from '../components/desk/TapePanel';
 import { OpenOrdersPanel } from '../components/desk/OpenOrdersPanel';
@@ -123,7 +122,6 @@ export function Desk() {
   // the clock advances, not only when the book refetches.
   const nowSec = useNowSec();
 
-  const freshSigned = freshData(signedBook);
   const ladder = useMemo(() => {
     if (!Array.isArray(book.data?.rows)) return null;
     // #1131 slice D — merge the gasless signed book ADDITIVELY: signed
@@ -133,10 +131,10 @@ export function Desk() {
     // same rate levels. An unavailable/loading signed book merges
     // nothing — the ladder degrades to chain-only rather than blanking;
     // the per-row "Signed" badge carries the indexer-sourced honesty.
-    // #2386 — fresh data only: a cached signed order behind a failed
-    // refetch may have been taken or cancelled, and `signedDepth` then
-    // tells the reader signed offers are missing rather than stale.
-    const signedRows = (freshSigned?.offers ?? [])
+    // #2386 — the hook returns fresh data only (a cached signed order
+    // behind a failed refetch may have been taken or cancelled), and
+    // `signedDepth` then tells the reader signed offers are missing.
+    const signedRows = (signedBook.data?.offers ?? [])
       .map((r) => signedRowToDeskRow(r, readChain.chainId, nowSec))
       .filter((r): r is DeskBookRow => r !== null);
     return buildLadder(
@@ -145,7 +143,7 @@ export function Desk() {
       nowSec,
       address,
     );
-  }, [book.data, freshSigned, days, address, readChain.chainId, nowSec]);
+  }, [book.data, signedBook.data, days, address, readChain.chainId, nowSec]);
   const signedDepth = signedDepthOf(signedBook);
 
   const lastFill = tape.data === undefined ? undefined : (tape.data?.[0] ?? null);

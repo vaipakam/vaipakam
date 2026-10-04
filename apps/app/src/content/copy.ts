@@ -3729,7 +3729,7 @@ const copySource = {
       // knows about the signed book (the header, list and chart all show
       // rates drawn from it).
       depthLoading:
-        'Still loading signed offers — for now the rates shown come only from offers posted on the blockchain.',
+        'Still loading signed offers — for now the rates shown come only from offers posted on the blockchain, so the best rates and the middle rate may be missing some signed offers.',
       depthUnavailable:
         'We couldn’t load signed offers from the offer-book service, so this shows only offers posted on the blockchain. The best rates and the middle rate may be missing some signed offers.',
       depthPartial:

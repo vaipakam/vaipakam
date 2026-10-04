@@ -1736,7 +1736,7 @@
         "badge": "Signed",
         "badgeTooltip": "A signed offer: its maker signed it without a transaction, and it becomes a loan in one transaction by whoever takes it. Signed offers are listed by the offer-book service, not read from the blockchain, until someone takes them.",
         "partialBadgeTooltip": "Part of this signed offer has been taken. The rest still counts and can be matched automatically while automatic matching is switched on, but it can no longer be taken directly.",
-        "depthLoading": "Still loading signed offers — for now the rates shown come only from offers posted on the blockchain.",
+        "depthLoading": "Still loading signed offers — for now the rates shown come only from offers posted on the blockchain, so the best rates and the middle rate may be missing some signed offers.",
         "depthUnavailable": "We couldn’t load signed offers from the offer-book service, so this shows only offers posted on the blockchain. The best rates and the middle rate may be missing some signed offers.",
         "depthPartial": "Not every signed offer may be loaded. The best-priced signed offers on each side are included, but the amounts shown — even at the best rate — and the running totals may leave some out.",
         "rangedBadgeTooltip": "A signed offer with a size range. It still counts, but only automatic matching can take it, in parts, and only while automatic matching is switched on — it cannot be taken whole in one go.",

@@ -30,6 +30,7 @@ import { erc20Abi, type PublicClient } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
 import { idleAware } from '../lib/idle';
+import { freshData } from '../lib/freshData';
 import { signalAware, tipAware } from '../chain/railHealth';
 import { AssetType } from '../lib/types';
 import {
@@ -321,7 +322,7 @@ export function useDeskSignedBook(
   signer?: string,
 ) {
   const { readChain } = useActiveChain();
-  return useQuery({
+  const q = useQuery({
     queryKey: [
       'deskSignedBook',
       readChain.chainId,
@@ -365,6 +366,12 @@ export function useDeskSignedBook(
       };
     },
   });
+  // #2398 r2 — the freshness rule lives HERE so every consumer gets it:
+  // a cached signed order behind a failed refetch may have been taken or
+  // cancelled, so it is not offered on the ladder or as an own order to
+  // cancel. (Transport failures already resolve to `null`; this covers a
+  // thrown queryFn too, structurally rather than by that convention.)
+  return { ...q, data: freshData(q) };
 }
 
 /** Executed fills for the (pair, tenor) market, newest first. */
