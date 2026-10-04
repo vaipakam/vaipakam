@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {SetupTest} from "./SetupTest.t.sol";
 
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
+import {RewardEraFacet} from "../src/facets/RewardEraFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
 import {RewardBroadcastFacet} from "../src/facets/RewardBroadcastFacet.sol";
@@ -66,6 +67,16 @@ abstract contract RewardBroadcastV3Harness is SetupTest, IVaipakamErrors {
     }
 
     // ─── Harness (the CrossChainRewardPlumbingTest shapes) ──────────────────
+
+    function _era() internal view returns (RewardEraFacet) {
+        return RewardEraFacet(address(diamond));
+    }
+
+    /// @dev PR C-4 — the id of the most recently parked broadcast (ids are dense from 1).
+    function _lastParkedId() internal view returns (uint256 id) {
+        id = 1;
+        while (_era().getParkedBroadcast(id + 1).receivedAt != 0) ++id;
+    }
 
     function _rep() internal view returns (RewardReporterFacet) {
         return RewardReporterFacet(address(diamond));
@@ -818,9 +829,13 @@ contract RewardBroadcastV3MirrorTest is RewardBroadcastV3Harness {
     /// Codex #1632 r2 P1 — a true era ROTATION permanently retires the
     /// identity-less legacy wires' FRESH applies (a retired era's delayed
     /// or re-executed kind-5/kind-2 is indistinguishable from a
-    /// legitimate one; the new era only speaks V3). Replays of
-    /// already-applied days stay idempotent, and a disarm/re-arm cycle of
-    /// the SAME era is not a rotation.
+    /// legitimate one; the new era only speaks V3). Since PR C-4 (#1566) a
+    /// retired wire's fresh apply is PARKED, not reverted: recorded in the
+    /// parked lane, counted against the live era, no day state installed,
+    /// a retry refused by name while the gate holds — so a legitimate late
+    /// packet is judged by the backfill instead of being lost in a revert.
+    /// Replays of already-applied days stay idempotent, and a disarm/re-arm
+    /// cycle of the SAME era is not a rotation.
     function testRotationRetiresLegacyWire() public {
         _configureMirror(CHAIN_ARB);
         messenger.deliverBroadcastV2(_v2Packet(CHAIN_ARB)); // day 3 applied
@@ -832,21 +847,30 @@ contract RewardBroadcastV3MirrorTest is RewardBroadcastV3Harness {
         day4.dayId = 4;
         messenger.deliverBroadcastV2(day4);
 
-        // A DIFFERENT nonzero era: rotation — legacy fresh applies retire.
+        // A DIFFERENT nonzero era: rotation — legacy fresh applies are PARKED.
         _rotateEra(address(0xE2));
+        uint64 live = _era().getCustodyEraCurrent();
+        uint256 openBefore = _era().getCustodyEraParkedOpen(live);
         RewardBroadcastV2 memory day5 = _v2Packet(CHAIN_ARB);
         day5.dayId = 5;
-        vm.expectRevert(
-            abi.encodeWithSelector(LegacyBroadcastRetired.selector, 5)
-        );
-        messenger.deliverBroadcastV2(day5);
+        messenger.deliverBroadcastV2(day5); // parked, not reverted
+        LibVaipakam.ParkedBroadcast memory p5 = _era().getParkedBroadcast(_lastParkedId());
+        assertEq(p5.kind, 5, "the kind-5 wire is parked");
+        assertEq(p5.dayId, 5);
+        assertEq(p5.status, 0, "parked, not applied");
+        assertEq(p5.custodyEraAtReceipt, live, "counted against the live era");
+        (, , bool set5) = _rep().getKnownGlobalInterestNumeraire18(5);
+        assertFalse(set5, "no day state installed for day 5");
 
-        // Kind-2 fresh writes retire too (a retired era's pair would wedge
-        // the day against the new era's V3).
-        vm.expectRevert(
-            abi.encodeWithSelector(LegacyBroadcastRetired.selector, 6)
-        );
+        // Kind-2 fresh writes park too (a retired era's pair would wedge the
+        // day against the new era's V3).
         messenger.deliverBroadcast(6, 1e18, 1e18, type(uint256).max);
+        LibVaipakam.ParkedBroadcast memory p6 = _era().getParkedBroadcast(_lastParkedId());
+        assertEq(p6.kind, 2, "the kind-2 wire is parked");
+        assertEq(p6.dayId, 6);
+        (, , bool set6) = _rep().getKnownGlobalInterestNumeraire18(6);
+        assertFalse(set6, "no day state installed for day 6");
+        assertEq(_era().getCustodyEraParkedOpen(live) - openBefore, 2, "both parked against the live era");
 
         // Replays of the pre-rotation days stay idempotent.
         messenger.deliverBroadcastV2(_v2Packet(CHAIN_ARB));
