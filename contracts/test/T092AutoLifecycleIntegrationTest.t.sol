@@ -20,6 +20,8 @@ import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
+import {RiskFacet} from "../src/facets/RiskFacet.sol";
+import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibAutoRefinanceCheck} from "../src/libraries/LibAutoRefinanceCheck.sol";
@@ -217,9 +219,19 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
     ///      Pattern copied from {RefinanceFacetTest}'s constructor —
     ///      lender opens a single-value offer, borrower accepts.
     function _buildActiveLoan() internal returns (uint256 loanId) {
+        return _buildActiveLoanWith(LibVaipakam.LiquidityStatus.Liquid);
+    }
+
+    /// @dev `_buildActiveLoan` with the collateral's liquidity chosen. The
+    ///      mock stays in force afterwards, so a refinance built on the loan
+    ///      admits its replacement under the same liquidity.
+    function _buildActiveLoanWith(LibVaipakam.LiquidityStatus collateralLiquidity)
+        internal
+        returns (uint256 loanId)
+    {
         mockOracleLiquidity(mockERC20, LibVaipakam.LiquidityStatus.Liquid);
         mockOraclePrice(mockERC20, 1e8, 8);
-        mockOracleLiquidity(mockCollateralERC20, LibVaipakam.LiquidityStatus.Liquid);
+        mockOracleLiquidity(mockCollateralERC20, collateralLiquidity);
         mockOraclePrice(mockCollateralERC20, 1e8, 8);
 
         address lenderVault =
@@ -1233,7 +1245,22 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
             uint256 newLenderPk
         )
     {
-        oldLoanId = _buildActiveLoan();
+        return _taggedRefinanceRequestWith(lenderLabel, LibVaipakam.LiquidityStatus.Liquid);
+    }
+
+    function _taggedRefinanceRequestWith(
+        string memory lenderLabel,
+        LibVaipakam.LiquidityStatus collateralLiquidity
+    )
+        internal
+        returns (
+            uint256 oldLoanId,
+            uint256 taggedOfferId,
+            address newLender,
+            uint256 newLenderPk
+        )
+    {
+        oldLoanId = _buildActiveLoanWith(collateralLiquidity);
         vm.prank(borrower);
         _f().setAutoRefinanceCaps(
             oldLoanId, true, 600, uint64(block.timestamp + 365 days)
@@ -1275,6 +1302,72 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
             uint8(LibVaipakam.LoanStatus.Active),
             "replacement loan open"
         );
+    }
+
+    /// @notice #2380 — a loan backed by ILLIQUID collateral refinances when
+    ///         both parties consented to the illiquid terms. Acceptance admits
+    ///         the replacement under that consent, the same as any new loan:
+    ///         an illiquid leg is valued at zero, so there is no LTV or health
+    ///         factor to compute. The post-rollover gate used to ask for them
+    ///         anyway and revert `IlliquidLoanNoRiskMath` after the payoff.
+    ///         Owner decision 2026-10-04: illiquid refinance is allowed when
+    ///         the new party accepts the illiquid terms.
+    function test_2380_consentedIlliquidCollateral_refinanceCompletes() public {
+        (
+            uint256 oldLoanId,
+            uint256 taggedOfferId,
+            address newLender,
+            uint256 newLenderPk
+        ) = _taggedRefinanceRequestWith("illiquidRefiLender", LibVaipakam.LiquidityStatus.Illiquid);
+        LibVaipakam.Loan memory oldLoan = LoanFacet(address(diamond)).getLoanDetails(oldLoanId);
+        assertEq(
+            uint8(oldLoan.collateralLiquidity),
+            uint8(LibVaipakam.LiquidityStatus.Illiquid),
+            "the loan being refinanced is backed by illiquid collateral"
+        );
+        uint256 lockedBefore = MetricsFacet(address(diamond)).getEncumbered(borrower, mockCollateralERC20, 0);
+
+        // SetupTest mocks the LTV and health-factor reads to pass for every
+        // loan. For an illiquid loan the real RiskFacet refuses both with
+        // `IlliquidLoanNoRiskMath`, and that refusal IS the #2380 defect, so
+        // restore it here: a gate that still asks for risk math on this
+        // replacement must revert, as it did on the live Diamond.
+        vm.mockCallRevert(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateLTV.selector),
+            abi.encodeWithSelector(IVaipakamErrors.IlliquidLoanNoRiskMath.selector)
+        );
+        vm.mockCallRevert(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector),
+            abi.encodeWithSelector(IVaipakamErrors.IlliquidLoanNoRiskMath.selector)
+        );
+
+        uint256 newLoanId = _signAndAcceptOffer(newLender, newLenderPk, taggedOfferId);
+
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(oldLoanId).status),
+            uint8(LibVaipakam.LoanStatus.Repaid),
+            "old loan closed by the refinance"
+        );
+        LibVaipakam.Loan memory replacement = LoanFacet(address(diamond)).getLoanDetails(newLoanId);
+        assertEq(uint8(replacement.status), uint8(LibVaipakam.LoanStatus.Active), "replacement loan open");
+        assertEq(
+            uint8(replacement.collateralLiquidity),
+            uint8(LibVaipakam.LiquidityStatus.Illiquid),
+            "replacement admitted on illiquid collateral"
+        );
+        assertTrue(replacement.riskAndTermsConsentFromBoth, "replacement carries both parties' consent");
+        assertEq(replacement.borrower, borrower, "same borrower");
+        assertEq(replacement.lender, newLender, "the accepting lender funds it");
+        assertEq(replacement.collateralAmount, oldLoan.collateralAmount, "collateral carried over");
+        assertEq(
+            MetricsFacet(address(diamond)).getEncumbered(borrower, mockCollateralERC20, 0),
+            lockedBefore,
+            "collateral stays locked once, for the replacement"
+        );
+        (, uint256 owedToOldLender, ) = ClaimFacet(address(diamond)).getClaimableAmount(oldLoanId, true);
+        assertGe(owedToOldLender, oldLoan.principal, "the exiting lender is paid out at least the principal");
     }
 
     function test_2349_lenderAccept_switchMovesNoFunds() public {
