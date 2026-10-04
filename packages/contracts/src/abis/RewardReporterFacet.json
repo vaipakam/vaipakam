@@ -530,6 +530,144 @@
   },
   {
     "type": "function",
+    "name": "retryParkedBroadcastV1",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "globalLenderNumeraire18",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "globalBorrowerNumeraire18",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "capThreshold18",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "scheduleFloorHalf",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "recycledHalf",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "armedFromDay",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "retryParkedBroadcastV2",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "b",
+        "type": "tuple",
+        "internalType": "struct RewardBroadcastV2",
+        "components": [
+          {
+            "name": "dayId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "globalLenderNumeraire18",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "globalBorrowerNumeraire18",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "capMode",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "capPayloadLender",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "capPayloadBorrower",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "armedFromDay",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "freshLenderHalf",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "freshBorrowerHalf",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "recycledLenderHalfEquiv",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "recycledBorrowerHalfEquiv",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "recycleConsume",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "keeperAllocate",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "destChainId",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "seedArmedFreshPaid",
     "inputs": [
       {
@@ -633,6 +771,43 @@
         "type": "address",
         "indexed": false,
         "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "BroadcastParked",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "kind",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      },
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "era",
+        "type": "uint64",
+        "indexed": true,
+        "internalType": "uint64"
+      },
+      {
+        "name": "quarantineOnly",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
       }
     ],
     "anonymous": false
@@ -899,6 +1074,19 @@
         "name": "amount",
         "type": "uint256",
         "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ParkedBroadcastApplied",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "uint256",
+        "indexed": true,
         "internalType": "uint256"
       }
     ],
@@ -1961,6 +2149,22 @@
   },
   {
     "type": "error",
+    "name": "CustodyEraParkedOpen",
+    "inputs": [
+      {
+        "name": "era",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "count",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "CustodyEraRoomShort",
     "inputs": [
       {
@@ -2920,6 +3124,66 @@
       },
       {
         "name": "max",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ParkedBroadcastDigestMismatch",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ParkedBroadcastNotParked",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "status",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ParkedBroadcastQuarantineOnly",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ParkedBroadcastStillUnroutable",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ParkedBroadcastUnknown",
+    "inputs": [
+      {
+        "name": "id",
         "type": "uint256",
         "internalType": "uint256"
       }

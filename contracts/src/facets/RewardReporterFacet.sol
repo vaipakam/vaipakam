@@ -489,9 +489,39 @@ contract RewardReporterFacet is
         // kind-2 write after an era rotation could install a retired era's
         // consensus pair, which would then wedge the day against the new
         // era's V3 (mixed-generation comparison). Replays above stay
-        // idempotent.
-        if (s.rewardEraRotated) revert LegacyBroadcastRetired(dayId);
+        // idempotent. PR C-4 — refused is PARKED, not reverted: the message is
+        // accepted by the transport and recorded with a disposition to come.
+        if (s.rewardEraRotated) {
+            LibRewardCustody.parkBroadcast(
+                s,
+                2,
+                dayId,
+                keccak256(
+                    abi.encode(
+                        uint8(2), dayId, globalLenderNumeraire18, globalBorrowerNumeraire18, capThreshold18,
+                        scheduleFloorHalf, recycledHalf, armedFromDay
+                    )
+                )
+            );
+            return;
+        }
+        _applyLegacyBroadcastV1(
+            s, dayId, globalLenderNumeraire18, globalBorrowerNumeraire18, capThreshold18, scheduleFloorHalf,
+            recycledHalf, armedFromDay
+        );
+    }
 
+    /// @dev PR C-4 — the kind-2 apply body, shared by the ingress and the parked retry.
+    function _applyLegacyBroadcastV1(
+        LibVaipakam.Storage storage s,
+        uint256 dayId,
+        uint256 globalLenderNumeraire18,
+        uint256 globalBorrowerNumeraire18,
+        uint256 capThreshold18,
+        uint256 scheduleFloorHalf,
+        uint256 recycledHalf,
+        uint256 armedFromDay
+    ) private {
         s.knownGlobalLenderInterestNumeraire18[dayId] = globalLenderNumeraire18;
         s.knownGlobalBorrowerInterestNumeraire18[dayId] = globalBorrowerNumeraire18;
         // #1008 (S13) — store the CANONICAL threshold from Base; mirrors never
@@ -628,7 +658,49 @@ contract RewardReporterFacet is
         external
     {
         LibVaipakam.Storage storage s = _broadcastIngressGates(b.destChainId);
-        _applyBroadcastV2Core(s, b, /* legacyWire */ true);
+        _applyBroadcastV2Core(s, b, /* legacyWire */ true, 0);
+    }
+
+    /// @notice PR C-4 — retry a PARKED kind-2 broadcast: re-supply it, prove it is
+    ///         the one parked, and run the same apply through the same gate.
+    ///         Permissionless: the digest is the authority. It stays parked while
+    ///         the gate refuses; a quarantine-only entry is refused by name.
+    function retryParkedBroadcastV1(
+        uint256 id,
+        uint256 dayId,
+        uint256 globalLenderNumeraire18,
+        uint256 globalBorrowerNumeraire18,
+        uint256 capThreshold18,
+        uint256 scheduleFloorHalf,
+        uint256 recycledHalf,
+        uint256 armedFromDay
+    ) external nonReentrant {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibRewardCustody.requireParkedRetryable(
+            s,
+            id,
+            keccak256(
+                abi.encode(
+                    uint8(2), dayId, globalLenderNumeraire18, globalBorrowerNumeraire18, capThreshold18,
+                    scheduleFloorHalf, recycledHalf, armedFromDay
+                )
+            )
+        );
+        if (s.rewardEraRotated || s.knownGlobalSet[dayId]) revert ParkedBroadcastStillUnroutable(id);
+        _applyLegacyBroadcastV1(
+            s, dayId, globalLenderNumeraire18, globalBorrowerNumeraire18, capThreshold18, scheduleFloorHalf,
+            recycledHalf, armedFromDay
+        );
+        LibRewardCustody.parkedBroadcastApplied(s, id);
+    }
+
+    /// @notice PR C-4 — retry a PARKED kind-5 broadcast; see {retryParkedBroadcastV1}.
+    function retryParkedBroadcastV2(uint256 id, RewardBroadcastV2 calldata b) external nonReentrant {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibRewardCustody.requireParkedRetryable(s, id, keccak256(abi.encode(uint8(5), b)));
+        if (b.destChainId != block.chainid) revert BroadcastDestinationMismatch(b.destChainId);
+        _applyBroadcastV2Core(s, b, /* legacyWire */ true, id);
+        LibRewardCustody.parkedBroadcastApplied(s, id);
     }
 
     /// @dev #1434 P2-w1 — the trust + destination-binding gates shared by
@@ -659,7 +731,8 @@ contract RewardReporterFacet is
     function _applyBroadcastV2Core(
         LibVaipakam.Storage storage s,
         RewardBroadcastV2 memory b,
-        bool legacyWire
+        bool legacyWire,
+        uint256 parkedId
     ) private {
         uint32 selfId = uint32(block.chainid);
         if (s.broadcastV2Applied[b.dayId]) {
@@ -749,7 +822,11 @@ contract RewardReporterFacet is
         // it reaches this core only having authenticated its era against
         // the configured ground truth.
         if (legacyWire && s.rewardEraRotated) {
-            revert LegacyBroadcastRetired(b.dayId);
+            // PR C-4 — refused is PARKED on first receipt; a retry that still
+            // meets the gate stays parked, by name.
+            if (parkedId != 0) revert ParkedBroadcastStillUnroutable(parkedId);
+            LibRewardCustody.parkBroadcast(s, 5, b.dayId, keccak256(abi.encode(uint8(5), b)));
+            return;
         }
 
         // Mixed-generation same-day: a legacy kind-2 delivery may already
@@ -1053,7 +1130,7 @@ contract RewardReporterFacet is
             return;
         }
 
-        _applyBroadcastV2Core(s, b.v2, /* legacyWire */ false);
+        _applyBroadcastV2Core(s, b.v2, /* legacyWire */ false, 0);
         // #1636 r2 — install (or verify) the day-level funded pool stamp
         // from the V3 packet. The V2 core deliberately does not write it
         // (the V2 wire never carried the day-level figure — only per-chain

@@ -117,6 +117,15 @@ library LibRewardCustody {
     ///         era-less wire), was held unclassified under its packet: no epoch, no ledger credit, no attestation.
     /// @custom:event-category state-change/reward-custody
     event IngressPacketEraQuarantined(bytes32 indexed packetHash, uint64 intended, uint64 live);
+    /// @notice PR C-4 — an era-less broadcast the rotation gate refused was PARKED under `id`, counted against era `era`.
+    /// @custom:event-category state-change/reward-custody
+    event BroadcastParked(uint256 indexed id, uint8 kind, uint256 indexed dayId, uint64 indexed era, bool quarantineOnly);
+    /// @notice PR C-4 — parked broadcast `id` was tombstoned by the operator with `reason`.
+    /// @custom:event-category state-change/reward-custody
+    event ParkedBroadcastTombstoned(uint256 indexed id, bytes32 reason);
+    /// @notice PR C-4 — parked broadcast `id` passed the gate on retry and was applied.
+    /// @custom:event-category state-change/reward-custody
+    event ParkedBroadcastApplied(uint256 indexed id);
 
     /// @notice Fresh funding was credited to the delivered ledger's received
     ///         side, and its custody attributed under the §5c deficit split.
@@ -1053,6 +1062,12 @@ library LibRewardCustody {
         if (e.daysClosed < span || e.openClassification != 0) {
             revert IVaipakamErrors.CustodyEraNotTerminal(era, e.daysClosed, span, e.openClassification);
         }
+        // PR C-4 — a parked era-less broadcast received in this era is neither a
+        // liability nor a packet, and a retry after release could install day
+        // state into a finalized era: the lane must be drained or tombstoned.
+        if (s.custodyEraParkedOpen[era] != 0) {
+            revert IVaipakamErrors.CustodyEraParkedOpen(era, s.custodyEraParkedOpen[era]);
+        }
         e.terminal = true;
         amount = e.holderRow;
         if (amount != 0) {
@@ -1192,6 +1207,56 @@ library LibRewardCustody {
         LibVaipakam.IngressPacket storage p = s.ingressPackets[h];
         p.eraQuarantined = true;
         emit IngressPacketEraQuarantined(h, intended, s.custodyEraCurrent);
+    }
+
+    // ── Slice 4 PR C-4 — the parked-message lane ──
+
+    /// @notice Park an era-less broadcast the rotation gate refused: a record
+    ///         with a disposition in place of a transport-side revert, counted
+    ///         against the custody era live at receipt.
+    function parkBroadcast(LibVaipakam.Storage storage s, uint8 kind, uint256 dayId, bytes32 digest)
+        internal
+        returns (uint256 id)
+    {
+        id = ++s.parkedBroadcastCount;
+        uint64 era = s.custodyEraCurrent;
+        LibVaipakam.ParkedBroadcast storage pb = s.parkedBroadcasts[id];
+        pb.kind = kind;
+        pb.receivedAt = uint64(block.timestamp);
+        pb.custodyEraAtReceipt = era;
+        pb.dayId = dayId;
+        pb.digest = digest;
+        pb.quarantineOnly = era != 0;
+        ++s.custodyEraParkedOpen[era];
+        emit BroadcastParked(id, kind, dayId, era, pb.quarantineOnly);
+    }
+
+    /// @notice The retry guard: the entry exists, is parked, is the broadcast
+    ///         re-supplied, and is not quarantine-only.
+    function requireParkedRetryable(LibVaipakam.Storage storage s, uint256 id, bytes32 digest) internal view {
+        LibVaipakam.ParkedBroadcast storage pb = s.parkedBroadcasts[id];
+        if (pb.receivedAt == 0) revert IVaipakamErrors.ParkedBroadcastUnknown(id);
+        if (pb.status != 0) revert IVaipakamErrors.ParkedBroadcastNotParked(id, pb.status);
+        if (pb.digest != digest) revert IVaipakamErrors.ParkedBroadcastDigestMismatch(id);
+        if (pb.quarantineOnly) revert IVaipakamErrors.ParkedBroadcastQuarantineOnly(id);
+    }
+
+    /// @notice A retry passed the gate: the entry is applied and leaves its era's open count.
+    function parkedBroadcastApplied(LibVaipakam.Storage storage s, uint256 id) internal {
+        LibVaipakam.ParkedBroadcast storage pb = s.parkedBroadcasts[id];
+        pb.status = 2;
+        --s.custodyEraParkedOpen[pb.custodyEraAtReceipt];
+        emit ParkedBroadcastApplied(id);
+    }
+
+    /// @notice The operator's recorded disposition of a parked entry the gate refuses.
+    function tombstoneParkedBroadcast(LibVaipakam.Storage storage s, uint256 id, bytes32 reason) internal {
+        LibVaipakam.ParkedBroadcast storage pb = s.parkedBroadcasts[id];
+        if (pb.receivedAt == 0) revert IVaipakamErrors.ParkedBroadcastUnknown(id);
+        if (pb.status != 0) revert IVaipakamErrors.ParkedBroadcastNotParked(id, pb.status);
+        pb.status = 1;
+        --s.custodyEraParkedOpen[pb.custodyEraAtReceipt];
+        emit ParkedBroadcastTombstoned(id, reason);
     }
 
     /// @notice PR C-3 — whether every listed day is live in the current era. The

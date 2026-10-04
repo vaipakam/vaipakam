@@ -7761,6 +7761,11 @@ library LibVaipakam {
         /// @dev PR C-2 — Σ fresh absorbed into the recycle bucket that a RETIRED
         ///      era's row funded (counted apart from live-funded absorption).
         uint256 recycleEraFundedCumulative;
+        /// @dev PR C-4 — the parked-message lane, by local id (1-based), and
+        ///      how many parked entries each custody era still carries open.
+        mapping(uint256 => ParkedBroadcast) parkedBroadcasts;
+        uint256 parkedBroadcastCount;
+        mapping(uint64 => uint256) custodyEraParkedOpen;
     }
 
     /// @notice 3b-ii-A2 (#2305) — one batch a staging record staged from, with
@@ -7872,6 +7877,23 @@ library LibVaipakam {
         ///      records' era legs): the era's room nets it; a resolve consumes it
         ///      and an unwind restores it.
         uint256 stagedFresh;
+    }
+
+    /// @notice Slice 4 PR C-4 (#1566) — one PARKED legacy broadcast: an era-less
+    ///         kind-2 or kind-5 wire the deployment-rotation gate refused, kept as
+    ///         a record with a disposition instead of a transport-side revert.
+    /// @dev    `status`: 0 parked, 1 tombstoned (operator-recorded disposition),
+    ///         2 applied (a retry passed the gate). `quarantineOnly`: first
+    ///         received after era 0 — exits by tombstone alone (design §5c: the
+    ///         next era's opening never certifies a later arrival).
+    struct ParkedBroadcast {
+        uint8 kind;
+        uint8 status;
+        bool quarantineOnly;
+        uint64 receivedAt;
+        uint64 custodyEraAtReceipt;
+        uint256 dayId;
+        bytes32 digest;
     }
 
     struct StagingDomain {

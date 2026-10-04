@@ -1866,4 +1866,16 @@ interface IVaipakamErrors {
     /// @notice The delivery was dispatched for era `intended`, ahead of this chain's live era `live`: the transport
     ///         retries it after the local transition (PR C-3).
     error CustodyEraAhead(uint64 intended, uint64 live);
+    /// @notice No parked broadcast under `id` (PR C-4).
+    error ParkedBroadcastUnknown(uint256 id);
+    /// @notice Parked broadcast `id` is not in the parked state (`status`: 1 tombstoned, 2 applied).
+    error ParkedBroadcastNotParked(uint256 id, uint8 status);
+    /// @notice The re-supplied broadcast is not the one parked under `id`.
+    error ParkedBroadcastDigestMismatch(uint256 id);
+    /// @notice The gate still refuses parked broadcast `id`: it stays parked.
+    error ParkedBroadcastStillUnroutable(uint256 id);
+    /// @notice Parked broadcast `id` was first received after the next era opened: it exits by tombstone only.
+    error ParkedBroadcastQuarantineOnly(uint256 id);
+    /// @notice Era `era` still carries `count` parked broadcasts: it is not terminal.
+    error CustodyEraParkedOpen(uint64 era, uint256 count);
 }

@@ -2234,7 +2234,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](23);
+        selectors = new bytes4[](25);
         selectors[0] = RewardReporterFacet.closeDay.selector;
         selectors[1] = RewardReporterFacet.onRewardBroadcastReceived.selector;
         // #1222 M3 B2-b — per-destination V2 broadcast ingress.
@@ -2267,6 +2267,9 @@ contract HelperTest {
         // #2277 — the permissionless frontier catch-up and its view.
         selectors[21] = RewardReporterFacet.advanceInterestFrontiers.selector;
         selectors[22] = RewardReporterFacet.getInterestFrontiers.selector;
+        // PR C-4 — the parked-message lane's retries.
+        selectors[23] = RewardReporterFacet.retryParkedBroadcastV1.selector;
+        selectors[24] = RewardReporterFacet.retryParkedBroadcastV2.selector;
         return selectors;
     }
 
@@ -2606,7 +2609,7 @@ contract HelperTest {
     /// `DeployDiamond._getRewardStagingSettleSelectors`.
     /// slice 4 PR C-1 (#1566) — the custody era registry. Mirrors `DeployDiamond._getRewardEraSelectors`.
     function getRewardEraFacetSelectors() public pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](10);
+        selectors = new bytes4[](13);
         selectors[0] = RewardEraFacet.getCustodyEraCurrent.selector;
         selectors[1] = RewardEraFacet.getCustodyEra.selector;
         selectors[2] = RewardEraFacet.getCustodyEraRowsTotal.selector;
@@ -2619,6 +2622,10 @@ contract HelperTest {
         // PR C-3 — the open-classification count.
         selectors[8] = RewardEraFacet.eraCountOpen.selector;
         selectors[9] = RewardEraFacet.eraNoteClassificationExit.selector;
+        // PR C-4 — the parked-message lane.
+        selectors[10] = RewardEraFacet.getParkedBroadcast.selector;
+        selectors[11] = RewardEraFacet.getCustodyEraParkedOpen.selector;
+        selectors[12] = RewardEraFacet.tombstoneParkedBroadcast.selector;
     }
 
     /// 3b-ii-B (#1566) — the per-day closure proof. Mirrors `DeployDiamond._getRewardClosureSelectors`.

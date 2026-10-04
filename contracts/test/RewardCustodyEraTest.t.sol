@@ -14,6 +14,7 @@ import {RewardReconciliationFacet} from "../src/facets/RewardReconciliationFacet
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 import {RewardClaimFacet} from "../src/facets/RewardClaimFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
+import {RewardBroadcastV2} from "../src/interfaces/IRewardMessenger.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {RewardClosureFacet} from "../src/facets/RewardClosureFacet.sol";
 import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
@@ -334,6 +335,96 @@ contract RewardCustodyEraTest is SetupTest, IVaipakamErrors {
         assertEq(paid, 3e18, "levelled as before");
         assertEq(_era().getCustodyEraCurrent(), 0, "no era opened");
         assertEq(_era().getCustodyEraRowsTotal(), 0);
+    }
+
+    // ─── PR C-4: the parked-message lane ───
+
+    /// @dev Rotate the canonical deployment this mirror reports to (allowed only
+    ///      while Detached), which retires every era-less wire; then reattach.
+    ///      Also makes this contract the reward messenger so it can deliver.
+    function _rotateDeployment() internal {
+        _rep().setBaseRewardDeployment(address(0xA11CE));
+        _detach();
+        _rep().setBaseRewardDeployment(address(0xB0B));
+        _reattach();
+        _rep().setRewardMessenger(address(this));
+    }
+
+    function _parkKind2(uint256 day) internal returns (uint256 id) {
+        uint256 before = _era().getCustodyEraParkedOpen(_era().getCustodyEraCurrent());
+        _rep().onRewardBroadcastReceived(day, 10e18, 5e18, type(uint256).max, 1e18, 0, 0);
+        id = 1;
+        while (_era().getParkedBroadcast(id + 1).receivedAt != 0) ++id;
+        assertEq(_era().getCustodyEraParkedOpen(_era().getCustodyEraCurrent()) - before, 1, "fixture: parked once");
+    }
+
+    /// @dev A legacy kind-2 broadcast after a rotation is PARKED — recorded, counted
+    ///      against the live era, no day state installed — not reverted; a retry is
+    ///      refused by name while the gate holds; the operator tombstones it.
+    function test_ALegacyBroadcastAfterRotation_IsParked_RetryRefused_ThenTombstoned() public {
+        activateRewardCustodyForTest(address(vpfi), 1e18);
+        _rotateDeployment();
+        uint64 live = _era().getCustodyEraCurrent();
+        uint256 id = _parkKind2(3);
+        LibVaipakam.ParkedBroadcast memory pb = _era().getParkedBroadcast(id);
+        assertEq(pb.kind, 2);
+        assertEq(pb.status, 0, "parked");
+        assertEq(pb.dayId, 3);
+        assertEq(pb.custodyEraAtReceipt, live, "counted against the live era");
+        assertTrue(pb.quarantineOnly, "received after era 0: tombstone-only");
+        assertGt(pb.receivedAt, 0);
+        (, , bool isSet) = _rep().getKnownGlobalInterestNumeraire18(3);
+        assertFalse(isSet, "no day state was installed");
+
+        vm.expectRevert(abi.encodeWithSelector(ParkedBroadcastQuarantineOnly.selector, id));
+        _rep().retryParkedBroadcastV1(id, 3, 10e18, 5e18, type(uint256).max, 1e18, 0, 0);
+        vm.expectRevert(abi.encodeWithSelector(ParkedBroadcastDigestMismatch.selector, id));
+        _rep().retryParkedBroadcastV1(id, 3, 11e18, 5e18, type(uint256).max, 1e18, 0, 0);
+
+        _era().tombstoneParkedBroadcast(id, bytes32("retired-era-broadcast"));
+        assertEq(_era().getParkedBroadcast(id).status, 1, "tombstoned");
+        assertEq(_era().getCustodyEraParkedOpen(live), 0, "the era's open count fell");
+        vm.expectRevert(abi.encodeWithSelector(ParkedBroadcastNotParked.selector, id, uint8(1)));
+        _era().tombstoneParkedBroadcast(id, bytes32("again"));
+        vm.expectRevert(abi.encodeWithSelector(ParkedBroadcastUnknown.selector, id + 1));
+        _era().tombstoneParkedBroadcast(id + 1, bytes32("none"));
+    }
+
+    /// @dev An era is not terminal while a broadcast parked in it stands; the
+    ///      tombstone drains the lane and the era finalizes.
+    function test_Finalize_RefusesWhileAParkedBroadcastStands() public {
+        activateRewardCustodyForTest(address(vpfi), 1e18);
+        _rotateDeployment();
+        uint64 era = _era().getCustodyEraCurrent();
+        uint256 id = _parkKind2(4);
+        _detach(); // the era with the parked entry is retired
+        _mut().setCustodyEraBackfillCompleteRaw(true);
+        vm.expectRevert(abi.encodeWithSelector(CustodyEraParkedOpen.selector, era, uint256(1)));
+        _era().finalizeCustodyEra(era);
+        _era().tombstoneParkedBroadcast(id, bytes32("drained"));
+        (uint256 released, ) = _era().finalizeCustodyEra(era);
+        assertEq(released, 0, "that era carried no custody; it finalizes clean");
+        assertTrue(_era().getCustodyEra(era).terminal);
+    }
+
+    /// @dev The kind-5 wire parks the same way, with its own digest.
+    function test_ALegacyV2BroadcastAfterRotation_IsParked() public {
+        activateRewardCustodyForTest(address(vpfi), 1e18);
+        _rotateDeployment();
+        RewardBroadcastV2 memory b;
+        b.dayId = 5;
+        b.globalLenderNumeraire18 = 10e18;
+        b.globalBorrowerNumeraire18 = 5e18;
+        b.destChainId = block.chainid;
+        uint256 before = _era().getParkedBroadcast(1).receivedAt == 0 ? 0 : 1;
+        _rep().onRewardBroadcastV2Received(b);
+        uint256 id = before + 1;
+        LibVaipakam.ParkedBroadcast memory pb = _era().getParkedBroadcast(id);
+        assertEq(pb.kind, 5);
+        assertEq(pb.dayId, 5);
+        assertEq(pb.digest, keccak256(abi.encode(uint8(5), b)), "the broadcast's digest");
+        vm.expectRevert(abi.encodeWithSelector(ParkedBroadcastQuarantineOnly.selector, id));
+        _rep().retryParkedBroadcastV2(id, b);
     }
 
     // ─── PR C-2: the era term of a day's fresh ───

@@ -2560,7 +2560,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getRewardReporterSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](23);
+        s = new bytes4[](25);
         s[0] = RewardReporterFacet.closeDay.selector;
         s[1] = RewardReporterFacet.onRewardBroadcastReceived.selector;
         // #1222 M3 B2-b — per-destination V2 broadcast ingress.
@@ -2594,6 +2594,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // #2277 — the permissionless frontier catch-up and its view.
         s[21] = RewardReporterFacet.advanceInterestFrontiers.selector;
         s[22] = RewardReporterFacet.getInterestFrontiers.selector;
+        // PR C-4 — the parked-message lane's retries.
+        s[23] = RewardReporterFacet.retryParkedBroadcastV1.selector;
+        s[24] = RewardReporterFacet.retryParkedBroadcastV2.selector;
     }
 
     /// #1222 M3 B2-c — mirror→Base per-loan headroom commitment report.
@@ -3184,7 +3187,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     /// @dev 3b-ii-A2 (#2305) — the staging record's settlement half.
     /// @dev slice 4 PR C-1 (#1566) — the custody era registry.
     function _getRewardEraSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](10);
+        s = new bytes4[](13);
         s[0] = RewardEraFacet.getCustodyEraCurrent.selector;
         s[1] = RewardEraFacet.getCustodyEra.selector;
         s[2] = RewardEraFacet.getCustodyEraRowsTotal.selector;
@@ -3197,6 +3200,10 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // PR C-3 — the open-classification count.
         s[8] = RewardEraFacet.eraCountOpen.selector;
         s[9] = RewardEraFacet.eraNoteClassificationExit.selector;
+        // PR C-4 — the parked-message lane.
+        s[10] = RewardEraFacet.getParkedBroadcast.selector;
+        s[11] = RewardEraFacet.getCustodyEraParkedOpen.selector;
+        s[12] = RewardEraFacet.tombstoneParkedBroadcast.selector;
     }
 
     /// @dev 3b-ii-B (#1566) — the per-day closure proof.
