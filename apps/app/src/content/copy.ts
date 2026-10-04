@@ -1661,6 +1661,10 @@ const copySource = {
       'A refinance request is live for this loan. A partial repayment would change the amount and make that request permanently unacceptable — cancel the refinance request first.',
     precloseBlockedByPending:
       'A refinance request is live for this loan. Closing early now would strand it — cancel the refinance request first.',
+    // #2406 r1 — the live check just before a borrower action that would
+    // change or settle the loan found an open request.
+    liveBlocksSettlement:
+      'A refinance request is open on this loan. This would change or settle the loan and leave the request impossible to fill, so nothing was sent — cancel the refinance request first.',
     // #2391 — requests are found on chain from the borrower's own offers;
     // when that check could not answer, the surfaces a request would be
     // stranded by hold back rather than guess "none".

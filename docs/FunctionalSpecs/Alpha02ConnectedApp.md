@@ -1429,10 +1429,10 @@ is the borrower's own money.
   the app looks for it on chain among the current borrower-position holder's
   own offers, the only ones the protocol will settle; the pre-check repeats that
   search just before the wallet opens. When the search cannot answer (it failed,
-  or the holder has more offers than one search covers), the surfaces a request
-  would be stranded by — taking collateral back, partial repayment and early
-  close-out — hold back and say they could not check, rather than assume there
-  is none.
+  or the holder has posted more offers since the loan began than one search
+  covers), the surfaces a request would be stranded by — taking collateral back,
+  partial repayment, early close-out, obligation handover and offset — hold back
+  and say they could not check, rather than assume there is none.
 - An open confirmation does not survive a network switch or a change of
   connected account: it closes, and the typed amount is cleared, so a review
   opened on one network or under one wallet can never send on another.
@@ -3098,15 +3098,20 @@ Its intended behaviour, as the test oracle for this surface:
   refused rather than quietly settling the loan. Because a partial
   changes the outstanding amount, it is held while another arrangement
   is pinned to that amount, and the reason is stated rather than the
-  option vanishing. Two of those holds are answered by the chain and so
-  hold wherever the borrower is signed in: a live offset, and a sale a
-  buyer has already accepted. The third — a standing refinance request
-  — is currently remembered only on the device that posted it, so a
-  borrower acting from a second device is not held back from a partial
-  that would leave that request permanently unacceptable. That
-  limitation is a known divergence from the intent, recorded in
-  `_CodeVsDocsAudit.md`, and is stated here rather than described as a
-  guarantee the product does not yet make.
+  option vanishing. All three holds are answered by the chain and so
+  hold wherever the borrower is signed in: a live offset, a sale a buyer
+  has already accepted, and a standing refinance request (found among
+  the current borrower-position holder's own offers). When the search
+  for a refinance request cannot answer, the partial is held too, with
+  that reason. Each borrower action that would change or settle the
+  loan — a partial, early close-out, an obligation handover, an offset,
+  taking collateral back — repeats the search just before the wallet
+  opens. What no check made before signing can rule out is a request
+  posted in the moments between that last check and the transaction
+  being mined; the protocol does not refuse a partial on its own when a
+  request is standing, so that narrow race remains and is stated here
+  rather than described as a guarantee (an on-chain guard is tracked as
+  #2407).
   The chooser never submits anything itself: in Advanced mode each
   path leads to its own tool with its own review; in Basic mode the
   advanced paths share one explicit, clearly labelled action that

@@ -811,6 +811,7 @@
       "multiStepNote": "Posting में up to three wallet confirmations लगते हैं (guardrails, payoff approval, request itself)। अगर बीच में रुकते हैं, earlier steps on-chain रहेंगे जब तक posting finish या cancel न हो — cancel approval भी हटाता है।",
       "partialBlockedByPending": "इस loan के लिए refinance request live है। Partial repayment amount बदल देगा और request permanently unacceptable बना देगा — पहले refinance request cancel करें।",
       "precloseBlockedByPending": "इस loan के लिए refinance request live है। अभी early close करने से यह stranded हो जाएगी — पहले refinance request cancel करें।",
+      "liveBlocksSettlement": "इस लोन पर एक रीफ़ाइनेंस अनुरोध खुला है। इससे लोन बदल जाएगा या निपट जाएगा और अनुरोध पूरा करना असंभव हो जाएगा, इसलिए कुछ नहीं भेजा गया — पहले रीफ़ाइनेंस अनुरोध रद्द करें।",
       "uncheckedBlocks": "हम यह जाँच नहीं सके कि इस लोन पर कोई रीफ़ाइनेंस अनुरोध खुला है या नहीं, इसलिए यहाँ लोन में बदलाव फ़िलहाल रोका गया है — लोन की मौजूदा स्थिति के लिए किया गया अनुरोध बेकार हो जाता। कृपया थोड़ी देर में फिर कोशिश करें।",
       "repayWarnPending": "इस loan के लिए refinance request अभी भी live है। Repaying loan settle करता है, जिसके बाद request कभी complete नहीं हो सकती — बाद में card से cancel करें (standing payoff approval भी हटेगी); तब तक यह expiry तक बैठी रहती है।"
     },

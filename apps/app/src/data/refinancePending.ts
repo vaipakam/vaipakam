@@ -41,6 +41,19 @@ import { ZERO_ADDRESS } from '../lib/offerSchema';
 import { makePendingMarkerStore } from '../lib/pendingMarker';
 import { useActiveChain } from '../chain/useActiveChain';
 import { tipAware } from '../chain/railHealth';
+import { idleAware } from '../lib/idle';
+
+/** #2391 — the discovery query's key (a prefix without the holder, for
+ *  invalidation). Deliberately outside the 'refinancePending' root. */
+export function refinanceDiscoveryKey(
+  chainId: number,
+  loanId: number,
+  holder?: string,
+): unknown[] {
+  return holder === undefined
+    ? ['refinanceDiscovery', chainId, loanId]
+    : ['refinanceDiscovery', chainId, loanId, holder];
+}
 
 const marker = makePendingMarkerStore('app.refinanceOffer');
 
@@ -56,6 +69,10 @@ export function readRefinanceMarker(chainId: number, loanId: number): string | n
 }
 
 export interface RefinancePendingState {
+  /** #2406 r1 — who posted the request: the only wallet that can cancel
+   *  it, so the pending card (and its funding actions) key to it, not to
+   *  the loan's original borrower. */
+  creator: string;
   /** Loan still Active on-chain (a request on a settled loan is dead
    *  weight — cancel + revoke is the only remaining action). */
   loanActive: boolean;
@@ -97,6 +114,9 @@ export function useRefinancePending(
    *  request. `undefined` while unknown; `'burned'` when the position is
    *  gone (no request can be settled then). */
   holder: string | 'burned' | undefined,
+  /** #2391 — the loan's own offer id: every request for the loan is
+   *  newer, which bounds the on-chain search. */
+  loanOfferId: number | undefined,
 ) {
   const { readChain, address } = useActiveChain();
   const readClient = usePublicClient({ chainId: readChain.chainId });
@@ -105,26 +125,28 @@ export function useRefinancePending(
     marker.read(readChain.chainId, loanId),
   );
 
-  // #2391 — on-chain discovery: the holder's open (then expired) offers
-  // tagged for this loan. Tri-state like every read: undefined while
-  // loading, 'unknown' when a scan failed or was cut short.
+  // #2391 — on-chain discovery: the holder's offers posted since the loan
+  // began, tagged for this loan. Its own query root, NOT under
+  // 'refinancePending' (#2406 r1): that root is re-fetched on every block,
+  // and discovery is a multi-read scan that only needs a minute's cadence
+  // (a borrower action re-runs it live before sending anyway).
   const discoveryQuery = useQuery({
-    queryKey: [
-      'refinancePending',
-      'discovery',
+    queryKey: refinanceDiscoveryKey(
       readChain.chainId,
       loanId,
       holder === 'burned' ? 'burned' : holder?.toLowerCase(),
-    ],
-    enabled: Boolean(readClient) && holder !== undefined,
-    refetchInterval: tipAware(60_000, Boolean(readChain.wsUrl)),
+    ),
+    enabled:
+      Boolean(readClient) && holder !== undefined && loanOfferId !== undefined,
+    refetchInterval: idleAware(60_000),
     queryFn: async (): Promise<RefinanceDiscovery> =>
-      holder === 'burned' || holder === undefined
+      holder === 'burned' || holder === undefined || loanOfferId === undefined
         ? { kind: 'none' }
         : discoverRefinanceRequest({
             client: readClient!,
             diamond: readChain.diamondAddress,
             loanId: BigInt(loanId),
+            sinceOfferId: BigInt(loanOfferId),
             holder: holder as `0x${string}`,
           }),
   });
@@ -132,17 +154,16 @@ export function useRefinancePending(
   const discovery: RefinanceDiscovery | undefined = discoveryQuery.isError
     ? { kind: 'unknown' }
     : discoveryQuery.data;
-  // This device's marker first (verified below like any other source),
-  // then whatever the chain says the holder has open.
+  // #2406 r1 — an OPEN request the chain names wins over this device's
+  // marker, which may still point at an expired or cancelled one (and the
+  // interlocks key on the request this resolves to). Otherwise the marker
+  // (it names a request this device just posted, before the next scan),
+  // then an expired request discovery found, so it can be cancelled.
   const offerId =
-    markerId ?? (discovery?.kind === 'found' ? discovery.offerId : null);
+    discovery?.kind === 'found' && discovery.open
+      ? discovery.offerId
+      : (markerId ?? (discovery?.kind === 'found' ? discovery.offerId : null));
 
-  // Re-seed when the (chain, loan) identity changes, as a render-phase
-  // ADJUSTMENT rather than in an effect (#1520) — same reasoning as
-  // offsetPending: React re-runs the render before painting, so the
-  // previous chain's marker is never displayed, where the effect version
-  // committed one frame carrying it. The initializer alone would freeze the
-  // first chain's marker, which is what the effect was there for.
   const seedKey = `${readChain.chainId}:${loanId}`;
   const [seededFor, setSeededFor] = useState(seedKey);
   if (seededFor !== seedKey) {
@@ -163,7 +184,7 @@ export function useRefinancePending(
     // A request found by discovery is cleared by the chain, not the marker:
     // re-scan so a cancelled one stops being named.
     void queryClient.invalidateQueries({
-      queryKey: ['refinancePending', 'discovery', readChain.chainId, loanId],
+      queryKey: refinanceDiscoveryKey(readChain.chainId, loanId),
     });
   }, [readChain.chainId, loanId, queryClient]);
 
@@ -268,6 +289,7 @@ export function useRefinancePending(
       const expired =
         offer.expiresAt !== 0n && latestBlock.timestamp >= offer.expiresAt;
       return {
+        creator: offer.creator,
         loanActive: live.status === LOAN_STATUS_ACTIVE,
         accepted: offer.accepted,
         expiresAt: offer.expiresAt,

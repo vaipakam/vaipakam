@@ -811,6 +811,7 @@
       "multiStepNote": "Publicar requiere hasta tres confirmaciones de billetera (límites, aprobación de pago, la solicitud). Si te detienes a mitad de camino, los pasos anteriores quedan on-chain hasta que termines de publicar o canceles — cancelar también elimina la aprobación.",
       "partialBlockedByPending": "Hay una solicitud de refinanciación activa para este préstamo. Un pago parcial cambiaría el monto y haría que esa solicitud fuera permanentemente inaceptable — cancela primero la solicitud de refinanciación.",
       "precloseBlockedByPending": "Hay una solicitud de refinanciación activa para este préstamo. Cerrarlo antes ahora la dejaría varada — cancela primero la solicitud de refinanciación.",
+      "liveBlocksSettlement": "Hay una solicitud de refinanciación abierta en este préstamo. Esto modificaría o liquidaría el préstamo y dejaría la solicitud imposible de cumplir, así que no se envió nada: cancela primero la solicitud de refinanciación.",
       "uncheckedBlocks": "No pudimos comprobar si hay una solicitud de refinanciación abierta en este préstamo, así que por ahora no se puede modificar el préstamo aquí: una solicitud hecha para el préstamo tal como está quedaría inservible. Inténtalo de nuevo en un momento.",
       "repayWarnPending": "Una solicitud de refinanciación sigue activa para este préstamo. Pagar liquida el préstamo, tras lo cual la solicitud nunca podrá completarse — cancélala luego desde su tarjeta (eso también elimina su aprobación permanente de pago); hasta entonces simplemente queda allí hasta vencer."
     },

@@ -1,63 +1,108 @@
-/** #2391 — refinance requests are found on chain, and an incomplete or
- *  failed scan is unknown, never "none". */
+/** #2391 — refinance requests are found on chain, within a bounded scan,
+ *  and an incomplete or failed scan is unknown, never "none". */
 import { describe, expect, it } from 'vitest';
-import { combineScans, pickRequest, type OfferFacts } from './refinanceDiscovery';
+import {
+  DISCOVERY_MAX_PAGES,
+  DISCOVERY_PAGE,
+  candidateIds,
+  selectRequest,
+  type OfferFacts,
+} from './refinanceDiscovery';
 
 const HOLDER = '0x00000000000000000000000000000000000000Aa';
 const OTHER = '0x00000000000000000000000000000000000000bb';
+const NOW = 1_000n;
 const req = (id: bigint, over: Partial<OfferFacts> = {}): OfferFacts => ({
   id,
   creator: HOLDER,
   accepted: false,
   refinanceTargetLoanId: 7n,
+  expiresAt: 0n,
   ...over,
 });
 
-describe('pickRequest', () => {
-  it('finds the newest request for the loan made by the current holder', () => {
-    expect(pickRequest(7n, HOLDER.toLowerCase(), [req(3n), req(9n), req(5n)])).toBe(9n);
-  });
-  it('ignores other loans, accepted offers and other creators', () => {
-    expect(
-      pickRequest(7n, HOLDER, [
-        req(1n, { refinanceTargetLoanId: 8n }),
-        req(2n, { refinanceTargetLoanId: 0n }),
-        req(3n, { accepted: true }),
-        // A previous holder's request: the contract will not settle it.
-        req(4n, { creator: OTHER }),
-      ]),
-    ).toBeNull();
-  });
-});
-
-describe('combineScans', () => {
-  const done = (offers: OfferFacts[]) => ({ offers, complete: true });
-  it('prefers an open request, and reports it as open', () => {
-    expect(combineScans(7n, HOLDER, done([req(4n)]), done([req(9n)]))).toEqual({
+describe('selectRequest', () => {
+  it('finds the newest open request for the loan made by the current holder', () => {
+    expect(selectRequest(7n, HOLDER.toLowerCase(), [req(3n), req(9n), req(5n)], NOW)).toEqual({
       kind: 'found',
-      offerId: '4',
+      offerId: '9',
       open: true,
     });
   });
+  it('prefers an OPEN request over a newer expired one (r1)', () => {
+    expect(
+      selectRequest(7n, HOLDER, [req(4n), req(9n, { expiresAt: NOW - 1n })], NOW),
+    ).toEqual({ kind: 'found', offerId: '4', open: true });
+  });
   it('returns an expired request when no open one exists, so it can be cancelled', () => {
-    expect(combineScans(7n, HOLDER, done([]), done([req(9n)]))).toEqual({
+    expect(selectRequest(7n, HOLDER, [req(9n, { expiresAt: NOW })], NOW)).toEqual({
       kind: 'found',
       offerId: '9',
       open: false,
     });
   });
-  it('is none only when both scans are complete and empty of matches', () => {
-    expect(combineScans(7n, HOLDER, done([req(1n, { refinanceTargetLoanId: 8n })]), done([]))).toEqual({
-      kind: 'none',
-    });
+  it('ignores other loans, accepted or cancelled offers, and other creators', () => {
+    expect(
+      selectRequest(
+        7n,
+        HOLDER,
+        [
+          req(1n, { refinanceTargetLoanId: 8n }),
+          req(2n, { refinanceTargetLoanId: 0n }),
+          req(3n, { accepted: true }),
+          req(4n, { creator: '0x0000000000000000000000000000000000000000' }),
+          // A previous holder's request: the contract will not settle it.
+          req(5n, { creator: OTHER }),
+        ],
+        NOW,
+      ),
+    ).toEqual({ kind: 'none' });
   });
-  it('is unknown when the open scan failed or was cut short — never none', () => {
-    expect(combineScans(7n, HOLDER, null, done([]))).toEqual({ kind: 'unknown' });
-    expect(combineScans(7n, HOLDER, { offers: [], complete: false }, done([]))).toEqual({
-      kind: 'unknown',
-    });
+});
+
+/** A fake offer index: ids 1..total in creation order. */
+function index(total: number) {
+  const ids = Array.from({ length: total }, (_, i) => BigInt(i + 1));
+  const reads: [bigint, bigint][] = [];
+  return {
+    reads,
+    readTotal: async () => BigInt(total),
+    readPage: async (offset: bigint, limit: bigint) => {
+      reads.push([offset, limit]);
+      return ids.slice(Number(offset), Number(offset + limit));
+    },
+  };
+}
+
+describe('candidateIds — bounded, newest-first, stops at the loan (r1)', () => {
+  it('returns only offers newer than the loan, reading one page when the boundary is on it', async () => {
+    const ix = index(250);
+    expect(await candidateIds(ix.readTotal, ix.readPage, 240n)).toEqual(
+      Array.from({ length: 10 }, (_, i) => BigInt(241 + i)),
+    );
+    expect(ix.reads).toEqual([[150n, 100n]]);
   });
-  it('is unknown when no open request was found but the expired scan is incomplete', () => {
-    expect(combineScans(7n, HOLDER, done([]), null)).toEqual({ kind: 'unknown' });
+  it('pages further back until it crosses the boundary', async () => {
+    const ix = index(250);
+    const ids = await candidateIds(ix.readTotal, ix.readPage, 120n);
+    expect(ids).toHaveLength(130);
+    expect(ix.reads).toEqual([
+      [150n, 100n],
+      [50n, 100n],
+    ]);
+  });
+  it('is complete when it reaches the start of the index', async () => {
+    const ix = index(30);
+    expect(await candidateIds(ix.readTotal, ix.readPage, 0n)).toHaveLength(30);
+  });
+  it('is null (unknown) — never a partial list — when the page cap is hit first', async () => {
+    const cap = DISCOVERY_PAGE * DISCOVERY_MAX_PAGES;
+    const ix = index(cap + 50);
+    expect(await candidateIds(ix.readTotal, ix.readPage, 10n)).toBeNull();
+    expect(ix.reads).toHaveLength(DISCOVERY_MAX_PAGES);
+  });
+  it('is an empty, complete list for a holder with no offers', async () => {
+    const ix = index(0);
+    expect(await candidateIds(ix.readTotal, ix.readPage, 5n)).toEqual([]);
   });
 });

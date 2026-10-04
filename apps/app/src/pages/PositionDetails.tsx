@@ -499,6 +499,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     // are searched on chain. A rental has no refinance path ('burned' =
     // nothing to search).
     loanIsRental ? 'burned' : freshBorrowerOwner,
+    loan.data?.offerId,
   );
   const refinancePending = refi.offerId !== null;
   /** #2391 — whether the page KNOWS there is no request it cannot see.
@@ -760,6 +761,38 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       return copy.saleHold.checkFailed;
     }
   }, [saleEligible, publicClient, walletChain, loan.data, loanId, address]);
+
+  /** #2391 / #2406 r1 — the live refinance check every BORROWER action
+   *  that changes or settles the loan runs immediately before sending
+   *  (partial repayment, preclose, obligation handover, offset): a request
+   *  posted on another device since the last poll is found on chain. A
+   *  search that cannot answer blocks too. Deliberately NOT part of the
+   *  sale gate above, which lender-side forced close also uses: a borrower
+   *  must not be able to block a forced close by posting a request.
+   *  What no client check can close is a request posted between this read
+   *  and the transaction mining; that remaining race is stated in the
+   *  functional spec rather than implied away. */
+  const assertNoRefinanceRequestLive = useCallback(async (): Promise<string | null> => {
+    if (loanIsRental) return null;
+    if (!publicClient || !walletChain || !loan.data || !address) {
+      return copy.refinance.uncheckedBlocks;
+    }
+    const found = await discoverRefinanceRequest({
+      client: publicClient,
+      diamond: walletChain.diamondAddress,
+      loanId: BigInt(loanId),
+      sinceOfferId: BigInt(loan.data.offerId),
+      holder: address,
+    });
+    if (found.kind === 'unknown') return copy.refinance.uncheckedBlocks;
+    if (found.kind === 'found' && found.open) return copy.refinance.liveBlocksSettlement;
+    return null;
+  }, [loanIsRental, publicClient, walletChain, loan.data, address, loanId]);
+  const assertBorrowerSettlementSafe = useCallback(
+    async (): Promise<string | null> =>
+      (await assertSaleSettlementSafe()) ?? (await assertNoRefinanceRequestLive()),
+    [assertSaleSettlementSafe, assertNoRefinanceRequestLive],
+  );
 
   // Live-offset state (preclose Option 3) — chain-authoritative
   // (PrecloseOffset lock on the borrower NFT), page-owned like the
@@ -2245,6 +2278,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           client: publicClient,
           diamond: walletChain.diamondAddress,
           loanId: BigInt(row.loanId),
+          sinceOfferId: BigInt(row.offerId),
           holder: address,
         }),
       ]);
@@ -2338,7 +2372,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     // Lock held across the live probe (Codex #1511 r6).
     setPhase('pending');
     {
-      const blocked = await assertSaleSettlementSafe();
+      const blocked = await assertBorrowerSettlementSafe();
       if (blocked) {
         setPhase(null);
         setError(blocked);
@@ -2485,7 +2519,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       // the on-chain close-out guard that fully closes the signing
       // race is the #1503 PR-E slice.
       {
-        const blockedLate = await assertSaleSettlementSafe();
+        const blockedLate = await assertBorrowerSettlementSafe();
         if (blockedLate) {
           setPhase(null);
           setError(blockedLate);
@@ -2525,7 +2559,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     // Lock held across the live probe (Codex #1511 r6).
     setPhase('pending');
     {
-      const blocked = await assertSaleSettlementSafe();
+      const blocked = await assertBorrowerSettlementSafe();
       if (blocked) {
         setPhase(null);
         setError(blocked);
@@ -2618,7 +2652,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       // the on-chain close-out guard that fully closes the signing
       // race is the #1503 PR-E slice.
       {
-        const blockedLate = await assertSaleSettlementSafe();
+        const blockedLate = await assertBorrowerSettlementSafe();
         if (blockedLate) {
           setPhase(null);
           setError(blockedLate);
@@ -3873,10 +3907,26 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         // the buyer's funded acceptance — paused (and waited on) like
         // the other settlement flows. The chooser rows say why.
         !saleCompletionPending &&
+        !saleHoldResolving &&
+        refiDiscoveryState !== 'settled' ? (
+          // #2406 r1 — the handover rewrites the borrower and the offset
+          // settles the loan, so both strand an unseen refinance request:
+          // held back, with the reason, while discovery has not answered.
+          refiDiscoveryState === 'checking' ? (
+            <p className="muted">{copy.earlyRepay.checkingInterlocks}</p>
+          ) : (
+            <div className="banner banner-warn" role="alert">
+              <span className="banner-body">{copy.refinance.uncheckedBlocks}</span>
+            </div>
+          )
+        ) : !livePastDue &&
+        !refinanceBlocking &&
+        !offsetPend.pending &&
+        !saleCompletionPending &&
         !saleHoldResolving ? (
           <>
             <ObligationTransferFlow
-              preSubmitBlock={assertSaleSettlementSafe}
+              preSubmitBlock={assertBorrowerSettlementSafe}
               row={row}
               live={loanLive.data.live}
               chainNow={loanLive.data.chainNow}
@@ -3904,6 +3954,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
               // revert.
               <OffsetFlow
                 key={`offset-${readChain.chainId}`}
+                preSubmitBlock={assertBorrowerSettlementSafe}
                 row={row}
                 live={loanLive.data.live}
                 chainNow={loanLive.data.chainNow}
@@ -4841,7 +4892,15 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       {refi.offerId &&
       !isRental &&
       address &&
-      address.toLowerCase() === row.borrower.toLowerCase() ? (
+      // #2406 r1 — keyed to the request's CREATOR (the only wallet that
+      // can cancel it) once verified, and to the current borrower-position
+      // holder while it loads — not to the loan's original borrower, who
+      // may have transferred the position.
+      (refi.state
+        ? address.toLowerCase() === refi.state.creator.toLowerCase()
+        : freshBorrowerOwner !== undefined &&
+          freshBorrowerOwner !== 'burned' &&
+          address.toLowerCase() === freshBorrowerOwner.toLowerCase()) ? (
         <RefinancePendingCard
           loanId={row.loanId}
           offerId={refi.offerId}
