@@ -7799,7 +7799,10 @@ library LibVaipakam {
         /// @dev Σ principal the escrow holds per rotation epoch — the fourth
         ///      tracked VPFI balance class, published by the facet.
         mapping(uint64 => uint256) serviceDepositEscrowByEpoch;
-        /// @dev role → its capacity curve (slice 2). Unset = that role's limiter is dark.
+        /// @dev role → its capacity curve (slice 2). `freeTier == 0` — unset, or
+        ///      CLEARED by a VPFI token rotation (slice 3) — means that role's limiter
+        ///      is dark; the epoch counter is never reset, so a re-set curve still
+        ///      retires every bucket of the old regime.
         mapping(uint8 => CapacityCurve) capacityCurves;
         /// @dev (role, actor) → the capacity bucket (slice 2).
         mapping(uint8 => mapping(address => CapacityBucket)) capacityBuckets;
@@ -7807,6 +7810,18 @@ library LibVaipakam {
         ///      rule 2): written by the adapter factory at creation (the keeper it
         ///      names), overridable by the admin for adapters created before this.
         mapping(address => address) adapterOperator;
+        /// @dev Slice 3 — the ARMING FEE's shape: a rate (1e18 = the whole newly-armed
+        ///      principal) charged on the principal a post or raise ACTUALLY arms
+        ///      (the part landing below `bondAt4x`), and the floor it may never sit
+        ///      under. `armingFeeRate == 0` ⇒ arming is dark: posting is refused.
+        uint256 armingFeeRate;
+        uint256 armingFeeFloor;
+        /// @dev Slice 3 — rotation epochs RETIRED by a VPFI token rotation, and the
+        ///      token each epoch's principal is denominated in (the live epoch's is
+        ///      `vpfiToken`; it is recorded here too, so a retired epoch keeps its
+        ///      asset after the pointer moves on).
+        mapping(uint64 => bool) rotationEpochArchived;
+        mapping(uint64 => address) rotationEpochToken;
     }
 
     /// @notice 3b-ii-A2 (#2305) — one batch a staging record staged from, with
@@ -7867,8 +7882,9 @@ library LibVaipakam {
     ///         threshold.
     /// @dev    `rotationEpoch` is the partition KEY and `token` its attribute
     ///         (A -> B -> A is two epochs). `eligibleAmount` is the ARMED balance
-    ///         the capacity rules read — equal to `amount` while no arming fee
-    ///         exists. `parkedRequest` is the CAP of a sanctions-parked withdrawal,
+    ///         the capacity rules read — equal to `amount` (the arming fee, slice 3,
+    ///         is paid BESIDE the principal, never out of it). `parkedRequest` is
+    ///         the CAP of a sanctions-parked withdrawal,
     ///         never a promise: the release pays `min(parkedRequest, principal)`.
     struct ServiceCapacityDeposit {
         address token;
@@ -7877,6 +7893,10 @@ library LibVaipakam {
         uint256 amount;
         uint256 eligibleAmount;
         uint256 parkedRequest;
+        /// @dev Slice 3 — set on the first touch of a record in a RETIRED rotation
+        ///      epoch: the lazy per-record materialization the epoch archival
+        ///      announces (`CapacityDepositMigrated`), no walk at rotation time.
+        bool migrated;
     }
 
     /// @notice #1219 (S-4) — one role's capacity CURVE. `freeTier` is the free

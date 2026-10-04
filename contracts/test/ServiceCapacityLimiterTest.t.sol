@@ -7,6 +7,7 @@ import {VPFIToken} from "../src/token/VPFIToken.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {ServiceCapacityFacet} from "../src/facets/ServiceCapacityFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
+import {LibServiceCapacity} from "../src/libraries/LibServiceCapacity.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 
 /// @title #1219 (S-4) slice 2 — the capacity limiter.
@@ -45,6 +46,8 @@ contract ServiceCapacityLimiterTest is SetupTest {
         vpfi.mint(op2, 1_000e18);
         _f().bindServiceCapacityEscrow();
         _f().setServiceCapacityEnabled(true);
+        _f().setArmingFeeFloor(1e15); // slice 3: posting needs a lit arming channel
+        _f().setArmingFeeRate(1e16); // 1% of newly armed principal
         vm.warp(1_000_000);
     }
 
@@ -55,11 +58,18 @@ contract ServiceCapacityLimiterTest is SetupTest {
     function _expectExhausted(address actor, uint256 have) internal {
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.ServiceCapacityExhausted.selector, SOLVER, actor, COST, have));
     }
+    /// @dev Slice 3 — through the quote: the preview prices the arming fee, the approval covers
+    ///      principal + fee, the live terms are read BEFORE the prank (a view would consume it).
     function _deposit(address who, uint256 amount) internal {
+        (uint256 fee, , , ) = _f().previewArming(SOLVER, who, amount);
+        (, uint64 epoch, ) = _f().getServiceCapacityEscrow();
+        LibServiceCapacity.ArmingBind memory b = LibServiceCapacity.ArmingBind({
+            maxFee: type(uint256).max, minCapacityAfter: 0, expectedRotationEpoch: epoch, expectedCurveEpoch: _f().getCapacityCurve(SOLVER).epoch
+        });
         vm.prank(who);
-        vpfi.approve(address(diamond), amount);
+        vpfi.approve(address(diamond), amount + fee);
         vm.prank(who);
-        _f().postCapacityDeposit(SOLVER, amount);
+        _f().postCapacityDeposit(SOLVER, amount, b);
     }
     function _accrued(address actor) internal view returns (uint256 a) { (a, , , ) = _f().previewCapacity(SOLVER, actor); }
 
@@ -109,16 +119,14 @@ contract ServiceCapacityLimiterTest is SetupTest {
         _spend(op);
     }
 
-    /// @dev The first touch grants the FREE floor, never deposit-derived credit: a
-    ///      deposit posted while the limiter was DARK (nothing settles; the bucket stays
-    ///      unseen) meets the arriving curve holding bondAt4x — and gets one action, not
-    ///      four. No fresh-address burst, whatever the deposit.
+    /// @dev The first touch grants exactly ONE action, never deposit-derived credit. Since
+    ///      slice 3 a deposit cannot be posted while the role is dark (arming is refused),
+    ///      and a post settles BEFORE it raises — so every first touch happens at zero
+    ///      eligible and the deposit shows only through the RATE afterwards: an actor
+    ///      posting bondAt4x gets one action, not four. No fresh-address burst.
     function test_UnseenBucket_StartsWithOneFreeAction_NotTheDepositCeiling() public {
-        vm.prank(op);
-        vpfi.approve(address(diamond), AT4X);
-        vm.prank(op);
-        _f().postCapacityDeposit(SOLVER, AT4X); // dark: no settle, the bucket is still unseen
-        _curve(); // the curve arrives with the deposit already armed
+        _curve();
+        _deposit(op, AT4X); // the deposit's settle is the first touch, at zero eligible
         assertEq(_accrued(op), COST, "one free action, not the 4x ceiling");
         _spend(op);
         _expectExhausted(op, 0);

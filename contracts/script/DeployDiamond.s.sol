@@ -3221,7 +3221,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
     /// #1219 (S-4) — service capacity deposits (slice 1).
     function _getServiceCapacitySelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](14);
+        s = new bytes4[](21);
         s[0] = ServiceCapacityFacet.bindServiceCapacityEscrow.selector;
         s[1] = ServiceCapacityFacet.setServiceCapacityEnabled.selector;
         s[2] = ServiceCapacityFacet.postCapacityDeposit.selector;
@@ -3237,6 +3237,14 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[11] = ServiceCapacityFacet.getCapacityBucket.selector;
         s[12] = ServiceCapacityFacet.previewCapacity.selector;
         s[13] = ServiceCapacityFacet.getAdapterOperator.selector;
+        // slice 3 — the arming fee and the rotation epochs.
+        s[14] = ServiceCapacityFacet.withdrawArchivedCapacityDeposit.selector;
+        s[15] = ServiceCapacityFacet.setArmingFeeRate.selector;
+        s[16] = ServiceCapacityFacet.setArmingFeeFloor.selector;
+        s[17] = ServiceCapacityFacet.getArmingFee.selector;
+        s[18] = ServiceCapacityFacet.previewArming.selector;
+        s[19] = ServiceCapacityFacet.isRotationEpochArchived.selector;
+        s[20] = ServiceCapacityFacet.getServiceCapacityEscrowByEpoch.selector;
     }
 
     /// #1219 (S-4) — the standing-intent fill, split out of OfferMatchFacet (EIP-170 host split).

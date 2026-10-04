@@ -7,10 +7,12 @@ import {LibVaipakam} from "./LibVaipakam.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {RewardCustodyHolder} from "../RewardCustodyHolder.sol";
 import {LibFacet} from "./LibFacet.sol";
+import {LibVpfiRecycle} from "./LibVpfiRecycle.sol";
 
 /**
- * @title  LibServiceCapacity — #1219 (S-4): service capacity deposits, slice 1 —
- *         the record lifecycle.
+ * @title  LibServiceCapacity — #1219 (S-4): service capacity deposits — the
+ *         record lifecycle (slice 1), the limiter (slice 2), the arming fee and
+ *         the rotation epochs (slice 3).
  * @author Vaipakam Developer Team
  * @notice An operator posts VPFI into a dedicated escrow to buy operational
  *         capacity above the permissionless free tier for one role (the curve
@@ -85,7 +87,7 @@ library LibServiceCapacity {
     /// @notice An authoritative clean read healed `party`'s stale persisted sanctions marker.
     /// @custom:event-category state-change/service-capacity
     event ServiceCapacitySanctionsMarkerHealed(address indexed party);
-    /// @notice `role`'s capacity curve was set (slice 2); `epoch` is the new curve epoch every bucket must re-settle under.
+    /// @notice `role`'s capacity curve was set (slice 2); `epoch` is the new curve epoch every bucket must re-settle under. All-zero figures mean the curve was CLEARED by a VPFI token rotation (slice 3): dark until re-set; the epoch counter is kept.
     /// @custom:event-category informational/config
     event CapacityCurveSet(uint8 indexed role, uint256 freeTier, uint256 freeRatePerSec, uint256 bondAt4x, uint256 classCost, uint64 epoch);
     /// @notice `actor` spent `cost` of `role` capacity for one executed item; the bucket now holds `balanceAfter` (units x 1e18).
@@ -97,6 +99,31 @@ library LibServiceCapacity {
     /// @notice `adapter`'s fills are charged to `operator` (actor rule 2).
     /// @custom:event-category informational/config
     event AdapterOperatorBound(address indexed adapter, address indexed operator);
+    /// @notice The arming fee's shape changed (slice 3): `rate` (1e18 = the whole newly-armed principal; 0 = arming dark) over `floor`.
+    /// @custom:event-category informational/config
+    event ArmingFeeSet(uint256 rate, uint256 floor);
+    /// @notice `operator` paid `fee` of the live VPFI into Diamond custody (recycled, never escrowed) for `capacityGranted` of principal newly armed for `role`; the deposit now buys `ceilingAfter`.
+    /// @custom:event-category state-change/service-capacity
+    event ArmingFeePaid(
+        uint8 indexed role, address indexed operator, uint64 indexed rotationEpoch, uint256 fee, uint256 capacityGranted, uint256 ceilingAfter
+    );
+    /// @notice A VPFI token rotation RETIRED rotation epoch `epoch`: its principal (`total` of `token`) stays in `escrow`, keyed by the epoch, withdrawable in that asset; the live epoch is now `epoch + 1` under `newToken`; every role's curve was cleared.
+    /// @custom:event-category state-change/service-capacity
+    event CapacityDepositEpochArchived(uint64 indexed epoch, address indexed token, address indexed newToken, address escrow, uint256 total);
+    /// @notice The first touch of a record in RETIRED epoch `epoch`: `operator`'s `role` deposit of `amount` of `token` is materialized as archived.
+    /// @custom:event-category state-change/service-capacity
+    event CapacityDepositMigrated(uint8 indexed role, address indexed operator, uint64 indexed epoch, address token, uint256 amount);
+
+    /// @notice The terms a payer BINDS on a post (slice 3): the most fee they will
+    ///         pay, the least capacity (ceiling) they expect afterwards, and the
+    ///         rotation and curve epochs they quoted under. Any that moved refuses
+    ///         by name, so a quote reviewed is the post executed.
+    struct ArmingBind {
+        uint256 maxFee;
+        uint256 minCapacityAfter;
+        uint64 expectedRotationEpoch;
+        uint64 expectedCurveEpoch;
+    }
 
     // ─── slice 2 — the limiter ───
 
@@ -104,7 +131,10 @@ library LibServiceCapacity {
     ///         `freeTier >= classCost`, so a zero-deposit operator can always
     ///         complete one action — the permissionless baseline the whole design
     ///         preserves. Bumps the curve epoch: every bucket settled under the old
-    ///         curve resets at its next touch (the conservative branch).
+    ///         curve resets at its next touch (the conservative branch). Dark ⟺
+    ///         `freeTier == 0`: unset, or cleared by a token rotation (slice 3); the
+    ///         epoch counter survives the clearing so a re-set curve still retires
+    ///         every bucket of the old regime.
     function setCurve(LibVaipakam.Storage storage s, uint8 role, uint256 freeTier, uint256 freeRatePerSec, uint256 bondAt4x, uint256 classCost)
         internal
     {
@@ -146,10 +176,10 @@ library LibServiceCapacity {
         returns (uint256 accrued, uint256 rate, uint256 ceiling, bool dark)
     {
         LibVaipakam.CapacityCurve storage c = s.capacityCurves[role];
-        if (c.epoch == 0) return (0, 0, 0, true);
+        if (c.freeTier == 0) return (0, 0, 0, true);
         (rate, ceiling) = curveAt(c, eligibleOf(s, role, actor));
         LibVaipakam.CapacityBucket storage b = s.capacityBuckets[role][actor];
-        if (!b.seen) return (c.classCost < ceiling ? c.classCost : ceiling, rate, ceiling, false);
+        if (!b.seen) return (c.classCost, rate, ceiling, false);
         if (b.curveEpoch != c.epoch) return (0, rate, ceiling, false);
         uint256 raw = uint256(b.balance) + rate * (block.timestamp - b.lastTouch);
         accrued = raw < ceiling ? raw : ceiling;
@@ -173,8 +203,11 @@ library LibServiceCapacity {
         uint256 rate;
         (rate, ceiling) = curveAt(c, freeOnly ? 0 : eligibleOf(s, role, actor));
         if (!b.seen) {
+            // Exactly one action. Every first touch happens at ZERO eligible — a post
+            // settles before it raises, and a post while the role is dark is refused
+            // (slice 3) — so the ceiling here is the free tier, floored at one action.
             b.seen = true;
-            b.balance = uint128(c.classCost < ceiling ? c.classCost : ceiling);
+            b.balance = uint128(c.classCost);
         } else if (b.curveEpoch != c.epoch) {
             emit CapacityBucketReset(role, actor, b.curveEpoch, c.epoch);
             b.balance = 0;
@@ -195,7 +228,7 @@ library LibServiceCapacity {
     function spend(LibVaipakam.Storage storage s, uint8 role, address actor, uint256 units, bool freeOnly) internal {
         requireRole(role);
         LibVaipakam.CapacityCurve storage c = s.capacityCurves[role];
-        if (c.epoch == 0 || units == 0) return;
+        if (c.freeTier == 0 || units == 0) return;
         (LibVaipakam.CapacityBucket storage b, ) = settle(s, role, actor, c, freeOnly);
         uint256 cost = c.classCost * units;
         uint256 have = b.balance;
@@ -210,7 +243,7 @@ library LibServiceCapacity {
     ///         fourth-site rule). A no-op while the role's limiter is dark.
     function settleOnDepositChange(LibVaipakam.Storage storage s, uint8 role, address actor) internal {
         LibVaipakam.CapacityCurve storage c = s.capacityCurves[role];
-        if (c.epoch == 0) return;
+        if (c.freeTier == 0) return;
         settle(s, role, actor, c, false);
     }
 
@@ -222,7 +255,7 @@ library LibServiceCapacity {
     ///         fresh deployment pays nothing per fill or action, and a Diamond that
     ///         has not routed the capacity facet is not broken by the gate.
     function charge(uint8 role, address actor, bool freeOnly) internal {
-        if (LibVaipakam.storageSlot().capacityCurves[role].epoch == 0) return;
+        if (LibVaipakam.storageSlot().capacityCurves[role].freeTier == 0) return;
         LibFacet.crossFacetCall(
             abi.encodeWithSignature("capacitySpendInternal(uint8,address,uint256,bool)", role, actor, uint256(1), freeOnly),
             IVaipakamErrors.ServiceCapacityCallFailed.selector
@@ -284,6 +317,150 @@ library LibServiceCapacity {
         charge(solver, msg.sender, false);
     }
 
+    // ─── slice 3 — the arming fee ───
+
+    /// @notice Set the arming fee rate (ADMIN; governance later): 1e18 = the whole
+    ///         newly-armed principal. Zero keeps arming DARK (posting refused); a
+    ///         positive rate must sit at or above a positive floor — the floor is
+    ///         the code's guarantee that the fee is never configured away to a
+    ///         token once lit.
+    function setArmingFeeRate(LibVaipakam.Storage storage s, uint256 rate) internal {
+        if (rate != 0 && (s.armingFeeFloor == 0 || rate < s.armingFeeFloor)) {
+            revert IVaipakamErrors.ServiceCapacityArmingFeeBelowFloor(rate, s.armingFeeFloor);
+        }
+        s.armingFeeRate = rate;
+        emit ArmingFeeSet(rate, s.armingFeeFloor);
+    }
+
+    /// @notice Raise the arming fee floor (ADMIN; raise-only, never back to zero).
+    ///         A live rate under the new floor is refused rather than silently
+    ///         re-priced: lift the rate first.
+    function setArmingFeeFloor(LibVaipakam.Storage storage s, uint256 floor) internal {
+        if (floor <= s.armingFeeFloor) revert IVaipakamErrors.ServiceCapacityArmingFloorNotRaised(s.armingFeeFloor, floor);
+        if (s.armingFeeRate != 0 && s.armingFeeRate < floor) {
+            revert IVaipakamErrors.ServiceCapacityArmingFeeBelowFloor(s.armingFeeRate, floor);
+        }
+        s.armingFeeFloor = floor;
+        emit ArmingFeeSet(s.armingFeeRate, floor);
+    }
+
+    /// @notice The arming quote for posting `amount` into `operator`'s `role`
+    ///         deposit — the ONE walk the post executes and the preview shows, so
+    ///         a quote can never price what the post refuses. The principal newly
+    ///         ARMED is the part that lands below `bondAt4x` (the curve is flat
+    ///         beyond it, so principal above it buys nothing and owes nothing — a
+    ///         capacity-neutral raise is accepted and charged nothing, and principal
+    ///         armed again after a withdrawal pays again); `fee = granted × rate /
+    ///         1e18`; `ceilingAfter` is the capacity the deposit buys afterwards.
+    ///         `dark` (no positive rate, or the role's curve unset) ⇒ zeros.
+    function armingQuote(LibVaipakam.Storage storage s, uint8 role, address operator, uint256 amount)
+        internal
+        view
+        returns (uint256 fee, uint256 granted, uint256 ceilingAfter, bool dark)
+    {
+        LibVaipakam.CapacityCurve storage c = s.capacityCurves[role];
+        if (s.armingFeeRate == 0 || c.freeTier == 0) return (0, 0, 0, true);
+        uint256 before = eligibleOf(s, role, operator);
+        uint256 after_ = before + amount;
+        uint256 armedBefore = before < c.bondAt4x ? before : c.bondAt4x;
+        uint256 armedAfter = after_ < c.bondAt4x ? after_ : c.bondAt4x;
+        granted = armedAfter - armedBefore;
+        fee = (granted * s.armingFeeRate) / 1e18;
+        (, ceilingAfter) = curveAt(c, after_);
+    }
+
+    /// @dev The quote, then the bind: dark refuses by name; each bound term that
+    ///      moved refuses by name, naming the term, what was bound and what stands.
+    function _quoteAndBind(
+        LibVaipakam.Storage storage s, uint8 role, address operator, uint256 amount, uint64 epoch, ArmingBind calldata bind
+    ) private view returns (uint256 fee, uint256 granted, uint256 ceilingAfter) {
+        bool dark;
+        (fee, granted, ceilingAfter, dark) = armingQuote(s, role, operator, amount);
+        if (dark) revert IVaipakamErrors.ServiceCapacityArmingDark(role);
+        if (fee > bind.maxFee) revert IVaipakamErrors.ServiceCapacityTermsMoved(0, bind.maxFee, fee);
+        if (ceilingAfter < bind.minCapacityAfter) {
+            revert IVaipakamErrors.ServiceCapacityTermsMoved(1, bind.minCapacityAfter, ceilingAfter);
+        }
+        if (epoch != bind.expectedRotationEpoch) {
+            revert IVaipakamErrors.ServiceCapacityTermsMoved(2, bind.expectedRotationEpoch, epoch);
+        }
+        uint64 curveEpoch = s.capacityCurves[role].epoch;
+        if (curveEpoch != bind.expectedCurveEpoch) {
+            revert IVaipakamErrors.ServiceCapacityTermsMoved(3, bind.expectedCurveEpoch, curveEpoch);
+        }
+    }
+
+    /// @dev The rotation's permitted rejection branch: a post under the new token
+    ///      waits until the operator has drained every RETIRED epoch's principal
+    ///      for the role. Retired epochs are counted by rotations ever performed —
+    ///      a handful, each a runbook-governed migration — so the honest shape is
+    ///      this loop, not an index.
+    function _requireNoRetiredBalance(LibVaipakam.Storage storage s, uint8 role, address operator, uint64 live) private view {
+        for (uint64 e = 0; e < live; e++) {
+            if (s.serviceDeposits[role][operator][e].amount != 0) {
+                revert IVaipakamErrors.ServiceCapacityOldEpochBalanceStands(role, operator, e);
+            }
+        }
+    }
+
+    /// @dev The fee's move: operator → the DIAMOND (never the escrow), credited to
+    ///      the recycle bucket through the fee's own provenance-verifying operation,
+    ///      which measures the ingress by balance delta itself — one check of one
+    ///      fact. Nothing is paid when nothing was newly armed.
+    function _chargeArmingFee(
+        uint8 role, address operator, uint64 epoch, address token, uint256 fee, uint256 granted, uint256 ceilingAfter
+    ) private {
+        if (fee == 0) return;
+        uint256 before = IERC20(token).balanceOf(address(this));
+        IERC20(token).safeTransferFrom(operator, address(this), fee);
+        LibVpfiRecycle.creditServiceCapacityArmingFee((uint256(role) << 160) | uint256(uint160(operator)), fee, before);
+        emit ArmingFeePaid(role, operator, epoch, fee, granted, ceilingAfter);
+    }
+
+    // ─── slice 3 — the rotation epochs ───
+
+    /// @notice The hook `setVPFIToken` runs on a ROTATION (a non-zero previous
+    ///         token): the epoch flip IS the transition. The live epoch is retired —
+    ///         archived, its asset recorded — and a new one opened under the new
+    ///         token in the same transaction; every role's curve is CLEARED (dark
+    ///         until the admin sizes one for the new token: a differing-decimals
+    ///         token must never inherit `bondAt4x` or the costs); archived principal
+    ///         stays in the escrow, keyed by the retired epoch, in its original
+    ///         asset. No per-record walk: records materialize lazily on first touch.
+    function onTokenRotated(LibVaipakam.Storage storage s, address previous, address newToken) internal {
+        uint64 old = s.vpfiRotationEpoch;
+        s.rotationEpochArchived[old] = true;
+        s.rotationEpochToken[old] = previous;
+        s.vpfiRotationEpoch = old + 1;
+        s.rotationEpochToken[old + 1] = newToken;
+        for (uint8 r = 0; r <= uint8(LibVaipakam.ServiceCapacityRole.Keeper); r++) {
+            LibVaipakam.CapacityCurve storage c = s.capacityCurves[r];
+            if (c.freeTier == 0) continue;
+            // The figures go; the epoch counter stays, so a curve re-set after the
+            // rotation still retires every bucket settled under the old regime.
+            c.freeTier = 0;
+            c.freeRatePerSec = 0;
+            c.bondAt4x = 0;
+            c.classCost = 0;
+            emit CapacityCurveSet(r, 0, 0, 0, 0, c.epoch);
+        }
+        emit CapacityDepositEpochArchived(old, previous, newToken, s.serviceCapacityEscrow, s.serviceDepositEscrowByEpoch[old]);
+    }
+
+    /// @notice Withdraw the WHOLE of `operator`'s `role` deposit in RETIRED rotation
+    ///         `epoch`, in that epoch's own asset — the drain a rotation asks of every
+    ///         operator before they post under the new token.
+    function withdrawArchived(LibVaipakam.Storage storage s, uint8 role, address operator, uint64 epoch)
+        internal
+        returns (uint8 status, uint256 paid)
+    {
+        requireRole(role);
+        if (!s.rotationEpochArchived[epoch]) revert IVaipakamErrors.ServiceCapacityEpochNotArchived(epoch);
+        uint256 all = s.serviceDeposits[role][operator][epoch].amount;
+        if (all == 0) revert IVaipakamErrors.ServiceCapacityInsufficient(role, operator, 0, 0);
+        return withdraw(s, role, operator, epoch, all);
+    }
+
     /// @dev `role` must be a capacity role.
     function requireRole(uint8 role) internal pure {
         if (role > uint8(LibVaipakam.ServiceCapacityRole.Keeper)) revert IVaipakamErrors.ServiceCapacityRoleUnknown(role);
@@ -319,17 +496,25 @@ library LibServiceCapacity {
     }
 
     /// @notice Post `amount` of the live VPFI into `operator`'s deposit for
-    ///         `role` (a raise when the record already holds principal).
-    ///         Refused while the channel is dark. The eligible balance follows
-    ///         the principal while no arming fee exists.
+    ///         `role` (a raise when the record already holds principal), paying
+    ///         the arming fee the quote names BESIDE it. Refused while the channel
+    ///         is dark, while arming is dark (no positive fee rate, or no curve for
+    ///         the role), while a bound term moved, and while the operator still
+    ///         holds principal in a retired epoch. The eligible balance equals the
+    ///         principal: the fee is never taken out of it.
     /// @return status {STATUS_OK}, or {STATUS_REFUSED_SANCTIONED} with no value moved.
-    function post(LibVaipakam.Storage storage s, uint8 role, address operator, uint256 amount) internal returns (uint8 status) {
+    function post(LibVaipakam.Storage storage s, uint8 role, address operator, uint256 amount, ArmingBind calldata bind)
+        internal
+        returns (uint8 status)
+    {
         requireRole(role);
         if (!s.serviceCapacityEnabled) revert IVaipakamErrors.ServiceCapacityDisabled();
         if (amount == 0) revert IVaipakamErrors.InvalidAmount();
         (address escrow, address token) = escrowAndToken(s);
-        if (!screen(s, role, operator, operator)) return STATUS_REFUSED_SANCTIONED;
         uint64 epoch = s.vpfiRotationEpoch;
+        (uint256 fee, uint256 granted, uint256 ceilingAfter) = _quoteAndBind(s, role, operator, amount, epoch, bind);
+        _requireNoRetiredBalance(s, role, operator, epoch);
+        if (!screen(s, role, operator, operator)) return STATUS_REFUSED_SANCTIONED;
         LibVaipakam.ServiceCapacityDeposit storage d = s.serviceDeposits[role][operator][epoch];
         bool raise = d.amount != 0;
         if (d.token == address(0)) {
@@ -344,25 +529,35 @@ library LibServiceCapacity {
         s.serviceDepositEscrowByEpoch[epoch] += amount;
         if (raise) emit CapacityDepositRaised(role, operator, epoch, token, amount, d.amount, d.eligibleAmount);
         else emit CapacityDepositPosted(role, operator, epoch, token, amount, d.amount, d.eligibleAmount);
+        _chargeArmingFee(role, operator, epoch, token, fee, granted, ceilingAfter);
         return STATUS_OK;
     }
 
-    /// @notice Withdraw `amount` of `operator`'s deposit for `role` in the LIVE
-    ///         rotation epoch — immediately (owner: unbond option (i)); always
-    ///         callable, dark or not. A first authoritative sanctions flag PARKS
-    ///         the request (capped to the principal) instead of refusing it; a
-    ///         later authoritative clean read releases a parked deposit's cap.
+    /// @notice Withdraw `amount` of `operator`'s deposit for `role` in rotation
+    ///         `epoch` — the LIVE epoch immediately (owner: unbond option (i)),
+    ///         always callable, dark or not; a RETIRED epoch pays in that epoch's
+    ///         own asset and settles no capacity (an archived epoch buys none),
+    ///         announcing the record's first touch as its lazy materialization. A
+    ///         first authoritative sanctions flag PARKS the request (capped to the
+    ///         principal) instead of refusing it; a later authoritative clean read
+    ///         releases a parked deposit's cap.
     /// @return status {STATUS_OK} with `paid`, or {STATUS_PARKED} with nothing paid.
-    function withdraw(LibVaipakam.Storage storage s, uint8 role, address operator, uint256 amount)
+    function withdraw(LibVaipakam.Storage storage s, uint8 role, address operator, uint64 epoch, uint256 amount)
         internal
         returns (uint8 status, uint256 paid)
     {
         requireRole(role);
         if (amount == 0) revert IVaipakamErrors.InvalidAmount();
-        LibVaipakam.ServiceCapacityDeposit storage d = s.serviceDeposits[role][operator][s.vpfiRotationEpoch];
+        bool live = epoch == s.vpfiRotationEpoch;
+        if (!live && !s.rotationEpochArchived[epoch]) revert IVaipakamErrors.ServiceCapacityEpochNotArchived(epoch);
+        LibVaipakam.ServiceCapacityDeposit storage d = s.serviceDeposits[role][operator][epoch];
         if (d.amount == 0) revert IVaipakamErrors.ServiceCapacityInsufficient(role, operator, 0, amount);
         address escrow = s.serviceCapacityEscrow;
         if (escrow == address(0)) revert IVaipakamErrors.ServiceCapacityEscrowNotBound();
+        if (!live && !d.migrated) {
+            d.migrated = true;
+            emit CapacityDepositMigrated(role, operator, epoch, d.token, d.amount);
+        }
         if (s.sanctionsOracle != address(0)) {
             LibVaipakam.SanctionsRead st = LibVaipakam.sanctionsStatus(operator);
             if (st == LibVaipakam.SanctionsRead.Flagged) {
@@ -382,7 +577,7 @@ library LibServiceCapacity {
                 emit ServiceCapacitySanctionsMarkerHealed(operator);
             }
         }
-        settleOnDepositChange(s, role, operator); // elapsed credit under the OLD capacity; the decrease clamps at the next touch
+        if (live) settleOnDepositChange(s, role, operator); // elapsed credit under the OLD capacity; the decrease clamps at the next touch
         bool released;
         if (d.state == LibVaipakam.ServiceDepositState.SanctionsParked) {
             // The clean read releases the PARKED cap, never more; a further

@@ -125,7 +125,14 @@ library LibVpfiRecycle {
         /// @dev #1566 transport epochs PR 3b-ii-A — release-only class: the
         ///      recycled leg of a USER claim an epoch paid, whose commitment
         ///      retires without a bucket debit (the bucket never paid it).
-        TransportPaidClaim
+        TransportPaidClaim,
+        /// @dev #1219 (S-4) slice 3 — the service capacity ARMING FEE: VPFI an
+        ///      operator pays the platform for the capacity a deposit newly arms,
+        ///      pulled into Diamond custody by the post (never into the deposit
+        ///      escrow). GENUINE absorption, fresh from the payer and never
+        ///      Ā-counted before — so it belongs in the day-bucketed feed and the
+        ///      reported cumulative, like the notification tariff.
+        ServiceCapacityArmingFee
     }
 
     /// @notice Emitted once per recycle-bucket credit — the on-chain feed
@@ -225,6 +232,14 @@ library LibVpfiRecycle {
     function creditSpendGatedPerk(uint256 refId, uint256 amount, uint256 balanceBefore) internal {
         _requireInflowDelta(RecycleSource.SpendGatedPerk, amount, balanceBefore);
         _credit(RecycleSource.SpendGatedPerk, refId, amount, CreditOrigin.Diamond);
+    }
+
+    /// @notice See {creditNotificationFee} — the service capacity ARMING FEE
+    ///         (#1219 S-4 slice 3), pulled from the operator into Diamond custody
+    ///         by the deposit post. `refId` is `(role << 160) | operator`.
+    function creditServiceCapacityArmingFee(uint256 refId, uint256 amount, uint256 balanceBefore) internal {
+        _requireInflowDelta(RecycleSource.ServiceCapacityArmingFee, amount, balanceBefore);
+        _credit(RecycleSource.ServiceCapacityArmingFee, refId, amount, CreditOrigin.Diamond);
     }
 
     /**

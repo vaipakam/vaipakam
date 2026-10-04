@@ -59,15 +59,30 @@ contract ServiceCapacityDepositTest is SetupTest {
     function _ready() internal returns (address escrow) {
         escrow = _f().bindServiceCapacityEscrow();
         _f().setServiceCapacityEnabled(true);
+        _arm();
+    }
+    /// @dev Slice 3 — posting needs a lit arming channel: a positive fee rate over a
+    ///      positive floor, and a curve for the role. 1% of newly armed principal; the
+    ///      knee sits far above every amount these cells post, so the fee is 1% of the post.
+    function _arm() internal {
+        _f().setArmingFeeFloor(1e15);
+        _f().setArmingFeeRate(1e16);
+        _f().setCapacityCurve(SOLVER, 1e18, 1e16, 1_000e18, 1e18);
+        _f().setCapacityCurve(KEEPER, 1e18, 1e16, 1_000e18, 1e18);
+    }
+    function _fee(uint256 amount) internal pure returns (uint256) { return amount / 100; }
+    /// @dev The bound terms (no rotation, one curve epoch here) — pure, so a prank is never consumed by a view.
+    function _bind() internal pure returns (LibServiceCapacity.ArmingBind memory) {
+        return LibServiceCapacity.ArmingBind({maxFee: type(uint256).max, minCapacityAfter: 0, expectedRotationEpoch: 0, expectedCurveEpoch: 1});
     }
     function _approve(uint256 amount) internal {
         vm.prank(op);
-        vpfi.approve(address(diamond), amount); // exact amount, never unbounded
+        vpfi.approve(address(diamond), amount + _fee(amount)); // the principal and its arming fee, exact, never unbounded
     }
     function _post(uint8 role, uint256 amount) internal returns (uint8 status) {
         _approve(amount);
         vm.prank(op);
-        status = _f().postCapacityDeposit(role, amount);
+        status = _f().postCapacityDeposit(role, amount, _bind());
     }
     function _withdraw(uint8 role, uint256 amount) internal returns (uint8 status, uint256 paid) {
         vm.prank(op);
@@ -88,11 +103,12 @@ contract ServiceCapacityDepositTest is SetupTest {
         _approve(10e18);
         vm.prank(op);
         vm.expectRevert(IVaipakamErrors.ServiceCapacityDisabled.selector);
-        _f().postCapacityDeposit(SOLVER, 10e18);
+        _f().postCapacityDeposit(SOLVER, 10e18, _bind());
         vm.expectEmit(false, false, false, true, address(diamond));
         emit ServiceCapacityEnabledSet(true);
         _f().setServiceCapacityEnabled(true);
         assertTrue(_f().isServiceCapacityEnabled());
+        _arm();
         assertEq(_post(SOLVER, 10e18), LibServiceCapacity.STATUS_OK, "posted once enabled");
     }
 
@@ -128,7 +144,7 @@ contract ServiceCapacityDepositTest is SetupTest {
         _approve(1e18);
         vm.prank(op);
         vm.expectRevert(IVaipakamErrors.ServiceCapacityEscrowNotBound.selector);
-        _f().postCapacityDeposit(SOLVER, 1e18);
+        _f().postCapacityDeposit(SOLVER, 1e18, _bind());
     }
 
     // ─── the record lifecycle ───
@@ -143,17 +159,17 @@ contract ServiceCapacityDepositTest is SetupTest {
         vm.expectEmit(true, true, true, true, address(diamond));
         emit CapacityDepositPosted(SOLVER, op, 0, address(vpfi), 10e18, 10e18, 10e18);
         vm.prank(op);
-        assertEq(_f().postCapacityDeposit(SOLVER, 10e18), LibServiceCapacity.STATUS_OK);
+        assertEq(_f().postCapacityDeposit(SOLVER, 10e18, _bind()), LibServiceCapacity.STATUS_OK);
         LibVaipakam.ServiceCapacityDeposit memory d = _dep(SOLVER);
         assertEq(d.token, address(vpfi));
         assertEq(d.rotationEpoch, 0);
         assertEq(uint8(d.state), uint8(LibVaipakam.ServiceDepositState.Active));
         assertEq(d.amount, 10e18);
-        assertEq(d.eligibleAmount, 10e18, "eligible follows principal while no fee exists");
+        assertEq(d.eligibleAmount, 10e18, "armed equals principal: the arming fee is paid beside it");
         assertEq(d.parkedRequest, 0);
         assertEq(vpfi.balanceOf(e), 10e18, "the escrow holds it");
-        assertEq(vpfi.balanceOf(address(diamond)), diamondBefore, "the Diamond's own balance is untouched");
-        assertEq(vpfi.balanceOf(op), 990e18);
+        assertEq(vpfi.balanceOf(address(diamond)), diamondBefore + 0.1e18, "the Diamond holds exactly the arming fee (recycled), never the principal");
+        assertEq(vpfi.balanceOf(op), 1_000e18 - 10e18 - 0.1e18, "the principal and its 1% arming fee");
         (, uint64 epoch, uint256 total) = _f().getServiceCapacityEscrow();
         assertEq(epoch, 0);
         assertEq(total, 10e18, "the epoch total is published");
@@ -168,7 +184,7 @@ contract ServiceCapacityDepositTest is SetupTest {
         vm.expectEmit(true, true, true, true, address(diamond));
         emit CapacityDepositRaised(SOLVER, op, 0, address(vpfi), 5e18, 15e18, 15e18);
         vm.prank(op);
-        _f().postCapacityDeposit(SOLVER, 5e18);
+        _f().postCapacityDeposit(SOLVER, 5e18, _bind());
         assertEq(_dep(SOLVER).amount, 15e18);
         assertEq(_dep(SOLVER).eligibleAmount, 15e18);
     }
@@ -184,7 +200,7 @@ contract ServiceCapacityDepositTest is SetupTest {
         assertEq(status, LibServiceCapacity.STATUS_OK);
         assertEq(paid, 4e18);
         assertEq(vpfi.balanceOf(e), 6e18);
-        assertEq(vpfi.balanceOf(op), 994e18);
+        assertEq(vpfi.balanceOf(op), 1_000e18 - 6e18 - 0.1e18);
         (, , uint256 total) = _f().getServiceCapacityEscrow();
         assertEq(total, 6e18);
         vm.prank(op);
@@ -202,10 +218,10 @@ contract ServiceCapacityDepositTest is SetupTest {
         _ready();
         vm.prank(op);
         vm.expectRevert(IVaipakamErrors.InvalidAmount.selector);
-        _f().postCapacityDeposit(SOLVER, 0);
+        _f().postCapacityDeposit(SOLVER, 0, _bind());
         vm.prank(op);
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.ServiceCapacityRoleUnknown.selector, uint8(7)));
-        _f().postCapacityDeposit(7, 1e18);
+        _f().postCapacityDeposit(7, 1e18, _bind());
         vm.prank(op);
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.ServiceCapacityInsufficient.selector, KEEPER, op, 0, 1e18));
         _f().withdrawCapacityDeposit(KEEPER, 1e18);
@@ -219,7 +235,7 @@ contract ServiceCapacityDepositTest is SetupTest {
         _approve(1e18);
         vm.prank(op);
         vm.expectRevert();
-        _f().postCapacityDeposit(SOLVER, 1e18);
+        _f().postCapacityDeposit(SOLVER, 1e18, _bind());
         vm.prank(op);
         vm.expectRevert();
         _f().withdrawCapacityDeposit(SOLVER, 1e18);
@@ -241,13 +257,13 @@ contract ServiceCapacityDepositTest is SetupTest {
         vm.expectEmit(true, true, true, true, address(diamond));
         emit ServiceCapacitySanctionsRefused(SOLVER, op, op, LibServiceCapacity.STATUS_REFUSED_SANCTIONED);
         vm.prank(op);
-        uint8 status = _f().postCapacityDeposit(SOLVER, 10e18);
+        uint8 status = _f().postCapacityDeposit(SOLVER, 10e18, _bind());
         assertEq(status, LibServiceCapacity.STATUS_REFUSED_SANCTIONED, "refused by status, not by revert");
         assertEq(vpfi.balanceOf(e), 0, "nothing moved");
         assertEq(_dep(SOLVER).amount, 0);
         vm.prank(op);
         vm.expectRevert(abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, op));
-        _f().postCapacityDeposit(SOLVER, 10e18);
+        _f().postCapacityDeposit(SOLVER, 10e18, _bind());
     }
 
     /// @dev A first flag on a WITHDRAWAL parks the request (capped to the
@@ -282,7 +298,7 @@ contract ServiceCapacityDepositTest is SetupTest {
         assertEq(paid, 10e18, "the parked cap is released, no more and no less");
         assertEq(_dep(SOLVER).amount, 0);
         assertEq(uint8(_dep(SOLVER).state), uint8(LibVaipakam.ServiceDepositState.Active));
-        assertEq(vpfi.balanceOf(op), 1_000e18);
+        assertEq(vpfi.balanceOf(op), 1_000e18 - 0.1e18, "whole again, less the fee paid for the arming");
     }
 
     /// @dev An oracle OUTAGE defers every deposit mutation, for a never-flagged
@@ -296,7 +312,7 @@ contract ServiceCapacityDepositTest is SetupTest {
         _approve(1e18);
         vm.prank(op);
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.ServiceCapacitySanctionsUnavailable.selector, op));
-        _f().postCapacityDeposit(SOLVER, 1e18);
+        _f().postCapacityDeposit(SOLVER, 1e18, _bind());
         vm.prank(op);
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.ServiceCapacitySanctionsUnavailable.selector, op));
         _f().withdrawCapacityDeposit(SOLVER, 1e18);
@@ -318,7 +334,7 @@ contract ServiceCapacityDepositTest is SetupTest {
         vm.expectEmit(true, false, false, true, address(diamond));
         emit ServiceCapacitySanctionsMarkerHealed(op);
         vm.prank(op);
-        assertEq(_f().postCapacityDeposit(SOLVER, 1e18), LibServiceCapacity.STATUS_OK, "healed and posted");
+        assertEq(_f().postCapacityDeposit(SOLVER, 1e18, _bind()), LibServiceCapacity.STATUS_OK, "healed and posted");
         assertEq(_dep(SOLVER).amount, 1e18);
     }
 

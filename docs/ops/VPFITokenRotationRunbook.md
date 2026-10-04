@@ -94,8 +94,8 @@ staked/tracked-balance stranding anyway — see "Decision" below).
      its principal/collateral are NOT VPFI, so it does not appear in the leg
      scans above; check the rebate ledger separately and let those loans reach
      terminal (settle/forfeit) so the held VPFI is released before rotating.
-   - **Service-bond custody (#1219, once built) is enumerated but NOT
-     drained**: bond deposits take the design's **epoch-level archival
+   - **Service capacity deposit custody (#1219) is enumerated but NOT
+     drained**: capacity deposits take the design's **epoch-level archival
      transition, ATOMIC WITH the step-6 rotation transaction itself**
      (the epoch flip IS the rotation transition — there is no separate
      archival call for the operator to invent between the freeze and the
@@ -103,8 +103,8 @@ staked/tracked-balance stranding anyway — see "Decision" below).
      lost-key, or (frozen) sanctioned operator cannot drain, and making
      the rotation wait on them is the hostage condition the archival
      path exists to remove. The verification splits accordingly: the
-     step-5 zero check scopes to non-bond custody and additionally
-     confirms bond custody is fully ACCOUNTED per-epoch (ready to
+     step-5 zero check scopes to non-deposit custody and additionally
+     confirms deposit custody is fully ACCOUNTED per-epoch (ready to
      archive); the **archived-under-the-rotation-epoch check runs
      immediately AFTER step 6**, against the same transaction's effects,
      before step 7 re-enables anything.
@@ -113,13 +113,13 @@ staked/tracked-balance stranding anyway — see "Decision" below).
    `MetricsFacet.getActiveOffersByAsset`, which keys on `lendingAsset` only and
    misses prepay/collateral offers), a full active-loan scan on all three legs,
    the encumbrance ledger, and the `protocolTrackedVaultBalance` ledger.
-3. **Drain them ACTIVELY — every class EXCEPT service-bond custody.** Don't
+3. **Drain them ACTIVELY — every class EXCEPT service capacity deposit custody.** Don't
    rely on passive expiry/maturity. Actively
    cancel the offers (releasing pre-vaulted principal); settle / close / repay
    the loans so their liens release; have users unstake + withdraw (or migrate)
    their tracked old-token VPFI. Drive every old-token offer, loan, encumbrance,
-   and tracked balance to zero by action. Service-bond custody (#1219, once
-   built) is NOT drained — it takes the epoch archival atomic with step 6, per
+   and tracked balance to zero by action. Service capacity deposit custody
+   (#1219) is NOT drained — it takes the epoch archival atomic with step 6, per
    the step-2 note; here it is only reconciled and accounted per-epoch.
 4. **Hard-freeze for the rotate window.** Now that the drain is complete, apply
    a hard freeze — a global guardian pause is appropriate **here** (the drain is
@@ -128,10 +128,13 @@ staked/tracked-balance stranding anyway — see "Decision" below).
 5. **Re-verify ZERO under the freeze — comprehensive total-balance check,
    with ONE carve-out.** With the system frozen, confirm the protocol holds
    **zero recoverable old-token VPFI anywhere it tracks or custodies it,
-   EXCEPT service-bond custody** (#1219, once built) — which is instead
+   EXCEPT service capacity deposit custody** (#1219) — which is instead
    verified here as fully ACCOUNTED per-epoch and ready to archive (its
    archived-state assertion runs after step 6, against the rotation
-   transaction's own effects). A nonzero balance in any OTHER class fails
+   transaction's own effects). Concretely: `ServiceCapacityFacet.getServiceCapacityEscrow()`
+   returns the escrow holder, the live epoch and its total; the holder's
+   old-token balance must equal that total plus every earlier retired
+   epoch's total from `getServiceCapacityEscrowByEpoch(epoch)`. A nonzero balance in any OTHER class fails
    this gate exactly as before. Do NOT rely on
    re-walking the named step-2 surfaces alone — the authoritative test is a
    TOTAL: account for the entire old-token VPFI supply the protocol controls.
@@ -158,14 +161,23 @@ staked/tracked-balance stranding anyway — see "Decision" below).
    and update them atomically-enough that no inbound flow lands on a stale
    token. The removed fixed-rate buy receiver/adapter are not part of new
    deployments.
-7. **Assert the bond-epoch archival (once #1219 custody exists).** Before any
+7. **Assert the deposit-epoch archival (#1219 slice 3 — shipped).** Before any
    generic event check, read back the archival's own effects from the step-6
-   transaction: the epoch-archival event fired and the per-epoch getter
-   reports every pre-rotation bond balance archived under the rotation epoch.
-   A rotation whose archival hook was absent or faulty must be caught HERE,
-   frozen — re-enabling first strands old-token deposits behind a completed
-   rotation. (On a deployment with no bond custody this step is a recorded
-   no-op.)
+   transaction: `CapacityDepositEpochArchived(oldEpoch, oldToken, newToken,
+   escrow, total)` fired; `isRotationEpochArchived(oldEpoch)` is true;
+   `getServiceCapacityEscrowByEpoch(oldEpoch)` reports the old token and the
+   full pre-rotation total; `getServiceCapacityEscrow()` reports the new live
+   epoch (old + 1) with a zero total; and `getCapacityCurve(role)` reads
+   all-zero figures for both roles (cleared — the limiter and arming are
+   dark until the admin sizes a curve for the new token, which must happen
+   before step 9 if deposits are to buy capacity again). The hook is atomic
+   with `setVPFIToken`, so a rotation whose archival effects are missing is a
+   faulty deployment and must be caught HERE, frozen — re-enabling first
+   strands old-token deposits behind a completed rotation. Operators drain a
+   retired epoch with `withdrawArchivedCapacityDeposit(role, epoch)`, paid in
+   the old asset, and may not post under the new token until they have. (On a
+   deployment with no deposit custody the event still fires with a zero total;
+   the step is then a recorded no-op.)
 8. **Confirm the audit event.** Ops/indexer must observe `VPFITokenRotated` and
    record that the drain + zero-verification (steps 2–5) preceded it. The event
    is the on-chain breadcrumb; it does not by itself prove the drain.
@@ -207,12 +219,13 @@ exist, (2) snapshot the VPFI address onto each offer/loan and have D-2/F-1
 read the snapshot, (3) this operational runbook.
 
 **Chosen: (3) runbook + an on-chain `VPFITokenRotated` audit event —
-scoped to the PRE-BOND world.** Once #1219 service-bond custody exists,
-this decision is SUPERSEDED in one respect: the deliberately-undrained
-bond deposits make a pointer-only `setVPFIToken` strand every residual
-old-token deposit on the first rotation, so **the atomic epoch-archival
-hook in the rotation transaction (per the #1219 design) is a SHIPPING
-PREREQUISITE of enabling bond custody** — not a deferred nicety; the
+scoped to the PRE-DEPOSIT world.** Now that #1219 service capacity deposit
+custody exists, this decision is SUPERSEDED in one respect: the
+deliberately-undrained capacity deposits would make a pointer-only
+`setVPFIToken` strand every residual old-token deposit on the first
+rotation, so **the atomic epoch-archival hook in the rotation transaction
+(per the #1219 design) is a SHIPPING PREREQUISITE of enabling deposit
+custody** — not a deferred nicety, and slice 3 ships it; the
 manual runbook alone stops being a complete procedure the day deposits
 go live. For everything else the original rationale stands: the
 exposure is low and recoverable. Liened collateral is never at

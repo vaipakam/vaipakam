@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibRewardCustody} from "../libraries/LibRewardCustody.sol";
+import {LibServiceCapacity} from "../libraries/LibServiceCapacity.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {IVPFIToken} from "../interfaces/IVPFIToken.sol";
@@ -138,6 +139,15 @@ contract VPFITokenFacet is DiamondAccessControl, IVaipakamErrors {
         // initial registration. Emit the distinct audit event so ops/indexers
         // can detect it and verify the rotation runbook was followed.
         if (previous != address(0)) {
+            // #1219 (S-4) slice 3 — the epoch flip IS the rotation transition:
+            // the live capacity-deposit epoch is retired (its principal stays in
+            // the escrow, keyed by the epoch, in the old asset), a new one opens
+            // under the new token, and every role's curve is cleared so a
+            // differing-decimals token can never inherit the old thresholds.
+            // Atomic with the pointer write — a pointer-only rotation would
+            // strand every residual old-token deposit; the rotation runbook's
+            // step 7 reads this hook's effects back before re-enabling.
+            LibServiceCapacity.onTokenRotated(s, previous, newToken);
             emit VPFITokenRotated(previous, newToken);
         }
     }
