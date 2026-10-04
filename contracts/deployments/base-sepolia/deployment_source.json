@@ -5,13 +5,13 @@
   "monorepoCommit": "f8176ea064b5fd4daadc5337266b602a5f6b72fc",
   "deployer": "0xb985F8987720C6d76f02909890AA21C11bC6EBCA",
   "diamond": "0xd89fd7F787e4415460b23891E97570a4881fb995",
-  "deployedAtCommit": "unknown — the 2026-07-01 deploy of this Diamond did not record its commit in this file, which kept naming the retired 0x725C… Diamond until this update",
-  "deployedAtSource": "on-chain: creation tx 0x6ef294cab3f6314ae51af96b05a3d7176dddfaab7a1616adc1199bedc16db0f2, block 43549990, creator 0xb985…EBCA",
+  "deployedAtCommit": "unknown \u2014 the 2026-07-01 deploy of this Diamond did not record its commit in this file, which kept naming the retired 0x725C\u2026 Diamond until this update",
+  "deployedAtSource": "on-chain: creation tx 0x6ef294cab3f6314ae51af96b05a3d7176dddfaab7a1616adc1199bedc16db0f2, block 43549990, creator 0xb985\u2026EBCA",
   "lastInPlaceRefresh": {
-    "kind": "RefreshAllFacetsInPlace, two runs (bootstrap, then the slice-4 rebase under a counted pause)",
-    "monorepoCommit": "f8176ea064b5fd4daadc5337266b602a5f6b72fc",
-    "completedAt": "2026-10-03T15:15:55Z",
+    "kind": "RefreshAllFacetsInPlace, single run (no migration due: seeded, rebased and role-recorded since 2026-10-03)",
+    "monorepoCommit": "3281c3589d2db9f53f28b892560f1497ce51984e",
+    "completedAt": "2026-10-04T03:06:55Z",
     "signer": "0xF718BaE5e0dc36140F16dAEF73289294c2372030",
-    "scope": "every facet DeployDiamond cuts, replaced or added; diamondCutFacet (constructor-installed) unchanged; retired selectors not removed and still routed to their old implementations (#2313)"
+    "scope": "every facet DeployDiamond cuts, replaced; diamondCutFacet (constructor-installed) unchanged; the 11 retired selectors the 2026-10-03 refresh left routed are removed and verified unrouted (#2313, #2385); vault template unchanged; reward custody NOT activated (owner decision 2026-10-04: deferred until the VPFI recycling work is ready)"
   }
 }
