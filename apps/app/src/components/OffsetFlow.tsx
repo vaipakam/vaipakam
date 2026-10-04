@@ -26,7 +26,7 @@ import { isPositiveDecimal, captureTxError } from '../lib/errors';
 import { flowDisabled } from '../lib/killSwitch';
 import { useActiveChain } from '../chain/useActiveChain';
 import { DIAMOND_ABI_VIEM, useDiamondWrite, useTermsBlockNonExitWrites } from '../contracts/diamond';
-import { ensureAllowance, restoreAllowance } from '../contracts/erc20';
+import { ensureAllowance, trackApproval } from '../contracts/erc20';
 import {
   assertAssetNotPausedLive,
   assertErc20BalanceLive,
@@ -252,18 +252,26 @@ export function OffsetFlow({
     }
     setBusy(true);
     setError(null);
-    // #2406 r3 — the allowance as it stood BEFORE this attempt, and what
-    // this attempt wrote, so a submit stopped after the approval mined (a
-    // late gate, or the write failing) puts it back rather than leaving a
-    // principal-plus-completion permission behind with no offset offer to
-    // use or cancel. The same tracking the handover and refinance flows
-    // use (#1514 / #1529): the prior VALUE, not a boolean, and the unwind
-    // acts only if the allowance still reads what this attempt wrote.
-    let priorAllowance: bigint | null = null;
-    let wroteAllowance: bigint | null = null;
-    let wroteAllowanceTx: `0x${string}` | null = null;
-    let confirmedAllowance: bigint | null = null;
-    let approvalToken: `0x${string}` | null = null;
+    // #2406 r3/r4 — what this attempt's approval did, so a submit stopped
+    // after it mined (a late gate, or the write failing) puts it back
+    // rather than leaving a principal-plus-completion permission behind
+    // with no offset offer to use or cancel (`trackApproval`).
+    const approval = trackApproval();
+    const unwindApproval = async () => {
+      const ok = await approval.unwind({
+        publicClient,
+        walletClient,
+        owner: address,
+        spender: walletChain.diamondAddress,
+      });
+      if (!ok) {
+        setError((prior) =>
+          prior
+            ? `${prior} ${copy.errors.approvalCleanupFailed}`
+            : copy.errors.approvalCleanupFailed,
+        );
+      }
+    };
     try {
       if (preSubmitBlock) {
         const blocked = await preSubmitBlock();
@@ -428,7 +436,6 @@ export function OffsetFlow({
             : copy.errors.termsNotAccepted,
         );
       }
-      approvalToken = liveLoan.principalAsset;
       await ensureAllowance({
         publicClient,
         walletClient,
@@ -436,16 +443,7 @@ export function OffsetFlow({
         owner: address,
         spender: walletChain.diamondAddress,
         amount: liveLoan.principal + liveBound,
-        onObserved: (value) => {
-          priorAllowance = value;
-        },
-        onWrote: (value, hash) => {
-          wroteAllowance = value;
-          wroteAllowanceTx = hash;
-        },
-        onConfirmed: (value) => {
-          confirmedAllowance = value;
-        },
+        ...approval.hooks(liveLoan.principalAsset),
       });
       // Codex #1539 r1 — `ensureAllowance` can add its OWN approval
       // transaction and wallet-confirm window between the early
@@ -504,40 +502,6 @@ export function OffsetFlow({
       await unwindApproval();
     } finally {
       setBusy(false);
-    }
-
-    // Best-effort, as in the handover flow: no offset offer was posted but
-    // the allowance mined, so put it back. A cleanup failure is APPENDED to
-    // the error the user saw, never swallowed and never replacing it.
-    async function unwindApproval() {
-      if (priorAllowance === null || !approvalToken) return;
-      if (!publicClient || !walletClient || !address || !walletChain) return;
-      const previous = priorAllowance;
-      const wrote = wroteAllowance;
-      const wroteTx = wroteAllowanceTx;
-      const confirmedVal = confirmedAllowance;
-      priorAllowance = null;
-      wroteAllowance = null;
-      wroteAllowanceTx = null;
-      try {
-        await restoreAllowance({
-          publicClient,
-          walletClient,
-          token: approvalToken,
-          owner: address,
-          spender: walletChain.diamondAddress,
-          previous,
-          wrote,
-          wroteTxHash: wroteTx,
-          confirmed: confirmedVal,
-        });
-      } catch {
-        setError((prior) =>
-          prior
-            ? `${prior} ${copy.errors.approvalCleanupFailed}`
-            : copy.errors.approvalCleanupFailed,
-        );
-      }
     }
   }
 

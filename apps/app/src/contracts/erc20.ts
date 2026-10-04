@@ -815,6 +815,82 @@ export async function restoreAllowance(opts: {
 }
 
 /**
+ * #2406 r4 — one record of what an approve-then-write attempt did to an
+ * allowance, and the unwind that puts it back when the write is never sent.
+ *
+ * Every flow that approves and then runs a LATE gate (a refinance request
+ * found just before the write, a sale accepted meanwhile, a due date come
+ * too close) can stop after the approval mined. Review kept finding flows
+ * that stopped without giving it back — offset in round 3, partial
+ * repayment and close-early in round 4 — because each carried, or forgot,
+ * its own copy of the same four variables. This is that copy, once:
+ *
+ *   const approval = trackApproval();
+ *   await ensureAllowance({ ..., ...approval.hooks(token) });
+ *   if (blockedLate) { await approval.unwind(clients); return; }
+ *
+ * The rules are `restoreAllowance`'s, unchanged: the PRIOR value is put
+ * back (never zero over a partial grant), and only if the allowance still
+ * reads what this attempt wrote. `unwind` is idempotent and never throws:
+ * it resolves `true` when nothing was left to do or the restore went
+ * through, `false` when the cleanup itself failed — which the caller must
+ * SAY, appended to its own message, never swallow.
+ */
+export function trackApproval() {
+  let token: `0x${string}` | null = null;
+  let prior: bigint | null = null;
+  let wrote: bigint | null = null;
+  let wroteTx: `0x${string}` | null = null;
+  let confirmed: bigint | null = null;
+  return {
+    /** Spread into `ensureAllowance`'s options for `t`. */
+    hooks(t: `0x${string}`) {
+      token = t;
+      return {
+        onObserved: (value: bigint) => {
+          prior = value;
+        },
+        onWrote: (value: bigint | null, hash: `0x${string}` | null) => {
+          wrote = value;
+          wroteTx = hash;
+        },
+        onConfirmed: (value: bigint) => {
+          confirmed = value;
+        },
+      };
+    },
+    async unwind(opts: {
+      publicClient: PublicClient;
+      walletClient: WalletClient;
+      owner: `0x${string}`;
+      spender: `0x${string}`;
+    }): Promise<boolean> {
+      if (prior === null || token === null) return true;
+      const previous = prior;
+      const w = wrote;
+      const tx = wroteTx;
+      const c = confirmed;
+      prior = null;
+      wrote = null;
+      wroteTx = null;
+      try {
+        await restoreAllowance({
+          ...opts,
+          token,
+          previous,
+          wrote: w,
+          wroteTxHash: tx,
+          confirmed: c,
+        });
+        return true;
+      } catch {
+        return false;
+      }
+    },
+  };
+}
+
+/**
  * Revoke a standing allowance (approve 0), skipping the tx when it is
  * already zero. For flows that granted a long-lived approval (e.g. a
  * refinance payoff) and are unwinding it.

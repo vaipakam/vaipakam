@@ -3079,7 +3079,11 @@ Its intended behaviour, as the test oracle for this surface:
   the search for a request has not answered, the full-repayment review
   stays available (it is the safety valve) but says that a request
   could exist, posted from another device, and that repaying would
-  strand it too. Only an acceptable request is live: one that has
+  strand it too. Because the page's search runs on a cadence, a review
+  that said nothing is checked again when it is confirmed: if a request
+  turns up, or that check cannot answer, nothing is sent that time and
+  the review now says what repaying would do — the next confirmation
+  repays. Repayment is held back at most once, never refused. Only an acceptable request is live: one that has
   expired, whose loan is past grace, or whose poster no longer holds
   the borrower position can never be filled, so it holds nothing back.
   The request is found on chain from the borrower-position holder's own
@@ -3088,7 +3092,12 @@ Its intended behaviour, as the test oracle for this surface:
   own record of a request it just posted only speeds that up. A wallet
   that posted a request and then transferred the position, or whose loan
   has settled, is shown that request from any device too — only the
-  poster can cancel it and remove its payoff approval. An expired
+  poster can cancel it and remove its payoff approval. When that wallet
+  has posted more offers since the loan's own offer than one search
+  reads, the page says it cannot show such a request and names the
+  manual cleanup (cancel it from the wallet's open offers, then remove
+  the token approval it relied on if nothing else needs it), rather
+  than staying silent. An expired
   request is still shown so it can be cancelled and its approval removed,
   and the card outlives the loan's settlement for the same reason. A new
   request cannot be posted while one is open — the protocol accepts
@@ -3131,7 +3140,12 @@ Its intended behaviour, as the test oracle for this surface:
   being mined; the protocol does not refuse a partial on its own when a
   request is standing, so that narrow race remains and is stated here
   rather than described as a guarantee (an on-chain guard is tracked as
-  #2407).
+  #2407). When one of those last checks — or any other check made after
+  the token approval — stops the action, the approval it granted is put
+  back to what it was before (best effort, and only if nothing else has
+  changed it since), and a failure to put it back is said alongside the
+  reason, never left silent. The same holds when the transaction itself
+  fails.
   The chooser never submits anything itself: in Advanced mode each
   path leads to its own tool with its own review; in Basic mode the
   advanced paths share one explicit, clearly labelled action that

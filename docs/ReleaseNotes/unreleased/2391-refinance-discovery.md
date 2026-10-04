@@ -27,10 +27,16 @@ that a request could exist while the search has not answered. An expired
 request no longer holds anything back, including posting a new request. A
 wallet that posted a request and then transferred the position, or whose loan
 has settled, is shown that request from any device, since only the poster can
-cancel it and remove its payoff approval. If posting an offset stops after its
-token approval was granted — for instance because a last check found a
-refinance request — the approval is now put back, as the handover and
-refinance flows already did.
+cancel it and remove its payoff approval. If an offset, a partial repayment, an
+early close-out or a full repayment stops after its token approval was
+granted — for instance because a last check found a refinance request, or
+the transaction failed — the approval is now put back to what it was, as the
+handover and refinance flows already did, and a failure to do so is said.
+A full-repayment review that said nothing about a request is checked again
+when confirmed; if one turns up, the review says so first and the next
+confirmation repays. A wallet whose own offers are too many to search is
+told the page cannot show a request it may have posted, and how to clean it
+up by hand.
 Each of those actions repeats the search just before the wallet opens. One
 narrow race remains and is stated in the specification: a request posted in
 the moments between that last check and the transaction being mined, since the
