@@ -1673,6 +1673,16 @@ const copySource = {
     // stranded by hold back rather than guess "none".
     uncheckedBlocks:
       'We couldn’t check whether a refinance request is open on this loan, so changing the loan here is held back for now — a request made for the loan as it stands would be stranded. Please try again in a moment.',
+    // #2406 r3 — the check was cut short by its page cap, which a retry
+    // will not change, so it must not say "try again".
+    cappedBlocks:
+      'This wallet has posted more offers since this loan’s offer was made than we can check here, so we can’t confirm that no refinance request is open on this loan. Changing the loan here is held back — a request made for the loan as it stands would be stranded. Full repayment stays open.',
+    // #2406 r3 — a chooser row whose card is held back by an open request.
+    heldByPending:
+      'A refinance request is open on this loan, and this would leave it impossible to fill — cancel the refinance request first.',
+    // #2406 r3 — the full-repayment review while the check has not answered.
+    repayWarnUnchecked:
+      'We haven’t confirmed whether a refinance request is open on this loan — one may have been posted from another device. If one is, repaying settles the loan and the request can never complete; cancel it afterwards from the wallet that posted it, which also removes its standing payoff approval.',
     repayWarnPending:
       'A refinance request is still live for this loan. Repaying settles the loan, after which the request can never complete — cancel it from its card afterwards (that also removes its standing payoff approval); until then it just sits until it expires.',
   },

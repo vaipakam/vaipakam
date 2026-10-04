@@ -239,6 +239,7 @@ export function withdrawCaveats(a: {
 export type WithdrawPreflightBlock =
   | 'refinance-pending'
   | 'refinance-unchecked'
+  | 'refinance-capped'
   | 'paused'
   | 'pause-unchecked'
   | 'sale-listed'
@@ -256,9 +257,10 @@ export function withdrawPreflightBlock(a: {
    *  acceptable — the page's existing `refinanceBlocking`. */
   refinancePending: boolean;
   /** #2391 — the live on-chain discovery re-run just before the wallet
-   *  opens. 'unknown' (a scan failed or was cut short) blocks like any
-   *  other unanswered check. */
-  refinanceDiscovery: 'open' | 'none' | 'unknown';
+   *  opens (`liveRefinanceVerdict`). A scan that did not answer blocks
+   *  like any other unanswered check; one cut short by the page cap
+   *  (#2406 r3) blocks with its own reason, since a retry will not help. */
+  refinanceDiscovery: 'open' | 'clear' | 'unchecked' | 'capped';
   /** #2389 r3 — the live pause read; 'unknown' when it failed. */
   paused: boolean | 'unknown';
   saleState: SaleListingHoldState;
@@ -267,7 +269,8 @@ export function withdrawPreflightBlock(a: {
   wei: bigint;
 }): WithdrawPreflightBlock | null {
   if (a.refinancePending || a.refinanceDiscovery === 'open') return 'refinance-pending';
-  if (a.refinanceDiscovery === 'unknown') return 'refinance-unchecked';
+  if (a.refinanceDiscovery === 'unchecked') return 'refinance-unchecked';
+  if (a.refinanceDiscovery === 'capped') return 'refinance-capped';
   if (a.paused === true) return 'paused';
   if (a.paused !== false) return 'pause-unchecked';
   if (a.saleState === 'live' || a.saleState === 'clearable' || a.saleState === 'accepted') {

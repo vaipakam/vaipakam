@@ -5,7 +5,6 @@ import {
   DISCOVERY_MAX_PAGES,
   DISCOVERY_PAGE,
   candidateIds,
-  discoverySurfaceState,
   selectRequest,
   type OfferFacts,
 } from './refinanceDiscovery';
@@ -105,27 +104,5 @@ describe('candidateIds — bounded, newest-first, stops at the loan (r1)', () =>
   it('is an empty, complete list for a holder with no offers', async () => {
     const ix = index(0);
     expect(await candidateIds(ix.readTotal, ix.readPage, 5n)).toEqual([]);
-  });
-});
-
-describe('discoverySurfaceState (r2)', () => {
-  const base = { refinanceBlocking: false, holderReadFailed: false };
-  it('is settled only on a resolved scan or a verified-blocking request', () => {
-    expect(discoverySurfaceState({ ...base, discovery: { kind: 'none' } })).toBe('settled');
-    expect(
-      discoverySurfaceState({ ...base, discovery: { kind: 'found', offerId: '4', open: false } }),
-    ).toBe('settled');
-    expect(
-      discoverySurfaceState({ ...base, discovery: { kind: 'unknown' }, refinanceBlocking: true }),
-    ).toBe('settled');
-  });
-  it('stays unchecked on a failed scan even when a non-blocking (expired) marker exists', () => {
-    expect(discoverySurfaceState({ ...base, discovery: { kind: 'unknown' } })).toBe('unchecked');
-  });
-  it('is unchecked when the holder read failed, and checking while loading', () => {
-    expect(discoverySurfaceState({ ...base, discovery: undefined, holderReadFailed: true })).toBe(
-      'unchecked',
-    );
-    expect(discoverySurfaceState({ ...base, discovery: undefined })).toBe('checking');
   });
 });

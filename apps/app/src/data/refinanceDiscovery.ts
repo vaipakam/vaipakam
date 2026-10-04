@@ -27,7 +27,17 @@
  * deploy-ordering hazard). An OPEN request wins over an expired one (an
  * expired one is still returned, so it can be cancelled and its approval
  * removed). Hitting the page cap before the boundary, or any failed read,
- * is `unknown` — the surfaces a request would strand then fail closed.
+ * is `unknown` — the surfaces a request would strand then fail closed —
+ * and the two are told apart (#2406 r3): a failed read may answer on the
+ * next try, a cap overrun will not, so the page must not say "try again".
+ *
+ * The boundary is the loan's SOURCE offer id, which can be older than the
+ * loan itself (an offer may stand open for a while before it is taken).
+ * It is the tightest boundary the chain offers: no field records when a
+ * loan began that later events do not re-stamp (a handover or an in-place
+ * extension rewrites the loan's start), and a re-stamped start could fall
+ * after a request still fillable. A dedicated loan-to-request index on
+ * chain would remove the scan entirely; that belongs with #2407.
  */
 import type { PublicClient } from 'viem';
 import { DIAMOND_ABI_VIEM } from '../contracts/diamond';
@@ -43,7 +53,9 @@ const ZERO = '0x0000000000000000000000000000000000000000';
 export type RefinanceDiscovery =
   | { kind: 'found'; offerId: string; open: boolean }
   | { kind: 'none' }
-  | { kind: 'unknown' };
+  /** `failed`: a read did not answer (may on retry). `capped`: the holder
+   *  has posted more offers since the boundary than one scan reads. */
+  | { kind: 'unknown'; reason: 'failed' | 'capped' };
 
 export interface OfferFacts {
   id: bigint;
@@ -138,7 +150,7 @@ export async function discoverRefinanceRequest(opts: {
       },
       opts.sinceOfferId,
     );
-    if (ids === null) return { kind: 'unknown' };
+    if (ids === null) return { kind: 'unknown', reason: 'capped' };
     if (ids.length === 0) return { kind: 'none' };
     const [details, block] = await Promise.all([
       client.multicall({
@@ -166,26 +178,6 @@ export async function discoverRefinanceRequest(opts: {
     }));
     return selectRequest(opts.loanId, holder, offers, block.timestamp);
   } catch {
-    return { kind: 'unknown' };
+    return { kind: 'unknown', reason: 'failed' };
   }
-}
-
-/** #2391 / #2406 r2 — whether the page KNOWS no request is hiding from
- *  it. 'settled' ONLY on a resolved scan (none / found) or a request
- *  already verified as blocking (whose own interlock applies) — a device
- *  marker naming an EXPIRED request does not settle it, since a failed
- *  scan could be hiding a different, open one. 'unchecked' when the scan
- *  failed or was cut short, or the holder read it depends on failed;
- *  otherwise 'checking'. Surfaces a request would strand hold back unless
- *  'settled'. */
-export function discoverySurfaceState(a: {
-  discovery: RefinanceDiscovery | undefined;
-  /** A known request is verified (or still verifying) as acceptable. */
-  refinanceBlocking: boolean;
-  holderReadFailed: boolean;
-}): 'settled' | 'checking' | 'unchecked' {
-  const k = a.discovery?.kind;
-  if (k === 'none' || k === 'found' || a.refinanceBlocking) return 'settled';
-  if (k === 'unknown' || a.holderReadFailed) return 'unchecked';
-  return 'checking';
 }

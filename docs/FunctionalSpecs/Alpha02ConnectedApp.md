@@ -1428,11 +1428,17 @@ is the borrower's own money.
   wherever it was made — on another device or through another tool — because
   the app looks for it on chain among the current borrower-position holder's
   own offers, the only ones the protocol will settle; the pre-check repeats that
-  search just before the wallet opens. When the search cannot answer (it failed,
-  or the holder has posted more offers since the loan began than one search
-  covers), the surfaces a request would be stranded by — taking collateral back,
-  partial repayment, early close-out, obligation handover and offset — hold back
-  and say they could not check, rather than assume there is none.
+  search just before the wallet opens. When the search cannot answer, the
+  surfaces a request would be stranded by — taking collateral back, partial
+  repayment, early close-out, obligation handover and offset — hold back and
+  say why, rather than assume there is none, and say which of two reasons
+  applies: the search failed (it may answer on a later try), or the holder has
+  posted more offers since the loan's own offer was made than one search reads
+  (a retry will not help, so the surface does not suggest one, and says full
+  repayment stays open). The bound is the loan's own offer, which can be older
+  than the loan itself, because the chain records no start for a loan that
+  later events do not rewrite; an on-chain index from a loan to its requests
+  would remove the search, and is tracked with #2407.
 - An open confirmation does not survive a network switch or a change of
   connected account: it closes, and the typed amount is cleared, so a review
   opened on one network or under one wallet can never send on another.
@@ -3069,17 +3075,26 @@ Its intended behaviour, as the test oracle for this surface:
   the standing payoff approval. While a request is live, partial
   repayment and close-early are held off with an explanation —
   either would strand the request — and the full-repayment review
-  warns that the request survives settlement until cancelled. The
-  request is found on chain from the borrower-position holder's own
+  warns that the request survives settlement until cancelled. While
+  the search for a request has not answered, the full-repayment review
+  stays available (it is the safety valve) but says that a request
+  could exist, posted from another device, and that repaying would
+  strand it too. Only an acceptable request is live: one that has
+  expired, whose loan is past grace, or whose poster no longer holds
+  the borrower position can never be filled, so it holds nothing back.
+  The request is found on chain from the borrower-position holder's own
   offers, so a request posted from another device or tool shows here
   too, with its cancel action, to the wallet that posted it; this device's
-  own record of a request it just posted only speeds that up. An expired
+  own record of a request it just posted only speeds that up. A wallet
+  that posted a request and then transferred the position, or whose loan
+  has settled, is shown that request from any device too — only the
+  poster can cancel it and remove its payoff approval. An expired
   request is still shown so it can be cancelled and its approval removed,
   and the card outlives the loan's settlement for the same reason. A new
   request cannot be posted while one is open — the protocol accepts
   several, and taking one leaves the others impossible to fill — and the
   form waits until the search has answered, checking again just before
-  posting. Loans on a periodic interest schedule carry a visible
+  posting. An expired request does not hold the form back. Loans on a periodic interest schedule carry a visible
   warning that an overdue period blocks completion until settled.
 - The borrower of an active ERC-20 loan sees, in BOTH interface
   modes, one chooser surface that names every early-repayment path
@@ -3123,7 +3138,9 @@ Its intended behaviour, as the test oracle for this surface:
   switches the interface to Advanced in place — the mode change is
   always the user's own choice, never a side effect. Paths that
   cannot currently apply (past the due date, held by a live linked
-  request, or one the position doesn't qualify for — refinancing on a
+  request, held while the search for a refinance request has not
+  answered — which says whether it is still checking, failed, or cannot
+  cover every offer — or one the position doesn't qualify for — refinancing on a
   position acquired on the secondary market stays with the original
   borrower) say so instead of disappearing silently; a
   past-the-due-date unavailability is judged only from chain-anchored
@@ -3265,7 +3282,12 @@ Its intended behaviour, as the test oracle for this surface:
   wallet only makes the acceptance fail; nothing is taken). The
   token approval granted at posting is sized to the largest pull any
   completion could make, and the quoted keep-available figure states
-  that bound. A live offset gets a standing view driven by the
+  that bound. If posting stops after that approval was granted but
+  before the offer was posted — a last check found a refinance request,
+  the due date came too close, or the posting itself failed — the
+  approval is put back to what it was before (best effort, and only if
+  nothing else has changed it since), and a failure to put it back is
+  said alongside the reason posting stopped, never left silent. A live offset gets a standing view driven by the
   chain's own lock record — an offset made on another device still
   shows — with the linked offer's identity when known, warnings when
   the standing approval or wallet balance no longer covers the

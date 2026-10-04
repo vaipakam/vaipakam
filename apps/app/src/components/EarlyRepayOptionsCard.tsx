@@ -16,6 +16,7 @@
  */
 import { ListChecks } from 'lucide-react';
 import { copy } from '../content/copy';
+import type { RefinanceCheck } from '../data/refinanceInterlock';
 
 export type EarlyRepayJumpTarget =
   | 'repay-action'
@@ -48,6 +49,7 @@ export function EarlyRepayOptionsCard({
    *  the due date passed (their cards gate on chain time). */
   pastDueHint,
   refinancePending,
+  refinanceCheck = 'settled',
   refinanceEligible,
   saleListingHeld,
   saleCompletionPending,
@@ -59,6 +61,11 @@ export function EarlyRepayOptionsCard({
   useFullTermInterest: boolean | undefined;
   pastDueHint: boolean;
   refinancePending: boolean;
+  /** #2406 r3 — whether the page KNOWS no refinance request is open
+   *  (`refinanceInterlock`'s check). While it does not, the page holds the
+   *  handover, offset and refinance cards back, so their rows say why
+   *  instead of jumping to a card that is not there. */
+  refinanceCheck?: RefinanceCheck;
   /** A lender-sale listing (live or ended-but-not-cleaned) holds the
    *  OFFSET path on-chain (#1503 PR-A: offsetWithNewOffer reverts
    *  SaleListingActiveOnLoan) — the offset row must say so instead of
@@ -99,6 +106,20 @@ export function EarlyRepayOptionsCard({
     : saleHoldChecking
       ? copy.earlyRepay.checkingInterlocks
       : undefined;
+  // The paths a refinance request would strand, and which the page holds
+  // back (rather than explaining inline, as partial repayment and close
+  // early do): handover, offset and a second request. An open request, or
+  // a check that has not answered, says so on their rows.
+  const refinanceHold =
+    refinanceCheck === 'checking'
+      ? copy.earlyRepay.checkingInterlocks
+      : refinanceCheck === 'unchecked'
+        ? copy.refinance.uncheckedBlocks
+        : refinanceCheck === 'capped'
+          ? copy.refinance.cappedBlocks
+          : refinancePending
+            ? copy.refinance.heldByPending
+            : undefined;
   const rows: OptionRow[] = [
     {
       key: 'full',
@@ -138,7 +159,7 @@ export function EarlyRepayOptionsCard({
       // paused during the completion window (Codex #1511 r5 P1).
       unavailable:
         completionPause ??
-        (pastDueHint ? copy.offset.onlyBeforeDue : undefined),
+        (pastDueHint ? copy.offset.onlyBeforeDue : refinanceHold),
       target: 'transfer-card',
     },
     {
@@ -159,7 +180,7 @@ export function EarlyRepayOptionsCard({
           ? o.offsetHeldBySale
           : pastDueHint
             ? copy.offset.onlyBeforeDue
-            : undefined),
+            : refinanceHold),
       target: 'offset-card',
     },
     {
@@ -169,11 +190,7 @@ export function EarlyRepayOptionsCard({
       cost: o.refinanceCost,
       unavailable:
         completionPause ??
-        (!refinanceEligible
-          ? o.refinanceTransferredUnavailable
-          : refinancePending
-            ? copy.refinance.partialBlockedByPending
-            : undefined),
+        (!refinanceEligible ? o.refinanceTransferredUnavailable : refinanceHold),
       target: 'refinance-card',
     },
   ];

@@ -16,9 +16,21 @@ and an expired one is still shown so it can be cancelled and its approval
 removed. The card for it now shows to whoever posted it, the only wallet
 that can cancel it. A request
 from any device now shows with its cancel action and holds those actions
-back. If the search cannot give a complete answer — a read failed, or the
-holder has more offers than one search covers — the page says it couldn't
-check and keeps those actions held back rather than assuming there is none.
+back. If the search cannot give a complete answer, the page keeps those
+actions held back rather than assuming there is none, and says which of two
+reasons applies: a read failed (it may answer on a later try), or the holder
+has posted more offers since the loan's own offer than one search reads (a
+retry will not help, so it does not suggest one; full repayment stays open).
+The early-repayment chooser says the same on the rows it cannot offer, rather
+than pointing at a card that is held back, and the full-repayment review warns
+that a request could exist while the search has not answered. An expired
+request no longer holds anything back, including posting a new request. A
+wallet that posted a request and then transferred the position, or whose loan
+has settled, is shown that request from any device, since only the poster can
+cancel it and remove its payoff approval. If posting an offset stops after its
+token approval was granted — for instance because a last check found a
+refinance request — the approval is now put back, as the handover and
+refinance flows already did.
 Each of those actions repeats the search just before the wallet opens. One
 narrow race remains and is stated in the specification: a request posted in
 the moments between that last check and the transaction being mined, since the

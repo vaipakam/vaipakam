@@ -106,7 +106,12 @@ import { LoanSalePendingCard } from '../components/LoanSalePendingCard';
 import { LoanKeeperCard } from '../components/LoanKeeperCard';
 import { LOCK_EARLY_WITHDRAWAL_SALE, useLoanSalePending } from '../data/loanSalePending';
 import { readRefinanceMarker, useRefinancePending } from '../data/refinancePending';
-import { discoverRefinanceRequest, discoverySurfaceState } from '../data/refinanceDiscovery';
+import { discoverRefinanceRequest } from '../data/refinanceDiscovery';
+import {
+  liveRefinanceVerdict,
+  refinanceInterlock,
+  type RefinanceCheck,
+} from '../data/refinanceInterlock';
 import { ZERO_ADDRESS } from '../lib/offerSchema';
 import {
   AssetType,
@@ -131,6 +136,33 @@ type ConfirmSurface =
   | 'loan-sale'
   | 'sale-teardown'
   | 'forced-close';
+
+
+/** #2406 r3 — what a surface a refinance request would strand shows in
+ *  place of its action while the page does not KNOW whether one is open
+ *  (`refinanceInterlock`'s check). One component, so every such surface
+ *  says the same true thing: still checking, could not check (may answer
+ *  on retry), or too many offers to check (a retry will not help). */
+function RefinanceCheckNotice({
+  check,
+}: {
+  check: Exclude<RefinanceCheck, 'settled'>;
+}) {
+  if (check === 'checking') {
+    return (
+      <p className="muted" style={{ margin: 0 }}>
+        {copy.earlyRepay.checkingInterlocks}
+      </p>
+    );
+  }
+  return (
+    <div className="banner banner-warn" role="alert">
+      <span className="banner-body">
+        {check === 'capped' ? copy.refinance.cappedBlocks : copy.refinance.uncheckedBlocks}
+      </span>
+    </div>
+  );
+}
 
 export function PositionDetails() {
   const { loanId: loanIdParam } = useParams();
@@ -497,43 +529,28 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       : (loan.data.lendingAsset as `0x${string}`),
     // #2391 — the CURRENT borrower-position holder, whose own open offers
     // are searched on chain. A rental has no refinance path ('burned' =
-    // nothing to search).
-    // #2406 r2 — once the position is burned (the loan settled), the only
-    // wallet that can still act on a standing request is the one that
-    // posted it: search the connected wallet, so the pending card and its
-    // cancel-and-revoke cleanup outlive settlement.
-    loanIsRental
-      ? 'burned'
-      : freshBorrowerOwner === 'burned'
-        ? (address ?? 'burned')
-        : freshBorrowerOwner,
+    // nothing to search). The hook also scans the CONNECTED wallet when it
+    // is not the holder (#2406 r3), so a request's creator finds it for
+    // cleanup after a transfer or once the loan has settled.
+    loanIsRental ? 'burned' : freshBorrowerOwner,
     loan.data?.offerId,
   );
-  const refinancePending = refi.offerId !== null;
-  // The partial/preclose interlocks exist to protect an ACCEPTABLE
-  // request from being stranded by a changed principal or a settled
-  // loan. An EXPIRED request can't be accepted by anyone, so it stops
-  // blocking — and neither can one whose loan is strictly past its
-  // grace window (the #1189 admission gate rejects the accept).
-  // While verification is still loading, keep blocking — the
-  // conservative side.
-  const refinanceBlocking =
-    refinancePending &&
-    refi.state?.expired !== true &&
-    refi.state?.pastGrace !== true;
-  /** #2391 — whether the page KNOWS there is no request it cannot see.
-   *  'checking' while discovery loads; 'unchecked' when it failed, was cut
-   *  short, or the holder read itself failed — a request could exist
-   *  unseen, so the surfaces it would strand hold back (fail closed).
-   *  #2406 r2 — 'settled' ONLY on a resolved scan (none / found), or on a
-   *  request already verified as blocking (whose own interlock applies):
-   *  a device marker naming an EXPIRED request does not settle it, since
-   *  a failed scan could be hiding a different, open one. */
-  const refiDiscoveryState = discoverySurfaceState({
-    discovery: refi.discovery,
-    refinanceBlocking,
+  /** #2391 / #2406 r3 — the ONE derivation every refinance-touching
+   *  surface reads (`refinanceInterlock`): whether an acceptable request
+   *  blocks (an expired one, one past grace, or one whose creator no longer
+   *  holds the position cannot be filled, so does not; one still verifying
+   *  does — the conservative side), and whether the page knows ('settled')
+   *  or must hold back and say why ('checking' / 'unchecked' / 'capped'). */
+  const refiLock = refinanceInterlock({
+    offerId: refi.offerId,
+    fromOwnScan: refi.fromOwnScan,
+    state: refi.state,
+    holder: loanIsRental ? 'burned' : freshBorrowerOwner,
+    holderScan: refi.holderScan,
     holderReadFailed: nftOwners.isError,
   });
+  const refinanceBlocking = refiLock.blocking;
+  const refiCheck: RefinanceCheck = refiLock.check;
 
   // Lender-side sibling: a live Option-2 sale listing. Existence is
   // the CHAIN's say-so (positionLock on the lender NFT), so a listing
@@ -792,15 +809,18 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     if (!publicClient || !walletChain || !loan.data || !address) {
       return copy.refinance.uncheckedBlocks;
     }
-    const found = await discoverRefinanceRequest({
-      client: publicClient,
-      diamond: walletChain.diamondAddress,
-      loanId: BigInt(loanId),
-      sinceOfferId: BigInt(loan.data.offerId),
-      holder: address,
-    });
-    if (found.kind === 'unknown') return copy.refinance.uncheckedBlocks;
-    if (found.kind === 'found' && found.open) return blockedMsg;
+    const verdict = liveRefinanceVerdict(
+      await discoverRefinanceRequest({
+        client: publicClient,
+        diamond: walletChain.diamondAddress,
+        loanId: BigInt(loanId),
+        sinceOfferId: BigInt(loan.data.offerId),
+        holder: address,
+      }),
+    );
+    if (verdict === 'open') return blockedMsg;
+    if (verdict === 'capped') return copy.refinance.cappedBlocks;
+    if (verdict === 'unchecked') return copy.refinance.uncheckedBlocks;
     return null;
   }, [loanIsRental, publicClient, walletChain, loan.data, address, loanId]);
   const assertBorrowerSettlementSafe = useCallback(
@@ -2323,12 +2343,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         // #2389 r6 — the page's verified state, OR a marker another tab
         // on this device wrote after the page mounted (re-read live).
         refinancePending: refinanceBlocking || newerRefinanceMarker,
-        refinanceDiscovery:
-          liveRefi.kind === 'unknown'
-            ? 'unknown'
-            : liveRefi.kind === 'found' && liveRefi.open
-              ? 'open'
-              : 'none',
+        refinanceDiscovery: liveRefinanceVerdict(liveRefi),
         paused,
         saleState,
         swapOrder,
@@ -2341,6 +2356,8 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             ? t.refinancePending
             : block === 'refinance-unchecked'
             ? t.refinanceUnchecked
+            : block === 'refinance-capped'
+            ? copy.refinance.cappedBlocks
             : block === 'paused'
             ? t.paused
             : block === 'pause-unchecked'
@@ -3244,6 +3261,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                 : false
           }
           refinancePending={refinanceBlocking}
+          refinanceCheck={refiCheck}
           refinanceEligible={Boolean(
             address && address.toLowerCase() === row.borrower.toLowerCase(),
           )}
@@ -3409,16 +3427,9 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             <p className="muted" style={{ margin: 0 }}>
               {copy.earlyRepay.checkingInterlocks}
             </p>
-          ) : refiDiscoveryState === 'checking' ? (
-            // #2391 — on-chain discovery has not answered yet.
-            <p className="muted" style={{ margin: 0 }}>
-              {copy.earlyRepay.checkingInterlocks}
-            </p>
-          ) : refiDiscoveryState === 'unchecked' ? (
-            // #2391 — a request could exist unseen; hold back.
-            <div className="banner banner-warn" role="alert">
-              <span className="banner-body">{copy.refinance.uncheckedBlocks}</span>
-            </div>
+          ) : refiCheck !== 'settled' ? (
+            // #2391 — a request could exist unseen; hold back, and say why.
+            <RefinanceCheckNotice check={refiCheck} />
           ) : refinanceBlocking ? (
             // #2389 r5 — the same pending-refinance interlock partial
             // repayment and preclose apply: the request is frozen at the
@@ -3625,16 +3636,9 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                 {copy.saleHold.completionPaused}
               </span>
             </div>
-          ) : refiDiscoveryState === 'checking' ? (
-            // #2391 — on-chain discovery has not answered yet.
-            <p className="muted" style={{ margin: 0 }}>
-              {copy.earlyRepay.checkingInterlocks}
-            </p>
-          ) : refiDiscoveryState === 'unchecked' ? (
-            // #2391 — a request could exist unseen; hold back.
-            <div className="banner banner-warn" role="alert">
-              <span className="banner-body">{copy.refinance.uncheckedBlocks}</span>
-            </div>
+          ) : refiCheck !== 'settled' ? (
+            // #2391 — a request could exist unseen; hold back, and say why.
+            <RefinanceCheckNotice check={refiCheck} />
           ) : refinanceBlocking ? (
             // A live refinance request is frozen at the CURRENT
             // principal — a partial would strand it unacceptable
@@ -3813,16 +3817,9 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                 {copy.offset.blockedOtherPaths}
               </span>
             </div>
-          ) : refiDiscoveryState === 'checking' ? (
-            // #2391 — on-chain discovery has not answered yet.
-            <p className="muted" style={{ margin: 0 }}>
-              {copy.earlyRepay.checkingInterlocks}
-            </p>
-          ) : refiDiscoveryState === 'unchecked' ? (
-            // #2391 — a request could exist unseen; hold back.
-            <div className="banner banner-warn" role="alert">
-              <span className="banner-body">{copy.refinance.uncheckedBlocks}</span>
-            </div>
+          ) : refiCheck !== 'settled' ? (
+            // #2391 — a request could exist unseen; hold back, and say why.
+            <RefinanceCheckNotice check={refiCheck} />
           ) : refinanceBlocking ? (
             // A live refinance request is frozen against THIS loan —
             // settling it early would strand the request forever.
@@ -3888,10 +3885,12 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             already live (the pending surface is the page-owned card
             below, which outlives these gates). Keyed by chain so a
             chain switch re-seeds per-chain state. */}
-        {!refinancePending &&
+        {!refinanceBlocking &&
         // #2406 r2 — and only once discovery has answered: an unseen
-        // request from another device must not invite a second one.
-        refiDiscoveryState === 'settled' &&
+        // request from another device must not invite a second one. An
+        // EXPIRED request does not hold the form (#2406 r3) — it can never
+        // be filled, and its own card offers the cleanup.
+        refiCheck === 'settled' &&
         !offsetPend.pending &&
         // Accepted-sale completion window (Codex #1511 r4 P1): a
         // carry-over refinance settles this loan and strands the
@@ -3935,17 +3934,11 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         // the other settlement flows. The chooser rows say why.
         !saleCompletionPending &&
         !saleHoldResolving &&
-        refiDiscoveryState !== 'settled' ? (
+        refiCheck !== 'settled' ? (
           // #2406 r1 — the handover rewrites the borrower and the offset
           // settles the loan, so both strand an unseen refinance request:
           // held back, with the reason, while discovery has not answered.
-          refiDiscoveryState === 'checking' ? (
-            <p className="muted">{copy.earlyRepay.checkingInterlocks}</p>
-          ) : (
-            <div className="banner banner-warn" role="alert">
-              <span className="banner-body">{copy.refinance.uncheckedBlocks}</span>
-            </div>
-          )
+          <RefinanceCheckNotice check={refiCheck} />
         ) : !livePastDue &&
         !refinanceBlocking &&
         !offsetPend.pending &&
@@ -4925,9 +4918,11 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       // may have transferred the position.
       (refi.state
         ? address.toLowerCase() === refi.state.creator.toLowerCase()
-        : freshBorrowerOwner !== undefined &&
-          freshBorrowerOwner !== 'burned' &&
-          address.toLowerCase() === freshBorrowerOwner.toLowerCase()) ? (
+        : // #2406 r3 — a request from the viewer's own scan is theirs.
+          refi.fromOwnScan ||
+          (freshBorrowerOwner !== undefined &&
+            freshBorrowerOwner !== 'burned' &&
+            address.toLowerCase() === freshBorrowerOwner.toLowerCase())) ? (
         <RefinancePendingCard
           loanId={row.loanId}
           offerId={refi.offerId}
@@ -5025,13 +5020,20 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                   <span className="banner-body">{copy.positions.details.nothingWaiting}</span>
                 </div>
               ) : null}
-              {action === 'repay' && refinancePending && !isRental ? (
+              {action === 'repay' &&
+              !isRental &&
+              (refinanceBlocking || refiCheck !== 'settled') ? (
                 // Repay stays open with a pending refinance request
                 // (it's the safety valve — never block it), but the
-                // request's fate must be stated before signing.
+                // request's fate must be stated before signing. #2406 r3 —
+                // so must an UNANSWERED check: a request from another
+                // device could exist, and repaying would strand it too. An
+                // expired request is not live; its own card covers cleanup.
                 <div className="banner banner-warn" role="alert" style={{ marginBottom: 12 }}>
                   <span className="banner-body">
-                    {copy.refinance.repayWarnPending}
+                    {refinanceBlocking
+                      ? copy.refinance.repayWarnPending
+                      : copy.refinance.repayWarnUnchecked}
                   </span>
                 </div>
               ) : null}

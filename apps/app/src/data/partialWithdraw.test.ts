@@ -245,7 +245,7 @@ describe('swapToRepayOrderState', () => {
 describe('withdrawPreflightBlock (#2389 r2)', () => {
   const ok = {
     refinancePending: false,
-    refinanceDiscovery: 'none' as const,
+    refinanceDiscovery: 'clear' as const,
     paused: false as const,
     saleState: 'none' as const,
     swapOrder: 'none' as const,
@@ -257,7 +257,9 @@ describe('withdrawPreflightBlock (#2389 r2)', () => {
   });
   it('blocks on a request the live on-chain discovery found, and when it could not answer (#2391)', () => {
     expect(withdrawPreflightBlock({ ...ok, refinanceDiscovery: 'open' })).toBe('refinance-pending');
-    expect(withdrawPreflightBlock({ ...ok, refinanceDiscovery: 'unknown' })).toBe('refinance-unchecked');
+    expect(withdrawPreflightBlock({ ...ok, refinanceDiscovery: 'unchecked' })).toBe('refinance-unchecked');
+    // #2406 r3 — a scan cut short by the page cap has its own reason.
+    expect(withdrawPreflightBlock({ ...ok, refinanceDiscovery: 'capped' })).toBe('refinance-capped');
   });
   it('blocks while the deployment is paused, and when the pause read failed (#2389 r3)', () => {
     expect(withdrawPreflightBlock({ ...ok, paused: true })).toBe('paused');
