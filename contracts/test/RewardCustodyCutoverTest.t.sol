@@ -12,6 +12,7 @@ import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {RewardClaimFacet} from "../src/facets/RewardClaimFacet.sol";
 import {RewardCustodyFacet} from "../src/facets/RewardCustodyFacet.sol";
+import {RewardStagingDomainFacet} from "../src/facets/RewardStagingDomainFacet.sol";
 import {RewardReconciliationFacet} from "../src/facets/RewardReconciliationFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
@@ -172,6 +173,29 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _rep().setIsCanonicalRewardChain(false);
         _rep().setBaseChainId(CHAIN_BASE);
         _remit().setRewardRemittanceReceiver(address(this));
+    }
+
+    /// @dev Claim alice's reward, driving her entry's LEGACY SLICE home first.
+    ///      An entry funded by an UNTYPED delivery is listed by the transport
+    ///      batch that delivery admits, so its claim opens the legacy-slice
+    ///      domain (A2-ii (c)) and defers while the domain is driven, one page
+    ///      per call; the facet's permissionless step drives it, and the next
+    ///      claim pays. Returns everything the claims paid.
+    function _claimDriven() internal returns (uint256 paid) {
+        vm.prank(alice);
+        (paid, , ) = _claim().claimInteractionRewards();
+        if (paid != 0) return paid;
+        uint256[] memory ids = _lens().getUserRewardEntryIds(alice);
+        uint256 id = ids[ids.length - 1];
+        for (uint256 i; i < 16; ++i) {
+            try RewardStagingDomainFacet(address(diamond)).stepLegacySlice(id) returns (bool consumed) {
+                if (consumed) break;
+            } catch {
+                break;
+            }
+        }
+        vm.prank(alice);
+        (paid, , ) = _claim().claimInteractionRewards();
     }
 
     function _seedDiamond(uint256 amount) internal {
@@ -1671,8 +1695,7 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _untyped(fresh, 43, id);
         _evidence(_packetHash(id), fresh);
         _classify(_packetHash(id), fresh, 0, keccak256("e-partial"));
-        vm.prank(alice);
-        (uint256 claimed, , ) = _claim().claimInteractionRewards();
+        uint256 claimed = _claimDriven(); // the untyped delivery listed a batch: the slice is driven home first
         uint256 unspent = fresh - claimed;
         (uint256 received0, uint256 paid0) = _ledger();
         _reclassify(0, true, 2e18, keccak256("r-2")); // within the unspent part
@@ -1953,8 +1976,7 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         // A fresh outflow, covered by delivered fresh backing, before any
         // fresh classification exists.
         _deliverStamped(expected + 1e18, expected + 1e18, 0, 53, keccak256("D")); // counted: live backing
-        vm.prank(alice);
-        (uint256 claimed, , ) = _claim().claimInteractionRewards();
+        uint256 claimed = _claimDriven(); // the untyped delivery listed a batch: the slice is driven home first
         assertGt(claimed, 0);
         _untyped(10e18, 54, keccak256("F"));
         _evidence(_packetHash(keccak256("F")), 10e18);
@@ -2294,8 +2316,7 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _untyped(expected, 70, keccak256("legacy-later"));
         _evidence(h, expected);
         _classify(h, expected, 0, keccak256("e-later"));
-        vm.prank(alice);
-        (uint256 claimed, , ) = _claim().claimInteractionRewards();
+        uint256 claimed = _claimDriven(); // the untyped delivery listed a batch: the slice is driven home first
         assertGt(claimed, 0, "paid out");
         uint256 dust = expected - claimed; // the claim rounds a few wei below the quote
         assertEq(_live(), dust);
