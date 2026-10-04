@@ -1638,7 +1638,7 @@
       "asksHeading": "Ofertas para prestar",
       "bidsHeading": "Solicitudes de préstamo",
       "bookEmpty": "Aún no hay ofertas abiertas para este par — la tuya puede ser la primera.",
-      "bookEmptySignedUnknown": "Todavía no hay ofertas publicadas en la blockchain para este par. Las ofertas firmadas no están incluidas ahora mismo, así que puede que haya alguna.",
+      "bookEmptySignedUnknown": "No hay ofertas que mostrar para este par ahora mismo. No se pudieron comprobar todas las ofertas firmadas, así que puede que haya alguna.",
       "bookUnavailable": "No pudimos cargar las ofertas ahora mismo. Inténtalo de nuevo en un momento.",
       "bookIndexedCopy": "Ahora mismo no podemos leer la blockchain directamente, así que mostramos una copia guardada de las ofertas, que puede estar algo desactualizada.",
       "yourOrderMark": "Tu oferta a esta tasa",

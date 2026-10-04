@@ -298,9 +298,9 @@ export function RateLadder({
         <EmptyState
           icon={BookOpen}
           title={
-            signedDepth === 'loading' || signedDepth === 'unavailable'
-              ? copy.desk.bookEmptySignedUnknown
-              : copy.desk.bookEmpty
+            signedDepth === 'complete'
+              ? copy.desk.bookEmpty
+              : copy.desk.bookEmptySignedUnknown
           }
         />
       ) : (

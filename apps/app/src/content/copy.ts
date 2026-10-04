@@ -3672,10 +3672,11 @@ const copySource = {
     asksHeading: 'Offers to lend',
     bidsHeading: 'Requests to borrow',
     bookEmpty: 'No open offers for this pair yet — yours can be the first.',
-    // #2386 r1 — empty on chain while signed offers are unknown: "no
-    // open offers" could be false, so say only what was checked.
+    // #2386 r1/r3 — empty while the signed book is anything but complete
+    // (loading, unavailable, or possibly cut short): "no open offers"
+    // could be false, so say only what could be checked.
     bookEmptySignedUnknown:
-      'No offers posted on the blockchain for this pair yet. Signed offers aren’t included right now, so there may be some.',
+      'No offers to show for this pair right now. Not every signed offer could be checked, so there may be some.',
     bookUnavailable:
       'We couldn’t load the offers right now. Please try again in a moment.',
     bookIndexedCopy:

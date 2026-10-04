@@ -1711,7 +1711,7 @@
       "asksHeading": "Offers to lend",
       "bidsHeading": "Requests to borrow",
       "bookEmpty": "No open offers for this pair yet — yours can be the first.",
-      "bookEmptySignedUnknown": "No offers posted on the blockchain for this pair yet. Signed offers aren’t included right now, so there may be some.",
+      "bookEmptySignedUnknown": "No offers to show for this pair right now. Not every signed offer could be checked, so there may be some.",
       "bookUnavailable": "We couldn’t load the offers right now. Please try again in a moment.",
       "bookIndexedCopy": "We can’t read the blockchain directly right now, so this shows a saved copy of the offers, which can be a little behind.",
       "yourOrderMark": "Your offer at this rate",

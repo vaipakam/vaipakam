@@ -1638,7 +1638,7 @@
       "asksHeading": "Offres de prêt",
       "bidsHeading": "Demandes d’emprunt",
       "bookEmpty": "Aucune offre ouverte pour cette paire pour l’instant — la vôtre peut être la première.",
-      "bookEmptySignedUnknown": "Aucune offre publiée sur la blockchain pour cette paire pour l’instant. Les offres signées ne sont pas incluses en ce moment, il peut donc y en avoir.",
+      "bookEmptySignedUnknown": "Aucune offre à afficher pour cette paire pour le moment. Toutes les offres signées n’ont pas pu être vérifiées, il peut donc y en avoir.",
       "bookUnavailable": "Nous n’avons pas pu charger les offres pour le moment. Veuillez réessayer dans un instant.",
       "bookIndexedCopy": "Nous ne pouvons pas lire directement la blockchain pour le moment : ceci affiche donc une copie enregistrée des offres, qui peut avoir un peu de retard.",
       "yourOrderMark": "Votre offre à ce taux",

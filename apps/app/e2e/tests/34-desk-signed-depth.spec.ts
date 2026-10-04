@@ -11,7 +11,8 @@
  *  serves `/signed-offers` normally, so this drives three states on one
  *  market by intercepting only that route's GET:
  *
- *   1. untouched — the stub answers, nothing is missing, NO note;
+ *   1. untouched — the stub answers with `truncated: false` like the
+ *                  worker, nothing is missing, NO note;
  *   2. 503       — the "couldn’t load signed offers" note, and the empty
  *                  state names only on-chain offers;
  *   3. a body flagged `truncated` — the "not every signed offer may be
@@ -53,7 +54,8 @@ test('the ladder discloses an unavailable or truncated signed book', async ({ la
   await openMarketViaCustomPair(page, tenor);
   await expect(note).toContainText(/couldn’t load signed offers/i, { timeout: 30_000 });
   await expect(note).toContainText(/only offers posted on the blockchain/i);
-  await expect(page.getByText(/signed offers aren’t included right now/i)).toBeVisible();
+  const emptyUnknown = page.getByText(/not every signed offer could be checked/i);
+  await expect(emptyUnknown).toBeVisible();
   await expect(empty).toHaveCount(0);
 
   // 3 — the service answers, but a side overflowed its cap.
@@ -71,4 +73,8 @@ test('the ladder discloses an unavailable or truncated signed book', async ({ la
   await openMarketViaCustomPair(page, tenor);
   await expect(note).toContainText(/not every signed offer may be loaded/i, { timeout: 30_000 });
   await expect(note).toContainText(/even at the best rate/i);
+  // r3 — a possibly cut-short book is not a complete one, so an empty
+  // list still says only what could be checked.
+  await expect(emptyUnknown).toBeVisible();
+  await expect(empty).toHaveCount(0);
 });

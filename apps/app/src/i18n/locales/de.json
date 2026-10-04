@@ -1638,7 +1638,7 @@
       "asksHeading": "Angebote zum Verleihen",
       "bidsHeading": "Anfragen zum Leihen",
       "bookEmpty": "Für dieses Paar gibt es noch keine offenen Angebote — Ihres kann das erste sein.",
-      "bookEmptySignedUnknown": "Für dieses Paar sind noch keine Angebote auf der Blockchain veröffentlicht. Signierte Angebote sind derzeit nicht berücksichtigt, es kann also welche geben.",
+      "bookEmptySignedUnknown": "Für dieses Paar gibt es gerade keine Angebote anzuzeigen. Nicht alle signierten Angebote konnten geprüft werden, es kann also welche geben.",
       "bookUnavailable": "Wir konnten die Angebote gerade nicht laden. Bitte versuchen Sie es gleich noch einmal.",
       "bookIndexedCopy": "Wir können die Blockchain gerade nicht direkt lesen, daher sehen Sie eine gespeicherte Kopie der Angebote, die etwas hinterherhinken kann.",
       "yourOrderMark": "Ihr Angebot zu diesem Zins",

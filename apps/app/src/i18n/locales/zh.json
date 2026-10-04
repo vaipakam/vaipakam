@@ -1638,7 +1638,7 @@
       "asksHeading": "出借报价",
       "bidsHeading": "借款请求",
       "bookEmpty": "这个交易对还没有开放报价——你的可以成为第一个。",
-      "bookEmptySignedUnknown": "这个交易对目前还没有发布在区块链上的报价。签名报价暂未包含在内，因此可能存在一些。",
+      "bookEmptySignedUnknown": "这个交易对目前没有可显示的报价。并非所有签名报价都能核实，因此可能存在一些。",
       "bookUnavailable": "暂时无法加载报价。请稍后再试。",
       "bookIndexedCopy": "我们现在无法直接读取区块链，因此这里显示的是报价的已保存副本，可能稍有滞后。",
       "yourOrderMark": "你在此利率的报价",
