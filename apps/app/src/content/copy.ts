@@ -1663,6 +1663,9 @@ const copySource = {
       'A refinance request is live for this loan. Closing early now would strand it — cancel the refinance request first.',
     // #2406 r1 — the live check just before a borrower action that would
     // change or settle the loan found an open request.
+    // #2406 r2 — posting a second request while one is already open.
+    alreadyOpen:
+      'A refinance request is already open on this loan — perhaps from another device — so nothing was posted. Cancel it first, or wait until it is taken or expires: a second request would leave one of them impossible to fill.',
     liveBlocksSettlement:
       'A refinance request is open on this loan. This would change or settle the loan and leave the request impossible to fill, so nothing was sent — cancel the refinance request first.',
     // #2391 — requests are found on chain from the borrower's own offers;

@@ -169,3 +169,23 @@ export async function discoverRefinanceRequest(opts: {
     return { kind: 'unknown' };
   }
 }
+
+/** #2391 / #2406 r2 — whether the page KNOWS no request is hiding from
+ *  it. 'settled' ONLY on a resolved scan (none / found) or a request
+ *  already verified as blocking (whose own interlock applies) — a device
+ *  marker naming an EXPIRED request does not settle it, since a failed
+ *  scan could be hiding a different, open one. 'unchecked' when the scan
+ *  failed or was cut short, or the holder read it depends on failed;
+ *  otherwise 'checking'. Surfaces a request would strand hold back unless
+ *  'settled'. */
+export function discoverySurfaceState(a: {
+  discovery: RefinanceDiscovery | undefined;
+  /** A known request is verified (or still verifying) as acceptable. */
+  refinanceBlocking: boolean;
+  holderReadFailed: boolean;
+}): 'settled' | 'checking' | 'unchecked' {
+  const k = a.discovery?.kind;
+  if (k === 'none' || k === 'found' || a.refinanceBlocking) return 'settled';
+  if (k === 'unknown' || a.holderReadFailed) return 'unchecked';
+  return 'checking';
+}

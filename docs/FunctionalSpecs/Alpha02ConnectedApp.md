@@ -3072,9 +3072,14 @@ Its intended behaviour, as the test oracle for this surface:
   warns that the request survives settlement until cancelled. The
   request is found on chain from the borrower-position holder's own
   offers, so a request posted from another device or tool shows here
-  too, with its cancel action; this device's own record of a request it
-  just posted only speeds that up. An expired request is still shown so
-  it can be cancelled and its approval removed. Loans on a periodic interest schedule carry a visible
+  too, with its cancel action, to the wallet that posted it; this device's
+  own record of a request it just posted only speeds that up. An expired
+  request is still shown so it can be cancelled and its approval removed,
+  and the card outlives the loan's settlement for the same reason. A new
+  request cannot be posted while one is open — the protocol accepts
+  several, and taking one leaves the others impossible to fill — and the
+  form waits until the search has answered, checking again just before
+  posting. Loans on a periodic interest schedule carry a visible
   warning that an overdue period blocks completion until settled.
 - The borrower of an active ERC-20 loan sees, in BOTH interface
   modes, one chooser surface that names every early-repayment path

@@ -106,7 +106,7 @@ import { LoanSalePendingCard } from '../components/LoanSalePendingCard';
 import { LoanKeeperCard } from '../components/LoanKeeperCard';
 import { LOCK_EARLY_WITHDRAWAL_SALE, useLoanSalePending } from '../data/loanSalePending';
 import { readRefinanceMarker, useRefinancePending } from '../data/refinancePending';
-import { discoverRefinanceRequest } from '../data/refinanceDiscovery';
+import { discoverRefinanceRequest, discoverySurfaceState } from '../data/refinanceDiscovery';
 import { ZERO_ADDRESS } from '../lib/offerSchema';
 import {
   AssetType,
@@ -498,20 +498,18 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     // #2391 — the CURRENT borrower-position holder, whose own open offers
     // are searched on chain. A rental has no refinance path ('burned' =
     // nothing to search).
-    loanIsRental ? 'burned' : freshBorrowerOwner,
+    // #2406 r2 — once the position is burned (the loan settled), the only
+    // wallet that can still act on a standing request is the one that
+    // posted it: search the connected wallet, so the pending card and its
+    // cancel-and-revoke cleanup outlive settlement.
+    loanIsRental
+      ? 'burned'
+      : freshBorrowerOwner === 'burned'
+        ? (address ?? 'burned')
+        : freshBorrowerOwner,
     loan.data?.offerId,
   );
   const refinancePending = refi.offerId !== null;
-  /** #2391 — whether the page KNOWS there is no request it cannot see.
-   *  'checking' while discovery loads; 'unchecked' when it failed, was cut
-   *  short, or the holder read itself failed — a request could exist
-   *  unseen, so the surfaces it would strand hold back (fail closed). */
-  const refiDiscoveryState: 'settled' | 'checking' | 'unchecked' =
-    refinancePending || refi.discovery?.kind === 'none'
-      ? 'settled'
-      : refi.discovery?.kind === 'unknown' || nftOwners.isError
-        ? 'unchecked'
-        : 'checking';
   // The partial/preclose interlocks exist to protect an ACCEPTABLE
   // request from being stranded by a changed principal or a settled
   // loan. An EXPIRED request can't be accepted by anyone, so it stops
@@ -523,6 +521,19 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     refinancePending &&
     refi.state?.expired !== true &&
     refi.state?.pastGrace !== true;
+  /** #2391 — whether the page KNOWS there is no request it cannot see.
+   *  'checking' while discovery loads; 'unchecked' when it failed, was cut
+   *  short, or the holder read itself failed — a request could exist
+   *  unseen, so the surfaces it would strand hold back (fail closed).
+   *  #2406 r2 — 'settled' ONLY on a resolved scan (none / found), or on a
+   *  request already verified as blocking (whose own interlock applies):
+   *  a device marker naming an EXPIRED request does not settle it, since
+   *  a failed scan could be hiding a different, open one. */
+  const refiDiscoveryState = discoverySurfaceState({
+    discovery: refi.discovery,
+    refinanceBlocking,
+    holderReadFailed: nftOwners.isError,
+  });
 
   // Lender-side sibling: a live Option-2 sale listing. Existence is
   // the CHAIN's say-so (positionLock on the lender NFT), so a listing
@@ -772,7 +783,11 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
    *  What no client check can close is a request posted between this read
    *  and the transaction mining; that remaining race is stated in the
    *  functional spec rather than implied away. */
-  const assertNoRefinanceRequestLive = useCallback(async (): Promise<string | null> => {
+  const assertNoRefinanceRequestLive = useCallback(async (
+    /** What to say when an open request is found — settling the loan and
+     *  posting a second request strand it in different ways. */
+    blockedMsg: string = copy.refinance.liveBlocksSettlement,
+  ): Promise<string | null> => {
     if (loanIsRental) return null;
     if (!publicClient || !walletChain || !loan.data || !address) {
       return copy.refinance.uncheckedBlocks;
@@ -785,12 +800,21 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       holder: address,
     });
     if (found.kind === 'unknown') return copy.refinance.uncheckedBlocks;
-    if (found.kind === 'found' && found.open) return copy.refinance.liveBlocksSettlement;
+    if (found.kind === 'found' && found.open) return blockedMsg;
     return null;
   }, [loanIsRental, publicClient, walletChain, loan.data, address, loanId]);
   const assertBorrowerSettlementSafe = useCallback(
     async (): Promise<string | null> =>
       (await assertSaleSettlementSafe()) ?? (await assertNoRefinanceRequestLive()),
+    [assertSaleSettlementSafe, assertNoRefinanceRequestLive],
+  );
+  /** #2406 r2 — posting a refinance request: the contract allows several
+   *  tagged offers, and accepting one leaves the others unfillable, so a
+   *  request already open (from any device) blocks a second. */
+  const assertRefinancePostSafe = useCallback(
+    async (): Promise<string | null> =>
+      (await assertSaleSettlementSafe()) ??
+      (await assertNoRefinanceRequestLive(copy.refinance.alreadyOpen)),
     [assertSaleSettlementSafe, assertNoRefinanceRequestLive],
   );
 
@@ -3865,6 +3889,9 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             below, which outlives these gates). Keyed by chain so a
             chain switch re-seeds per-chain state. */}
         {!refinancePending &&
+        // #2406 r2 — and only once discovery has answered: an unseen
+        // request from another device must not invite a second one.
+        refiDiscoveryState === 'settled' &&
         !offsetPend.pending &&
         // Accepted-sale completion window (Codex #1511 r4 P1): a
         // carry-over refinance settles this loan and strands the
@@ -3877,7 +3904,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           <div id="refinance-card">
             <RefinanceFlow
               key={readChain.chainId}
-              preSubmitBlock={assertSaleSettlementSafe}
+              preSubmitBlock={assertRefinancePostSafe}
               row={row}
               live={loanLive.data.live}
               chainNow={loanLive.data.chainNow}
