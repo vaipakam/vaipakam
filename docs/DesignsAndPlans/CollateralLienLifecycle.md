@@ -107,7 +107,7 @@ the collateral lien.
 | BV4 | `LibSwapToRepayIntentSettlement.sol:146` | intent residual → vault | Repaid | **NONE re-applied (pairs with SV4)** | ⚠️ |
 | BV5 | `RiskMatchLiquidationFacet.sol:612` | FallbackPending full-rescue residual → vault | InternalMatched | **NONE; claims deleted** | ⚠️² |
 | BV6 | `SwapToRepayFacet.sol:393` `swapToRepayFull` | partial-fill refund → vault | Repaid | increment(refund) | ✅ |
-| BV7 | `SwapToRepayFacet.sol:601` `swapToRepayPartial` | partial-fill refund → vault | Active | increment(refund) | ✅ |
+| BV7 | `SwapToRepayPartialFacet.sol:288` `swapToRepayPartial` (moved off `SwapToRepayFacet` in #2416) | partial-fill refund → vault | Active | increment(refund) | ✅ |
 | BV8 | `SwapToRepayIntentFacet.sol:912` `_teardownCommit` | intent cancel → vault | Active | increment(custodial) | ✅ |
 
 ¹ SV6 relies entirely on `claimAsBorrower` (no terminal release) — verify a test

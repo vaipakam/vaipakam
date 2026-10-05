@@ -28,6 +28,7 @@ import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {RepayPeriodicFacet} from "../src/facets/RepayPeriodicFacet.sol";
 import {SwapToRepayFacet} from "../src/facets/SwapToRepayFacet.sol";
+import {SwapToRepayPartialFacet} from "../src/facets/SwapToRepayPartialFacet.sol";
 import {SwapToRepayIntentFacet} from "../src/facets/SwapToRepayIntentFacet.sol";
 import {IntentDispatchFacet} from "../src/facets/IntentDispatchFacet.sol";
 import {AutoLifecycleFacet} from "../src/facets/AutoLifecycleFacet.sol";
@@ -243,6 +244,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         RepayFacet repayFacet = new RepayFacet();
         RepayPeriodicFacet repayPeriodicFacet = new RepayPeriodicFacet();
         SwapToRepayFacet swapToRepayFacet = new SwapToRepayFacet();
+        // #2416 — the partial swap-to-repay route, split off for EIP-170.
+        SwapToRepayPartialFacet swapToRepayPartialFacet = new SwapToRepayPartialFacet();
         // T-090 v1.1 (#389) — intent-based swap-to-repay sibling facet.
         SwapToRepayIntentFacet swapToRepayIntentFacet = new SwapToRepayIntentFacet();
         // T-087 Sub 3.B — the 1inch LOP v4 callback dispatcher;
@@ -383,7 +386,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](87);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](88);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -565,6 +568,13 @@ contract DeployDiamond is Script, ArtifactRootBase {
         cuts[43] = _buildCut(
             address(swapToRepayFacet),
             _getSwapToRepayFacetSelectors()
+        );
+        // #2416 — the PARTIAL route, split off SwapToRepayFacet at 73 bytes of
+        // EIP-170 headroom. Same storage, same Diamond, same selector; only
+        // the runtime bytecode is separate. Refresh the two together.
+        cuts[87] = _buildCut(
+            address(swapToRepayPartialFacet),
+            _getSwapToRepayPartialFacetSelectors()
         );
         // T-090 v1.1 (#389) — intent-based swap-to-repay sibling.
         // Hosts the commit / cancel / cancelExpired entry points +
@@ -1093,6 +1103,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeFacet("repayFacet",              address(repayFacet));
         Deployments.writeFacet("repayPeriodicFacet",      address(repayPeriodicFacet));
         Deployments.writeFacet("swapToRepayFacet",        address(swapToRepayFacet));
+        Deployments.writeFacet("swapToRepayPartialFacet", address(swapToRepayPartialFacet));
         Deployments.writeFacet("defaultedFacet",          address(defaultedFacet));
         Deployments.writeFacet("riskFacet",               address(riskFacet));
         Deployments.writeFacet("riskMatchLiquidationFacet", address(riskMatchLiquidationFacet));
@@ -1747,11 +1758,16 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
     /// T-090 — Borrower-initiated swap-to-repay facet selectors.
     function _getSwapToRepayFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](3);
+        s = new bytes4[](2);
         s[0] = SwapToRepayFacet.swapToRepayFull.selector;
-        s[1] = SwapToRepayFacet.swapToRepayPartial.selector;
         // #2317 — read-only sizing preview for the full close-out.
-        s[2] = SwapToRepayFacet.previewSwapToRepayFull.selector;
+        s[1] = SwapToRepayFacet.previewSwapToRepayFull.selector;
+    }
+
+    /// #2416 — the partial swap-to-repay route (split off SwapToRepayFacet).
+    function _getSwapToRepayPartialFacetSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](1);
+        s[0] = SwapToRepayPartialFacet.swapToRepayPartial.selector;
     }
 
     /// T-090 v1.1 (#389) — intent-based swap-to-repay facet selectors.

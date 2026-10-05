@@ -1,0 +1,5 @@
+## Thread — The partial swap-to-repay route gets its own facet (PR #2423)
+
+The swap-to-repay facet hosted both of the borrower's swap routes — paying a loan off in full by swapping collateral into the principal asset, and paying part of it down the same way — and had grown to within 73 bytes of the per-contract size limit every chain enforces. That is less than any guard costs, so no further change to either route could be deployed: the refinance-request guard planned for the partial route in #2407 would have pushed the facet over the limit.
+
+The partial route now lives in its own facet. This is a pure move: the function keeps the same name, the same address (the protocol's single entry point) and the same behaviour, and reads and writes the same storage, so nothing changes for a borrower, the app, a keeper or an indexer. Only the deployed bytecode is split across two contracts. Operators should note that the two facets are one surface and must always be refreshed together; the all-facets refresh script carries both. The full-repayment facet now has roughly 4 KB of headroom and the new partial facet roughly 9 KB. Closes #2416.

@@ -130,7 +130,7 @@ non-protective under D-1, see §4.6.)
 |------|----------|-------------|----|--------|
 | `RepayFacet:1279` | `_autoLiquidatePeriodShortfall` (ERC20 periodic interest) | `toSell` | decrement | wired ✓ |
 | `RiskFacet:1190` | `triggerPartialLiquidation` | `swappedCollateral` | decrement | wired ✓ |
-| `SwapToRepayFacet:550` | `swapToRepayPartial` | `collateralSwapAmount` (− partial-fill refund increment) | decrement + increment | wired ✓ |
+| `SwapToRepayPartialFacet:247` (moved off `SwapToRepayFacet` in #2416) | `swapToRepayPartial` | `collateralSwapAmount` (− partial-fill refund increment) | decrement + increment | wired ✓ |
 | **`PartialWithdrawalFacet:107`** | **`partialWithdrawCollateral`** | **`amount`** | **decrement** | **MISSING ❌** |
 
 ### 4.3 Protective sites — top-up increment / recreate

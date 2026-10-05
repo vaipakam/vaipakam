@@ -1,7 +1,7 @@
 [
   {
     "type": "function",
-    "name": "previewSwapToRepayFull",
+    "name": "swapToRepayPartial",
     "inputs": [
       {
         "name": "loanId",
@@ -9,36 +9,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "maxCollateralIn",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "collateralToSell",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "minPrincipalOut",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "requiredPrincipal",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "swapToRepayFull",
-    "inputs": [
-      {
-        "name": "loanId",
+        "name": "collateralSwapAmount",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -58,11 +29,6 @@
             "internalType": "bytes"
           }
         ]
-      },
-      {
-        "name": "maxCollateralIn",
-        "type": "uint256",
-        "internalType": "uint256"
       }
     ],
     "outputs": [],
@@ -107,6 +73,74 @@
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "PeriodicInterestSettled",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "periodEndAt",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "expected",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "paidByBorrower",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "settler",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RepayPartialPeriodAdvanced",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "periodEndAt",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "expected",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "advancedBy",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
       }
     ],
     "anonymous": false
@@ -188,7 +222,7 @@
   },
   {
     "type": "event",
-    "name": "SwapToRepayExecuted",
+    "name": "SwapToRepayPartialExecuted",
     "inputs": [
       {
         "name": "loanId",
@@ -210,6 +244,12 @@
       },
       {
         "name": "principalOut",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "partialPrincipal",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -1089,17 +1129,6 @@
   },
   {
     "type": "error",
-    "name": "ERC721NonexistentToken",
-    "inputs": [
-      {
-        "name": "tokenId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "EncumbranceUnderflow",
     "inputs": [
       {
@@ -1331,6 +1360,11 @@
         "internalType": "uint256"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "InsufficientPartialAmount",
+    "inputs": []
   },
   {
     "type": "error",
@@ -1922,6 +1956,32 @@
         "internalType": "uint256"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "PartialRepayNotAllowed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "PartialSwapWorsensHealthFactor",
+    "inputs": [
+      {
+        "name": "hfBefore",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "hfAfter",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "PartialWouldRetireFullPrincipal",
+    "inputs": []
   },
   {
     "type": "error",
@@ -3336,17 +3396,6 @@
   },
   {
     "type": "error",
-    "name": "SafeCastOverflowedUintToInt",
-    "inputs": [
-      {
-        "name": "value",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "SafeERC20FailedOperation",
     "inputs": [
       {
@@ -3767,11 +3816,6 @@
   {
     "type": "error",
     "name": "SwapAllAdaptersFailed",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "SwapBoundsInsufficient",
     "inputs": []
   },
   {

@@ -69,7 +69,11 @@ abstract contract DiamondFacetNames {
     ///      cluster split off `RewardAggregatorFacet`, which had 32 bytes
     ///      of EIP-170 headroom — far less than one cross-facet call, the
     ///      same condition as #1780 at 30 and #1835 at 164).
-    function cutFacetNames() internal pure returns (string[87] memory) {
+    ///      87 → 88 in #2416 with `SwapToRepayPartialFacet` (the partial
+    ///      swap-to-repay route split off `SwapToRepayFacet`, which had 73
+    ///      bytes of EIP-170 headroom — less than the refinance-request
+    ///      guard #2407 has to add to that route).
+    function cutFacetNames() internal pure returns (string[88] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -176,6 +180,7 @@ abstract contract DiamondFacetNames {
             "RiskMatchLiquidationFacet",
             "RiskSplitLiquidationFacet",
             "SwapToRepayFacet",
+            "SwapToRepayPartialFacet",
             "SwapToRepayIntentFacet",
             "TreasuryFacet",
             "VaipakamNFTFacet",
