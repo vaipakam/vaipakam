@@ -21,9 +21,14 @@
  *     equal the true value as `formatTokenAmount` would round it (four
  *     significant digits below one, four decimals above); a percent is
  *     `formatBpsAsPercent`'s two-decimal figure; a length is parsed back
- *     through the en.json unit words and compared in days; a grace window in
- *     seconds. Equality at display precision means a figure that RENDERS
+ *     through the en.json unit words and compared in days; a grace window is
+ *     compared as the exact label `formatGraceSeconds` renders for the
+ *     configured seconds (r8 — that formatter rounds, so parsing back is
+ *     lossy). Equality at display precision means a figure that RENDERS
  *     the same as the true one passes, and any visibly different one fails.
+ *   - Each label must label EXACTLY ONE row (r8): none, or two, is a
+ *     mismatch — a duplicate row with a different figure is something the
+ *     reader saw.
  *
  * Pure; `reviewTerms.test.mjs` pins it with the strings the deployed app
  * rendered on 2026-10-05.
@@ -117,12 +122,33 @@ export function parseDurationDays(s, units) {
   return null;
 }
 
-/** A grace window rendered by `formatGraceSeconds` → seconds. */
-export function parseGraceSeconds(s) {
-  const m = /^(\d+) (minute|hour|day|week)s?$/.exec(squash(s));
-  if (!m) return null;
-  const unit = { minute: 60, hour: 3_600, day: 86_400, week: 604_800 }[m[2]];
-  return BigInt(m[1]) * BigInt(unit);
+/**
+ * The label the app renders for a grace window of `seconds` — a mirror of
+ * `formatGraceSeconds` (apps/app/src/lib/grace.ts), the single formatter
+ * every grace label in the app goes through (`data/protocol.ts`,
+ * `offerSchema.gracePeriodLabel`).
+ *
+ * WHY a mirror and not a parser (#2422 r8): the formatter ROUNDS. 3,700 s
+ * renders "1 hour"; parsing "1 hour" back gives 3,600 s, which is not the
+ * configured 3,700 — so a parse-and-compare-seconds check failed a review
+ * that showed exactly what the app was meant to show. The question the
+ * review check asks is "did the page render the label for the configured
+ * grace?", and that is answered by formatting the configured seconds the
+ * same way and comparing STRINGS. The test pins this mirror against the
+ * formatter's branch table, 3,700 s → "1 hour" among them.
+ */
+export function formatGraceSeconds(seconds) {
+  const s = Number(seconds);
+  if (s < 3_600) return `${Math.max(1, Math.round(s / 60))} minutes`;
+  if (s < 86_400) {
+    const h = Math.round(s / 3_600);
+    return h === 1 ? '1 hour' : `${h} hours`;
+  }
+  const days = Math.round(s / 86_400);
+  if (days === 1) return '1 day';
+  if (days === 7) return '1 week';
+  if (days === 14) return '2 weeks';
+  return `${days} days`;
 }
 
 /**
@@ -143,22 +169,44 @@ export function termLedger() {
 // The two receipts this drive consents to, compared term by term.
 // ---------------------------------------------------------------------
 
+/**
+ * The rows carrying a label: EXACTLY ONE is the only usable answer
+ * (#2422 r8). With a first-match lookup, a receipt that rendered the right
+ * figure in one row and a different figure in a second row of the same
+ * label passed — the comparison read whichever came first, and the reader
+ * of the page saw both. Zero rows and two-or-more rows are both mismatches.
+ */
+export function rowsLabelled(rows, label) {
+  const want = squash(label);
+  return rows.filter((r) => squash(r.label) === want);
+}
+
 /** One comparison over receipt rows ({ label, value } text). Rows are
- *  found by their en.json LABEL; `compared` lists every term looked at. */
+ *  found by their en.json LABEL — exactly one per label; `compared` lists
+ *  every term looked at. */
 function comparer(rows, en) {
   const L = termLedger();
   const compared = [];
+  const reported = new Set();
+  /** The single row's value, or null — and a non-single count is recorded
+   *  as a mismatch once per label, however many terms read that row. */
   const valueOf = (key) => {
-    const want = squash(en.receipt[key]);
-    const row = rows.find((r) => squash(r.label) === want);
-    return row ? squash(row.value) : null;
+    const hits = rowsLabelled(rows, en.receipt[key]);
+    if (hits.length === 1) return squash(hits[0].value);
+    if (!reported.has(key)) {
+      reported.add(key);
+      L.want(
+        `"${en.receipt[key]}" row`,
+        false,
+        hits.map((r) => squash(r.value)),
+        hits.length === 0 ? 'exactly one row (none rendered)' : `exactly one row (${hits.length} rendered)`,
+      );
+    }
+    return null;
   };
   const fit = (key, template, opts) => {
     const v = valueOf(key);
-    if (v === null) {
-      L.want(`"${en.receipt[key]}" row`, false, null, 'present');
-      return null;
-    }
+    if (v === null) return null;
     const g = matchTemplate(template, v, opts);
     if (!g) L.want(`"${en.receipt[key]}" row`, false, v, `text fitting ${JSON.stringify(template)}`);
     return g;
@@ -175,7 +223,8 @@ function comparer(rows, en) {
   };
   const exact = (key, text) => {
     compared.push(`"${en.receipt[key]}" text`);
-    L.want(`"${en.receipt[key]}" row`, valueOf(key) === squash(text), valueOf(key), JSON.stringify(text));
+    const v = valueOf(key);
+    if (v !== null) L.want(`"${en.receipt[key]}" row`, v === squash(text), v, JSON.stringify(text));
   };
   return { L, compared, valueOf, fit, amount, percent, exact };
 }
@@ -216,7 +265,8 @@ export function compareLenderReceipt(rows, ctx) {
     c.compared.push('loan length', 'grace window');
     const days = parseDurationDays(g5.duration, en.units);
     c.L.want('loan length', days !== null && BigInt(days) === BigInt(req.durationDays), g5.duration, `${req.durationDays} days`);
-    c.L.want('grace window', parseGraceSeconds(g5.grace) === BigInt(ctx.graceSeconds), g5.grace, `${ctx.graceSeconds}s`);
+    const graceLabel = formatGraceSeconds(BigInt(ctx.graceSeconds));
+    c.L.want('grace window', squash(g5.grace) === graceLabel, g5.grace, `"${graceLabel}" (formatGraceSeconds of ${ctx.graceSeconds}s)`);
   }
   return { mismatches: c.L.mismatches(), compared: c.compared };
 }

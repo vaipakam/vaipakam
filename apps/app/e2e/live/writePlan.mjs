@@ -34,6 +34,18 @@
  * other than its set (a createOffer standing on a zeroed allowance) is
  * refused.
  *
+ * THE PLAN IS CLOSED UNTIL A ROLE IS ARMED (#2422 r7, moved here in r8).
+ * `arm(role)` opens the plan to ONE role's requests; `close()` shuts it.
+ * A request from any role while the plan is closed — or from a role other
+ * than the armed one — is refused and LATCHES, like any other refusal. It
+ * lives in the plan rather than beside it so that no caller can consult the
+ * cursor without the arming state: a drive arms a role immediately before
+ * the UI action that is meant to lead to a write (the confirmed submit), so
+ * a page that asks to sign anything while it is still loading — an
+ * `approve(Diamond, 0)` fired from the position page's mount, say — is
+ * refused and halts the drive instead of consuming the plan's optional
+ * reset step.
+ *
  * A step's `expected` may be a function, evaluated at match time, for a
  * step whose payload depends on an earlier one (an accept CALL carrying
  * exactly the terms and signature just signed). Returning `null` means the
@@ -60,6 +72,8 @@ export function createWritePlan(steps) {
   const state = steps.map((s) => ({ ...s, status: 'pending', record: {} }));
   let cursor = 0;
   let latched = null;
+  /** The one role whose requests may be judged; null = CLOSED. */
+  let armed = null;
   /** Step ids made required by a consumed step's `requires`. */
   const forced = new Set();
   const isOptional = (s) => Boolean(s.optional) && !forced.has(s.id);
@@ -75,6 +89,10 @@ export function createWritePlan(steps) {
    */
   function offer(role, kind, actual) {
     if (latched) return { ok: false, why: `plan already refused a request (${latched}) — no further writes` };
+    if (armed === null) {
+      return refuse(`the write plan is CLOSED — no role is armed, so nothing may be signed (${role} ${kind})`);
+    }
+    if (armed !== role) return refuse(`the ${armed} phase is armed, not the ${role} phase (${role} ${kind})`);
     if (cursor >= state.length) {
       return refuse(`the plan is complete — nothing further may be signed (${role} ${kind})`);
     }
@@ -113,6 +131,18 @@ export function createWritePlan(steps) {
 
   return {
     offer,
+    /** Open the plan to `role`'s requests only (closes any other role). A
+     *  latched plan stays latched: arming never undoes a refusal. */
+    arm(role) {
+      if (typeof role !== 'string' || role === '') throw new Error(`arm(): not a role: ${JSON.stringify(role)}`);
+      armed = role;
+    },
+    /** Close the plan: every request is refused until a role is armed. */
+    close() {
+      armed = null;
+    },
+    /** The armed role, or null while CLOSED. */
+    armed: () => armed,
     /** Attach outcome data (hash, signature, provider result) to a step. */
     record(index, data) {
       Object.assign(state[index].record, data);

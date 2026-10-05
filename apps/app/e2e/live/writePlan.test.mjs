@@ -9,8 +9,20 @@ import { is } from './expectedPayload.mjs';
 import { createWritePlan } from './writePlan.mjs';
 
 const approve = (amount) => ({ fn: 'approve', amount });
+/**
+ * The CURSOR tests below are about order, not arming: this wraps a plan so
+ * each request arms its own role first. The arming rule itself is pinned,
+ * unwrapped, in the "closed until armed" block at the end.
+ */
+const autoArm = (p) => ({
+  ...p,
+  offer: (role, kind, actual) => {
+    if (p.armed() !== role) p.arm(role);
+    return p.offer(role, kind, actual);
+  },
+});
 const plan = () =>
-  createWritePlan([
+  autoArm(createWritePlan([
     { id: 'caps', role: 'borrower', kind: 'tx', purpose: 'caps', optional: true, expected: { fn: 'caps' } },
     { id: 'reset', role: 'borrower', kind: 'tx', purpose: 'reset', optional: true, expected: approve(0n) },
     {
@@ -24,7 +36,7 @@ const plan = () =>
     { id: 'create', role: 'borrower', kind: 'tx', purpose: 'create', expected: { fn: 'create' } },
     { id: 'sign', role: 'lender', kind: 'typed', purpose: 'sign', expected: { msg: 'terms' } },
     { id: 'accept', role: 'lender', kind: 'tx', purpose: 'accept', expected: () => ({ fn: 'accept' }) },
-  ]);
+  ]));
 
 const statuses = (p) => p.steps().map((s) => `${s.id}:${s.status}`);
 
@@ -86,14 +98,14 @@ describe('writePlan — one ordered sequence, each step consumed once', () => {
   });
 
   it('refuses a step whose expected object cannot be built yet', () => {
-    const p = createWritePlan([
+    const p = autoArm(createWritePlan([
       { id: 'accept', role: 'lender', kind: 'tx', purpose: 'accept', expected: () => null },
-    ]);
+    ]));
     expect(p.offer('lender', 'tx', { fn: 'accept' }).why).toMatch(/cannot be judged yet/);
   });
 
   it('refuses anything after the plan is complete', () => {
-    const p = createWritePlan([{ id: 'only', role: 'lender', kind: 'tx', purpose: 'x', expected: { fn: 'x' } }]);
+    const p = autoArm(createWritePlan([{ id: 'only', role: 'lender', kind: 'tx', purpose: 'x', expected: { fn: 'x' } }]));
     expect(p.offer('lender', 'tx', { fn: 'x' }).ok).toBe(true);
     expect(p.complete()).toBe(true);
     expect(p.offer('lender', 'tx', { fn: 'x' }).why).toMatch(/plan is complete/);
@@ -107,11 +119,11 @@ describe('writePlan — one ordered sequence, each step consumed once', () => {
   });
 
   it('a reset must be followed by its set: reset → create is refused', () => {
-    const p = createWritePlan([
+    const p = autoArm(createWritePlan([
       { id: 'reset', role: 'b', kind: 'tx', purpose: 'reset', optional: true, requires: 'set', expected: approve(0n) },
       { id: 'set', role: 'b', kind: 'tx', purpose: 'set', optional: true, expected: approve(5n) },
       { id: 'create', role: 'b', kind: 'tx', purpose: 'create', expected: { fn: 'create' } },
-    ]);
+    ]));
     expect(p.offer('b', 'tx', approve(0n)).ok).toBe(true);
     const r = p.offer('b', 'tx', { fn: 'create' });
     expect(r.ok).toBe(false);
@@ -124,24 +136,66 @@ describe('writePlan — one ordered sequence, each step consumed once', () => {
       { id: 'set', role: 'b', kind: 'tx', purpose: 'set', optional: true, expected: approve(5n) },
       { id: 'create', role: 'b', kind: 'tx', purpose: 'create', expected: { fn: 'create' } },
     ];
-    const both = createWritePlan(steps());
+    const both = autoArm(createWritePlan(steps()));
     for (const a of [approve(0n), approve(5n), { fn: 'create' }]) expect(both.offer('b', 'tx', a).ok).toBe(true);
     expect(both.complete()).toBe(true);
-    const setOnly = createWritePlan(steps());
+    const setOnly = autoArm(createWritePlan(steps()));
     for (const a of [approve(5n), { fn: 'create' }]) expect(setOnly.offer('b', 'tx', a).ok).toBe(true);
     expect(setOnly.complete()).toBe(true);
     // And skipping the whole pair is still fine.
-    const neither = createWritePlan(steps());
+    const neither = autoArm(createWritePlan(steps()));
     expect(neither.offer('b', 'tx', { fn: 'create' }).ok).toBe(true);
   });
 
   it('a consumed reset whose set never comes leaves the plan incomplete', () => {
-    const p = createWritePlan([
+    const p = autoArm(createWritePlan([
       { id: 'reset', role: 'b', kind: 'tx', purpose: 'reset', optional: true, requires: 'set', expected: approve(0n) },
       { id: 'set', role: 'b', kind: 'tx', purpose: 'set', optional: true, expected: approve(5n) },
-    ]);
+    ]));
     expect(p.offer('b', 'tx', approve(0n)).ok).toBe(true);
     expect(p.complete()).toBe(false);
   });
 });
 
+// #2422 r8 — the arming rule, in the plan itself (no autoArm here).
+describe('writePlan — closed until a role is armed', () => {
+  const steps = () => [
+    { id: 'reset', role: 'borrower', kind: 'tx', purpose: 'reset', optional: true, requires: 'set', expected: approve(0n) },
+    { id: 'set', role: 'borrower', kind: 'tx', purpose: 'set', optional: true, expected: approve(5n) },
+    { id: 'create', role: 'borrower', kind: 'tx', purpose: 'create', expected: { fn: 'create' } },
+    { id: 'sign', role: 'lender', kind: 'typed', purpose: 'sign', expected: { msg: 'terms' } },
+  ];
+
+  it('refuses every request while CLOSED, and the refusal latches', () => {
+    const p = createWritePlan(steps());
+    expect(p.armed()).toBeNull();
+    const r = p.offer('borrower', 'tx', approve(0n));
+    expect(r.ok).toBe(false);
+    expect(r.why).toMatch(/CLOSED/);
+    expect(p.steps().map((s) => s.status)).toEqual(['pending', 'pending', 'pending', 'pending']);
+    // Arming afterwards does not undo the refusal.
+    p.arm('borrower');
+    expect(p.offer('borrower', 'tx', approve(0n)).why).toMatch(/already refused/);
+  });
+
+  it('refuses the role that is not armed', () => {
+    const p = createWritePlan(steps());
+    p.arm('lender');
+    expect(p.offer('borrower', 'tx', { fn: 'create' }).why).toMatch(/lender phase is armed, not the borrower/);
+  });
+
+  it('close() shuts an armed plan again', () => {
+    const p = createWritePlan(steps());
+    p.arm('borrower');
+    expect(p.offer('borrower', 'tx', { fn: 'create' }).ok).toBe(true);
+    p.close();
+    expect(p.offer('lender', 'typed', { msg: 'terms' }).why).toMatch(/CLOSED/);
+  });
+
+  it('refuses arming with something that is not a role', () => {
+    const p = createWritePlan(steps());
+    expect(() => p.arm('')).toThrow(/not a role/);
+    expect(() => p.arm(null)).toThrow(/not a role/);
+    expect(p.armed()).toBeNull();
+  });
+});

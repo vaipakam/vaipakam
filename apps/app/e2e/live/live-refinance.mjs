@@ -70,12 +70,26 @@
 //       a submit) checks the halt first and stops. A review that fails to
 //       disclose the illiquid collateral is therefore never consented to.
 //
-// THE PLAN IS CLOSED UNTIL ARMED (#2422 r7). No signing request is
-// allowed before both sessions' page preflights (navigation + English)
-// pass; the borrower phase is then armed explicitly, and the lender phase
-// only once the request is pinned and every request check has passed. A
-// request while closed (or from the unarmed role) is refused and halts.
+// THE PLAN IS CLOSED UNTIL ARMED (#2422 r7; in the plan itself since r8).
+// Each role is armed only IMMEDIATELY BEFORE ITS CONFIRMED SUBMIT — the
+// borrower once the position card, posture banner and review figures have
+// passed, the lender once the request is pinned and the lender's review
+// has passed — and the plan is closed again when that submit settles. A
+// request while closed (or from the unarmed role) is refused, latches the
+// plan and halts: an approve(Diamond, 0) the position page fires while it
+// loads can never consume the plan's reset step.
 // An approval RESET must be followed by its SET (`requires` in the plan).
+//
+// THE VERDICT IS AN OUTCOME MANIFEST (#2422 r8, outcomeManifest.mjs), not
+// "all checks passed": every claim this drive VERIFIES, with the on-chain
+// reads that substantiate it — a claim prints as verified only when every
+// check it declares ran and passed — and every claim it does NOT verify,
+// with the reason and where it is covered. Among the verified claims, read
+// at the block before the accept and at the accept block: the exact
+// settlement (the old lender's claim and vault, both wallets, the vaults,
+// and the principal token's Transfer logs in the accept receipt, all
+// against the contract's own payoff view and fee config), and the collateral
+// lien moving intact from the old loan to the replacement.
 //
 // THE REVIEW IS CHECKED BEFORE CONSENT (#2422 r7, reviewTerms.mjs). Before
 // each consent tick, the receipt rows are read by their en.json labels and
@@ -159,8 +173,11 @@
 // drive's own worst case (about 35 minutes).
 //
 // Verdicts (the three-verdict contract in run-live-batch.mjs):
-//   0 PASS     — every assertion held.
-//   1 FAIL     — an assertion failed, a write was refused by the gate, a
+//   0 PASS     — every assertion held, and every claim the outcome manifest
+//                declares verifiable ran and passed (a deferred claim is
+//                printed under NOT VERIFIED, with its reason).
+//   1 FAIL     — an assertion failed, a manifest claim failed or never ran,
+//                a write was refused by the gate, a
 //                transaction reverted, or the UI could not complete a
 //                step it should have.
 //   2 BLOCKED  — a precondition did not hold BEFORE anything was written
@@ -223,16 +240,25 @@ import { redactUrl } from './redact.mjs';
 import { confirmWrite } from './writeConfirm.mjs';
 import {
   ANCHOR_WINDOW_SEC,
+  borrowerReserve,
   decodeTxForComparison,
   graceSecondsFrom,
+  refinancePayoffAt,
   refinancePlanSteps,
   REQUEST_WINDOW_SEC,
 } from './refinanceExpected.mjs';
 import { createWritePlan } from './writePlan.mjs';
 import { formatLedgerRow, ledgerRows } from './touchedState.mjs';
 import { compareBorrowerReceipt, compareLenderReceipt } from './reviewTerms.mjs';
-import { refinancePayoffAt } from './refinanceExpected.mjs';
 import { expectedPostureFrom, postureCopyFrom } from './refinancePosture.mjs';
+import { createManifest } from './outcomeManifest.mjs';
+import {
+  expectedPrincipalTransfers,
+  expectedSettlement,
+  lienMismatches,
+  scanForReplacement,
+  transferMismatches,
+} from './refinanceOutcome.mjs';
 
 // ---------------------------------------------------------------------
 // Output hygiene FIRST — before anything can print. The chain RPC URL may
@@ -480,11 +506,166 @@ function halt(why) {
   HALT = why;
   console.log(`HALT  ${why} — the write gate now refuses every further write`);
 }
-function check(label, ok, observed) {
-  checks.push({ label, ok: Boolean(ok), observed });
-  console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${observed !== undefined ? `  — observed: ${observed}` : ''}`);
-  if (!ok) halt(`check failed: ${label}`);
-  return Boolean(ok);
+// ---------------------------------------------------------------------
+// THE OUTCOME MANIFEST (#2422 r8, outcomeManifest.mjs) — what this drive's
+// verdict claims, declared before anything runs. Each VERIFIED claim names
+// the checks it consists of and the read behind each; it prints as verified
+// only when every one of them ran and passed. Each NOT VERIFIED claim says
+// why this drive does not check it and where it is covered. The verdict
+// prints this manifest instead of a bare "all checks passed".
+// ---------------------------------------------------------------------
+const MANIFEST = createManifest({
+  verifiable: [
+    {
+      id: 'uiFlow',
+      claim: 'the refinance ran end to end through the deployed app’s own UI, in English, with no scripted write',
+      checks: {
+        borrower: '<html lang> on /positions/<loan>, and the "Refinance this loan" card rendered for the stored borrower',
+        lender: '<html lang> on /offers, and the guided review opened as "You’re funding borrow request #<id>"',
+        lenderDone: 'the lender page reported "Loan opened"',
+      },
+    },
+    {
+      id: 'borrowerReview',
+      claim: 'before consent, the borrower’s review showed the chain’s auto-match posture and the figures the chain implies',
+      checks: {
+        posture: 'the posture banner and the standing request card vs paused / getAutoRefinanceEnabled / getMasterFlags at the pinned block',
+        receipt: 'the review rows (payoff, late-fee headroom, wallet top-up, LIF and treasury rates, request lifetime, carry-over copy) vs getLoanDetails at chain head, getLoanInitiationFeeBps and getFeesConfig',
+      },
+    },
+    {
+      id: 'request',
+      claim: `the request the borrower posted is on chain with exactly the reviewed terms, refinancing loan ${LOAN_ID} by carry-over`,
+      checks: {
+        receipt: 'the createOffer receipt: success, every Diamond log decodes, one OfferCreated, the page names the same id',
+        terms: 'getOfferDetails(request) at the createOffer block: target loan, carry-over, creator, 0..ceiling rate band, length, amount, assets, collateral, consent, expiry',
+        onlyOffer: 'getUserOffersPaginated(borrower) walked to its total at the createOffer block: the request is the only new offer',
+      },
+    },
+    {
+      id: 'offerBook',
+      claim: 'the request was discoverable in the Offer Book, tagged illiquid, with a "Fund this request" CTA to the guided accept',
+      checks: {
+        cta: 'the Offer Book row’s CTA href',
+        illiquidTag: 'the Offer Book row text vs copy.offers.illiquidCollateralTag',
+      },
+    },
+    {
+      id: 'lenderReview',
+      claim: 'before consent, the lender’s review disclosed the illiquid collateral and showed the request’s terms as the chain holds them',
+      checks: {
+        illiquidWarning: 'the review text vs copy.match.illiquidWarning',
+        receipt: 'the review rows (principal, ceiling-rate interest, collateral, yield fee, length, grace) vs getOfferDetails(request), getFeesConfig and the grace window',
+      },
+    },
+    {
+      id: 'oldLoanClosed',
+      claim: `loan ${LOAN_ID} is closed as Repaid`,
+      checks: { status: `getLoanDetails(${LOAN_ID}).status at or after the accept block (confirmWrite)` },
+    },
+    {
+      id: 'replacement',
+      claim: 'the accept opened ONE replacement loan: Active, from this request, the same borrower, the accepting lender, the same principal and collateral (still illiquid, consent from both), the requested rate and length',
+      checks: {
+        events: 'the accept receipt: success, every Diamond log decodes, one OfferAccepted(request), LoanRefinanced(old → new, newLender, borrower)',
+        loan: 'getLoanDetails(replacement) at the accept block',
+        positionNfts: 'ownerOf(borrowerTokenId / lenderTokenId) at the accept block',
+        requestAccepted: 'getOfferDetails(request).accepted at the accept block',
+        lenderIndex: 'getUserActiveLoans(lender) at the accept block',
+      },
+    },
+    {
+      id: 'collateralCarryOver',
+      claim: 'the collateral carried over without leaving custody: the borrower’s collateral wallet never moved, and the lien moved intact from the old loan to the replacement',
+      checks: {
+        walletAtPost: 'balanceOf(collateral, borrower) at the createOffer block vs the pinned preflight block',
+        walletAtAccept: 'balanceOf(collateral, borrower) at the accept block vs the pinned preflight block',
+        liens: 'getLoanCollateralLien(old) at the block before the accept and at the accept block; getLoanCollateralLien(replacement) at the accept block',
+      },
+    },
+    {
+      id: 'settlement',
+      claim: 'the accept settled exactly what the contract’s own views prescribe: the old lender’s claim and vault got the payoff less the treasury share, the treasury got its interest share and LIF cut, the borrower got the new principal less the LIF and paid the payoff, the accepting lender paid the principal and got the matcher cut',
+      checks: {
+        payoffView: 'calculateRepaymentAmount(old) at the block before the accept vs the app’s payoff formula for that block',
+        oldLenderClaim: 'getClaimable(old, lender) at the block before the accept and at the accept block',
+        transfers: 'the principal token’s Transfer logs in the accept receipt — attributable to this transaction alone, the treasury’s legs included — vs the legs derived from those views',
+        wallets: 'balanceOf(principal) of the borrower and the accepting lender at the block before the accept and at the accept block',
+        vaults: 'balanceOf(principal) of the old lender’s, the borrower’s and the lender’s vaults (getUserVaultAddress) at the same two blocks',
+      },
+    },
+    {
+      id: 'writeDiscipline',
+      claim: 'every signature and transaction was the next step of the declared write plan, exactly, and the chain shows nothing the gate did not allow',
+      checks: {
+        nonces: 'each role’s latest / pending nonce vs the consumed plan transactions, all with a hash',
+        noRefusals: 'the gate’s and the wallets’ refusal logs, and the plan’s latch',
+      },
+    },
+  ],
+  notVerified: [
+    {
+      id: 'graceWindow',
+      claim: 'a refinance accepted inside the old loan’s grace window settles with the late fee',
+      reason: 'excluded by this drive’s precondition (at least two hours before maturity)',
+      coveredBy:
+        'contracts/test/RefinanceFacetTest.t.sol testRefinanceLoan_graceWindow_succeeds (admission and completion); the fee amount via PrecloseFacetTest.testPreclosedDirect_graceWindow_chargesLateFee',
+    },
+    {
+      id: 'yieldDiscount',
+      claim: 'an exiting lender’s VPFI yield-fee discount is applied on refinance',
+      reason: 'outside the settlement model this drive asserts; a receipt carrying a discount moves the settlement claim to NOT VERIFIED',
+      coveredBy: 'contracts/test/FeeEntitlementFacetTest.t.sol test_1955_refinance_discountKeysOnHolder_notStoredLender',
+    },
+    {
+      id: 'liquidCollateral',
+      claim: 'refinancing a loan with LIQUID collateral (the replacement’s HF / LTV gates)',
+      reason: 'this drive refinances an illiquid-collateral loan only',
+      coveredBy: 'apps/app/e2e/tests/29-refinance-completion.spec.ts (CI-Anvil)',
+    },
+    {
+      id: 'oldLenderPayout',
+      claim: 'the exiting lender can claim the settled payoff out of the protocol',
+      reason: 'this drive verifies the claim is recorded and funded in the vault; claiming it is a write outside its plan',
+      coveredBy: null,
+    },
+    {
+      id: 'indexerAfter',
+      claim: 'after the accept, the indexer and the app’s lists show the request filled and the replacement among both parties’ positions',
+      reason: 'every outcome is asserted on chain; the Offer Book is used only to find the request',
+      coveredBy: null,
+    },
+    {
+      id: 'rewards',
+      claim: 'VPFI reward accounting for the closed loan and the replacement',
+      reason: 'no reward state is read',
+      coveredBy: null,
+    },
+    {
+      id: 'allowanceAfter',
+      claim: 'no payoff allowance to the Diamond is left standing once the refinance completes',
+      reason:
+        'not asserted — the app approves the payoff at the request’s last fillable moment (late-fee headroom included), so an accept before that leaves the difference approved; loan 22’s run left 0.0000764 WETH',
+      coveredBy: null,
+    },
+  ],
+});
+
+/**
+ * One check: printed, recorded, and — when it fails — a halt (rule B).
+ * `at` ('claim.check') files the result in the outcome manifest under the
+ * claim it substantiates; the manifest refuses an undeclared one.
+ */
+function check(label, ok, observed, at) {
+  const pass = Boolean(ok);
+  checks.push({ label, ok: pass, observed });
+  console.log(`${pass ? 'PASS' : 'FAIL'}  ${label}${observed !== undefined ? `  — observed: ${observed}` : ''}`);
+  if (at) {
+    const [claim, key] = at.split('.');
+    MANIFEST.record(claim, key, pass, `${label}${observed !== undefined ? ` — ${observed}` : ''}`);
+  }
+  if (!pass) halt(`check failed: ${label}`);
+  return pass;
 }
 function note(s) {
   findings.push(s);
@@ -571,29 +752,20 @@ function abiFor(to) {
   return null;
 }
 
-/** Judge one signing request against the plan. Synchronous: the decision
- *  and the consumption of the step happen in one turn. */
 /**
- * Which role's phase is ARMED (#2422 r7). Null — the plan is CLOSED — until
- * both sessions' page preflights (navigation + English) have passed; then
- * the borrower phase is armed explicitly, and the lender phase only once
- * the request is pinned and every request check has passed. A signing
- * request from a role whose phase is not armed is refused, and the refusal
- * halts the drive (as every refusal does).
+ * Judge one signing request against the plan. Synchronous: the decision
+ * and the consumption of the step happen in one turn.
+ *
+ * WHICH ROLE MAY SIGN is the plan's own state (#2422 r7, moved into
+ * writePlan.mjs in r8): the plan is CLOSED until a role is armed, and each
+ * role is armed only immediately before its confirmed submit — after the
+ * page, card and review checks have passed — and closed again once that
+ * submit has settled. A request from a closed or unarmed role is refused by
+ * `PLAN.offer`, latches the plan, and halts the drive.
  */
-let ARMED_ROLE = null;
-
 function judge(role, method, params) {
   noteWalletRefusals();
   if (HALT) return { ok: false, why: `halted — ${HALT}` };
-  if (ARMED_ROLE !== role) {
-    return {
-      ok: false,
-      why: ARMED_ROLE === null
-        ? 'the write plan is CLOSED — nothing may be signed before the page preflights pass and a phase is armed'
-        : `the ${ARMED_ROLE} phase is armed, not the ${role} phase`,
-    };
-  }
   if (!PLAN) return { ok: false, why: 'no write plan has been built' };
   let kind;
   let actual;
@@ -891,17 +1063,16 @@ const REPLACEMENT_SCAN_CAP = 2_000;
 async function replacementAt(head) {
   if (RUN_REQUEST.state === 'none') return null;
   if (RUN_REQUEST.state === 'unidentified') throw new Error('this run\u2019s request could not be identified');
-  // Loan ids are sequential and an unused id reads back as id 0, so the
-  // scan from the old loan upward ends at the first empty id (capped).
-  let match = null;
-  for (let id = LOAN_ID + 1n, n = 0; n < REPLACEMENT_SCAN_CAP; id++, n++) {
-    const l = await loanOf(id, head);
-    if (l.id === 0n) break;
-    if (l.offerId === RUN_REQUEST.id) {
-      if (match) throw new Error(`two loans (#${match.id}, #${l.id}) carry request #${RUN_REQUEST.id}`);
-      match = l;
-    }
-  }
+  // Loan ids are sequential and an unused id reads back as id 0: only
+  // reaching that empty id establishes "none". A scan that exhausts its cap
+  // THROWS (#2422 r8), so the ledger prints this entry as UNKNOWN with its
+  // event-lookup remedy instead of a "none" it has not established.
+  const match = await scanForReplacement({
+    readLoan: (id) => loanOf(id, head),
+    startId: LOAN_ID + 1n,
+    requestId: RUN_REQUEST.id,
+    cap: REPLACEMENT_SCAN_CAP,
+  });
   if (!match) return null;
   const [borrowerHolder, lenderHolder] = await Promise.all([
     read('ownerOf', [match.borrowerTokenId], head),
@@ -1231,6 +1402,10 @@ const pre = await precondition('reading the preconditions from chain', async () 
   // The LIVE loan-initiation fee rate (ConfigFacet), pinned to the same
   // head — the payoff reserve below is computed from it, never assumed.
   const lifBps = await read('getLoanInitiationFeeBps', [], head);
+  // The contract's own payoff for the loan at the same head (RepayFacet's
+  // view): the borrower's reserve is sized from it and from the loan's
+  // remaining-term fields, never from its original length (#2422 r8).
+  const repayDue = await read('calculateRepaymentAmount', [LOAN_ID], head);
   // Per-asset pause — the read RefinanceFlow's assertAssetNotPausedLive
   // makes for BOTH legs at submit (#2422 r6 P2). The app treats a failed
   // read as not-paused; here it throws, so an unknown pause state BLOCKS.
@@ -1317,6 +1492,7 @@ const pre = await precondition('reading the preconditions from chain', async () 
     openRequests,
     caps,
     lifBps,
+    repayDue,
     riskTermsHash,
     principalPaused,
     collateralPaused,
@@ -1423,18 +1599,30 @@ const fmtP = (v) => formatUnits(v, PDEC);
 want('lender holds the principal', pre.l.principal >= loan.principal, `${fmtP(pre.l.principal)} ≥ ${fmtP(loan.principal)}`);
 // What the borrower must hold SPARE when the lender accepts: the payoff's
 // interest share plus the new loan's initiation fee (the new principal
-// arrives in the same transaction). The interest share is the FULL term
-// at the loan's rate — exact for a full-term-interest loan, an upper
-// bound for a pro-rata one — which holds because the precheck above
-// requires the loan to be pre-maturity (no late fee yet). The fee uses
-// the LIVE rate read at the pinned head, so a governance retune of
-// `loanInitiationFeeBps` moves this figure instead of hiding behind a
-// hard-coded one (Codex #2422 r1 P2).
-const fullTermInterest = (loan.principal * loan.interestRateBps * loan.durationDays) / (10_000n * 365n);
-const lifWei = (loan.principal * BigInt(pre.lifBps)) / 10_000n;
-const borrowerSpareNeed = fullTermInterest + lifWei;
+// arrives in the same transaction). The payoff is the LIVE remaining-term
+// figure (#2422 r8, `borrowerReserve`): the larger of the contract's payoff
+// view at the pinned head and the app's payoff formula — which reads
+// `interestAccrualStart` / `interestRemainingDays` — at the latest moment
+// this drive could accept (the maturity margin out, so a day's accrual step
+// in between is covered and no late fee is). Never the loan's original
+// `durationDays`: a loan re-anchored by a partial repayment owes far less,
+// and a full-term figure would BLOCK it. The fee uses the LIVE rate read at
+// the pinned head (Codex #2422 r1 P2).
+const RESERVE = borrowerReserve({
+  loan,
+  viewDue: pre.repayDue,
+  asOf: pre.now,
+  horizonSec: MIN_TO_MATURITY_SEC,
+  lifBps: pre.lifBps,
+});
+const lifWei = RESERVE.lif;
+const borrowerSpareNeed = RESERVE.reserve;
+console.log(
+  `pre   payoff: contract view ${fmtP(pre.repayDue)} at block ${pre.head}; reserved for ${fmtP(RESERVE.payoff)} ` +
+    `(remaining term: ${loan.interestRemainingDays} days from ${loan.interestAccrualStart || loan.startTime})`,
+);
 console.log(`pre   live loan-initiation fee: ${pre.lifBps} bps → ${fmtP(lifWei)} on the new principal (decimals ${PDEC})`);
-want('borrower holds the payoff top-up (interest share + live LIF)', pre.b.principal >= borrowerSpareNeed, `${fmtP(pre.b.principal)} ≥ ${fmtP(borrowerSpareNeed)}`);
+want('borrower holds the payoff top-up (remaining-term interest share + live LIF)', pre.b.principal >= borrowerSpareNeed, `${fmtP(pre.b.principal)} ≥ ${fmtP(borrowerSpareNeed)}`);
 const GAS_FLOOR = 300_000_000_000_000n; // 0.0003 ETH — several Base Sepolia txs
 console.log(`pre   current risk-terms hash: ${pre.riskTermsHash}`);
 // An unset oracle is fail-open BY DESIGN on the retail deploy: every
@@ -1627,9 +1815,11 @@ if (HALT || refusals.length || walletRefusals().length) {
   await report(BASELINE_NONCES);
   process.exit(1);
 }
-// Both page preflights passed: arm the borrower phase, explicitly.
-ARMED_ROLE = 'borrower';
-console.log('pre   write plan ARMED for the borrower phase');
+// Both page preflights passed. The plan STAYS CLOSED (#2422 r8): the
+// borrower role is armed only immediately before the confirmed submit,
+// after the position card and the review have been checked, so anything
+// the position page asks the wallet for while it loads is refused.
+console.log('pre   write plan CLOSED — each role is armed only for its confirmed submit');
 
 // =====================================================================
 // From here on, chain state may change: no BLOCKED exits.
@@ -1646,14 +1836,14 @@ try {
   await bp.goto(`${SITE}/positions/${LOAN_ID}`, { waitUntil: 'domcontentloaded', timeout: 60_000 });
   await ensureConnected(bp);
   const bLang = await renderedLang(bp);
-  check('borrower page renders English (every disclosure is matched against en.json)', isEnglish(bLang), bLang);
+  check('borrower page renders English (every disclosure is matched against en.json)', isEnglish(bLang), bLang, 'uiFlow.borrower');
 
   const card = bp.locator('section.card').filter({ hasText: 'Refinance this loan' });
   if (!(await card.first().waitFor({ state: 'visible', timeout: 90_000 }).then(() => true, () => false))) {
     await session.shot('refinance-01-no-card');
     stop('the "Refinance this loan" card never rendered for the stored borrower in Advanced mode');
   }
-  check('borrower: "Refinance this loan" card renders on /positions/' + LOAN_ID, true);
+  check('borrower: "Refinance this loan" card renders on /positions/' + LOAN_ID, true, undefined, 'uiFlow.borrower');
 
   // #2349/#2355 posture disclosure — judged against the chain's switches.
   const banner = card.locator('[data-auto-match-posture]');
@@ -1666,6 +1856,7 @@ try {
     `borrower: posture banner states the chain's posture (${expectedPosture})`,
     bannerPosture === expectedPosture && bannerText?.includes(postureCopy[expectedPosture]),
     `${bannerPosture}: "${bannerText}"`,
+    'borrowerReview.posture',
   );
 
   await card.getByLabel(/highest yearly rate/i).fill(RATE_PCT);
@@ -1680,7 +1871,7 @@ try {
   // The receipt the borrower consents to — kept as evidence.
   const receiptText = (await card.innerText()).replace(/\s+/g, ' ').trim();
   console.log(`\n--- refinance review (as rendered) ---\n${receiptText.slice(0, 2500)}\n---`);
-  check('borrower: review says the collateral carries over', /carries over|without ever unlocking/i.test(receiptText));
+  check('borrower: review says the collateral carries over', /carries over|without ever unlocking/i.test(receiptText), undefined, 'borrowerReview.receipt');
   await session.shot('refinance-03-review');
   // The figures the borrower is about to consent to, against the chain
   // (#2422 r7). A mismatch or an unparseable row halts before consent.
@@ -1689,6 +1880,7 @@ try {
     `borrower: review figures match the chain (${bTerms.compared.join(', ')})`,
     bTerms.mismatches.length === 0,
     bTerms.mismatches.join(' | ') || `all ${bTerms.compared.length} terms match`,
+    'borrowerReview.receipt',
   );
 
   // Rule B: nothing below may lead to a write if anything above failed.
@@ -1710,6 +1902,10 @@ try {
   beforeWriteStep('posting the refinance request');
   BORROWER_ANCHOR = await chainNow();
   console.log(`info  borrower anchor (chain time at submit start): ${BORROWER_ANCHOR}`);
+  // Arm the borrower role NOW — the card, posture and review checks above
+  // have passed, and the next action is the confirmed submit (#2422 r8).
+  PLAN.arm('borrower');
+  console.log('info  write plan ARMED for the borrower’s confirmed submit');
   await confirm.click();
 
   const live = await pollUntil('request is live', async () => {
@@ -1726,6 +1922,10 @@ try {
   if (!live || live.startsWith('error')) {
     stop(`the refinance request did not go live: ${live ?? 'timed out'}`);
   }
+  // The borrower's submit has settled: nothing may be signed until the
+  // lender's confirmed submit arms the plan again.
+  PLAN.close();
+  console.log('info  write plan CLOSED after the borrower’s submit');
   const pageRequestId = BigInt(live);
 
   // Pending card carries the posture disclosure too.
@@ -1744,6 +1944,7 @@ try {
     `borrower: the standing request card discloses the posture (${expectedPosture})`,
     pendingPosture === expectedPosture,
     pendingPostureErr ? `UNREADABLE — ${pendingPostureErr}` : pendingPosture,
+    'borrowerReview.posture',
   );
 
   // -------------------------------------------------------------------
@@ -1763,20 +1964,20 @@ try {
   const createTx = hashedSends('borrower').find((t) => t.purpose.startsWith('createOffer'));
   if (!createTx) stop('no createOffer transaction was captured at the wallet boundary');
   const createRcpt = await pub.waitForTransactionReceipt({ hash: createTx.hash, timeout: 180_000 });
-  check('createOffer receipt status success', createRcpt.status === 'success', createRcpt.status);
+  check('createOffer receipt status success', createRcpt.status === 'success', createRcpt.status, 'request.receipt');
   for (const t of hashedSends('borrower')) {
     const r = await pub.waitForTransactionReceipt({ hash: t.hash, timeout: 180_000 });
     if (r.status !== 'success') stop(`borrower tx ${t.hash} (${t.purpose}) reverted`);
   }
   const createDecoded = diamondEvents(createRcpt);
-  check('every Diamond log in the createOffer receipt decodes', createDecoded.undecodable === 0, `${createDecoded.undecodable} undecodable`);
+  check('every Diamond log in the createOffer receipt decodes', createDecoded.undecodable === 0, `${createDecoded.undecodable} undecodable`, 'request.receipt');
   const created = createDecoded.events.filter((e) => e.eventName === 'OfferCreated');
   if (created.length !== 1) stop(`createOffer receipt carries ${created.length} OfferCreated events`);
   requestId = created[0].args.offerId;
   // Only now can the lender's plan steps be judged; until this line they
   // refuse, so no lender write could precede the request's pinning.
   REQUEST_ID = requestId;
-  check('page names the same request id the receipt created', pageRequestId === requestId, `page #${pageRequestId}, receipt #${requestId}`);
+  check('page names the same request id the receipt created', pageRequestId === requestId, `page #${pageRequestId}, receipt #${requestId}`, 'request.receipt');
 
   const atCreate = createRcpt.blockNumber;
   const createRcptTs = (await pub.getBlock({ blockNumber: atCreate })).timestamp;
@@ -1788,23 +1989,25 @@ try {
     'exactly one new borrower offer across the full index, and it is the request',
     newIds.length === 1 && newIds[0] === String(requestId),
     `${newIds.join(',') || 'none'} of ${idsAfter.length}`,
+    'request.onlyOffer',
   );
   const req = await read('getOfferDetails', [requestId], atCreate);
-  check(`request refinanceTargetLoanId == ${LOAN_ID}`, req.refinanceTargetLoanId === LOAN_ID, req.refinanceTargetLoanId);
-  check('request refinanceCarryOver == true', req.refinanceCarryOver === true, req.refinanceCarryOver);
-  check('request is a borrower offer by the borrower', Number(req.offerType) === 1 && eq(req.creator, BORROWER), `${req.offerType} ${req.creator}`);
-  check(`request rate ceiling == ${RATE_BPS} bps (typed ${RATE_PCT}%)`, req.interestRateBpsMax === RATE_BPS, req.interestRateBpsMax);
-  check('request rate floor == 0 (a borrow request is a 0..ceiling band)', req.interestRateBps === 0n, req.interestRateBps);
-  check(`request durationDays == ${DAYS_N}`, req.durationDays === DAYS_N, req.durationDays);
-  check('request amount == old principal', req.amount === loan.principal, req.amount);
-  check('request lending asset == old principal asset', eq(req.lendingAsset, loan.principalAsset), req.lendingAsset);
-  check('request collateral identity == old collateral', eq(req.collateralAsset, loan.collateralAsset) && req.collateralAmount === loan.collateralAmount, `${req.collateralAsset} × ${req.collateralAmount}`);
-  check('request not yet accepted', req.accepted === false, req.accepted);
-  check('request records the borrower\u2019s consent', req.creatorRiskAndTermsConsent === true, req.creatorRiskAndTermsConsent);
+  check(`request refinanceTargetLoanId == ${LOAN_ID}`, req.refinanceTargetLoanId === LOAN_ID, req.refinanceTargetLoanId, 'request.terms');
+  check('request refinanceCarryOver == true', req.refinanceCarryOver === true, req.refinanceCarryOver, 'request.terms');
+  check('request is a borrower offer by the borrower', Number(req.offerType) === 1 && eq(req.creator, BORROWER), `${req.offerType} ${req.creator}`, 'request.terms');
+  check(`request rate ceiling == ${RATE_BPS} bps (typed ${RATE_PCT}%)`, req.interestRateBpsMax === RATE_BPS, req.interestRateBpsMax, 'request.terms');
+  check('request rate floor == 0 (a borrow request is a 0..ceiling band)', req.interestRateBps === 0n, req.interestRateBps, 'request.terms');
+  check(`request durationDays == ${DAYS_N}`, req.durationDays === DAYS_N, req.durationDays, 'request.terms');
+  check('request amount == old principal', req.amount === loan.principal, req.amount, 'request.terms');
+  check('request lending asset == old principal asset', eq(req.lendingAsset, loan.principalAsset), req.lendingAsset, 'request.terms');
+  check('request collateral identity == old collateral', eq(req.collateralAsset, loan.collateralAsset) && req.collateralAmount === loan.collateralAmount, `${req.collateralAsset} × ${req.collateralAmount}`, 'request.terms');
+  check('request not yet accepted', req.accepted === false, req.accepted, 'request.terms');
+  check('request records the borrower\u2019s consent', req.creatorRiskAndTermsConsent === true, req.creatorRiskAndTermsConsent, 'request.terms');
   check(
     'request expiry is in the future and no later than ~30 days out',
     req.expiresAt > createRcptTs && req.expiresAt <= BORROWER_ANCHOR + REQUEST_WINDOW_SEC + ANCHOR_WINDOW_SEC,
     `${req.expiresAt} (block ts ${createRcptTs})`,
+    'request.terms',
   );
   console.log(
     `info  request persisted: rate floor ${req.interestRateBps} bps, ceiling ${req.interestRateBpsMax} bps, ` +
@@ -1814,7 +2017,7 @@ try {
   const capsNow = await read('getAutoRefinanceCaps', [LOAN_ID], atCreate);
   console.log(`info  caps after posting: enabled ${capsNow.enabled}, maxRateBps ${capsNow.maxRateBps}, maxNewExpiry ${capsNow.maxNewExpiry}`);
   const collAfterPost = await tokenBalance(loan.collateralAsset, BORROWER, atCreate);
-  check('posting pulled no collateral from the borrower wallet', collAfterPost === baselineCollateral, `${collAfterPost}`);
+  check('posting pulled no collateral from the borrower wallet', collAfterPost === baselineCollateral, `${collAfterPost}`, 'collateralCarryOver.walletAtPost');
   const phase2Failed = checks.slice(phase2From).filter((c) => !c.ok);
   if (phase2Failed.length) {
     stop(
@@ -1825,10 +2028,9 @@ try {
   }
 
   await closeSession('borrower');
-  // The request is pinned and every request check passed: hand the plan to
-  // the lender phase. The borrower can sign nothing from here on.
-  ARMED_ROLE = 'lender';
-  console.log('info  write plan ARMED for the lender phase');
+  // The request is pinned and every request check passed. The plan stays
+  // CLOSED through the lender's page loads and review checks; the lender
+  // role is armed immediately before "Fund this borrower".
 
   // -------------------------------------------------------------------
   // 3. A DIFFERENT lender funds it through the Offer Book → guided review.
@@ -1841,7 +2043,7 @@ try {
   await lp.goto(`${SITE}/offers`, { waitUntil: 'domcontentloaded', timeout: 60_000 });
   await ensureConnected(lp);
   const lLang = await renderedLang(lp);
-  check('lender page renders English (every disclosure is matched against en.json)', isEnglish(lLang), lLang);
+  check('lender page renders English (every disclosure is matched against en.json)', isEnglish(lLang), lLang, 'uiFlow.lender');
   const fundLink = await pollUntil('request row in the Offer Book', async () => {
     // Someone else may have filled it in the meantime — stop, don't race.
     const o = await read('getOfferDetails', [requestId]);
@@ -1863,7 +2065,7 @@ try {
   }
   if (fundLink) {
     const href = await fundLink.getAttribute('href');
-    check('Offer Book "Fund this request" links to the guided accept', href === expectedHref, href);
+    check('Offer Book "Fund this request" links to the guided accept', href === expectedHref, href, 'offerBook.cta');
     const rowText = (await lp.locator('.item-row').filter({ hasText: new RegExp(`offer #${requestId}\\b`) }).first().innerText()).replace(/\s+/g, ' ');
     console.log(`info  book row: ${rowText}`);
     // A disclosure, judged like every other (#2422 r4 P2): a book row that
@@ -1873,6 +2075,7 @@ try {
       `Offer Book row for #${requestId} carries the illiquid-collateral tag (copy.offers.illiquidCollateralTag)`,
       rowText.includes(squash(bookIlliquidTag)),
       rowText,
+      'offerBook.illiquidTag',
     );
     await session.shot('refinance-06-book-row');
     await fundLink.click();
@@ -1882,6 +2085,11 @@ try {
     // still a UI route, so the accept itself stays a UI accept — but the
     // discovery path is a finding.
     note(`request #${requestId} did not appear in the Offer Book within 5 min (indexer ingest?) — opened the CTA's own target ${expectedHref} directly`);
+    MANIFEST.defer(
+      'offerBook',
+      `the indexer did not list request #${requestId} within 5 minutes, so the lender opened the CTA’s own target directly — no Offer Book row was seen`,
+      null,
+    );
     await lp.goto(`${SITE}${expectedHref}`, { waitUntil: 'domcontentloaded', timeout: 60_000 });
   }
   console.log(`info  lender reached the request via ${reachedViaBook ? 'the Offer Book CTA' : 'the CTA target directly'}`);
@@ -1892,7 +2100,7 @@ try {
     await session.shot('refinance-07-no-review');
     stop(`the guided accept did not open the review for request #${requestId}: ${body.slice(0, 600)}`);
   }
-  check(`lender: review opens as "You’re funding borrow request #${requestId}"`, true);
+  check(`lender: review opens as "You’re funding borrow request #${requestId}"`, true, undefined, 'uiFlow.lender');
 
   const submit = lp.getByRole('button', { name: /fund this borrower/i });
   const consent = lp.locator('label:has(a[href="/help#risks"]) input[type="checkbox"]').last();
@@ -1910,7 +2118,7 @@ try {
   const reviewText = (await lp.locator('main').innerText().catch(() => lp.locator('body').innerText())).replace(/\s+/g, ' ');
   console.log(`\n--- lender review (as rendered, before consent) ---\n${reviewText.slice(0, 4000)}\n---`);
   if (/would fail|will fail|revert/i.test(reviewText)) note('the lender review shows a would-fail / revert note (see the transcript above)');
-  check('lender: review carries the illiquid-collateral warning (copy.match.illiquidWarning)', reviewText.includes(squash(illiquidWarning)));
+  check('lender: review carries the illiquid-collateral warning (copy.match.illiquidWarning)', reviewText.includes(squash(illiquidWarning)), undefined, 'lenderReview.illiquidWarning');
   // Evidence, not a verdict: the spec does not say whether a lender funding
   // a refinance request must be told it closes another loan.
   if (!/refinanc/i.test(reviewText)) {
@@ -1925,6 +2133,7 @@ try {
     `lender: review figures match the request on chain (${lTerms.compared.join(', ')})`,
     lTerms.mismatches.length === 0,
     lTerms.mismatches.join(' | ') || `all ${lTerms.compared.length} terms match`,
+    'lenderReview.receipt',
   );
 
   beforeWriteStep('ticking the lender consent');
@@ -1941,6 +2150,8 @@ try {
   beforeWriteStep('submitting "Fund this borrower"');
   LENDER_ANCHOR = await chainNow();
   console.log(`info  lender anchor (chain time at submit start): ${LENDER_ANCHOR}`);
+  PLAN.arm('lender');
+  console.log('info  write plan ARMED for the lender’s confirmed submit');
   await submit.click();
 
   const outcome = await pollUntil('accept settles', async () => {
@@ -1959,7 +2170,9 @@ try {
   if (refusals.length) stop('the lender flow asked for a write the gate had not armed');
   if (HALT) stop(`halted while accepting: ${HALT}`);
   if (outcome !== 'opened') stop(`the lender's accept did not complete in the UI: ${outcome ?? 'timed out'}`);
-  check('lender: the app reports "Loan opened"', true);
+  PLAN.close();
+  console.log('info  write plan CLOSED after the lender’s submit');
+  check('lender: the app reports "Loan opened"', true, undefined, 'uiFlow.lenderDone');
   const doneIdx = doneText.search(/loan opened/i);
   console.log(`info  lender done step: ${doneText.slice(doneIdx, doneIdx + 400)}`);
 
@@ -1978,16 +2191,16 @@ try {
     if (r.status !== 'success') stop(`lender tx ${t.hash} (${t.purpose}) reverted`);
   }
   const acc = await pub.waitForTransactionReceipt({ hash: acceptHash, timeout: 180_000 });
-  check('accept receipt status success', acc.status === 'success', acc.status);
+  check('accept receipt status success', acc.status === 'success', acc.status, 'replacement.events');
   const accDecoded = diamondEvents(acc);
-  check('every Diamond log in the accept receipt decodes', accDecoded.undecodable === 0, `${accDecoded.undecodable} undecodable`);
+  check('every Diamond log in the accept receipt decodes', accDecoded.undecodable === 0, `${accDecoded.undecodable} undecodable`, 'replacement.events');
   const evs = accDecoded.events;
   const accepted = evs.filter((e) => e.eventName === 'OfferAccepted' && e.args.offerId === requestId);
   const refinanced = evs.filter((e) => e.eventName === 'LoanRefinanced');
   if (accepted.length !== 1) stop(`accept receipt carries ${accepted.length} OfferAccepted events for #${requestId}`);
   const newLoanId = accepted[0].args.loanId;
   console.log(`info  accept events: ${evs.map((e) => e.eventName).join(', ')}`);
-  check('replacement is a DIFFERENT loan', newLoanId !== LOAN_ID, newLoanId);
+  check('replacement is a DIFFERENT loan', newLoanId !== LOAN_ID, newLoanId, 'replacement.events');
   check(
     'LoanRefinanced(old → new, newLender = lender) emitted',
     refinanced.length === 1 &&
@@ -1996,6 +2209,7 @@ try {
       eq(refinanced[0].args.newLender, LENDER) &&
       eq(refinanced[0].args.borrower, BORROWER),
     refinanced.map((e) => `${e.args.oldLoanId}→${e.args.newLoanId} newLender ${e.args.newLender} oldStatus ${e.args.oldLoanNewStatus}`).join('; '),
+    'replacement.events',
   );
 
   const floor = acc.blockNumber;
@@ -2028,10 +2242,11 @@ try {
     `old loan ${LOAN_ID} status == 1 (Repaid)`,
     oldConfirmed.ok,
     oldConfirmed.unconfirmed ? `unconfirmed: ${oldConfirmed.why}` : oldConfirmed.value?.status,
+    'oldLoanClosed.status',
   );
   const fresh = await loanOf(newLoanId, floor);
-  check(`replacement loan ${newLoanId} status == 0 (Active)`, fresh.status === LOAN_STATUS.ACTIVE, fresh.status);
-  check('replacement offerId == the request', fresh.offerId === requestId, fresh.offerId);
+  check(`replacement loan ${newLoanId} status == 0 (Active)`, fresh.status === LOAN_STATUS.ACTIVE, fresh.status, 'replacement.loan');
+  check('replacement offerId == the request', fresh.offerId === requestId, fresh.offerId, 'replacement.loan');
   // Who HOLDS the replacement's position NFTs, at the accept's block — the
   // stored parties say who the loan was opened for; the NFTs say who can
   // act on it (#2422 r6 P2). Read failures throw, and so fail the run.
@@ -2043,24 +2258,26 @@ try {
     'replacement borrower position NFT is held by the borrower role',
     eq(newBorrowerHolder, BORROWER),
     `token ${fresh.borrowerTokenId} → ${newBorrowerHolder}`,
+    'replacement.positionNfts',
   );
   check(
     'replacement lender position NFT is held by the accepting lender role',
     eq(newLenderHolder, LENDER),
     `token ${fresh.lenderTokenId} → ${newLenderHolder}`,
+    'replacement.positionNfts',
   );
-  check('replacement borrower unchanged', eq(fresh.borrower, BORROWER), fresh.borrower);
-  check('replacement lender == the accepting `lender` role', eq(fresh.lender, LENDER), fresh.lender);
-  check('replacement collateralAsset == old', eq(fresh.collateralAsset, loan.collateralAsset), fresh.collateralAsset);
-  check('replacement collateralAmount == old', fresh.collateralAmount === loan.collateralAmount, fresh.collateralAmount);
-  check('replacement collateralLiquidity == Illiquid', fresh.collateralLiquidity === LIQUIDITY_ILLIQUID, fresh.collateralLiquidity);
-  check('replacement riskAndTermsConsentFromBoth == true', fresh.riskAndTermsConsentFromBoth === true, fresh.riskAndTermsConsentFromBoth);
-  check('replacement principal == old principal', fresh.principal === loan.principal, fresh.principal);
-  check('replacement principal asset == old', eq(fresh.principalAsset, loan.principalAsset), fresh.principalAsset);
-  check(`replacement interestRateBps == the request ceiling (${RATE_BPS})`, fresh.interestRateBps === RATE_BPS, fresh.interestRateBps);
-  check(`replacement durationDays == ${DAYS_N}`, fresh.durationDays === DAYS_N, fresh.durationDays);
+  check('replacement borrower unchanged', eq(fresh.borrower, BORROWER), fresh.borrower, 'replacement.loan');
+  check('replacement lender == the accepting `lender` role', eq(fresh.lender, LENDER), fresh.lender, 'replacement.loan');
+  check('replacement collateralAsset == old', eq(fresh.collateralAsset, loan.collateralAsset), fresh.collateralAsset, 'replacement.loan');
+  check('replacement collateralAmount == old', fresh.collateralAmount === loan.collateralAmount, fresh.collateralAmount, 'replacement.loan');
+  check('replacement collateralLiquidity == Illiquid', fresh.collateralLiquidity === LIQUIDITY_ILLIQUID, fresh.collateralLiquidity, 'replacement.loan');
+  check('replacement riskAndTermsConsentFromBoth == true', fresh.riskAndTermsConsentFromBoth === true, fresh.riskAndTermsConsentFromBoth, 'replacement.loan');
+  check('replacement principal == old principal', fresh.principal === loan.principal, fresh.principal, 'replacement.loan');
+  check('replacement principal asset == old', eq(fresh.principalAsset, loan.principalAsset), fresh.principalAsset, 'replacement.loan');
+  check(`replacement interestRateBps == the request ceiling (${RATE_BPS})`, fresh.interestRateBps === RATE_BPS, fresh.interestRateBps, 'replacement.loan');
+  check(`replacement durationDays == ${DAYS_N}`, fresh.durationDays === DAYS_N, fresh.durationDays, 'replacement.loan');
   const reqAfter = await read('getOfferDetails', [requestId], floor);
-  check('request marked accepted', reqAfter.accepted === true, reqAfter.accepted);
+  check('request marked accepted', reqAfter.accepted === true, reqAfter.accepted, 'replacement.requestAccepted');
   // An unreadable index is UNKNOWN, and an assertion that could not be
   // made fails — it is never skipped (#2422 r6 P2).
   let lenderLoans = null;
@@ -2074,13 +2291,162 @@ try {
     'replacement listed among the lender\u2019s active loans',
     lenderLoans !== null && lenderLoans.includes(newLoanId),
     lenderLoans === null ? `UNKNOWN — the active-loan index could not be read (${lenderLoansErr})` : `${lenderLoans.length} loans`,
+    'replacement.lenderIndex',
   );
   const collEnd = await tokenBalance(loan.collateralAsset, BORROWER, floor);
   check(
     'borrower collateral WALLET balance unchanged across post + accept (carry-over, not re-pledge)',
     collEnd === baselineCollateral,
     `${baselineCollateral} → ${collEnd}`,
+    'collateralCarryOver.walletAtAccept',
   );
+
+  // -------------------------------------------------------------------
+  // 5. The lien and the settlement (#2422 r8), read at the block BEFORE the
+  // accept (`prev`) and at the accept block (`floor`). Every expected
+  // figure comes from the contract's own views at `prev`; nothing is
+  // assumed from the drive's inputs.
+  // -------------------------------------------------------------------
+  const prev = floor - 1n;
+  const [lienOldBefore, lienOldAfter, lienNewAfter] = await Promise.all([
+    read('getLoanCollateralLien', [LOAN_ID], prev),
+    read('getLoanCollateralLien', [LOAN_ID], floor),
+    read('getLoanCollateralLien', [newLoanId], floor),
+  ]);
+  const fmtLien = (l) => `${l.user} ${l.asset} type ${l.assetType} #${l.tokenId} × ${l.amount}${l.released ? ' RELEASED' : ''}`;
+  const lienDiff = lienMismatches({
+    oldBefore: lienOldBefore,
+    oldAfter: lienOldAfter,
+    newAfter: lienNewAfter,
+    expected: {
+      user: BORROWER,
+      asset: loan.collateralAsset,
+      assetType: loan.collateralAssetType,
+      tokenId: loan.collateralTokenId,
+      amount: loan.collateralAmount,
+    },
+  });
+  check(
+    `collateral lien moved intact: loan ${LOAN_ID}'s released and zeroed, loan ${newLoanId}'s live with the same borrower, asset, type, tokenId and amount`,
+    lienDiff.length === 0,
+    lienDiff.join(' | ') ||
+      `old @${prev}: ${fmtLien(lienOldBefore)}; old @${floor}: ${fmtLien(lienOldAfter)}; new @${floor}: ${fmtLien(lienNewAfter)}`,
+    'collateralCarryOver.liens',
+  );
+
+  const oldAtPrev = await loanOf(LOAN_ID, prev);
+  const [repayDue, bundle, treasury, tsPrev, tsAccept] = await Promise.all([
+    read('calculateRepaymentAmount', [LOAN_ID], prev),
+    read('getProtocolConfigBundle', [], prev),
+    read('getTreasury', [], prev),
+    pub.getBlock({ blockNumber: prev }).then((b) => b.timestamp),
+    pub.getBlock({ blockNumber: floor }).then((b) => b.timestamp),
+  ]);
+  // The app's payoff formula must agree with the contract's view — the
+  // borrower's review quoted the formula, and the accept pays the view.
+  const formulaPrev = refinancePayoffAt(oldAtPrev, tsPrev);
+  check(
+    `the contract's payoff view equals the app's payoff formula at block ${prev}`,
+    repayDue === formulaPrev,
+    `calculateRepaymentAmount ${repayDue}, formula ${formulaPrev}`,
+    'settlement.payoffView',
+  );
+  // Cases outside the settlement model are STATED, not judged against it.
+  const discounts = evs.filter((e) => e.eventName === 'VPFIYieldFeeDiscountApplied' || e.eventName === 'VPFIDiscountApplied');
+  const outsideModel = discounts.length
+    ? {
+        reason: `the accept applied a VPFI discount (${discounts.map((e) => e.eventName).join(', ')}), which the settlement model does not cover`,
+        coveredBy: 'contracts/test/FeeEntitlementFacetTest.t.sol test_1955_refinance_discountKeysOnHolder_notStoredLender',
+      }
+    : refinancePayoffAt(oldAtPrev, tsAccept) !== formulaPrev
+      ? {
+          reason: `the payoff stepped between block ${prev} (ts ${tsPrev}) and the accept block (ts ${tsAccept}), so the view read before the accept is not the figure the accept paid`,
+          coveredBy: null,
+        }
+      : null;
+  if (outsideModel) {
+    MANIFEST.defer('settlement', outsideModel.reason, outsideModel.coveredBy);
+    note(`settlement NOT VERIFIED: ${outsideModel.reason}`);
+  } else {
+    const S = expectedSettlement({
+      repayDue,
+      oldPrincipal: oldAtPrev.principal,
+      treasuryFeeBpsAtInit: oldAtPrev.treasuryFeeBpsAtInit,
+      newPrincipal: fresh.principal,
+      lifBps: bundle[1],
+      matcherBps: bundle[12],
+    });
+    console.log(
+      `info  settlement model @${prev}: payoff ${repayDue} = principal ${oldAtPrev.principal} + interest ${S.interestPortion}; ` +
+        `treasury share ${S.treasuryShare} (${S.feeBps} bps); lender due ${S.lenderDue}; LIF ${S.lif} (${bundle[1]} bps), ` +
+        `matcher cut ${S.matcherCut} (${bundle[12]} bps); treasury ${treasury}`,
+    );
+    const [claimBefore, claimAfter] = await Promise.all([
+      read('getClaimable', [LOAN_ID, true], prev),
+      read('getClaimable', [LOAN_ID, true], floor),
+    ]);
+    check(
+      `the old lender's claim on loan ${LOAN_ID} rose by exactly the payoff less the treasury share, in the principal asset, unclaimed`,
+      claimAfter[1] - claimBefore[1] === S.lenderDue && eq(claimAfter[0], loan.principalAsset) && claimAfter[2] === false,
+      `${claimBefore[1]} → ${claimAfter[1]} ${claimAfter[0]} claimed ${claimAfter[2]} (expected +${S.lenderDue})`,
+      'settlement.oldLenderClaim',
+    );
+    const [borrowerVault, lenderVault, oldLenderVault] = await Promise.all(
+      [BORROWER, LENDER, oldAtPrev.lender].map((who) => read('getUserVaultAddress', [who], floor)),
+    );
+    // The principal token's Transfer logs in THIS receipt — the only figures
+    // attributable to this transaction alone (the treasury is a shared
+    // address, so its balance could move for any reason in the block).
+    const tokenLogs = acc.logs.filter((l) => eq(l.address, loan.principalAsset));
+    const transfers = [];
+    const unreadable = [];
+    for (const l of tokenLogs) {
+      try {
+        const e = decodeEventLog({ abi: erc20Abi, data: l.data, topics: l.topics });
+        if (e.eventName === 'Transfer') transfers.push(e.args);
+        else if (e.eventName !== 'Approval') unreadable.push(e.eventName);
+      } catch {
+        unreadable.push(`undecodable log ${l.topics[0]}`);
+      }
+    }
+    const wantTransfers = expectedPrincipalTransfers(S, {
+      borrower: BORROWER,
+      lender: LENDER,
+      lenderVault,
+      treasury,
+      oldLenderVault,
+      newPrincipal: fresh.principal,
+    });
+    const transferDiff = [...transferMismatches(wantTransfers, transfers), ...unreadable.map((u) => `unexpected principal-token log: ${u}`)];
+    check(
+      `the accept receipt's principal-token transfers are exactly the ${wantTransfers.length} the settlement prescribes (treasury legs included)`,
+      transferDiff.length === 0,
+      transferDiff.join(' | ') || transfers.map((t) => `${t.from}→${t.to} ${t.value}`).join('; '),
+      'settlement.transfers',
+    );
+    const delta = async (who) => {
+      const [a, b] = await Promise.all([
+        tokenBalance(loan.principalAsset, who, prev),
+        tokenBalance(loan.principalAsset, who, floor),
+      ]);
+      return b - a;
+    };
+    const [dBorrower, dLender, dOldLenderVault, dBorrowerVault, dLenderVault] = await Promise.all(
+      [BORROWER, LENDER, oldLenderVault, borrowerVault, lenderVault].map(delta),
+    );
+    check(
+      'wallets: the borrower got the new principal less the LIF and paid the payoff; the lender paid the principal and got the matcher cut',
+      dBorrower === S.borrowerWalletDelta && dLender === S.lenderWalletDelta,
+      `borrower ${dBorrower} (expected ${S.borrowerWalletDelta}), lender ${dLender} (expected ${S.lenderWalletDelta})`,
+      'settlement.wallets',
+    );
+    check(
+      'vaults: the old lender’s rose by the lender due; the borrower’s and the lender’s are unchanged',
+      dOldLenderVault === S.oldLenderVaultDelta && dBorrowerVault === 0n && dLenderVault === 0n,
+      `old lender ${dOldLenderVault} (expected ${S.oldLenderVaultDelta}), borrower ${dBorrowerVault}, lender ${dLenderVault}`,
+      'settlement.vaults',
+    );
+  }
 
   // Every write the wallets made is one the gate allowed AND saw a hash
   // for: the mined nonce delta equals the hashed sends, nothing pending.
@@ -2096,6 +2462,7 @@ try {
       `${role}: nonce delta == consumed plan transactions, all with a hash, none pending`,
       latest - baselineNonces[role] === hashed && hashed === allowed && pending === latest,
       `mined +${latest - baselineNonces[role]}, pending +${pending - latest}, allowed ${allowed}, hashed ${hashed}`,
+      'writeDiscipline.nonces',
     );
   }
   console.log(`\nresult  request offer #${requestId} → replacement loan #${newLoanId}; old loan #${LOAN_ID} closed`);
@@ -2127,6 +2494,14 @@ try {
   await closeSession('lender');
 }
 
+// The write discipline's second half, judged over the WHOLE run: nothing
+// was refused by the gate or the wallets, and the plan never latched.
+check(
+  'no write was refused by the gate or the wallets, and the plan never latched',
+  refusals.length === 0 && walletRefusals().length === 0 && !PLAN?.refusal(),
+  `${refusals.length} gate refusal(s), ${walletRefusals().length} wallet refusal(s), plan ${PLAN?.refusal() ? `latched: ${PLAN.refusal()}` : 'not latched'}`,
+  'writeDiscipline.noRefusals',
+);
 const reconciliation = await report(baselineNonces);
 const failedRun =
   exitCode !== 0 ||
@@ -2134,10 +2509,20 @@ const failedRun =
   walletRefusals().length > 0 ||
   HALT !== null ||
   reconciliation.unreconciled ||
-  checks.some((c) => !c.ok);
+  checks.some((c) => !c.ok) ||
+  !MANIFEST.passed();
 if (failedRun) await reportAfterFailure();
 // FAIL, never PASS, when anything is unaccounted for: a refused write, a
-// failed check, a halt, or an allowed send the chain cannot account for.
+// failed check, a halt, an allowed send the chain cannot account for, or a
+// manifest claim that failed or never ran.
 if (failedRun) exitCode = 1;
-console.log(exitCode === 0 ? '\nlive refinance review: ALL CHECKS PASSED' : '\nlive refinance review: FAILED (see above)');
+// THE VERDICT IS THE MANIFEST (#2422 r8): what this run verified, with the
+// reads behind it, and what it did not, with where that is covered.
+console.log('');
+for (const line of MANIFEST.render()) console.log(line);
+console.log(
+  exitCode === 0
+    ? '\nOUTCOME: PASS — every claim under VERIFIED holds; the claims under NOT VERIFIED BY THIS DRIVER were not checked by it'
+    : '\nOUTCOME: FAIL — see the manifest and the report above',
+);
 process.exit(exitCode);

@@ -107,6 +107,33 @@ export function refinancePayoffAt(l, asOf) {
   return l.principal + (l.principal * l.interestRateBps * days) / (365n * 10_000n) + lateFeeAt(l, asOf);
 }
 
+/**
+ * What the borrower must hold SPARE for the accept (#2422 r8): the accept
+ * pulls the whole payoff from the borrower's wallet, and the new principal
+ * minus its LIF arrives in the same transaction, so the wallet needs
+ * `payoff − principal + LIF`.
+ *
+ * The payoff is the LIVE remaining-term figure, never `durationDays` of
+ * interest: a loan re-anchored by a partial repayment owes interest from
+ * `interestAccrualStart` over `interestRemainingDays`, which can be far
+ * shorter than its original length — a full-term figure over-reserves and
+ * BLOCKS a drivable loan. So it is the larger of
+ *   - `viewDue`: the contract's own payoff view (RepayFacet
+ *     `calculateRepaymentAmount`) at the pinned block, and
+ *   - the app's payoff formula (`refinancePayoffAt`, which reads those
+ *     remaining-term fields) at `asOf + horizonSec` — the latest moment the
+ *     drive could plausibly accept, so a whole-day accrual step between the
+ *     preflight and the accept is reserved for too.
+ * The LIF uses the LIVE rate (`lifBps`, read at the pinned block).
+ */
+export function borrowerReserve({ loan, viewDue, asOf, horizonSec, lifBps }) {
+  const mirror = refinancePayoffAt(loan, asOf + horizonSec);
+  const payoff = BigInt(viewDue) > mirror ? BigInt(viewDue) : mirror;
+  const lif = (loan.principal * BigInt(lifBps)) / 10_000n;
+  const interestShare = payoff - loan.principal;
+  return { payoff, interestShare, lif, reserve: interestShare + lif };
+}
+
 /** `defaultGraceSeconds` (apps/app/src/lib/grace.ts) — the table the app
  *  falls back to when the Diamond publishes no grace buckets, as Base
  *  Sepolia does today. */

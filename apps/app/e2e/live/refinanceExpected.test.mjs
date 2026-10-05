@@ -27,13 +27,14 @@ import {
   ANCHOR_LAG_SEC,
   ANCHOR_WINDOW_SEC,
   approvalBetween,
+  borrowerReserve,
   graceSecondsFrom,
   payoffApprovalBounds,
   refinancePlanSteps,
   ZERO_HASH,
 } from './refinanceExpected.mjs';
 import { createWritePlan } from './writePlan.mjs';
-import { encodeFunctionData } from 'viem';
+import { encodeFunctionData, erc20Abi } from 'viem';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ABI = JSON.parse(
@@ -205,6 +206,7 @@ describe('refinanceExpected — complete payloads, closed in both directions', (
       () => ABI,
     );
     // Caps and both approvals are optional — the app may skip them.
+    plan.arm('borrower');
     expect(plan.offer('borrower', 'tx', createReq).ok).toBe(true);
     // The identical request again is refused: the step is consumed.
     expect(plan.offer('borrower', 'tx', createReq).ok).toBe(false);
@@ -230,7 +232,51 @@ describe('refinanceExpected — complete payloads, closed in both directions', (
     );
     // Every borrower step is optional except createOffer, which a lender
     // request cannot pass over.
-    expect(plan.offer('lender', 'typed', {}).ok).toBe(false);
+    plan.arm('lender');
+    const r = plan.offer('lender', 'typed', {});
+    expect(r.ok).toBe(false);
+    expect(r.why).toMatch(/b-create expects borrower tx/);
+  });
+
+  // #2422 r8 — the borrower role stays CLOSED through the position page's
+  // load, the card checks and the review checks; it is armed only for the
+  // confirmed submit. An approve(Diamond, 0) the page fires while loading
+  // matches the plan's optional reset step exactly, so only the arming
+  // keeps it from being consumed.
+  it('refuses an approve(Diamond, 0) requested while the borrower role is closed', () => {
+    const planArgs = {
+      ...TERMS_ARGS,
+      abi: ABI,
+      chainId: 84532,
+      diamond: DIAMOND,
+      graceSeconds: 86_400n,
+      borrowerAnchor: () => NOW,
+      lenderAnchor: () => NOW,
+      requestId: () => null,
+      signedAcceptTerms: () => null,
+    };
+    const reset = decodeTxForComparison(
+      {
+        from: BORROWER,
+        to: LOAN.principalAsset,
+        data: encodeFunctionData({ abi: erc20Abi, functionName: 'approve', args: [DIAMOND, 0n] }),
+      },
+      () => erc20Abi,
+    );
+    const onLoad = createWritePlan(refinancePlanSteps(planArgs));
+    const r = onLoad.offer('borrower', 'tx', reset);
+    expect(r.ok).toBe(false);
+    expect(r.why).toMatch(/CLOSED/);
+    expect(onLoad.steps().find((st) => st.id === 'b-approve-reset').status).toBe('pending');
+    // Latched: the confirmed submit that follows cannot write either.
+    onLoad.arm('borrower');
+    expect(onLoad.offer('borrower', 'tx', reset).ok).toBe(false);
+    // The same request, on a fresh plan armed for the submit, is the reset
+    // step it was declared as — so the refusal above was the arming alone.
+    const atSubmit = createWritePlan(refinancePlanSteps(planArgs));
+    atSubmit.arm('borrower');
+    expect(atSubmit.offer('borrower', 'tx', reset).ok).toBe(true);
+    expect(atSubmit.steps().find((st) => st.id === 'b-approve-reset').status).toBe('consumed');
   });
 
   it('bounds the payoff approval with the app\u2019s own formula — loan 22 to the wei', () => {
@@ -270,3 +316,63 @@ describe('refinanceExpected — complete payloads, closed in both directions', (
   });
 });
 
+// #2422 r8 — the borrower's top-up reserve comes from the LIVE remaining
+// term (interestAccrualStart / interestRemainingDays, and the contract's
+// payoff view), never from the loan's original durationDays.
+describe('refinanceExpected — the borrower reserve', () => {
+  const DAY = 86_400n;
+  const HORIZON = 2n * 3_600n;
+
+  it('loan 22: the reserve is exactly what the real accept took from the borrower wallet', () => {
+    // calculateRepaymentAmount(22) at the pinned block, LIF 20 bps live.
+    const r = borrowerReserve({ loan: LOAN, viewDue: 5_039_726_027_397_260n, asOf: NOW, horizonSec: HORIZON, lifBps: 20n });
+    expect(r.payoff).toBe(5_039_726_027_397_260n);
+    expect(r.lif).toBe(10_000_000_000_000n);
+    // The borrower wallet's real delta across the accept was −49726027397260.
+    expect(r.reserve).toBe(49_726_027_397_260n);
+  });
+
+  it('a partially repaid, re-anchored loan reserves its REMAINING term, not durationDays', () => {
+    const t0 = 1_700_000_000n;
+    const reanchored = {
+      principal: 10n ** 18n,
+      startTime: t0,
+      durationDays: 60n,
+      interestRateBps: 1000n,
+      // A partial repayment on day 50 re-anchored the clock: 10 days left.
+      interestAccrualStart: t0 + 50n * DAY,
+      interestRemainingDays: 10,
+    };
+    const tenDays = (10n ** 18n * 1000n * 10n) / (365n * 10_000n);
+    const sixtyDays = (10n ** 18n * 1000n * 60n) / (365n * 10_000n);
+    const r = borrowerReserve({
+      loan: reanchored,
+      viewDue: 10n ** 18n + tenDays,
+      asOf: t0 + 50n * DAY + 3_600n,
+      horizonSec: HORIZON,
+      lifBps: 20n,
+    });
+    expect(r.interestShare).toBe(tenDays);
+    expect(r.reserve).toBe(tenDays + 2_000_000_000_000_000n);
+    // The retired durationDays figure would have demanded 6× the interest.
+    expect(r.reserve).toBeLessThan(sixtyDays);
+  });
+
+  it('takes the contract view when it is the larger figure', () => {
+    const r = borrowerReserve({ loan: LOAN, viewDue: 5_100_000_000_000_000n, asOf: NOW, horizonSec: HORIZON, lifBps: 20n });
+    expect(r.payoff).toBe(5_100_000_000_000_000n);
+  });
+
+  it('reserves for a whole-day accrual step inside the horizon', () => {
+    // A loan whose elapsed days already equal its remaining floor: one more
+    // day of interest accrues if the accept lands after the next day mark.
+    const start = 1_700_000_000n;
+    const l = { ...LOAN, interestAccrualStart: start, startTime: start, interestRemainingDays: 3, durationDays: 30n };
+    const asOf = start + 4n * DAY - 60n; // one minute before day 4 begins
+    const now = borrowerReserve({ loan: l, viewDue: 0n, asOf, horizonSec: 0n, lifBps: 0n });
+    const later = borrowerReserve({ loan: l, viewDue: 0n, asOf, horizonSec: HORIZON, lifBps: 0n });
+    const interestFor = (days) => (l.principal * l.interestRateBps * days) / (365n * 10_000n);
+    expect(now.interestShare).toBe(interestFor(3n));
+    expect(later.interestShare).toBe(interestFor(4n));
+  });
+});

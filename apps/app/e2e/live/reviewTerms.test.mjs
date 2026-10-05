@@ -15,10 +15,11 @@ import {
   compareLenderReceipt,
   matchTemplate,
   parseAmount,
+  formatGraceSeconds,
   parseDurationDays,
-  parseGraceSeconds,
   parsePercentBps,
   percentMatches,
+  rowsLabelled,
   templateRegex,
 } from './reviewTerms.mjs';
 
@@ -67,7 +68,7 @@ describe('reviewTerms — values at display precision', () => {
     expect(parseAmount('lots of WETH')).toBeNull();
   });
 
-  it('parses percents, lengths and grace windows', () => {
+  it('parses percents and lengths', () => {
     expect(parsePercentBps('2%')).toBe(200);
     expect(percentMatches(parsePercentBps('2%'), 200)).toBe(true);
     expect(percentMatches(parsePercentBps('0.2%'), 20)).toBe(true);
@@ -76,9 +77,34 @@ describe('reviewTerms — values at display precision', () => {
     expect(parseDurationDays('29 days', EN.units)).toBe(29);
     expect(parseDurationDays('2 years', EN.units)).toBe(730);
     expect(parseDurationDays('a while', EN.units)).toBeNull();
-    expect(parseGraceSeconds('3 days')).toBe(259_200n);
-    expect(parseGraceSeconds('1 hour')).toBe(3_600n);
-    expect(parseGraceSeconds('soon')).toBeNull();
+  });
+
+  // #2422 r8: a grace window is compared as the LABEL the app's
+  // formatGraceSeconds renders for the configured seconds — the formatter
+  // rounds, so parsing the label back to seconds is lossy.
+  it('mirrors formatGraceSeconds, branch by branch', () => {
+    expect(formatGraceSeconds(60n)).toBe('1 minutes');
+    expect(formatGraceSeconds(20n)).toBe('1 minutes');
+    expect(formatGraceSeconds(1_800n)).toBe('30 minutes');
+    expect(formatGraceSeconds(3_600n)).toBe('1 hour');
+    expect(formatGraceSeconds(3_700n)).toBe('1 hour');
+    expect(formatGraceSeconds(7_200n)).toBe('2 hours');
+    expect(formatGraceSeconds(86_400n)).toBe('1 day');
+    expect(formatGraceSeconds(259_200n)).toBe('3 days');
+    expect(formatGraceSeconds(604_800n)).toBe('1 week');
+    expect(formatGraceSeconds(1_209_600n)).toBe('2 weeks');
+    expect(formatGraceSeconds(2_592_000n)).toBe('30 days');
+  });
+
+  it('pins the mirror against the app formatter source', () => {
+    // The mirror is a copy; this reads the app's own function body and
+    // requires the same branch constants and labels, so the two cannot
+    // drift silently.
+    const src = fs.readFileSync(path.join(HERE, '../../src/lib/grace.ts'), 'utf8');
+    const body = /export function formatGraceSeconds[\s\S]*?\n}/.exec(src)?.[0] ?? '';
+    for (const needle of ['s < 3_600', 'Math.max(1, Math.round(s / 60))', 's < 86_400', "'1 hour'", '`${h} hours`', 'Math.round(s / 86_400)', "'1 day'", 'days === 7', "'1 week'", 'days === 14', "'2 weeks'", '`${days} days`']) {
+      expect(body, needle).toContain(needle);
+    }
   });
 });
 
@@ -165,7 +191,32 @@ describe('reviewTerms — the real loan-22 receipts', () => {
     const tampered = LENDER_ROWS.map((r) => (r.label === 'You lock' ? { ...r, value: 'half of it, maybe' } : r));
     expect(compareLenderReceipt(tampered, LENDER_CTX).mismatches.join()).toMatch(/"You lock" row/);
     const missing = LENDER_ROWS.filter((r) => r.label !== 'Fees');
-    expect(compareLenderReceipt(missing, LENDER_CTX).mismatches.join()).toMatch(/"Fees" row: shown null/);
+    expect(compareLenderReceipt(missing, LENDER_CTX).mismatches.join()).toMatch(/"Fees" row: shown \[\], expected exactly one row \(none rendered\)/);
+  });
+
+  // #2422 r8: a configured grace of 3,700 s renders "1 hour" (the app rounds);
+  // the review that shows "1 hour" is the CORRECT review and must pass, and
+  // one that shows "2 hours" must not.
+  it('a rounded grace label passes when it is what the app renders for the configured seconds', () => {
+    const at = (grace) => LENDER_ROWS.map((r) => (r.label === 'When this ends' ? { ...r, value: `Repayment is due within 1 month (grace period: ${grace}). You then claim your funds.` } : r));
+    expect(compareLenderReceipt(at('1 hour'), { ...LENDER_CTX, graceSeconds: 3_700n }).mismatches).toEqual([]);
+    expect(compareLenderReceipt(at('2 hours'), { ...LENDER_CTX, graceSeconds: 3_700n }).mismatches).toHaveLength(1);
+    expect(compareLenderReceipt(LENDER_ROWS, { ...LENDER_CTX, graceSeconds: 86_400n }).mismatches.join()).toMatch(/grace window: shown "3 days", expected "1 day"/);
+  });
+
+  // #2422 r8: exactly one row per label — a duplicate row carrying a
+  // different figure must not be ignored because the first one was right.
+  it('requires exactly one receipt row per label: a duplicate is a mismatch even when the first is right', () => {
+    expect(rowsLabelled(LENDER_ROWS, 'Fees')).toHaveLength(1);
+    const dup = [...LENDER_ROWS, { label: 'Fees', value: 'Vaipakam keeps 9% of the interest you earn.' }];
+    const r = compareLenderReceipt(dup, LENDER_CTX);
+    expect(r.mismatches).toHaveLength(1);
+    expect(r.mismatches[0]).toMatch(/"Fees" row: .*expected exactly one row \(2 rendered\)/);
+    // Even an identical duplicate is refused: the count is the rule.
+    const same = [...LENDER_ROWS, LENDER_ROWS.at(-1)];
+    expect(compareLenderReceipt(same, LENDER_CTX).mismatches.join()).toMatch(/"When this ends" row: .*2 rendered/);
+    const bdup = [...BORROWER_ROWS, BORROWER_ROWS.at(2)];
+    expect(compareBorrowerReceipt(bdup, borrowerCtx()).mismatches.join()).toMatch(/"You may owe" row: .*2 rendered/);
   });
 
   it('the borrower review matches the app\u2019s own payoff formulas, every term', () => {
