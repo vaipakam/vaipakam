@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {Test} from "forge-std/Test.sol";
 import {DiamondFacetNames} from "./DiamondFacetNames.sol";
+import {VaipakamDiamond} from "../../src/VaipakamDiamond.sol";
 
 /**
  * @title  ExportedFacetParityTest
@@ -30,6 +31,17 @@ import {DiamondFacetNames} from "./DiamondFacetNames.sol";
  *         the Diamond's facet set lives in Solidity. Reading the manifest
  *         JSON here keeps the check where both lists are visible without
  *         parsing any source as text.
+ *
+ *         The proxy (#2399). `VaipakamDiamond` is not a facet, but its
+ *         fallback raises `FunctionDoesNotExist()` for an unrouted selector —
+ *         the revert a stale ABI produces — so the manifest lists it under
+ *         `proxy` and the union takes its errors and events. The proxy's
+ *         identity is pinned here, against the compiled contract's own name,
+ *         so a rename or a dropped entry fails; that every error and event it
+ *         declares is in the union is pinned by the package test
+ *         (`build-diamond-abi.test.mjs`), and that the committed
+ *         `VaipakamDiamond.json` matches the compiled ABI by
+ *         `predeploy-check.sh` step 4.
  */
 contract ExportedFacetParityTest is Test, DiamondFacetNames {
     string internal constant MANIFEST = "../packages/contracts/scripts/diamond-facets.json";
@@ -83,6 +95,15 @@ contract ExportedFacetParityTest is Test, DiamondFacetNames {
                 )
             );
         }
+    }
+
+    /// The Diamond proxy is exported under `proxy`, exactly once and alone
+    /// (#2399), so its own errors reach the combined Diamond ABI.
+    function test_DiamondProxyIsExportedAsProxy() public view {
+        string[] memory proxy = vm.parseJsonStringArray(vm.readFile(MANIFEST), ".proxy");
+        assertEq(proxy.length, 1, "diamond-facets.json `proxy` must name exactly the Diamond contract");
+        assertEq(proxy[0], type(VaipakamDiamond).name, "diamond-facets.json `proxy`");
+        assertFalse(_contains(_exported(), proxy[0]), "the Diamond proxy is not a facet");
     }
 
     /// Same size as well as mutual containment, so a duplicate entry cannot

@@ -94,7 +94,8 @@
 #     brand-new facet, add it to FACETS below AND wire it into
 #     `packages/contracts/src/abis/index.ts` manually, AND name it in
 #     `packages/contracts/scripts/diamond-facets.json` — under `facets` if
-#     it is cut into the Diamond, `standalone` otherwise. The combined
+#     it is cut into the Diamond, `proxy` for the Diamond contract itself
+#     (#2399), `standalone` otherwise. The combined
 #     Diamond ABI is built from that list (UX3-008), and
 #     `pnpm --filter @vaipakam/contracts test` fails on an ABI that is in
 #     neither list, so the omission is loud rather than a silently missing
@@ -368,6 +369,11 @@ FACETS=(
   # barrel; admin tooling / keeper construct calls (setTierPremiumBps,
   # getTierPremiums, …) to it directly by named ABI export.
   "RiskPremiumRateModel"
+  # #2399 — the Diamond PROXY itself. Not a facet: its fallback raises
+  # `FunctionDoesNotExist()` for an unrouted selector, the revert a stale ABI
+  # produces. Listed under `proxy` in diamond-facets.json, and the combined
+  # Diamond ABI takes only its errors and events.
+  "VaipakamDiamond"
 )
 
 # ── Stage every facet, publish only if ALL of them succeeded (#1893, Codex r1) ─

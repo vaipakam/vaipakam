@@ -528,7 +528,8 @@ to the `FACETS=(...)` array in
 re-export barrel `packages/contracts/src/abis/index.ts` (the
 script does NOT touch the barrel) AND name it in
 `packages/contracts/scripts/diamond-facets.json` — under `facets` if
-it is cut into the Diamond, `standalone` otherwise.
+it is cut into the Diamond, `standalone` otherwise. (`proxy` is a third
+class with one member, `VaipakamDiamond` itself — see below.)
 
 **The combined Diamond ABI is a generated file** (UX3-008).
 `DIAMOND_ABI` / `DIAMOND_ABI_VIEM` read `packages/contracts/src/diamondAbi.json`,
@@ -547,6 +548,23 @@ together. The provenance stamp treats the union as output, like the facet
 JSONs. Do not
 hand-edit `diamondAbi.json`; run
 `node packages/contracts/scripts/build-diamond-abi.mjs`.
+
+**The union also carries the Diamond PROXY's own errors and events**
+(#2399). `VaipakamDiamond` is not a facet, but its fallback reverts
+`FunctionDoesNotExist()` for a selector no facet hosts — the revert a stale
+ABI or a partial refresh produces. The manifest lists it under `proxy`, and
+the generator takes only its errors and events (not its constructor,
+`fallback` or `receive`). `ExportedFacetParityTest` pins that entry to the
+compiled contract's name, and the package test fails if any error or event
+it declares is missing from the union.
+
+**Consequence for error detection: viem now DECODES that revert.** The
+decoded message reads `FunctionDoesNotExist()` and does not contain the
+selector `0xa9ad62f8`, so a matcher that looks for the selector in message
+TEXT stops recognising it. Detect it from the error's structure instead —
+the connected app's `isFunctionDoesNotExistRevert` reads the revert data viem
+keeps on `ContractFunctionRevertedError.raw`, decoded or not — and treat any
+text match as a fallback for non-viem errors only.
 
 ## Worker ABI consumption (Stage 3 split)
 

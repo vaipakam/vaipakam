@@ -1,0 +1,137 @@
+[
+  {
+    "type": "constructor",
+    "inputs": [
+      {
+        "name": "contractOwner",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "diamondCutFacet",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "fallback",
+    "stateMutability": "payable"
+  },
+  {
+    "type": "receive",
+    "stateMutability": "payable"
+  },
+  {
+    "type": "event",
+    "name": "DiamondCut",
+    "inputs": [
+      {
+        "name": "_diamondCut",
+        "type": "tuple[]",
+        "indexed": false,
+        "internalType": "struct IDiamondCut.FacetCut[]",
+        "components": [
+          {
+            "name": "facetAddress",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "action",
+            "type": "uint8",
+            "internalType": "enum IDiamondCut.FacetCutAction"
+          },
+          {
+            "name": "functionSelectors",
+            "type": "bytes4[]",
+            "internalType": "bytes4[]"
+          }
+        ]
+      },
+      {
+        "name": "_init",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "_calldata",
+        "type": "bytes",
+        "indexed": false,
+        "internalType": "bytes"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "OwnershipTransferred",
+    "inputs": [
+      {
+        "name": "previousOwner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "newOwner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "Paused",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "FunctionDoesNotExist",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InitializationFunctionReverted",
+    "inputs": [
+      {
+        "name": "_initializationContractAddress",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "_calldata",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SafeCastOverflowedUintDowncast",
+    "inputs": [
+      {
+        "name": "bits",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "value",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  }
+]
