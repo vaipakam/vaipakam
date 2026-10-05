@@ -149,7 +149,7 @@ export async function run() {
   // ------------------------------------------------------------- partial
   {
     const { loanId: noPartial } = await openLoan({ lender, borrower, borrowerCanRepayFromWallet: false });
-    const refused = await simulate(DIAMOND, ABIS.swapToRepay, 'swapToRepayPartial', [noPartial, parseUnits('0.1', 18), VENUE_ROUTE], borrower.address);
+    const refused = await simulate(DIAMOND, ABIS.swapToRepayPartial, 'swapToRepayPartial', [noPartial, parseUnits('0.1', 18), VENUE_ROUTE], borrower.address);
     expectRefusal('A11.7', 'a partial swap on a loan that never allowed partial repayment is refused', refused, 'PartialRepayNotAllowed');
 
     const { loanId } = await openLoan({ lender, borrower, allowsPartialRepay: true, borrowerCanRepayFromWallet: false });
@@ -171,10 +171,10 @@ export async function run() {
     const hfBefore = await read(ABIS.risk, 'calculateHealthFactor', [loanId]);
     const loanBefore = await read(ABIS.loan, 'getLoanDetails', [loanId]);
     const partialPos = await positionOf(loanId);
-    const sim = await simulate(DIAMOND, ABIS.swapToRepay, 'swapToRepayPartial', [loanId, parseUnits('0.1', 18), VENUE_ROUTE], borrower.address);
+    const sim = await simulate(DIAMOND, ABIS.swapToRepayPartial, 'swapToRepayPartial', [loanId, parseUnits('0.1', 18), VENUE_ROUTE], borrower.address);
     if (!sim.ok) cannotContinue('A11.8 partial swap-to-repay', sim.name);
     const before = await snapshot(tokens, holders);
-    const receipt = await tx(borrower, { address: DIAMOND, abi: ABIS.swapToRepay, functionName: 'swapToRepayPartial', args: [loanId, parseUnits('0.1', 18), VENUE_ROUTE] }, 'swapToRepayPartial');
+    const receipt = await tx(borrower, { address: DIAMOND, abi: ABIS.swapToRepayPartial, functionName: 'swapToRepayPartial', args: [loanId, parseUnits('0.1', 18), VENUE_ROUTE] }, 'swapToRepayPartial');
     const after = await snapshot(tokens, holders);
     const hfAfter = await read(ABIS.risk, 'calculateHealthFactor', [loanId]);
     const loanAfter = await read(ABIS.loan, 'getLoanDetails', [loanId]);

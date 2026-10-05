@@ -55,6 +55,9 @@ export const ABIS = {
   numeraireConfig: abi('NumeraireConfigFacet'),
   repayPeriodic: abi('RepayPeriodicFacet'),
   swapToRepay: abi('SwapToRepayFacet'),
+  // #2416 — the partial route lives on its own facet; its function is not in
+  // SwapToRepayFacet's ABI, so viem refuses to encode it from that one.
+  swapToRepayPartial: abi('SwapToRepayPartialFacet'),
   earlyWithdrawal: abi('EarlyWithdrawalFacet'),
   earlyWithdrawalDirect: abi('EarlyWithdrawalDirectFacet'),
   profile: abi('ProfileFacet'),

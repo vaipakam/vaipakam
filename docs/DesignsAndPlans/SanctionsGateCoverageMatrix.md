@@ -69,7 +69,7 @@ per-action postures.
 | 5 | `swapToRepayFull` **lender leg** | bare `getOrCreateVault(loan.lender)` deposit — bricks for a lender flagged after init | `LibCloseoutFreeze.freezeLenderProceeds` — receive-side `depositLocked` + encumber-all-ERC20 + frozen-VPFI tier-exclude for a transferred-and-sanctioned holder |
 | 6 | `swapToRepayFull` **collateral pull + partial-fill refund** | bare vault withdraw / refund — bricks for a flagged self-holder | two NARROW from-side move-out windows (`vaultWithdrawERC20MoveOut` for the pull; `beginMoveOut`/`endMoveOut` for the refund), neither spanning the external swap |
 | 7 | `swapToRepayFull` **surplus** encumber | reserved VPFI only | encumber EVERY ERC20 surplus (`freeBalance` gates any-asset signed-offer spend) + `frozenVpfiOwedByVault` tier-exclude |
-| 8 | `swapToRepayPartial` direct payouts | unscreened EOA transfers to lender + borrower holders | Tier-1 `_assertNotSanctioned` on both (discretionary → screen, mirrors `repayPartial`) |
+| 8 | `SwapToRepayPartialFacet.swapToRepayPartial` direct payouts (moved off `SwapToRepayFacet` in #2416) | unscreened EOA transfers to lender + borrower holders | Tier-1 `_assertNotSanctioned` on both (discretionary → screen, mirrors `repayPartial`) |
 | 9 | Fusion intent fill `LibSwapToRepayIntentSettlement._runSettlement` | ZERO sanctions handling | same freeze pattern via `LibCloseoutFreeze` (lender leg + surplus) + residual move-out window; residual re-lien already present |
 | 10 | `backstopFill` | creator screened only at opt-in | re-screen `o.creator` at fill, before `executeFill` (Tier-1) |
 
