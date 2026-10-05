@@ -92,8 +92,11 @@
 // lien moving intact from the old loan to the replacement.
 //
 // THE SETTLEMENT MODEL IS BOUNDED, NOT EXTENDED (#2422 r9). It covers the
-// default fee posture only — an undiscounted borrower LIF and an exiting
-// holder with no yield-fee entitlement — and those PREMISES are read at the
+// default fee posture only — an undiscounted borrower LIF (effective
+// discount 0 and no Full opt-in: Diamond state only, never the principal's
+// liquidity, which reads oracle and pool state no isolation covers — r11)
+// and an exiting holder with no yield-fee entitlement — and those PREMISES
+// are read at the
 // pinned preflight block: when one fails, the settlement claim is stated NOT
 // VERIFIED in the pre-write summary, before anything is written. After the
 // write, a premise that no longer holds at the block before the accept (or a
@@ -119,7 +122,14 @@
 //     receipts show no other transaction touching the Diamond (the position
 //     NFTs included) or a participant's wallet or vault. The same isolation
 //     guards receipt-model checks whose inputs are state at the block
-//     before. Otherwise: UNDETERMINED, with the reason.
+//     before. Otherwise: UNDETERMINED, with the reason. Every post-write
+//     read is PINNED to the transaction's block or the block before (r11);
+//     "latest" only where the claim is about now (an observation, a nonce
+//     reconciliation, the failure ledger). The old lender's payout owner is
+//     derived as the contract derives it: the stored lender AFTER the
+//     accept's consolidation to the NFT holder, cross-checked against that
+//     holder. The risk-terms epoch is watched config too, re-read just
+//     before the lender is armed.
 // A claim needed before the NEXT write that cannot be established after a
 // write (a racing lender review, an unisolated createOffer block) stops the
 // drive as STOPPED, UNDETERMINED (exit 3) — not a FAIL.
@@ -265,8 +275,6 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   decodeEventLog,
-  decodeFunctionResult,
-  encodeFunctionData,
   erc20Abi,
   formatUnits,
   parseAbi,
@@ -286,7 +294,6 @@ import {
   SITE,
 } from './driver.mjs';
 import { redactUrl } from './redact.mjs';
-import { confirmWrite } from './writeConfirm.mjs';
 import {
   ANCHOR_WINDOW_SEC,
   borrowerReserve,
@@ -308,6 +315,7 @@ import {
   expectedPrincipalTransfers,
   expectedSettlement,
   lienMismatches,
+  payoutOwnerOf,
   scanForReplacement,
   scopeReason,
   settlementPremises,
@@ -474,16 +482,16 @@ const tokenBalance = (token, owner, blockNumber) =>
  * position holder's yield-fee eligibility inputs. Returns the raw reads and
  * the verdict.
  */
-async function readSettlementPremises(blockNumber, { principalAsset, holder, requestId }) {
-  const [principalLiquidity, [, borrowerEffBps], holderConsent, entitlement, creatorFull] = await Promise.all([
-    read('checkLiquidity', [principalAsset], blockNumber),
+async function readSettlementPremises(blockNumber, { holder, requestId }) {
+  // Diamond state only (#2422 r11): no liquidity read — that is external
+  // oracle and pool state no block-isolation check can cover.
+  const [[, borrowerEffBps], holderConsent, entitlement, creatorFull] = await Promise.all([
     read('getEffectiveDiscount', [BORROWER], blockNumber),
     read('getVPFIDiscountConsent', [holder], blockNumber),
     read('getFeeEntitlement', [LOAN_ID], blockNumber),
     requestId === null ? false : read('getOfferDetails', [requestId], blockNumber).then((o) => o.creatorFull),
   ]);
   const inputs = {
-    principalLiquidity: Number(principalLiquidity),
     borrowerEffBps: Number(borrowerEffBps),
     requestCreatorFull: creatorFull,
     holderConsent,
@@ -570,13 +578,18 @@ function scopedCheck(sc, label, ok, observed, at) {
  * so a reading compares field for field with the pinned baseline.
  */
 async function readObservedConfig(blockNumber) {
-  const [posture, fees, lifBps, graceBuckets] = await Promise.all([
+  const [posture, fees, lifBps, graceBuckets, riskTermsHash] = await Promise.all([
     readPostureSwitches(blockNumber),
     read('getFeesConfig', [], blockNumber),
     read('getLoanInitiationFeeBps', [], blockNumber),
     read('getGraceBuckets', [], blockNumber),
+    // #2422 r11: a new risk-terms epoch after the preflight would make the
+    // lender sign terms anchored to the old hash — the gate's expected
+    // AcceptTerms carries the PREFLIGHT hash, so a moved hash stops the run
+    // (BLOCKED before any write, UNDETERMINED after) instead of being signed.
+    read('getCurrentRiskTermsHash', [], blockNumber),
   ]);
-  return { ...posture, treasuryFeeBps: fees[0], lifBps, graceBuckets };
+  return { ...posture, treasuryFeeBps: fees[0], lifBps, graceBuckets, riskTermsHash };
 }
 
 /**
@@ -761,7 +774,7 @@ const MANIFEST = createManifest({
       claim: `loan ${LOAN_ID} is closed as Repaid`,
       checks: {
         event: 'LoanRefinanced.oldLoanNewStatus in the accept receipt',
-        status: `getLoanDetails(${LOAN_ID}).status at or after the accept block (confirmWrite) — judged only if the accept's block is isolated (RULE 2)`,
+        status: `getLoanDetails(${LOAN_ID}).status pinned to the accept block — judged only if the accept's block is isolated (RULE 2)`,
       },
     },
     {
@@ -795,7 +808,7 @@ const MANIFEST = createManifest({
         oldLenderClaim: 'getClaimable(old, lender) at the block before the accept and at the accept block (a block diff: only if no other transaction in the block touched the Diamond or a participant)',
         transfers: 'the principal token’s Transfer logs in the accept receipt — attributable to this transaction alone, the treasury’s legs included — vs the legs derived from those views (whose inputs are state at the block before, so judged only if the accept\u2019s block is isolated)',
         wallets: 'balanceOf(principal) of the borrower and the accepting lender at the block before the accept and at the accept block (block diff, scoped)',
-        vaults: 'balanceOf(principal) of the old lender’s, the borrower’s and the lender’s vaults (getUserVaultAddress) at the same two blocks (block diff, scoped)',
+        vaults: 'balanceOf(principal) of the PAYOUT OWNER’s vault (the old loan’s stored lender at the accept block, after the contract’s consolidation to the NFT holder; cross-checked against ownerOf at the block before), the borrower’s and the lender’s vaults (getUserVaultAddress) at the same two blocks (block diff, scoped)',
       },
     },
     {
@@ -1725,7 +1738,6 @@ const pre = await precondition('reading the preconditions from chain', async () 
   // write plan has no setOfferCreatorFullTariff step), so it enters as not
   // Full and is re-read at the block before the accept.
   const premises = await readSettlementPremises(head, {
-    principalAsset: loan.principalAsset,
     holder: lenderPositionHolder,
     requestId: null,
   });
@@ -1906,7 +1918,7 @@ console.log(`pre   auto-refinance switch: ${pre.autoRefi}; matcher partialFill: 
 // apply. The model is bounded, not extended to every fee branch.
 console.log(
   `pre   settlement premises @${pre.head}: ` +
-    `principal liquidity ${pre.premises.inputs.principalLiquidity}, borrower effective discount ${pre.premises.inputs.borrowerEffBps} bps, ` +
+    `borrower effective discount ${pre.premises.inputs.borrowerEffBps} bps, request Full opt-in ${pre.premises.inputs.requestCreatorFull}, ` +
     `exiting holder ${pre.premises.holder} consent ${pre.premises.inputs.holderConsent}, loan lenderMode ${pre.premises.inputs.lenderMode}`,
 );
 for (const b of pre.premises.basis) console.log(`pre   ok   ${b}`);
@@ -1960,6 +1972,7 @@ OBSERVED_BASELINE = {
   treasuryFeeBps: pre.treasuryFeeBps,
   lifBps: pre.lifBps,
   graceBuckets: pre.graceBuckets,
+  riskTermsHash: pre.riskTermsHash,
 };
 
 EXPECT_LOAN = loan;
@@ -2397,6 +2410,7 @@ try {
   check('lender page renders English (every disclosure is matched against en.json)', isEnglish(lLang), lLang, 'uiFlow.lender');
   const fundLink = await pollUntil('request row in the Offer Book', async () => {
     // Someone else may have filled it in the meantime — stop, don't race.
+    // Explicitly about NOW (#2422 r11): has anyone filled it yet?
     const o = await read('getOfferDetails', [requestId]);
     if (o.accepted) return 'taken';
     const row = lp.locator('.item-row').filter({ hasText: new RegExp(`offer #${requestId}\\b`) });
@@ -2484,7 +2498,10 @@ try {
   // already landed, so a race here cannot be BLOCKED: it is UNDETERMINED,
   // and the drive stops BEFORE the lender's consent — a review nobody could
   // judge is not consented to (`raceStop`, exit 3, never a FAIL).
-  const reqNow = await read('getOfferDetails', [requestId]);
+  // The request AS CREATED — read pinned to its create block under RULE 2
+  // (#2422 r11: no post-write read uses "latest" unless its claim is about
+  // now). Its terms are what the lender's review must show.
+  const reqNow = req;
   const lObs = await observeConfig('the lender\u2019s review', () => receiptRows(lp.locator('main')));
   if (lObs.undetermined) {
     MANIFEST.undetermined('lenderReview', 'receipt', lObs.undetermined);
@@ -2510,6 +2527,15 @@ try {
     stop('the deployed UI never enabled "Fund this borrower" for this request (see the review transcript above)');
   }
   beforeWriteStep('submitting "Fund this borrower"');
+  // RULE 1, once more, IMMEDIATELY before arming the lender (#2422 r11): the
+  // watched config — the risk-terms epoch the AcceptTerms is anchored to
+  // included — must still equal the preflight's. A move here is
+  // UNDETERMINED and stops the run before the lender is armed.
+  const armObs = await observeConfig('the lender\u2019s submit (risk-terms epoch, fees, grace, posture)', async () => null);
+  if (armObs.undetermined) {
+    MANIFEST.undetermined('lenderReview', 'receipt', armObs.undetermined);
+    raceStop(`not arming the lender: ${armObs.undetermined}`);
+  }
   LENDER_ANCHOR = await chainNow();
   console.log(`info  lender anchor (chain time at submit start): ${LENDER_ANCHOR}`);
   PLAN.arm('lender');
@@ -2582,17 +2608,36 @@ try {
   // NFTs) or a participant's wallet or vault. The same isolation guards the
   // receipt-MODEL checks below, whose inputs (fee posture, position holder,
   // payoff) are state read at the block before.
-  const oldAtPrev = await loanOf(LOAN_ID, prev);
-  const [borrowerVault, lenderVault, oldLenderVault, oldHolderAtPrev] = await Promise.all([
+  // Every post-accept read is PINNED (#2422 r11): to `floor` for what the
+  // accept produced, to `prev` for what it started from — never "latest".
+  const [oldAtPrev, oldAtFloor] = await Promise.all([loanOf(LOAN_ID, prev), loanOf(LOAN_ID, floor)]);
+  // THE PAYOUT OWNER, derived as RefinanceFacet derives it (#2422 r11): the
+  // accept first consolidates the old loan's stored lender to the current
+  // lender-NFT holder (`eagerConsolidateToHolder`, skip-not-block), then
+  // deposits the lender due into `oldLoan.lender`'s vault. So the owner is
+  // the stored lender read at `floor` — after the consolidation — and it is
+  // cross-checked against the NFT holder at `prev`.
+  const oldHolderAtPrev = await read('ownerOf', [oldAtPrev.lenderTokenId], prev);
+  const PAYOUT = payoutOwnerOf({
+    storedLenderAtFloor: oldAtFloor.lender,
+    storedLenderAtPrev: oldAtPrev.lender,
+    holderAtPrev: oldHolderAtPrev,
+    floor,
+    prev,
+  });
+  const payoutOwner = PAYOUT.owner;
+  const [borrowerVault, lenderVault, oldLenderVault] = await Promise.all([
     read('getUserVaultAddress', [BORROWER], floor),
     read('getUserVaultAddress', [LENDER], floor),
-    read('getUserVaultAddress', [oldAtPrev.lender], floor),
-    read('ownerOf', [oldAtPrev.lenderTokenId], prev),
+    read('getUserVaultAddress', [payoutOwner], floor),
   ]);
+  const payoutEvidence = `${PAYOUT.evidence}; its vault ${oldLenderVault}`;
+  console.log(`info  ${payoutEvidence}`);
   const ACCEPT = await scopeOf(acc, 'the accept', {
     borrower: BORROWER,
     lender: LENDER,
-    'old lender': oldAtPrev.lender,
+    'old lender (stored before the accept)': oldAtPrev.lender,
+    'payout owner': payoutOwner,
     'old position holder': oldHolderAtPrev,
     'borrower vault': borrowerVault,
     'lender vault': lenderVault,
@@ -2605,36 +2650,11 @@ try {
     refinanced.map((e) => e.args.oldLoanNewStatus).join(', ') || 'no LoanRefinanced',
     'oldLoanClosed.event',
   );
-  const oldConfirmed = await confirmWrite({
-    what: `loan ${LOAN_ID} status`,
-    minBlock: floor,
-    // `cacheTime: 0`: viem caches this action for the client's polling
-    // interval, so consecutive attempts would otherwise reuse ONE head
-    // read and a head cached as behind could outlive the chain catching
-    // up (same reasoning as live-rate-desk's confirmation).
-    getBlockNumber: () => pub.getBlockNumber({ cacheTime: 0 }),
-    // The RAW reply, pinned to the head it is handed; `decode` below turns
-    // it into a loan. Kept apart so a malformed reply is told from a
-    // failure to reach anything (#2107 r3, r7).
-    read: async (blockNumber) => {
-      const { data } = await pub.call({
-        to: DIAMOND,
-        data: encodeFunctionData({ abi: DIAMOND_ABI, functionName: 'getLoanDetails', args: [LOAN_ID] }),
-        blockNumber,
-      });
-      return data ?? '0x';
-    },
-    decode: (data) => {
-      const l = decodeFunctionResult({ abi: DIAMOND_ABI, functionName: 'getLoanDetails', data });
-      return { ...l, status: Number(l.status) };
-    },
-    accept: (l) => l.status === LOAN_STATUS.REPAID,
-  });
   scopedCheck(
     ACCEPT,
-    `old loan ${LOAN_ID} status == 1 (Repaid)`,
-    oldConfirmed.ok,
-    oldConfirmed.unconfirmed ? `unconfirmed: ${oldConfirmed.why}` : oldConfirmed.value?.status,
+    `old loan ${LOAN_ID} status == 1 (Repaid) at the accept block ${floor}`,
+    oldAtFloor.status === LOAN_STATUS.REPAID,
+    oldAtFloor.status,
     'oldLoanClosed.status',
   );
   const fresh = await loanOf(newLoanId, floor);
@@ -2795,7 +2815,6 @@ try {
     // a payoff that stepped between the two blocks. Any of them means the
     // model's premises did not hold for the accept — UNDETERMINED, not FAIL.
     const atPrev = await readSettlementPremises(prev, {
-      principalAsset: loan.principalAsset,
       holder: oldHolderAtPrev,
       requestId,
     });
@@ -2836,7 +2855,7 @@ try {
       stateDiff(
         `the old lender's claim on loan ${LOAN_ID} rose by exactly the payoff less the treasury share, in the principal asset, unclaimed`,
         claimAfter[1] - claimBefore[1] === S.lenderDue && eq(claimAfter[0], loan.principalAsset) && claimAfter[2] === false,
-        `${claimBefore[1]} → ${claimAfter[1]} ${claimAfter[0]} claimed ${claimAfter[2]} (expected +${S.lenderDue})`,
+        `${claimBefore[1]} → ${claimAfter[1]} ${claimAfter[0]} claimed ${claimAfter[2]} (expected +${S.lenderDue}); ${payoutEvidence}`,
         'settlement.oldLenderClaim',
       );
       // The principal token's Transfer logs in THIS receipt — the only
@@ -2865,7 +2884,7 @@ try {
       check(
         `the accept receipt's principal-token transfers are exactly the ${wantTransfers.length} the settlement prescribes (treasury legs included)`,
         transferDiff.length === 0,
-        transferDiff.join(' | ') || transfers.map((t) => `${t.from}→${t.to} ${t.value}`).join('; '),
+        `${transferDiff.join(' | ') || transfers.map((t) => `${t.from}→${t.to} ${t.value}`).join('; ')}; ${payoutEvidence}`,
         'settlement.transfers',
       );
       const delta = async (who) => {
@@ -2887,7 +2906,7 @@ try {
       stateDiff(
         'vaults: the old lender’s rose by the lender due; the borrower’s and the lender’s are unchanged',
         dOldLenderVault === S.oldLenderVaultDelta && dBorrowerVault === 0n && dLenderVault === 0n,
-        `old lender ${dOldLenderVault} (expected ${S.oldLenderVaultDelta}), borrower ${dBorrowerVault}, lender ${dLenderVault}`,
+        `old lender ${dOldLenderVault} (expected ${S.oldLenderVaultDelta}), borrower ${dBorrowerVault}, lender ${dLenderVault}; ${payoutEvidence}`,
         'settlement.vaults',
       );
     }

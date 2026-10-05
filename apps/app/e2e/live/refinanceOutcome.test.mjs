@@ -15,6 +15,7 @@ import {
   expectedPrincipalTransfers,
   expectedSettlement,
   lienMismatches,
+  payoutOwnerOf,
   scanForReplacement,
   scopeReason,
   settlementPremises,
@@ -197,10 +198,10 @@ describe('refinanceOutcome — the replacement scan states its limit', () => {
 // ---------------------------------------------------------------------
 
 describe('refinanceOutcome — settlement premises (the default fee posture)', () => {
-  // Loan 22 at block 47711161: WETH Liquid (0); the borrower CONSENTS but
+  // Loan 22 at block 47711161: the borrower CONSENTS but
   // its effective discount is 0 bps; request #45 not Full; the old lender
   // holder has no consent; loan 22's lenderMode is None (0).
-  const LOAN22 = { principalLiquidity: 0, borrowerEffBps: 0, requestCreatorFull: false, holderConsent: false, lenderMode: 0 };
+  const LOAN22 = { borrowerEffBps: 0, requestCreatorFull: false, holderConsent: false, lenderMode: 0 };
 
   it('holds for the real loan-22 posture', () => {
     const p = settlementPremises(LOAN22);
@@ -209,14 +210,18 @@ describe('refinanceOutcome — settlement premises (the default fee posture)', (
     expect(p.basis.join(' | ')).toMatch(/effective discount 0 bps/);
   });
 
-  it('a discounted borrower LIF breaks the premise — but only on a Liquid principal', () => {
+  // #2422 r11: the premise no longer reads liquidity (external oracle/pool
+  // state no isolation check covers). A non-zero discount or a Full opt-in
+  // is outside the model whatever the principal's liquidity.
+  it('a borrower discount or Full opt-in breaks the premise — liquidity is not an input', () => {
     const tier = settlementPremises({ ...LOAN22, borrowerEffBps: 1000 });
     expect(tier.holds).toBe(false);
     expect(tier.failures[0].party).toBe('borrower');
     expect(tier.failures[0].reason).toMatch(/effective discount is 1000 bps/);
+    expect(tier.failures[0].reason).toMatch(/does not depend on the principal\u2019s liquidity/);
     expect(settlementPremises({ ...LOAN22, borrowerEffBps: 0, requestCreatorFull: true }).failures[0].reason).toMatch(/Full opt-in/);
-    // holdOnlyBorrowerLif discounts nothing when the principal is not Liquid.
-    expect(settlementPremises({ ...LOAN22, principalLiquidity: 1, borrowerEffBps: 1000, requestCreatorFull: true }).holds).toBe(true);
+    // An illiquid-principal flag passed in is ignored: still outside the model.
+    expect(settlementPremises({ ...LOAN22, principalLiquidity: 1, borrowerEffBps: 1000 }).holds).toBe(false);
   });
 
   it('any yield-fee entitlement of the exiting holder breaks the premise (VPFI-paid or direct reduction)', () => {
@@ -384,6 +389,31 @@ describe('refinanceOutcome — each role’s nonces are their own check', () => 
     });
     expect(r.ok).toBe(false);
     expect(m.rows()[0].status).toBe('failed');
+  });
+});
+
+// #2422 r11 — the payout owner follows the contract's consolidation.
+describe('refinanceOutcome — the old lender\u2019s payout owner', () => {
+  const OLD = '0x648897f2c549956eFfF626D57fBc3E39761e6792';
+  const BUYER = '0x000000000000000000000000000000000000b0b0';
+  it('is the stored lender AFTER the accept, not before (a transferred position)', () => {
+    // The position NFT was sold to BUYER; the accept consolidated the stored
+    // lender from OLD to BUYER and paid BUYER's vault.
+    const r = payoutOwnerOf({ storedLenderAtFloor: BUYER, storedLenderAtPrev: OLD, holderAtPrev: BUYER, floor: 9n, prev: 8n });
+    expect(r.owner).toBe(BUYER);
+    expect(r.consolidated).toBe(true);
+    expect(r.evidence).toMatch(/stored lender before the accept was 0x6488/);
+  });
+  it('states a skipped consolidation when the holder differs', () => {
+    const r = payoutOwnerOf({ storedLenderAtFloor: OLD, storedLenderAtPrev: OLD, holderAtPrev: BUYER, floor: 9n, prev: 8n });
+    expect(r.owner).toBe(OLD);
+    expect(r.consolidated).toBe(false);
+    expect(r.evidence).toMatch(/DIFFERS from the lender-NFT holder at block 8/);
+  });
+  it('loan 22: holder, stored lender and payout owner were all the original lender', () => {
+    const r = payoutOwnerOf({ storedLenderAtFloor: OLD, storedLenderAtPrev: OLD, holderAtPrev: OLD, floor: 47_711_162n, prev: 47_711_161n });
+    expect(r).toMatchObject({ owner: OLD, consolidated: true });
+    expect(r.evidence).not.toMatch(/DIFFERS|before the accept was/);
   });
 });
 

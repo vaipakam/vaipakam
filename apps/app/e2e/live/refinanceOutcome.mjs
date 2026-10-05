@@ -20,8 +20,8 @@
  * extended): an ERC-20 loan accepted by the lender through the app (so the
  * LIF's matcher share goes to that lender), settled before maturity, where
  *   - the borrower's initiation fee carries no discount
- *     (`settlementPremises`: the principal is not Liquid, or the borrower's
- *     effective discount is 0, and the request carries no Full tariff), and
+ *     (`settlementPremises`: the borrower's effective discount is 0 and the
+ *     request carries no Full opt-in — Diamond state only), and
  *   - the exiting position holder has no yield-fee discount entitlement (no
  *     VPFI-discount consent and no Full tariff on the loan — the one guard in
  *     front of BOTH the VPFI-paid path and the direct-reduction fallback).
@@ -44,8 +44,6 @@ export const LEGACY_TREASURY_FEE_BPS = 100n;
 
 const lc = (a) => String(a).toLowerCase();
 
-/** LibVaipakam.LiquidityStatus.Liquid. */
-export const LIQUID = 0;
 /** LibVaipakam.FeeEntitlementMode.Full. */
 export const FEE_MODE_FULL = 2;
 
@@ -60,13 +58,16 @@ export const FEE_MODE_FULL = 2;
  * the fee maths:
  *
  *   BORROWER — OfferAcceptFeeFacet charges `holdOnlyBorrowerLif(borrower,
- *   principal, isLiquid, fullMode)`, where `isLiquid` is
- *   `checkLiquidity(lendingAsset) == Liquid`. That discounts only when the
- *   principal is Liquid AND (the borrower's effective discount — the
- *   consent-gated, clamped `getEffectiveDiscount` view — is non-zero, OR the
- *   request carries a confirmed Full opt-in). So the fee is undiscounted when
- *   the principal is not Liquid, or when the effective discount is 0 and the
- *   request is not Full.
+ *   principal, isLiquid, fullMode)`, which discounts only when the borrower's
+ *   effective discount (the consent-gated, clamped `getEffectiveDiscount`
+ *   view) is non-zero, or the request carries a confirmed Full opt-in — and
+ *   then only on a Liquid principal. The premise used here is the
+ *   liquidity-FREE half (#2422 r11): effective discount 0 AND no Full
+ *   opt-in, under which the fee is undiscounted whatever the liquidity.
+ *   Liquidity (`checkLiquidity`) reads external oracle and pool state that no
+ *   block-isolation check can cover, so the model never depends on it: a
+ *   borrower with a non-zero discount is outside the model even if the
+ *   principal happens to be illiquid — stated, not guessed.
  *
  *   EXITING LENDER — RefinanceFacet resolves `resolveLenderYieldFeeFor` for
  *   the CURRENT holder of the lender position NFT. Its first guard,
@@ -75,26 +76,24 @@ export const FEE_MODE_FULL = 2;
  *   share is untouched — neither the VPFI-paid path (`tryApplyYieldFee`) nor
  *   the direct-reduction fallback runs.
  *
- * @param {{ principalLiquidity: number|bigint, borrowerEffBps: number|bigint,
- *           requestCreatorFull: boolean, holderConsent: boolean,
- *           lenderMode: number|bigint }} r
+ * @param {{ borrowerEffBps: number|bigint, requestCreatorFull: boolean,
+ *           holderConsent: boolean, lenderMode: number|bigint }} r
  * @returns {{ holds: boolean, basis: string[],
  *             failures: { party: string, reason: string, coveredBy: string }[] }}
  */
 export function settlementPremises(r) {
   const basis = [];
   const failures = [];
-  const principalLiquid = Number(r.principalLiquidity) === LIQUID;
   const effBps = Number(r.borrowerEffBps);
-  if (!principalLiquid) basis.push('borrower LIF undiscounted: the principal is not Liquid (checkLiquidity)');
-  else if (effBps === 0 && r.requestCreatorFull !== true) {
+  if (effBps === 0 && r.requestCreatorFull !== true) {
     basis.push('borrower LIF undiscounted: effective discount 0 bps (getEffectiveDiscount) and no Full opt-in');
   } else {
     failures.push({
       party: 'borrower',
       reason:
-        `the borrower's initiation fee may be discounted — the principal is Liquid and ` +
-        (effBps !== 0 ? `the borrower's effective discount is ${effBps} bps` : 'the request carries a Full opt-in'),
+        `the borrower's initiation fee may be discounted — ` +
+        (effBps !== 0 ? `the borrower's effective discount is ${effBps} bps` : 'the request carries a Full opt-in') +
+        ' (the model does not depend on the principal\u2019s liquidity, which no isolation check covers)',
       coveredBy: 'contracts/test/VPFIDiscountFacetTest.t.sol testAcceptOfferWithVPFIDiscountApplied',
     });
   }
@@ -432,3 +431,32 @@ export function lienMismatches({ oldBefore, oldAfter, newAfter, expected }) {
   live('replacement lien at the accept', newAfter);
   return out;
 }
+
+// ---------------------------------------------------------------------
+// Who the old lender's payout goes to (#2422 r11).
+// ---------------------------------------------------------------------
+
+/**
+ * The owner of the vault RefinanceFacet pays the lender due into, derived
+ * as the contract derives it: the accept first consolidates the old loan's
+ * stored lender to the CURRENT lender-NFT holder (`eagerConsolidateToHolder`,
+ * skip-not-block — a sanctioned holder or an excluded state leaves the old
+ * address), then deposits into `oldLoan.lender`'s vault. So the owner is the
+ * stored lender read AFTER the accept, at the accept block — never the one
+ * read before it. The NFT holder at the block before is the cross-check;
+ * when the two differ (the consolidation was skipped) the evidence says so.
+ *
+ * @returns {{ owner: string, consolidated: boolean, evidence: string }}
+ */
+export function payoutOwnerOf({ storedLenderAtFloor, storedLenderAtPrev, holderAtPrev, floor, prev }) {
+  const owner = storedLenderAtFloor;
+  const consolidated = lc(owner) === lc(holderAtPrev);
+  const evidence =
+    `payout owner ${owner} (the old loan's stored lender at block ${floor}, after the accept's consolidation)` +
+    (consolidated
+      ? `; the lender-NFT holder at block ${prev} is the same` +
+        (lc(storedLenderAtPrev) !== lc(owner) ? ` (the stored lender before the accept was ${storedLenderAtPrev})` : '')
+      : `; DIFFERS from the lender-NFT holder at block ${prev} (${holderAtPrev}) — the consolidation did not move it`);
+  return { owner, consolidated, evidence };
+}
+
