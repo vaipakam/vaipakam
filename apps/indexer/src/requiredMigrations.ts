@@ -1,7 +1,7 @@
 /**
  * Every D1 migration this build was written against — the schema gate
  * (schemaGate.ts) holds scheduled work until ALL of them are recorded in
- * `d1_migrations`, and the deploy wrapper (scripts/migrate-then-deploy.mjs)
+ * `d1_migrations`, and the deploy wrapper (scripts/deploy-shared-d1.mjs)
  * refuses to publish until they are.
  *
  * The whole set, not only the newest: a migration that fills a gap in the

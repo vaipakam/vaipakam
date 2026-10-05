@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "wrangler dev",
     "migrate": "wrangler d1 migrations apply vaipakam-warm --remote",
-    "deploy": "node scripts/migrate-then-deploy.mjs",
+    "deploy": "node scripts/deploy-shared-d1.mjs apply",
     "deploy:dry": "wrangler deploy --dry-run",
     "build": "pnpm run typecheck",
     "check-event-coverage": "node scripts/check-event-coverage.mjs",

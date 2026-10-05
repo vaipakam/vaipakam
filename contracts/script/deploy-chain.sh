@@ -1341,6 +1341,12 @@ fi
 # owns migrations + the indexer_cursor row; the keeper and agent are
 # stateless RPC-call surfaces.
 #
+# ONE APPLIER, FIRST (#2214 / #2409): step 8.0 applies the shared D1
+# migrations before ANY Worker publishes — the keeper (8a) runs before
+# the indexer (8b), and its deploy only VERIFIES the schema (read-only),
+# refusing to publish code onto a schema it was not written for. The
+# indexer's own deploy re-applies (a no-op by then) and verifies.
+#
 # Per-Worker skip flags gate each independently. Each Worker has its
 # own RPC-secret store (Cloudflare scopes secrets per Worker), so the
 # `wrangler secret list` verification fans out across all three.
@@ -1396,6 +1402,16 @@ case "$CHAIN_SLUG" in
   polygon-amoy)  EXPECTED_RPC_SECRET="RPC_POLYGON_AMOY" ;;
   *)             EXPECTED_RPC_SECRET="" ;;
 esac
+
+# ── 8.0 Shared D1 migrations — before any Worker publishes ────────────
+# Needs D1 Edit on the Cloudflare token. Non-interactive (stdin from
+# /dev/null), so wrangler applies without a prompt; a failure stops the
+# script here under `set -e`, before any Worker ships.
+if [ "$SKIP_KEEPER" = "0" ] || [ "$SKIP_INDEXER" = "0" ] || [ "$SKIP_AGENT" = "0" ]; then
+  echo
+  echo "[8.0] Shared D1 migrations (vaipakam-warm, owned by apps/indexer)"
+  ( cd "$INDEXER_DIR" && pnpm run migrate < /dev/null )
+fi
 
 # ── 8a. apps/keeper — autonomous HF-liquidation Worker ────────────────
 # Stateless: signs `triggerLiquidation` on-chain when an active loan's

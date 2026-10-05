@@ -621,22 +621,27 @@ read and write a subset of the shared tables via the same binding
 directly on the deployed db: that diverges the migrations record from
 the live schema and breaks fresh-environment bootstrap.
 
-**Migrations apply BEFORE code ships, and the Worker refuses to run ahead
-of its schema** (#2214). `apps/indexer`'s `migrate` script applies pending
-migrations, and the `deploy` scripts of ALL THREE Workers that bind this
-database (indexer, keeper, agent) run it before publishing, through
-`apps/indexer/scripts/migrate-then-deploy.mjs` — so whichever publishes
-first, the schema lands first. The wrapper VERIFIES every required migration
-is recorded before publishing, and refuses arguments (dry runs use
-`pnpm run deploy:dry`, which never migrates). Workers Builds also auto-deploys
-them on merge with a dashboard-configured command the repo cannot pin, so
-the indexer carries a schema gate (`src/schemaGate.ts`): scheduled ingest
-declines, by name, until EVERY migration in the build is recorded in
-`d1_migrations`, and resumes by itself once it is. **A new migration must
-be listed in `apps/indexer/src/requiredMigrations.json`** —
-`check-schema-gate.mjs` in `typecheck` fails otherwise. The gate holds
-WRITES only; a new read of a new column must still tolerate the older
-schema. Keeper and agent have no gate yet (#2410).
+**Migrations apply BEFORE code ships, ONE applier, and every migration is
+additive** (#2214 / #2409). Only the indexer — the schema's owner — APPLIES
+migrations: its `deploy` (`apps/indexer/scripts/deploy-shared-d1.mjs apply`)
+applies non-interactively, VERIFIES in the database that every migration in
+`apps/indexer/src/requiredMigrations.json` is recorded, then publishes. The
+keeper's and agent's `deploy` (`… verify`) only verify, read-only, waiting a
+bounded time for the indexer to apply, and refuse to publish onto an older
+schema — three appliers raced on one merge and left partial releases. The
+wrapper refuses arguments (dry runs: `pnpm run deploy:dry`, which never
+touches the database). **Migrations land while the old Workers are still
+serving, so each one must be compatible with the deployed code** — additive
+(expand/contract); a dropped/renamed column or a tightened constraint needs a
+coordinated two-step release. Workers Builds also auto-deploys on merge with a
+dashboard command the repo cannot pin, so the indexer carries a schema gate
+(`src/schemaGate.ts`): scheduled work declines, by name, until EVERY migration
+in the build is recorded, and resumes by itself once it is. **A new migration
+must be listed in `requiredMigrations.json`** — `check-schema-gate.mjs` in
+`typecheck` fails otherwise. The gate covers SCHEDULED work only: every HTTP
+handler — reads and the POST writes (signed offers, prepay match-source, the
+chain-event webhook) — must tolerate the previous schema. Keeper and agent
+have no runtime gate yet (#2410).
 
 **`NNNN` must be unique** — enforced by
 `apps/indexer/scripts/check-migration-prefixes.mjs` (wired into

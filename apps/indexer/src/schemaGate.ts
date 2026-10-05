@@ -2,9 +2,9 @@
  * The D1 schema gate — scheduled work runs only against the schema this build
  * was written for.
  *
- * WHY A GATE AND NOT ONLY A DEPLOY ORDER. The deploy scripts and the package
- * `deploy` scripts of every Worker that binds the shared database now apply
- * migrations BEFORE publishing, and abort the publish if the apply fails. But
+ * WHY A GATE AND NOT ONLY A DEPLOY ORDER. The indexer's deploy applies
+ * migrations, verifies them and only then publishes; the keeper's and agent's
+ * deploys verify before publishing (scripts/deploy-shared-d1.mjs). But
  * the indexer also auto-deploys on every merge through Cloudflare Workers
  * Builds, whose deploy command is dashboard configuration this repository
  * cannot see or pin. If that route publishes without migrating, the new code
@@ -25,15 +25,18 @@
  * a database that never applied it.
  *
  * WHAT IT DOES NOT COVER, stated rather than implied:
- *  - the HTTP read API. A route that reads a column the database does not
- *    have yet still fails until the migration is applied; a feature adding
- *    such a read must tolerate the older schema itself (or ship its read
- *    after its migration). The gate keeps WRITES consistent; it does not make
- *    a read of a missing column succeed.
+ *  - HTTP. The gate holds SCHEDULED work only. Every `fetch()` handler — the
+ *    reads, and the POST writes (`/signed-offers`, the prepay listing
+ *    match-source, the `/hooks/chain-event` webhook) — runs against whatever
+ *    schema the database has. A handler that reads or writes a new column
+ *    must tolerate the previous schema itself (or ship after its migration).
  *  - the keeper and agent Workers, which bind the same database. Their
- *    package deploys migrate first too, but they carry no gate of their own
- *    yet, so their Workers Builds auto-deploy is unguarded — tracked in the
- *    follow-up issue named in the indexer README.
+ *    package deploys verify the schema before publishing, but they carry no
+ *    runtime gate of their own yet, so a deploy route that bypasses the
+ *    package script is unguarded — tracked in #2410.
+ *  - a migration INCOMPATIBLE with the code already deployed. Migrations land
+ *    while old Workers are still serving, so each must be additive
+ *    (expand / contract); ordering does not make a destructive change safe.
  *
  * `REQUIRED_D1_MIGRATIONS` (requiredMigrations.json) is pinned to the
  * `migrations/` directory by `scripts/check-schema-gate.mjs` (part of

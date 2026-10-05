@@ -112,10 +112,12 @@ __lenv_baseline="$(declare -p $(compgen -v) 2>/dev/null)"
 #       secret is present on the Worker before claiming success.
 #
 #   bash contracts/script/deploy-testnet.sh <chain-slug> --phase cf-indexer [--fresh]
-#       Deploys apps/indexer (D1 indexer + read-only API) via
-#       wrangler, then applies any pending D1 migrations to the shared
-#       `vaipakam-warm` database. The indexer is the only Worker
-#       that owns migrations — keeper + agent are stateless. With
+#       Applies any pending D1 migrations to the shared `vaipakam-warm`
+#       database, verifies them, THEN deploys apps/indexer (D1 indexer +
+#       read-only API) — a failed apply never publishes. The indexer is
+#       the only Worker that applies migrations; the keeper and agent
+#       phases verify the schema and refuse to publish while one is
+#       pending, so run this phase first on a migration-bearing release. With
 #       `--fresh` (i.e. after a fresh contract redeploy that changed the
 #       diamond address) it ALSO purges this chain's stale D1 rows
 #       (offers/loans/activity/cursor/…) so the reindex starts clean from
@@ -296,7 +298,7 @@ Phases (mirror mainnet phase-for-phase except pause-rehearsal):
   cf-app          — Build + wrangler deploy apps/app (the dApp).
   cf-www           — Build + wrangler deploy apps/www (marketing).
   cf-keeper        — wrangler deploy apps/keeper (autonomous keeper).
-  cf-indexer       — wrangler deploy apps/indexer + D1 migrations
+  cf-indexer       — D1 migrations (apply + verify), then wrangler deploy apps/indexer
                      on the shared \`vaipakam-warm\` database.
   cf-agent         — wrangler deploy apps/agent (notifications, frames).
   verify           — Read-only smoke checks.
@@ -1882,9 +1884,13 @@ phase_cf_keeper() {
 # shared `vaipakam-warm` D1 database + its migrations (the keeper
 # and agent Workers BIND the same D1 but never run migrations against
 # it). Two sub-steps:
-#   [a] D1 migrations apply, THEN wrangler deploy — via the package
-#       `deploy` script, so a failed apply never publishes (#2214).
-#       Only this Worker runs migrations.
+#   [a] D1 migrations apply, verify, THEN wrangler deploy — via the
+#       package `deploy` script, so a failed or partial apply never
+#       publishes (#2214 / #2409). This is the ONLY phase that applies
+#       migrations (needs D1 Edit). The cf-keeper and cf-agent phases
+#       VERIFY the schema read-only and refuse to publish while a
+#       migration is pending — so when a release carries a migration,
+#       run this phase FIRST.
 #   [b] RPC-secret check for this chain
 #
 # Note on cursor seeding: deploy-chain.sh and deploy-testnet.sh seed
