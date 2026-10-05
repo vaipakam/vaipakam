@@ -355,18 +355,34 @@ contract OracleFacetTest is Test {
         OracleFacet(address(diamond)).calculateLTV(mockAsset, 1000 ether, mockAsset2, 0);
     }
 
-    /// #2403 — a collateral leg whose value does not register even at the
-    /// 1e18 scale is refused the same way, never divided by. One base unit
-    /// of a 6-decimal token priced at 1e-13 numeraire is 1e-19 numeraire —
-    /// below the 1e-18 resolution.
-    function testCalculateLTVDustCollateralReverts() public {
-        address coll6 = address(new ERC20Mock("COL6", "COL6", 6));
+    /// #2418 r2 — a leg too small to register at ANY fixed scale still
+    /// counts: the ratio is taken in one step, never from rounded legs. One
+    /// base unit of a 1-decimal token at 9e-18 per whole token (9e-19) against
+    /// one unit of a 0-decimal token at 1e-18 is 0.9 — 9000 bps, not 0.
+    function testCalculateLTVTinyLegsUseTheExactRatio() public {
+        address b1 = address(new ERC20Mock("B1", "B1", 1));
+        address c0 = address(new ERC20Mock("C0", "C0", 0));
+        _mockRegistryFeed(b1, mockFeed);
+        _mockRegistryFeed(c0, mockFeed2);
+        _mockFeedFull(mockFeed, int256(9), 18);
+        _mockFeedFull(mockFeed2, int256(1), 18);
+        // Borrowed scale (19) above collateral scale (18): the divide-after branch.
+        assertEq(OracleFacet(address(diamond)).calculateLTV(b1, 1, c0, 1), 9000);
+        // And the other way round — the multiply-before branch: 81 units of
+        // C0 (8.1e-17) against 100 units of B1 (9e-17) is 0.9 too.
+        assertEq(OracleFacet(address(diamond)).calculateLTV(c0, 81, b1, 100), 9000);
+    }
+
+    /// #2418 r2 — large amounts with high-decimal feeds and tokens do not
+    /// overflow the one-step ratio: 1e9 whole 18-decimal tokens priced with an
+    /// 18-decimal feed on both sides.
+    function testCalculateLTVLargeAmountsDoNotOverflow() public {
         _mockRegistryFeed(mockAsset, mockFeed);
-        _mockRegistryFeed(coll6, mockFeed2);
-        _mockFeedFull(mockFeed, int256(1e8), 8);
-        _mockFeedFull(mockFeed2, int256(1), 18); // 1e-18 per whole token
-        vm.expectRevert(OracleFacet.ZeroCollateral.selector);
-        OracleFacet(address(diamond)).calculateLTV(mockAsset, 1000 ether, coll6, 1);
+        _mockRegistryFeed(mockAsset2, mockFeed2);
+        _mockFeedFull(mockFeed, int256(1000e18), 18);
+        _mockFeedFull(mockFeed2, int256(2000e18), 18);
+        uint256 ltv = OracleFacet(address(diamond)).calculateLTV(mockAsset, 1e9 ether, mockAsset2, 1e9 ether);
+        assertEq(ltv, 5000);
     }
 
     /// #2418 r1 — a borrow worth less than one whole numeraire unit keeps its
