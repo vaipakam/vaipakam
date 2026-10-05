@@ -183,6 +183,16 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         uint256 oldLoanId,
         uint256 borrowerOfferId
     ) external onlyDiamondInternal whenNotPaused {
+        // #2407 — on the atomic routes only the loan's RECORDED request may
+        // complete: it is the one the borrower-action guard watches, so a
+        // displaced or never-recorded request (which could otherwise revive
+        // when the position returns to its creator) can never be taken. A
+        // revert here unwinds the whole acceptance, so nothing is stranded.
+        // The standalone {refinanceLoan} deliberately does not check it: it
+        // only ever completes an offer ALREADY accepted — post-#2407 every
+        // acceptance runs this check — and by then the replacement loan
+        // exists, so refusing would strand both loans (see the payoff body).
+        LibRefinanceRequest.assertRecorded(oldLoanId, borrowerOfferId);
         _authorizeRefinance(
             oldLoanId,
             borrowerOfferId,
@@ -210,6 +220,8 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         uint256 oldLoanId,
         uint256 borrowerOfferId
     ) external onlyDiamondInternal whenNotPaused {
+        // #2407 — see {refinanceLoanFromAccept}.
+        LibRefinanceRequest.assertRecorded(oldLoanId, borrowerOfferId);
         _authorizeRefinance(
             oldLoanId,
             borrowerOfferId,
@@ -281,12 +293,6 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         // on the fund-receiving wallet.
         address currentBorrowerNftOwner =
             LibERC721.ownerOf(oldLoan.borrowerTokenId);
-        // #2407 — only the loan's RECORDED refinance request may complete: it
-        // is the one the borrower-action guard watches, so a displaced or
-        // never-recorded request (which could otherwise revive when the
-        // position returns to its creator) can never fill. Checked before the
-        // holder-direct early return so every route is bound.
-        LibRefinanceRequest.assertRecorded(oldLoanId, borrowerOfferId);
         if (
             route == RefinanceRoute.Direct &&
             currentBorrowerNftOwner == msg.sender
@@ -1094,14 +1100,13 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
     ///         what the chain already proves, so a caller can neither invent a
     ///         request, displace one, nor choose between two — the cursor fixes
     ///         the order (first in offer-id order wins).
-    /// @dev    An offer is recorded for its target loan when nothing the
-    ///         creation rule protects is recorded there yet, no offset is live
-    ///         on the loan, and the offer is EITHER a live request (by
-    ///         {LibRefinanceRequest.isLive}) OR a request accepted under the
-    ///         pre-atomic flow whose replacement loan exists while the target
-    ///         is still Active — its standalone {refinanceLoan} completion needs
-    ///         the record. Until recorded, a pre-index request can neither fill
-    ///         nor hold the loan back. A second pre-index request for the same
+    /// @dev    An offer is recorded for its target loan when it is a live
+    ///         request (by {LibRefinanceRequest.isLive}), nothing the creation
+    ///         rule protects is recorded there yet, and no offset is live on the
+    ///         loan. Until recorded, a pre-index request can neither be accepted
+    ///         nor hold the loan back. A request ALREADY accepted under the
+    ///         pre-atomic flow needs no record: its standalone {refinanceLoan}
+    ///         completion is not gated by it. A second pre-index request for the same
     ///         loan, or one the holder replaced with a new request before the
     ///         cursor reached it, can never fill; its creator cancels it.
     /// @return recorded How many requests this call recorded.
@@ -1115,13 +1120,9 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         if (end - cursor > maxOffers) end = cursor + maxOffers;
         while (cursor < end) {
             uint256 id = ++cursor;
-            LibVaipakam.Offer storage o = s.offers[id];
-            uint256 loanId = o.refinanceTargetLoanId;
+            uint256 loanId = s.offers[id].refinanceTargetLoanId;
             if (loanId == 0 || s.loanToOffsetOfferId[loanId] != 0) continue;
-            bool awaitingCompletion = o.accepted &&
-                s.offerIdToLoanId[id] != 0 &&
-                s.loans[loanId].status == LibVaipakam.LoanStatus.Active;
-            if (!awaitingCompletion && !LibRefinanceRequest.isLive(s, loanId, id)) continue;
+            if (!LibRefinanceRequest.isLive(s, loanId, id)) continue;
             (uint256 prior,) = LibRefinanceRequest.blockingRecord(loanId);
             if (prior != 0) continue;
             s.refinanceRequestOfLoan[loanId] = id;

@@ -25,6 +25,7 @@ import {RepayPeriodicFacet} from "../src/facets/RepayPeriodicFacet.sol";
 import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
 import {Deployments} from "./lib/Deployments.sol";
 import {FacetSelectors} from "./lib/FacetSelectors.sol";
+import {RefinanceRecordRollout} from "./lib/RefinanceRecordRollout.sol";
 
 /**
  * @title RedeployFacets
@@ -85,6 +86,9 @@ contract RedeployFacets is Script {
      */
     function runWith(address diamond, uint256 deployerKey) public {
         console.log("Diamond:", diamond);
+        // #2407 — the refinance-request record spans facets this curated set
+        // does not carry; refuse a Diamond that has not had it rolled out.
+        RefinanceRecordRollout.assertInstalled(diamond);
 
         vm.startBroadcast(deployerKey);
 

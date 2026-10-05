@@ -38,11 +38,14 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
  *
  *         THE RECORD IS AUTHORITATIVE. Liveness is not one-way — a position
  *         that leaves its creator can come back — so a request the record no
- *         longer points to could otherwise revive unguarded. The refinance
- *         completion therefore accepts a tagged request ONLY if it is the
- *         loan's recorded request ({assertRecorded}): a displaced or
- *         never-recorded request can never fill, so the request the guard
- *         watches is always the only one that can.
+ *         longer points to could otherwise revive unguarded. An acceptance
+ *         therefore completes a tagged request ONLY if it is the loan's
+ *         recorded request ({assertRecorded}, on the atomic accept / match
+ *         routes): a displaced or never-recorded request can never be taken,
+ *         so the request the guard watches is always the only one that can.
+ *         The standalone completion of an ALREADY-accepted request is not
+ *         gated: the replacement loan exists by then, and refusing would
+ *         strand both loans.
  *
  *         NO LOST REQUESTS. The record is how a request is found from its
  *         loan, and a fresh-pledge request holds its collateral until it is

@@ -10,6 +10,7 @@ import {ReplaceStaleFacets} from "../../script/ReplaceStaleFacets.s.sol";
 import {FacetSelectors} from "../../script/lib/FacetSelectors.sol";
 import {VaipakamDiamond} from "../../src/VaipakamDiamond.sol";
 import {RiskPreviewFacet} from "../../src/facets/RiskPreviewFacet.sol";
+import {RefinanceFacet} from "../../src/facets/RefinanceFacet.sol";
 
 /**
  * @title  PartialRefreshRoutingTest
@@ -133,6 +134,38 @@ contract PartialRefreshRoutingTest is Test {
             sel := mload(add(ret, 0x20))
         }
         return sel == VaipakamDiamond.FunctionDoesNotExist.selector;
+    }
+
+    // ─── #2407 — the curated scripts refuse a pre-record Diamond ──────
+
+    function _unrouteRefinanceRecord() internal {
+        bytes4[] memory sels = new bytes4[](1);
+        sels[0] = RefinanceFacet.getRefinanceRequest.selector;
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
+        cuts[0] = IDiamondCut.FacetCut({
+            facetAddress: address(0),
+            action: IDiamondCut.FacetCutAction.Remove,
+            functionSelectors: sels
+        });
+        vm.prank(deployer);
+        IDiamondCut(diamond).diamondCut(cuts, address(0), "");
+    }
+
+    /// @notice Neither curated script installs the whole refinance-record
+    ///         facet set, so each refuses a Diamond that predates it rather
+    ///         than leaving the record half-installed.
+    function test_CuratedScripts_RefuseAPre2407Diamond() public {
+        _unrouteRefinanceRecord();
+        RedeployFacets redeploy = new RedeployFacets();
+        vm.expectRevert(
+            bytes("#2407: this Diamond predates the refinance-request record - roll it out with RefreshAllFacetsInPlace first")
+        );
+        redeploy.runWith(diamond, DEPLOYER_KEY);
+        ReplaceStaleFacets replace = new ReplaceStaleFacets();
+        vm.expectRevert(
+            bytes("#2407: this Diamond predates the refinance-request record - roll it out with RefreshAllFacetsInPlace first")
+        );
+        replace.runWith(diamond, DEPLOYER_KEY);
     }
 
     // ─── 1. The fixture genuinely reproduces the break ────────────────
