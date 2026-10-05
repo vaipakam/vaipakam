@@ -10,16 +10,17 @@ import { describe, expect, it } from 'vitest';
 
 import { createManifest } from './outcomeManifest.mjs';
 import {
-  blockIsolation,
   checkRoleNonces,
   collateralMovedOut,
   expectedPrincipalTransfers,
   expectedSettlement,
   lienMismatches,
   scanForReplacement,
+  scopeReason,
   settlementPremises,
   TOPIC,
   transferMismatches,
+  txIsolation,
 } from './refinanceOutcome.mjs';
 
 const BORROWER = '0xC86BB89f8ddF703c34724Cf11137498bC69F039D';
@@ -243,18 +244,53 @@ const pad = (a) => `0x${a.toLowerCase().replace(/^0x/, '').padStart(64, '0')}`;
 const WATCHED = { borrower: BORROWER, lender: LENDER, borrowerVault: BORROWER_VAULT, oldLenderVault: OLD_LENDER_VAULT };
 const rc = (hash, over = {}) => ({ transactionHash: hash, status: '0x1', from: '0x000000000000000000000000000000000000aaaa', to: '0x000000000000000000000000000000000000bbbb', logs: [], ...over });
 const OTHER = `0x${'1'.repeat(64)}`;
+const ACCEPT_RCPT = { transactionHash: ACCEPT, blockNumber: 47_711_162n };
 
 describe('refinanceOutcome — the accept block’s other transactions', () => {
   it('an unreadable block is not isolation', () => {
-    expect(blockIsolation({ receipts: null, acceptHash: ACCEPT, diamond: DIAMOND, watched: WATCHED })).toEqual({ known: false, isolated: false, touching: [] });
+    expect(txIsolation({ receipt: ACCEPT_RCPT, receipts: null, diamond: DIAMOND, watched: WATCHED })).toEqual({ known: false, isolated: false, touching: [], own: [] });
     // A receipt list that does not even contain the accept is not the block.
-    expect(blockIsolation({ receipts: [rc(OTHER)], acceptHash: ACCEPT, diamond: DIAMOND, watched: WATCHED }).known).toBe(false);
+    expect(txIsolation({ receipt: ACCEPT_RCPT, receipts: [rc(OTHER)], diamond: DIAMOND, watched: WATCHED }).known).toBe(false);
+  });
+
+  it('receipts from another block are not this block', () => {
+    const r = txIsolation({ receipt: ACCEPT_RCPT, receipts: [rc(ACCEPT, { blockNumber: '0x2d80a3a' }), rc(OTHER, { blockNumber: '0x2d80a3b' })], diamond: DIAMOND, watched: WATCHED });
+    expect(r.known).toBe(false);
+    expect(r.touching[0]).toMatch(/from a block other than 47711162/);
+  });
+
+  it('takes ANY of this run\u2019s receipts — a createOffer\u2019s block is scoped the same way', () => {
+    const create = { transactionHash: OTHER, blockNumber: 47_700_000n };
+    const r = txIsolation({ receipt: create, receipts: [rc(OTHER), rc(ACCEPT, { logs: [{ address: DIAMOND, topics: [`0x${'2'.repeat(64)}`] }] })], diamond: DIAMOND, watched: WATCHED });
+    expect(r.isolated).toBe(false);
+    expect(r.touching[0]).toMatch(new RegExp(`^${ACCEPT}: a Diamond log`));
+  });
+
+  it('sets aside this run\u2019s OTHER plan transactions by name — and only those', () => {
+    const approve = `0x${'4'.repeat(64)}`;
+    const approveRc = rc(approve, { from: LENDER, logs: [{ address: '0x4200000000000000000000000000000000000006', topics: [`0x${'8'.repeat(64)}`, pad(LENDER), pad(DIAMOND)] }] });
+    const withOwn = txIsolation({ receipt: ACCEPT_RCPT, receipts: [rc(ACCEPT), approveRc], diamond: DIAMOND, watched: WATCHED, own: [approve] });
+    expect(withOwn).toEqual({ known: true, isolated: true, touching: [], own: [approve] });
+    // The same transaction, not declared as ours, breaks isolation.
+    const without = txIsolation({ receipt: ACCEPT_RCPT, receipts: [rc(ACCEPT), approveRc], diamond: DIAMOND, watched: WATCHED });
+    expect(without.isolated).toBe(false);
+    expect(without.touching[0]).toMatch(/from lender/);
+  });
+
+  it('states why a scope is not isolated, and nothing when it is', () => {
+    expect(scopeReason({ known: true, isolated: true, touching: [] }, { what: 'the accept', block: 9n })).toBeNull();
+    expect(scopeReason({ known: false, isolated: false, touching: [] }, { what: 'the accept', block: 9n, error: 'rpc down' })).toMatch(
+      /receipts of the accept's block 9 could not be established \(rpc down\)/,
+    );
+    expect(scopeReason({ known: true, isolated: false, touching: ['0xab: a Diamond log'] }, { what: 'createOffer', block: 9n })).toMatch(
+      /1 other transaction\(s\) in createOffer's block 9 touched the Diamond or a participant: 0xab: a Diamond log/,
+    );
   });
 
   it('unrelated traffic leaves the accept isolated (block 47711162 had 133 such transactions)', () => {
     const unrelated = rc(OTHER, { logs: [{ address: '0x96e582dc68e66613bcb1996320844a3fb28c07d8', topics: [TOPIC.transfer, pad('0x000000000000000000000000000000000000cccc'), pad('0x000000000000000000000000000000000000dddd')] }] });
-    const r = blockIsolation({ receipts: [unrelated, rc(ACCEPT, { from: LENDER, to: DIAMOND })], acceptHash: ACCEPT, diamond: DIAMOND, watched: WATCHED });
-    expect(r).toEqual({ known: true, isolated: true, touching: [] });
+    const r = txIsolation({ receipt: ACCEPT_RCPT, receipts: [unrelated, rc(ACCEPT, { from: LENDER, to: DIAMOND })], diamond: DIAMOND, watched: WATCHED });
+    expect(r).toEqual({ known: true, isolated: true, touching: [], own: [] });
   });
 
   it('flags a Diamond log, a participant named in a token transfer, a vault log, and a participant’s own transaction', () => {
@@ -267,7 +303,7 @@ describe('refinanceOutcome — the accept block’s other transactions', () => {
       [rc(OTHER, { to: DIAMOND }), /sent to the Diamond/],
     ];
     for (const [other, why] of cases) {
-      const r = blockIsolation({ receipts: [rc(ACCEPT), other], acceptHash: ACCEPT, diamond: DIAMOND, watched: WATCHED });
+      const r = txIsolation({ receipt: ACCEPT_RCPT, receipts: [rc(ACCEPT), other], diamond: DIAMOND, watched: WATCHED });
       expect(r.isolated, String(why)).toBe(false);
       expect(r.touching[0], String(why)).toMatch(why);
     }

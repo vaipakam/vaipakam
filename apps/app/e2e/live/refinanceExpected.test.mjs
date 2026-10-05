@@ -30,12 +30,14 @@ import {
   borrowerReserve,
   graceSecondsFrom,
   payoffApprovalBounds,
+  refinancePayoffAt,
   refinancePlanSteps,
   ZERO_HASH,
 } from './refinanceExpected.mjs';
 import { createWritePlan } from './writePlan.mjs';
 import { encodeFunctionData, erc20Abi } from 'viem';
 
+const DAY = 86_400n;
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ABI = JSON.parse(
   fs.readFileSync(path.join(HERE, '../../../../packages/contracts/src/diamondAbi.json'), 'utf8'),
@@ -286,13 +288,40 @@ describe('refinanceExpected — complete payloads, closed in both directions', (
     expect(graceSecondsFrom([], 29n)).toBe(86_400n);
     const b = payoffApprovalBounds(LOAN, 86_400n, () => 1_791_190_252n);
     expect(b.floor()).toBe(5_116_095_890_410_958n);
-    expect(b.cap).toBe(5_116_095_890_410_958n);
+    // Loan 22's grace end came before the request's expiry, so both bounds
+    // clamp to it and coincide.
+    expect(b.cap()).toBe(5_116_095_890_410_958n);
     // An undersized approve is refused; the real one passes.
     const m = approvalBetween(b.floor, b.cap, 'the payoff');
     expect(structMismatches({ amount: m }, { amount: 1n })).toHaveLength(1);
     expect(structMismatches({ amount: m }, { amount: 5_116_095_890_410_958n })).toEqual([]);
     // No anchor yet → the floor is unknown → refused, never guessed.
-    expect(structMismatches({ amount: approvalBetween(() => null, b.cap, 'x') }, { amount: b.cap })).toHaveLength(1);
+    expect(structMismatches({ amount: approvalBetween(() => null, b.cap, 'x') }, { amount: b.cap() })).toHaveLength(1);
+    expect(payoffApprovalBounds(LOAN, 86_400n, () => null).cap()).toBeNull();
+  });
+
+  // #2422 r9: the cap is the payoff at min(anchor + ANCHOR_WINDOW_SEC +
+  // REQUEST_WINDOW_SEC − 1, grace end) — when the grace end lies past the
+  // request's expiry, an approval sized for the grace end is refused.
+  it('caps the payoff approval at the request\u2019s last fillable moment when the grace end is later', () => {
+    const anchor = 1_800_000_000n;
+    // A one-year loan that started a day before the anchor: its grace end
+    // is ~a year out, far past the request's 30-day window.
+    const long = { ...LOAN, startTime: anchor - DAY, interestAccrualStart: anchor - DAY, durationDays: 365n, interestRemainingDays: 365, useFullTermInterest: false };
+    // Accrual past the floor: make interest grow with elapsed days by
+    // setting the remaining-term floor to 0 days.
+    const growing = { ...long, interestRemainingDays: 0 };
+    const grace = 30n * DAY;
+    const graceEnd = growing.startTime + growing.durationDays * DAY + grace;
+    const lastFillable = anchor + ANCHOR_WINDOW_SEC + 30n * DAY - 1n;
+    expect(lastFillable < graceEnd).toBe(true);
+    const b = payoffApprovalBounds(growing, grace, () => anchor);
+    expect(b.cap()).toBe(refinancePayoffAt(growing, lastFillable));
+    expect(b.cap()).toBeLessThan(refinancePayoffAt(growing, graceEnd));
+    const m = approvalBetween(b.floor, b.cap, 'the payoff');
+    expect(structMismatches({ amount: m }, { amount: refinancePayoffAt(growing, graceEnd) })).toHaveLength(1);
+    expect(structMismatches({ amount: m }, { amount: b.cap() })).toEqual([]);
+    expect(structMismatches({ amount: m }, { amount: b.floor() })).toEqual([]);
   });
 
   it('judges stamped times against the chain anchor, not the local clock', () => {

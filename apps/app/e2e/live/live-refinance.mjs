@@ -105,11 +105,24 @@
 // checks are UNDETERMINED with the reason. Receipt-scoped checks (the
 // transfer legs, collateral leaving the vault) judge regardless.
 //
-// POSTURE RACES (#2422 r9). The posture banner is judged against the
-// switches read right after it is observed; if they moved since the
-// preflight, that is a state race and the drive exits BLOCKED before any
-// write. After the write, the same race makes the standing card's check
-// UNDETERMINED.
+// TWO RULES, applied everywhere rather than per call site (#2422 r10):
+//   RULE 1 — OBSERVATION vs CHAIN (`observeConfig`, observation.mjs). Every
+//     check that compares something RENDERED with chain config (the posture
+//     banner and the standing card's posture; the fee rates and grace window
+//     on both reviews) reads that config before and after the observation
+//     and compares both with the preflight's. A difference is a state race:
+//     BLOCKED before any write, UNDETERMINED after one — never a FAIL. A
+//     stable config is what the observation is judged against.
+//   RULE 2 — WRITE OUTCOME vs CHAIN (`scopeOf`, `txIsolation`). Every
+//     assertion about what one of this run's transactions did is read from
+//     its receipt, or from state across its block only when the block's
+//     receipts show no other transaction touching the Diamond (the position
+//     NFTs included) or a participant's wallet or vault. The same isolation
+//     guards receipt-model checks whose inputs are state at the block
+//     before. Otherwise: UNDETERMINED, with the reason.
+// A claim needed before the NEXT write that cannot be established after a
+// write (a racing lender review, an unisolated createOffer block) stops the
+// drive as STOPPED, UNDETERMINED (exit 3) — not a FAIL.
 //
 // THE REVIEW IS CHECKED BEFORE CONSENT (#2422 r7, reviewTerms.mjs). Before
 // each consent tick, the receipt rows are read by their en.json labels and
@@ -207,7 +220,8 @@
 //                be set up — both are set up before the first write).
 // Once the first transaction has been sent, nothing exits BLOCKED: the
 // drive has changed chain state and its report must be read.
-//   3 UNDETERMINED — every check that could judge held, but some post-write
+//   3 UNDETERMINED — the drive stopped on a race after a write (RULE 1/2),
+//                or every check that could judge held but some post-write
 //                claim could not be substantiated either way (#2422 r9 — a
 //                fee posture outside the model by the accept, another
 //                transaction in the accept block touching a diffed state,
@@ -283,20 +297,22 @@ import {
   REQUEST_WINDOW_SEC,
 } from './refinanceExpected.mjs';
 import { createWritePlan } from './writePlan.mjs';
-import { formatLedgerRow, ledgerRows } from './touchedState.mjs';
+import { formatLedgerRow, ledgerRows, runTouchedSteps } from './touchedState.mjs';
 import { compareBorrowerReceipt, compareLenderReceipt } from './reviewTerms.mjs';
-import { expectedPostureFrom, postureCopyFrom, postureSwitchesChanged } from './refinancePosture.mjs';
-import { createManifest } from './outcomeManifest.mjs';
+import { expectedPostureFrom, postureCopyFrom } from './refinancePosture.mjs';
+import { createManifest, runVerdict } from './outcomeManifest.mjs';
+import { observationVerdict, observeAgainstChain } from './observation.mjs';
 import {
-  blockIsolation,
   checkRoleNonces,
   collateralMovedOut,
   expectedPrincipalTransfers,
   expectedSettlement,
   lienMismatches,
   scanForReplacement,
+  scopeReason,
   settlementPremises,
   transferMismatches,
+  txIsolation,
 } from './refinanceOutcome.mjs';
 
 // ---------------------------------------------------------------------
@@ -482,7 +498,7 @@ async function readSettlementPremises(blockNumber, { principalAsset, holder, req
  * own transaction count; anything less is `receipts: null` with the reason,
  * which the caller reports as UNDETERMINED. Never a partial list.
  */
-async function acceptBlockReceipts(blockNumber) {
+async function blockReceiptsOf(blockNumber) {
   let block;
   try {
     block = await pub.getBlock({ blockNumber });
@@ -513,6 +529,74 @@ async function acceptBlockReceipts(blockNumber) {
     };
   }
 }
+
+/**
+ * RULE 2 (#2422 r10): the scope of one of this run's transactions — whether
+ * a state difference across its block can be attributed to it. Reads the
+ * block's receipts (`blockReceiptsOf`) and runs `txIsolation`, setting aside
+ * this run's own other plan transactions by name. Returns `{ reason }`: null
+ * when isolated, else the sentence every scoped check records as
+ * UNDETERMINED.
+ */
+async function scopeOf(receipt, what, watched) {
+  const blockRead = await blockReceiptsOf(receipt.blockNumber);
+  const own = planSteps()
+    .filter((st) => st.kind === 'tx' && st.record.hash && !eq(st.record.hash, receipt.transactionHash))
+    .map((st) => st.record.hash);
+  const scope = txIsolation({ receipt, receipts: blockRead.receipts, diamond: DIAMOND, watched, own });
+  const reason = scopeReason(scope, { what, block: receipt.blockNumber, error: blockRead.error });
+  console.log(
+    `info  ${what} block ${receipt.blockNumber}: ${blockRead.receipts ? `${blockRead.receipts.length} receipts via ${blockRead.via}` : 'receipts UNREADABLE'}` +
+      (scope.own.length ? `; set aside as this run's own plan transactions: ${scope.own.join(', ')}` : '') +
+      `; ${reason ? `NOT isolated — ${reason}` : 'no other transaction touched the Diamond or a participant'}`,
+  );
+  return { reason };
+}
+/** A check whose evidence is state read across a scoped transaction's block:
+ *  judged when the scope is isolated, UNDETERMINED (with the reason) when
+ *  not. Receipt-log checks use plain `check`. */
+function scopedCheck(sc, label, ok, observed, at) {
+  if (!sc.reason) return check(label, ok, observed, at);
+  const [claim, key] = at.split('.');
+  MANIFEST.undetermined(claim, key, sc.reason);
+  console.log(`UNDET ${label} — observed ${observed}; ${sc.reason}`);
+  return null;
+}
+
+/**
+ * Every piece of chain CONFIG a rendered review or banner is judged against
+ * (#2422 r10): the three posture switches, the treasury fee, the LIF rate
+ * and the grace buckets — read through the same getters the preflight uses,
+ * so a reading compares field for field with the pinned baseline.
+ */
+async function readObservedConfig(blockNumber) {
+  const [posture, fees, lifBps, graceBuckets] = await Promise.all([
+    readPostureSwitches(blockNumber),
+    read('getFeesConfig', [], blockNumber),
+    read('getLoanInitiationFeeBps', [], blockNumber),
+    read('getGraceBuckets', [], blockNumber),
+  ]);
+  return { ...posture, treasuryFeeBps: fees[0], lifBps, graceBuckets };
+}
+
+/**
+ * RULE 1 for every observation of the browser against chain config
+ * (#2422 r10, observation.mjs): read the config before and after `observe`,
+ * against the preflight baseline. A stable reading returns `{ config,
+ * observed }` to judge against. A race (or an unreadable config) before any
+ * write exits BLOCKED here; after a write it returns `{ undetermined: why,
+ * observed }` — the caller records UNDETERMINED, never a FAIL.
+ */
+async function observeConfig(what, observe) {
+  const result = await observeAgainstChain({ baseline: OBSERVED_BASELINE, readConfig: () => readObservedConfig(), observe });
+  const v = observationVerdict(result, { wrote: anythingAllowed(), what });
+  if (v.action === 'judge') return { config: v.config, observed: result.observed };
+  if (v.action === 'blocked') await blockedByRace(`${v.why}; rerun once it is stable`);
+  console.log(`UNDET ${what}: ${v.why}`);
+  return { undetermined: v.why, observed: result.observed };
+}
+/** Set from the preflight: the config every observation is raced against. */
+let OBSERVED_BASELINE = null;
 
 /** The three switches the auto-match posture banner reflects, at a block
  *  (or the latest one). */
@@ -652,8 +736,8 @@ const MANIFEST = createManifest({
       claim: `the request the borrower posted is on chain with exactly the reviewed terms, refinancing loan ${LOAN_ID} by carry-over`,
       checks: {
         receipt: 'the createOffer receipt: success, every Diamond log decodes, one OfferCreated, the page names the same id',
-        terms: 'getOfferDetails(request) at the createOffer block: target loan, carry-over, creator, 0..ceiling rate band, length, amount, assets, collateral, consent, expiry',
-        onlyOffer: 'getUserOffersPaginated(borrower) walked to its total at the createOffer block: the request is the only new offer',
+        terms: 'getOfferDetails(request) at the createOffer block: target loan, carry-over, creator, 0..ceiling rate band, length, amount, assets, collateral, consent, no Full opt-in, expiry — judged only if the create block is isolated (RULE 2)',
+        onlyOffer: 'getUserOffersPaginated(borrower) walked to its total at the block before the createOffer and at its block: the request is the only new offer — scoped likewise',
       },
     },
     {
@@ -675,24 +759,28 @@ const MANIFEST = createManifest({
     {
       id: 'oldLoanClosed',
       claim: `loan ${LOAN_ID} is closed as Repaid`,
-      checks: { status: `getLoanDetails(${LOAN_ID}).status at or after the accept block (confirmWrite)` },
+      checks: {
+        event: 'LoanRefinanced.oldLoanNewStatus in the accept receipt',
+        status: `getLoanDetails(${LOAN_ID}).status at or after the accept block (confirmWrite) — judged only if the accept's block is isolated (RULE 2)`,
+      },
     },
     {
       id: 'replacement',
       claim: 'the accept opened ONE replacement loan: Active, from this request, the same borrower, the accepting lender, the same principal and collateral (still illiquid, consent from both), the requested rate and length',
       checks: {
         events: 'the accept receipt: success, every Diamond log decodes, one OfferAccepted(request), LoanRefinanced(old → new, newLender, borrower)',
-        loan: 'getLoanDetails(replacement) at the accept block',
-        positionNfts: 'ownerOf(borrowerTokenId / lenderTokenId) at the accept block',
-        requestAccepted: 'getOfferDetails(request).accepted at the accept block',
-        lenderIndex: 'getUserActiveLoans(lender) at the accept block',
+        loan: 'getLoanDetails(replacement) at the accept block — state checks here are judged only if the accept\u2019s block is isolated (RULE 2)',
+        positionNfts: 'ownerOf(borrowerTokenId / lenderTokenId) at the accept block (scoped)',
+        requestAccepted: 'getOfferDetails(request).accepted at the accept block (scoped)',
+        lenderIndex: 'getUserActiveLoans(lender) at the accept block (scoped)',
       },
     },
     {
       id: 'collateralCarryOver',
       claim: 'the collateral carried over without leaving custody: neither the borrower’s wallet nor the borrower’s vault released it, and the lien moved intact from the old loan to the replacement',
       checks: {
-        walletAtPost: 'balanceOf(collateral, borrower) at the createOffer block vs the pinned preflight block',
+        postNoCollateralOut: 'the createOffer receipt\u2019s collateral-token logs: nothing out of the borrower\u2019s wallet or vault',
+        postBalances: 'balanceOf(collateral) of the borrower\u2019s wallet and vault at the block before the createOffer and at its block (scoped, RULE 2)',
         walletAtAccept: 'balanceOf(collateral, borrower) at the block before the accept vs the accept block (a block diff: only if no other transaction in the block touched it)',
         vaultAtAccept: 'balanceOf(collateral, getUserVaultAddress(borrower)) at the same two blocks (a block diff, likewise scoped)',
         noCollateralOut: 'the accept receipt’s collateral-token logs: no Transfer (ERC-20/721) or TransferSingle/Batch (ERC-1155) out of the borrower’s vault',
@@ -705,7 +793,7 @@ const MANIFEST = createManifest({
       checks: {
         payoffView: 'calculateRepaymentAmount(old) at the block before the accept vs the app’s payoff formula for that block',
         oldLenderClaim: 'getClaimable(old, lender) at the block before the accept and at the accept block (a block diff: only if no other transaction in the block touched the Diamond or a participant)',
-        transfers: 'the principal token’s Transfer logs in the accept receipt — attributable to this transaction alone, the treasury’s legs included — vs the legs derived from those views',
+        transfers: 'the principal token’s Transfer logs in the accept receipt — attributable to this transaction alone, the treasury’s legs included — vs the legs derived from those views (whose inputs are state at the block before, so judged only if the accept\u2019s block is isolated)',
         wallets: 'balanceOf(principal) of the borrower and the accepting lender at the block before the accept and at the accept block (block diff, scoped)',
         vaults: 'balanceOf(principal) of the old lender’s, the borrower’s and the lender’s vaults (getUserVaultAddress) at the same two blocks (block diff, scoped)',
       },
@@ -800,6 +888,19 @@ class Stop extends Error {}
 function stop(why) {
   halt(why);
   throw new Stop(why);
+}
+/**
+ * Stop the flow because a claim it must establish before the NEXT write
+ * could not be established — a state race or an unisolated block after a
+ * write (#2422 r10). Nothing was observed wrong, so the run ends
+ * UNDETERMINED (exit 3), not FAIL — unless something else failed too.
+ */
+class RaceStop extends Stop {}
+let RACE_STOP = null;
+function raceStop(why) {
+  RACE_STOP = why;
+  halt(why);
+  throw new RaceStop(why);
 }
 /** Call before any UI action that can lead to a signing request. */
 function beforeWriteStep(step) {
@@ -991,14 +1092,15 @@ async function receiptRows(scope) {
 
 /** The lender's funding review vs the request on chain and the live fee
  *  config at the pinned block (see `compareLenderReceipt`). */
-async function lenderReviewMismatches(page, req) {
-  return compareLenderReceipt(await receiptRows(page.locator('main')), {
+function lenderReviewMismatches(rows, req, config) {
+  return compareLenderReceipt(rows, {
     en: EN.copy,
     req,
     principal: { decimals: PDEC, symbol: pre.principalSymbol },
     collateral: { decimals: Number(pre.collateralDecimals), symbol: pre.collateralSymbol },
-    treasuryFeeBps: pre.treasuryFeeBps,
-    graceSeconds: graceSecondsFrom(pre.graceBuckets, req.durationDays),
+    // RULE 1 (#2422 r10): the config read AROUND the observation.
+    treasuryFeeBps: config.treasuryFeeBps,
+    graceSeconds: graceSecondsFrom(config.graceBuckets, req.durationDays),
   });
 }
 
@@ -1008,22 +1110,24 @@ async function lenderReviewMismatches(page, req) {
  * whole-day boundary crossed between the page's read and this one would
  * show as a mismatch and halt — the safe direction.
  */
-async function borrowerReviewMismatches(card) {
+async function borrowerReviewMismatches(rows, config) {
   const t = await chainNow();
   const payoffNow = refinancePayoffAt(loan, t);
-  const lif = (loan.principal * BigInt(pre.lifBps)) / 10_000n;
-  const graceEnd = loanDue + GRACE_SECONDS;
+  // RULE 1 (#2422 r10): the fee rates and grace buckets read AROUND the
+  // observation, not the preflight's.
+  const lif = (loan.principal * BigInt(config.lifBps)) / 10_000n;
+  const graceEnd = loanDue + graceSecondsFrom(config.graceBuckets, loan.durationDays);
   const expiresAt = t + REQUEST_WINDOW_SEC;
   const lastFillable = expiresAt - 1n < graceEnd ? expiresAt - 1n : graceEnd;
   const dateOpts = { day: 'numeric', month: 'short', year: 'numeric' };
-  return compareBorrowerReceipt(await receiptRows(card), {
+  return compareBorrowerReceipt(rows, {
     en: EN.copy,
     principal: { decimals: PDEC, symbol: pre.principalSymbol },
     payoffNow,
     headroom: refinancePayoffAt(loan, lastFillable) - payoffNow,
     topUp: payoffNow - loan.principal + lif,
-    lifBps: pre.lifBps,
-    treasuryFeeBps: pre.treasuryFeeBps,
+    lifBps: config.lifBps,
+    treasuryFeeBps: config.treasuryFeeBps,
     clamped: graceEnd + 1n < expiresAt,
     // formatDate renders with the browser's zone; accept that and UTC.
     graceEndDates: [
@@ -1095,7 +1199,9 @@ const LEDGER = [
     key: 'borrowerAllowance',
     label: 'borrower allowance (principal token → Diamond)',
     // The approvals set it; the accept's payoff pull spends it.
-    touchedBy: ['b-approve-reset', 'b-approve-set', 'l-accept'],
+    // ... and so does ANY fill of this run's request — ours, another
+    // lender's, or the order matcher's (#2422 r10, `runTouchedSteps`).
+    touchedBy: ['b-approve-reset', 'b-approve-set', 'l-accept', 'b-request-filled'],
     read: (head) => allowanceAt(BORROWER, head),
     format: (v) => `${fmtP(v)} (raw ${v})`,
     restore: (b) =>
@@ -1270,9 +1376,11 @@ async function reportAfterFailure() {
   } catch (e) {
     console.log(`could not read the chain head (${String(e.shortMessage ?? e.message).slice(0, 120)}) — every entry below is UNKNOWN; check them by hand`);
   }
+  let requestState = null;
   if (id !== null && head !== undefined) {
     try {
-      console.log(`this run's request #${id}: ${(await requestStateAt(id, head)).toUpperCase()}`);
+      requestState = await requestStateAt(id, head);
+      console.log(`this run's request #${id}: ${requestState.toUpperCase()}`);
     } catch (e) {
       console.log(`this run's request #${id}: state UNREADABLE (${String(e.shortMessage ?? e.message).slice(0, 120)})`);
     }
@@ -1280,7 +1388,20 @@ async function reportAfterFailure() {
     console.log('this run\u2019s request: NOT IDENTIFIED (see above) — treat a request as possibly live');
   }
   const now = head !== undefined ? await readLedger(head) : {};
-  const consumed = planSteps().filter((st) => st.status === 'consumed').map((st) => st.id);
+  // A fill of OUR request — whoever sent it — is this run's doing: the
+  // request is ours, and the fill spends the borrower's payoff allowance
+  // (#2422 r10). Detected from the request's on-chain state.
+  const touched = runTouchedSteps(
+    planSteps().filter((st) => st.status === 'consumed').map((st) => st.id),
+    { requestState },
+  );
+  if (touched.byOthers) {
+    console.log(
+      `this run's request #${id} was FILLED BY ANOTHER PARTY (getOfferDetails.accepted, with no accept of ours consumed) — ` +
+        'what that fill changed is attributed to this run below (step b-request-filled), with its restore',
+    );
+  }
+  const consumed = touched.ids;
   console.log(`baseline: block ${pre.head} (preflight); now: block ${head ?? 'unknown'}`);
   for (const row of ledgerRows(LEDGER, LEDGER_BASELINE, now, consumed)) console.log(formatLedgerRow(row));
   console.log('Nothing was sent to recover: this drive reports, and the operator decides.');
@@ -1832,6 +1953,14 @@ console.log(
   `pre   auto-match posture @${pre.head}: ${expectedPostureFrom(pre.posture)} ` +
     `(paused ${pre.posture.paused}, auto-refinance ${pre.posture.autoRefinance}, partial fill ${pre.posture.partialFill})`,
 );
+// RULE 1's baseline: every observation of the browser is raced against
+// these pinned values as well as against reads taken around it.
+OBSERVED_BASELINE = {
+  ...pre.posture,
+  treasuryFeeBps: pre.treasuryFeeBps,
+  lifBps: pre.lifBps,
+  graceBuckets: pre.graceBuckets,
+};
 
 EXPECT_LOAN = loan;
 
@@ -1890,7 +2019,6 @@ console.log(
 const baselineCollateral = pre.b.collateral;
 const baselineNonces = { borrower: pre.b.nonceLatest, lender: pre.l.nonceLatest };
 BASELINE_NONCES = baselineNonces;
-const baselineOffers = new Set(pre.offerIds.map(String));
 console.log(`pre   borrower collateral WALLET baseline @${pre.head}: ${baselineCollateral}`);
 if (process.env.REFI_PREFLIGHT_ONLY === '1') {
   // Read-only rehearsal: every precondition above held, nothing launched.
@@ -2015,34 +2143,23 @@ try {
 
   // #2349/#2355 posture disclosure — judged against the chain's switches.
   const banner = card.locator('[data-auto-match-posture]');
-  const bannerPosture = await pollUntil('posture banner settles', async () => {
-    const a = await banner.first().getAttribute('data-auto-match-posture', { timeout: 2_000 });
-    return a && a !== 'unknown' ? a : null;
-  }, { timeoutMs: 45_000 });
-  const bannerText = bannerPosture ? (await banner.first().innerText()).replace(/\s+/g, ' ').trim() : null;
-  // The posture AT THE OBSERVATION (#2422 r9). If the chain's switches moved
-  // since the pinned preflight, the banner is racing the chain: nothing has
-  // been written (the plan is still closed), so that is BLOCKED — a state
-  // race — and never a product FAIL. Otherwise the banner is judged against
-  // the posture read right after it was observed.
-  let postureAtBanner;
-  try {
-    postureAtBanner = await readPostureSwitches();
-  } catch (err) {
-    await blockedByRace(`the posture switches could not be re-read after the banner was observed`, err);
-  }
-  const bannerRace = postureSwitchesChanged(pre.posture, postureAtBanner);
-  if (bannerRace.length) {
-    await blockedByRace(
-      `the chain's auto-match posture changed between the preflight and the banner (${bannerRace.join(', ')}) — ` +
-        'a state race, not a product defect; rerun once it is stable',
-    );
-  }
-  const postureNow = expectedPostureFrom(postureAtBanner);
+  // RULE 1 (#2422 r10, `observeConfig`): the banner is judged only against
+  // switches that held still around its observation — read before and after
+  // it, and equal to the preflight's. A move is a state race: BLOCKED here,
+  // before any write. Never a product FAIL.
+  const bannerObs = await observeConfig('the posture banner', async () => {
+    const posture = await pollUntil('posture banner settles', async () => {
+      const a = await banner.first().getAttribute('data-auto-match-posture', { timeout: 2_000 });
+      return a && a !== 'unknown' ? a : null;
+    }, { timeoutMs: 45_000 });
+    const text = posture ? (await banner.first().innerText()).replace(/\s+/g, ' ').trim() : null;
+    return { posture, text };
+  });
+  const postureNow = expectedPostureFrom(bannerObs.config);
   check(
     `borrower: posture banner states the chain's posture at the observation (${postureNow})`,
-    bannerPosture === postureNow && bannerText?.includes(postureCopy[postureNow]),
-    `${bannerPosture}: "${bannerText}"`,
+    bannerObs.observed.posture === postureNow && bannerObs.observed.text?.includes(postureCopy[postureNow]),
+    `${bannerObs.observed.posture}: "${bannerObs.observed.text}"`,
     'borrowerReview.posture',
   );
 
@@ -2062,7 +2179,10 @@ try {
   await session.shot('refinance-03-review');
   // The figures the borrower is about to consent to, against the chain
   // (#2422 r7). A mismatch or an unparseable row halts before consent.
-  const bTerms = await borrowerReviewMismatches(card);
+  // RULE 1: the fee rates and grace window it quotes are judged against the
+  // config read around the observation (BLOCKED on a race — nothing written).
+  const bObs = await observeConfig('the borrower\u2019s review', () => receiptRows(card));
+  const bTerms = await borrowerReviewMismatches(bObs.observed, bObs.config);
   check(
     `borrower: review figures match the chain (${bTerms.compared.join(', ')})`,
     bTerms.mismatches.length === 0,
@@ -2117,38 +2237,26 @@ try {
 
   // Pending card carries the posture disclosure too.
   const pendingCard = bp.locator('section.card').filter({ hasText: new RegExp(`Refinance request #${pageRequestId} is live`, 'i') });
-  let pendingPosture = null;
-  let pendingPostureErr = null;
-  try {
-    pendingPosture = await pendingCard
-      .locator('[data-auto-match-posture]')
-      .first()
-      .getAttribute('data-auto-match-posture', { timeout: 30_000 });
-  } catch (e) {
-    pendingPostureErr = String(e.message).split('\n')[0].slice(0, 120);
-  }
-  // Judged against the posture read at THIS observation (#2422 r9). After
-  // the write a race cannot be BLOCKED, so a posture that moved since the
-  // preflight (or could not be re-read) makes this check UNDETERMINED.
-  let postureAtCard = null;
-  let postureAtCardErr = null;
-  try {
-    postureAtCard = await readPostureSwitches();
-  } catch (e) {
-    postureAtCardErr = String(e.shortMessage ?? e.message).slice(0, 120);
-  }
-  const cardRace = postureAtCard ? postureSwitchesChanged(pre.posture, postureAtCard) : [];
-  if (postureAtCardErr || cardRace.length) {
-    const why = postureAtCardErr
-      ? `the posture switches could not be re-read after the standing card was observed (${postureAtCardErr})`
-      : `the chain's auto-match posture changed after the preflight (${cardRace.join(', ')}) — a state race, so the card cannot be judged`;
-    MANIFEST.undetermined('borrowerReview', 'posture', why);
-    console.log(`UNDET borrower: the standing request card's posture — ${why} (card showed ${pendingPosture ?? pendingPostureErr})`);
+  // RULE 1, after the borrower's write: a race is UNDETERMINED, not FAIL.
+  const cardObs = await observeConfig('the standing request card', async () => {
+    try {
+      return {
+        posture: await pendingCard.locator('[data-auto-match-posture]').first().getAttribute('data-auto-match-posture', { timeout: 30_000 }),
+        err: null,
+      };
+    } catch (e) {
+      return { posture: null, err: String(e.message).split('\n')[0].slice(0, 120) };
+    }
+  });
+  if (cardObs.undetermined) {
+    MANIFEST.undetermined('borrowerReview', 'posture', cardObs.undetermined);
+    console.log(`UNDET borrower: the standing request card's posture — ${cardObs.undetermined} (card showed ${cardObs.observed?.posture ?? cardObs.observed?.err})`);
   } else {
+    const want = expectedPostureFrom(cardObs.config);
     check(
-      `borrower: the standing request card discloses the posture (${expectedPostureFrom(postureAtCard)})`,
-      pendingPosture === expectedPostureFrom(postureAtCard),
-      pendingPostureErr ? `UNREADABLE — ${pendingPostureErr}` : pendingPosture,
+      `borrower: the standing request card discloses the posture (${want})`,
+      cardObs.observed.posture === want,
+      cardObs.observed.err ? `UNREADABLE — ${cardObs.observed.err}` : cardObs.observed.posture,
       'borrowerReview.posture',
     );
   }
@@ -2187,33 +2295,42 @@ try {
 
   const atCreate = createRcpt.blockNumber;
   const createRcptTs = (await pub.getBlock({ blockNumber: atCreate })).timestamp;
-  // The baseline delta over the WHOLE offer index (paginated to its total):
-  // the only id this run may have added is the request itself.
-  const idsAfter = await allOfferIdsOf(BORROWER, atCreate);
-  const newIds = idsAfter.map(String).filter((id) => !baselineOffers.has(id));
-  check(
-    'exactly one new borrower offer across the full index, and it is the request',
+  // RULE 2 (#2422 r10): what the createOffer did is read from ITS receipt,
+  // or from a state difference across its block only when no other
+  // transaction in that block touched the Diamond or the borrower's wallet
+  // or vault. Nothing here is compared against the preflight.
+  const borrowerVaultAtCreate = await read('getUserVaultAddress', [BORROWER], atCreate);
+  const CREATE = await scopeOf(createRcpt, 'createOffer', { borrower: BORROWER, 'borrower vault': borrowerVaultAtCreate });
+  const beforeCreate = atCreate - 1n;
+  // The offer index across the create block: exactly one new id, the request.
+  const [idsBefore, idsAfter] = await Promise.all([allOfferIdsOf(BORROWER, beforeCreate), allOfferIdsOf(BORROWER, atCreate)]);
+  const before = new Set(idsBefore.map(String));
+  const newIds = idsAfter.map(String).filter((id) => !before.has(id));
+  scopedCheck(
+    CREATE,
+    'exactly one new borrower offer across the create block (full index), and it is the request',
     newIds.length === 1 && newIds[0] === String(requestId),
     `${newIds.join(',') || 'none'} of ${idsAfter.length}`,
     'request.onlyOffer',
   );
   const req = await read('getOfferDetails', [requestId], atCreate);
-  check(`request refinanceTargetLoanId == ${LOAN_ID}`, req.refinanceTargetLoanId === LOAN_ID, req.refinanceTargetLoanId, 'request.terms');
-  check('request refinanceCarryOver == true', req.refinanceCarryOver === true, req.refinanceCarryOver, 'request.terms');
-  check('request is a borrower offer by the borrower', Number(req.offerType) === 1 && eq(req.creator, BORROWER), `${req.offerType} ${req.creator}`, 'request.terms');
-  check(`request rate ceiling == ${RATE_BPS} bps (typed ${RATE_PCT}%)`, req.interestRateBpsMax === RATE_BPS, req.interestRateBpsMax, 'request.terms');
-  check('request rate floor == 0 (a borrow request is a 0..ceiling band)', req.interestRateBps === 0n, req.interestRateBps, 'request.terms');
-  check(`request durationDays == ${DAYS_N}`, req.durationDays === DAYS_N, req.durationDays, 'request.terms');
-  check('request amount == old principal', req.amount === loan.principal, req.amount, 'request.terms');
-  check('request lending asset == old principal asset', eq(req.lendingAsset, loan.principalAsset), req.lendingAsset, 'request.terms');
-  check('request collateral identity == old collateral', eq(req.collateralAsset, loan.collateralAsset) && req.collateralAmount === loan.collateralAmount, `${req.collateralAsset} × ${req.collateralAmount}`, 'request.terms');
-  check('request not yet accepted', req.accepted === false, req.accepted, 'request.terms');
-  check('request records the borrower\u2019s consent', req.creatorRiskAndTermsConsent === true, req.creatorRiskAndTermsConsent, 'request.terms');
-  check(
+  const terms = (label, ok, observed) => scopedCheck(CREATE, label, ok, observed, 'request.terms');
+  terms(`request refinanceTargetLoanId == ${LOAN_ID}`, req.refinanceTargetLoanId === LOAN_ID, req.refinanceTargetLoanId);
+  terms('request refinanceCarryOver == true', req.refinanceCarryOver === true, req.refinanceCarryOver);
+  terms('request is a borrower offer by the borrower', Number(req.offerType) === 1 && eq(req.creator, BORROWER), `${req.offerType} ${req.creator}`);
+  terms(`request rate ceiling == ${RATE_BPS} bps (typed ${RATE_PCT}%)`, req.interestRateBpsMax === RATE_BPS, req.interestRateBpsMax);
+  terms('request rate floor == 0 (a borrow request is a 0..ceiling band)', req.interestRateBps === 0n, req.interestRateBps);
+  terms(`request durationDays == ${DAYS_N}`, req.durationDays === DAYS_N, req.durationDays);
+  terms('request amount == old principal', req.amount === loan.principal, req.amount);
+  terms('request lending asset == old principal asset', eq(req.lendingAsset, loan.principalAsset), req.lendingAsset);
+  terms('request collateral identity == old collateral', eq(req.collateralAsset, loan.collateralAsset) && req.collateralAmount === loan.collateralAmount, `${req.collateralAsset} × ${req.collateralAmount}`);
+  terms('request not yet accepted', req.accepted === false, req.accepted);
+  terms('request records the borrower\u2019s consent', req.creatorRiskAndTermsConsent === true, req.creatorRiskAndTermsConsent);
+  terms('request carries no Full-tariff opt-in', req.creatorFull === false, req.creatorFull);
+  terms(
     'request expiry is in the future and no later than ~30 days out',
     req.expiresAt > createRcptTs && req.expiresAt <= BORROWER_ANCHOR + REQUEST_WINDOW_SEC + ANCHOR_WINDOW_SEC,
     `${req.expiresAt} (block ts ${createRcptTs})`,
-    'request.terms',
   );
   console.log(
     `info  request persisted: rate floor ${req.interestRateBps} bps, ceiling ${req.interestRateBpsMax} bps, ` +
@@ -2222,8 +2339,33 @@ try {
   );
   const capsNow = await read('getAutoRefinanceCaps', [LOAN_ID], atCreate);
   console.log(`info  caps after posting: enabled ${capsNow.enabled}, maxRateBps ${capsNow.maxRateBps}, maxNewExpiry ${capsNow.maxNewExpiry}`);
-  const collAfterPost = await tokenBalance(loan.collateralAsset, BORROWER, atCreate);
-  check('posting pulled no collateral from the borrower wallet', collAfterPost === baselineCollateral, `${collAfterPost}`, 'collateralCarryOver.walletAtPost');
+  // Collateral custody at posting (#2422 r10): the create receipt moves no
+  // collateral out of the borrower's wallet or vault, and — scoped — neither
+  // balance changed across the create block.
+  const postOut = [
+    ...collateralMovedOut({ logs: createRcpt.logs, token: loan.collateralAsset, from: BORROWER, assetType: loan.collateralAssetType }),
+    ...collateralMovedOut({ logs: createRcpt.logs, token: loan.collateralAsset, from: borrowerVaultAtCreate, assetType: loan.collateralAssetType }),
+  ];
+  check(
+    'the createOffer receipt moves no collateral out of the borrower\u2019s wallet or vault',
+    postOut.length === 0,
+    postOut.join(' | ') || 'none',
+    'collateralCarryOver.postNoCollateralOut',
+  );
+  const collAt = (who, at) => tokenBalance(loan.collateralAsset, who, at);
+  const [pw0, pw1, pv0, pv1] = await Promise.all([
+    collAt(BORROWER, beforeCreate),
+    collAt(BORROWER, atCreate),
+    collAt(borrowerVaultAtCreate, beforeCreate),
+    collAt(borrowerVaultAtCreate, atCreate),
+  ]);
+  scopedCheck(
+    CREATE,
+    'posting moved no collateral: the borrower\u2019s wallet and vault balances are unchanged across the create block',
+    pw1 === pw0 && pv1 === pv0,
+    `wallet ${pw0} → ${pw1}, vault ${pv0} → ${pv1}`,
+    'collateralCarryOver.postBalances',
+  );
   const phase2Failed = checks.slice(phase2From).filter((c) => !c.ok);
   if (phase2Failed.length) {
     stop(
@@ -2232,6 +2374,9 @@ try {
         `borrower's position page once its cooldown opens.`,
     );
   }
+  // A request whose terms could not be established in isolation is not
+  // funded: that is UNDETERMINED, not a FAIL (exit 3).
+  if (CREATE.reason) raceStop(`not funding request #${requestId}: its terms could not be read in isolation — ${CREATE.reason}`);
 
   await closeSession('borrower');
   // The request is pinned and every request check passed. The plan stays
@@ -2333,8 +2478,19 @@ try {
   await session.shot('refinance-08-lender-review');
   // The figures the lender is about to consent to, against the request on
   // chain and the live fee config (#2422 r7) — before the consent tick.
+  //
+  // RULE 1 (#2422 r10): the yield fee and grace window are judged against
+  // the config read around the observation. The borrower's write has
+  // already landed, so a race here cannot be BLOCKED: it is UNDETERMINED,
+  // and the drive stops BEFORE the lender's consent — a review nobody could
+  // judge is not consented to (`raceStop`, exit 3, never a FAIL).
   const reqNow = await read('getOfferDetails', [requestId]);
-  const lTerms = await lenderReviewMismatches(lp, reqNow);
+  const lObs = await observeConfig('the lender\u2019s review', () => receiptRows(lp.locator('main')));
+  if (lObs.undetermined) {
+    MANIFEST.undetermined('lenderReview', 'receipt', lObs.undetermined);
+    raceStop(`not funding: ${lObs.undetermined}`);
+  }
+  const lTerms = lenderReviewMismatches(lObs.observed, reqNow, lObs.config);
   check(
     `lender: review figures match the request on chain (${lTerms.compared.join(', ')})`,
     lTerms.mismatches.length === 0,
@@ -2419,6 +2575,36 @@ try {
   );
 
   const floor = acc.blockNumber;
+  const prev = floor - 1n;
+  // RULE 2 (#2422 r10): every assertion about what the accept did is read
+  // from its receipt, or from state across its block only when no other
+  // transaction there touched the Diamond (whose state includes the position
+  // NFTs) or a participant's wallet or vault. The same isolation guards the
+  // receipt-MODEL checks below, whose inputs (fee posture, position holder,
+  // payoff) are state read at the block before.
+  const oldAtPrev = await loanOf(LOAN_ID, prev);
+  const [borrowerVault, lenderVault, oldLenderVault, oldHolderAtPrev] = await Promise.all([
+    read('getUserVaultAddress', [BORROWER], floor),
+    read('getUserVaultAddress', [LENDER], floor),
+    read('getUserVaultAddress', [oldAtPrev.lender], floor),
+    read('ownerOf', [oldAtPrev.lenderTokenId], prev),
+  ]);
+  const ACCEPT = await scopeOf(acc, 'the accept', {
+    borrower: BORROWER,
+    lender: LENDER,
+    'old lender': oldAtPrev.lender,
+    'old position holder': oldHolderAtPrev,
+    'borrower vault': borrowerVault,
+    'lender vault': lenderVault,
+    'old lender vault': oldLenderVault,
+  });
+  // The old loan's new status, from the receipt itself.
+  check(
+    `the accept receipt's LoanRefinanced names loan ${LOAN_ID}'s new status Repaid (1)`,
+    refinanced.length === 1 && Number(refinanced[0].args.oldLoanNewStatus) === LOAN_STATUS.REPAID,
+    refinanced.map((e) => e.args.oldLoanNewStatus).join(', ') || 'no LoanRefinanced',
+    'oldLoanClosed.event',
+  );
   const oldConfirmed = await confirmWrite({
     what: `loan ${LOAN_ID} status`,
     minBlock: floor,
@@ -2444,15 +2630,16 @@ try {
     },
     accept: (l) => l.status === LOAN_STATUS.REPAID,
   });
-  check(
+  scopedCheck(
+    ACCEPT,
     `old loan ${LOAN_ID} status == 1 (Repaid)`,
     oldConfirmed.ok,
     oldConfirmed.unconfirmed ? `unconfirmed: ${oldConfirmed.why}` : oldConfirmed.value?.status,
     'oldLoanClosed.status',
   );
   const fresh = await loanOf(newLoanId, floor);
-  check(`replacement loan ${newLoanId} status == 0 (Active)`, fresh.status === LOAN_STATUS.ACTIVE, fresh.status, 'replacement.loan');
-  check('replacement offerId == the request', fresh.offerId === requestId, fresh.offerId, 'replacement.loan');
+  scopedCheck(ACCEPT, `replacement loan ${newLoanId} status == 0 (Active)`, fresh.status === LOAN_STATUS.ACTIVE, fresh.status, 'replacement.loan');
+  scopedCheck(ACCEPT, 'replacement offerId == the request', fresh.offerId === requestId, fresh.offerId, 'replacement.loan');
   // Who HOLDS the replacement's position NFTs, at the accept's block — the
   // stored parties say who the loan was opened for; the NFTs say who can
   // act on it (#2422 r6 P2). Read failures throw, and so fail the run.
@@ -2460,30 +2647,32 @@ try {
     read('ownerOf', [fresh.borrowerTokenId], floor),
     read('ownerOf', [fresh.lenderTokenId], floor),
   ]);
-  check(
+  scopedCheck(
+    ACCEPT,
     'replacement borrower position NFT is held by the borrower role',
     eq(newBorrowerHolder, BORROWER),
     `token ${fresh.borrowerTokenId} → ${newBorrowerHolder}`,
     'replacement.positionNfts',
   );
-  check(
+  scopedCheck(
+    ACCEPT,
     'replacement lender position NFT is held by the accepting lender role',
     eq(newLenderHolder, LENDER),
     `token ${fresh.lenderTokenId} → ${newLenderHolder}`,
     'replacement.positionNfts',
   );
-  check('replacement borrower unchanged', eq(fresh.borrower, BORROWER), fresh.borrower, 'replacement.loan');
-  check('replacement lender == the accepting `lender` role', eq(fresh.lender, LENDER), fresh.lender, 'replacement.loan');
-  check('replacement collateralAsset == old', eq(fresh.collateralAsset, loan.collateralAsset), fresh.collateralAsset, 'replacement.loan');
-  check('replacement collateralAmount == old', fresh.collateralAmount === loan.collateralAmount, fresh.collateralAmount, 'replacement.loan');
-  check('replacement collateralLiquidity == Illiquid', fresh.collateralLiquidity === LIQUIDITY_ILLIQUID, fresh.collateralLiquidity, 'replacement.loan');
-  check('replacement riskAndTermsConsentFromBoth == true', fresh.riskAndTermsConsentFromBoth === true, fresh.riskAndTermsConsentFromBoth, 'replacement.loan');
-  check('replacement principal == old principal', fresh.principal === loan.principal, fresh.principal, 'replacement.loan');
-  check('replacement principal asset == old', eq(fresh.principalAsset, loan.principalAsset), fresh.principalAsset, 'replacement.loan');
-  check(`replacement interestRateBps == the request ceiling (${RATE_BPS})`, fresh.interestRateBps === RATE_BPS, fresh.interestRateBps, 'replacement.loan');
-  check(`replacement durationDays == ${DAYS_N}`, fresh.durationDays === DAYS_N, fresh.durationDays, 'replacement.loan');
+  scopedCheck(ACCEPT, 'replacement borrower unchanged', eq(fresh.borrower, BORROWER), fresh.borrower, 'replacement.loan');
+  scopedCheck(ACCEPT, 'replacement lender == the accepting `lender` role', eq(fresh.lender, LENDER), fresh.lender, 'replacement.loan');
+  scopedCheck(ACCEPT, 'replacement collateralAsset == old', eq(fresh.collateralAsset, loan.collateralAsset), fresh.collateralAsset, 'replacement.loan');
+  scopedCheck(ACCEPT, 'replacement collateralAmount == old', fresh.collateralAmount === loan.collateralAmount, fresh.collateralAmount, 'replacement.loan');
+  scopedCheck(ACCEPT, 'replacement collateralLiquidity == Illiquid', fresh.collateralLiquidity === LIQUIDITY_ILLIQUID, fresh.collateralLiquidity, 'replacement.loan');
+  scopedCheck(ACCEPT, 'replacement riskAndTermsConsentFromBoth == true', fresh.riskAndTermsConsentFromBoth === true, fresh.riskAndTermsConsentFromBoth, 'replacement.loan');
+  scopedCheck(ACCEPT, 'replacement principal == old principal', fresh.principal === loan.principal, fresh.principal, 'replacement.loan');
+  scopedCheck(ACCEPT, 'replacement principal asset == old', eq(fresh.principalAsset, loan.principalAsset), fresh.principalAsset, 'replacement.loan');
+  scopedCheck(ACCEPT, `replacement interestRateBps == the request ceiling (${RATE_BPS})`, fresh.interestRateBps === RATE_BPS, fresh.interestRateBps, 'replacement.loan');
+  scopedCheck(ACCEPT, `replacement durationDays == ${DAYS_N}`, fresh.durationDays === DAYS_N, fresh.durationDays, 'replacement.loan');
   const reqAfter = await read('getOfferDetails', [requestId], floor);
-  check('request marked accepted', reqAfter.accepted === true, reqAfter.accepted, 'replacement.requestAccepted');
+  scopedCheck(ACCEPT, 'request marked accepted', reqAfter.accepted === true, reqAfter.accepted, 'replacement.requestAccepted');
   // An unreadable index is UNKNOWN, and an assertion that could not be
   // made fails — it is never skipped (#2422 r6 P2).
   let lenderLoans = null;
@@ -2493,7 +2682,8 @@ try {
   } catch (e) {
     lenderLoansErr = String(e.shortMessage ?? e.message).slice(0, 120);
   }
-  check(
+  scopedCheck(
+    ACCEPT,
     'replacement listed among the lender\u2019s active loans',
     lenderLoans !== null && lenderLoans.includes(newLoanId),
     lenderLoans === null ? `UNKNOWN — the active-loan index could not be read (${lenderLoansErr})` : `${lenderLoans.length} loans`,
@@ -2504,55 +2694,17 @@ try {
   // the block BEFORE the accept (`prev`) and at the accept block (`floor`).
   // Every expected figure comes from the contract's own views at `prev`.
   //
-  // TRANSACTION SCOPE (r9). The accept receipt's own logs are this
-  // transaction's alone. A BLOCK DIFF (state at `floor` minus state at
-  // `prev`) covers every transaction in the accept block, so it is
+  // TRANSACTION SCOPE (RULE 2, r9/r10, `scopeOf`). The accept receipt's own
+  // logs are this transaction's alone. A BLOCK DIFF (state at `floor` minus
+  // state at `prev`) covers every transaction in the accept block, so it is
   // attributed to the accept only when no other transaction in that block
   // touched the Diamond or a participant's wallet or vault — established from
-  // the block's receipts (`blockIsolation`), never assumed. When another one
-  // did, or the receipts cannot be read, each block-diff check is
-  // UNDETERMINED with that reason; receipt-scoped checks still judge.
+  // the block's receipts, never assumed. When another one did, or the
+  // receipts cannot be read, each block-diff check AND each receipt-model
+  // check is UNDETERMINED with that reason; receipt-only checks still judge.
   // -------------------------------------------------------------------
-  const prev = floor - 1n;
-  const oldAtPrev = await loanOf(LOAN_ID, prev);
-  const [borrowerVault, lenderVault, oldLenderVault, oldHolderAtPrev] = await Promise.all([
-    read('getUserVaultAddress', [BORROWER], floor),
-    read('getUserVaultAddress', [LENDER], floor),
-    read('getUserVaultAddress', [oldAtPrev.lender], floor),
-    read('ownerOf', [oldAtPrev.lenderTokenId], prev),
-  ]);
-  const blockRead = await acceptBlockReceipts(floor);
-  const ISO = blockIsolation({
-    receipts: blockRead.receipts,
-    acceptHash,
-    diamond: DIAMOND,
-    watched: {
-      borrower: BORROWER,
-      lender: LENDER,
-      'old lender': oldAtPrev.lender,
-      'old position holder': oldHolderAtPrev,
-      'borrower vault': borrowerVault,
-      'lender vault': lenderVault,
-      'old lender vault': oldLenderVault,
-    },
-  });
-  const notIsolated = !ISO.known
-    ? `the accept block ${floor}'s receipts could not be established (${blockRead.error ?? ISO.touching.join('; ')}), so a block diff cannot be attributed to the accept`
-    : ISO.isolated
-      ? null
-      : `${ISO.touching.length} other transaction(s) in accept block ${floor} touched the Diamond or a participant: ${ISO.touching.join(' | ')}`;
-  console.log(
-    `info  accept block ${floor}: ${blockRead.receipts ? `${blockRead.receipts.length} receipts via ${blockRead.via}` : 'receipts UNREADABLE'}; ` +
-      (notIsolated ? `NOT isolated — ${notIsolated}` : 'no other transaction touched the Diamond or a participant'),
-  );
-  /** A block-diff check: judged only when the accept is isolated in its block. */
-  const stateDiff = (label, ok, observed, at) => {
-    if (!notIsolated) return check(label, ok, observed, at);
-    const [claim, key] = at.split('.');
-    MANIFEST.undetermined(claim, key, notIsolated);
-    console.log(`UNDET ${label} — observed ${observed}; ${notIsolated}`);
-    return null;
-  };
+  /** A block-diff check of the accept: scoped by RULE 2. */
+  const stateDiff = (label, ok, observed, at) => scopedCheck(ACCEPT, label, ok, observed, at);
 
   // Collateral: wallet and vault unchanged across the accept block, and no
   // collateral token left the borrower's vault in the accept itself.
@@ -2648,7 +2800,12 @@ try {
       requestId,
     });
     const discounts = evs.filter((e) => e.eventName === 'VPFIYieldFeeDiscountApplied' || e.eventName === 'VPFIDiscountApplied');
-    const premiseBroken = !atPrev.holds
+    // RULE 2 (#2422 r10): the model's inputs are state at the block before
+    // the accept; another transaction in the accept's block, ahead of it,
+    // could have moved them — so the model is judged only in isolation.
+    const premiseBroken = ACCEPT.reason
+      ? `the receipt model's inputs (fee posture, position holder, payoff — read at block ${prev}) are not isolated from the accept's block: ${ACCEPT.reason}`
+      : !atPrev.holds
       ? `the default fee posture no longer held at block ${prev} — ${atPrev.failures.map((f) => f.reason).join('; ')}`
       : discounts.length
         ? `the accept emitted ${discounts.map((e) => e.eventName).join(', ')} — a discount the model does not cover`
@@ -2763,7 +2920,8 @@ try {
   }
   console.log(`\nresult  request offer #${requestId} → replacement loan #${newLoanId}; old loan #${LOAN_ID} closed`);
 } catch (err) {
-  exitCode = 1;
+  // A race stop (#2422 r10) is not a failure by itself: the verdict decides.
+  if (!(err instanceof RaceStop)) exitCode = 1;
   const why = err instanceof Stop ? err.message : `unexpected error: ${String(err.shortMessage ?? err.message ?? err).split('\n')[0]}`;
   console.log(`\nSTOPPED: ${why}`);
   // "Nothing was written" is a claim only an EMPTY send log supports: an
@@ -2799,39 +2957,25 @@ check(
   'writeDiscipline.noRefusals',
 );
 const reconciliation = await report(baselineNonces);
-const failedRun =
+// Something observed WRONG — as opposed to a claim that could not be
+// established (a race stop or an UNDETERMINED check, #2422 r9/r10).
+const failure =
   exitCode !== 0 ||
   refusals.length > 0 ||
   walletRefusals().length > 0 ||
-  HALT !== null ||
+  (HALT !== null && HALT !== RACE_STOP) ||
   reconciliation.unreconciled ||
-  checks.some((c) => !c.ok) ||
-  !MANIFEST.passed();
-if (failedRun) await reportAfterFailure();
-// FAIL, never PASS, when anything is unaccounted for: a refused write, a
-// failed check, a halt, an allowed send the chain cannot account for, or a
-// manifest claim that failed or never ran.
-if (failedRun) exitCode = 1;
+  checks.some((c) => !c.ok);
+const VERDICT = runVerdict({ rows: MANIFEST.rows(), failure, raceStop: RACE_STOP });
+// Whatever this run may have left standing is reported whenever it did not
+// PASS — a race stop leaves a live request, and an undetermined claim may
+// hide a change.
+if (VERDICT.exit !== 0) await reportAfterFailure();
 // THE VERDICT IS THE MANIFEST (#2422 r8): what this run verified, with the
-// reads behind it, and what it did not, with where that is covered.
+// reads behind it, and what it did not, with where that is covered. Exit
+// codes and the outcome line come from ONE precedence rule (`runVerdict`):
+// FAIL (1) > STOPPED/COMPLETED UNDETERMINED (3) > PASS (0).
 console.log('');
 for (const line of MANIFEST.render()) console.log(line);
-// UNDETERMINED is not FAIL (#2422 r9): nothing was observed to be wrong,
-// but a claim could not be substantiated. The line says so in words, and
-// says the refinance itself completed only when the manifest verified it.
-const rowsNow = MANIFEST.rows();
-const completed = ['oldLoanClosed', 'replacement'].every((id) => rowsNow.find((r) => r.id === id)?.status === 'verified');
-const undet = rowsNow.filter((r) => r.status === 'undetermined');
-console.log(
-  exitCode !== 0
-    ? '\nOUTCOME: FAIL — see the manifest and the report above'
-    : undet.length
-      ? `\nOUTCOME: COMPLETED, ${undet.length} CLAIM(S) UNDETERMINED — ` +
-        (completed ? 'the refinance completed on chain and ' : '') +
-        `every claim under VERIFIED holds, but ${undet.map((r) => `[${r.id}]`).join(', ')} could not be substantiated ` +
-        '(why, per check, under UNDETERMINED above) — not a failure, and not a pass of those claims'
-      : '\nOUTCOME: PASS — every claim under VERIFIED holds; the claims under NOT VERIFIED BY THIS DRIVER were not checked by it',
-);
-// An UNDETERMINED claim must not leave as exit 0 — see the header's exit 3.
-if (exitCode === 0 && undet.length) exitCode = 3;
-process.exit(exitCode);
+console.log(`\n${VERDICT.line}`);
+process.exit(VERDICT.exit);

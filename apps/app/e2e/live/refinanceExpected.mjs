@@ -72,11 +72,13 @@ export function afterAnchor(desc, anchor, offset) {
  * not the request that was reviewed.
  */
 export function approvalBetween(min, max, why) {
-  return is(`covers ${why}: floor ≤ amount ≤ ${max}`, (v) => {
-    const floor = typeof min === 'function' ? min() : min;
-    if (floor == null) return false;
+  const at = (b) => (typeof b === 'function' ? b() : b);
+  return is(`covers ${why}: floor ≤ amount ≤ cap`, (v) => {
+    const floor = at(min);
+    const cap = at(max);
+    if (floor == null || cap == null) return false;
     const x = BigInt(v);
-    return x >= floor && x <= max && x > 0n;
+    return x >= floor && x <= cap && x > 0n;
   });
 }
 
@@ -171,14 +173,29 @@ export function graceSecondsFrom(buckets, durationDays) {
  */
 export function payoffApprovalBounds(l, graceSeconds, anchor) {
   const graceEnd = loanEndOf(l) + graceSeconds;
+  /** The payoff at `t`, clamped to the grace end (the request cannot be
+   *  filled past it). */
+  const payoffBy = (t) => refinancePayoffAt(l, t < graceEnd ? t : graceEnd);
   return {
     floor: () => {
       const a = anchor();
       if (a == null) return null;
-      const lastFillable = a - ANCHOR_LAG_SEC + REQUEST_WINDOW_SEC - 1n;
-      return refinancePayoffAt(l, lastFillable < graceEnd ? lastFillable : graceEnd);
+      return payoffBy(a - ANCHOR_LAG_SEC + REQUEST_WINDOW_SEC - 1n);
     },
-    cap: refinancePayoffAt(l, graceEnd),
+    // #2422 r9: the CAP is bounded by the request's own last fillable moment
+    // too, not only the grace end. The app stamps the expiry from a chain
+    // time inside [anchor − ANCHOR_LAG_SEC, anchor + ANCHOR_WINDOW_SEC], and
+    // the last fillable moment is expiry − 1 — so no approval the app could
+    // honestly compute exceeds the payoff at
+    // min(anchor + ANCHOR_WINDOW_SEC + REQUEST_WINDOW_SEC − 1, graceEnd).
+    // Capping at the grace end alone let an approval sized for a moment the
+    // request can never be filled at pass, whenever the grace end lies past
+    // the request's expiry.
+    cap: () => {
+      const a = anchor();
+      if (a == null) return null;
+      return payoffBy(a + ANCHOR_WINDOW_SEC + REQUEST_WINDOW_SEC - 1n);
+    },
   };
 }
 
@@ -517,7 +534,7 @@ export function refinancePlanSteps({
       role,
       kind: 'tx',
       optional: true,
-      purpose: `approve(Diamond, covering ${why}, ≤ ${max})`,
+      purpose: `approve(Diamond, covering ${why}${typeof max === 'function' ? '' : `, ≤ ${max}`})`,
       expected: tx(who, loan.principalAsset, expectedApproveCall({ spender: diamond, min, max, why })),
     },
   ];

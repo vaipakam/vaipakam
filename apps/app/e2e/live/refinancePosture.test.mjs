@@ -6,7 +6,6 @@ import { describe, expect, it } from 'vitest';
 import {
   expectedPostureFrom,
   postureCopyFrom,
-  postureSwitchesChanged,
   refinancePostureCoverage,
   refinancePostureVerdict,
 } from './refinancePosture.mjs';
@@ -266,24 +265,3 @@ describe('refinancePostureCoverage', () => {
     expect(refinancePostureCoverage([pass, unjudged], true)).toBeNull();
   });
 });
-
-// #2422 r9 — a posture that moved between the preflight and the banner is
-// a state race (BLOCKED before any write), not a product FAIL.
-describe('postureSwitchesChanged', () => {
-  const pre = { paused: false, autoRefinance: true, partialFill: true };
-  it('is empty when nothing moved', () => {
-    expect(postureSwitchesChanged(pre, { ...pre })).toEqual([]);
-  });
-  it('names each switch that moved, with both values', () => {
-    expect(postureSwitchesChanged(pre, { ...pre, autoRefinance: false })).toEqual(['autoRefinance: true → false']);
-    expect(postureSwitchesChanged(pre, { paused: true, autoRefinance: true, partialFill: false })).toEqual([
-      'paused: false → true',
-      'partialFill: true → false',
-    ]);
-  });
-  it('treats an unreadable switch as changed', () => {
-    expect(postureSwitchesChanged(pre, { ...pre, paused: undefined })).toEqual(['paused: false → undefined']);
-    expect(postureSwitchesChanged(null, pre)).toHaveLength(3);
-  });
-});
-

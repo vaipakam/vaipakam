@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { formatLedgerRow, ledgerRows } from './touchedState.mjs';
+import { formatLedgerRow, ledgerRows, runTouchedSteps } from './touchedState.mjs';
 
 const allowance = {
   key: 'borrowerAllowance',
@@ -75,6 +75,33 @@ describe('ledgerRows — what changed, who changed it, how to put it back', () =
     const e = { ...allowance, lookup: 'look it up on the explorer' };
     const [r] = ledgerRows([e], { borrowerAllowance: { ok: false, error: 'x' } }, { borrowerAllowance: ok(1n) }, []);
     expect(r).toMatchObject({ status: 'unknown', remedy: 'look it up on the explorer' });
+  });
+});
+
+// #2422 r10 — an external (or automatic) fill of OUR request spends the
+// borrower's payoff allowance. Our request caused it, so the ledger
+// attributes it to this run and offers the restore-to-baseline remedy.
+describe('runTouchedSteps — a fill of our request is this run\u2019s doing', () => {
+  const borrowerAllowance = { ...allowance, touchedBy: [...allowance.touchedBy, 'b-request-filled'] };
+  const rowWith = (b, n, ids) => ledgerRows([borrowerAllowance], { borrowerAllowance: b }, { borrowerAllowance: n }, ids)[0];
+
+  it('an external fill after b-create: the spent allowance is CHANGED BY THIS RUN, with the baseline remedy', () => {
+    const t = runTouchedSteps(['b-create'], { requestState: 'accepted' });
+    expect(t).toEqual({ ids: ['b-create', 'b-request-filled'], filled: true, byOthers: true });
+    const r = rowWith(ok(5_116_095_890_410_958n), ok(0n), t.ids);
+    expect(r.status).toBe('changed-by-run');
+    expect(r.touchedSteps).toEqual(['b-request-filled']);
+    expect(r.remedy).toBe('approve(Diamond, 5116095890410958)');
+  });
+
+  it('without the fill the same change is not attributed (the old, wrong answer for a filled request)', () => {
+    const t = runTouchedSteps(['b-create'], { requestState: 'open' });
+    expect(t).toEqual({ ids: ['b-create'], filled: false, byOthers: false });
+    expect(rowWith(ok(5n), ok(0n), t.ids).status).toBe('changed-not-by-run');
+  });
+
+  it('our own accept is a fill too, but not by others', () => {
+    expect(runTouchedSteps(['b-create', 'l-accept'], { requestState: 'accepted' })).toMatchObject({ filled: true, byOthers: false });
   });
 });
 

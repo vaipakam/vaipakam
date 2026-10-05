@@ -30,8 +30,8 @@
  * when one stops holding by the accept the claim is UNDETERMINED — never a
  * FAIL against a model that did not apply.
  *
- * `blockIsolation` bounds the other premise of a block-diff read: that no
- * other transaction in the accept block touched the state being diffed.
+ * `txIsolation` bounds the other premise of a block-diff read: that no
+ * other transaction in the same block touched the state being diffed.
  *
  * Pure; `refinanceOutcome.test.mjs` pins every helper against the real
  * loan 22 → loan 23 accept on Base Sepolia (block 47711162).
@@ -123,33 +123,62 @@ export function settlementPremises(r) {
 const topicAddress = (t) => (typeof t === 'string' && t.length === 66 ? `0x${t.slice(26)}`.toLowerCase() : null);
 
 /**
- * Did any OTHER transaction in the accept block touch what a block-diff read
- * (state at the accept block minus state at the block before) attributes to
- * the accept? A diff across a block covers every transaction in it, so the
- * diff is the accept's only when nothing else in the block touched:
- *   - the Diamond (any log it emitted — its state is what the views read),
+ * RULE 2 — a write's outcome is scoped to THAT transaction (#2422 r9, made
+ * general in r10). Did any OTHER transaction in the block of `receipt` (any
+ * of this run's: createOffer, an approval, the accept) touch what a
+ * block-diff read — state at the block minus state at the block before —
+ * would attribute to it? Such a diff covers every transaction in the block,
+ * so it is the receipt's only when nothing else in the block touched:
+ *   - the Diamond (any log it emitted, or a transaction sent to it — its
+ *     state is what the views read, the position NFTs included);
  *   - any watched address: a log EMITTED by it (a vault), or a log naming
  *     it in an indexed topic (an ERC-20/721 Transfer or ERC-1155
  *     TransferSingle/Batch with it as from/to — on ANY token, which covers
  *     the principal and collateral tokens and is stricter than them), or a
  *     successful transaction from or to it.
- * `receipts === null` (the block could not be read) is NOT isolation: the
- * caller reports that as UNDETERMINED. Nothing is assumed.
+ * The same isolation is what a RECEIPT-MODEL check needs when its inputs are
+ * state read at the block before (the fee posture, the NFT holder, the
+ * payoff): another transaction ahead of ours in the block could have moved
+ * them.
  *
- * @param {{ receipts: object[]|null, acceptHash: string, diamond: string,
- *           watched: Record<string, string> }} a  watched: label → address
- * @returns {{ known: boolean, isolated: boolean, touching: string[] }}
+ * `receipts === null` (the block could not be read) is NOT isolation, nor is
+ * a list that lacks `receipt` or holds receipts from another block: the
+ * caller reports those as UNDETERMINED. Nothing is assumed.
+ *
+ * `own` lists this run's OTHER plan transactions (an approval mined in the
+ * same block as the createOffer or the accept). Each was judged field by
+ * field against its expected object before it was signed, and none of them
+ * moves a token balance or touches an offer or a loan — an ERC-20 approve
+ * sets an allowance, the caps write sets the loan's guardrails — so they
+ * are set aside and NAMED (`own`), never silently.
+ *
+ * @param {{ receipt: { transactionHash: string, blockNumber: bigint|string },
+ *           receipts: object[]|null, diamond: string,
+ *           watched: Record<string, string>, own?: string[] }} a  watched: label → address
+ * @returns {{ known: boolean, isolated: boolean, touching: string[], own: string[] }}
  */
-export function blockIsolation({ receipts, acceptHash, diamond, watched }) {
-  if (!Array.isArray(receipts)) return { known: false, isolated: false, touching: [] };
-  if (!receipts.some((r) => lc(r.transactionHash) === lc(acceptHash))) {
-    return { known: false, isolated: false, touching: [`the block's receipts do not include the accept ${acceptHash}`] };
+export function txIsolation({ receipt, receipts, diamond, watched, own = [] }) {
+  if (!Array.isArray(receipts)) return { known: false, isolated: false, touching: [], own: [] };
+  const hash = lc(receipt.transactionHash);
+  if (!receipts.some((r) => lc(r.transactionHash) === hash)) {
+    return { known: false, isolated: false, touching: [`the block's receipts do not include ${receipt.transactionHash}`], own: [] };
+  }
+  const block = BigInt(receipt.blockNumber);
+  const strays = receipts.filter((r) => r.blockNumber != null && BigInt(r.blockNumber) !== block);
+  if (strays.length) {
+    return { known: false, isolated: false, touching: [`${strays.length} receipt(s) are from a block other than ${block}`], own: [] };
   }
   const names = new Map(Object.entries(watched).map(([label, a]) => [lc(a), label]));
   const D = lc(diamond);
+  const ownSet = new Set(own.map(lc));
   const touching = [];
+  const ownSeen = [];
   for (const r of receipts) {
-    if (lc(r.transactionHash) === lc(acceptHash)) continue;
+    if (lc(r.transactionHash) === hash) continue;
+    if (ownSet.has(lc(r.transactionHash))) {
+      ownSeen.push(r.transactionHash);
+      continue;
+    }
     const why = new Set();
     const ok = r.status === 'success' || r.status === '0x1' || r.status === 1;
     if (ok && lc(r.to) === D) why.add('sent to the Diamond');
@@ -166,7 +195,16 @@ export function blockIsolation({ receipts, acceptHash, diamond, watched }) {
     }
     if (why.size) touching.push(`${r.transactionHash}: ${[...why].join(', ')}`);
   }
-  return { known: true, isolated: touching.length === 0, touching };
+  return { known: true, isolated: touching.length === 0, touching, own: ownSeen };
+}
+
+/** Why a scope is not isolated, in one sentence, or null when it is. */
+export function scopeReason(scope, { what, block, error }) {
+  if (!scope.known) {
+    return `the receipts of ${what}'s block ${block} could not be established (${(error ?? scope.touching.join('; ')) || 'unreadable'}), so no state difference across that block can be attributed to it`;
+  }
+  if (scope.isolated) return null;
+  return `${scope.touching.length} other transaction(s) in ${what}'s block ${block} touched the Diamond or a participant: ${scope.touching.join(' | ')}`;
 }
 
 // ---------------------------------------------------------------------

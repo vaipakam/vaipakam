@@ -101,3 +101,21 @@ export function formatLedgerRow(r) {
   if (r.remedy) lines.push(`  REMEDY:   ${r.remedy}`);
   return lines.join('\n');
 }
+
+/**
+ * The step ids a run's ledger should treat as THIS RUN's doing (#2422 r10):
+ * the consumed plan steps, plus `b-request-filled` when the run's own
+ * request has been FILLED on chain (`requestState === 'accepted'`) — by our
+ * accept or by anyone else's, including an automatic match. Our request
+ * caused that fill, so what the fill changed (it pulls the payoff from the
+ * borrower's allowance and wallet) is this run's to account for and to
+ * restore, even though no step of OUR plan sent the transaction. `byOthers`
+ * says whether the fill was someone else's (no accept of ours was consumed).
+ */
+export function runTouchedSteps(consumedIds, { requestState }) {
+  const ids = [...consumedIds];
+  const filled = requestState === 'accepted';
+  if (filled && !ids.includes('b-request-filled')) ids.push('b-request-filled');
+  return { ids, filled, byOthers: filled && !ids.includes('l-accept') };
+}
+

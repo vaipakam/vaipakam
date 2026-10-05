@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { createManifest } from './outcomeManifest.mjs';
+import { createManifest, runVerdict } from './outcomeManifest.mjs';
 
 const spec = () => ({
   verifiable: [
@@ -141,3 +141,32 @@ describe('outcomeManifest', () => {
     expect(() => m.undetermined('indexer', 'x', 'y')).toThrow(/declared NOT VERIFIED/);
   });
 });
+
+// #2422 r10 — one precedence rule for the exit code.
+describe('runVerdict', () => {
+  const row = (id, status) => ({ id, status });
+  const done = [row('oldLoanClosed', 'verified'), row('replacement', 'verified')];
+  it('PASS only when nothing failed, nothing is missing and nothing is undetermined', () => {
+    expect(runVerdict({ rows: done, failure: false, raceStop: null }).exit).toBe(0);
+  });
+  it('a failure outranks everything, a race stop included', () => {
+    expect(runVerdict({ rows: done, failure: true, raceStop: 'x' }).exit).toBe(1);
+    expect(runVerdict({ rows: [...done, row('settlement', 'failed')], failure: false, raceStop: 'x' }).exit).toBe(1);
+  });
+  it('a race stop is STOPPED, UNDETERMINED (exit 3) even though later claims never ran', () => {
+    const v = runVerdict({ rows: [row('lenderReview', 'undetermined'), row('replacement', 'not run')], failure: false, raceStop: 'the fee moved' });
+    expect(v.exit).toBe(3);
+    expect(v.line).toMatch(/^OUTCOME: STOPPED, UNDETERMINED — .*the fee moved/);
+  });
+  it('a claim NOT RUN without a race stop is a FAIL', () => {
+    expect(runVerdict({ rows: [row('replacement', 'not run')], failure: false, raceStop: null })).toMatchObject({ exit: 1 });
+  });
+  it('an undetermined claim is exit 3, and says the refinance completed only when that was verified', () => {
+    const v = runVerdict({ rows: [...done, row('settlement', 'undetermined')], failure: false, raceStop: null });
+    expect(v.exit).toBe(3);
+    expect(v.line).toMatch(/the refinance completed on chain and .*\[settlement\]/);
+    const w = runVerdict({ rows: [row('oldLoanClosed', 'undetermined'), row('replacement', 'verified')], failure: false, raceStop: null });
+    expect(w.line).not.toMatch(/completed on chain/);
+  });
+});
+

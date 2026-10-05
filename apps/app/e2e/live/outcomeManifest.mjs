@@ -202,3 +202,54 @@ export function createManifest({ verifiable, notVerified = [] }) {
 
   return { record, undetermined, defer, rows, passed, undeterminedCount, render };
 }
+
+/**
+ * The run's exit code and outcome line, from the manifest's rows and what
+ * else the drive knows (#2422 r10). One place, so the order of precedence
+ * is a rule and not a sequence of `if`s at the bottom of a driver:
+ *
+ *   1 FAIL — anything observed wrong: `failure` (a failed check, a refused
+ *     write, an unreconciled send, a stop that was not a race), or a claim
+ *     that FAILED.
+ *   3 STOPPED, UNDETERMINED — the drive stopped because a state race or an
+ *     unisolated block after a write left a claim it needed before the next
+ *     write unestablished (`raceStop`). Claims after the stop are NOT RUN;
+ *     nothing was observed wrong.
+ *   1 FAIL — a verifiable claim NOT RUN without such a stop.
+ *   3 COMPLETED, UNDETERMINED — every check that could judge held, and some
+ *     claim is UNDETERMINED.
+ *   0 PASS — otherwise.
+ *
+ * @param {{ rows: Array<{ id: string, status: string }>, failure: boolean,
+ *           raceStop: string|null }} a
+ * @returns {{ exit: 0|1|3, line: string }}
+ */
+export function runVerdict({ rows, failure, raceStop }) {
+  const ids = (status) => rows.filter((r) => r.status === status).map((r) => `[${r.id}]`);
+  if (failure || ids('failed').length) {
+    return { exit: 1, line: 'OUTCOME: FAIL — see the manifest and the report above' };
+  }
+  if (raceStop) {
+    return {
+      exit: 3,
+      line:
+        `OUTCOME: STOPPED, UNDETERMINED — the drive stopped before its next write because a claim it needed could not be established: ${raceStop}. ` +
+        'Nothing observed was wrong; the claims after the stop did not run, and the touched-state ledger above says what this run left standing',
+    };
+  }
+  if (ids('not run').length) return { exit: 1, line: `OUTCOME: FAIL — ${ids('not run').join(', ')} never ran` };
+  const undet = ids('undetermined');
+  if (undet.length) {
+    const completed = ['oldLoanClosed', 'replacement'].every((id) => rows.find((r) => r.id === id)?.status === 'verified');
+    return {
+      exit: 3,
+      line:
+        `OUTCOME: COMPLETED, ${undet.length} CLAIM(S) UNDETERMINED — ` +
+        (completed ? 'the refinance completed on chain and ' : '') +
+        `every claim under VERIFIED holds, but ${undet.join(', ')} could not be substantiated ` +
+        '(why, per check, under UNDETERMINED above) — not a failure, and not a pass of those claims',
+    };
+  }
+  return { exit: 0, line: 'OUTCOME: PASS — every claim under VERIFIED holds; the claims under NOT VERIFIED BY THIS DRIVER were not checked by it' };
+}
+
