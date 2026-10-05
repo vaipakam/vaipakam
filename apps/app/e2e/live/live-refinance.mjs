@@ -308,8 +308,10 @@ import { formatLedgerRow, ledgerRows, runTouchedSteps } from './touchedState.mjs
 import { compareBorrowerReceipt, compareLenderReceipt } from './reviewTerms.mjs';
 import { expectedPostureFrom, postureCopyFrom } from './refinancePosture.mjs';
 import { createManifest, runVerdict } from './outcomeManifest.mjs';
-import { observationVerdict, observeAgainstChain } from './observation.mjs';
+import { configChanges, observationVerdict, observeAgainstChain } from './observation.mjs';
+import { readWatchedConfig } from './watchedConfig.mjs';
 import {
+  balanceDeltaMismatches,
   checkRoleNonces,
   collateralMovedOut,
   expectedPrincipalTransfers,
@@ -318,6 +320,7 @@ import {
   payoutOwnerOf,
   scanForReplacement,
   scopeReason,
+  settlementBlocker,
   settlementPremises,
   transferMismatches,
   txIsolation,
@@ -571,26 +574,17 @@ function scopedCheck(sc, label, ok, observed, at) {
   return null;
 }
 
+/** `read` in the shape watchedConfig.mjs takes. */
+const diamondRead = (fn, args, blockNumber) => read(fn, args, blockNumber);
+/** The loan's assets, which the per-asset pause entries are read for. */
+const watchedContextOf = (l) => ({ principalAsset: l.principalAsset, collateralAsset: l.collateralAsset });
 /**
- * Every piece of chain CONFIG a rendered review or banner is judged against
- * (#2422 r10): the three posture switches, the treasury fee, the LIF rate
- * and the grace buckets — read through the same getters the preflight uses,
- * so a reading compares field for field with the pinned baseline.
+ * THE WATCHED-CONFIG SNAPSHOT at a block (undefined ⇒ latest) — every
+ * mutable governance value this drive reads, as defined ONCE in
+ * watchedConfig.mjs (#2422 r12). Rule 1 races every observation against the
+ * whole of it.
  */
-async function readObservedConfig(blockNumber) {
-  const [posture, fees, lifBps, graceBuckets, riskTermsHash] = await Promise.all([
-    readPostureSwitches(blockNumber),
-    read('getFeesConfig', [], blockNumber),
-    read('getLoanInitiationFeeBps', [], blockNumber),
-    read('getGraceBuckets', [], blockNumber),
-    // #2422 r11: a new risk-terms epoch after the preflight would make the
-    // lender sign terms anchored to the old hash — the gate's expected
-    // AcceptTerms carries the PREFLIGHT hash, so a moved hash stops the run
-    // (BLOCKED before any write, UNDETERMINED after) instead of being signed.
-    read('getCurrentRiskTermsHash', [], blockNumber),
-  ]);
-  return { ...posture, treasuryFeeBps: fees[0], lifBps, graceBuckets, riskTermsHash };
-}
+const readObservedConfig = (blockNumber) => readWatchedConfig(diamondRead, watchedContextOf(EXPECT_LOAN), blockNumber);
 
 /**
  * RULE 1 for every observation of the browser against chain config
@@ -611,16 +605,6 @@ async function observeConfig(what, observe) {
 /** Set from the preflight: the config every observation is raced against. */
 let OBSERVED_BASELINE = null;
 
-/** The three switches the auto-match posture banner reflects, at a block
- *  (or the latest one). */
-async function readPostureSwitches(blockNumber) {
-  const [paused, autoRefinance, flags] = await Promise.all([
-    read('paused', [], blockNumber),
-    read('getAutoRefinanceEnabled', [], blockNumber),
-    read('getMasterFlags', [], blockNumber),
-  ]);
-  return { paused, autoRefinance, partialFill: flags[2] };
-}
 
 /**
  * EVERY offer id `who` has created, as of `blockNumber`, walking the
@@ -786,6 +770,7 @@ const MANIFEST = createManifest({
         positionNfts: 'ownerOf(borrowerTokenId / lenderTokenId) at the accept block (scoped)',
         requestAccepted: 'getOfferDetails(request).accepted at the accept block (scoped)',
         lenderIndex: 'getUserActiveLoans(lender) at the accept block (scoped)',
+        feeStamps: 'getLoanDetails(replacement).treasuryFeeBpsAtInit / loanInitiationFeeBpsAtInit at the accept block vs the watched-config snapshot the reviews were judged against (scoped)',
       },
     },
     {
@@ -1256,7 +1241,7 @@ const LEDGER = [
       return (
         `cancel ${added.map((id) => `#${id}`).join(', ')} from the borrower — "Cancel refinance request" on ` +
         `${SITE}/positions/${LOAN_ID} (it opens a few minutes after posting), or cancelOffer(id) on the Diamond. ` +
-        `Until then any lender can accept it${pre.autoRefi && pre.flags[2] ? ', and with automatic matching ON the order matcher can fill it' : ''}.`
+        `Until then any lender can accept it${pre.autoRefi && pre.posture.partialFill ? ', and with automatic matching ON the order matcher can fill it' : ''}.`
       );
     },
   },
@@ -1624,13 +1609,13 @@ const pre = await precondition('reading the preconditions from chain', async () 
   const head = await pub.getBlockNumber();
   const block = await pub.getBlock({ blockNumber: head });
   const loan = await loanOf(LOAN_ID, head);
-  const [riskGate, autoRefi, paused, flags, collLiquidity] = await Promise.all([
-    read('getRiskAccessGateEnabled', [], head),
-    read('getAutoRefinanceEnabled', [], head),
-    read('paused', [], head),
-    read('getMasterFlags', [], head),
-    read('checkLiquidity', [loan.collateralAsset], head),
-  ]);
+  // THE WATCHED-CONFIG SNAPSHOT (#2422 r12, watchedConfig.mjs): every
+  // mutable governance value this drive reads, in ONE read, at the pinned
+  // head. Every governance figure below comes from it; nothing reads a
+  // watched getter directly.
+  const watched = await readWatchedConfig(diamondRead, watchedContextOf(loan), head);
+  const { riskAccessGate: riskGate, autoRefinance: autoRefi, paused, partialFill } = watched;
+  const collLiquidity = await read('checkLiquidity', [loan.collateralAsset], head);
   const [tosB, tosL] = await Promise.all([
     read('hasAcceptedCurrentTerms', [BORROWER], head),
     read('hasAcceptedCurrentTerms', [LENDER], head),
@@ -1659,7 +1644,7 @@ const pre = await precondition('reading the preconditions from chain', async () 
   const caps = await read('getAutoRefinanceCaps', [LOAN_ID], head);
   // The LIVE loan-initiation fee rate (ConfigFacet), pinned to the same
   // head — the payoff reserve below is computed from it, never assumed.
-  const lifBps = await read('getLoanInitiationFeeBps', [], head);
+  const { lifBps } = watched;
   // The contract's own payoff for the loan at the same head (RepayFacet's
   // view): the borrower's reserve is sized from it and from the loan's
   // remaining-term fields, never from its original length (#2422 r8).
@@ -1667,17 +1652,14 @@ const pre = await precondition('reading the preconditions from chain', async () 
   // Per-asset pause — the read RefinanceFlow's assertAssetNotPausedLive
   // makes for BOTH legs at submit (#2422 r6 P2). The app treats a failed
   // read as not-paused; here it throws, so an unknown pause state BLOCKS.
-  const [principalPaused, collateralPaused] = await Promise.all([
-    read('isAssetPaused', [loan.principalAsset], head),
-    read('isAssetPaused', [loan.collateralAsset], head),
-  ]);
+  const { principalPaused, collateralPaused } = watched;
   // The form's upper bound on the new length, read where the app reads it
   // (fees.ts: getProtocolConfigBundle()[14], maxOfferDurationDays).
-  const maxOfferDurationDays = (await read('getProtocolConfigBundle', [], head))[14];
+  const { maxOfferDurationDays } = watched;
   // The risk-terms hash the lender's AcceptTerms must carry (the app reads
   // the same getter, fail-closed). Read before any write so the expected
   // acceptance terms are complete before the first signature.
-  const riskTermsHash = await read('getCurrentRiskTermsHash', [], head);
+  const { riskTermsHash } = watched;
   // The principal token's decimals, for every principal-denominated figure
   // this drive prints (#2422 r3 P2). The raw comparisons never depend on it.
   const principalDecimals = await pub.readContract({
@@ -1688,11 +1670,10 @@ const pre = await precondition('reading the preconditions from chain', async () 
   });
   // What the review screens print the tokens as, and the fee config they
   // quote — read at the same pinned block (#2422 r7).
-  const [principalSymbol, collateralSymbol, collateralDecimals, feesConfig] = await Promise.all([
+  const [principalSymbol, collateralSymbol, collateralDecimals] = await Promise.all([
     pub.readContract({ address: loan.principalAsset, abi: erc20Abi, functionName: 'symbol', blockNumber: head }),
     pub.readContract({ address: loan.collateralAsset, abi: erc20Abi, functionName: 'symbol', blockNumber: head }),
     pub.readContract({ address: loan.collateralAsset, abi: erc20Abi, functionName: 'decimals', blockNumber: head }),
-    read('getFeesConfig', [], head),
   ]);
   // Who holds each position NOW (#2422 r3 P2). The stored borrower is what
   // carry-over binds to; the position NFT is who may act on the position.
@@ -1711,7 +1692,7 @@ const pre = await precondition('reading the preconditions from chain', async () 
   //     the recovery-ban rule on a declared source). Flagged by either →
   //     BLOCKED; the oracle call reverted or unreachable → BLOCKED as
   //     "oracle unavailable", never "clean".
-  const sanctionsOracle = await read('getSanctionsOracle', [], head);
+  const { sanctionsOracle } = watched;
   const oracleSet = !/^0x0{40}$/i.test(sanctionsOracle);
   const screen = async (who) => {
     const diamondSays = await read('isSanctionedAddress', [who], head);
@@ -1732,7 +1713,7 @@ const pre = await precondition('reading the preconditions from chain', async () 
   const [sanctionB, sanctionL] = await Promise.all([screen(BORROWER), screen(LENDER)]);
   // The loan's grace window, read the way the app reads it — the payoff
   // approval the borrower signs is the payoff at the end of it.
-  const graceBuckets = await read('getGraceBuckets', [], head);
+  const { graceBuckets } = watched;
   // The settlement model's PREMISES (#2422 r9), pinned with everything else.
   // The request does not exist yet; it cannot be made Full by this run (the
   // write plan has no setOfferCreatorFullTariff step), so it enters as not
@@ -1741,7 +1722,7 @@ const pre = await precondition('reading the preconditions from chain', async () 
     holder: lenderPositionHolder,
     requestId: null,
   });
-  const posture = await readPostureSwitches(head);
+  const posture = { paused, autoRefinance: autoRefi, partialFill };
   return {
     head,
     now: block.timestamp,
@@ -1749,7 +1730,6 @@ const pre = await precondition('reading the preconditions from chain', async () 
     riskGate,
     autoRefi,
     paused,
-    flags,
     collLiquidity,
     tosB,
     tosL,
@@ -1768,7 +1748,7 @@ const pre = await precondition('reading the preconditions from chain', async () 
     principalSymbol,
     collateralSymbol,
     collateralDecimals,
-    treasuryFeeBps: feesConfig[0],
+    treasuryFeeBps: watched.treasuryFeeBps,
     borrowerPositionHolder,
     lenderPositionHolder,
     sanctionsOracle,
@@ -1778,6 +1758,7 @@ const pre = await precondition('reading the preconditions from chain', async () 
     graceBuckets,
     premises,
     posture,
+    watched,
   };
 });
 
@@ -1909,7 +1890,7 @@ want(
 );
 want('borrower has gas', pre.b.eth >= GAS_FLOOR, formatUnits(pre.b.eth, 18));
 want('lender has gas', pre.l.eth >= GAS_FLOOR, formatUnits(pre.l.eth, 18));
-console.log(`pre   auto-refinance switch: ${pre.autoRefi}; matcher partialFill: ${pre.flags[2]}; caps on loan: ${JSON.stringify(pre.caps, (_k, v) => (typeof v === 'bigint' ? String(v) : v))}`);
+console.log(`pre   auto-refinance switch: ${pre.autoRefi}; matcher partialFill: ${pre.posture.partialFill}; caps on loan: ${JSON.stringify(pre.caps, (_k, v) => (typeof v === 'bigint' ? String(v) : v))}`);
 // THE SETTLEMENT MODEL'S PREMISES, established before the first write
 // (#2422 r9). The exact-settlement claim models the default fee posture
 // only; when the pinned reads say a discount can apply, the claim is stated
@@ -1937,7 +1918,7 @@ if (!pre.premises.holds) {
 if (misses.length) {
   await blockedBeforeAnyWrite(`chain facts differ from the drive's preconditions — nothing was written:\n  - ${misses.join('\n  - ')}`);
 }
-if (pre.autoRefi && pre.flags[2]) {
+if (pre.autoRefi && pre.posture.partialFill) {
   note(
     'automatic matching is ON for this deployment, so the order matcher could fill the request before the lender does; ' +
       'the drive accepts promptly and STOPS if any other party fills it',
@@ -1967,13 +1948,9 @@ console.log(
 );
 // RULE 1's baseline: every observation of the browser is raced against
 // these pinned values as well as against reads taken around it.
-OBSERVED_BASELINE = {
-  ...pre.posture,
-  treasuryFeeBps: pre.treasuryFeeBps,
-  lifBps: pre.lifBps,
-  graceBuckets: pre.graceBuckets,
-  riskTermsHash: pre.riskTermsHash,
-};
+// That is the WHOLE watched-config snapshot (#2422 r12), not a hand-picked
+// subset of it.
+OBSERVED_BASELINE = pre.watched;
 
 EXPECT_LOAN = loan;
 
@@ -2536,6 +2513,9 @@ try {
     MANIFEST.undetermined('lenderReview', 'receipt', armObs.undetermined);
     raceStop(`not arming the lender: ${armObs.undetermined}`);
   }
+  // The config the reviews were judged against, as last confirmed before the
+  // lender's write: the settlement must be computed from exactly this.
+  const REVIEWED_CONFIG = armObs.config;
   LENDER_ANCHOR = await chainNow();
   console.log(`info  lender anchor (chain time at submit start): ${LENDER_ANCHOR}`);
   PLAN.arm('lender');
@@ -2691,6 +2671,20 @@ try {
   scopedCheck(ACCEPT, 'replacement principal asset == old', eq(fresh.principalAsset, loan.principalAsset), fresh.principalAsset, 'replacement.loan');
   scopedCheck(ACCEPT, `replacement interestRateBps == the request ceiling (${RATE_BPS})`, fresh.interestRateBps === RATE_BPS, fresh.interestRateBps, 'replacement.loan');
   scopedCheck(ACCEPT, `replacement durationDays == ${DAYS_N}`, fresh.durationDays === DAYS_N, fresh.durationDays, 'replacement.loan');
+  // The fees the replacement STAMPED at origination are the ones reviewed
+  // (#2422 r12): `_snapshotFeeBps` writes the live treasury fee and — for an
+  // ERC-20 origination — the live LIF rate onto the new loan. Compared with
+  // the snapshot the reviews were judged against. (Its other *AtInit stamps
+  // — fallback, health-factor and LTV parameters — are shown on neither
+  // review, so they are not claimed here.)
+  scopedCheck(
+    ACCEPT,
+    'replacement fee stamps equal the reviewed fees (treasuryFeeBpsAtInit, loanInitiationFeeBpsAtInit)',
+    BigInt(fresh.treasuryFeeBpsAtInit) === BigInt(REVIEWED_CONFIG.treasuryFeeBps) &&
+      BigInt(fresh.loanInitiationFeeBpsAtInit) === BigInt(REVIEWED_CONFIG.lifBps),
+    `treasury ${fresh.treasuryFeeBpsAtInit} (reviewed ${REVIEWED_CONFIG.treasuryFeeBps}), LIF ${fresh.loanInitiationFeeBpsAtInit} (reviewed ${REVIEWED_CONFIG.lifBps})`,
+    'replacement.feeStamps',
+  );
   const reqAfter = await read('getOfferDetails', [requestId], floor);
   scopedCheck(ACCEPT, 'request marked accepted', reqAfter.accepted === true, reqAfter.accepted, 'replacement.requestAccepted');
   // An unreadable index is UNKNOWN, and an assertion that could not be
@@ -2788,13 +2782,17 @@ try {
   );
 
   // The settlement.
-  const [repayDue, bundle, treasury, tsPrev, tsAccept] = await Promise.all([
+  // The WHOLE watched snapshot at the accept's prestate (#2422 r12): the
+  // settlement model's fee inputs come from it, and it must equal the
+  // snapshot the reviews were judged against.
+  const [repayDue, cfgAtPrev, tsPrev, tsAccept] = await Promise.all([
     read('calculateRepaymentAmount', [LOAN_ID], prev),
-    read('getProtocolConfigBundle', [], prev),
-    read('getTreasury', [], prev),
+    readObservedConfig(prev),
     pub.getBlock({ blockNumber: prev }).then((b) => b.timestamp),
     pub.getBlock({ blockNumber: floor }).then((b) => b.timestamp),
   ]);
+  const reviewDrift = configChanges(REVIEWED_CONFIG, cfgAtPrev);
+  const { treasury } = cfgAtPrev;
   // The app's payoff formula must agree with the contract's view — the
   // borrower's review quoted the formula, and the accept pays the view.
   const formulaPrev = refinancePayoffAt(oldAtPrev, tsPrev);
@@ -2822,15 +2820,15 @@ try {
     // RULE 2 (#2422 r10): the model's inputs are state at the block before
     // the accept; another transaction in the accept's block, ahead of it,
     // could have moved them — so the model is judged only in isolation.
-    const premiseBroken = ACCEPT.reason
-      ? `the receipt model's inputs (fee posture, position holder, payoff — read at block ${prev}) are not isolated from the accept's block: ${ACCEPT.reason}`
-      : !atPrev.holds
-      ? `the default fee posture no longer held at block ${prev} — ${atPrev.failures.map((f) => f.reason).join('; ')}`
-      : discounts.length
-        ? `the accept emitted ${discounts.map((e) => e.eventName).join(', ')} — a discount the model does not cover`
-        : refinancePayoffAt(oldAtPrev, tsAccept) !== formulaPrev
-          ? `the payoff stepped between block ${prev} (ts ${tsPrev}) and the accept block (ts ${tsAccept}), so the view read before the accept is not the figure the accept paid`
-          : null;
+    const premiseBroken = settlementBlocker({
+      prev,
+      isolation: ACCEPT.reason,
+      reviewDrift,
+      premisesAtPrev: atPrev,
+      discountEvents: discounts.map((e) => e.eventName),
+      payoffStep:
+        refinancePayoffAt(oldAtPrev, tsAccept) !== formulaPrev ? { tsPrev, tsAccept } : null,
+    });
     if (premiseBroken) {
       for (const key of MODEL_CHECKS) MANIFEST.undetermined('settlement', key, premiseBroken);
       console.log(`UNDET settlement — ${premiseBroken}`);
@@ -2840,13 +2838,13 @@ try {
         oldPrincipal: oldAtPrev.principal,
         treasuryFeeBpsAtInit: oldAtPrev.treasuryFeeBpsAtInit,
         newPrincipal: fresh.principal,
-        lifBps: bundle[1],
-        matcherBps: bundle[12],
+        lifBps: cfgAtPrev.lifBps,
+        matcherBps: cfgAtPrev.lifMatcherFeeBps,
       });
       console.log(
         `info  settlement model @${prev}: payoff ${repayDue} = principal ${oldAtPrev.principal} + interest ${S.interestPortion}; ` +
-          `treasury share ${S.treasuryShare} (${S.feeBps} bps); lender due ${S.lenderDue}; LIF ${S.lif} (${bundle[1]} bps), ` +
-          `matcher cut ${S.matcherCut} (${bundle[12]} bps); treasury ${treasury}`,
+          `treasury share ${S.treasuryShare} (${S.feeBps} bps); lender due ${S.lenderDue}; LIF ${S.lif} (${cfgAtPrev.lifBps} bps), ` +
+          `matcher cut ${S.matcherCut} (${cfgAtPrev.lifMatcherFeeBps} bps); treasury ${treasury}`,
       );
       const [claimBefore, claimAfter] = await Promise.all([
         read('getClaimable', [LOAN_ID, true], prev),
@@ -2894,19 +2892,29 @@ try {
         ]);
         return b - a;
       };
-      const [dBorrower, dLender, dOldLenderVault, dBorrowerVault, dLenderVault] = await Promise.all(
-        [BORROWER, LENDER, oldLenderVault, borrowerVault, lenderVault].map(delta),
-      );
+      // Judged per UNIQUE ADDRESS against the sum of every expected leg
+      // (#2422 r12): the payout vault may BE the borrower's or the lender's
+      // vault, and then the chain shows their sum.
+      const observedOf = async (label, address) => ({ label, address, delta: await delta(address) });
+      const wallets = balanceDeltaMismatches(wantTransfers, await Promise.all([
+        observedOf('borrower wallet', BORROWER),
+        observedOf('lender wallet', LENDER),
+      ]));
       stateDiff(
-        'wallets: the borrower got the new principal less the LIF and paid the payoff; the lender paid the principal and got the matcher cut',
-        dBorrower === S.borrowerWalletDelta && dLender === S.lenderWalletDelta,
-        `borrower ${dBorrower} (expected ${S.borrowerWalletDelta}), lender ${dLender} (expected ${S.lenderWalletDelta})`,
+        'wallets: each unique wallet moved by the sum of its expected legs (the borrower: net principal in, payoff out; the lender: principal out, matcher cut in)',
+        wallets.mismatches.length === 0,
+        (wallets.mismatches.length ? wallets.mismatches : wallets.rows).join(' | '),
         'settlement.wallets',
       );
+      const vaults = balanceDeltaMismatches(wantTransfers, await Promise.all([
+        observedOf('payout vault', oldLenderVault),
+        observedOf('borrower vault', borrowerVault),
+        observedOf('lender vault', lenderVault),
+      ]));
       stateDiff(
-        'vaults: the old lender’s rose by the lender due; the borrower’s and the lender’s are unchanged',
-        dOldLenderVault === S.oldLenderVaultDelta && dBorrowerVault === 0n && dLenderVault === 0n,
-        `old lender ${dOldLenderVault} (expected ${S.oldLenderVaultDelta}), borrower ${dBorrowerVault}, lender ${dLenderVault}; ${payoutEvidence}`,
+        'vaults: each unique vault moved by the sum of its expected legs (the payout vault: the lender due in; the others: nothing net)',
+        vaults.mismatches.length === 0,
+        `${(vaults.mismatches.length ? vaults.mismatches : vaults.rows).join(' | ')}; ${payoutEvidence}`,
         'settlement.vaults',
       );
     }

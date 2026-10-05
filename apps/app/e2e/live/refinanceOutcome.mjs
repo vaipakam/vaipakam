@@ -401,6 +401,48 @@ export function transferMismatches(expected, actual) {
   return out;
 }
 
+/**
+ * Balance deltas judged per UNIQUE ADDRESS against the sum of every expected
+ * leg into or out of it (#2422 r12). Comparing named parties one by one
+ * breaks when two names are one address — the old lender's payout vault IS
+ * the borrower's or the new lender's vault whenever one of them holds (or,
+ * after a holder change, came to hold) the old lender position — because each
+ * name then carries only its own legs while the chain shows their sum. Keying
+ * by address and summing all legs is right whether or not anything aliases.
+ *
+ * @param {Array<{ from: string, to: string, value: bigint }>} legs  every expected leg
+ * @param {Array<{ label: string, address: string, delta: bigint }>} observed
+ * @returns {{ mismatches: string[], rows: string[] }}
+ */
+export function balanceDeltaMismatches(legs, observed) {
+  const byAddr = new Map();
+  for (const o of observed) {
+    const k = lc(o.address);
+    const row = byAddr.get(k) ?? { labels: [], deltas: new Set(), delta: o.delta };
+    row.labels.push(o.label);
+    row.deltas.add(BigInt(o.delta));
+    byAddr.set(k, row);
+  }
+  const mismatches = [];
+  const rows = [];
+  for (const [addr, row] of byAddr) {
+    let want = 0n;
+    for (const l of legs) {
+      if (lc(l.to) === addr) want += BigInt(l.value);
+      if (lc(l.from) === addr) want -= BigInt(l.value);
+    }
+    const name = `${row.labels.join(' = ')} (${addr})`;
+    if (row.deltas.size !== 1) {
+      mismatches.push(`${name}: one address read with ${row.deltas.size} different deltas`);
+      continue;
+    }
+    const got = [...row.deltas][0];
+    rows.push(`${name}: ${got} (expected ${want})`);
+    if (got !== want) mismatches.push(`${name}: moved ${got}, expected ${want}`);
+  }
+  return { mismatches, rows };
+}
+
 // ---------------------------------------------------------------------
 // The collateral lien's carry-over.
 // ---------------------------------------------------------------------
@@ -458,5 +500,35 @@ export function payoutOwnerOf({ storedLenderAtFloor, storedLenderAtPrev, holderA
         (lc(storedLenderAtPrev) !== lc(owner) ? ` (the stored lender before the accept was ${storedLenderAtPrev})` : '')
       : `; DIFFERS from the lender-NFT holder at block ${prev} (${holderAtPrev}) — the consolidation did not move it`);
   return { owner, consolidated, evidence };
+}
+
+/**
+ * Why the settlement model may NOT judge this accept, or null when it may
+ * (#2422 r9–r12) — one precedence, so no premise can be dropped from one
+ * call site. Each reason makes every model check UNDETERMINED, never FAIL:
+ *   1. the accept's block is not isolated (its prestate inputs may have
+ *      moved under another transaction);
+ *   2. the watched config at the accept's prestate differs from the
+ *      snapshot the reviews were judged against — the settled fees are not
+ *      the reviewed ones, so nothing may be certified;
+ *   3. the default fee posture no longer held at the prestate;
+ *   4. the receipt carries a discount event the model does not cover;
+ *   5. the payoff stepped between the prestate and the accept.
+ */
+export function settlementBlocker({ prev, isolation, reviewDrift, premisesAtPrev, discountEvents, payoffStep }) {
+  if (isolation) {
+    return `the receipt model's inputs (fee posture, position holder, payoff — read at block ${prev}) are not isolated from the accept's block: ${isolation}`;
+  }
+  if (reviewDrift.length) {
+    return `config changed between review and accept (block ${prev}): ${reviewDrift.join('; ')} — the settled fees are not the reviewed ones, so nothing is certified`;
+  }
+  if (!premisesAtPrev.holds) {
+    return `the default fee posture no longer held at block ${prev} — ${premisesAtPrev.failures.map((f) => f.reason).join('; ')}`;
+  }
+  if (discountEvents.length) return `the accept emitted ${discountEvents.join(', ')} — a discount the model does not cover`;
+  if (payoffStep) {
+    return `the payoff stepped between block ${prev} (ts ${payoffStep.tsPrev}) and the accept block (ts ${payoffStep.tsAccept}), so the view read before the accept is not the figure the accept paid`;
+  }
+  return null;
 }
 

@@ -10,6 +10,7 @@ import { describe, expect, it } from 'vitest';
 
 import { createManifest } from './outcomeManifest.mjs';
 import {
+  balanceDeltaMismatches,
   checkRoleNonces,
   collateralMovedOut,
   expectedPrincipalTransfers,
@@ -18,6 +19,7 @@ import {
   payoutOwnerOf,
   scanForReplacement,
   scopeReason,
+  settlementBlocker,
   settlementPremises,
   TOPIC,
   transferMismatches,
@@ -414,6 +416,101 @@ describe('refinanceOutcome — the old lender\u2019s payout owner', () => {
     const r = payoutOwnerOf({ storedLenderAtFloor: OLD, storedLenderAtPrev: OLD, holderAtPrev: OLD, floor: 47_711_162n, prev: 47_711_161n });
     expect(r).toMatchObject({ owner: OLD, consolidated: true });
     expect(r.evidence).not.toMatch(/DIFFERS|before the accept was/);
+  });
+});
+
+// #2422 r12 — balance deltas per UNIQUE address, summing every leg.
+describe('refinanceOutcome — balance deltas survive address aliasing', () => {
+  const S = expectedSettlement(LOAN22_AT_P);
+  const legsFor = (p) => expectedPrincipalTransfers(S, { ...PARTIES, ...p });
+  // The real accept, no aliasing: every party's observed delta.
+  it('judges the real loan-22 deltas, wallets and vaults', () => {
+    const legs = legsFor({});
+    expect(
+      balanceDeltaMismatches(legs, [
+        { label: 'borrower', address: BORROWER, delta: -49_726_027_397_260n },
+        { label: 'lender', address: LENDER, delta: -4_999_900_000_000_000n },
+      ]).mismatches,
+    ).toEqual([]);
+    expect(
+      balanceDeltaMismatches(legs, [
+        { label: 'payout vault', address: OLD_LENDER_VAULT, delta: 5_038_931_506_849_315n },
+        { label: 'borrower vault', address: BORROWER_VAULT, delta: 0n },
+        { label: 'lender vault', address: LENDER_VAULT, delta: 0n },
+      ]).mismatches,
+    ).toEqual([]);
+  });
+
+  // Each alias pair: the payout vault is ALSO another party's vault. The
+  // chain shows the sum, and the per-address expectation is the sum too.
+  for (const [pair, alias, otherLegsSum] of [
+    ['payout vault = borrower vault (the borrower held the old lender position)', BORROWER_VAULT, 0n],
+    ['payout vault = lender vault (the accepting lender held or bought the old lender position)', LENDER_VAULT, 0n],
+  ]) {
+    it(`aggregates an alias: ${pair}`, () => {
+      const legs = legsFor({ oldLenderVault: alias });
+      const summed = S.lenderDue + otherLegsSum;
+      const observed = [
+        { label: 'payout vault', address: alias, delta: summed },
+        { label: 'other role\u2019s vault', address: alias, delta: summed },
+      ];
+      expect(balanceDeltaMismatches(legs, observed).mismatches).toEqual([]);
+      // The per-name comparison this replaces would have demanded 0 of the
+      // other role's vault and failed a correct accept:
+      const wrong = [{ label: 'other role\u2019s vault', address: alias, delta: 0n }];
+      expect(balanceDeltaMismatches(legs, wrong).mismatches).toHaveLength(1);
+    });
+  }
+
+  it('aggregates an alias: borrower vault = lender vault', () => {
+    const legs = legsFor({ lenderVault: BORROWER_VAULT });
+    const observed = [
+      { label: 'borrower vault', address: BORROWER_VAULT, delta: 0n },
+      { label: 'lender vault', address: BORROWER_VAULT, delta: 0n },
+    ];
+    expect(balanceDeltaMismatches(legs, observed).mismatches).toEqual([]);
+  });
+
+  it('aggregates an alias: borrower wallet = lender wallet', () => {
+    const legs = legsFor({ lender: BORROWER });
+    const net = -49_726_027_397_260n + -4_999_900_000_000_000n;
+    const observed = [
+      { label: 'borrower', address: BORROWER, delta: net },
+      { label: 'lender', address: BORROWER, delta: net },
+    ];
+    expect(balanceDeltaMismatches(legs, observed).mismatches).toEqual([]);
+  });
+
+  it('a wrong delta is still a mismatch, and one address read two ways is refused', () => {
+    const legs = legsFor({});
+    expect(balanceDeltaMismatches(legs, [{ label: 'payout vault', address: OLD_LENDER_VAULT, delta: 1n }]).mismatches[0]).toMatch(
+      /payout vault .*moved 1, expected 5038931506849315/,
+    );
+    expect(
+      balanceDeltaMismatches(legs, [
+        { label: 'a', address: OLD_LENDER_VAULT, delta: 1n },
+        { label: 'b', address: OLD_LENDER_VAULT, delta: 2n },
+      ]).mismatches[0],
+    ).toMatch(/one address read with 2 different deltas/);
+  });
+});
+
+// #2422 r12 — the reviewed fees must be the settled ones.
+describe('refinanceOutcome — when the settlement model may not judge', () => {
+  const ok = { prev: 8n, isolation: null, reviewDrift: [], premisesAtPrev: { holds: true, failures: [] }, discountEvents: [], payoffStep: null };
+  it('judges only when every premise holds', () => {
+    expect(settlementBlocker(ok)).toBeNull();
+  });
+  it('config changed between review and accept: never certified', () => {
+    expect(settlementBlocker({ ...ok, reviewDrift: ['lifBps: "20n" → "30n"'] })).toMatch(
+      /^config changed between review and accept \(block 8\): lifBps: "20n" → "30n" — the settled fees are not the reviewed ones/,
+    );
+  });
+  it('isolation outranks drift, and each other premise has its own reason', () => {
+    expect(settlementBlocker({ ...ok, isolation: 'x', reviewDrift: ['y'] })).toMatch(/not isolated from the accept's block: x/);
+    expect(settlementBlocker({ ...ok, premisesAtPrev: { holds: false, failures: [{ reason: 'r' }] } })).toMatch(/no longer held at block 8 — r/);
+    expect(settlementBlocker({ ...ok, discountEvents: ['VPFIDiscountApplied'] })).toMatch(/emitted VPFIDiscountApplied/);
+    expect(settlementBlocker({ ...ok, payoffStep: { tsPrev: 1n, tsAccept: 2n } })).toMatch(/payoff stepped/);
   });
 });
 
