@@ -35,7 +35,7 @@
  *    yet, so their Workers Builds auto-deploy is unguarded — tracked in the
  *    follow-up issue named in the indexer README.
  *
- * `REQUIRED_D1_MIGRATIONS` (requiredMigrations.ts) is pinned to the
+ * `REQUIRED_D1_MIGRATIONS` (requiredMigrations.json) is pinned to the
  * `migrations/` directory by `scripts/check-schema-gate.mjs` (part of
  * `typecheck`).
  */

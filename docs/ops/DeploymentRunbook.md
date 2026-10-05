@@ -357,7 +357,9 @@ manual follow-up required when the prerequisites are in place:
    indexer-owned migrations before publishing whichever Worker it is —
    the keeper phase, which runs first, lands the schema before any
    code that uses it. Re-running the apply in a later phase is a no-op
-   (wrangler skips applied files). A `--dry-run` applies nothing. The
+   (wrangler skips applied files). The wrapper verifies every required
+   migration is recorded before it publishes, and takes no arguments — a
+   dry run is `pnpm run deploy:dry`, which never migrates. The
    indexer still OWNS the schema: every migration lives in
    `apps/indexer/migrations/`. On `--fresh`, also seeds the indexer
    cursor at the current safe head so the first cron tick starts AT
