@@ -161,18 +161,47 @@ export async function readGraceSecondsLive(opts: {
   return defaultGraceSeconds(opts.durationDays);
 }
 
+/** `VaipakamDiamond.FunctionDoesNotExist()` — the Diamond fallback's
+ *  revert for a selector no facet hosts. No arguments, so the revert data
+ *  is exactly these four bytes. */
+const FUNCTION_DOES_NOT_EXIST_SELECTOR = '0xa9ad62f8';
+
+/** True when a viem contract call reverted with the Diamond's own
+ *  `FunctionDoesNotExist()`. Read from the error's STRUCTURE, never its
+ *  message: viem keeps the revert data on `raw` whether or not it could
+ *  decode it — decoded is the normal case now that the combined Diamond
+ *  ABI carries the proxy's errors (#2399), undecoded what an ABI without
+ *  that declaration leaves (and then `signature` carries it too). */
+export function isFunctionDoesNotExistRevert(e: unknown): boolean {
+  const reverted =
+    e instanceof BaseError
+      ? (e.walk((x) => x instanceof ContractFunctionRevertedError) as
+          | ContractFunctionRevertedError
+          | null)
+      : null;
+  if (!reverted) return false;
+  const raw = reverted.signature ?? reverted.raw ?? '';
+  return raw.toLowerCase().startsWith(FUNCTION_DOES_NOT_EXIST_SELECTOR);
+}
+
 /** True when a contract read failed because the Diamond doesn't cut the
- *  selector — as opposed to a transient RPC/ABI error. `0xa9ad62f8` is
- *  the Diamond's FunctionNotFound selector. Shared by the accept
- *  signers' gate previews and the signed-fill KYC preflight so every
- *  "older deploy without the view" branch classifies identically. */
+ *  selector — as opposed to a transient RPC/ABI error. Shared by the
+ *  accept signers' gate previews and the signed-fill KYC preflight so
+ *  every "older deploy without the view" branch classifies identically.
+ *
+ *  Structural first (#2399): once the combined ABI declared the proxy's
+ *  error, viem began DECODING it, and the decoded message reads
+ *  `FunctionDoesNotExist()` with no selector in it — a text match on the
+ *  selector alone stopped recognising the very revert it exists for. The
+ *  text match stays as the fallback for errors that are not viem's. */
 export function isMissingSelectorError(e: unknown): boolean {
+  if (isFunctionDoesNotExistRevert(e)) return true;
   const msg = String(
     (e as { data?: string; message?: string })?.data ??
       (e as Error)?.message ??
       '',
   );
-  return /function does not exist|functionnotfound|0xa9ad62f8/i.test(msg);
+  return /function does not exist|functiondoesnotexist|functionnotfound|0xa9ad62f8/i.test(msg);
 }
 
 /** LiquidityStatus enum values (LibVaipakam): 0 = Liquid, 1 = Illiquid. */
@@ -608,7 +637,6 @@ export async function assertRowActionStillValid(opts: {
  *     FAIL CLOSED with a retry. Retrying a read is free; a wasted
  *     signature and approval is not.
  */
-const FUNCTION_DOES_NOT_EXIST_SELECTOR = '0xa9ad62f8';
 /** `previewAccept(uint256,address)` — asked of the loupe by selector,
  *  because that is the routing question the fail-open branch turns on. */
 const PREVIEW_ACCEPT_SELECTOR = '0xa9582660';
@@ -630,23 +658,9 @@ export async function assertAcceptPreviewClearLive(opts: {
   } catch (err) {
     // An unrouted selector is NOT a failed check — it is a deploy
     // without this view. The Diamond's fallback reverts
-    // `FunctionDoesNotExist()`, which is declared on VaipakamDiamond
-    // and therefore absent from the exported facet ABIs, so viem
-    // cannot name it: match the raw 4-byte selector instead of
-    // guessing from the message text.
-    const reverted =
-      err instanceof BaseError
-        ? (err.walk((e) => e instanceof ContractFunctionRevertedError) as
-            | ContractFunctionRevertedError
-            | null)
-        : null;
-    // `signature` is the 4-byte selector viem keeps when it CANNOT
-    // decode the error — which is exactly this case, so it is the
-    // field that carries the answer; `raw` is the fallback for the
-    // full revert data. `data` is the DECODED form and is necessarily
-    // undefined here, so reading it would always miss.
-    const raw = reverted?.signature ?? reverted?.raw ?? '';
-    if (!raw.startsWith(FUNCTION_DOES_NOT_EXIST_SELECTOR)) {
+    // `FunctionDoesNotExist()`; read it from the error's structure, in
+    // the decoded and the raw form alike, never from the message text.
+    if (!isFunctionDoesNotExistRevert(err)) {
       throw new Error(copy.errors.checkRetry);
     }
     // That selector alone does NOT prove the deploy lacks this view.

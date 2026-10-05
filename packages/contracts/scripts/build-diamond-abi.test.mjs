@@ -9,10 +9,12 @@ import { readFileSync } from 'node:fs';
 import {
   UNION_PATH,
   buildDiamondAbi,
+  buildFromManifest,
   canonical,
   classificationProblems,
   listAbiFiles,
   readFacetAbi,
+  proxyEntries,
   readManifest,
   serialize,
 } from './build-diamond-abi.mjs';
@@ -22,12 +24,12 @@ const manifest = readManifest();
 test('the committed union is current with the facet ABIs', () => {
   assert.equal(
     readFileSync(UNION_PATH, 'utf8'),
-    serialize(buildDiamondAbi(manifest.facets)),
+    serialize(buildFromManifest(manifest)),
     'src/diamondAbi.json is stale — run node packages/contracts/scripts/build-diamond-abi.mjs',
   );
 });
 
-test('every ABI in src/abis is named exactly once, as a facet or as standalone', () => {
+test('every ABI in src/abis is named exactly once, as a facet, the proxy or standalone', () => {
   assert.deepEqual(classificationProblems(manifest, listAbiFiles()), []);
 });
 
@@ -42,6 +44,14 @@ test('the classification rule names each kind of drift (#2392 r1)', () => {
     classificationProblems({ facets: ['A', 'A'], standalone: [] }, ['A']).join('\n'),
     /named twice.*A/,
   );
+  // The proxy class counts as a classification (#2399), and cannot double up.
+  const withProxy = { ...m, proxy: ['P'] };
+  assert.deepEqual(classificationProblems(withProxy, ['A', 'B', 'S', 'P']), []);
+  assert.match(classificationProblems(m, ['A', 'B', 'S', 'P']).join('\n'), /not classified.*P/);
+  assert.match(
+    classificationProblems({ facets: ['P'], proxy: ['P'], standalone: [] }, ['P']).join('\n'),
+    /named twice.*P/,
+  );
 });
 
 test('the union drops only exact duplicates — every facet entry is still in it', () => {
@@ -53,10 +63,48 @@ test('the union drops only exact duplicates — every facet entry is still in it
   }
 });
 
-test('the union holds nothing that no facet carries', () => {
-  const facetEntries = new Set(manifest.facets.flatMap((n) => readFacetAbi(n).map(canonical)));
+test("the union carries every error and event the proxy declares (#2399)", () => {
+  // The Diamond's own fallback reverts FunctionDoesNotExist() for an unrouted
+  // selector — the revert a stale ABI produces. If the proxy drops out of the
+  // manifest, or the union stops taking its errors, this is what fails.
+  assert.deepEqual(manifest.proxy, ['VaipakamDiamond']);
+  const union = new Set(JSON.parse(readFileSync(UNION_PATH, 'utf8')).map(canonical));
+  const declared = proxyEntries(readFacetAbi('VaipakamDiamond'));
+  assert.ok(
+    declared.some((e) => e.type === 'error' && e.name === 'FunctionDoesNotExist'),
+    'VaipakamDiamond.json no longer declares FunctionDoesNotExist — re-export it',
+  );
+  for (const entry of declared) {
+    assert.ok(union.has(canonical(entry)), `VaipakamDiamond: ${entry.type} ${entry.name} is missing from the union`);
+  }
+});
+
+test("the union takes no proxy constructor, fallback or receive", () => {
+  const union = JSON.parse(readFileSync(UNION_PATH, 'utf8'));
+  for (const type of ['constructor', 'fallback', 'receive']) {
+    assert.equal(union.filter((e) => e.type === type).length, 0, `the union carries a ${type}`);
+  }
+  // And the filter itself: of a proxy ABI, only errors and events survive.
+  const abi = [
+    { type: 'constructor', inputs: [] },
+    { type: 'fallback' },
+    { type: 'receive' },
+    { type: 'error', name: 'E', inputs: [] },
+    { type: 'event', name: 'V', inputs: [], anonymous: false },
+  ];
+  assert.deepEqual(
+    buildDiamondAbi([], () => abi, ['P']).map((e) => e.type),
+    ['error', 'event'],
+  );
+});
+
+test('the union holds nothing that no facet or proxy declaration carries', () => {
+  const sources = new Set([
+    ...manifest.facets.flatMap((n) => readFacetAbi(n).map(canonical)),
+    ...(manifest.proxy ?? []).flatMap((n) => proxyEntries(readFacetAbi(n)).map(canonical)),
+  ]);
   for (const entry of JSON.parse(readFileSync(UNION_PATH, 'utf8'))) {
-    assert.ok(facetEntries.has(canonical(entry)), `${entry.type} ${entry.name ?? ''} is not from any facet`);
+    assert.ok(sources.has(canonical(entry)), `${entry.type} ${entry.name ?? ''} is not from any facet or the proxy`);
   }
 });
 

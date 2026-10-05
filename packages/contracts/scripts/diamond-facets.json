@@ -1,5 +1,5 @@
 {
-  "_readme": "The facets whose ABIs make up the combined Diamond ABI (`DIAMOND_ABI`), and the standalone contracts whose ABIs ship in the same directory but are NOT Diamond facets. scripts/build-diamond-abi.mjs builds src/diamondAbi.json from `facets` with exact duplicates removed. Every ABI JSON in src/abis must be named in exactly one list — scripts/build-diamond-abi.test.mjs enforces it, so a new facet cannot be left out of the Diamond ABI silently.",
+  "_readme": "The facets whose ABIs make up the combined Diamond ABI (`DIAMOND_ABI`), the Diamond PROXY contract itself, and the standalone contracts whose ABIs ship in the same directory but are NOT part of the Diamond. scripts/build-diamond-abi.mjs builds src/diamondAbi.json from every `facets` ABI plus only the errors and events of each `proxy` ABI (the proxy's constructor, fallback and receive are not callable entry points of the Diamond's interface), with exact duplicates removed. Every ABI JSON in src/abis must be named in exactly one list — scripts/build-diamond-abi.test.mjs enforces it, so a new facet cannot be left out of the Diamond ABI silently.",
   "facets": [
     "OfferCreateFacet",
     "SignedOfferFacet",
@@ -89,6 +89,9 @@
     "RewardForfeitWalkFacet",
     "RewardSweepWalkFacet",
     "DiamondCutFacet"
+  ],
+  "proxy": [
+    "VaipakamDiamond"
   ],
   "standalone": [
     "AggregatorAdapterImplementation",

@@ -128,6 +128,10 @@ import OwnershipFacetABI from './OwnershipFacet.json';
 import ReceiverFacetABI from './ReceiverFacet.json';
 import OfferAcceptFeeFacetABI from './OfferAcceptFeeFacet.json';
 import RewardClaimWalkFacetABI from './RewardClaimWalkFacet.json';
+// #2399 — the Diamond PROXY contract. Its errors and events (notably
+// `FunctionDoesNotExist`, the fallback's revert for an unrouted selector) are
+// merged into `DIAMOND_ABI`; its own constructor / fallback / receive are not.
+import VaipakamDiamondABI from './VaipakamDiamond.json';
 import RewardForfeitWalkFacetABI from './RewardForfeitWalkFacet.json';
 import RewardSweepWalkFacetABI from './RewardSweepWalkFacet.json';
 // FlashLoanLiquidationPath.md Phase 3 — standalone reference
@@ -229,6 +233,7 @@ export {
   ReceiverFacetABI,
   OfferAcceptFeeFacetABI,
   RewardClaimWalkFacetABI,
+  VaipakamDiamondABI,
   RewardForfeitWalkFacetABI,
   RewardSweepWalkFacetABI,
   FlashLoanLiquidatorABI,
@@ -241,7 +246,8 @@ import DiamondAbiUnion from '../diamondAbi.json';
 /** Combined ABI — all facet functions routed through the Diamond proxy.
  *
  *  UX3-008 — built at export time by `scripts/build-diamond-abi.mjs` from
- *  the facets listed in `scripts/diamond-facets.json`, with EXACT duplicate
+ *  the facets listed in `scripts/diamond-facets.json`, plus the errors and
+ *  events of the Diamond proxy contract itself (#2399), with EXACT duplicate
  *  entries removed. It used to be every facet ABI spread into one array
  *  here; each facet carries the shared errors and events it can surface, so
  *  three quarters of that array was repeats, shipped to every connected

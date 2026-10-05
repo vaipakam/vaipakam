@@ -16,6 +16,16 @@
  * compared on a canonical form (keys sorted, recursively), and the FIRST
  * occurrence is kept, so the union's order follows the manifest's.
  *
+ * The PROXY's own declarations (#2399). One revert is raised by the Diamond
+ * contract itself rather than by any facet: `VaipakamDiamond`'s fallback
+ * reverts `FunctionDoesNotExist()` for an unrouted selector — exactly what a
+ * stale ABI or a partial refresh produces, and the one revert a caller most
+ * needs to be able to name. The manifest lists the proxy under `proxy`, and
+ * the union takes only its ERRORS and EVENTS: its constructor is not part of
+ * the deployed interface, and its `fallback` / `receive` entries would tell
+ * an ABI consumer the Diamond accepts arbitrary calldata and plain ETH, which
+ * is a statement about routing, not an entry point anyone should encode.
+ *
  * Run by `contracts/script/exportFrontendAbis.sh` against its STAGED facet
  * ABIs, before anything is published (#2392 r1): a failure here leaves the
  * committed bundle untouched. Every run first checks that each ABI file is
@@ -61,21 +71,33 @@ export function readFacetAbi(name, dir = ABI_DIR) {
   return abi;
 }
 
-/** The union of the listed facets' ABIs, exact duplicates removed, first
- *  occurrence kept. */
-export function buildDiamondAbi(facets, read = readFacetAbi) {
+/** The kinds of proxy entry the union takes (#2399). */
+export const PROXY_ENTRY_TYPES = new Set(['error', 'event']);
+
+/** The entries of a proxy ABI that belong in the union. */
+export const proxyEntries = (abi) => abi.filter((e) => PROXY_ENTRY_TYPES.has(e.type));
+
+/** The union of the listed facets' ABIs plus the proxies' errors and events,
+ *  exact duplicates removed, first occurrence kept. */
+export function buildDiamondAbi(facets, read = readFacetAbi, proxies = []) {
   const seen = new Set();
   const out = [];
-  for (const name of facets) {
-    for (const entry of read(name)) {
+  const add = (entries) => {
+    for (const entry of entries) {
       const key = canonical(entry);
       if (seen.has(key)) continue;
       seen.add(key);
       out.push(entry);
     }
-  }
+  };
+  for (const name of facets) add(read(name));
+  for (const name of proxies) add(proxyEntries(read(name)));
   return out;
 }
+
+/** The union `diamond-facets.json` describes. */
+export const buildFromManifest = (manifest, read = readFacetAbi) =>
+  buildDiamondAbi(manifest.facets, read, manifest.proxy ?? []);
 
 /** One entry per line: small enough to ship, still reviewable as a diff. */
 export function serialize(abi) {
@@ -95,7 +117,7 @@ export function listAbiFiles(dir = ABI_DIR) {
  *  directory agree. Shared by the generator and the package test, so the
  *  export and CI apply one rule. */
 export function classificationProblems(manifest, files) {
-  const named = [...manifest.facets, ...(manifest.standalone ?? [])];
+  const named = [...manifest.facets, ...(manifest.proxy ?? []), ...(manifest.standalone ?? [])];
   const problems = [];
   const dupes = named.filter((n, i) => named.indexOf(n) !== i);
   if (dupes.length) problems.push(`named twice in diamond-facets.json: ${[...new Set(dupes)].join(', ')}`);
@@ -120,7 +142,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
     for (const p of problems) console.error(p);
     process.exit(1);
   }
-  const text = serialize(buildDiamondAbi(manifest.facets, (n) => readFacetAbi(n, abiDir)));
+  const text = serialize(buildFromManifest(manifest, (n) => readFacetAbi(n, abiDir)));
   if (process.argv.includes('--check')) {
     const current = readFileSync(outPath, 'utf8');
     if (current !== text) {
