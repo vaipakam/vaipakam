@@ -3554,12 +3554,15 @@ const copySource = {
       '{{remaining}} still committed ({{used}} consumed by earlier fills) — less than the {{floor}} every fill must lock, so no further fill can use it until the request is amended or cancelled',
       ['remaining', 'used', 'floor'],
     ),
-    // #2382 r1 — a single-value request (ceiling == floor). It commits
+    // #2382 r1/r3 — a single-value request (ceiling == floor). It commits
     // exactly this amount, but only a direct funding locks all of it: a
-    // matched fill locks the lender's pro-rated requirement and returns the
-    // rest, so the loan can carry less than the figure.
+    // matched fill locks the lender's pro-rated requirement, so the loan can
+    // carry less than the figure. Where the unused part goes is NOT stated:
+    // it is refunded at the match on a deployment without partial fills and
+    // stays committed for later fills on one with them, and the card does not
+    // read that setting.
     collateralSingle: tmpl(
-      '{{amount}} committed — funding it directly locks all of it; a matched fill locks only what the lender requires, up to {{amount}}, and returns the rest',
+      '{{amount}} committed — funding it directly locks all of it; a matched fill locks only what the lender requires, up to {{amount}}',
       ['amount'],
     ),
     // #2384 (UX3-007) — the loan-to-value the card can substantiate, from
@@ -3580,6 +3583,11 @@ const copySource = {
     ltvTooSmall: 'loan-to-value can’t be worked out at this size — one side’s value rounds to nothing',
     ltvUnknown: 'loan-to-value couldn’t be checked right now',
     ltvLoading: 'checking loan-to-value…',
+    // #2382 r3 — a borrow request that earlier matched fills have part-used:
+    // the next fill's amount and collateral both vary (and below the floor no
+    // fill can execute), so there are no "amounts shown" to take a ratio at.
+    ltvPartFilled:
+      'loan-to-value isn’t stated for a request already part-filled — each further matched fill sets its own amounts',
     // #2378 r4 — a loan-position sale row carries no collateral of its own.
     collateralOfRunningLoan: 'the collateral of the running loan being sold (not shown on this row)',
     // #2378 r1 — an ERC-20 collateral amount whose token details are still

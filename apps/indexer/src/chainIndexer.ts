@@ -3531,10 +3531,18 @@ async function refreshOfferDetails(
   // and was missed — `creator_current_owner` is stuck at the OfferCreated seed.
   // Now that we know the real `positionTokenId`, read its owner ONCE so the
   // D1-only wallet routes (and the LoanInitiated creator-side seed that copies
-  // this column) see the true holder. Falls back to the creator on a revert
-  // (e.g. an already-burned token) — same as the no-transfer default. One bounded
-  // RPC per stub-heal (cron pass, not the hot read path).
-  let creatorCurrentOwner = o.creator.toLowerCase();
+  // this column) see the true holder. One bounded RPC per heal (cron pass, not
+  // the hot read path).
+  //
+  // A FAILED read changes nothing (#2382 r3). This lane no longer heals only
+  // stubs: migration 0054 sends every active offer through it, including ones
+  // whose holder the Transfer handler already recorded. Writing the creator
+  // whenever `ownerOf` did not answer — a revert, or just a dropped request —
+  // would hand a transferred offer back to its creator and drop it from the
+  // holder's `/offers/by-owner`. So an unanswered read keeps what is stored,
+  // and only a row with NOTHING stored (a stub's empty seed) falls back to
+  // the creator, the old no-transfer default.
+  let observedOwner: string | null = null;
   if (o.positionTokenId > 0n) {
     try {
       const owner = (await client.readContract({
@@ -3543,9 +3551,9 @@ async function refreshOfferDetails(
         functionName: 'ownerOf',
         args: [o.positionTokenId],
       })) as string;
-      if (owner) creatorCurrentOwner = owner.toLowerCase();
+      if (owner) observedOwner = owner.toLowerCase();
     } catch {
-      // burned / nonexistent token — keep the creator default.
+      // unanswered — keep the stored holder (see above).
     }
   }
   await env.DB.prepare(
@@ -3561,7 +3569,7 @@ async function refreshOfferDetails(
        prepay_asset = ?, use_full_term_interest = ?,
        creator_fallback_consent = ?, allows_partial_repay = ?,
        created_at = ?, expires_at = ?, fill_mode = ?,
-       creator_current_owner = ?,
+       creator_current_owner = COALESCE(?, NULLIF(creator_current_owner, ''), ?),
        is_stub = 0,
        updated_at = ?
      WHERE chain_id = ? AND offer_id = ?`,
@@ -3596,7 +3604,8 @@ async function refreshOfferDetails(
       Number(o.createdAt ?? 0n),
       Number(o.expiresAt ?? 0n),
       Number(o.fillMode ?? 0),
-      creatorCurrentOwner,
+      observedOwner,
+      o.creator.toLowerCase(),
       now,
       chainId,
       offerId,

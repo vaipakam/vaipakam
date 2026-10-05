@@ -88,6 +88,8 @@ function ltvText(ltv: OfferLtv): string | null {
       return copy.offers.ltvUnknown;
     case 'loading':
       return copy.offers.ltvLoading;
+    case 'partFilled':
+      return copy.offers.ltvPartFilled;
     case 'none':
       return null;
   }

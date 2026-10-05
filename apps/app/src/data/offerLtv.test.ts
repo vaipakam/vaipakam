@@ -68,6 +68,20 @@ describe('offerLtv', () => {
       });
     }
   });
+  it('states — never computes — a part-filled borrow request’s ratio (#2382 r3)', () => {
+    const req = { offerType: 1, amount: '500000000', amountMax: '1000000000' };
+    expect(offerLtv(offer({ ...req, amountFilled: '500000000' }), PRICED)).toEqual({ kind: 'partFilled' });
+    expect(
+      offerLtv(offer({ ...req, collateralAmountMax: '2000000000000000000', collateralAmountFilled: '1' }), PRICED),
+    ).toEqual({ kind: 'partFilled' });
+    // An unfilled request is still a (qualified) ratio, and a part-filled
+    // LEND offer stays a ratio at its full size, as before.
+    expect(offerLtv(offer({ ...req, amountFilled: '0', collateralAmountFilled: '0' }), PRICED)).toMatchObject({
+      kind: 'value',
+      ranged: true,
+    });
+    expect(offerLtv(offer({ amountFilled: '1' }), PRICED)).toMatchObject({ kind: 'value', ranged: true });
+  });
   it('keeps precision for small offers instead of flooring to 0%', () => {
     // 1 USDC against 0.001 WETH ($2) → 50%, not a whole-dollar 0.
     expect(

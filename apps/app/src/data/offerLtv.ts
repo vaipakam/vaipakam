@@ -50,6 +50,8 @@ export type OfferLtv =
   | { kind: 'tooSmall' }
   | { kind: 'unknown' }
   | { kind: 'loading' }
+  /** #2382 r3 — a borrow request earlier matched fills have part-used. */
+  | { kind: 'partFilled' }
   | { kind: 'none' };
 
 const ZERO = '0x0000000000000000000000000000000000000000';
@@ -96,6 +98,18 @@ export function offerLtv(
 ): OfferLtv {
   const legs = ltvLegs(offer);
   if (!legs) return { kind: 'none' };
+  // #2382 r3 — a part-used borrow request has no single pair of amounts a
+  // further fill would carry: its principal and collateral both vary per
+  // fill, and the card shows the remaining COMMITMENT, not a fill. A ratio
+  // against the original floor would be labelled "at the amounts shown" while
+  // matching neither. Stated, not computed. (A part-filled LEND offer stays a
+  // ratio at its full size, qualified as ranged, as before.)
+  if (
+    offer.offerType === 1 &&
+    (BigInt(offer.amountFilled || '0') > 0n || BigInt(offer.collateralAmountFilled || '0') > 0n)
+  ) {
+    return { kind: 'partFilled' };
+  }
   if (pricing === undefined) return { kind: 'loading' };
   if (pricing === null) return { kind: 'unknown' };
   const lend = pricing.get(legs.lending);

@@ -1260,7 +1260,10 @@ progress.
   and EVERY borrow request — the card says so. A borrow request is never stated
   exactly, even one whose collateral ceiling equals its floor: a direct funding
   locks exactly the amounts shown, but a matched fill locks only what the
-  lender requires and returns the rest, so the resulting ratio can be higher.
+  lender requires, so the resulting ratio can be higher. A request that earlier
+  matched fills have already part-used has no single pair of amounts a further
+  fill would carry, so its card states that the ratio is not given rather than
+  one taken against the original floor.
   When the
   protocol treats either side as illiquid the card says the ratio isn't worked
   out and names both possible causes (no reliable price, or too little trading),
@@ -1292,7 +1295,10 @@ progress.
   presenting it as available. A request whose ceiling equals its floor
   is never stated as an exact loan collateral: it commits exactly that amount
   and a direct funding locks all of it, but a matched fill locks only what the
-  lender requires and returns the rest, and the card says both. For the same
+  lender requires, and the card says both. Where the unused part goes depends
+  on the deployment — refunded at the match where partial fills are off, kept
+  committed for later fills where they are on — and the card does not assert
+  either. For the same
   reason a borrow request's loan-to-value is always qualified as the ratio at
   the amounts shown. Until the ceiling or the part already used has
   been read — older market data, or a request the index has not re-read yet —

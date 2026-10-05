@@ -236,3 +236,62 @@ describe('the heal lanes run LAST in the pass (#2382 r2)', () => {
     expect(src).not.toContain('readOfferFillsAt');
   });
 });
+
+describe('a range backfill keeps the offer’s recorded holder (#2382 r3)', () => {
+  const CREATOR = '0x00000000000000000000000000000000000000c0';
+  const HOLDER = '0x00000000000000000000000000000000000000d0';
+  const NEW_HOLDER = '0x00000000000000000000000000000000000000e0';
+  const detail = {
+    creator: CREATOR, offerType: 1, principalLiquidity: 0, collateralLiquidity: 0, accepted: false,
+    assetType: 0, collateralAssetType: 0, useFullTermInterest: false, creatorRiskAndTermsConsent: true,
+    allowsPartialRepay: false, lendingAsset: '0x00000000000000000000000000000000000000a1', amount: 1000n,
+    interestRateBps: 500n, collateralAsset: '0x00000000000000000000000000000000000000b1', collateralAmount: 150n,
+    durationDays: 30n, tokenId: 0n, positionTokenId: 5n, quantity: 0n, collateralTokenId: 0n,
+    collateralQuantity: 0n, prepayAsset: '0x0000000000000000000000000000000000000000', amountMax: 1000n,
+    amountFilled: 0n, interestRateBpsMax: 500n, collateralAmountMax: 400n, collateralAmountFilled: 0n,
+    createdAt: 1n, expiresAt: 0n, fillMode: 0,
+  };
+  const client = (owner: () => string) =>
+    ({
+      async readContract({ functionName }: { functionName: string }) {
+        if (functionName === 'getOfferDetails') return detail;
+        return owner();
+      },
+    }) as never;
+  const run = async (h: ReturnType<typeof createSqliteD1>, owner: () => string) => {
+    const budget = createBudget(1_000, 'test', 1_000);
+    await refreshStubOffers(client(owner), '0x0' as never, 84532,
+      meterEnv({ DB: h.d1 } as unknown as Env, budget) as unknown as Env, budget);
+    return h.db.prepare('SELECT creator_current_owner AS o, collateral_amount_max AS m FROM offers').get() as {
+      o: string;
+      m: string | null;
+    };
+  };
+
+  it('keeps a recorded transferee when ownerOf does not answer, and still writes the range', async () => {
+    const h = createSqliteD1(migrations());
+    seed(h, { creator_current_owner: HOLDER });
+    const r = await run(h, () => {
+      throw new Error('rpc dropped');
+    });
+    expect(r).toEqual({ o: HOLDER, m: '400' });
+  });
+
+  it('writes the holder ownerOf reports', async () => {
+    const h = createSqliteD1(migrations());
+    seed(h, { creator_current_owner: HOLDER });
+    expect((await run(h, () => NEW_HOLDER)).o).toBe(NEW_HOLDER);
+  });
+
+  it('falls back to the creator only when nothing is recorded', async () => {
+    const h = createSqliteD1(migrations());
+    seed(h, { creator_current_owner: '' });
+    expect(
+      (
+        await run(h, () => {
+          throw new Error('reverted');
+        })
+      ).o,
+    ).toBe(CREATOR);
+  });
+});
