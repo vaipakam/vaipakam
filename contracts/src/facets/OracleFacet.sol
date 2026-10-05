@@ -106,6 +106,12 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
     ///         when the borrowed one is (`10**gap` must). Far beyond any real
     ///         token pair, and refused by name rather than by an overflow.
     error DecimalScaleUnsupported(uint256 gap);
+    /// @notice Reverted by the pair-level {calculateLTV} when an asset's
+    ///         price resolves to zero — a composed price can floor to zero
+    ///         even when every component feed is positive. A zero price says
+    ///         nothing about value, so it is refused rather than read as a
+    ///         loan-to-value of 0 ("no risk") or as zero collateral.
+    error ZeroPrice(address asset);
 
     // 0.3% v3-style AMM fee tier — the standard ERC20/WETH venue. Resolved
     // live via `factory.getPool(tokenA, tokenB, fee)` so the same code path
@@ -354,9 +360,11 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
      *         truncation — tracked as #2419.
      *
      *         Reverts {ZeroCollateral} on a zero collateral amount, as the
-     *         loan-level path does; returning 0 read as "no risk". (A
-     *         nonzero amount cannot value to zero here: {getAssetPrice}
-     *         refuses a non-positive price.) Reverts on a missing or stale
+     *         loan-level path does; returning 0 read as "no risk". Reverts
+     *         {ZeroPrice} when either asset's price resolves to zero (#2418
+     *         r4): a composed price can floor to zero from positive feeds,
+     *         and a zero borrowed price would otherwise return a confident
+     *         0 for a nonzero debt. Reverts on a missing or stale
      *         feed via {getAssetPrice}. Two stated limits, both far outside
      *         any real asset: {DecimalScaleUnsupported} when the legs'
      *         decimal scales differ by more than 73 / 77 (#2418 r3 — see the
@@ -378,9 +386,10 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         // The two legs' decimal scales, as powers of ten.
         uint256 borrowedScale = uint256(borrowedFeedDec) + IERC20Metadata(borrowedAsset).decimals();
         uint256 collateralScale = uint256(collateralFeedDec) + IERC20Metadata(collateralAsset).decimals();
+        if (borrowedPrice == 0) revert ZeroPrice(borrowedAsset);
+        if (collateralPrice == 0) revert ZeroPrice(collateralAsset);
         uint256 borrowedRaw = borrowedAmount * borrowedPrice;
         uint256 collateralRaw = collateralAmount * collateralPrice;
-        if (collateralRaw == 0) revert ZeroCollateral();
 
         // Cancel only the common power of ten, then floor once.
         uint256 gap = collateralScale >= borrowedScale
@@ -391,14 +400,26 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
             ltv = Math.mulDiv(borrowedRaw, LibVaipakam.LTV_SCALE * (10 ** gap), collateralRaw);
         } else {
             if (gap > 77) revert DecimalScaleUnsupported(gap); // 10**gap < 2**256
-            // The decimal divisor goes INSIDE the full-precision division
-            // (#2418 r3): dividing it out afterwards made mulDiv hold the
-            // unscaled quotient, which can exceed 256 bits when the final
-            // ratio does not. Still exact — for integers,
-            // floor(floor(N / k) / D) == floor(N / (k · D)) — and the
-            // denominator never becomes `collateralRaw · 10**gap`, which can
-            // overflow on large collateral.
-            ltv = Math.mulDiv(borrowedRaw, LibVaipakam.LTV_SCALE, 10 ** gap) / collateralRaw;
+            // ltv = floor(borrowedRaw · LTV_SCALE / (k · collateralRaw)),
+            // k = 10**gap, with no intermediate allowed to overflow when the
+            // result fits (#2418 r3/r4):
+            //  - k · collateralRaw fits → ONE full-precision division by it;
+            //    mulDiv then reverts only if the true result does not fit.
+            //  - it does not fit → the result is below LTV_SCALE, and the
+            //    LARGER of the two divisors goes inside mulDiv. Since
+            //    k · collateralRaw > 2**256, that divisor exceeds 2**128, so
+            //    the intermediate is below 2**256 · LTV_SCALE / 2**128 and
+            //    fits; the smaller is divided out after.
+            // Every order is exact: floor(floor(N / a) / b) == floor(N / (a · b)).
+            uint256 k = 10 ** gap;
+            (bool fits, uint256 denominator) = Math.tryMul(k, collateralRaw);
+            if (fits) {
+                ltv = Math.mulDiv(borrowedRaw, LibVaipakam.LTV_SCALE, denominator);
+            } else if (collateralRaw >= k) {
+                ltv = Math.mulDiv(borrowedRaw, LibVaipakam.LTV_SCALE, collateralRaw) / k;
+            } else {
+                ltv = Math.mulDiv(borrowedRaw, LibVaipakam.LTV_SCALE, k) / collateralRaw;
+            }
         }
     }
 

@@ -415,6 +415,60 @@ contract OracleFacetTest is Test {
         OracleFacet(address(diamond)).calculateLTV(b0, 1, c74, 1e74);
     }
 
+    /// #2418 r4 — the reviewer's case: a 1-decimal gap with a maximal borrow
+    /// returns the representable result instead of overflowing the
+    /// intermediate quotient. max units of B1 against 1000 of C0, unit prices:
+    /// max · 1e4 / (10 · 1000) == max.
+    function testCalculateLTVMaximalBorrowSmallGap() public {
+        address b1 = address(new ERC20Mock("B1", "B1", 1));
+        address c0 = address(new ERC20Mock("C0", "C0", 0));
+        _mockRegistryFeed(b1, mockFeed);
+        _mockRegistryFeed(c0, mockFeed2);
+        _mockFeedFull(mockFeed, int256(1), 0);
+        _mockFeedFull(mockFeed2, int256(1), 0);
+        assertEq(OracleFacet(address(diamond)).calculateLTV(b1, type(uint256).max, c0, 1000), type(uint256).max);
+    }
+
+    /// #2418 r4 — when 10**gap · collateral does NOT fit, both orderings stay
+    /// exact and never overflow: the larger divisor goes inside mulDiv.
+    function testCalculateLTVOverflowingDenominatorBothOrders() public {
+        address c0 = address(new ERC20Mock("C0", "C0", 0));
+        _mockRegistryFeed(c0, mockFeed2);
+        _mockFeedFull(mockFeed2, int256(1), 0);
+        _mockFeedFull(mockFeed, int256(1), 0);
+        // 10**gap larger: 77-decimal borrowed, max units against 1000.
+        // floor(max · 1e4 / 1e80) == 11.
+        address b77 = address(new ERC20Mock("B77", "B77", 77));
+        _mockRegistryFeed(b77, mockFeed);
+        assertEq(OracleFacet(address(diamond)).calculateLTV(b77, type(uint256).max, c0, 1000), 11);
+        // Collateral larger: 1-decimal borrowed, max against max:
+        // max · 1e4 / (10 · max) == 1000.
+        address b1 = address(new ERC20Mock("B1", "B1", 1));
+        _mockRegistryFeed(b1, mockFeed);
+        assertEq(
+            OracleFacet(address(diamond)).calculateLTV(b1, type(uint256).max, c0, type(uint256).max),
+            1000
+        );
+    }
+
+    /// #2418 r4 — a price that resolves to zero (a composed price can floor to
+    /// zero from positive feeds) is refused by name on either side, never read
+    /// as LTV 0 ("no risk") or as zero collateral.
+    function testCalculateLTVRefusesAZeroPrice() public {
+        _mockRegistryFeed(mockAsset2, mockFeed2);
+        _mockFeedFull(mockFeed2, int256(1e8), 8);
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, mockAsset),
+            abi.encode(uint256(0), uint8(8))
+        );
+        vm.expectRevert(abi.encodeWithSelector(OracleFacet.ZeroPrice.selector, mockAsset));
+        OracleFacet(address(diamond)).calculateLTV(mockAsset, 1 ether, mockAsset2, 1 ether);
+
+        vm.expectRevert(abi.encodeWithSelector(OracleFacet.ZeroPrice.selector, mockAsset));
+        OracleFacet(address(diamond)).calculateLTV(mockAsset2, 1 ether, mockAsset, 1 ether);
+    }
+
     /// #2418 r2 — large amounts with high-decimal feeds and tokens do not
     /// overflow the one-step ratio: 1e9 whole 18-decimal tokens priced with an
     /// 18-decimal feed on both sides.

@@ -174,15 +174,18 @@ library LibRiskMath {
     ///         cfgTierMaxInitLtvBps(effectiveTier(collateral)))`.
     /// @dev    `LTV = debtUSD × BASIS_POINTS / collateralUsd` (the loan-level
     ///         `RiskFacet.calculateLTV(loanId)` formula, which values each
-    ///         leg via `RiskFacet._computeNumeraireValues`; the pair-level
-    ///         `OracleFacet.calculateLTV` preview applies the same valuation
-    ///         since #2403), so `LTV ≤ capBps` ⟺
+    ///         leg via `RiskFacet._computeNumeraireValues`, flooring each leg
+    ///         to whole numeraire units), so `LTV ≤ capBps` ⟺
     ///         `collateralUsd ≥ debtUSD × BASIS_POINTS / capBps`. Doesn't
     ///         involve `liqThresholdBps` (the LTV cap is on the *borrow*
     ///         ratio, not the liquidation trigger; and since the invariant
     ///         `capBps ≤ loanInitMaxLtvBps ≤ liqThresholdBps` holds, this floor
     ///         dominates the `HF ≥ 1e18` floor `_checkInitialLtvAndHf`
-    ///         also keeps). Returns `type(uint256).max` when `capBps == 0`
+    ///         also keeps). The pair-level `OracleFacet.calculateLTV`
+    ///         preview prices in the same units but floors only the final
+    ///         ratio, so it is NOT a substitute for this binding rounding:
+    ///         for a leg near one numeraire unit the two can differ (#2419).
+    ///         Returns `type(uint256).max` when `capBps == 0`
     ///         (a Tier-0 / no-borrow collateral — no positive amount
     ///         satisfies it, caller must reject); returns `0` when oracle
     ///         price is missing on either leg (no create-time bound, fall
