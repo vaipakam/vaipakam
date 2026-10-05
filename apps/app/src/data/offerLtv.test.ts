@@ -49,6 +49,8 @@ describe('offerLtv', () => {
       kind: 'value',
       bps: 2500n,
       ranged: true,
+      // #2382 r5 — and its basis is named: the request's collateral floor.
+      atFloor: true,
     });
   });
   it('keeps a borrow request qualified even when its ceiling equals its floor (#2382 r1)', () => {
@@ -65,6 +67,7 @@ describe('offerLtv', () => {
         kind: 'value',
         bps: 2500n,
         ranged: true,
+        atFloor: true,
       });
     }
   });
@@ -81,6 +84,9 @@ describe('offerLtv', () => {
       ranged: true,
     });
     expect(offerLtv(offer({ amountFilled: '1' }), PRICED)).toMatchObject({ kind: 'value', ranged: true });
+    // A lend offer's ratio is at its own full size, so it carries no
+    // floor basis.
+    expect(offerLtv(offer({ amountFilled: '1' }), PRICED)).not.toHaveProperty('atFloor');
   });
   it('keeps precision for small offers instead of flooring to 0%', () => {
     // 1 USDC against 0.001 WETH ($2) → 50%, not a whole-dollar 0.

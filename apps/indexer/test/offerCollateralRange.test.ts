@@ -16,6 +16,9 @@ import type { Env } from '../src/env';
 import { createSqliteD1 } from './helpers/sqliteD1';
 
 const MIGRATIONS_DIR = new URL('../migrations/', import.meta.url);
+/** The settled block a pass pins its heal reads to. */
+const AT = 12_345n;
+
 const migrations = (upTo?: string) =>
   readdirSync(MIGRATIONS_DIR)
     .filter((f) => f.endsWith('.sql') && (upTo === undefined || f < upTo))
@@ -122,6 +125,7 @@ describe('the range backfill lane (#2382 r1/r2)', () => {
       84532,
       meterEnv({ DB: h.d1 } as unknown as Env, budget) as unknown as Env,
       budget,
+      AT,
     );
     expect(reads.length).toBe(3);
     // D1 queries are a second ceiling (#2382 r2): with none left after the
@@ -134,6 +138,7 @@ describe('the range backfill lane (#2382 r1/r2)', () => {
       84532,
       meterEnv({ DB: h.d1 } as unknown as Env, tight) as unknown as Env,
       tight,
+      AT,
     );
     expect(none.length).toBe(0);
   });
@@ -151,6 +156,7 @@ describe('the range backfill lane (#2382 r1/r2)', () => {
       84532,
       meterEnv({ DB: h.d1 } as unknown as Env, budget) as unknown as Env,
       budget,
+      AT,
     );
     expect(reads.sort()).toEqual([1, 2]);
   });
@@ -183,6 +189,7 @@ describe('a match marks the borrower offer’s fills unread (#2382 r2)', () => {
       84532,
       meterEnv({ DB: h.d1 } as unknown as Env, budget) as unknown as Env,
       budget,
+      AT,
     );
     expect(reads).toEqual([1]);
   });
@@ -261,7 +268,7 @@ describe('a range backfill keeps the offer’s recorded holder (#2382 r3)', () =
   const run = async (h: ReturnType<typeof createSqliteD1>, owner: () => string) => {
     const budget = createBudget(1_000, 'test', 1_000);
     await refreshStubOffers(client(owner), '0x0' as never, 84532,
-      meterEnv({ DB: h.d1 } as unknown as Env, budget) as unknown as Env, budget);
+      meterEnv({ DB: h.d1 } as unknown as Env, budget) as unknown as Env, budget, AT);
     return h.db.prepare('SELECT creator_current_owner AS o, collateral_amount_max AS m FROM offers').get() as {
       o: string;
       m: string | null;
@@ -311,6 +318,7 @@ describe('a match that also CLOSES the borrower offer is still re-read (#2382 r4
       84532,
       meterEnv({ DB: h.d1 } as unknown as Env, budget) as unknown as Env,
       budget,
+      AT,
     );
     return seen;
   };
@@ -336,5 +344,43 @@ describe('a match that also CLOSES the borrower offer is still re-read (#2382 r4
     expect(await reads(h, () => zero)).toEqual([]);
     const r = h.db.prepare('SELECT collateral_amount_filled AS f FROM offers').get() as { f: string };
     expect(r.f).toBe('0');
+  });
+});
+
+describe('heal reads are pinned to the settled scan block (#2382 r5)', () => {
+  it('passes the pass’s scanTo to the details and ownerOf reads', async () => {
+    const h = createSqliteD1(migrations());
+    seed(h, { creator_current_owner: '0x00000000000000000000000000000000000000d0' });
+    const blocks: Array<[string, unknown]> = [];
+    const budget = createBudget(1_000, 'test', 1_000);
+    await refreshStubOffers(
+      ({
+        async readContract({ functionName, blockNumber }: { functionName: string; blockNumber?: bigint }) {
+          blocks.push([functionName, blockNumber]);
+          if (functionName === 'getOfferDetails') {
+            return {
+              creator: '0x00000000000000000000000000000000000000c0', offerType: 1, principalLiquidity: 0,
+              collateralLiquidity: 0, accepted: false, assetType: 0, collateralAssetType: 0,
+              useFullTermInterest: false, creatorRiskAndTermsConsent: true, allowsPartialRepay: false,
+              lendingAsset: '0x00000000000000000000000000000000000000a1', amount: 1n, interestRateBps: 1n,
+              collateralAsset: '0x00000000000000000000000000000000000000b1', collateralAmount: 1n,
+              durationDays: 1n, tokenId: 0n, positionTokenId: 5n, quantity: 0n, collateralTokenId: 0n,
+              collateralQuantity: 0n, prepayAsset: '0x0000000000000000000000000000000000000000',
+              amountMax: 1n, amountFilled: 0n, collateralAmountMax: 1n, collateralAmountFilled: 0n,
+            };
+          }
+          return '0x00000000000000000000000000000000000000e0';
+        },
+      }) as never,
+      '0x0' as never,
+      84532,
+      meterEnv({ DB: h.d1 } as unknown as Env, budget) as unknown as Env,
+      budget,
+      AT,
+    );
+    expect(blocks).toEqual([
+      ['getOfferDetails', AT],
+      ['ownerOf', AT],
+    ]);
   });
 });

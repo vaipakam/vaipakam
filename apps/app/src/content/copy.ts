@@ -3549,8 +3549,8 @@ const copySource = {
     // what those fills CONSUMED (cumulative; a resulting loan may have
     // settled since, so not "locked").
     collateralRangeRemaining: tmpl(
-      '{{remaining}} still committed ({{used}} consumed by earlier fills)',
-      ['remaining', 'used'],
+      '{{remaining}} still committed ({{used}} consumed by earlier fills; request floor {{floor}}); how much a fill locks depends on how it is filled',
+      ['remaining', 'used', 'floor'],
     ),
     collateralRemainingBelowFloor: tmpl(
       '{{remaining}} still committed ({{used}} consumed by earlier fills) — below the request’s {{floor}} floor',
@@ -3567,6 +3567,13 @@ const copySource = {
     ),
     ltvValueRanged: tmpl(
       'loan-to-value {{pct}} at the amounts shown (the loan’s value as a share of the collateral’s) — a fill of another size can differ',
+      ['pct'],
+    ),
+    // #2382 r5 — a borrow request's ratio names its basis: the requested
+    // amount against the collateral FLOOR, not the larger commitment the card
+    // shows beside it.
+    ltvValueAtFloor: tmpl(
+      'loan-to-value {{pct}} at the requested amount and the request’s collateral floor (the loan’s value as a share of the collateral’s) — a fill can differ',
       ['pct'],
     ),
     ltvIlliquid:

@@ -10,7 +10,7 @@ const labels = {
   atLeast: (a: string) => `at least ${a}`,
   forFullOffer: (a: string) => `${a} for the full offer (proportionally less for part of it)`,
   range: (c: string, f: string) => `${c} committed (floor ${f})`,
-  rangeRemaining: (r: string, u: string) => `${r} still committed (${u} consumed)`,
+  rangeRemaining: (r: string, u: string, f: string) => `${r} still committed (${u} consumed; floor ${f})`,
   remainingBelowFloor: (r: string, u: string, f: string) => `${r} still committed (${u} consumed) — below the ${f} floor`,
   single: (a: string) => `${a} committed`,
 };
@@ -58,7 +58,7 @@ describe('offerCollateralText', () => {
     });
     it('states EXACTLY what is still committed after earlier fills — never a range (#2382 r2)', () => {
       expect(offerCollateralText({ ...req, borrowerRange: { ceiling: e(400), filled: e(100) } })).toBe(
-        '300 tLIQ still committed (100 tLIQ consumed)',
+        '300 tLIQ still committed (100 tLIQ consumed; floor 150 tLIQ)',
       );
     });
     it('says a remainder below the floor can be used by no fill (#2382 r2)', () => {
@@ -68,7 +68,7 @@ describe('offerCollateralText', () => {
       );
       // Exactly the floor left is still usable.
       expect(offerCollateralText({ ...req, borrowerRange: { ceiling: e(400), filled: e(250) } })).toBe(
-        '150 tLIQ still committed (250 tLIQ consumed)',
+        '150 tLIQ still committed (250 tLIQ consumed; floor 150 tLIQ)',
       );
     });
     it('keeps "at least" while the ceiling or fills are unread — never assumes', () => {

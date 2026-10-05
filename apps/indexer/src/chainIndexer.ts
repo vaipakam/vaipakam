@@ -2458,7 +2458,7 @@ async function runChainPass(
   let detailRefreshes = 0;
   let loanDetailRefreshes = 0;
   try {
-    detailRefreshes = await refreshStubOffers(client, diamond, chainId, env, budget);
+    detailRefreshes = await refreshStubOffers(client, diamond, chainId, env, budget, scanTo);
     // Bootstrap loan position-NFT token IDs (lender_token_id /
     // borrower_token_id) for any newly-inserted loan rows. One
     // getLoanDetails call per loan, batched per tick. After bootstrap
@@ -3404,6 +3404,9 @@ export async function refreshStubOffers(
   chainId: number,
   env: Env,
   budget: TickBudget,
+  /** The block every read is pinned to — the pass's settled `scanTo`
+   *  (#2382 r5). See `refreshOfferDetails`. */
+  atBlock: bigint,
 ): Promise<number> {
   if (!healRowAffordable(budget, 1)) return 0;
   // Targeted refresh: only rows actually flagged as stub. Every row
@@ -3442,7 +3445,7 @@ export async function refreshStubOffers(
   let refreshed = 0;
   for (const row of stale.results ?? []) {
     if (!healRowAffordable(budget, OFFER_DETAIL_REFRESH_COST)) break;
-    const ok = await refreshOfferDetails(client, diamond, chainId, row.offer_id, env);
+    const ok = await refreshOfferDetails(client, diamond, chainId, row.offer_id, env, atBlock);
     if (ok) refreshed++;
   }
   return refreshed;
@@ -3462,6 +3465,14 @@ async function refreshOfferDetails(
   chainId: number,
   offerId: number,
   env: Env,
+  /** PINNED to the pass's settled `scanTo` (#2382 r5). An unpinned read
+   *  returns the unsafe tip: a match, amend or transfer the scan has not
+   *  reached yet — and which may be reorged away — would be written here, the
+   *  row would leave the heal queue with both range columns set, and the
+   *  canonical scan would never see the vanished event to correct it. At
+   *  `scanTo` the row reflects exactly the events this pass processed; a
+   *  later event updates it when the scan reaches it. */
+  atBlock: bigint,
 ): Promise<boolean> {
   let detail: Record<string, unknown> | null = null;
   try {
@@ -3470,6 +3481,7 @@ async function refreshOfferDetails(
       abi: DIAMOND_OFFER_DETAILS_ABI,
       functionName: 'getOfferDetails',
       args: [BigInt(offerId)],
+      blockNumber: atBlock,
     })) as Record<string, unknown>;
   } catch (err) {
     console.error(`[chainIndexer] getOfferDetails(${offerId}) failed`, err);
@@ -3563,6 +3575,7 @@ async function refreshOfferDetails(
         abi: ERC721_OWNER_OF_ABI,
         functionName: 'ownerOf',
         args: [o.positionTokenId],
+        blockNumber: atBlock,
       })) as string;
       if (owner) observedOwner = owner.toLowerCase();
     } catch {

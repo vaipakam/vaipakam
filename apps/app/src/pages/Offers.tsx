@@ -78,6 +78,7 @@ function ltvText(ltv: OfferLtv): string | null {
   switch (ltv.kind) {
     case 'value': {
       const pct = formatBpsAsPercent(Number(ltv.bps));
+      if (ltv.atFloor) return copy.offers.ltvValueAtFloor(pct);
       return ltv.ranged ? copy.offers.ltvValueRanged(pct) : copy.offers.ltvValue(pct);
     }
     case 'illiquid':

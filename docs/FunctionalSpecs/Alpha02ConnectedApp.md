@@ -1296,8 +1296,11 @@ progress.
   how much earlier fills consumed — a running total, not what is locked
   today, since a resulting loan may have settled — and when what is left is
   below the request's floor it states that fact rather than presenting the
-  remainder as available. For the same reason a borrow request's
-  loan-to-value is always qualified as the ratio at
+  remainder as available. A part-used request keeps the same terms — what is
+  held, the floor, and the fill-dependence — none drops out after a first
+  fill. For the same reason a borrow request's loan-to-value names its basis
+  (the requested amount against the request's collateral floor, not the larger
+  commitment shown beside it) and is always qualified as the ratio at
   the amounts shown. Until the ceiling or the part already used has
   been read — older market data, or a request the index has not re-read yet —
   the card states only the floor, as "at least" that amount, never an assumed

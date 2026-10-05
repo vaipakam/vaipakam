@@ -55,7 +55,7 @@ export function offerCollateralText(args: {
     /** #2382 — a request earlier fills have part-used: exactly what is still
      *  committed, and what earlier fills CONSUMED (a running total, not what
      *  is locked today — a resulting loan may have settled since). */
-    rangeRemaining?: (remaining: string, used: string) => string;
+    rangeRemaining?: (remaining: string, used: string, floor: string) => string;
     /** #2382 r2/r4 — the same, when what is left is below the request's
      *  floor: stated as that fact. */
     remainingBelowFloor?: (remaining: string, used: string, floor: string) => string;
@@ -101,7 +101,9 @@ export function offerCollateralText(args: {
       if (ceiling > floor && left < floor) {
         return args.labels.remainingBelowFloor(remaining, used, `${n(floor)} ${symbol}`);
       }
-      return args.labels.rangeRemaining(remaining, used);
+      // The same terms as an unfilled request (#2382 r5): what is held, the
+      // floor, and the fill-dependence — none drops out after a first fill.
+      return args.labels.rangeRemaining(remaining, used, `${n(floor)} ${symbol}`);
     }
     if (ceiling > floor) {
       // The whole ceiling is held for an unfilled ranged request (#2382 r4),

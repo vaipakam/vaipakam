@@ -45,7 +45,10 @@ export type AssetPricing =
   | { kind: 'failed' };
 
 export type OfferLtv =
-  | { kind: 'value'; bps: bigint; ranged: boolean }
+  /** `atFloor` (#2382 r5): the ratio is a borrow request's, taken at the
+   *  requested amount against its collateral FLOOR — named as such, since
+   *  the card shows the (larger) commitment beside it. */
+  | { kind: 'value'; bps: bigint; ranged: boolean; atFloor?: boolean }
   | { kind: 'illiquid' }
   | { kind: 'tooSmall' }
   | { kind: 'unknown' }
@@ -141,7 +144,12 @@ export function offerLtv(
   // the ceiling narrows the range, never the uncertainty.
   const ranged =
     !isLender || amountMax > amount || BigInt(offer.amountFilled || '0') > 0n;
-  return { kind: 'value', bps: (borrowedValue * 10_000n) / collateralValue, ranged };
+  return {
+    kind: 'value',
+    bps: (borrowedValue * 10_000n) / collateralValue,
+    ranged,
+    ...(isLender ? {} : { atFloor: true }),
+  };
 }
 
 /** One batched read per asset: liquidity verdict, oracle price, token
