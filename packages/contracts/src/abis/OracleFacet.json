@@ -1244,6 +1244,17 @@
   },
   {
     "type": "error",
+    "name": "DecimalScaleUnsupported",
+    "inputs": [
+      {
+        "name": "gap",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "DeliveredFreshBoundExceeded",
     "inputs": [
       {
@@ -4314,5 +4325,21 @@
     "type": "error",
     "name": "VpfiNotAllowedAsRentalPrepay",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ZeroCollateral",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ZeroPrice",
+    "inputs": [
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
   }
 ]

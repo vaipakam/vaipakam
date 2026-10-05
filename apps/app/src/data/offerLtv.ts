@@ -6,8 +6,10 @@
  * `amount × price × 1e18 / 10^feedDecimals / 10^tokenDecimals`
  * (`OracleFacet.getAssetPrice`), the same formula `OfferAcceptFacet`
  * applies and `preflights.liquidNumeraireValueLive` mirrors. It is NOT
- * read from `OracleFacet.calculateLTV(pair)`: that view drops the token
- * decimals and is wrong for mixed-decimal pairs (#2403). The 1e18 scale
+ * read from `OracleFacet.calculateLTV(pair)`: before #2403 that view
+ * dropped the token decimals and was wrong for mixed-decimal pairs, and a
+ * Diamond not yet refreshed past #2403 still serves the old one — reading
+ * the prices here keeps the card right on either. The 1e18 scale
  * keeps small offers from flooring to a whole-dollar value of 0, which
  * would print a confident "0%".
  *
