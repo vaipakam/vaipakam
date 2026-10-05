@@ -356,8 +356,9 @@ manual follow-up required when the prerequisites are in place:
    run their package deploys in VERIFY mode: read-only, waiting a
    bounded time for the migrations, and refusing to publish while one is
    still pending — so on a release that carries a migration, run
-   `cf-indexer` before them (`deploy-chain.sh` applies the shared
-   migrations itself, as step 8.0, before its keeper phase). The wrapper
+   `cf-indexer` before them (`deploy-chain.sh` deploys its indexer
+   first, as step 8a, for the same reason — there is no second apply
+   path). The wrapper
    (`apps/indexer/scripts/deploy-shared-d1.mjs`) verifies every required
    migration is recorded before it publishes and takes no arguments — a
    dry run is `pnpm run deploy:dry`, which never touches the database.

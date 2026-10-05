@@ -1333,7 +1333,7 @@ else
   echo "[7b] Skipping apps/www deploy (--skip-www)"
 fi
 
-# ── 8. Worker Cloudflare deploys (keeper + indexer + agent) ───────────
+# ── 8. Worker Cloudflare deploys (indexer + keeper + agent) ───────────
 #
 # Stage 3 split (May 2026): the historical `ops/hf-watcher` monolith
 # is now three focused Workers under apps/{keeper,indexer,agent}, all
@@ -1341,11 +1341,12 @@ fi
 # owns migrations + the indexer_cursor row; the keeper and agent are
 # stateless RPC-call surfaces.
 #
-# ONE APPLIER, FIRST (#2214 / #2409): step 8.0 applies the shared D1
-# migrations before ANY Worker publishes — the keeper (8a) runs before
-# the indexer (8b), and its deploy only VERIFIES the schema (read-only),
-# refusing to publish code onto a schema it was not written for. The
-# indexer's own deploy re-applies (a no-op by then) and verifies.
+# ONE APPLIER, FIRST (#2214 / #2409): the indexer (8a) — the schema's
+# owner — deploys before the keeper (8b) and agent (8c). Its package deploy
+# is the only thing that APPLIES the shared D1 migrations (race-tolerant:
+# it re-verifies if a concurrent deploy got there first); the keeper's and
+# agent's deploys only VERIFY the schema, read-only, and refuse to publish
+# onto one they were not written for. There is no second apply path here.
 #
 # Per-Worker skip flags gate each independently. Each Worker has its
 # own RPC-secret store (Cloudflare scopes secrets per Worker), so the
@@ -1403,78 +1404,33 @@ case "$CHAIN_SLUG" in
   *)             EXPECTED_RPC_SECRET="" ;;
 esac
 
-# ── 8.0 Shared D1 migrations — before any Worker publishes ────────────
-# Needs D1 Edit on the Cloudflare token. Non-interactive (stdin from
-# /dev/null), so wrangler applies without a prompt; a failure stops the
-# script here under `set -e`, before any Worker ships.
-if [ "$SKIP_KEEPER" = "0" ] || [ "$SKIP_INDEXER" = "0" ] || [ "$SKIP_AGENT" = "0" ]; then
-  echo
-  echo "[8.0] Shared D1 migrations (vaipakam-warm, owned by apps/indexer)"
-  ( cd "$INDEXER_DIR" && pnpm run migrate < /dev/null )
-fi
-
-# ── 8a. apps/keeper — autonomous HF-liquidation Worker ────────────────
-# Stateless: signs `triggerLiquidation` on-chain when an active loan's
-# HF drops below 1e18. Reads RPC + signing key from wrangler secrets;
-# no D1 writes (it consumes indexer reads via internal fetch). Skipped
-# under --skip-keeper.
-
-if [ "$SKIP_KEEPER" = "0" ] && step_done "keeper"; then
-  echo
-  echo "[8a] apps/keeper deploy (skipped — marker exists)"
-elif [ "$SKIP_KEEPER" = "0" ]; then
-  echo
-  echo "[8a] apps/keeper Cloudflare Worker deploy"
-  if [ ! -d "$KEEPER_DIR/node_modules" ]; then
-    echo "Error: $KEEPER_DIR/node_modules missing — run \`pnpm install\` at the monorepo root first." >&2
-    exit 1
-  fi
-  # `pnpm run deploy`, NOT `pnpm exec wrangler deploy` (#1896, Codex
-  # #1924 r8). The package script carries `--keep-vars`; a bare deploy
-  # deletes every var NOT in `wrangler.jsonc` before applying the ones
-  # that are, and what is not in that config is exactly the
-  # dashboard-managed tuning the keeper reads (HF_SCALE, LIQ_CONFIDENCE_*,
-  # LIQ_TIER3_*, SPLIT_MIN_IMPROVEMENT_BPS, PARTIAL_LIQ_MIN_HF_BPS).
-  # Losing them here is silent: the keeper is unscheduled, so nothing
-  # runs to reveal it, and the re-enable deploy then faithfully
-  # preserves the absence and arms liquidation on defaults.
-  ( cd "$KEEPER_DIR" && pnpm run deploy )
-
-  if [ -n "$EXPECTED_RPC_SECRET" ]; then
-    echo
-    echo "  RPC-secret check for chainId=$CHAIN_ID"
-    verify_rpc_secret_on_worker "$KEEPER_DIR" "vaipakam-keeper" \
-      "$EXPECTED_RPC_SECRET" "$CHAIN_ID" || exit 1
-  fi
-
-  mark_done "keeper"
-else
-  echo
-  echo "[8a] Skipping apps/keeper deploy (--skip-keeper)"
-fi
-
-# ── 8b. apps/indexer — D1 indexer + read-only API ─────────────────────
-# Owns the `vaipakam-warm` D1 database + its migrations. Indexes
+# ── 8a. apps/indexer — D1 indexer + read-only API ─────────────────────
+# Owns the `vaipakam-warm` D1 database + its migrations, and runs FIRST
+# among the Workers (#2409): its package deploy is the ONE applier, so the
+# keeper (8b) and agent (8c) — whose deploys only verify the schema — find
+# it current. With --skip-indexer they verify an un-migrated schema, wait,
+# and refuse to publish if a migration is pending: skipping the schema owner
+# skips its migrations too, as that flag documents. Indexes
 # Diamond events to D1 on every cron tick; serves /offers/recent,
 # /loans/byParticipant, etc. Three sub-steps:
-#   8b.1 D1 migrations apply, THEN wrangler deploy — via the package
+#   8a.1 D1 migrations apply, THEN wrangler deploy — via the package
 #        `deploy` script, so a failed apply never publishes (#2214).
 #        Only the indexer runs migrations.
-#   8b.2 RPC-secret check for this chain
-#   8b.3 Cursor seed at safe head, --fresh only
+#   8a.2 RPC-secret check for this chain
+#   8a.3 Cursor seed at safe head, --fresh only
 
 if [ "$SKIP_INDEXER" = "0" ] && step_done "indexer"; then
   echo
-  echo "[8b] apps/indexer deploy (skipped — marker exists)"
+  echo "[8a] apps/indexer deploy (skipped — marker exists)"
 elif [ "$SKIP_INDEXER" = "0" ]; then
   echo
-  echo "[8b] apps/indexer Cloudflare Worker deploy"
+  echo "[8a] apps/indexer Cloudflare Worker deploy"
   if [ ! -d "$INDEXER_DIR/node_modules" ]; then
     echo "Error: $INDEXER_DIR/node_modules missing — run \`pnpm install\` at the monorepo root first." >&2
     exit 1
   fi
 
-  echo "  [8b.1] D1 migrations apply, then wrangler deploy (the package deploy script)"
+  echo "  [8a.1] D1 migrations apply, then wrangler deploy (the package deploy script)"
   # MIGRATIONS FIRST, and the publish only if they applied (#2214). The order
   # lives in ONE place — apps/indexer's `deploy` script — so this phase, the
   # runbook and an operator typing `pnpm run deploy` cannot drift apart. The
@@ -1487,12 +1443,12 @@ elif [ "$SKIP_INDEXER" = "0" ]; then
 
   if [ -n "$EXPECTED_RPC_SECRET" ]; then
     echo
-    echo "  [8b.2] RPC-secret check for chainId=$CHAIN_ID"
+    echo "  [8a.2] RPC-secret check for chainId=$CHAIN_ID"
     verify_rpc_secret_on_worker "$INDEXER_DIR" "vaipakam-indexer" \
       "$EXPECTED_RPC_SECRET" "$CHAIN_ID" || exit 1
   fi
 
-  # ── 8b.3. Seed indexer_cursor to current safe head (FRESH only) ─────
+  # ── 8a.3. Seed indexer_cursor to current safe head (FRESH only) ─────
   #
   # Reason for existence: after a `--fresh` deploy, the prior
   # rehearsal's addresses.json was rotated out so the indexer is
@@ -1520,7 +1476,7 @@ elif [ "$SKIP_INDEXER" = "0" ]; then
   # preserves the diamond address).
   if [ "$FRESH" = "1" ]; then
     echo
-    echo "  [8b.3] Seed indexer_cursor for chainId=$CHAIN_ID at safe head"
+    echo "  [8a.3] Seed indexer_cursor for chainId=$CHAIN_ID at safe head"
     # Map chain-slug → env var holding the RPC URL. Mirrors the
     # naming convention every env (.env / .env.example / wrangler
     # secrets) already uses.
@@ -1559,7 +1515,47 @@ elif [ "$SKIP_INDEXER" = "0" ]; then
   mark_done "indexer"
 else
   echo
-  echo "[8b] Skipping apps/indexer deploy (--skip-indexer)"
+  echo "[8a] Skipping apps/indexer deploy (--skip-indexer)"
+fi
+
+# ── 8b. apps/keeper — autonomous HF-liquidation Worker ────────────────
+# Stateless: signs `triggerLiquidation` on-chain when an active loan's
+# HF drops below 1e18. Reads RPC + signing key from wrangler secrets;
+# no D1 writes (it consumes indexer reads via internal fetch). Skipped
+# under --skip-keeper.
+
+if [ "$SKIP_KEEPER" = "0" ] && step_done "keeper"; then
+  echo
+  echo "[8b] apps/keeper deploy (skipped — marker exists)"
+elif [ "$SKIP_KEEPER" = "0" ]; then
+  echo
+  echo "[8b] apps/keeper Cloudflare Worker deploy"
+  if [ ! -d "$KEEPER_DIR/node_modules" ]; then
+    echo "Error: $KEEPER_DIR/node_modules missing — run \`pnpm install\` at the monorepo root first." >&2
+    exit 1
+  fi
+  # `pnpm run deploy`, NOT `pnpm exec wrangler deploy` (#1896, Codex
+  # #1924 r8). The package script carries `--keep-vars`; a bare deploy
+  # deletes every var NOT in `wrangler.jsonc` before applying the ones
+  # that are, and what is not in that config is exactly the
+  # dashboard-managed tuning the keeper reads (HF_SCALE, LIQ_CONFIDENCE_*,
+  # LIQ_TIER3_*, SPLIT_MIN_IMPROVEMENT_BPS, PARTIAL_LIQ_MIN_HF_BPS).
+  # Losing them here is silent: the keeper is unscheduled, so nothing
+  # runs to reveal it, and the re-enable deploy then faithfully
+  # preserves the absence and arms liquidation on defaults.
+  ( cd "$KEEPER_DIR" && pnpm run deploy )
+
+  if [ -n "$EXPECTED_RPC_SECRET" ]; then
+    echo
+    echo "  RPC-secret check for chainId=$CHAIN_ID"
+    verify_rpc_secret_on_worker "$KEEPER_DIR" "vaipakam-keeper" \
+      "$EXPECTED_RPC_SECRET" "$CHAIN_ID" || exit 1
+  fi
+
+  mark_done "keeper"
+else
+  echo
+  echo "[8b] Skipping apps/keeper deploy (--skip-keeper)"
 fi
 
 # ── 8c. apps/agent — notifications + frames + agent surfaces ──────────
