@@ -30,7 +30,7 @@ This is narrower than "reads only", which this file used to claim and which is f
 
 ```bash
 pnpm --filter @vaipakam/indexer dev       # local wrangler dev against testnet
-pnpm --filter @vaipakam/indexer run deploy    # wrangler deploy; uses `wrangler login` on the operator's machine
+pnpm --filter @vaipakam/indexer run deploy    # applies D1 migrations, then wrangler deploy; uses `wrangler login` on the operator's machine
 ```
 
 ## How to test
@@ -84,14 +84,16 @@ Any schema change — even for a table only keeper or agent writes — lands as 
 
 ### Migrations before code — the deploy order and the schema gate (#2214)
 
-**`pnpm run deploy` applies pending migrations to `vaipakam-warm`, then publishes — and publishes only if the apply succeeded.** The three deploy scripts' indexer phase calls that same package script, so the order is defined once. (They used to publish first and migrate second, which left new code running against the old schema for the length of the gap — unboundedly, if the migration step failed. #1149 was that window: every scan failed `no such column` and the cursor held until someone read the logs.)
+**`pnpm run deploy` applies pending migrations to `vaipakam-warm` (the `migrate` script), then publishes — and publishes only if the apply succeeded.** The deploy scripts' Worker phases call the package scripts, so the order is defined once. **The keeper and agent bind the same database**, so their `deploy` scripts call this package's `migrate` first too: whichever Worker an operator publishes first, the schema lands before any code that uses it. (They used to publish first and migrate second, which left new code running against the old schema for the length of the gap — unboundedly, if the migration step failed. #1149 was that window: every scan failed `no such column` and the cursor held until someone read the logs.)
 
 **This Worker also auto-deploys on every merge to `main` through Cloudflare Workers Builds, and that route's deploy command is dashboard configuration this repository cannot see or pin.** If it runs plain `wrangler deploy`, it publishes without migrating. For that route — and any other that skips the package script — the Worker carries a **schema gate** (`src/schemaGate.ts`):
 
-- `REQUIRED_D1_MIGRATION` names the newest file in `migrations/`; `scripts/check-schema-gate.mjs` (part of `typecheck`) fails CI if a new migration does not move it.
-- Until that migration is recorded in `d1_migrations`, every cron tick and every chain pass (DO alarm or legacy inline) **declines** with a log line naming the missing migration and the command that applies it. No scan, no prune, no sweep, no cursor movement.
+- `src/requiredMigrations.ts` lists EVERY file in `migrations/`; `scripts/check-schema-gate.mjs` (part of `typecheck`) fails CI unless the list equals the directory exactly. The whole set rather than the newest file, because a migration filling a numbering gap sorts below the newest (#2409 r1).
+- Until all of them are recorded in `d1_migrations`, every cron tick and every chain pass (DO alarm or legacy inline) **declines** with a log line naming the missing migrations and the command that applies them. No scan, no prune, no sweep, no cursor movement.
 - On the first tick after the migration is applied, ingest resumes by itself — no redeploy, no cursor repair. The app's existing freshness surface shows the pause as stale data in the meantime.
 - **The gate does not cover the HTTP read API.** A route reading a column the database does not have yet still fails until the migration lands, so a feature adding such a read must tolerate the older schema itself (or ship its read after its migration).
+
+- **The keeper and agent carry no gate yet** — their package deploys migrate first, but their Workers Builds auto-deploy is unguarded. Tracked in #2410.
 
 **Recommended Workers Builds setting (operator, Cloudflare dashboard → Worker → Settings → Builds):** deploy command `pnpm run deploy`, with a build token that carries **D1 Edit** on the account. That makes the auto-deploy migrate first too, and the gate becomes a backstop rather than the mechanism. Until it is set, a merge that adds a migration pauses scheduled ingest until someone runs the apply.
 

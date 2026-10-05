@@ -622,16 +622,18 @@ directly on the deployed db: that diverges the migrations record from
 the live schema and breaks fresh-environment bootstrap.
 
 **Migrations apply BEFORE code ships, and the Worker refuses to run ahead
-of its schema** (#2214). `apps/indexer`'s `deploy` script — which every
-deploy script's indexer phase calls — applies pending migrations and
-publishes only if they applied. Workers Builds also auto-deploys the
-indexer on merge with a dashboard-configured command the repo cannot pin,
-so the Worker carries a schema gate (`src/schemaGate.ts`): scheduled
-ingest declines, by name, until the newest migration in the build is
-recorded in `d1_migrations`, and resumes by itself once it is. **A new
-migration must move `REQUIRED_D1_MIGRATION`** — `check-schema-gate.mjs`
-in `typecheck` fails otherwise. The gate holds WRITES only; a new read of
-a new column must still tolerate the older schema.
+of its schema** (#2214). `apps/indexer`'s `migrate` script applies pending
+migrations, and the `deploy` scripts of ALL THREE Workers that bind this
+database (indexer, keeper, agent) run it before publishing — so whichever
+publishes first, the schema lands first. Workers Builds also auto-deploys
+them on merge with a dashboard-configured command the repo cannot pin, so
+the indexer carries a schema gate (`src/schemaGate.ts`): scheduled ingest
+declines, by name, until EVERY migration in the build is recorded in
+`d1_migrations`, and resumes by itself once it is. **A new migration must
+be listed in `apps/indexer/src/requiredMigrations.ts`** —
+`check-schema-gate.mjs` in `typecheck` fails otherwise. The gate holds
+WRITES only; a new read of a new column must still tolerate the older
+schema. Keeper and agent have no gate yet (#2410).
 
 **`NNNN` must be unique** — enforced by
 `apps/indexer/scripts/check-migration-prefixes.mjs` (wired into

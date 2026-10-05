@@ -1805,11 +1805,11 @@ export async function runChainIndexerForChain(
     // and the legacy inline cron) reach the pass only through this wrapper.
     // Not retryable: the cursor stays where it is and the next tick asks again.
     const schema = await schemaGate.check(meterD1(rawEnv.DB, budget));
-    if (schema !== 'current') {
+    if (schema.state !== 'current') {
       // eslint-disable-next-line no-console
       console.warn(schemaDeclineNotice(`chain ${chain.id} pass`, schema));
       return {
-        ...emptyResult(schema === 'pending' ? 'schema-pending' : 'schema-unknown'),
+        ...emptyResult(schema.state === 'pending' ? 'schema-pending' : 'schema-unknown'),
         chainId: chain.id,
         invocationSubrequestsSpent: spent(budget),
       };

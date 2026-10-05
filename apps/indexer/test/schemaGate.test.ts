@@ -10,11 +10,8 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 import { createSqliteD1 } from './helpers/sqliteD1';
-import {
-  REQUIRED_D1_MIGRATION,
-  createSchemaGate,
-  schemaDeclineNotice,
-} from '../src/schemaGate';
+import { createSchemaGate, schemaDeclineNotice } from '../src/schemaGate';
+import { REQUIRED_D1_MIGRATIONS } from '../src/requiredMigrations';
 import { runChainIndexerForChain } from '../src/chainIndexer';
 import type { ChainConfig, Env } from '../src/env';
 
@@ -31,15 +28,30 @@ const applied = (...names: string[]) => {
   return h;
 };
 
+const GAP = ['0001_a.sql', '0002_b.sql', '0004_d.sql'];
+
 describe('schema gate — answers', () => {
-  it('is current when the required migration is recorded', async () => {
-    const h = applied('0001_init.sql', REQUIRED_D1_MIGRATION);
-    expect(await createSchemaGate().check(h.d1 as never)).toBe('current');
+  it('is current when every required migration is recorded', async () => {
+    const h = applied(...REQUIRED_D1_MIGRATIONS);
+    expect(await createSchemaGate().check(h.d1 as never)).toEqual({ state: 'current' });
   });
 
-  it('is pending when only older migrations are recorded', async () => {
-    const h = applied('0001_init.sql', '0052_quarantine_first_seen_index.sql');
-    expect(await createSchemaGate().check(h.d1 as never)).toBe('pending');
+  it('is pending, naming what is missing, when the newest is not recorded', async () => {
+    const h = applied(...REQUIRED_D1_MIGRATIONS.slice(0, -1));
+    expect(await createSchemaGate().check(h.d1 as never)).toEqual({
+      state: 'pending',
+      missing: [REQUIRED_D1_MIGRATIONS[REQUIRED_D1_MIGRATIONS.length - 1]],
+    });
+  });
+
+  it('is pending when a GAP-FILLING migration is missing even though the newest is recorded (#2409 r1)', async () => {
+    // 0003 is added later and sorts below 0004 — a newest-only check would
+    // call this database current.
+    const h = applied(...GAP);
+    expect(await createSchemaGate([...GAP, '0003_c.sql'].sort()).check(h.d1 as never)).toEqual({
+      state: 'pending',
+      missing: ['0003_c.sql'],
+    });
   });
 
   it('is unknown — not pending — when the migrations table cannot be read', async () => {
@@ -47,25 +59,31 @@ describe('schema gate — answers', () => {
     // gate must not claim a specific migration is missing when the probe
     // simply could not tell; it declines all the same.
     const h = createSqliteD1([]);
-    expect(await createSchemaGate().check(h.d1 as never)).toBe('unknown');
+    expect(await createSchemaGate().check(h.d1 as never)).toEqual({ state: 'unknown' });
   });
 
   it('caches current, and re-asks after pending (ingest resumes without a redeploy)', async () => {
-    const h = applied('0001_init.sql');
-    const gate = createSchemaGate();
-    expect(await gate.check(h.d1 as never)).toBe('pending');
+    const h = applied(...GAP.slice(0, 2));
+    const gate = createSchemaGate(GAP);
+    expect((await gate.check(h.d1 as never)).state).toBe('pending');
     // The operator applies the migration; the SAME isolate must see it.
-    h.db.prepare('INSERT INTO d1_migrations (name) VALUES (?)').run(REQUIRED_D1_MIGRATION);
-    expect(await gate.check(h.d1 as never)).toBe('current');
+    h.db.prepare('INSERT INTO d1_migrations (name) VALUES (?)').run('0004_d.sql');
+    expect((await gate.check(h.d1 as never)).state).toBe('current');
     // Once current, no further read: a migration does not un-apply.
     h.db.exec('DROP TABLE d1_migrations');
-    expect(await gate.check(h.d1 as never)).toBe('current');
+    expect((await gate.check(h.d1 as never)).state).toBe('current');
   });
 
-  it('names the missing migration and the remedy', () => {
-    expect(schemaDeclineNotice('this tick', 'pending')).toContain(REQUIRED_D1_MIGRATION);
-    expect(schemaDeclineNotice('this tick', 'pending')).toContain('d1 migrations apply');
-    expect(schemaDeclineNotice('this tick', 'unknown')).toContain('could not confirm');
+  it('names the missing migrations and the remedy', () => {
+    const one = schemaDeclineNotice('this tick', { state: 'pending', missing: ['0054_x.sql'] });
+    expect(one).toContain('0054_x.sql');
+    expect(one).toContain('d1 migrations apply');
+    const many = schemaDeclineNotice('this tick', {
+      state: 'pending',
+      missing: ['a.sql', 'b.sql', 'c.sql', 'd.sql', 'e.sql'],
+    });
+    expect(many).toContain('and 2 more');
+    expect(schemaDeclineNotice('this tick', { state: 'unknown' })).toContain('could not confirm');
   });
 });
 

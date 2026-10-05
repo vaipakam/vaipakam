@@ -222,7 +222,7 @@ export default {
     // before the Secrets Store reads below are spent. The ingest DO runs the
     // same check inside its own pass, so a webhook-driven scan is held too.
     const schema = await schemaGate.check(meterD1(env.DB as D1Database, budget));
-    if (schema !== 'current') {
+    if (schema.state !== 'current') {
       // eslint-disable-next-line no-console
       console.warn(schemaDeclineNotice('this tick', schema));
       return;

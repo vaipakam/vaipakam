@@ -76,7 +76,7 @@ Three deploy scripts after the 2026-05-10 modernization sweep
 | `handover` | `--confirm-i-have-multisig-ready` | `Handover.s.sol` — rotates DEFAULT_ADMIN_ROLE → governance Safe (direct), ADMIN/KYC/ORACLE/RISK/VAULT/UNPAUSER → Timelock, PAUSER → Pauser Safe (direct), ERC-173 → Timelock, OApp ownership → governance Safe (Ownable2Step first leg). ADMIN renounces every role. **Multisig-bytecode preflight runs first**: refuses if any of the three Safe addresses has zero bytecode on the target chain. Operator must drive `acceptOwnership()` on each OApp via the Safe UI to complete the second leg. |
 | `abi-sync` | — | Runs the export scripts: `exportFrontendAbis.sh` + `exportFrontendDeployments.sh` + `exportSubgraphAbis.sh` + `exportTenderlyAlerts.sh` + (sibling repo present) `exportAbis.sh` for the keeper-bot. |
 | `cf-app` / `cf-www` | — | Build + `wrangler deploy` apps/app (the dApp) / apps/www (marketing). |
-| `cf-keeper` / `cf-indexer` / `cf-agent` | — | wrangler deploy of each Worker. The indexer phase also runs D1 migrations against `vaipakam-warm`. Each verifies the chain-specific `RPC_<CHAIN>` secret is set on the Worker (hard-fail if missing). |
+| `cf-keeper` / `cf-indexer` / `cf-agent` | — | `pnpm run deploy` of each Worker. All three bind the shared `vaipakam-warm` D1, so each package deploy applies its pending migrations (the indexer's `migrate` script) BEFORE publishing, and publishes only if they applied (#2214 / #2409). Each verifies the chain-specific `RPC_<CHAIN>` secret is set on the Worker (hard-fail if missing). |
 | `verify` | — | Read-only smoke checks: `paused()`, `getTreasury()`, facet count (exact-matches the live `DiamondLoupe.facetAddresses().length` against `addresses.json` `.facetCount` recorded at deploy — fails on any mismatch, not just a low count), master flag state, and the VPFI TokenPool rate-limit **wiring**: the pool's `getRateLimitAdmin()` must be the `VpfiPoolRateGovernor` (which range-bounds every value and refuses to disable a lane's limit) and `getSupportedChains()` must be non-empty — refuses to mark verify-done otherwise. **Known limit of the automated check**: it does NOT read each lane's limiter config, so an interrupted `ccip-wire` run can leave a lane present but with its rate limit disabled (or zeroed) and still pass verify. **Manual operator step (required)**: after verify, for EVERY expected lane read the pool's per-lane limiter state (`cast call $POOL 'getCurrentOutboundRateLimiterState(uint64)((uint128,uint32,bool,uint128,uint128))' <remoteChainSelector>` and the `getCurrentInboundRateLimiterState` equivalent; the returned tuple is `(tokens, lastUpdated, isEnabled, capacity, rate)`) and confirm `isEnabled == true` with the finite capacity/rate values from the design §10 starting numbers (capacity 50,000 VPFI, refill ≈5.8 VPFI/s) before proceeding to handover. (Hardening follow-up: extend the verify phase to read per-lane limiter configs itself. The former BuyAdapter rate-limit-cap check is gone with the adapter, #687-A.) |
 | `pause-rehearsal` (testnet only) | `--mode {calldata\|check\|unpause-calldata}` | Sub-5-min N-chain simultaneous-pause drill. `--mode calldata` (default) prints `pause()` calldata for the operator to sign through the Pauser Safe UI; `--mode check` reads `paused()` on every contract and reports elapsed wall-clock vs the 300s budget; `--mode unpause-calldata` prints the inverse for cleanup. Refused on mainnet. |
 
@@ -938,8 +938,11 @@ printf '%s' "<bnb-testnet signing key>"  | wrangler secrets-store secret create 
 #      "vars": { …, "CHAIN_INGEST_VIA_DO": "true" }
 #    (Add a `_<chainId>` binding for every chain you enable a webhook for.)
 
-# 3. Redeploy the indexer Worker.
-cd apps/indexer && wrangler deploy
+# 3. Redeploy the indexer Worker — through the package script, which applies
+#    pending D1 migrations first and publishes only if they applied (#2214).
+#    A bare `wrangler deploy` skips that step; the Worker's schema gate would
+#    then hold scheduled ingest until someone applied them.
+pnpm --filter @vaipakam/indexer run deploy
 ```
 
 **Provision the provider webhook (one per chain):** create an Alchemy **Custom
