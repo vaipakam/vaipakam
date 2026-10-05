@@ -70,4 +70,11 @@ describe('ledgerRows — what changed, who changed it, how to put it back', () =
     expect(text).toMatch(/now: {6}100/);
     expect(text).toMatch(/REMEDY: {3}approve\(Diamond, 7\)/);
   });
+
+  it('gives an UNKNOWN row the entry\u2019s own lookup when it has one', () => {
+    const e = { ...allowance, lookup: 'look it up on the explorer' };
+    const [r] = ledgerRows([e], { borrowerAllowance: { ok: false, error: 'x' } }, { borrowerAllowance: ok(1n) }, []);
+    expect(r).toMatchObject({ status: 'unknown', remedy: 'look it up on the explorer' });
+  });
 });
+

@@ -27,6 +27,13 @@
  *     is refused, and the plan LATCHES: every later request is refused too.
  *     A drive that saw something it did not plan for stops writing.
  *
+ * A step may declare `requires: <stepId>` (#2422 r7): once it is consumed,
+ * the named step stops being optional — it must be consumed before any
+ * later step. That is how an approval RESET pairs with its SET: the reset
+ * may be skipped, and so may the pair, but a reset followed by anything
+ * other than its set (a createOffer standing on a zeroed allowance) is
+ * refused.
+ *
  * A step's `expected` may be a function, evaluated at match time, for a
  * step whose payload depends on an earlier one (an accept CALL carrying
  * exactly the terms and signature just signed). Returning `null` means the
@@ -44,6 +51,7 @@ import { structMismatches } from './expectedPayload.mjs';
  * @property {'tx'|'typed'} kind
  * @property {string} purpose
  * @property {boolean} [optional]
+ * @property {string} [requires]   a step that becomes REQUIRED once this one is consumed
  * @property {object|(() => object|null)} expected
  */
 
@@ -52,6 +60,9 @@ export function createWritePlan(steps) {
   const state = steps.map((s) => ({ ...s, status: 'pending', record: {} }));
   let cursor = 0;
   let latched = null;
+  /** Step ids made required by a consumed step's `requires`. */
+  const forced = new Set();
+  const isOptional = (s) => Boolean(s.optional) && !forced.has(s.id);
 
   const expectedOf = (s) => (typeof s.expected === 'function' ? s.expected() : s.expected);
 
@@ -82,6 +93,7 @@ export function createWritePlan(steps) {
           if (diff.length === 0) {
             for (let j = cursor; j < i; j++) state[j].status = 'skipped';
             s.status = 'consumed';
+            if (s.requires) forced.add(s.requires);
             cursor = i + 1;
             return { ok: true, index: i, step: s };
           }
@@ -89,7 +101,7 @@ export function createWritePlan(steps) {
         }
       }
       reasons.push(why);
-      if (!s.optional) break; // a required step cannot be passed over
+      if (!isOptional(s)) break; // a required (or now-required) step cannot be passed over
     }
     return refuse(`matches no next step of the plan — ${reasons.join(' | ')}`);
   }
@@ -107,7 +119,7 @@ export function createWritePlan(steps) {
     },
     /** Every required step consumed. */
     complete() {
-      return state.filter((s) => !s.optional).every((s) => s.status === 'consumed');
+      return state.filter((s) => !isOptional(s)).every((s) => s.status === 'consumed');
     },
     /** The refusal that latched the plan, or null. */
     refusal: () => latched,

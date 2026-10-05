@@ -105,4 +105,43 @@ describe('writePlan — one ordered sequence, each step consumed once', () => {
     p.record(r.index, { hash: '0xabc' });
     expect(p.steps()[r.index].record).toEqual({ hash: '0xabc' });
   });
+
+  it('a reset must be followed by its set: reset → create is refused', () => {
+    const p = createWritePlan([
+      { id: 'reset', role: 'b', kind: 'tx', purpose: 'reset', optional: true, requires: 'set', expected: approve(0n) },
+      { id: 'set', role: 'b', kind: 'tx', purpose: 'set', optional: true, expected: approve(5n) },
+      { id: 'create', role: 'b', kind: 'tx', purpose: 'create', expected: { fn: 'create' } },
+    ]);
+    expect(p.offer('b', 'tx', approve(0n)).ok).toBe(true);
+    const r = p.offer('b', 'tx', { fn: 'create' });
+    expect(r.ok).toBe(false);
+    expect(r.why).toMatch(/set:/);
+  });
+
+  it('reset → set → create is accepted, and set alone (no reset) is accepted', () => {
+    const steps = () => [
+      { id: 'reset', role: 'b', kind: 'tx', purpose: 'reset', optional: true, requires: 'set', expected: approve(0n) },
+      { id: 'set', role: 'b', kind: 'tx', purpose: 'set', optional: true, expected: approve(5n) },
+      { id: 'create', role: 'b', kind: 'tx', purpose: 'create', expected: { fn: 'create' } },
+    ];
+    const both = createWritePlan(steps());
+    for (const a of [approve(0n), approve(5n), { fn: 'create' }]) expect(both.offer('b', 'tx', a).ok).toBe(true);
+    expect(both.complete()).toBe(true);
+    const setOnly = createWritePlan(steps());
+    for (const a of [approve(5n), { fn: 'create' }]) expect(setOnly.offer('b', 'tx', a).ok).toBe(true);
+    expect(setOnly.complete()).toBe(true);
+    // And skipping the whole pair is still fine.
+    const neither = createWritePlan(steps());
+    expect(neither.offer('b', 'tx', { fn: 'create' }).ok).toBe(true);
+  });
+
+  it('a consumed reset whose set never comes leaves the plan incomplete', () => {
+    const p = createWritePlan([
+      { id: 'reset', role: 'b', kind: 'tx', purpose: 'reset', optional: true, requires: 'set', expected: approve(0n) },
+      { id: 'set', role: 'b', kind: 'tx', purpose: 'set', optional: true, expected: approve(5n) },
+    ]);
+    expect(p.offer('b', 'tx', approve(0n)).ok).toBe(true);
+    expect(p.complete()).toBe(false);
+  });
 });
+

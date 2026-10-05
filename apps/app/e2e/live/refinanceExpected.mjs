@@ -479,6 +479,9 @@ export function refinancePlanSteps({
       role,
       kind: 'tx',
       optional: true,
+      // A reset must be followed by its set: once the allowance has been
+      // zeroed, nothing else may be signed until it is set again.
+      requires: `${role[0]}-approve-set`,
       purpose: 'approve(Diamond, 0) — reset of a leftover allowance',
       expected: tx(who, loan.principalAsset, expectedApproveCall({ spender: diamond, why, reset: true })),
     },

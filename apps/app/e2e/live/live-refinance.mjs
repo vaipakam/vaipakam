@@ -70,6 +70,23 @@
 //       a submit) checks the halt first and stops. A review that fails to
 //       disclose the illiquid collateral is therefore never consented to.
 //
+// THE PLAN IS CLOSED UNTIL ARMED (#2422 r7). No signing request is
+// allowed before both sessions' page preflights (navigation + English)
+// pass; the borrower phase is then armed explicitly, and the lender phase
+// only once the request is pinned and every request check has passed. A
+// request while closed (or from the unarmed role) is refused and halts.
+// An approval RESET must be followed by its SET (`requires` in the plan).
+//
+// THE REVIEW IS CHECKED BEFORE CONSENT (#2422 r7, reviewTerms.mjs). Before
+// each consent tick, the receipt rows are read by their en.json labels and
+// parsed against the en.json templates that produced them, and every
+// figure is compared with the chain at display precision: the lender's
+// principal, full-term interest at the ceiling rate, collateral, yield fee,
+// length and grace window against the request and the live fee config;
+// the borrower's payoff, late-fee headroom, wallet top-up, LIF and treasury
+// rates and the request's lifetime against the app's own formulas. A
+// mismatch or an unparseable row halts before consent.
+//
 // THE GATE LIVES IN THE WALLET (#2422 r4). Rules A and B are enforced by
 // `launch({ signingGate, pinnedChainId: 84532 })`: driver.mjs runs every
 // request the page makes of the injected wallet through walletGate.mjs
@@ -113,7 +130,10 @@
 // the chain through the TOUCHED-STATE LEDGER (#2422 r6, touchedState.mjs):
 // every piece of state a plan step can change — the borrower's and the
 // lender's allowance to the Diamond, the loan's auto-refinance caps, the
-// open refinance requests on the loan, the loan's status — is snapshotted
+// open refinance requests on the loan, the replacement loan (identified
+// from our accept's receipt and by a state scan for the loan carrying this
+// run's request — so a matcher fill is found too — with both position
+// holders and its terms), the loan's status — is snapshotted
 // at the pinned preflight block, re-read after the failure, and printed
 // with baseline, now, whether a consumed step of THIS run touches it, and a
 // remedy that RESTORES THE BASELINE (never a blanket zero; a change this
@@ -210,6 +230,8 @@ import {
 } from './refinanceExpected.mjs';
 import { createWritePlan } from './writePlan.mjs';
 import { formatLedgerRow, ledgerRows } from './touchedState.mjs';
+import { compareBorrowerReceipt, compareLenderReceipt } from './reviewTerms.mjs';
+import { refinancePayoffAt } from './refinanceExpected.mjs';
 import { expectedPostureFrom, postureCopyFrom } from './refinancePosture.mjs';
 
 // ---------------------------------------------------------------------
@@ -551,9 +573,27 @@ function abiFor(to) {
 
 /** Judge one signing request against the plan. Synchronous: the decision
  *  and the consumption of the step happen in one turn. */
+/**
+ * Which role's phase is ARMED (#2422 r7). Null — the plan is CLOSED — until
+ * both sessions' page preflights (navigation + English) have passed; then
+ * the borrower phase is armed explicitly, and the lender phase only once
+ * the request is pinned and every request check has passed. A signing
+ * request from a role whose phase is not armed is refused, and the refusal
+ * halts the drive (as every refusal does).
+ */
+let ARMED_ROLE = null;
+
 function judge(role, method, params) {
   noteWalletRefusals();
   if (HALT) return { ok: false, why: `halted — ${HALT}` };
+  if (ARMED_ROLE !== role) {
+    return {
+      ok: false,
+      why: ARMED_ROLE === null
+        ? 'the write plan is CLOSED — nothing may be signed before the page preflights pass and a phase is armed'
+        : `the ${ARMED_ROLE} phase is armed, not the ${role} phase`,
+    };
+  }
   if (!PLAN) return { ok: false, why: 'no write plan has been built' };
   let kind;
   let actual;
@@ -636,6 +676,65 @@ async function seedProfile(ctx) {
     } catch {
       /* storage blocked — the English assertion will say so */
     }
+  });
+}
+
+// ---------------------------------------------------------------------
+// The review screens' TERMS, compared with the chain before consent
+// (#2422 r7). See reviewTerms.mjs for how rows are read and matched.
+// ---------------------------------------------------------------------
+/** The receipt rows inside `scope`, as { label, value } text. */
+async function receiptRows(scope) {
+  return scope.locator('dl.receipt .receipt-row').evaluateAll((rows) =>
+    rows.map((r) => ({
+      label: r.querySelector('dt')?.textContent ?? '',
+      value: r.querySelector('dd')?.textContent ?? '',
+    })),
+  );
+}
+
+/** The lender's funding review vs the request on chain and the live fee
+ *  config at the pinned block (see `compareLenderReceipt`). */
+async function lenderReviewMismatches(page, req) {
+  return compareLenderReceipt(await receiptRows(page.locator('main')), {
+    en: EN.copy,
+    req,
+    principal: { decimals: PDEC, symbol: pre.principalSymbol },
+    collateral: { decimals: Number(pre.collateralDecimals), symbol: pre.collateralSymbol },
+    treasuryFeeBps: pre.treasuryFeeBps,
+    graceSeconds: graceSecondsFrom(pre.graceBuckets, req.durationDays),
+  });
+}
+
+/**
+ * The borrower's refinance review vs the chain at the moment of comparison,
+ * with the app's own payoff formulas (see `compareBorrowerReceipt`). A
+ * whole-day boundary crossed between the page's read and this one would
+ * show as a mismatch and halt — the safe direction.
+ */
+async function borrowerReviewMismatches(card) {
+  const t = await chainNow();
+  const payoffNow = refinancePayoffAt(loan, t);
+  const lif = (loan.principal * BigInt(pre.lifBps)) / 10_000n;
+  const graceEnd = loanDue + GRACE_SECONDS;
+  const expiresAt = t + REQUEST_WINDOW_SEC;
+  const lastFillable = expiresAt - 1n < graceEnd ? expiresAt - 1n : graceEnd;
+  const dateOpts = { day: 'numeric', month: 'short', year: 'numeric' };
+  return compareBorrowerReceipt(await receiptRows(card), {
+    en: EN.copy,
+    principal: { decimals: PDEC, symbol: pre.principalSymbol },
+    payoffNow,
+    headroom: refinancePayoffAt(loan, lastFillable) - payoffNow,
+    topUp: payoffNow - loan.principal + lif,
+    lifBps: pre.lifBps,
+    treasuryFeeBps: pre.treasuryFeeBps,
+    clamped: graceEnd + 1n < expiresAt,
+    // formatDate renders with the browser's zone; accept that and UTC.
+    graceEndDates: [
+      new Date(Number(graceEnd) * 1000).toLocaleDateString('en', dateOpts),
+      new Date(Number(graceEnd) * 1000).toLocaleDateString('en', { ...dateOpts, timeZone: 'UTC' }),
+    ],
+    requestWindowDays: REQUEST_WINDOW_SEC / 86_400n,
   });
 }
 
@@ -747,9 +846,29 @@ const LEDGER = [
     },
   },
   {
+    key: 'replacementLoan',
+    label: `replacement for loan ${LOAN_ID}`,
+    // Our accept opens it; so does the order matcher filling the request
+    // this run created — either way it is this run's doing.
+    touchedBy: ['b-create', 'l-accept'],
+    read: replacementAt,
+    format: (v) =>
+      v === null
+        ? 'none'
+        : `loan #${v.id} — status ${v.status}; borrower NFT held by ${v.borrowerHolder}, lender NFT held by ${v.lenderHolder}; ` +
+          `principal ${fmtP(v.principal)} ${pre.principalSymbol}, rate ${v.rateBps} bps, ${v.durationDays} days; ` +
+          `collateral ${v.collateralAsset} × ${v.collateralAmount}`,
+    lookup:
+      `UNKNOWN — find it by hand: the Diamond's LoanRefinanced events for oldLoanId ${LOAN_ID} ` +
+      `(${EXPLORER}/address/${DIAMOND}#events), or the borrower's positions at ${SITE}/positions`,
+    // A completed refinance is not undone by one action: the replacement is
+    // a live loan with its own parties.
+    restore: () => null,
+  },
+  {
     key: 'oldLoanStatus',
     label: `loan ${LOAN_ID} status`,
-    touchedBy: ['l-accept'],
+    touchedBy: ['b-create', 'l-accept'],
     read: async (head) => (await loanOf(LOAN_ID, head)).status,
     format: (v) => `${v} (${v === LOAN_STATUS.ACTIVE ? 'Active' : v === LOAN_STATUS.REPAID ? 'Repaid' : 'other'})`,
     // A completed refinance is not undone by a single action — the
@@ -757,6 +876,49 @@ const LEDGER = [
     restore: () => null,
   },
 ];
+
+/**
+ * This run's request as the ledger should see it: `none` before any
+ * createOffer (the preflight baseline, where the loan is Active and so has
+ * no replacement), `known` once identified, `unidentified` when a
+ * createOffer was handed to the wallet but its request could not be
+ * pinned — then the replacement is UNKNOWN, never assumed absent.
+ */
+let RUN_REQUEST = { state: 'none', id: null };
+const REPLACEMENT_SCAN_CAP = 2_000;
+
+/** The loan opened from this run's request, read at `head`; null if none. */
+async function replacementAt(head) {
+  if (RUN_REQUEST.state === 'none') return null;
+  if (RUN_REQUEST.state === 'unidentified') throw new Error('this run\u2019s request could not be identified');
+  // Loan ids are sequential and an unused id reads back as id 0, so the
+  // scan from the old loan upward ends at the first empty id (capped).
+  let match = null;
+  for (let id = LOAN_ID + 1n, n = 0; n < REPLACEMENT_SCAN_CAP; id++, n++) {
+    const l = await loanOf(id, head);
+    if (l.id === 0n) break;
+    if (l.offerId === RUN_REQUEST.id) {
+      if (match) throw new Error(`two loans (#${match.id}, #${l.id}) carry request #${RUN_REQUEST.id}`);
+      match = l;
+    }
+  }
+  if (!match) return null;
+  const [borrowerHolder, lenderHolder] = await Promise.all([
+    read('ownerOf', [match.borrowerTokenId], head),
+    read('ownerOf', [match.lenderTokenId], head),
+  ]);
+  return {
+    id: match.id,
+    status: match.status,
+    borrowerHolder,
+    lenderHolder,
+    principal: match.principal,
+    rateBps: match.interestRateBps,
+    durationDays: match.durationDays,
+    collateralAsset: match.collateralAsset,
+    collateralAmount: match.collateralAmount,
+  };
+}
 
 /** Read every ledger entry at `head`; a failed read is recorded, not thrown. */
 async function readLedger(head) {
@@ -785,6 +947,27 @@ async function reportAfterFailure() {
   let id = REQUEST_ID;
   const create = planSteps().find((st) => st.id === 'b-create' && st.status === 'consumed');
   if (id === null && create) id = await requestIdFromCreateStep(create);
+  RUN_REQUEST = id !== null ? { state: 'known', id } : create ? { state: 'unidentified', id: null } : { state: 'none', id: null };
+  // Our own accept's receipt names the replacement directly, when there is
+  // one; the ledger's scan below confirms it from chain state either way.
+  const accept = planSteps().find((st) => st.id === 'l-accept' && st.status === 'consumed');
+  if (accept) {
+    if (!accept.record.hash) {
+      console.log(`\naccept: handed to the wallet with no hash (${accept.record.outcome ?? 'awaiting provider'}) — check the lender's transactions at ${EXPLORER}/address/${LENDER}`);
+    } else {
+      try {
+        const rcpt = await pub.waitForTransactionReceipt({ hash: accept.record.hash, timeout: 90_000 });
+        const refi = diamondEvents(rcpt).events.filter((e) => e.eventName === 'LoanRefinanced');
+        console.log(
+          rcpt.status !== 'success'
+            ? `\naccept ${accept.record.hash} REVERTED — it opened no replacement.`
+            : `\naccept ${accept.record.hash}: ${refi.map((e) => `LoanRefinanced ${e.args.oldLoanId} → #${e.args.newLoanId}`).join('; ') || 'no LoanRefinanced event'}`,
+        );
+      } catch (e) {
+        console.log(`\naccept ${accept.record.hash}: no receipt yet (${String(e.shortMessage ?? e.message).slice(0, 100)}) — look it up at ${EXPLORER}/tx/${accept.record.hash}`);
+      }
+    }
+  }
   console.log('\n=== touched-state ledger after the failure (latest block) ===');
   let head;
   try {
@@ -921,6 +1104,9 @@ async function blockedBeforeAnyWrite(why, err) {
   if (anythingAllowed()) {
     console.log(`\nSTOPPED (FAIL, not BLOCKED — the gate had already allowed a write): ${why}`);
     await report(BASELINE_NONCES);
+    // Defensive (#2422 r7): nothing should be consumed while the plan is
+    // closed, but if anything was, its touched state is reported too.
+    await reportAfterFailure();
     process.exit(1);
   }
   await blocked(why, err);
@@ -1067,6 +1253,14 @@ const pre = await precondition('reading the preconditions from chain', async () 
     functionName: 'decimals',
     blockNumber: head,
   });
+  // What the review screens print the tokens as, and the fee config they
+  // quote — read at the same pinned block (#2422 r7).
+  const [principalSymbol, collateralSymbol, collateralDecimals, feesConfig] = await Promise.all([
+    pub.readContract({ address: loan.principalAsset, abi: erc20Abi, functionName: 'symbol', blockNumber: head }),
+    pub.readContract({ address: loan.collateralAsset, abi: erc20Abi, functionName: 'symbol', blockNumber: head }),
+    pub.readContract({ address: loan.collateralAsset, abi: erc20Abi, functionName: 'decimals', blockNumber: head }),
+    read('getFeesConfig', [], head),
+  ]);
   // Who holds each position NOW (#2422 r3 P2). The stored borrower is what
   // carry-over binds to; the position NFT is who may act on the position.
   const [borrowerPositionHolder, lenderPositionHolder] = await Promise.all([
@@ -1128,6 +1322,10 @@ const pre = await precondition('reading the preconditions from chain', async () 
     collateralPaused,
     maxOfferDurationDays,
     principalDecimals,
+    principalSymbol,
+    collateralSymbol,
+    collateralDecimals,
+    treasuryFeeBps: feesConfig[0],
     borrowerPositionHolder,
     lenderPositionHolder,
     sanctionsOracle,
@@ -1419,6 +1617,20 @@ for (const role of ['borrower', 'lender']) {
   }
 }
 
+// A page that asked to sign anything while the plan was CLOSED has halted
+// the drive. Nothing was written (the request was refused), but it is a
+// product finding, not a missing precondition — so FAIL, with the report.
+if (HALT || refusals.length || walletRefusals().length) {
+  console.log(`\nSTOPPED (FAIL): a page asked to sign before any phase was armed — ${HALT ?? 'see refusals'}`);
+  await closeSession('borrower');
+  await closeSession('lender');
+  await report(BASELINE_NONCES);
+  process.exit(1);
+}
+// Both page preflights passed: arm the borrower phase, explicitly.
+ARMED_ROLE = 'borrower';
+console.log('pre   write plan ARMED for the borrower phase');
+
 // =====================================================================
 // From here on, chain state may change: no BLOCKED exits.
 // =====================================================================
@@ -1470,6 +1682,14 @@ try {
   console.log(`\n--- refinance review (as rendered) ---\n${receiptText.slice(0, 2500)}\n---`);
   check('borrower: review says the collateral carries over', /carries over|without ever unlocking/i.test(receiptText));
   await session.shot('refinance-03-review');
+  // The figures the borrower is about to consent to, against the chain
+  // (#2422 r7). A mismatch or an unparseable row halts before consent.
+  const bTerms = await borrowerReviewMismatches(card);
+  check(
+    `borrower: review figures match the chain (${bTerms.compared.join(', ')})`,
+    bTerms.mismatches.length === 0,
+    bTerms.mismatches.join(' | ') || `all ${bTerms.compared.length} terms match`,
+  );
 
   // Rule B: nothing below may lead to a write if anything above failed.
   // Rule A: arm the gate with the three complete requests the form may
@@ -1605,6 +1825,10 @@ try {
   }
 
   await closeSession('borrower');
+  // The request is pinned and every request check passed: hand the plan to
+  // the lender phase. The borrower can sign nothing from here on.
+  ARMED_ROLE = 'lender';
+  console.log('info  write plan ARMED for the lender phase');
 
   // -------------------------------------------------------------------
   // 3. A DIFFERENT lender funds it through the Offer Book → guided review.
@@ -1693,6 +1917,15 @@ try {
     note('the lender review never says this request refinances an existing loan (accepting it also pays off and closes that loan)');
   }
   await session.shot('refinance-08-lender-review');
+  // The figures the lender is about to consent to, against the request on
+  // chain and the live fee config (#2422 r7) — before the consent tick.
+  const reqNow = await read('getOfferDetails', [requestId]);
+  const lTerms = await lenderReviewMismatches(lp, reqNow);
+  check(
+    `lender: review figures match the request on chain (${lTerms.compared.join(', ')})`,
+    lTerms.mismatches.length === 0,
+    lTerms.mismatches.join(' | ') || `all ${lTerms.compared.length} terms match`,
+  );
 
   beforeWriteStep('ticking the lender consent');
   const canSign = await pollUntil('consent + "Fund this borrower" enabled', async () => {

@@ -45,6 +45,7 @@
  * @property {(v: any) => string} format
  * @property {(a: any, b: any) => boolean} [equal]   default: deep-ish equality
  * @property {(baseline: any, now: any) => string|null} restore
+ * @property {string} [lookup]   how to find the state by hand when it is UNKNOWN
  *
  * @typedef {{ ok: true, value: any } | { ok: false, error: string }} Reading
  */
@@ -71,7 +72,7 @@ export function ledgerRows(entries, baseline, now, consumedStepIds) {
     const text = (r) => (r?.ok ? e.format(r.value) : `UNREADABLE (${r?.error ?? 'not read'})`);
     const row = { key: e.key, label: e.label, baselineText: text(b), nowText: text(n), touchedSteps };
     if (!b?.ok || !n?.ok) {
-      return { ...row, status: 'unknown', remedy: `could not be compared — read ${e.label} by hand` };
+      return { ...row, status: 'unknown', remedy: e.lookup ?? `could not be compared — read ${e.label} by hand` };
     }
     if ((e.equal ?? defaultEqual)(b.value, n.value)) {
       return { ...row, status: 'unchanged', remedy: null };
