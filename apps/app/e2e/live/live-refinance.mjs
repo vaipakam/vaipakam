@@ -35,27 +35,45 @@
 //      and the borrower's collateral-token WALLET balance unchanged across
 //      the whole flow (carry-over re-tags the lien, it never re-pledges).
 //
-// WRITE DISCIPLINE — enforced, not promised. Every signing request the
-// page makes passes a gate in THIS process before the injected wallet
-// sees it. Allowed, per phase and role:
-//   borrower, posting phase:  setAutoRefinanceCaps(<loan>, on, typed
-//                             ceiling, ~now+length+30d), a BOUNDED
-//                             principal-asset approve(Diamond, …), and a
-//                             createOffer whose WHOLE payload is bound to
-//                             the loan and the typed terms before signing
-//                             (see `createOfferMismatches`)
-//   lender, accept phase:     principal-asset approve(Diamond ≤ principal |
-//                             Permit2), acceptOffer / acceptOfferWithPermit
-//                             for <request> with terms naming this lender,
-//                             the borrower, the loan and the principal, the
-//                             AcceptTerms signature for this lender, and a
-//                             Permit2 transfer signature for the principal
-//                             asset to the Diamond
-// Anything else is refused at the wallet (EIP-1193 4001), recorded, and
-// ends the drive as a FAIL. Outside its phase a role may write nothing.
-// Every transaction hash is captured at the wallet boundary and reported
-// with its receipt status, and the drive cross-checks the count against
-// each role's nonce delta so a write that bypassed the capture would show.
+// WRITE DISCIPLINE — two rules, applied to every write (#2422 r2):
+//
+//   (A) ONE COMPLETE EXPECTED OBJECT PER SIGNING REQUEST. Every
+//       eth_sendTransaction and eth_signTypedData request is compared,
+//       field by field over the WHOLE decoded payload, against an expected
+//       object built BEFORE signing from the loan and the typed terms
+//       (refinanceExpected.mjs; the comparator is expectedPayload.mjs). A
+//       field the expected object does not name is itself a mismatch, so
+//       nothing is hand-picked and a new or regressed field is refused by
+//       construction. What may be signed, per phase:
+//         borrower, posting: setAutoRefinanceCaps, a bounded principal
+//           approve(Diamond), and the refinance createOffer (all 26 fields);
+//         lender, accepting: a bounded principal approve(Diamond), the
+//           AcceptTerms signature (all 34 fields — including the Full VPFI
+//           tariff OFF: acceptorFull false, ceiling 0, no downgrade), and
+//           then acceptOffer carrying EXACTLY the terms and signature just
+//           signed. No Permit2 path: a borrower-request accept never uses
+//           one (OfferFlow: acceptOfferWithPermit "only serves accepting a
+//           LENDER offer").
+//       Anything else is refused at the wallet (EIP-1193 4001).
+//   (B) HALT BEFORE THE NEXT WRITE. Any failed assertion or disclosure
+//       check, at any phase, sets a halt; the gate then refuses every
+//       further write, and every UI step that leads to one (a consent tick,
+//       a submit) checks the halt first and stops. A review that fails to
+//       disclose the illiquid collateral is therefore never consented to.
+//
+// SENDS ARE RECORDED BEFORE THE PROVIDER IS AWAITED. An allowed
+// transaction is logged when the gate allows it; a broadcast whose RPC
+// then fails never returns a hash but stays on record as "outcome unknown",
+// is reconciled against the role's latest/pending nonces in the report, and
+// makes the run FAIL. Once the gate has allowed anything, no exit is
+// BLOCKED and nothing reports "nothing written".
+//
+// MATURITY MARGIN. The loan must be at least two hours from maturity at
+// preflight. Past maturity the payoff grows by the late fee, so a run that
+// crossed the due date would sign a different deal from the one it
+// reserved for and reviewed — refinancing in the grace window is a
+// separate scenario, not this one. Two hours is over three times this
+// drive's own worst case (about 35 minutes).
 //
 // Verdicts (the three-verdict contract in run-live-batch.mjs):
 //   0 PASS     — every assertion held.
@@ -99,7 +117,6 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   decodeEventLog,
-  decodeFunctionData,
   decodeFunctionResult,
   encodeFunctionData,
   erc20Abi,
@@ -120,6 +137,19 @@ import {
 } from './driver.mjs';
 import { redactUrl } from './redact.mjs';
 import { confirmWrite } from './writeConfirm.mjs';
+import { structMismatches } from './expectedPayload.mjs';
+import {
+  decodeTxForComparison,
+  expectedAcceptOfferCall,
+  expectedAcceptTerms,
+  expectedAcceptTypedData,
+  expectedApproveCall,
+  expectedCapsCall,
+  expectedCreateOfferCall,
+  expectedTx,
+  REQUEST_WINDOW_SEC,
+  CLOCK_SLACK_SEC,
+} from './refinanceExpected.mjs';
 import { expectedPostureFrom, postureCopyFrom } from './refinancePosture.mjs';
 
 // ---------------------------------------------------------------------
@@ -177,7 +207,8 @@ const RATE_BPS = BigInt(Math.round(Number(RATE_PCT) * 100));
 const DAYS_N = BigInt(DAYS);
 const WORKERS_DEV_URL =
   process.env.WORKERS_DEV_URL ?? 'https://vaipakam-app.dawn-fire-139e.workers.dev';
-const PERMIT2 = '0x000000000022D473030F116dDEE9F6B43aC78BA3';
+/** See the maturity precondition for why two hours. */
+const MIN_TO_MATURITY_SEC = 2n * 3_600n;
 
 /** Facts read from chain when this drive was written — re-verified, not
  *  trusted. Only for loan 22 (now Repaid, so `REFI_LOAN_ID=22` blocks);
@@ -284,13 +315,41 @@ async function allOfferIdsOf(who, blockNumber) {
 // ---------------------------------------------------------------------
 const checks = []; // { label, ok, observed }
 const findings = []; // UI observations worth recording
-const sentTxs = []; // { role, purpose, hash }
 const refusals = []; // write-gate refusals — each one fails the drive
-let firstWriteSent = false;
+/**
+ * Every transaction the gate ALLOWED, recorded at the moment it was
+ * allowed — BEFORE the provider is awaited (#2422 r2 P1). A broadcast whose
+ * RPC then times out never returns a hash, and a record made only on
+ * success would let the report claim nothing was sent. Each entry is
+ * `{ role, purpose, hash: string|null, outcome }` where outcome is
+ * 'awaiting provider' → 'hash returned' | 'provider rejected: …'. An entry
+ * without a hash is reconciled against the role's nonces in `report()`.
+ */
+const sends = [];
+/** Typed-data signatures the gate allowed, with what came back. */
+const signatures = [];
+const hashedSends = (role) => sends.filter((t) => t.role === role && t.hash);
 
+// ---------------------------------------------------------------------
+// RULE B — one "halt before the next write" rule (#2422 r2).
+//
+// ANY failed assertion or disclosure check, at any phase, sets HALT. Once it
+// is set the write gate refuses every further signing request, and every UI
+// step that leads to a write (ticking a consent box, pressing a submit)
+// calls `beforeWriteStep` first and stops there. So a failure observed
+// before a write can never be followed by that write — whichever path the
+// failure took to get recorded — and nothing after it silently continues.
+// ---------------------------------------------------------------------
+let HALT = null;
+function halt(why) {
+  if (HALT) return;
+  HALT = why;
+  console.log(`HALT  ${why} — the write gate now refuses every further write`);
+}
 function check(label, ok, observed) {
   checks.push({ label, ok: Boolean(ok), observed });
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${observed !== undefined ? `  — observed: ${observed}` : ''}`);
+  if (!ok) halt(`check failed: ${label}`);
   return Boolean(ok);
 }
 function note(s) {
@@ -300,7 +359,12 @@ function note(s) {
 /** Stop the flow: an unexpected state. FAIL once anything was written. */
 class Stop extends Error {}
 function stop(why) {
+  halt(why);
   throw new Stop(why);
+}
+/** Call before any UI action that can lead to a signing request. */
+function beforeWriteStep(step) {
+  if (HALT) throw new Stop(`not ${step}: the drive halted earlier — ${HALT}`);
 }
 
 async function pollUntil(label, fn, { timeoutMs = 120_000, everyMs = 3_000 } = {}) {
@@ -324,184 +388,75 @@ async function pollUntil(label, fn, { timeoutMs = 120_000, everyMs = 3_000 } = {
 }
 
 // ---------------------------------------------------------------------
-// The write gate. Phase-scoped allowlist, decided in this process.
+// RULE A — the write gate compares every signing request against ONE
+// complete expected object (#2422 r2).
+//
+// Each phase ARMS its gate with the whole requests it may sign, built
+// before signing from the loan and the typed terms (refinanceExpected.mjs):
+// for a transaction, the full request with its calldata decoded to
+// `{ functionName, args }`; for a typed-data signature, the signer plus the
+// whole typed data (domain, types, primaryType, message). A request is
+// allowed only if `structMismatches` finds NO difference against one of
+// them — every field compared, and any field the expected object does not
+// name is itself a refusal. Nothing is hand-picked, so a field nobody
+// thought of (the Full-tariff trio, round 2) cannot slip through.
+//
+// The lender's accept CALL is armed only after the lender has signed, with
+// the AcceptTerms pinned to exactly the signed values and the signature
+// that came back — so the transaction can carry nothing but what was
+// signed. A borrower-request accept never uses Permit2 (OfferFlow:
+// `acceptOfferWithPermit` "only serves accepting a LENDER offer"), so no
+// Permit2 approval, signature or call is armed at all.
 // ---------------------------------------------------------------------
 const gate = {
-  borrower: { open: false },
-  lender: { open: false, requestId: null },
+  borrower: { open: false, txs: [], typed: [] },
+  lender: { open: false, txs: [], typed: [] },
 };
+const ROLE_ADDRESS = { borrower: BORROWER, lender: LENDER };
+/** Each role's `latest` nonce before anything could be written. */
+let BASELINE_NONCES = null;
+/** Set once the preconditions read the loan; the gate decodes approvals on
+ *  its principal asset only after that. */
+let EXPECT_LOAN = null;
 
-function decodeDiamondCall(data) {
-  try {
-    return decodeFunctionData({ abi: DIAMOND_ABI, data });
-  } catch {
-    return null;
-  }
+function abiFor(to) {
+  if (eq(to, DIAMOND)) return DIAMOND_ABI;
+  if (EXPECT_LOAN && eq(to, EXPECT_LOAN.principalAsset)) return erc20Abi;
+  return null;
 }
 
-/**
- * What the borrower's createOffer must carry, bound field by field BEFORE
- * signing (Codex #2422 r1 P1). Set once the preconditions have read the
- * loan; until then `judgeTx` refuses every createOffer.
- *
- * The expected values are the refinance request's CONTRACT, not a copy of
- * whatever the form happens to send: same principal asset and amount as
- * the loan (amountMax too — a request is taken whole), the loan's
- * collateral identity verbatim (that is what selects carry-over), the
- * loan's prepay asset, partial-repay and interest-mode flags, the TYPED
- * ceiling and length, a refinance tag for THIS loan, the borrower's
- * consent, all-or-nothing fill, no prepay listing / parallel sale /
- * periodic cadence, and an expiry about REQUEST_WINDOW_DAYS out.
- *
- * The rate FLOOR is bound to 0, not to the typed ceiling: a borrow
- * request is a band whose floor the app posts as 0 and whose ceiling is
- * what the borrower typed (Offers.tsx: "Borrow requests posted by this
- * app carry floor 0 / ceiling Y by design"; loan 22's request #45
- * persisted floor 0 / ceiling 1200). Binding the floor to the ceiling
- * would refuse the form's legitimate post.
- */
-let EXPECT = null;
-const REQUEST_WINDOW_SEC = 30n * 86_400n; // RefinanceFlow's REQUEST_WINDOW_DAYS
-const CLOCK_SLACK_SEC = 900n; // local clock vs block time, either way
-const nowSec = () => BigInt(Math.floor(Date.now() / 1000));
-const within = (v, centre) => v >= centre - CLOCK_SLACK_SEC && v <= centre + CLOCK_SLACK_SEC;
-
-function createOfferMismatches(p) {
-  const L = EXPECT.loan;
-  const want = [
-    ['offerType', Number(p.offerType), 1],
-    ['lendingAsset', p.lendingAsset, L.principalAsset, eq],
-    ['amount', p.amount, L.principal],
-    ['amountMax', p.amountMax, L.principal],
-    ['interestRateBps (floor)', p.interestRateBps, 0n],
-    ['interestRateBpsMax (typed ceiling)', p.interestRateBpsMax, RATE_BPS],
-    ['durationDays (typed length)', p.durationDays, DAYS_N],
-    ['assetType', Number(p.assetType), 0],
-    ['tokenId', p.tokenId, 0n],
-    ['quantity', p.quantity, 1n],
-    ['collateralAsset', p.collateralAsset, L.collateralAsset, eq],
-    ['collateralAmount', p.collateralAmount, L.collateralAmount],
-    ['collateralAmountMax', p.collateralAmountMax, L.collateralAmount],
-    ['collateralAssetType', Number(p.collateralAssetType), Number(L.collateralAssetType)],
-    ['collateralTokenId', p.collateralTokenId, L.collateralTokenId],
-    ['collateralQuantity', p.collateralQuantity, L.collateralQuantity],
-    ['prepayAsset', p.prepayAsset, L.prepayAsset, eq],
-    ['allowsPartialRepay', p.allowsPartialRepay, L.allowsPartialRepay],
-    ['useFullTermInterest', p.useFullTermInterest, L.useFullTermInterest],
-    ['creatorRiskAndTermsConsent', p.creatorRiskAndTermsConsent, true],
-    ['periodicInterestCadence', Number(p.periodicInterestCadence), 0],
-    ['fillMode (all-or-nothing)', Number(p.fillMode), 1],
-    ['allowsPrepayListing', p.allowsPrepayListing, false],
-    ['allowsParallelSale', p.allowsParallelSale, false],
-    ['refinanceTargetLoanId', p.refinanceTargetLoanId, LOAN_ID],
-  ];
-  const bad = want
-    .filter(([, got, exp, cmp]) => !(cmp ? cmp(got, exp) : got === exp))
-    .map(([k, got, exp]) => `${k}=${got} (want ${exp})`);
-  // The request's own hard expiry: ~REQUEST_WINDOW_DAYS after posting.
-  if (!within(BigInt(p.expiresAt), nowSec() + REQUEST_WINDOW_SEC)) {
-    bad.push(`expiresAt=${p.expiresAt} (want ~now+30d)`);
-  }
-  return bad;
-}
-
-/** @returns {{ ok: true, purpose: string } | { ok: false, why: string }} */
-function judgeTx(role, tx, principalAsset) {
+/** Judge one signing request. @returns {{ok: true, purpose, kind}|{ok: false, why}} */
+function judge(role, method, params) {
   const g = gate[role];
+  if (HALT) return { ok: false, why: `halted — ${HALT}` };
   if (!g.open) return { ok: false, why: `${role} may not write outside its phase` };
-  if (!EXPECT) return { ok: false, why: 'gate not armed (preconditions unread)' };
-  if (tx.value && BigInt(tx.value) !== 0n) return { ok: false, why: 'non-zero value' };
-  if (!tx.to || !tx.data) return { ok: false, why: 'missing to/data' };
-  const principal = EXPECT.loan.principal;
-  if (eq(tx.to, principalAsset)) {
-    let d;
+  if (method === 'eth_sendTransaction') {
+    const actual = decodeTxForComparison(params?.[0] ?? {}, abiFor);
+    const reasons = [];
+    for (const cand of g.txs) {
+      const diff = structMismatches(cand.expected, actual);
+      if (diff.length === 0) return { ok: true, purpose: cand.purpose, kind: 'tx', armed: cand };
+      reasons.push(`${cand.purpose}: ${diff.join('; ')}`);
+    }
+    return { ok: false, why: `transaction matches no armed request — ${reasons.join(' | ') || 'none armed'}` };
+  }
+  if (method === 'eth_signTypedData_v4') {
+    let typedData;
     try {
-      d = decodeFunctionData({ abi: erc20Abi, data: tx.data });
+      typedData = JSON.parse(params?.[1]);
     } catch {
-      return { ok: false, why: 'unrecognised call on the principal asset' };
+      return { ok: false, why: 'unparseable typed data' };
     }
-    if (d.functionName !== 'approve') return { ok: false, why: `principal-asset ${d.functionName}` };
-    const [spender, amount] = d.args;
-    const toDiamond = eq(spender, DIAMOND);
-    if (!toDiamond && !(role === 'lender' && eq(spender, PERMIT2))) {
-      return { ok: false, why: `approve to unexpected spender ${spender}` };
+    const actual = { signer: params?.[0], typedData };
+    const reasons = [];
+    for (const cand of g.typed) {
+      const diff = structMismatches(cand.expected, actual);
+      if (diff.length === 0) return { ok: true, purpose: cand.purpose, kind: 'typed', armed: cand };
+      reasons.push(`${cand.purpose}: ${diff.join('; ')}`);
     }
-    // Bounded: 0 is the form's reset / unwind; otherwise the borrower's
-    // payoff approval (principal + the interest the payoff can reach,
-    // capped well above it) or the lender's principal. A Permit2
-    // approval moves nothing by itself, so its size is not bounded here.
-    if (toDiamond && amount !== 0n) {
-      const cap = role === 'borrower' ? EXPECT.payoffApprovalCap : principal;
-      if (amount > cap) return { ok: false, why: `approve(Diamond, ${amount}) above the ${cap} this flow needs` };
-    }
-    return { ok: true, purpose: `approve(${toDiamond ? 'Diamond' : 'Permit2'}, ${amount})` };
+    return { ok: false, why: `signature matches no armed request — ${reasons.join(' | ') || 'none armed'}` };
   }
-  if (!eq(tx.to, DIAMOND)) return { ok: false, why: `call to unexpected contract ${tx.to}` };
-  const d = decodeDiamondCall(tx.data);
-  if (!d) return { ok: false, why: 'undecodable Diamond call' };
-  if (role === 'borrower') {
-    if (d.functionName === 'setAutoRefinanceCaps') {
-      const [loanId, enabled, maxRateBps, maxNewExpiry] = d.args;
-      const bad = [];
-      if (loanId !== LOAN_ID) bad.push(`loanId=${loanId}`);
-      if (enabled !== true) bad.push(`enabled=${enabled}`);
-      if (BigInt(maxRateBps) !== RATE_BPS) bad.push(`maxRateBps=${maxRateBps} (want ${RATE_BPS})`);
-      if (!within(BigInt(maxNewExpiry), nowSec() + DAYS_N * 86_400n + REQUEST_WINDOW_SEC)) {
-        bad.push(`maxNewExpiry=${maxNewExpiry} (want ~now+${DAYS_N}d+30d)`);
-      }
-      if (bad.length) return { ok: false, why: `setAutoRefinanceCaps mismatch: ${bad.join(', ')}` };
-      return { ok: true, purpose: `setAutoRefinanceCaps(${d.args.join(', ')})` };
-    }
-    if (d.functionName === 'createOffer') {
-      const bad = createOfferMismatches(d.args[0]);
-      if (bad.length) return { ok: false, why: `createOffer payload mismatch: ${bad.join('; ')}` };
-      return { ok: true, purpose: `createOffer(refinance of loan ${LOAN_ID})` };
-    }
-    return { ok: false, why: `borrower Diamond call ${d.functionName}` };
-  }
-  // lender
-  if (d.functionName === 'acceptOffer' || d.functionName === 'acceptOfferWithPermit') {
-    const [offerId, terms] = d.args;
-    if (g.requestId === null || offerId !== g.requestId) {
-      return { ok: false, why: `${d.functionName} for offer ${offerId}, expected ${g.requestId}` };
-    }
-    const bad = [];
-    if (!eq(terms?.acceptor, LENDER)) bad.push(`acceptor=${terms?.acceptor}`);
-    if (!eq(terms?.offerCreator, BORROWER)) bad.push(`offerCreator=${terms?.offerCreator}`);
-    if (terms?.refinanceTargetLoanId !== LOAN_ID) bad.push(`refinanceTargetLoanId=${terms?.refinanceTargetLoanId}`);
-    if (terms?.amount !== principal) bad.push(`amount=${terms?.amount}`);
-    if (terms?.riskAndTermsConsent !== true) bad.push(`riskAndTermsConsent=${terms?.riskAndTermsConsent}`);
-    if (bad.length) return { ok: false, why: `${d.functionName} terms mismatch: ${bad.join(', ')}` };
-    return { ok: true, purpose: `${d.functionName}(offer ${offerId})` };
-  }
-  return { ok: false, why: `lender Diamond call ${d.functionName}` };
-}
-
-function judgeTypedData(role, signer, json, principalAsset) {
-  const g = gate[role];
-  if (!g.open) return { ok: false, why: `${role} may not sign outside its phase` };
-  let t;
-  try {
-    t = JSON.parse(json);
-  } catch {
-    return { ok: false, why: 'unparseable typed data' };
-  }
-  if (role !== 'lender') return { ok: false, why: `${role} signature ${t.primaryType}` };
-  if (t.primaryType === 'AcceptTerms') {
-    if (!eq(t.domain?.verifyingContract, DIAMOND)) return { ok: false, why: 'AcceptTerms for another contract' };
-    if (!eq(t.message?.acceptor, signer)) return { ok: false, why: 'AcceptTerms for another acceptor' };
-    if (String(t.message?.refinanceTargetLoanId) !== String(LOAN_ID)) {
-      return { ok: false, why: `AcceptTerms refinanceTargetLoanId ${t.message?.refinanceTargetLoanId}` };
-    }
-    return { ok: true, purpose: 'sign AcceptTerms' };
-  }
-  if (t.primaryType === 'PermitTransferFrom') {
-    if (!eq(t.domain?.verifyingContract, PERMIT2)) return { ok: false, why: 'permit for another verifier' };
-    if (!eq(t.message?.spender, DIAMOND)) return { ok: false, why: 'permit to another spender' };
-    if (!eq(t.message?.permitted?.token, principalAsset)) return { ok: false, why: 'permit for another token' };
-    return { ok: true, purpose: `sign Permit2 transfer (${t.message?.permitted?.amount})` };
-  }
-  return { ok: false, why: `unexpected signature type ${t.primaryType}` };
+  return { ok: false, why: `unexpected wallet method ${method}` };
 }
 
 const SIGNING_METHODS = [
@@ -519,28 +474,50 @@ const SIGNING_METHODS = [
 
 /**
  * Wrap the injected provider so every signing request is judged here
- * first, and every sent hash is reported back. Installed AFTER `launch()`
- * adds its own init script, so it runs second and finds the provider in
- * place; EIP-6963 announced the same object, so the wrap covers it too.
+ * first. Installed AFTER `launch()` adds its own init script, so it runs
+ * second and finds the provider in place; EIP-6963 announced the same
+ * object, so the wrap covers it too.
+ *
+ * A transaction is recorded by the gate binding itself, synchronously with
+ * the decision to allow it and before the page hands it to the provider —
+ * so an ambiguous send (broadcast, then the provider rejects) is already on
+ * record as "awaiting provider" and is reconciled by nonce, never lost.
  */
-async function installGate(ctx, role, principalAsset, advanced = true) {
+async function installGate(ctx, role, advanced = true) {
   await ctx.exposeBinding('__liveRefiGate', async (_src, { method, params }) => {
-    let v;
-    if (method === 'eth_sendTransaction') v = judgeTx(role, params?.[0] ?? {}, principalAsset);
-    else if (method === 'eth_signTypedData_v4') v = judgeTypedData(role, params?.[0], params?.[1], principalAsset);
-    else v = { ok: false, why: `unexpected wallet method ${method}` };
+    const v = judge(role, method, params);
     if (!v.ok) {
       refusals.push(`${role}: ${method} — ${v.why}`);
       console.log(`GATE  refused ${role} ${method}: ${v.why}`);
-    } else {
-      console.log(`GATE  allowed ${role}: ${v.purpose}`);
+      halt(`the ${role} page asked to sign something not armed (${method})`);
+      return { ok: false, why: v.why };
     }
-    return v;
+    console.log(`GATE  allowed ${role}: ${v.purpose}`);
+    if (v.kind === 'tx') {
+      sends.push({ role, purpose: v.purpose, hash: null, outcome: 'awaiting provider' });
+      return { ok: true, kind: 'tx', id: sends.length - 1 };
+    }
+    signatures.push({ role, purpose: v.purpose, armed: v.armed, params, signature: null, outcome: 'awaiting provider' });
+    return { ok: true, kind: 'typed', id: signatures.length - 1 };
   });
-  await ctx.exposeBinding('__liveRefiSent', async (_src, { hash, purpose }) => {
-    firstWriteSent = true;
-    sentTxs.push({ role, purpose, hash });
-    console.log(`TX    ${role} sent ${purpose}: ${hash}`);
+  await ctx.exposeBinding('__liveRefiOutcome', async (_src, { kind, id, result, error }) => {
+    const rec = kind === 'tx' ? sends[id] : signatures[id];
+    if (!rec) return;
+    if (error !== undefined) {
+      rec.outcome = `provider rejected: ${String(error).slice(0, 160)}`;
+      console.log(`${kind === 'tx' ? 'TX  ' : 'SIG '}  ${role} ${rec.purpose} — ${rec.outcome}`);
+      return;
+    }
+    if (kind === 'tx') {
+      rec.hash = result;
+      rec.outcome = 'hash returned';
+      console.log(`TX    ${role} sent ${rec.purpose}: ${result}`);
+    } else {
+      rec.signature = result;
+      rec.outcome = 'signed';
+      console.log(`SIG   ${role} signed ${rec.purpose}`);
+      await rec.armed.onSigned?.(rec);
+    }
   });
   await ctx.addInitScript(
     ({ methods, advanced }) => {
@@ -563,10 +540,14 @@ async function installGate(ctx, role, principalAsset, advanced = true) {
           e.code = 4001;
           throw e;
         }
-        const res = await inner(payload);
-        if (method === 'eth_sendTransaction') {
-          await window.__liveRefiSent({ hash: res, purpose: v.purpose });
+        let res;
+        try {
+          res = await inner(payload);
+        } catch (err) {
+          await window.__liveRefiOutcome({ kind: v.kind, id: v.id, error: String(err?.message ?? err) });
+          throw err;
         }
+        await window.__liveRefiOutcome({ kind: v.kind, id: v.id, result: res });
         return res;
       };
       p.__liveRefiWrapped = true;
@@ -576,25 +557,113 @@ async function installGate(ctx, role, principalAsset, advanced = true) {
 }
 
 // ---------------------------------------------------------------------
-// Report — printed on every exit after the first precondition.
+// Report — printed on every exit once anything could have been written.
 // ---------------------------------------------------------------------
-async function report() {
-  console.log('\n=== transactions sent ===');
-  if (sentTxs.length === 0) console.log('(none)');
-  for (const t of sentTxs) {
-    let status = 'unknown';
+/**
+ * Reconcile every allowed send against the chain (#2422 r2 P1). The nonce
+ * is the one record a lost hash cannot hide from: each mined transaction
+ * from a role advances its `latest` nonce, and each broadcast one not yet
+ * mined shows in `pending`. Returns the per-role lines and whether anything
+ * is unaccounted for.
+ */
+async function reconcileSends(baselineNonces) {
+  const lines = [];
+  let unreconciled = false;
+  if (!baselineNonces && sends.length > 0) {
+    return { lines: ['no nonce baseline was taken — allowed sends cannot be reconciled'], unreconciled: true };
+  }
+  for (const role of ['borrower', 'lender']) {
+    const allowed = sends.filter((t) => t.role === role);
+    if (allowed.length === 0) continue;
+    const who = ROLE_ADDRESS[role];
+    let latest;
+    let pending;
     try {
-      const r = await pub.waitForTransactionReceipt({ hash: t.hash, timeout: 120_000 });
-      status = `${r.status} @ block ${r.blockNumber}`;
+      [latest, pending] = await Promise.all([
+        pub.getTransactionCount({ address: who, blockTag: 'latest' }),
+        pub.getTransactionCount({ address: who, blockTag: 'pending' }),
+      ]);
     } catch (e) {
-      status = `receipt unavailable (${String(e.shortMessage ?? e.message).slice(0, 80)})`;
+      lines.push(`${role}: nonces unreadable (${String(e.shortMessage ?? e.message).slice(0, 80)}) — ${allowed.length} allowed send(s) NOT reconciled`);
+      unreconciled = true;
+      continue;
     }
-    console.log(`${t.role.padEnd(8)} ${t.hash}  ${t.purpose}  → ${status}`);
+    const minedDelta = latest - baselineNonces[role];
+    const pendingDelta = pending - latest;
+    const hashed = allowed.filter((t) => t.hash).length;
+    const unhashed = allowed.length - hashed;
+    lines.push(
+      `${role}: ${allowed.length} allowed (${hashed} with a hash, ${unhashed} without); ` +
+        `nonce mined +${minedDelta}, pending +${pendingDelta}`,
+    );
+    if (minedDelta + pendingDelta > allowed.length) {
+      lines.push(`  ${role}: MORE transactions reached the chain than the gate allowed — a write bypassed the gate`);
+      unreconciled = true;
+    }
+    if (unhashed > 0) {
+      const onChainWithoutHash = minedDelta + pendingDelta - hashed;
+      if (onChainWithoutHash > 0) {
+        lines.push(
+          `  ${role}: ${onChainWithoutHash} send(s) reached the chain although the provider returned no hash — ` +
+            `look up nonce(s) from ${baselineNonces[role] + hashed} on the explorer`,
+        );
+      } else {
+        lines.push(
+          `  ${role}: ${unhashed} send(s) without a hash are NOT on chain as of this read; a delayed ` +
+            `broadcast is still possible — recheck the nonce before treating them as unsent`,
+        );
+      }
+      unreconciled = true;
+    }
+  }
+  return { lines, unreconciled };
+}
+
+/**
+ * BLOCKED is a claim that nothing was written, so it is refused once the
+ * gate has allowed ANY write or signature (#2422 r2 P1): from then on the
+ * outcome is FAIL with the full report and the nonce reconciliation. Every
+ * BLOCKED exit in this file goes through here, so the rule does not depend
+ * on where in the flow a call site happens to sit.
+ */
+async function blockedBeforeAnyWrite(why, err) {
+  if (sends.length > 0 || signatures.length > 0) {
+    console.log(`\nSTOPPED (FAIL, not BLOCKED — the gate had already allowed a write): ${why}`);
+    await report(BASELINE_NONCES);
+    process.exit(1);
+  }
+  await blocked(why, err);
+}
+
+async function report(baselineNonces) {
+  console.log('\n=== transactions the gate allowed ===');
+  if (sends.length === 0) console.log('(none — nothing was written)');
+  for (const t of sends) {
+    let status = t.outcome;
+    if (t.hash) {
+      try {
+        const r = await pub.waitForTransactionReceipt({ hash: t.hash, timeout: 120_000 });
+        status = `${r.status} @ block ${r.blockNumber}`;
+      } catch (e) {
+        status = `receipt unavailable (${String(e.shortMessage ?? e.message).slice(0, 80)})`;
+      }
+    }
+    console.log(`${t.role.padEnd(8)} ${t.hash ?? '(no hash — outcome unknown)'}  ${t.purpose}  → ${status}`);
+  }
+  if (signatures.length) {
+    console.log('\n=== signatures the gate allowed ===');
+    for (const s of signatures) console.log(`${s.role.padEnd(8)} ${s.purpose} → ${s.outcome}`);
+  }
+  const rec = await reconcileSends(baselineNonces);
+  if (rec.lines.length) {
+    console.log('\n=== nonce reconciliation ===');
+    for (const l of rec.lines) console.log(l);
   }
   if (refusals.length) {
     console.log('\n=== write-gate refusals ===');
     for (const r of refusals) console.log(r);
   }
+  if (HALT) console.log(`\n=== halted: ${HALT} ===`);
   if (findings.length) {
     console.log('\n=== UI / flow notes ===');
     for (const f of findings) console.log(`- ${f}`);
@@ -602,6 +671,7 @@ async function report() {
   const failed = checks.filter((c) => !c.ok);
   console.log(`\n=== ${checks.length - failed.length}/${checks.length} checks passed ===`);
   for (const c of failed) console.log(`FAILED: ${c.label}`);
+  return rec;
 }
 
 // =====================================================================
@@ -620,7 +690,7 @@ const siteBundle = await precondition(`opening ${SITE}`, () => indexHash(SITE));
 const refBundle = await precondition(`opening ${WORKERS_DEV_URL}`, () => indexHash(WORKERS_DEV_URL));
 console.log(`build  ${SITE} → ${siteBundle}\nbuild  ${WORKERS_DEV_URL} → ${refBundle}`);
 if (siteBundle !== refBundle) {
-  await blocked(
+  await blockedBeforeAnyWrite(
     `${SITE} serves ${siteBundle} but the workers.dev deploy serves ${refBundle} — ` +
       `review the deployment you just made: rerun with SITE_URL=${WORKERS_DEV_URL}`,
   );
@@ -668,7 +738,11 @@ const pre = await precondition('reading the preconditions from chain', async () 
   // The LIVE loan-initiation fee rate (ConfigFacet), pinned to the same
   // head — the payoff reserve below is computed from it, never assumed.
   const lifBps = await read('getLoanInitiationFeeBps', [], head);
-  return { head, now: block.timestamp, loan, riskGate, autoRefi, paused, flags, collLiquidity, tosB, tosL, b, l, offerIds, openRequests, caps, lifBps };
+  // The risk-terms hash the lender's AcceptTerms must carry (the app reads
+  // the same getter, fail-closed). Read before any write so the expected
+  // acceptance terms are complete before the first signature.
+  const riskTermsHash = await read('getCurrentRiskTermsHash', [], head);
+  return { head, now: block.timestamp, loan, riskGate, autoRefi, paused, flags, collLiquidity, tosB, tosL, b, l, offerIds, openRequests, caps, lifBps, riskTermsHash };
 });
 
 const { loan } = pre;
@@ -685,7 +759,21 @@ want('collateral recorded Illiquid on the loan', loan.collateralLiquidity === LI
 want('collateral is Illiquid now (checkLiquidity)', Number(pre.collLiquidity) === LIQUIDITY_ILLIQUID, pre.collLiquidity);
 want('riskAndTermsConsentFromBoth', loan.riskAndTermsConsentFromBoth === true, loan.riskAndTermsConsentFromBoth);
 want('ERC-20 loan with ERC-20 collateral', Number(loan.assetType) === 0 && Number(loan.collateralAssetType) === 0, `${loan.assetType}/${loan.collateralAssetType}`);
-want('not past maturity (form stays pre-grace)', pre.now < loan.startTime + loan.durationDays * 86_400n, `now ${pre.now}, due ${loan.startTime + loan.durationDays * 86_400n}`);
+// At least MIN_TO_MATURITY_SEC before maturity, not merely "not past it"
+// (#2422 r2 P2). Past maturity the payoff grows by the late fee and keeps
+// accruing, so a run that crosses the due date mid-drive would be signing
+// a different deal from the one it reserved for and reviewed — a separate
+// scenario (refinancing in the grace window), not this one. The margin is
+// generous on purpose: this drive's own worst case is about 35 minutes
+// (5 min Offer Book wait + up to 5 min each for posting and accepting, the
+// review and consent polls, and up to 3 min per receipt), and two hours is
+// more than three times that.
+const loanDue = loan.startTime + loan.durationDays * 86_400n;
+want(
+  `at least ${MIN_TO_MATURITY_SEC / 60n} min before maturity (a refinance near or past the due date is a different scenario)`,
+  loanDue - pre.now >= MIN_TO_MATURITY_SEC,
+  `now ${pre.now}, due ${loanDue} (${(loanDue - pre.now) / 60n} min away)`,
+);
 want('no periodic-interest cadence', Number(loan.periodicInterestCadence) === 0, loan.periodicInterestCadence);
 if (LOAN_ID === 22n) {
   for (const [k, v] of Object.entries(LOAN22_FACTS)) {
@@ -715,11 +803,12 @@ const borrowerSpareNeed = fullTermInterest + lifWei;
 console.log(`pre   live loan-initiation fee: ${pre.lifBps} bps → ${formatUnits(lifWei, 18)} on the new principal`);
 want('borrower holds the payoff top-up (interest share + live LIF)', pre.b.principal >= borrowerSpareNeed, `${formatUnits(pre.b.principal, 18)} ≥ ${formatUnits(borrowerSpareNeed, 18)}`);
 const GAS_FLOOR = 300_000_000_000_000n; // 0.0003 ETH — several Base Sepolia txs
+console.log(`pre   current risk-terms hash: ${pre.riskTermsHash}`);
 want('borrower has gas', pre.b.eth >= GAS_FLOOR, formatUnits(pre.b.eth, 18));
 want('lender has gas', pre.l.eth >= GAS_FLOOR, formatUnits(pre.l.eth, 18));
 console.log(`pre   auto-refinance switch: ${pre.autoRefi}; matcher partialFill: ${pre.flags[2]}; caps on loan: ${JSON.stringify(pre.caps, (_k, v) => (typeof v === 'bigint' ? String(v) : v))}`);
 if (misses.length) {
-  await blocked(`chain facts differ from the drive's preconditions — nothing was written:\n  - ${misses.join('\n  - ')}`);
+  await blockedBeforeAnyWrite(`chain facts differ from the drive's preconditions — nothing was written:\n  - ${misses.join('\n  - ')}`);
 }
 if (pre.autoRefi && pre.flags[2]) {
   note(
@@ -750,17 +839,104 @@ const expectedPosture = expectedPostureFrom({
   partialFill: pre.flags[2],
 });
 
-const PRINCIPAL_ASSET = loan.principalAsset;
-// Arm the write gate with the loan it binds every payload to. The payoff
-// approval cap is deliberately loose (twice the full-term interest plus a
-// tenth of principal over principal): it bounds a runaway approval, while
-// the exact figure is the form's own business and grows with late fees.
-EXPECT = {
+// What every expected payload is built from — the loan and the typed
+// terms. The payoff approval cap is deliberately loose (principal plus
+// twice the full-term interest plus a tenth of principal): it bounds a
+// runaway approval, while the exact figure is the form's own business.
+const EXPECT = {
   loan,
   payoffApprovalCap: loan.principal + 2n * fullTermInterest + loan.principal / 10n,
 };
+const nowSec = () => BigInt(Math.floor(Date.now() / 1000));
+EXPECT_LOAN = loan;
+
+/** Arm the borrower's gate: the three requests the form may sign. */
+function armBorrower() {
+  const tx = (call) => expectedTx({ from: BORROWER, to: DIAMOND, call, chainId: CHAIN_ID });
+  gate.borrower.txs = [
+    {
+      purpose: `setAutoRefinanceCaps(${LOAN_ID}, on, ${RATE_BPS} bps)`,
+      expected: tx(expectedCapsCall({ loanId: LOAN_ID, rateBps: RATE_BPS, days: DAYS_N, nowSec })),
+    },
+    {
+      purpose: 'approve(Diamond, payoff)',
+      expected: expectedTx({
+        from: BORROWER,
+        to: loan.principalAsset,
+        call: expectedApproveCall({ spender: DIAMOND, cap: EXPECT.payoffApprovalCap, why: 'the payoff bound' }),
+        chainId: CHAIN_ID,
+      }),
+    },
+    {
+      purpose: `createOffer(refinance of loan ${LOAN_ID})`,
+      expected: tx(expectedCreateOfferCall({ loan, loanId: LOAN_ID, rateBps: RATE_BPS, days: DAYS_N, nowSec })),
+    },
+  ];
+  gate.borrower.typed = []; // the borrower signs no typed data on this path
+}
+
+/**
+ * Arm the lender's gate for `requestId`: the principal approval and the
+ * AcceptTerms signature. The accept CALL is armed only once that signature
+ * comes back, pinned to exactly the signed terms and signature.
+ */
+function armLender(requestId) {
+  const termsArgs = {
+    loan,
+    loanId: LOAN_ID,
+    requestId,
+    lender: LENDER,
+    borrower: BORROWER,
+    rateBps: RATE_BPS,
+    days: DAYS_N,
+    riskTermsHash: pre.riskTermsHash,
+    nowSec,
+  };
+  const approve = {
+    purpose: 'approve(Diamond, principal)',
+    expected: expectedTx({
+      from: LENDER,
+      to: loan.principalAsset,
+      call: expectedApproveCall({ spender: DIAMOND, cap: loan.principal, why: 'the principal' }),
+      chainId: CHAIN_ID,
+    }),
+  };
+  gate.lender.txs = [approve];
+  gate.lender.typed = [
+    {
+      purpose: `sign AcceptTerms for request #${requestId}`,
+      expected: expectedAcceptTypedData({
+        abi: DIAMOND_ABI,
+        chainId: CHAIN_ID,
+        diamond: DIAMOND,
+        signer: LENDER,
+        terms: expectedAcceptTerms(termsArgs),
+      }),
+      onSigned: (rec) => {
+        const signed = JSON.parse(rec.params[1]).message;
+        const terms = expectedAcceptTerms({
+          ...termsArgs,
+          pinned: { nonce: BigInt(signed.nonce), deadline: BigInt(signed.deadline) },
+        });
+        gate.lender.txs = [
+          approve,
+          {
+            purpose: `acceptOffer(offer ${requestId})`,
+            expected: expectedTx({
+              from: LENDER,
+              to: DIAMOND,
+              call: expectedAcceptOfferCall({ requestId, terms, signature: rec.signature }),
+              chainId: CHAIN_ID,
+            }),
+          },
+        ];
+      },
+    },
+  ];
+}
 const baselineCollateral = pre.b.collateral;
 const baselineNonces = { borrower: pre.b.nonceLatest, lender: pre.l.nonceLatest };
+BASELINE_NONCES = baselineNonces;
 const baselineOffers = new Set(pre.offerIds.map(String));
 console.log(`pre   borrower collateral WALLET baseline @${pre.head}: ${baselineCollateral}`);
 if (process.env.REFI_PREFLIGHT_ONLY === '1') {
@@ -796,11 +972,11 @@ async function closeSession(role) {
 for (const role of ['borrower', 'lender']) {
   try {
     sessions[role] = await launch({ role, onSetupFailure: 'throw' });
-    await installGate(sessions[role].ctx, role, PRINCIPAL_ASSET);
+    await installGate(sessions[role].ctx, role);
   } catch (err) {
     await closeSession('borrower');
     await closeSession('lender');
-    await blocked(`setting up the ${role} browser session failed before any write`, err);
+    await blockedBeforeAnyWrite(`setting up the ${role} browser session failed before any write`, err);
   }
 }
 
@@ -854,22 +1030,29 @@ try {
   check('borrower: review says the collateral carries over', /carries over|without ever unlocking/i.test(receiptText));
   await session.shot('refinance-03-review');
 
-  // Open the gate only now: the confirm is the one action that may write.
+  // Rule B: nothing below may lead to a write if anything above failed.
+  // Rule A: arm the gate with the three complete requests the form may
+  // sign, then open it — the confirm is the one action that may write.
+  beforeWriteStep('ticking the borrower consent');
+  armBorrower();
   gate.borrower.open = true;
   const confirm = card.getByRole('button', { name: /confirm — post refinance request/i });
   const consentBox = card.locator('input[type="checkbox"]');
   const confirmed = await pollUntil('consent + confirm enabled', async () => {
+    beforeWriteStep('ticking the borrower consent');
     if (!(await consentBox.isChecked())) await consentBox.check();
     return confirm.isEnabled();
   }, { timeoutMs: 60_000 });
+  if (HALT) stop(`not posting: ${HALT}`);
   if (!confirmed) {
     await session.shot('refinance-04-confirm-disabled');
     stop('"Confirm — post refinance request" never enabled after consent');
   }
+  beforeWriteStep('posting the refinance request');
   await confirm.click();
 
   const live = await pollUntil('request is live', async () => {
-    if (refusals.length) return 'refused';
+    if (refusals.length || HALT) return 'refused';
     const err = card.locator('.banner-danger');
     if (await err.count()) return `error: ${(await err.first().innerText()).trim()}`;
     const t = await bp.locator('body').innerText();
@@ -878,7 +1061,8 @@ try {
   }, { timeoutMs: 300_000, everyMs: 2_000 });
   gate.borrower.open = false;
   await session.shot('refinance-05-posted');
-  if (refusals.length) stop('the borrower form asked for a write outside the allowlist');
+  if (refusals.length) stop('the borrower form asked for a write the gate had not armed');
+  if (HALT) stop(`halted while posting: ${HALT}`);
   if (!live || live.startsWith('error')) {
     stop(`the refinance request did not go live: ${live ?? 'timed out'}`);
   }
@@ -897,11 +1081,18 @@ try {
   // is not exactly the one reviewed must never be funded, so a failure
   // here stops the drive rather than only being recorded (Codex #2422 r1).
   const phase2From = checks.length;
-  const createTx = sentTxs.find((t) => t.role === 'borrower' && t.purpose.startsWith('createOffer'));
+  // An allowed send whose provider returned no hash is an UNKNOWN, not an
+  // absence: it may have been broadcast. Stop rather than reason past it;
+  // the report reconciles it against the borrower's nonce.
+  const unhashedB = sends.filter((t) => t.role === 'borrower' && !t.hash);
+  if (unhashedB.length) {
+    stop(`borrower send(s) with no hash — outcome unknown: ${unhashedB.map((t) => t.purpose).join(', ')}`);
+  }
+  const createTx = hashedSends('borrower').find((t) => t.purpose.startsWith('createOffer'));
   if (!createTx) stop('no createOffer transaction was captured at the wallet boundary');
   const createRcpt = await pub.waitForTransactionReceipt({ hash: createTx.hash, timeout: 180_000 });
   check('createOffer receipt status success', createRcpt.status === 'success', createRcpt.status);
-  for (const t of sentTxs.filter((x) => x.role === 'borrower')) {
+  for (const t of hashedSends('borrower')) {
     const r = await pub.waitForTransactionReceipt({ hash: t.hash, timeout: 180_000 });
     if (r.status !== 'success') stop(`borrower tx ${t.hash} (${t.purpose}) reverted`);
   }
@@ -972,7 +1163,6 @@ try {
   // The session already exists (launched and gated before any write).
   // -------------------------------------------------------------------
   session = sessions.lender;
-  gate.lender.requestId = requestId;
   const lp = session.page;
   const expectedHref = `/lend?offer=${requestId}&chain=${CHAIN_ID}`;
   let reachedViaBook = false;
@@ -1027,20 +1217,19 @@ try {
 
   const submit = lp.getByRole('button', { name: /fund this borrower/i });
   const consent = lp.locator('label:has(a[href="/help#risks"]) input[type="checkbox"]').last();
-  // Let the review settle (liquidity, grace, dry run) before consenting:
+  // Let the review settle (liquidity, grace, dry run) before judging it:
   // a disclosure arriving later clears consent by design.
   await pollUntil('review settled', async () => {
     const t = await lp.locator('body').innerText();
     return !/preparing|checking/i.test(t.slice(t.indexOf('Before you sign')));
   }, { timeoutMs: 45_000 });
-  gate.lender.open = true;
-  const canSign = await pollUntil('consent + "Fund this borrower" enabled', async () => {
-    if (!(await consent.isChecked())) await consent.check();
-    await lp.waitForTimeout(1_000);
-    return submit.isEnabled();
-  }, { timeoutMs: 120_000, everyMs: 3_000 });
+
+  // The DISCLOSURES are judged BEFORE consent is given (#2422 r2 P1): the
+  // lender must not consent to — or sign — a review that failed to say the
+  // collateral is illiquid. Under rule B the failed check halts, and the
+  // `beforeWriteStep` below stops before the consent tick and the submit.
   const reviewText = (await lp.locator('main').innerText().catch(() => lp.locator('body').innerText())).replace(/\s+/g, ' ');
-  console.log(`\n--- lender review (as rendered) ---\n${reviewText.slice(0, 4000)}\n---`);
+  console.log(`\n--- lender review (as rendered, before consent) ---\n${reviewText.slice(0, 4000)}\n---`);
   if (/would fail|will fail|revert/i.test(reviewText)) note('the lender review shows a would-fail / revert note (see the transcript above)');
   check('lender: review carries the illiquid-collateral warning (copy.match.illiquidWarning)', reviewText.includes(squash(illiquidWarning)));
   // Evidence, not a verdict: the spec does not say whether a lender funding
@@ -1049,14 +1238,26 @@ try {
     note('the lender review never says this request refinances an existing loan (accepting it also pays off and closes that loan)');
   }
   await session.shot('refinance-08-lender-review');
+
+  beforeWriteStep('ticking the lender consent');
+  armLender(requestId);
+  gate.lender.open = true;
+  const canSign = await pollUntil('consent + "Fund this borrower" enabled', async () => {
+    beforeWriteStep('ticking the lender consent');
+    if (!(await consent.isChecked())) await consent.check();
+    await lp.waitForTimeout(1_000);
+    return submit.isEnabled();
+  }, { timeoutMs: 120_000, everyMs: 3_000 });
+  if (HALT) stop(`not funding: ${HALT}`);
   if (!canSign) {
     gate.lender.open = false;
     stop('the deployed UI never enabled "Fund this borrower" for this request (see the review transcript above)');
   }
+  beforeWriteStep('submitting "Fund this borrower"');
   await submit.click();
 
   const outcome = await pollUntil('accept settles', async () => {
-    if (refusals.length) return 'refused';
+    if (refusals.length || HALT) return 'refused';
     if (await lp.getByRole('heading', { name: /loan opened/i }).count()) return 'opened';
     const err = lp.locator('.banner-danger[role="alert"]');
     if (await err.count()) {
@@ -1069,7 +1270,8 @@ try {
   gate.lender.open = false;
   await session.shot('refinance-09-lender-done');
   const doneText = (await lp.locator('body').innerText()).replace(/\s+/g, ' ');
-  if (refusals.length) stop('the lender flow asked for a write outside the allowlist');
+  if (refusals.length) stop('the lender flow asked for a write the gate had not armed');
+  if (HALT) stop(`halted while accepting: ${HALT}`);
   if (outcome !== 'opened') stop(`the lender's accept did not complete in the UI: ${outcome ?? 'timed out'}`);
   check('lender: the app reports "Loan opened"', true);
   const doneIdx = doneText.search(/loan opened/i);
@@ -1078,10 +1280,14 @@ try {
   // -------------------------------------------------------------------
   // 4. On-chain outcome, pinned at or after the accept's block.
   // -------------------------------------------------------------------
-  const acceptTx = sentTxs.find((t) => t.role === 'lender' && t.purpose.startsWith('accept'));
+  const unhashedL = sends.filter((t) => t.role === 'lender' && !t.hash);
+  if (unhashedL.length) {
+    stop(`lender send(s) with no hash — outcome unknown: ${unhashedL.map((t) => t.purpose).join(', ')}`);
+  }
+  const acceptTx = hashedSends('lender').find((t) => t.purpose.startsWith('acceptOffer'));
   if (!acceptTx) stop('no accept transaction was captured at the wallet boundary');
   acceptHash = acceptTx.hash;
-  for (const t of sentTxs.filter((x) => x.role === 'lender')) {
+  for (const t of hashedSends('lender')) {
     const r = await pub.waitForTransactionReceipt({ hash: t.hash, timeout: 180_000 });
     if (r.status !== 'success') stop(`lender tx ${t.hash} (${t.purpose}) reverted`);
   }
@@ -1170,21 +1376,35 @@ try {
     `${baselineCollateral} → ${collEnd}`,
   );
 
-  // Every write the wallets made is one the gate saw.
-  const [nb, nl] = await Promise.all([
-    pub.getTransactionCount({ address: BORROWER, blockTag: 'latest' }),
-    pub.getTransactionCount({ address: LENDER, blockTag: 'latest' }),
-  ]);
-  const sentB = sentTxs.filter((t) => t.role === 'borrower').length;
-  const sentL = sentTxs.filter((t) => t.role === 'lender').length;
-  check('borrower nonce delta == captured borrower txs', nb - baselineNonces.borrower === sentB, `${nb - baselineNonces.borrower} vs ${sentB}`);
-  check('lender nonce delta == captured lender txs', nl - baselineNonces.lender === sentL, `${nl - baselineNonces.lender} vs ${sentL}`);
+  // Every write the wallets made is one the gate allowed AND saw a hash
+  // for: the mined nonce delta equals the hashed sends, nothing pending.
+  for (const role of ['borrower', 'lender']) {
+    const who = ROLE_ADDRESS[role];
+    const [latest, pending] = await Promise.all([
+      pub.getTransactionCount({ address: who, blockTag: 'latest' }),
+      pub.getTransactionCount({ address: who, blockTag: 'pending' }),
+    ]);
+    const hashed = hashedSends(role).length;
+    const allowed = sends.filter((t) => t.role === role).length;
+    check(
+      `${role}: nonce delta == allowed sends, all with a hash, none pending`,
+      latest - baselineNonces[role] === hashed && hashed === allowed && pending === latest,
+      `mined +${latest - baselineNonces[role]}, pending +${pending - latest}, allowed ${allowed}, hashed ${hashed}`,
+    );
+  }
   console.log(`\nresult  request offer #${requestId} → replacement loan #${newLoanId}; old loan #${LOAN_ID} closed`);
 } catch (err) {
   exitCode = 1;
   const why = err instanceof Stop ? err.message : `unexpected error: ${String(err.shortMessage ?? err.message ?? err).split('\n')[0]}`;
   console.log(`\nSTOPPED: ${why}`);
-  if (!firstWriteSent) console.log('(no transaction had been sent when the drive stopped)');
+  // "Nothing was written" is a claim only an EMPTY send log supports: an
+  // allowed send without a hash may have been broadcast (#2422 r2 P1), and
+  // the reconciliation below says which.
+  console.log(
+    sends.length === 0
+      ? '(the gate allowed no transaction before the drive stopped — nothing was written)'
+      : `(${sends.length} transaction(s) were allowed before the drive stopped — see the report and nonce reconciliation)`,
+  );
   if (err instanceof Stop) {
     /* already explained */
   } else if (err?.stack) {
@@ -1202,7 +1422,9 @@ try {
   await closeSession('lender');
 }
 
-await report();
-if (refusals.length || checks.some((c) => !c.ok)) exitCode = 1;
+const reconciliation = await report(baselineNonces);
+// FAIL, never PASS, when anything is unaccounted for: a refused write, a
+// failed check, a halt, or an allowed send the chain cannot account for.
+if (refusals.length || HALT || reconciliation.unreconciled || checks.some((c) => !c.ok)) exitCode = 1;
 console.log(exitCode === 0 ? '\nlive refinance review: ALL CHECKS PASSED' : '\nlive refinance review: FAILED (see above)');
 process.exit(exitCode);
