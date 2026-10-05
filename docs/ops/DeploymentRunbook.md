@@ -333,15 +333,7 @@ manual follow-up required when the prerequisites are in place:
    snapshot. Skip with `--skip-app` if the build is intentionally
    lagging. (The flag was `--skip-frontend` and the phase
    `phase_cf_frontend` before #1854; neither name exists now.)
-3. **Keeper Cloudflare deploy** (phase `cf-keeper`) —
-   `pnpm run deploy` from `apps/keeper/`, plus the
-   RPC-secret presence check (**hard-fails if a per-chain
-   `RPC_<CHAIN>` secret is missing** — see prerequisite above).
-   The package script carries `--keep-vars` (#1896); the phase used
-   to call `pnpm exec wrangler deploy`, which bypassed it and deleted
-   the dashboard-managed `HF_SCALE` / `LIQ_*` / `SPLIT_*` /
-   `PARTIAL_LIQ_*` tuning on every deploy.
-4. **Indexer Cloudflare deploy** (phase `cf-indexer`) —
+3. **Indexer Cloudflare deploy** — FIRST among the Workers (phase `cf-indexer`) —
    `pnpm run deploy` from `apps/indexer/`, which applies
    `wrangler d1 migrations apply vaipakam-warm --remote` FIRST and
    publishes only if the apply succeeded (#2214 — it used to publish
@@ -366,6 +358,14 @@ manual follow-up required when the prerequisites are in place:
    still serving. On `--fresh`, also seeds the indexer
    cursor at the current safe head so the first cron tick starts AT
    head instead of backfilling an empty pre-deploy range.
+4. **Keeper Cloudflare deploy** (phase `cf-keeper`) —
+   `pnpm run deploy` from `apps/keeper/`, plus the
+   RPC-secret presence check (**hard-fails if a per-chain
+   `RPC_<CHAIN>` secret is missing** — see prerequisite above).
+   The package script carries `--keep-vars` (#1896); the phase used
+   to call `pnpm exec wrangler deploy`, which bypassed it and deleted
+   the dashboard-managed `HF_SCALE` / `LIQ_*` / `SPLIT_*` /
+   `PARTIAL_LIQ_*` tuning on every deploy.
 5. **Agent Cloudflare deploy** (phase `cf-agent`) —
    `pnpm --filter @vaipakam/agent run deploy` — the packaged script, which
    carries `--keep-vars`. Since #1995 the agent's `wrangler.jsonc` also

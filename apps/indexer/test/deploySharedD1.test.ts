@@ -9,7 +9,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 // @ts-expect-error — plain ESM script, no type declarations.
-import { admit, isSettled, unapplied } from '../scripts/deploy-shared-d1.mjs';
+import { admit, isSettled, unapplied, waitsForSchema } from '../scripts/deploy-shared-d1.mjs';
 
 const pkg = (w: string) =>
   JSON.parse(readFileSync(new URL(`../../${w}/package.json`, import.meta.url), 'utf8')).scripts;
@@ -79,5 +79,15 @@ describe('deploy-shared-d1 — what counts as settled', () => {
     expect(isSettled([])).toBe(true);
     expect(isSettled(['0001_a.sql'])).toBe(false);
     expect(isSettled(null)).toBe(false);
+  });
+});
+
+describe('deploy-shared-d1 — when the verification waits', () => {
+  it('verify mode always waits; apply mode waits only after a failed apply (r7)', () => {
+    expect(waitsForSchema('verify', true)).toBe(true);
+    expect(waitsForSchema('apply', true)).toBe(false);
+    // A concurrent indexer deploy may be part-way through the same
+    // migrations: one re-read would abort while it finishes.
+    expect(waitsForSchema('apply', false)).toBe(true);
   });
 });
