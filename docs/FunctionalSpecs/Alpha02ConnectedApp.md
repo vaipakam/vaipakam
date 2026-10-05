@@ -1121,10 +1121,10 @@ The app uses chain reads and indexed reads for different jobs.
   recent-activity-only disclosure.
 - An Activity row states the asset and amount its transaction moved or offered
   when the activity record carries them as normalized fields — exact, or as a
-  range for an offer that commits one — and shows no amount otherwise. It never
-  reconstructs an amount the record does not state, and never presents an NFT
-  leg as a token amount. (Not yet implemented: the record does not carry these
-  fields — tracked in #2383.)
+  range for an offer that commits one. It never reconstructs an amount the
+  record does not state, never presents an NFT leg as a token amount, and where
+  an amount exists but cannot be stated it says so rather than showing nothing.
+  (Stated in full under the Activity surface below — #2383.)
 - Realtime push refreshes matching indexed views when available. Polling remains
   the fallback.
 - The push signal covers every class of change a holder-keyed view depends on —
@@ -2969,8 +2969,27 @@ Its intended behaviour, as the test oracle for this surface:
   and the app shows it as given. Where it is not established (an event with
   no single amount, such as a repayment; a claim whose asset the loan record
   cannot place unambiguously; history recorded before this was introduced),
-  the row states no amount rather than a reconstructed one, and a token
-  amount whose details cannot be read is not shown in raw units.
+  the row says the amount was not recorded rather than reconstructing one.
+- A row states EVERY value its action moved for its own loan or offer, not
+  only one: a borrower claim that pays residual collateral and a frozen
+  principal surplus in different assets states both. A companion event that
+  restates the same value (an offer's creation and its details, a loan start
+  and the acceptance that made it) is counted once. When the same action moved
+  something the history service does not itemise — a borrower's fee rebate, or
+  a value it could not establish — the row says an amount is not itemised. A
+  lender claim always notes that it also pays out any funds held for the
+  lender from earlier top-ups, which its event does not include in the amount
+  shown. A neighbouring loan or offer in the same batched transaction is never
+  folded into the row.
+- A token amount names its contract beside its symbol, because a symbol is
+  whatever the token reports and two contracts can share one. While the
+  token's details load, the row says the amount is loading; if they cannot be
+  read, it states the figure explicitly as base units of that contract — never
+  as if it were a token amount, and never by silently dropping a known amount.
+- An ERC-1155 states how many copies moved (one copy and a hundred are
+  different positions); when the record does not carry the number, the row
+  says so. An ERC-721 is always a single token and states no count. A
+  collateral top-up states the amount added, in the loan's collateral asset.
 - NFT rentals are never presented as debt: nothing says "repay", the
   NFT stays in the owner's vault, the renter receives temporary use
   rights, and the renter's total up-front payment (fees plus the live

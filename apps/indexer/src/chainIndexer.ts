@@ -5712,8 +5712,8 @@ export async function recordActivityEvents(
       `INSERT OR IGNORE INTO activity_events
         (chain_id, block_number, log_index, tx_hash, kind,
          loan_id, offer_id, actor, args_json, block_at,
-         asset, asset_type, amount, amount_max, token_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         asset, asset_type, amount, amount_max, token_id, quantity)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
       .bind(
         chainId,
@@ -5731,6 +5731,7 @@ export async function recordActivityEvents(
         v.amount,
         v.amountMax,
         v.tokenId,
+        v.quantity,
       )
       .run();
     if ((result.meta?.changes ?? 0) > 0) inserted++;
@@ -5758,7 +5759,7 @@ async function loadActivityValueContext(
       env.DB.prepare(
         `SELECT 'loan' AS k, l.loan_id AS id, l.lending_asset, l.asset_type, l.token_id,
                 l.collateral_asset, l.collateral_asset_type, l.collateral_token_id,
-                o.prepay_asset
+                o.prepay_asset, o.quantity, o.collateral_quantity
            FROM loans l
            LEFT JOIN offers o ON o.chain_id = l.chain_id AND o.offer_id = l.offer_id
           WHERE l.chain_id = ? AND l.loan_id IN (${c.placeholders})`,
@@ -5766,7 +5767,7 @@ async function loadActivityValueContext(
     ),
     ...offerChunks.map((c) =>
       env.DB.prepare(
-        `SELECT 'offer' AS k, offer_id AS id, lending_asset, asset_type, token_id
+        `SELECT 'offer' AS k, offer_id AS id, lending_asset, asset_type, token_id, quantity
            FROM offers WHERE chain_id = ? AND offer_id IN (${c.placeholders})`,
       ).bind(...c.binds),
     ),
@@ -5781,6 +5782,8 @@ async function loadActivityValueContext(
     collateral_asset_type?: number;
     collateral_token_id?: string;
     prepay_asset?: string | null;
+    quantity?: string | null;
+    collateral_quantity?: string | null;
   };
   const parts = await env.DB.batch<Row>(statements);
   for (const part of parts) {
@@ -5796,9 +5799,16 @@ async function loadActivityValueContext(
           // An all-zero prepay asset is "none", not the zero-address token.
           prepayAsset:
             r.prepay_asset && !/^0x0{40}$/i.test(r.prepay_asset) ? r.prepay_asset.toLowerCase() : null,
+          quantity: r.quantity ?? null,
+          collateralQuantity: r.collateral_quantity ?? null,
         });
       } else {
-        ctx.offers.set(r.id, { lendingAsset: r.lending_asset, assetType: r.asset_type, tokenId: r.token_id });
+        ctx.offers.set(r.id, {
+          lendingAsset: r.lending_asset,
+          assetType: r.asset_type,
+          tokenId: r.token_id,
+          quantity: r.quantity ?? null,
+        });
       }
     }
   }

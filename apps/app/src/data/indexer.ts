@@ -509,7 +509,8 @@ export interface IndexedActivityEvent {
   blockAt: number;
   /** #2383 — what the row moved or offered, normalized by the indexer.
    *  `amount` / `amountMax` are base units of an ERC-20 `asset` (a range
-   *  when `amountMax` is set); `tokenId` names an NFT. null = not
+   *  when `amountMax` is set); `tokenId` names an NFT and `quantity` an
+   *  ERC-1155's copies (#2383 r1). null = not
    *  established; absent = an indexer that predates the fields. Never
    *  reconstruct either from `args`. */
   asset?: string | null;
@@ -517,6 +518,7 @@ export interface IndexedActivityEvent {
   amount?: string | null;
   amountMax?: string | null;
   tokenId?: string | null;
+  quantity?: string | null;
 }
 
 export interface ActivityPage {

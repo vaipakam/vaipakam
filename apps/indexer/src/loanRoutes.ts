@@ -162,6 +162,7 @@ interface ActivityRow {
   amount?: string | null;
   amount_max?: string | null;
   token_id?: string | null;
+  quantity?: string | null;
 }
 
 function activityToJson(row: ActivityRow): Record<string, unknown> {
@@ -191,6 +192,8 @@ function activityToJson(row: ActivityRow): Record<string, unknown> {
     amount: row.amount ?? null,
     amountMax: row.amount_max ?? null,
     tokenId: row.token_id ?? null,
+    // #2383 r1 — an ERC-1155's quantity (null for any other asset).
+    quantity: row.quantity ?? null,
   };
 }
 

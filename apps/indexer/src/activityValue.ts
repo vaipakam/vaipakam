@@ -13,7 +13,9 @@
  *
  * WHAT A ROW CARRIES. `asset` and `assetType` say what moved; `amount` (and
  * `amountMax` for a range) say how much, in the asset's base units, and are set
- * ONLY for a fungible (ERC-20) asset; `tokenId` is set only for an NFT. Every
+ * ONLY for a fungible (ERC-20) asset; `tokenId` is set only for an NFT, and
+ * `quantity` only for an ERC-1155 (#2383 r1 — one copy and a hundred are
+ * different positions; an ERC-721 is always one). Every
  * field is null when this event, its siblings and the records do not establish
  * it — never a guess. An NFT row therefore has no amount, and a claim whose
  * asset type cannot be told apart from the loan record has no type and no
@@ -37,6 +39,7 @@ export interface ActivityValue {
   amount: string | null;
   amountMax: string | null;
   tokenId: string | null;
+  quantity: string | null;
 }
 
 export const NO_VALUE: ActivityValue = {
@@ -45,7 +48,11 @@ export const NO_VALUE: ActivityValue = {
   amount: null,
   amountMax: null,
   tokenId: null,
+  quantity: null,
 };
+
+/** LibVaipakam.AssetType.ERC1155. */
+export const ASSET_ERC1155 = 2;
 
 /** The records a value may need, read once per ingest batch. */
 export interface LoanRecord {
@@ -58,12 +65,18 @@ export interface LoanRecord {
   /** The loan's originating offer's prepay asset (an NFT rental's fee
    *  asset), lowercase; null when the offer row is absent. */
   prepayAsset: string | null;
+  /** ERC-1155 quantities of the lent asset and of the collateral, from the
+   *  originating offer (an NFT leg is whole-or-nothing, so the loan's
+   *  quantities are the offer's); null when the offer row is absent. */
+  quantity: string | null;
+  collateralQuantity: string | null;
 }
 
 export interface OfferRecord {
   lendingAsset: string;
   assetType: number;
   tokenId: string;
+  quantity: string | null;
 }
 
 export interface ActivityValueContext {
@@ -109,8 +122,9 @@ const typeOf = (v: unknown): number | null => {
 
 /**
  * Assemble a value from what is known. An amount is kept only for an ERC-20
- * asset; a token id only for an NFT. A range is kept only when its ceiling is
- * strictly above the amount — a ceiling of 0 (or equal) means "exact".
+ * asset; a token id only for an NFT; a quantity only for an ERC-1155. A range
+ * is kept only when its ceiling is strictly above the amount — a ceiling of 0
+ * (or equal) means "exact".
  */
 function value(
   asset: string | null,
@@ -118,6 +132,7 @@ function value(
   amount: bigint | null,
   tokenId: bigint | string | null,
   amountMax: bigint | null = null,
+  quantity: bigint | string | null = null,
 ): ActivityValue {
   if (assetType === null) return { ...NO_VALUE, asset };
   if (assetType === ASSET_ERC20) {
@@ -128,33 +143,47 @@ function value(
       amountMax:
         amount !== null && amountMax !== null && amountMax > amount ? amountMax.toString() : null,
       tokenId: null,
+      quantity: null,
     };
   }
+  const q = quantity === null ? null : big(quantity);
   return {
     asset,
     assetType,
     amount: null,
     amountMax: null,
     tokenId: tokenId === null ? null : tokenId.toString(),
+    // A zero quantity is the "not applicable" default a non-1155 row carries,
+    // never a real holding — so it is unknown, not "0 copies".
+    quantity: assetType === ASSET_ERC1155 && q !== null && q > 0n ? q.toString() : null,
   };
 }
 
 /** An offer's value from its terms (OfferCreatedDetails.fields /
  *  OfferCanceledDetails), with the lending asset given separately. */
-function offerTermsValue(asset: unknown, t: Record<string, unknown>): ActivityValue {
-  return value(lower(asset), typeOf(t.assetType), big(t.amount), big(t.tokenId), big(t.amountMax));
+function offerTermsValue(
+  asset: unknown,
+  t: Record<string, unknown>,
+  quantity: string | null,
+): ActivityValue {
+  return value(lower(asset), typeOf(t.assetType), big(t.amount), big(t.tokenId), big(t.amountMax), quantity);
 }
+
+/** The offer events carry no quantity; the offer record (written earlier in
+ *  the same pass, and an NFT leg's quantity cannot be amended) does. */
+const offerQuantity = (offerId: number | null, ctx: ActivityValueContext) =>
+  offerId === null ? null : ctx.offers.get(offerId)?.quantity ?? null;
 
 function createdValue(offerId: number | null, ctx: ActivityValueContext): ActivityValue {
   const d = offerId === null ? undefined : ctx.offerCreated.get(offerId);
   if (!d || typeof d.fields !== 'object' || d.fields === null) return NO_VALUE;
-  return offerTermsValue(d.lendingAsset, d.fields as Record<string, unknown>);
+  return offerTermsValue(d.lendingAsset, d.fields as Record<string, unknown>, offerQuantity(offerId, ctx));
 }
 
 function canceledValue(offerId: number | null, ctx: ActivityValueContext): ActivityValue {
   const d = offerId === null ? undefined : ctx.offerCanceled.get(offerId);
   if (!d) return NO_VALUE;
-  return offerTermsValue(d.lendingAsset, d);
+  return offerTermsValue(d.lendingAsset, d, offerQuantity(offerId, ctx));
 }
 
 /** A loan's principal value: the asset from its `LoanInitiatedDetails`
@@ -166,9 +195,9 @@ function loanPrincipalValue(
 ): ActivityValue {
   if (loanId === null) return NO_VALUE;
   const d = ctx.loanDetails.get(loanId);
-  if (d) return value(lower(d.principalAsset), typeOf(d.assetType), amount, big(d.tokenId));
+  if (d) return value(lower(d.principalAsset), typeOf(d.assetType), amount, big(d.tokenId), null, big(d.quantity));
   const r = ctx.loans.get(loanId);
-  if (r) return value(r.lendingAsset.toLowerCase(), r.assetType, amount, r.tokenId);
+  if (r) return value(r.lendingAsset.toLowerCase(), r.assetType, amount, r.tokenId, null, r.quantity);
   return NO_VALUE;
 }
 
@@ -184,12 +213,14 @@ function claimValue(loanId: number | null, args: Record<string, unknown>, ctx: A
   const asset = lower(args.asset);
   const r = loanId === null ? undefined : ctx.loans.get(loanId);
   if (!asset || !r) return { ...NO_VALUE, asset };
-  const candidates: { type: number; tokenId: string | null }[] = [];
-  if (r.lendingAsset.toLowerCase() === asset) candidates.push({ type: r.assetType, tokenId: r.tokenId });
-  if (r.collateralAsset.toLowerCase() === asset) {
-    candidates.push({ type: r.collateralAssetType, tokenId: r.collateralTokenId });
+  const candidates: { type: number; tokenId: string | null; quantity: string | null }[] = [];
+  if (r.lendingAsset.toLowerCase() === asset) {
+    candidates.push({ type: r.assetType, tokenId: r.tokenId, quantity: r.quantity });
   }
-  if (r.prepayAsset === asset) candidates.push({ type: ASSET_ERC20, tokenId: null });
+  if (r.collateralAsset.toLowerCase() === asset) {
+    candidates.push({ type: r.collateralAssetType, tokenId: r.collateralTokenId, quantity: r.collateralQuantity });
+  }
+  if (r.prepayAsset === asset) candidates.push({ type: ASSET_ERC20, tokenId: null, quantity: null });
   const types = new Set(candidates.map((c) => c.type));
   if (types.size !== 1) return { ...NO_VALUE, asset };
   const [only] = candidates;
@@ -198,7 +229,7 @@ function claimValue(loanId: number | null, args: Record<string, unknown>, ctx: A
   if (only.type !== ASSET_ERC20 && new Set(candidates.map((c) => c.tokenId)).size !== 1) {
     return { ...NO_VALUE, asset, assetType: only.type };
   }
-  return value(asset, only.type, big(args.amount), only.tokenId);
+  return value(asset, only.type, big(args.amount), only.tokenId, null, only.quantity);
 }
 
 /** The normalized value of one decoded event. */
@@ -234,6 +265,19 @@ export function activityValue(
     case 'BorrowerFundsClaimed':
     case 'BorrowerSurplusClaimed':
       return claimValue(id(args.loanId), args, ctx);
+    case 'CollateralAdded': {
+      // #2383 r1 — the amount added, in the loan's collateral.
+      const r = ctx.loans.get(id(args.loanId) ?? -1);
+      if (!r) return NO_VALUE;
+      return value(
+        r.collateralAsset.toLowerCase(),
+        r.collateralAssetType,
+        big(args.amountAdded),
+        r.collateralTokenId,
+        null,
+        r.collateralQuantity,
+      );
+    }
     default:
       return NO_VALUE;
   }
@@ -264,12 +308,18 @@ export function collectBatch(
       }
       case 'OfferCreatedDetails': {
         const o = id(a.offerId);
-        if (o !== null) ctx.offerCreated.set(o, a);
+        if (o !== null) {
+          ctx.offerCreated.set(o, a);
+          offerIds.add(o); // its record carries the ERC-1155 quantity
+        }
         break;
       }
       case 'OfferCanceledDetails': {
         const o = id(a.offerId);
-        if (o !== null) ctx.offerCanceled.set(o, a);
+        if (o !== null) {
+          ctx.offerCanceled.set(o, a);
+          offerIds.add(o);
+        }
         break;
       }
       case 'OfferModified': {
@@ -279,6 +329,7 @@ export function collectBatch(
       }
       case 'OfferAccepted':
       case 'OfferMatched':
+      case 'CollateralAdded':
       case 'LenderFundsClaimed':
       case 'BorrowerFundsClaimed':
       case 'BorrowerSurplusClaimed': {

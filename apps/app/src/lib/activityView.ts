@@ -163,6 +163,10 @@ export interface ActivityRowView {
   category: ActivityCategory;
   /** Extra events in the same transaction that this row subsumes. */
   hiddenCount: number;
+  /** The representative plus every event of the same transaction that names
+   *  its loan or offer — the action's own legs, which {@link rowValue} reads
+   *  (#2383 r1). A neighbouring loan or offer in a multicall is not one. */
+  related: IndexedActivityEvent[];
 }
 
 const DEFAULT_PRIORITY = 20;
@@ -204,6 +208,12 @@ export function coalesceByTx(events: IndexedActivityEvent[]): ActivityRowView[] 
       label: labelForKind(rep.kind),
       category: ACTIVITY_LABELS[rep.kind]?.category ?? 'other',
       hiddenCount: bucket.length - 1,
+      related: bucket.filter(
+        (ev) =>
+          ev === rep ||
+          (rep.loanId !== null && ev.loanId === rep.loanId) ||
+          (rep.offerId !== null && ev.offerId === rep.offerId),
+      ),
     });
   }
 
@@ -216,45 +226,131 @@ export function coalesceByTx(events: IndexedActivityEvent[]): ActivityRowView[] 
   return rows;
 }
 
-/** What a row's value needs to be stated. */
-export type ActivityValueNeed =
-  | { kind: 'none' }
+/** One thing a row moved or offered, from the indexer's normalized fields. */
+export type ValueLeg =
   | { kind: 'token'; asset: string; amount: bigint; amountMax: bigint | null }
-  | { kind: 'nft'; asset: string; tokenId: string };
+  | { kind: 'nft'; asset: string; tokenId: string; erc1155: boolean; quantity: bigint | null };
+
+const DIGITS = /^\d+$/;
 
 /**
- * #2383 — what this row moved or offered, from the fields the INDEXER
- * normalized. Nothing is reconstructed from `args` (#2378 tried and was
- * withdrawn): a row without a value, or with a value the indexer could not
- * establish, states none.
+ * #2383 — the value one event carries, from the fields the INDEXER normalized.
+ * Nothing is reconstructed from `args` (#2378 tried and was withdrawn): an
+ * event without a value, or with one the indexer could not establish, has none.
  */
-export function activityValueNeed(ev: IndexedActivityEvent): ActivityValueNeed {
+export function valueLeg(ev: IndexedActivityEvent): ValueLeg | null {
   const asset = ev.asset ?? null;
-  if (!asset) return { kind: 'none' };
-  if (ev.assetType === 0 && ev.amount != null && /^\d+$/.test(ev.amount)) {
-    const amountMax =
-      ev.amountMax != null && /^\d+$/.test(ev.amountMax) ? BigInt(ev.amountMax) : null;
+  if (!asset) return null;
+  if (ev.assetType === 0 && ev.amount != null && DIGITS.test(ev.amount)) {
+    const amountMax = ev.amountMax != null && DIGITS.test(ev.amountMax) ? BigInt(ev.amountMax) : null;
     return { kind: 'token', asset, amount: BigInt(ev.amount), amountMax };
   }
   if ((ev.assetType === 1 || ev.assetType === 2) && ev.tokenId != null) {
-    return { kind: 'nft', asset, tokenId: ev.tokenId };
+    const erc1155 = ev.assetType === 2;
+    const quantity =
+      erc1155 && ev.quantity != null && DIGITS.test(ev.quantity) && BigInt(ev.quantity) > 0n
+        ? BigInt(ev.quantity)
+        : null;
+    return { kind: 'nft', asset, tokenId: ev.tokenId, erc1155, quantity };
   }
-  return { kind: 'none' };
+  return null;
 }
 
 /**
- * The value as text. A token amount needs the token's decimals and symbol:
- * until they load — or when they cannot be read — nothing is stated rather
- * than a raw base-unit figure a reader would take for a token amount.
+ * Which value an event states, so that one transaction's companions are not
+ * counted twice: an offer's create/cancel pair (and an amendment) states the
+ * offer's terms once; a loan start, its details companion and the accept or
+ * match that made it state one fill. Every claim lane is its own value — a
+ * borrower claim can pay residual collateral AND a frozen principal surplus,
+ * in different assets, in one transaction (#2383 r1).
+ *
+ * `BorrowerLifRebateClaimed` moves VPFI but the indexer does not itemise it, so
+ * it is listed here only so the row can say an amount went unstated.
  */
-export function activityValueText(
-  need: ActivityValueNeed,
-  meta: { decimals: number; symbol: string } | undefined,
-): string | null {
-  if (need.kind === 'nft') return `NFT ${shortAddress(need.asset)} #${need.tokenId}`;
-  if (need.kind !== 'token' || !meta) return null;
+const VALUE_GROUP: Record<string, string> = {
+  OfferCreated: 'offer',
+  OfferCreatedDetails: 'offer',
+  OfferCanceled: 'offer',
+  OfferCanceledDetails: 'offer',
+  OfferModified: 'offer',
+  LoanInitiated: 'fill',
+  LoanInitiatedDetails: 'fill',
+  OfferAccepted: 'fill',
+  OfferMatched: 'fill',
+  LenderFundsClaimed: 'lender-claim',
+  BorrowerFundsClaimed: 'borrower-claim',
+  BorrowerSurplusClaimed: 'borrower-surplus',
+  CollateralAdded: 'collateral-added',
+  BorrowerLifRebateClaimed: 'lif-rebate',
+};
+
+/** Everything a row can say about value. */
+export interface RowValue {
+  /** Each distinct value the transaction moved for the row's loan or offer. */
+  legs: ValueLeg[];
+  /** The same action moved or offered something the indexer did not state
+   *  (an unitemised rebate, a value it could not establish, or a row
+   *  recorded before values were). */
+  unstated: boolean;
+  /** A lender claim also pays out any funds held for the lender from earlier
+   *  top-ups, and its event names only the claim's own amount. */
+  mayIncludeHeldForLender: boolean;
+}
+
+/**
+ * #2383 r1 — the row's value across EVERY event of its action, not only the
+ * representative's: a claim that paid two assets states both, and an amount
+ * the indexer could not state is said to exist rather than dropped.
+ */
+export function rowValue(row: Pick<ActivityRowView, 'related'>): RowValue {
+  const byGroup = new Map<string, ValueLeg | null>();
+  const ordered = [...row.related].sort((a, b) => a.logIndex - b.logIndex);
+  let mayIncludeHeldForLender = false;
+  for (const ev of ordered) {
+    const group = VALUE_GROUP[ev.kind];
+    if (!group) continue;
+    if (ev.kind === 'LenderFundsClaimed') mayIncludeHeldForLender = true;
+    if (byGroup.get(group)) continue; // already established by a companion
+    byGroup.set(group, valueLeg(ev));
+  }
+  const legs = [...byGroup.values()].filter((l): l is ValueLeg => l !== null);
+  return { legs, unstated: legs.length < byGroup.size, mayIncludeHeldForLender };
+}
+
+/** What is known about an ERC-20 leg's token while it renders. */
+export type LegMeta =
+  | { status: 'ready'; decimals: number; symbol: string }
+  | { status: 'loading' }
+  | { status: 'unreadable' };
+
+/** The locale's words for the states a leg can be in. */
+export interface LegLabels {
+  loading: (token: string) => string;
+  unreadable: (amount: string, token: string) => string;
+  quantityUnknown: string;
+}
+
+/**
+ * One leg as text. A token always carries its contract's short address beside
+ * the symbol — a symbol is whatever the token says it is, and two contracts can
+ * both call themselves "USDC". Until the token's details load, or when they
+ * cannot be read, the leg SAYS so: a known amount is never silently dropped,
+ * and base units are never shown as if they were a token amount.
+ */
+export function legText(leg: ValueLeg, meta: LegMeta, labels: LegLabels): string {
+  const token = shortAddress(leg.asset);
+  if (leg.kind === 'nft') {
+    const nft = `NFT ${token} #${leg.tokenId}`;
+    if (!leg.erc1155) return nft;
+    return leg.quantity !== null ? `${leg.quantity} × ${nft}` : `${nft} (${labels.quantityUnknown})`;
+  }
+  const range = leg.amountMax !== null && leg.amountMax > leg.amount;
+  if (meta.status === 'loading') return labels.loading(token);
+  if (meta.status === 'unreadable') {
+    const raw = range ? `${leg.amount}–${leg.amountMax}` : `${leg.amount}`;
+    return labels.unreadable(raw, token);
+  }
   const n = (v: bigint) => formatTokenAmount(v, meta.decimals);
-  return need.amountMax !== null && need.amountMax > need.amount
-    ? `${n(need.amount)}–${n(need.amountMax)} ${meta.symbol}`
-    : `${n(need.amount)} ${meta.symbol}`;
+  const amount = range ? `${n(leg.amount)}–${n(leg.amountMax as bigint)}` : n(leg.amount);
+  return `${amount} ${meta.symbol} (${token})`;
 }

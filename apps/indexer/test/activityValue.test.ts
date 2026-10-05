@@ -169,13 +169,14 @@ type Row = {
   amount: string | null;
   amount_max: string | null;
   token_id: string | null;
+  quantity: string | null;
 };
 
 async function record(h: ReturnType<typeof createSqliteD1>, logs: ReturnType<typeof realLog>[]) {
   await recordActivityEvents(logs as never, { DB: h.d1 } as unknown as Env, CHAIN, new Map());
   return h.db
     .prepare(
-      'SELECT kind, log_index, asset, asset_type, amount, amount_max, token_id FROM activity_events ORDER BY log_index',
+      'SELECT kind, log_index, asset, asset_type, amount, amount_max, token_id, quantity FROM activity_events ORDER BY log_index',
     )
     .all() as Row[];
 }
@@ -186,6 +187,7 @@ const value = (r: Row) => ({
   amount: r.amount,
   amountMax: r.amount_max,
   tokenId: r.token_id,
+  quantity: r.quantity,
 });
 
 describe('loan start', () => {
@@ -196,7 +198,7 @@ describe('loan start', () => {
       realLog('LoanInitiatedDetails', { loanId: 5n, lender: A1, borrower: A2, details: loanDetails({}) }, 1, 1),
     ]);
     for (const r of rows) {
-      expect(value(r)).toEqual({ asset: USDC, assetType: 0, amount: '1000000', amountMax: null, tokenId: null });
+      expect(value(r)).toEqual({ asset: USDC, assetType: 0, amount: '1000000', amountMax: null, tokenId: null, quantity: null });
     }
   });
 
@@ -223,7 +225,7 @@ describe('loan start', () => {
       realLog('LoanInitiated', { loanId: 5n, offerId: 9n, lender: A1, borrower: A2, principal: 1n, collateralAmount: 0n }, 1, 0),
       realLog('LoanInitiatedDetails', { loanId: 5n, lender: A1, borrower: A2, details: loanDetails({ principalAsset: NFT, assetType: 1, tokenId: 42n }) }, 1, 1),
     ]);
-    expect(value(rows[0])).toEqual({ asset: NFT, assetType: 1, amount: null, amountMax: null, tokenId: '42' });
+    expect(value(rows[0])).toEqual({ asset: NFT, assetType: 1, amount: null, amountMax: null, tokenId: '42', quantity: null });
   });
 });
 
@@ -237,14 +239,14 @@ describe('offer creation and cancellation', () => {
     const h = createSqliteD1(migrations());
     const rows = await record(h, created(3n, { amount: 500n }, 1, 0));
     for (const r of rows) {
-      expect(value(r)).toEqual({ asset: USDC, assetType: 0, amount: '500', amountMax: null, tokenId: null });
+      expect(value(r)).toEqual({ asset: USDC, assetType: 0, amount: '500', amountMax: null, tokenId: null, quantity: null });
     }
   });
 
   it('a range offer: the minimum AND the ceiling — `amount` alone is only the minimum', async () => {
     const h = createSqliteD1(migrations());
     const rows = await record(h, created(3n, { amount: 500n, amountMax: 2_000n }, 1, 0));
-    expect(value(rows[0])).toEqual({ asset: USDC, assetType: 0, amount: '500', amountMax: '2000', tokenId: null });
+    expect(value(rows[0])).toEqual({ asset: USDC, assetType: 0, amount: '500', amountMax: '2000', tokenId: null, quantity: null });
   });
 
   it('a multicall creating two offers gives each its own terms', async () => {
@@ -274,7 +276,7 @@ describe('offer creation and cancellation', () => {
         1,
       ),
     ]);
-    expect(value(rows[0])).toEqual({ asset: USDC, assetType: 0, amount: '500', amountMax: '800', tokenId: null });
+    expect(value(rows[0])).toEqual({ asset: USDC, assetType: 0, amount: '500', amountMax: '800', tokenId: null, quantity: null });
   });
 
   it('an amendment states the new size in the offer’s own asset', async () => {
@@ -283,7 +285,7 @@ describe('offer creation and cancellation', () => {
     const rows = await record(h, [
       realLog('OfferModified', { offerId: 3n, creator: A1, amount: 40n, amountMax: 0n, interestRateBps: 1n, interestRateBpsMax: 0n, collateralAmount: 1n, collateralAmountMax: 0n }, 1, 0),
     ]);
-    expect(value(rows[0])).toEqual({ asset: WETH, assetType: 0, amount: '40', amountMax: null, tokenId: null });
+    expect(value(rows[0])).toEqual({ asset: WETH, assetType: 0, amount: '40', amountMax: null, tokenId: null, quantity: null });
   });
 });
 
@@ -297,14 +299,14 @@ describe('claims — the event carries no asset type; the loan record decides it
     const h = createSqliteD1(migrations());
     seedLoan(h, 5, { lending_asset: USDC, collateral_asset: WETH });
     const [r] = await record(h, [claim('LenderFundsClaimed', 5n, USDC, 1_100n)]);
-    expect(value(r)).toEqual({ asset: USDC, assetType: 0, amount: '1100', amountMax: null, tokenId: null });
+    expect(value(r)).toEqual({ asset: USDC, assetType: 0, amount: '1100', amountMax: null, tokenId: null, quantity: null });
   });
 
   it('an NFT collateral claim names the token and states NO amount', async () => {
     const h = createSqliteD1(migrations());
     seedLoan(h, 5, { lending_asset: USDC, collateral_asset: NFT, collateral_asset_type: 1, collateral_token_id: '77' });
     const [r] = await record(h, [claim('BorrowerFundsClaimed', 5n, NFT, 1n)]);
-    expect(value(r)).toEqual({ asset: NFT, assetType: 1, amount: null, amountMax: null, tokenId: '77' });
+    expect(value(r)).toEqual({ asset: NFT, assetType: 1, amount: null, amountMax: null, tokenId: '77', quantity: null });
   });
 
   it('a rental fee claim in the offer’s prepay asset is ERC-20', async () => {
@@ -312,7 +314,7 @@ describe('claims — the event carries no asset type; the loan record decides it
     seedOffer(h, 905, { prepay_asset: RENT });
     seedLoan(h, 5, { lending_asset: NFT, asset_type: 1, token_id: '42', collateral_asset: WETH });
     const [r] = await record(h, [claim('LenderFundsClaimed', 5n, RENT, 300n)]);
-    expect(value(r)).toEqual({ asset: RENT, assetType: 0, amount: '300', amountMax: null, tokenId: null });
+    expect(value(r)).toEqual({ asset: RENT, assetType: 0, amount: '300', amountMax: null, tokenId: null, quantity: null });
   });
 
   it('an asset the loan cannot place, or places two ways, states no type and no amount', async () => {
@@ -324,8 +326,8 @@ describe('claims — the event carries no asset type; the loan record decides it
       realLog('BorrowerFundsClaimed', { loanId: 5n, claimant: A1, asset: NFT, amount: 1n, newBothClaimed: false }, 1, 0),
       realLog('LenderFundsClaimed', { loanId: 6n, claimant: A1, asset: RENT, amount: 9n, newBothClaimed: false }, 1, 1),
     ]);
-    expect(value(rows[0])).toEqual({ asset: NFT, assetType: null, amount: null, amountMax: null, tokenId: null });
-    expect(value(rows[1])).toEqual({ asset: RENT, assetType: null, amount: null, amountMax: null, tokenId: null });
+    expect(value(rows[0])).toEqual({ asset: NFT, assetType: null, amount: null, amountMax: null, tokenId: null, quantity: null });
+    expect(value(rows[1])).toEqual({ asset: RENT, assetType: null, amount: null, amountMax: null, tokenId: null, quantity: null });
   });
 });
 
@@ -339,6 +341,7 @@ describe('fills', () => {
       amount: '250',
       amountMax: null,
       tokenId: null,
+      quantity: null,
     });
   });
 
@@ -349,7 +352,82 @@ describe('fills', () => {
       amount: null,
       amountMax: null,
       tokenId: null,
+      quantity: null,
     });
+  });
+});
+
+describe('ERC-1155 quantity — one copy and a hundred are different positions (#2383 r1)', () => {
+  it('a rental of an ERC-1155 states the copies the loan carries', async () => {
+    const h = createSqliteD1(migrations());
+    const rows = await record(h, [
+      realLog('LoanInitiated', { loanId: 5n, offerId: 9n, lender: A1, borrower: A2, principal: 1n, collateralAmount: 0n }, 1, 0),
+      realLog('LoanInitiatedDetails', { loanId: 5n, lender: A1, borrower: A2, details: loanDetails({ principalAsset: NFT, assetType: 2, tokenId: 42n, quantity: 5n }) }, 1, 1),
+    ]);
+    for (const r of rows) {
+      expect(value(r)).toEqual({ asset: NFT, assetType: 2, amount: null, amountMax: null, tokenId: '42', quantity: '5' });
+    }
+  });
+
+  it('an ERC-1155 offer takes its quantity from the offer record', async () => {
+    const h = createSqliteD1(migrations());
+    seedOffer(h, 3, { lending_asset: NFT, asset_type: 2, token_id: '42', quantity: '7' });
+    const rows = await record(h, [
+      realLog('OfferCreated', { offerId: 3n, creator: A1, offerType: 0 }, 1, 0),
+      realLog('OfferCreatedDetails', { offerId: 3n, creator: A1, lendingAsset: NFT, fields: offerFields({ assetType: 2, tokenId: 42n, amount: 1n }) }, 1, 1),
+    ]);
+    for (const r of rows) {
+      expect(value(r)).toEqual({ asset: NFT, assetType: 2, amount: null, amountMax: null, tokenId: '42', quantity: '7' });
+    }
+  });
+
+  it('a record whose quantity is the zero default states it as unknown, not as zero copies', async () => {
+    const h = createSqliteD1(migrations());
+    // A stub row carries the column default '0' until it heals.
+    seedOffer(h, 3, { lending_asset: NFT, asset_type: 2, token_id: '42' });
+    const rows = await record(h, [
+      realLog('OfferCreated', { offerId: 3n, creator: A1, offerType: 0 }, 1, 0),
+      realLog('OfferCreatedDetails', { offerId: 3n, creator: A1, lendingAsset: NFT, fields: offerFields({ assetType: 2, tokenId: 42n, amount: 1n }) }, 1, 1),
+    ]);
+    expect(value(rows[0]).quantity).toBeNull();
+    expect(value(rows[0]).tokenId).toBe('42');
+  });
+
+  it('an ERC-1155 collateral claim states the collateral copies', async () => {
+    const h = createSqliteD1(migrations());
+    seedOffer(h, 905, { collateral_asset: NFT, collateral_asset_type: 2, collateral_quantity: '3', quantity: '9' });
+    seedLoan(h, 5, { lending_asset: USDC, collateral_asset: NFT, collateral_asset_type: 2, collateral_token_id: '77' });
+    const [r] = await record(h, [
+      realLog('BorrowerFundsClaimed', { loanId: 5n, claimant: A1, asset: NFT, amount: 3n, newBothClaimed: false }, 1, 0),
+    ]);
+    expect(value(r)).toEqual({ asset: NFT, assetType: 2, amount: null, amountMax: null, tokenId: '77', quantity: '3' });
+  });
+
+  it('an ERC-721 never carries a quantity', async () => {
+    const h = createSqliteD1(migrations());
+    const [r] = await record(h, [
+      realLog('LoanInitiated', { loanId: 5n, offerId: 9n, lender: A1, borrower: A2, principal: 1n, collateralAmount: 0n }, 1, 0),
+      realLog('LoanInitiatedDetails', { loanId: 5n, lender: A1, borrower: A2, details: loanDetails({ principalAsset: NFT, assetType: 1, tokenId: 42n, quantity: 5n }) }, 1, 1),
+    ]);
+    expect(value(r).quantity).toBeNull();
+  });
+});
+
+describe('collateral top-up (#2383 r1)', () => {
+  const added = (loanId: bigint, amountAdded: bigint) =>
+    realLog('CollateralAdded', { loanId, borrower: A2, amountAdded, newCollateralAmount: amountAdded + 10n, newHf: 2n * 10n ** 18n, newLtv: 4000n }, 1, 0);
+
+  it('states the amount added, in the loan’s collateral asset', async () => {
+    const h = createSqliteD1(migrations());
+    seedLoan(h, 5, { lending_asset: USDC, collateral_asset: WETH });
+    const [r] = await record(h, [added(5n, 25n)]);
+    expect(value(r)).toEqual({ asset: WETH, assetType: 0, amount: '25', amountMax: null, tokenId: null, quantity: null });
+  });
+
+  it('states nothing when the loan record is absent — never a guessed asset', async () => {
+    const h = createSqliteD1(migrations());
+    const [r] = await record(h, [added(5n, 25n)]);
+    expect(value(r)).toEqual({ asset: null, assetType: null, amount: null, amountMax: null, tokenId: null, quantity: null });
   });
 });
 
@@ -362,14 +440,14 @@ describe('/activity serves the value — and a database before 0055 still serves
     return ((await res.json()) as { events: Record<string, unknown>[] }).events;
   };
 
-  it('serves the five fields', async () => {
+  it('serves the six fields', async () => {
     const h = createSqliteD1(migrations());
     await record(h, [
       realLog('LoanInitiated', { loanId: 5n, offerId: 9n, lender: A1, borrower: A2, principal: 7n, collateralAmount: 1n }, 1, 0),
       realLog('LoanInitiatedDetails', { loanId: 5n, lender: A1, borrower: A2, details: loanDetails({}) }, 1, 1),
     ]);
     const [first] = await fetchRows(h);
-    expect(first).toMatchObject({ asset: USDC, assetType: 0, amount: '7', amountMax: null, tokenId: null });
+    expect(first).toMatchObject({ asset: USDC, assetType: 0, amount: '7', amountMax: null, tokenId: null, quantity: null });
   });
 
   it('answers with null fields on a pre-0055 schema', async () => {
@@ -381,6 +459,6 @@ describe('/activity serves the value — and a database before 0055 still serves
       )
       .run(CHAIN);
     const [first] = await fetchRows(h);
-    expect(first).toMatchObject({ asset: null, assetType: null, amount: null, amountMax: null, tokenId: null });
+    expect(first).toMatchObject({ asset: null, assetType: null, amount: null, amountMax: null, tokenId: null, quantity: null });
   });
 });
