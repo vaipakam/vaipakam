@@ -295,3 +295,46 @@ describe('a range backfill keeps the offer’s recorded holder (#2382 r3)', () =
     ).toBe(CREATOR);
   });
 });
+
+describe('a match that also CLOSES the borrower offer is still re-read (#2382 r4)', () => {
+  const reads = async (h: ReturnType<typeof createSqliteD1>, answer: () => unknown) => {
+    const budget = createBudget(1_000, 'test', 1_000);
+    const seen: number[] = [];
+    await refreshStubOffers(
+      ({
+        async readContract({ args }: { args: [bigint] }) {
+          seen.push(Number(args[0]));
+          return answer();
+        },
+      }) as never,
+      '0x0' as never,
+      84532,
+      meterEnv({ DB: h.d1 } as unknown as Env, budget) as unknown as Env,
+      budget,
+    );
+    return seen;
+  };
+
+  it('selects a terminal row a match marked, and leaves terminal history alone', async () => {
+    const h = createSqliteD1(migrations());
+    // Marked by the closing match: ceiling known, fill unread.
+    seed(h, { offer_id: '1', status: 'fullyFilled', collateral_amount_max: '400', collateral_amount_filled: null });
+    // Pre-0054 terminal history: neither column.
+    seed(h, { offer_id: '2', status: 'fullyFilled', collateral_amount_max: null, collateral_amount_filled: null });
+    expect(
+      await reads(h, () => {
+        throw new Error('read refused');
+      }),
+    ).toEqual([1]);
+  });
+
+  it('records a fill of 0 when the struct is gone, so the row drops out', async () => {
+    const h = createSqliteD1(migrations());
+    seed(h, { offer_id: '1', status: 'cancelled', collateral_amount_max: '400', collateral_amount_filled: null });
+    const zero = { creator: '0x0000000000000000000000000000000000000000' };
+    expect(await reads(h, () => zero)).toEqual([1]);
+    expect(await reads(h, () => zero)).toEqual([]);
+    const r = h.db.prepare('SELECT collateral_amount_filled AS f FROM offers').get() as { f: string };
+    expect(r.f).toBe('0');
+  });
+});

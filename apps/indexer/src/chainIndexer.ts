@@ -3421,11 +3421,19 @@ export async function refreshStubOffers(
   // the refresh set. Genuinely-deleted offers (zero-fill cancels) are handled in
   // `refreshOfferDetails`, which clears `is_stub` on a zero read so the dead row
   // drops out of this queue instead of starving real stubs.
+  // The third clause (#2382 r4): a match marks the borrower offer's fills
+  // unread, and the SAME match can close it (fully filled, dust) — so a
+  // terminal row marked that way must still be re-read, or it keeps an
+  // unknown fill for good. It is told apart from pre-0054 history by its
+  // ceiling: every row written since 0054 has one, history has neither, and
+  // a terminal history row is not this lane's to backfill. A row whose
+  // struct is gone writes a fill of 0 below, so it cannot loop here.
   const stale = await env.DB.prepare(
     `SELECT offer_id FROM offers
      WHERE chain_id = ? AND (is_stub = 1
        OR (status = 'active'
-           AND (collateral_amount_max IS NULL OR collateral_amount_filled IS NULL)))
+           AND (collateral_amount_max IS NULL OR collateral_amount_filled IS NULL))
+       OR (collateral_amount_filled IS NULL AND collateral_amount_max IS NOT NULL))
      ORDER BY updated_at ASC
      LIMIT ?`,
   )
@@ -3482,8 +3490,13 @@ async function refreshOfferDetails(
     (detail.creator as string | undefined)?.toLowerCase() ===
     '0x0000000000000000000000000000000000000000'
   ) {
+    // #2382 r4 — and a fill of 0 where none is recorded: the protocol deletes
+    // an offer's struct only on a ZERO-fill cancel, so 0 is what it consumed,
+    // and recording it keeps the row from being re-selected for an unread fill.
     await env.DB.prepare(
-      `UPDATE offers SET is_stub = 0, updated_at = ?
+      `UPDATE offers SET is_stub = 0,
+              collateral_amount_filled = COALESCE(collateral_amount_filled, '0'),
+              updated_at = ?
        WHERE chain_id = ? AND offer_id = ?`,
     )
       .bind(now, chainId, offerId)

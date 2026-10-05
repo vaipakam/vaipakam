@@ -3533,37 +3533,28 @@ const copySource = {
     // checks liquidity again and the loan follows THAT result.
     illiquidCollateralTag: 'illiquid when posted (checked again at acceptance) — if so, handed over as-is if not repaid',
     collateralAtLeast: tmpl('at least {{amount}}', ['amount']),
-    // #2382 — a borrow request's committed collateral RANGE, once the indexer
-    // has read it. Funding the request directly locks exactly the floor (the
-    // rest goes back to the borrower); a matched fill can lock more, up to
-    // the ceiling. A request earlier fills have part-used can only be
-    // matched (direct funding refuses a part-filled offer).
+    // #2382 — a borrow request's collateral, once the indexer has read its
+    // range. TERMS ONLY (r4): what the request commits now and its floor —
+    // never what a particular fill path locks, which depends on the path
+    // (direct, matched, carry-over refinance) and on the deployment.
     collateralRange: tmpl(
-      '{{range}} committed — funding it directly locks {{floor}}; a matched fill can lock up to {{ceiling}}',
-      ['range', 'floor', 'ceiling'],
+      '{{committed}} committed (request floor {{floor}}); how much a fill locks depends on how it is filled',
+      ['committed', 'floor'],
     ),
-    // #2382 r2 — exactly what remains committed, and what earlier fills
-    // CONSUMED (cumulative; a resulting loan may have settled since, so it is
-    // not "locked"). Below the floor, no fill can use the remainder: the
-    // matcher locks at least the floor on every fill.
+    collateralSingle: tmpl(
+      '{{amount}} committed; how much a fill locks depends on how it is filled',
+      ['amount'],
+    ),
+    // Part-used by earlier matched fills: exactly what remains committed, and
+    // what those fills CONSUMED (cumulative; a resulting loan may have
+    // settled since, so not "locked").
     collateralRangeRemaining: tmpl(
-      '{{remaining}} still committed ({{used}} consumed by earlier fills); only a matched fill can use it',
+      '{{remaining}} still committed ({{used}} consumed by earlier fills)',
       ['remaining', 'used'],
     ),
     collateralRemainingBelowFloor: tmpl(
-      '{{remaining}} still committed ({{used}} consumed by earlier fills) — less than the {{floor}} every fill must lock, so no further fill can use it until the request is amended or cancelled',
+      '{{remaining}} still committed ({{used}} consumed by earlier fills) — below the request’s {{floor}} floor',
       ['remaining', 'used', 'floor'],
-    ),
-    // #2382 r1/r3 — a single-value request (ceiling == floor). It commits
-    // exactly this amount, but only a direct funding locks all of it: a
-    // matched fill locks the lender's pro-rated requirement, so the loan can
-    // carry less than the figure. Where the unused part goes is NOT stated:
-    // it is refunded at the match on a deployment without partial fills and
-    // stays committed for later fills on one with them, and the card does not
-    // read that setting.
-    collateralSingle: tmpl(
-      '{{amount}} committed — funding it directly locks all of it; a matched fill locks only what the lender requires, up to {{amount}}',
-      ['amount'],
     ),
     // #2384 (UX3-007) — the loan-to-value the card can substantiate, from
     // the protocol's live oracle prices, with its one-clause definition

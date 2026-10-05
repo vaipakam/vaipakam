@@ -26,10 +26,16 @@ export function offerCollateralText(args: {
   /** #2382 — a borrower offer's committed range as the indexer read it:
    *  the effective ceiling and the part earlier matched fills consumed.
    *  `null` in either = not read yet, which keeps the "at least" floor
-   *  wording. A direct "fund this request" locks exactly the floor (the
-   *  rest is returned to the borrower); a matched fill can lock more, up
-   *  to the ceiling still unused; a request already part-filled can only
-   *  be matched. */
+   *  wording.
+   *
+   *  TERMS ONLY (#2382 r4). The card states what the request commits — the
+   *  collateral held for it now (`ceiling − filled`) — and its floor, and
+   *  says plainly that what a fill locks depends on how it is filled. It does
+   *  NOT narrate what each path locks: that depends on the path (a direct
+   *  funding, a matched fill, a carry-over refinance that pins the old
+   *  loan's collateral) and on the deployment (whether partial fills are
+   *  on), and four review rounds each found a sentence one of those
+   *  contradicted. Facts the indexer holds do not go stale that way. */
   borrowerRange?: { ceiling: string | null; filled: string | null };
   /** #2378 r8 — a LENDER offer's collateral is the requirement at its full
    *  amount, and matching scales it to the part taken. Where the offer can
@@ -43,18 +49,17 @@ export function offerCollateralText(args: {
     amountRaw: (amount: string, token: string) => string;
     atLeast: (amount: string) => string;
     forFullOffer: (amount: string) => string;
-    /** #2382 — an unfilled ranged request: the range, the floor a direct
-     *  funding locks, and the ceiling a matched fill can reach. */
-    range?: (range: string, floor: string, ceiling: string) => string;
+    /** #2382 — an unfilled ranged request: what it commits now (the
+     *  ceiling — the whole of it is held) and its floor. */
+    range?: (committed: string, floor: string) => string;
     /** #2382 — a request earlier fills have part-used: exactly what is still
      *  committed, and what earlier fills CONSUMED (a running total, not what
      *  is locked today — a resulting loan may have settled since). */
     rangeRemaining?: (remaining: string, used: string) => string;
-    /** #2382 r2 — the same, when what is left is below the floor every fill
-     *  must lock: no fill can use it. */
+    /** #2382 r2/r4 — the same, when what is left is below the request's
+     *  floor: stated as that fact. */
     remainingBelowFloor?: (remaining: string, used: string, floor: string) => string;
-    /** #2382 r1 — an unfilled single-value request: funding it directly
-     *  locks all of it, a matched fill only the lender's requirement. */
+    /** #2382 r1/r4 — an unfilled single-value request: what it commits. */
     single?: (amount: string) => string;
   };
 }): string {
@@ -91,26 +96,19 @@ export function offerCollateralText(args: {
       const left = ceiling > filled ? ceiling - filled : 0n;
       const remaining = `${n(left)} ${symbol}`;
       const used = `${n(filled)} ${symbol}`;
-      // A ranged request's every fill locks at least the floor (the matcher
-      // clamps up to it), so a remainder below the floor can be taken by no
-      // fill at all — say so rather than offer it as available.
+      // A remainder below a ranged request's floor is stated as exactly
+      // that, never presented as available for a fill (#2382 r2/r4).
       if (ceiling > floor && left < floor) {
         return args.labels.remainingBelowFloor(remaining, used, `${n(floor)} ${symbol}`);
       }
       return args.labels.rangeRemaining(remaining, used);
     }
     if (ceiling > floor) {
-      return args.labels.range(
-        `${n(floor)}–${n(ceiling)} ${symbol}`,
-        `${n(floor)} ${symbol}`,
-        `${n(ceiling)} ${symbol}`,
-      );
+      // The whole ceiling is held for an unfilled ranged request (#2382 r4),
+      // so that is the commitment; the floor is stated as the request's term.
+      return args.labels.range(`${n(ceiling)} ${symbol}`, `${n(floor)} ${symbol}`);
     }
-    // Ceiling == floor and nothing used. The request commits exactly this,
-    // but it is NOT the loan's collateral in every case: a direct funding
-    // locks all of it, while a matched fill locks only the lender's pro-rated
-    // requirement and returns the rest (LibOfferMatch's single-value branch,
-    // #2382 r1). Say both rather than print a figure as if it were exact.
+    // Ceiling == floor and nothing used: the request commits exactly this.
     return args.labels.single(`${n(floor)} ${symbol}`);
   }
   let text: string;

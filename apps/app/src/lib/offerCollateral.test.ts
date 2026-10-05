@@ -9,10 +9,10 @@ const labels = {
   amountRaw: (a: string, t: string) => `${a} base units of ${t} (token details couldn’t be read)`,
   atLeast: (a: string) => `at least ${a}`,
   forFullOffer: (a: string) => `${a} for the full offer (proportionally less for part of it)`,
-  range: (r: string, f: string, c: string) => `${r} committed — direct locks ${f}; match up to ${c}`,
+  range: (c: string, f: string) => `${c} committed (floor ${f})`,
   rangeRemaining: (r: string, u: string) => `${r} still committed (${u} consumed)`,
-  remainingBelowFloor: (r: string, u: string, f: string) => `${r} still committed (${u} consumed) — below ${f}, no fill can use it`,
-  single: (a: string) => `${a} committed — direct locks all; match locks the requirement`,
+  remainingBelowFloor: (r: string, u: string, f: string) => `${r} still committed (${u} consumed) — below the ${f} floor`,
+  single: (a: string) => `${a} committed`,
 };
 const base = { asset, amount: '0', tokenId: '0', quantity: '0', meta: undefined, metaFailed: false, labels };
 
@@ -44,14 +44,16 @@ describe('offerCollateralText', () => {
     const meta = { decimals: 18, symbol: 'tLIQ' };
     const e = (n: number) => `${n}000000000000000000`;
     const req = { ...base, assetType: 0, amount: e(150), meta, floorOnly: true };
-    it('states the range, what a direct funding locks, and the ceiling', () => {
+    it('states the WHOLE ceiling as committed, and the floor as the request’s term (#2382 r4)', () => {
+      // An unfilled ranged request holds its entire ceiling, so that is the
+      // commitment — not a range the reader could take for it.
       expect(offerCollateralText({ ...req, borrowerRange: { ceiling: e(400), filled: '0' } })).toBe(
-        '150–400 tLIQ committed — direct locks 150 tLIQ; match up to 400 tLIQ',
+        '400 tLIQ committed (floor 150 tLIQ)',
       );
     });
-    it('never states a single-value request as exact — a matched fill can lock less (#2382 r1)', () => {
+    it('states a single-value request by what it commits, through its own label (#2382 r1/r4)', () => {
       expect(offerCollateralText({ ...req, borrowerRange: { ceiling: e(150), filled: '0' } })).toBe(
-        '150 tLIQ committed — direct locks all; match locks the requirement',
+        '150 tLIQ committed',
       );
     });
     it('states EXACTLY what is still committed after earlier fills — never a range (#2382 r2)', () => {
@@ -62,7 +64,7 @@ describe('offerCollateralText', () => {
     it('says a remainder below the floor can be used by no fill (#2382 r2)', () => {
       // 400 − 300 = 100 left, below the 150 every fill of this range locks.
       expect(offerCollateralText({ ...req, borrowerRange: { ceiling: e(400), filled: e(300) } })).toBe(
-        '100 tLIQ still committed (300 tLIQ consumed) — below 150 tLIQ, no fill can use it',
+        '100 tLIQ still committed (300 tLIQ consumed) — below the 150 tLIQ floor',
       );
       // Exactly the floor left is still usable.
       expect(offerCollateralText({ ...req, borrowerRange: { ceiling: e(400), filled: e(250) } })).toBe(

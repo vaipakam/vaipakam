@@ -1283,23 +1283,21 @@ progress.
   token); a token amount whose details are loading or could not be read says so,
   rather than showing only a contract address. A borrow request can commit a
   collateral RANGE — a floor and a ceiling. Once the market data carries the
-  ceiling, the card states the range, says that funding the request directly
-  locks exactly the floor (the rest goes back to the borrower), and says a
-  matched fill can lock more, up to the ceiling. A request that earlier matched
-  fills have already part-used states exactly what is still committed and how
-  much earlier fills consumed — a running total, not what is locked today, since
-  a resulting loan may have settled — and says only a matched fill can use the
-  rest (a part-filled request cannot be funded directly). When what is left is
-  below the floor every fill of the range must lock, the card says no further
-  fill can use it until the request is amended or cancelled, rather than
-  presenting it as available. A request whose ceiling equals its floor
-  is never stated as an exact loan collateral: it commits exactly that amount
-  and a direct funding locks all of it, but a matched fill locks only what the
-  lender requires, and the card says both. Where the unused part goes depends
-  on the deployment — refunded at the match where partial fills are off, kept
-  committed for later fills where they are on — and the card does not assert
-  either. For the same
-  reason a borrow request's loan-to-value is always qualified as the ratio at
+  ceiling and the part earlier fills consumed, the card states the request's
+  own terms and nothing it cannot know: the collateral the request holds now
+  (the whole ceiling for an unfilled request; what is left of it for one that
+  earlier matched fills have part-used) and its floor, and that how much a
+  given fill locks depends on how the request is filled. It does not narrate
+  what each fill path locks, because that depends on the path — a direct
+  funding, a matched fill, a refinance that carries over the old loan's
+  collateral — and on the deployment (whether partial fills are on, which
+  also decides whether unused collateral is refunded at a match or stays
+  committed), none of which the card reads. For a part-used request it states
+  how much earlier fills consumed — a running total, not what is locked
+  today, since a resulting loan may have settled — and when what is left is
+  below the request's floor it states that fact rather than presenting the
+  remainder as available. For the same reason a borrow request's
+  loan-to-value is always qualified as the ratio at
   the amounts shown. Until the ceiling or the part already used has
   been read — older market data, or a request the index has not re-read yet —
   the card states only the floor, as "at least" that amount, never an assumed
