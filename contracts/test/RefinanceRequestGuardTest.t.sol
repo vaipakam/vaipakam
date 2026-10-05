@@ -240,30 +240,6 @@ contract RefinanceRequestGuardTest is SetupTest {
         assertEq(_live(loanId), 0);
     }
 
-    // ─── the backfill for requests posted before the index ───────────
-
-    function test_indexRecordsAPreIndexRequestAndNeverDisplacesOne() public {
-        uint256 loanId = _activeLoan();
-        uint256 offerId = _request(loanId, 0);
-
-        // Simulate a request posted before the index existed: clear its slot.
-        bytes32 slot = _indexSlotOf(loanId, offerId);
-        vm.store(address(diamond), slot, bytes32(0));
-        assertEq(_live(loanId), 0, "slot not cleared");
-
-        // Anyone may record it; only what the chain proves is recorded.
-        vm.prank(makeAddr("anyone"));
-        assertEq(_index(), 1);
-        assertEq(_live(loanId), offerId);
-        // The cursor has passed it: a further call scans nothing new.
-        assertEq(_index(), 0);
-    }
-
-    /// Runs the backfill over every offer id not yet scanned.
-    function _index() internal returns (uint256 recorded) {
-        (recorded,) = RefinanceFacet(address(diamond)).indexRefinanceRequests(type(uint256).max);
-    }
-
     // ─── #2424 r1 — only the RECORDED request can fill ───────────────
 
     /// A funded replacement lender, and the borrower's payoff approval.
@@ -324,39 +300,23 @@ contract RefinanceRequestGuardTest is SetupTest {
         _acceptExpectingRevert(r1, _notRecorded(loanId, r1));
     }
 
-    /// A request posted before the record existed cannot fill until it is
-    /// recorded — and once the holder has posted a new one, never.
-    function test_aPreIndexRequestFillsOnlyOnceRecorded() public {
+    /// A request posted before the record existed is never recorded, so it can
+    /// never be taken — and it does not hold the loan back. Its borrower
+    /// cancels it and posts a new one, which is recorded and takeable.
+    function test_aPreIndexRequestCanNeverBeTaken() public {
         uint256 loanId = _activeLoan();
         uint256 r1 = _request(loanId, 0);
         vm.store(address(diamond), _indexSlotOf(loanId, r1), bytes32(0));
 
         _acceptExpectingRevert(r1, _notRecorded(loanId, r1));
+        assertEq(_live(loanId), 0, "an unrecorded request does not hold the loan back");
 
-        // The holder posts a new request before the backfill reaches R1.
         vm.prank(borrower);
         uint256 r2 = OfferCreateFacet(address(diamond)).createOffer(
             _params(LibVaipakam.OfferType.Borrower, 400, LibVaipakam.FillMode.Aon, loanId, 0)
         );
-        assertEq(_index(), 0);
         assertEq(_live(loanId), r2);
         _acceptExpectingRevert(r1, _notRecorded(loanId, r1));
-    }
-
-    /// Recorded by the backfill, a pre-index request fills normally.
-    function test_aBackfilledRequestFills() public {
-        uint256 loanId = _activeLoan();
-        uint256 r1 = _request(loanId, 0);
-        vm.store(address(diamond), _indexSlotOf(loanId, r1), bytes32(0));
-        assertEq(_index(), 1);
-
-        (address l, uint256 pk) = _replacementLender("backfillLender");
-        _signAndAcceptOffer(l, pk, r1);
-        assertEq(
-            uint8(LoanFacet(address(diamond)).getLoanDetails(loanId).status),
-            uint8(LibVaipakam.LoanStatus.Repaid),
-            "the backfilled request completed the refinance"
-        );
     }
 
     // ─── #2424 r1 — no request is dropped from view uncancelled ──────
@@ -412,32 +372,6 @@ contract RefinanceRequestGuardTest is SetupTest {
         );
         vm.stopPrank();
         assertEq(_live(loanId), r);
-    }
-
-    /// The backfill walks offer ids in order from a stored cursor, so of two
-    /// pre-index requests for one loan the FIRST is recorded — no caller can
-    /// pick the other.
-    function test_theBackfillRecordsTheFirstOfTwoPreIndexRequests() public {
-        uint256 loanId = _activeLoan();
-        uint256 r1 = _request(loanId, 0);
-        bytes32 slot = _indexSlotOf(loanId, r1);
-        vm.store(address(diamond), slot, bytes32(0));
-        vm.prank(borrower);
-        uint256 r2 = OfferCreateFacet(address(diamond)).createOffer(
-            _params(LibVaipakam.OfferType.Borrower, 400, LibVaipakam.FillMode.Aon, loanId, 0)
-        );
-        vm.store(address(diamond), slot, bytes32(0));
-        assertGt(r2, r1);
-
-        // Stepping one offer at a time cannot reach R2 before R1.
-        vm.startPrank(makeAddr("anyone"));
-        uint256 cursor;
-        while (cursor < r2) {
-            (, cursor) = RefinanceFacet(address(diamond)).indexRefinanceRequests(1);
-        }
-        vm.stopPrank();
-        assertEq(_live(loanId), r1, "the first request in offer-id order is recorded");
-        _acceptExpectingRevert(r2, _notRecorded(loanId, r2));
     }
 
     /// The accept preview reports an unrecorded request as unfillable, instead
@@ -527,53 +461,6 @@ contract RefinanceRequestGuardTest is SetupTest {
             uint8(LoanFacet(address(diamond)).getLoanDetails(newLoanId).status),
             uint8(LibVaipakam.LoanStatus.Active)
         );
-    }
-
-    // ─── #2424 r5 — the backfill skips only for FINAL reasons ────────
-
-    /// A pre-index request that coexists with an offset (legacy state) is
-    /// recorded anyway: the offset can be withdrawn, and the cursor never
-    /// comes back.
-    function test_theBackfillRecordsARequestThatCoexistsWithAnOffset() public {
-        uint256 loanId = _activeLoan();
-        uint256 r1 = _request(loanId, 0);
-        vm.store(address(diamond), _indexSlotOf(loanId, r1), bytes32(0));
-        address borrowerVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower);
-        vm.startPrank(borrower);
-        ERC20(mockERC20).approve(borrowerVault, type(uint256).max);
-        ERC20(mockERC20).approve(address(diamond), type(uint256).max);
-        uint256 offsetOfferId = PrecloseFacet(address(diamond)).offsetWithNewOffer(
-            loanId, 500, 30, mockCollateralERC20, LOAN_COLLATERAL, true, mockERC20
-        );
-        vm.stopPrank();
-
-        assertEq(_index(), 1, "recorded despite the open offset");
-        assertEq(_recorded(loanId), r1);
-        // Once the offset is withdrawn the request holds the loan back again.
-        vm.prank(borrower);
-        OfferCancelFacet(address(diamond)).cancelOffer(offsetOfferId);
-        assertEq(_live(loanId), r1);
-    }
-
-    /// A pre-index request whose creator does not hold the position when the
-    /// scan passes is recorded anyway — it is not live (it does not hold the
-    /// new holder back), and becomes live again if the position returns.
-    function test_theBackfillRecordsAnOrphanedRequestThatCanRevive() public {
-        uint256 loanId = _activeLoan();
-        uint256 r1 = _request(loanId, 0);
-        vm.store(address(diamond), _indexSlotOf(loanId, r1), bytes32(0));
-        uint256 tokenId = LoanFacet(address(diamond)).getLoanDetails(loanId).borrowerTokenId;
-        address holderB = makeAddr("holderB");
-        vm.prank(borrower);
-        IERC721(address(diamond)).transferFrom(borrower, holderB, tokenId);
-
-        assertEq(_index(), 1, "recorded although orphaned");
-        assertEq(_recorded(loanId), r1);
-        assertEq(_live(loanId), 0, "an orphaned request does not hold the new holder back");
-
-        vm.prank(holderB);
-        IERC721(address(diamond)).transferFrom(holderB, borrower, tokenId);
-        assertEq(_live(loanId), r1, "live again once the position returns");
     }
 
     /// The storage slot holding `loanId`'s indexed request, found by observing

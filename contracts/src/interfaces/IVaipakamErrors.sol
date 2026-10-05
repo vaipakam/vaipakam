@@ -1789,9 +1789,8 @@ interface IVaipakamErrors {
     ///         the loan's recorded request, so it cannot complete a refinance.
     ///         Only the recorded request is guarded against changes to the loan
     ///         underneath it, so only it may be accepted. A request posted
-    ///         before the record existed becomes acceptable once
-    ///         `indexRefinanceRequests` records it; one displaced from the record
-    ///         stays unacceptable — cancel it.
+    ///         before the record existed, or one displaced from it, stays
+    ///         unacceptable — cancel it (and post a new one if still wanted).
     error RefinanceRequestNotRecorded(uint256 loanId, uint256 offerId);
 
     /// @notice #2407 — `loanId` has a live offset (`offsetOfferId`, the
