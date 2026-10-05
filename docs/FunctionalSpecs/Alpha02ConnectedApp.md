@@ -212,8 +212,12 @@ The app uses chain reads and indexed reads for different jobs.
   scheduled indexing — naming the missing update in the operator log —
   rather than writing records the old layout cannot hold. Indexing resumes
   by itself once the update lands; nothing is lost, because the reading
-  position does not move while paused. In the meantime the app shows the
-  degraded / stale-data warning above, never a partial or invented record.
+  position does not move while paused, and no partial or invented record is
+  written. During the pause the index's data is old but intact: the market
+  and history surfaces that read it show their stale-data notice once the
+  index has not advanced for half an hour — the same notice any ingest stall
+  produces — and the connected wallet's own positions, which are read from
+  the chain, are unaffected.
 - Indexed lifecycle status must not drift from the chain's indefinitely.
   A loan's ending is learned from the event announcing it, and an
   announcement the platform does not see is missed for good — resuming

@@ -9,7 +9,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 // @ts-expect-error — plain ESM script, no type declarations.
-import { admit, unapplied } from '../scripts/deploy-shared-d1.mjs';
+import { admit, isSettled, unapplied } from '../scripts/deploy-shared-d1.mjs';
 
 const pkg = (w: string) =>
   JSON.parse(readFileSync(new URL(`../../${w}/package.json`, import.meta.url), 'utf8')).scripts;
@@ -71,5 +71,13 @@ describe('deploy-shared-d1 — verification', () => {
     expect(unapplied('', required)).toBeNull();
     expect(unapplied('not json [ at all', required)).toBeNull();
     expect(unapplied(JSON.stringify({ error: 'x' }), required)).toBeNull();
+  });
+});
+
+describe('deploy-shared-d1 — what counts as settled', () => {
+  it('only a clean answer settles; an unreadable one (null) keeps waiting (r5)', () => {
+    expect(isSettled([])).toBe(true);
+    expect(isSettled(['0001_a.sql'])).toBe(false);
+    expect(isSettled(null)).toBe(false);
   });
 });

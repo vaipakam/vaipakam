@@ -115,6 +115,9 @@ function readMissing(required) {
   return unapplied(q.stdout ?? '', required);
 }
 
+/** A verification that answered with nothing missing. */
+export const isSettled = (missing) => Array.isArray(missing) && missing.length === 0;
+
 const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
 function fail(msg) {
@@ -147,8 +150,16 @@ function main() {
   console.log(`[deploy] verifying all ${required.length} migrations are recorded`);
   const deadline = Date.now() + (gate.mode === 'verify' ? VERIFY_WAIT_MS : 0);
   let missing = readMissing(required);
-  while (gate.mode === 'verify' && missing !== null && missing.length > 0 && Date.now() < deadline) {
-    console.log(`[deploy] waiting for the indexer's deploy to apply: ${missing.join(', ')}`);
+  // An UNREADABLE result (null) waits too (#2409 r5): on a fresh database the
+  // indexer may not have created d1_migrations yet, and a transient read
+  // failure is not an answer. Either way this deploy still refuses to publish
+  // if the deadline passes without a clean verification.
+  while (gate.mode === 'verify' && !isSettled(missing) && Date.now() < deadline) {
+    console.log(
+      missing === null
+        ? '[deploy] could not read d1_migrations yet — retrying'
+        : `[deploy] waiting for the indexer's deploy to apply: ${missing.join(', ')}`,
+    );
     sleep(VERIFY_POLL_MS);
     missing = readMissing(required);
   }
