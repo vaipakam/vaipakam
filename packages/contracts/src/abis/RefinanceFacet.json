@@ -28,12 +28,7 @@
     "name": "indexRefinanceRequests",
     "inputs": [
       {
-        "name": "fromOfferId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "toOfferId",
+        "name": "maxOffers",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -41,6 +36,11 @@
     "outputs": [
       {
         "name": "recorded",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "cursor",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -2421,6 +2421,22 @@
     "type": "error",
     "name": "ReentrancyGuardReentrantCall",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RefinanceBlockedByOffset",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "offsetOfferId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",
