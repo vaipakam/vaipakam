@@ -1100,10 +1100,15 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
     ///         what the chain already proves, so a caller can neither invent a
     ///         request, displace one, nor choose between two — the cursor fixes
     ///         the order (first in offer-id order wins).
-    /// @dev    An offer is recorded for its target loan when it is a live
-    ///         request (by {LibRefinanceRequest.isLive}), nothing the creation
-    ///         rule protects is recorded there yet, and no offset is live on the
-    ///         loan. Until recorded, a pre-index request can neither be accepted
+    /// @dev    An offer is recorded for its target loan when it is a request
+    ///         that could still fill — it exists, is untaken, unexpired, and its
+    ///         loan is Active — and nothing the creation rule protects is
+    ///         recorded there yet. Because the cursor never returns, only FINAL
+    ///         conditions decide a skip: whether the creator holds the position
+    ///         or an offset is open can change later, so a request is recorded
+    ///         regardless, and liveness reads those conditions live. (A new
+    ///         request is still refused while an offset is open; a legacy one
+    ///         that already coexists with an offset is simply recorded.) Until recorded, a pre-index request can neither be accepted
     ///         nor hold the loan back. A request ALREADY accepted under the
     ///         pre-atomic flow needs no record: its standalone {refinanceLoan}
     ///         completion is not gated by it. A second pre-index request for the same
@@ -1120,9 +1125,21 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         if (end - cursor > maxOffers) end = cursor + maxOffers;
         while (cursor < end) {
             uint256 id = ++cursor;
-            uint256 loanId = s.offers[id].refinanceTargetLoanId;
-            if (loanId == 0 || s.loanToOffsetOfferId[loanId] != 0) continue;
-            if (!LibRefinanceRequest.isLive(s, loanId, id)) continue;
+            LibVaipakam.Offer storage o = s.offers[id];
+            uint256 loanId = o.refinanceTargetLoanId;
+            // Skip only for reasons that are FINAL — the cursor never comes
+            // back. A taken, cancelled (deleted) or expired request, or one
+            // whose loan is no longer Active, can never fill again. Whether
+            // its creator holds the position, or an offset is open on the
+            // loan, can change later, so neither is checked here: liveness
+            // (and with it the guard and acceptance) still reads them live.
+            if (
+                loanId == 0 ||
+                o.creator == address(0) ||
+                o.accepted ||
+                LibVaipakam.isOfferExpired(o) ||
+                s.loans[loanId].status != LibVaipakam.LoanStatus.Active
+            ) continue;
             (uint256 prior,) = LibRefinanceRequest.blockingRecord(loanId);
             if (prior != 0) continue;
             s.refinanceRequestOfLoan[loanId] = id;

@@ -529,6 +529,53 @@ contract RefinanceRequestGuardTest is SetupTest {
         );
     }
 
+    // ─── #2424 r5 — the backfill skips only for FINAL reasons ────────
+
+    /// A pre-index request that coexists with an offset (legacy state) is
+    /// recorded anyway: the offset can be withdrawn, and the cursor never
+    /// comes back.
+    function test_theBackfillRecordsARequestThatCoexistsWithAnOffset() public {
+        uint256 loanId = _activeLoan();
+        uint256 r1 = _request(loanId, 0);
+        vm.store(address(diamond), _indexSlotOf(loanId, r1), bytes32(0));
+        address borrowerVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower);
+        vm.startPrank(borrower);
+        ERC20(mockERC20).approve(borrowerVault, type(uint256).max);
+        ERC20(mockERC20).approve(address(diamond), type(uint256).max);
+        uint256 offsetOfferId = PrecloseFacet(address(diamond)).offsetWithNewOffer(
+            loanId, 500, 30, mockCollateralERC20, LOAN_COLLATERAL, true, mockERC20
+        );
+        vm.stopPrank();
+
+        assertEq(_index(), 1, "recorded despite the open offset");
+        assertEq(_recorded(loanId), r1);
+        // Once the offset is withdrawn the request holds the loan back again.
+        vm.prank(borrower);
+        OfferCancelFacet(address(diamond)).cancelOffer(offsetOfferId);
+        assertEq(_live(loanId), r1);
+    }
+
+    /// A pre-index request whose creator does not hold the position when the
+    /// scan passes is recorded anyway — it is not live (it does not hold the
+    /// new holder back), and becomes live again if the position returns.
+    function test_theBackfillRecordsAnOrphanedRequestThatCanRevive() public {
+        uint256 loanId = _activeLoan();
+        uint256 r1 = _request(loanId, 0);
+        vm.store(address(diamond), _indexSlotOf(loanId, r1), bytes32(0));
+        uint256 tokenId = LoanFacet(address(diamond)).getLoanDetails(loanId).borrowerTokenId;
+        address holderB = makeAddr("holderB");
+        vm.prank(borrower);
+        IERC721(address(diamond)).transferFrom(borrower, holderB, tokenId);
+
+        assertEq(_index(), 1, "recorded although orphaned");
+        assertEq(_recorded(loanId), r1);
+        assertEq(_live(loanId), 0, "an orphaned request does not hold the new holder back");
+
+        vm.prank(holderB);
+        IERC721(address(diamond)).transferFrom(holderB, borrower, tokenId);
+        assertEq(_live(loanId), r1, "live again once the position returns");
+    }
+
     /// The storage slot holding `loanId`'s indexed request, found by observing
     /// which slot the view reads that holds `offerId` (the Storage struct is
     /// too large to compute its field offset by hand).
