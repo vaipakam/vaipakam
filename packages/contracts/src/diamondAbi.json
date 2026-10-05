@@ -238,6 +238,8 @@
 {"type":"error","name":"RefinanceCapsRequired","inputs":[]},
 {"type":"error","name":"RefinanceExpiryExceedsCap","inputs":[]},
 {"type":"error","name":"RefinanceRateExceedsCap","inputs":[]},
+{"type":"error","name":"RefinanceRequestNotCancelled","inputs":[{"name":"loanId","type":"uint256","internalType":"uint256"},{"name":"offerId","type":"uint256","internalType":"uint256"}]},
+{"type":"error","name":"RefinanceRequestNotRecorded","inputs":[{"name":"loanId","type":"uint256","internalType":"uint256"},{"name":"offerId","type":"uint256","internalType":"uint256"}]},
 {"type":"error","name":"RefinanceRequestOpen","inputs":[{"name":"loanId","type":"uint256","internalType":"uint256"},{"name":"offerId","type":"uint256","internalType":"uint256"}]},
 {"type":"error","name":"RefinanceRequiresPeriodSettle","inputs":[{"name":"oldLoanId","type":"uint256","internalType":"uint256"},{"name":"graceEndsAt","type":"uint256","internalType":"uint256"}]},
 {"type":"error","name":"RefinanceTargetIncompatible","inputs":[]},
