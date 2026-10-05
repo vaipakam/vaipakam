@@ -105,11 +105,25 @@
 // deadline) are judged against the CHAIN time read when each submit flow
 // starts, not the local clock (see `afterAnchor`).
 //
-// AFTER A FAILURE WITH A REQUEST STANDING, the drive re-reads the chain and
-// prints the request's state (open / accepted / cancelled / expired), the
-// old loan's status, any replacement loan, and the borrower's remaining
-// allowance, with the remedy for each — cancel from the app or via
-// cancelOffer, revoke via approve(Diamond, 0) — and sends nothing itself.
+// AFTER ANY FAILED RUN the drive works out what may be standing FROM THE
+// WRITE PLAN, not from what the page confirmed (#2422 r5): a consumed
+// createOffer step yields the request id from its own receipt even if the
+// page never said "request is live" (a missing or pending receipt, or a
+// send with no hash, is stated with its explorer lookup). It then re-reads
+// the chain and prints the request's state (open / accepted / cancelled /
+// expired), the old loan's status, any replacement loan, and the borrower's
+// remaining allowance — reported for any consumed borrower step, request or
+// not — with the remedy for each (cancel from the app or via cancelOffer,
+// revoke via approve(Diamond, 0)). It sends nothing itself.
+//
+// ALSO BLOCKED BEFORE ANY WRITE (#2422 r5): a rate outside the form's
+// 0 < bps ≤ 10,000, a length under 1 day or above the live
+// maxOfferDurationDays, and a page that does not render English (both
+// profiles are seeded with `vaipakam:language` = en, and `<html lang>` is
+// asserted, because every disclosure is matched against en.json).
+// WALLET-LEVEL REFUSALS — a chain switch or a wrong-chain signature the
+// wallet refused before the drive's gate was even asked — are collected
+// from both sessions, halt the drive, and fail the run.
 //
 // MATURITY MARGIN. The loan must be at least two hours from maturity at
 // preflight. Past maturity the payoff grows by the late fee, so a run that
@@ -209,9 +223,14 @@ try {
 function scrub(s) {
   let out = String(s);
   if (RPC_URL) out = out.split(RPC_URL).join(redactUrl(RPC_URL, RPC_ORIGIN));
-  return out.replace(/https?:\/\/[^\s"'<>)]+/g, (u) =>
-    RPC_ORIGIN && u.startsWith(RPC_ORIGIN) ? `${RPC_ORIGIN}/***` : redactUrl(u),
-  );
+  return out.replace(/https?:\/\/[^\s"'<>)]+/g, (u) => {
+    if (RPC_ORIGIN && u.startsWith(RPC_ORIGIN)) return `${RPC_ORIGIN}/***`;
+    // The block explorer's paths are public addresses and hashes, and they
+    // ARE the remedy a failure report points at — masking them as
+    // "secret-shaped" hex would leave the operator nothing to look up.
+    if (u.startsWith('https://sepolia.basescan.org/')) return u;
+    return redactUrl(u);
+  });
 }
 for (const k of ['log', 'error', 'warn']) {
   const orig = console[k].bind(console);
@@ -244,6 +263,16 @@ if (!/^\d+(\.\d{1,2})?$/.test(RATE_PCT) || !/^\d+$/.test(DAYS)) {
 }
 const RATE_BPS = BigInt(Math.round(Number(RATE_PCT) * 100));
 const DAYS_N = BigInt(DAYS);
+// The form's own rules (#2422 r5 P2), checked BEFORE anything launches so
+// an input the form would refuse can never become a half-driven run:
+// RefinanceFlow accepts a rate only when 0 < bps ≤ MAX_INTEREST_BPS
+// (10,000 = 100% a year), and a length of at least one day — its upper
+// bound, the LIVE maxOfferDurationDays, is checked against the chain in the
+// pinned preflight below.
+if (RATE_BPS <= 0n || RATE_BPS > 10_000n) {
+  blockedSync(`REFI_RATE_PCT must be above 0 and at most 100 (the form's 10,000 bps cap); got ${RATE_PCT}`);
+}
+if (DAYS_N < 1n) blockedSync(`REFI_DAYS must be at least 1; got ${DAYS}`);
 const WORKERS_DEV_URL =
   process.env.WORKERS_DEV_URL ?? 'https://vaipakam-app.dawn-fire-139e.workers.dev';
 /** See the maturity precondition for why two hours. */
@@ -420,7 +449,14 @@ function stop(why) {
 }
 /** Call before any UI action that can lead to a signing request. */
 function beforeWriteStep(step) {
+  noteWalletRefusals();
   if (HALT) throw new Stop(`not ${step}: the drive halted earlier — ${HALT}`);
+}
+/** A wallet-level refusal means the page asked the wallet for something it
+ *  must never do (another chain, a signature on the wrong chain): halt. */
+function noteWalletRefusals() {
+  const w = walletRefusals();
+  if (w.length) halt(`the wallet refused ${w.length} request(s) itself: ${w[0].role} — ${w[0].reason}`);
 }
 
 async function pollUntil(label, fn, { timeoutMs = 120_000, everyMs = 3_000 } = {}) {
@@ -463,6 +499,17 @@ async function pollUntil(label, fn, { timeoutMs = 120_000, everyMs = 3_000 } = {
 // is complete. A refusal latches the plan AND halts the drive (rule B).
 // ---------------------------------------------------------------------
 const ROLE_ADDRESS = { borrower: BORROWER, lender: LENDER };
+/**
+ * Each session's wallet-level refusal log (`blockedRequests` from launch()),
+ * kept by reference so it survives the session's close (#2422 r5 P2). It
+ * holds the refusals `walletGateDecision` makes BEFORE the drive's gate is
+ * consulted — a switch to another chain, a signing request on the wrong
+ * active chain — as well as the gate's own. Any entry fails the run, even
+ * if the page recovered from it, and stops further writes.
+ */
+const walletLogs = { borrower: [], lender: [] };
+const walletRefusals = () =>
+  ['borrower', 'lender'].flatMap((role) => (walletLogs[role] ?? []).map((r) => ({ role, ...r })));
 /** Each role's `latest` nonce before anything could be written. */
 let BASELINE_NONCES = null;
 /** Set once the preconditions read the loan; the gate decodes approvals on
@@ -478,6 +525,7 @@ function abiFor(to) {
 /** Judge one signing request against the plan. Synchronous: the decision
  *  and the consumption of the step happen in one turn. */
 function judge(role, method, params) {
+  noteWalletRefusals();
   if (HALT) return { ok: false, why: `halted — ${HALT}` };
   if (!PLAN) return { ok: false, why: 'no write plan has been built' };
   let kind;
@@ -546,17 +594,34 @@ function signingGateFor(role) {
   };
 }
 
-/** Advanced mode before the first paint — the refinance form is an
- *  Advanced surface. Storage only; nothing here touches the wallet. */
-async function seedAdvancedMode(ctx) {
+/** Advanced mode AND English before the first paint (#2422 r5 P2). The
+ *  refinance form is an Advanced surface, and every disclosure this drive
+ *  judges is matched against the ENGLISH catalogue — a persistent profile
+ *  carrying another language would make those checks false negatives. The
+ *  key is the shared i18n factory's (`packages/i18n` LANGUAGE_STORAGE_KEY).
+ *  Storage only; nothing here touches the wallet. The language actually
+ *  rendered is asserted after load (`assertEnglish`). */
+async function seedProfile(ctx) {
   await ctx.addInitScript(() => {
     try {
       localStorage.setItem('app.mode', 'advanced');
+      localStorage.setItem('vaipakam:language', 'en');
     } catch {
-      /* storage blocked — the card check will say so */
+      /* storage blocked — the English assertion will say so */
     }
   });
 }
+
+/** The page's rendered language, once i18n has set it (polled). */
+async function renderedLang(page) {
+  const lang = await pollUntil(
+    'the page sets <html lang>',
+    async () => (await page.evaluate(() => document.documentElement.lang || '')) || null,
+    { timeoutMs: 30_000, everyMs: 1_000 },
+  );
+  return lang ?? '';
+}
+const isEnglish = (lang) => /^en(-|$)/i.test(lang);
 
 // ---------------------------------------------------------------------
 // After a failure with a request standing: state and remedy, REPORT ONLY.
@@ -629,6 +694,104 @@ async function reportRequestState(requestId) {
     console.log('Nothing was sent to recover: this drive reports, and the operator decides.');
   } catch (e) {
     console.log(`could not read the request's state: ${String(e.shortMessage ?? e.message).slice(0, 160)} — check request #${requestId} by hand`);
+  }
+}
+
+const EXPLORER = 'https://sepolia.basescan.org';
+
+/**
+ * On EVERY failed run, derive what may be standing from the WRITE PLAN, not
+ * from what the UI managed to confirm (#2422 r5 P1). `REQUEST_ID` is set
+ * only once the page said "request is live" and phase 2 pinned it; a
+ * createOffer that mined while the page then errored or timed out leaves it
+ * null — with a fillable request and its payoff allowance possibly live.
+ * So: if the plan's `b-create` step was consumed, the request id comes from
+ * that step's own receipt (OfferCreated); if the receipt is missing or the
+ * outcome unknown, the report says exactly that and how to look it up. Any
+ * consumed borrower step also gets the allowance reported, request or not.
+ */
+async function reportAfterFailure() {
+  const borrowerSteps = planSteps().filter((st) => st.role === 'borrower' && st.status === 'consumed');
+  if (borrowerSteps.length === 0) return; // nothing borrower-side reached the wallet
+  let id = REQUEST_ID;
+  const create = planSteps().find((st) => st.id === 'b-create' && st.status === 'consumed');
+  if (id === null && create) id = await requestIdFromCreateStep(create);
+  if (id !== null) {
+    await reportRequestState(id);
+    return;
+  }
+  await reportBorrowerAllowance(
+    create
+      ? 'a createOffer was handed to the wallet and its request could not be identified (see above) — treat a request as POSSIBLY live'
+      : 'no createOffer was handed to the wallet, so no request was created by this run',
+  );
+}
+
+/** The request id from the consumed createOffer step's receipt, or null
+ *  with the reason printed. Never guesses. */
+async function requestIdFromCreateStep(st) {
+  console.log('\n=== the createOffer this run handed to the wallet ===');
+  const hash = st.record.hash ?? null;
+  if (!hash) {
+    console.log(
+      `no hash came back (outcome: ${st.record.outcome ?? 'awaiting provider'}). It may still have been broadcast: ` +
+        `check the borrower's transactions from nonce ${BASELINE_NONCES?.borrower ?? '?'} at ${EXPLORER}/address/${BORROWER}`,
+    );
+    return null;
+  }
+  let receipt = null;
+  try {
+    receipt = await pub.waitForTransactionReceipt({ hash, timeout: 90_000 });
+  } catch (e) {
+    console.log(
+      `createOffer ${hash}: no receipt yet (${String(e.shortMessage ?? e.message).slice(0, 100)}) — pending or dropped. ` +
+        `Look it up at ${EXPLORER}/tx/${hash}; if it mines, it creates a fillable request.`,
+    );
+    return null;
+  }
+  if (receipt.status !== 'success') {
+    console.log(`createOffer ${hash} REVERTED at block ${receipt.blockNumber} — it created no request.`);
+    return null;
+  }
+  const created = receipt.logs
+    .filter((l) => eq(l.address, DIAMOND))
+    .map((l) => {
+      try {
+        return decodeEventLog({ abi: DIAMOND_ABI, data: l.data, topics: l.topics });
+      } catch {
+        return null;
+      }
+    })
+    .filter((e) => e?.eventName === 'OfferCreated');
+  if (created.length !== 1) {
+    console.log(`createOffer ${hash} mined but carries ${created.length} OfferCreated events — inspect it at ${EXPLORER}/tx/${hash}`);
+    return null;
+  }
+  console.log(`createOffer ${hash} mined at block ${receipt.blockNumber}: it created request #${created[0].args.offerId}`);
+  return created[0].args.offerId;
+}
+
+/** The borrower's principal-token allowance to the Diamond, with the
+ *  revoke remedy, for a failure with no identifiable request. */
+async function reportBorrowerAllowance(context) {
+  console.log(`\n=== borrower allowance after the failure (${context}) ===`);
+  try {
+    const allowance = await pub.readContract({
+      address: loan.principalAsset,
+      abi: erc20Abi,
+      functionName: 'allowance',
+      args: [BORROWER, DIAMOND],
+    });
+    console.log(`borrower payoff allowance (principal token → Diamond): ${fmtP(allowance)} (raw ${allowance})`);
+    if (allowance > 0n) {
+      console.log(
+        `REMEDY (allowance): revoke with approve(${DIAMOND}, 0) on ${loan.principalAsset} from the borrower, or from ` +
+          `the wallet's token-approvals view — but only once no request of this run can still need it.`,
+      );
+    }
+    console.log('Nothing was sent to recover: this drive reports, and the operator decides.');
+  } catch (e) {
+    console.log(`could not read the allowance: ${String(e.shortMessage ?? e.message).slice(0, 160)} — check it by hand`);
   }
 }
 
@@ -746,6 +909,11 @@ async function report(baselineNonces) {
     console.log('\n=== nonce reconciliation ===');
     for (const l of rec.lines) console.log(l);
   }
+  const wr = walletRefusals();
+  if (wr.length) {
+    console.log('\n=== wallet-level refusals (each one fails the run) ===');
+    for (const r of wr) console.log(`${r.role.padEnd(8)} ${r.reason}`);
+  }
   if (refusals.length) {
     console.log('\n=== write-gate refusals ===');
     for (const r of refusals) console.log(r);
@@ -825,6 +993,9 @@ const pre = await precondition('reading the preconditions from chain', async () 
   // The LIVE loan-initiation fee rate (ConfigFacet), pinned to the same
   // head — the payoff reserve below is computed from it, never assumed.
   const lifBps = await read('getLoanInitiationFeeBps', [], head);
+  // The form's upper bound on the new length, read where the app reads it
+  // (fees.ts: getProtocolConfigBundle()[14], maxOfferDurationDays).
+  const maxOfferDurationDays = (await read('getProtocolConfigBundle', [], head))[14];
   // The risk-terms hash the lender's AcceptTerms must carry (the app reads
   // the same getter, fail-closed). Read before any write so the expected
   // acceptance terms are complete before the first signature.
@@ -894,6 +1065,7 @@ const pre = await precondition('reading the preconditions from chain', async () 
     caps,
     lifBps,
     riskTermsHash,
+    maxOfferDurationDays,
     principalDecimals,
     borrowerPositionHolder,
     lenderPositionHolder,
@@ -1001,6 +1173,11 @@ if (!pre.oracleSet) {
 } else {
   console.log(`pre   sanctions oracle: ${pre.sanctionsOracle} — both wallets answered by the oracle directly at block ${pre.head}`);
 }
+want(
+  `REFI_DAYS (${DAYS_N}) is within the live maxOfferDurationDays`,
+  DAYS_N <= BigInt(pre.maxOfferDurationDays),
+  `${DAYS_N} ≤ ${pre.maxOfferDurationDays}`,
+);
 want('borrower has gas', pre.b.eth >= GAS_FLOOR, formatUnits(pre.b.eth, 18));
 want('lender has gas', pre.l.eth >= GAS_FLOOR, formatUnits(pre.l.eth, 18));
 console.log(`pre   auto-refinance switch: ${pre.autoRefi}; matcher partialFill: ${pre.flags[2]}; caps on loan: ${JSON.stringify(pre.caps, (_k, v) => (typeof v === 'bigint' ? String(v) : v))}`);
@@ -1120,11 +1297,37 @@ for (const role of ['borrower', 'lender']) {
       pinnedChainId: CHAIN_ID,
       signingGate: signingGateFor(role),
     });
-    await seedAdvancedMode(sessions[role].ctx);
+    await seedProfile(sessions[role].ctx);
+    // Keep the wallet's own refusal log past the session's close (#2422 r5).
+    walletLogs[role] = sessions[role].blockedRequests;
   } catch (err) {
     await closeSession('borrower');
     await closeSession('lender');
     await blockedBeforeAnyWrite(`setting up the ${role} browser session failed before any write`, err);
+  }
+}
+
+// Both pages must render in English BEFORE anything can be written — every
+// disclosure check below matches the English catalogue. A page that is not
+// English here is BLOCKED (nothing written yet).
+for (const role of ['borrower', 'lender']) {
+  const page = sessions[role].page;
+  let lang = '';
+  try {
+    await page.goto(SITE, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+    lang = await renderedLang(page);
+  } catch (err) {
+    await closeSession('borrower');
+    await closeSession('lender');
+    await blockedBeforeAnyWrite(`opening ${SITE} in the ${role} session failed before any write`, err);
+  }
+  console.log(`pre   ${role} page language: <html lang="${lang}">`);
+  if (!isEnglish(lang)) {
+    await closeSession('borrower');
+    await closeSession('lender');
+    await blockedBeforeAnyWrite(
+      `the ${role} page renders <html lang="${lang}">, not English — every disclosure check matches the English catalogue`,
+    );
   }
 }
 
@@ -1142,6 +1345,8 @@ try {
   const bp = session.page;
   await bp.goto(`${SITE}/positions/${LOAN_ID}`, { waitUntil: 'domcontentloaded', timeout: 60_000 });
   await ensureConnected(bp);
+  const bLang = await renderedLang(bp);
+  check('borrower page renders English (every disclosure is matched against en.json)', isEnglish(bLang), bLang);
 
   const card = bp.locator('section.card').filter({ hasText: 'Refinance this loan' });
   if (!(await card.first().waitFor({ state: 'visible', timeout: 90_000 }).then(() => true, () => false))) {
@@ -1318,6 +1523,8 @@ try {
   let reachedViaBook = false;
   await lp.goto(`${SITE}/offers`, { waitUntil: 'domcontentloaded', timeout: 60_000 });
   await ensureConnected(lp);
+  const lLang = await renderedLang(lp);
+  check('lender page renders English (every disclosure is matched against en.json)', isEnglish(lLang), lLang);
   const fundLink = await pollUntil('request row in the Offer Book', async () => {
     // Someone else may have filled it in the meantime — stop, don't race.
     const o = await read('getOfferDetails', [requestId]);
@@ -1575,8 +1782,14 @@ try {
 }
 
 const reconciliation = await report(baselineNonces);
-const failedRun = exitCode !== 0 || refusals.length > 0 || HALT !== null || reconciliation.unreconciled || checks.some((c) => !c.ok);
-if (failedRun && REQUEST_ID !== null) await reportRequestState(REQUEST_ID);
+const failedRun =
+  exitCode !== 0 ||
+  refusals.length > 0 ||
+  walletRefusals().length > 0 ||
+  HALT !== null ||
+  reconciliation.unreconciled ||
+  checks.some((c) => !c.ok);
+if (failedRun) await reportAfterFailure();
 // FAIL, never PASS, when anything is unaccounted for: a refused write, a
 // failed check, a halt, or an allowed send the chain cannot account for.
 if (failedRun) exitCode = 1;
