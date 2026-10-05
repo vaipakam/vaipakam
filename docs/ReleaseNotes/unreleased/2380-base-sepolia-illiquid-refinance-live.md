@@ -1,4 +1,4 @@
-## Thread — Base Sepolia now refinances loans backed by illiquid collateral (PR #TBD)
+## Thread — Base Sepolia now refinances loans backed by illiquid collateral (PR #2411)
 
 Base Sepolia was refreshed in place on 5 October, paused briefly from 01:01 to 01:05 UTC, to current main. That deploys #2380's fix: a loan backed by illiquid collateral, where both parties to the replacement loan consented to the illiquid terms, now refinances. The replacement loan is admitted exactly as a new illiquid loan would be. Before this, every such refinance reverted at the final risk check, which asked for a loan-to-value ratio and a health factor that the platform never computes for an asset it values at zero. Live loan 22 is the case that found it.
 
