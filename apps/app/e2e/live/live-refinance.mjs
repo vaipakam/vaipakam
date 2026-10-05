@@ -110,13 +110,19 @@
 // createOffer step yields the request id from its own receipt even if the
 // page never said "request is live" (a missing or pending receipt, or a
 // send with no hash, is stated with its explorer lookup). It then re-reads
-// the chain and prints the request's state (open / accepted / cancelled /
-// expired), the old loan's status, any replacement loan, and the borrower's
-// remaining allowance — reported for any consumed borrower step, request or
-// not — with the remedy for each (cancel from the app or via cancelOffer,
-// revoke via approve(Diamond, 0)). It sends nothing itself.
+// the chain through the TOUCHED-STATE LEDGER (#2422 r6, touchedState.mjs):
+// every piece of state a plan step can change — the borrower's and the
+// lender's allowance to the Diamond, the loan's auto-refinance caps, the
+// open refinance requests on the loan, the loan's status — is snapshotted
+// at the pinned preflight block, re-read after the failure, and printed
+// with baseline, now, whether a consumed step of THIS run touches it, and a
+// remedy that RESTORES THE BASELINE (never a blanket zero; a change this
+// run did not make gets no remedy; an irreversible one says so). It sends
+// nothing itself.
 //
-// ALSO BLOCKED BEFORE ANY WRITE (#2422 r5): a rate outside the form's
+// ALSO BLOCKED BEFORE ANY WRITE: either asset paused (isAssetPaused, the
+// read RefinanceFlow makes — an operator's posture, stated as such), an
+// unreadable ledger baseline (#2422 r6); and (#2422 r5) a rate outside the form's
 // 0 < bps ≤ 10,000, a length under 1 day or above the live
 // maxOfferDurationDays, and a page that does not render English (both
 // profiles are seeded with `vaipakam:language` = en, and `<html lang>` is
@@ -203,6 +209,7 @@ import {
   REQUEST_WINDOW_SEC,
 } from './refinanceExpected.mjs';
 import { createWritePlan } from './writePlan.mjs';
+import { formatLedgerRow, ledgerRows } from './touchedState.mjs';
 import { expectedPostureFrom, postureCopyFrom } from './refinancePosture.mjs';
 
 // ---------------------------------------------------------------------
@@ -380,6 +387,26 @@ async function allOfferIdsOf(who, blockNumber) {
     throw new Error(`offer walk for ${who} returned ${ids.length} ids, view reports ${total}`);
   }
   return ids;
+}
+
+/**
+ * Every Diamond-emitted log in `receipt`, decoded against the Diamond ABI.
+ * A Diamond log that does NOT decode is counted rather than dropped
+ * (#2422 r6): an event-count assertion over a partial view would pass on
+ * evidence it never saw, so callers fail when `undecodable` is non-zero.
+ */
+function diamondEvents(receipt) {
+  const events = [];
+  let undecodable = 0;
+  for (const l of receipt.logs) {
+    if (!eq(l.address, DIAMOND)) continue;
+    try {
+      events.push(decodeEventLog({ abi: DIAMOND_ABI, data: l.data, topics: l.topics }));
+    } catch {
+      undecodable += 1;
+    }
+  }
+  return { events, undecodable };
 }
 
 // ---------------------------------------------------------------------
@@ -624,107 +651,161 @@ async function renderedLang(page) {
 const isEnglish = (lang) => /^en(-|$)/i.test(lang);
 
 // ---------------------------------------------------------------------
-// After a failure with a request standing: state and remedy, REPORT ONLY.
+// After a failure: the TOUCHED-STATE LEDGER — REPORT ONLY (#2422 r6).
 // ---------------------------------------------------------------------
-/**
- * Once the request is pinned, a failure anywhere later (Offer Book, review,
- * signature, approval, accept, or an assertion afterwards) can leave a live
- * refinance request and a payoff-sized allowance behind (#2422 r4 P1). This
- * re-reads the chain at the latest block and states exactly what stands,
- * with the remedy for each — and sends NOTHING: a recovery transaction is a
- * write this drive's plan never declared, and deciding to cancel is the
- * operator's call.
- */
-async function reportRequestState(requestId) {
-  console.log(`\n=== request #${requestId} after the failure (chain state, latest block) ===`);
-  try {
-    const head = await pub.getBlockNumber({ cacheTime: 0 });
-    const block = await pub.getBlock({ blockNumber: head });
-    const [offer, cancelled, oldLoan, allowance, borrowerLoans] = await Promise.all([
-      read('getOfferDetails', [requestId], head),
-      read('isOfferCancelled', [requestId], head),
-      loanOf(LOAN_ID, head),
-      pub.readContract({
-        address: loan.principalAsset,
-        abi: erc20Abi,
-        functionName: 'allowance',
-        args: [BORROWER, DIAMOND],
-        blockNumber: head,
-      }),
-      read('getUserActiveLoans', [BORROWER], head).catch(() => null),
-    ]);
-    const expired = offer.expiresAt !== 0n && offer.expiresAt <= block.timestamp;
-    const state = cancelled ? 'CANCELLED' : offer.accepted ? 'ACCEPTED' : expired ? 'EXPIRED (not fillable)' : 'OPEN — still fillable';
-    console.log(`block ${head} (ts ${block.timestamp})`);
-    console.log(`request #${requestId}: ${state}; expiresAt ${offer.expiresAt}`);
-    console.log(`old loan #${LOAN_ID}: status ${oldLoan.status} (${oldLoan.status === LOAN_STATUS.ACTIVE ? 'Active' : oldLoan.status === LOAN_STATUS.REPAID ? 'Repaid' : 'other'})`);
-    let replacement = null;
-    if (borrowerLoans) {
-      for (const id of borrowerLoans) {
-        const l = await loanOf(id, head);
-        if (l.offerId === requestId) replacement = { id, l };
-      }
-      console.log(
-        replacement
-          ? `replacement loan: #${replacement.id} (status ${replacement.l.status}, lender ${replacement.l.lender})`
-          : 'replacement loan: none among the borrower\u2019s active loans',
-      );
-    } else {
-      console.log('replacement loan: UNKNOWN — the borrower\u2019s active-loan list could not be read');
-    }
-    console.log(`borrower payoff allowance (principal token → Diamond): ${fmtP(allowance)} (raw ${allowance})`);
-    if (!cancelled && !offer.accepted && !expired) {
-      console.log(
-        `REMEDY (request open): it can still be accepted by any lender, AND — with automatic matching ` +
-          `${pre.autoRefi && pre.flags[2] ? 'ON on this deployment' : 'currently off, but a switch flip would change that'} — ` +
-          `filled by the order matcher. To withdraw it, the borrower cancels it from ${SITE}/positions/${LOAN_ID} ` +
-          `("Cancel refinance request" on the standing-request card; it opens a few minutes after posting and also ` +
-          `removes the payoff approval), or calls the Diamond's cancelOffer(${requestId}) directly.`,
-      );
-    }
-    if (allowance > 0n && (cancelled || expired || offer.accepted || oldLoan.status !== LOAN_STATUS.ACTIVE)) {
-      console.log(
-        `REMEDY (allowance): ${fmtP(allowance)} of the principal token is still approved to the Diamond with no ` +
-          `request needing it. Revoke with approve(${DIAMOND}, 0) on ${loan.principalAsset} from the borrower, or ` +
-          `from the wallet's token-approvals view.`,
-      );
-    } else if (allowance > 0n) {
-      console.log('REMEDY (allowance): it backs the open request — cancelling from the app removes it with the request.');
-    }
-    console.log('Nothing was sent to recover: this drive reports, and the operator decides.');
-  } catch (e) {
-    console.log(`could not read the request's state: ${String(e.shortMessage ?? e.message).slice(0, 160)} — check request #${requestId} by hand`);
-  }
-}
-
 const EXPLORER = 'https://sepolia.basescan.org';
 
+/** A refinance request's state at `head`. */
+async function requestStateAt(id, head) {
+  const [offer, cancelled, block] = await Promise.all([
+    read('getOfferDetails', [id], head),
+    read('isOfferCancelled', [id], head),
+    pub.getBlock({ blockNumber: head }),
+  ]);
+  const expired = offer.expiresAt !== 0n && offer.expiresAt <= block.timestamp;
+  return cancelled ? 'cancelled' : offer.accepted ? 'accepted' : expired ? 'expired' : 'open';
+}
+
+/** Every OPEN refinance request on the loan at `head`, as sorted ids —
+ *  the same scan the preflight's "no open request" condition makes. */
+async function openRequestsAt(head) {
+  const ids = await allOfferIdsOf(BORROWER, head);
+  const open = [];
+  for (const id of ids) {
+    const o = await read('getOfferDetails', [id], head);
+    if (o.refinanceTargetLoanId !== LOAN_ID || eq(o.creator, '0x0000000000000000000000000000000000000000')) continue;
+    if ((await requestStateAt(id, head)) === 'open') open.push(String(id));
+  }
+  return open.sort();
+}
+
+const allowanceAt = (owner, head) =>
+  pub.readContract({
+    address: loan.principalAsset,
+    abi: erc20Abi,
+    functionName: 'allowance',
+    args: [owner, DIAMOND],
+    blockNumber: head,
+  });
+
 /**
- * On EVERY failed run, derive what may be standing from the WRITE PLAN, not
- * from what the UI managed to confirm (#2422 r5 P1). `REQUEST_ID` is set
- * only once the page said "request is live" and phase 2 pinned it; a
- * createOffer that mined while the page then errored or timed out leaves it
- * null — with a fillable request and its payoff allowance possibly live.
- * So: if the plan's `b-create` step was consumed, the request id comes from
- * that step's own receipt (OfferCreated); if the receipt is missing or the
- * outcome unknown, the report says exactly that and how to look it up. Any
- * consumed borrower step also gets the allowance reported, request or not.
+ * Every piece of on-chain state a write-plan step can change, with the
+ * steps that touch it, how to read and print it, and how to RESTORE IT TO
+ * THE BASELINE (never a blanket zero: a grant that predates the run is put
+ * back, not erased). The preflight snapshots each at the pinned block;
+ * `touchedState.mjs` decides, after a failure, what each row says.
+ */
+const LEDGER = [
+  {
+    key: 'borrowerAllowance',
+    label: 'borrower allowance (principal token → Diamond)',
+    // The approvals set it; the accept's payoff pull spends it.
+    touchedBy: ['b-approve-reset', 'b-approve-set', 'l-accept'],
+    read: (head) => allowanceAt(BORROWER, head),
+    format: (v) => `${fmtP(v)} (raw ${v})`,
+    restore: (b) =>
+      `from the borrower, approve(${DIAMOND}, ${b}) on ${loan.principalAsset} — the pre-run figure` +
+      `${b === 0n ? ' (a revoke)' : ''}. If a request of this run is still open, cancel it first: its acceptance pulls from this allowance` +
+      ' (and the app\u2019s cancel also clears the approval, so re-check this row after cancelling).',
+  },
+  {
+    key: 'lenderAllowance',
+    label: 'lender allowance (principal token → Diamond)',
+    touchedBy: ['l-approve-reset', 'l-approve-set', 'l-accept'],
+    read: (head) => allowanceAt(LENDER, head),
+    format: (v) => `${fmtP(v)} (raw ${v})`,
+    restore: (b) =>
+      `from the lender, approve(${DIAMOND}, ${b}) on ${loan.principalAsset} — the pre-run figure${b === 0n ? ' (a revoke)' : ''}.`,
+  },
+  {
+    key: 'caps',
+    label: `loan ${LOAN_ID} auto-refinance caps`,
+    touchedBy: ['b-caps'],
+    read: async (head) => {
+      const c = await read('getAutoRefinanceCaps', [LOAN_ID], head);
+      return { enabled: c.enabled, maxRateBps: Number(c.maxRateBps), maxNewExpiry: c.maxNewExpiry };
+    },
+    format: (v) => `enabled ${v.enabled}, maxRateBps ${v.maxRateBps}, maxNewExpiry ${v.maxNewExpiry}`,
+    restore: (b) =>
+      `from the borrower, setAutoRefinanceCaps(${LOAN_ID}, ${b.enabled}, ${b.maxRateBps}, ${b.maxNewExpiry}) — the pre-run caps` +
+      ' (only meaningful while the loan is still Active).',
+  },
+  {
+    key: 'openRequests',
+    label: `open refinance requests on loan ${LOAN_ID}`,
+    touchedBy: ['b-create', 'l-accept'],
+    read: openRequestsAt,
+    format: (v) => (v.length ? v.map((id) => `#${id}`).join(', ') : 'none'),
+    restore: (b, n) => {
+      const added = n.filter((id) => !b.includes(id));
+      if (added.length === 0) return null;
+      return (
+        `cancel ${added.map((id) => `#${id}`).join(', ')} from the borrower — "Cancel refinance request" on ` +
+        `${SITE}/positions/${LOAN_ID} (it opens a few minutes after posting), or cancelOffer(id) on the Diamond. ` +
+        `Until then any lender can accept it${pre.autoRefi && pre.flags[2] ? ', and with automatic matching ON the order matcher can fill it' : ''}.`
+      );
+    },
+  },
+  {
+    key: 'oldLoanStatus',
+    label: `loan ${LOAN_ID} status`,
+    touchedBy: ['l-accept'],
+    read: async (head) => (await loanOf(LOAN_ID, head)).status,
+    format: (v) => `${v} (${v === LOAN_STATUS.ACTIVE ? 'Active' : v === LOAN_STATUS.REPAID ? 'Repaid' : 'other'})`,
+    // A completed refinance is not undone by a single action — the
+    // replacement loan is live. The row says so rather than inventing one.
+    restore: () => null,
+  },
+];
+
+/** Read every ledger entry at `head`; a failed read is recorded, not thrown. */
+async function readLedger(head) {
+  const out = {};
+  for (const e of LEDGER) {
+    try {
+      out[e.key] = { ok: true, value: await e.read(head) };
+    } catch (err) {
+      out[e.key] = { ok: false, error: String(err?.shortMessage ?? err?.message ?? err).slice(0, 120) };
+    }
+  }
+  return out;
+}
+/** The ledger at the pinned preflight block — set before any write. */
+let LEDGER_BASELINE = null;
+
+/**
+ * On EVERY failed run that wrote anything: identify this run's request
+ * from the WRITE PLAN (a consumed createOffer's own receipt, even if the
+ * page never confirmed it — #2422 r5), then re-read the whole ledger and
+ * print, per entry, baseline, now, whether this run changed it, and the
+ * remedy that restores the baseline. Sends nothing.
  */
 async function reportAfterFailure() {
-  const borrowerSteps = planSteps().filter((st) => st.role === 'borrower' && st.status === 'consumed');
-  if (borrowerSteps.length === 0) return; // nothing borrower-side reached the wallet
+  if (!anythingAllowed()) return; // nothing reached the wallet
   let id = REQUEST_ID;
   const create = planSteps().find((st) => st.id === 'b-create' && st.status === 'consumed');
   if (id === null && create) id = await requestIdFromCreateStep(create);
-  if (id !== null) {
-    await reportRequestState(id);
-    return;
+  console.log('\n=== touched-state ledger after the failure (latest block) ===');
+  let head;
+  try {
+    head = await pub.getBlockNumber({ cacheTime: 0 });
+  } catch (e) {
+    console.log(`could not read the chain head (${String(e.shortMessage ?? e.message).slice(0, 120)}) — every entry below is UNKNOWN; check them by hand`);
   }
-  await reportBorrowerAllowance(
-    create
-      ? 'a createOffer was handed to the wallet and its request could not be identified (see above) — treat a request as POSSIBLY live'
-      : 'no createOffer was handed to the wallet, so no request was created by this run',
-  );
+  if (id !== null && head !== undefined) {
+    try {
+      console.log(`this run's request #${id}: ${(await requestStateAt(id, head)).toUpperCase()}`);
+    } catch (e) {
+      console.log(`this run's request #${id}: state UNREADABLE (${String(e.shortMessage ?? e.message).slice(0, 120)})`);
+    }
+  } else if (create && id === null) {
+    console.log('this run\u2019s request: NOT IDENTIFIED (see above) — treat a request as possibly live');
+  }
+  const now = head !== undefined ? await readLedger(head) : {};
+  const consumed = planSteps().filter((st) => st.status === 'consumed').map((st) => st.id);
+  console.log(`baseline: block ${pre.head} (preflight); now: block ${head ?? 'unknown'}`);
+  for (const row of ledgerRows(LEDGER, LEDGER_BASELINE, now, consumed)) console.log(formatLedgerRow(row));
+  console.log('Nothing was sent to recover: this drive reports, and the operator decides.');
 }
 
 /** The request id from the consumed createOffer step's receipt, or null
@@ -753,46 +834,17 @@ async function requestIdFromCreateStep(st) {
     console.log(`createOffer ${hash} REVERTED at block ${receipt.blockNumber} — it created no request.`);
     return null;
   }
-  const created = receipt.logs
-    .filter((l) => eq(l.address, DIAMOND))
-    .map((l) => {
-      try {
-        return decodeEventLog({ abi: DIAMOND_ABI, data: l.data, topics: l.topics });
-      } catch {
-        return null;
-      }
-    })
-    .filter((e) => e?.eventName === 'OfferCreated');
+  const decoded = diamondEvents(receipt);
+  if (decoded.undecodable > 0) {
+    console.log(`createOffer ${hash}: ${decoded.undecodable} Diamond log(s) did not decode — the request id below may be incomplete; inspect ${EXPLORER}/tx/${hash}`);
+  }
+  const created = decoded.events.filter((e) => e.eventName === 'OfferCreated');
   if (created.length !== 1) {
     console.log(`createOffer ${hash} mined but carries ${created.length} OfferCreated events — inspect it at ${EXPLORER}/tx/${hash}`);
     return null;
   }
   console.log(`createOffer ${hash} mined at block ${receipt.blockNumber}: it created request #${created[0].args.offerId}`);
   return created[0].args.offerId;
-}
-
-/** The borrower's principal-token allowance to the Diamond, with the
- *  revoke remedy, for a failure with no identifiable request. */
-async function reportBorrowerAllowance(context) {
-  console.log(`\n=== borrower allowance after the failure (${context}) ===`);
-  try {
-    const allowance = await pub.readContract({
-      address: loan.principalAsset,
-      abi: erc20Abi,
-      functionName: 'allowance',
-      args: [BORROWER, DIAMOND],
-    });
-    console.log(`borrower payoff allowance (principal token → Diamond): ${fmtP(allowance)} (raw ${allowance})`);
-    if (allowance > 0n) {
-      console.log(
-        `REMEDY (allowance): revoke with approve(${DIAMOND}, 0) on ${loan.principalAsset} from the borrower, or from ` +
-          `the wallet's token-approvals view — but only once no request of this run can still need it.`,
-      );
-    }
-    console.log('Nothing was sent to recover: this drive reports, and the operator decides.');
-  } catch (e) {
-    console.log(`could not read the allowance: ${String(e.shortMessage ?? e.message).slice(0, 160)} — check it by hand`);
-  }
 }
 
 // ---------------------------------------------------------------------
@@ -993,6 +1045,13 @@ const pre = await precondition('reading the preconditions from chain', async () 
   // The LIVE loan-initiation fee rate (ConfigFacet), pinned to the same
   // head — the payoff reserve below is computed from it, never assumed.
   const lifBps = await read('getLoanInitiationFeeBps', [], head);
+  // Per-asset pause — the read RefinanceFlow's assertAssetNotPausedLive
+  // makes for BOTH legs at submit (#2422 r6 P2). The app treats a failed
+  // read as not-paused; here it throws, so an unknown pause state BLOCKS.
+  const [principalPaused, collateralPaused] = await Promise.all([
+    read('isAssetPaused', [loan.principalAsset], head),
+    read('isAssetPaused', [loan.collateralAsset], head),
+  ]);
   // The form's upper bound on the new length, read where the app reads it
   // (fees.ts: getProtocolConfigBundle()[14], maxOfferDurationDays).
   const maxOfferDurationDays = (await read('getProtocolConfigBundle', [], head))[14];
@@ -1065,6 +1124,8 @@ const pre = await precondition('reading the preconditions from chain', async () 
     caps,
     lifBps,
     riskTermsHash,
+    principalPaused,
+    collateralPaused,
     maxOfferDurationDays,
     principalDecimals,
     borrowerPositionHolder,
@@ -1141,6 +1202,19 @@ if (LOAN_ID === 22n) {
 }
 want('risk-access gate disabled (no tier / pair-consent setup needed)', pre.riskGate === false, pre.riskGate);
 want('protocol not paused', pre.paused === false, pre.paused);
+// An asset pause is an operational posture of the deployment: the form
+// refuses to post (and an accept could not complete) while either leg is
+// paused, so the drive states it and stops before launching anything.
+want(
+  `principal asset ${loan.principalAsset} not paused (isAssetPaused — the operator has paused it if this fails)`,
+  pre.principalPaused === false,
+  pre.principalPaused,
+);
+want(
+  `collateral asset ${loan.collateralAsset} not paused (isAssetPaused — the operator has paused it if this fails)`,
+  pre.collateralPaused === false,
+  pre.collateralPaused,
+);
 want('borrower accepted current Terms', pre.tosB === true, pre.tosB);
 want('lender accepted current Terms', pre.tosL === true, pre.tosL);
 want('no open refinance request on this loan', pre.openRequests.length === 0, pre.openRequests.join(',') || 'none');
@@ -1253,6 +1327,20 @@ PLAN = createWritePlan(
 );
 console.log(`pre   write plan: ${planSteps().map((st) => `${st.id}${st.optional ? '?' : ''}`).join(' → ')}`);
 
+// The touched-state ledger's BASELINE, at the same pinned block as every
+// other precondition and before any write. Every entry must be readable: a
+// failure report that cannot say what the state was is no use, so an
+// unreadable baseline BLOCKS the drive (nothing written yet).
+LEDGER_BASELINE = await precondition('snapshotting the touched-state ledger at the pinned block', async () => {
+  const snap = await readLedger(pre.head);
+  const bad = Object.entries(snap).filter(([, r]) => !r.ok);
+  if (bad.length) throw new Error(`unreadable: ${bad.map(([k, r]) => `${k} (${r.error})`).join('; ')}`);
+  return snap;
+});
+console.log(
+  `pre   ledger baseline @${pre.head}: ` +
+    LEDGER.map((e) => `${e.key} = ${e.format(LEDGER_BASELINE[e.key].value)}`).join(' | '),
+);
 const baselineCollateral = pre.b.collateral;
 const baselineNonces = { borrower: pre.b.nonceLatest, lender: pre.l.nonceLatest };
 BASELINE_NONCES = baselineNonces;
@@ -1422,9 +1510,21 @@ try {
 
   // Pending card carries the posture disclosure too.
   const pendingCard = bp.locator('section.card').filter({ hasText: new RegExp(`Refinance request #${pageRequestId} is live`, 'i') });
-  const pendingPosture = await pendingCard.locator('[data-auto-match-posture]').first()
-    .getAttribute('data-auto-match-posture', { timeout: 30_000 }).catch(() => null);
-  check(`borrower: the standing request card discloses the posture (${expectedPosture})`, pendingPosture === expectedPosture, pendingPosture);
+  let pendingPosture = null;
+  let pendingPostureErr = null;
+  try {
+    pendingPosture = await pendingCard
+      .locator('[data-auto-match-posture]')
+      .first()
+      .getAttribute('data-auto-match-posture', { timeout: 30_000 });
+  } catch (e) {
+    pendingPostureErr = String(e.message).split('\n')[0].slice(0, 120);
+  }
+  check(
+    `borrower: the standing request card discloses the posture (${expectedPosture})`,
+    pendingPosture === expectedPosture,
+    pendingPostureErr ? `UNREADABLE — ${pendingPostureErr}` : pendingPosture,
+  );
 
   // -------------------------------------------------------------------
   // 2. Pin the request on chain from the createOffer receipt itself.
@@ -1448,16 +1548,9 @@ try {
     const r = await pub.waitForTransactionReceipt({ hash: t.hash, timeout: 180_000 });
     if (r.status !== 'success') stop(`borrower tx ${t.hash} (${t.purpose}) reverted`);
   }
-  const created = createRcpt.logs
-    .filter((l) => eq(l.address, DIAMOND))
-    .map((l) => {
-      try {
-        return decodeEventLog({ abi: DIAMOND_ABI, data: l.data, topics: l.topics });
-      } catch {
-        return null;
-      }
-    })
-    .filter((e) => e?.eventName === 'OfferCreated');
+  const createDecoded = diamondEvents(createRcpt);
+  check('every Diamond log in the createOffer receipt decodes', createDecoded.undecodable === 0, `${createDecoded.undecodable} undecodable`);
+  const created = createDecoded.events.filter((e) => e.eventName === 'OfferCreated');
   if (created.length !== 1) stop(`createOffer receipt carries ${created.length} OfferCreated events`);
   requestId = created[0].args.offerId;
   // Only now can the lender's plan steps be judged; until this line they
@@ -1653,16 +1746,9 @@ try {
   }
   const acc = await pub.waitForTransactionReceipt({ hash: acceptHash, timeout: 180_000 });
   check('accept receipt status success', acc.status === 'success', acc.status);
-  const evs = acc.logs
-    .filter((l) => eq(l.address, DIAMOND))
-    .map((l) => {
-      try {
-        return decodeEventLog({ abi: DIAMOND_ABI, data: l.data, topics: l.topics });
-      } catch {
-        return null;
-      }
-    })
-    .filter(Boolean);
+  const accDecoded = diamondEvents(acc);
+  check('every Diamond log in the accept receipt decodes', accDecoded.undecodable === 0, `${accDecoded.undecodable} undecodable`);
+  const evs = accDecoded.events;
   const accepted = evs.filter((e) => e.eventName === 'OfferAccepted' && e.args.offerId === requestId);
   const refinanced = evs.filter((e) => e.eventName === 'LoanRefinanced');
   if (accepted.length !== 1) stop(`accept receipt carries ${accepted.length} OfferAccepted events for #${requestId}`);
@@ -1713,6 +1799,23 @@ try {
   const fresh = await loanOf(newLoanId, floor);
   check(`replacement loan ${newLoanId} status == 0 (Active)`, fresh.status === LOAN_STATUS.ACTIVE, fresh.status);
   check('replacement offerId == the request', fresh.offerId === requestId, fresh.offerId);
+  // Who HOLDS the replacement's position NFTs, at the accept's block — the
+  // stored parties say who the loan was opened for; the NFTs say who can
+  // act on it (#2422 r6 P2). Read failures throw, and so fail the run.
+  const [newBorrowerHolder, newLenderHolder] = await Promise.all([
+    read('ownerOf', [fresh.borrowerTokenId], floor),
+    read('ownerOf', [fresh.lenderTokenId], floor),
+  ]);
+  check(
+    'replacement borrower position NFT is held by the borrower role',
+    eq(newBorrowerHolder, BORROWER),
+    `token ${fresh.borrowerTokenId} → ${newBorrowerHolder}`,
+  );
+  check(
+    'replacement lender position NFT is held by the accepting lender role',
+    eq(newLenderHolder, LENDER),
+    `token ${fresh.lenderTokenId} → ${newLenderHolder}`,
+  );
   check('replacement borrower unchanged', eq(fresh.borrower, BORROWER), fresh.borrower);
   check('replacement lender == the accepting `lender` role', eq(fresh.lender, LENDER), fresh.lender);
   check('replacement collateralAsset == old', eq(fresh.collateralAsset, loan.collateralAsset), fresh.collateralAsset);
@@ -1725,10 +1828,20 @@ try {
   check(`replacement durationDays == ${DAYS_N}`, fresh.durationDays === DAYS_N, fresh.durationDays);
   const reqAfter = await read('getOfferDetails', [requestId], floor);
   check('request marked accepted', reqAfter.accepted === true, reqAfter.accepted);
-  const lenderLoans = await read('getUserActiveLoans', [LENDER], floor).catch(() => null);
-  if (lenderLoans) {
-    check('replacement listed among the lender’s active loans', lenderLoans.includes(newLoanId), `${lenderLoans.length} loans`);
+  // An unreadable index is UNKNOWN, and an assertion that could not be
+  // made fails — it is never skipped (#2422 r6 P2).
+  let lenderLoans = null;
+  let lenderLoansErr = null;
+  try {
+    lenderLoans = await read('getUserActiveLoans', [LENDER], floor);
+  } catch (e) {
+    lenderLoansErr = String(e.shortMessage ?? e.message).slice(0, 120);
   }
+  check(
+    'replacement listed among the lender\u2019s active loans',
+    lenderLoans !== null && lenderLoans.includes(newLoanId),
+    lenderLoans === null ? `UNKNOWN — the active-loan index could not be read (${lenderLoansErr})` : `${lenderLoans.length} loans`,
+  );
   const collEnd = await tokenBalance(loan.collateralAsset, BORROWER, floor);
   check(
     'borrower collateral WALLET balance unchanged across post + accept (carry-over, not re-pledge)',
