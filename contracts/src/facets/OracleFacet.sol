@@ -319,22 +319,30 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
      *         of `borrowedAsset` against `collateralAmount` of
      *         `collateralAsset` — a pair-level PREVIEW of the figure loan
      *         initiation checks.
-     * @dev    Values each leg exactly as the loan-level path does
+     * @dev    Values each leg in numeraire terms as the loan-level path does
      *         (`RiskFacet._computeNumeraireValues`, which initiation,
-     *         liquidation, add-collateral and refinance use):
-     *         `amount × price / 10**feedDecimals / 10**tokenDecimals`. Both
-     *         divisions matter: dividing by the feed's decimals alone (#2403)
-     *         left each leg in raw token units, so a pair whose tokens have
-     *         different decimals — a 6-decimal stablecoin against an
-     *         18-decimal asset — came out off by `10**(decimal difference)`.
-     *         The same integer truncation as the loan-level path is kept on
-     *         purpose, so the preview and the binding check agree.
+     *         liquidation, add-collateral and refinance use) — price over the
+     *         feed's decimals AND over the token's own decimals. Dividing by
+     *         the feed's decimals alone (#2403) left each leg in raw token
+     *         units, so a pair whose tokens have different decimals — a
+     *         6-decimal stablecoin against an 18-decimal asset — came out off
+     *         by `10**(decimal difference)`.
+     *
+     *         Both legs carry a shared 1e18 scale through that division
+     *         (#2418 r1), so the ratio keeps its precision at any size: a
+     *         borrow worth less than one whole numeraire unit is not
+     *         truncated to a value of 0 and reported as an LTV of 0. This is
+     *         the economic ratio. The loan-level path divides the scale out
+     *         and truncates each leg to whole units, so the two agree except
+     *         where a leg sits within one unit of that truncation — tracked
+     *         as #2419.
      *
      *         Reverts {ZeroCollateral} when the collateral leg values to
-     *         zero (a zero amount, or one too small to register), as the
-     *         loan-level path does; returning 0 read as "no risk". Reverts
-     *         on a missing or stale feed via {getAssetPrice}. Meaningful only
-     *         for liquid (priced) assets.
+     *         zero (a zero amount, or a price-and-amount product that does
+     *         not register even at the 1e18 scale), as the loan-level path
+     *         does; returning 0 read as "no risk". Reverts on a missing or
+     *         stale feed via {getAssetPrice}. Meaningful only for liquid
+     *         (priced) assets.
      */
     // forge-lint: disable-next-line(mixed-case-function)
     function calculateLTV(
@@ -348,9 +356,11 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         (uint256 borrowedPrice, uint8 borrowedFeedDec) = this.getAssetPrice(borrowedAsset);
         (uint256 collateralPrice, uint8 collateralFeedDec) = this.getAssetPrice(collateralAsset);
 
-        uint256 borrowedValue = (borrowedAmount * borrowedPrice) /
+        // Numeraire value at a shared 1e18 scale (#2418 r1): the scale cancels
+        // in the ratio, so only precision is gained.
+        uint256 borrowedValue = (borrowedAmount * borrowedPrice * 1e18) /
             (10 ** borrowedFeedDec) / (10 ** IERC20Metadata(borrowedAsset).decimals());
-        uint256 collateralValue = (collateralAmount * collateralPrice) /
+        uint256 collateralValue = (collateralAmount * collateralPrice * 1e18) /
             (10 ** collateralFeedDec) / (10 ** IERC20Metadata(collateralAsset).decimals());
         if (collateralValue == 0) revert ZeroCollateral();
 

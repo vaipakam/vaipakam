@@ -355,15 +355,30 @@ contract OracleFacetTest is Test {
         OracleFacet(address(diamond)).calculateLTV(mockAsset, 1000 ether, mockAsset2, 0);
     }
 
-    /// #2403 — a collateral amount too small to register in whole numeraire
-    /// units values to zero and is refused the same way, never divided by.
+    /// #2403 — a collateral leg whose value does not register even at the
+    /// 1e18 scale is refused the same way, never divided by. One base unit
+    /// of a 6-decimal token priced at 1e-13 numeraire is 1e-19 numeraire —
+    /// below the 1e-18 resolution.
     function testCalculateLTVDustCollateralReverts() public {
+        address coll6 = address(new ERC20Mock("COL6", "COL6", 6));
+        _mockRegistryFeed(mockAsset, mockFeed);
+        _mockRegistryFeed(coll6, mockFeed2);
+        _mockFeedFull(mockFeed, int256(1e8), 8);
+        _mockFeedFull(mockFeed2, int256(1), 18); // 1e-18 per whole token
+        vm.expectRevert(OracleFacet.ZeroCollateral.selector);
+        OracleFacet(address(diamond)).calculateLTV(mockAsset, 1000 ether, coll6, 1);
+    }
+
+    /// #2418 r1 — a borrow worth less than one whole numeraire unit keeps its
+    /// precision: $0.50 against $1 of collateral is 5000 bps, never a
+    /// truncated "0 — no risk".
+    function testCalculateLTVSubUnitBorrowKeepsPrecision() public {
         _mockRegistryFeed(mockAsset, mockFeed);
         _mockRegistryFeed(mockAsset2, mockFeed2);
-        _mockFeedFull(mockFeed, int256(1e8), 8);
-        _mockFeedFull(mockFeed2, int256(2e8), 8);
-        vm.expectRevert(OracleFacet.ZeroCollateral.selector);
-        OracleFacet(address(diamond)).calculateLTV(mockAsset, 1000 ether, mockAsset2, 1);
+        _mockFeedFull(mockFeed, int256(1e8), 8);  // borrowed: $1
+        _mockFeedFull(mockFeed2, int256(1e8), 8); // collateral: $1
+        uint256 ltv = OracleFacet(address(diamond)).calculateLTV(mockAsset, 0.5 ether, mockAsset2, 1 ether);
+        assertEq(ltv, 5000);
     }
 
     /// #2403 — each leg is scaled by its OWN token decimals. A 6-decimal
