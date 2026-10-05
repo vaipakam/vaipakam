@@ -1,4 +1,4 @@
-## Thread — The pair-level loan-to-value preview values each token in its own units (PR #<n>)
+## Thread — The pair-level loan-to-value preview values each token in its own units (PR #2418)
 
 The oracle facet exposes a read-only preview of the loan-to-value of a given borrowed amount against a given collateral amount. It divided each leg by its price feed's decimals but never by the token's own decimals, so both legs entered the ratio in raw token units. For two tokens with the same number of decimals that cancelled out; for a pair with different decimals, such as a 6-decimal stablecoin against an 18-decimal asset, the result was off by a factor of ten to the power of the difference. It also answered a zero collateral amount with a loan-to-value of 0, which reads as "no risk", where the loan-level calculation refuses.
 
