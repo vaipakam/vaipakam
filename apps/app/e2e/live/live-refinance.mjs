@@ -195,15 +195,7 @@
 // Verdicts (the three-verdict contract in run-live-batch.mjs):
 //   0 PASS     — every assertion held, and every claim the outcome manifest
 //                declares verifiable ran and passed (a deferred claim is
-//                printed under NOT VERIFIED, with its reason). Also exit 0,
-//                but printed "OUTCOME: COMPLETED, N CLAIM(S) UNDETERMINED",
-//                when every check that could judge held and some post-write
-//                check could not be substantiated (#2422 r9 — a fee posture
-//                outside the model by the accept, another transaction in the
-//                accept block touching a diffed state, unreadable receipts):
-//                nothing was observed wrong, and the line says which claims
-//                were not established and why. Never a FAIL, never a PASS of
-//                those claims.
+//                printed under NOT VERIFIED, with its reason).
 //   1 FAIL     — an assertion failed, a manifest claim failed or never ran,
 //                a write was refused by the gate, a
 //                transaction reverted, or the UI could not complete a
@@ -215,6 +207,20 @@
 //                be set up — both are set up before the first write).
 // Once the first transaction has been sent, nothing exits BLOCKED: the
 // drive has changed chain state and its report must be read.
+//   3 UNDETERMINED — every check that could judge held, but some post-write
+//                claim could not be substantiated either way (#2422 r9 — a
+//                fee posture outside the model by the accept, another
+//                transaction in the accept block touching a diffed state,
+//                unreadable receipts). Printed "OUTCOME: COMPLETED, N
+//                CLAIM(S) UNDETERMINED" with each claim and its reason.
+//                Deliberately NOT exit 0: an exit code is read without the
+//                line beside it, and 0 would certify claims nobody
+//                established. Not 1 (nothing was observed wrong) and not 2
+//                (chain state has changed). This is a fourth code outside the
+//                batch's three-verdict contract, which is safe only because
+//                the driver is MANUAL_ONLY: were it ever batched, the runner
+//                classifies any code other than 0 and 2 as FAIL — the
+//                conservative reading, never a PASS.
 //
 // ONE-SHOT BY NATURE, SO MANUAL-ONLY. A successful run closes the loan it
 // drives, so there is no loan this drive could default to that stays
@@ -2826,4 +2832,6 @@ console.log(
         '(why, per check, under UNDETERMINED above) — not a failure, and not a pass of those claims'
       : '\nOUTCOME: PASS — every claim under VERIFIED holds; the claims under NOT VERIFIED BY THIS DRIVER were not checked by it',
 );
+// An UNDETERMINED claim must not leave as exit 0 — see the header's exit 3.
+if (exitCode === 0 && undet.length) exitCode = 3;
 process.exit(exitCode);
