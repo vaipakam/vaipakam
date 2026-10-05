@@ -46,9 +46,13 @@ export function offerCollateralText(args: {
     /** #2382 — an unfilled ranged request: the range, the floor a direct
      *  funding locks, and the ceiling a matched fill can reach. */
     range?: (range: string, floor: string, ceiling: string) => string;
-    /** #2382 — a request earlier fills have part-used: what is still
-     *  committed, and how much is already locked. */
-    rangeRemaining?: (range: string, used: string) => string;
+    /** #2382 — a request earlier fills have part-used: exactly what is still
+     *  committed, and what earlier fills CONSUMED (a running total, not what
+     *  is locked today — a resulting loan may have settled since). */
+    rangeRemaining?: (remaining: string, used: string) => string;
+    /** #2382 r2 — the same, when what is left is below the floor every fill
+     *  must lock: no fill can use it. */
+    remainingBelowFloor?: (remaining: string, used: string, floor: string) => string;
     /** #2382 r1 — an unfilled single-value request: funding it directly
      *  locks all of it, a matched fill only the lender's requirement. */
     single?: (amount: string) => string;
@@ -71,6 +75,7 @@ export function offerCollateralText(args: {
     r.filled !== null &&
     args.labels.range &&
     args.labels.rangeRemaining &&
+    args.labels.remainingBelowFloor &&
     args.labels.single
   ) {
     const { decimals, symbol } = args.meta;
@@ -79,9 +84,20 @@ export function offerCollateralText(args: {
     const ceiling = BigInt(r.ceiling);
     const filled = BigInt(r.filled);
     if (filled > 0n) {
+      // Exactly what is still committed (`ceiling − filled`), never a range:
+      // a range here read as the commitment and understated it (#2382 r2).
+      // `filled` is cumulative — consumed by earlier fills, not necessarily
+      // locked now.
       const left = ceiling > filled ? ceiling - filled : 0n;
-      const range = ceiling > floor && left > floor ? `${n(floor)}–${n(left)} ${symbol}` : `${n(left)} ${symbol}`;
-      return args.labels.rangeRemaining(range, `${n(filled)} ${symbol}`);
+      const remaining = `${n(left)} ${symbol}`;
+      const used = `${n(filled)} ${symbol}`;
+      // A ranged request's every fill locks at least the floor (the matcher
+      // clamps up to it), so a remainder below the floor can be taken by no
+      // fill at all — say so rather than offer it as available.
+      if (ceiling > floor && left < floor) {
+        return args.labels.remainingBelowFloor(remaining, used, `${n(floor)} ${symbol}`);
+      }
+      return args.labels.rangeRemaining(remaining, used);
     }
     if (ceiling > floor) {
       return args.labels.range(

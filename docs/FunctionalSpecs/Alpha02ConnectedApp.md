@@ -1257,11 +1257,11 @@ progress.
   precision. The figure is the ratio at the amounts the card shows, and it is
   never presented as exact or as a limit across fills: where a fill of another
   size could carry another ratio — a ranged or part-taken offer of either side,
-  and a borrow request whose committed collateral range is wider than its
-  floor or has not been read yet — the card says so. A single-size borrow
-  request whose collateral ceiling is known to equal its floor, with nothing
-  taken yet, is stated exactly: funding it directly locks exactly those
-  amounts. When the
+  and EVERY borrow request — the card says so. A borrow request is never stated
+  exactly, even one whose collateral ceiling equals its floor: a direct funding
+  locks exactly the amounts shown, but a matched fill locks only what the
+  lender requires and returns the rest, so the resulting ratio can be higher.
+  When the
   protocol treats either side as illiquid the card says the ratio isn't worked
   out and names both possible causes (no reliable price, or too little trading),
   since it cannot tell which; when one side's value rounds to nothing at that
@@ -1283,9 +1283,13 @@ progress.
   ceiling, the card states the range, says that funding the request directly
   locks exactly the floor (the rest goes back to the borrower), and says a
   matched fill can lock more, up to the ceiling. A request that earlier matched
-  fills have already part-used states what is still committed and how much is
-  already locked, and says only a matched fill can take the rest (a part-filled
-  request cannot be funded directly). A request whose ceiling equals its floor
+  fills have already part-used states exactly what is still committed and how
+  much earlier fills consumed — a running total, not what is locked today, since
+  a resulting loan may have settled — and says only a matched fill can use the
+  rest (a part-filled request cannot be funded directly). When what is left is
+  below the floor every fill of the range must lock, the card says no further
+  fill can use it until the request is amended or cancelled, rather than
+  presenting it as available. A request whose ceiling equals its floor
   is never stated as an exact loan collateral: it commits exactly that amount
   and a direct funding locks all of it, but a matched fill locks only what the
   lender requires and returns the rest, and the card says both. For the same

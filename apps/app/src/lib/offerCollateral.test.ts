@@ -10,7 +10,8 @@ const labels = {
   atLeast: (a: string) => `at least ${a}`,
   forFullOffer: (a: string) => `${a} for the full offer (proportionally less for part of it)`,
   range: (r: string, f: string, c: string) => `${r} committed — direct locks ${f}; match up to ${c}`,
-  rangeRemaining: (r: string, u: string) => `${r} still committed (${u} used)`,
+  rangeRemaining: (r: string, u: string) => `${r} still committed (${u} consumed)`,
+  remainingBelowFloor: (r: string, u: string, f: string) => `${r} still committed (${u} consumed) — below ${f}, no fill can use it`,
   single: (a: string) => `${a} committed — direct locks all; match locks the requirement`,
 };
 const base = { asset, amount: '0', tokenId: '0', quantity: '0', meta: undefined, metaFailed: false, labels };
@@ -53,9 +54,19 @@ describe('offerCollateralText', () => {
         '150 tLIQ committed — direct locks all; match locks the requirement',
       );
     });
-    it('states what is still committed after earlier fills, and what they used', () => {
+    it('states EXACTLY what is still committed after earlier fills — never a range (#2382 r2)', () => {
       expect(offerCollateralText({ ...req, borrowerRange: { ceiling: e(400), filled: e(100) } })).toBe(
-        '150–300 tLIQ still committed (100 tLIQ used)',
+        '300 tLIQ still committed (100 tLIQ consumed)',
+      );
+    });
+    it('says a remainder below the floor can be used by no fill (#2382 r2)', () => {
+      // 400 − 300 = 100 left, below the 150 every fill of this range locks.
+      expect(offerCollateralText({ ...req, borrowerRange: { ceiling: e(400), filled: e(300) } })).toBe(
+        '100 tLIQ still committed (300 tLIQ consumed) — below 150 tLIQ, no fill can use it',
+      );
+      // Exactly the floor left is still usable.
+      expect(offerCollateralText({ ...req, borrowerRange: { ceiling: e(400), filled: e(250) } })).toBe(
+        '150 tLIQ still committed (250 tLIQ consumed)',
       );
     });
     it('keeps "at least" while the ceiling or fills are unread — never assumes', () => {

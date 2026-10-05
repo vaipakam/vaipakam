@@ -3542,9 +3542,17 @@ const copySource = {
       '{{range}} committed — funding it directly locks {{floor}}; a matched fill can lock up to {{ceiling}}',
       ['range', 'floor', 'ceiling'],
     ),
+    // #2382 r2 — exactly what remains committed, and what earlier fills
+    // CONSUMED (cumulative; a resulting loan may have settled since, so it is
+    // not "locked"). Below the floor, no fill can use the remainder: the
+    // matcher locks at least the floor on every fill.
     collateralRangeRemaining: tmpl(
-      '{{range}} still committed ({{used}} already locked by earlier fills; only a matched fill can take the rest)',
-      ['range', 'used'],
+      '{{remaining}} still committed ({{used}} consumed by earlier fills); only a matched fill can use it',
+      ['remaining', 'used'],
+    ),
+    collateralRemainingBelowFloor: tmpl(
+      '{{remaining}} still committed ({{used}} consumed by earlier fills) — less than the {{floor}} every fill must lock, so no further fill can use it until the request is amended or cancelled',
+      ['remaining', 'used', 'floor'],
     ),
     // #2382 r1 — a single-value request (ceiling == floor). It commits
     // exactly this amount, but only a direct funding locks all of it: a

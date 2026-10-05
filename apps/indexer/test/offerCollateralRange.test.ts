@@ -9,8 +9,8 @@
  */
 import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { effectiveCollateralMax, refreshStubOffers } from '../src/chainIndexer';
-import { CURSOR_WRITE_RESERVE, createBudget, meterEnv, spend } from '../src/subrequestBudget';
+import { effectiveCollateralMax, markBorrowerFillsUnread, refreshStubOffers } from '../src/chainIndexer';
+import { createBudget, meterEnv, spend } from '../src/subrequestBudget';
 import { handleOfferById } from '../src/offerRoutes';
 import type { Env } from '../src/env';
 import { createSqliteD1 } from './helpers/sqliteD1';
@@ -97,7 +97,7 @@ describe('offer API — collateral range', () => {
   });
 });
 
-describe('the range backfill lane (#2382 r1)', () => {
+describe('the range backfill lane (#2382 r1/r2)', () => {
   /** A chain client whose every read costs what a full refresh can: the
    *  details read, the ownerOf read and the UPDATE (3), then fails — so the
    *  lane's spending, not the row's content, is what is measured. */
@@ -110,10 +110,11 @@ describe('the range backfill lane (#2382 r1)', () => {
       },
     }) as never;
 
-  it('stops while the cursor write is still affordable, however large the backlog', async () => {
+  it('stops starting rows once a row no longer fits either meter (a soft stop)', async () => {
     const h = createSqliteD1(migrations());
     for (let i = 1; i <= 20; i++) seed(h, { offer_id: String(i) });
-    const budget = createBudget(10);
+    // Subrequests: 10 − 1 (the selection) = 9 → three rows at 3 each.
+    const budget = createBudget(10, 'test', 1_000);
     const reads: number[] = [];
     await refreshStubOffers(
       costlyClient(budget, reads),
@@ -122,9 +123,19 @@ describe('the range backfill lane (#2382 r1)', () => {
       meterEnv({ DB: h.d1 } as unknown as Env, budget) as unknown as Env,
       budget,
     );
-    // 10 − 1 (the selection) = 9: two rows at 3 each leave 3, below 3 + 1.
-    expect(reads.length).toBe(2);
-    expect(budget.subrequests.remaining).toBeGreaterThanOrEqual(CURSOR_WRITE_RESERVE);
+    expect(reads.length).toBe(3);
+    // D1 queries are a second ceiling (#2382 r2): with none left after the
+    // selection, no row starts however many subrequests remain.
+    const tight = createBudget(1_000, 'test', 1);
+    const none: number[] = [];
+    await refreshStubOffers(
+      costlyClient(tight, none),
+      '0x0' as never,
+      84532,
+      meterEnv({ DB: h.d1 } as unknown as Env, tight) as unknown as Env,
+      tight,
+    );
+    expect(none.length).toBe(0);
   });
 
   it('keeps a row queued until BOTH range columns are read', async () => {
@@ -142,5 +153,86 @@ describe('the range backfill lane (#2382 r1)', () => {
       budget,
     );
     expect(reads.sort()).toEqual([1, 2]);
+  });
+});
+
+describe('a match marks the borrower offer’s fills unread (#2382 r2)', () => {
+  it('nulls only the named offers’ fills, which re-queues them for the refresh lane', async () => {
+    const h = createSqliteD1(migrations());
+    seed(h, { offer_id: '1', collateral_amount_max: '400', collateral_amount_filled: '0' });
+    seed(h, { offer_id: '2', collateral_amount_max: '400', collateral_amount_filled: '0' });
+    await markBorrowerFillsUnread({ DB: h.d1 } as unknown as Env, 84532, [1]);
+    const rows = h.db
+      .prepare('SELECT offer_id, collateral_amount_filled AS f FROM offers ORDER BY offer_id')
+      .all() as { offer_id: number; f: string | null }[];
+    expect(rows).toEqual([
+      { offer_id: 1, f: null },
+      { offer_id: 2, f: '0' },
+    ]);
+    // …and the refresh lane picks the marked row up.
+    const budget = createBudget(1_000, 'test', 1_000);
+    const reads: number[] = [];
+    await refreshStubOffers(
+      ({
+        async readContract({ args }: { args: [bigint] }) {
+          reads.push(Number(args[0]));
+          throw new Error('read refused');
+        },
+      }) as never,
+      '0x0' as never,
+      84532,
+      meterEnv({ DB: h.d1 } as unknown as Env, budget) as unknown as Env,
+      budget,
+    );
+    expect(reads).toEqual([1]);
+  });
+
+  it('spends one statement batch however many offers it marks', async () => {
+    const h = createSqliteD1(migrations());
+    const ids = Array.from({ length: 150 }, (_, i) => i + 1);
+    for (const i of ids) seed(h, { offer_id: String(i), collateral_amount_filled: '0' });
+    const budget = createBudget(1_000, 'test', 1_000);
+    await markBorrowerFillsUnread(meterEnv({ DB: h.d1 } as unknown as Env, budget) as unknown as Env, 84532, ids);
+    expect(budget.subrequests.limit - budget.subrequests.remaining).toBe(1);
+    const n = h.db.prepare('SELECT COUNT(*) AS n FROM offers WHERE collateral_amount_filled IS NULL').get() as { n: number };
+    expect(n.n).toBe(150);
+  });
+});
+
+describe('the heal lanes run LAST in the pass (#2382 r2)', () => {
+  // Structural, like oneTimeBackfillReachability: the property is WHERE the
+  // calls sit in runChainPass — after the cursor write and every once-per-scan
+  // step — which no test of the lane alone can establish. That placement, not
+  // a cost estimate, is what keeps an overrun from freezing the chain.
+  const src = readFileSync(new URL('../src/chainIndexer.ts', import.meta.url), 'utf8');
+  const body = src.slice(src.indexOf('async function runChainPass'), src.indexOf('\nfunction emptyResult'));
+  const at = (needle: string) => {
+    const i = body.indexOf(needle);
+    expect(i, `${needle} not found in runChainPass`).toBeGreaterThan(-1);
+    return i;
+  };
+  it('calls both lanes after the cursor write and the once-per-scan steps, inside a try', () => {
+    const offers = at('await refreshStubOffers(');
+    const loans = at('await refreshStubLoans(');
+    for (const before of [
+      'INSERT INTO indexer_cursor',
+      'await materializeNotifications(',
+      'await _runLoanReconcilePass(',
+      'await _sweepCalendarIfEstablished(',
+    ]) {
+      expect(at(before), `${before} must precede the heal lanes`).toBeLessThan(offers);
+    }
+    expect(loans).toBeGreaterThan(offers);
+    // Each call appears once, and inside the try that keeps a failure from
+    // failing the pass.
+    expect(body.split('await refreshStubOffers(').length).toBe(2);
+    expect(body.lastIndexOf('try {', offers)).toBeGreaterThan(at('await _sweepCalendarIfEstablished('));
+  });
+  it('has the match handler mark the borrower offer rather than read it', () => {
+    const p = src.slice(src.indexOf('async function processOfferLogs'), src.indexOf('export async function markBorrowerFillsUnread'));
+    expect(p).toContain('borrowerFillsStale.add(Number(ev.borrowerOfferId))');
+    expect(p).toContain('await markBorrowerFillsUnread(env, chainId, [...borrowerFillsStale])');
+    // No block-pinned borrower read survives in the scan path.
+    expect(src).not.toContain('readOfferFillsAt');
   });
 });

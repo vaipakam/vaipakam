@@ -217,6 +217,7 @@ function OfferRow({
                 range: copy.offers.collateralRange,
                 rangeRemaining: copy.offers.collateralRangeRemaining,
                 single: copy.offers.collateralSingle,
+                remainingBelowFloor: copy.offers.collateralRemainingBelowFloor,
               },
             })
           : copy.offers.collateralNone

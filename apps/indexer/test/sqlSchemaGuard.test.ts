@@ -139,7 +139,14 @@ describe('SQL-vs-schema guard (#1149)', () => {
     // runs the sweep against the REAL migrated schema and asserts exactly
     // which rows go and which remain, so a mis-built `IN` list fails loudly
     // rather than silently clearing too much.
-    expect(skipped.length).toBeLessThanOrEqual(16);
+    // Raised 16 → 17 for #2382 r2: a match now MARKS the borrower offer's
+    // fills unread (`markBorrowerFillsUnread`, one chunked `IN (?, ?, …)`
+    // UPDATE per batch) instead of reading them inside the scan, so the
+    // refresh lane — which runs after the cursor write — re-reads them. The
+    // bind list is what makes it dynamic. Covered against the REAL migrated
+    // schema in `offerCollateralRange.test.ts`, which asserts exactly which
+    // rows it nulls and that the refresh lane then selects them.
+    expect(skipped.length).toBeLessThanOrEqual(17);
   });
 
   it('every static SQL statement prepares against the migrated schema', () => {
