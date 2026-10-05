@@ -1,4 +1,4 @@
-## Thread — indexer: migrations before code, and a schema gate for the routes that skip them (PR #<n>)
+## Thread — indexer: migrations before code, and a schema gate for the routes that skip them (PR #2409)
 
 The indexer's deploy now applies its database migrations FIRST and publishes the new Worker only if they applied. The order lives in one place, the indexer's own deploy script, and the indexer phase of all three deploy scripts (single-chain, testnet, mainnet) calls it. They used to publish and then migrate, so on every release with a migration, new code ran against the old schema for the length of the gap — and indefinitely if the migration step failed, because nothing rolled the Worker back. #1149 was that window in production: every scan failed on a missing column and the chain's reading position held until someone read the logs. #2214 asked the question and was closed without the change; this makes it.
 
