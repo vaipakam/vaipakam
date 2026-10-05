@@ -79,5 +79,30 @@ describe('live-refinance wiring', () => {
     expect(region).toContain('BigInt(fresh.treasuryFeeBpsAtInit) === BigInt(REVIEWED_CONFIG.treasuryFeeBps)');
     expect(region).toContain('BigInt(fresh.loanInitiationFeeBpsAtInit) === BigInt(REVIEWED_CONFIG.lifBps)');
   });
+
+  it('the preflight evaluates the supported loan posture, and blocks on any miss (r13 finding 1)', () => {
+    const region = between(SRC, 'for (const m of postureMisses(loan)) {', 'if (postureMisses(loan).length === 0)');
+    expect(region).toContain('want(`loan ${m.field} within the supported posture');
+    expect(region).toContain(', false, m.value);');
+  });
+
+  it('the preflight\u2019s open-request scan IS the ledger\u2019s, cancellation included (r13 finding 2)', () => {
+    expect(statementFrom(SRC, 'const openRequests =')).toBe('const openRequests = await openRequestsAt(head);');
+    expect(between(SRC, 'async function requestStateAt(', 'async function openRequestsAt(')).toContain('requestStateOf({ offer, cancelled, blockTs: block.timestamp })');
+  });
+
+  it('an external fill during the Offer Book wait goes through externalFillVerdict to raceStop (r13 finding 3)', () => {
+    const region = between(SRC, "if (fundLink === 'taken') {", 'raceStop(fill.why);');
+    expect(region).toContain('externalFillVerdict({ requestId, replacement, scanError })');
+    expect(region).toContain("if (fill.kind === 'fail') stop(fill.why);");
+    expect(region).toContain('replacementAt(');
+  });
+
+  it('the stored expiry is compared exactly with the decoded submission, clamped (r13 finding 4)', () => {
+    const region = between(SRC, 'const createInput = (await pub.getTransaction({ hash: createTx.hash })).input;', "request expiry is exactly the submitted expiry");
+    expect(region).toContain('decodeFunctionData({ abi: DIAMOND_ABI, data: createInput }).args[0].expiresAt');
+    expect(region).toContain('expectedStoredExpiry({');
+    expect(SRC).toMatch(/BigInt\(req\.expiresAt\) === wantExpiry/);
+  });
 });
 

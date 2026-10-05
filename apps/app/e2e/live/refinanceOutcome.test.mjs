@@ -8,15 +8,18 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { createManifest } from './outcomeManifest.mjs';
+import { createManifest, runVerdict } from './outcomeManifest.mjs';
 import {
   balanceDeltaMismatches,
   checkRoleNonces,
   collateralMovedOut,
   expectedPrincipalTransfers,
   expectedSettlement,
+  expectedStoredExpiry,
+  externalFillVerdict,
   lienMismatches,
   payoutOwnerOf,
+  requestStateOf,
   scanForReplacement,
   scopeReason,
   settlementBlocker,
@@ -511,6 +514,62 @@ describe('refinanceOutcome — when the settlement model may not judge', () => {
     expect(settlementBlocker({ ...ok, premisesAtPrev: { holds: false, failures: [{ reason: 'r' }] } })).toMatch(/no longer held at block 8 — r/);
     expect(settlementBlocker({ ...ok, discountEvents: ['VPFIDiscountApplied'] })).toMatch(/emitted VPFIDiscountApplied/);
     expect(settlementBlocker({ ...ok, payoffStep: { tsPrev: 1n, tsAccept: 2n } })).toMatch(/payoff stepped/);
+  });
+});
+
+// #2422 r13 finding 2 — one request-state rule, cancellation first.
+describe('refinanceOutcome — a request\u2019s state', () => {
+  const offer = (over = {}) => ({ accepted: false, expiresAt: 2_000n, ...over });
+  it('a cancelled request that has not expired is NOT open', () => {
+    expect(requestStateOf({ offer: offer(), cancelled: true, blockTs: 1_000n })).toBe('cancelled');
+  });
+  it('open, accepted and expired, by the contract\u2019s own expiry test', () => {
+    expect(requestStateOf({ offer: offer(), cancelled: false, blockTs: 1_000n })).toBe('open');
+    expect(requestStateOf({ offer: offer({ accepted: true }), cancelled: false, blockTs: 1_000n })).toBe('accepted');
+    expect(requestStateOf({ offer: offer(), cancelled: false, blockTs: 2_000n })).toBe('expired');
+    expect(requestStateOf({ offer: offer({ expiresAt: 0n }), cancelled: false, blockTs: 9_999n })).toBe('open');
+  });
+});
+
+// #2422 r13 finding 3 — a fill by someone else during the Offer Book wait.
+describe('refinanceOutcome — an external fill is a race, not a FAIL', () => {
+  const notRun = [{ id: 'lenderReview', status: 'not run' }, { id: 'replacement', status: 'not run' }];
+  it('a fill with a replacement loan: UNDETERMINED, exit 3 through runVerdict', () => {
+    const v = externalFillVerdict({ requestId: 45n, replacement: { id: 23n, status: 0, borrowerHolder: BORROWER, lenderHolder: '0xother' } });
+    expect(v.kind).toBe('race');
+    expect(v.why).toMatch(/filled by another party .*replacement loan #23/);
+    const r = runVerdict({ rows: notRun, failure: false, raceStop: v.why });
+    expect(r.exit).toBe(3);
+    expect(r.line).toMatch(/^OUTCOME: STOPPED, UNDETERMINED/);
+  });
+  it('a fill whose replacement could not be scanned: still a race, with the event lookup', () => {
+    const v = externalFillVerdict({ requestId: 45n, replacement: null, scanError: 'cap exhausted' });
+    expect(v.kind).toBe('race');
+    expect(v.why).toMatch(/LoanRefinanced events/);
+  });
+  it('accepted with NO loan carrying it is something actually wrong: FAIL, exit 1', () => {
+    const v = externalFillVerdict({ requestId: 45n, replacement: null });
+    expect(v.kind).toBe('fail');
+    expect(runVerdict({ rows: notRun, failure: true, raceStop: null }).exit).toBe(1);
+  });
+});
+
+// #2422 r13 finding 4 — the stored expiry is exact: submitted, or the grace clamp.
+describe('refinanceOutcome — the stored request expiry', () => {
+  // Loan 22: start 1790964520, 29 days, grace 1 day ⇒ deadline 1793556521.
+  const L22 = { startTime: 1_790_964_520n, durationDays: 29n, graceSeconds: 86_400n };
+  const deadline = 1_790_964_520n + 29n * 86_400n + 86_400n + 1n;
+  it('clamped: a submitted expiry past the grace deadline is stored AS the deadline (request #45)', () => {
+    // Request #45: createOffer calldata submitted 1793782280 (chain time + 30
+    // days), past loan 22's grace end; the chain stored 1793556521.
+    expect(deadline).toBe(1_793_556_521n);
+    expect(expectedStoredExpiry({ ...L22, submitted: 1_793_782_280n })).toBe(1_793_556_521n);
+    expect(expectedStoredExpiry({ ...L22, submitted: 0n })).toBe(deadline);
+  });
+  it('unclamped: an expiry at or before the deadline is stored as submitted', () => {
+    expect(expectedStoredExpiry({ ...L22, submitted: deadline })).toBe(deadline);
+    expect(expectedStoredExpiry({ ...L22, submitted: deadline - 1n })).toBe(deadline - 1n);
+    expect(expectedStoredExpiry({ ...L22, submitted: 1_791_200_000n })).toBe(1_791_200_000n);
   });
 });
 

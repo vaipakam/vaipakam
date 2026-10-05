@@ -532,3 +532,68 @@ export function settlementBlocker({ prev, isolation, reviewDrift, premisesAtPrev
   return null;
 }
 
+/**
+ * A refinance request's state from its on-chain reads (#2422 r13) — one rule
+ * for the preflight's "no open request" condition and the failure ledger:
+ * cancelled (`isOfferCancelled`) outranks everything, then accepted, then
+ * expired (`expiresAt != 0 && expiresAt <= block time`, the contract's own
+ * expiry test), else open. A cancelled request that has not expired yet is
+ * NOT open — the preflight used to count it as one.
+ */
+export function requestStateOf({ offer, cancelled, blockTs }) {
+  if (cancelled) return 'cancelled';
+  if (offer.accepted) return 'accepted';
+  const exp = BigInt(offer.expiresAt);
+  if (exp !== 0n && exp <= BigInt(blockTs)) return 'expired';
+  return 'open';
+}
+
+/**
+ * Our request was filled by SOMEONE ELSE while the lender phase waited on
+ * the Offer Book (#2422 r13). That is a race with the open market (or the
+ * order matcher), not a product defect — UNDETERMINED (exit 3) for the
+ * claims the drive can no longer make — unless the chain shows something
+ * actually WRONG: the request accepted while no loan carries it.
+ *
+ * @param {{ requestId: bigint, replacement: object|null, scanError?: string|null }} a
+ *   `replacement` is `replacementAt`'s result (null = the scan reached an
+ *   empty id without finding a loan carrying the request); `scanError` is
+ *   set when the scan could not establish either way.
+ * @returns {{ kind: 'race'|'fail', why: string }}
+ */
+export function externalFillVerdict({ requestId, replacement, scanError = null }) {
+  if (scanError) {
+    return {
+      kind: 'race',
+      why:
+        `request #${requestId} was filled by another party before the lender reached it; its replacement loan could not be ` +
+        `established by state scan (${scanError}) — look it up by the Diamond's LoanRefinanced events`,
+    };
+  }
+  if (!replacement) {
+    return {
+      kind: 'fail',
+      why: `request #${requestId} is accepted on chain but no loan carries it — a fill without a replacement loan`,
+    };
+  }
+  return {
+    kind: 'race',
+    why:
+      `request #${requestId} was filled by another party before the lender reached it: replacement loan #${replacement.id} ` +
+      `(status ${replacement.status}, borrower NFT ${replacement.borrowerHolder}, lender NFT ${replacement.lenderHolder})`,
+  };
+}
+
+/**
+ * The expiry the contract STORES for a refinance-tagged request
+ * (OfferCreateFacet, #1189): the submitted `expiresAt`, clamped to the target
+ * loan's grace deadline — `startTime + durationDays·1 day + gracePeriod +
+ * 1` (exclusive, so the grace boundary itself stays fillable) — whenever the
+ * submitted one is 0 (open-ended) or later than that deadline.
+ */
+export function expectedStoredExpiry({ submitted, startTime, durationDays, graceSeconds }) {
+  const deadline = BigInt(startTime) + BigInt(durationDays) * 86_400n + BigInt(graceSeconds) + 1n;
+  const sub = BigInt(submitted);
+  return sub === 0n || sub > deadline ? deadline : sub;
+}
+

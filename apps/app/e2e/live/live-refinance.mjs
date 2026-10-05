@@ -275,6 +275,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   decodeEventLog,
+  decodeFunctionData,
   erc20Abi,
   formatUnits,
   parseAbi,
@@ -310,14 +311,18 @@ import { expectedPostureFrom, postureCopyFrom } from './refinancePosture.mjs';
 import { createManifest, runVerdict } from './outcomeManifest.mjs';
 import { configChanges, observationVerdict, observeAgainstChain } from './observation.mjs';
 import { readWatchedConfig } from './watchedConfig.mjs';
+import { postureMisses } from './supportedPosture.mjs';
 import {
   balanceDeltaMismatches,
   checkRoleNonces,
   collateralMovedOut,
   expectedPrincipalTransfers,
   expectedSettlement,
+  expectedStoredExpiry,
+  externalFillVerdict,
   lienMismatches,
   payoutOwnerOf,
+  requestStateOf,
   scanForReplacement,
   scopeReason,
   settlementBlocker,
@@ -1159,8 +1164,7 @@ async function requestStateAt(id, head) {
     read('isOfferCancelled', [id], head),
     pub.getBlock({ blockNumber: head }),
   ]);
-  const expired = offer.expiresAt !== 0n && offer.expiresAt <= block.timestamp;
-  return cancelled ? 'cancelled' : offer.accepted ? 'accepted' : expired ? 'expired' : 'open';
+  return requestStateOf({ offer, cancelled, blockTs: block.timestamp });
 }
 
 /** Every OPEN refinance request on the loan at `head`, as sorted ids —
@@ -1629,18 +1633,10 @@ const pre = await precondition('reading the preconditions from chain', async () 
   });
   const [b, l] = await Promise.all([bal(BORROWER), bal(LENDER)]);
   const offerIds = await allOfferIdsOf(BORROWER, head);
-  const openRequests = [];
-  for (const id of offerIds) {
-    const o = await read('getOfferDetails', [id], head);
-    if (
-      o.refinanceTargetLoanId === LOAN_ID &&
-      !o.accepted &&
-      !eq(o.creator, '0x0000000000000000000000000000000000000000') &&
-      (o.expiresAt === 0n || o.expiresAt > block.timestamp)
-    ) {
-      openRequests.push(id);
-    }
-  }
+  // The SAME scan the failure ledger makes (#2422 r13): `requestStateAt` →
+  // `requestStateOf`, so a cancelled request that has not yet expired is
+  // not counted as open, and the two can never disagree.
+  const openRequests = await openRequestsAt(head);
   const caps = await read('getAutoRefinanceCaps', [LOAN_ID], head);
   // The LIVE loan-initiation fee rate (ConfigFacet), pinned to the same
   // head — the payoff reserve below is computed from it, never assumed.
@@ -1768,7 +1764,15 @@ const want = (label, ok, observed) => {
   console.log(`pre   ${ok ? 'ok  ' : 'MISS'} ${label}: ${observed}`);
   if (!ok) misses.push(`${label} (observed ${observed})`);
 };
-want('loan is Active', loan.status === LOAN_STATUS.ACTIVE, loan.status);
+// THE SUPPORTED LOAN POSTURE (#2422 r13, supportedPosture.mjs): every Loan
+// field the expected builders and the settlement model depend on, with the
+// value they support. A loan outside it is BLOCKED here, by field and
+// reason — the unsupported mode (a pro-rata or periodic loan, settled
+// interest, a rental, liquid collateral) is never modelled.
+for (const m of postureMisses(loan)) {
+  want(`loan ${m.field} within the supported posture (${m.want}) — ${m.why}`, false, m.value);
+}
+if (postureMisses(loan).length === 0) console.log('pre   ok   loan is within the supported posture (supportedPosture.mjs): every declared field');
 want('stored borrower is the borrower role', eq(loan.borrower, BORROWER), loan.borrower);
 want(
   'the borrower role holds the borrower position NFT (ownerOf at the pinned block)',
@@ -1799,10 +1803,7 @@ console.log(
   `pre   grace window: ${GRACE_SECONDS}s (${pre.graceBuckets.length ? 'from getGraceBuckets' : 'no buckets published — the app\u2019s default table'})`,
 );
 want('accepting lender is not the borrower', !eq(LENDER, BORROWER), LENDER);
-want('collateral recorded Illiquid on the loan', loan.collateralLiquidity === LIQUIDITY_ILLIQUID, loan.collateralLiquidity);
 want('collateral is Illiquid now (checkLiquidity)', Number(pre.collLiquidity) === LIQUIDITY_ILLIQUID, pre.collLiquidity);
-want('riskAndTermsConsentFromBoth', loan.riskAndTermsConsentFromBoth === true, loan.riskAndTermsConsentFromBoth);
-want('ERC-20 loan with ERC-20 collateral', Number(loan.assetType) === 0 && Number(loan.collateralAssetType) === 0, `${loan.assetType}/${loan.collateralAssetType}`);
 // At least MIN_TO_MATURITY_SEC before maturity, not merely "not past it"
 // (#2422 r2 P2). Past maturity the payoff grows by the late fee and keeps
 // accruing, so a run that crosses the due date mid-drive would be signing
@@ -1818,7 +1819,6 @@ want(
   loanDue - pre.now >= MIN_TO_MATURITY_SEC,
   `now ${pre.now}, due ${loanDue} (${(loanDue - pre.now) / 60n} min away)`,
 );
-want('no periodic-interest cadence', Number(loan.periodicInterestCadence) === 0, loan.periodicInterestCadence);
 if (LOAN_ID === 22n) {
   for (const [k, v] of Object.entries(LOAN22_FACTS)) {
     want(`loan 22 ${k}`, typeof v === 'string' ? eq(loan[k], v) : loan[k] === v, loan[k]);
@@ -2317,10 +2317,24 @@ try {
   terms('request not yet accepted', req.accepted === false, req.accepted);
   terms('request records the borrower\u2019s consent', req.creatorRiskAndTermsConsent === true, req.creatorRiskAndTermsConsent);
   terms('request carries no Full-tariff opt-in', req.creatorFull === false, req.creatorFull);
+  // The stored expiry is EXACT (#2422 r13): the expiry the createOffer
+  // actually SUBMITTED (decoded from its own calldata), clamped as
+  // OfferCreateFacet clamps a refinance-tagged request — to the target
+  // loan's grace deadline + 1 — using the loan and the grace buckets as they
+  // stood just before the create (scoped by RULE 2 like every term here).
+  const createInput = (await pub.getTransaction({ hash: createTx.hash })).input;
+  const submittedExpiry = decodeFunctionData({ abi: DIAMOND_ABI, data: createInput }).args[0].expiresAt;
+  const [loanBeforeCreate, cfgBeforeCreate] = await Promise.all([loanOf(LOAN_ID, beforeCreate), readObservedConfig(beforeCreate)]);
+  const wantExpiry = expectedStoredExpiry({
+    submitted: submittedExpiry,
+    startTime: loanBeforeCreate.startTime,
+    durationDays: loanBeforeCreate.durationDays,
+    graceSeconds: graceSecondsFrom(cfgBeforeCreate.graceBuckets, loanBeforeCreate.durationDays),
+  });
   terms(
-    'request expiry is in the future and no later than ~30 days out',
-    req.expiresAt > createRcptTs && req.expiresAt <= BORROWER_ANCHOR + REQUEST_WINDOW_SEC + ANCHOR_WINDOW_SEC,
-    `${req.expiresAt} (block ts ${createRcptTs})`,
+    'request expiry is exactly the submitted expiry, clamped to the loan\u2019s grace deadline as the contract clamps it',
+    BigInt(req.expiresAt) === wantExpiry && BigInt(req.expiresAt) > createRcptTs,
+    `stored ${req.expiresAt}, submitted ${submittedExpiry}, expected ${wantExpiry}${wantExpiry !== BigInt(submittedExpiry) ? ' (clamped to the grace deadline)' : ''}; block ts ${createRcptTs}`,
   );
   console.log(
     `info  request persisted: rate floor ${req.interestRateBps} bps, ceiling ${req.interestRateBpsMax} bps, ` +
@@ -2400,7 +2414,23 @@ try {
     if ((await link.count()) === 0) return `row-without-cta: ${(await row.first().innerText()).replace(/\s+/g, ' ')}`;
     return link.first();
   }, { timeoutMs: 300_000, everyMs: 6_000 });
-  if (fundLink === 'taken') stop(`request #${requestId} was accepted by another party before the lender reached it`);
+  if (fundLink === 'taken') {
+    // Filled by SOMEONE ELSE while we waited (#2422 r13): a race with the
+    // open market or the order matcher — UNDETERMINED (exit 3), with the
+    // replacement reported — unless the chain shows something actually
+    // wrong (accepted, yet no loan carries it): then FAIL.
+    RUN_REQUEST = { state: 'known', id: requestId };
+    let replacement = null;
+    let scanError = null;
+    try {
+      replacement = await replacementAt(await pub.getBlockNumber({ cacheTime: 0 }));
+    } catch (e) {
+      scanError = String(e.shortMessage ?? e.message).slice(0, 160);
+    }
+    const fill = externalFillVerdict({ requestId, replacement, scanError });
+    if (fill.kind === 'fail') stop(fill.why);
+    raceStop(fill.why);
+  }
   if (typeof fundLink === 'string') {
     await session.shot('refinance-06-row-no-cta');
     stop(`the Offer Book row for request #${requestId} offers no "Fund this request" CTA: ${fundLink}`);
