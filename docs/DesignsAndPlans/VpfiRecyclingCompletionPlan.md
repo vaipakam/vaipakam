@@ -1865,11 +1865,12 @@ constituent cards below remain the working tickets.
    action, not a build input (priority solver routing armed first and
    alone); the **referral half is deferred for Phase 1** as a recorded
    deferral. #1204 no longer gates this programme.
-6. **D4 — #2047 keeper allocation: DECIDED (2026-09-07)** — decouple the
+6. **D4 — #2047 keeper allocation: DECIDED (2026-09-07), BUILT (2026-10-04)** — decouple the
    earmark from the claim-demand gate (its own resolution step, same
    finalization and broadcast) and cap the per-day mirror attribution
    rather than moving the authority; scheduled **after #1566**, with the
-   M4 follow-up. See §M6.
+   M4 follow-up. See §M6 and `VpfiCrossChainRecyclingDesign.md` §3.5 for
+   the built shape (one Base-set absolute per-chain daily ceiling).
 7. **D5 — #1566 sequencing: DECIDED (2026-09-07)** — a **read-only
    grandfathered census runs first**, before any migration machinery, and
    its committed artifact decides whether slices 0–3 are live work or a

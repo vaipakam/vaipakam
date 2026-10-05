@@ -7943,6 +7943,20 @@ library LibVaipakam {
         ///         custody it is the `Provisional` row; a hold made before custody
         ///         activation rests at the Diamond and is counted here alone.
         uint256 rewardBudgetFreshProvisional;
+        /// @dev #2047 — ONE Base-set ceiling on the recycled credit Base ATTRIBUTES
+        ///      to a mirror per day (VPFI wei; 0 = uncapped, the deploy default).
+        ///      The mirror supplies both terms of `min(forDayReported, headroom)`,
+        ///      so a mirror holding accumulated headroom could compress it into one
+        ///      day and accelerate its own keeper earmark; this bounds the per-day
+        ///      attribution — the allocation MIX and TIMING — from Base's side.
+        ///      Required to be non-zero before a chain's keeper bps may be armed.
+        mapping(uint32 => uint256) chainDailyAttributionCap;
+        /// @dev #2047 — the credit a chain's own day figures named that the ceiling
+        ///      trimmed, carried by BASE and dripped on later days at no more than the
+        ///      ceiling per day, so an honest chain loses nothing to the cap and a
+        ///      hostile one cannot compress it into one day. Base-tracked: the mirror
+        ///      supplies neither its size (the ceiling trims it) nor its pace.
+        mapping(uint32 => uint256) chainAttributionBacklog;
     }
 
     /// @notice 3b-ii-A2 (#2305) — one batch a staging record staged from, with

@@ -1663,7 +1663,10 @@ library LibVpfiRecycle {
      *         quiet-day close would zero the headroom of the days whose
      *         credit that cumulative already includes. Trade-off, accepted:
      *         a buggy/malicious mirror can shift credit BETWEEN its own
-     *         days within the aggregate bound (never exceed it); `Ā` only
+     *         days within the aggregate bound (never exceed it) — and, since
+     *         #2047, by at most the Base-set per-day attribution cap when one
+     *         is set: what the cap trims from a day's figure is carried as a
+     *         Base-tracked backlog and dripped at that pace on later days; `Ā` only
      *         sizes budgets, and B2's `min(target, availRecycled)` funding
      *         re-bounds everything against the availability ledger.
      *
@@ -1689,7 +1692,26 @@ library LibVpfiRecycle {
         uint256 accepted;
         if (reported > attributed) {
             uint256 headroom = reported - attributed;
-            accepted = forDayReported < headroom ? forDayReported : headroom;
+            uint256 claimed = forDayReported < headroom ? forDayReported : headroom;
+            // #2047 — ONE Base-set ceiling on the WHOLE accepted daily figure.
+            // Both terms of `claimed` are mirror-supplied, so a mirror holding
+            // accumulated headroom could label all of it today's credit and
+            // compress it into one day's keeper earmark. The ceiling BOUNDS the
+            // day's attribution; what it trims is carried as a BASE-tracked
+            // backlog and dripped on later days at no more than the ceiling —
+            // so an honest chain's big day loses nothing (the pure bound would
+            // strand its excess forever, since an honest chain never re-claims
+            // it), the allocation MIX and TIMING are bounded from Base's side,
+            // and the mirror supplies neither the backlog's size nor its pace.
+            // An unset ceiling (0, the deploy default) is the pre-#2047 rule
+            // exactly — and drains any backlog left by a ceiling that was later
+            // cleared; a huge ceiling is a no-op by construction. The keeper
+            // bps cannot be armed for a chain until a ceiling exists.
+            uint256 want = claimed + s.chainAttributionBacklog[sourceChainId];
+            if (want > headroom) want = headroom;
+            uint256 cap = s.chainDailyAttributionCap[sourceChainId];
+            accepted = (cap != 0 && want > cap) ? cap : want;
+            s.chainAttributionBacklog[sourceChainId] = want - accepted;
         }
 
         s.chainRecycledDayAccepted[dayId][sourceChainId] = true;

@@ -1054,7 +1054,14 @@ contract RewardAggregatorFacet is
                 LibVaipakam.RECYCLE_REGISTER_KEEPER_MAX_BPS
             );
         }
-        LibVaipakam.storageSlot().chainKeeperAllocateBps[chainId] = bps;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        // #2047 — the earmark's numerator must be bounded before it is armed:
+        // a chain's per-day attribution cap is the only Base-side limit on how
+        // fast its reported headroom can reach the earmark.
+        if (bps != 0 && s.chainDailyAttributionCap[chainId] == 0) {
+            revert IVaipakamErrors.KeeperAllocateNeedsAttributionCap(chainId);
+        }
+        s.chainKeeperAllocateBps[chainId] = bps;
         emit ChainKeeperAllocateBpsSet(chainId, bps);
     }
 
@@ -1072,6 +1079,44 @@ contract RewardAggregatorFacet is
         returns (uint16)
     {
         return LibVaipakam.storageSlot().chainKeeperAllocateBps[chainId];
+    }
+
+    /// @notice #2047 — `chainId`'s per-day attribution ceiling changed.
+    /// @custom:event-category informational/config
+    event ChainDailyAttributionCapSet(uint32 indexed chainId, uint256 cap);
+
+    /// @notice #2047 — set the ONE Base-side ceiling on the recycled credit Base
+    ///         attributes to `chainId` per day (VPFI wei; 0 = uncapped). The
+    ///         mirror supplies both terms of the attribution clamp, so without
+    ///         this a mirror holding accumulated headroom could compress it into
+    ///         one day and accelerate its own keeper earmark. A chain's keeper
+    ///         bps cannot be armed while this is zero, and this cannot return to
+    ///         zero while the bps is armed: the earmark is never armed uncapped.
+    ///         What the ceiling trims from a day's figure is carried as a Base-
+    ///         tracked backlog and dripped at the ceiling on later days, so an
+    ///         honest chain loses nothing. The canonical chain is not a target.
+    function setChainDailyAttributionCap(uint32 chainId, uint256 cap)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+        onlyCanonical
+    {
+        if (chainId == uint32(block.chainid)) revert KeeperAllocateTargetIsCanonical(chainId);
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint16 live = s.chainKeeperAllocateBps[chainId];
+        if (cap == 0 && live != 0) revert IVaipakamErrors.AttributionCapUnderLiveKeeperBps(chainId, live);
+        s.chainDailyAttributionCap[chainId] = cap;
+        emit ChainDailyAttributionCapSet(chainId, cap);
+    }
+
+    /// @notice #2047 — `chainId`'s per-day attribution ceiling (0 = uncapped).
+    function getChainDailyAttributionCap(uint32 chainId) external view returns (uint256) {
+        return LibVaipakam.storageSlot().chainDailyAttributionCap[chainId];
+    }
+
+    /// @notice #2047 — the credit `chainId`'s own day figures named that the ceiling
+    ///         trimmed and Base still carries, dripping at the ceiling on later days.
+    function getChainAttributionBacklog(uint32 chainId) external view returns (uint256) {
+        return LibVaipakam.storageSlot().chainAttributionBacklog[chainId];
     }
 
     function setRecycleSurplusMultiple(uint16 newMultiple)
@@ -1333,6 +1378,11 @@ contract RewardAggregatorFacet is
             // own-chain record, so Base must guarantee its own stamp on
             // EVERY armed day (fresh floors only; recycled zeroes).
             _ensureBaseDayFundingStamp(s, dayId, scheduleFloor / 2);
+            // #2047 — the keeper earmark's OWN resolution step, after the
+            // funding stamps (its availability read nets their commits) and on
+            // EVERY armed day: the demand gate above no longer decides whether
+            // a mirror's inflow is earmarked. Same finalization, same broadcast.
+            LibMeshFunding.resolveKeeperEarmarks(s, dayId, scheduleFloor / 2);
         } else {
             recycledBudget = schedule == 0
                 ? 0

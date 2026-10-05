@@ -1927,4 +1927,9 @@ interface IVaipakamErrors {
     ///         targets another loan, or has expired. Raised by
     ///         `RefinanceFacet.checkRefinanceRequest`.
     error RefinanceRequestNotLive(uint256 loanId, uint256 offerId);
+    // ── #2047 — keeper allocation: the per-day attribution ceiling ──
+    /// @notice `chainId`'s keeper allocation cannot be armed while its per-day attribution cap is zero: the earmark's numerator is bounded first.
+    error KeeperAllocateNeedsAttributionCap(uint32 chainId);
+    /// @notice `chainId`'s attribution cap cannot return to zero while its keeper allocation (`bps`) is armed.
+    error AttributionCapUnderLiveKeeperBps(uint32 chainId, uint16 bps);
 }

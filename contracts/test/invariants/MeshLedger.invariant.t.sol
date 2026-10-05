@@ -279,6 +279,10 @@ contract MeshLedgerInvariant is Test {
         //
         // ARB only, so `invariant_...MinusRetired` still spans an armed and
         // an unarmed chain in the same campaign.
+        // #2047 — a keeper bps can only be armed behind a per-day attribution
+        // cap; set it far above anything the handler reports so the campaign's
+        // figures are what they were.
+        RewardAggregatorFacet(address(diamond)).setChainDailyAttributionCap(CHAIN_ARB, type(uint128).max);
         RewardAggregatorFacet(address(diamond)).setChainKeeperAllocateBps(
             CHAIN_ARB, 2_500
         );

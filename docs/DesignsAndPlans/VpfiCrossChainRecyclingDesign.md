@@ -314,6 +314,35 @@ the **commitment invariant** (§3.6a — one statement, subtraction-first) is
 preserved. A day whose claims exhaust the bucket simply funds no keeper
 allocation that day.
 
+> **#2047 — BUILT (2026-10-04), the ratified shape (plan §M6 D4).** Two
+> amendments to the paragraph above, neither moving the authority:
+>
+> 1. **The earmark has its OWN resolution step** inside the same
+>    finalization — `LibMeshFunding.resolveKeeperEarmarks`, run after the
+>    funding stamps on EVERY armed day, so a quiet day (no coupled target, or
+>    no interest on either side — where the claim-funding resolution returns
+>    before stamping) earmarks its inflow too, into a minimally stamped
+>    record the same broadcast carries. `headroom` is the single availability
+>    read: the ledger nets the day's claim commit, every earlier earmark and
+>    every repatriation draw, so the formula above is unchanged and computed
+>    in one place for demand and quiet days alike.
+> 2. **`reportedInflow[c][D]` is bounded per day by ONE Base-set ceiling**,
+>    `chainDailyAttributionCap[c]`, applied to the WHOLE accepted figure at
+>    the report ingress (`recordChainRecycled`): the ceiling bounds the day's
+>    attribution, and what it trims from the chain's own day figure is carried
+>    as a BASE-tracked backlog (`chainAttributionBacklog[c]`) dripped on later
+>    days at no more than the ceiling — an honest chain's big day loses
+>    nothing (a pure bound would strand its excess, since an honest chain never
+>    re-claims it), accumulated headroom cannot be compressed into one day's
+>    earmark (the allocation MIX and TIMING the finding named are bounded; the
+>    total was already bounded by availability), and a ceiling above the
+>    chain's daily figures is a no-op by construction. Of the two shapes the decision left
+>    open, the Base-set absolute ceiling was chosen over authenticated
+>    per-day absorption buckets: the latter is a new attestation path for a
+>    non-solvency concern, which the decision text rejects. A chain's keeper
+>    bps cannot be armed while its ceiling is zero, and the ceiling cannot
+>    return to zero under a live bps — the earmark is never armed uncapped.
+
 ### 3.6 Surplus handling (the only place tokens still travel)
 
 If a chain's `availRecycled` exceeds a governance knob (e.g. N× its trailing

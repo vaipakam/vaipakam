@@ -8,6 +8,7 @@ import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
+import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 
 /**
  * @title  MeshCommitRetirementTest
@@ -38,6 +39,18 @@ contract MeshCommitRetirementTest is SetupTest {
 
     uint32 internal constant CHAIN_BASE = 8453;
     uint32 internal constant CHAIN_ARB = 42161;
+    /// @dev #2047 — the per-day attribution ceiling the earmark is armed behind; far
+    ///      above every report in the pre-#2047 cells, so their figures are unchanged.
+    uint256 internal constant CAP = 1_000 ether;
+
+    event ChainDailyAttributionCapSet(uint32 indexed chainId, uint256 cap);
+    event ChainDayKeeperEarmarked(uint256 indexed dayId, uint32 indexed chainId, uint256 want, uint256 headroom, uint256 allocated);
+
+    /// @dev #2047 — arm ARB's keeper allocation the only way it can be armed now: cap first, then bps.
+    function _armKeeper(uint16 bps) internal {
+        _agg().setChainDailyAttributionCap(CHAIN_ARB, CAP);
+        _agg().setChainKeeperAllocateBps(CHAIN_ARB, bps);
+    }
 
     function setUp() public {
         setupHelper();
@@ -174,7 +187,7 @@ contract MeshCommitRetirementTest is SetupTest {
     function test_KeeperEarmarkDoesNotBreakTheLedgerIdentity() public {
         // 25% — large enough that a regression cannot hide inside the
         // approximate-equality slack the instruction figure carries.
-        _agg().setChainKeeperAllocateBps(CHAIN_ARB, 2_500);
+        _armKeeper(2_500);
 
         uint256 instructed = _armAndInstruct40();
 
@@ -199,7 +212,7 @@ contract MeshCommitRetirementTest is SetupTest {
     /// what the commit leaves (see the over-commit test below), so on that
     /// scaffold the armed figure is legitimately zero.
     function test_KeeperEarmarkStillDrawsDownAvailability() public {
-        _agg().setChainKeeperAllocateBps(CHAIN_ARB, 2_500);
+        _armKeeper(2_500);
         uint256 instructed = _armAndInstructWithHeadroom();
         uint256 keeperArmed = _agg().getChainKeeperDraw(CHAIN_ARB);
         assertGt(keeperArmed, 0, "the earmark fits in the headroom");
@@ -227,7 +240,7 @@ contract MeshCommitRetirementTest is SetupTest {
     /// keeper budget backed by 40 tokens, with the mirror dutifully
     /// reserving both.
     function test_KeeperEarmarkCannotOverCommitTheBucket() public {
-        _agg().setChainKeeperAllocateBps(CHAIN_ARB, 2_500);
+        _armKeeper(2_500);
         uint256 instructed = _armAndInstruct40();
 
         (uint256 reported, uint256 consumed, , ) =
@@ -279,12 +292,114 @@ contract MeshCommitRetirementTest is SetupTest {
         // The control: the guard is scoped to the canonical id and has not
         // broken the case the setter exists for. Without this a change that
         // rejected every chain would pass the assertion above.
-        _agg().setChainKeeperAllocateBps(CHAIN_ARB, 2_500);
+        _armKeeper(2_500);
         assertEq(
             _agg().getChainKeeperAllocateBps(CHAIN_ARB),
             2_500,
             "a mirror is still a valid target"
         );
+    }
+
+    // ─── #2047 — the earmark's own resolution step + the attribution ceiling ───
+
+    /// A day with NO claim demand (receipts reported, zero interest on both
+    /// sides) used to earmark nothing: the funding resolution early-returns
+    /// before stamping and the earmark sat downstream of that return. Now the
+    /// earmark has its own step on every armed day: the mirror's record is
+    /// stamped minimal, the earmark is 25% of the attributed inflow bounded by
+    /// the chain's availability, the draw slot takes it, and the broadcast
+    /// field is filled — on the same finalization, for the same broadcast.
+    function test_2047_QuietDay_EarmarksInflow_WithoutClaimDemand() public {
+        _mut().setRecycleBucketRaw(1_000_000 ether);
+        _mut().setRecycledCreditedByDayRaw(5, 700 ether); // coupled target > 0 ...
+        _mut().setGovernorCommitArmedFromDayRaw(5);
+        _armKeeper(2_500);
+        // ... but no interest anywhere: the day is quiet.
+        messenger.deliverChainReportB3(CHAIN_ARB, 5, 0, 0, 40 ether, 40 ether, 0, 0);
+        messenger.deliverChainReport(CHAIN_BASE, 5, 0, 0);
+        _mut().setChainDayCommitmentCompleteRaw(5, CHAIN_ARB, true);
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit ChainDayKeeperEarmarked(5, CHAIN_ARB, 10 ether, 40 ether, 10 ether);
+        _agg().finalizeDay(5);
+        LibVaipakam.ChainDayFunding memory f = _agg().getChainDayRecycledFunding(5, CHAIN_ARB);
+        assertTrue(f.stamped, "the quiet day's record is stamped by the earmark step");
+        assertEq(f.recycleConsume, 0, "no claim demand, no commit");
+        assertEq(f.keeperAllocate, 10 ether, "25% of the attributed inflow, earmarked without demand");
+        assertEq(_agg().getChainKeeperDraw(CHAIN_ARB), 10 ether, "charged to the chain's own draw slot");
+        (, uint256 instructed, uint256 avail, ) = _agg().getChainRecycledLedger(CHAIN_ARB);
+        assertEq(instructed, 0, "nothing instructed for claims");
+        assertEq(avail, 30 ether, "availability nets the earmark, so the same tokens cannot be instructed twice");
+        _assertLedgerIdentity(CHAIN_ARB);
+    }
+
+    /// A demand day earmarks exactly as before — the single availability read
+    /// is the headroom the commit leaves — so the existing over-commit cell
+    /// above still holds through the new step. Here the control: with the bps
+    /// dark, a quiet day stamps nothing for the mirror and earmarks nothing.
+    function test_2047_QuietDay_DarkBps_EarmarksNothing() public {
+        _mut().setRecycleBucketRaw(1_000_000 ether);
+        _mut().setRecycledCreditedByDayRaw(5, 700 ether);
+        _mut().setGovernorCommitArmedFromDayRaw(5);
+        messenger.deliverChainReportB3(CHAIN_ARB, 5, 0, 0, 40 ether, 40 ether, 0, 0);
+        messenger.deliverChainReport(CHAIN_BASE, 5, 0, 0);
+        _mut().setChainDayCommitmentCompleteRaw(5, CHAIN_ARB, true);
+        _agg().finalizeDay(5);
+        assertFalse(_agg().getChainDayRecycledFunding(5, CHAIN_ARB).stamped, "dark: nothing stamped for the mirror");
+        assertEq(_agg().getChainKeeperDraw(CHAIN_ARB), 0, "dark: nothing earmarked");
+    }
+
+    /// With a ceiling set, a report labelling 40 of accumulated headroom as
+    /// today's credit is attributed 10 a day until the trimmed credit — a
+    /// Base-tracked backlog — is gone: nothing is lost, the MIX and TIMING are
+    /// bounded, the mirror supplies neither the backlog's size nor its pace.
+    /// Without a ceiling the pre-#2047 rule stands.
+    function test_2047_AttributionCap_DripsHeadroom_NothingLost() public {
+        vm.expectEmit(true, false, false, true, address(diamond));
+        emit ChainDailyAttributionCapSet(CHAIN_ARB, 10 ether);
+        _agg().setChainDailyAttributionCap(CHAIN_ARB, 10 ether);
+        assertEq(_agg().getChainDailyAttributionCap(CHAIN_ARB), 10 ether);
+        _reportArbWithDayCredit(5, 40 ether, 40 ether, 0, 0); // "all 40 is today's"
+        (uint256 c5, bool a5) = _agg().getChainDailyRecycledCredit(5, CHAIN_ARB);
+        assertTrue(a5);
+        assertEq(c5, 10 ether, "capped: one day takes at most the ceiling");
+        assertEq(_agg().getChainAttributionBacklog(CHAIN_ARB), 30 ether, "what the ceiling trimmed is carried by Base");
+        for (uint256 d = 6; d <= 8; ++d) {
+            _reportArbWithDayCredit(d, 40 ether, 0, 0, 0); // honest later days: no new credit
+            (uint256 cd, ) = _agg().getChainDailyRecycledCredit(d, CHAIN_ARB);
+            assertEq(cd, 10 ether, "the withheld credit drips at the ceiling");
+            assertEq(_agg().getChainAttributionBacklog(CHAIN_ARB), (8 - d) * 10 ether, "the backlog falls by the drip");
+        }
+        _reportArbWithDayCredit(9, 40 ether, 0, 0, 0);
+        (uint256 c9, bool a9) = _agg().getChainDailyRecycledCredit(9, CHAIN_ARB);
+        assertTrue(a9);
+        assertEq(c9, 0, "headroom exhausted: 10 + 10 + 10 + 10 = 40, nothing lost, nothing invented");
+        (uint256 reported, , , ) = _agg().getChainRecycledLedger(CHAIN_ARB);
+        assertEq(reported, 40 ether, "the availability ratchet is untouched by the cap");
+
+        // The uncapped control, on a fresh chain state.
+        setUp();
+        _reportArbWithDayCredit(5, 40 ether, 40 ether, 0, 0);
+        (uint256 u5, ) = _agg().getChainDailyRecycledCredit(5, CHAIN_ARB);
+        assertEq(u5, 40 ether, "uncapped: the pre-#2047 rule, the mirror's day figure within its headroom");
+    }
+
+    /// The earmark is never armed uncapped: a bps needs a cap first; the cap
+    /// cannot return to zero under a live bps; the canonical chain is no
+    /// target for either knob.
+    function test_2047_ArmingNeedsACap_CapCannotDropUnderALiveBps() public {
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.KeeperAllocateNeedsAttributionCap.selector, CHAIN_ARB));
+        _agg().setChainKeeperAllocateBps(CHAIN_ARB, 2_500);
+        _agg().setChainDailyAttributionCap(CHAIN_ARB, 10 ether);
+        _agg().setChainKeeperAllocateBps(CHAIN_ARB, 2_500);
+        assertEq(_agg().getChainKeeperAllocateBps(CHAIN_ARB), 2_500, "armed behind the cap");
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.AttributionCapUnderLiveKeeperBps.selector, CHAIN_ARB, uint16(2_500)));
+        _agg().setChainDailyAttributionCap(CHAIN_ARB, 0);
+        _agg().setChainDailyAttributionCap(CHAIN_ARB, 20 ether); // raising or lowering above zero is fine
+        _agg().setChainKeeperAllocateBps(CHAIN_ARB, 0); // disarm ...
+        _agg().setChainDailyAttributionCap(CHAIN_ARB, 0); // ... then the cap may go
+        assertEq(_agg().getChainDailyAttributionCap(CHAIN_ARB), 0);
+        vm.expectRevert(abi.encodeWithSelector(RewardAggregatorFacet.KeeperAllocateTargetIsCanonical.selector, CHAIN_BASE));
+        _agg().setChainDailyAttributionCap(CHAIN_BASE, 1 ether);
     }
 
     /// @dev Like `_armAndInstruct40` but reports MORE availability than the
