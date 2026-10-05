@@ -18,6 +18,7 @@ import {IApi3ServerV1} from "../interfaces/IApi3ServerV1.sol";
 import {IDIAOracleV2} from "../interfaces/IDIAOracleV2.sol";
 import {IPyth} from "../interfaces/IPyth.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 
 /**
  * @title OracleFacet
@@ -93,6 +94,10 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
     /// @notice Reverted when the l2 sequencer has been up for less than
     ///         `LibVaipakam.SEQUENCER_GRACE_PERIOD` seconds after a recovery.
     error SequencerGracePeriod();
+    /// @notice Reverted by the pair-level {calculateLTV} when the collateral
+    ///         leg values to zero — the same refusal, by the same name, as
+    ///         the loan-level `RiskFacet.calculateLTV(loanId)`.
+    error ZeroCollateral();
 
     // 0.3% v3-style AMM fee tier — the standard ERC20/WETH venue. Resolved
     // live via `factory.getPool(tokenA, tokenB, fee)` so the same code path
@@ -310,11 +315,26 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
 
 
     /**
-     * @notice Calculates the Loan-to-Value (LTV) ratio for a loan in basis points.
-     * @dev LTV = (borrowedValueUsd * 10000) / collateralValueUsd; 0 for
-     *      zero-collateral. Uses {getAssetPrice} for both legs, which
-     *      reverts on missing/stale feeds. Callers (RiskFacet, LoanFacet)
-     *      should only invoke this for liquid loans.
+     * @notice Loan-to-value, in basis points, of borrowing `borrowedAmount`
+     *         of `borrowedAsset` against `collateralAmount` of
+     *         `collateralAsset` — a pair-level PREVIEW of the figure loan
+     *         initiation checks.
+     * @dev    Values each leg exactly as the loan-level path does
+     *         (`RiskFacet._computeNumeraireValues`, which initiation,
+     *         liquidation, add-collateral and refinance use):
+     *         `amount × price / 10**feedDecimals / 10**tokenDecimals`. Both
+     *         divisions matter: dividing by the feed's decimals alone (#2403)
+     *         left each leg in raw token units, so a pair whose tokens have
+     *         different decimals — a 6-decimal stablecoin against an
+     *         18-decimal asset — came out off by `10**(decimal difference)`.
+     *         The same integer truncation as the loan-level path is kept on
+     *         purpose, so the preview and the binding check agree.
+     *
+     *         Reverts {ZeroCollateral} when the collateral leg values to
+     *         zero (a zero amount, or one too small to register), as the
+     *         loan-level path does; returning 0 read as "no risk". Reverts
+     *         on a missing or stale feed via {getAssetPrice}. Meaningful only
+     *         for liquid (priced) assets.
      */
     // forge-lint: disable-next-line(mixed-case-function)
     function calculateLTV(
@@ -323,15 +343,18 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         address collateralAsset,
         uint256 collateralAmount
     ) external view returns (uint256 ltv) {
-        if (collateralAmount == 0) return 0;
+        if (collateralAmount == 0) revert ZeroCollateral();
 
-        (uint256 borrowedPrice, uint8 borrowedDec) = this.getAssetPrice(borrowedAsset);
-        (uint256 collateralPrice, uint8 collateralDec) = this.getAssetPrice(collateralAsset);
+        (uint256 borrowedPrice, uint8 borrowedFeedDec) = this.getAssetPrice(borrowedAsset);
+        (uint256 collateralPrice, uint8 collateralFeedDec) = this.getAssetPrice(collateralAsset);
 
-        uint256 borrowedValueUsd = (borrowedAmount * borrowedPrice) / (10 ** borrowedDec);
-        uint256 collateralValueUsd = (collateralAmount * collateralPrice) / (10 ** collateralDec);
+        uint256 borrowedValue = (borrowedAmount * borrowedPrice) /
+            (10 ** borrowedFeedDec) / (10 ** IERC20Metadata(borrowedAsset).decimals());
+        uint256 collateralValue = (collateralAmount * collateralPrice) /
+            (10 ** collateralFeedDec) / (10 ** IERC20Metadata(collateralAsset).decimals());
+        if (collateralValue == 0) revert ZeroCollateral();
 
-        ltv = (borrowedValueUsd * LibVaipakam.LTV_SCALE) / collateralValueUsd;
+        ltv = (borrowedValue * LibVaipakam.LTV_SCALE) / collateralValue;
     }
 
     /**

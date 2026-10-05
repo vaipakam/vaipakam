@@ -172,8 +172,11 @@ library LibRiskMath {
     ///         binding `LoanFacet._checkInitialLtvAndHf` gate. `capBps` is
     ///         the effective cap = `min(assetRiskParams.loanInitMaxLtvBps,
     ///         cfgTierMaxInitLtvBps(effectiveTier(collateral)))`.
-    /// @dev    `LTV = debtUSD × BASIS_POINTS / collateralUsd` (mirrors
-    ///         `OracleFacet.calculateLTV`), so `LTV ≤ capBps` ⟺
+    /// @dev    `LTV = debtUSD × BASIS_POINTS / collateralUsd` (the loan-level
+    ///         `RiskFacet.calculateLTV(loanId)` formula, which values each
+    ///         leg via `RiskFacet._computeNumeraireValues`; the pair-level
+    ///         `OracleFacet.calculateLTV` preview applies the same valuation
+    ///         since #2403), so `LTV ≤ capBps` ⟺
     ///         `collateralUsd ≥ debtUSD × BASIS_POINTS / capBps`. Doesn't
     ///         involve `liqThresholdBps` (the LTV cap is on the *borrow*
     ///         ratio, not the liquidation trigger; and since the invariant

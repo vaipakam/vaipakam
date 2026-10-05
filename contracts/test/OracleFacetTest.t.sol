@@ -348,9 +348,44 @@ contract OracleFacetTest is Test {
 
     // ─── calculateLTV ─────────────────────────────────────────────────────────
 
-    function testCalculateLTVZeroCollateralReturnsZero() public view {
-        uint256 ltv = OracleFacet(address(diamond)).calculateLTV(mockAsset, 1000 ether, mockAsset2, 0);
-        assertEq(ltv, 0);
+    /// #2403 — zero collateral is refused, as the loan-level path refuses
+    /// it, rather than answered with an LTV of 0 that reads as "no risk".
+    function testCalculateLTVZeroCollateralReverts() public {
+        vm.expectRevert(OracleFacet.ZeroCollateral.selector);
+        OracleFacet(address(diamond)).calculateLTV(mockAsset, 1000 ether, mockAsset2, 0);
+    }
+
+    /// #2403 — a collateral amount too small to register in whole numeraire
+    /// units values to zero and is refused the same way, never divided by.
+    function testCalculateLTVDustCollateralReverts() public {
+        _mockRegistryFeed(mockAsset, mockFeed);
+        _mockRegistryFeed(mockAsset2, mockFeed2);
+        _mockFeedFull(mockFeed, int256(1e8), 8);
+        _mockFeedFull(mockFeed2, int256(2e8), 8);
+        vm.expectRevert(OracleFacet.ZeroCollateral.selector);
+        OracleFacet(address(diamond)).calculateLTV(mockAsset, 1000 ether, mockAsset2, 1);
+    }
+
+    /// #2403 — each leg is scaled by its OWN token decimals. A 6-decimal
+    /// borrowed token against an 18-decimal collateral gives the same LTV as
+    /// the equal-decimals case for the same dollar amounts; dividing by the
+    /// feed decimals alone made this ~0 (off by 10**12).
+    function testCalculateLTVMixedTokenDecimals() public {
+        address usd6 = address(new ERC20Mock("USD6", "USD6", 6));
+        _mockRegistryFeed(usd6, mockFeed);
+        _mockRegistryFeed(mockAsset2, mockFeed2);
+        _mockFeedFull(mockFeed, int256(1e8), 8);   // borrowed: $1, 6 decimals
+        _mockFeedFull(mockFeed2, int256(2e8), 8);  // collateral: $2, 18 decimals
+
+        uint256 ltv = OracleFacet(address(diamond)).calculateLTV(usd6, 1000e6, mockAsset2, 1800 ether);
+        assertEq(ltv, 2777);
+
+        // And the other way round: 18-decimal borrowed, 6-decimal collateral.
+        address coll6 = address(new ERC20Mock("COL6", "COL6", 6));
+        _mockRegistryFeed(mockAsset, mockFeed);
+        _mockRegistryFeed(coll6, mockFeed2);
+        ltv = OracleFacet(address(diamond)).calculateLTV(mockAsset, 1000 ether, coll6, 1800e6);
+        assertEq(ltv, 2777);
     }
 
     function testCalculateLTVRevertsNoPriceFeedForBorrowed() public {
