@@ -49,6 +49,9 @@ export function offerCollateralText(args: {
     /** #2382 — a request earlier fills have part-used: what is still
      *  committed, and how much is already locked. */
     rangeRemaining?: (range: string, used: string) => string;
+    /** #2382 r1 — an unfilled single-value request: funding it directly
+     *  locks all of it, a matched fill only the lender's requirement. */
+    single?: (amount: string) => string;
   };
 }): string {
   const token = shortAddress(args.asset);
@@ -67,7 +70,8 @@ export function offerCollateralText(args: {
     r.ceiling !== null &&
     r.filled !== null &&
     args.labels.range &&
-    args.labels.rangeRemaining
+    args.labels.rangeRemaining &&
+    args.labels.single
   ) {
     const { decimals, symbol } = args.meta;
     const n = (v: bigint) => formatTokenAmount(v, decimals);
@@ -86,8 +90,12 @@ export function offerCollateralText(args: {
         `${n(ceiling)} ${symbol}`,
       );
     }
-    // Ceiling == floor and nothing used: the figure is exact.
-    return `${n(floor)} ${symbol}`;
+    // Ceiling == floor and nothing used. The request commits exactly this,
+    // but it is NOT the loan's collateral in every case: a direct funding
+    // locks all of it, while a matched fill locks only the lender's pro-rated
+    // requirement and returns the rest (LibOfferMatch's single-value branch,
+    // #2382 r1). Say both rather than print a figure as if it were exact.
+    return args.labels.single(`${n(floor)} ${symbol}`);
   }
   let text: string;
   if (args.meta) {

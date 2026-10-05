@@ -120,6 +120,7 @@ import {
 } from './calendarNotifications';
 import {
   MAX_SUBREQUESTS_PER_INVOCATION,
+  canAfford,
   createBudget,
   createChainClient,
   meterD1,
@@ -2320,6 +2321,7 @@ async function runChainPass(
     diamond,
     chainId,
     env,
+    budget,
   );
   // Bootstrap loan position-NFT token IDs (lender_token_id /
   // borrower_token_id) for any newly-inserted loan rows. One
@@ -2331,6 +2333,7 @@ async function runChainPass(
     diamond,
     chainId,
     env,
+    budget,
   );
 
   // Advance cursor only after every step succeeded — atomic from the
@@ -3343,17 +3346,33 @@ async function processSignedOfferLogs(
   return updates;
 }
 
+/** The most subrequests one `refreshOfferDetails` spends: the
+ *  `getOfferDetails` read, the position-NFT `ownerOf` read, the row UPDATE. */
+const OFFER_DETAIL_REFRESH_COST = 3;
+/** The most one `refreshStubLoans` row spends: the read and the UPDATE. */
+const LOAN_DETAIL_REFRESH_COST = 2;
+
 /**
  * Refresh `getOfferDetails` for every offer whose row was inserted as
  * a placeholder OR whose status flipped (in case a partial-fill
  * ratcheted `amountFilled`). Bound by DETAILS_REFRESH_BATCH per tick.
+ *
+ * AND BY THE INVOCATION BUDGET (#2382 r1). Both refresh lanes run BEFORE the
+ * cursor write, so a lane that spends past the allowance takes the cursor with
+ * it and the next tick replays the same range. A migration that newly
+ * qualifies every active offer (0054 did) makes that the common case for a
+ * while: fifty rows at up to three subrequests each is three times the
+ * allowance. Each row is started only if it is still affordable with the
+ * cursor write reserved; the rest wait for the next tick, oldest first.
  */
-async function refreshStubOffers(
+export async function refreshStubOffers(
   client: PublicClient,
   diamond: Address,
   chainId: number,
   env: Env,
+  budget: TickBudget,
 ): Promise<number> {
+  if (!canAfford(budget, 1)) return 0;
   // Targeted refresh: only rows actually flagged as stub. Every row
   // INSERTed via the inline-success path lands with `is_stub = 0`, and
   // `refreshOfferDetails` flips the flag back to 0 once it writes
@@ -3372,7 +3391,8 @@ async function refreshStubOffers(
   const stale = await env.DB.prepare(
     `SELECT offer_id FROM offers
      WHERE chain_id = ? AND (is_stub = 1
-       OR (status = 'active' AND collateral_amount_max IS NULL))
+       OR (status = 'active'
+           AND (collateral_amount_max IS NULL OR collateral_amount_filled IS NULL)))
      ORDER BY updated_at ASC
      LIMIT ?`,
   )
@@ -3380,6 +3400,7 @@ async function refreshStubOffers(
     .all<{ offer_id: number }>();
   let refreshed = 0;
   for (const row of stale.results ?? []) {
+    if (!canAfford(budget, OFFER_DETAIL_REFRESH_COST)) break;
     const ok = await refreshOfferDetails(client, diamond, chainId, row.offer_id, env);
     if (ok) refreshed++;
   }
@@ -3583,8 +3604,12 @@ async function refreshStubLoans(
   diamond: Address,
   chainId: number,
   env: Env,
+  budget: TickBudget,
 ): Promise<number> {
   let healed = 0;
+  // Budget-bound for the same reason as `refreshStubOffers`: it runs before
+  // the cursor write, which must stay affordable.
+  if (!canAfford(budget, 1)) return 0;
   const stale = await env.DB.prepare(
     `SELECT loan_id FROM loans
      WHERE chain_id = ? AND is_stub = 1
@@ -3593,6 +3618,7 @@ async function refreshStubLoans(
     .bind(chainId, LOAN_TOKEN_ID_BATCH)
     .all<{ loan_id: number }>();
   for (const row of stale.results ?? []) {
+    if (!canAfford(budget, LOAN_DETAIL_REFRESH_COST)) break;
     try {
       const detail = (await client.readContract({
         address: diamond,

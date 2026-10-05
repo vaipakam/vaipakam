@@ -9,7 +9,8 @@
  */
 import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { effectiveCollateralMax } from '../src/chainIndexer';
+import { effectiveCollateralMax, refreshStubOffers } from '../src/chainIndexer';
+import { CURSOR_WRITE_RESERVE, createBudget, meterEnv, spend } from '../src/subrequestBudget';
 import { handleOfferById } from '../src/offerRoutes';
 import type { Env } from '../src/env';
 import { createSqliteD1 } from './helpers/sqliteD1';
@@ -93,5 +94,53 @@ describe('offer API — collateral range', () => {
     const o = await fetchOffer(h);
     expect(o.collateralAmount).toBe('150');
     expect(o.collateralAmountMax).toBeNull();
+  });
+});
+
+describe('the range backfill lane (#2382 r1)', () => {
+  /** A chain client whose every read costs what a full refresh can: the
+   *  details read, the ownerOf read and the UPDATE (3), then fails — so the
+   *  lane's spending, not the row's content, is what is measured. */
+  const costlyClient = (budget: ReturnType<typeof createBudget>, reads: number[]) =>
+    ({
+      async readContract({ args }: { args: [bigint] }) {
+        reads.push(Number(args[0]));
+        spend(budget, 3);
+        throw new Error('read refused');
+      },
+    }) as never;
+
+  it('stops while the cursor write is still affordable, however large the backlog', async () => {
+    const h = createSqliteD1(migrations());
+    for (let i = 1; i <= 20; i++) seed(h, { offer_id: String(i) });
+    const budget = createBudget(10);
+    const reads: number[] = [];
+    await refreshStubOffers(
+      costlyClient(budget, reads),
+      '0x0' as never,
+      84532,
+      meterEnv({ DB: h.d1 } as unknown as Env, budget) as unknown as Env,
+      budget,
+    );
+    // 10 − 1 (the selection) = 9: two rows at 3 each leave 3, below 3 + 1.
+    expect(reads.length).toBe(2);
+    expect(budget.subrequests.remaining).toBeGreaterThanOrEqual(CURSOR_WRITE_RESERVE);
+  });
+
+  it('keeps a row queued until BOTH range columns are read', async () => {
+    const h = createSqliteD1(migrations());
+    seed(h, { offer_id: '1', collateral_amount_max: '400', collateral_amount_filled: null });
+    seed(h, { offer_id: '2', collateral_amount_max: null, collateral_amount_filled: '0' });
+    seed(h, { offer_id: '3', collateral_amount_max: '400', collateral_amount_filled: '0' });
+    const budget = createBudget(1_000, 'test', 1_000);
+    const reads: number[] = [];
+    await refreshStubOffers(
+      costlyClient(budget, reads),
+      '0x0' as never,
+      84532,
+      meterEnv({ DB: h.d1 } as unknown as Env, budget) as unknown as Env,
+      budget,
+    );
+    expect(reads.sort()).toEqual([1, 2]);
   });
 });

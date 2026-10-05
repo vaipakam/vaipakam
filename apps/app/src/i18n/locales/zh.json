@@ -1532,6 +1532,7 @@
       "collateralAtLeast": "至少 {{amount}}",
       "collateralRange": "已承诺 {{range}} — 直接出资会锁定 {{floor}}；撮合成交最多可锁定 {{ceiling}}",
       "collateralRangeRemaining": "仍承诺 {{range}}（{{used}} 已被之前的成交锁定；剩余部分只能通过撮合成交获取）",
+      "collateralSingle": "已承诺 {{amount}} — 直接出资会锁定全部；撮合成交只锁定出借方要求的部分（最多 {{amount}}），其余退回",
       "ltvValue": "贷款价值比 {{pct}}（贷款价值占抵押品价值的比例）",
       "ltvValueRanged": "按所示数量的贷款价值比 {{pct}}（贷款价值占抵押品价值的比例）——以其他数量成交时可能不同",
       "ltvIlliquid": "不计算贷款价值比——其中一方被视为流动性不足（没有可靠价格或交易太少），因此协议认定其价值为零",

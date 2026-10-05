@@ -1532,6 +1532,7 @@
       "collateralAtLeast": "al menos {{amount}}",
       "collateralRange": "{{range}} comprometido — financiarla directamente bloquea {{floor}}; una ejecución emparejada puede bloquear hasta {{ceiling}}",
       "collateralRangeRemaining": "{{range}} aún comprometido ({{used}} ya bloqueado por ejecuciones anteriores; solo una ejecución emparejada puede tomar el resto)",
+      "collateralSingle": "{{amount}} comprometido — financiarla directamente bloquea todo; una ejecución emparejada bloquea solo lo que exige el prestamista, hasta {{amount}}, y devuelve el resto",
       "ltvValue": "préstamo sobre valor {{pct}} (el valor del préstamo como proporción del de la garantía)",
       "ltvValueRanged": "préstamo sobre valor {{pct}} con los importes mostrados (el valor del préstamo como proporción del de la garantía); una ejecución de otro tamaño puede diferir",
       "ltvIlliquid": "el préstamo sobre valor no se calcula: una de las partes se considera ilíquida (sin un precio fiable o con muy poca negociación), así que el protocolo no le asigna valor",

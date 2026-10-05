@@ -11,6 +11,7 @@ const labels = {
   forFullOffer: (a: string) => `${a} for the full offer (proportionally less for part of it)`,
   range: (r: string, f: string, c: string) => `${r} committed — direct locks ${f}; match up to ${c}`,
   rangeRemaining: (r: string, u: string) => `${r} still committed (${u} used)`,
+  single: (a: string) => `${a} committed — direct locks all; match locks the requirement`,
 };
 const base = { asset, amount: '0', tokenId: '0', quantity: '0', meta: undefined, metaFailed: false, labels };
 
@@ -47,8 +48,10 @@ describe('offerCollateralText', () => {
         '150–400 tLIQ committed — direct locks 150 tLIQ; match up to 400 tLIQ',
       );
     });
-    it('is exact when the ceiling equals the floor', () => {
-      expect(offerCollateralText({ ...req, borrowerRange: { ceiling: e(150), filled: '0' } })).toBe('150 tLIQ');
+    it('never states a single-value request as exact — a matched fill can lock less (#2382 r1)', () => {
+      expect(offerCollateralText({ ...req, borrowerRange: { ceiling: e(150), filled: '0' } })).toBe(
+        '150 tLIQ committed — direct locks all; match locks the requirement',
+      );
     });
     it('states what is still committed after earlier fills, and what they used', () => {
       expect(offerCollateralText({ ...req, borrowerRange: { ceiling: e(400), filled: e(100) } })).toBe(

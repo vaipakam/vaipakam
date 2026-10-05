@@ -1532,6 +1532,7 @@
       "collateralAtLeast": "mindestens {{amount}}",
       "collateralRange": "{{range}} zugesagt – eine direkte Finanzierung sperrt {{floor}}; eine zugeordnete Ausführung kann bis zu {{ceiling}} sperren",
       "collateralRangeRemaining": "{{range}} noch zugesagt ({{used}} bereits durch frühere Ausführungen gesperrt; den Rest kann nur eine zugeordnete Ausführung übernehmen)",
+      "collateralSingle": "{{amount}} zugesagt — eine direkte Finanzierung sperrt den gesamten Betrag; eine zugeordnete Ausführung sperrt nur, was der Kreditgeber verlangt, bis zu {{amount}}, und gibt den Rest zurück",
       "ltvValue": "Beleihungsquote {{pct}} (der Wert des Kredits als Anteil am Wert der Sicherheit)",
       "ltvValueRanged": "Beleihungsquote {{pct}} bei den angezeigten Beträgen (der Wert des Kredits als Anteil am Wert der Sicherheit) – eine Ausführung anderer Größe kann abweichen",
       "ltvIlliquid": "Beleihungsquote wird nicht berechnet – eine Seite gilt als illiquide (kein verlässlicher Preis oder zu wenig Handel), daher setzt das Protokoll ihren Wert mit null an",

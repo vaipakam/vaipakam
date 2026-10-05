@@ -51,24 +51,21 @@ describe('offerLtv', () => {
       ranged: true,
     });
   });
-  it('states a borrow request as exact once its ceiling is known to equal its floor (#2382)', () => {
+  it('keeps a borrow request qualified even when its ceiling equals its floor (#2382 r1)', () => {
+    // Ceiling == floor and nothing used. A direct funding would lock exactly
+    // this, but the matcher may fill it instead, locking only the lender's
+    // pro-rated requirement — less collateral, a higher ratio.
     const req = { offerType: 1, amount: '500000000', amountMax: '500000000' };
-    // Ceiling == floor, nothing used: a direct funding locks exactly this.
-    expect(
-      offerLtv(
-        offer({ ...req, collateralAmountMax: '1000000000000000000', collateralAmountFilled: '0' }),
-        PRICED,
-      ),
-    ).toEqual({ kind: 'value', bps: 2500n, ranged: false });
-    // A real range, an earlier fill, or an unread ceiling — each still ranged.
     for (const over of [
+      { collateralAmountMax: '1000000000000000000', collateralAmountFilled: '0' },
       { collateralAmountMax: '2000000000000000000', collateralAmountFilled: '0' },
-      { collateralAmountMax: '1000000000000000000', collateralAmountFilled: '1' },
       { collateralAmountMax: null, collateralAmountFilled: null },
-      { collateralAmountMax: null, collateralAmountFilled: '0' },
-      { collateralAmountMax: '1000000000000000000', collateralAmountFilled: null },
     ]) {
-      expect(offerLtv(offer({ ...req, ...over }), PRICED)).toMatchObject({ ranged: true });
+      expect(offerLtv(offer({ ...req, ...over }), PRICED)).toEqual({
+        kind: 'value',
+        bps: 2500n,
+        ranged: true,
+      });
     }
   });
   it('keeps precision for small offers instead of flooring to 0%', () => {

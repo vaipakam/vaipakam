@@ -3546,6 +3546,14 @@ const copySource = {
       '{{range}} still committed ({{used}} already locked by earlier fills; only a matched fill can take the rest)',
       ['range', 'used'],
     ),
+    // #2382 r1 — a single-value request (ceiling == floor). It commits
+    // exactly this amount, but only a direct funding locks all of it: a
+    // matched fill locks the lender's pro-rated requirement and returns the
+    // rest, so the loan can carry less than the figure.
+    collateralSingle: tmpl(
+      '{{amount}} committed — funding it directly locks all of it; a matched fill locks only what the lender requires, up to {{amount}}, and returns the rest',
+      ['amount'],
+    ),
     // #2384 (UX3-007) — the loan-to-value the card can substantiate, from
     // the protocol's live oracle prices, with its one-clause definition
     // (WebsiteReadme: jargon at a funds decision carries one). The figure

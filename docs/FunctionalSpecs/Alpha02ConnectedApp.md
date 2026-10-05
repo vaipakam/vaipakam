@@ -1286,7 +1286,11 @@ progress.
   fills have already part-used states what is still committed and how much is
   already locked, and says only a matched fill can take the rest (a part-filled
   request cannot be funded directly). A request whose ceiling equals its floor
-  states the figure exactly. Until the ceiling or the part already used has
+  is never stated as an exact loan collateral: it commits exactly that amount
+  and a direct funding locks all of it, but a matched fill locks only what the
+  lender requires and returns the rest, and the card says both. For the same
+  reason a borrow request's loan-to-value is always qualified as the ratio at
+  the amounts shown. Until the ceiling or the part already used has
   been read — older market data, or a request the index has not re-read yet —
   the card states only the floor, as "at least" that amount, never an assumed
   range or an assumed exact figure. A lender offer that can be taken in part (a range, or

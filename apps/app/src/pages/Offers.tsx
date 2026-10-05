@@ -216,6 +216,7 @@ function OfferRow({
                 forFullOffer: copy.offers.collateralForFullOffer,
                 range: copy.offers.collateralRange,
                 rangeRemaining: copy.offers.collateralRangeRemaining,
+                single: copy.offers.collateralSingle,
               },
             })
           : copy.offers.collateralNone
