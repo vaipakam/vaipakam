@@ -2048,7 +2048,7 @@
         "protocolPaused": "Le protocole est actuellement en pause : aucune position ne peut être ouverte ni acceptée. Rien n’a été envoyé — réessayez une fois qu’il reprend.",
         "vaultUpgradeRequired": "L’une des parties de cette opération utilise une ancienne version du vault et doit la mettre à jour avant de pouvoir négocier. Rien n’a été envoyé.",
         "selfTrade": "C’est votre propre offre, vous ne pouvez donc pas l’accepter. Annulez-la si vous voulez la retirer du carnet.",
-        "refinanceNotRecorded": "Cette demande de refinancement n’est pas celle que le protocole a enregistrée pour ce prêt, elle ne peut donc pas être acceptée. Rien n’a été envoyé — l’emprunteur peut l’annuler.",
+        "refinanceUntakeable": "Cette demande de refinancement ne peut pas être acceptée pour le moment — soit ce n’est pas la demande que le protocole a enregistrée pour ce prêt (une plus ancienne, ou une que l’emprunteur a remplacée), soit l’emprunteur a une offre de compensation pour clôture anticipée ouverte sur le prêt. Rien n’a été envoyé.",
         "unknown": "Le protocole n’accepte pas cette offre pour le moment. Rien n’a été envoyé — actualisez et réessayez, ou revenez un peu plus tard."
       },
       "termsNotAccepted": "Vous devez accepter les conditions de Vaipakam avant de faire cela. Ouvrez la page Accueil et la demande vous sera faite une seule fois ; rembourser, réclamer et retirer continuent de fonctionner dans tous les cas.",

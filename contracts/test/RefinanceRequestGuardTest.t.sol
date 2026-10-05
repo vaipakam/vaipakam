@@ -13,6 +13,7 @@ import {PartialWithdrawalFacet} from "../src/facets/PartialWithdrawalFacet.sol";
 import {SwapToRepayPartialFacet} from "../src/facets/SwapToRepayPartialFacet.sol";
 import {RefinanceFacet} from "../src/facets/RefinanceFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
+import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibSwap} from "../src/libraries/LibSwap.sol";
@@ -383,13 +384,13 @@ contract RefinanceRequestGuardTest is SetupTest {
         address l = makeAddr("previewLender");
         assertTrue(
             OfferPreviewFacet(address(diamond)).previewAccept(r1, l).errorCode
-                != OfferAcceptFacet.AcceptError.RefinanceRequestNotRecorded,
+                != OfferAcceptFacet.AcceptError.RefinanceRequestUntakeable,
             "the recorded request is not flagged"
         );
         vm.store(address(diamond), _indexSlotOf(loanId, r1), bytes32(0));
         assertEq(
             uint8(OfferPreviewFacet(address(diamond)).previewAccept(r1, l).errorCode),
-            uint8(OfferAcceptFacet.AcceptError.RefinanceRequestNotRecorded)
+            uint8(OfferAcceptFacet.AcceptError.RefinanceRequestUntakeable)
         );
     }
 
@@ -537,6 +538,61 @@ contract RefinanceRequestGuardTest is SetupTest {
             abi.encodeWithSelector(IVaipakamErrors.RefinanceRequestNotLive.selector, loanId, r1)
         );
         RefinanceFacet(address(diamond)).checkRefinanceRequest(loanId, r1);
+    }
+
+    // ─── #2424 r8 — every loan-side prerequisite is part of liveness ──
+
+    /// A carry-over request must match the loan's collateral exactly, so a
+    /// top-up (which stays allowed) makes it unacceptable — and not live.
+    function test_aCollateralTopUpStopsACarryOverRequestBeingLive() public {
+        uint256 loanId = _activeLoan();
+        uint256 r1 = _request(loanId, 0);
+        assertEq(_live(loanId), r1, "precondition: live");
+        vm.prank(borrower);
+        AddCollateralFacet(address(diamond)).addCollateral(loanId, 1 ether);
+        assertEq(_live(loanId), 0, "a carry-over request no longer matching the collateral is not live");
+        vm.expectRevert(
+            abi.encodeWithSelector(IVaipakamErrors.RefinanceRequestNotLive.selector, loanId, r1)
+        );
+        RefinanceFacet(address(diamond)).checkRefinanceRequest(loanId, r1);
+    }
+
+    /// Liveness is reversible (caps can be toggled), so an offset can be opened
+    /// while the request is momentarily not live. Re-enabling the caps must not
+    /// make both flows takeable: the request is not live while the offset is
+    /// open, cannot be taken, and is previewed as untakeable.
+    function test_aRequestCannotBeTakenWhileAnOffsetIsOpen() public {
+        uint256 loanId = _activeLoan();
+        uint256 r1 = _request(loanId, 0);
+        vm.prank(borrower);
+        AutoLifecycleFacet(address(diamond)).setAutoRefinanceCaps(
+            loanId, false, 600, uint64(block.timestamp + 365 days)
+        );
+        address borrowerVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower);
+        vm.startPrank(borrower);
+        ERC20(mockERC20).approve(borrowerVault, type(uint256).max);
+        ERC20(mockERC20).approve(address(diamond), type(uint256).max);
+        uint256 offsetOfferId = PrecloseFacet(address(diamond)).offsetWithNewOffer(
+            loanId, 500, 30, mockCollateralERC20, LOAN_COLLATERAL, true, mockERC20
+        );
+        AutoLifecycleFacet(address(diamond)).setAutoRefinanceCaps(
+            loanId, true, 600, uint64(block.timestamp + 365 days)
+        );
+        vm.stopPrank();
+
+        assertEq(_live(loanId), 0, "not live while an offset is open");
+        assertEq(
+            uint8(OfferPreviewFacet(address(diamond)).previewAccept(r1, makeAddr("previewLender")).errorCode),
+            uint8(OfferAcceptFacet.AcceptError.RefinanceRequestUntakeable)
+        );
+        _acceptExpectingRevert(
+            r1,
+            abi.encodeWithSelector(IVaipakamErrors.RefinanceBlockedByOffset.selector, loanId, offsetOfferId)
+        );
+
+        vm.prank(borrower);
+        OfferCancelFacet(address(diamond)).cancelOffer(offsetOfferId);
+        assertEq(_live(loanId), r1, "live again once the offset is withdrawn");
     }
 
     /// The storage slot holding `loanId`'s indexed request, found by observing

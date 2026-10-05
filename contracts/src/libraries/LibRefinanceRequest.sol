@@ -5,6 +5,7 @@ import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibERC721} from "./LibERC721.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {LibAutoRefinanceCheck} from "./LibAutoRefinanceCheck.sol";
+import {LibPeriodicInterest} from "./LibPeriodicInterest.sol";
 
 /**
  * @title  LibRefinanceRequest
@@ -41,7 +42,7 @@ import {LibAutoRefinanceCheck} from "./LibAutoRefinanceCheck.sol";
  *         that leaves its creator can come back — so a request the record no
  *         longer points to could otherwise revive unguarded. An acceptance
  *         therefore completes a tagged request ONLY if it is the loan's
- *         recorded request ({assertRecorded}, on the atomic accept / match
+ *         recorded request ({assertTakeable}, on the atomic accept / match
  *         routes): a displaced or never-recorded request can never be taken,
  *         so the request the guard watches is always the only one that can.
  *         The standalone completion of an ALREADY-accepted request is not
@@ -98,7 +99,16 @@ library LibRefinanceRequest {
     ///         check acceptance re-runs — the loan is Active and not past
     ///         grace, its creator holds the borrower position, the assets and
     ///         principal still fit, and the holder's refinance caps still admit
-    ///         it. Used only by `RefinanceFacet`, which serves it to everyone.
+    ///         it — then every further prerequisite of completing the refinance
+    ///         that depends on the LOAN's or the REQUEST's own state: no offset
+    ///         open on the loan, no swap-to-repay intent committed against it,
+    ///         no periodic interest overdue past its grace, and, for a
+    ///         carry-over request, the old collateral still matching it exactly
+    ///         under a live lien. What it deliberately does NOT model is the
+    ///         MARKET — the replacement loan's health factor and LTV at the
+    ///         moment of acceptance — which no standing check can know in
+    ///         advance; a request can be live and still be refused on those.
+    ///         Used only by `RefinanceFacet`, which serves it to everyone.
     function assertAcceptable(
         LibVaipakam.Storage storage s,
         uint256 loanId,
@@ -130,6 +140,30 @@ library LibRefinanceRequest {
             o.amount,
             o.amountMax == 0 ? o.amount : o.amountMax
         );
+        uint256 offsetOfferId = s.loanToOffsetOfferId[loanId];
+        if (offsetOfferId != 0) {
+            revert IVaipakamErrors.RefinanceBlockedByOffset(loanId, offsetOfferId);
+        }
+        LibVaipakam.assertNoLiveIntentCommit(loanId);
+        LibVaipakam.Loan storage loan = s.loans[loanId];
+        if (loan.periodicInterestCadence != LibVaipakam.PeriodicInterestCadence.None) {
+            uint256 graceEndsAt = LibPeriodicInterest.settleAllowedFromAt(loan);
+            if (block.timestamp >= graceEndsAt) {
+                revert IVaipakamErrors.RefinanceRequiresPeriodSettle(loanId, graceEndsAt);
+            }
+        }
+        if (
+            o.refinanceCarryOver &&
+            !LibAutoRefinanceCheck.isCarryOver(
+                s,
+                loanId,
+                o.creator,
+                o.collateralAmount,
+                o.collateralAmountMax,
+                o.collateralTokenId,
+                o.collateralQuantity
+            )
+        ) revert IVaipakamErrors.RefinanceRequestNotLive(loanId, offerId);
     }
 
     /// @notice Revert {IVaipakamErrors.RefinanceRequestOpen} while a live
@@ -185,15 +219,33 @@ library LibRefinanceRequest {
         s.refinanceRequestOfLoan[loanId] = offerId;
     }
 
-    /// @notice Revert {IVaipakamErrors.RefinanceRequestNotRecorded} when
-    ///         `offerId` is refinance-tagged but is not `loanId`'s recorded
-    ///         request. An untagged offer passes: it is not a refinance
-    ///         request, and the routes that accept one gate it themselves.
-    function assertRecorded(uint256 loanId, uint256 offerId) internal view {
+    /// @notice Revert unless `offerId`, if refinance-tagged, may be TAKEN now
+    ///         as `loanId`'s refinance: it must be the loan's recorded request
+    ///         ({IVaipakamErrors.RefinanceRequestNotRecorded}) and no offset may
+    ///         be open on the loan ({IVaipakamErrors.RefinanceBlockedByOffset})
+    ///         — the two flows each close the loan, so whichever settled second
+    ///         would find it closed underneath it. An untagged offer passes: it
+    ///         is not a refinance request, and the routes that accept one gate
+    ///         it themselves.
+    function assertTakeable(uint256 loanId, uint256 offerId) internal view {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        if (
-            s.offers[offerId].refinanceTargetLoanId != 0 &&
-            s.refinanceRequestOfLoan[loanId] != offerId
-        ) revert IVaipakamErrors.RefinanceRequestNotRecorded(loanId, offerId);
+        if (s.offers[offerId].refinanceTargetLoanId == 0) return;
+        if (s.refinanceRequestOfLoan[loanId] != offerId) {
+            revert IVaipakamErrors.RefinanceRequestNotRecorded(loanId, offerId);
+        }
+        uint256 offsetOfferId = s.loanToOffsetOfferId[loanId];
+        if (offsetOfferId != 0) {
+            revert IVaipakamErrors.RefinanceBlockedByOffset(loanId, offsetOfferId);
+        }
+    }
+
+    /// @notice Whether a refinance-tagged `offerId` passes {assertTakeable} —
+    ///         the non-reverting form the previews use.
+    function isTakeable(
+        LibVaipakam.Storage storage s,
+        uint256 loanId,
+        uint256 offerId
+    ) internal view returns (bool) {
+        return s.refinanceRequestOfLoan[loanId] == offerId && s.loanToOffsetOfferId[loanId] == 0;
     }
 }

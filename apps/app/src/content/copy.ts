@@ -4472,10 +4472,10 @@ const copySource = {
         'One side of this trade is on an old vault version and needs to upgrade before it can trade. Nothing was sent.',
       selfTrade:
         'This is your own offer, so you can’t take it. Cancel it instead if you want it off the book.',
-      // #2407 — only a loan's recorded refinance request can be taken; this
-      // one is not it (an older duplicate, or one replaced by a newer request).
-      refinanceNotRecorded:
-        'This refinance request isn’t the one the protocol has on record for its loan, so it can’t be taken. Nothing was sent — the borrower can cancel it.',
+      // #2407 — a refinance request can be taken only if it is its loan's
+      // recorded request and no early-close offset is open on that loan.
+      refinanceUntakeable:
+        'This refinance request can’t be taken right now — either it isn’t the request the protocol has on record for its loan (an older one, or one the borrower replaced), or the borrower has an early-close offset open on the loan. Nothing was sent.',
       // A refusal we have no words for — the app can be older than the
       // deployment it is talking to, and this vocabulary grows by
       // appending. Says only what is certainly true.

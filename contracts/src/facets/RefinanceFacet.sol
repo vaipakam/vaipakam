@@ -184,15 +184,18 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         uint256 borrowerOfferId
     ) external onlyDiamondInternal whenNotPaused {
         // #2407 — on the atomic routes only the loan's RECORDED request may
-        // complete: it is the one the borrower-action guard watches, so a
+        // complete, and only while no offset is open on the loan: the
+        // recorded request is the one the borrower-action guard watches, so a
         // displaced or never-recorded request (which could otherwise revive
-        // when the position returns to its creator) can never be taken. A
-        // revert here unwinds the whole acceptance, so nothing is stranded.
+        // when the position returns to its creator) can never be taken; and a
+        // refinance and an offset each close the loan, so they never both
+        // proceed. A revert here unwinds the whole acceptance, so nothing is
+        // stranded.
         // The standalone {refinanceLoan} deliberately does not check it: it
         // only ever completes an offer ALREADY accepted — post-#2407 every
         // acceptance runs this check — and by then the replacement loan
         // exists, so refusing would strand both loans (see the payoff body).
-        LibRefinanceRequest.assertRecorded(oldLoanId, borrowerOfferId);
+        LibRefinanceRequest.assertTakeable(oldLoanId, borrowerOfferId);
         _authorizeRefinance(
             oldLoanId,
             borrowerOfferId,
@@ -221,7 +224,7 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         uint256 borrowerOfferId
     ) external onlyDiamondInternal whenNotPaused {
         // #2407 — see {refinanceLoanFromAccept}.
-        LibRefinanceRequest.assertRecorded(oldLoanId, borrowerOfferId);
+        LibRefinanceRequest.assertTakeable(oldLoanId, borrowerOfferId);
         _authorizeRefinance(
             oldLoanId,
             borrowerOfferId,

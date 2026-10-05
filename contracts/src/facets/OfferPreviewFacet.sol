@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibRefinanceRequest} from "../libraries/LibRefinanceRequest.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
@@ -462,14 +463,15 @@ contract OfferPreviewFacet {
         }
 
         // #2407 — a refinance-tagged offer completes only if it is its target
-        // loan's recorded request; otherwise the refinance hook, which runs
-        // after every check above, reverts `RefinanceRequestNotRecorded`. Last
-        // in the chain because it is last in execution.
+        // loan's recorded request and no offset is open on that loan;
+        // otherwise the refinance hook, which runs after every check above,
+        // reverts (`RefinanceRequestNotRecorded` / `RefinanceBlockedByOffset`).
+        // Last in the chain because it is last in execution.
         if (
             offer.refinanceTargetLoanId != 0 &&
-            s.refinanceRequestOfLoan[offer.refinanceTargetLoanId] != offerId
+            !LibRefinanceRequest.isTakeable(s, offer.refinanceTargetLoanId, offerId)
         ) {
-            preview.errorCode = OfferAcceptFacet.AcceptError.RefinanceRequestNotRecorded;
+            preview.errorCode = OfferAcceptFacet.AcceptError.RefinanceRequestUntakeable;
             return preview;
         }
 

@@ -9,7 +9,10 @@ The protocol now keeps a record of each loan's refinance request and allows one 
 - it has not expired;
 - the loan is still active;
 - its creator still holds the borrower position;
-- the loan still fits it and the borrower's refinance limits still allow it — liveness is the same check a lender's acceptance runs, so withdrawing or tightening those limits also stops a request holding the loan back.
+- the loan still fits it and the borrower's refinance limits still allow it — liveness is the same check a lender's acceptance runs, so withdrawing or tightening those limits also stops a request holding the loan back;
+- no early-close offset is open on the loan, no swap-to-repay order is committed against it, no periodic interest is overdue, and a request that carries the existing collateral over still matches that collateral exactly (a top-up ends it).
+
+What liveness cannot know in advance is the market — the replacement loan's health at the moment a lender accepts — so a live request can still be refused on that. A request can never be taken while an offset is open on the loan, because each would close the loan underneath the other.
 
 Liveness is worked out when it is read, not stored, so a request that lapses for any of these reasons stops holding the loan back without any further transaction. A new public read reports the request recorded for a loan and whether it is still live. A lapsed request stays reported, so an expired request that was never cancelled can still be found and cleaned up.
 

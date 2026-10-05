@@ -2100,7 +2100,7 @@
         "protocolPaused": "The protocol is paused right now, so no positions can be opened or taken. Nothing was sent — try again once it resumes.",
         "vaultUpgradeRequired": "One side of this trade is on an old vault version and needs to upgrade before it can trade. Nothing was sent.",
         "selfTrade": "This is your own offer, so you can’t take it. Cancel it instead if you want it off the book.",
-        "refinanceNotRecorded": "This refinance request isn’t the one the protocol has on record for its loan, so it can’t be taken. Nothing was sent — the borrower can cancel it.",
+        "refinanceUntakeable": "This refinance request can’t be taken right now — either it isn’t the request the protocol has on record for its loan (an older one, or one the borrower replaced), or the borrower has an early-close offset open on the loan. Nothing was sent.",
         "unknown": "The protocol won’t accept this offer right now. Nothing was sent — refresh and try again, or check back shortly."
       },
       "walletConnectFirst": "Connect a wallet on a supported network first.",
