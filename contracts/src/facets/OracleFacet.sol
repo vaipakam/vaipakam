@@ -99,6 +99,13 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
     ///         leg values to zero — the same refusal, by the same name, as
     ///         the loan-level `RiskFacet.calculateLTV(loanId)`.
     error ZeroCollateral();
+    /// @notice Reverted by the pair-level {calculateLTV} when the two legs'
+    ///         decimal scales (feed decimals + token decimals) differ by more
+    ///         than it can represent exactly — 73 when the collateral's scale
+    ///         is the larger (`LTV_SCALE · 10**gap` must fit in 256 bits), 77
+    ///         when the borrowed one is (`10**gap` must). Far beyond any real
+    ///         token pair, and refused by name rather than by an overflow.
+    error DecimalScaleUnsupported(uint256 gap);
 
     // 0.3% v3-style AMM fee tier — the standard ERC20/WETH venue. Resolved
     // live via `factory.getPool(tokenA, tokenB, fee)` so the same code path
@@ -350,9 +357,11 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
      *         loan-level path does; returning 0 read as "no risk". (A
      *         nonzero amount cannot value to zero here: {getAssetPrice}
      *         refuses a non-positive price.) Reverts on a missing or stale
-     *         feed via {getAssetPrice}, and on an arithmetically absurd input
-     *         whose amount × price product overflows. Meaningful only for
-     *         liquid (priced) assets.
+     *         feed via {getAssetPrice}. Two stated limits, both far outside
+     *         any real asset: {DecimalScaleUnsupported} when the legs'
+     *         decimal scales differ by more than 73 / 77 (#2418 r3 — see the
+     *         error), and an overflow revert when an amount × price product
+     *         exceeds 256 bits. Meaningful only for liquid (priced) assets.
      */
     // forge-lint: disable-next-line(mixed-case-function)
     function calculateLTV(
@@ -373,19 +382,23 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         uint256 collateralRaw = collateralAmount * collateralPrice;
         if (collateralRaw == 0) revert ZeroCollateral();
 
-        // Cancel only the common power of ten, then floor once. Splitting the
-        // division by 10**(-e) out of the mulDiv is exact: for integers,
-        // floor(floor(N / D) / k) == floor(N / (D · k)) — and it keeps the
-        // denominator from overflowing on large collateral.
+        // Cancel only the common power of ten, then floor once.
+        uint256 gap = collateralScale >= borrowedScale
+            ? collateralScale - borrowedScale
+            : borrowedScale - collateralScale;
         if (collateralScale >= borrowedScale) {
-            ltv = Math.mulDiv(
-                borrowedRaw,
-                LibVaipakam.LTV_SCALE * (10 ** (collateralScale - borrowedScale)),
-                collateralRaw
-            );
+            if (gap > 73) revert DecimalScaleUnsupported(gap); // LTV_SCALE·10**gap < 2**256
+            ltv = Math.mulDiv(borrowedRaw, LibVaipakam.LTV_SCALE * (10 ** gap), collateralRaw);
         } else {
-            ltv = Math.mulDiv(borrowedRaw, LibVaipakam.LTV_SCALE, collateralRaw) /
-                (10 ** (borrowedScale - collateralScale));
+            if (gap > 77) revert DecimalScaleUnsupported(gap); // 10**gap < 2**256
+            // The decimal divisor goes INSIDE the full-precision division
+            // (#2418 r3): dividing it out afterwards made mulDiv hold the
+            // unscaled quotient, which can exceed 256 bits when the final
+            // ratio does not. Still exact — for integers,
+            // floor(floor(N / k) / D) == floor(N / (k · D)) — and the
+            // denominator never becomes `collateralRaw · 10**gap`, which can
+            // overflow on large collateral.
+            ltv = Math.mulDiv(borrowedRaw, LibVaipakam.LTV_SCALE, 10 ** gap) / collateralRaw;
         }
     }
 

@@ -373,6 +373,48 @@ contract OracleFacetTest is Test {
         assertEq(OracleFacet(address(diamond)).calculateLTV(c0, 81, b1, 100), 9000);
     }
 
+    /// #2418 r3 — when the borrowed scale is the larger, a quotient that is
+    /// huge BEFORE the decimal division still returns the representable
+    /// result: 2e74 base units of a 60-decimal token (2e14 whole) against one
+    /// whole 0-decimal token, both at 1 with 0-decimal feeds, is 2e18 bps.
+    /// Dividing the decimals out after the mulDiv overflowed at 2e78.
+    function testCalculateLTVLargeBorrowedScaleDoesNotOverflowEarly() public {
+        address b60 = address(new ERC20Mock("B60", "B60", 60));
+        address c0 = address(new ERC20Mock("C0", "C0", 0));
+        _mockRegistryFeed(b60, mockFeed);
+        _mockRegistryFeed(c0, mockFeed2);
+        _mockFeedFull(mockFeed, int256(1), 0);
+        _mockFeedFull(mockFeed2, int256(1), 0);
+        assertEq(OracleFacet(address(diamond)).calculateLTV(b60, 2e74, c0, 1), 2e18);
+    }
+
+    /// #2418 r3 — the reviewer's own case: a 77-decimal borrowed token (the
+    /// widest gap the borrowed-larger branch represents) against a 0-decimal
+    /// collateral at equal unit prices — 2e73 base units against 1 is 2 bps.
+    function testCalculateLTVWidestBorrowedGapIsExact() public {
+        address b77 = address(new ERC20Mock("B77", "B77", 77));
+        address c0 = address(new ERC20Mock("C0", "C0", 0));
+        _mockRegistryFeed(b77, mockFeed);
+        _mockRegistryFeed(c0, mockFeed2);
+        _mockFeedFull(mockFeed, int256(1), 0);
+        _mockFeedFull(mockFeed2, int256(1), 0);
+        assertEq(OracleFacet(address(diamond)).calculateLTV(b77, 2e73, c0, 1), 2);
+    }
+
+    /// #2418 r3 — a gap beyond what a branch represents exactly is refused BY
+    /// NAME, never by an arithmetic panic: a 74-decimal COLLATERAL token
+    /// (LTV_SCALE · 10**74 would not fit).
+    function testCalculateLTVRefusesAnUnsupportedScaleGap() public {
+        address b0 = address(new ERC20Mock("B0", "B0", 0));
+        address c74 = address(new ERC20Mock("C74", "C74", 74));
+        _mockRegistryFeed(b0, mockFeed);
+        _mockRegistryFeed(c74, mockFeed2);
+        _mockFeedFull(mockFeed, int256(1), 0);
+        _mockFeedFull(mockFeed2, int256(1), 0);
+        vm.expectRevert(abi.encodeWithSelector(OracleFacet.DecimalScaleUnsupported.selector, 74));
+        OracleFacet(address(diamond)).calculateLTV(b0, 1, c74, 1e74);
+    }
+
     /// #2418 r2 — large amounts with high-decimal feeds and tokens do not
     /// overflow the one-step ratio: 1e9 whole 18-decimal tokens priced with an
     /// 18-decimal feed on both sides.
