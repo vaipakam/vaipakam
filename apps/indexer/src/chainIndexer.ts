@@ -122,11 +122,13 @@ import {
   MAX_SUBREQUESTS_PER_INVOCATION,
   createBudget,
   createChainClient,
+  meterD1,
   meterEnv,
   reportSpend,
   spent,
   type TickBudget,
 } from './subrequestBudget';
+import { schemaDeclineNotice, schemaGate } from './schemaGate';
 
 /** Resolve a chain's deployBlock from the consolidated deployments
  *  JSON — the indexer's first-run fallback when no cursor exists. */
@@ -677,6 +679,13 @@ export async function verifyRpcChainIdentity(
  *  a new failure kind can't silently read as "caught up" there. */
 export function isRetryableScanSkip(skipped: string | undefined): boolean {
   return skipped === 'rpc-error' || skipped === 'rpc-chain-mismatch';
+}
+
+/** The schema gate (schemaGate.ts) declined the pass. Not retryable within
+ *  an alarm's budget — no retry can apply a missing migration — so the
+ *  ingest DO stops its loop rather than rearming (#2409 r2). */
+export function isSchemaDeclinedSkip(skipped: string | undefined): boolean {
+  return skipped === 'schema-pending' || skipped === 'schema-unknown';
 }
 
 /**
@@ -1796,6 +1805,22 @@ export async function runChainIndexerForChain(
   ),
 ): Promise<ChainIndexerResult> {
   try {
+    // THE SCHEMA GATE, ahead of every D1 write the pass makes (see
+    // schemaGate.ts). Here rather than inside `runChainPass` because it is a
+    // precondition of the whole pass — including the one-time backfills that
+    // pass runs before its first return — and both ingest lanes (the DO alarm
+    // and the legacy inline cron) reach the pass only through this wrapper.
+    // Not retryable: the cursor stays where it is and the next tick asks again.
+    const schema = await schemaGate.check(meterD1(rawEnv.DB, budget));
+    if (schema.state !== 'current') {
+      // eslint-disable-next-line no-console
+      console.warn(schemaDeclineNotice(`chain ${chain.id} pass`, schema));
+      return {
+        ...emptyResult(schema.state === 'pending' ? 'schema-pending' : 'schema-unknown'),
+        chainId: chain.id,
+        invocationSubrequestsSpent: spent(budget),
+      };
+    }
     const result = await runChainPass(rawEnv, chain, reconcileBudget, budget);
     return { ...result, invocationSubrequestsSpent: spent(budget) };
   } finally {

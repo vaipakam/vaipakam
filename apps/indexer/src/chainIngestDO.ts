@@ -55,6 +55,7 @@ import {
   RECONCILE_BUDGET_OWN_INVOCATION,
   SCAN_PASS_MAX_BLOCKS,
   isRetryableScanSkip,
+  isSchemaDeclinedSkip,
   runChainIndexerForChain,
   type ChainIndexerResult,
 } from './chainIndexer';
@@ -181,6 +182,38 @@ export function shouldRearmForBacklog(
     return false;
   }
   return headBlock - scannedTo > SCAN_PASS_MAX_BLOCKS;
+}
+
+/**
+ * What the alarm does after a pass — ONE decision, so each way a pass can end
+ * is answered in one place and a test can drive it (#2409 r2).
+ *
+ *  - `finish`    — stop the loop; the cron backstop pings again later.
+ *  - `slow-lane` — a successful pass that left a deep backlog: keep draining.
+ *  - `rearm`     — more work toward the target, or retry a soft failure,
+ *                  within the bounded attempt budget.
+ *
+ * A pass the SCHEMA GATE declined (schemaGate.ts) finishes, whatever the
+ * target: the database is missing a migration this build needs, and no retry
+ * in the next ten minutes can apply it. Rearming there spent the whole
+ * fast/slow budget — up to 31 alarms, each a DO storage write and a probe —
+ * rediscovering the same refusal. The cron's next ping asks again, and the
+ * first one after the migration lands resumes ingest.
+ */
+export function alarmNextStep(p: {
+  schemaDeclined: boolean;
+  retryableFailure: boolean;
+  scannedTo: bigint | null;
+  target: bigint;
+  headBlock: bigint | undefined;
+}): 'finish' | 'slow-lane' | 'rearm' {
+  if (p.schemaDeclined) return 'finish';
+  if (!p.retryableFailure && p.scannedTo !== null && p.scannedTo >= p.target) {
+    return shouldRearmForBacklog(p.headBlock, p.scannedTo, p.retryableFailure)
+      ? 'slow-lane'
+      : 'finish';
+  }
+  return 'rearm';
 }
 
 export async function rearmOrFinishAttempts(
@@ -534,6 +567,7 @@ export class ChainIngestDO {
       let scannedTo: bigint | null = null;
       let headBlock: bigint | undefined;
       let retryableFailure = false;
+      let schemaDeclined = false;
       try {
         // The Secrets Store reads at the top of the alarm are counted too —
         // the scan is not the only thing that spends here.
@@ -566,6 +600,7 @@ export class ChainIngestDO {
         // `>= target`, e.g. target 0 for a block-less webhook) for success and
         // drop the already-acked webhook's only retry until the next cron tick.
         retryableFailure = isRetryableScanSkip(result.skipped);
+        schemaDeclined = isSchemaDeclinedSkip(result.skipped);
         // #757 Phase B — broadcast the coarse invalidation keys to subscribed
         // clients AFTER the D1 write, so a connected dapp refetches the changed
         // slice within seconds instead of waiting for its next poll. If a PRIOR
@@ -595,23 +630,24 @@ export class ChainIngestDO {
       const target = BigInt(
         (await this.state.storage.get<string>('pendingTarget')) ?? '0',
       );
-      if (!retryableFailure && scannedTo !== null && scannedTo >= target) {
-        if (shouldRearmForBacklog(headBlock, scannedTo, retryableFailure)) {
-          // #1416 — truncated backlog pass: the cron target (0 for a
-          // plain tick) is met, but the safe head is still more than a
-          // full pass-budget away. Clear the RETRY budget (this pass
-          // was progress, not failure) and self-drive the next pass on
-          // the slow lane — a deep backlog drains in minutes/hours
-          // instead of one chunk per 5-minute tick. One setAlarm row
-          // per draining pass, only while genuinely behind. The arm
-          // keeps an EARLIER already-set alarm (a webhook trigger that
-          // interleaved after this pass's final target read) instead
-          // of clobbering it — see armSlowLaneAlarm.
-          await this.clearLoopState();
-          await armSlowLaneAlarm(this.state.storage, Date.now());
-        } else {
-          await this.clearLoopState(); // genuinely caught up
-        }
+      const step = alarmNextStep({ schemaDeclined, retryableFailure, scannedTo, target, headBlock });
+      if (step === 'slow-lane') {
+        // #1416 — truncated backlog pass: the cron target (0 for a
+        // plain tick) is met, but the safe head is still more than a
+        // full pass-budget away. Clear the RETRY budget (this pass
+        // was progress, not failure) and self-drive the next pass on
+        // the slow lane — a deep backlog drains in minutes/hours
+        // instead of one chunk per 5-minute tick. One setAlarm row
+        // per draining pass, only while genuinely behind. The arm
+        // keeps an EARLIER already-set alarm (a webhook trigger that
+        // interleaved after this pass's final target read) instead
+        // of clobbering it — see armSlowLaneAlarm.
+        await this.clearLoopState();
+        await armSlowLaneAlarm(this.state.storage, Date.now());
+      } else if (step === 'finish') {
+        // Genuinely caught up — or the schema gate declined the pass, which
+        // no retry inside the attempt budget can fix (see alarmNextStep).
+        await this.clearLoopState();
       } else {
         await this.rearmOrFinish(attempts); // more work, or retry a soft failure
       }
