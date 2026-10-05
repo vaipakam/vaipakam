@@ -3533,6 +3533,19 @@ const copySource = {
     // checks liquidity again and the loan follows THAT result.
     illiquidCollateralTag: 'illiquid when posted (checked again at acceptance) — if so, handed over as-is if not repaid',
     collateralAtLeast: tmpl('at least {{amount}}', ['amount']),
+    // #2382 — a borrow request's committed collateral RANGE, once the indexer
+    // has read it. Funding the request directly locks exactly the floor (the
+    // rest goes back to the borrower); a matched fill can lock more, up to
+    // the ceiling. A request earlier fills have part-used can only be
+    // matched (direct funding refuses a part-filled offer).
+    collateralRange: tmpl(
+      '{{range}} committed — funding it directly locks {{floor}}; a matched fill can lock up to {{ceiling}}',
+      ['range', 'floor', 'ceiling'],
+    ),
+    collateralRangeRemaining: tmpl(
+      '{{range}} still committed ({{used}} already locked by earlier fills; only a matched fill can take the rest)',
+      ['range', 'used'],
+    ),
     // #2384 (UX3-007) — the loan-to-value the card can substantiate, from
     // the protocol's live oracle prices, with its one-clause definition
     // (WebsiteReadme: jargon at a funds decision carries one). The figure

@@ -1530,6 +1530,8 @@
       "collateralNone": "aucune",
       "illiquidCollateralTag": "illiquide lors de la publication (revérifiée à l’acceptation) — si c’est le cas, remise telle quelle en cas de non-remboursement",
       "collateralAtLeast": "au moins {{amount}}",
+      "collateralRange": "{{range}} engagé — la financer directement bloque {{floor}} ; une exécution appariée peut bloquer jusqu’à {{ceiling}}",
+      "collateralRangeRemaining": "{{range}} encore engagé ({{used}} déjà bloqué par des exécutions précédentes ; seule une exécution appariée peut prendre le reste)",
       "ltvValue": "ratio prêt/valeur {{pct}} (la valeur du prêt rapportée à celle de la garantie)",
       "ltvValueRanged": "ratio prêt/valeur {{pct}} pour les montants affichés (la valeur du prêt rapportée à celle de la garantie) — une exécution d’une autre taille peut différer",
       "ltvIlliquid": "le ratio prêt/valeur n’est pas calculé — l’un des deux côtés est considéré comme illiquide (pas de prix fiable ou trop peu d’échanges), donc le protocole ne lui attribue aucune valeur",

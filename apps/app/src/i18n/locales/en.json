@@ -1603,6 +1603,8 @@
       "collateralNone": "none",
       "illiquidCollateralTag": "illiquid when posted (checked again at acceptance) — if so, handed over as-is if not repaid",
       "collateralAtLeast": "at least {{amount}}",
+      "collateralRange": "{{range}} committed — funding it directly locks {{floor}}; a matched fill can lock up to {{ceiling}}",
+      "collateralRangeRemaining": "{{range}} still committed ({{used}} already locked by earlier fills; only a matched fill can take the rest)",
       "ltvValue": "loan-to-value {{pct}} (the loan’s value as a share of the collateral’s)",
       "ltvValueRanged": "loan-to-value {{pct}} at the amounts shown (the loan’s value as a share of the collateral’s) — a fill of another size can differ",
       "ltvIlliquid": "loan-to-value isn’t worked out — one side is treated as illiquid (no reliable price or too little trading), so the protocol gives it no value",

@@ -83,6 +83,12 @@ export interface IndexedOffer {
   interestRateBps: number;
   interestRateBpsMax: number;
   collateralAmount: string;
+  /** #2382 — a borrower offer's effective collateral ceiling, and the part
+   *  earlier matched fills consumed. `null` = the indexer has not read it
+   *  yet; absent = an older indexer build. Both mean UNKNOWN, never "same
+   *  as the floor". */
+  collateralAmountMax?: string | null;
+  collateralAmountFilled?: string | null;
   durationDays: number;
   positionTokenId: string;
   prepayAsset: string;

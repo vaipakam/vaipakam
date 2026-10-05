@@ -51,6 +51,26 @@ describe('offerLtv', () => {
       ranged: true,
     });
   });
+  it('states a borrow request as exact once its ceiling is known to equal its floor (#2382)', () => {
+    const req = { offerType: 1, amount: '500000000', amountMax: '500000000' };
+    // Ceiling == floor, nothing used: a direct funding locks exactly this.
+    expect(
+      offerLtv(
+        offer({ ...req, collateralAmountMax: '1000000000000000000', collateralAmountFilled: '0' }),
+        PRICED,
+      ),
+    ).toEqual({ kind: 'value', bps: 2500n, ranged: false });
+    // A real range, an earlier fill, or an unread ceiling — each still ranged.
+    for (const over of [
+      { collateralAmountMax: '2000000000000000000', collateralAmountFilled: '0' },
+      { collateralAmountMax: '1000000000000000000', collateralAmountFilled: '1' },
+      { collateralAmountMax: null, collateralAmountFilled: null },
+      { collateralAmountMax: null, collateralAmountFilled: '0' },
+      { collateralAmountMax: '1000000000000000000', collateralAmountFilled: null },
+    ]) {
+      expect(offerLtv(offer({ ...req, ...over }), PRICED)).toMatchObject({ ranged: true });
+    }
+  });
   it('keeps precision for small offers instead of flooring to 0%', () => {
     // 1 USDC against 0.001 WETH ($2) → 50%, not a whole-dollar 0.
     expect(

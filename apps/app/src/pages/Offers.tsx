@@ -194,8 +194,15 @@ function OfferRow({
               quantity: offer.collateralQuantity,
               meta: collateralMeta.data,
               metaFailed: collateralMeta.isError,
-              // A borrower offer's indexed collateral is its committed floor.
+              // A borrower offer's indexed collateral is its committed floor;
+              // #2382 — and its range, once the indexer has read it.
               floorOnly: !isLending,
+              borrowerRange: isLending
+                ? undefined
+                : {
+                    ceiling: offer.collateralAmountMax ?? null,
+                    filled: offer.collateralAmountFilled ?? null,
+                  },
               // #2378 r8 — a lender offer's figure is its full-amount
               // requirement; say so where it can be taken in part.
               scalesWithAmount:
@@ -207,6 +214,8 @@ function OfferRow({
                 amountRaw: copy.offers.collateralAmountRaw,
                 atLeast: copy.offers.collateralAtLeast,
                 forFullOffer: copy.offers.collateralForFullOffer,
+                range: copy.offers.collateralRange,
+                rangeRemaining: copy.offers.collateralRangeRemaining,
               },
             })
           : copy.offers.collateralNone

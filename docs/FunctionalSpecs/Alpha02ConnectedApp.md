@@ -1256,8 +1256,12 @@ progress.
   the protocol's live oracle prices with each side valued by its own token's
   precision. The figure is the ratio at the amounts the card shows, and it is
   never presented as exact or as a limit across fills: where a fill of another
-  size could carry another ratio — a ranged or part-taken lend offer, and any
-  borrow request, whose collateral is only a floor — the card says so. When the
+  size could carry another ratio — a ranged or part-taken offer of either side,
+  and a borrow request whose committed collateral range is wider than its
+  floor or has not been read yet — the card says so. A single-size borrow
+  request whose collateral ceiling is known to equal its floor, with nothing
+  taken yet, is stated exactly: funding it directly locks exactly those
+  amounts. When the
   protocol treats either side as illiquid the card says the ratio isn't worked
   out and names both possible causes (no reliable price, or too little trading),
   since it cannot tell which; when one side's value rounds to nothing at that
@@ -1274,9 +1278,18 @@ progress.
   offer was posted — acceptance checks liquidity again, and the loan follows that
   result. NFT collateral is named by its token (and quantity, for a multi-unit
   token); a token amount whose details are loading or could not be read says so,
-  rather than showing only a contract address. Where the shown amount is only the
-  offer's committed floor (a borrower offer can commit a range), it is stated as
-  "at least" that amount. A lender offer that can be taken in part (a range, or
+  rather than showing only a contract address. A borrow request can commit a
+  collateral RANGE — a floor and a ceiling. Once the market data carries the
+  ceiling, the card states the range, says that funding the request directly
+  locks exactly the floor (the rest goes back to the borrower), and says a
+  matched fill can lock more, up to the ceiling. A request that earlier matched
+  fills have already part-used states what is still committed and how much is
+  already locked, and says only a matched fill can take the rest (a part-filled
+  request cannot be funded directly). A request whose ceiling equals its floor
+  states the figure exactly. Until the ceiling or the part already used has
+  been read — older market data, or a request the index has not re-read yet —
+  the card states only the floor, as "at least" that amount, never an assumed
+  range or an assumed exact figure. A lender offer that can be taken in part (a range, or
   already partly taken) states its collateral as the requirement for the full
   offer, since a smaller take needs proportionally less. When the token's details
   cannot be read, the recorded amount is still shown, in the token's raw base

@@ -157,19 +157,28 @@ describe('SQL-vs-schema guard (#1149)', () => {
     expect(failures, failures.join('\n\n')).toEqual([]);
   });
 
-  it('regression pin: offers has no collateral_amount_max (the #1149 column)', () => {
-    // The offers schema stores collateral MIN only — amount_max and
-    // interest_rate_bps_max exist, a collateral max never did. If a
-    // future migration adds it (for ranged-collateral display), this
-    // pin flips and should be updated alongside the create/refresh
-    // writes — never by re-adding the column to one UPDATE alone.
+  it('regression pin: the collateral range columns exist AND every full offer write carries them (#1149 → #2382)', () => {
+    // #1149: a collateral-max write shipped with no column behind it. #2382
+    // added the column (migration 0054) — this pin used to assert its
+    // ABSENCE and said to flip it "alongside the create/refresh writes,
+    // never by re-adding the column to one UPDATE alone". Both halves are
+    // asserted now: the schema has the columns, and the create INSERT, the
+    // detail-refresh UPDATE and the OfferModified UPDATE all write the
+    // ceiling, so no write path is left serving a stale range.
     const cols = db
       .prepare(`SELECT name FROM pragma_table_info('offers')`)
       .all() as { name: string }[];
     const names = cols.map((c) => c.name);
     expect(names).toContain('collateral_amount');
-    expect(names).toContain('amount_max');
-    expect(names).toContain('interest_rate_bps_max');
-    expect(names).not.toContain('collateral_amount_max');
+    expect(names).toContain('collateral_amount_max');
+    expect(names).toContain('collateral_amount_filled');
+
+    const src = readFileSync(new URL('../src/chainIndexer.ts', import.meta.url), 'utf8');
+    const createInsert = src.slice(src.indexOf('`INSERT OR IGNORE INTO offers\n          (chain_id, offer_id, status, creator, offer_type,'));
+    expect(createInsert.slice(0, 1200)).toContain('collateral_amount_max, collateral_amount_filled');
+    const refresh = src.slice(src.indexOf('async function refreshOfferDetails('));
+    expect(refresh.slice(0, 6000)).toContain('collateral_amount_max = ?, collateral_amount_filled = ?');
+    const modified = src.slice(src.indexOf('// OfferModified — full post-image.'));
+    expect(modified.slice(0, 1500)).toContain('collateral_amount_max = ?');
   });
 });

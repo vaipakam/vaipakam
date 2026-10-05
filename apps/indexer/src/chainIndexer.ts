@@ -2604,15 +2604,19 @@ async function processOfferLogs(
         amountMax: bigint;
         interestRateBps: bigint;
         interestRateBpsMax: bigint;
-        // NOTE: the event's post-image also carries collateralAmountMax,
-        // deliberately NOT captured here — the `offers` schema stores
-        // collateral min only (no collateral_amount_max column exists;
-        // the create/refresh paths never wrote one and no read path
-        // consumes one). Persisting it wedged production ingest with
-        // `D1_ERROR: no such column` on every OfferModified (#1149).
-        collateralAmount: bigint; }
+        collateralAmount: bigint;
+        // #2382 — the ceiling of a borrower offer's collateral range, raw
+        // from the post-image (0 = single-value, normalised on write).
+        // Persisted since migration 0054 added the column; #1149 was this
+        // same write landing BEFORE the column existed, which the schema
+        // gate (schemaGate.ts) now prevents for every migration.
+        collateralAmountMax: bigint; }
     | { kind: 'matched';
         lenderOfferId: bigint;
+        // #2382 — the borrower side of the match. Under partial fills its
+        // offer stays open with part of its collateral range consumed, so
+        // its filled amounts are re-read block-pinned like the lender's.
+        borrowerOfferId: bigint;
         // #760 — block of the OfferMatched log, for the block-pinned
         // absolute `amountFilled` read in the apply loop below.
         blockNumber: bigint; };
@@ -2651,6 +2655,7 @@ async function processOfferLogs(
       orderedMatchAndModify.push({
         kind: 'matched',
         lenderOfferId: a.lenderOfferId as bigint,
+        borrowerOfferId: a.borrowerOfferId as bigint,
         // #760 — carried so the matched apply can read the absolute
         // `amountFilled` block-pinned to THIS event (idempotent re-scan).
         blockNumber: log.blockNumber,
@@ -2672,6 +2677,7 @@ async function processOfferLogs(
         interestRateBps: a.interestRateBps as bigint,
         interestRateBpsMax: a.interestRateBpsMax as bigint,
         collateralAmount: a.collateralAmount as bigint,
+        collateralAmountMax: a.collateralAmountMax as bigint,
       });
     }
   }
@@ -2756,6 +2762,10 @@ async function processOfferLogs(
         amountMax?: bigint;
         amountFilled?: bigint;
         interestRateBpsMax?: bigint;
+        // #2382 — the collateral range ceiling (0 = single-value) and the
+        // portion partial matches have consumed.
+        collateralAmountMax?: bigint;
+        collateralAmountFilled?: bigint;
         // #164 — on-chain createdAt (uint64 unix-seconds), stamped at
         // `createOffer` and immutable thereafter. Captured here
         // explicitly instead of derived from `first_seen_at` so the
@@ -2778,7 +2788,8 @@ async function processOfferLogs(
            principal_liquidity, collateral_liquidity,
            amount, amount_max, amount_filled,
            interest_rate_bps, interest_rate_bps_max,
-           collateral_amount, duration_days,
+           collateral_amount, collateral_amount_max, collateral_amount_filled,
+           duration_days,
            token_id, collateral_token_id,
            quantity, collateral_quantity, position_token_id,
            prepay_asset,
@@ -2788,7 +2799,7 @@ async function processOfferLogs(
            created_at, expires_at, fill_mode,
            first_seen_block, first_seen_at, updated_at)
          VALUES
-          (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)`,
+          (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)`,
       )
         .bind(
           chainId,
@@ -2808,6 +2819,8 @@ async function processOfferLogs(
           Number(od.interestRateBps),
           Number(od.interestRateBpsMax ?? 0n),
           od.collateralAmount.toString(),
+          effectiveCollateralMax(od.collateralAmount, od.collateralAmountMax),
+          od.collateralAmountFilled === undefined ? null : od.collateralAmountFilled.toString(),
           Number(od.durationDays),
           od.tokenId.toString(),
           od.collateralTokenId.toString(),
@@ -2930,8 +2943,11 @@ async function processOfferLogs(
   // interleaving is retained because OfferModified still applies its own
   // post-image to amount_max.
   //
-  // Note: borrower-side partial fills are out of Phase 1 scope (the
-  // borrowerOfferId is single-fill), so we apply on `lenderOfferId` only.
+  // #2382 — the BORROWER offer's fills are re-read too. This note used to
+  // say borrower partial fills were out of scope and applied the match to
+  // the lender offer only; `OfferMatchFacet` has since gained borrower-side
+  // partial fills (behind `partialFillEnabled`), under which the borrower
+  // offer stays open with `amountFilled` / `collateralAmountFilled` grown.
   for (const ev of orderedMatchAndModify) {
     if (ev.kind === 'matched') {
       // #760 — write the ABSOLUTE `amount_filled` read block-pinned to this
@@ -2977,22 +2993,35 @@ async function processOfferLogs(
         .bind(absFilled.toString(), now, chainId, Number(ev.lenderOfferId))
         .run();
       if ((r.meta?.changes ?? 0) > 0) statusUpdates++;
+      // #2382 — the borrower offer's absolute filled amounts, read at the same
+      // block for the same reason (idempotent replay), and FAIL-CLOSED for the
+      // same reason: under partial fills the borrower offer stays open, and a
+      // skipped update would leave the book showing collateral and principal
+      // that matches have already consumed. A zero struct (no storage) writes
+      // nothing rather than zeros.
+      const bf = await readOfferFillsAt(client, diamond, ev.borrowerOfferId, ev.blockNumber);
+      if (bf !== null) {
+        const rb = await env.DB.prepare(
+          `UPDATE offers
+           SET amount_filled = ?,
+               collateral_amount_filled = ?,
+               updated_at = ?
+           WHERE chain_id = ? AND offer_id = ?`,
+        )
+          .bind(bf.amountFilled, bf.collateralAmountFilled, now, chainId, Number(ev.borrowerOfferId))
+          .run();
+        if ((rb.meta?.changes ?? 0) > 0) statusUpdates++;
+      }
     } else {
       // OfferModified — full post-image. Status stays 'active'
       // (modifications are only allowed on unaccepted offers;
       // OfferAlreadyAccepted reverts the modify call), so we don't
       // touch the status column.
       //
-      // #1149 — do NOT write `collateral_amount_max`: that column has
-      // never existed on `offers` (0004 created amount_max +
-      // interest_rate_bps_max but collateral min only, and no later
-      // migration added a max). The over-eager post-image write here
-      // failed the whole scan with `D1_ERROR: no such column` on any
-      // OfferModified in the window, and the fail-closed design then
-      // wedged the chain's cursor permanently. Nothing reads a
-      // collateral max from this table; if a ranged-collateral display
-      // ever needs it, add the column via migration FIRST, then extend
-      // the create/refresh writes alongside this one.
+      // #2382 — the collateral ceiling is written too (migration 0054).
+      // #1149 was this write landing before its column existed; the
+      // schema gate now holds the whole pass until the migration a build
+      // needs is applied, so the write ships WITH its column, not ahead.
       const r = await env.DB.prepare(
         `UPDATE offers
          SET amount = ?,
@@ -3000,6 +3029,7 @@ async function processOfferLogs(
              interest_rate_bps = ?,
              interest_rate_bps_max = ?,
              collateral_amount = ?,
+             collateral_amount_max = ?,
              updated_at = ?
          WHERE chain_id = ? AND offer_id = ?`,
       )
@@ -3009,6 +3039,7 @@ async function processOfferLogs(
           Number(ev.interestRateBps),
           Number(ev.interestRateBpsMax),
           ev.collateralAmount.toString(),
+          effectiveCollateralMax(ev.collateralAmount, ev.collateralAmountMax),
           now,
           chainId,
           Number(ev.offerId),
@@ -3340,7 +3371,8 @@ async function refreshStubOffers(
   // drops out of this queue instead of starving real stubs.
   const stale = await env.DB.prepare(
     `SELECT offer_id FROM offers
-     WHERE chain_id = ? AND is_stub = 1
+     WHERE chain_id = ? AND (is_stub = 1
+       OR (status = 'active' AND collateral_amount_max IS NULL))
      ORDER BY updated_at ASC
      LIMIT ?`,
   )
@@ -3430,6 +3462,8 @@ async function refreshOfferDetails(
     amountMax?: bigint;
     amountFilled?: bigint;
     interestRateBpsMax?: bigint;
+    collateralAmountMax?: bigint;
+    collateralAmountFilled?: bigint;
     // See parallel definition above — #164 createdAt + #195 GTT +
     // #125 fill-mode.
     createdAt?: bigint;
@@ -3468,7 +3502,8 @@ async function refreshOfferDetails(
        collateral_token_id = ?, quantity = ?, collateral_quantity = ?,
        amount = ?, amount_max = ?, amount_filled = ?,
        interest_rate_bps = ?, interest_rate_bps_max = ?,
-       collateral_amount = ?, duration_days = ?, position_token_id = ?,
+       collateral_amount = ?, collateral_amount_max = ?, collateral_amount_filled = ?,
+       duration_days = ?, position_token_id = ?,
        prepay_asset = ?, use_full_term_interest = ?,
        creator_fallback_consent = ?, allows_partial_repay = ?,
        created_at = ?, expires_at = ?, fill_mode = ?,
@@ -3496,6 +3531,8 @@ async function refreshOfferDetails(
       Number(o.interestRateBps),
       Number(o.interestRateBpsMax ?? 0n),
       o.collateralAmount.toString(),
+      effectiveCollateralMax(o.collateralAmount, o.collateralAmountMax),
+      o.collateralAmountFilled === undefined ? null : o.collateralAmountFilled.toString(),
       Number(o.durationDays),
       o.positionTokenId.toString(),
       o.prepayAsset.toLowerCase(),
@@ -6291,6 +6328,61 @@ function serializeArgs(args: Record<string, unknown>): string {
   return JSON.stringify(args, (_k, v) =>
     typeof v === 'bigint' ? v.toString() : v,
   );
+}
+
+/**
+ * #2382 — a borrower offer's EFFECTIVE collateral ceiling, as stored in
+ * `offers.collateral_amount_max`. The chain stores 0 for a single-value offer
+ * (it means "the floor"), so the row never carries that sentinel. `undefined`
+ * — a detail read that did not decode the field — writes NULL (not yet read),
+ * never the floor: claiming "exactly this much" on a failed decode would state
+ * a figure the indexer does not have.
+ */
+export function effectiveCollateralMax(
+  floor: bigint,
+  max: bigint | undefined,
+): string | null {
+  if (max === undefined) return null;
+  return (max === 0n ? floor : max).toString();
+}
+
+/**
+ * #2382 — an offer's absolute filled amounts at `blockNumber`, for the
+ * OfferMatched apply. Throws on a failed read (the caller's scan must not
+ * advance past an unapplied update — #760's rule); returns null for a zero
+ * struct (no storage left), which has nothing to write.
+ */
+async function readOfferFillsAt(
+  client: PublicClient,
+  diamond: Address,
+  offerId: bigint,
+  blockNumber: bigint,
+): Promise<{ amountFilled: string; collateralAmountFilled: string } | null> {
+  let od: { creator?: string; amountFilled?: bigint; collateralAmountFilled?: bigint };
+  try {
+    od = (await client.readContract({
+      address: diamond,
+      abi: DIAMOND_OFFER_DETAILS_ABI,
+      functionName: 'getOfferDetails',
+      args: [offerId],
+      blockNumber,
+    })) as typeof od;
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(
+      `[chainIndexer] #2382 getOfferDetails(${Number(offerId)}) for OfferMatched failed; aborting scan so the cursor doesn't advance`,
+      err,
+    );
+    throw err;
+  }
+  if (od.creator?.toLowerCase() === '0x0000000000000000000000000000000000000000') return null;
+  if (od.amountFilled === undefined || od.collateralAmountFilled === undefined) {
+    throw new Error('getOfferDetails returned no amountFilled / collateralAmountFilled');
+  }
+  return {
+    amountFilled: BigInt(od.amountFilled).toString(),
+    collateralAmountFilled: BigInt(od.collateralAmountFilled).toString(),
+  };
 }
 
 function emptyResult(skipped: string): ChainIndexerResult {

@@ -1530,6 +1530,8 @@
       "collateralNone": "없음",
       "illiquidCollateralTag": "등록 시 비유동(수락 시 다시 확인) — 그렇다면 상환되지 않을 때 그대로 넘겨집니다",
       "collateralAtLeast": "최소 {{amount}}",
+      "collateralRange": "{{range}} 약정됨 — 직접 자금을 제공하면 {{floor}}이(가) 잠기며, 매칭 체결은 최대 {{ceiling}}까지 잠글 수 있습니다",
+      "collateralRangeRemaining": "{{range}} 아직 약정됨 ({{used}}은(는) 이전 체결로 이미 잠김; 나머지는 매칭 체결로만 가져갈 수 있습니다)",
       "ltvValue": "담보인정비율 {{pct}}(담보 가치 대비 대출 가치의 비율)",
       "ltvValueRanged": "표시된 수량 기준 담보인정비율 {{pct}}(담보 가치 대비 대출 가치의 비율). 다른 수량으로 체결되면 달라질 수 있습니다",
       "ltvIlliquid": "담보인정비율을 계산하지 않습니다. 한쪽이 비유동 자산(신뢰할 수 있는 가격이 없거나 거래가 너무 적음)으로 취급되어 프로토콜이 가치를 0으로 봅니다",

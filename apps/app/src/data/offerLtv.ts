@@ -87,7 +87,11 @@ function valueOf(amount: bigint, p: Extract<AssetPricing, { kind: 'priced' }>): 
  */
 export function offerLtv(
   offer: Parameters<typeof ltvLegs>[0] &
-    Pick<IndexedOffer, 'amount' | 'amountMax'> & { amountFilled?: string },
+    Pick<IndexedOffer, 'amount' | 'amountMax'> & {
+      amountFilled?: string;
+      collateralAmountMax?: string | null;
+      collateralAmountFilled?: string | null;
+    },
   pricing: ReadonlyMap<string, AssetPricing> | null | undefined,
 ): OfferLtv {
   const legs = ltvLegs(offer);
@@ -112,13 +116,22 @@ export function offerLtv(
   // Either side rounding to nothing would print a fictional 0% (or divide
   // by zero) — say the size is too small to work out instead.
   if (borrowedValue === 0n || collateralValue === 0n) return { kind: 'tooSmall' };
-  // A fill of another size can carry another ratio when the lend offer is
-  // a range or already part-taken (the matcher scales and rounds down the
-  // collateral), and for EVERY borrow request: its collateral is a floor
-  // and the indexed row does not carry its ceiling (#2382), so the card
-  // cannot know a fill will use exactly the amounts shown.
-  const ranged =
-    !isLender || amountMax > amount || BigInt(offer.amountFilled || '0') > 0n;
+  // A fill of another size can carry another ratio when the offer is a
+  // range or already part-taken (the matcher scales and rounds down a lend
+  // offer's collateral, and can lock more than a borrow request's floor, up
+  // to its ceiling). A borrow request whose collateral ceiling the indexer
+  // has not read yet (#2382) is treated as ranged: the card cannot know a
+  // fill will use exactly the amounts shown. One whose ceiling equals its
+  // floor, unfilled and single-size, is exact — a direct funding locks
+  // exactly the floor at exactly the requested amount.
+  const filled = BigInt(offer.amountFilled || '0') > 0n;
+  const borrowerCollateralRanged =
+    !isLender &&
+    (offer.collateralAmountMax == null ||
+      offer.collateralAmountFilled == null ||
+      BigInt(offer.collateralAmountMax) > BigInt(offer.collateralAmount) ||
+      BigInt(offer.collateralAmountFilled) > 0n);
+  const ranged = amountMax > amount || filled || borrowerCollateralRanged;
   return { kind: 'value', bps: (borrowedValue * 10_000n) / collateralValue, ranged };
 }
 

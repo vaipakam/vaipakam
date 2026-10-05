@@ -20,9 +20,17 @@ export function offerCollateralText(args: {
   /** The token-details read failed (as opposed to still loading). */
   metaFailed: boolean;
   /** #2378 r2 — the indexed amount is only the offer's FLOOR (a borrower
-   *  offer can commit a collateral range, and the row does not carry the
-   *  ceiling yet — #2382). The figure is then stated as "at least". */
+   *  offer can commit a collateral range). Stated as "at least" — unless
+   *  `borrowerRange` below says what the range actually is. */
   floorOnly?: boolean;
+  /** #2382 — a borrower offer's committed range as the indexer read it:
+   *  the effective ceiling and the part earlier matched fills consumed.
+   *  `null` in either = not read yet, which keeps the "at least" floor
+   *  wording. A direct "fund this request" locks exactly the floor (the
+   *  rest is returned to the borrower); a matched fill can lock more, up
+   *  to the ceiling still unused; a request already part-filled can only
+   *  be matched. */
+  borrowerRange?: { ceiling: string | null; filled: string | null };
   /** #2378 r8 — a LENDER offer's collateral is the requirement at its full
    *  amount, and matching scales it to the part taken. Where the offer can
    *  be taken in part (a range, or already partly taken), the figure is
@@ -35,6 +43,12 @@ export function offerCollateralText(args: {
     amountRaw: (amount: string, token: string) => string;
     atLeast: (amount: string) => string;
     forFullOffer: (amount: string) => string;
+    /** #2382 — an unfilled ranged request: the range, the floor a direct
+     *  funding locks, and the ceiling a matched fill can reach. */
+    range?: (range: string, floor: string, ceiling: string) => string;
+    /** #2382 — a request earlier fills have part-used: what is still
+     *  committed, and how much is already locked. */
+    rangeRemaining?: (range: string, used: string) => string;
   };
 }): string {
   const token = shortAddress(args.asset);
@@ -42,6 +56,38 @@ export function offerCollateralText(args: {
   if (args.assetType === AssetType.ERC1155) {
     const qty = BigInt(args.quantity);
     return `${qty > 1n ? `${qty} × ` : ''}NFT ${token} #${args.tokenId}`;
+  }
+  // #2382 — the borrower's committed range, once the indexer has read it.
+  // Only with token details: a range in raw base units would bury the one
+  // figure, so a failed read keeps the floor-only wording below.
+  const r = args.borrowerRange;
+  if (
+    args.meta &&
+    r &&
+    r.ceiling !== null &&
+    r.filled !== null &&
+    args.labels.range &&
+    args.labels.rangeRemaining
+  ) {
+    const { decimals, symbol } = args.meta;
+    const n = (v: bigint) => formatTokenAmount(v, decimals);
+    const floor = BigInt(args.amount);
+    const ceiling = BigInt(r.ceiling);
+    const filled = BigInt(r.filled);
+    if (filled > 0n) {
+      const left = ceiling > filled ? ceiling - filled : 0n;
+      const range = ceiling > floor && left > floor ? `${n(floor)}–${n(left)} ${symbol}` : `${n(left)} ${symbol}`;
+      return args.labels.rangeRemaining(range, `${n(filled)} ${symbol}`);
+    }
+    if (ceiling > floor) {
+      return args.labels.range(
+        `${n(floor)}–${n(ceiling)} ${symbol}`,
+        `${n(floor)} ${symbol}`,
+        `${n(ceiling)} ${symbol}`,
+      );
+    }
+    // Ceiling == floor and nothing used: the figure is exact.
+    return `${n(floor)} ${symbol}`;
   }
   let text: string;
   if (args.meta) {
