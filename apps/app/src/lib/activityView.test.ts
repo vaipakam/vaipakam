@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  activityValueNeed,
+  activityValueText,
   coalesceByTx,
   humanizeKind,
   labelForKind,
@@ -178,5 +180,31 @@ describe('coalesceByTx', () => {
     ]);
     expect(borrower).toHaveLength(1);
     expect(borrower[0].label).toBe('Collateral claimed');
+  });
+});
+
+describe('#2383 — the row’s value, from the indexer’s normalized fields only', () => {
+  const USDC = '0x00000000000000000000000000000000000000a1';
+  const meta = { decimals: 6, symbol: 'USDC' };
+  const text = (p: Partial<IndexedActivityEvent>, m = meta) => activityValueText(activityValueNeed(ev(p)), m);
+
+  it('states an exact token amount', () => {
+    expect(text({ asset: USDC, assetType: 0, amount: '1500000' })).toBe('1.5 USDC');
+  });
+  it('states a range as X–Y', () => {
+    expect(text({ asset: USDC, assetType: 0, amount: '500000', amountMax: '2000000' })).toBe('0.5–2 USDC');
+  });
+  it('names an NFT by token id, with no amount', () => {
+    expect(text({ asset: USDC, assetType: 1, tokenId: '42', amount: null })).toMatch(/^NFT .+ #42$/);
+  });
+  it('states nothing until the token’s details are read — never raw base units', () => {
+    expect(activityValueText(activityValueNeed(ev({ asset: USDC, assetType: 0, amount: '1500000' })), undefined)).toBeNull();
+  });
+  it('states nothing the indexer did not establish — and never reads args', () => {
+    // Unknown type, no fields at all (an older indexer), and an amount in
+    // the args bag the row does not carry: all nothing.
+    expect(text({ asset: USDC, assetType: null, amount: '1' })).toBeNull();
+    expect(text({})).toBeNull();
+    expect(text({ args: { amount: '1000000', asset: USDC } })).toBeNull();
   });
 });

@@ -2956,6 +2956,21 @@ Its intended behaviour, as the test oracle for this surface:
   the history service answers participant-history queries (a tracked
   indexer follow-up), and until then the feed must not present its
   narrower scope as the wallet's complete history.
+- Each activity row states the asset and amount its transaction moved or
+  offered, when that is known: a loan start states the principal, an offer
+  creation or cancellation states the offer's size (as "X–Y" when the offer
+  is a range, since its first figure alone is only the minimum fill), an
+  amendment states the new size, an acceptance or match states the fill, and
+  a claim states what was claimed. An NFT is named by its token, never given
+  an amount. In a transaction that carries several offers or loans, each row
+  states its OWN offer's or loan's value. The value is established by the
+  history service while it reads the chain — from the event itself, its
+  companion events in the same transaction, and the loan or offer record —
+  and the app shows it as given. Where it is not established (an event with
+  no single amount, such as a repayment; a claim whose asset the loan record
+  cannot place unambiguously; history recorded before this was introduced),
+  the row states no amount rather than a reconstructed one, and a token
+  amount whose details cannot be read is not shown in raw units.
 - NFT rentals are never presented as debt: nothing says "repay", the
   NFT stays in the owner's vault, the renter receives temporary use
   rights, and the renter's total up-front payment (fees plus the live

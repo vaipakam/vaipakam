@@ -19,8 +19,23 @@ import {
 import { EmptyState, UnavailableState } from '../components/EmptyState';
 import { MarketFreshnessNote } from '../components/MarketFreshnessNote';
 import { formatTimeAgo, shortAddress } from '../lib/format';
-import { coalesceByTx, type ActivityRowView } from '../lib/activityView';
+import {
+  activityValueNeed,
+  activityValueText,
+  coalesceByTx,
+  type ActivityRowView,
+} from '../lib/activityView';
+import { useTokenMeta } from '../contracts/erc20';
 import { signalAware } from '../chain/railHealth';
+
+/** #2383 — the asset/amount the row moved or offered, as the indexer
+ *  normalized it. Token details load only for a fungible amount; until they
+ *  do, or if they cannot be read, the row states no amount. */
+function useActivityValue(event: ActivityRowView['event']): string | null {
+  const need = activityValueNeed(event);
+  const meta = useTokenMeta(need.kind === 'token' ? need.asset : undefined);
+  return activityValueText(need, meta.data);
+}
 
 /** UX-008 — one coalesced transaction as a readable row: plain-language
  *  action, a single substance sub-line (loan/offer id · who acted · when
@@ -31,7 +46,9 @@ function ActivityRow({ row, explorer }: { row: ActivityRowView; explorer: string
   // back to the pure module's humanized label for a kind the app
   // doesn't map yet (English — unavoidable for an unknown event).
   const displayLabel = copy.activity.labels[event.kind] ?? label;
+  const value = useActivityValue(event);
   const context = [
+    value,
     event.loanId !== null ? copy.activity.loanRef(event.loanId) : null,
     event.offerId !== null ? copy.activity.offerRef(event.offerId) : null,
   ].filter(Boolean);

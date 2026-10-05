@@ -71,6 +71,7 @@ import {
   type RpcIdentityVerdict,
 } from '@vaipakam/lib/rpcIdentity';
 import { chunkD1InList } from '@vaipakam/lib/d1Binds';
+import { activityValue, collectBatch, type ActivityValueContext } from './activityValue';
 import {
   blockToNumber,
   resolveSettledHead,
@@ -5686,6 +5687,11 @@ export async function recordActivityEvents(
     }
   }
 
+  // #2383 — the asset/amount each row moved or offered, fixed here where the
+  // sibling events and the loan/offer records are at hand (see
+  // activityValue.ts for why not in the client).
+  const valueCtx = await loadActivityValueContext(env, chainId, logs);
+
   let inserted = 0;
   for (const log of logs) {
     let args = log.args;
@@ -5699,13 +5705,15 @@ export async function recordActivityEvents(
       }
     }
     const { actor, loanId, offerId } = pluckActivityRefs(log.eventName, args);
+    const v = activityValue(log.eventName, args as Record<string, unknown>, valueCtx);
     const argsJson = serializeArgs(args);
     const blockAt = blockTimestamps.get(log.blockNumber) ?? Math.floor(Date.now() / 1000);
     const result = await env.DB.prepare(
       `INSERT OR IGNORE INTO activity_events
         (chain_id, block_number, log_index, tx_hash, kind,
-         loan_id, offer_id, actor, args_json, block_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         loan_id, offer_id, actor, args_json, block_at,
+         asset, asset_type, amount, amount_max, token_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
       .bind(
         chainId,
@@ -5718,11 +5726,83 @@ export async function recordActivityEvents(
         actor,
         argsJson,
         blockAt,
+        v.asset,
+        v.assetType,
+        v.amount,
+        v.amountMax,
+        v.tokenId,
       )
       .run();
     if ((result.meta?.changes ?? 0) > 0) inserted++;
   }
   return inserted;
+}
+
+/**
+ * #2383 — the sibling maps and the loan/offer records this batch's activity
+ * values need. The records are read AFTER the batch's own offer and loan writes
+ * (runChainPass orders them so), so a loan or offer created in this batch is
+ * found. One `batch()` round trip, chunked under D1's bind cap.
+ */
+async function loadActivityValueContext(
+  env: Env,
+  chainId: number,
+  logs: DecodedLog[],
+): Promise<ActivityValueContext> {
+  const { ctx, loanIds, offerIds } = collectBatch(logs);
+  const loanChunks = chunkD1InList(loanIds, { before: [chainId] });
+  const offerChunks = chunkD1InList(offerIds, { before: [chainId] });
+  if (loanChunks.length + offerChunks.length === 0) return ctx;
+  const statements = [
+    ...loanChunks.map((c) =>
+      env.DB.prepare(
+        `SELECT 'loan' AS k, l.loan_id AS id, l.lending_asset, l.asset_type, l.token_id,
+                l.collateral_asset, l.collateral_asset_type, l.collateral_token_id,
+                o.prepay_asset
+           FROM loans l
+           LEFT JOIN offers o ON o.chain_id = l.chain_id AND o.offer_id = l.offer_id
+          WHERE l.chain_id = ? AND l.loan_id IN (${c.placeholders})`,
+      ).bind(...c.binds),
+    ),
+    ...offerChunks.map((c) =>
+      env.DB.prepare(
+        `SELECT 'offer' AS k, offer_id AS id, lending_asset, asset_type, token_id
+           FROM offers WHERE chain_id = ? AND offer_id IN (${c.placeholders})`,
+      ).bind(...c.binds),
+    ),
+  ];
+  type Row = {
+    k: 'loan' | 'offer';
+    id: number;
+    lending_asset: string;
+    asset_type: number;
+    token_id: string;
+    collateral_asset?: string;
+    collateral_asset_type?: number;
+    collateral_token_id?: string;
+    prepay_asset?: string | null;
+  };
+  const parts = await env.DB.batch<Row>(statements);
+  for (const part of parts) {
+    for (const r of part.results ?? []) {
+      if (r.k === 'loan') {
+        ctx.loans.set(r.id, {
+          lendingAsset: r.lending_asset,
+          assetType: r.asset_type,
+          tokenId: r.token_id,
+          collateralAsset: r.collateral_asset ?? '',
+          collateralAssetType: r.collateral_asset_type ?? 0,
+          collateralTokenId: r.collateral_token_id ?? '0',
+          // An all-zero prepay asset is "none", not the zero-address token.
+          prepayAsset:
+            r.prepay_asset && !/^0x0{40}$/i.test(r.prepay_asset) ? r.prepay_asset.toLowerCase() : null,
+        });
+      } else {
+        ctx.offers.set(r.id, { lendingAsset: r.lending_asset, assetType: r.asset_type, tokenId: r.token_id });
+      }
+    }
+  }
+  return ctx;
 }
 
 /** Map a decoded event to the cross-domain reference columns the

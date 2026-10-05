@@ -17,6 +17,7 @@
  * page).
  */
 import type { IndexedActivityEvent } from '../data/indexer';
+import { formatTokenAmount, shortAddress } from './format';
 
 export type ActivityCategory =
   | 'offer'
@@ -213,4 +214,47 @@ export function coalesceByTx(events: IndexedActivityEvent[]): ActivityRowView[] 
       b.event.logIndex - a.event.logIndex,
   );
   return rows;
+}
+
+/** What a row's value needs to be stated. */
+export type ActivityValueNeed =
+  | { kind: 'none' }
+  | { kind: 'token'; asset: string; amount: bigint; amountMax: bigint | null }
+  | { kind: 'nft'; asset: string; tokenId: string };
+
+/**
+ * #2383 — what this row moved or offered, from the fields the INDEXER
+ * normalized. Nothing is reconstructed from `args` (#2378 tried and was
+ * withdrawn): a row without a value, or with a value the indexer could not
+ * establish, states none.
+ */
+export function activityValueNeed(ev: IndexedActivityEvent): ActivityValueNeed {
+  const asset = ev.asset ?? null;
+  if (!asset) return { kind: 'none' };
+  if (ev.assetType === 0 && ev.amount != null && /^\d+$/.test(ev.amount)) {
+    const amountMax =
+      ev.amountMax != null && /^\d+$/.test(ev.amountMax) ? BigInt(ev.amountMax) : null;
+    return { kind: 'token', asset, amount: BigInt(ev.amount), amountMax };
+  }
+  if ((ev.assetType === 1 || ev.assetType === 2) && ev.tokenId != null) {
+    return { kind: 'nft', asset, tokenId: ev.tokenId };
+  }
+  return { kind: 'none' };
+}
+
+/**
+ * The value as text. A token amount needs the token's decimals and symbol:
+ * until they load — or when they cannot be read — nothing is stated rather
+ * than a raw base-unit figure a reader would take for a token amount.
+ */
+export function activityValueText(
+  need: ActivityValueNeed,
+  meta: { decimals: number; symbol: string } | undefined,
+): string | null {
+  if (need.kind === 'nft') return `NFT ${shortAddress(need.asset)} #${need.tokenId}`;
+  if (need.kind !== 'token' || !meta) return null;
+  const n = (v: bigint) => formatTokenAmount(v, meta.decimals);
+  return need.amountMax !== null && need.amountMax > need.amount
+    ? `${n(need.amount)}–${n(need.amountMax)} ${meta.symbol}`
+    : `${n(need.amount)} ${meta.symbol}`;
 }

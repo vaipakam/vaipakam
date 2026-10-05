@@ -146,7 +146,16 @@ describe('SQL-vs-schema guard (#1149)', () => {
     // bind list is what makes it dynamic. Covered against the REAL migrated
     // schema in `offerCollateralRange.test.ts`, which asserts exactly which
     // rows it nulls and that the refresh lane then selects them.
-    expect(skipped.length).toBeLessThanOrEqual(17);
+    // Raised 17 → 19 for #2383: the activity ledger now reads the loan and
+    // offer records its normalized values need (`loadActivityValueContext`)
+    // through two chunked `IN (?, ?, …)` statements — one placeholder per id,
+    // values bound, the same shape as the consumed-offer creator lookup. A
+    // bind list is what makes them dynamic. Covered against the REAL migrated
+    // schema by `activityValue.test.ts`, which runs `recordActivityEvents` end
+    // to end and asserts the values those reads produce (a rental claim found
+    // through the loan→offer join, an NFT claim through the loan's collateral
+    // columns), so a wrong column or join fails there.
+    expect(skipped.length).toBeLessThanOrEqual(19);
   });
 
   it('every static SQL statement prepares against the migrated schema', () => {
