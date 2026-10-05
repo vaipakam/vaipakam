@@ -106,4 +106,38 @@ describe('outcomeManifest', () => {
     expect(text).toMatch(/NOT RUN[^\n]*\(1\):\n {2}\[settled\]/);
     expect(text).toMatch(/--   vault: balanceOf/);
   });
+
+  // #2422 r9 — UNDETERMINED: ran after the write, premises did not hold.
+  it('UNDETERMINED is its own outcome: not verified, not failed, and the run still passes', () => {
+    const m = createManifest(spec());
+    m.record('closed', 'status', true, 'ok');
+    m.record('settled', 'claim', true, 'claim rose by the lender due');
+    m.undetermined('settled', 'vault', 'another transaction in the accept block touched the old lender\u2019s vault');
+    expect(statusOf(m, 'settled')).toBe('undetermined');
+    expect(m.passed()).toBe(true);
+    expect(m.undeterminedCount()).toBe(1);
+    const text = m.render().join('\n');
+    expect(text).toMatch(/UNDETERMINED \(each check ran after the write[^\n]*\(1\):\n {2}\[settled\]/);
+    expect(text).toMatch(/\?\? {3}vault: balanceOf\(old lender vault\)\n {13}UNDETERMINED — another transaction/);
+    expect(text).not.toMatch(/^VERIFIED \(\d\):\n {2}\[settled\]/m);
+  });
+
+  it('a failure outranks UNDETERMINED, and an undetermined check alone never counts as verified', () => {
+    const m = createManifest(spec());
+    m.undetermined('settled', 'claim', 'premise did not hold');
+    m.record('settled', 'vault', false, 'wrong amount');
+    expect(statusOf(m, 'settled')).toBe('failed');
+    const n = createManifest(spec());
+    n.undetermined('settled', 'claim', 'premise did not hold');
+    // `vault` never ran: the claim is NOT RUN, which fails the run.
+    expect(statusOf(n, 'settled')).toBe('not run');
+    expect(n.passed()).toBe(false);
+  });
+
+  it('UNDETERMINED needs a declared check and a reason', () => {
+    const m = createManifest(spec());
+    expect(() => m.undetermined('settled', 'nope', 'x')).toThrow(/declares no check "nope"/);
+    expect(() => m.undetermined('settled', 'vault', '')).toThrow(/needs a reason/);
+    expect(() => m.undetermined('indexer', 'x', 'y')).toThrow(/declared NOT VERIFIED/);
+  });
 });

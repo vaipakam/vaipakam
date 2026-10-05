@@ -57,6 +57,25 @@ export function expectedPostureFrom(sw) {
 }
 
 /**
+ * Which of the three posture switches differ between two readings
+ * (#2422 r9). A banner is judged against the switches read AT its
+ * observation; if those differ from the pinned preflight snapshot the
+ * chain moved under the drive — a state race, not a product defect — and
+ * the drive stops before writing rather than reporting a FAIL. Returns the
+ * changed switch names with both values; empty ⇔ unchanged. A reading with
+ * a non-boolean switch is reported as changed (it cannot be compared).
+ */
+export function postureSwitchesChanged(before, after) {
+  const out = [];
+  for (const k of ['paused', 'autoRefinance', 'partialFill']) {
+    const a = before?.[k];
+    const b = after?.[k];
+    if (typeof a !== 'boolean' || typeof b !== 'boolean' || a !== b) out.push(`${k}: ${a} → ${b}`);
+  }
+  return out;
+}
+
+/**
  * The four sentences, read from the repo's English catalogue — the same
  * place the drive already takes its forced-close copy from, so there is no
  * second copy to drift. Throws by name when a key is missing, so the caller

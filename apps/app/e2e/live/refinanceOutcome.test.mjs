@@ -8,11 +8,17 @@
  */
 import { describe, expect, it } from 'vitest';
 
+import { createManifest } from './outcomeManifest.mjs';
 import {
+  blockIsolation,
+  checkRoleNonces,
+  collateralMovedOut,
   expectedPrincipalTransfers,
   expectedSettlement,
   lienMismatches,
   scanForReplacement,
+  settlementPremises,
+  TOPIC,
   transferMismatches,
 } from './refinanceOutcome.mjs';
 
@@ -184,3 +190,164 @@ describe('refinanceOutcome — the replacement scan states its limit', () => {
     await expect(scanForReplacement({ readLoan, startId: 23n, requestId: 45n, cap: 10 })).rejects.toThrow(/two loans/);
   });
 });
+
+// ---------------------------------------------------------------------
+// #2422 r9 — the model's premises, the block's scope, the vault, nonces.
+// ---------------------------------------------------------------------
+
+describe('refinanceOutcome — settlement premises (the default fee posture)', () => {
+  // Loan 22 at block 47711161: WETH Liquid (0); the borrower CONSENTS but
+  // its effective discount is 0 bps; request #45 not Full; the old lender
+  // holder has no consent; loan 22's lenderMode is None (0).
+  const LOAN22 = { principalLiquidity: 0, borrowerEffBps: 0, requestCreatorFull: false, holderConsent: false, lenderMode: 0 };
+
+  it('holds for the real loan-22 posture', () => {
+    const p = settlementPremises(LOAN22);
+    expect(p.holds).toBe(true);
+    expect(p.failures).toEqual([]);
+    expect(p.basis.join(' | ')).toMatch(/effective discount 0 bps/);
+  });
+
+  it('a discounted borrower LIF breaks the premise — but only on a Liquid principal', () => {
+    const tier = settlementPremises({ ...LOAN22, borrowerEffBps: 1000 });
+    expect(tier.holds).toBe(false);
+    expect(tier.failures[0].party).toBe('borrower');
+    expect(tier.failures[0].reason).toMatch(/effective discount is 1000 bps/);
+    expect(settlementPremises({ ...LOAN22, borrowerEffBps: 0, requestCreatorFull: true }).failures[0].reason).toMatch(/Full opt-in/);
+    // holdOnlyBorrowerLif discounts nothing when the principal is not Liquid.
+    expect(settlementPremises({ ...LOAN22, principalLiquidity: 1, borrowerEffBps: 1000, requestCreatorFull: true }).holds).toBe(true);
+  });
+
+  it('any yield-fee entitlement of the exiting holder breaks the premise (VPFI-paid or direct reduction)', () => {
+    const consent = settlementPremises({ ...LOAN22, holderConsent: true });
+    expect(consent.holds).toBe(false);
+    expect(consent.failures[0].party).toBe('exiting lender');
+    expect(consent.failures[0].coveredBy).toMatch(/FeeEntitlementFacetTest/);
+    expect(settlementPremises({ ...LOAN22, lenderMode: 2 }).failures[0].reason).toMatch(/Full tariff on the loan/);
+    // HoldOnly (1) alone is not eligibility: lenderYieldFeeEligible needs consent or Full.
+    expect(settlementPremises({ ...LOAN22, lenderMode: 1 }).holds).toBe(true);
+  });
+
+  it('reports both parties when both fail', () => {
+    expect(settlementPremises({ ...LOAN22, borrowerEffBps: 500, holderConsent: true }).failures.map((f) => f.party)).toEqual([
+      'borrower',
+      'exiting lender',
+    ]);
+  });
+});
+
+const ACCEPT = '0x6651828509c9bcfd01746270a79f8602cc303a06aa1ef853b71ad24c29b0888c';
+const DIAMOND = '0xd89fd7F787e4415460b23891E97570a4881fb995';
+const BORROWER_VAULT = '0x5F2295e0D353D02324d12E32eE7304743b456Ac6';
+const pad = (a) => `0x${a.toLowerCase().replace(/^0x/, '').padStart(64, '0')}`;
+const WATCHED = { borrower: BORROWER, lender: LENDER, borrowerVault: BORROWER_VAULT, oldLenderVault: OLD_LENDER_VAULT };
+const rc = (hash, over = {}) => ({ transactionHash: hash, status: '0x1', from: '0x000000000000000000000000000000000000aaaa', to: '0x000000000000000000000000000000000000bbbb', logs: [], ...over });
+const OTHER = `0x${'1'.repeat(64)}`;
+
+describe('refinanceOutcome — the accept block’s other transactions', () => {
+  it('an unreadable block is not isolation', () => {
+    expect(blockIsolation({ receipts: null, acceptHash: ACCEPT, diamond: DIAMOND, watched: WATCHED })).toEqual({ known: false, isolated: false, touching: [] });
+    // A receipt list that does not even contain the accept is not the block.
+    expect(blockIsolation({ receipts: [rc(OTHER)], acceptHash: ACCEPT, diamond: DIAMOND, watched: WATCHED }).known).toBe(false);
+  });
+
+  it('unrelated traffic leaves the accept isolated (block 47711162 had 133 such transactions)', () => {
+    const unrelated = rc(OTHER, { logs: [{ address: '0x96e582dc68e66613bcb1996320844a3fb28c07d8', topics: [TOPIC.transfer, pad('0x000000000000000000000000000000000000cccc'), pad('0x000000000000000000000000000000000000dddd')] }] });
+    const r = blockIsolation({ receipts: [unrelated, rc(ACCEPT, { from: LENDER, to: DIAMOND })], acceptHash: ACCEPT, diamond: DIAMOND, watched: WATCHED });
+    expect(r).toEqual({ known: true, isolated: true, touching: [] });
+  });
+
+  it('flags a Diamond log, a participant named in a token transfer, a vault log, and a participant’s own transaction', () => {
+    const cases = [
+      [rc(OTHER, { logs: [{ address: DIAMOND, topics: [`0x${'2'.repeat(64)}`] }] }), /a Diamond log/],
+      [rc(OTHER, { logs: [{ address: TCOL, topics: [TOPIC.transfer, pad(BORROWER_VAULT), pad('0x000000000000000000000000000000000000dddd')] }] }), /naming borrowerVault/],
+      [rc(OTHER, { logs: [{ address: '0x4200000000000000000000000000000000000006', topics: [TOPIC.transfer, pad('0x000000000000000000000000000000000000dddd'), pad(OLD_LENDER_VAULT)] }] }), /naming oldLenderVault/],
+      [rc(OTHER, { logs: [{ address: BORROWER_VAULT, topics: [`0x${'3'.repeat(64)}`] }] }), /a log emitted by borrowerVault/],
+      [rc(OTHER, { from: LENDER }), /from lender/],
+      [rc(OTHER, { to: DIAMOND }), /sent to the Diamond/],
+    ];
+    for (const [other, why] of cases) {
+      const r = blockIsolation({ receipts: [rc(ACCEPT), other], acceptHash: ACCEPT, diamond: DIAMOND, watched: WATCHED });
+      expect(r.isolated, String(why)).toBe(false);
+      expect(r.touching[0], String(why)).toMatch(why);
+    }
+  });
+});
+
+describe('refinanceOutcome — collateral leaving the borrower’s vault (accept receipt only)', () => {
+  const x = '0x000000000000000000000000000000000000dddd';
+  it('finds an ERC-20 / ERC-721 Transfer out of the vault, and nothing else', () => {
+    const out20 = { address: TCOL, topics: [TOPIC.transfer, pad(BORROWER_VAULT), pad(x)] };
+    const in20 = { address: TCOL, topics: [TOPIC.transfer, pad(x), pad(BORROWER_VAULT)] };
+    const otherToken = { address: '0x4200000000000000000000000000000000000006', topics: [TOPIC.transfer, pad(BORROWER_VAULT), pad(x)] };
+    expect(collateralMovedOut({ logs: [in20, otherToken], token: TCOL, from: BORROWER_VAULT, assetType: 0 })).toEqual([]);
+    expect(collateralMovedOut({ logs: [out20], token: TCOL, from: BORROWER_VAULT, assetType: 0 })).toHaveLength(1);
+    const out721 = { address: TCOL, topics: [TOPIC.transfer, pad(BORROWER_VAULT), pad(x), `0x${'0'.repeat(63)}7`] };
+    expect(collateralMovedOut({ logs: [out721], token: TCOL, from: BORROWER_VAULT, assetType: 1 })[0]).toMatch(/^ERC-721 Transfer/);
+  });
+
+  it('reads ERC-1155 movements by their FROM (the second indexed address), not the operator', () => {
+    const single = { address: TCOL, topics: [TOPIC.transferSingle, pad(x), pad(BORROWER_VAULT), pad(x)] };
+    const batch = { address: TCOL, topics: [TOPIC.transferBatch, pad(x), pad(BORROWER_VAULT), pad(x)] };
+    const operatorOnly = { address: TCOL, topics: [TOPIC.transferSingle, pad(BORROWER_VAULT), pad(x), pad(BORROWER_VAULT)] };
+    expect(collateralMovedOut({ logs: [single, batch, operatorOnly], token: TCOL, from: BORROWER_VAULT, assetType: 2 })).toHaveLength(2);
+    expect(() => collateralMovedOut({ logs: [], token: TCOL, from: BORROWER_VAULT, assetType: 3 })).toThrow(/unknown asset type/);
+  });
+
+  it('the real loan-22 accept moved no collateral out of the borrower’s vault', () => {
+    // The real receipt's logs on the collateral token: none (its six token
+    // logs are all WETH — REAL_TRANSFERS above).
+    expect(collateralMovedOut({ logs: [], token: TCOL, from: BORROWER_VAULT, assetType: 0 })).toEqual([]);
+  });
+});
+
+describe('refinanceOutcome — each role’s nonces are their own check', () => {
+  const discipline = () =>
+    createManifest({
+      verifiable: [
+        {
+          id: 'writeDiscipline',
+          claim: 'every write was planned',
+          checks: { borrowerNonces: 'borrower nonces', lenderNonces: 'lender nonces', noRefusals: 'refusal logs' },
+        },
+      ],
+    });
+
+  it('a lender read that throws leaves writeDiscipline unverified', async () => {
+    const m = discipline();
+    const record = (key, ok, ev) => m.record('writeDiscipline', key, ok, ev);
+    const b = await checkRoleNonces({ role: 'borrower', readNonces: async () => ({ latest: 89, pending: 89 }), baseline: 86, hashed: 3, allowed: 3, record });
+    expect(b).toMatchObject({ recorded: true, ok: true });
+    const l = await checkRoleNonces({
+      role: 'lender',
+      readNonces: async () => {
+        throw new Error('RPC timeout');
+      },
+      baseline: 130,
+      hashed: 2,
+      allowed: 2,
+      record,
+    });
+    expect(l).toEqual({ recorded: false, error: 'RPC timeout' });
+    m.record('writeDiscipline', 'noRefusals', true, 'none');
+    const row = m.rows()[0];
+    expect(row.status).toBe('not run');
+    expect(row.checks.find((c) => c.key === 'lenderNonces').status).toBe('not run');
+    expect(m.passed()).toBe(false);
+  });
+
+  it('records a mismatch as a failure when the read succeeds', async () => {
+    const m = discipline();
+    const r = await checkRoleNonces({
+      role: 'lender',
+      readNonces: async () => ({ latest: 133, pending: 133 }),
+      baseline: 130,
+      hashed: 2,
+      allowed: 2,
+      record: (key, ok, ev) => m.record('writeDiscipline', key, ok, ev),
+    });
+    expect(r.ok).toBe(false);
+    expect(m.rows()[0].status).toBe('failed');
+  });
+});
+

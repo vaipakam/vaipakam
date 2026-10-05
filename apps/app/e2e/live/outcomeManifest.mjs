@@ -22,9 +22,18 @@
  *     here at runtime via `defer`, when the drive meets a case its model
  *     does not cover — stated, with the reason, rather than passed.
  *
+ * A third outcome, UNDETERMINED (#2422 r9), is for a check that RAN after
+ * the irreversible write but whose model premises did not hold — a fee
+ * posture the model does not cover, another transaction in the same block
+ * touching the state it diffs, a block whose receipts could not be read. It
+ * is distinct from FAILED: nothing was observed to be wrong; the claim could
+ * not be substantiated, and the manifest says why. It is recorded per check
+ * (`undetermined`), always with a reason.
+ *
  * `passed()` is true only when no claim FAILED and no verifiable claim is
- * NOT RUN. Deferred and static not-verified claims do not fail a run; they
- * are printed as exactly what they are.
+ * NOT RUN. Deferred, static not-verified and UNDETERMINED claims do not fail
+ * a run; they are printed as exactly what they are, and `undeterminedCount()`
+ * lets the verdict say so instead of printing a plain PASS.
  *
  * Pure; `outcomeManifest.test.mjs` pins the rules.
  */
@@ -42,7 +51,7 @@
  * @property {string|null} coveredBy             a named test, or null = not covered
  */
 
-const STATUS_ORDER = ['verified', 'failed', 'not run', 'not verified'];
+const STATUS_ORDER = ['verified', 'failed', 'not run', 'undetermined', 'not verified'];
 
 /**
  * @param {{ verifiable: VerifiableClaim[], notVerified?: NotVerifiedClaim[] }} spec
@@ -95,6 +104,18 @@ export function createManifest({ verifiable, notVerified = [] }) {
   }
 
   /**
+   * Record that a declared check RAN but could not be substantiated, and
+   * why (#2422 r9). Never a failure; never a pass. A reason is required.
+   */
+  function undetermined(id, key, reason) {
+    const c = verifiableClaim(id);
+    const k = c.checks.get(key);
+    if (!k) throw new Error(`manifest: claim "${id}" declares no check "${key}"`);
+    if (!reason) throw new Error(`manifest: an undetermined check ("${id}.${key}") needs a reason`);
+    k.records.push({ ok: null, undetermined: String(reason), evidence: `UNDETERMINED — ${reason}` });
+  }
+
+  /**
    * Move a verifiable claim to NOT VERIFIED at runtime: the drive met a
    * case its model does not substantiate. A claim that already FAILED stays
    * failed — deferring never hides a failure.
@@ -108,11 +129,20 @@ export function createManifest({ verifiable, notVerified = [] }) {
   function statusOf(c) {
     if (c.kind === 'static') return 'not verified';
     const all = [...c.checks.values()];
-    if (all.some((k) => k.records.some((r) => !r.ok))) return 'failed';
+    if (all.some((k) => k.records.some((r) => r.ok === false))) return 'failed';
     if (c.deferred) return 'not verified';
     if (all.some((k) => k.records.length === 0)) return 'not run';
+    if (all.some((k) => k.records.some((r) => r.undetermined))) return 'undetermined';
     return 'verified';
   }
+  const checkStatus = (k) =>
+    k.records.length === 0
+      ? 'not run'
+      : k.records.some((r) => r.ok === false)
+        ? 'failed'
+        : k.records.some((r) => r.undetermined)
+          ? 'undetermined'
+          : 'passed';
 
   /** One row per claim, in declaration order. */
   function rows() {
@@ -126,7 +156,7 @@ export function createManifest({ verifiable, notVerified = [] }) {
           : [...c.checks.entries()].map(([key, k]) => ({
               key,
               read: k.read,
-              status: k.records.length === 0 ? 'not run' : k.records.every((r) => r.ok) ? 'passed' : 'failed',
+              status: checkStatus(k),
               evidence: k.records.map((r) => r.evidence),
             })),
       reason: c.deferred?.reason ?? null,
@@ -134,7 +164,8 @@ export function createManifest({ verifiable, notVerified = [] }) {
     }));
   }
 
-  const passed = () => rows().every((r) => r.status === 'verified' || r.status === 'not verified');
+  const passed = () => rows().every((r) => ['verified', 'not verified', 'undetermined'].includes(r.status));
+  const undeterminedCount = () => rows().filter((r) => r.status === 'undetermined').length;
 
   /** The manifest as printable lines, grouped by status. */
   function render() {
@@ -144,6 +175,8 @@ export function createManifest({ verifiable, notVerified = [] }) {
       verified: 'VERIFIED',
       failed: 'FAILED',
       'not run': 'NOT RUN (a declared check never ran — the claim is not substantiated)',
+      undetermined:
+        'UNDETERMINED (each check ran after the write, but its premises did not hold — the claim could not be substantiated either way)',
       'not verified': 'NOT VERIFIED BY THIS DRIVER',
     };
     for (const status of STATUS_ORDER) {
@@ -154,7 +187,8 @@ export function createManifest({ verifiable, notVerified = [] }) {
         out.push(`  [${r.id}] ${r.claim}`);
         for (const k of r.checks) {
           if (status === 'not verified' && k.status === 'not run') continue;
-          out.push(`      ${k.status === 'passed' ? 'ok  ' : k.status === 'failed' ? 'FAIL' : '--  '} ${k.key}: ${k.read}`);
+          const mark = { passed: 'ok  ', failed: 'FAIL', undetermined: '??  ', 'not run': '--  ' }[k.status];
+          out.push(`      ${mark} ${k.key}: ${k.read}`);
           for (const e of k.evidence) out.push(`             ${e}`);
         }
         if (status === 'not verified') {
@@ -166,5 +200,5 @@ export function createManifest({ verifiable, notVerified = [] }) {
     return out;
   }
 
-  return { record, defer, rows, passed, render };
+  return { record, undetermined, defer, rows, passed, undeterminedCount, render };
 }
