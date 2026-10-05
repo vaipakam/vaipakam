@@ -4777,6 +4777,23 @@ const copySource = {
     // Row context refs — the loan / offer a row belongs to.
     loanRef: tmpl(`Loan #{{loanId}}`, ['loanId']),
     offerRef: tmpl(`Offer #{{offerId}}`, ['offerId']),
+    // #2383 r1 — a row's value, stated or disclosed. A known amount whose
+    // token details are still loading, or could not be read, is SAID to be
+    // there (never dropped), and raw base units are named as base units.
+    valueLoading: tmpl(`amount loading ({{token}})`, ['token']),
+    valueUnreadable: tmpl(
+      `{{amount}} base units of {{token}} (its token details could not be read)`,
+      ['amount', 'token'],
+    ),
+    // An ERC-1155 whose number of copies the record does not carry.
+    quantityUnknown: 'number of copies not recorded',
+    // The same action moved or offered something not itemised on the row.
+    valuePlusUnstated: '+ an amount not itemised here',
+    valueNotRecorded: 'Amount not recorded',
+    // A lender claim's event names only the claim's own amount; funds held
+    // for the lender from earlier top-ups are paid out with it.
+    heldForLenderNote:
+      'A lender claim also pays out any funds held for the lender from earlier top-ups — those are not included in the amount shown.',
     viewTx: 'View transaction',
     loadMore: 'Load older activity',
     loadingMore: 'Loading…',

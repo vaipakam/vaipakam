@@ -153,6 +153,16 @@ interface ActivityRow {
   actor: string | null;
   args_json: string;
   block_at: number;
+  // 0055 (#2383) — the normalized value (activityValue.ts). NULL = not
+  // established for this row; `undefined` = the column does not exist yet
+  // (this build reading a database before 0055 — `SELECT *` keeps that
+  // working). Both serve as null.
+  asset?: string | null;
+  asset_type?: number | null;
+  amount?: string | null;
+  amount_max?: string | null;
+  token_id?: string | null;
+  quantity?: string | null;
 }
 
 function activityToJson(row: ActivityRow): Record<string, unknown> {
@@ -174,6 +184,16 @@ function activityToJson(row: ActivityRow): Record<string, unknown> {
     actor: row.actor,
     args,
     blockAt: row.block_at,
+    // #2383 — what the row moved or offered. `amount`/`amountMax` are base
+    // units of an ERC-20 `asset`; `tokenId` names an NFT. null = unknown,
+    // and a client must show nothing rather than reconstruct it from args.
+    asset: row.asset ?? null,
+    assetType: row.asset_type ?? null,
+    amount: row.amount ?? null,
+    amountMax: row.amount_max ?? null,
+    tokenId: row.token_id ?? null,
+    // #2383 r1 — an ERC-1155's quantity (null for any other asset).
+    quantity: row.quantity ?? null,
   };
 }
 
