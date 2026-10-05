@@ -4314,5 +4314,10 @@
     "type": "error",
     "name": "VpfiNotAllowedAsRentalPrepay",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ZeroCollateral",
+    "inputs": []
   }
 ]
