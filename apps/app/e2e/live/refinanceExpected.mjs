@@ -16,7 +16,7 @@
  * random nonce, a deadline relative to chain time, an approval capped from
  * above); everything else is exact.
  *
- * Pure (only viem's pure encoding helpers) and parameterised on `nowSec`,
+ * Pure (only viem's pure encoding helpers) and parameterised on the anchors,
  * so `refinanceExpected.test.mjs` can pin the shapes without a chain.
  */
 import { decodeFunctionData, encodeAbiParameters, keccak256, toFunctionSelector } from 'viem';
@@ -28,24 +28,131 @@ export const ZERO_HASH = `0x${'0'.repeat(64)}`;
 export const REQUEST_WINDOW_SEC = 30n * 86_400n;
 /** useAcceptTerms' ACCEPT_DEADLINE_SECONDS — the signed terms' lifetime. */
 export const ACCEPT_DEADLINE_SEC = 30n * 60n;
-/** Local clock vs block time, in either direction. */
-export const CLOCK_SLACK_SEC = 900n;
+/**
+ * TIME WINDOWS ARE ANCHORED TO CHAIN TIME, NOT THE LOCAL CLOCK (#2422 r4).
+ *
+ * The app stamps every time-relative field from a CHAIN timestamp it reads
+ * inside its own submit flow (`latestBlock.timestamp` in RefinanceFlow, and
+ * `chainNow` in useAcceptTerms). The drive reads the chain's latest block
+ * timestamp itself the moment it starts that flow (just before the click)
+ * and calls that the ANCHOR. The app's own read happens AFTER the anchor,
+ * so each stamped field must lie in
+ *
+ *     [anchor + offset − ANCHOR_LAG_SEC,  anchor + offset + ANCHOR_WINDOW_SEC]
+ *
+ *   - ANCHOR_LAG_SEC (5 min) allows the app's RPC node to sit a little
+ *     BEHIND the node the drive read the anchor from;
+ *   - ANCHOR_WINDOW_SEC (45 min) covers the drive's documented worst case
+ *     between the anchor and the app's read — about 35 minutes end to end
+ *     (Offer Book wait, posting, review and consent polls, receipt waits) —
+ *     plus a 10-minute margin. It is deliberately the WHOLE drive's worst
+ *     case: a sequence that takes longer than that is not the one reviewed.
+ *
+ * The anchor is a getter: until the drive has read it, the field cannot be
+ * judged, and the request is refused rather than compared with a guess.
+ */
+export const ANCHOR_LAG_SEC = 5n * 60n;
+export const ANCHOR_WINDOW_SEC = 45n * 60n;
 
-/** A timestamp within CLOCK_SLACK_SEC of `centre()`, evaluated at check time. */
-export function near(desc, centre) {
-  return is(`${desc} (±${CLOCK_SLACK_SEC}s)`, (v) => {
+/** A timestamp stamped by the app from chain time, `offset` after the anchor. */
+export function afterAnchor(desc, anchor, offset) {
+  return is(`${desc}: anchor + ${offset}s, −${ANCHOR_LAG_SEC}s … +${ANCHOR_WINDOW_SEC}s`, (v) => {
+    const a = anchor();
+    if (a == null) return false;
     const x = BigInt(v);
-    const c = centre();
-    return x >= c - CLOCK_SLACK_SEC && x <= c + CLOCK_SLACK_SEC;
+    return x >= a + offset - ANCHOR_LAG_SEC && x <= a + offset + ANCHOR_WINDOW_SEC;
   });
 }
 
-/** A non-zero approval amount of at most `cap`. */
-export function approvalUpTo(cap, why) {
-  return is(`0 < amount ≤ ${cap} (${why})`, (v) => {
+/**
+ * An approval that COVERS the pull it exists for and goes no further
+ * (#2422 r4 P2): `min ≤ amount ≤ max`, where `min` may be a getter for a
+ * floor that depends on the anchor. An undersized approve — `approve(1)` —
+ * is refused, because a request the payoff cannot actually be pulled for is
+ * not the request that was reviewed.
+ */
+export function approvalBetween(min, max, why) {
+  return is(`covers ${why}: floor ≤ amount ≤ ${max}`, (v) => {
+    const floor = typeof min === 'function' ? min() : min;
+    if (floor == null) return false;
     const x = BigInt(v);
-    return x > 0n && x <= cap;
+    return x >= floor && x <= max && x > 0n;
   });
+}
+
+// ---------------------------------------------------------------------
+// The payoff the borrower's approval must cover — a MIRROR of the app's own
+// computation (apps/app/src/contracts/loanLive.ts), so the bound is what
+// the reviewed flow requires, not a guess.
+// ---------------------------------------------------------------------
+const DAY = 86_400n;
+const loanEndOf = (l) => l.startTime + l.durationDays * DAY;
+
+/** `lateFeeAt`: 0 at/before maturity, then 1% + 0.5% per whole day late, ≤ 5%. */
+export function lateFeeAt(l, ts) {
+  const end = loanEndOf(l);
+  if (ts <= end) return 0n;
+  let bps = 100n + ((ts - end) / DAY) * 50n;
+  if (bps > 500n) bps = 500n;
+  return (l.principal * bps) / 10_000n;
+}
+
+/** `refinancePayoffOf`: principal + interest for max(elapsed whole days,
+ *  remaining committed days) + the grace-window late fee. */
+export function refinancePayoffAt(l, asOf) {
+  const start = l.interestAccrualStart !== 0n ? l.interestAccrualStart : l.startTime;
+  const elapsed = asOf > start ? (asOf - start) / DAY : 0n;
+  const floorDays = l.interestAccrualStart !== 0n ? BigInt(l.interestRemainingDays) : l.durationDays;
+  const days = elapsed > floorDays ? elapsed : floorDays;
+  return l.principal + (l.principal * l.interestRateBps * days) / (365n * 10_000n) + lateFeeAt(l, asOf);
+}
+
+/** `defaultGraceSeconds` (apps/app/src/lib/grace.ts) — the table the app
+ *  falls back to when the Diamond publishes no grace buckets, as Base
+ *  Sepolia does today. */
+export function defaultGraceSeconds(durationDays) {
+  const d = BigInt(durationDays);
+  if (d < 7n) return 3_600n;
+  if (d < 30n) return DAY;
+  if (d < 90n) return 3n * DAY;
+  if (d < 180n) return 7n * DAY;
+  if (d < 365n) return 14n * DAY;
+  return 30n * DAY;
+}
+
+/** `readGraceSecondsLive`: the first matching `getGraceBuckets()` entry (a
+ *  `maxDurationDays` of 0 is the catch-all; no match falls back to the last
+ *  entry, as the contract does), or `defaultGraceSeconds` when the Diamond
+ *  publishes no buckets at all. */
+export function graceSecondsFrom(buckets, durationDays) {
+  if (!Array.isArray(buckets) || buckets.length === 0) return defaultGraceSeconds(durationDays);
+  for (const b of buckets) {
+    if (b.maxDurationDays === 0n) return b.graceSeconds;
+    if (BigInt(durationDays) < b.maxDurationDays) return b.graceSeconds;
+  }
+  return buckets[buckets.length - 1].graceSeconds;
+}
+
+/**
+ * The borrower's payoff-approval bounds. The app approves
+ * `refinanceApprovalOf` = the payoff at the request's last fillable moment:
+ * min(expiresAt − 1, grace end), with expiresAt = its submit-time chain
+ * time + REQUEST_WINDOW. Payoff only grows with time, so:
+ *   - FLOOR: the payoff at min(anchor − LAG + REQUEST_WINDOW − 1, grace end)
+ *     — the earliest the app's own clock could have put that moment;
+ *   - CAP:   the payoff at the grace end — no request can be filled later.
+ */
+export function payoffApprovalBounds(l, graceSeconds, anchor) {
+  const graceEnd = loanEndOf(l) + graceSeconds;
+  return {
+    floor: () => {
+      const a = anchor();
+      if (a == null) return null;
+      const lastFillable = a - ANCHOR_LAG_SEC + REQUEST_WINDOW_SEC - 1n;
+      return refinancePayoffAt(l, lastFillable < graceEnd ? lastFillable : graceEnd);
+    },
+    cap: refinancePayoffAt(l, graceEnd),
+  };
 }
 
 /**
@@ -112,14 +219,14 @@ export function decodeTxForComparison(tx, abiFor) {
 /** `setAutoRefinanceCaps(loanId, enabled, maxRateBps, maxNewExpiry)` as the
  *  form writes it: guardrails ON at the typed ceiling, with an end-date
  *  window of the new length plus the request window from now. */
-export function expectedCapsCall({ loanId, rateBps, days, nowSec }) {
+export function expectedCapsCall({ loanId, rateBps, days, anchor }) {
   return {
     functionName: 'setAutoRefinanceCaps',
     args: {
       loanId,
       enabled: true,
       maxRateBps: rateBps,
-      maxNewExpiry: near('now + new length + 30d', () => nowSec() + days * 86_400n + REQUEST_WINDOW_SEC),
+      maxNewExpiry: afterAnchor('new length + 30d', anchor, days * 86_400n + REQUEST_WINDOW_SEC),
     },
   };
 }
@@ -129,12 +236,13 @@ export function expectedCapsCall({ loanId, rateBps, days, nowSec }) {
  * `ensureAllowance` sends two: when a NON-ZERO allowance below the needed
  * figure is left over it first resets to exactly 0 (tokens like mainnet
  * USDT revert a non-zero→non-zero approve), then sets the new amount.
- * `reset: true` is that first write; otherwise the amount is bounded.
+ * `reset: true` is that first write; otherwise the amount must cover the
+ * pull (`min`) without exceeding `max`.
  */
-export function expectedApproveCall({ spender, cap, why, reset = false }) {
+export function expectedApproveCall({ spender, min, max, why, reset = false }) {
   return {
     functionName: 'approve',
-    args: { spender, amount: reset ? 0n : approvalUpTo(cap, why) },
+    args: { spender, amount: reset ? 0n : approvalBetween(min, max, why) },
   };
 }
 
@@ -154,7 +262,7 @@ export function expectedApproveCall({ spender, cap, why, reset = false }) {
  *     listing or parallel sale; the refinance tag for THIS loan;
  *   - an expiry about the request window out.
  */
-export function expectedCreateOfferCall({ loan, loanId, rateBps, days, nowSec }) {
+export function expectedCreateOfferCall({ loan, loanId, rateBps, days, anchor }) {
   return {
     functionName: 'createOffer',
     args: {
@@ -179,7 +287,7 @@ export function expectedCreateOfferCall({ loan, loanId, rateBps, days, nowSec })
         interestRateBpsMax: rateBps,
         collateralAmountMax: loan.collateralAmount,
         periodicInterestCadence: 0,
-        expiresAt: near('now + 30d', () => nowSec() + REQUEST_WINDOW_SEC),
+        expiresAt: afterAnchor('request window', anchor, REQUEST_WINDOW_SEC),
         fillMode: 1,
         allowsPrepayListing: false,
         allowsParallelSale: false,
@@ -236,7 +344,7 @@ export function expectedAcceptTerms({
   rateBps,
   days,
   riskTermsHash,
-  nowSec,
+  anchor,
   pinned,
 }) {
   return {
@@ -273,7 +381,7 @@ export function expectedAcceptTerms({
       : is('a non-zero uint256 (drawn at random by the app)', (v) => BigInt(v) > 0n),
     deadline: pinned
       ? pinned.deadline
-      : near('chain time + 30 min', () => nowSec() + ACCEPT_DEADLINE_SEC),
+      : afterAnchor('accept deadline', anchor, ACCEPT_DEADLINE_SEC),
     riskTermsHash,
     acceptorFull: false,
     acceptorMaxCStar: 0n,
@@ -345,8 +453,9 @@ export function refinancePlanSteps({
   rateBps,
   days,
   riskTermsHash,
-  payoffApprovalCap,
-  nowSec,
+  graceSeconds,
+  borrowerAnchor,
+  lenderAnchor,
   requestId,
   signedAcceptTerms,
 }) {
@@ -360,25 +469,26 @@ export function refinancePlanSteps({
     rateBps,
     days,
     riskTermsHash,
-    nowSec,
+    anchor: lenderAnchor,
     pinned,
   });
-  const approvePair = (role, who, cap, why) => [
+  const payoff = payoffApprovalBounds(loan, graceSeconds, borrowerAnchor);
+  const approvePair = (role, who, min, max, why) => [
     {
       id: `${role[0]}-approve-reset`,
       role,
       kind: 'tx',
       optional: true,
       purpose: 'approve(Diamond, 0) — reset of a leftover allowance',
-      expected: tx(who, loan.principalAsset, expectedApproveCall({ spender: diamond, cap, why, reset: true })),
+      expected: tx(who, loan.principalAsset, expectedApproveCall({ spender: diamond, why, reset: true })),
     },
     {
       id: `${role[0]}-approve-set`,
       role,
       kind: 'tx',
       optional: true,
-      purpose: `approve(Diamond, ≤ ${cap}) — ${why}`,
-      expected: tx(who, loan.principalAsset, expectedApproveCall({ spender: diamond, cap, why })),
+      purpose: `approve(Diamond, covering ${why}, ≤ ${max})`,
+      expected: tx(who, loan.principalAsset, expectedApproveCall({ spender: diamond, min, max, why })),
     },
   ];
   return [
@@ -388,15 +498,15 @@ export function refinancePlanSteps({
       kind: 'tx',
       optional: true,
       purpose: `setAutoRefinanceCaps(${loanId}, on, ${rateBps} bps)`,
-      expected: tx(borrower, diamond, expectedCapsCall({ loanId, rateBps, days, nowSec })),
+      expected: tx(borrower, diamond, expectedCapsCall({ loanId, rateBps, days, anchor: borrowerAnchor })),
     },
-    ...approvePair('borrower', borrower, payoffApprovalCap, 'the payoff bound'),
+    ...approvePair('borrower', borrower, payoff.floor, payoff.cap, 'the payoff'),
     {
       id: 'b-create',
       role: 'borrower',
       kind: 'tx',
       purpose: `createOffer(refinance of loan ${loanId})`,
-      expected: tx(borrower, diamond, expectedCreateOfferCall({ loan, loanId, rateBps, days, nowSec })),
+      expected: tx(borrower, diamond, expectedCreateOfferCall({ loan, loanId, rateBps, days, anchor: borrowerAnchor })),
     },
     {
       id: 'l-sign',
@@ -409,7 +519,8 @@ export function refinancePlanSteps({
         return expectedAcceptTypedData({ abi, chainId, diamond, signer: lender, terms: expectedAcceptTerms(termsArgs(rid)) });
       },
     },
-    ...approvePair('lender', lender, loan.principal, 'the principal'),
+    // The lender's pull is exactly the principal, so floor = cap = principal.
+    ...approvePair('lender', lender, loan.principal, loan.principal, 'the principal'),
     {
       id: 'l-accept',
       role: 'lender',

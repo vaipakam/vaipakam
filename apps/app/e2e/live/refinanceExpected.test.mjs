@@ -23,6 +23,12 @@ import {
   expectedAcceptTypedData,
   expectedCreateOfferCall,
   expectedTx,
+  afterAnchor,
+  ANCHOR_LAG_SEC,
+  ANCHOR_WINDOW_SEC,
+  approvalBetween,
+  graceSecondsFrom,
+  payoffApprovalBounds,
   refinancePlanSteps,
   ZERO_HASH,
 } from './refinanceExpected.mjs';
@@ -48,6 +54,12 @@ const LOAN = {
   prepayAsset: '0x4200000000000000000000000000000000000006',
   useFullTermInterest: true,
   allowsPartialRepay: false,
+  // The interest clock, as loan 22 carried it.
+  startTime: 1_790_964_520n,
+  durationDays: 29n,
+  interestRateBps: 1000n,
+  interestAccrualStart: 1_790_964_520n,
+  interestRemainingDays: 29,
 };
 const TERMS_ARGS = {
   loan: LOAN,
@@ -58,7 +70,9 @@ const TERMS_ARGS = {
   rateBps: 1200n,
   days: 30n,
   riskTermsHash: ZERO_HASH,
-  nowSec: () => NOW,
+  // The accept deadline is anchored to chain time read when the lender's
+  // submit starts; NOW − 6 s mirrors the real run (deadline = chainNow + 1800).
+  anchor: () => NOW - 6n,
 };
 
 /** The acceptance terms request #45 was actually signed with. */
@@ -130,7 +144,7 @@ describe('refinanceExpected — complete payloads, closed in both directions', (
   });
 
   it('builds the createOffer request over all 26 params, with the 0..ceiling band', () => {
-    const call = expectedCreateOfferCall({ loan: LOAN, loanId: 22n, rateBps: 1200n, days: 30n, nowSec: () => NOW });
+    const call = expectedCreateOfferCall({ loan: LOAN, loanId: 22n, rateBps: 1200n, days: 30n, anchor: () => NOW });
     const fn = ABI.find((e) => e.type === 'function' && e.name === 'createOffer');
     expect(Object.keys(call.args.params).sort()).toEqual(fn.inputs[0].components.map((c) => c.name).sort());
     expect(call.args.params.interestRateBps).toBe(0n);
@@ -151,8 +165,9 @@ describe('refinanceExpected — complete payloads, closed in both directions', (
         rateBps: 1200n,
         days: 30n,
         riskTermsHash: ZERO_HASH,
-        payoffApprovalCap: 6_000_000_000_000_000n,
-        nowSec: () => NOW,
+        graceSeconds: 86_400n,
+        borrowerAnchor: () => NOW,
+        lenderAnchor: () => NOW,
         requestId: () => requestId,
         signedAcceptTerms: () => null,
       }),
@@ -206,7 +221,9 @@ describe('refinanceExpected — complete payloads, closed in both directions', (
         abi: ABI,
         chainId: 84532,
         diamond: DIAMOND,
-        payoffApprovalCap: 1n,
+        graceSeconds: 86_400n,
+        borrowerAnchor: () => NOW,
+        lenderAnchor: () => null,
         requestId: () => null,
         signedAcceptTerms: () => null,
       }),
@@ -215,4 +232,41 @@ describe('refinanceExpected — complete payloads, closed in both directions', (
     // request cannot pass over.
     expect(plan.offer('lender', 'typed', {}).ok).toBe(false);
   });
+
+  it('bounds the payoff approval with the app\u2019s own formula — loan 22 to the wei', () => {
+    // Loan 22 refinanced on 2026-10-05: grace 1 day (no buckets → the default
+    // table for 29 days), the borrower's submit anchored at chain time
+    // 1791190252, and the app approved exactly 5116095890410958 wei.
+    expect(graceSecondsFrom([], 29n)).toBe(86_400n);
+    const b = payoffApprovalBounds(LOAN, 86_400n, () => 1_791_190_252n);
+    expect(b.floor()).toBe(5_116_095_890_410_958n);
+    expect(b.cap).toBe(5_116_095_890_410_958n);
+    // An undersized approve is refused; the real one passes.
+    const m = approvalBetween(b.floor, b.cap, 'the payoff');
+    expect(structMismatches({ amount: m }, { amount: 1n })).toHaveLength(1);
+    expect(structMismatches({ amount: m }, { amount: 5_116_095_890_410_958n })).toEqual([]);
+    // No anchor yet → the floor is unknown → refused, never guessed.
+    expect(structMismatches({ amount: approvalBetween(() => null, b.cap, 'x') }, { amount: b.cap })).toHaveLength(1);
+  });
+
+  it('judges stamped times against the chain anchor, not the local clock', () => {
+    const exp = afterAnchor('x', () => 1_000_000n, 1_800n);
+    expect(structMismatches({ t: exp }, { t: 1_000_000n + 1_800n + 40n * 60n })).toEqual([]); // inside +45 min
+    expect(structMismatches({ t: exp }, { t: 1_000_000n + 1_800n + ANCHOR_WINDOW_SEC + 1n })).toHaveLength(1);
+    expect(structMismatches({ t: exp }, { t: 1_000_000n + 1_800n - ANCHOR_LAG_SEC - 1n })).toHaveLength(1);
+    expect(structMismatches({ t: afterAnchor('x', () => null, 0n) }, { t: 1n })).toHaveLength(1);
+  });
+
+  it('mirrors the app\u2019s default grace table and bucket walk', () => {
+    expect([1n, 7n, 30n, 90n, 180n, 365n].map((d) => graceSecondsFrom([], d))).toEqual([
+      3_600n, 86_400n, 259_200n, 604_800n, 1_209_600n, 2_592_000n,
+    ]);
+    const buckets = [
+      { maxDurationDays: 10n, graceSeconds: 5n },
+      { maxDurationDays: 0n, graceSeconds: 9n },
+    ];
+    expect(graceSecondsFrom(buckets, 3n)).toBe(5n);
+    expect(graceSecondsFrom(buckets, 40n)).toBe(9n);
+  });
 });
+

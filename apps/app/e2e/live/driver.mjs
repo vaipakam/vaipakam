@@ -45,6 +45,7 @@ import {
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { baseSepolia, arbitrumSepolia } from 'viem/chains';
+import { walletGateDecision } from './walletGate.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 // Dev TEST wallets only — throwaway keys holding testnet dust. The
@@ -748,8 +749,44 @@ export async function launch({
   // The default is the safe one on purpose: forgetting the option costs
   // a correct-but-blunt verdict, never a silently discarded finding.
   onSetupFailure = 'blocked',
+  // signingGate + pinnedChainId: an OPT-IN signing gate enforced INSIDE the
+  // injected wallet's own request handler — the code that holds the key and
+  // signs — rather than by wrapping the page's provider from outside
+  // (#2422 r4). Absent (the default), the wallet behaves exactly as before
+  // for every existing driver.
+  //
+  // When set, `signingGate(method, params, { role, chainId })` is awaited for
+  // EVERY signing or sending method (walletGate.mjs `GATED_METHODS`) and the
+  // request is refused with EIP-1193 4001 unless it returns `{ ok: true }`.
+  // The wallet is also PINNED to `pinnedChainId`: a switch or add to any
+  // other chain is refused, and no signing method runs while the active
+  // chain is another one. The verdict may carry `onResult(result)` /
+  // `onError(err)`, called after the wallet acts, so a drive can attach the
+  // hash or signature to whatever it consumed when it allowed the request.
+  //
+  // Why at the wallet: a page-side wrapper depends on init-script ORDER,
+  // which Playwright does not define — run before the wallet's script, it
+  // finds no provider and that document goes unwrapped — and it cannot see
+  // the chain the wallet will sign for, so a page could switch chains and
+  // have calldata judged for one chain broadcast on another.
+  signingGate = null,
+  pinnedChainId = null,
 } = {}) {
   requireSiteUrl();
+  if (signingGate) {
+    if (typeof signingGate !== 'function' || !CHAINS[pinnedChainId]) {
+      blockedSync(
+        `launch({ signingGate }) needs a function and a configured pinnedChainId` +
+          ` (got ${typeof signingGate}, ${pinnedChainId})`,
+      );
+    }
+    if (startChainId !== pinnedChainId) {
+      blockedSync(`launch({ signingGate }) starts on ${startChainId} but is pinned to ${pinnedChainId}`);
+    }
+    if (keyless || readOnly) {
+      blockedSync('launch({ signingGate }) is for a signing session — it cannot be combined with keyless or readOnly');
+    }
+  }
   // CREDENTIAL RESOLUTION HONOURS `onSetupFailure` TOO (#2069 review
   // round 4 P2). `walletFor` reports a bad or missing credential through
   // `blockedSync`, which exits the PROCESS — and this call sits above
@@ -1138,7 +1175,38 @@ export async function launch({
     'eth_signTransaction',
     'eth_sendRawTransaction',
   ]);
-  async function handle({ method, params }) {
+  // The opt-in signing gate (see the `signingGate` option). Runs BEFORE
+  // `dispatch`, in this process, for every request the page makes of the
+  // wallet; absent, `handle` is `dispatch` exactly as it always was.
+  async function handle(payload) {
+    if (!signingGate) return dispatch(payload);
+    const decision = await walletGateDecision({
+      method: payload.method,
+      params: payload.params,
+      activeChainId: chainId,
+      pinnedChainId,
+      role,
+      gate: signingGate,
+    });
+    if (!decision.ok) {
+      blockedRequests.push({ reason: `signing gate: ${decision.why}`, url: '(injected wallet)' });
+      const refusal = new Error(decision.why);
+      refusal.code = decision.code;
+      throw refusal;
+    }
+    const verdict = decision.verdict;
+    let result;
+    try {
+      result = await dispatch(payload);
+    } catch (err) {
+      await verdict?.onError?.(err);
+      throw err;
+    }
+    await verdict?.onResult?.(result);
+    return result;
+  }
+
+  async function dispatch({ method, params }) {
     const { chain, rpc } = CHAINS[chainId];
     const pub = createPublicClient({ chain, transport: http(rpc) });
     const wallet = createWalletClient({ chain, transport: http(rpc), account });

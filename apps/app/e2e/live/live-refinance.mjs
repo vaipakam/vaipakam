@@ -70,6 +70,14 @@
 //       a submit) checks the halt first and stops. A review that fails to
 //       disclose the illiquid collateral is therefore never consented to.
 //
+// THE GATE LIVES IN THE WALLET (#2422 r4). Rules A and B are enforced by
+// `launch({ signingGate, pinnedChainId: 84532 })`: driver.mjs runs every
+// request the page makes of the injected wallet through walletGate.mjs
+// INSIDE the wallet's own handler — the code that holds the key — so no
+// page-side wrapper exists to be skipped by init-script order, and the
+// wallet is pinned to Base Sepolia: a switch or add to another chain is
+// refused, and nothing signs while the active chain is another one.
+//
 // SENDS ARE RECORDED BEFORE THE PROVIDER IS AWAITED. An allowed
 // transaction is logged when the gate allows it; a broadcast whose RPC
 // then fails never returns a hash but stays on record as "outcome unknown",
@@ -77,13 +85,31 @@
 // makes the run FAIL. Once the gate has allowed anything, no exit is
 // BLOCKED and nothing reports "nothing written".
 //
-// PRE-WRITE SCREENING (#2422 r3). Before any write, pinned to one block:
-// the borrower role must also HOLD the borrower position NFT (ownerOf), the
-// accepting lender must not hold the lender position NFT (a self-refinance
-// is not this scenario), and both wallets are screened with the app's own
-// sanctions read (`isSanctionedAddress`). An UNSET oracle is fail-open by
-// design and is reported as such, never as a pass. Principal amounts print
-// with the principal token's own decimals().
+// PRE-WRITE SCREENING (#2422 r3, r4). Before any write, pinned to one
+// block: the borrower role must also HOLD the borrower position NFT
+// (ownerOf), the accepting lender must not hold the lender position NFT (a
+// self-refinance is not this scenario), and both wallets are screened
+// TRI-STATE: an unset oracle is reported as "unset, screened nobody"; a set
+// oracle is asked directly (ISanctionsList.isSanctioned, the call the
+// Diamond makes without its fail-open try/catch) — not flagged by it and by
+// the Diamond is clean, flagged is BLOCKED, a failed oracle call is BLOCKED
+// as "oracle unavailable". Principal amounts print with the principal
+// token's own decimals().
+//
+// APPROVALS COVER THE PULL (#2422 r4). The borrower's payoff approval must
+// lie between the payoff the app itself computes for the request's last
+// fillable moment (loanLive.ts `refinanceApprovalOf`, mirrored in
+// refinanceExpected.mjs — it reproduces loan 22's real approval to the wei)
+// and the payoff at the grace end; the lender's must be exactly the
+// principal. Time-stamped fields (request expiry, caps window, accept
+// deadline) are judged against the CHAIN time read when each submit flow
+// starts, not the local clock (see `afterAnchor`).
+//
+// AFTER A FAILURE WITH A REQUEST STANDING, the drive re-reads the chain and
+// prints the request's state (open / accepted / cancelled / expired), the
+// old loan's status, any replacement loan, and the borrower's remaining
+// allowance, with the remedy for each — cancel from the app or via
+// cancelOffer, revoke via approve(Diamond, 0) — and sends nothing itself.
 //
 // MATURITY MARGIN. The loan must be at least two hours from maturity at
 // preflight. Past maturity the payoff grows by the late fee, so a run that
@@ -138,6 +164,7 @@ import {
   encodeFunctionData,
   erc20Abi,
   formatUnits,
+  parseAbi,
 } from 'viem';
 import {
   addressOf,
@@ -155,8 +182,9 @@ import {
 import { redactUrl } from './redact.mjs';
 import { confirmWrite } from './writeConfirm.mjs';
 import {
-  CLOCK_SLACK_SEC,
+  ANCHOR_WINDOW_SEC,
   decodeTxForComparison,
+  graceSecondsFrom,
   refinancePlanSteps,
   REQUEST_WINDOW_SEC,
 } from './refinanceExpected.mjs';
@@ -237,6 +265,10 @@ const LOAN22_FACTS = {
 };
 
 const LOAN_STATUS = { ACTIVE: 0, REPAID: 1 };
+/** The oracle interface the Diamond itself calls (contracts/src/interfaces/
+ *  ISanctionsList.sol) — so the drive asks the oracle exactly what the
+ *  Diamond asks it, without the Diamond's fail-open try/catch. */
+const SANCTIONS_LIST_ABI = parseAbi(['function isSanctioned(address addr) view returns (bool)']);
 const LIQUIDITY_ILLIQUID = 1;
 
 const eq = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
@@ -469,32 +501,22 @@ function judge(role, method, params) {
   return { ok: true, index: r.index, kind, purpose: r.step.purpose, stepId: r.step.id };
 }
 
-const SIGNING_METHODS = [
-  'eth_sendTransaction',
-  'eth_sendRawTransaction',
-  'eth_signTransaction',
-  'wallet_sendCalls',
-  'eth_sendUserOperation',
-  'personal_sign',
-  'eth_sign',
-  'eth_signTypedData',
-  'eth_signTypedData_v3',
-  'eth_signTypedData_v4',
-];
-
 /**
- * Wrap the injected provider so every signing request is judged here
- * first. Installed AFTER `launch()` adds its own init script, so it runs
- * second and finds the provider in place; EIP-6963 announced the same
- * object, so the wrap covers it too.
+ * The signing gate for one role, handed to `launch({ signingGate,
+ * pinnedChainId })` (#2422 r4). driver.mjs calls it from INSIDE the
+ * injected wallet's request handler — the code that holds the key — for
+ * every signing or sending method, after it has already refused any chain
+ * other than Base Sepolia (walletGate.mjs). There is no page-side wrapper:
+ * nothing depends on init-script order, and the page cannot switch the
+ * wallet to another chain to have Base Sepolia calldata broadcast there.
  *
- * The step is consumed inside the gate binding, synchronously with the
- * decision to allow it and before the page hands the request to the
- * provider — so an ambiguous send (broadcast, then the provider rejects)
- * is already on record as "awaiting provider" and is reconciled by nonce.
+ * Allowing consumes the plan step synchronously, before the wallet signs or
+ * broadcasts; `onResult` / `onError` then attach what came back. A send the
+ * provider rejects after broadcasting therefore stays on record as consumed
+ * with an unknown outcome, and is reconciled by nonce in the report.
  */
-async function installGate(ctx, role, advanced = true) {
-  await ctx.exposeBinding('__liveRefiGate', async (_src, { method, params }) => {
+function signingGateFor(role) {
+  return async (method, params) => {
     const v = judge(role, method, params);
     if (!v.ok) {
       refusals.push(`${role}: ${method} — ${v.why}`);
@@ -503,60 +525,111 @@ async function installGate(ctx, role, advanced = true) {
       return { ok: false, why: v.why };
     }
     console.log(`GATE  allowed ${role}: step ${v.stepId} — ${v.purpose}`);
-    return { ok: true, kind: v.kind, index: v.index };
-  });
-  await ctx.exposeBinding('__liveRefiOutcome', async (_src, { kind, index, result, error }) => {
-    const st = planSteps()[index];
-    if (!st) return;
-    if (error !== undefined) {
-      const outcome = `provider rejected: ${String(error).slice(0, 160)}`;
-      PLAN.record(index, { outcome });
-      console.log(`${kind === 'tx' ? 'TX  ' : 'SIG '}  ${role} ${st.purpose} — ${outcome}`);
-      return;
-    }
-    if (kind === 'tx') {
-      PLAN.record(index, { hash: result, outcome: 'hash returned' });
-      console.log(`TX    ${role} sent ${st.purpose}: ${result}`);
-    } else {
-      PLAN.record(index, { signature: result, outcome: 'signed' });
-      console.log(`SIG   ${role} signed ${st.purpose}`);
-    }
-  });
-  await ctx.addInitScript(
-    ({ methods, advanced }) => {
-      if (advanced) {
-        try {
-          localStorage.setItem('app.mode', 'advanced');
-        } catch {
-          /* storage blocked — the card check will say so */
+    const st = () => planSteps()[v.index];
+    return {
+      ok: true,
+      onResult: (result) => {
+        if (v.kind === 'tx') {
+          PLAN.record(v.index, { hash: result, outcome: 'hash returned' });
+          console.log(`TX    ${role} sent ${st().purpose}: ${result}`);
+        } else {
+          PLAN.record(v.index, { signature: result, outcome: 'signed' });
+          console.log(`SIG   ${role} signed ${st().purpose}`);
         }
+      },
+      onError: (err) => {
+        const outcome = `provider rejected: ${String(err?.shortMessage ?? err?.message ?? err).slice(0, 160)}`;
+        PLAN.record(v.index, { outcome });
+        console.log(`${v.kind === 'tx' ? 'TX  ' : 'SIG '}  ${role} ${st().purpose} — ${outcome}`);
+      },
+    };
+  };
+}
+
+/** Advanced mode before the first paint — the refinance form is an
+ *  Advanced surface. Storage only; nothing here touches the wallet. */
+async function seedAdvancedMode(ctx) {
+  await ctx.addInitScript(() => {
+    try {
+      localStorage.setItem('app.mode', 'advanced');
+    } catch {
+      /* storage blocked — the card check will say so */
+    }
+  });
+}
+
+// ---------------------------------------------------------------------
+// After a failure with a request standing: state and remedy, REPORT ONLY.
+// ---------------------------------------------------------------------
+/**
+ * Once the request is pinned, a failure anywhere later (Offer Book, review,
+ * signature, approval, accept, or an assertion afterwards) can leave a live
+ * refinance request and a payoff-sized allowance behind (#2422 r4 P1). This
+ * re-reads the chain at the latest block and states exactly what stands,
+ * with the remedy for each — and sends NOTHING: a recovery transaction is a
+ * write this drive's plan never declared, and deciding to cancel is the
+ * operator's call.
+ */
+async function reportRequestState(requestId) {
+  console.log(`\n=== request #${requestId} after the failure (chain state, latest block) ===`);
+  try {
+    const head = await pub.getBlockNumber({ cacheTime: 0 });
+    const block = await pub.getBlock({ blockNumber: head });
+    const [offer, cancelled, oldLoan, allowance, borrowerLoans] = await Promise.all([
+      read('getOfferDetails', [requestId], head),
+      read('isOfferCancelled', [requestId], head),
+      loanOf(LOAN_ID, head),
+      pub.readContract({
+        address: loan.principalAsset,
+        abi: erc20Abi,
+        functionName: 'allowance',
+        args: [BORROWER, DIAMOND],
+        blockNumber: head,
+      }),
+      read('getUserActiveLoans', [BORROWER], head).catch(() => null),
+    ]);
+    const expired = offer.expiresAt !== 0n && offer.expiresAt <= block.timestamp;
+    const state = cancelled ? 'CANCELLED' : offer.accepted ? 'ACCEPTED' : expired ? 'EXPIRED (not fillable)' : 'OPEN — still fillable';
+    console.log(`block ${head} (ts ${block.timestamp})`);
+    console.log(`request #${requestId}: ${state}; expiresAt ${offer.expiresAt}`);
+    console.log(`old loan #${LOAN_ID}: status ${oldLoan.status} (${oldLoan.status === LOAN_STATUS.ACTIVE ? 'Active' : oldLoan.status === LOAN_STATUS.REPAID ? 'Repaid' : 'other'})`);
+    let replacement = null;
+    if (borrowerLoans) {
+      for (const id of borrowerLoans) {
+        const l = await loanOf(id, head);
+        if (l.offerId === requestId) replacement = { id, l };
       }
-      const p = window.ethereum;
-      if (!p || p.__liveRefiWrapped) return;
-      const inner = p.request;
-      p.request = async (payload) => {
-        const method = payload?.method;
-        if (!methods.includes(method)) return inner(payload);
-        const v = await window.__liveRefiGate({ method, params: payload.params });
-        if (!v.ok) {
-          const e = new Error(`live-refinance write gate refused: ${v.why}`);
-          e.code = 4001;
-          throw e;
-        }
-        let res;
-        try {
-          res = await inner(payload);
-        } catch (err) {
-          await window.__liveRefiOutcome({ kind: v.kind, index: v.index, error: String(err?.message ?? err) });
-          throw err;
-        }
-        await window.__liveRefiOutcome({ kind: v.kind, index: v.index, result: res });
-        return res;
-      };
-      p.__liveRefiWrapped = true;
-    },
-    { methods: SIGNING_METHODS, advanced },
-  );
+      console.log(
+        replacement
+          ? `replacement loan: #${replacement.id} (status ${replacement.l.status}, lender ${replacement.l.lender})`
+          : 'replacement loan: none among the borrower\u2019s active loans',
+      );
+    } else {
+      console.log('replacement loan: UNKNOWN — the borrower\u2019s active-loan list could not be read');
+    }
+    console.log(`borrower payoff allowance (principal token → Diamond): ${fmtP(allowance)} (raw ${allowance})`);
+    if (!cancelled && !offer.accepted && !expired) {
+      console.log(
+        `REMEDY (request open): it can still be accepted by any lender, AND — with automatic matching ` +
+          `${pre.autoRefi && pre.flags[2] ? 'ON on this deployment' : 'currently off, but a switch flip would change that'} — ` +
+          `filled by the order matcher. To withdraw it, the borrower cancels it from ${SITE}/positions/${LOAN_ID} ` +
+          `("Cancel refinance request" on the standing-request card; it opens a few minutes after posting and also ` +
+          `removes the payoff approval), or calls the Diamond's cancelOffer(${requestId}) directly.`,
+      );
+    }
+    if (allowance > 0n && (cancelled || expired || offer.accepted || oldLoan.status !== LOAN_STATUS.ACTIVE)) {
+      console.log(
+        `REMEDY (allowance): ${fmtP(allowance)} of the principal token is still approved to the Diamond with no ` +
+          `request needing it. Revoke with approve(${DIAMOND}, 0) on ${loan.principalAsset} from the borrower, or ` +
+          `from the wallet's token-approvals view.`,
+      );
+    } else if (allowance > 0n) {
+      console.log('REMEDY (allowance): it backs the open request — cancelling from the app removes it with the request.');
+    }
+    console.log('Nothing was sent to recover: this drive reports, and the operator decides.');
+  } catch (e) {
+    console.log(`could not read the request's state: ${String(e.shortMessage ?? e.message).slice(0, 160)} — check request #${requestId} by hand`);
+  }
 }
 
 // ---------------------------------------------------------------------
@@ -770,16 +843,39 @@ const pre = await precondition('reading the preconditions from chain', async () 
     read('ownerOf', [loan.borrowerTokenId], head),
     read('ownerOf', [loan.lenderTokenId], head),
   ]);
-  // Sanctions screening — the SAME view the app uses
-  // (`assertWalletNotSanctionedLive` reads `isSanctionedAddress`), plus the
-  // oracle address so an unset oracle is REPORTED rather than passed by
-  // silence (#2422 r3 P2). Unlike the app's fail-open helper, a read error
-  // here throws, so this drive BLOCKS rather than writing unscreened.
-  const [sanctionsOracle, sanctionedB, sanctionedL] = await Promise.all([
-    read('getSanctionsOracle', [], head),
-    read('isSanctionedAddress', [BORROWER], head),
-    read('isSanctionedAddress', [LENDER], head),
-  ]);
+  // Sanctions screening, TRI-STATE (#2422 r3/r4 P2). The Diamond's
+  // `isSanctionedAddress` (the app's read) is fail-open twice over: an
+  // unset oracle reads "not flagged", and so does an oracle whose call
+  // REVERTS (LibVaipakam wraps it in try/catch). So:
+  //   - oracle unset   → reported as "unset, screened nobody";
+  //   - oracle set     → the drive ALSO asks the oracle directly, with the
+  //     interface the Diamond uses (ISanctionsList.isSanctioned). Clean only
+  //     if the oracle ANSWERED not-flagged and the Diamond agrees (it adds
+  //     the recovery-ban rule on a declared source). Flagged by either →
+  //     BLOCKED; the oracle call reverted or unreachable → BLOCKED as
+  //     "oracle unavailable", never "clean".
+  const sanctionsOracle = await read('getSanctionsOracle', [], head);
+  const oracleSet = !/^0x0{40}$/i.test(sanctionsOracle);
+  const screen = async (who) => {
+    const diamondSays = await read('isSanctionedAddress', [who], head);
+    if (!oracleSet) return { state: 'unset', diamondSays };
+    try {
+      const oracleSays = await pub.readContract({
+        address: sanctionsOracle,
+        abi: SANCTIONS_LIST_ABI,
+        functionName: 'isSanctioned',
+        args: [who],
+        blockNumber: head,
+      });
+      return { state: oracleSays || diamondSays ? 'flagged' : 'clean', oracleSays, diamondSays };
+    } catch (e) {
+      return { state: 'unavailable', diamondSays, error: String(e.shortMessage ?? e.message).slice(0, 120) };
+    }
+  };
+  const [sanctionB, sanctionL] = await Promise.all([screen(BORROWER), screen(LENDER)]);
+  // The loan's grace window, read the way the app reads it — the payoff
+  // approval the borrower signs is the payoff at the end of it.
+  const graceBuckets = await read('getGraceBuckets', [], head);
   return {
     head,
     now: block.timestamp,
@@ -802,8 +898,10 @@ const pre = await precondition('reading the preconditions from chain', async () 
     borrowerPositionHolder,
     lenderPositionHolder,
     sanctionsOracle,
-    sanctionedB,
-    sanctionedL,
+    oracleSet,
+    sanctionB,
+    sanctionL,
+    graceBuckets,
   };
 });
 
@@ -826,8 +924,23 @@ want(
   !eq(pre.lenderPositionHolder, LENDER),
   `token ${loan.lenderTokenId} → ${pre.lenderPositionHolder}`,
 );
-want('borrower is not flagged by the sanctions oracle (isSanctionedAddress)', pre.sanctionedB === false, pre.sanctionedB);
-want('lender is not flagged by the sanctions oracle (isSanctionedAddress)', pre.sanctionedL === false, pre.sanctionedL);
+// Unset is not a MISS (the retail oracle is unset by design and this drive
+// runs there); it is reported below. Flagged and unavailable both BLOCK.
+for (const [who, r] of [['borrower', pre.sanctionB], ['lender', pre.sanctionL]]) {
+  want(
+    `${who} sanctions screen is not flagged and not unavailable`,
+    r.state === 'clean' || r.state === 'unset',
+    r.state === 'unavailable'
+      ? `oracle unavailable — its isSanctioned call failed (${r.error})`
+      : `${r.state} (oracle ${r.oracleSays ?? 'n/a'}, Diamond ${r.diamondSays})`,
+  );
+}
+// The loan's grace window, resolved exactly as the app resolves it: the
+// Diamond's buckets, or the app's default table when it publishes none.
+const GRACE_SECONDS = graceSecondsFrom(pre.graceBuckets, loan.durationDays);
+console.log(
+  `pre   grace window: ${GRACE_SECONDS}s (${pre.graceBuckets.length ? 'from getGraceBuckets' : 'no buckets published — the app\u2019s default table'})`,
+);
 want('accepting lender is not the borrower', !eq(LENDER, BORROWER), LENDER);
 want('collateral recorded Illiquid on the loan', loan.collateralLiquidity === LIQUIDITY_ILLIQUID, loan.collateralLiquidity);
 want('collateral is Illiquid now (checkLiquidity)', Number(pre.collLiquidity) === LIQUIDITY_ILLIQUID, pre.collLiquidity);
@@ -883,10 +996,10 @@ console.log(`pre   current risk-terms hash: ${pre.riskTermsHash}`);
 // An unset oracle is fail-open BY DESIGN on the retail deploy: every
 // address reads unflagged. Say so — a "not flagged" verdict from an unset
 // oracle is not a screening result, and must not read as one.
-if (/^0x0{40}$/i.test(pre.sanctionsOracle)) {
-  note('sanctions oracle is UNSET on this deployment — isSanctionedAddress is fail-open by design, so "not flagged" screened nobody');
+if (!pre.oracleSet) {
+  note('sanctions oracle is UNSET on this deployment — isSanctionedAddress is fail-open by design, so the screen screened nobody');
 } else {
-  console.log(`pre   sanctions oracle: ${pre.sanctionsOracle} — both wallets screened at block ${pre.head}`);
+  console.log(`pre   sanctions oracle: ${pre.sanctionsOracle} — both wallets answered by the oracle directly at block ${pre.head}`);
 }
 want('borrower has gas', pre.b.eth >= GAS_FLOOR, formatUnits(pre.b.eth, 18));
 want('lender has gas', pre.l.eth >= GAS_FLOOR, formatUnits(pre.l.eth, 18));
@@ -923,19 +1036,22 @@ const expectedPosture = expectedPostureFrom({
   partialFill: pre.flags[2],
 });
 
-// What every expected payload is built from — the loan and the typed
-// terms. The payoff approval cap is deliberately loose (principal plus
-// twice the full-term interest plus a tenth of principal): it bounds a
-// runaway approval, while the exact figure is the form's own business.
-const EXPECT = {
-  loan,
-  payoffApprovalCap: loan.principal + 2n * fullTermInterest + loan.principal / 10n,
-};
-const nowSec = () => BigInt(Math.floor(Date.now() / 1000));
 EXPECT_LOAN = loan;
 
 /** The request's id, once phase 2 has pinned it from the receipt. */
 let REQUEST_ID = null;
+/**
+ * Chain-time ANCHORS (#2422 r4 P2): the latest block's timestamp, read the
+ * moment each submit flow starts — just before the click that leads to the
+ * app's own `latestBlock` / `chainNow` read. Every time-relative field the
+ * app stamps (the request expiry, the caps window, the AcceptTerms
+ * deadline, and the payoff approval's floor) is judged against these
+ * rather than against the local clock; see `afterAnchor` for the window.
+ * Null until read, which leaves those steps unjudgeable — refused.
+ */
+let BORROWER_ANCHOR = null;
+let LENDER_ANCHOR = null;
+const chainNow = async () => (await pub.getBlock({ blockTag: 'latest' })).timestamp;
 // The drive's ONE write plan, built here — before the first write — from
 // the loan and the typed terms. See `refinancePlanSteps` for the order and
 // what each step may carry.
@@ -951,8 +1067,9 @@ PLAN = createWritePlan(
     rateBps: RATE_BPS,
     days: DAYS_N,
     riskTermsHash: pre.riskTermsHash,
-    payoffApprovalCap: EXPECT.payoffApprovalCap,
-    nowSec,
+    graceSeconds: GRACE_SECONDS,
+    borrowerAnchor: () => BORROWER_ANCHOR,
+    lenderAnchor: () => LENDER_ANCHOR,
     requestId: () => REQUEST_ID,
     signedAcceptTerms: () => planSteps().find((st) => st.id === 'l-sign' && st.status === 'consumed')?.record ?? null,
   }),
@@ -996,8 +1113,14 @@ async function closeSession(role) {
 }
 for (const role of ['borrower', 'lender']) {
   try {
-    sessions[role] = await launch({ role, onSetupFailure: 'throw' });
-    await installGate(sessions[role].ctx, role);
+    sessions[role] = await launch({
+      role,
+      onSetupFailure: 'throw',
+      startChainId: CHAIN_ID,
+      pinnedChainId: CHAIN_ID,
+      signingGate: signingGateFor(role),
+    });
+    await seedAdvancedMode(sessions[role].ctx);
   } catch (err) {
     await closeSession('borrower');
     await closeSession('lender');
@@ -1072,6 +1195,8 @@ try {
     stop('"Confirm — post refinance request" never enabled after consent');
   }
   beforeWriteStep('posting the refinance request');
+  BORROWER_ANCHOR = await chainNow();
+  console.log(`info  borrower anchor (chain time at submit start): ${BORROWER_ANCHOR}`);
   await confirm.click();
 
   const live = await pollUntil('request is live', async () => {
@@ -1160,7 +1285,7 @@ try {
   check('request records the borrower\u2019s consent', req.creatorRiskAndTermsConsent === true, req.creatorRiskAndTermsConsent);
   check(
     'request expiry is in the future and no later than ~30 days out',
-    req.expiresAt > createRcptTs && req.expiresAt <= createRcptTs + REQUEST_WINDOW_SEC + CLOCK_SLACK_SEC,
+    req.expiresAt > createRcptTs && req.expiresAt <= BORROWER_ANCHOR + REQUEST_WINDOW_SEC + ANCHOR_WINDOW_SEC,
     `${req.expiresAt} (block ts ${createRcptTs})`,
   );
   console.log(
@@ -1217,9 +1342,14 @@ try {
     check('Offer Book "Fund this request" links to the guided accept', href === expectedHref, href);
     const rowText = (await lp.locator('.item-row').filter({ hasText: new RegExp(`offer #${requestId}\\b`) }).first().innerText()).replace(/\s+/g, ' ');
     console.log(`info  book row: ${rowText}`);
-    if (!rowText.includes(squash(bookIlliquidTag))) {
-      note(`the book row for #${requestId} carries no illiquid-collateral tag: "${rowText}"`);
-    }
+    // A disclosure, judged like every other (#2422 r4 P2): a book row that
+    // does not tag the collateral as illiquid fails and halts — the lender
+    // must not be led from an undisclosed row into a funding review.
+    check(
+      `Offer Book row for #${requestId} carries the illiquid-collateral tag (copy.offers.illiquidCollateralTag)`,
+      rowText.includes(squash(bookIlliquidTag)),
+      rowText,
+    );
     await session.shot('refinance-06-book-row');
     await fundLink.click();
     reachedViaBook = true;
@@ -1276,6 +1406,8 @@ try {
     stop('the deployed UI never enabled "Fund this borrower" for this request (see the review transcript above)');
   }
   beforeWriteStep('submitting "Fund this borrower"');
+  LENDER_ANCHOR = await chainNow();
+  console.log(`info  lender anchor (chain time at submit start): ${LENDER_ANCHOR}`);
   await submit.click();
 
   const outcome = await pollUntil('accept settles', async () => {
@@ -1443,8 +1575,10 @@ try {
 }
 
 const reconciliation = await report(baselineNonces);
+const failedRun = exitCode !== 0 || refusals.length > 0 || HALT !== null || reconciliation.unreconciled || checks.some((c) => !c.ok);
+if (failedRun && REQUEST_ID !== null) await reportRequestState(REQUEST_ID);
 // FAIL, never PASS, when anything is unaccounted for: a refused write, a
 // failed check, a halt, or an allowed send the chain cannot account for.
-if (refusals.length || HALT || reconciliation.unreconciled || checks.some((c) => !c.ok)) exitCode = 1;
+if (failedRun) exitCode = 1;
 console.log(exitCode === 0 ? '\nlive refinance review: ALL CHECKS PASSED' : '\nlive refinance review: FAILED (see above)');
 process.exit(exitCode);
