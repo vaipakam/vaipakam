@@ -1337,7 +1337,6 @@
 {"type":"error","name":"OffsetOfferNotAccepted","inputs":[]},
 {"type":"error","name":"SaleListingActiveOnLoan","inputs":[]},
 {"type":"function","name":"getRefinanceRequest","inputs":[{"name":"loanId","type":"uint256","internalType":"uint256"}],"outputs":[{"name":"offerId","type":"uint256","internalType":"uint256"},{"name":"live","type":"bool","internalType":"bool"}],"stateMutability":"view"},
-{"type":"function","name":"indexRefinanceRequests","inputs":[{"name":"maxOffers","type":"uint256","internalType":"uint256"}],"outputs":[{"name":"recorded","type":"uint256","internalType":"uint256"},{"name":"cursor","type":"uint256","internalType":"uint256"}],"stateMutability":"nonpayable"},
 {"type":"function","name":"refinanceLoan","inputs":[{"name":"oldLoanId","type":"uint256","internalType":"uint256"},{"name":"borrowerOfferId","type":"uint256","internalType":"uint256"}],"outputs":[],"stateMutability":"nonpayable"},
 {"type":"function","name":"refinanceLoanFromAccept","inputs":[{"name":"oldLoanId","type":"uint256","internalType":"uint256"},{"name":"borrowerOfferId","type":"uint256","internalType":"uint256"}],"outputs":[],"stateMutability":"nonpayable"},
 {"type":"function","name":"refinanceLoanFromMatch","inputs":[{"name":"oldLoanId","type":"uint256","internalType":"uint256"},{"name":"borrowerOfferId","type":"uint256","internalType":"uint256"}],"outputs":[],"stateMutability":"nonpayable"},
