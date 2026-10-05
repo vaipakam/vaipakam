@@ -1,6 +1,24 @@
 [
   {
     "type": "function",
+    "name": "checkRefinanceRequest",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "offerId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getRefinanceRequest",
     "inputs": [
       {
@@ -2416,7 +2434,38 @@
   },
   {
     "type": "error",
+    "name": "RefinanceCapsRequired",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RefinanceExpiryExceedsCap",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RefinanceRateExceedsCap",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "RefinanceRequestNotCancelled",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "offerId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RefinanceRequestNotLive",
     "inputs": [
       {
         "name": "loanId",
@@ -2477,6 +2526,26 @@
         "internalType": "uint256"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "RefinanceTargetIncompatible",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RefinanceTargetNotActive",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RefinanceTargetNotBorrower",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RefinanceTargetPastGrace",
+    "inputs": []
   },
   {
     "type": "error",
