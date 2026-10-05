@@ -7668,6 +7668,22 @@ unwind of the loser. Lifts 3b's deferral. Must land before PR C unfreezes
 role changes — a late legacy packet after a transition is exactly the
 contended case.
 
+> **HELD — owner decision 2026-10-05 (#2387).** 3c-1 shipped the refusal
+> half: a contested draw is withheld by name and unarrived-day batches serve
+> as the necessity tier. The displacement half — 3c-2 (the dark plan format
+> and its page verification) and 3c-3 (the bonded slot, suspension, switch,
+> unwind, grace) — is HELD, because on this code base no incumbent can exist
+> to displace: a record never stages from a contested batch, arrived days'
+> facts are monotone, and the two things this paragraph's last sentence was
+> written for are handled upstream — PR C-3's day-resolved placement puts a
+> late era-less packet in the live or quarantined era by its listed days, and
+> A2-ii's non-settlement window orders contested waiters (oldest registrant
+> first, one priority at a time). The slot's scope (per chain vs per transport
+> domain) and the bond's asset and sizing are therefore moot; if a later
+> change can create an incumbent, #2387 reopens with exactly those two
+> choices. The sentence above is kept as the design's original reasoning,
+> not as a live requirement.
+
 **Transport epochs PR 3d — the d6 wire.** The new wire version embedding a
 Merkle root over fixed-size chunks together with the authenticated extent,
 the indexed materialization pages verified against it, **and the INTENDED
