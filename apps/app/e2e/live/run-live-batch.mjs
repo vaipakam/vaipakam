@@ -42,7 +42,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
+  batchDrivers,
   driversOnDisk,
+  MANUAL_ONLY_DRIVERS,
   THREE_VERDICT_DRIVERS,
   TWO_VERDICT_DRIVERS,
   undeclaredDrivers,
@@ -72,7 +74,19 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
  * The check that fails is a unit test.
  */
 
-const scripts = driversOnDisk(HERE);
+const onDisk = driversOnDisk(HERE);
+// Manual-only drivers are skipped, and SAID to be skipped — here and in
+// the summary — so a green batch never implies it covered them (see
+// MANUAL_ONLY_DRIVERS in verdictContract.mjs for when a driver belongs
+// there). They are still declared below like every other driver.
+const skipped = onDisk.filter((s) => MANUAL_ONLY_DRIVERS.has(s));
+const scripts = batchDrivers(onDisk);
+if (skipped.length) {
+  console.log(
+    `\nNOTE: ${skipped.length} manual-only driver(s) are NOT run by the batch:\n` +
+      skipped.map((s) => `  ${s} — ${MANUAL_ONLY_DRIVERS.get(s)}`).join('\n'),
+  );
+}
 
 // Say so UP FRONT rather than at classification time. An unregistered
 // driver's BLOCKED is silently downgraded to FAIL below — the safe
@@ -87,7 +101,7 @@ const scripts = driversOnDisk(HERE);
 // operator does not need to be told to go and register it, and telling
 // them lands the same annotation on its ordinary FAIL rows as on a
 // driver nobody has looked at. Only the UNDECLARED are asked about.
-const undeclared = undeclaredDrivers(scripts);
+const undeclared = undeclaredDrivers(onDisk);
 if (undeclared.length) {
   console.log(
     `\nNOTE: ${undeclared.length} driver(s) are declared nowhere, so a BLOCKED` +
@@ -138,6 +152,9 @@ for (const script of scripts) {
 }
 
 console.log('\n━━━ live batch summary ━━━');
+for (const s of skipped) {
+  console.log(`SKIPPED  ${s}  (manual-only — run it by hand; not covered by this batch)`);
+}
 for (const r of results) {
   // A DECLARED opt-out is not an unknown (#2099 round 1). Its exit 2 is
   // a FAIL by decision, and annotating it "may be infrastructure" would

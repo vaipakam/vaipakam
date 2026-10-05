@@ -32,8 +32,10 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  batchDrivers,
   doublyDeclaredDrivers,
   driversOnDisk,
+  MANUAL_ONLY_DRIVERS,
   THREE_VERDICT_DRIVERS,
   TWO_VERDICT_DRIVERS,
   undeclaredDrivers,
@@ -92,5 +94,37 @@ describe('#2099 — every live driver says which verdicts it speaks', () => {
   it('records a reason for every deliberate opt-out', () => {
     const missing = [...TWO_VERDICT_DRIVERS].filter(([, why]) => !why || !String(why).trim());
     expect(missing.map(([n]) => n), 'an opt-out without a reason is an oversight wearing a decision').toEqual([]);
+  });
+});
+
+// Manual-only is a decision about whether the BATCH launches a driver, not
+// a way out of declaring its verdicts — so each entry must still be a real,
+// declared driver, carry its reason, and be the only thing the batch drops.
+describe('manual-only drivers are skipped visibly, never undeclared', () => {
+  it('names only drivers that exist on disk', () => {
+    const disk = new Set(driversOnDisk());
+    expect([...MANUAL_ONLY_DRIVERS.keys()].filter((n) => !disk.has(n))).toEqual([]);
+  });
+
+  it('still declares each one in exactly one verdict list', () => {
+    for (const n of MANUAL_ONLY_DRIVERS.keys()) {
+      expect(undeclaredDrivers([n]), `${n} is manual-only but declared nowhere`).toEqual([]);
+      expect(THREE_VERDICT_DRIVERS.has(n) && TWO_VERDICT_DRIVERS.has(n), `${n} is declared twice`).toBe(false);
+    }
+  });
+
+  it('records a reason for every manual-only driver', () => {
+    const missing = [...MANUAL_ONLY_DRIVERS].filter(([, why]) => !why || !String(why).trim());
+    expect(missing.map(([n]) => n)).toEqual([]);
+  });
+
+  it('drops exactly the manual-only drivers from a batch, and nothing else', () => {
+    const disk = driversOnDisk();
+    const batch = batchDrivers(disk);
+    expect(disk.filter((n) => !batch.includes(n)).sort()).toEqual(
+      [...MANUAL_ONLY_DRIVERS.keys()].filter((n) => disk.includes(n)).sort(),
+    );
+    // And it can bite: a non-manual name passes straight through.
+    expect(batchDrivers(['live-alerts-link.mjs', 'live-refinance.mjs'])).toEqual(['live-alerts-link.mjs']);
   });
 });

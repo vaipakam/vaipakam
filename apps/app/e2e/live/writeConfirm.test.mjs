@@ -581,6 +581,7 @@ describe('every confirmWrite call site reads a fresh head', () => {
     expect(calls.length).toBeGreaterThanOrEqual(2);
     expect([...new Set(calls.map((c) => c.file))].sort()).toEqual([
       'live-rate-desk.mjs',
+      'live-refinance.mjs',
       'live-signed-book.mjs',
     ]);
   });

@@ -96,10 +96,12 @@ export const THREE_VERDICT_DRIVERS = new Set([
   // same run (Codex #1590 r3).
   'live-recover-locales.mjs',
   'live-risk-access.mjs',
-  // Exits 2 only BEFORE its first write: site build mismatch, chain facts
-  // that differ from the loan's pinned shape, short balances, an already-
-  // open request, missing credentials. After the first transaction every
-  // outcome is PASS or FAIL, because the chain has changed (#2380 live).
+  // Exits 2 only BEFORE its first write: no REFI_LOAN_ID, site build
+  // mismatch, chain facts that differ from an eligible loan, short balances,
+  // an already-open request, missing credentials, or a browser session that
+  // could not be set up (both are set up before the first write). After the
+  // first transaction every outcome is PASS or FAIL, because the chain has
+  // changed (#2380 live). Also MANUAL-ONLY — see MANUAL_ONLY_DRIVERS below.
   'live-refinance.mjs',
   'live-rpc-audit.mjs',
   'live-signed-book.mjs',
@@ -121,6 +123,38 @@ export const THREE_VERDICT_DRIVERS = new Set([
 export const TWO_VERDICT_DRIVERS = new Map([
   // (empty today: every driver in this directory honours the contract)
 ]);
+
+/**
+ * Drivers the batch runner SKIPS — run by hand, one deliberate invocation
+ * at a time — each with its reason.
+ *
+ * This is NOT a third verdict contract and does not replace the two
+ * above: a manual-only driver is still declared in exactly one of them,
+ * because an operator running it by hand reads its exit code the same
+ * way. What this list answers is a different question — whether a
+ * release batch should launch it at all. A driver belongs here when an
+ * unattended run cannot be green: it consumes the on-chain state it
+ * drives (a one-shot refinance closes its loan), so after its first
+ * success every batch would show it BLOCKED, and a batch that is red by
+ * construction trains people to ignore red.
+ *
+ * Skipping is never silent: the runner prints each skipped driver with
+ * its reason before the batch and again in the summary, so a reviewer
+ * reading a green batch can see what it did not cover.
+ */
+export const MANUAL_ONLY_DRIVERS = new Map([
+  [
+    'live-refinance.mjs',
+    'one-shot on-chain refinance: a success closes the loan it drives, and it ' +
+      'needs REFI_LOAN_ID naming a fresh eligible loan — run it by hand',
+  ],
+]);
+
+/** The drivers a batch run actually launches: everything on disk minus
+ *  the manual-only ones. */
+export function batchDrivers(names = driversOnDisk()) {
+  return names.filter((n) => !MANUAL_ONLY_DRIVERS.has(n));
+}
 
 /** Every driver on disk, the way the batch runner discovers them. */
 export function driversOnDisk(dir = HERE) {

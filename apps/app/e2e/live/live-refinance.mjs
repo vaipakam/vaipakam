@@ -38,13 +38,18 @@
 // WRITE DISCIPLINE — enforced, not promised. Every signing request the
 // page makes passes a gate in THIS process before the injected wallet
 // sees it. Allowed, per phase and role:
-//   borrower, posting phase:  setAutoRefinanceCaps(<loan>, …),
-//                             principal-asset approve(Diamond, …),
-//                             createOffer(refinance of <loan>)
-//   lender, accept phase:     principal-asset approve(Diamond|Permit2, …),
-//                             acceptOffer / acceptOfferWithPermit(<request>),
-//                             the AcceptTerms signature for this lender, and
-//                             a Permit2 transfer signature for the principal
+//   borrower, posting phase:  setAutoRefinanceCaps(<loan>, on, typed
+//                             ceiling, ~now+length+30d), a BOUNDED
+//                             principal-asset approve(Diamond, …), and a
+//                             createOffer whose WHOLE payload is bound to
+//                             the loan and the typed terms before signing
+//                             (see `createOfferMismatches`)
+//   lender, accept phase:     principal-asset approve(Diamond ≤ principal |
+//                             Permit2), acceptOffer / acceptOfferWithPermit
+//                             for <request> with terms naming this lender,
+//                             the borrower, the loan and the principal, the
+//                             AcceptTerms signature for this lender, and a
+//                             Permit2 transfer signature for the principal
 //                             asset to the Diamond
 // Anything else is refused at the wallet (EIP-1193 4001), recorded, and
 // ends the drive as a FAIL. Outside its phase a role may write nothing.
@@ -58,36 +63,45 @@
 //                transaction reverted, or the UI could not complete a
 //                step it should have.
 //   2 BLOCKED  — a precondition did not hold BEFORE anything was written
-//                (site build mismatch, chain facts differ, balances short,
-//                an open request already exists, credentials missing).
+//                (no REFI_LOAN_ID, site build mismatch, chain facts differ,
+//                balances short, an open request already exists,
+//                credentials missing, or either browser session could not
+//                be set up — both are set up before the first write).
 // Once the first transaction has been sent, nothing exits BLOCKED: the
 // drive has changed chain state and its report must be read.
 //
-// ONE-SHOT BY NATURE. A successful run closes the loan, so a rerun against
-// the same loan exits BLOCKED at the "loan is Active" precondition. Point
-// REFI_LOAN_ID at another Active, illiquid-collateral, consented loan whose
-// stored borrower is the `borrower` role to drive it again; the loan-22
-// pinned facts below apply only to loan 22.
+// ONE-SHOT BY NATURE, SO MANUAL-ONLY. A successful run closes the loan it
+// drives, so there is no loan this drive could default to that stays
+// drivable: REFI_LOAN_ID is REQUIRED (an Active, illiquid-collateral,
+// both-parties-consented loan whose stored borrower is the `borrower`
+// role and whose lender is not the `lender` role). For the same reason it
+// is listed in `MANUAL_ONLY_DRIVERS` (verdictContract.mjs): the batch
+// runner skips it, and says so, instead of running a drive that would
+// BLOCK on every batch after its loan closed. Loan 22 — the loan that
+// exposed #2380, refinanced by this drive into loan 23 on 2026-10-05 — keeps
+// its pinned facts below, so `REFI_LOAN_ID=22` now exits BLOCKED at "loan
+// is Active" without writing anything.
 //
 // Run (from apps/app/e2e/live/):
-//   SITE_URL=https://app.vaipakam.com \
+//   SITE_URL=https://app.vaipakam.com REFI_LOAN_ID=<loan id> \
 //   BASE_SEPOLIA_RPC=<an RPC URL; may carry a key — it is never printed> \
 //   node live-refinance.mjs
 // In a sandbox whose Playwright browser build differs from the installed
 // one, add LIVE_CHROMIUM_PATH=<chrome binary> (honoured by driver.mjs);
 // where Node's fetch must ride an HTTPS proxy, NODE_USE_ENV_PROXY=1.
 // Optional: REFI_RATE_PCT (default 12), REFI_DAYS (default 30),
-// REFI_LOAN_ID (default 22), WORKERS_DEV_URL (the build-parity reference,
-// default the vaipakam-app production workers.dev host),
-// REFI_PREFLIGHT_ONLY=1 (check every precondition, then exit 0 without
-// launching a browser or writing anything), TESTNET_WALLETS_FILE (see
-// README).
+// WORKERS_DEV_URL (the build-parity reference, default the vaipakam-app
+// production workers.dev host), REFI_PREFLIGHT_ONLY=1 (check every
+// precondition, then exit 0 without launching a browser or writing
+// anything), TESTNET_WALLETS_FILE (see README).
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   decodeEventLog,
   decodeFunctionData,
+  decodeFunctionResult,
+  encodeFunctionData,
   erc20Abi,
   formatUnits,
 } from 'viem';
@@ -143,7 +157,17 @@ requireSigningRole('lender');
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.join(HERE, '../../../..');
 const CHAIN_ID = 84532;
-const LOAN_ID = BigInt(process.env.REFI_LOAN_ID ?? '22');
+// REQUIRED — see the header. No default: every loan this drive succeeds on
+// stops being drivable, so a default is a BLOCKED waiting to happen.
+const LOAN_ID_RAW = process.env.REFI_LOAN_ID;
+if (!LOAN_ID_RAW || !/^\d+$/.test(LOAN_ID_RAW.trim())) {
+  blockedSync(
+    `REFI_LOAN_ID is required (got ${JSON.stringify(LOAN_ID_RAW ?? null)}) — the loan to ` +
+      'refinance: Active, illiquid collateral, consent from both, stored borrower = the ' +
+      '`borrower` role. There is no default because a successful run closes the loan.',
+  );
+}
+const LOAN_ID = BigInt(LOAN_ID_RAW.trim());
 const RATE_PCT = process.env.REFI_RATE_PCT ?? '12';
 const DAYS = process.env.REFI_DAYS ?? '30';
 if (!/^\d+(\.\d{1,2})?$/.test(RATE_PCT) || !/^\d+$/.test(DAYS)) {
@@ -156,8 +180,8 @@ const WORKERS_DEV_URL =
 const PERMIT2 = '0x000000000022D473030F116dDEE9F6B43aC78BA3';
 
 /** Facts read from chain when this drive was written — re-verified, not
- *  trusted. Only for loan 22; another REFI_LOAN_ID gets the generic
- *  invariants alone. */
+ *  trusted. Only for loan 22 (now Repaid, so `REFI_LOAN_ID=22` blocks);
+ *  any other REFI_LOAN_ID gets the generic invariants alone. */
 const LOAN22_FACTS = {
   principal: 5_000_000_000_000_000n, // 0.005 WETH
   principalAsset: '0x4200000000000000000000000000000000000006',
@@ -229,6 +253,32 @@ const tokenBalance = (token, owner, blockNumber) =>
     ...(blockNumber !== undefined ? { blockNumber } : {}),
   });
 
+/**
+ * EVERY offer id `who` has created, as of `blockNumber`, walking the
+ * paginated view to its reported `total` (Codex #2422 r1 P2). A single
+ * capped page would silently miss an open request past the cap — the one
+ * the open-request precheck exists to find — and would make the
+ * post-request baseline delta blind to a new id past it. A walk that does
+ * not end at exactly `total` ids throws, so a short read is never mistaken
+ * for a complete one.
+ */
+const OFFER_PAGE = 200n;
+async function allOfferIdsOf(who, blockNumber) {
+  const ids = [];
+  let total = null;
+  for (let offset = 0n; total === null || offset < total; offset += OFFER_PAGE) {
+    const [page, t] = await read('getUserOffersPaginated', [who, offset, OFFER_PAGE], blockNumber);
+    if (total !== null && t !== total) throw new Error(`offer total moved mid-walk (${total} → ${t}) at a pinned block`);
+    total = t;
+    ids.push(...page);
+    if (page.length === 0) break;
+  }
+  if (BigInt(ids.length) !== total) {
+    throw new Error(`offer walk for ${who} returned ${ids.length} ids, view reports ${total}`);
+  }
+  return ids;
+}
+
 // ---------------------------------------------------------------------
 // Bookkeeping for the report.
 // ---------------------------------------------------------------------
@@ -289,12 +339,80 @@ function decodeDiamondCall(data) {
   }
 }
 
+/**
+ * What the borrower's createOffer must carry, bound field by field BEFORE
+ * signing (Codex #2422 r1 P1). Set once the preconditions have read the
+ * loan; until then `judgeTx` refuses every createOffer.
+ *
+ * The expected values are the refinance request's CONTRACT, not a copy of
+ * whatever the form happens to send: same principal asset and amount as
+ * the loan (amountMax too — a request is taken whole), the loan's
+ * collateral identity verbatim (that is what selects carry-over), the
+ * loan's prepay asset, partial-repay and interest-mode flags, the TYPED
+ * ceiling and length, a refinance tag for THIS loan, the borrower's
+ * consent, all-or-nothing fill, no prepay listing / parallel sale /
+ * periodic cadence, and an expiry about REQUEST_WINDOW_DAYS out.
+ *
+ * The rate FLOOR is bound to 0, not to the typed ceiling: a borrow
+ * request is a band whose floor the app posts as 0 and whose ceiling is
+ * what the borrower typed (Offers.tsx: "Borrow requests posted by this
+ * app carry floor 0 / ceiling Y by design"; loan 22's request #45
+ * persisted floor 0 / ceiling 1200). Binding the floor to the ceiling
+ * would refuse the form's legitimate post.
+ */
+let EXPECT = null;
+const REQUEST_WINDOW_SEC = 30n * 86_400n; // RefinanceFlow's REQUEST_WINDOW_DAYS
+const CLOCK_SLACK_SEC = 900n; // local clock vs block time, either way
+const nowSec = () => BigInt(Math.floor(Date.now() / 1000));
+const within = (v, centre) => v >= centre - CLOCK_SLACK_SEC && v <= centre + CLOCK_SLACK_SEC;
+
+function createOfferMismatches(p) {
+  const L = EXPECT.loan;
+  const want = [
+    ['offerType', Number(p.offerType), 1],
+    ['lendingAsset', p.lendingAsset, L.principalAsset, eq],
+    ['amount', p.amount, L.principal],
+    ['amountMax', p.amountMax, L.principal],
+    ['interestRateBps (floor)', p.interestRateBps, 0n],
+    ['interestRateBpsMax (typed ceiling)', p.interestRateBpsMax, RATE_BPS],
+    ['durationDays (typed length)', p.durationDays, DAYS_N],
+    ['assetType', Number(p.assetType), 0],
+    ['tokenId', p.tokenId, 0n],
+    ['quantity', p.quantity, 1n],
+    ['collateralAsset', p.collateralAsset, L.collateralAsset, eq],
+    ['collateralAmount', p.collateralAmount, L.collateralAmount],
+    ['collateralAmountMax', p.collateralAmountMax, L.collateralAmount],
+    ['collateralAssetType', Number(p.collateralAssetType), Number(L.collateralAssetType)],
+    ['collateralTokenId', p.collateralTokenId, L.collateralTokenId],
+    ['collateralQuantity', p.collateralQuantity, L.collateralQuantity],
+    ['prepayAsset', p.prepayAsset, L.prepayAsset, eq],
+    ['allowsPartialRepay', p.allowsPartialRepay, L.allowsPartialRepay],
+    ['useFullTermInterest', p.useFullTermInterest, L.useFullTermInterest],
+    ['creatorRiskAndTermsConsent', p.creatorRiskAndTermsConsent, true],
+    ['periodicInterestCadence', Number(p.periodicInterestCadence), 0],
+    ['fillMode (all-or-nothing)', Number(p.fillMode), 1],
+    ['allowsPrepayListing', p.allowsPrepayListing, false],
+    ['allowsParallelSale', p.allowsParallelSale, false],
+    ['refinanceTargetLoanId', p.refinanceTargetLoanId, LOAN_ID],
+  ];
+  const bad = want
+    .filter(([, got, exp, cmp]) => !(cmp ? cmp(got, exp) : got === exp))
+    .map(([k, got, exp]) => `${k}=${got} (want ${exp})`);
+  // The request's own hard expiry: ~REQUEST_WINDOW_DAYS after posting.
+  if (!within(BigInt(p.expiresAt), nowSec() + REQUEST_WINDOW_SEC)) {
+    bad.push(`expiresAt=${p.expiresAt} (want ~now+30d)`);
+  }
+  return bad;
+}
+
 /** @returns {{ ok: true, purpose: string } | { ok: false, why: string }} */
 function judgeTx(role, tx, principalAsset) {
   const g = gate[role];
   if (!g.open) return { ok: false, why: `${role} may not write outside its phase` };
+  if (!EXPECT) return { ok: false, why: 'gate not armed (preconditions unread)' };
   if (tx.value && BigInt(tx.value) !== 0n) return { ok: false, why: 'non-zero value' };
   if (!tx.to || !tx.data) return { ok: false, why: 'missing to/data' };
+  const principal = EXPECT.loan.principal;
   if (eq(tx.to, principalAsset)) {
     let d;
     try {
@@ -304,35 +422,57 @@ function judgeTx(role, tx, principalAsset) {
     }
     if (d.functionName !== 'approve') return { ok: false, why: `principal-asset ${d.functionName}` };
     const [spender, amount] = d.args;
-    const spenders = role === 'borrower' ? [DIAMOND] : [DIAMOND, PERMIT2];
-    if (!spenders.some((s) => eq(s, spender))) {
+    const toDiamond = eq(spender, DIAMOND);
+    if (!toDiamond && !(role === 'lender' && eq(spender, PERMIT2))) {
       return { ok: false, why: `approve to unexpected spender ${spender}` };
     }
-    return { ok: true, purpose: `approve(${eq(spender, DIAMOND) ? 'Diamond' : 'Permit2'}, ${amount})` };
+    // Bounded: 0 is the form's reset / unwind; otherwise the borrower's
+    // payoff approval (principal + the interest the payoff can reach,
+    // capped well above it) or the lender's principal. A Permit2
+    // approval moves nothing by itself, so its size is not bounded here.
+    if (toDiamond && amount !== 0n) {
+      const cap = role === 'borrower' ? EXPECT.payoffApprovalCap : principal;
+      if (amount > cap) return { ok: false, why: `approve(Diamond, ${amount}) above the ${cap} this flow needs` };
+    }
+    return { ok: true, purpose: `approve(${toDiamond ? 'Diamond' : 'Permit2'}, ${amount})` };
   }
   if (!eq(tx.to, DIAMOND)) return { ok: false, why: `call to unexpected contract ${tx.to}` };
   const d = decodeDiamondCall(tx.data);
   if (!d) return { ok: false, why: 'undecodable Diamond call' };
   if (role === 'borrower') {
     if (d.functionName === 'setAutoRefinanceCaps') {
-      if (d.args[0] !== LOAN_ID) return { ok: false, why: `caps for loan ${d.args[0]}` };
+      const [loanId, enabled, maxRateBps, maxNewExpiry] = d.args;
+      const bad = [];
+      if (loanId !== LOAN_ID) bad.push(`loanId=${loanId}`);
+      if (enabled !== true) bad.push(`enabled=${enabled}`);
+      if (BigInt(maxRateBps) !== RATE_BPS) bad.push(`maxRateBps=${maxRateBps} (want ${RATE_BPS})`);
+      if (!within(BigInt(maxNewExpiry), nowSec() + DAYS_N * 86_400n + REQUEST_WINDOW_SEC)) {
+        bad.push(`maxNewExpiry=${maxNewExpiry} (want ~now+${DAYS_N}d+30d)`);
+      }
+      if (bad.length) return { ok: false, why: `setAutoRefinanceCaps mismatch: ${bad.join(', ')}` };
       return { ok: true, purpose: `setAutoRefinanceCaps(${d.args.join(', ')})` };
     }
     if (d.functionName === 'createOffer') {
-      const p = d.args[0];
-      if (p.refinanceTargetLoanId !== LOAN_ID || Number(p.offerType) !== 1) {
-        return { ok: false, why: `createOffer not a refinance of loan ${LOAN_ID}` };
-      }
+      const bad = createOfferMismatches(d.args[0]);
+      if (bad.length) return { ok: false, why: `createOffer payload mismatch: ${bad.join('; ')}` };
       return { ok: true, purpose: `createOffer(refinance of loan ${LOAN_ID})` };
     }
     return { ok: false, why: `borrower Diamond call ${d.functionName}` };
   }
   // lender
   if (d.functionName === 'acceptOffer' || d.functionName === 'acceptOfferWithPermit') {
-    if (g.requestId === null || d.args[0] !== g.requestId) {
-      return { ok: false, why: `${d.functionName} for offer ${d.args[0]}, expected ${g.requestId}` };
+    const [offerId, terms] = d.args;
+    if (g.requestId === null || offerId !== g.requestId) {
+      return { ok: false, why: `${d.functionName} for offer ${offerId}, expected ${g.requestId}` };
     }
-    return { ok: true, purpose: `${d.functionName}(offer ${d.args[0]})` };
+    const bad = [];
+    if (!eq(terms?.acceptor, LENDER)) bad.push(`acceptor=${terms?.acceptor}`);
+    if (!eq(terms?.offerCreator, BORROWER)) bad.push(`offerCreator=${terms?.offerCreator}`);
+    if (terms?.refinanceTargetLoanId !== LOAN_ID) bad.push(`refinanceTargetLoanId=${terms?.refinanceTargetLoanId}`);
+    if (terms?.amount !== principal) bad.push(`amount=${terms?.amount}`);
+    if (terms?.riskAndTermsConsent !== true) bad.push(`riskAndTermsConsent=${terms?.riskAndTermsConsent}`);
+    if (bad.length) return { ok: false, why: `${d.functionName} terms mismatch: ${bad.join(', ')}` };
+    return { ok: true, purpose: `${d.functionName}(offer ${offerId})` };
   }
   return { ok: false, why: `lender Diamond call ${d.functionName}` };
 }
@@ -511,7 +651,7 @@ const pre = await precondition('reading the preconditions from chain', async () 
     noncePending: await pub.getTransactionCount({ address: who, blockTag: 'pending' }),
   });
   const [b, l] = await Promise.all([bal(BORROWER), bal(LENDER)]);
-  const [offerIds] = await read('getUserOffersPaginated', [BORROWER, 0n, 500n], head);
+  const offerIds = await allOfferIdsOf(BORROWER, head);
   const openRequests = [];
   for (const id of offerIds) {
     const o = await read('getOfferDetails', [id], head);
@@ -525,7 +665,10 @@ const pre = await precondition('reading the preconditions from chain', async () 
     }
   }
   const caps = await read('getAutoRefinanceCaps', [LOAN_ID], head);
-  return { head, now: block.timestamp, loan, riskGate, autoRefi, paused, flags, collLiquidity, tosB, tosL, b, l, offerIds, openRequests, caps };
+  // The LIVE loan-initiation fee rate (ConfigFacet), pinned to the same
+  // head — the payoff reserve below is computed from it, never assumed.
+  const lifBps = await read('getLoanInitiationFeeBps', [], head);
+  return { head, now: block.timestamp, loan, riskGate, autoRefi, paused, flags, collLiquidity, tosB, tosL, b, l, offerIds, openRequests, caps, lifBps };
 });
 
 const { loan } = pre;
@@ -557,11 +700,20 @@ want('no open refinance request on this loan', pre.openRequests.length === 0, pr
 want('borrower has no pending transactions', pre.b.nonceLatest === pre.b.noncePending, `${pre.b.nonceLatest}/${pre.b.noncePending}`);
 want('lender has no pending transactions', pre.l.nonceLatest === pre.l.noncePending, `${pre.l.nonceLatest}/${pre.l.noncePending}`);
 want('lender holds the principal', pre.l.principal >= loan.principal, formatUnits(pre.l.principal, 18));
-// Payoff interest (the full term at the CURRENT rate — the payoff is
-// full-term) plus 1% of principal, which covers the 0.2% LIF with margin.
-const borrowerSpareNeed =
-  (loan.principal * loan.interestRateBps * loan.durationDays) / (10_000n * 365n) + loan.principal / 100n;
-want('borrower holds the payoff top-up', pre.b.principal >= borrowerSpareNeed, `${formatUnits(pre.b.principal, 18)} ≥ ${formatUnits(borrowerSpareNeed, 18)}`);
+// What the borrower must hold SPARE when the lender accepts: the payoff's
+// interest share plus the new loan's initiation fee (the new principal
+// arrives in the same transaction). The interest share is the FULL term
+// at the loan's rate — exact for a full-term-interest loan, an upper
+// bound for a pro-rata one — which holds because the precheck above
+// requires the loan to be pre-maturity (no late fee yet). The fee uses
+// the LIVE rate read at the pinned head, so a governance retune of
+// `loanInitiationFeeBps` moves this figure instead of hiding behind a
+// hard-coded one (Codex #2422 r1 P2).
+const fullTermInterest = (loan.principal * loan.interestRateBps * loan.durationDays) / (10_000n * 365n);
+const lifWei = (loan.principal * BigInt(pre.lifBps)) / 10_000n;
+const borrowerSpareNeed = fullTermInterest + lifWei;
+console.log(`pre   live loan-initiation fee: ${pre.lifBps} bps → ${formatUnits(lifWei, 18)} on the new principal`);
+want('borrower holds the payoff top-up (interest share + live LIF)', pre.b.principal >= borrowerSpareNeed, `${formatUnits(pre.b.principal, 18)} ≥ ${formatUnits(borrowerSpareNeed, 18)}`);
 const GAS_FLOOR = 300_000_000_000_000n; // 0.0003 ETH — several Base Sepolia txs
 want('borrower has gas', pre.b.eth >= GAS_FLOOR, formatUnits(pre.b.eth, 18));
 want('lender has gas', pre.l.eth >= GAS_FLOOR, formatUnits(pre.l.eth, 18));
@@ -599,6 +751,14 @@ const expectedPosture = expectedPostureFrom({
 });
 
 const PRINCIPAL_ASSET = loan.principalAsset;
+// Arm the write gate with the loan it binds every payload to. The payoff
+// approval cap is deliberately loose (twice the full-term interest plus a
+// tenth of principal over principal): it bounds a runaway approval, while
+// the exact figure is the form's own business and grows with late fees.
+EXPECT = {
+  loan,
+  payoffApprovalCap: loan.principal + 2n * fullTermInterest + loan.principal / 10n,
+};
 const baselineCollateral = pre.b.collateral;
 const baselineNonces = { borrower: pre.b.nonceLatest, lender: pre.l.nonceLatest };
 const baselineOffers = new Set(pre.offerIds.map(String));
@@ -610,18 +770,51 @@ if (process.env.REFI_PREFLIGHT_ONLY === '1') {
 }
 
 // =====================================================================
+// BOTH browser sessions are established — launched, gated, first page
+// open — BEFORE the first write (Codex #2422 r1 P1). A setup failure here
+// has written nothing, so BLOCKED is honest; the same failure after the
+// borrower had posted would have exited 2 from inside `launch()`,
+// skipping the catch/finally and the transaction report while a live
+// request stood on chain. With both sessions in hand, nothing after the
+// first write depends on browser setup, and every later failure takes
+// the FAIL path below.
+//
+// `onSetupFailure: 'throw'` so a failure on the SECOND launch can close
+// the first before exiting: `blocked()` closes only the browser it last
+// registered.
+// =====================================================================
+const sessions = { borrower: null, lender: null };
+async function closeSession(role) {
+  const s = sessions[role];
+  sessions[role] = null;
+  try {
+    await s?.done();
+  } catch {
+    /* closing is best effort */
+  }
+}
+for (const role of ['borrower', 'lender']) {
+  try {
+    sessions[role] = await launch({ role, onSetupFailure: 'throw' });
+    await installGate(sessions[role].ctx, role, PRINCIPAL_ASSET);
+  } catch (err) {
+    await closeSession('borrower');
+    await closeSession('lender');
+    await blocked(`setting up the ${role} browser session failed before any write`, err);
+  }
+}
+
+// =====================================================================
 // From here on, chain state may change: no BLOCKED exits.
 // =====================================================================
 let exitCode = 0;
-let session = null;
+let session = sessions.borrower; // the session `shot()` on a stop targets
 let requestId = null;
 let acceptHash = null;
 try {
   // -------------------------------------------------------------------
   // 1. Borrower posts the refinance request through the form.
   // -------------------------------------------------------------------
-  session = await launch({ role: 'borrower' });
-  await installGate(session.ctx, 'borrower', PRINCIPAL_ASSET);
   const bp = session.page;
   await bp.goto(`${SITE}/positions/${LOAN_ID}`, { waitUntil: 'domcontentloaded', timeout: 60_000 });
   await ensureConnected(bp);
@@ -700,6 +893,10 @@ try {
   // -------------------------------------------------------------------
   // 2. Pin the request on chain from the createOffer receipt itself.
   // -------------------------------------------------------------------
+  // Every assertion in this phase GATES the lender phase: a request that
+  // is not exactly the one reviewed must never be funded, so a failure
+  // here stops the drive rather than only being recorded (Codex #2422 r1).
+  const phase2From = checks.length;
   const createTx = sentTxs.find((t) => t.role === 'borrower' && t.purpose.startsWith('createOffer'));
   if (!createTx) stop('no createOffer transaction was captured at the wallet boundary');
   const createRcpt = await pub.waitForTransactionReceipt({ hash: createTx.hash, timeout: 180_000 });
@@ -723,19 +920,33 @@ try {
   check('page names the same request id the receipt created', pageRequestId === requestId, `page #${pageRequestId}, receipt #${requestId}`);
 
   const atCreate = createRcpt.blockNumber;
-  const [idsAfter] = await read('getUserOffersPaginated', [BORROWER, 0n, 500n], atCreate);
+  const createRcptTs = (await pub.getBlock({ blockNumber: atCreate })).timestamp;
+  // The baseline delta over the WHOLE offer index (paginated to its total):
+  // the only id this run may have added is the request itself.
+  const idsAfter = await allOfferIdsOf(BORROWER, atCreate);
   const newIds = idsAfter.map(String).filter((id) => !baselineOffers.has(id));
-  check('exactly one new borrower offer, and it is the request', newIds.length === 1 && newIds[0] === String(requestId), newIds.join(','));
+  check(
+    'exactly one new borrower offer across the full index, and it is the request',
+    newIds.length === 1 && newIds[0] === String(requestId),
+    `${newIds.join(',') || 'none'} of ${idsAfter.length}`,
+  );
   const req = await read('getOfferDetails', [requestId], atCreate);
   check(`request refinanceTargetLoanId == ${LOAN_ID}`, req.refinanceTargetLoanId === LOAN_ID, req.refinanceTargetLoanId);
   check('request refinanceCarryOver == true', req.refinanceCarryOver === true, req.refinanceCarryOver);
   check('request is a borrower offer by the borrower', Number(req.offerType) === 1 && eq(req.creator, BORROWER), `${req.offerType} ${req.creator}`);
   check(`request rate ceiling == ${RATE_BPS} bps (typed ${RATE_PCT}%)`, req.interestRateBpsMax === RATE_BPS, req.interestRateBpsMax);
+  check('request rate floor == 0 (a borrow request is a 0..ceiling band)', req.interestRateBps === 0n, req.interestRateBps);
   check(`request durationDays == ${DAYS_N}`, req.durationDays === DAYS_N, req.durationDays);
   check('request amount == old principal', req.amount === loan.principal, req.amount);
   check('request lending asset == old principal asset', eq(req.lendingAsset, loan.principalAsset), req.lendingAsset);
   check('request collateral identity == old collateral', eq(req.collateralAsset, loan.collateralAsset) && req.collateralAmount === loan.collateralAmount, `${req.collateralAsset} × ${req.collateralAmount}`);
   check('request not yet accepted', req.accepted === false, req.accepted);
+  check('request records the borrower\u2019s consent', req.creatorRiskAndTermsConsent === true, req.creatorRiskAndTermsConsent);
+  check(
+    'request expiry is in the future and no later than ~30 days out',
+    req.expiresAt > createRcptTs && req.expiresAt <= createRcptTs + REQUEST_WINDOW_SEC + CLOCK_SLACK_SEC,
+    `${req.expiresAt} (block ts ${createRcptTs})`,
+  );
   console.log(
     `info  request persisted: rate floor ${req.interestRateBps} bps, ceiling ${req.interestRateBpsMax} bps, ` +
       `collateralLiquidity ${req.collateralLiquidity}, useFullTermInterest ${req.useFullTermInterest}, ` +
@@ -745,16 +956,23 @@ try {
   console.log(`info  caps after posting: enabled ${capsNow.enabled}, maxRateBps ${capsNow.maxRateBps}, maxNewExpiry ${capsNow.maxNewExpiry}`);
   const collAfterPost = await tokenBalance(loan.collateralAsset, BORROWER, atCreate);
   check('posting pulled no collateral from the borrower wallet', collAfterPost === baselineCollateral, `${collAfterPost}`);
+  const phase2Failed = checks.slice(phase2From).filter((c) => !c.ok);
+  if (phase2Failed.length) {
+    stop(
+      `the posted request does not match what was reviewed (${phase2Failed.map((c) => c.label).join('; ')}) — ` +
+        `NOT proceeding to the lender phase. Request #${requestId} is live on chain; cancel it from the ` +
+        `borrower's position page once its cooldown opens.`,
+    );
+  }
 
-  await session.done();
-  session = null;
+  await closeSession('borrower');
 
   // -------------------------------------------------------------------
   // 3. A DIFFERENT lender funds it through the Offer Book → guided review.
+  // The session already exists (launched and gated before any write).
   // -------------------------------------------------------------------
-  session = await launch({ role: 'lender' });
+  session = sessions.lender;
   gate.lender.requestId = requestId;
-  await installGate(session.ctx, 'lender', PRINCIPAL_ASSET);
   const lp = session.page;
   const expectedHref = `/lend?offer=${requestId}&chain=${CHAIN_ID}`;
   let reachedViaBook = false;
@@ -897,11 +1115,29 @@ try {
 
   const floor = acc.blockNumber;
   const oldConfirmed = await confirmWrite({
-    read: (bn) => loanOf(LOAN_ID, bn),
-    accept: (l) => l.status === LOAN_STATUS.REPAID,
-    minBlock: floor,
-    getBlockNumber: () => pub.getBlockNumber(),
     what: `loan ${LOAN_ID} status`,
+    minBlock: floor,
+    // `cacheTime: 0`: viem caches this action for the client's polling
+    // interval, so consecutive attempts would otherwise reuse ONE head
+    // read and a head cached as behind could outlive the chain catching
+    // up (same reasoning as live-rate-desk's confirmation).
+    getBlockNumber: () => pub.getBlockNumber({ cacheTime: 0 }),
+    // The RAW reply, pinned to the head it is handed; `decode` below turns
+    // it into a loan. Kept apart so a malformed reply is told from a
+    // failure to reach anything (#2107 r3, r7).
+    read: async (blockNumber) => {
+      const { data } = await pub.call({
+        to: DIAMOND,
+        data: encodeFunctionData({ abi: DIAMOND_ABI, functionName: 'getLoanDetails', args: [LOAN_ID] }),
+        blockNumber,
+      });
+      return data ?? '0x';
+    },
+    decode: (data) => {
+      const l = decodeFunctionResult({ abi: DIAMOND_ABI, functionName: 'getLoanDetails', data });
+      return { ...l, status: Number(l.status) };
+    },
+    accept: (l) => l.status === LOAN_STATUS.REPAID,
   });
   check(
     `old loan ${LOAN_ID} status == 1 (Repaid)`,
@@ -962,11 +1198,8 @@ try {
 } finally {
   gate.borrower.open = false;
   gate.lender.open = false;
-  try {
-    await session?.done();
-  } catch {
-    /* closing is best effort */
-  }
+  await closeSession('borrower');
+  await closeSession('lender');
 }
 
 await report();
