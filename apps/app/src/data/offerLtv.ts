@@ -45,11 +45,16 @@ export type AssetPricing =
   | { kind: 'failed' };
 
 export type OfferLtv =
-  | { kind: 'value'; bps: bigint; ranged: boolean }
+  /** `atFloor` (#2382 r5): the ratio is a borrow request's, taken at the
+   *  requested amount against its collateral FLOOR — named as such, since
+   *  the card shows the (larger) commitment beside it. */
+  | { kind: 'value'; bps: bigint; ranged: boolean; atFloor?: boolean }
   | { kind: 'illiquid' }
   | { kind: 'tooSmall' }
   | { kind: 'unknown' }
   | { kind: 'loading' }
+  /** #2382 r3 — a borrow request earlier matched fills have part-used. */
+  | { kind: 'partFilled' }
   | { kind: 'none' };
 
 const ZERO = '0x0000000000000000000000000000000000000000';
@@ -87,11 +92,27 @@ function valueOf(amount: bigint, p: Extract<AssetPricing, { kind: 'priced' }>): 
  */
 export function offerLtv(
   offer: Parameters<typeof ltvLegs>[0] &
-    Pick<IndexedOffer, 'amount' | 'amountMax'> & { amountFilled?: string },
+    Pick<IndexedOffer, 'amount' | 'amountMax'> & {
+      amountFilled?: string;
+      collateralAmountMax?: string | null;
+      collateralAmountFilled?: string | null;
+    },
   pricing: ReadonlyMap<string, AssetPricing> | null | undefined,
 ): OfferLtv {
   const legs = ltvLegs(offer);
   if (!legs) return { kind: 'none' };
+  // #2382 r3 — a part-used borrow request has no single pair of amounts a
+  // further fill would carry: its principal and collateral both vary per
+  // fill, and the card shows the remaining COMMITMENT, not a fill. A ratio
+  // against the original floor would be labelled "at the amounts shown" while
+  // matching neither. Stated, not computed. (A part-filled LEND offer stays a
+  // ratio at its full size, qualified as ranged, as before.)
+  if (
+    offer.offerType === 1 &&
+    (BigInt(offer.amountFilled || '0') > 0n || BigInt(offer.collateralAmountFilled || '0') > 0n)
+  ) {
+    return { kind: 'partFilled' };
+  }
   if (pricing === undefined) return { kind: 'loading' };
   if (pricing === null) return { kind: 'unknown' };
   const lend = pricing.get(legs.lending);
@@ -114,12 +135,21 @@ export function offerLtv(
   if (borrowedValue === 0n || collateralValue === 0n) return { kind: 'tooSmall' };
   // A fill of another size can carry another ratio when the lend offer is
   // a range or already part-taken (the matcher scales and rounds down the
-  // collateral), and for EVERY borrow request: its collateral is a floor
-  // and the indexed row does not carry its ceiling (#2382), so the card
-  // cannot know a fill will use exactly the amounts shown.
+  // collateral), and for EVERY borrow request — whatever its collateral
+  // range (#2382 r1). A direct funding locks exactly the floor, but any
+  // request can also be filled by the matcher: a single-value request then
+  // locks only the lender's pro-rated requirement and refunds the rest
+  // (LibOfferMatch's single-value branch), so the loan can carry LESS
+  // collateral than shown; a ranged one can lock up to its ceiling. Knowing
+  // the ceiling narrows the range, never the uncertainty.
   const ranged =
     !isLender || amountMax > amount || BigInt(offer.amountFilled || '0') > 0n;
-  return { kind: 'value', bps: (borrowedValue * 10_000n) / collateralValue, ranged };
+  return {
+    kind: 'value',
+    bps: (borrowedValue * 10_000n) / collateralValue,
+    ranged,
+    ...(isLender ? {} : { atFloor: true }),
+  };
 }
 
 /** One batched read per asset: liquidity verdict, oracle price, token

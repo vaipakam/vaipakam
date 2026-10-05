@@ -1256,8 +1256,15 @@ progress.
   the protocol's live oracle prices with each side valued by its own token's
   precision. The figure is the ratio at the amounts the card shows, and it is
   never presented as exact or as a limit across fills: where a fill of another
-  size could carry another ratio — a ranged or part-taken lend offer, and any
-  borrow request, whose collateral is only a floor — the card says so. When the
+  size could carry another ratio — a ranged or part-taken offer of either side,
+  and EVERY borrow request — the card says so. A borrow request is never stated
+  exactly, even one whose collateral ceiling equals its floor: a direct funding
+  locks exactly the amounts shown, but a matched fill locks only what the
+  lender requires, so the resulting ratio can be higher. A request that earlier
+  matched fills have already part-used has no single pair of amounts a further
+  fill would carry, so its card states that the ratio is not given rather than
+  one taken against the original floor.
+  When the
   protocol treats either side as illiquid the card says the ratio isn't worked
   out and names both possible causes (no reliable price, or too little trading),
   since it cannot tell which; when one side's value rounds to nothing at that
@@ -1274,13 +1281,35 @@ progress.
   offer was posted — acceptance checks liquidity again, and the loan follows that
   result. NFT collateral is named by its token (and quantity, for a multi-unit
   token); a token amount whose details are loading or could not be read says so,
-  rather than showing only a contract address. Where the shown amount is only the
-  offer's committed floor (a borrower offer can commit a range), it is stated as
-  "at least" that amount. A lender offer that can be taken in part (a range, or
+  rather than showing only a contract address. A borrow request can commit a
+  collateral RANGE — a floor and a ceiling. Once the market data carries the
+  ceiling and the part earlier fills consumed, the card states the request's
+  own terms and nothing it cannot know: the collateral the request holds now
+  (the whole ceiling for an unfilled request; what is left of it for one that
+  earlier matched fills have part-used) and its floor, and that how much a
+  given fill locks depends on how the request is filled. It does not narrate
+  what each fill path locks, because that depends on the path — a direct
+  funding, a matched fill, a refinance that carries over the old loan's
+  collateral — and on the deployment (whether partial fills are on, which
+  also decides whether unused collateral is refunded at a match or stays
+  committed), none of which the card reads. For a part-used request it states
+  how much earlier fills consumed — a running total, not what is locked
+  today, since a resulting loan may have settled — and when what is left is
+  below the request's floor it states that fact rather than presenting the
+  remainder as available. A part-used request keeps the same terms — what is
+  held, the floor, and the fill-dependence — none drops out after a first
+  fill. For the same reason a borrow request's loan-to-value names its basis
+  (the requested amount against the request's collateral floor, not the larger
+  commitment shown beside it) and is always qualified as the ratio at
+  the amounts shown. Until the ceiling or the part already used has
+  been read — older market data, or a request the index has not re-read yet —
+  the card states only the floor, as "at least" that amount, never an assumed
+  range or an assumed exact figure. A lender offer that can be taken in part (a range, or
   already partly taken) states its collateral as the requirement for the full
   offer, since a smaller take needs proportionally less. When the token's details
   cannot be read, the recorded amount is still shown, in the token's raw base
-  units, with the failure named. A loan-position sale row says its collateral is the
+  units, with the failure named — and a borrow request's known commitment and
+  floor are stated the same way rather than reduced to "at least" the floor. A loan-position sale row says its collateral is the
   running loan's, rather than showing the zero its own row carries.
 - A filter with no matches says the filter has no matches; it does not claim the
   whole market is empty.

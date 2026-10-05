@@ -78,6 +78,7 @@ function ltvText(ltv: OfferLtv): string | null {
   switch (ltv.kind) {
     case 'value': {
       const pct = formatBpsAsPercent(Number(ltv.bps));
+      if (ltv.atFloor) return copy.offers.ltvValueAtFloor(pct);
       return ltv.ranged ? copy.offers.ltvValueRanged(pct) : copy.offers.ltvValue(pct);
     }
     case 'illiquid':
@@ -88,6 +89,8 @@ function ltvText(ltv: OfferLtv): string | null {
       return copy.offers.ltvUnknown;
     case 'loading':
       return copy.offers.ltvLoading;
+    case 'partFilled':
+      return copy.offers.ltvPartFilled;
     case 'none':
       return null;
   }
@@ -194,8 +197,15 @@ function OfferRow({
               quantity: offer.collateralQuantity,
               meta: collateralMeta.data,
               metaFailed: collateralMeta.isError,
-              // A borrower offer's indexed collateral is its committed floor.
+              // A borrower offer's indexed collateral is its committed floor;
+              // #2382 — and its range, once the indexer has read it.
               floorOnly: !isLending,
+              borrowerRange: isLending
+                ? undefined
+                : {
+                    ceiling: offer.collateralAmountMax ?? null,
+                    filled: offer.collateralAmountFilled ?? null,
+                  },
               // #2378 r8 — a lender offer's figure is its full-amount
               // requirement; say so where it can be taken in part.
               scalesWithAmount:
@@ -205,8 +215,13 @@ function OfferRow({
               labels: {
                 amountLoading: copy.offers.collateralAmountLoading,
                 amountRaw: copy.offers.collateralAmountRaw,
+                inBaseUnits: copy.offers.collateralInBaseUnits,
                 atLeast: copy.offers.collateralAtLeast,
                 forFullOffer: copy.offers.collateralForFullOffer,
+                range: copy.offers.collateralRange,
+                rangeRemaining: copy.offers.collateralRangeRemaining,
+                single: copy.offers.collateralSingle,
+                remainingBelowFloor: copy.offers.collateralRemainingBelowFloor,
               },
             })
           : copy.offers.collateralNone

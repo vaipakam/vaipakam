@@ -91,6 +91,12 @@ interface OfferRow {
   interest_rate_bps: number;
   interest_rate_bps_max: number;
   collateral_amount: string;
+  // 0054 (#2382) — the effective collateral ceiling and the portion partial
+  // matches consumed. NULL = not yet read from chain; `undefined` = the
+  // column does not exist yet (this build reading a database before 0054 —
+  // `SELECT *` keeps that working). Both serve as null: unknown.
+  collateral_amount_max?: string | null;
+  collateral_amount_filled?: string | null;
   duration_days: number;
   position_token_id: string;
   prepay_asset: string;
@@ -145,6 +151,9 @@ function toJson(row: OfferRow): Record<string, unknown> {
     interestRateBps: row.interest_rate_bps,
     interestRateBpsMax: row.interest_rate_bps_max,
     collateralAmount: row.collateral_amount,
+    // #2382 — null means UNKNOWN (not read yet), never "same as the floor".
+    collateralAmountMax: row.collateral_amount_max ?? null,
+    collateralAmountFilled: row.collateral_amount_filled ?? null,
     durationDays: row.duration_days,
     positionTokenId: row.position_token_id,
     prepayAsset: row.prepay_asset,

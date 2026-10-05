@@ -3533,6 +3533,29 @@ const copySource = {
     // checks liquidity again and the loan follows THAT result.
     illiquidCollateralTag: 'illiquid when posted (checked again at acceptance) — if so, handed over as-is if not repaid',
     collateralAtLeast: tmpl('at least {{amount}}', ['amount']),
+    // #2382 — a borrow request's collateral, once the indexer has read its
+    // range. TERMS ONLY (r4): what the request commits now and its floor —
+    // never what a particular fill path locks, which depends on the path
+    // (direct, matched, carry-over refinance) and on the deployment.
+    collateralRange: tmpl(
+      '{{committed}} committed (request floor {{floor}}); how much a fill locks depends on how it is filled',
+      ['committed', 'floor'],
+    ),
+    collateralSingle: tmpl(
+      '{{amount}} committed; how much a fill locks depends on how it is filled',
+      ['amount'],
+    ),
+    // Part-used by earlier matched fills: exactly what remains committed, and
+    // what those fills CONSUMED (cumulative; a resulting loan may have
+    // settled since, so not "locked").
+    collateralRangeRemaining: tmpl(
+      '{{remaining}} still committed ({{used}} consumed by earlier fills; request floor {{floor}}); how much a fill locks depends on how it is filled',
+      ['remaining', 'used', 'floor'],
+    ),
+    collateralRemainingBelowFloor: tmpl(
+      '{{remaining}} still committed ({{used}} consumed by earlier fills) — below the request’s {{floor}} floor',
+      ['remaining', 'used', 'floor'],
+    ),
     // #2384 (UX3-007) — the loan-to-value the card can substantiate, from
     // the protocol's live oracle prices, with its one-clause definition
     // (WebsiteReadme: jargon at a funds decision carries one). The figure
@@ -3546,11 +3569,23 @@ const copySource = {
       'loan-to-value {{pct}} at the amounts shown (the loan’s value as a share of the collateral’s) — a fill of another size can differ',
       ['pct'],
     ),
+    // #2382 r5 — a borrow request's ratio names its basis: the requested
+    // amount against the collateral FLOOR, not the larger commitment the card
+    // shows beside it.
+    ltvValueAtFloor: tmpl(
+      'loan-to-value {{pct}} at the requested amount and the request’s collateral floor (the loan’s value as a share of the collateral’s) — a fill can differ',
+      ['pct'],
+    ),
     ltvIlliquid:
       'loan-to-value isn’t worked out — one side is treated as illiquid (no reliable price or too little trading), so the protocol gives it no value',
     ltvTooSmall: 'loan-to-value can’t be worked out at this size — one side’s value rounds to nothing',
     ltvUnknown: 'loan-to-value couldn’t be checked right now',
     ltvLoading: 'checking loan-to-value…',
+    // #2382 r3 — a borrow request that earlier matched fills have part-used:
+    // the next fill's amount and collateral both vary (and below the floor no
+    // fill can execute), so there are no "amounts shown" to take a ratio at.
+    ltvPartFilled:
+      'loan-to-value isn’t stated for a request already part-filled — each further matched fill sets its own amounts',
     // #2378 r4 — a loan-position sale row carries no collateral of its own.
     collateralOfRunningLoan: 'the collateral of the running loan being sold (not shown on this row)',
     // #2378 r1 — an ERC-20 collateral amount whose token details are still
@@ -3561,6 +3596,12 @@ const copySource = {
     collateralAmountRaw: tmpl(
       '{{amount}} base units of {{token}} (token details couldn’t be read)',
       ['amount', 'token'],
+    ),
+    // #2382 r6 — a known range whose token details could not be read: its
+    // figures are raw base units, and the failure is named once.
+    collateralInBaseUnits: tmpl(
+      '{{text}} — amounts in base units of {{token}} (token details couldn’t be read)',
+      ['text', 'token'],
     ),
     // #2378 r8 — a lender offer's collateral is the requirement at its full
     // amount; matching scales it to the part taken.
