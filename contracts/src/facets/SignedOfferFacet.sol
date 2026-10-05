@@ -214,6 +214,7 @@ contract SignedOfferFacet is DiamondReentrancyGuard, DiamondPausable {
         view
         returns (bytes32 orderHash)
     {
+        LibSignedOffer.requireFullWellFormed(o); // #1949 — a Full opt-in needs a ceiling
         if (o.deadline != 0 && block.timestamp > o.deadline) {
             revert SignedOfferSigExpired(o.deadline);
         }
@@ -254,7 +255,8 @@ contract SignedOfferFacet is DiamondReentrancyGuard, DiamondPausable {
             abi.encodeWithSelector(
                 OfferCreateFacet.createSignedOfferVault.selector,
                 o.signer,
-                params
+                params,
+                LibSignedOffer.makerFullFor(o, _ceiling(o)) // #1949 — the whole order
             )
         );
         offerId = abi.decode(res, (uint256));
@@ -276,7 +278,8 @@ contract SignedOfferFacet is DiamondReentrancyGuard, DiamondPausable {
                 params,
                 permit,
                 witness,
-                permitSig
+                permitSig,
+                LibSignedOffer.makerFullFor(o, _ceiling(o)) // #1949 — the whole order
             )
         );
         offerId = abi.decode(res, (uint256));

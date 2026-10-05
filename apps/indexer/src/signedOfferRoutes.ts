@@ -153,6 +153,7 @@ const U256_FIELDS = [
   'collateralTokenId',
   'collateralQuantity',
   'refinanceTargetLoanId',
+  'creatorMaxCStar', // #1949
   'nonce',
 ] as const;
 
@@ -179,6 +180,8 @@ const BOOL_FIELDS = [
   'allowsPrepayListing',
   'allowsParallelSale',
   'useFullTermInterest',
+  'creatorFull', // #1949
+  'creatorAllowFullDowngrade', // #1949
 ] as const;
 
 /**
@@ -222,7 +225,7 @@ function validateOrder(
   raw: Record<string, unknown>,
   now: number,
 ): { order: SignedOrderWire } | { error: string } {
-  // Exactly the 28 struct fields — unknown keys are rejected so order_json
+  // Exactly the 31 struct fields — unknown keys are rejected so order_json
   // stays the canonical replay payload (extra junk would survive into the
   // stored JSON otherwise).
   const keys = Object.keys(raw);
@@ -485,10 +488,16 @@ function validateOrder(
     }
   }
 
+  // #1949 — a Full opt-in without a ceiling is refused at vetting on every fill
+  // path (`LibSignedOffer.requireFullWellFormed`): a guaranteed-unfillable order,
+  // not stored — the same static-invariant rule as the checks above.
+  if (out.creatorFull === true && BigInt(out.creatorMaxCStar as string) === 0n) {
+    return { error: 'full-needs-max-cstar' };
+  }
   return { order: out as unknown as SignedOrderWire };
 }
 
-/** Build the canonical order_json — the 28 fields in struct order, addresses
+/** Build the canonical order_json — the 31 fields in struct order, addresses
  *  already lowercased by validateOrder. Stable key order means byte-identical
  *  JSON for the same order, so idempotent re-posts are trivially comparable. */
 function canonicalOrderJson(order: SignedOrderWire): string {
@@ -504,7 +513,7 @@ function canonicalOrderJson(order: SignedOrderWire): string {
 /**
  * POST /signed-offers
  *
- * Body: `{ chainId: number, order: <28-field SignedOffer wire object>,
+ * Body: `{ chainId: number, order: <31-field SignedOffer wire object>,
  *          signature: 0x-hex }` — every uint as a decimal string, addresses
  * 0x-40-hex, bools as booleans (the same shape GET returns and takers replay
  * on-chain).

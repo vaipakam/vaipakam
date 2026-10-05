@@ -594,17 +594,20 @@ contract OfferCreateFacet is
     ///         cross-facet call site under viaIR's stack ceiling). The
     ///         signer's stake is already free vault balance.
     /// @param creator The offer signer (on-behalf-of). @param params Terms.
+    /// @param full    #1949 — the maker's Full opt-in carried on the signed artifact
+    ///                (whole order or the slice's pro-rata share).
     /// @return offerId The materialized on-chain offer id.
     function createSignedOfferVault(
         address creator,
-        LibVaipakam.CreateOfferParams calldata params
+        LibVaipakam.CreateOfferParams calldata params,
+        LibSignedOffer.MakerFull calldata full
     ) external whenNotPaused returns (uint256 offerId) {
         if (msg.sender != address(this)) {
             revert UnauthorizedCrossFacetCall();
         }
         ISignatureTransfer.PermitTransferFrom memory emptyPermit;
         return _materializeSignedOffer(
-            creator, params, SignedFunding.VaultBacked, emptyPermit, bytes32(0), ""
+            creator, params, SignedFunding.VaultBacked, emptyPermit, bytes32(0), "", full
         );
     }
 
@@ -613,19 +616,21 @@ contract OfferCreateFacet is
     /// @param permit    Permit2 struct the signer signed.
     /// @param witness   The SignedOffer hash bound as the Permit2 witness.
     /// @param permitSig The Permit2 witness signature.
+    /// @param full      #1949 — the maker's Full opt-in carried on the signed artifact.
     /// @return offerId  The materialized on-chain offer id.
     function createSignedOfferWallet(
         address creator,
         LibVaipakam.CreateOfferParams calldata params,
         ISignatureTransfer.PermitTransferFrom calldata permit,
         bytes32 witness,
-        bytes calldata permitSig
+        bytes calldata permitSig,
+        LibSignedOffer.MakerFull calldata full
     ) external whenNotPaused returns (uint256 offerId) {
         if (msg.sender != address(this)) {
             revert UnauthorizedCrossFacetCall();
         }
         return _materializeSignedOffer(
-            creator, params, SignedFunding.WalletWitness, permit, witness, permitSig
+            creator, params, SignedFunding.WalletWitness, permit, witness, permitSig, full
         );
     }
 
@@ -641,7 +646,8 @@ contract OfferCreateFacet is
         SignedFunding fundingMode,
         ISignatureTransfer.PermitTransferFrom memory permit,
         bytes32 witness,
-        bytes memory permitSig
+        bytes memory permitSig,
+        LibSignedOffer.MakerFull memory full
     ) private returns (uint256 offerId) {
         // v0.5 supported shapes: ERC-20 Lender-principal offer, or
         // ERC-20-collateral Borrower offer. NFT lender / NFT-rental
@@ -653,6 +659,7 @@ contract OfferCreateFacet is
 
         address vault;
         (offerId, vault) = _createOfferSetup(creator, params);
+        _applyMakerFull(offerId, full); // #1949
         uint256 amount = _creatorPullAmount(offerId, params);
 
         if (fundingMode == SignedFunding.VaultBacked) {
@@ -691,6 +698,31 @@ contract OfferCreateFacet is
             );
         }
         _createOfferFinish(creator, offerId, params);
+    }
+
+    /// @notice #1949 — the same event `ProfileFacet.setOfferCreatorFullTariff`
+    ///         emits (same signature, one topic): a signed-offer maker's Full
+    ///         opt-in is applied at materialization, so indexers see one shape.
+    event OfferCreatorFullTariffSet(uint256 indexed offerId, bool creatorFull, uint256 maxCStar, bool allowDowngrade);
+
+    /// @dev #1949 — apply the maker's Full opt-in carried on the signed artifact.
+    ///      A signed offer is materialized and accepted in ONE transaction, so
+    ///      there is no post-create moment for the standing-offer setter; the
+    ///      three fields and the event are the setter's, so the accept's tariff
+    ///      resolution and the indexer see one shape. The ceiling rule has ONE
+    ///      home, `LibSignedOffer.requireFullWellFormed`, run by both fill paths
+    ///      before any value moves; the materialize entries are Diamond-only, and
+    ///      their third caller (the intent slice) passes no maker Full, so a
+    ///      second check here would be a second statement of one rule. A slice's
+    ///      pro-rata ceiling rounds UP, so a vetted non-zero ceiling never
+    ///      arrives here as zero.
+    function _applyMakerFull(uint256 offerId, LibSignedOffer.MakerFull memory full) private {
+        if (!full.full) return;
+        LibVaipakam.Offer storage o = LibVaipakam.storageSlot().offers[offerId];
+        o.creatorFull = true;
+        o.creatorMaxCStar = full.maxCStar;
+        o.creatorAllowFullDowngrade = full.allowDowngrade;
+        emit OfferCreatorFullTariffSet(offerId, true, full.maxCStar, full.allowDowngrade);
     }
 
     /// @dev Resolve the creator-side staked ERC-20 asset for a signed offer
@@ -1781,12 +1813,15 @@ contract OfferCreateFacet is
         // existing `CreateOfferParams` construction sites stay untouched. Absent
         // that opt-in the fields stay zero ⇒ non-Full.
         //
-        // SIGNED OFFERS (materialized + accepted atomically) therefore CANNOT
-        // authorize maker Full — there is no post-create / pre-accept moment to
-        // call the setter, so a signed-offer maker always resolves as non-Full
-        // (safe: no wrong charge). Threading maker Full through the signed-offer
-        // EIP-712 / materialization path is a deliberate follow-up, tracked as
-        // **#1949**.
+        // SIGNED OFFERS (materialized + accepted atomically) have no post-create
+        // / pre-accept moment to call the setter, so since #1949 the signed
+        // artifact itself carries the maker's Full opt-in
+        // (`LibSignedOffer.SignedOffer.creatorFull` / `creatorMaxCStar` /
+        // `creatorAllowFullDowngrade`) and `_materializeSignedOffer` applies it
+        // through `_applyMakerFull` — the same three fields and the same event
+        // as the setter; a slice takes its pro-rata share of the ceiling. Before
+        // #1949 a signed-offer maker always resolved as non-Full (safe: no wrong
+        // charge, but the Full channel was unreachable from a signed offer).
         //
         // NOT #1369, which this comment used to name and which CLOSED on
         // 2026-07-30 having covered the OTHER half — the matched-fill lender

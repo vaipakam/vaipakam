@@ -5,7 +5,7 @@
  * Mirrors the indexer's `apps/indexer/src/signedOfferEip712.ts` (which in
  * turn mirrors `contracts/src/libraries/LibSignedOffer.sol`):
  *
- *  - `SIGNED_OFFER_TYPES.SignedOffer` lists the 28 fields in the SAME
+ *  - `SIGNED_OFFER_TYPES.SignedOffer` lists the 31 fields in the SAME
  *    order as the Solidity struct / `SIGNED_OFFER_TYPEHASH` type string.
  *    Field order is load-bearing — any drift silently changes every hash
  *    and breaks both the maker's signature and the taker's replay.
@@ -24,7 +24,7 @@ import { hashStruct, type Address, type Hex } from 'viem';
 import type { IndexedOffer, IndexedSignedOffer } from '../data/indexer';
 import type { CreateOfferPayload } from './offerSchema';
 
-/** The 28-field SignedOffer typed-data description — struct order EXACTLY
+/** The 31-field SignedOffer typed-data description — struct order EXACTLY
  *  as `LibSignedOffer.SignedOffer` declares it (enums ⇒ uint8, GTT ⇒
  *  uint64). Byte-for-byte the same list the indexer's ingest gate derives
  *  its typehash from. */
@@ -55,6 +55,10 @@ export const SIGNED_OFFER_TYPES = {
     { name: 'periodicInterestCadence', type: 'uint8' },
     { name: 'refinanceTargetLoanId', type: 'uint256' },
     { name: 'useFullTermInterest', type: 'bool' },
+    // #1949 — the maker's Full tariff opt-in rides the artifact they sign.
+    { name: 'creatorFull', type: 'bool' },
+    { name: 'creatorMaxCStar', type: 'uint256' },
+    { name: 'creatorAllowFullDowngrade', type: 'bool' },
     { name: 'signer', type: 'address' },
     { name: 'nonce', type: 'uint256' },
     { name: 'deadline', type: 'uint256' },
@@ -95,6 +99,10 @@ export interface SignedOrderWire {
   periodicInterestCadence: string;
   refinanceTargetLoanId: string;
   useFullTermInterest: boolean;
+  /** #1949 — the maker's Full tariff opt-in, carried on the signed artifact. */
+  creatorFull: boolean;
+  creatorMaxCStar: string;
+  creatorAllowFullDowngrade: boolean;
   signer: string;
   nonce: string;
   deadline: string;
@@ -129,6 +137,9 @@ export function signedOfferTypedMessage(order: SignedOrderWire) {
     periodicInterestCadence: Number(order.periodicInterestCadence),
     refinanceTargetLoanId: BigInt(order.refinanceTargetLoanId),
     useFullTermInterest: order.useFullTermInterest,
+    creatorFull: order.creatorFull,
+    creatorMaxCStar: BigInt(order.creatorMaxCStar),
+    creatorAllowFullDowngrade: order.creatorAllowFullDowngrade,
     signer: order.signer as Address,
     nonce: BigInt(order.nonce),
     deadline: BigInt(order.deadline),
@@ -236,11 +247,22 @@ export function signedOfferRemaining(
  * Keys are emitted in canonical struct order so `JSON.stringify` of the
  * result is byte-identical to the indexer's stored `order_json`.
  */
+/** #1949 — the maker's Full tariff opt-in for a signed order: the opt-in flag, the
+ *  ceiling on the maker's tariff (VPFI wei, required when opting in) and whether a
+ *  downgrade is permitted. Absent ⇒ off, which is what the ticket signs today (the
+ *  maker-side control is a separate card). */
+export interface MakerFullIntent {
+  full: boolean;
+  maxCStar: bigint;
+  allowDowngrade: boolean;
+}
+
 export function wireFromCreatePayload(
   payload: CreateOfferPayload,
   signer: string,
   nonce: bigint,
   deadline: bigint,
+  makerFull?: MakerFullIntent,
 ): SignedOrderWire {
   return {
     offerType: String(payload.offerType),
@@ -268,6 +290,9 @@ export function wireFromCreatePayload(
     periodicInterestCadence: String(payload.periodicInterestCadence),
     refinanceTargetLoanId: payload.refinanceTargetLoanId.toString(),
     useFullTermInterest: payload.useFullTermInterest,
+    creatorFull: makerFull?.full ?? false,
+    creatorMaxCStar: (makerFull?.maxCStar ?? 0n).toString(),
+    creatorAllowFullDowngrade: makerFull?.allowDowngrade ?? false,
     signer: signer.toLowerCase(),
     nonce: nonce.toString(),
     deadline: deadline.toString(),

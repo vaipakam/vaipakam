@@ -2075,9 +2075,14 @@ is the borrower's own money.
 - Each party opts their OWN side into the Full tariff at the moment their
   authorization is signed: the acceptor on the accept review (classic accept
   and desk signed-order fill alike), and a standing-offer creator on their own
-  open offer after posting. Nobody can opt a counterparty in, and a
-  signed-order maker has no opt-in surface until the gasless order shape
-  carries one.
+  open offer after posting, and a signed-order maker on the gasless order
+  itself — the order shape carries the opt-in, so it travels with the
+  signature and applies to every fill of that order, a keeper-matched slice
+  taking its pro-rata share of the maker's ceiling (never rounding a non-zero
+  ceiling to nothing). A signed Full opt-in without a ceiling is refused
+  before any value moves, on every fill path. Nobody can opt a counterparty
+  in. (The ticket's maker-side control is a separate card; the shape and the
+  on-chain honouring are in place.)
 - **A party's Full authorization is honoured whichever venue fills their
   offer.** A standing offer armed with Full is charged the tariff when it is
   filled by a keeper matching it against a counterparty offer, exactly as it

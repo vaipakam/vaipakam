@@ -21,6 +21,9 @@ import {FeeEntitlementFacet} from "../src/facets/FeeEntitlementFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
+import {SignedOfferFacet} from "../src/facets/SignedOfferFacet.sol";
+import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
+import {LibSignedOffer} from "../src/libraries/LibSignedOffer.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
@@ -53,6 +56,9 @@ contract FeeEntitlementFacetTest is SetupTest {
     VPFIToken internal vpfiToken;
 
     address internal treasuryRecipient;
+    /// @dev #1949 — a signed-offer MAKER with a known key, so the suite can sign the artifact that carries the opt-in.
+    address internal signedMaker;
+    uint256 internal signedMakerPk;
 
     // Diamond VPFI reserve so `LibVpfiRecycle.credit`'s backing invariant
     // (Diamond balance ≥ bucket + amount) is always satisfied.
@@ -67,6 +73,7 @@ contract FeeEntitlementFacetTest is SetupTest {
         setupHelper();
 
         treasuryRecipient = makeAddr("treasury");
+        (signedMaker, signedMakerPk) = makeAddrAndKey("signed-maker");
         AdminFacet(address(diamond)).setTreasury(treasuryRecipient);
 
         // Deploy VPFI behind a UUPS proxy, register it, mark this chain
@@ -145,6 +152,145 @@ contract FeeEntitlementFacetTest is SetupTest {
     ///      NFT RENTAL (the lent asset is the ERC-721; the fee is prepaid in an
     ///      ERC-20). Used to pin the asset-type gate that keeps rentals out of
     ///      the Full tariff.
+    // ─── #1949 — a SIGNED maker's Full opt-in rides the artifact they sign ───
+
+    event OfferCreatorFullTariffSet(uint256 indexed offerId, bool creatorFull, uint256 maxCStar, bool allowDowngrade);
+
+    /// @dev A signed ERC-20 LENDER offer in this suite's shape (PRINCIPAL at 5%, 2x
+    ///      collateral, 30 days) with `amountMax = ceiling`, carrying the maker's Full
+    ///      opt-in on the artifact itself. Fields set one by one, as the signed-offer
+    ///      suites do (a struct literal of this width trips the viaIR ceiling).
+    function _signedLender(uint256 ceiling, bool full, uint256 maxCStar, bool allowDowngrade)
+        internal
+        view
+        returns (LibSignedOffer.SignedOffer memory o)
+    {
+        o.offerType = uint8(LibVaipakam.OfferType.Lender);
+        o.lendingAsset = mockERC20;
+        o.amount = PRINCIPAL;
+        o.amountMax = ceiling;
+        o.interestRateBps = 500;
+        o.interestRateBpsMax = 500;
+        o.collateralAsset = mockCollateralERC20;
+        o.collateralAmount = PRINCIPAL * 2;
+        o.collateralAmountMax = ceiling * 2;
+        o.durationDays = 30;
+        o.assetType = uint8(LibVaipakam.AssetType.ERC20);
+        o.collateralAssetType = uint8(LibVaipakam.AssetType.ERC20);
+        o.prepayAsset = mockERC20;
+        o.fillMode = uint8(LibVaipakam.FillMode.Partial);
+        o.periodicInterestCadence = uint8(LibVaipakam.PeriodicInterestCadence.None);
+        o.creatorFull = full;
+        o.creatorMaxCStar = maxCStar;
+        o.creatorAllowFullDowngrade = allowDowngrade;
+        o.signer = signedMaker;
+        o.nonce = 1;
+    }
+
+    function _signMaker(LibSignedOffer.SignedOffer memory o) internal view returns (bytes memory sig) {
+        bytes32 digest = SignedOfferFacet(address(diamond)).hashSignedOffer(o);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(signedMakerPk, digest);
+        sig = abi.encodePacked(r, s, v);
+    }
+
+    /// @dev The matched-fill scaffold of `testMatch_LenderOfferFullIsHonored` with the
+    ///      LENDER side a signed maker: fee entitlement on, range flags on, the maker's
+    ///      principal free in their vault (enough for two fills) and their VPFI staked.
+    ///      Returns the borrower counterparty's offer id; a slice materialized by a
+    ///      match takes the next free id.
+    function _signedScaffold() internal returns (uint256 borrowerOfferId) {
+        _config().setFeeEntitlementEnabled(true);
+        vm.startPrank(owner);
+        _config().setRangeAmountEnabled(true);
+        _config().setRangeRateEnabled(true);
+        _config().setRangeCollateralEnabled(true);
+        _config().setPartialFillEnabled(true);
+        vm.stopPrank();
+        vpfiToken.transfer(signedMaker, PARTY_VPFI_STAKE);
+        _stakeVpfi(signedMaker, PARTY_VPFI_STAKE);
+        _fundActorVault(signedMaker, mockERC20, 2 * PRINCIPAL);
+        borrowerOfferId = _createBorrowerErc20Offer();
+    }
+
+    /// #1949 — a signed-offer maker has no post-create moment to call the setter; the
+    /// Full opt-in now rides the artifact they sign. A keeper matching the signed
+    /// LENDER against a borrower offer materializes the slice WITH the opt-in (the
+    /// setter's own event) and the accept charges the maker's C* and stamps Full — the
+    /// tariff a party pays does not depend on the venue that filled their offer. The
+    /// borrower armed nothing and is not charged.
+    function testSigned_MakerFull_IsHonoredOnAMatchedSlice() public {
+        uint256 borrowerOfferId = _signedScaffold();
+        uint256 c = _cStar();
+        LibSignedOffer.SignedOffer memory o = _signedLender(PRINCIPAL, true, c, false);
+        bytes memory sig = _signMaker(o);
+        address mVault = _vault(signedMaker);
+        uint256 mBefore = vpfiToken.balanceOf(mVault);
+        uint256 bucketBefore = _config().getRecycleBucket();
+        vm.expectEmit(false, false, false, true, address(diamond));
+        emit OfferCreatorFullTariffSet(0, true, c, false);
+        uint256 loanId = OfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, borrowerOfferId, PRINCIPAL);
+        assertEq(mBefore - vpfiToken.balanceOf(mVault), c, "the signed maker's own C*, charged on a matched slice");
+        assertEq(_config().getRecycleBucket() - bucketBefore, c, "absorbed once");
+        LibVaipakam.FeeEntitlement memory fe = _feFacet().getFeeEntitlement(loanId);
+        assertEq(uint8(fe.lenderMode), uint8(LibVaipakam.FeeEntitlementMode.Full), "maker stamped Full");
+        assertTrue(uint8(fe.borrowerMode) != uint8(LibVaipakam.FeeEntitlementMode.Full), "the borrower armed nothing");
+        LibVaipakam.Offer memory slice = OfferCancelFacet(address(diamond)).getOffer(borrowerOfferId + 1);
+        assertEq(slice.creator, signedMaker, "the slice is the maker's");
+        assertTrue(slice.creatorFull, "the opt-in landed on the materialized slice");
+        assertEq(slice.creatorMaxCStar, c);
+        assertFalse(slice.creatorAllowFullDowngrade);
+    }
+
+    /// The control: a signed maker who did NOT opt in stays non-Full through a
+    /// matched slice — the field travels only when the maker set it, so "read the
+    /// artifact" cannot be satisfied by defaulting to Full.
+    function testSigned_MakerWithoutFull_StaysUncharged() public {
+        uint256 borrowerOfferId = _signedScaffold();
+        LibSignedOffer.SignedOffer memory o = _signedLender(PRINCIPAL, false, 0, false);
+        bytes memory sig = _signMaker(o);
+        address mVault = _vault(signedMaker);
+        uint256 mBefore = vpfiToken.balanceOf(mVault);
+        uint256 loanId = OfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, borrowerOfferId, PRINCIPAL);
+        assertEq(vpfiToken.balanceOf(mVault), mBefore, "nothing charged");
+        LibVaipakam.FeeEntitlement memory fe = _feFacet().getFeeEntitlement(loanId);
+        assertTrue(uint8(fe.lenderMode) != uint8(LibVaipakam.FeeEntitlementMode.Full), "not Full");
+        assertFalse(OfferCancelFacet(address(diamond)).getOffer(borrowerOfferId + 1).creatorFull);
+    }
+
+    /// A Full opt-in without a ceiling is refused at vetting on BOTH fill paths —
+    /// before any value moves — exactly as the standing-offer setter refuses it.
+    function testSigned_FullNeedsACeiling_RefusedAtVetting() public {
+        uint256 borrowerOfferId = _signedScaffold();
+        LibSignedOffer.SignedOffer memory o = _signedLender(PRINCIPAL, true, 0, false);
+        bytes memory sig = _signMaker(o);
+        vm.expectRevert(LibSignedOffer.SignedOfferFullNeedsMaxCStar.selector);
+        OfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, borrowerOfferId, PRINCIPAL);
+        LibAcceptTerms.AcceptTerms memory noTerms;
+        vm.prank(borrower);
+        vm.expectRevert(LibSignedOffer.SignedOfferFullNeedsMaxCStar.selector);
+        SignedOfferFacet(address(diamond)).acceptSignedOffer(o, sig, noTerms, "");
+    }
+
+    /// A SLICE takes its pro-rata share of the signed ceiling (rounded up): two
+    /// half-fills of an order whose ceiling is twice C* each carry a ceiling of C*,
+    /// and each is charged C* — the signed ceiling bounds the whole order, never a
+    /// single slice.
+    function testSigned_SliceCeilingIsProRata() public {
+        uint256 b1 = _signedScaffold();
+        uint256 b2 = _createBorrowerErc20Offer();
+        uint256 c = _cStar();
+        LibSignedOffer.SignedOffer memory o = _signedLender(2 * PRINCIPAL, true, 2 * c, false);
+        bytes memory sig = _signMaker(o);
+        address mVault = _vault(signedMaker);
+        uint256 mBefore = vpfiToken.balanceOf(mVault);
+        OfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, b1, PRINCIPAL);
+        assertEq(OfferCancelFacet(address(diamond)).getOffer(b2 + 1).creatorMaxCStar, c, "half the order, half the ceiling");
+        assertEq(mBefore - vpfiToken.balanceOf(mVault), c, "the first slice charged within its share");
+        OfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, b2, PRINCIPAL);
+        assertEq(OfferCancelFacet(address(diamond)).getOffer(b2 + 2).creatorMaxCStar, c, "the second slice too");
+        assertEq(mBefore - vpfiToken.balanceOf(mVault), 2 * c, "two slices, the whole signed ceiling, no more");
+    }
+
     function _createLenderRentalOffer() internal returns (uint256) {
         vm.prank(lender);
         IERC721(mockNft721).setApprovalForAll(address(diamond), true);

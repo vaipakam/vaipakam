@@ -134,6 +134,21 @@
             "internalType": "bool"
           },
           {
+            "name": "creatorFull",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "creatorMaxCStar",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "creatorAllowFullDowngrade",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
             "name": "signer",
             "type": "address",
             "internalType": "address"
@@ -478,6 +493,21 @@
           },
           {
             "name": "useFullTermInterest",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "creatorFull",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "creatorMaxCStar",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "creatorAllowFullDowngrade",
             "type": "bool",
             "internalType": "bool"
           },
@@ -864,6 +894,21 @@
             "internalType": "bool"
           },
           {
+            "name": "creatorFull",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "creatorMaxCStar",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "creatorAllowFullDowngrade",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
             "name": "signer",
             "type": "address",
             "internalType": "address"
@@ -1015,6 +1060,21 @@
           },
           {
             "name": "useFullTermInterest",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "creatorFull",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "creatorMaxCStar",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "creatorAllowFullDowngrade",
             "type": "bool",
             "internalType": "bool"
           },
@@ -1236,6 +1296,21 @@
             "internalType": "bool"
           },
           {
+            "name": "creatorFull",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "creatorMaxCStar",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "creatorAllowFullDowngrade",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
             "name": "signer",
             "type": "address",
             "internalType": "address"
@@ -1383,6 +1458,11 @@
         "internalType": "uint64"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "SignedOfferFullNeedsMaxCStar",
+    "inputs": []
   },
   {
     "type": "error",

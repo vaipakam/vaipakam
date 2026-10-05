@@ -641,6 +641,28 @@
             "internalType": "bool"
           }
         ]
+      },
+      {
+        "name": "full",
+        "type": "tuple",
+        "internalType": "struct LibSignedOffer.MakerFull",
+        "components": [
+          {
+            "name": "full",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "maxCStar",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "allowDowngrade",
+            "type": "bool",
+            "internalType": "bool"
+          }
+        ]
       }
     ],
     "outputs": [
@@ -841,6 +863,28 @@
         "name": "permitSig",
         "type": "bytes",
         "internalType": "bytes"
+      },
+      {
+        "name": "full",
+        "type": "tuple",
+        "internalType": "struct LibSignedOffer.MakerFull",
+        "components": [
+          {
+            "name": "full",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "maxCStar",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "allowDowngrade",
+            "type": "bool",
+            "internalType": "bool"
+          }
+        ]
       }
     ],
     "outputs": [
@@ -1081,6 +1125,37 @@
             "internalType": "uint256"
           }
         ]
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "OfferCreatorFullTariffSet",
+    "inputs": [
+      {
+        "name": "offerId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "creatorFull",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
+      },
+      {
+        "name": "maxCStar",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "allowDowngrade",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
       }
     ],
     "anonymous": false
@@ -5197,6 +5272,11 @@
         "internalType": "uint256"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "SignedOfferFullNeedsMaxCStar",
+    "inputs": []
   },
   {
     "type": "error",

@@ -127,7 +127,7 @@ function chainOffer(p: Partial<IndexedOffer> = {}): IndexedOffer {
 }
 
 describe('wireFromCreatePayload', () => {
-  it('emits exactly the 28 struct fields in canonical order', () => {
+  it('emits exactly the 31 struct fields in canonical order', () => {
     const w = wireFromCreatePayload(payload(), MAKER, 42n, 123n);
     expect(Object.keys(w)).toEqual(SIGNED_OFFER_FIELD_NAMES);
   });

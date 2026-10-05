@@ -4,7 +4,7 @@
  *
  * Mirrors `contracts/src/libraries/LibSignedOffer.sol` exactly:
  *
- *   - `SIGNED_OFFER_TYPES.SignedOffer` lists the 28 fields in the SAME order
+ *   - `SIGNED_OFFER_TYPES.SignedOffer` lists the 31 fields in the SAME order
  *     as the Solidity struct / `SIGNED_OFFER_TYPEHASH` type string
  *     (LibSignedOffer.sol:39-105). Field order is load-bearing — any drift
  *     silently changes every hash. The unit test
@@ -33,7 +33,7 @@ import {
   type TypedDataDomain,
 } from 'viem';
 
-/** The 28-field SignedOffer typed-data description — struct order EXACTLY as
+/** The 31-field SignedOffer typed-data description — struct order EXACTLY as
  *  `LibSignedOffer.SignedOffer` declares it (enums ⇒ uint8, GTT ⇒ uint64). */
 export const SIGNED_OFFER_TYPES = {
   SignedOffer: [
@@ -62,6 +62,10 @@ export const SIGNED_OFFER_TYPES = {
     { name: 'periodicInterestCadence', type: 'uint8' },
     { name: 'refinanceTargetLoanId', type: 'uint256' },
     { name: 'useFullTermInterest', type: 'bool' },
+    // #1949 — the maker's Full tariff opt-in rides the artifact they sign.
+    { name: 'creatorFull', type: 'bool' },
+    { name: 'creatorMaxCStar', type: 'uint256' },
+    { name: 'creatorAllowFullDowngrade', type: 'bool' },
     { name: 'signer', type: 'address' },
     { name: 'nonce', type: 'uint256' },
     { name: 'deadline', type: 'uint256' },
@@ -104,6 +108,10 @@ export interface SignedOrderWire {
   periodicInterestCadence: string;
   refinanceTargetLoanId: string;
   useFullTermInterest: boolean;
+  /** #1949 — the maker's Full tariff opt-in, carried on the signed artifact. */
+  creatorFull: boolean;
+  creatorMaxCStar: string;
+  creatorAllowFullDowngrade: boolean;
   signer: string;
   nonce: string;
   deadline: string;
@@ -155,6 +163,9 @@ export function toTypedMessage(order: SignedOrderWire) {
     periodicInterestCadence: Number(order.periodicInterestCadence),
     refinanceTargetLoanId: BigInt(order.refinanceTargetLoanId),
     useFullTermInterest: order.useFullTermInterest,
+    creatorFull: order.creatorFull,
+    creatorMaxCStar: BigInt(order.creatorMaxCStar),
+    creatorAllowFullDowngrade: order.creatorAllowFullDowngrade,
     signer: order.signer as Address,
     nonce: BigInt(order.nonce),
     deadline: BigInt(order.deadline),

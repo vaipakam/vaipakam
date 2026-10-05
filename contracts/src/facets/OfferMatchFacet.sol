@@ -274,6 +274,7 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         LibSignedOffer.SignedOffer calldata o,
         uint256 fillAmount
     ) private view returns (bytes32 orderHash) {
+        LibSignedOffer.requireFullWellFormed(o); // #1949 — a Full opt-in needs a ceiling
         if (o.deadline != 0 && block.timestamp > o.deadline) {
             revert SignedOfferSigExpired(o.deadline);
         }
@@ -367,7 +368,8 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         // slither-disable-next-line low-level-calls
         (bool ok, bytes memory res) = address(this).call(
             abi.encodeWithSelector(
-                OfferCreateFacet.createSignedOfferVault.selector, o.signer, params
+                OfferCreateFacet.createSignedOfferVault.selector, o.signer, params,
+                LibSignedOffer.makerFullFor(o, fillAmount) // #1949 — the slice's pro-rata share
             )
         );
         if (!ok) {

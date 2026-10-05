@@ -13,6 +13,7 @@ import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {LibOfferMatchExecute} from "../libraries/LibOfferMatchExecute.sol";
+import {LibSignedOffer} from "../libraries/LibSignedOffer.sol";
 import {LibServiceCapacity} from "../libraries/LibServiceCapacity.sol";
 
 /**
@@ -314,7 +315,8 @@ contract OfferMatchIntentFacet is DiamondReentrancyGuard, DiamondPausable {
         // slither-disable-next-line low-level-calls
         (bool ok, bytes memory res) = address(this).call(
             abi.encodeWithSelector(
-                OfferCreateFacet.createSignedOfferVault.selector, lender, params
+                OfferCreateFacet.createSignedOfferVault.selector, lender, params,
+                LibSignedOffer.MakerFull(false, 0, false) // #1949 — an intent slice carries no maker Full
             )
         );
         if (!ok) {
