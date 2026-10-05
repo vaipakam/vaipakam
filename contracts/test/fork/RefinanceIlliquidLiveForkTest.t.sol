@@ -3,14 +3,12 @@ pragma solidity ^0.8.29;
 
 import {Test} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {IDiamondLoupe} from "@diamond-3/interfaces/IDiamondLoupe.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {LibRiskAccess} from "../../src/libraries/LibRiskAccess.sol";
 import {LoanFacet} from "../../src/facets/LoanFacet.sol";
 import {OfferCreateFacet} from "../../src/facets/OfferCreateFacet.sol";
 import {AutoLifecycleFacet} from "../../src/facets/AutoLifecycleFacet.sol";
 import {OracleFacet} from "../../src/facets/OracleFacet.sol";
-import {RefinanceFacet} from "../../src/facets/RefinanceFacet.sol";
 import {RiskAccessFacet} from "../../src/facets/RiskAccessFacet.sol";
 import {VaultFactoryFacet} from "../../src/facets/VaultFactoryFacet.sol";
 import {LibAcceptTestSigner} from "../helpers/LibAcceptTestSigner.sol";
@@ -23,12 +21,17 @@ import {LibAcceptTestSigner} from "../helpers/LibAcceptTestSigner.sol";
  *         parties' illiquid consent — the shape of live loan 22, which found
  *         the defect.
  *
- * @dev    The refinance facet's routed implementation is replaced, on the fork
- *         only, with THIS tree's `RefinanceFacet` runtime code (it carries no
- *         immutables). So the test exercises the source under review against
- *         live state — the live oracle's liquidity verdict, the live risk-access
- *         configuration, every other facet as deployed — and keeps meaning the
- *         same thing once a refresh has deployed it.
+ * @dev    It runs the DEPLOYED bytecode — every facet as routed on the live
+ *         Diamond, the live oracle's liquidity verdict, the live risk-access
+ *         configuration. The 2026-10-05 in-place refresh shipped the fix; the
+ *         identical scenario forked at block 47696900, before that refresh,
+ *         reverts `IlliquidLoanNoRiskMath` out of the refinance's post-rollover
+ *         risk gate, which is the defect live loan 22 found.
+ *
+ *         (Before that refresh this test swapped this tree's `RefinanceFacet`
+ *         code in over the live implementation, so it could prove the source
+ *         ahead of deployment. Against deployed code the swap would only hide
+ *         a deployment that had drifted from the source, so it is gone.)
  *
  *         Every actor raises its vault to `IlliquidCustom` and consents to the
  *         exact pair, then the fork warps past the live opt-up cooldown — the
@@ -70,8 +73,6 @@ contract RefinanceIlliquidLiveForkTest is Test {
             uint8(LibVaipakam.LiquidityStatus.Illiquid),
             "the faucet's illiquid asset reads Illiquid on the live Diamond"
         );
-        _installSourceRefinanceFacet();
-
         address borrower = makeAddr("forkIlliquidBorrower");
         (address lenderA, uint256 lenderAPk) = makeAddrAndKey("forkIlliquidLenderA");
         (address lenderB, uint256 lenderBPk) = makeAddrAndKey("forkIlliquidLenderB");
@@ -124,14 +125,6 @@ contract RefinanceIlliquidLiveForkTest is Test {
         assertEq(replacement.borrower, borrower, "same borrower");
         assertEq(replacement.lender, lenderB, "the accepting lender funds it");
         assertEq(replacement.collateralAmount, COLLATERAL, "collateral carried over");
-    }
-
-    /// @dev Route the refinance facet's live implementation address to this
-    ///      tree's bytecode, on the fork only.
-    function _installSourceRefinanceFacet() internal {
-        address live = IDiamondLoupe(diamond).facetAddress(RefinanceFacet.refinanceLoanFromAccept.selector);
-        require(live != address(0), "refinanceLoanFromAccept is not routed on the live Diamond");
-        vm.etch(live, address(new RefinanceFacet()).code);
     }
 
     function _armIlliquid(address who) internal {
