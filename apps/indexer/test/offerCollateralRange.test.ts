@@ -25,8 +25,8 @@ const migrations = (upTo?: string) =>
     .sort()
     .map((f) => readFileSync(new URL(f, MIGRATIONS_DIR), 'utf8'));
 
-const seed = (h: ReturnType<typeof createSqliteD1>, extra: Record<string, string | null>) => {
-  const base: Record<string, string | number | null> = {
+const seed = (h: ReturnType<typeof createSqliteD1>, extra: Record<string, string | number | null | undefined>) => {
+  const base: Record<string, string | number | null | undefined> = {
     chain_id: 84532,
     offer_id: 7,
     status: 'active',
@@ -43,12 +43,17 @@ const seed = (h: ReturnType<typeof createSqliteD1>, extra: Record<string, string
     first_seen_block: 1,
     first_seen_at: 1,
     updated_at: 1,
+    // Marked for the heal lane by default — the state a new row or the 0054
+    // backfill leaves; tests that need an unmarked row say so.
+    collateral_range_stale: 1,
     ...extra,
   };
-  const cols = Object.keys(base);
+  // A key set to undefined is omitted — how a pre-0054 schema test leaves
+  // out a column that schema does not have.
+  const cols = Object.keys(base).filter((k) => base[k] !== undefined);
   h.db
     .prepare(`INSERT INTO offers (${cols.join(',')}) VALUES (${cols.map(() => '?').join(',')})`)
-    .run(...(Object.values(base) as never[]));
+    .run(...(cols.map((k) => base[k]) as never[]));
 };
 
 const fetchOffer = async (h: ReturnType<typeof createSqliteD1>) => {
@@ -93,7 +98,7 @@ describe('offer API — collateral range', () => {
 
   it('still answers on a database that predates 0054', async () => {
     const h = createSqliteD1(migrations('0054'));
-    seed(h, {});
+    seed(h, { collateral_range_stale: undefined });
     const o = await fetchOffer(h);
     expect(o.collateralAmount).toBe('150');
     expect(o.collateralAmountMax).toBeNull();
@@ -143,11 +148,14 @@ describe('the range backfill lane (#2382 r1/r2)', () => {
     expect(none.length).toBe(0);
   });
 
-  it('keeps a row queued until BOTH range columns are read', async () => {
+  it('selects on the explicit marker, not on which columns happen to be NULL (#2382 r6)', async () => {
     const h = createSqliteD1(migrations());
-    seed(h, { offer_id: '1', collateral_amount_max: '400', collateral_amount_filled: null });
-    seed(h, { offer_id: '2', collateral_amount_max: null, collateral_amount_filled: '0' });
-    seed(h, { offer_id: '3', collateral_amount_max: '400', collateral_amount_filled: '0' });
+    // Marked, with both columns already set (an amend wrote the ceiling).
+    seed(h, { offer_id: '1', collateral_amount_max: '400', collateral_amount_filled: '0', collateral_range_stale: 1 });
+    // Unmarked, with both columns NULL (terminal history the backfill skipped).
+    seed(h, { offer_id: '2', status: 'fullyFilled', collateral_range_stale: 0 });
+    // Marked and terminal (a match marked it, then closed it).
+    seed(h, { offer_id: '3', status: 'fullyFilled', collateral_amount_max: null, collateral_amount_filled: null, collateral_range_stale: 1 });
     const budget = createBudget(1_000, 'test', 1_000);
     const reads: number[] = [];
     await refreshStubOffers(
@@ -158,15 +166,15 @@ describe('the range backfill lane (#2382 r1/r2)', () => {
       budget,
       AT,
     );
-    expect(reads.sort()).toEqual([1, 2]);
+    expect(reads.sort()).toEqual([1, 3]);
   });
 });
 
 describe('a match marks the borrower offer’s fills unread (#2382 r2)', () => {
   it('nulls only the named offers’ fills, which re-queues them for the refresh lane', async () => {
     const h = createSqliteD1(migrations());
-    seed(h, { offer_id: '1', collateral_amount_max: '400', collateral_amount_filled: '0' });
-    seed(h, { offer_id: '2', collateral_amount_max: '400', collateral_amount_filled: '0' });
+    seed(h, { offer_id: '1', collateral_amount_max: '400', collateral_amount_filled: '0', collateral_range_stale: 0 });
+    seed(h, { offer_id: '2', collateral_amount_max: '400', collateral_amount_filled: '0', collateral_range_stale: 0 });
     await markBorrowerFillsUnread({ DB: h.d1 } as unknown as Env, 84532, [1]);
     const rows = h.db
       .prepare('SELECT offer_id, collateral_amount_filled AS f FROM offers ORDER BY offer_id')
@@ -206,40 +214,65 @@ describe('a match marks the borrower offer’s fills unread (#2382 r2)', () => {
   });
 });
 
-describe('the heal lanes run LAST in the pass (#2382 r2)', () => {
+describe('the heal lanes run LAST in the pass (#2382 r2/r6)', () => {
   // Structural, like oneTimeBackfillReachability: the property is WHERE the
-  // calls sit in runChainPass — after the cursor write and every once-per-scan
-  // step — which no test of the lane alone can establish. That placement, not
-  // a cost estimate, is what keeps an overrun from freezing the chain.
+  // calls sit — after the cursor write and every once-per-scan step, on the
+  // scanning AND the caught-up path — which no test of the lane alone can
+  // establish. Each function is sliced up to the NEXT top-level function, so
+  // a call elsewhere in the file cannot satisfy it (#2382 r6: the previous
+  // slice ran on past runChainPass and passed vacuously).
   const src = readFileSync(new URL('../src/chainIndexer.ts', import.meta.url), 'utf8');
-  const body = src.slice(src.indexOf('async function runChainPass'), src.indexOf('\nfunction emptyResult'));
-  const at = (needle: string) => {
-    const i = body.indexOf(needle);
-    expect(i, `${needle} not found in runChainPass`).toBeGreaterThan(-1);
+  const fn = (decl: string) => {
+    const i = src.indexOf(decl);
+    expect(i, `${decl} not found`).toBeGreaterThan(-1);
+    const next = src.slice(i + decl.length).search(/\n(export )?(async )?function /);
+    return src.slice(i, next < 0 ? undefined : i + decl.length + next);
+  };
+  const pass = fn('async function runChainPass(');
+  const heal = fn('async function runHealLanes(');
+  const at = (body: string, needle: string, from = 0) => {
+    const i = body.indexOf(needle, from);
+    expect(i, `${needle} not found`).toBeGreaterThan(-1);
     return i;
   };
-  it('calls both lanes after the cursor write and the once-per-scan steps, inside a try', () => {
-    const offers = at('await refreshStubOffers(');
-    const loans = at('await refreshStubLoans(');
-    for (const before of [
-      'INSERT INTO indexer_cursor',
-      'await materializeNotifications(',
-      'await _runLoanReconcilePass(',
-      'await _sweepCalendarIfEstablished(',
-    ]) {
-      expect(at(before), `${before} must precede the heal lanes`).toBeLessThan(offers);
-    }
-    expect(loans).toBeGreaterThan(offers);
-    // Each call appears once, and inside the try that keeps a failure from
-    // failing the pass.
-    expect(body.split('await refreshStubOffers(').length).toBe(2);
-    expect(body.lastIndexOf('try {', offers)).toBeGreaterThan(at('await _sweepCalendarIfEstablished('));
+
+  it('runHealLanes runs both lanes inside one try, offers first', () => {
+    const t = at(heal, 'try {');
+    expect(at(heal, 'await refreshStubOffers(')).toBeGreaterThan(t);
+    expect(at(heal, 'await refreshStubLoans(')).toBeGreaterThan(at(heal, 'await refreshStubOffers('));
+    expect(at(heal, '} catch')).toBeGreaterThan(at(heal, 'await refreshStubLoans('));
   });
+
+  it('the scanning tail heals after the cursor write and every once-per-scan step, pinned to scanTo', () => {
+    const cursor = at(pass, 'INSERT INTO indexer_cursor');
+    const call = pass.indexOf('await runHealLanes(', cursor);
+    expect(call, 'no heal call after the cursor write').toBeGreaterThan(-1);
+    for (const step of ['await materializeNotifications(', 'await _sweepCalendarIfEstablished(']) {
+      expect(pass.lastIndexOf(step, call), `${step} must precede the heal`).toBeGreaterThan(cursor);
+    }
+    expect(pass.slice(call, pass.indexOf(');', call))).toContain('scanTo');
+    // The lanes are never called directly from the pass.
+    expect(pass).not.toContain('await refreshStubOffers(');
+    expect(pass).not.toContain('await refreshStubLoans(');
+  });
+
+  it('the caught-up tail heals too, pinned to the cursor (#2382 r6)', () => {
+    const quiet = pass.slice(at(pass, 'if (scanFrom > head) {'), at(pass, 'INSERT INTO indexer_cursor'));
+    const call = at(quiet, 'await runHealLanes(');
+    expect(call).toBeGreaterThan(at(quiet, 'await stampNotifiedWatermark('));
+    expect(quiet.slice(call, quiet.indexOf(');', call))).toContain('lastBlock');
+  });
+
+  it('a new row is inserted marked for the pinned healer, its range unread (#2382 r6)', () => {
+    const p = fn('async function processOfferLogs(');
+    expect(p).toContain('is_stub, collateral_range_stale,');
+    expect(p).toMatch(/\?, 0, 1, \?, \?, \?, \?, \?, \?\)`/);
+  });
+
   it('has the match handler mark the borrower offer rather than read it', () => {
-    const p = src.slice(src.indexOf('async function processOfferLogs'), src.indexOf('export async function markBorrowerFillsUnread'));
+    const p = fn('async function processOfferLogs(');
     expect(p).toContain('borrowerFillsStale.add(Number(ev.borrowerOfferId))');
     expect(p).toContain('await markBorrowerFillsUnread(env, chainId, [...borrowerFillsStale])');
-    // No block-pinned borrower read survives in the scan path.
     expect(src).not.toContain('readOfferFillsAt');
   });
 });
@@ -303,8 +336,8 @@ describe('a range backfill keeps the offer’s recorded holder (#2382 r3)', () =
   });
 });
 
-describe('a match that also CLOSES the borrower offer is still re-read (#2382 r4)', () => {
-  const reads = async (h: ReturnType<typeof createSqliteD1>, answer: () => unknown) => {
+describe('a completed read clears the marker (#2382 r4/r6)', () => {
+  const read = async (h: ReturnType<typeof createSqliteD1>, answer: () => unknown) => {
     const budget = createBudget(1_000, 'test', 1_000);
     const seen: number[] = [];
     await refreshStubOffers(
@@ -323,27 +356,27 @@ describe('a match that also CLOSES the borrower offer is still re-read (#2382 r4
     return seen;
   };
 
-  it('selects a terminal row a match marked, and leaves terminal history alone', async () => {
-    const h = createSqliteD1(migrations());
-    // Marked by the closing match: ceiling known, fill unread.
-    seed(h, { offer_id: '1', status: 'fullyFilled', collateral_amount_max: '400', collateral_amount_filled: null });
-    // Pre-0054 terminal history: neither column.
-    seed(h, { offer_id: '2', status: 'fullyFilled', collateral_amount_max: null, collateral_amount_filled: null });
-    expect(
-      await reads(h, () => {
-        throw new Error('read refused');
-      }),
-    ).toEqual([1]);
-  });
-
-  it('records a fill of 0 when the struct is gone, so the row drops out', async () => {
+  it('a gone struct records a fill of 0 and clears the marker, so the row drops out', async () => {
     const h = createSqliteD1(migrations());
     seed(h, { offer_id: '1', status: 'cancelled', collateral_amount_max: '400', collateral_amount_filled: null });
     const zero = { creator: '0x0000000000000000000000000000000000000000' };
-    expect(await reads(h, () => zero)).toEqual([1]);
-    expect(await reads(h, () => zero)).toEqual([]);
-    const r = h.db.prepare('SELECT collateral_amount_filled AS f FROM offers').get() as { f: string };
-    expect(r.f).toBe('0');
+    expect(await read(h, () => zero)).toEqual([1]);
+    expect(await read(h, () => zero)).toEqual([]);
+    const r = h.db.prepare('SELECT collateral_amount_filled AS f, collateral_range_stale AS s FROM offers').get() as {
+      f: string;
+      s: number;
+    };
+    expect(r).toEqual({ f: '0', s: 0 });
+  });
+
+  it('a failed read leaves the marker set, so the row is tried again', async () => {
+    const h = createSqliteD1(migrations());
+    seed(h, { offer_id: '1' });
+    const fail = () => {
+      throw new Error('rpc dropped');
+    };
+    expect(await read(h, fail)).toEqual([1]);
+    expect(await read(h, fail)).toEqual([1]);
   });
 });
 
@@ -382,5 +415,8 @@ describe('heal reads are pinned to the settled scan block (#2382 r5)', () => {
       ['getOfferDetails', AT],
       ['ownerOf', AT],
     ]);
+    // …and a completed read clears the marker.
+    const r = h.db.prepare('SELECT collateral_range_stale AS s FROM offers').get() as { s: number };
+    expect(r.s).toBe(0);
   });
 });

@@ -1545,6 +1545,7 @@
       "collateralOfRunningLoan": "판매되는 진행 중 대출의 담보(이 행에는 표시되지 않음)",
       "collateralAmountLoading": "{{token}} (수량 불러오는 중…)",
       "collateralAmountRaw": "{{token}}의 기본 단위 {{amount}}(토큰 정보를 읽지 못함)",
+      "collateralInBaseUnits": "{{text}} — 금액은 {{token}}의 기본 단위 (토큰 정보를 읽지 못했습니다)",
       "collateralForFullOffer": "제안 전체 기준 {{amount}}(일부만 받으면 비례해서 줄어듦)",
       "byCreator": "작성자",
       "advancedPartialRepayOk": "부분 상환 가능",

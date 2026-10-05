@@ -1545,6 +1545,7 @@
       "collateralOfRunningLoan": "la garantía del préstamo en curso que se vende (no se muestra en esta fila)",
       "collateralAmountLoading": "{{token}} (cargando la cantidad…)",
       "collateralAmountRaw": "{{amount}} unidades base de {{token}} (no se pudieron leer los datos del token)",
+      "collateralInBaseUnits": "{{text}} — importes en unidades base de {{token}} (no se pudieron leer los datos del token)",
       "collateralForFullOffer": "{{amount}} para la oferta completa (proporcionalmente menos para una parte)",
       "byCreator": "por",
       "advancedPartialRepayOk": "pago parcial OK",

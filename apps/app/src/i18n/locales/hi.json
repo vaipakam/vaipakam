@@ -1545,6 +1545,7 @@
       "collateralOfRunningLoan": "बेचे जा रहे चालू लोन का कोलैटरल (इस पंक्ति में नहीं दिखाया गया)",
       "collateralAmountLoading": "{{token}} (राशि लोड हो रही है…)",
       "collateralAmountRaw": "{{token}} की {{amount}} base units (token का विवरण पढ़ा नहीं जा सका)",
+      "collateralInBaseUnits": "{{text}} — राशियाँ {{token}} की मूल इकाइयों में (टोकन विवरण पढ़े नहीं जा सके)",
       "collateralForFullOffer": "पूरे ऑफ़र के लिए {{amount}} (उसके एक हिस्से के लिए अनुपात में कम)",
       "byCreator": "द्वारा",
       "advancedPartialRepayOk": "partial repay OK",

@@ -1618,6 +1618,7 @@
       "collateralOfRunningLoan": "the collateral of the running loan being sold (not shown on this row)",
       "collateralAmountLoading": "{{token}} (amount loading…)",
       "collateralAmountRaw": "{{amount}} base units of {{token}} (token details couldn’t be read)",
+      "collateralInBaseUnits": "{{text}} — amounts in base units of {{token}} (token details couldn’t be read)",
       "collateralForFullOffer": "{{amount}} for the full offer (proportionally less for part of it)",
       "byCreator": "by",
       "advancedPartialRepayOk": "partial repay OK",

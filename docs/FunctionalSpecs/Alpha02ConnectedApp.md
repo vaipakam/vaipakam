@@ -1308,7 +1308,8 @@ progress.
   already partly taken) states its collateral as the requirement for the full
   offer, since a smaller take needs proportionally less. When the token's details
   cannot be read, the recorded amount is still shown, in the token's raw base
-  units, with the failure named. A loan-position sale row says its collateral is the
+  units, with the failure named — and a borrow request's known commitment and
+  floor are stated the same way rather than reduced to "at least" the floor. A loan-position sale row says its collateral is the
   running loan's, rather than showing the zero its own row carries.
 - A filter with no matches says the filter has no matches; it does not claim the
   whole market is empty.

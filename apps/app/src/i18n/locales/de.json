@@ -1545,6 +1545,7 @@
       "collateralOfRunningLoan": "die Sicherheit des laufenden Kredits, der verkauft wird (in dieser Zeile nicht angezeigt)",
       "collateralAmountLoading": "{{token}} (Betrag wird geladen…)",
       "collateralAmountRaw": "{{amount}} Basiseinheiten von {{token}} (Token-Details konnten nicht gelesen werden)",
+      "collateralInBaseUnits": "{{text}} — Beträge in Basiseinheiten von {{token}} (Token-Details konnten nicht gelesen werden)",
       "collateralForFullOffer": "{{amount}} für das gesamte Angebot (anteilig weniger für einen Teil davon)",
       "byCreator": "von",
       "advancedPartialRepayOk": "Teilrückzahlung OK",

@@ -1545,6 +1545,7 @@
       "collateralOfRunningLoan": "ضمان القرض الجاري المُباع (غير معروض في هذا الصف)",
       "collateralAmountLoading": "{{token}} (جارٍ تحميل المقدار…)",
       "collateralAmountRaw": "{{amount}} وحدة أساسية من {{token}} (تعذّرت قراءة تفاصيل الرمز)",
+      "collateralInBaseUnits": "{{text}} — المبالغ بالوحدات الأساسية لـ {{token}} (تعذّرت قراءة تفاصيل الرمز)",
       "collateralForFullOffer": "{{amount}} للعرض كاملًا (أقل بالتناسب لجزء منه)",
       "byCreator": "بواسطة",
       "advancedPartialRepayOk": "السداد الجزئي مسموح",

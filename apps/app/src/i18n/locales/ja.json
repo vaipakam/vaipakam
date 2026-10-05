@@ -1545,6 +1545,7 @@
       "collateralOfRunningLoan": "売却される進行中のローンの担保（この行には表示されません）",
       "collateralAmountLoading": "{{token}}（数量を読み込み中…）",
       "collateralAmountRaw": "{{token}} の基本単位で {{amount}}（トークンの詳細を読み取れませんでした）",
+      "collateralInBaseUnits": "{{text}} — 金額は {{token}} の基本単位（トークン情報を読み取れませんでした）",
       "collateralForFullOffer": "オファー全額に対して {{amount}}（一部だけなら比例して少なくなります）",
       "byCreator": "作成者",
       "advancedPartialRepayOk": "分割返済 OK",

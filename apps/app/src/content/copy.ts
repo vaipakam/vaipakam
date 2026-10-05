@@ -3597,6 +3597,12 @@ const copySource = {
       '{{amount}} base units of {{token}} (token details couldn’t be read)',
       ['amount', 'token'],
     ),
+    // #2382 r6 — a known range whose token details could not be read: its
+    // figures are raw base units, and the failure is named once.
+    collateralInBaseUnits: tmpl(
+      '{{text}} — amounts in base units of {{token}} (token details couldn’t be read)',
+      ['text', 'token'],
+    ),
     // #2378 r8 — a lender offer's collateral is the requirement at its full
     // amount; matching scales it to the part taken.
     collateralForFullOffer: tmpl(

@@ -61,6 +61,10 @@ export function offerCollateralText(args: {
     remainingBelowFloor?: (remaining: string, used: string, floor: string) => string;
     /** #2382 r1/r4 — an unfilled single-value request: what it commits. */
     single?: (amount: string) => string;
+    /** #2382 r6 — the range text above, with its figures in raw base units
+     *  because the token's details could not be read: the failure named once,
+     *  the known commitment still stated. */
+    inBaseUnits?: (text: string, token: string) => string;
   };
 }): string {
   const token = shortAddress(args.asset);
@@ -70,11 +74,14 @@ export function offerCollateralText(args: {
     return `${qty > 1n ? `${qty} × ` : ''}NFT ${token} #${args.tokenId}`;
   }
   // #2382 — the borrower's committed range, once the indexer has read it.
-  // Only with token details: a range in raw base units would bury the one
-  // figure, so a failed read keeps the floor-only wording below.
+  // With token details the figures are token amounts; when the details could
+  // not be read they are raw base units with the failure named (#2382 r6) —
+  // a known commitment is stated either way, never reduced to "at least" the
+  // floor. While the details are still loading, the loading wording below.
   const r = args.borrowerRange;
   if (
-    args.meta &&
+    (args.meta || args.metaFailed) &&
+    args.labels.inBaseUnits &&
     r &&
     r.ceiling !== null &&
     r.filled !== null &&
@@ -83,8 +90,11 @@ export function offerCollateralText(args: {
     args.labels.remainingBelowFloor &&
     args.labels.single
   ) {
-    const { decimals, symbol } = args.meta;
-    const n = (v: bigint) => formatTokenAmount(v, decimals);
+    const meta = args.meta;
+    // `amt` renders one figure: a token amount, or raw base units.
+    const amt = (v: bigint) => (meta ? `${formatTokenAmount(v, meta.decimals)} ${meta.symbol}` : v.toString());
+    const inBaseUnits = args.labels.inBaseUnits;
+    const wrap = (text: string) => (meta ? text : inBaseUnits(text, token));
     const floor = BigInt(args.amount);
     const ceiling = BigInt(r.ceiling);
     const filled = BigInt(r.filled);
@@ -94,24 +104,24 @@ export function offerCollateralText(args: {
       // `filled` is cumulative — consumed by earlier fills, not necessarily
       // locked now.
       const left = ceiling > filled ? ceiling - filled : 0n;
-      const remaining = `${n(left)} ${symbol}`;
-      const used = `${n(filled)} ${symbol}`;
+      const remaining = amt(left);
+      const used = amt(filled);
       // A remainder below a ranged request's floor is stated as exactly
       // that, never presented as available for a fill (#2382 r2/r4).
       if (ceiling > floor && left < floor) {
-        return args.labels.remainingBelowFloor(remaining, used, `${n(floor)} ${symbol}`);
+        return wrap(args.labels.remainingBelowFloor(remaining, used, amt(floor)));
       }
       // The same terms as an unfilled request (#2382 r5): what is held, the
       // floor, and the fill-dependence — none drops out after a first fill.
-      return args.labels.rangeRemaining(remaining, used, `${n(floor)} ${symbol}`);
+      return wrap(args.labels.rangeRemaining(remaining, used, amt(floor)));
     }
     if (ceiling > floor) {
       // The whole ceiling is held for an unfilled ranged request (#2382 r4),
       // so that is the commitment; the floor is stated as the request's term.
-      return args.labels.range(`${n(ceiling)} ${symbol}`, `${n(floor)} ${symbol}`);
+      return wrap(args.labels.range(amt(ceiling), amt(floor)));
     }
     // Ceiling == floor and nothing used: the request commits exactly this.
-    return args.labels.single(`${n(floor)} ${symbol}`);
+    return wrap(args.labels.single(amt(floor)));
   }
   let text: string;
   if (args.meta) {

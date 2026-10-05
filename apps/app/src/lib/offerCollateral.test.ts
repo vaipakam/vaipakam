@@ -13,6 +13,7 @@ const labels = {
   rangeRemaining: (r: string, u: string, f: string) => `${r} still committed (${u} consumed; floor ${f})`,
   remainingBelowFloor: (r: string, u: string, f: string) => `${r} still committed (${u} consumed) — below the ${f} floor`,
   single: (a: string) => `${a} committed`,
+  inBaseUnits: (t: string, tok: string) => `${t} [base units of ${tok}; details unread]`,
 };
 const base = { asset, amount: '0', tokenId: '0', quantity: '0', meta: undefined, metaFailed: false, labels };
 
@@ -61,6 +62,15 @@ describe('offerCollateralText', () => {
         '300 tLIQ still committed (100 tLIQ consumed; floor 150 tLIQ)',
       );
     });
+    it('states a KNOWN range in raw base units when token details fail — never just "at least" (#2382 r6)', () => {
+      const failed = { ...req, meta: undefined, metaFailed: true };
+      const out = offerCollateralText({ ...failed, borrowerRange: { ceiling: e(400), filled: '0' } });
+      expect(out).toMatch(/^400000000000000000000 committed \(floor 150000000000000000000\) \[base units of .+; details unread\]$/);
+      // Still loading: no figure yet.
+      expect(
+        offerCollateralText({ ...req, meta: undefined, metaFailed: false, borrowerRange: { ceiling: e(400), filled: '0' } }),
+      ).toMatch(/amount loading/);
+    });
     it('says a remainder below the floor can be used by no fill (#2382 r2)', () => {
       // 400 − 300 = 100 left, below the 150 every fill of this range locks.
       expect(offerCollateralText({ ...req, borrowerRange: { ceiling: e(400), filled: e(300) } })).toBe(
@@ -76,9 +86,9 @@ describe('offerCollateralText', () => {
         expect(offerCollateralText({ ...req, borrowerRange: r })).toBe('at least 150 tLIQ');
       }
     });
-    it('keeps the floor wording when token details failed', () => {
+    it('keeps the raw floor as "at least" when token details failed AND the range is unread', () => {
       expect(
-        offerCollateralText({ ...req, meta: undefined, metaFailed: true, borrowerRange: { ceiling: e(400), filled: '0' } }),
+        offerCollateralText({ ...req, meta: undefined, metaFailed: true, borrowerRange: { ceiling: null, filled: null } }),
       ).toMatch(/^at least .+ base units of/);
     });
   });

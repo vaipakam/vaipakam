@@ -1545,6 +1545,7 @@
       "collateralOfRunningLoan": "la garantie du prêt en cours vendu (non affichée sur cette ligne)",
       "collateralAmountLoading": "{{token}} (chargement du montant…)",
       "collateralAmountRaw": "{{amount}} unités de base de {{token}} (les détails du jeton n’ont pas pu être lus)",
+      "collateralInBaseUnits": "{{text}} — montants en unités de base de {{token}} (les détails du jeton n’ont pas pu être lus)",
       "collateralForFullOffer": "{{amount}} pour l’offre complète (proportionnellement moins pour une partie)",
       "byCreator": "par",
       "advancedPartialRepayOk": "remboursement partiel OK",

@@ -2073,16 +2073,20 @@ async function runChainPass(
     // #1213 PR 2b (Codex #1300 r1) — the caught-up quiet tick is a
     // valid "notifications complete through lastBlock" point too.
     await stampNotifiedWatermark(env, chainId, lastBlock);
+    // #2382 r6 — a caught-up tick heals too, or a backlog the scanning ticks
+    // did not finish (or a soft-stopped heal) would wait for the next new
+    // block. Pinned to the cursor: every event up to it is processed.
+    const quietHeal = await runHealLanes(client, diamond, chainId, env, budget, lastBlock);
     // (Both one-time backfills already ran above, before this branch.)
     return {
       scannedFrom: scanFrom,
       scannedTo: scanFrom - 1n,
       newOffers: 0,
       statusUpdates: 0,
-      detailRefreshes: 0,
+      detailRefreshes: quietHeal.detailRefreshes,
       newLoans: 0,
       loanStatusUpdates: 0,
-      loanDetailRefreshes: 0,
+      loanDetailRefreshes: quietHeal.loanDetailRefreshes,
       activityEvents: 0,
       // #1213 PR 2 (Codex #1298 r3) — a reminder minted on this quiet
       // tick must still reach the bell promptly: the count maps to the
@@ -2455,19 +2459,14 @@ async function runChainPass(
   // D1 counts queries separately from subrequests, so any fixed per-row
   // figure is a guess. A failure, including the platform refusing a request
   // past the invocation ceiling, is logged and the remaining rows wait.
-  let detailRefreshes = 0;
-  let loanDetailRefreshes = 0;
-  try {
-    detailRefreshes = await refreshStubOffers(client, diamond, chainId, env, budget, scanTo);
-    // Bootstrap loan position-NFT token IDs (lender_token_id /
-    // borrower_token_id) for any newly-inserted loan rows. One
-    // getLoanDetails call per loan, batched per tick. After bootstrap
-    // the values are immutable for the loan's lifetime; the next tick
-    // skips them via the `lender_token_id = '0'` predicate.
-    loanDetailRefreshes = await refreshStubLoans(client, diamond, chainId, env, budget);
-  } catch (err) {
-    console.warn(`[chainIndexer] heal lanes stopped on chain ${chainId}; remaining rows wait for the next tick`, err);
-  }
+  const { detailRefreshes, loanDetailRefreshes } = await runHealLanes(
+    client,
+    diamond,
+    chainId,
+    env,
+    budget,
+    scanTo,
+  );
 
   const hintStats = pushHintStats(allLogs);
   const stubHealForcedTruncation = detailRefreshes > 0 || loanDetailRefreshes > 0;
@@ -2809,11 +2808,11 @@ async function processOfferLogs(
            prepay_asset,
            use_full_term_interest, creator_fallback_consent, allows_partial_repay,
            creator_current_owner,
-           is_stub,
+           is_stub, collateral_range_stale,
            created_at, expires_at, fill_mode,
            first_seen_block, first_seen_at, updated_at)
          VALUES
-          (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)`,
+          (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?, ?, ?, ?, ?)`,
       )
         .bind(
           chainId,
@@ -2833,8 +2832,13 @@ async function processOfferLogs(
           Number(od.interestRateBps),
           Number(od.interestRateBpsMax ?? 0n),
           od.collateralAmount.toString(),
-          effectiveCollateralMax(od.collateralAmount, od.collateralAmountMax),
-          od.collateralAmountFilled === undefined ? null : od.collateralAmountFilled.toString(),
+          // #2382 r6 — NOT from this read. It is taken at `latest` on purpose
+          // (#763: no archive dependency on a fail-soft read), so a range it
+          // returned could reflect a later, unscanned — and reorgable — amend
+          // or match. The row is inserted marked `collateral_range_stale` and
+          // the heal lane reads the range at the pass's settled block.
+          null,
+          null,
           Number(od.durationDays),
           od.tokenId.toString(),
           od.collateralTokenId.toString(),
@@ -3117,7 +3121,7 @@ export async function markBorrowerFillsUnread(
   await env.DB.batch(
     chunks.map((c) =>
       env.DB.prepare(
-        `UPDATE offers SET collateral_amount_filled = NULL
+        `UPDATE offers SET collateral_amount_filled = NULL, collateral_range_stale = 1
           WHERE chain_id = ? AND offer_id IN (${c.placeholders})`,
       ).bind(...c.binds),
     ),
@@ -3370,6 +3374,40 @@ async function processSignedOfferLogs(
   return updates;
 }
 
+/**
+ * The heal lanes, run LAST on every pass — scanning or caught-up (#2382
+ * r2/r6). They re-read rows the scan or a migration left incomplete, and
+ * every row they skip is selected again next tick, so they go after the
+ * cursor write and every once-per-scan step: whatever they spend can cost
+ * only heal rows. A failure — including the platform refusing a request past
+ * the invocation ceiling — is logged and the remaining rows wait.
+ * `atBlock` is the block every read is pinned to: everything up to it has
+ * been processed.
+ */
+async function runHealLanes(
+  client: PublicClient,
+  diamond: Address,
+  chainId: number,
+  env: Env,
+  budget: TickBudget,
+  atBlock: bigint,
+): Promise<{ detailRefreshes: number; loanDetailRefreshes: number }> {
+  let detailRefreshes = 0;
+  let loanDetailRefreshes = 0;
+  try {
+    detailRefreshes = await refreshStubOffers(client, diamond, chainId, env, budget, atBlock);
+    // Bootstrap loan position-NFT token IDs (lender_token_id /
+    // borrower_token_id) for any newly-inserted loan rows. One
+    // getLoanDetails call per loan, batched per tick. After bootstrap
+    // the values are immutable for the loan's lifetime; the next tick
+    // skips them via the `lender_token_id = '0'` predicate.
+    loanDetailRefreshes = await refreshStubLoans(client, diamond, chainId, env, budget);
+  } catch (err) {
+    console.warn(`[chainIndexer] heal lanes stopped on chain ${chainId}; remaining rows wait for the next tick`, err);
+  }
+  return { detailRefreshes, loanDetailRefreshes };
+}
+
 /** Subrequests one `refreshOfferDetails` normally spends — the details
  *  read, the position-NFT `ownerOf` read, the row UPDATE — of which one is
  *  a D1 query. A NORMAL figure for a soft stop, not a bound: a retried read
@@ -3424,19 +3462,16 @@ export async function refreshStubOffers(
   // the refresh set. Genuinely-deleted offers (zero-fill cancels) are handled in
   // `refreshOfferDetails`, which clears `is_stub` on a zero read so the dead row
   // drops out of this queue instead of starving real stubs.
-  // The third clause (#2382 r4): a match marks the borrower offer's fills
-  // unread, and the SAME match can close it (fully filled, dust) — so a
-  // terminal row marked that way must still be re-read, or it keeps an
-  // unknown fill for good. It is told apart from pre-0054 history by its
-  // ceiling: every row written since 0054 has one, history has neither, and
-  // a terminal history row is not this lane's to backfill. A row whose
-  // struct is gone writes a fill of 0 below, so it cannot loop here.
+  // #2382 r6 — the range is re-read on an EXPLICIT marker, set by every path
+  // that can change it (migration 0054's backfill of active rows, an insert,
+  // a match) and cleared only by a completed read. Earlier revisions inferred
+  // "needs a read" from combinations of NULLs and statuses, and each round of
+  // review found a row that inference missed (a pre-0054 offer closed by a
+  // match, a terminal row a match both marked and closed). The marker names
+  // the state instead of guessing it.
   const stale = await env.DB.prepare(
     `SELECT offer_id FROM offers
-     WHERE chain_id = ? AND (is_stub = 1
-       OR (status = 'active'
-           AND (collateral_amount_max IS NULL OR collateral_amount_filled IS NULL))
-       OR (collateral_amount_filled IS NULL AND collateral_amount_max IS NOT NULL))
+     WHERE chain_id = ? AND (is_stub = 1 OR collateral_range_stale = 1)
      ORDER BY updated_at ASC
      LIMIT ?`,
   )
@@ -3508,6 +3543,7 @@ async function refreshOfferDetails(
     await env.DB.prepare(
       `UPDATE offers SET is_stub = 0,
               collateral_amount_filled = COALESCE(collateral_amount_filled, '0'),
+              collateral_range_stale = 0,
               updated_at = ?
        WHERE chain_id = ? AND offer_id = ?`,
     )
@@ -3597,6 +3633,7 @@ async function refreshOfferDetails(
        created_at = ?, expires_at = ?, fill_mode = ?,
        creator_current_owner = COALESCE(?, NULLIF(creator_current_owner, ''), ?),
        is_stub = 0,
+       collateral_range_stale = 0,
        updated_at = ?
      WHERE chain_id = ? AND offer_id = ?`,
   )

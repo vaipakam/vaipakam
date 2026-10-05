@@ -215,6 +215,7 @@ function OfferRow({
               labels: {
                 amountLoading: copy.offers.collateralAmountLoading,
                 amountRaw: copy.offers.collateralAmountRaw,
+                inBaseUnits: copy.offers.collateralInBaseUnits,
                 atLeast: copy.offers.collateralAtLeast,
                 forFullOffer: copy.offers.collateralForFullOffer,
                 range: copy.offers.collateralRange,

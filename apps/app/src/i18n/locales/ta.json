@@ -1545,6 +1545,7 @@
       "collateralOfRunningLoan": "விற்கப்படும் நடப்புக் கடனின் பிணையம் (இந்த வரிசையில் காட்டப்படவில்லை)",
       "collateralAmountLoading": "{{token}} (தொகை ஏற்றப்படுகிறது…)",
       "collateralAmountRaw": "{{token}}-இன் {{amount}} அடிப்படை அலகுகள் (டோக்கன் விவரங்களைப் படிக்க முடியவில்லை)",
+      "collateralInBaseUnits": "{{text}} — தொகைகள் {{token}}-இன் அடிப்படை அலகுகளில் (டோக்கன் விவரங்களைப் படிக்க முடியவில்லை)",
       "collateralForFullOffer": "முழுச் சலுகைக்கு {{amount}} (அதன் ஒரு பகுதிக்கு விகிதப்படி குறைவு)",
       "byCreator": "மூலம்",
       "advancedPartialRepayOk": "பகுதி திருப்பிச் செலுத்தல் சரி",

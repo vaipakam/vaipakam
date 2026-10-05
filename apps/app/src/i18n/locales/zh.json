@@ -1545,6 +1545,7 @@
       "collateralOfRunningLoan": "所出售的进行中贷款的抵押品（此行未显示）",
       "collateralAmountLoading": "{{token}}（正在加载数量…）",
       "collateralAmountRaw": "{{token}} 的 {{amount}} 个基本单位（无法读取代币详情）",
+      "collateralInBaseUnits": "{{text}} — 金额为 {{token}} 的基础单位（无法读取代币信息）",
       "collateralForFullOffer": "整笔报价需 {{amount}}（只取一部分则按比例减少）",
       "byCreator": "由",
       "advancedPartialRepayOk": "可部分还款",
