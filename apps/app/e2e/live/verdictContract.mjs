@@ -96,6 +96,11 @@ export const THREE_VERDICT_DRIVERS = new Set([
   // same run (Codex #1590 r3).
   'live-recover-locales.mjs',
   'live-risk-access.mjs',
+  // Exits 2 only BEFORE its first write: site build mismatch, chain facts
+  // that differ from the loan's pinned shape, short balances, an already-
+  // open request, missing credentials. After the first transaction every
+  // outcome is PASS or FAIL, because the chain has changed (#2380 live).
+  'live-refinance.mjs',
   'live-rpc-audit.mjs',
   'live-signed-book.mjs',
   'live-support-ticket.mjs',
