@@ -281,6 +281,12 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         // on the fund-receiving wallet.
         address currentBorrowerNftOwner =
             LibERC721.ownerOf(oldLoan.borrowerTokenId);
+        // #2407 — only the loan's RECORDED refinance request may complete: it
+        // is the one the borrower-action guard watches, so a displaced or
+        // never-recorded request (which could otherwise revive when the
+        // position returns to its creator) can never fill. Checked before the
+        // holder-direct early return so every route is bound.
+        LibRefinanceRequest.assertRecorded(oldLoanId, borrowerOfferId);
         if (
             route == RefinanceRoute.Direct &&
             currentBorrowerNftOwner == msg.sender
@@ -1069,9 +1075,10 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
     /// @dev    A recorded request that is no longer live is still reported, so
     ///         a client can tell an expired-but-uncancelled request (whose token
     ///         approval the borrower may want to remove) from no request at
-    ///         all; `offerId` is 0 only when nothing was ever recorded. A
-    ///         request posted BEFORE the index existed is not seen here until
-    ///         {indexRefinanceRequests} has recorded it.
+    ///         all; `offerId` is 0 only when nothing was ever recorded. Only
+    ///         the recorded request can complete a refinance, so a request
+    ///         posted BEFORE the index existed is neither seen here nor
+    ///         acceptable until {indexRefinanceRequests} has recorded it.
     function getRefinanceRequest(
         uint256 loanId
     ) external view returns (uint256 offerId, bool live) {
@@ -1084,14 +1091,16 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
     ///         scanning offer ids `fromOfferId..toOfferId` (inclusive; clamped
     ///         to the last offer id). Permissionless: it records only what the
     ///         chain already proves — a request that is live by the rule above,
-    ///         for a loan with no live request recorded — so a caller can
-    ///         neither invent a request nor displace one. The range bounds the
-    ///         gas; call it in slices.
-    /// @dev    Before the index, nothing stopped a borrower posting two
-    ///         requests for one loan. If two are still live, the FIRST in id
-    ///         order is recorded; the other remains acceptable but is not the
-    ///         one the guard and the view report. New requests cannot reach
-    ///         that state: creation refuses a second live request.
+    ///         for a loan whose recorded request may be replaced (the same rule
+    ///         creation applies) — so a caller can neither invent a request nor
+    ///         displace one. The range bounds the gas; call it in slices.
+    /// @dev    Until it is recorded, a pre-index request can neither fill nor
+    ///         hold the loan back (only the recorded request completes a
+    ///         refinance). Before the index, nothing stopped a borrower posting
+    ///         two requests for one loan; if two are still live, the FIRST in id
+    ///         order is recorded and the other can never fill — its creator
+    ///         cancels it. The same holds for a pre-index request the holder
+    ///         replaced with a new one before this backfill reached it.
     /// @return recorded How many requests this call recorded.
     function indexRefinanceRequests(
         uint256 fromOfferId,
@@ -1103,7 +1112,8 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         for (uint256 id = fromOfferId == 0 ? 1 : fromOfferId; id <= toOfferId; ++id) {
             uint256 loanId = s.offers[id].refinanceTargetLoanId;
             if (loanId == 0 || !LibRefinanceRequest.isLive(s, loanId, id)) continue;
-            if (LibRefinanceRequest.live(loanId) != 0) continue;
+            (uint256 prior,) = LibRefinanceRequest.blockingRecord(loanId);
+            if (prior != 0) continue;
             s.refinanceRequestOfLoan[loanId] = id;
             ++recorded;
         }

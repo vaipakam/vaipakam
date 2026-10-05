@@ -3193,18 +3193,19 @@ Its intended behaviour, as the test oracle for this surface:
   on that search, not on any other role the wallet holds in the loan. An expired
   request is still shown so it can be cancelled and its approval removed,
   and the card outlives the loan's settlement for the same reason. A new
-  request is not posted while the app can see one open — the protocol
-  accepts several, and taking one leaves the others impossible to fill —
-  and the form waits until the search has answered, checking again just
+  request is not posted while the app can see one open, and the form waits until the search has answered, checking again just
   before posting. The protocol enforces the same limit (#2407): while a
   live request targets the loan, posting a second is refused, so two
   devices that both pass the app's check in the same moment cannot both
   post — the protocol refuses the second, naming the request already
-  open. Two open requests for one loan can only exist from before
-  that limit; the page names one open request at a time, and once it is
-  taken or cancelled the other is found and shown so it can be cancelled
-  too. An expired request
-  does not hold the form back, and a request the search has already found
+  open. Only the request the protocol has recorded for the loan can be
+  taken; a second request left over from before that limit can never be
+  taken, and the page shows it so it can be cancelled. An expired request
+  that was never cancelled must be cancelled before a new one is posted —
+  the protocol refuses the new one otherwise, because the expired request
+  may still hold a fresh collateral pledge and the loan's record is how it
+  is found — so the form says so and offers the cancel rather than letting
+  the post fail (this form behaviour is tracked with #2425). A request the search has already found
   expired stays treated as expired even when the page's fuller check of
   it cannot finish. Loans on a periodic interest schedule carry a visible
   warning that an overdue period blocks completion until settled.

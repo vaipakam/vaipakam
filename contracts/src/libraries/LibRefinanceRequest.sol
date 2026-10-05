@@ -36,6 +36,23 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
  *         any of those reasons stops blocking with no write anywhere, and no
  *         path that ends a request has to remember to clear the slot.
  *
+ *         THE RECORD IS AUTHORITATIVE. Liveness is not one-way — a position
+ *         that leaves its creator can come back — so a request the record no
+ *         longer points to could otherwise revive unguarded. The refinance
+ *         completion therefore accepts a tagged request ONLY if it is the
+ *         loan's recorded request ({assertRecorded}): a displaced or
+ *         never-recorded request can never fill, so the request the guard
+ *         watches is always the only one that can.
+ *
+ *         NO LOST REQUESTS. The record is how a request is found from its
+ *         loan, and a fresh-pledge request holds its collateral until it is
+ *         cancelled. So a new request may not displace an OUTSTANDING one —
+ *         never accepted, never cancelled, and posted by the current holder —
+ *         even once it has expired: that holder cancels it first
+ *         ({assertReplaceable}). A request posted by a FORMER holder may be
+ *         displaced; the new holder could not cancel it, and its creator still
+ *         finds it among their own offers.
+ *
  *         NOT GUARDED, deliberately: a full repayment settles the loan, which
  *         ends the request with it; every ENFORCEMENT action (default,
  *         liquidation in full or in part, the periodic-interest
@@ -85,10 +102,54 @@ library LibRefinanceRequest {
         if (offerId != 0) revert IVaipakamErrors.RefinanceRequestOpen(loanId, offerId);
     }
 
-    /// @notice Record `offerId` as `loanId`'s request — one per loan: refused
-    ///         while another request for the loan is live.
+    /// @notice Revert unless `loanId`'s recorded request may be replaced: a
+    ///         live one reverts {IVaipakamErrors.RefinanceRequestOpen}; an
+    ///         outstanding one of the current holder's that is no longer live
+    ///         (in practice, expired) reverts
+    ///         {IVaipakamErrors.RefinanceRequestNotCancelled}.
+    function assertReplaceable(uint256 loanId) internal view {
+        (uint256 prior, bool isLiveNow) = blockingRecord(loanId);
+        if (prior == 0) return;
+        if (isLiveNow) revert IVaipakamErrors.RefinanceRequestOpen(loanId, prior);
+        revert IVaipakamErrors.RefinanceRequestNotCancelled(loanId, prior);
+    }
+
+    /// @notice The recorded request that a new one may not displace, or 0:
+    ///         a live one (`isLiveNow`), or an outstanding one — never
+    ///         accepted, never cancelled — posted by the current holder.
+    function blockingRecord(
+        uint256 loanId
+    ) internal view returns (uint256 prior, bool isLiveNow) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        prior = s.refinanceRequestOfLoan[loanId];
+        if (prior == 0) return (0, false);
+        if (isLive(s, loanId, prior)) return (prior, true);
+        LibVaipakam.Offer storage o = s.offers[prior];
+        if (
+            o.creator == address(0) ||
+            o.accepted ||
+            LibERC721._ownerOfRaw(s.loans[loanId].borrowerTokenId) != o.creator
+        ) return (0, false);
+        return (prior, false);
+    }
+
+    /// @notice Record `offerId` as `loanId`'s request — one per loan, and
+    ///         never displacing one its holder has not cancelled
+    ///         ({assertReplaceable}).
     function record(uint256 loanId, uint256 offerId) internal {
-        assertNone(loanId);
+        assertReplaceable(loanId);
         LibVaipakam.storageSlot().refinanceRequestOfLoan[loanId] = offerId;
+    }
+
+    /// @notice Revert {IVaipakamErrors.RefinanceRequestNotRecorded} when
+    ///         `offerId` is refinance-tagged but is not `loanId`'s recorded
+    ///         request. An untagged offer passes: it is not a refinance
+    ///         request, and the routes that accept one gate it themselves.
+    function assertRecorded(uint256 loanId, uint256 offerId) internal view {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (
+            s.offers[offerId].refinanceTargetLoanId != 0 &&
+            s.refinanceRequestOfLoan[loanId] != offerId
+        ) revert IVaipakamErrors.RefinanceRequestNotRecorded(loanId, offerId);
     }
 }

@@ -224,13 +224,15 @@ refinance guard; the spec states that race.
 refinance request per loan and refuses a partial repayment (direct and
 swap-to-repay), a direct preclose, an obligation handover, an offset and a
 partial collateral withdrawal while that request is live, and refuses a second
-live request for the same loan. Full repayment, every enforcement action (including a
+live request for the same loan. Only the recorded request can be taken, so a
+request that drops out of the record cannot revive unguarded. Full repayment, every enforcement action (including a
 partial liquidation) and adding collateral are deliberately not held (see `ProjectDetailsREADME.md`, the
 refinance section). This brings the code to the intent the spec already
 stated; the spec's race paragraph was rewritten to say the protocol closes it.
 The app still discovers the request by its bounded on-chain search; moving it
-to the protocol's record is a separate app change. The original entry
-follows.
+to the protocol's record is a separate app change (#2425), as is the form
+offering to cancel an expired request the protocol now requires cancelled
+before a new one. The original entry follows.
 
 The connected app holds partial repayment while another arrangement is pinned
 to the loan's outstanding amount. Two of those holds are answered by the chain

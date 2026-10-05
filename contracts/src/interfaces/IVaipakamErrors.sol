@@ -1775,4 +1775,22 @@ interface IVaipakamErrors {
     ///         request for the same loan. Cancel the request first. Full
     ///         repayment and forced closes are not refused.
     error RefinanceRequestOpen(uint256 loanId, uint256 offerId);
+
+    /// @notice #2407 — `loanId`'s recorded refinance request (`offerId`) has
+    ///         expired but was never cancelled, and its creator still holds the
+    ///         borrower position. Raised when that holder posts a new request:
+    ///         the record is the only way to find the old request from the
+    ///         loan, and a fresh-pledge request keeps its collateral locked until
+    ///         cancelled, so the old one must be cancelled first rather than
+    ///         dropped from view.
+    error RefinanceRequestNotCancelled(uint256 loanId, uint256 offerId);
+
+    /// @notice #2407 — `offerId` is refinance-tagged for `loanId` but is not
+    ///         the loan's recorded request, so it cannot complete a refinance.
+    ///         Only the recorded request is guarded against changes to the loan
+    ///         underneath it, so only it may be accepted. A request posted
+    ///         before the record existed becomes acceptable once
+    ///         `indexRefinanceRequests` records it; one displaced from the record
+    ///         stays unacceptable — cancel it.
+    error RefinanceRequestNotRecorded(uint256 loanId, uint256 offerId);
 }
