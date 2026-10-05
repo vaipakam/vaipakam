@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibRefinanceRequest} from "../libraries/LibRefinanceRequest.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibConsolidation} from "../libraries/LibConsolidation.sol";
@@ -732,6 +733,8 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         // T-090 v1.1 (#389) §5.8 — partial repay still pulls from
         // `loan.borrower`'s vault; block while a v1.1 commit is live.
         LibVaipakam.assertNoLiveIntentCommit(loanId);
+        // #2407 — refused while a live refinance request targets the loan.
+        LibRefinanceRequest.assertNone(loanId);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
         // #594 — repayPartial is BOTH-SIDE: the ERC-20 partial path pays

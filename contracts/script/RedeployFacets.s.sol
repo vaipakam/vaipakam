@@ -684,13 +684,17 @@ contract RedeployFacets is Script {
     /// @dev #658 PR-B2 — RefinanceFacet selectors, mirrors
     ///      `DeployDiamond._getRefinanceSelectors` (kept in lockstep).
     function _refinanceSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](3);
+        s = new bytes4[](5);
         s[0] = RefinanceFacet.refinanceLoan.selector;
         s[1] = RefinanceFacet.refinanceLoanFromAccept.selector;
         // #2349 — the matcher-fill route's entry. NEW, so this list is cut via
         // the Add/Replace-by-routing partition (a Replace reverts on an
         // unrouted selector on any pre-#2349 target).
         s[2] = RefinanceFacet.refinanceLoanFromMatch.selector;
+        // #2407 — NEW, so cut through the same Add/Replace-by-routing
+        // partition as the #2349 entry above.
+        s[3] = RefinanceFacet.getRefinanceRequest.selector;
+        s[4] = RefinanceFacet.indexRefinanceRequests.selector;
     }
 
     /// @dev #658 PR-B2 — ClaimFacet selectors, mirrors

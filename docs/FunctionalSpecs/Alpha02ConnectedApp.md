@@ -1481,8 +1481,10 @@ is the borrower's own money.
   open request among them is found and shown as usual — only a search that
   found no open request in what it read is reported as unable to answer. The bound is the loan's own offer, which can be older
   than the loan itself, because the chain records no start for a loan that
-  later events do not rewrite; an on-chain index from a loan to its requests
-  would remove the search, and is tracked with #2407.
+  later events do not rewrite. The protocol now records each loan's request
+  and whether it is live (#2407); reading that record in place of the search
+  is a separate app change, and until it lands the search described here is
+  what the app does.
 - An open confirmation does not survive a network switch or a change of
   connected account: it closes, and the typed amount is cleared, so a review
   opened on one network or under one wallet can never send on another.
@@ -3194,12 +3196,14 @@ Its intended behaviour, as the test oracle for this surface:
   request is not posted while the app can see one open — the protocol
   accepts several, and taking one leaves the others impossible to fill —
   and the form waits until the search has answered, checking again just
-  before posting. That check cannot stop two devices that both pass it in
-  the same moment: both requests can then be posted, sharing one payoff
-  approval, and taking either leaves the other impossible to fill. The
-  page names one open request at a time; once it is taken or cancelled,
-  the other is found and shown so it can be cancelled too. An on-chain
-  limit of one request per loan is tracked with #2407. An expired request
+  before posting. The protocol enforces the same limit (#2407): while a
+  live request targets the loan, posting a second is refused, so two
+  devices that both pass the app's check in the same moment cannot both
+  post — the protocol refuses the second, naming the request already
+  open. Two open requests for one loan can only exist from before
+  that limit; the page names one open request at a time, and once it is
+  taken or cancelled the other is found and shown so it can be cancelled
+  too. An expired request
   does not hold the form back, and a request the search has already found
   expired stays treated as expired even when the page's fuller check of
   it cannot finish. Loans on a periodic interest schedule carry a visible
@@ -3234,12 +3238,14 @@ Its intended behaviour, as the test oracle for this surface:
   that reason. Each borrower action that would change or settle the
   loan — a partial, early close-out, an obligation handover, an offset,
   taking collateral back — repeats the search just before the wallet
-  opens. What no check made before signing can rule out is a request
-  posted in the moments between that last check and the transaction
-  being mined; the protocol does not refuse a partial on its own when a
-  request is standing, so that narrow race remains and is stated here
-  rather than described as a guarantee (an on-chain guard is tracked as
-  #2407). When one of those last checks — or any other check made after
+  opens. No check made before signing can rule out a request posted in
+  the moments between that last check and the transaction being mined,
+  so the protocol closes that race itself (#2407): while a live request
+  targets the loan it refuses a partial (paid directly or by swapping
+  collateral), an early close-out, an obligation handover, an offset and
+  taking collateral back, naming the request in its refusal. Full
+  repayment, adding collateral and every enforcement action (including a
+  partial liquidation) are never held by it. When one of those last checks — or any other check made after
   the token approval — stops the action, the approval it granted is put
   back to what it was before (best effort, and only if nothing else has
   changed it since), and a failure to put it back is said alongside the

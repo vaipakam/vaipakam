@@ -1629,7 +1629,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](3);
+        selectors = new bytes4[](5);
         selectors[0] = RefinanceFacet.refinanceLoan.selector;
         // T-092-H (#549) — atomic accept-and-refinance internal
         // entries; cut so the diamond fallback can route the
@@ -1637,6 +1637,9 @@ contract HelperTest {
         // #2349 — lender-accept and matcher-fill routes are separate.
         selectors[1] = RefinanceFacet.refinanceLoanFromAccept.selector;
         selectors[2] = RefinanceFacet.refinanceLoanFromMatch.selector;
+        // #2407 — the refinance-request index view and backfill.
+        selectors[3] = RefinanceFacet.getRefinanceRequest.selector;
+        selectors[4] = RefinanceFacet.indexRefinanceRequests.selector;
         return selectors;
     }
 

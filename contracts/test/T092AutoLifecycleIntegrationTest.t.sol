@@ -1203,7 +1203,13 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         // collateral was never deposited (it's the target loan's, already
         // liened), so transferObligation would double-lien the same NFT and
         // corrupt settlement. Reject before any state change.
+        //
+        // #2407 — offered against ITS OWN target loan, the tagged offer is that
+        // loan's live refinance request, so the refinance-request guard refuses
+        // the handover first. The #576 rejection is what still stands between
+        // a tagged offer and a DIFFERENT loan, so that is the case pinned here.
         uint256 oldLoanId = _buildActiveLoan();
+        uint256 otherLoanId = _buildActiveLoan();
         vm.prank(borrower);
         _f().setAutoRefinanceCaps(
             oldLoanId, true, 600, uint64(block.timestamp + 365 days)
@@ -1215,7 +1221,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         vm.prank(borrower);
         vm.expectRevert(PrecloseFacet.InvalidOfferTerms.selector);
         PrecloseFacet(address(diamond)).transferObligationViaOffer(
-            oldLoanId, taggedOfferId
+            otherLoanId, taggedOfferId
         );
     }
 

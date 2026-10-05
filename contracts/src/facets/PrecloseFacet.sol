@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibRefinanceRequest} from "../libraries/LibRefinanceRequest.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {InteractionRewardsFacet} from "./InteractionRewardsFacet.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
@@ -205,6 +206,8 @@ contract PrecloseFacet is
         // T-090 v1.1 (#389) §5.8 — borrower can't preclose-direct
         // while the v1.1 intent surface holds the collateral.
         LibVaipakam.assertNoLiveIntentCommit(loanId);
+        // #2407 — refused while a live refinance request targets the loan.
+        LibRefinanceRequest.assertNone(loanId);
         // Tier-1 sanctions gate — preclose routes funds back to
         // msg.sender (borrower closing early); sanctioned blocked.
         LibVaipakam._assertNotSanctioned(msg.sender);
@@ -660,6 +663,8 @@ contract PrecloseFacet is
         // NFT; the v1.1 commit's `lopAtCommit` pin and orderHash
         // would describe a stale baseline. Block while live.
         LibVaipakam.assertNoLiveIntentCommit(loanId);
+        // #2407 — refused while a live refinance request targets the loan.
+        LibRefinanceRequest.assertNone(loanId);
         // Tier-1 sanctions gate — transferring an obligation closes
         // and re-opens loan state on behalf of msg.sender.
         LibVaipakam._assertNotSanctioned(msg.sender);
@@ -1419,6 +1424,8 @@ contract PrecloseFacet is
         // conflict rationale as the other PrecloseFacet entry
         // points.
         LibVaipakam.assertNoLiveIntentCommit(loanId);
+        // #2407 — refused while a live refinance request targets the loan.
+        LibRefinanceRequest.assertNone(loanId);
         // #1001 (S3, Codex #1070 r6 P2) — Tier-1 caller screen. This creates and
         // funds an offset offer as the borrower-NFT holder (not msg.sender), so
         // `createOfferInternal`'s create-time screen only catches the borrower

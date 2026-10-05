@@ -1766,4 +1766,13 @@ interface IVaipakamErrors {
     ///         resolves or unwinds — never a trim, which only the lifetime
     ///         cap may cause (3b-ii-A2; Codex #2308 r4).
     error LoanSideReservedShortfall(uint256 loanId, uint8 side, uint256 needed, uint256 available);
+
+    /// @notice #2407 — a live refinance request (`offerId`, a refinance-tagged
+    ///         borrower offer) targets `loanId`. Raised by the borrower actions
+    ///         that would change the loan underneath the request — a partial
+    ///         repayment (direct or by swap), an early close, an obligation
+    ///         handover, an offset and a collateral withdrawal — and by a second
+    ///         request for the same loan. Cancel the request first. Full
+    ///         repayment and forced closes are not refused.
+    error RefinanceRequestOpen(uint256 loanId, uint256 offerId);
 }

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibRefinanceRequest} from "../libraries/LibRefinanceRequest.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibAutoRefinanceCheck} from "../libraries/LibAutoRefinanceCheck.sol";
@@ -1054,5 +1055,57 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         uint256 hfFloor =
             LibVaipakam.effectiveLoanMinHealthFactor(newLoan.minHealthFactorAtInit);
         if (newHf < hfFloor) revert HealthFactorTooLow();
+    }
+
+    // ─── #2407 — the loan → refinance-request index ─────────────────────
+
+    /// @notice The refinance request (a refinance-tagged borrower offer)
+    ///         recorded for `loanId`, and whether it is LIVE — able to still be
+    ///         accepted: it exists, is not accepted or cancelled, has not
+    ///         expired, the loan is Active and the request's creator still holds
+    ///         the borrower position. While `live` is true the borrower actions
+    ///         that would change the loan underneath it revert
+    ///         {IVaipakamErrors.RefinanceRequestOpen}.
+    /// @dev    A recorded request that is no longer live is still reported, so
+    ///         a client can tell an expired-but-uncancelled request (whose token
+    ///         approval the borrower may want to remove) from no request at
+    ///         all; `offerId` is 0 only when nothing was ever recorded. A
+    ///         request posted BEFORE the index existed is not seen here until
+    ///         {indexRefinanceRequests} has recorded it.
+    function getRefinanceRequest(
+        uint256 loanId
+    ) external view returns (uint256 offerId, bool live) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        offerId = s.refinanceRequestOfLoan[loanId];
+        live = offerId != 0 && LibRefinanceRequest.isLive(s, loanId, offerId);
+    }
+
+    /// @notice Record refinance requests posted before the index existed,
+    ///         scanning offer ids `fromOfferId..toOfferId` (inclusive; clamped
+    ///         to the last offer id). Permissionless: it records only what the
+    ///         chain already proves — a request that is live by the rule above,
+    ///         for a loan with no live request recorded — so a caller can
+    ///         neither invent a request nor displace one. The range bounds the
+    ///         gas; call it in slices.
+    /// @dev    Before the index, nothing stopped a borrower posting two
+    ///         requests for one loan. If two are still live, the FIRST in id
+    ///         order is recorded; the other remains acceptable but is not the
+    ///         one the guard and the view report. New requests cannot reach
+    ///         that state: creation refuses a second live request.
+    /// @return recorded How many requests this call recorded.
+    function indexRefinanceRequests(
+        uint256 fromOfferId,
+        uint256 toOfferId
+    ) external whenNotPaused returns (uint256 recorded) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256 last = s.nextOfferId;
+        if (toOfferId > last) toOfferId = last;
+        for (uint256 id = fromOfferId == 0 ? 1 : fromOfferId; id <= toOfferId; ++id) {
+            uint256 loanId = s.offers[id].refinanceTargetLoanId;
+            if (loanId == 0 || !LibRefinanceRequest.isLive(s, loanId, id)) continue;
+            if (LibRefinanceRequest.live(loanId) != 0) continue;
+            s.refinanceRequestOfLoan[loanId] = id;
+            ++recorded;
+        }
     }
 }
