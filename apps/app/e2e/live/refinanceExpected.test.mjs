@@ -23,8 +23,10 @@ import {
   expectedAcceptTypedData,
   expectedCreateOfferCall,
   expectedTx,
+  refinancePlanSteps,
   ZERO_HASH,
 } from './refinanceExpected.mjs';
+import { createWritePlan } from './writePlan.mjs';
 import { encodeFunctionData } from 'viem';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -133,5 +135,84 @@ describe('refinanceExpected — complete payloads, closed in both directions', (
     expect(Object.keys(call.args.params).sort()).toEqual(fn.inputs[0].components.map((c) => c.name).sort());
     expect(call.args.params.interestRateBps).toBe(0n);
     expect(call.args.params.interestRateBpsMax).toBe(1200n);
+  });
+
+  it('the whole-drive plan accepts the posting once and refuses a duplicated createOffer', () => {
+    let requestId = null;
+    const plan = createWritePlan(
+      refinancePlanSteps({
+        abi: ABI,
+        chainId: 84532,
+        diamond: DIAMOND,
+        loan: LOAN,
+        loanId: 22n,
+        borrower: BORROWER,
+        lender: LENDER,
+        rateBps: 1200n,
+        days: 30n,
+        riskTermsHash: ZERO_HASH,
+        payoffApprovalCap: 6_000_000_000_000_000n,
+        nowSec: () => NOW,
+        requestId: () => requestId,
+        signedAcceptTerms: () => null,
+      }),
+    );
+    const params = {
+      offerType: 1,
+      lendingAsset: LOAN.principalAsset,
+      amount: LOAN.principal,
+      interestRateBps: 0n,
+      collateralAsset: LOAN.collateralAsset,
+      collateralAmount: LOAN.collateralAmount,
+      durationDays: 30n,
+      assetType: 0,
+      tokenId: 0n,
+      quantity: 1n,
+      creatorRiskAndTermsConsent: true,
+      prepayAsset: LOAN.prepayAsset,
+      collateralAssetType: 0,
+      collateralTokenId: 0n,
+      collateralQuantity: 0n,
+      allowsPartialRepay: false,
+      amountMax: LOAN.principal,
+      interestRateBpsMax: 1200n,
+      collateralAmountMax: LOAN.collateralAmount,
+      periodicInterestCadence: 0,
+      expiresAt: NOW + 30n * 86_400n,
+      fillMode: 1,
+      allowsPrepayListing: false,
+      allowsParallelSale: false,
+      refinanceTargetLoanId: 22n,
+      useFullTermInterest: true,
+    };
+    const createReq = decodeTxForComparison(
+      { from: BORROWER, to: DIAMOND, data: encodeFunctionData({ abi: ABI, functionName: 'createOffer', args: [params] }) },
+      () => ABI,
+    );
+    // Caps and both approvals are optional — the app may skip them.
+    expect(plan.offer('borrower', 'tx', createReq).ok).toBe(true);
+    // The identical request again is refused: the step is consumed.
+    expect(plan.offer('borrower', 'tx', createReq).ok).toBe(false);
+    // And the lender's steps cannot even be judged before the request id
+    // is pinned — but the plan has latched anyway.
+    requestId = 45n;
+    expect(plan.offer('lender', 'typed', {}).why).toMatch(/already refused/);
+  });
+
+  it('refuses a lender signature before the request id is pinned', () => {
+    const plan = createWritePlan(
+      refinancePlanSteps({
+        ...TERMS_ARGS,
+        abi: ABI,
+        chainId: 84532,
+        diamond: DIAMOND,
+        payoffApprovalCap: 1n,
+        requestId: () => null,
+        signedAcceptTerms: () => null,
+      }),
+    );
+    // Every borrower step is optional except createOffer, which a lender
+    // request cannot pass over.
+    expect(plan.offer('lender', 'typed', {}).ok).toBe(false);
   });
 });

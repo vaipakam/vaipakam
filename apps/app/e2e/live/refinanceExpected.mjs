@@ -40,11 +40,11 @@ export function near(desc, centre) {
   });
 }
 
-/** An approval amount: 0 (the form's reset / unwind) or at most `cap`. */
+/** A non-zero approval amount of at most `cap`. */
 export function approvalUpTo(cap, why) {
-  return is(`0 or ≤ ${cap} (${why})`, (v) => {
+  return is(`0 < amount ≤ ${cap} (${why})`, (v) => {
     const x = BigInt(v);
-    return x === 0n || (x > 0n && x <= cap);
+    return x > 0n && x <= cap;
   });
 }
 
@@ -124,9 +124,18 @@ export function expectedCapsCall({ loanId, rateBps, days, nowSec }) {
   };
 }
 
-/** ERC-20 `approve(spender, amount)` bounded from above. */
-export function expectedApproveCall({ spender, cap, why }) {
-  return { functionName: 'approve', args: { spender, amount: approvalUpTo(cap, why) } };
+/**
+ * ERC-20 `approve(spender, amount)`. Two shapes, because the app's
+ * `ensureAllowance` sends two: when a NON-ZERO allowance below the needed
+ * figure is left over it first resets to exactly 0 (tokens like mainnet
+ * USDT revert a non-zero→non-zero approve), then sets the new amount.
+ * `reset: true` is that first write; otherwise the amount is bounded.
+ */
+export function expectedApproveCall({ spender, cap, why, reset = false }) {
+  return {
+    functionName: 'approve',
+    args: { spender, amount: reset ? 0n : approvalUpTo(cap, why) },
+  };
 }
 
 /**
@@ -297,3 +306,126 @@ export function expectedAcceptTypedData({ abi, chainId, diamond, signer, terms }
 export function expectedAcceptOfferCall({ requestId, terms, signature }) {
   return { functionName: 'acceptOffer', args: { offerId: requestId, terms, signature } };
 }
+
+// ---------------------------------------------------------------------
+// The whole drive's write plan, in order (#2422 r3).
+// ---------------------------------------------------------------------
+
+/**
+ * Every signing step the refinance drive may take, in the order the app
+ * takes them, each with its complete expected object. Consumed by
+ * `createWritePlan` (writePlan.mjs), which allows a request only if it
+ * matches the NEXT unconsumed step.
+ *
+ * The order is the app's, read from its source and confirmed by the
+ * 2026-10-05 run on loan 22:
+ *   borrower (RefinanceFlow.submit): setAutoRefinanceCaps — OPTIONAL, the
+ *     form skips it when the loan's caps already cover the reviewed terms;
+ *     then `ensureAllowance` — an OPTIONAL reset to 0 (only when a non-zero
+ *     allowance below the payoff bound is left over) and an OPTIONAL set
+ *     (skipped when the allowance already covers it); then createOffer.
+ *   lender (OfferFlow accept): the AcceptTerms signature FIRST (the review
+ *     lists "Sign the terms" before "Approve"), then the same optional
+ *     reset / set pair for the principal, then acceptOffer.
+ *
+ * `requestId()` returns the request's id once phase 2 has pinned it (null
+ * before, which refuses the lender's steps); `signedAcceptTerms()` returns
+ * the consumed AcceptTerms step's record `{ params, signature }` once the
+ * signature is back (null before, which refuses the accept call). The
+ * accept CALL is then pinned to exactly the signed terms and signature.
+ */
+export function refinancePlanSteps({
+  abi,
+  chainId,
+  diamond,
+  loan,
+  loanId,
+  borrower,
+  lender,
+  rateBps,
+  days,
+  riskTermsHash,
+  payoffApprovalCap,
+  nowSec,
+  requestId,
+  signedAcceptTerms,
+}) {
+  const tx = (from, to, call) => expectedTx({ from, to, call, chainId });
+  const termsArgs = (rid, pinned) => ({
+    loan,
+    loanId,
+    requestId: rid,
+    lender,
+    borrower,
+    rateBps,
+    days,
+    riskTermsHash,
+    nowSec,
+    pinned,
+  });
+  const approvePair = (role, who, cap, why) => [
+    {
+      id: `${role[0]}-approve-reset`,
+      role,
+      kind: 'tx',
+      optional: true,
+      purpose: 'approve(Diamond, 0) — reset of a leftover allowance',
+      expected: tx(who, loan.principalAsset, expectedApproveCall({ spender: diamond, cap, why, reset: true })),
+    },
+    {
+      id: `${role[0]}-approve-set`,
+      role,
+      kind: 'tx',
+      optional: true,
+      purpose: `approve(Diamond, ≤ ${cap}) — ${why}`,
+      expected: tx(who, loan.principalAsset, expectedApproveCall({ spender: diamond, cap, why })),
+    },
+  ];
+  return [
+    {
+      id: 'b-caps',
+      role: 'borrower',
+      kind: 'tx',
+      optional: true,
+      purpose: `setAutoRefinanceCaps(${loanId}, on, ${rateBps} bps)`,
+      expected: tx(borrower, diamond, expectedCapsCall({ loanId, rateBps, days, nowSec })),
+    },
+    ...approvePair('borrower', borrower, payoffApprovalCap, 'the payoff bound'),
+    {
+      id: 'b-create',
+      role: 'borrower',
+      kind: 'tx',
+      purpose: `createOffer(refinance of loan ${loanId})`,
+      expected: tx(borrower, diamond, expectedCreateOfferCall({ loan, loanId, rateBps, days, nowSec })),
+    },
+    {
+      id: 'l-sign',
+      role: 'lender',
+      kind: 'typed',
+      purpose: 'sign AcceptTerms for the request',
+      expected: () => {
+        const rid = requestId();
+        if (rid == null) return null;
+        return expectedAcceptTypedData({ abi, chainId, diamond, signer: lender, terms: expectedAcceptTerms(termsArgs(rid)) });
+      },
+    },
+    ...approvePair('lender', lender, loan.principal, 'the principal'),
+    {
+      id: 'l-accept',
+      role: 'lender',
+      kind: 'tx',
+      purpose: 'acceptOffer(the request) with exactly the signed terms',
+      expected: () => {
+        const rid = requestId();
+        const signed = signedAcceptTerms();
+        if (rid == null || !signed?.signature || !signed?.params) return null;
+        const message = JSON.parse(signed.params[1]).message;
+        const terms = expectedAcceptTerms(
+          termsArgs(rid, { nonce: BigInt(message.nonce), deadline: BigInt(message.deadline) }),
+        );
+        return tx(lender, diamond, expectedAcceptOfferCall({ requestId: rid, terms, signature: signed.signature }));
+      },
+    },
+  ];
+}
+

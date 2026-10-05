@@ -44,17 +44,26 @@
 //       (refinanceExpected.mjs; the comparator is expectedPayload.mjs). A
 //       field the expected object does not name is itself a mismatch, so
 //       nothing is hand-picked and a new or regressed field is refused by
-//       construction. What may be signed, per phase:
-//         borrower, posting: setAutoRefinanceCaps, a bounded principal
-//           approve(Diamond), and the refinance createOffer (all 26 fields);
-//         lender, accepting: a bounded principal approve(Diamond), the
-//           AcceptTerms signature (all 34 fields — including the Full VPFI
-//           tariff OFF: acceptorFull false, ceiling 0, no downgrade), and
-//           then acceptOffer carrying EXACTLY the terms and signature just
-//           signed. No Permit2 path: a borrower-request accept never uses
-//           one (OfferFlow: acceptOfferWithPermit "only serves accepting a
-//           LENDER offer").
-//       Anything else is refused at the wallet (EIP-1193 4001).
+//       construction.
+//   (A') ONE ORDERED WRITE PLAN (#2422 r3). Those expected objects are the
+//       steps of ONE plan for the whole drive, declared before the first
+//       write (refinancePlanSteps → writePlan.mjs), in the app's order:
+//         b-caps? → b-approve-reset? → b-approve-set? → b-create →
+//         l-sign → l-approve-reset? → l-approve-set? → l-accept
+//       (`?` = optional: the form skips caps that already cover the terms,
+//       and `ensureAllowance` sends a reset to 0 only for a leftover
+//       non-zero allowance and no approve at all when it already suffices).
+//       A request is allowed only if it matches the NEXT unconsumed step;
+//       a match consumes it before the provider is called, so a duplicate,
+//       an out-of-order request, a step the plan lacks, or anything after
+//       the plan is complete is refused, and the refusal latches the plan.
+//       The steps: caps; bounded principal approvals; the 26-field
+//       createOffer; the 34-field AcceptTerms (Full VPFI tariff OFF); and
+//       acceptOffer carrying EXACTLY the signed terms and signature. No
+//       Permit2 path: a borrower-request accept never uses one. The app's
+//       approval UNWIND after a failed post is not in the plan, so it is
+//       refused too — by then the drive has halted, and the report names
+//       any approval left standing.
 //   (B) HALT BEFORE THE NEXT WRITE. Any failed assertion or disclosure
 //       check, at any phase, sets a halt; the gate then refuses every
 //       further write, and every UI step that leads to one (a consent tick,
@@ -67,6 +76,14 @@
 // is reconciled against the role's latest/pending nonces in the report, and
 // makes the run FAIL. Once the gate has allowed anything, no exit is
 // BLOCKED and nothing reports "nothing written".
+//
+// PRE-WRITE SCREENING (#2422 r3). Before any write, pinned to one block:
+// the borrower role must also HOLD the borrower position NFT (ownerOf), the
+// accepting lender must not hold the lender position NFT (a self-refinance
+// is not this scenario), and both wallets are screened with the app's own
+// sanctions read (`isSanctionedAddress`). An UNSET oracle is fail-open by
+// design and is reported as such, never as a pass. Principal amounts print
+// with the principal token's own decimals().
 //
 // MATURITY MARGIN. The loan must be at least two hours from maturity at
 // preflight. Past maturity the payoff grows by the late fee, so a run that
@@ -137,19 +154,13 @@ import {
 } from './driver.mjs';
 import { redactUrl } from './redact.mjs';
 import { confirmWrite } from './writeConfirm.mjs';
-import { structMismatches } from './expectedPayload.mjs';
 import {
-  decodeTxForComparison,
-  expectedAcceptOfferCall,
-  expectedAcceptTerms,
-  expectedAcceptTypedData,
-  expectedApproveCall,
-  expectedCapsCall,
-  expectedCreateOfferCall,
-  expectedTx,
-  REQUEST_WINDOW_SEC,
   CLOCK_SLACK_SEC,
+  decodeTxForComparison,
+  refinancePlanSteps,
+  REQUEST_WINDOW_SEC,
 } from './refinanceExpected.mjs';
+import { createWritePlan } from './writePlan.mjs';
 import { expectedPostureFrom, postureCopyFrom } from './refinancePosture.mjs';
 
 // ---------------------------------------------------------------------
@@ -317,18 +328,31 @@ const checks = []; // { label, ok, observed }
 const findings = []; // UI observations worth recording
 const refusals = []; // write-gate refusals — each one fails the drive
 /**
- * Every transaction the gate ALLOWED, recorded at the moment it was
- * allowed — BEFORE the provider is awaited (#2422 r2 P1). A broadcast whose
- * RPC then times out never returns a hash, and a record made only on
- * success would let the report claim nothing was sent. Each entry is
- * `{ role, purpose, hash: string|null, outcome }` where outcome is
- * 'awaiting provider' → 'hash returned' | 'provider rejected: …'. An entry
+ * The drive's ONE ordered write plan (writePlan.mjs), built before the
+ * first write; null until then. Every allowed signing request is a CONSUMED
+ * step of it, and the step's record carries what came back: `hash` or
+ * `signature`, and `outcome` — 'awaiting provider' from the moment the step
+ * is consumed (BEFORE the provider is called, #2422 r2 P1), then 'hash
+ * returned' / 'signed' / 'provider rejected: …'. A consumed transaction step
  * without a hash is reconciled against the role's nonces in `report()`.
  */
-const sends = [];
-/** Typed-data signatures the gate allowed, with what came back. */
-const signatures = [];
-const hashedSends = (role) => sends.filter((t) => t.role === role && t.hash);
+let PLAN = null;
+const planSteps = () => (PLAN ? PLAN.steps() : []);
+/** Consumed steps of `kind`, flattened for the report and the flow. */
+const consumedSteps = (kind, role) =>
+  planSteps()
+    .filter((st) => st.kind === kind && st.status === 'consumed' && (!role || st.role === role))
+    .map((st) => ({
+      id: st.id,
+      role: st.role,
+      purpose: st.purpose,
+      hash: st.record.hash ?? null,
+      signature: st.record.signature ?? null,
+      outcome: st.record.outcome ?? 'awaiting provider',
+    }));
+const sendsOf = (role) => consumedSteps('tx', role);
+const hashedSends = (role) => sendsOf(role).filter((t) => t.hash);
+const anythingAllowed = () => planSteps().some((st) => st.status === 'consumed');
 
 // ---------------------------------------------------------------------
 // RULE B — one "halt before the next write" rule (#2422 r2).
@@ -388,30 +412,24 @@ async function pollUntil(label, fn, { timeoutMs = 120_000, everyMs = 3_000 } = {
 }
 
 // ---------------------------------------------------------------------
-// RULE A — the write gate compares every signing request against ONE
-// complete expected object (#2422 r2).
+// THE WRITE GATE — rule A over ONE ordered write plan (#2422 r2, r3).
 //
-// Each phase ARMS its gate with the whole requests it may sign, built
-// before signing from the loan and the typed terms (refinanceExpected.mjs):
-// for a transaction, the full request with its calldata decoded to
-// `{ functionName, args }`; for a typed-data signature, the signer plus the
-// whole typed data (domain, types, primaryType, message). A request is
-// allowed only if `structMismatches` finds NO difference against one of
-// them — every field compared, and any field the expected object does not
-// name is itself a refusal. Nothing is hand-picked, so a field nobody
-// thought of (the Full-tariff trio, round 2) cannot slip through.
+// Rule A: every signing request is compared, over its WHOLE decoded
+// payload, against one complete expected object built before signing from
+// the loan and the typed terms (refinanceExpected.mjs): for a transaction,
+// the full request with its calldata decoded to `{ functionName, args }`;
+// for a typed-data signature, the signer plus the whole typed data. Any
+// difference, and any field the expected object does not name, refuses.
 //
-// The lender's accept CALL is armed only after the lender has signed, with
-// the AcceptTerms pinned to exactly the signed values and the signature
-// that came back — so the transaction can carry nothing but what was
-// signed. A borrower-request accept never uses Permit2 (OfferFlow:
-// `acceptOfferWithPermit` "only serves accepting a LENDER offer"), so no
-// Permit2 approval, signature or call is armed at all.
+// The ORDER (r3): those expected objects are steps of one plan for the
+// whole drive (`buildPlan`, below the preconditions), and a request is
+// allowed only if it matches the NEXT unconsumed step — passing over only
+// steps declared optional. A match consumes the step before the provider
+// is called, so an identical repeat (a stale page re-sending createOffer,
+// a second accept) is refused by construction, as is anything out of
+// order, any step the plan does not contain, and anything after the plan
+// is complete. A refusal latches the plan AND halts the drive (rule B).
 // ---------------------------------------------------------------------
-const gate = {
-  borrower: { open: false, txs: [], typed: [] },
-  lender: { open: false, txs: [], typed: [] },
-};
 const ROLE_ADDRESS = { borrower: BORROWER, lender: LENDER };
 /** Each role's `latest` nonce before anything could be written. */
 let BASELINE_NONCES = null;
@@ -425,38 +443,30 @@ function abiFor(to) {
   return null;
 }
 
-/** Judge one signing request. @returns {{ok: true, purpose, kind}|{ok: false, why}} */
+/** Judge one signing request against the plan. Synchronous: the decision
+ *  and the consumption of the step happen in one turn. */
 function judge(role, method, params) {
-  const g = gate[role];
   if (HALT) return { ok: false, why: `halted — ${HALT}` };
-  if (!g.open) return { ok: false, why: `${role} may not write outside its phase` };
+  if (!PLAN) return { ok: false, why: 'no write plan has been built' };
+  let kind;
+  let actual;
   if (method === 'eth_sendTransaction') {
-    const actual = decodeTxForComparison(params?.[0] ?? {}, abiFor);
-    const reasons = [];
-    for (const cand of g.txs) {
-      const diff = structMismatches(cand.expected, actual);
-      if (diff.length === 0) return { ok: true, purpose: cand.purpose, kind: 'tx', armed: cand };
-      reasons.push(`${cand.purpose}: ${diff.join('; ')}`);
-    }
-    return { ok: false, why: `transaction matches no armed request — ${reasons.join(' | ') || 'none armed'}` };
-  }
-  if (method === 'eth_signTypedData_v4') {
-    let typedData;
+    kind = 'tx';
+    actual = decodeTxForComparison(params?.[0] ?? {}, abiFor);
+  } else if (method === 'eth_signTypedData_v4') {
+    kind = 'typed';
     try {
-      typedData = JSON.parse(params?.[1]);
+      actual = { signer: params?.[0], typedData: JSON.parse(params?.[1]) };
     } catch {
       return { ok: false, why: 'unparseable typed data' };
     }
-    const actual = { signer: params?.[0], typedData };
-    const reasons = [];
-    for (const cand of g.typed) {
-      const diff = structMismatches(cand.expected, actual);
-      if (diff.length === 0) return { ok: true, purpose: cand.purpose, kind: 'typed', armed: cand };
-      reasons.push(`${cand.purpose}: ${diff.join('; ')}`);
-    }
-    return { ok: false, why: `signature matches no armed request — ${reasons.join(' | ') || 'none armed'}` };
+  } else {
+    return { ok: false, why: `unexpected wallet method ${method}` };
   }
-  return { ok: false, why: `unexpected wallet method ${method}` };
+  const r = PLAN.offer(role, kind, actual);
+  if (!r.ok) return r;
+  PLAN.record(r.index, { outcome: 'awaiting provider', ...(kind === 'typed' ? { params } : {}) });
+  return { ok: true, index: r.index, kind, purpose: r.step.purpose, stepId: r.step.id };
 }
 
 const SIGNING_METHODS = [
@@ -478,10 +488,10 @@ const SIGNING_METHODS = [
  * second and finds the provider in place; EIP-6963 announced the same
  * object, so the wrap covers it too.
  *
- * A transaction is recorded by the gate binding itself, synchronously with
- * the decision to allow it and before the page hands it to the provider —
- * so an ambiguous send (broadcast, then the provider rejects) is already on
- * record as "awaiting provider" and is reconciled by nonce, never lost.
+ * The step is consumed inside the gate binding, synchronously with the
+ * decision to allow it and before the page hands the request to the
+ * provider — so an ambiguous send (broadcast, then the provider rejects)
+ * is already on record as "awaiting provider" and is reconciled by nonce.
  */
 async function installGate(ctx, role, advanced = true) {
   await ctx.exposeBinding('__liveRefiGate', async (_src, { method, params }) => {
@@ -489,34 +499,27 @@ async function installGate(ctx, role, advanced = true) {
     if (!v.ok) {
       refusals.push(`${role}: ${method} — ${v.why}`);
       console.log(`GATE  refused ${role} ${method}: ${v.why}`);
-      halt(`the ${role} page asked to sign something not armed (${method})`);
+      halt(`the ${role} page asked to sign something the plan does not allow next (${method})`);
       return { ok: false, why: v.why };
     }
-    console.log(`GATE  allowed ${role}: ${v.purpose}`);
-    if (v.kind === 'tx') {
-      sends.push({ role, purpose: v.purpose, hash: null, outcome: 'awaiting provider' });
-      return { ok: true, kind: 'tx', id: sends.length - 1 };
-    }
-    signatures.push({ role, purpose: v.purpose, armed: v.armed, params, signature: null, outcome: 'awaiting provider' });
-    return { ok: true, kind: 'typed', id: signatures.length - 1 };
+    console.log(`GATE  allowed ${role}: step ${v.stepId} — ${v.purpose}`);
+    return { ok: true, kind: v.kind, index: v.index };
   });
-  await ctx.exposeBinding('__liveRefiOutcome', async (_src, { kind, id, result, error }) => {
-    const rec = kind === 'tx' ? sends[id] : signatures[id];
-    if (!rec) return;
+  await ctx.exposeBinding('__liveRefiOutcome', async (_src, { kind, index, result, error }) => {
+    const st = planSteps()[index];
+    if (!st) return;
     if (error !== undefined) {
-      rec.outcome = `provider rejected: ${String(error).slice(0, 160)}`;
-      console.log(`${kind === 'tx' ? 'TX  ' : 'SIG '}  ${role} ${rec.purpose} — ${rec.outcome}`);
+      const outcome = `provider rejected: ${String(error).slice(0, 160)}`;
+      PLAN.record(index, { outcome });
+      console.log(`${kind === 'tx' ? 'TX  ' : 'SIG '}  ${role} ${st.purpose} — ${outcome}`);
       return;
     }
     if (kind === 'tx') {
-      rec.hash = result;
-      rec.outcome = 'hash returned';
-      console.log(`TX    ${role} sent ${rec.purpose}: ${result}`);
+      PLAN.record(index, { hash: result, outcome: 'hash returned' });
+      console.log(`TX    ${role} sent ${st.purpose}: ${result}`);
     } else {
-      rec.signature = result;
-      rec.outcome = 'signed';
-      console.log(`SIG   ${role} signed ${rec.purpose}`);
-      await rec.armed.onSigned?.(rec);
+      PLAN.record(index, { signature: result, outcome: 'signed' });
+      console.log(`SIG   ${role} signed ${st.purpose}`);
     }
   });
   await ctx.addInitScript(
@@ -544,10 +547,10 @@ async function installGate(ctx, role, advanced = true) {
         try {
           res = await inner(payload);
         } catch (err) {
-          await window.__liveRefiOutcome({ kind: v.kind, id: v.id, error: String(err?.message ?? err) });
+          await window.__liveRefiOutcome({ kind: v.kind, index: v.index, error: String(err?.message ?? err) });
           throw err;
         }
-        await window.__liveRefiOutcome({ kind: v.kind, id: v.id, result: res });
+        await window.__liveRefiOutcome({ kind: v.kind, index: v.index, result: res });
         return res;
       };
       p.__liveRefiWrapped = true;
@@ -569,11 +572,11 @@ async function installGate(ctx, role, advanced = true) {
 async function reconcileSends(baselineNonces) {
   const lines = [];
   let unreconciled = false;
-  if (!baselineNonces && sends.length > 0) {
+  if (!baselineNonces && sendsOf().length > 0) {
     return { lines: ['no nonce baseline was taken — allowed sends cannot be reconciled'], unreconciled: true };
   }
   for (const role of ['borrower', 'lender']) {
-    const allowed = sends.filter((t) => t.role === role);
+    const allowed = sendsOf(role);
     if (allowed.length === 0) continue;
     const who = ROLE_ADDRESS[role];
     let latest;
@@ -627,7 +630,7 @@ async function reconcileSends(baselineNonces) {
  * on where in the flow a call site happens to sit.
  */
 async function blockedBeforeAnyWrite(why, err) {
-  if (sends.length > 0 || signatures.length > 0) {
+  if (anythingAllowed()) {
     console.log(`\nSTOPPED (FAIL, not BLOCKED — the gate had already allowed a write): ${why}`);
     await report(BASELINE_NONCES);
     process.exit(1);
@@ -636,24 +639,35 @@ async function blockedBeforeAnyWrite(why, err) {
 }
 
 async function report(baselineNonces) {
-  console.log('\n=== transactions the gate allowed ===');
-  if (sends.length === 0) console.log('(none — nothing was written)');
-  for (const t of sends) {
-    let status = t.outcome;
-    if (t.hash) {
-      try {
-        const r = await pub.waitForTransactionReceipt({ hash: t.hash, timeout: 120_000 });
-        status = `${r.status} @ block ${r.blockNumber}`;
-      } catch (e) {
-        status = `receipt unavailable (${String(e.shortMessage ?? e.message).slice(0, 80)})`;
+  console.log('\n=== write plan ===');
+  if (!PLAN) console.log('(no plan was built — nothing could be written)');
+  else if (!anythingAllowed()) console.log('(no step was consumed — nothing was written)');
+  for (const st of planSteps()) {
+    let detail = '';
+    if (st.status === 'consumed') {
+      if (st.kind === 'tx') {
+        detail = st.record.hash ?? '(no hash — outcome unknown)';
+        if (st.record.hash) {
+          try {
+            const r = await pub.waitForTransactionReceipt({ hash: st.record.hash, timeout: 120_000 });
+            detail += ` → ${r.status} @ block ${r.blockNumber}`;
+          } catch (e) {
+            detail += ` → receipt unavailable (${String(e.shortMessage ?? e.message).slice(0, 80)})`;
+          }
+        } else {
+          detail += ` → ${st.record.outcome ?? 'awaiting provider'}`;
+        }
+      } else {
+        detail = st.record.outcome ?? 'awaiting provider';
       }
     }
-    console.log(`${t.role.padEnd(8)} ${t.hash ?? '(no hash — outcome unknown)'}  ${t.purpose}  → ${status}`);
+    const status = st.status === 'pending' ? (st.optional ? 'not used' : 'NOT REACHED') : st.status;
+    console.log(
+      `${st.id.padEnd(16)} ${st.role.padEnd(8)} ${st.kind.padEnd(5)} ${status.padEnd(11)} ${st.purpose}` +
+        (detail ? `  ${detail}` : ''),
+    );
   }
-  if (signatures.length) {
-    console.log('\n=== signatures the gate allowed ===');
-    for (const s of signatures) console.log(`${s.role.padEnd(8)} ${s.purpose} → ${s.outcome}`);
-  }
+  if (PLAN?.refusal()) console.log(`plan refusal: ${PLAN.refusal()}`);
   const rec = await reconcileSends(baselineNonces);
   if (rec.lines.length) {
     console.log('\n=== nonce reconciliation ===');
@@ -742,7 +756,55 @@ const pre = await precondition('reading the preconditions from chain', async () 
   // the same getter, fail-closed). Read before any write so the expected
   // acceptance terms are complete before the first signature.
   const riskTermsHash = await read('getCurrentRiskTermsHash', [], head);
-  return { head, now: block.timestamp, loan, riskGate, autoRefi, paused, flags, collLiquidity, tosB, tosL, b, l, offerIds, openRequests, caps, lifBps, riskTermsHash };
+  // The principal token's decimals, for every principal-denominated figure
+  // this drive prints (#2422 r3 P2). The raw comparisons never depend on it.
+  const principalDecimals = await pub.readContract({
+    address: loan.principalAsset,
+    abi: erc20Abi,
+    functionName: 'decimals',
+    blockNumber: head,
+  });
+  // Who holds each position NOW (#2422 r3 P2). The stored borrower is what
+  // carry-over binds to; the position NFT is who may act on the position.
+  const [borrowerPositionHolder, lenderPositionHolder] = await Promise.all([
+    read('ownerOf', [loan.borrowerTokenId], head),
+    read('ownerOf', [loan.lenderTokenId], head),
+  ]);
+  // Sanctions screening — the SAME view the app uses
+  // (`assertWalletNotSanctionedLive` reads `isSanctionedAddress`), plus the
+  // oracle address so an unset oracle is REPORTED rather than passed by
+  // silence (#2422 r3 P2). Unlike the app's fail-open helper, a read error
+  // here throws, so this drive BLOCKS rather than writing unscreened.
+  const [sanctionsOracle, sanctionedB, sanctionedL] = await Promise.all([
+    read('getSanctionsOracle', [], head),
+    read('isSanctionedAddress', [BORROWER], head),
+    read('isSanctionedAddress', [LENDER], head),
+  ]);
+  return {
+    head,
+    now: block.timestamp,
+    loan,
+    riskGate,
+    autoRefi,
+    paused,
+    flags,
+    collLiquidity,
+    tosB,
+    tosL,
+    b,
+    l,
+    offerIds,
+    openRequests,
+    caps,
+    lifBps,
+    riskTermsHash,
+    principalDecimals,
+    borrowerPositionHolder,
+    lenderPositionHolder,
+    sanctionsOracle,
+    sanctionedB,
+    sanctionedL,
+  };
 });
 
 const { loan } = pre;
@@ -753,7 +815,19 @@ const want = (label, ok, observed) => {
 };
 want('loan is Active', loan.status === LOAN_STATUS.ACTIVE, loan.status);
 want('stored borrower is the borrower role', eq(loan.borrower, BORROWER), loan.borrower);
+want(
+  'the borrower role holds the borrower position NFT (ownerOf at the pinned block)',
+  eq(pre.borrowerPositionHolder, BORROWER),
+  `token ${loan.borrowerTokenId} → ${pre.borrowerPositionHolder}`,
+);
 want('accepting lender differs from the current lender', !eq(loan.lender, LENDER), loan.lender);
+want(
+  'the accepting lender does not hold the lender position NFT (a self-refinance is not this scenario)',
+  !eq(pre.lenderPositionHolder, LENDER),
+  `token ${loan.lenderTokenId} → ${pre.lenderPositionHolder}`,
+);
+want('borrower is not flagged by the sanctions oracle (isSanctionedAddress)', pre.sanctionedB === false, pre.sanctionedB);
+want('lender is not flagged by the sanctions oracle (isSanctionedAddress)', pre.sanctionedL === false, pre.sanctionedL);
 want('accepting lender is not the borrower', !eq(LENDER, BORROWER), LENDER);
 want('collateral recorded Illiquid on the loan', loan.collateralLiquidity === LIQUIDITY_ILLIQUID, loan.collateralLiquidity);
 want('collateral is Illiquid now (checkLiquidity)', Number(pre.collLiquidity) === LIQUIDITY_ILLIQUID, pre.collLiquidity);
@@ -787,7 +861,9 @@ want('lender accepted current Terms', pre.tosL === true, pre.tosL);
 want('no open refinance request on this loan', pre.openRequests.length === 0, pre.openRequests.join(',') || 'none');
 want('borrower has no pending transactions', pre.b.nonceLatest === pre.b.noncePending, `${pre.b.nonceLatest}/${pre.b.noncePending}`);
 want('lender has no pending transactions', pre.l.nonceLatest === pre.l.noncePending, `${pre.l.nonceLatest}/${pre.l.noncePending}`);
-want('lender holds the principal', pre.l.principal >= loan.principal, formatUnits(pre.l.principal, 18));
+const PDEC = Number(pre.principalDecimals);
+const fmtP = (v) => formatUnits(v, PDEC);
+want('lender holds the principal', pre.l.principal >= loan.principal, `${fmtP(pre.l.principal)} ≥ ${fmtP(loan.principal)}`);
 // What the borrower must hold SPARE when the lender accepts: the payoff's
 // interest share plus the new loan's initiation fee (the new principal
 // arrives in the same transaction). The interest share is the FULL term
@@ -800,10 +876,18 @@ want('lender holds the principal', pre.l.principal >= loan.principal, formatUnit
 const fullTermInterest = (loan.principal * loan.interestRateBps * loan.durationDays) / (10_000n * 365n);
 const lifWei = (loan.principal * BigInt(pre.lifBps)) / 10_000n;
 const borrowerSpareNeed = fullTermInterest + lifWei;
-console.log(`pre   live loan-initiation fee: ${pre.lifBps} bps → ${formatUnits(lifWei, 18)} on the new principal`);
-want('borrower holds the payoff top-up (interest share + live LIF)', pre.b.principal >= borrowerSpareNeed, `${formatUnits(pre.b.principal, 18)} ≥ ${formatUnits(borrowerSpareNeed, 18)}`);
+console.log(`pre   live loan-initiation fee: ${pre.lifBps} bps → ${fmtP(lifWei)} on the new principal (decimals ${PDEC})`);
+want('borrower holds the payoff top-up (interest share + live LIF)', pre.b.principal >= borrowerSpareNeed, `${fmtP(pre.b.principal)} ≥ ${fmtP(borrowerSpareNeed)}`);
 const GAS_FLOOR = 300_000_000_000_000n; // 0.0003 ETH — several Base Sepolia txs
 console.log(`pre   current risk-terms hash: ${pre.riskTermsHash}`);
+// An unset oracle is fail-open BY DESIGN on the retail deploy: every
+// address reads unflagged. Say so — a "not flagged" verdict from an unset
+// oracle is not a screening result, and must not read as one.
+if (/^0x0{40}$/i.test(pre.sanctionsOracle)) {
+  note('sanctions oracle is UNSET on this deployment — isSanctionedAddress is fail-open by design, so "not flagged" screened nobody');
+} else {
+  console.log(`pre   sanctions oracle: ${pre.sanctionsOracle} — both wallets screened at block ${pre.head}`);
+}
 want('borrower has gas', pre.b.eth >= GAS_FLOOR, formatUnits(pre.b.eth, 18));
 want('lender has gas', pre.l.eth >= GAS_FLOOR, formatUnits(pre.l.eth, 18));
 console.log(`pre   auto-refinance switch: ${pre.autoRefi}; matcher partialFill: ${pre.flags[2]}; caps on loan: ${JSON.stringify(pre.caps, (_k, v) => (typeof v === 'bigint' ? String(v) : v))}`);
@@ -850,90 +934,31 @@ const EXPECT = {
 const nowSec = () => BigInt(Math.floor(Date.now() / 1000));
 EXPECT_LOAN = loan;
 
-/** Arm the borrower's gate: the three requests the form may sign. */
-function armBorrower() {
-  const tx = (call) => expectedTx({ from: BORROWER, to: DIAMOND, call, chainId: CHAIN_ID });
-  gate.borrower.txs = [
-    {
-      purpose: `setAutoRefinanceCaps(${LOAN_ID}, on, ${RATE_BPS} bps)`,
-      expected: tx(expectedCapsCall({ loanId: LOAN_ID, rateBps: RATE_BPS, days: DAYS_N, nowSec })),
-    },
-    {
-      purpose: 'approve(Diamond, payoff)',
-      expected: expectedTx({
-        from: BORROWER,
-        to: loan.principalAsset,
-        call: expectedApproveCall({ spender: DIAMOND, cap: EXPECT.payoffApprovalCap, why: 'the payoff bound' }),
-        chainId: CHAIN_ID,
-      }),
-    },
-    {
-      purpose: `createOffer(refinance of loan ${LOAN_ID})`,
-      expected: tx(expectedCreateOfferCall({ loan, loanId: LOAN_ID, rateBps: RATE_BPS, days: DAYS_N, nowSec })),
-    },
-  ];
-  gate.borrower.typed = []; // the borrower signs no typed data on this path
-}
-
-/**
- * Arm the lender's gate for `requestId`: the principal approval and the
- * AcceptTerms signature. The accept CALL is armed only once that signature
- * comes back, pinned to exactly the signed terms and signature.
- */
-function armLender(requestId) {
-  const termsArgs = {
+/** The request's id, once phase 2 has pinned it from the receipt. */
+let REQUEST_ID = null;
+// The drive's ONE write plan, built here — before the first write — from
+// the loan and the typed terms. See `refinancePlanSteps` for the order and
+// what each step may carry.
+PLAN = createWritePlan(
+  refinancePlanSteps({
+    abi: DIAMOND_ABI,
+    chainId: CHAIN_ID,
+    diamond: DIAMOND,
     loan,
     loanId: LOAN_ID,
-    requestId,
-    lender: LENDER,
     borrower: BORROWER,
+    lender: LENDER,
     rateBps: RATE_BPS,
     days: DAYS_N,
     riskTermsHash: pre.riskTermsHash,
+    payoffApprovalCap: EXPECT.payoffApprovalCap,
     nowSec,
-  };
-  const approve = {
-    purpose: 'approve(Diamond, principal)',
-    expected: expectedTx({
-      from: LENDER,
-      to: loan.principalAsset,
-      call: expectedApproveCall({ spender: DIAMOND, cap: loan.principal, why: 'the principal' }),
-      chainId: CHAIN_ID,
-    }),
-  };
-  gate.lender.txs = [approve];
-  gate.lender.typed = [
-    {
-      purpose: `sign AcceptTerms for request #${requestId}`,
-      expected: expectedAcceptTypedData({
-        abi: DIAMOND_ABI,
-        chainId: CHAIN_ID,
-        diamond: DIAMOND,
-        signer: LENDER,
-        terms: expectedAcceptTerms(termsArgs),
-      }),
-      onSigned: (rec) => {
-        const signed = JSON.parse(rec.params[1]).message;
-        const terms = expectedAcceptTerms({
-          ...termsArgs,
-          pinned: { nonce: BigInt(signed.nonce), deadline: BigInt(signed.deadline) },
-        });
-        gate.lender.txs = [
-          approve,
-          {
-            purpose: `acceptOffer(offer ${requestId})`,
-            expected: expectedTx({
-              from: LENDER,
-              to: DIAMOND,
-              call: expectedAcceptOfferCall({ requestId, terms, signature: rec.signature }),
-              chainId: CHAIN_ID,
-            }),
-          },
-        ];
-      },
-    },
-  ];
-}
+    requestId: () => REQUEST_ID,
+    signedAcceptTerms: () => planSteps().find((st) => st.id === 'l-sign' && st.status === 'consumed')?.record ?? null,
+  }),
+);
+console.log(`pre   write plan: ${planSteps().map((st) => `${st.id}${st.optional ? '?' : ''}`).join(' → ')}`);
+
 const baselineCollateral = pre.b.collateral;
 const baselineNonces = { borrower: pre.b.nonceLatest, lender: pre.l.nonceLatest };
 BASELINE_NONCES = baselineNonces;
@@ -1034,8 +1059,6 @@ try {
   // Rule A: arm the gate with the three complete requests the form may
   // sign, then open it — the confirm is the one action that may write.
   beforeWriteStep('ticking the borrower consent');
-  armBorrower();
-  gate.borrower.open = true;
   const confirm = card.getByRole('button', { name: /confirm — post refinance request/i });
   const consentBox = card.locator('input[type="checkbox"]');
   const confirmed = await pollUntil('consent + confirm enabled', async () => {
@@ -1059,7 +1082,6 @@ try {
     const m = t.match(/Refinance request #(\d+) is live/i);
     return m ? m[1] : null;
   }, { timeoutMs: 300_000, everyMs: 2_000 });
-  gate.borrower.open = false;
   await session.shot('refinance-05-posted');
   if (refusals.length) stop('the borrower form asked for a write the gate had not armed');
   if (HALT) stop(`halted while posting: ${HALT}`);
@@ -1084,7 +1106,7 @@ try {
   // An allowed send whose provider returned no hash is an UNKNOWN, not an
   // absence: it may have been broadcast. Stop rather than reason past it;
   // the report reconciles it against the borrower's nonce.
-  const unhashedB = sends.filter((t) => t.role === 'borrower' && !t.hash);
+  const unhashedB = sendsOf('borrower').filter((t) => !t.hash);
   if (unhashedB.length) {
     stop(`borrower send(s) with no hash — outcome unknown: ${unhashedB.map((t) => t.purpose).join(', ')}`);
   }
@@ -1108,6 +1130,9 @@ try {
     .filter((e) => e?.eventName === 'OfferCreated');
   if (created.length !== 1) stop(`createOffer receipt carries ${created.length} OfferCreated events`);
   requestId = created[0].args.offerId;
+  // Only now can the lender's plan steps be judged; until this line they
+  // refuse, so no lender write could precede the request's pinning.
+  REQUEST_ID = requestId;
   check('page names the same request id the receipt created', pageRequestId === requestId, `page #${pageRequestId}, receipt #${requestId}`);
 
   const atCreate = createRcpt.blockNumber;
@@ -1240,8 +1265,6 @@ try {
   await session.shot('refinance-08-lender-review');
 
   beforeWriteStep('ticking the lender consent');
-  armLender(requestId);
-  gate.lender.open = true;
   const canSign = await pollUntil('consent + "Fund this borrower" enabled', async () => {
     beforeWriteStep('ticking the lender consent');
     if (!(await consent.isChecked())) await consent.check();
@@ -1250,7 +1273,6 @@ try {
   }, { timeoutMs: 120_000, everyMs: 3_000 });
   if (HALT) stop(`not funding: ${HALT}`);
   if (!canSign) {
-    gate.lender.open = false;
     stop('the deployed UI never enabled "Fund this borrower" for this request (see the review transcript above)');
   }
   beforeWriteStep('submitting "Fund this borrower"');
@@ -1267,7 +1289,6 @@ try {
     }
     return null;
   }, { timeoutMs: 300_000, everyMs: 2_000 });
-  gate.lender.open = false;
   await session.shot('refinance-09-lender-done');
   const doneText = (await lp.locator('body').innerText()).replace(/\s+/g, ' ');
   if (refusals.length) stop('the lender flow asked for a write the gate had not armed');
@@ -1280,7 +1301,7 @@ try {
   // -------------------------------------------------------------------
   // 4. On-chain outcome, pinned at or after the accept's block.
   // -------------------------------------------------------------------
-  const unhashedL = sends.filter((t) => t.role === 'lender' && !t.hash);
+  const unhashedL = sendsOf('lender').filter((t) => !t.hash);
   if (unhashedL.length) {
     stop(`lender send(s) with no hash — outcome unknown: ${unhashedL.map((t) => t.purpose).join(', ')}`);
   }
@@ -1385,9 +1406,9 @@ try {
       pub.getTransactionCount({ address: who, blockTag: 'pending' }),
     ]);
     const hashed = hashedSends(role).length;
-    const allowed = sends.filter((t) => t.role === role).length;
+    const allowed = sendsOf(role).length;
     check(
-      `${role}: nonce delta == allowed sends, all with a hash, none pending`,
+      `${role}: nonce delta == consumed plan transactions, all with a hash, none pending`,
       latest - baselineNonces[role] === hashed && hashed === allowed && pending === latest,
       `mined +${latest - baselineNonces[role]}, pending +${pending - latest}, allowed ${allowed}, hashed ${hashed}`,
     );
@@ -1401,9 +1422,10 @@ try {
   // allowed send without a hash may have been broadcast (#2422 r2 P1), and
   // the reconciliation below says which.
   console.log(
-    sends.length === 0
-      ? '(the gate allowed no transaction before the drive stopped — nothing was written)'
-      : `(${sends.length} transaction(s) were allowed before the drive stopped — see the report and nonce reconciliation)`,
+    !anythingAllowed()
+      ? '(no plan step was consumed before the drive stopped — nothing was written)'
+      : `(${sendsOf().length} transaction step(s) and ${consumedSteps('typed').length} signature step(s) were ` +
+          'consumed before the drive stopped — see the write plan and nonce reconciliation)',
   );
   if (err instanceof Stop) {
     /* already explained */
@@ -1416,8 +1438,6 @@ try {
     /* the page may already be gone */
   }
 } finally {
-  gate.borrower.open = false;
-  gate.lender.open = false;
   await closeSession('borrower');
   await closeSession('lender');
 }
