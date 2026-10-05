@@ -168,6 +168,9 @@ library LibAutoRefinanceCheck {
         if (!offer.refinanceCarryOver) return false;
         if (offer.refinanceTargetLoanId != oldLoanId) return false;
         if (offer.offerType != LibVaipakam.OfferType.Borrower) return false;
+        // #2407 — only the loan's recorded request completes a refinance
+        // (`RefinanceFacet` reverts `RefinanceRequestNotRecorded` otherwise).
+        if (s.refinanceRequestOfLoan[oldLoanId] != offer.id) return false;
 
         LibVaipakam.Loan storage oldLoan = s.loans[oldLoanId];
         if (oldLoan.status != LibVaipakam.LoanStatus.Active) return false;

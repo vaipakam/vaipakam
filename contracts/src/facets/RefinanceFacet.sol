@@ -1087,35 +1087,46 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         live = offerId != 0 && LibRefinanceRequest.isLive(s, loanId, offerId);
     }
 
-    /// @notice Record refinance requests posted before the index existed,
-    ///         scanning offer ids `fromOfferId..toOfferId` (inclusive; clamped
-    ///         to the last offer id). Permissionless: it records only what the
-    ///         chain already proves — a request that is live by the rule above,
-    ///         for a loan whose recorded request may be replaced (the same rule
-    ///         creation applies) — so a caller can neither invent a request nor
-    ///         displace one. The range bounds the gas; call it in slices.
-    /// @dev    Until it is recorded, a pre-index request can neither fill nor
-    ///         hold the loan back (only the recorded request completes a
-    ///         refinance). Before the index, nothing stopped a borrower posting
-    ///         two requests for one loan; if two are still live, the FIRST in id
-    ///         order is recorded and the other can never fill — its creator
-    ///         cancels it. The same holds for a pre-index request the holder
-    ///         replaced with a new one before this backfill reached it.
+    /// @notice Record refinance requests posted before the index existed.
+    ///         Scans the next `maxOffers` offer ids after the stored cursor, in
+    ///         id order, and advances the cursor; call it repeatedly until the
+    ///         cursor reaches the last offer id. Permissionless: it records only
+    ///         what the chain already proves, so a caller can neither invent a
+    ///         request, displace one, nor choose between two — the cursor fixes
+    ///         the order (first in offer-id order wins).
+    /// @dev    An offer is recorded for its target loan when nothing the
+    ///         creation rule protects is recorded there yet, no offset is live
+    ///         on the loan, and the offer is EITHER a live request (by
+    ///         {LibRefinanceRequest.isLive}) OR a request accepted under the
+    ///         pre-atomic flow whose replacement loan exists while the target
+    ///         is still Active — its standalone {refinanceLoan} completion needs
+    ///         the record. Until recorded, a pre-index request can neither fill
+    ///         nor hold the loan back. A second pre-index request for the same
+    ///         loan, or one the holder replaced with a new request before the
+    ///         cursor reached it, can never fill; its creator cancels it.
     /// @return recorded How many requests this call recorded.
+    /// @return cursor   The highest offer id scanned so far.
     function indexRefinanceRequests(
-        uint256 fromOfferId,
-        uint256 toOfferId
-    ) external whenNotPaused returns (uint256 recorded) {
+        uint256 maxOffers
+    ) external whenNotPaused returns (uint256 recorded, uint256 cursor) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        uint256 last = s.nextOfferId;
-        if (toOfferId > last) toOfferId = last;
-        for (uint256 id = fromOfferId == 0 ? 1 : fromOfferId; id <= toOfferId; ++id) {
-            uint256 loanId = s.offers[id].refinanceTargetLoanId;
-            if (loanId == 0 || !LibRefinanceRequest.isLive(s, loanId, id)) continue;
+        cursor = s.refinanceBackfillCursor;
+        uint256 end = s.nextOfferId;
+        if (end - cursor > maxOffers) end = cursor + maxOffers;
+        while (cursor < end) {
+            uint256 id = ++cursor;
+            LibVaipakam.Offer storage o = s.offers[id];
+            uint256 loanId = o.refinanceTargetLoanId;
+            if (loanId == 0 || s.loanToOffsetOfferId[loanId] != 0) continue;
+            bool awaitingCompletion = o.accepted &&
+                s.offerIdToLoanId[id] != 0 &&
+                s.loans[loanId].status == LibVaipakam.LoanStatus.Active;
+            if (!awaitingCompletion && !LibRefinanceRequest.isLive(s, loanId, id)) continue;
             (uint256 prior,) = LibRefinanceRequest.blockingRecord(loanId);
             if (prior != 0) continue;
             s.refinanceRequestOfLoan[loanId] = id;
             ++recorded;
         }
+        s.refinanceBackfillCursor = cursor;
     }
 }

@@ -16,6 +16,9 @@ import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibSwap} from "../src/libraries/LibSwap.sol";
+import {LibOfferMatch} from "../src/libraries/LibOfferMatch.sol";
+import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
+import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
@@ -242,8 +245,6 @@ contract RefinanceRequestGuardTest is SetupTest {
     function test_indexRecordsAPreIndexRequestAndNeverDisplacesOne() public {
         uint256 loanId = _activeLoan();
         uint256 offerId = _request(loanId, 0);
-        // Recording again changes nothing: the request is already indexed.
-        assertEq(RefinanceFacet(address(diamond)).indexRefinanceRequests(1, type(uint256).max), 0);
 
         // Simulate a request posted before the index existed: clear its slot.
         bytes32 slot = _indexSlotOf(loanId, offerId);
@@ -252,8 +253,15 @@ contract RefinanceRequestGuardTest is SetupTest {
 
         // Anyone may record it; only what the chain proves is recorded.
         vm.prank(makeAddr("anyone"));
-        assertEq(RefinanceFacet(address(diamond)).indexRefinanceRequests(1, type(uint256).max), 1);
+        assertEq(_index(), 1);
         assertEq(_live(loanId), offerId);
+        // The cursor has passed it: a further call scans nothing new.
+        assertEq(_index(), 0);
+    }
+
+    /// Runs the backfill over every offer id not yet scanned.
+    function _index() internal returns (uint256 recorded) {
+        (recorded,) = RefinanceFacet(address(diamond)).indexRefinanceRequests(type(uint256).max);
     }
 
     // ─── #2424 r1 — only the RECORDED request can fill ───────────────
@@ -330,7 +338,7 @@ contract RefinanceRequestGuardTest is SetupTest {
         uint256 r2 = OfferCreateFacet(address(diamond)).createOffer(
             _params(LibVaipakam.OfferType.Borrower, 400, LibVaipakam.FillMode.Aon, loanId, 0)
         );
-        assertEq(RefinanceFacet(address(diamond)).indexRefinanceRequests(1, type(uint256).max), 0);
+        assertEq(_index(), 0);
         assertEq(_live(loanId), r2);
         _acceptExpectingRevert(r1, _notRecorded(loanId, r1));
     }
@@ -340,7 +348,7 @@ contract RefinanceRequestGuardTest is SetupTest {
         uint256 loanId = _activeLoan();
         uint256 r1 = _request(loanId, 0);
         vm.store(address(diamond), _indexSlotOf(loanId, r1), bytes32(0));
-        assertEq(RefinanceFacet(address(diamond)).indexRefinanceRequests(1, type(uint256).max), 1);
+        assertEq(_index(), 1);
 
         (address l, uint256 pk) = _replacementLender("backfillLender");
         _signAndAcceptOffer(l, pk, r1);
@@ -373,6 +381,149 @@ contract RefinanceRequestGuardTest is SetupTest {
         OfferCancelFacet(address(diamond)).cancelOffer(r1);
         uint256 r2 = _request(loanId, 0);
         assertEq(_live(loanId), r2);
+    }
+
+    // ─── #2424 r2 ─────────────────────────────────────────────────────
+
+    /// An offset closes the loan when it completes, so a request is not posted
+    /// while one is live — the order the offset guard cannot see.
+    function test_aRequestIsRefusedWhileAnOffsetIsLive() public {
+        uint256 loanId = _activeLoan();
+        address borrowerVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower);
+        vm.startPrank(borrower);
+        ERC20(mockERC20).approve(borrowerVault, type(uint256).max);
+        ERC20(mockERC20).approve(address(diamond), type(uint256).max);
+        uint256 offsetOfferId = PrecloseFacet(address(diamond)).offsetWithNewOffer(
+            loanId, 500, 30, mockCollateralERC20, LOAN_COLLATERAL, true, mockERC20
+        );
+        AutoLifecycleFacet(address(diamond)).setAutoRefinanceCaps(
+            loanId, true, 600, uint64(block.timestamp + 365 days)
+        );
+        vm.expectRevert(
+            abi.encodeWithSelector(IVaipakamErrors.RefinanceBlockedByOffset.selector, loanId, offsetOfferId)
+        );
+        OfferCreateFacet(address(diamond)).createOffer(
+            _params(LibVaipakam.OfferType.Borrower, 400, LibVaipakam.FillMode.Aon, loanId, 0)
+        );
+        // Once the offset is withdrawn, the request may be posted.
+        OfferCancelFacet(address(diamond)).cancelOffer(offsetOfferId);
+        uint256 r = OfferCreateFacet(address(diamond)).createOffer(
+            _params(LibVaipakam.OfferType.Borrower, 400, LibVaipakam.FillMode.Aon, loanId, 0)
+        );
+        vm.stopPrank();
+        assertEq(_live(loanId), r);
+    }
+
+    /// The backfill walks offer ids in order from a stored cursor, so of two
+    /// pre-index requests for one loan the FIRST is recorded — no caller can
+    /// pick the other.
+    function test_theBackfillRecordsTheFirstOfTwoPreIndexRequests() public {
+        uint256 loanId = _activeLoan();
+        uint256 r1 = _request(loanId, 0);
+        bytes32 slot = _indexSlotOf(loanId, r1);
+        vm.store(address(diamond), slot, bytes32(0));
+        vm.prank(borrower);
+        uint256 r2 = OfferCreateFacet(address(diamond)).createOffer(
+            _params(LibVaipakam.OfferType.Borrower, 400, LibVaipakam.FillMode.Aon, loanId, 0)
+        );
+        vm.store(address(diamond), slot, bytes32(0));
+        assertGt(r2, r1);
+
+        // Stepping one offer at a time cannot reach R2 before R1.
+        vm.startPrank(makeAddr("anyone"));
+        uint256 cursor;
+        while (cursor < r2) {
+            (, cursor) = RefinanceFacet(address(diamond)).indexRefinanceRequests(1);
+        }
+        vm.stopPrank();
+        assertEq(_live(loanId), r1, "the first request in offer-id order is recorded");
+        _acceptExpectingRevert(r2, _notRecorded(loanId, r2));
+    }
+
+    /// The accept preview reports an unrecorded request as unfillable, instead
+    /// of advertising an acceptance the refinance hook would revert.
+    function test_theAcceptPreviewReportsAnUnrecordedRequest() public {
+        uint256 loanId = _activeLoan();
+        uint256 r1 = _request(loanId, 0);
+        address l = makeAddr("previewLender");
+        assertTrue(
+            OfferPreviewFacet(address(diamond)).previewAccept(r1, l).errorCode
+                != OfferAcceptFacet.AcceptError.RefinanceRequestNotRecorded,
+            "the recorded request is not flagged"
+        );
+        vm.store(address(diamond), _indexSlotOf(loanId, r1), bytes32(0));
+        assertEq(
+            uint8(OfferPreviewFacet(address(diamond)).previewAccept(r1, l).errorCode),
+            uint8(OfferAcceptFacet.AcceptError.RefinanceRequestNotRecorded)
+        );
+    }
+
+    /// The match preview (the bots' and the matcher's admission check) refuses
+    /// an unrecorded carry-over request too.
+    function test_theMatchPreviewRefusesAnUnrecordedRequest() public {
+        uint256 loanId = _activeLoan();
+        uint256 r1 = _request(loanId, 0);
+        vm.prank(lender);
+        uint256 lenderOffer = OfferCreateFacet(address(diamond)).createOffer(
+            _params(LibVaipakam.OfferType.Lender, 400, LibVaipakam.FillMode.Partial, 0, 0)
+        );
+        assertTrue(
+            OfferMatchFacet(address(diamond)).previewMatch(lenderOffer, r1).errorCode
+                != LibOfferMatch.MatchError.RefinanceTagged,
+            "the recorded carry-over request is admissible"
+        );
+        vm.store(address(diamond), _indexSlotOf(loanId, r1), bytes32(0));
+        assertEq(
+            uint8(OfferMatchFacet(address(diamond)).previewMatch(lenderOffer, r1).errorCode),
+            uint8(LibOfferMatch.MatchError.RefinanceTagged)
+        );
+    }
+
+    /// A request accepted under the pre-atomic, step-by-step flow — replacement
+    /// loan created, original still Active, completion pending — is recorded by
+    /// the backfill so its standalone completion can proceed. The state is
+    /// built by muting the refinance hook during the accept, which is exactly
+    /// what that flow left behind.
+    function test_theBackfillRecordsALegacyAcceptedRequestSoItCanComplete() public {
+        uint256 loanId = _activeLoan();
+        uint256 r1 = _request(loanId, 0);
+        bytes32 slot = _indexSlotOf(loanId, r1);
+        (address l, uint256 pk) = _replacementLender("legacyLender");
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RefinanceFacet.refinanceLoanFromAccept.selector),
+            ""
+        );
+        uint256 newLoanId = _signAndAcceptOffer(l, pk, r1);
+        vm.clearMockedCalls();
+        // (that also cleared the oracle mocks the loan was priced with)
+        mockOracleLiquidity(mockERC20, LibVaipakam.LiquidityStatus.Liquid);
+        mockOraclePrice(mockERC20, 1e8, 8);
+        mockOracleLiquidity(mockCollateralERC20, LibVaipakam.LiquidityStatus.Liquid);
+        mockOraclePrice(mockCollateralERC20, 1e8, 8);
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(loanId).status),
+            uint8(LibVaipakam.LoanStatus.Active),
+            "precondition: the original loan awaits completion"
+        );
+        // Pre-index: nothing recorded.
+        vm.store(address(diamond), slot, bytes32(0));
+
+        assertEq(_index(), 1, "the awaiting-completion request is recorded");
+        assertEq(_recorded(loanId), r1);
+        assertEq(_live(loanId), 0, "an accepted request does not hold the loan back");
+
+        vm.prank(borrower);
+        RefinanceFacet(address(diamond)).refinanceLoan(loanId, r1);
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(loanId).status),
+            uint8(LibVaipakam.LoanStatus.Repaid),
+            "the standalone completion went through"
+        );
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(newLoanId).status),
+            uint8(LibVaipakam.LoanStatus.Active)
+        );
     }
 
     /// The storage slot holding `loanId`'s indexed request, found by observing

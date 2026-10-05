@@ -1793,4 +1793,12 @@ interface IVaipakamErrors {
     ///         `indexRefinanceRequests` records it; one displaced from the record
     ///         stays unacceptable — cancel it.
     error RefinanceRequestNotRecorded(uint256 loanId, uint256 offerId);
+
+    /// @notice #2407 — `loanId` has a live offset (`offsetOfferId`, the
+    ///         borrower's early-close offset offer), so a refinance request for
+    ///         it is refused: completing the offset closes the loan and would
+    ///         leave the request unfillable. Cancel the offset first. (The
+    ///         reverse order is refused too — an offset is not opened while a
+    ///         live refinance request targets the loan.)
+    error RefinanceBlockedByOffset(uint256 loanId, uint256 offsetOfferId);
 }

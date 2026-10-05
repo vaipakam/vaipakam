@@ -133,12 +133,19 @@ library LibRefinanceRequest {
         return (prior, false);
     }
 
-    /// @notice Record `offerId` as `loanId`'s request — one per loan, and
-    ///         never displacing one its holder has not cancelled
-    ///         ({assertReplaceable}).
+    /// @notice Record `offerId` as `loanId`'s request — one per loan, never
+    ///         displacing one its holder has not cancelled
+    ///         ({assertReplaceable}), and never while an offset is live on the
+    ///         loan (completing the offset would close the loan underneath the
+    ///         request; the offset is refused in the other order too).
     function record(uint256 loanId, uint256 offerId) internal {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256 offsetOfferId = s.loanToOffsetOfferId[loanId];
+        if (offsetOfferId != 0) {
+            revert IVaipakamErrors.RefinanceBlockedByOffset(loanId, offsetOfferId);
+        }
         assertReplaceable(loanId);
-        LibVaipakam.storageSlot().refinanceRequestOfLoan[loanId] = offerId;
+        s.refinanceRequestOfLoan[loanId] = offerId;
     }
 
     /// @notice Revert {IVaipakamErrors.RefinanceRequestNotRecorded} when

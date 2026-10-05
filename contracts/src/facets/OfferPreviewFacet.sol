@@ -461,6 +461,18 @@ contract OfferPreviewFacet {
             }
         }
 
+        // #2407 — a refinance-tagged offer completes only if it is its target
+        // loan's recorded request; otherwise the refinance hook, which runs
+        // after every check above, reverts `RefinanceRequestNotRecorded`. Last
+        // in the chain because it is last in execution.
+        if (
+            offer.refinanceTargetLoanId != 0 &&
+            s.refinanceRequestOfLoan[offer.refinanceTargetLoanId] != offerId
+        ) {
+            preview.errorCode = OfferAcceptFacet.AcceptError.RefinanceRequestNotRecorded;
+            return preview;
+        }
+
         // The risk-access gate is surfaced separately via
         // `RiskPreviewFacet.previewOfferAcceptBlock(offerId, acceptor)` (0 = OK,
         // 1 = tier too low, 2 = illiquid pair needs standing consent), which the

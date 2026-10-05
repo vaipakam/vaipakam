@@ -7698,6 +7698,12 @@ library LibVaipakam {
         ///      slot but is not live, so no path that ends a request has to
         ///      clear it.
         mapping(uint256 => uint256) refinanceRequestOfLoan;
+        /// @dev #2407 — the highest offer id the permissionless backfill
+        ///      ({RefinanceFacet.indexRefinanceRequests}) has scanned. The
+        ///      backfill only ever advances it, so requests are considered in
+        ///      offer-id order and no caller can choose which of two pre-index
+        ///      requests for one loan is recorded.
+        uint256 refinanceBackfillCursor;
     }
 
     /// @notice 3b-ii-A2 (#2305) — one batch a staging record staged from, with

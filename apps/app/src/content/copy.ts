@@ -4468,6 +4468,10 @@ const copySource = {
         'One side of this trade is on an old vault version and needs to upgrade before it can trade. Nothing was sent.',
       selfTrade:
         'This is your own offer, so you can’t take it. Cancel it instead if you want it off the book.',
+      // #2407 — only a loan's recorded refinance request can be taken; this
+      // one is not it (an older duplicate, or one replaced by a newer request).
+      refinanceNotRecorded:
+        'This refinance request isn’t the one the protocol has on record for its loan, so it can’t be taken. Nothing was sent — the borrower can cancel it.',
       // A refusal we have no words for — the app can be older than the
       // deployment it is talking to, and this vocabulary grows by
       // appending. Says only what is certainly true.

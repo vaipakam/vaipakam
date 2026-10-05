@@ -62,6 +62,7 @@ export const ACCEPT_ERROR_NAMES = [
   'ProtocolPaused',
   'VaultUpgradeRequired',
   'SelfTrade',
+  'RefinanceRequestNotRecorded',
 ] as const;
 
 export type AcceptErrorName = (typeof ACCEPT_ERROR_NAMES)[number];
@@ -110,6 +111,7 @@ const ACCEPT_ERROR_COPY_KEY: Record<AcceptErrorName, AcceptBlockedKey | null> = 
   ProtocolPaused: 'protocolPaused',
   VaultUpgradeRequired: 'vaultUpgradeRequired',
   SelfTrade: 'selfTrade',
+  RefinanceRequestNotRecorded: 'refinanceNotRecorded',
 };
 
 /**
