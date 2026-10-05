@@ -205,6 +205,15 @@ The app uses chain reads and indexed reads for different jobs.
   slice.
 - If the indexer is stalled or unavailable, the app should show a degraded
   data-source warning rather than a confident empty list.
+- The index never runs ahead of its own storage layout. A release that
+  changes how indexed data is stored updates that storage BEFORE the new
+  indexing code goes live, and a release that reaches the indexer without
+  that update (an automatic deploy route, a failed update step) pauses its
+  scheduled indexing — naming the missing update in the operator log —
+  rather than writing records the old layout cannot hold. Indexing resumes
+  by itself once the update lands; nothing is lost, because the reading
+  position does not move while paused. In the meantime the app shows the
+  degraded / stale-data warning above, never a partial or invented record.
 - Indexed lifecycle status must not drift from the chain's indefinitely.
   A loan's ending is learned from the event announcing it, and an
   announcement the platform does not see is missed for good — resuming

@@ -1881,10 +1881,11 @@ phase_cf_keeper() {
 # Deploys apps/indexer — the D1 indexer + read-only API. Owns the
 # shared `vaipakam-warm` D1 database + its migrations (the keeper
 # and agent Workers BIND the same D1 but never run migrations against
-# it). Three sub-steps:
-#   [a] wrangler deploy
-#   [b] D1 migrations apply  (only this Worker runs them)
-#   [c] RPC-secret check for this chain
+# it). Two sub-steps:
+#   [a] D1 migrations apply, THEN wrangler deploy — via the package
+#       `deploy` script, so a failed apply never publishes (#2214).
+#       Only this Worker runs migrations.
+#   [b] RPC-secret check for this chain
 #
 # Note on cursor seeding: deploy-chain.sh and deploy-testnet.sh seed
 # `indexer_cursor` at safe head under `--fresh` to skip the empty
@@ -1909,19 +1910,20 @@ phase_cf_indexer() {
   echo "deploy-testnet.sh — cf-indexer"
   echo "═══════════════════════════════════════════════════════════════"
 
-  echo "[a] wrangler deploy"
-  ( cd "$INDEXER_DIR" && pnpm exec wrangler deploy )
-
-  echo
-  echo "[b] D1 migrations apply (vaipakam-warm)"
-  # Idempotent — wrangler skips already-applied entries. Without this
-  # the indexer returns 500 D1_ERROR (no such table) on every
-  # /offers/recent / /loans/byParticipant query.
-  ( cd "$INDEXER_DIR" && pnpm exec wrangler d1 migrations apply vaipakam-warm --remote )
+  echo "[a] D1 migrations apply, then wrangler deploy (the package deploy script)"
+  # MIGRATIONS FIRST, and the publish only if they applied (#2214). The order
+  # lives in ONE place — apps/indexer's `deploy` script — so this phase, the
+  # runbook and an operator typing `pnpm run deploy` cannot drift apart. The
+  # apply is idempotent (wrangler skips applied files); a failure exits the
+  # subshell non-zero and `set -e` stops the phase BEFORE the new code is
+  # published, so a failed migration never leaves new code on an old schema.
+  # The Worker carries its own schema gate as well (src/schemaGate.ts), which
+  # holds scheduled ingest on any route that publishes without migrating.
+  ( cd "$INDEXER_DIR" && pnpm run deploy )
 
   if [ -n "$EXPECTED_RPC_SECRET" ]; then
     echo
-    echo "[c] RPC-secret check for chainId=$CHAIN_ID"
+    echo "[b] RPC-secret check for chainId=$CHAIN_ID"
     verify_rpc_secret_on_worker "$INDEXER_DIR" "vaipakam-indexer" \
       "$EXPECTED_RPC_SECRET" "$CHAIN_ID" || exit 1
   fi

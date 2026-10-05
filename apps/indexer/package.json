@@ -6,15 +6,16 @@
   "description": "Vaipakam chain → D1 indexer + public read-API Cloudflare Worker (Stage 3 PR3 of the Worker split — see docs/DesignsAndPlans/Stage3WorkerSplitPlan.md). Cron-driven event scan: pulls Offer / Loan / VPFI / NFT lifecycle events into D1 round-robin per chain, plus a cancelled-offer retention prune. HTTP-fronted read-API (open CORS, T-041): /offers/{stats,active,recent,by-creator/:addr,:offerId} + /loans/{active,recent,stats,timeseries,by-lender/:addr,by-borrower/:addr,:loanId} + /activity + /claimables/:addr. Holds no on-chain signing key, but is NOT read-only: it writes D1 (including via POST endpoints), verifies inbound Alchemy webhooks, and publishes borrower-authorised, on-chain-bound Seaport listings to OpenSea (empty 0x signature; the vault's ERC-1271 check validates a hash the borrower bound on-chain) with its own API key.",
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
+    "deploy": "wrangler d1 migrations apply vaipakam-warm --remote && wrangler deploy",
     "build": "pnpm run typecheck",
     "check-event-coverage": "node scripts/check-event-coverage.mjs",
     "check-notification-coverage": "node scripts/check-notification-coverage.mjs",
     "check-activity-refs-coverage": "node scripts/check-activity-refs-coverage.mjs",
-    "typecheck": "tsc -p . --noEmit && node scripts/check-event-coverage.mjs && node scripts/check-notification-coverage.mjs && node scripts/check-activity-refs-coverage.mjs && node scripts/check-migration-prefixes.mjs && node scripts/check-table-classification.mjs && node scripts/check-d1-name-consistency.mjs",
+    "typecheck": "tsc -p . --noEmit && node scripts/check-event-coverage.mjs && node scripts/check-notification-coverage.mjs && node scripts/check-activity-refs-coverage.mjs && node scripts/check-migration-prefixes.mjs && node scripts/check-schema-gate.mjs && node scripts/check-table-classification.mjs && node scripts/check-d1-name-consistency.mjs",
     "test": "vitest run",
     "check-migration-prefixes": "node scripts/check-migration-prefixes.mjs",
-    "check-d1-name-consistency": "node scripts/check-d1-name-consistency.mjs"
+    "check-d1-name-consistency": "node scripts/check-d1-name-consistency.mjs",
+    "check-schema-gate": "node scripts/check-schema-gate.mjs"
   },
   "dependencies": {
     "@vaipakam/contracts": "workspace:*",

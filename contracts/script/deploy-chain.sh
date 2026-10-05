@@ -1441,10 +1441,11 @@ fi
 # Owns the `vaipakam-warm` D1 database + its migrations. Indexes
 # Diamond events to D1 on every cron tick; serves /offers/recent,
 # /loans/byParticipant, etc. Three sub-steps:
-#   8b.1 wrangler deploy
-#   8b.2 D1 migrations apply  (only the indexer runs them)
-#   8b.3 RPC-secret check for this chain
-#   8b.4 Cursor seed at safe head, --fresh only
+#   8b.1 D1 migrations apply, THEN wrangler deploy — via the package
+#        `deploy` script, so a failed apply never publishes (#2214).
+#        Only the indexer runs migrations.
+#   8b.2 RPC-secret check for this chain
+#   8b.3 Cursor seed at safe head, --fresh only
 
 if [ "$SKIP_INDEXER" = "0" ] && step_done "indexer"; then
   echo
@@ -1457,25 +1458,25 @@ elif [ "$SKIP_INDEXER" = "0" ]; then
     exit 1
   fi
 
-  echo "  [8b.1] wrangler deploy"
-  ( cd "$INDEXER_DIR" && pnpm exec wrangler deploy )
-
-  echo
-  echo "  [8b.2] D1 migrations apply (vaipakam-warm)"
-  # Wrangler's `d1 migrations apply` is idempotent — already-applied
-  # entries are skipped. Without this step the indexer returns 500
-  # `D1_ERROR no such table` on every loan/offer query after a fresh
-  # database creation or a schema-bumping deploy.
-  ( cd "$INDEXER_DIR" && pnpm exec wrangler d1 migrations apply vaipakam-warm --remote )
+  echo "  [8b.1] D1 migrations apply, then wrangler deploy (the package deploy script)"
+  # MIGRATIONS FIRST, and the publish only if they applied (#2214). The order
+  # lives in ONE place — apps/indexer's `deploy` script — so this phase, the
+  # runbook and an operator typing `pnpm run deploy` cannot drift apart. The
+  # apply is idempotent (wrangler skips applied files); a failure exits the
+  # subshell non-zero and `set -e` stops the phase BEFORE the new code is
+  # published, so a failed migration never leaves new code on an old schema.
+  # The Worker carries its own schema gate as well (src/schemaGate.ts), which
+  # holds scheduled ingest on any route that publishes without migrating.
+  ( cd "$INDEXER_DIR" && pnpm run deploy )
 
   if [ -n "$EXPECTED_RPC_SECRET" ]; then
     echo
-    echo "  [8b.3] RPC-secret check for chainId=$CHAIN_ID"
+    echo "  [8b.2] RPC-secret check for chainId=$CHAIN_ID"
     verify_rpc_secret_on_worker "$INDEXER_DIR" "vaipakam-indexer" \
       "$EXPECTED_RPC_SECRET" "$CHAIN_ID" || exit 1
   fi
 
-  # ── 8b.4. Seed indexer_cursor to current safe head (FRESH only) ─────
+  # ── 8b.3. Seed indexer_cursor to current safe head (FRESH only) ─────
   #
   # Reason for existence: after a `--fresh` deploy, the prior
   # rehearsal's addresses.json was rotated out so the indexer is
@@ -1503,7 +1504,7 @@ elif [ "$SKIP_INDEXER" = "0" ]; then
   # preserves the diamond address).
   if [ "$FRESH" = "1" ]; then
     echo
-    echo "  [8b.4] Seed indexer_cursor for chainId=$CHAIN_ID at safe head"
+    echo "  [8b.3] Seed indexer_cursor for chainId=$CHAIN_ID at safe head"
     # Map chain-slug → env var holding the RPC URL. Mirrors the
     # naming convention every env (.env / .env.example / wrangler
     # secrets) already uses.

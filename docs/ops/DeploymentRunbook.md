@@ -342,9 +342,15 @@ manual follow-up required when the prerequisites are in place:
    the dashboard-managed `HF_SCALE` / `LIQ_*` / `SPLIT_*` /
    `PARTIAL_LIQ_*` tuning on every deploy.
 4. **Indexer Cloudflare deploy** (phase `cf-indexer`) —
-   `pnpm exec wrangler deploy` from `apps/indexer/`, then
-   `pnpm exec wrangler d1 migrations apply vaipakam-warm --remote`.
-   Only this phase runs migrations: the indexer owns the shared
+   `pnpm run deploy` from `apps/indexer/`, which applies
+   `wrangler d1 migrations apply vaipakam-warm --remote` FIRST and
+   publishes only if the apply succeeded (#2214 — it used to publish
+   first, leaving new code on the old schema for the gap, or for good
+   if the apply failed). The Worker's schema gate (`src/schemaGate.ts`)
+   additionally holds scheduled ingest on any route that publishes
+   without migrating — including Workers Builds, whose deploy command
+   is dashboard config; see `apps/indexer/README.md` for the gate and
+   the recommended Builds setting. Only this phase runs migrations: the indexer owns the shared
    `vaipakam-warm` schema, and the keeper/agent bind the same D1
    without ever migrating it. On `--fresh`, also seeds the indexer
    cursor at the current safe head so the first cron tick starts AT

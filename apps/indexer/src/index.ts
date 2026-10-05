@@ -78,9 +78,11 @@ import {
   type SecretBinding,
 } from './env';
 import { runChainIndexer, sweepUnpublishedListings } from './chainIndexer';
+import { schemaDeclineNotice, schemaGate } from './schemaGate';
 import {
   MAX_SUBREQUESTS_PER_INVOCATION,
   createBudget,
+  meterD1,
   meterEnv,
   meterFetch,
   reportSpend,
@@ -215,6 +217,16 @@ export default {
     // report four comfortable numbers for an invocation that had already
     // been killed (#2194 is that condition, measured rather than argued).
     const budget = createBudget(MAX_SUBREQUESTS_PER_INVOCATION, 'cron tick');
+    // THE SCHEMA GATE (schemaGate.ts): decline the whole tick while the newest
+    // migration in this build is not applied, before any pass writes D1 and
+    // before the Secrets Store reads below are spent. The ingest DO runs the
+    // same check inside its own pass, so a webhook-driven scan is held too.
+    const schema = await schemaGate.check(meterD1(env.DB as D1Database, budget));
+    if (schema !== 'current') {
+      // eslint-disable-next-line no-console
+      console.warn(schemaDeclineNotice('this tick', schema));
+      return;
+    }
     // Every pass registered below is ALSO collected here, so the tick can
     // report what it spent once they have all settled (#2227 r1
     // `4033546280`). Reporting it is the point of measuring it: the passes
