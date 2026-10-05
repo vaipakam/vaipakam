@@ -2106,7 +2106,7 @@ contract ConfigFacet is DiamondAccessControl {
     /**
      * @notice #956 (#921 item 5) — set the per-asset minimum partial-repayment
      *         floor, in bps of remaining principal.
-     * @dev    Enforced by {RepayFacet.repayPartial} and {SwapToRepayFacet}: a
+     * @dev    Enforced by {RepayFacet.repayPartial} and {SwapToRepayPartialFacet}: a
      *         partial must be `>= principal * minPartialBps / BASIS_POINTS`. The
      *         field was enforced but had no production setter (only the test
      *         mutator wrote it), so in production it was permanently 0 — a no-op
@@ -2119,7 +2119,7 @@ contract ConfigFacet is DiamondAccessControl {
      * @dev    #956 (Codex #978) — the ceiling is `BASIS_POINTS - 1`, not
      *         `BASIS_POINTS`. A 100% floor requires every partial to be at least
      *         the entire remaining principal, but both {RepayFacet.repayPartial}
-     *         and {SwapToRepayFacet} independently reject a partial that would
+     *         and {SwapToRepayPartialFacet} independently reject a partial that would
      *         retire the full principal (`PartialWouldRetireFullPrincipal`), so
      *         `minPartialBps == BASIS_POINTS` would make ERC-20 partial repayment
      *         impossible for the asset — a silent kill-switch. Reject it; use

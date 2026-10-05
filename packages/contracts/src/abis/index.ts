@@ -36,6 +36,8 @@ import RepayPeriodicFacetABI from './RepayPeriodicFacet.json';
 // asset → principal asset and applies the proceeds to a full or partial
 // loan repay in one transaction.
 import SwapToRepayFacetABI from './SwapToRepayFacet.json';
+// #2416 — the partial swap-to-repay route, split off SwapToRepayFacet.
+import SwapToRepayPartialFacetABI from './SwapToRepayPartialFacet.json';
 // T-090 v1.1 (#389) — intent-based swap-to-repay sibling facet.
 import SwapToRepayIntentFacetABI from './SwapToRepayIntentFacet.json';
 // T-087 Sub 3.B — 1inch LOP v4 callback dispatcher.
@@ -166,6 +168,7 @@ export {
   RepayFacetABI,
   RepayPeriodicFacetABI,
   SwapToRepayFacetABI,
+  SwapToRepayPartialFacetABI,
   SwapToRepayIntentFacetABI,
   IntentDispatchFacetABI,
   AutoLifecycleFacetABI,

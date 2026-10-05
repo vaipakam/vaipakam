@@ -174,7 +174,7 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
     ///         a full-principal "partial" left the loan Active at principal 0 (a
     ///         zombie) with close-out stranded behind a separate {repayLoan}.
     ///         Callers retiring the whole principal must use {repayLoan}. Mirrors
-    ///         `SwapToRepayFacet.PartialWouldRetireFullPrincipal`.
+    ///         `SwapToRepayPartialFacet.PartialWouldRetireFullPrincipal`.
     error PartialWouldRetireFullPrincipal();
     /// @notice Reverted when {repayPartial} is called on a loan whose
     ///         `allowsPartialRepay` flag is false. The flag is
@@ -757,7 +757,7 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         // token base units, so applying the floor there would compare days against
         // token units and wrongly revert legitimate rental-day reductions. Scope
         // the floor to ERC-20 loans; the NFT-rental path below has its own
-        // day-based validation. (SwapToRepayFacet needs no such guard — its
+        // day-based validation. (SwapToRepayPartialFacet needs no such guard — its
         // `partialPrincipal` is always a swapped token amount.)
         if (loan.assetType == LibVaipakam.AssetType.ERC20) {
             uint256 minPartial = (loan.principal *

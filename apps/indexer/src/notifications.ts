@@ -85,7 +85,8 @@ export const EVENT_NOTIF_MAP: Readonly<Record<string, NotifMapping>> = {
   LoanDefaulted: { kind: 'loan_defaulted', recipients: 'both' },
   // Swap-to-repay is a DISTINCT repayment path: it flips the position
   // status inline and emits its OWN event WITHOUT a LoanRepaid /
-  // PartialRepaid companion (SwapToRepayFacet.sol), so it must map
+  // PartialRepaid companion (SwapToRepayFacet / SwapToRepayPartialFacet),
+  // so it must map
   // directly or those repayments produce no inbox row (Codex #1292 r1).
   SwapToRepayExecuted: { kind: 'loan_repaid', recipients: 'both' },
   SwapToRepayPartialExecuted: { kind: 'partial_repay', recipients: 'lender' },

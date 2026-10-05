@@ -320,6 +320,7 @@ FACETS=(
   "RiskMatchLiquidationFacet"
   "RiskSplitLiquidationFacet"
   "SwapToRepayFacet"
+  "SwapToRepayPartialFacet"
   "SwapToRepayIntentFacet"
   "IntentDispatchFacet"
   "AutoLifecycleFacet"

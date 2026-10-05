@@ -161,6 +161,8 @@ export interface DeploymentFacets {
   riskSplitLiquidationFacet?: HexAddress;
   signedOfferFacet?: HexAddress;
   swapToRepayFacet?: HexAddress;
+  /** #2416 — the partial swap-to-repay route, split off swapToRepayFacet. */
+  swapToRepayPartialFacet?: HexAddress;
   swapToRepayIntentFacet?: HexAddress;
   vpfiDiscountAccumulatorFacet?: HexAddress;
 }

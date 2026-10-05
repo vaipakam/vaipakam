@@ -20,6 +20,7 @@
     "RepayFacet",
     "RepayPeriodicFacet",
     "SwapToRepayFacet",
+    "SwapToRepayPartialFacet",
     "SwapToRepayIntentFacet",
     "IntentDispatchFacet",
     "AutoLifecycleFacet",

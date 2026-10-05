@@ -61,6 +61,7 @@ import {NFTPrepayListingAtomicFacet} from "../src/facets/NFTPrepayListingAtomicF
 import {NFTPrepayAutoListFacet} from "../src/facets/NFTPrepayAutoListFacet.sol";
 import {OfferParallelSaleFacet} from "../src/facets/OfferParallelSaleFacet.sol";
 import {SwapToRepayFacet} from "../src/facets/SwapToRepayFacet.sol";
+import {SwapToRepayPartialFacet} from "../src/facets/SwapToRepayPartialFacet.sol";
 import {SwapToRepayIntentFacet} from "../src/facets/SwapToRepayIntentFacet.sol";
 import {IntentConfigFacet} from "../src/facets/IntentConfigFacet.sol";
 import {VPFIDiscountAccumulatorFacet} from "../src/facets/VPFIDiscountAccumulatorFacet.sol";
@@ -237,7 +238,9 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     // (#1434) landed on either side of one merge.
     // 74 -> 75: OfferAcceptFeeFacet (#1835) — the borrower-LIF charge split
     // off OfferAcceptFacet, which was 164 bytes under EIP-170.
-    uint256 public constant EXPECTED_FACETS = 87;
+    // 87 -> 88: SwapToRepayPartialFacet (#2416) — the partial swap-to-repay
+    // route split off SwapToRepayFacet, which was 73 bytes under EIP-170.
+    uint256 public constant EXPECTED_FACETS = 88;
 
     function refresh() external {
         uint256 cid = block.chainid;
@@ -1379,6 +1382,9 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         items[84] = Item("rewardSweepWalkFacet", address(new RewardSweepWalkFacet()), _getRewardSweepWalkSelectors());
         items[85] = Item("rewardStagingSettleFacet", address(new RewardStagingSettleFacet()), _getRewardStagingSettleSelectors());
         items[86] = Item("rewardForfeitWalkFacet", address(new RewardForfeitWalkFacet()), _getRewardForfeitWalkSelectors());
+        // #2416 — refreshed WITH swapToRepayFacet (items[43]): one surface
+        // across the two, so refreshing either alone splits the routes.
+        items[87] = Item("swapToRepayPartialFacet", address(new SwapToRepayPartialFacet()), _getSwapToRepayPartialFacetSelectors());
         items[26] = Item("rewardReporterFacet", address(new RewardReporterFacet()), _getRewardReporterSelectors());
         // #1222 M3 B3 — `getChainRecycledLedger` /
         // `getChainDailyRecycledCredit` moved here from ConfigFacet (EIP-170).

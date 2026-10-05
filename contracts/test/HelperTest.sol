@@ -30,6 +30,7 @@ import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {RepayPeriodicFacet} from "../src/facets/RepayPeriodicFacet.sol";
 import {SwapToRepayFacet} from "../src/facets/SwapToRepayFacet.sol";
+import {SwapToRepayPartialFacet} from "../src/facets/SwapToRepayPartialFacet.sol";
 import {SwapToRepayIntentFacet} from "../src/facets/SwapToRepayIntentFacet.sol";
 import {IntentDispatchFacet} from "../src/facets/IntentDispatchFacet.sol";
 import {AutoLifecycleFacet} from "../src/facets/AutoLifecycleFacet.sol";
@@ -1012,10 +1013,19 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](3);
+        selectors = new bytes4[](2);
         selectors[0] = SwapToRepayFacet.swapToRepayFull.selector;
-        selectors[1] = SwapToRepayFacet.swapToRepayPartial.selector;
-        selectors[2] = SwapToRepayFacet.previewSwapToRepayFull.selector;
+        selectors[1] = SwapToRepayFacet.previewSwapToRepayFull.selector;
+    }
+
+    /// #2416 — the partial swap-to-repay route (split off SwapToRepayFacet).
+    function getSwapToRepayPartialFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](1);
+        selectors[0] = SwapToRepayPartialFacet.swapToRepayPartial.selector;
     }
 
     /// T-090 v1.1 (#389) — intent-based swap-to-repay facet selectors.
