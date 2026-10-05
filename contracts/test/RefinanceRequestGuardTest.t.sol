@@ -16,6 +16,7 @@ import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibSwap} from "../src/libraries/LibSwap.sol";
+import {LibAutoRefinanceCheck} from "../src/libraries/LibAutoRefinanceCheck.sol";
 import {LibOfferMatch} from "../src/libraries/LibOfferMatch.sol";
 import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
 import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
@@ -461,6 +462,81 @@ contract RefinanceRequestGuardTest is SetupTest {
             uint8(LoanFacet(address(diamond)).getLoanDetails(newLoanId).status),
             uint8(LibVaipakam.LoanStatus.Active)
         );
+    }
+
+    // ─── #2424 r7 — live means "could be accepted right now" ─────────
+
+    /// Withdrawing the refinance caps makes the request unacceptable, so it
+    /// stops holding the loan back at once — and, being the holder's own
+    /// uncancelled request, still has to be cancelled before a new one.
+    function test_withdrawingTheCapsStopsTheRequestHoldingTheLoan() public {
+        uint256 loanId = _activeLoan();
+        uint256 r1 = _request(loanId, 0);
+        assertEq(_live(loanId), r1);
+
+        vm.prank(borrower);
+        AutoLifecycleFacet(address(diamond)).setAutoRefinanceCaps(
+            loanId, false, 600, uint64(block.timestamp + 365 days)
+        );
+        assertEq(_live(loanId), 0, "an unacceptable request is not live");
+        assertEq(_recorded(loanId), r1, "but still reported");
+        assertTrue(
+            _selectorOf(abi.encodeCall(RepayFacet.repayPartial, (loanId, 1)))
+                != IVaipakamErrors.RefinanceRequestOpen.selector,
+            "the guard lifted"
+        );
+        // A new request inside re-enabled but tighter caps (which leave R1,
+        // at 400 bps, unacceptable) is refused until R1 is cancelled.
+        vm.prank(borrower);
+        AutoLifecycleFacet(address(diamond)).setAutoRefinanceCaps(
+            loanId, true, 300, uint64(block.timestamp + 365 days)
+        );
+        assertEq(_live(loanId), 0, "still not live under the tighter cap");
+        vm.prank(borrower);
+        vm.expectRevert(
+            abi.encodeWithSelector(IVaipakamErrors.RefinanceRequestNotCancelled.selector, loanId, r1)
+        );
+        OfferCreateFacet(address(diamond)).createOffer(
+            _params(LibVaipakam.OfferType.Borrower, 250, LibVaipakam.FillMode.Aon, loanId, 0)
+        );
+    }
+
+    /// Tightening the rate cap below the request's rate does the same.
+    function test_tighteningTheRateCapBelowTheRequestStopsItBeingLive() public {
+        uint256 loanId = _activeLoan();
+        uint256 r1 = _request(loanId, 0); // rate 400
+        vm.prank(borrower);
+        AutoLifecycleFacet(address(diamond)).setAutoRefinanceCaps(
+            loanId, true, 300, uint64(block.timestamp + 365 days)
+        );
+        assertEq(_live(loanId), 0);
+        // Restoring the cap makes it live again — liveness is read, not stored.
+        vm.prank(borrower);
+        AutoLifecycleFacet(address(diamond)).setAutoRefinanceCaps(
+            loanId, true, 600, uint64(block.timestamp + 365 days)
+        );
+        assertEq(_live(loanId), r1);
+    }
+
+    /// The public check gives the reason a request could not be accepted now.
+    function test_checkRefinanceRequestGivesTheReason() public {
+        uint256 loanId = _activeLoan();
+        uint256 r1 = _request(loanId, 0);
+        RefinanceFacet(address(diamond)).checkRefinanceRequest(loanId, r1); // passes
+
+        vm.prank(borrower);
+        AutoLifecycleFacet(address(diamond)).setAutoRefinanceCaps(
+            loanId, false, 600, uint64(block.timestamp + 365 days)
+        );
+        vm.expectRevert(LibAutoRefinanceCheck.RefinanceCapsRequired.selector);
+        RefinanceFacet(address(diamond)).checkRefinanceRequest(loanId, r1);
+
+        vm.prank(borrower);
+        OfferCancelFacet(address(diamond)).cancelOffer(r1);
+        vm.expectRevert(
+            abi.encodeWithSelector(IVaipakamErrors.RefinanceRequestNotLive.selector, loanId, r1)
+        );
+        RefinanceFacet(address(diamond)).checkRefinanceRequest(loanId, r1);
     }
 
     /// The storage slot holding `loanId`'s indexed request, found by observing

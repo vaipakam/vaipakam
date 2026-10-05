@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import type { RefinanceDiscovery } from './refinanceDiscovery';
 import {
   liveRefinanceVerdict,
+  postRefinanceVerdict,
   ownScanUnresolved,
   refinanceInterlock,
   repayRefinanceDecision,
@@ -153,6 +154,16 @@ describe('liveRefinanceVerdict', () => {
     expect(liveRefinanceVerdict(none)).toBe('clear');
     expect(liveRefinanceVerdict(failed)).toBe('unchecked');
     expect(liveRefinanceVerdict(capped)).toBe('capped');
+  });
+});
+
+describe('postRefinanceVerdict (#2424 r7)', () => {
+  it('blocks a new request on an uncancelled expired one, unlike the settlement verdict', () => {
+    expect(postRefinanceVerdict(expired('1'))).toBe('expired');
+    expect(postRefinanceVerdict(open('1'))).toBe('open');
+    expect(postRefinanceVerdict(none)).toBe('clear');
+    expect(postRefinanceVerdict(failed)).toBe('unchecked');
+    expect(postRefinanceVerdict(capped)).toBe('capped');
   });
 });
 

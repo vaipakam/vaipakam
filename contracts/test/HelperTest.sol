@@ -1629,7 +1629,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](4);
+        selectors = new bytes4[](5);
         selectors[0] = RefinanceFacet.refinanceLoan.selector;
         // T-092-H (#549) — atomic accept-and-refinance internal
         // entries; cut so the diamond fallback can route the
@@ -1639,6 +1639,7 @@ contract HelperTest {
         selectors[2] = RefinanceFacet.refinanceLoanFromMatch.selector;
         // #2407 — the refinance-request record's view.
         selectors[3] = RefinanceFacet.getRefinanceRequest.selector;
+        selectors[4] = RefinanceFacet.checkRefinanceRequest.selector;
         return selectors;
     }
 

@@ -121,6 +121,19 @@ export function liveRefinanceVerdict(
   return 'clear';
 }
 
+/** #2424 r7 — the verdict before POSTING a new request. Unlike the
+ *  settlement checks, an expired request the holder never cancelled blocks
+ *  too: the protocol refuses a new request until it is cancelled (it may
+ *  still hold a fresh pledge, and the loan's record is how it is found), so
+ *  the form stops and offers the cancel instead of writing caps and an
+ *  approval for a post that would fail. */
+export function postRefinanceVerdict(
+  d: RefinanceDiscovery,
+): 'clear' | 'open' | 'expired' | 'unchecked' | 'capped' {
+  if (d.kind === 'found') return d.open ? 'open' : 'expired';
+  return liveRefinanceVerdict(d);
+}
+
 /** #2406 r4/r5 — the viewer's OWN scan (run only when they are not the
  *  holder) did not answer: it failed, or hit its page cap. Either way a
  *  request this wallet posted could survive unseen with its payoff

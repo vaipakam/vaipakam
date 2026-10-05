@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibERC721} from "./LibERC721.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
+import {LibAutoRefinanceCheck} from "./LibAutoRefinanceCheck.sol";
 
 /**
  * @title  LibRefinanceRequest
@@ -66,36 +67,69 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
  *         though it makes a carry-over request (exact collateral match)
  *         unfillable.
  */
+/// @dev The one liveness rule, served by `RefinanceFacet` through the Diamond.
+interface IRefinanceRequestView {
+    function getRefinanceRequest(uint256 loanId) external view returns (uint256 offerId, bool live);
+}
+
 library LibRefinanceRequest {
     /// @notice The live refinance request targeting `loanId`, or 0.
+    /// @dev    Asks `RefinanceFacet.getRefinanceRequest` through the Diamond
+    ///         rather than inlining the rule, so liveness has ONE definition —
+    ///         "could be accepted right now", which `RefinanceFacet` evaluates
+    ///         with the same `LibAutoRefinanceCheck.validate` acceptance runs —
+    ///         and the size-tight guard facets carry only this call. A failed
+    ///         call (a Diamond without the view) reads as "none": the guard
+    ///         protects a request from the borrower's own actions, and must not
+    ///         be able to brick repayment on a misconfigured Diamond.
     function live(uint256 loanId) internal view returns (uint256 offerId) {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        offerId = s.refinanceRequestOfLoan[loanId];
-        if (offerId != 0 && !isLive(s, loanId, offerId)) offerId = 0;
+        (bool ok, bytes memory ret) = address(this).staticcall(
+            abi.encodeCall(IRefinanceRequestView.getRefinanceRequest, (loanId))
+        );
+        if (!ok || ret.length < 64) return 0;
+        (uint256 id, bool isLive_) = abi.decode(ret, (uint256, bool));
+        return isLive_ ? id : 0;
     }
 
-    /// @notice Whether `offerId` is a live refinance request for `loanId`
-    ///         (see the library notes for the conditions).
-    function isLive(
+    /// @notice Revert with the reason `offerId` could not be accepted as
+    ///         `loanId`'s refinance request right now; return if it could.
+    ///         This IS liveness: the request's own state (it exists, is not
+    ///         taken, still targets the loan, has not expired), then the very
+    ///         check acceptance re-runs — the loan is Active and not past
+    ///         grace, its creator holds the borrower position, the assets and
+    ///         principal still fit, and the holder's refinance caps still admit
+    ///         it. Used only by `RefinanceFacet`, which serves it to everyone.
+    function assertAcceptable(
         LibVaipakam.Storage storage s,
         uint256 loanId,
         uint256 offerId
-    ) internal view returns (bool) {
+    ) internal view {
         LibVaipakam.Offer storage o = s.offers[offerId];
         // `accepted` is defensive today: every route that marks a request
         // accepted (direct accept, matcher fill, a partial match's dust-close)
         // chains the refinance in the same transaction, so the loan is already
         // no longer Active by the time it reads true — and a cancel of an
-        // all-or-nothing request deletes it. It keeps a future non-atomic
-        // completion route (the spec permits a fresh-pledge standalone one)
-        // from leaving a taken request blocking the loan.
-        if (o.creator == address(0) || o.accepted) return false;
-        if (o.refinanceTargetLoanId != loanId) return false;
-        if (LibVaipakam.isOfferExpired(o)) return false;
-        LibVaipakam.Loan storage loan = s.loans[loanId];
-        if (loan.status != LibVaipakam.LoanStatus.Active) return false;
-        // Non-reverting read: a missing token simply means "not live".
-        return LibERC721._ownerOfRaw(loan.borrowerTokenId) == o.creator;
+        // all-or-nothing request deletes it.
+        if (
+            o.creator == address(0) ||
+            o.accepted ||
+            o.refinanceTargetLoanId != loanId ||
+            LibVaipakam.isOfferExpired(o)
+        ) revert IVaipakamErrors.RefinanceRequestNotLive(loanId, offerId);
+        LibAutoRefinanceCheck.validate(
+            s,
+            loanId,
+            o.creator,
+            o.interestRateBpsMax == 0 ? o.interestRateBps : o.interestRateBpsMax,
+            o.durationDays,
+            o.lendingAsset,
+            o.collateralAsset,
+            o.assetType,
+            o.collateralAssetType,
+            o.prepayAsset,
+            o.amount,
+            o.amountMax == 0 ? o.amount : o.amountMax
+        );
     }
 
     /// @notice Revert {IVaipakamErrors.RefinanceRequestOpen} while a live
@@ -126,7 +160,7 @@ library LibRefinanceRequest {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         prior = s.refinanceRequestOfLoan[loanId];
         if (prior == 0) return (0, false);
-        if (isLive(s, loanId, prior)) return (prior, true);
+        if (live(loanId) == prior) return (prior, true);
         LibVaipakam.Offer storage o = s.offers[prior];
         if (
             o.creator == address(0) ||

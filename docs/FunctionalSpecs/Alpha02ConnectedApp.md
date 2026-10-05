@@ -3205,7 +3205,7 @@ Its intended behaviour, as the test oracle for this surface:
   the protocol refuses the new one otherwise, because the expired request
   may still hold a fresh collateral pledge and the loan's record is how it
   is found — so the form says so and offers the cancel rather than letting
-  the post fail (this form behaviour is tracked with #2425). A request the search has already found
+  the post fail. A request the search has already found
   expired stays treated as expired even when the page's fuller check of
   it cannot finish. Loans on a periodic interest schedule carry a visible
   warning that an overdue period blocks completion until settled.

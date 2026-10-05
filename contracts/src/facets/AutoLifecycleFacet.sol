@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibRefinanceRequest} from "../libraries/LibRefinanceRequest.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
@@ -525,6 +526,11 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         // same guard used by RepayFacet / RefinanceFacet / PrecloseFacet
         // / collateral-mutation paths.
         LibVaipakam.assertNoLiveIntentCommit(loanId);
+        // #2407 — an extension rewrites the rate, term and accrual clock, and
+        // so the payoff a standing refinance request was priced against.
+        // Refused while a live request targets the loan, like the other
+        // borrower-consented changes to it; the borrower cancels it first.
+        LibRefinanceRequest.assertNone(loanId);
         // Codex round-1 P2 — duration must be in
         // `[1, cfgMaxOfferDurationDays()]`. Otherwise extension could
         // bypass the long-duration interest-formula invariant that

@@ -1800,4 +1800,10 @@ interface IVaipakamErrors {
     ///         reverse order is refused too — an offset is not opened while a
     ///         live refinance request targets the loan.)
     error RefinanceBlockedByOffset(uint256 loanId, uint256 offsetOfferId);
+
+    /// @notice #2407 — `offerId` is not a standing refinance request for
+    ///         `loanId`: it no longer exists (cancelled), was already taken,
+    ///         targets another loan, or has expired. Raised by
+    ///         `RefinanceFacet.checkRefinanceRequest`.
+    error RefinanceRequestNotLive(uint256 loanId, uint256 offerId);
 }

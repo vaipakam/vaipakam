@@ -1666,6 +1666,10 @@ const copySource = {
     // #2406 r2 — posting a second request while one is already open.
     alreadyOpen:
       'A refinance request is already open on this loan — perhaps from another device — so nothing was posted. Cancel it first, or wait until it is taken or expires: a second request would leave one of them impossible to fill.',
+    // #2424 r7 — posting a new request while the holder's own expired one
+    // was never cancelled: the protocol refuses the new one until it is.
+    expiredBlocksNew:
+      'Your earlier refinance request for this loan has expired but was never cancelled, so a new one can’t be posted yet. Cancel the expired request first — it may still hold collateral or a token approval — then post again.',
     liveBlocksSettlement:
       'A refinance request is open on this loan. This would change or settle the loan and leave the request impossible to fill, so nothing was sent — cancel the refinance request first.',
     // #2391 — requests are found on chain from the borrower's own offers;
