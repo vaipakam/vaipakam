@@ -681,6 +681,13 @@ export function isRetryableScanSkip(skipped: string | undefined): boolean {
   return skipped === 'rpc-error' || skipped === 'rpc-chain-mismatch';
 }
 
+/** The schema gate (schemaGate.ts) declined the pass. Not retryable within
+ *  an alarm's budget — no retry can apply a missing migration — so the
+ *  ingest DO stops its loop rather than rearming (#2409 r2). */
+export function isSchemaDeclinedSkip(skipped: string | undefined): boolean {
+  return skipped === 'schema-pending' || skipped === 'schema-unknown';
+}
+
 /**
  * How many rows the #2101 repair pass may examine on THIS invocation.
  *

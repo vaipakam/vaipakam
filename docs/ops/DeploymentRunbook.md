@@ -350,9 +350,16 @@ manual follow-up required when the prerequisites are in place:
    additionally holds scheduled ingest on any route that publishes
    without migrating — including Workers Builds, whose deploy command
    is dashboard config; see `apps/indexer/README.md` for the gate and
-   the recommended Builds setting. Only this phase runs migrations: the indexer owns the shared
-   `vaipakam-warm` schema, and the keeper/agent bind the same D1
-   without ever migrating it. On `--fresh`, also seeds the indexer
+   the recommended Builds setting. **The keeper and agent phases apply
+   migrations too** (#2409): all three Workers bind the shared
+   `vaipakam-warm` D1, so each package `deploy` runs
+   `apps/indexer/scripts/migrate-then-deploy.mjs`, which applies the
+   indexer-owned migrations before publishing whichever Worker it is —
+   the keeper phase, which runs first, lands the schema before any
+   code that uses it. Re-running the apply in a later phase is a no-op
+   (wrangler skips applied files). A `--dry-run` applies nothing. The
+   indexer still OWNS the schema: every migration lives in
+   `apps/indexer/migrations/`. On `--fresh`, also seeds the indexer
    cursor at the current safe head so the first cron tick starts AT
    head instead of backfilling an empty pre-deploy range.
 5. **Agent Cloudflare deploy** (phase `cf-agent`) —

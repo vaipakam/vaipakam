@@ -624,8 +624,9 @@ the live schema and breaks fresh-environment bootstrap.
 **Migrations apply BEFORE code ships, and the Worker refuses to run ahead
 of its schema** (#2214). `apps/indexer`'s `migrate` script applies pending
 migrations, and the `deploy` scripts of ALL THREE Workers that bind this
-database (indexer, keeper, agent) run it before publishing — so whichever
-publishes first, the schema lands first. Workers Builds also auto-deploys
+database (indexer, keeper, agent) run it before publishing, through
+`apps/indexer/scripts/migrate-then-deploy.mjs` — so whichever publishes
+first, the schema lands first, and a `--dry-run` applies nothing. Workers Builds also auto-deploys
 them on merge with a dashboard-configured command the repo cannot pin, so
 the indexer carries a schema gate (`src/schemaGate.ts`): scheduled ingest
 declines, by name, until EVERY migration in the build is recorded in

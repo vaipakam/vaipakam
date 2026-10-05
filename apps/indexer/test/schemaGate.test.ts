@@ -128,3 +128,33 @@ describe('schema gate — the cron tick declines before registering any pass', (
     expect(secretRead).not.toHaveBeenCalled();
   });
 });
+
+describe('schema gate — the ingest DO stops its loop on a declined pass (#2409 r2)', () => {
+  it('finishes, rather than rearming, even with a webhook target still pending', async () => {
+    const { alarmNextStep } = await import('../src/chainIngestDO');
+    const { isSchemaDeclinedSkip } = await import('../src/chainIndexer');
+    for (const skipped of ['schema-pending', 'schema-unknown']) {
+      expect(isSchemaDeclinedSkip(skipped)).toBe(true);
+      // A declined pass reports scannedTo 0; a webhook left target 500. The
+      // old rule (scannedTo < target → rearm) spent the whole retry budget.
+      expect(
+        alarmNextStep({
+          schemaDeclined: isSchemaDeclinedSkip(skipped),
+          retryableFailure: false,
+          scannedTo: 0n,
+          target: 500n,
+          headBlock: undefined,
+        }),
+      ).toBe('finish');
+    }
+  });
+
+  it('leaves every other ending as it was', async () => {
+    const { alarmNextStep } = await import('../src/chainIngestDO');
+    const base = { schemaDeclined: false, retryableFailure: false, headBlock: undefined };
+    expect(alarmNextStep({ ...base, scannedTo: 10n, target: 0n })).toBe('finish');
+    expect(alarmNextStep({ ...base, scannedTo: 10n, target: 500n })).toBe('rearm');
+    expect(alarmNextStep({ ...base, retryableFailure: true, scannedTo: 10n, target: 0n })).toBe('rearm');
+    expect(alarmNextStep({ ...base, scannedTo: 10n, target: 0n, headBlock: 10_000_000n })).toBe('slow-lane');
+  });
+});
