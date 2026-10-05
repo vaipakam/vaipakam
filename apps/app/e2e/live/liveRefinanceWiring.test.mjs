@@ -37,7 +37,8 @@ describe('live-refinance wiring', () => {
   });
 
   it('the lender review reads the request as created, not "latest" (r11 finding 3)', () => {
-    expect(statementFrom(SRC, 'const reqNow =')).toBe('const reqNow = req;');
+    expect(statementFrom(SRC, 'const reqNow =')).toBe('const reqNow = REQUEST_AS_CREATED;');
+    expect(SRC).toContain('  REQUEST_AS_CREATED = req;');
   });
 
   it('the risk-terms epoch is watched config, against the preflight value (r11 finding 4; one snapshot since r12)', () => {
@@ -53,7 +54,7 @@ describe('live-refinance wiring', () => {
     expect(region).toContain('readObservedConfig(prev)');
     expect(region).toContain('configChanges(REVIEWED_CONFIG, cfgAtPrev)');
     expect(SRC).toMatch(/const premiseBroken = settlementBlocker\(\{[^}]*\breviewDrift,/);
-    expect(statementFrom(SRC, 'const REVIEWED_CONFIG =')).toBe('const REVIEWED_CONFIG = armObs.config;');
+    expect(SRC).toMatch(/^ {2}REVIEWED_CONFIG = armObs\.config;$/m);
     const model = statementFrom(SRC, 'const S = expectedSettlement({');
     expect(model).toContain('lifBps: cfgAtPrev.lifBps');
     expect(model).toContain('matcherBps: cfgAtPrev.lifMatcherFeeBps');
@@ -103,6 +104,59 @@ describe('live-refinance wiring', () => {
     expect(region).toContain('decodeFunctionData({ abi: DIAMOND_ABI, data: createInput }).args[0].expiresAt');
     expect(region).toContain('expectedStoredExpiry({');
     expect(SRC).toMatch(/BigInt\(req\.expiresAt\) === wantExpiry/);
+  });
+
+  // ---- #2422 r14 ROOT A — one post-write failure classifier ----
+  // The post-write try body: from the session hand-off to its only catch.
+  const TRY_BODY = between(SRC, 'const bp = session.page;', 'await settleFailure(err);');
+
+  it('ROOT A: the post-write try has ONE catch, and it only settles through the classifier', () => {
+    const tail = between(SRC, "await session?.shot('refinance-zz-stopped');", '} finally {');
+    expect(tail).toContain('await settleFailure(err);');
+    expect(tail).not.toMatch(/exitCode\s*=|process\.exit\(|RACE_STOP\s*=/);
+    expect(between(SRC, 'async function settleFailure(err) {', '\n}\n')).toContain('classifyPostWriteFailure({ cause: { kind, why }, ours, premises })');
+  });
+
+  it('ROOT A: no post-write stop can bypass the catch — no exit, exit code or nested catch-all in the try body', () => {
+    expect(TRY_BODY.length).toBeGreaterThan(5_000); // not-a-source-region: a size floor proving the region is the whole try body, not a bound
+    expect(TRY_BODY).not.toMatch(/process\.exit\(/);
+    expect(TRY_BODY).not.toMatch(/\bexitCode\s*=/);
+    expect(TRY_BODY).not.toMatch(/blockedBeforeAnyWrite\(/);
+    // The two outcome verifiers are called from the try AND from the classifier.
+    expect(TRY_BODY).toContain('await verifyCreateOutcome(pageRequestId);');
+    expect(TRY_BODY).toContain('await verifyAcceptOutcome();');
+  });
+
+  it('ROOT A (i): a mined transaction is verified by the same function the happy path runs, with the UI failure recorded', () => {
+    const settle = between(SRC, 'async function settleFailure(err) {', '\n}\n');
+    expect(settle).toContain("if (accept) await verifyAcceptOutcome();");
+    expect(settle).toContain('else await verifyCreateOutcome(null);');
+    expect(settle).toMatch(/if \(POST_WRITE\.recordUiFailure\) \{\s*check\(/);
+  });
+
+  it('ROOT A (ii): premises re-read = the whole snapshot (screening included), the request state, the loan posture', () => {
+    const p = between(SRC, 'async function premisesNow({ acceptMined }) {', '\n}\n');
+    expect(p).toContain('readObservedConfig(head)');
+    expect(p).toContain('configChanges(REVIEWED_CONFIG ?? OBSERVED_BASELINE, cfg)');
+    expect(p).toContain('requestStateAt(REQUEST_ID, head)');
+    expect(p).toContain('replacementAt(head)');
+    expect(p).toContain('postureMisses(await loanOf(LOAN_ID, head))');
+    const ctx = between(SRC, 'const watchedContextOf = (l, oldHolder) => ({', '});');
+    expect(ctx).toContain('participants: { borrower: BORROWER, lender: LENDER');
+  });
+
+  it('ROOT A (iii): the request state is re-read before the lender is armed, and a non-open request stops', () => {
+    const region = between(SRC, 'const stateBeforeArm = await requestStateAt(', "PLAN.arm('lender');");
+    expect(region).toContain("if (stateBeforeArm !== 'open') stop(");
+  });
+
+  // ---- #2422 r14 ROOT B — the replacement through the declared mapping ----
+  it('ROOT B: replacement.loan is ONE evaluation of the whole mapping, with the unchecked fields in NOT VERIFIED', () => {
+    const verify = between(SRC, 'async function verifyAcceptOutcome() {', '\n}\n');
+    expect(verify).toContain('evaluateReplacement(fresh, {');
+    expect(verify.match(/'replacement\.loan'/g)).toHaveLength(1);
+    expect(verify).toContain('terms: signedTerms');
+    expect(SRC).toContain("id: 'replacementUncheckedFields'");
   });
 });
 

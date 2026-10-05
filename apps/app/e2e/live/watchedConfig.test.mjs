@@ -10,7 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-import { readWatchedConfig, STATE_READS, WATCHED_CONFIG, WATCHED_GETTERS } from './watchedConfig.mjs';
+import { readWatchedConfig, screenParticipant, STATE_READS, WATCHED_CONFIG, WATCHED_GETTERS } from './watchedConfig.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const src = (f) => fs.readFileSync(path.join(HERE, f), 'utf8');
@@ -89,3 +89,36 @@ describe('watchedConfig — the one snapshot', () => {
     expect(calls.every((c) => c.endsWith('@9'))).toBe(true);
   });
 });
+
+// #2422 r14 — every participant's sanctions screening is part of the snapshot.
+describe('watchedConfig — participants are screened inside the snapshot', () => {
+  const ORACLE = '0x00000000000000000000000000000000000000aa';
+  const base = async (fn, args) => {
+    if (fn === 'getSanctionsOracle') return ORACLE;
+    if (fn === 'isSanctionedAddress') return false;
+    if (fn === 'getMasterFlags') return [false, false, true];
+    if (fn === 'getFeesConfig') return [200n, 20n];
+    if (fn === 'getProtocolConfigBundle') return Array.from({ length: 15 }, (_, i) => BigInt(i));
+    return 0n;
+  };
+  it('adds screen:<label> for each participant, tri-state, with the oracle asked directly', async () => {
+    const snap = await readWatchedConfig(base, {
+      principalAsset: '0xP',
+      collateralAsset: '0xC',
+      participants: { borrower: '0xB', lender: '0xL' },
+      readOracle: async (oracle, who) => {
+        expect(oracle).toBe(ORACLE);
+        return who === '0xL';
+      },
+    });
+    expect(snap['screen:borrower']).toEqual({ state: 'clean', oracleSays: false, diamondSays: false });
+    expect(snap['screen:lender']).toEqual({ state: 'flagged', oracleSays: true, diamondSays: false });
+  });
+  it('unset oracle → unset; a failed oracle call → unavailable (never clean)', async () => {
+    const r = (fn) => (fn === 'isSanctionedAddress' ? false : 0n);
+    expect(await screenParticipant({ read: r, who: '0xB', oracle: `0x${'0'.repeat(40)}` })).toEqual({ state: 'unset', diamondSays: false });
+    const down = await screenParticipant({ read: r, who: '0xB', oracle: ORACLE, readOracle: async () => { throw new Error('reverted'); } });
+    expect(down).toEqual({ state: 'unavailable', diamondSays: false });
+  });
+});
+

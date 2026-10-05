@@ -134,6 +134,23 @@
 // write (a racing lender review, an unisolated createOffer block) stops the
 // drive as STOPPED, UNDETERMINED (exit 3) — not a FAIL.
 //
+// TWO ROOT RULES (#2422 r14), each with a completeness test:
+//   ROOT A — ONE POST-WRITE FAILURE CLASSIFIER (postWriteFailure.mjs). The
+//     post-write try has one catch, and it settles every stop through
+//     `classifyPostWriteFailure`: if a transaction of ours MINED (the accept
+//     first), the full receipt-based outcome verifier runs anyway and the
+//     page's failure is its own failed check; otherwise every premise is
+//     re-read — the whole watched snapshot, every participant's sanctions
+//     screening included, the request state, the loan posture — and a moved
+//     premise is a race naming what moved (an external fill through
+//     `externalFillVerdict`); only when nothing moved is it a product FAIL.
+//     The request must still be open when the lender is armed.
+//   ROOT B — THE REPLACEMENT THROUGH A DECLARED MAPPING
+//     (replacementMapping.mjs): every Loan field of the replacement is
+//     checked as a signed term, a carried value, a reviewed config value or
+//     an accept-block value — or declared unchecked with its reason, listed
+//     under NOT VERIFIED.
+//
 // THE REVIEW IS CHECKED BEFORE CONSENT (#2422 r7, reviewTerms.mjs). Before
 // each consent tick, the receipt rows are read by their en.json labels and
 // parsed against the en.json templates that produced them, and every
@@ -296,7 +313,6 @@ import {
 } from './driver.mjs';
 import { redactUrl } from './redact.mjs';
 import {
-  ANCHOR_WINDOW_SEC,
   borrowerReserve,
   decodeTxForComparison,
   graceSecondsFrom,
@@ -312,6 +328,8 @@ import { createManifest, runVerdict } from './outcomeManifest.mjs';
 import { configChanges, observationVerdict, observeAgainstChain } from './observation.mjs';
 import { readWatchedConfig } from './watchedConfig.mjs';
 import { postureMisses } from './supportedPosture.mjs';
+import { causeKindOf, classifyPostWriteFailure } from './postWriteFailure.mjs';
+import { evaluateReplacement, UNCHECKED_FIELDS } from './replacementMapping.mjs';
 import {
   balanceDeltaMismatches,
   checkRoleNonces,
@@ -582,14 +600,28 @@ function scopedCheck(sc, label, ok, observed, at) {
 /** `read` in the shape watchedConfig.mjs takes. */
 const diamondRead = (fn, args, blockNumber) => read(fn, args, blockNumber);
 /** The loan's assets, which the per-asset pause entries are read for. */
-const watchedContextOf = (l) => ({ principalAsset: l.principalAsset, collateralAsset: l.collateralAsset });
+const watchedContextOf = (l, oldHolder) => ({
+  principalAsset: l.principalAsset,
+  collateralAsset: l.collateralAsset,
+  // Every participant whose sanctions screening the snapshot carries (r14).
+  participants: { borrower: BORROWER, lender: LENDER, 'old lender': l.lender, 'old lender position holder': oldHolder },
+  readOracle: (oracle, who, blockNumber) =>
+    pub.readContract({
+      address: oracle,
+      abi: SANCTIONS_LIST_ABI,
+      functionName: 'isSanctioned',
+      args: [who],
+      ...(blockNumber !== undefined ? { blockNumber } : {}),
+    }),
+});
 /**
  * THE WATCHED-CONFIG SNAPSHOT at a block (undefined ⇒ latest) — every
  * mutable governance value this drive reads, as defined ONCE in
  * watchedConfig.mjs (#2422 r12). Rule 1 races every observation against the
  * whole of it.
  */
-const readObservedConfig = (blockNumber) => readWatchedConfig(diamondRead, watchedContextOf(EXPECT_LOAN), blockNumber);
+const readObservedConfig = (blockNumber) =>
+  readWatchedConfig(diamondRead, watchedContextOf(EXPECT_LOAN, pre.lenderPositionHolder), blockNumber);
 
 /**
  * RULE 1 for every observation of the browser against chain config
@@ -771,7 +803,7 @@ const MANIFEST = createManifest({
       claim: 'the accept opened ONE replacement loan: Active, from this request, the same borrower, the accepting lender, the same principal and collateral (still illiquid, consent from both), the requested rate and length',
       checks: {
         events: 'the accept receipt: success, every Diamond log decodes, one OfferAccepted(request), LoanRefinanced(old → new, newLender, borrower)',
-        loan: 'getLoanDetails(replacement) at the accept block — state checks here are judged only if the accept\u2019s block is isolated (RULE 2)',
+        loan: 'getLoanDetails(replacement) at the accept block, EVERY field through the declared mapping (replacementMapping.mjs: signed term / carried / reviewed config / accept block; the unchecked ones listed under NOT VERIFIED) — scoped (RULE 2)',
         positionNfts: 'ownerOf(borrowerTokenId / lenderTokenId) at the accept block (scoped)',
         requestAccepted: 'getOfferDetails(request).accepted at the accept block (scoped)',
         lenderIndex: 'getUserActiveLoans(lender) at the accept block (scoped)',
@@ -812,6 +844,14 @@ const MANIFEST = createManifest({
     },
   ],
   notVerified: [
+    // ROOT B (#2422 r14): the replacement's fields the declared mapping
+    // leaves unchecked, each with its reason — so nothing is left unstated.
+    {
+      id: 'replacementUncheckedFields',
+      claim: `the replacement loan's ${UNCHECKED_FIELDS.map((u) => u.field).join(', ')}`,
+      reason: UNCHECKED_FIELDS.map((u) => `${u.field}: ${u.why}`).join('; '),
+      coveredBy: null,
+    },
     {
       id: 'graceWindow',
       claim: 'a refinance accepted inside the old loan’s grace window settles with the late fee',
@@ -1613,11 +1653,18 @@ const pre = await precondition('reading the preconditions from chain', async () 
   const head = await pub.getBlockNumber();
   const block = await pub.getBlock({ blockNumber: head });
   const loan = await loanOf(LOAN_ID, head);
+  // Who holds each position NOW (#2422 r3 P2) — read first, because the old
+  // lender position's holder is one of the participants the snapshot screens.
+  const [borrowerPositionHolder, lenderPositionHolder] = await Promise.all([
+    read('ownerOf', [loan.borrowerTokenId], head),
+    read('ownerOf', [loan.lenderTokenId], head),
+  ]);
   // THE WATCHED-CONFIG SNAPSHOT (#2422 r12, watchedConfig.mjs): every
   // mutable governance value this drive reads, in ONE read, at the pinned
-  // head. Every governance figure below comes from it; nothing reads a
-  // watched getter directly.
-  const watched = await readWatchedConfig(diamondRead, watchedContextOf(loan), head);
+  // head — every participant's sanctions screening included (r14). Every
+  // governance figure below comes from it; nothing reads a watched getter
+  // directly.
+  const watched = await readWatchedConfig(diamondRead, watchedContextOf(loan, lenderPositionHolder), head);
   const { riskAccessGate: riskGate, autoRefinance: autoRefi, paused, partialFill } = watched;
   const collLiquidity = await read('checkLiquidity', [loan.collateralAsset], head);
   const [tosB, tosL] = await Promise.all([
@@ -1671,42 +1718,17 @@ const pre = await precondition('reading the preconditions from chain', async () 
     pub.readContract({ address: loan.collateralAsset, abi: erc20Abi, functionName: 'symbol', blockNumber: head }),
     pub.readContract({ address: loan.collateralAsset, abi: erc20Abi, functionName: 'decimals', blockNumber: head }),
   ]);
-  // Who holds each position NOW (#2422 r3 P2). The stored borrower is what
-  // carry-over binds to; the position NFT is who may act on the position.
-  const [borrowerPositionHolder, lenderPositionHolder] = await Promise.all([
-    read('ownerOf', [loan.borrowerTokenId], head),
-    read('ownerOf', [loan.lenderTokenId], head),
-  ]);
-  // Sanctions screening, TRI-STATE (#2422 r3/r4 P2). The Diamond's
-  // `isSanctionedAddress` (the app's read) is fail-open twice over: an
-  // unset oracle reads "not flagged", and so does an oracle whose call
-  // REVERTS (LibVaipakam wraps it in try/catch). So:
-  //   - oracle unset   → reported as "unset, screened nobody";
-  //   - oracle set     → the drive ALSO asks the oracle directly, with the
-  //     interface the Diamond uses (ISanctionsList.isSanctioned). Clean only
-  //     if the oracle ANSWERED not-flagged and the Diamond agrees (it adds
-  //     the recovery-ban rule on a declared source). Flagged by either →
-  //     BLOCKED; the oracle call reverted or unreachable → BLOCKED as
-  //     "oracle unavailable", never "clean".
+
+  // Sanctions screening, TRI-STATE (#2422 r3/r4 P2), now INSIDE the
+  // snapshot (r14, `screenParticipant`): oracle unset → "unset, screened
+  // nobody"; set → the oracle asked directly as the Diamond asks it, clean
+  // only if it ANSWERED not-flagged and the Diamond agrees; flagged or
+  // unavailable → BLOCKED. Every later snapshot re-screens every participant.
   const { sanctionsOracle } = watched;
   const oracleSet = !/^0x0{40}$/i.test(sanctionsOracle);
-  const screen = async (who) => {
-    const diamondSays = await read('isSanctionedAddress', [who], head);
-    if (!oracleSet) return { state: 'unset', diamondSays };
-    try {
-      const oracleSays = await pub.readContract({
-        address: sanctionsOracle,
-        abi: SANCTIONS_LIST_ABI,
-        functionName: 'isSanctioned',
-        args: [who],
-        blockNumber: head,
-      });
-      return { state: oracleSays || diamondSays ? 'flagged' : 'clean', oracleSays, diamondSays };
-    } catch (e) {
-      return { state: 'unavailable', diamondSays, error: String(e.shortMessage ?? e.message).slice(0, 120) };
-    }
-  };
-  const [sanctionB, sanctionL] = await Promise.all([screen(BORROWER), screen(LENDER)]);
+  const sanctionB = watched['screen:borrower'];
+  const sanctionL = watched['screen:lender'];
+
   // The loan's grace window, read the way the app reads it — the payoff
   // approval the borrower signs is the payoff at the end of it.
   const { graceBuckets } = watched;
@@ -1787,12 +1809,12 @@ want(
 );
 // Unset is not a MISS (the retail oracle is unset by design and this drive
 // runs there); it is reported below. Flagged and unavailable both BLOCK.
-for (const [who, r] of [['borrower', pre.sanctionB], ['lender', pre.sanctionL]]) {
+for (const [who, r] of Object.entries(pre.watched).filter(([k]) => k.startsWith('screen:')).map(([k, v]) => [k.slice(7), v])) {
   want(
     `${who} sanctions screen is not flagged and not unavailable`,
     r.state === 'clean' || r.state === 'unset',
     r.state === 'unavailable'
-      ? `oracle unavailable — its isSanctioned call failed (${r.error})`
+      ? 'oracle unavailable — its isSanctioned call failed'
       : `${r.state} (oracle ${r.oracleSays ?? 'n/a'}, Diamond ${r.diamondSays})`,
   );
 }
@@ -2114,143 +2136,28 @@ let exitCode = 0;
 let session = sessions.borrower; // the session `shot()` on a stop targets
 let requestId = null;
 let acceptHash = null;
-try {
-  // -------------------------------------------------------------------
-  // 1. Borrower posts the refinance request through the form.
-  // -------------------------------------------------------------------
-  const bp = session.page;
-  await bp.goto(`${SITE}/positions/${LOAN_ID}`, { waitUntil: 'domcontentloaded', timeout: 60_000 });
-  await ensureConnected(bp);
-  const bLang = await renderedLang(bp);
-  check('borrower page renders English (every disclosure is matched against en.json)', isEnglish(bLang), bLang, 'uiFlow.borrower');
 
-  const card = bp.locator('section.card').filter({ hasText: 'Refinance this loan' });
-  if (!(await card.first().waitFor({ state: 'visible', timeout: 90_000 }).then(() => true, () => false))) {
-    await session.shot('refinance-01-no-card');
-    stop('the "Refinance this loan" card never rendered for the stored borrower in Advanced mode');
-  }
-  check('borrower: "Refinance this loan" card renders on /positions/' + LOAN_ID, true, undefined, 'uiFlow.borrower');
+/** The request as its createOffer stored it (pinned to the create block,
+ *  RULE 2) — set by `verifyCreateOutcome`. */
+let REQUEST_AS_CREATED = null;
+/** The watched-config snapshot the reviews were last judged against (the
+ *  read just before the lender is armed) — what the settlement must use. */
+let REVIEWED_CONFIG = null;
+/** Which outcome verifiers have started — the classifier runs one only once. */
+const VERIFY_STARTED = { create: false, accept: false };
+/** The post-write classifier's last decision, and its FAIL reason if any. */
+let POST_WRITE = null;
+let POST_WRITE_FAIL = null;
 
-  // #2349/#2355 posture disclosure — judged against the chain's switches.
-  const banner = card.locator('[data-auto-match-posture]');
-  // RULE 1 (#2422 r10, `observeConfig`): the banner is judged only against
-  // switches that held still around its observation — read before and after
-  // it, and equal to the preflight's. A move is a state race: BLOCKED here,
-  // before any write. Never a product FAIL.
-  const bannerObs = await observeConfig('the posture banner', async () => {
-    const posture = await pollUntil('posture banner settles', async () => {
-      const a = await banner.first().getAttribute('data-auto-match-posture', { timeout: 2_000 });
-      return a && a !== 'unknown' ? a : null;
-    }, { timeoutMs: 45_000 });
-    const text = posture ? (await banner.first().innerText()).replace(/\s+/g, ' ').trim() : null;
-    return { posture, text };
-  });
-  const postureNow = expectedPostureFrom(bannerObs.config);
-  check(
-    `borrower: posture banner states the chain's posture at the observation (${postureNow})`,
-    bannerObs.observed.posture === postureNow && bannerObs.observed.text?.includes(postureCopy[postureNow]),
-    `${bannerObs.observed.posture}: "${bannerObs.observed.text}"`,
-    'borrowerReview.posture',
-  );
-
-  await card.getByLabel(/highest yearly rate/i).fill(RATE_PCT);
-  await card.getByLabel(/new loan length/i).fill(DAYS);
-  const review = card.getByRole('button', { name: /review refinance request/i });
-  if (!(await pollUntil('review enabled', () => review.isEnabled(), { timeoutMs: 60_000 }))) {
-    await session.shot('refinance-02-review-disabled');
-    stop('"Review refinance request" never enabled');
-  }
-  await review.click();
-
-  // The receipt the borrower consents to — kept as evidence.
-  const receiptText = (await card.innerText()).replace(/\s+/g, ' ').trim();
-  console.log(`\n--- refinance review (as rendered) ---\n${receiptText.slice(0, 2500)}\n---`);
-  check('borrower: review says the collateral carries over', /carries over|without ever unlocking/i.test(receiptText), undefined, 'borrowerReview.receipt');
-  await session.shot('refinance-03-review');
-  // The figures the borrower is about to consent to, against the chain
-  // (#2422 r7). A mismatch or an unparseable row halts before consent.
-  // RULE 1: the fee rates and grace window it quotes are judged against the
-  // config read around the observation (BLOCKED on a race — nothing written).
-  const bObs = await observeConfig('the borrower\u2019s review', () => receiptRows(card));
-  const bTerms = await borrowerReviewMismatches(bObs.observed, bObs.config);
-  check(
-    `borrower: review figures match the chain (${bTerms.compared.join(', ')})`,
-    bTerms.mismatches.length === 0,
-    bTerms.mismatches.join(' | ') || `all ${bTerms.compared.length} terms match`,
-    'borrowerReview.receipt',
-  );
-
-  // Rule B: nothing below may lead to a write if anything above failed.
-  // Rule A: arm the gate with the three complete requests the form may
-  // sign, then open it — the confirm is the one action that may write.
-  beforeWriteStep('ticking the borrower consent');
-  const confirm = card.getByRole('button', { name: /confirm — post refinance request/i });
-  const consentBox = card.locator('input[type="checkbox"]');
-  const confirmed = await pollUntil('consent + confirm enabled', async () => {
-    beforeWriteStep('ticking the borrower consent');
-    if (!(await consentBox.isChecked())) await consentBox.check();
-    return confirm.isEnabled();
-  }, { timeoutMs: 60_000 });
-  if (HALT) stop(`not posting: ${HALT}`);
-  if (!confirmed) {
-    await session.shot('refinance-04-confirm-disabled');
-    stop('"Confirm — post refinance request" never enabled after consent');
-  }
-  beforeWriteStep('posting the refinance request');
-  BORROWER_ANCHOR = await chainNow();
-  console.log(`info  borrower anchor (chain time at submit start): ${BORROWER_ANCHOR}`);
-  // Arm the borrower role NOW — the card, posture and review checks above
-  // have passed, and the next action is the confirmed submit (#2422 r8).
-  PLAN.arm('borrower');
-  console.log('info  write plan ARMED for the borrower’s confirmed submit');
-  await confirm.click();
-
-  const live = await pollUntil('request is live', async () => {
-    if (refusals.length || HALT) return 'refused';
-    const err = card.locator('.banner-danger');
-    if (await err.count()) return `error: ${(await err.first().innerText()).trim()}`;
-    const t = await bp.locator('body').innerText();
-    const m = t.match(/Refinance request #(\d+) is live/i);
-    return m ? m[1] : null;
-  }, { timeoutMs: 300_000, everyMs: 2_000 });
-  await session.shot('refinance-05-posted');
-  if (refusals.length) stop('the borrower form asked for a write the gate had not armed');
-  if (HALT) stop(`halted while posting: ${HALT}`);
-  if (!live || live.startsWith('error')) {
-    stop(`the refinance request did not go live: ${live ?? 'timed out'}`);
-  }
-  // The borrower's submit has settled: nothing may be signed until the
-  // lender's confirmed submit arms the plan again.
-  PLAN.close();
-  console.log('info  write plan CLOSED after the borrower’s submit');
-  const pageRequestId = BigInt(live);
-
-  // Pending card carries the posture disclosure too.
-  const pendingCard = bp.locator('section.card').filter({ hasText: new RegExp(`Refinance request #${pageRequestId} is live`, 'i') });
-  // RULE 1, after the borrower's write: a race is UNDETERMINED, not FAIL.
-  const cardObs = await observeConfig('the standing request card', async () => {
-    try {
-      return {
-        posture: await pendingCard.locator('[data-auto-match-posture]').first().getAttribute('data-auto-match-posture', { timeout: 30_000 }),
-        err: null,
-      };
-    } catch (e) {
-      return { posture: null, err: String(e.message).split('\n')[0].slice(0, 120) };
-    }
-  });
-  if (cardObs.undetermined) {
-    MANIFEST.undetermined('borrowerReview', 'posture', cardObs.undetermined);
-    console.log(`UNDET borrower: the standing request card's posture — ${cardObs.undetermined} (card showed ${cardObs.observed?.posture ?? cardObs.observed?.err})`);
-  } else {
-    const want = expectedPostureFrom(cardObs.config);
-    check(
-      `borrower: the standing request card discloses the posture (${want})`,
-      cardObs.observed.posture === want,
-      cardObs.observed.err ? `UNREADABLE — ${cardObs.observed.err}` : cardObs.observed.posture,
-      'borrowerReview.posture',
-    );
-  }
-
+/**
+ * PHASE 2 — what the createOffer did, from its receipt (#2422 r14: a
+ * function, so the post-write classifier can run it when the createOffer
+ * MINED but the page never said the request was live). Pins the request,
+ * checks its terms (scoped, RULE 2), and stops before the lender phase on any
+ * mismatch. `pageRequestId` is null when the page named no id.
+ */
+async function verifyCreateOutcome(pageRequestId) {
+  VERIFY_STARTED.create = true;
   // -------------------------------------------------------------------
   // 2. Pin the request on chain from the createOffer receipt itself.
   // -------------------------------------------------------------------
@@ -2281,7 +2188,11 @@ try {
   // Only now can the lender's plan steps be judged; until this line they
   // refuse, so no lender write could precede the request's pinning.
   REQUEST_ID = requestId;
-  check('page names the same request id the receipt created', pageRequestId === requestId, `page #${pageRequestId}, receipt #${requestId}`, 'request.receipt');
+  // The page's id is compared when the page named one; when it did not, the
+  // UI failure is its own failed check (recorded by the classifier).
+  if (pageRequestId !== null) {
+    check('page names the same request id the receipt created', pageRequestId === requestId, `page #${pageRequestId}, receipt #${requestId}`, 'request.receipt');
+  }
 
   const atCreate = createRcpt.blockNumber;
   const createRcptTs = (await pub.getBlock({ blockNumber: atCreate })).timestamp;
@@ -2304,6 +2215,7 @@ try {
     'request.onlyOffer',
   );
   const req = await read('getOfferDetails', [requestId], atCreate);
+  REQUEST_AS_CREATED = req;
   const terms = (label, ok, observed) => scopedCheck(CREATE, label, ok, observed, 'request.terms');
   terms(`request refinanceTargetLoanId == ${LOAN_ID}`, req.refinanceTargetLoanId === LOAN_ID, req.refinanceTargetLoanId);
   terms('request refinanceCarryOver == true', req.refinanceCarryOver === true, req.refinanceCarryOver);
@@ -2381,202 +2293,20 @@ try {
   // A request whose terms could not be established in isolation is not
   // funded: that is UNDETERMINED, not a FAIL (exit 3).
   if (CREATE.reason) raceStop(`not funding request #${requestId}: its terms could not be read in isolation — ${CREATE.reason}`);
+}
 
-  await closeSession('borrower');
-  // The request is pinned and every request check passed. The plan stays
-  // CLOSED through the lender's page loads and review checks; the lender
-  // role is armed immediately before "Fund this borrower".
-
-  // -------------------------------------------------------------------
-  // 3. A DIFFERENT lender funds it through the Offer Book → guided review.
-  // The session already exists (launched and gated before any write).
-  // -------------------------------------------------------------------
-  session = sessions.lender;
-  const lp = session.page;
-  const expectedHref = `/lend?offer=${requestId}&chain=${CHAIN_ID}`;
-  let reachedViaBook = false;
-  await lp.goto(`${SITE}/offers`, { waitUntil: 'domcontentloaded', timeout: 60_000 });
-  await ensureConnected(lp);
-  const lLang = await renderedLang(lp);
-  check('lender page renders English (every disclosure is matched against en.json)', isEnglish(lLang), lLang, 'uiFlow.lender');
-  const fundLink = await pollUntil('request row in the Offer Book', async () => {
-    // Someone else may have filled it in the meantime — stop, don't race.
-    // Explicitly about NOW (#2422 r11): has anyone filled it yet?
-    const o = await read('getOfferDetails', [requestId]);
-    if (o.accepted) return 'taken';
-    const row = lp.locator('.item-row').filter({ hasText: new RegExp(`offer #${requestId}\\b`) });
-    if ((await row.count()) === 0) {
-      await lp.reload({ waitUntil: 'domcontentloaded' });
-      await lp.waitForTimeout(4_000);
-      return null;
-    }
-    const link = row.first().getByRole('link', { name: /fund this request/i });
-    if ((await link.count()) === 0) return `row-without-cta: ${(await row.first().innerText()).replace(/\s+/g, ' ')}`;
-    return link.first();
-  }, { timeoutMs: 300_000, everyMs: 6_000 });
-  if (fundLink === 'taken') {
-    // Filled by SOMEONE ELSE while we waited (#2422 r13): a race with the
-    // open market or the order matcher — UNDETERMINED (exit 3), with the
-    // replacement reported — unless the chain shows something actually
-    // wrong (accepted, yet no loan carries it): then FAIL.
-    RUN_REQUEST = { state: 'known', id: requestId };
-    let replacement = null;
-    let scanError = null;
-    try {
-      replacement = await replacementAt(await pub.getBlockNumber({ cacheTime: 0 }));
-    } catch (e) {
-      scanError = String(e.shortMessage ?? e.message).slice(0, 160);
-    }
-    const fill = externalFillVerdict({ requestId, replacement, scanError });
-    if (fill.kind === 'fail') stop(fill.why);
-    raceStop(fill.why);
-  }
-  if (typeof fundLink === 'string') {
-    await session.shot('refinance-06-row-no-cta');
-    stop(`the Offer Book row for request #${requestId} offers no "Fund this request" CTA: ${fundLink}`);
-  }
-  if (fundLink) {
-    const href = await fundLink.getAttribute('href');
-    check('Offer Book "Fund this request" links to the guided accept', href === expectedHref, href, 'offerBook.cta');
-    const rowText = (await lp.locator('.item-row').filter({ hasText: new RegExp(`offer #${requestId}\\b`) }).first().innerText()).replace(/\s+/g, ' ');
-    console.log(`info  book row: ${rowText}`);
-    // A disclosure, judged like every other (#2422 r4 P2): a book row that
-    // does not tag the collateral as illiquid fails and halts — the lender
-    // must not be led from an undisclosed row into a funding review.
-    check(
-      `Offer Book row for #${requestId} carries the illiquid-collateral tag (copy.offers.illiquidCollateralTag)`,
-      rowText.includes(squash(bookIlliquidTag)),
-      rowText,
-      'offerBook.illiquidTag',
-    );
-    await session.shot('refinance-06-book-row');
-    await fundLink.click();
-    reachedViaBook = true;
-  } else {
-    // The indexer never listed it within the window. The CTA's target is
-    // still a UI route, so the accept itself stays a UI accept — but the
-    // discovery path is a finding.
-    note(`request #${requestId} did not appear in the Offer Book within 5 min (indexer ingest?) — opened the CTA's own target ${expectedHref} directly`);
-    MANIFEST.defer(
-      'offerBook',
-      `the indexer did not list request #${requestId} within 5 minutes, so the lender opened the CTA’s own target directly — no Offer Book row was seen`,
-      null,
-    );
-    await lp.goto(`${SITE}${expectedHref}`, { waitUntil: 'domcontentloaded', timeout: 60_000 });
-  }
-  console.log(`info  lender reached the request via ${reachedViaBook ? 'the Offer Book CTA' : 'the CTA target directly'}`);
-
-  const banner2 = lp.getByText(new RegExp(`funding borrow request #${requestId}\\b`, 'i'));
-  if (!(await banner2.first().waitFor({ state: 'visible', timeout: 90_000 }).then(() => true, () => false))) {
-    const body = (await lp.locator('body').innerText()).replace(/\s+/g, ' ');
-    await session.shot('refinance-07-no-review');
-    stop(`the guided accept did not open the review for request #${requestId}: ${body.slice(0, 600)}`);
-  }
-  check(`lender: review opens as "You’re funding borrow request #${requestId}"`, true, undefined, 'uiFlow.lender');
-
-  const submit = lp.getByRole('button', { name: /fund this borrower/i });
-  const consent = lp.locator('label:has(a[href="/help#risks"]) input[type="checkbox"]').last();
-  // Let the review settle (liquidity, grace, dry run) before judging it:
-  // a disclosure arriving later clears consent by design.
-  await pollUntil('review settled', async () => {
-    const t = await lp.locator('body').innerText();
-    return !/preparing|checking/i.test(t.slice(t.indexOf('Before you sign')));
-  }, { timeoutMs: 45_000 });
-
-  // The DISCLOSURES are judged BEFORE consent is given (#2422 r2 P1): the
-  // lender must not consent to — or sign — a review that failed to say the
-  // collateral is illiquid. Under rule B the failed check halts, and the
-  // `beforeWriteStep` below stops before the consent tick and the submit.
-  const reviewText = (await lp.locator('main').innerText().catch(() => lp.locator('body').innerText())).replace(/\s+/g, ' ');
-  console.log(`\n--- lender review (as rendered, before consent) ---\n${reviewText.slice(0, 4000)}\n---`);
-  if (/would fail|will fail|revert/i.test(reviewText)) note('the lender review shows a would-fail / revert note (see the transcript above)');
-  check('lender: review carries the illiquid-collateral warning (copy.match.illiquidWarning)', reviewText.includes(squash(illiquidWarning)), undefined, 'lenderReview.illiquidWarning');
-  // Evidence, not a verdict: the spec does not say whether a lender funding
-  // a refinance request must be told it closes another loan.
-  if (!/refinanc/i.test(reviewText)) {
-    note('the lender review never says this request refinances an existing loan (accepting it also pays off and closes that loan)');
-  }
-  await session.shot('refinance-08-lender-review');
-  // The figures the lender is about to consent to, against the request on
-  // chain and the live fee config (#2422 r7) — before the consent tick.
-  //
-  // RULE 1 (#2422 r10): the yield fee and grace window are judged against
-  // the config read around the observation. The borrower's write has
-  // already landed, so a race here cannot be BLOCKED: it is UNDETERMINED,
-  // and the drive stops BEFORE the lender's consent — a review nobody could
-  // judge is not consented to (`raceStop`, exit 3, never a FAIL).
-  // The request AS CREATED — read pinned to its create block under RULE 2
-  // (#2422 r11: no post-write read uses "latest" unless its claim is about
-  // now). Its terms are what the lender's review must show.
-  const reqNow = req;
-  const lObs = await observeConfig('the lender\u2019s review', () => receiptRows(lp.locator('main')));
-  if (lObs.undetermined) {
-    MANIFEST.undetermined('lenderReview', 'receipt', lObs.undetermined);
-    raceStop(`not funding: ${lObs.undetermined}`);
-  }
-  const lTerms = lenderReviewMismatches(lObs.observed, reqNow, lObs.config);
-  check(
-    `lender: review figures match the request on chain (${lTerms.compared.join(', ')})`,
-    lTerms.mismatches.length === 0,
-    lTerms.mismatches.join(' | ') || `all ${lTerms.compared.length} terms match`,
-    'lenderReview.receipt',
-  );
-
-  beforeWriteStep('ticking the lender consent');
-  const canSign = await pollUntil('consent + "Fund this borrower" enabled', async () => {
-    beforeWriteStep('ticking the lender consent');
-    if (!(await consent.isChecked())) await consent.check();
-    await lp.waitForTimeout(1_000);
-    return submit.isEnabled();
-  }, { timeoutMs: 120_000, everyMs: 3_000 });
-  if (HALT) stop(`not funding: ${HALT}`);
-  if (!canSign) {
-    stop('the deployed UI never enabled "Fund this borrower" for this request (see the review transcript above)');
-  }
-  beforeWriteStep('submitting "Fund this borrower"');
-  // RULE 1, once more, IMMEDIATELY before arming the lender (#2422 r11): the
-  // watched config — the risk-terms epoch the AcceptTerms is anchored to
-  // included — must still equal the preflight's. A move here is
-  // UNDETERMINED and stops the run before the lender is armed.
-  const armObs = await observeConfig('the lender\u2019s submit (risk-terms epoch, fees, grace, posture)', async () => null);
-  if (armObs.undetermined) {
-    MANIFEST.undetermined('lenderReview', 'receipt', armObs.undetermined);
-    raceStop(`not arming the lender: ${armObs.undetermined}`);
-  }
-  // The config the reviews were judged against, as last confirmed before the
-  // lender's write: the settlement must be computed from exactly this.
-  const REVIEWED_CONFIG = armObs.config;
-  LENDER_ANCHOR = await chainNow();
-  console.log(`info  lender anchor (chain time at submit start): ${LENDER_ANCHOR}`);
-  PLAN.arm('lender');
-  console.log('info  write plan ARMED for the lender’s confirmed submit');
-  await submit.click();
-
-  const outcome = await pollUntil('accept settles', async () => {
-    if (refusals.length || HALT) return 'refused';
-    if (await lp.getByRole('heading', { name: /loan opened/i }).count()) return 'opened';
-    const err = lp.locator('.banner-danger[role="alert"]');
-    if (await err.count()) {
-      const t = (await err.first().innerText()).trim();
-      // A submit error is final only once the button is idle again.
-      if (await submit.isEnabled().catch(() => false)) return `error: ${t}`;
-    }
-    return null;
-  }, { timeoutMs: 300_000, everyMs: 2_000 });
-  await session.shot('refinance-09-lender-done');
-  const doneText = (await lp.locator('body').innerText()).replace(/\s+/g, ' ');
-  if (refusals.length) stop('the lender flow asked for a write the gate had not armed');
-  if (HALT) stop(`halted while accepting: ${HALT}`);
-  if (outcome !== 'opened') stop(`the lender's accept did not complete in the UI: ${outcome ?? 'timed out'}`);
-  PLAN.close();
-  console.log('info  write plan CLOSED after the lender’s submit');
-  check('lender: the app reports "Loan opened"', true, undefined, 'uiFlow.lenderDone');
-  const doneIdx = doneText.search(/loan opened/i);
-  console.log(`info  lender done step: ${doneText.slice(doneIdx, doneIdx + 400)}`);
-
+/**
+ * PHASES 4–5 — what the accept did, from its receipt and its isolated block
+ * (#2422 r14: a function, so the post-write classifier can run it when the
+ * accept MINED but the page missed it — the UI failure is then its own
+ * failed check, and the chain outcome is still established).
+ */
+async function verifyAcceptOutcome() {
   // -------------------------------------------------------------------
   // 4. On-chain outcome, pinned at or after the accept's block.
   // -------------------------------------------------------------------
+  VERIFY_STARTED.accept = true;
+  if (!REVIEWED_CONFIG) stop('internal: the accept is being verified but no reviewed config was recorded before arming');
   const unhashedL = sendsOf('lender').filter((t) => !t.hash);
   if (unhashedL.length) {
     stop(`lender send(s) with no hash — outcome unknown: ${unhashedL.map((t) => t.purpose).join(', ')}`);
@@ -2668,8 +2398,6 @@ try {
     'oldLoanClosed.status',
   );
   const fresh = await loanOf(newLoanId, floor);
-  scopedCheck(ACCEPT, `replacement loan ${newLoanId} status == 0 (Active)`, fresh.status === LOAN_STATUS.ACTIVE, fresh.status, 'replacement.loan');
-  scopedCheck(ACCEPT, 'replacement offerId == the request', fresh.offerId === requestId, fresh.offerId, 'replacement.loan');
   // Who HOLDS the replacement's position NFTs, at the accept's block — the
   // stored parties say who the loan was opened for; the NFTs say who can
   // act on it (#2422 r6 P2). Read failures throw, and so fail the run.
@@ -2691,16 +2419,31 @@ try {
     `token ${fresh.lenderTokenId} → ${newLenderHolder}`,
     'replacement.positionNfts',
   );
-  scopedCheck(ACCEPT, 'replacement borrower unchanged', eq(fresh.borrower, BORROWER), fresh.borrower, 'replacement.loan');
-  scopedCheck(ACCEPT, 'replacement lender == the accepting `lender` role', eq(fresh.lender, LENDER), fresh.lender, 'replacement.loan');
-  scopedCheck(ACCEPT, 'replacement collateralAsset == old', eq(fresh.collateralAsset, loan.collateralAsset), fresh.collateralAsset, 'replacement.loan');
-  scopedCheck(ACCEPT, 'replacement collateralAmount == old', fresh.collateralAmount === loan.collateralAmount, fresh.collateralAmount, 'replacement.loan');
-  scopedCheck(ACCEPT, 'replacement collateralLiquidity == Illiquid', fresh.collateralLiquidity === LIQUIDITY_ILLIQUID, fresh.collateralLiquidity, 'replacement.loan');
-  scopedCheck(ACCEPT, 'replacement riskAndTermsConsentFromBoth == true', fresh.riskAndTermsConsentFromBoth === true, fresh.riskAndTermsConsentFromBoth, 'replacement.loan');
-  scopedCheck(ACCEPT, 'replacement principal == old principal', fresh.principal === loan.principal, fresh.principal, 'replacement.loan');
-  scopedCheck(ACCEPT, 'replacement principal asset == old', eq(fresh.principalAsset, loan.principalAsset), fresh.principalAsset, 'replacement.loan');
-  scopedCheck(ACCEPT, `replacement interestRateBps == the request ceiling (${RATE_BPS})`, fresh.interestRateBps === RATE_BPS, fresh.interestRateBps, 'replacement.loan');
-  scopedCheck(ACCEPT, `replacement durationDays == ${DAYS_N}`, fresh.durationDays === DAYS_N, fresh.durationDays, 'replacement.loan');
+  // THE REPLACEMENT, field by field, through ONE declared mapping (#2422
+  // r14, ROOT B, replacementMapping.mjs): every Loan field is checked as a
+  // signed term, a carried value, a reviewed config value or a value the
+  // accept block determines — or declared unchecked with its reason (those
+  // are listed under NOT VERIFIED). The evidence names every field.
+  const signedStep = planSteps().find((st) => st.id === 'l-sign' && st.status === 'consumed');
+  const signedTerms = signedStep?.record?.params ? JSON.parse(signedStep.record.params[1]).message : null;
+  if (!signedTerms) stop('internal: the accept mined but the signed AcceptTerms were not recorded');
+  const replacementEval = evaluateReplacement(fresh, {
+    newLoanId,
+    requestId,
+    acceptor: LENDER,
+    acceptTs: (await pub.getBlock({ blockNumber: floor })).timestamp,
+    terms: signedTerms,
+    request: REQUEST_AS_CREATED,
+    oldLoan: oldAtPrev,
+    reviewedConfig: REVIEWED_CONFIG,
+  });
+  scopedCheck(
+    ACCEPT,
+    `replacement loan ${newLoanId} matches the declared field mapping (${replacementEval.evidence.length} fields; ${replacementEval.unchecked.length} declared unchecked)`,
+    replacementEval.mismatches.length === 0,
+    (replacementEval.mismatches.length ? replacementEval.mismatches : replacementEval.evidence).join(' | '),
+    'replacement.loan',
+  );
   // The fees the replacement STAMPED at origination are the ones reviewed
   // (#2422 r12): `_snapshotFeeBps` writes the live treasury fee and — for an
   // ERC-20 origination — the live LIF rate onto the new loan. Compared with
@@ -2976,30 +2719,447 @@ try {
     }
   }
   console.log(`\nresult  request offer #${requestId} → replacement loan #${newLoanId}; old loan #${LOAN_ID} closed`);
-} catch (err) {
-  // A race stop (#2422 r10) is not a failure by itself: the verdict decides.
-  if (!(err instanceof RaceStop)) exitCode = 1;
-  const why = err instanceof Stop ? err.message : `unexpected error: ${String(err.shortMessage ?? err.message ?? err).split('\n')[0]}`;
-  console.log(`\nSTOPPED: ${why}`);
-  // "Nothing was written" is a claim only an EMPTY send log supports: an
-  // allowed send without a hash may have been broadcast (#2422 r2 P1), and
-  // the reconciliation below says which.
-  console.log(
-    !anythingAllowed()
-      ? '(no plan step was consumed before the drive stopped — nothing was written)'
-      : `(${sendsOf().length} transaction step(s) and ${consumedSteps('typed').length} signature step(s) were ` +
-          'consumed before the drive stopped — see the write plan and nonce reconciliation)',
-  );
-  if (err instanceof Stop) {
-    /* already explained */
-  } else if (err?.stack) {
-    console.log(String(err.stack).split('\n').slice(1, 4).join('\n'));
+}
+
+/** Whether one of OUR plan steps mined successfully (its own receipt). */
+async function ourStepMined(id) {
+  const st = planSteps().find((x) => x.id === id && x.status === 'consumed');
+  if (!st?.record?.hash) return false;
+  try {
+    return (await pub.waitForTransactionReceipt({ hash: st.record.hash, timeout: 120_000 })).status === 'success';
+  } catch {
+    return false;
   }
+}
+
+/**
+ * Every premise, re-read now (#2422 r14 ROOT A (ii)): the whole watched
+ * snapshot — every participant's sanctions screening included — against the
+ * snapshot the run was judged against; the request's state by
+ * `requestStateOf` (with the replacement scan when it was filled); the loan's
+ * supported posture while our accept has not mined. Never throws: an
+ * unreadable premise is returned as `{ error }`.
+ */
+async function premisesNow({ acceptMined }) {
+  try {
+    const head = await pub.getBlockNumber({ cacheTime: 0 });
+    const cfg = await readObservedConfig(head);
+    const configMoves = configChanges(REVIEWED_CONFIG ?? OBSERVED_BASELINE, cfg);
+    let request = null;
+    if (REQUEST_ID !== null) {
+      request = { id: REQUEST_ID, state: await requestStateAt(REQUEST_ID, head) };
+      if (request.state === 'accepted') {
+        RUN_REQUEST = { state: 'known', id: REQUEST_ID };
+        try {
+          request.replacement = await replacementAt(head);
+        } catch (e) {
+          request.scanError = String(e.shortMessage ?? e.message).slice(0, 160);
+        }
+      }
+    }
+    const posture = acceptMined
+      ? []
+      : postureMisses(await loanOf(LOAN_ID, head)).map((m) => `${m.field} is ${m.value} (supported: ${m.want})`);
+    return { configChanges: configMoves, request, postureMisses: posture };
+  } catch (e) {
+    return { error: String(e.shortMessage ?? e.message ?? e).slice(0, 160) };
+  }
+}
+
+/**
+ * THE ONE PLACE A FAILURE IS SETTLED (#2422 r14 ROOT A). The post-write
+ * try's only catch calls this, so every stop or error after the first write
+ * goes through `classifyPostWriteFailure`: verify the outcome of a
+ * transaction of ours that mined (recording the UI failure as its own
+ * failed check), or re-read every premise and call it a race when one
+ * moved — FAIL only when nothing did. Before any write, a stop is a product
+ * FAIL as it always was (a pre-write race exits BLOCKED where it is found).
+ */
+async function settleFailure(err) {
+  let current = err;
+  for (let round = 0; current && round < 3; round++) {
+    const why = current instanceof Stop ? current.message : `unexpected error: ${String(current.shortMessage ?? current.message ?? current).split('\n')[0]}`;
+    console.log(`\nSTOPPED: ${why}`);
+    if (!(current instanceof Stop) && current?.stack) console.log(String(current.stack).split('\n').slice(1, 4).join('\n'));
+    if (!anythingAllowed()) {
+      console.log('(no plan step was consumed before the drive stopped — nothing was written)');
+      exitCode = 1;
+      return;
+    }
+    const kind = causeKindOf(current, { RaceStop, Stop });
+    const acceptMined = await ourStepMined('l-accept');
+    const ours = { acceptMined, createMined: await ourStepMined('b-create'), verified: { ...VERIFY_STARTED } };
+    const premises = kind === 'race' ? null : await premisesNow({ acceptMined });
+    POST_WRITE = classifyPostWriteFailure({ cause: { kind, why }, ours, premises });
+    console.log(`CLASSIFIED (${kind}) → ${POST_WRITE.action}: ${POST_WRITE.why}`);
+    if (POST_WRITE.action === 'race') {
+      RACE_STOP = RACE_STOP ?? POST_WRITE.why;
+      return;
+    }
+    if (POST_WRITE.action === 'fail') {
+      POST_WRITE_FAIL = POST_WRITE.why;
+      return;
+    }
+    const accept = POST_WRITE.action === 'verify-accept';
+    if (POST_WRITE.recordUiFailure) {
+      check(`the page failed after our ${accept ? 'accept' : 'createOffer'} mined: ${why}`, false, 'the chain outcome is verified below regardless', accept ? 'uiFlow.lenderDone' : 'uiFlow.borrower');
+    }
+    current = null;
+    try {
+      if (accept) await verifyAcceptOutcome();
+      else await verifyCreateOutcome(null);
+    } catch (e) {
+      current = e;
+    }
+  }
+}
+
+try {
+  // -------------------------------------------------------------------
+  // 1. Borrower posts the refinance request through the form.
+  // -------------------------------------------------------------------
+  const bp = session.page;
+  await bp.goto(`${SITE}/positions/${LOAN_ID}`, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+  await ensureConnected(bp);
+  const bLang = await renderedLang(bp);
+  check('borrower page renders English (every disclosure is matched against en.json)', isEnglish(bLang), bLang, 'uiFlow.borrower');
+
+  const card = bp.locator('section.card').filter({ hasText: 'Refinance this loan' });
+  if (!(await card.first().waitFor({ state: 'visible', timeout: 90_000 }).then(() => true, () => false))) {
+    await session.shot('refinance-01-no-card');
+    stop('the "Refinance this loan" card never rendered for the stored borrower in Advanced mode');
+  }
+  check('borrower: "Refinance this loan" card renders on /positions/' + LOAN_ID, true, undefined, 'uiFlow.borrower');
+
+  // #2349/#2355 posture disclosure — judged against the chain's switches.
+  const banner = card.locator('[data-auto-match-posture]');
+  // RULE 1 (#2422 r10, `observeConfig`): the banner is judged only against
+  // switches that held still around its observation — read before and after
+  // it, and equal to the preflight's. A move is a state race: BLOCKED here,
+  // before any write. Never a product FAIL.
+  const bannerObs = await observeConfig('the posture banner', async () => {
+    const posture = await pollUntil('posture banner settles', async () => {
+      const a = await banner.first().getAttribute('data-auto-match-posture', { timeout: 2_000 });
+      return a && a !== 'unknown' ? a : null;
+    }, { timeoutMs: 45_000 });
+    const text = posture ? (await banner.first().innerText()).replace(/\s+/g, ' ').trim() : null;
+    return { posture, text };
+  });
+  const postureNow = expectedPostureFrom(bannerObs.config);
+  check(
+    `borrower: posture banner states the chain's posture at the observation (${postureNow})`,
+    bannerObs.observed.posture === postureNow && bannerObs.observed.text?.includes(postureCopy[postureNow]),
+    `${bannerObs.observed.posture}: "${bannerObs.observed.text}"`,
+    'borrowerReview.posture',
+  );
+
+  await card.getByLabel(/highest yearly rate/i).fill(RATE_PCT);
+  await card.getByLabel(/new loan length/i).fill(DAYS);
+  const review = card.getByRole('button', { name: /review refinance request/i });
+  if (!(await pollUntil('review enabled', () => review.isEnabled(), { timeoutMs: 60_000 }))) {
+    await session.shot('refinance-02-review-disabled');
+    stop('"Review refinance request" never enabled');
+  }
+  await review.click();
+
+  // The receipt the borrower consents to — kept as evidence.
+  const receiptText = (await card.innerText()).replace(/\s+/g, ' ').trim();
+  console.log(`\n--- refinance review (as rendered) ---\n${receiptText.slice(0, 2500)}\n---`);
+  check('borrower: review says the collateral carries over', /carries over|without ever unlocking/i.test(receiptText), undefined, 'borrowerReview.receipt');
+  await session.shot('refinance-03-review');
+  // The figures the borrower is about to consent to, against the chain
+  // (#2422 r7). A mismatch or an unparseable row halts before consent.
+  // RULE 1: the fee rates and grace window it quotes are judged against the
+  // config read around the observation (BLOCKED on a race — nothing written).
+  const bObs = await observeConfig('the borrower\u2019s review', () => receiptRows(card));
+  const bTerms = await borrowerReviewMismatches(bObs.observed, bObs.config);
+  check(
+    `borrower: review figures match the chain (${bTerms.compared.join(', ')})`,
+    bTerms.mismatches.length === 0,
+    bTerms.mismatches.join(' | ') || `all ${bTerms.compared.length} terms match`,
+    'borrowerReview.receipt',
+  );
+
+  // Rule B: nothing below may lead to a write if anything above failed.
+  // Rule A: arm the gate with the three complete requests the form may
+  // sign, then open it — the confirm is the one action that may write.
+  beforeWriteStep('ticking the borrower consent');
+  const confirm = card.getByRole('button', { name: /confirm — post refinance request/i });
+  const consentBox = card.locator('input[type="checkbox"]');
+  const confirmed = await pollUntil('consent + confirm enabled', async () => {
+    beforeWriteStep('ticking the borrower consent');
+    if (!(await consentBox.isChecked())) await consentBox.check();
+    return confirm.isEnabled();
+  }, { timeoutMs: 60_000 });
+  if (HALT) stop(`not posting: ${HALT}`);
+  if (!confirmed) {
+    await session.shot('refinance-04-confirm-disabled');
+    stop('"Confirm — post refinance request" never enabled after consent');
+  }
+  beforeWriteStep('posting the refinance request');
+  BORROWER_ANCHOR = await chainNow();
+  console.log(`info  borrower anchor (chain time at submit start): ${BORROWER_ANCHOR}`);
+  // Arm the borrower role NOW — the card, posture and review checks above
+  // have passed, and the next action is the confirmed submit (#2422 r8).
+  PLAN.arm('borrower');
+  console.log('info  write plan ARMED for the borrower’s confirmed submit');
+  await confirm.click();
+
+  const live = await pollUntil('request is live', async () => {
+    if (refusals.length || HALT) return 'refused';
+    const err = card.locator('.banner-danger');
+    if (await err.count()) return `error: ${(await err.first().innerText()).trim()}`;
+    const t = await bp.locator('body').innerText();
+    const m = t.match(/Refinance request #(\d+) is live/i);
+    return m ? m[1] : null;
+  }, { timeoutMs: 300_000, everyMs: 2_000 });
+  await session.shot('refinance-05-posted');
+  if (refusals.length) stop('the borrower form asked for a write the gate had not armed');
+  if (HALT) stop(`halted while posting: ${HALT}`);
+  if (!live || live.startsWith('error')) {
+    stop(`the refinance request did not go live: ${live ?? 'timed out'}`);
+  }
+  // The borrower's submit has settled: nothing may be signed until the
+  // lender's confirmed submit arms the plan again.
+  PLAN.close();
+  console.log('info  write plan CLOSED after the borrower’s submit');
+  const pageRequestId = BigInt(live);
+
+  // Pending card carries the posture disclosure too.
+  const pendingCard = bp.locator('section.card').filter({ hasText: new RegExp(`Refinance request #${pageRequestId} is live`, 'i') });
+  // RULE 1, after the borrower's write: a race is UNDETERMINED, not FAIL.
+  const cardObs = await observeConfig('the standing request card', async () => {
+    try {
+      return {
+        posture: await pendingCard.locator('[data-auto-match-posture]').first().getAttribute('data-auto-match-posture', { timeout: 30_000 }),
+        err: null,
+      };
+    } catch (e) {
+      return { posture: null, err: String(e.message).split('\n')[0].slice(0, 120) };
+    }
+  });
+  if (cardObs.undetermined) {
+    MANIFEST.undetermined('borrowerReview', 'posture', cardObs.undetermined);
+    console.log(`UNDET borrower: the standing request card's posture — ${cardObs.undetermined} (card showed ${cardObs.observed?.posture ?? cardObs.observed?.err})`);
+  } else {
+    const want = expectedPostureFrom(cardObs.config);
+    check(
+      `borrower: the standing request card discloses the posture (${want})`,
+      cardObs.observed.posture === want,
+      cardObs.observed.err ? `UNREADABLE — ${cardObs.observed.err}` : cardObs.observed.posture,
+      'borrowerReview.posture',
+    );
+  }
+
+  await verifyCreateOutcome(pageRequestId);
+
+  await closeSession('borrower');
+  // The request is pinned and every request check passed. The plan stays
+  // CLOSED through the lender's page loads and review checks; the lender
+  // role is armed immediately before "Fund this borrower".
+
+  // -------------------------------------------------------------------
+  // 3. A DIFFERENT lender funds it through the Offer Book → guided review.
+  // The session already exists (launched and gated before any write).
+  // -------------------------------------------------------------------
+  session = sessions.lender;
+  const lp = session.page;
+  const expectedHref = `/lend?offer=${requestId}&chain=${CHAIN_ID}`;
+  let reachedViaBook = false;
+  await lp.goto(`${SITE}/offers`, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+  await ensureConnected(lp);
+  const lLang = await renderedLang(lp);
+  check('lender page renders English (every disclosure is matched against en.json)', isEnglish(lLang), lLang, 'uiFlow.lender');
+  const fundLink = await pollUntil('request row in the Offer Book', async () => {
+    // Someone else may have filled it in the meantime — stop, don't race.
+    // Explicitly about NOW (#2422 r11): has anyone filled it yet?
+    const o = await read('getOfferDetails', [requestId]);
+    if (o.accepted) return 'taken';
+    const row = lp.locator('.item-row').filter({ hasText: new RegExp(`offer #${requestId}\\b`) });
+    if ((await row.count()) === 0) {
+      await lp.reload({ waitUntil: 'domcontentloaded' });
+      await lp.waitForTimeout(4_000);
+      return null;
+    }
+    const link = row.first().getByRole('link', { name: /fund this request/i });
+    if ((await link.count()) === 0) return `row-without-cta: ${(await row.first().innerText()).replace(/\s+/g, ' ')}`;
+    return link.first();
+  }, { timeoutMs: 300_000, everyMs: 6_000 });
+  if (fundLink === 'taken') {
+    // Filled by SOMEONE ELSE while we waited (#2422 r13): a race with the
+    // open market or the order matcher — UNDETERMINED (exit 3), with the
+    // replacement reported — unless the chain shows something actually
+    // wrong (accepted, yet no loan carries it): then FAIL.
+    RUN_REQUEST = { state: 'known', id: requestId };
+    let replacement = null;
+    let scanError = null;
+    try {
+      replacement = await replacementAt(await pub.getBlockNumber({ cacheTime: 0 }));
+    } catch (e) {
+      scanError = String(e.shortMessage ?? e.message).slice(0, 160);
+    }
+    const fill = externalFillVerdict({ requestId, replacement, scanError });
+    if (fill.kind === 'fail') stop(fill.why);
+    raceStop(fill.why);
+  }
+  if (typeof fundLink === 'string') {
+    await session.shot('refinance-06-row-no-cta');
+    stop(`the Offer Book row for request #${requestId} offers no "Fund this request" CTA: ${fundLink}`);
+  }
+  if (fundLink) {
+    const href = await fundLink.getAttribute('href');
+    check('Offer Book "Fund this request" links to the guided accept', href === expectedHref, href, 'offerBook.cta');
+    const rowText = (await lp.locator('.item-row').filter({ hasText: new RegExp(`offer #${requestId}\\b`) }).first().innerText()).replace(/\s+/g, ' ');
+    console.log(`info  book row: ${rowText}`);
+    // A disclosure, judged like every other (#2422 r4 P2): a book row that
+    // does not tag the collateral as illiquid fails and halts — the lender
+    // must not be led from an undisclosed row into a funding review.
+    check(
+      `Offer Book row for #${requestId} carries the illiquid-collateral tag (copy.offers.illiquidCollateralTag)`,
+      rowText.includes(squash(bookIlliquidTag)),
+      rowText,
+      'offerBook.illiquidTag',
+    );
+    await session.shot('refinance-06-book-row');
+    await fundLink.click();
+    reachedViaBook = true;
+  } else {
+    // The indexer never listed it within the window. The CTA's target is
+    // still a UI route, so the accept itself stays a UI accept — but the
+    // discovery path is a finding.
+    note(`request #${requestId} did not appear in the Offer Book within 5 min (indexer ingest?) — opened the CTA's own target ${expectedHref} directly`);
+    MANIFEST.defer(
+      'offerBook',
+      `the indexer did not list request #${requestId} within 5 minutes, so the lender opened the CTA’s own target directly — no Offer Book row was seen`,
+      null,
+    );
+    await lp.goto(`${SITE}${expectedHref}`, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+  }
+  console.log(`info  lender reached the request via ${reachedViaBook ? 'the Offer Book CTA' : 'the CTA target directly'}`);
+
+  const banner2 = lp.getByText(new RegExp(`funding borrow request #${requestId}\\b`, 'i'));
+  if (!(await banner2.first().waitFor({ state: 'visible', timeout: 90_000 }).then(() => true, () => false))) {
+    const body = (await lp.locator('body').innerText()).replace(/\s+/g, ' ');
+    await session.shot('refinance-07-no-review');
+    stop(`the guided accept did not open the review for request #${requestId}: ${body.slice(0, 600)}`);
+  }
+  check(`lender: review opens as "You’re funding borrow request #${requestId}"`, true, undefined, 'uiFlow.lender');
+
+  const submit = lp.getByRole('button', { name: /fund this borrower/i });
+  const consent = lp.locator('label:has(a[href="/help#risks"]) input[type="checkbox"]').last();
+  // Let the review settle (liquidity, grace, dry run) before judging it:
+  // a disclosure arriving later clears consent by design.
+  await pollUntil('review settled', async () => {
+    const t = await lp.locator('body').innerText();
+    return !/preparing|checking/i.test(t.slice(t.indexOf('Before you sign')));
+  }, { timeoutMs: 45_000 });
+
+  // The DISCLOSURES are judged BEFORE consent is given (#2422 r2 P1): the
+  // lender must not consent to — or sign — a review that failed to say the
+  // collateral is illiquid. Under rule B the failed check halts, and the
+  // `beforeWriteStep` below stops before the consent tick and the submit.
+  const reviewText = (await lp.locator('main').innerText().catch(() => lp.locator('body').innerText())).replace(/\s+/g, ' ');
+  console.log(`\n--- lender review (as rendered, before consent) ---\n${reviewText.slice(0, 4000)}\n---`);
+  if (/would fail|will fail|revert/i.test(reviewText)) note('the lender review shows a would-fail / revert note (see the transcript above)');
+  check('lender: review carries the illiquid-collateral warning (copy.match.illiquidWarning)', reviewText.includes(squash(illiquidWarning)), undefined, 'lenderReview.illiquidWarning');
+  // Evidence, not a verdict: the spec does not say whether a lender funding
+  // a refinance request must be told it closes another loan.
+  if (!/refinanc/i.test(reviewText)) {
+    note('the lender review never says this request refinances an existing loan (accepting it also pays off and closes that loan)');
+  }
+  await session.shot('refinance-08-lender-review');
+  // The figures the lender is about to consent to, against the request on
+  // chain and the live fee config (#2422 r7) — before the consent tick.
+  //
+  // RULE 1 (#2422 r10): the yield fee and grace window are judged against
+  // the config read around the observation. The borrower's write has
+  // already landed, so a race here cannot be BLOCKED: it is UNDETERMINED,
+  // and the drive stops BEFORE the lender's consent — a review nobody could
+  // judge is not consented to (`raceStop`, exit 3, never a FAIL).
+  // The request AS CREATED — read pinned to its create block under RULE 2
+  // (#2422 r11: no post-write read uses "latest" unless its claim is about
+  // now). Its terms are what the lender's review must show.
+  const reqNow = REQUEST_AS_CREATED;
+  const lObs = await observeConfig('the lender\u2019s review', () => receiptRows(lp.locator('main')));
+  if (lObs.undetermined) {
+    MANIFEST.undetermined('lenderReview', 'receipt', lObs.undetermined);
+    raceStop(`not funding: ${lObs.undetermined}`);
+  }
+  const lTerms = lenderReviewMismatches(lObs.observed, reqNow, lObs.config);
+  check(
+    `lender: review figures match the request on chain (${lTerms.compared.join(', ')})`,
+    lTerms.mismatches.length === 0,
+    lTerms.mismatches.join(' | ') || `all ${lTerms.compared.length} terms match`,
+    'lenderReview.receipt',
+  );
+
+  beforeWriteStep('ticking the lender consent');
+  const canSign = await pollUntil('consent + "Fund this borrower" enabled', async () => {
+    beforeWriteStep('ticking the lender consent');
+    if (!(await consent.isChecked())) await consent.check();
+    await lp.waitForTimeout(1_000);
+    return submit.isEnabled();
+  }, { timeoutMs: 120_000, everyMs: 3_000 });
+  if (HALT) stop(`not funding: ${HALT}`);
+  if (!canSign) {
+    stop('the deployed UI never enabled "Fund this borrower" for this request (see the review transcript above)');
+  }
+  beforeWriteStep('submitting "Fund this borrower"');
+  // ROOT A (iii) (#2422 r14): the request must still be OPEN when the lender
+  // is armed. Filled, cancelled or expired → stop through the classifier
+  // (an external fill is `externalFillVerdict`), and the lender is never armed.
+  const stateBeforeArm = await requestStateAt(requestId, await pub.getBlockNumber({ cacheTime: 0 }));
+  if (stateBeforeArm !== 'open') stop(`request #${requestId} is ${stateBeforeArm} before the lender is armed — not arming`);
+  // RULE 1, once more, IMMEDIATELY before arming the lender (#2422 r11): the
+  // watched config — the risk-terms epoch the AcceptTerms is anchored to
+  // included — must still equal the preflight's. A move here is
+  // UNDETERMINED and stops the run before the lender is armed.
+  const armObs = await observeConfig('the lender\u2019s submit (risk-terms epoch, fees, grace, posture)', async () => null);
+  if (armObs.undetermined) {
+    MANIFEST.undetermined('lenderReview', 'receipt', armObs.undetermined);
+    raceStop(`not arming the lender: ${armObs.undetermined}`);
+  }
+  // The config the reviews were judged against, as last confirmed before the
+  // lender's write: the settlement must be computed from exactly this.
+  REVIEWED_CONFIG = armObs.config;
+  LENDER_ANCHOR = await chainNow();
+  console.log(`info  lender anchor (chain time at submit start): ${LENDER_ANCHOR}`);
+  PLAN.arm('lender');
+  console.log('info  write plan ARMED for the lender’s confirmed submit');
+  await submit.click();
+
+  const outcome = await pollUntil('accept settles', async () => {
+    if (refusals.length || HALT) return 'refused';
+    if (await lp.getByRole('heading', { name: /loan opened/i }).count()) return 'opened';
+    const err = lp.locator('.banner-danger[role="alert"]');
+    if (await err.count()) {
+      const t = (await err.first().innerText()).trim();
+      // A submit error is final only once the button is idle again.
+      if (await submit.isEnabled().catch(() => false)) return `error: ${t}`;
+    }
+    return null;
+  }, { timeoutMs: 300_000, everyMs: 2_000 });
+  await session.shot('refinance-09-lender-done');
+  const doneText = (await lp.locator('body').innerText()).replace(/\s+/g, ' ');
+  if (refusals.length) stop('the lender flow asked for a write the gate had not armed');
+  if (HALT) stop(`halted while accepting: ${HALT}`);
+  if (outcome !== 'opened') stop(`the lender's accept did not complete in the UI: ${outcome ?? 'timed out'}`);
+  PLAN.close();
+  console.log('info  write plan CLOSED after the lender’s submit');
+  check('lender: the app reports "Loan opened"', true, undefined, 'uiFlow.lenderDone');
+  const doneIdx = doneText.search(/loan opened/i);
+  console.log(`info  lender done step: ${doneText.slice(doneIdx, doneIdx + 400)}`);
+
+  await verifyAcceptOutcome();
+} catch (err) {
+  // EVERY failure after the first write is settled by ONE classifier
+  // (#2422 r14 ROOT A); nothing here decides an exit code by itself.
   try {
     await session?.shot('refinance-zz-stopped');
   } catch {
     /* the page may already be gone */
   }
+  await settleFailure(err);
 } finally {
   await closeSession('borrower');
   await closeSession('lender');
@@ -3007,22 +3167,32 @@ try {
 
 // The write discipline's second half, judged over the WHOLE run: nothing
 // was refused by the gate or the wallets, and the plan never latched.
-check(
-  'no write was refused by the gate or the wallets, and the plan never latched',
-  refusals.length === 0 && walletRefusals().length === 0 && !PLAN?.refusal(),
-  `${refusals.length} gate refusal(s), ${walletRefusals().length} wallet refusal(s), plan ${PLAN?.refusal() ? `latched: ${PLAN.refusal()}` : 'not latched'}`,
-  'writeDiscipline.noRefusals',
-);
+const refusalText = `${refusals.length} gate refusal(s), ${walletRefusals().length} wallet refusal(s), plan ${PLAN?.refusal() ? `latched: ${PLAN.refusal()}` : 'not latched'}`;
+if (POST_WRITE?.action === 'race' && refusals.length > 0 && walletRefusals().length === 0) {
+  // A gate refusal the classifier traced to a moved premise (#2422 r14):
+  // the gate did its job; whether the page misbehaved cannot be established.
+  MANIFEST.undetermined('writeDiscipline', 'noRefusals', `${refusalText} — classified a race: ${POST_WRITE.why}`);
+} else {
+  check(
+    'no write was refused by the gate or the wallets, and the plan never latched',
+    refusals.length === 0 && walletRefusals().length === 0 && !PLAN?.refusal(),
+    refusalText,
+    'writeDiscipline.noRefusals',
+  );
+}
 const reconciliation = await report(baselineNonces);
 // Something observed WRONG — as opposed to a claim that could not be
 // established (a race stop or an UNDETERMINED check, #2422 r9/r10).
+// When a post-write failure was settled by the classifier (#2422 r14 ROOT
+// A), ITS verdict says whether the stop — a refused write, a halt — was a
+// product failure; otherwise they count as they always did.
 const failure =
   exitCode !== 0 ||
-  refusals.length > 0 ||
+  POST_WRITE_FAIL !== null ||
   walletRefusals().length > 0 ||
-  (HALT !== null && HALT !== RACE_STOP) ||
   reconciliation.unreconciled ||
-  checks.some((c) => !c.ok);
+  checks.some((c) => !c.ok) ||
+  (POST_WRITE === null && (refusals.length > 0 || (HALT !== null && HALT !== RACE_STOP)));
 const VERDICT = runVerdict({ rows: MANIFEST.rows(), failure, raceStop: RACE_STOP });
 // Whatever this run may have left standing is reported whenever it did not
 // PASS — a race stop leaves a live request, and an undetermined claim may
