@@ -22,7 +22,8 @@
  *  - Whether a request BLOCKS (`blocking`) — an acceptable request exists,
  *    which settling or changing the loan would strand. Only the current
  *    holder's request can be filled (the contract checks the creator is the
- *    holder), an expired one cannot, nor one whose loan is past grace.
+ *    holder), an expired one cannot, nor one whose loan is past grace, nor
+ *    (#2425) one that is not the loan's recorded request.
  *  - Whether the page KNOWS (`check`) — the holder's scan answered, or a
  *    blocking request already has its own interlock. Anything else holds
  *    the surfaces a request would strand, and says why.
@@ -40,6 +41,9 @@ export interface NamedRequestFacts {
   creator: string;
   expired: boolean;
   pastGrace: boolean;
+  /** #2425 — not the loan's recorded request (the protocol reports another,
+   *  or none): it can never be taken and holds nothing back. */
+  untakeable: boolean;
 }
 
 /** The request the page names. `ownScan` is the connected viewer's own
@@ -58,7 +62,12 @@ export function resolveNamedRequest(a: {
     return { offerId: a.ownScan.offerId, fromOwnScan: true };
   }
   const h = a.holderScan;
-  const holderOpen = h?.kind === 'found' && h.open ? h.offerId : null;
+  // #2429 r1 — only a request the protocol could take outranks this device's
+  // marker. A leftover it will never take ranks with the expired ones: a
+  // request just posted from here (the marker) must be named over it until
+  // the next scan, or its card is hidden behind the leftover's.
+  const holderOpen =
+    h?.kind === 'found' && h.open && h.untakeable !== true ? h.offerId : null;
   const holderAny = h?.kind === 'found' ? h.offerId : null;
   return { offerId: holderOpen ?? a.markerId ?? holderAny, fromOwnScan: false };
 }
@@ -87,19 +96,24 @@ export function refinanceInterlock(a: {
   // batch also reads fees, balances and allowances, any of which can fail
   // for reasons unrelated to the request): a failed side-read must not turn
   // a request the chain says has expired back into a live one.
-  const scanSaysExpired =
-    h?.kind === 'found' && !h.open && h.offerId === a.offerId;
+  // #2425 — likewise once the scan has found it is not the loan's recorded
+  // request: the protocol will never take it, so it blocks nothing.
+  const scanSaysDead =
+    h?.kind === 'found' && (!h.open || h.untakeable === true) && h.offerId === a.offerId;
   const namedBlocking =
     a.offerId !== null &&
     (a.state === undefined
       ? // Still verifying: block, unless it is known to be the viewer's
         // own request on a position they no longer hold, or the holder's
-        // scan already found it expired.
-        !a.fromOwnScan && !scanSaysExpired
-      : creatorIsHolder(a.state.creator) && !a.state.expired && !a.state.pastGrace);
+        // scan already found it expired or untakeable.
+        !a.fromOwnScan && !scanSaysDead
+      : creatorIsHolder(a.state.creator) &&
+        !a.state.expired &&
+        !a.state.pastGrace &&
+        !a.state.untakeable);
   // An open request the holder's scan found that the page is NOT naming
   // (the viewer's own request is named instead) still blocks.
-  const holderOpen = h?.kind === 'found' && h.open ? h.offerId : null;
+  const holderOpen = h?.kind === 'found' && h.open && h.untakeable !== true ? h.offerId : null;
   const blocking = namedBlocking || (holderOpen !== null && holderOpen !== a.offerId);
 
   // A device marker naming an EXPIRED request does not settle the check:
@@ -116,7 +130,8 @@ export function refinanceInterlock(a: {
 export function liveRefinanceVerdict(
   d: RefinanceDiscovery,
 ): 'clear' | 'open' | 'unchecked' | 'capped' {
-  if (d.kind === 'found') return d.open ? 'open' : 'clear';
+  // #2425 — a request the protocol will never take holds nothing back.
+  if (d.kind === 'found') return d.open && d.untakeable !== true ? 'open' : 'clear';
   if (d.kind === 'unknown') return d.reason === 'capped' ? 'capped' : 'unchecked';
   return 'clear';
 }
@@ -130,7 +145,12 @@ export function liveRefinanceVerdict(
 export function postRefinanceVerdict(
   d: RefinanceDiscovery,
 ): 'clear' | 'open' | 'expired' | 'unchecked' | 'capped' {
-  if (d.kind === 'found') return d.open ? 'open' : 'expired';
+  // #2425 — the protocol refuses a new request only for the loan's RECORDED
+  // one (open, or expired and uncancelled); a leftover never blocks a post.
+  if (d.kind === 'found' && d.untakeable !== true) return d.open ? 'open' : 'expired';
+  // #2429 r3 — the record's lapsed request could not be checked: a post may
+  // be refused while it stays uncancelled, so the post is unconfirmed.
+  if (d.kind === 'none' && d.lapsed === 'unchecked') return 'unchecked';
   return liveRefinanceVerdict(d);
 }
 
@@ -169,3 +189,15 @@ export function repayRefinanceDecision(
   return { proceed: covered, notice: needed };
 }
 
+
+/** #2429 r3 — whether cancelling the named request also revokes its payoff
+ *  approval. Never for a leftover the protocol will never take: the same
+ *  approval serves every refinance request this wallet posts on the token,
+ *  and another may stand now or be posted from another device at any moment
+ *  — no read before a separate revoke transaction can rule that out, so the
+ *  card leaves it and names the manual removal. Cancelling the loan's own
+ *  request revokes as before (a request posted meanwhile elsewhere shows its
+ *  short approval on its own card, with Re-approve). */
+export function cancelRevokesApproval(state: Pick<NamedRequestFacts, 'untakeable'>): boolean {
+  return !state.untakeable;
+}

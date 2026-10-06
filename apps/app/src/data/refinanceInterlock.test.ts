@@ -4,6 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import type { RefinanceDiscovery } from './refinanceDiscovery';
 import {
+  cancelRevokesApproval,
   liveRefinanceVerdict,
   postRefinanceVerdict,
   ownScanUnresolved,
@@ -17,10 +18,25 @@ const OTHER = '0x00000000000000000000000000000000000000bb';
 const open = (id: string): RefinanceDiscovery => ({ kind: 'found', offerId: id, open: true });
 const expired = (id: string): RefinanceDiscovery => ({ kind: 'found', offerId: id, open: false });
 const none: RefinanceDiscovery = { kind: 'none' };
+const leftover = (id: string): RefinanceDiscovery => ({ kind: 'found', offerId: id, open: true, untakeable: true });
 const failed: RefinanceDiscovery = { kind: 'unknown', reason: 'failed' };
 const capped: RefinanceDiscovery = { kind: 'unknown', reason: 'capped' };
 
 describe('resolveNamedRequest', () => {
+  // #2429 r1 — a request just posted from this device (the marker) must be
+  // named over a leftover the protocol will never take, until the next scan.
+  it('names the marker over an untakeable leftover, and the leftover when there is no marker', () => {
+    expect(resolveNamedRequest({ holderScan: leftover('4'), ownScan: undefined, markerId: '9' })).toEqual({
+      offerId: '9',
+      fromOwnScan: false,
+    });
+    expect(resolveNamedRequest({ holderScan: leftover('4'), ownScan: undefined, markerId: null })).toEqual({
+      offerId: '4',
+      fromOwnScan: false,
+    });
+    // A request the protocol could take still outranks the marker.
+    expect(resolveNamedRequest({ holderScan: open('4'), ownScan: undefined, markerId: '9' }).offerId).toBe('4');
+  });
   it("names the viewer's own request when they are not the holder (r3: cleanup after a transfer)", () => {
     expect(
       resolveNamedRequest({ holderScan: open('9'), ownScan: expired('4'), markerId: null }),
@@ -42,11 +58,29 @@ describe('refinanceInterlock — blocking', () => {
     holder: HOLDER as string | 'burned' | undefined,
     holderReadFailed: false,
   };
-  const facts = (over: Partial<{ creator: string; expired: boolean; pastGrace: boolean }> = {}) => ({
+  const facts = (
+    over: Partial<{ creator: string; expired: boolean; pastGrace: boolean; untakeable: boolean }> = {},
+  ) => ({
     creator: HOLDER,
     expired: false,
     pastGrace: false,
+    untakeable: false,
     ...over,
+  });
+  // #2425 — a request that is not the loan's recorded one can never be taken
+  // and holds nothing back, whether the scan or the live state says so.
+  it('a request the protocol will never take does not block', () => {
+    expect(
+      refinanceInterlock({ ...base, offerId: '9', state: facts({ untakeable: true }), holderScan: none }),
+    ).toEqual({ blocking: false, check: 'settled' });
+    // Still verifying, but the scan already found it untakeable.
+    expect(
+      refinanceInterlock({ ...base, offerId: '9', state: undefined, holderScan: leftover('9') }).blocking,
+    ).toBe(false);
+    // An untakeable open leftover the page is NOT naming blocks nothing either.
+    expect(
+      refinanceInterlock({ ...base, offerId: null, state: undefined, holderScan: leftover('9') }).blocking,
+    ).toBe(false);
   });
   it('an open request by the holder blocks; an EXPIRED one does not (r3)', () => {
     expect(
@@ -129,7 +163,7 @@ describe('refinanceInterlock — check', () => {
       refinanceInterlock({
         ...base,
         offerId: '7',
-        state: { creator: HOLDER, expired: true, pastGrace: false },
+        state: { creator: HOLDER, expired: true, pastGrace: false, untakeable: false },
         holderScan: failed,
       }).check,
     ).toBe('unchecked');
@@ -165,6 +199,23 @@ describe('postRefinanceVerdict (#2424 r7)', () => {
     expect(postRefinanceVerdict(failed)).toBe('unchecked');
     expect(postRefinanceVerdict(capped)).toBe('capped');
   });
+
+  // #2425 — the protocol refuses a new request only for the loan's RECORDED
+  // one; a leftover it will never take holds back neither a post nor a
+  // settlement.
+  it('never blocks on a leftover the protocol will never take', () => {
+    expect(postRefinanceVerdict(leftover('1'))).toBe('clear');
+    expect(liveRefinanceVerdict(leftover('1'))).toBe('clear');
+    expect(liveRefinanceVerdict(open('1'))).toBe('open');
+  });
+
+  // #2429 r3 — the record proved no request stands but its lapsed request
+  // could not be checked: settlement is clear, a new post is unconfirmed.
+  it('lets settlement through but not a post when the lapsed request is unchecked', () => {
+    const lapsed: RefinanceDiscovery = { kind: 'none', leftovers: 'failed', lapsed: 'unchecked' };
+    expect(liveRefinanceVerdict(lapsed)).toBe('clear');
+    expect(postRefinanceVerdict(lapsed)).toBe('unchecked');
+  });
 });
 
 describe('ownScanUnresolved (r4/r5)', () => {
@@ -198,3 +249,10 @@ describe('repayRefinanceDecision (r4/r5) — every confirm re-checks', () => {
   });
 });
 
+
+describe('cancelRevokesApproval (#2429 r3)', () => {
+  it('never revokes the shared approval when cancelling a leftover; revokes for the loan\'s own request', () => {
+    expect(cancelRevokesApproval({ untakeable: true })).toBe(false);
+    expect(cancelRevokesApproval({ untakeable: false })).toBe(true);
+  });
+});

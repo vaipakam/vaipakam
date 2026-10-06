@@ -38,9 +38,27 @@
  * extension rewrites the loan's start), and a re-stamped start could fall
  * after a request still fillable. A dedicated loan-to-request index on
  * chain would remove the scan entirely; that belongs with #2407.
+ *
+ * #2425 — that index now exists. `RefinanceFacet.getRefinanceRequest(loanId)`
+ * reports the loan's RECORDED request and whether it still stands, and the
+ * protocol holds the loan back only for that request and lets only that one
+ * be taken. So the holder's discovery reads the record FIRST:
+ *  - a standing record is the open request — no scan;
+ *  - a lapsed record that is still the holder's own uncancelled request is
+ *    returned as expired (the protocol refuses a new request until it is
+ *    cancelled);
+ *  - otherwise the bounded scan above runs only to find LEFTOVERS: a request
+ *    posted before the record existed, or one a newer request displaced.
+ *    The protocol will never take one, and it holds nothing back, so a
+ *    leftover is returned `untakeable` for cleanup only — and a scan that
+ *    does not answer is "none", since nothing the app would block depends
+ *    on it (the holder's own offer list still shows every offer).
+ * On a deployment without the view (`FunctionDoesNotExist`) the scan alone
+ * decides, as before. Any other failed read of the record is `unknown`.
  */
 import type { PublicClient } from 'viem';
 import { DIAMOND_ABI_VIEM } from '../contracts/diamond';
+import { isFunctionDoesNotExistRevert } from '../contracts/preflights';
 
 /** Offers read per page, and pages read at most, newest first. A holder
  *  who posted more than PAGE × MAX_PAGES offers since the loan began gets
@@ -51,8 +69,23 @@ export const DISCOVERY_MAX_PAGES = 3;
 const ZERO = '0x0000000000000000000000000000000000000000';
 
 export type RefinanceDiscovery =
-  | { kind: 'found'; offerId: string; open: boolean }
-  | { kind: 'none' }
+  /** `untakeable` (#2425): not the loan's recorded request, so the protocol
+   *  will never take it and it holds nothing back — named for cleanup only. */
+  | { kind: 'found'; offerId: string; open: boolean; untakeable?: true }
+  /** `leftovers` (#2429 r2): the record answered, but the search for a
+   *  request it does not name did not (`failed` / `capped`). Never blocks —
+   *  such a request is never accepted — but a leftover and its payoff
+   *  approval may exist unseen, so the page says it could not check. */
+  | {
+      kind: 'none';
+      leftovers?: 'failed' | 'capped';
+      /** #2429 r3 — the record said no request STANDS, but whether its lapsed
+       *  request is the holder's uncancelled one could not be read. Nothing is
+       *  held back (the record already proved none stands); only a new POST
+       *  is unconfirmed, since the protocol refuses one while that request is
+       *  uncancelled. */
+      lapsed?: 'unchecked';
+    }
   /** `failed`: a read did not answer (may on retry). `capped`: the holder
    *  has posted more offers since the boundary than one scan reads. */
   | { kind: 'unknown'; reason: 'failed' | 'capped' };
@@ -138,16 +171,100 @@ export function resolveScan(
   return { kind: 'unknown', reason: 'capped' };
 }
 
-/** Live discovery — used by the polling hook and re-run just before any
- *  borrower action a request would be stranded by. */
-export async function discoverRefinanceRequest(opts: {
+interface DiscoveryOpts {
   client: PublicClient;
   diamond: `0x${string}`;
   loanId: bigint;
   /** The loan's own offer id — every request for it is newer. */
   sinceOfferId: bigint;
   holder: `0x${string}`;
-}): Promise<RefinanceDiscovery> {
+}
+
+/** #2425 — what the protocol's record says, decided from its two reads.
+ *  `record` is `getRefinanceRequest`'s answer; `recordedOffer` the recorded
+ *  offer's facts (read only for a lapsed record). Returns null when the
+ *  record leaves the question to the leftover scan. */
+export function fromRecord(
+  loanId: bigint,
+  holder: string,
+  record: { offerId: bigint; live: boolean },
+  recordedOffer: Omit<OfferFacts, 'expiresAt' | 'id'> | null,
+): RefinanceDiscovery | null {
+  if (record.live) return { kind: 'found', offerId: record.offerId.toString(), open: true };
+  if (
+    record.offerId !== 0n &&
+    recordedOffer !== null &&
+    !recordedOffer.accepted &&
+    recordedOffer.creator !== ZERO &&
+    recordedOffer.creator.toLowerCase() === holder.toLowerCase() &&
+    recordedOffer.refinanceTargetLoanId === loanId
+  ) {
+    // The holder's own recorded request that no longer stands: expired, and
+    // never cancelled. Shown for cleanup; a new request waits on its cancel.
+    return { kind: 'found', offerId: record.offerId.toString(), open: false };
+  }
+  return null;
+}
+
+/** #2425 — whether a named request is NOT the loan's recorded one, given the
+ *  recorded id (`getRefinanceRequest`; null on a deployment without the
+ *  record, where nothing is untakeable). */
+export function isUntakeable(recordedId: bigint | null, offerId: string): boolean {
+  return recordedId !== null && recordedId !== BigInt(offerId);
+}
+
+/** #2425 — a leftover the scan found is never takeable. A scan that did not
+ *  answer blocks nothing (nothing the protocol would refuse depends on it),
+ *  but it is not "none": it is carried as `leftovers` so the page can say it
+ *  could not check (#2429 r2). */
+export function leftoverFrom(scan: RefinanceDiscovery): RefinanceDiscovery {
+  if (scan.kind === 'found') return { ...scan, untakeable: true };
+  if (scan.kind === 'unknown') return { kind: 'none', leftovers: scan.reason };
+  return { kind: 'none' };
+}
+
+/** Live discovery of the HOLDER's request — used by the polling hook and
+ *  re-run just before any borrower action a request would be stranded by.
+ *  Record first (#2425); the scan only where the record cannot answer. */
+export async function discoverRefinanceRequest(opts: DiscoveryOpts): Promise<RefinanceDiscovery> {
+  const { client, diamond, loanId, holder } = opts;
+  let record: { offerId: bigint; live: boolean };
+  try {
+    const [offerId, live] = (await client.readContract({
+      address: diamond,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'getRefinanceRequest',
+      args: [loanId],
+    })) as readonly [bigint, boolean];
+    record = { offerId, live };
+  } catch (e) {
+    // A deployment that predates the record: the scan decides, as before.
+    if (isFunctionDoesNotExistRevert(e)) return scanHolderOffers(opts);
+    return { kind: 'unknown', reason: 'failed' };
+  }
+  let recordedOffer: Omit<OfferFacts, 'expiresAt' | 'id'> | null = null;
+  if (!record.live && record.offerId !== 0n) {
+    try {
+      recordedOffer = (await client.readContract({
+        address: diamond,
+        abi: DIAMOND_ABI_VIEM,
+        functionName: 'getOfferDetails',
+        args: [record.offerId],
+      })) as Omit<OfferFacts, 'expiresAt' | 'id'>;
+    } catch {
+      // #2429 r3 — the record already proved no request stands, so this
+      // failure holds nothing back; it leaves only the cleanup and the
+      // posting question open.
+      return { kind: 'none', leftovers: 'failed', lapsed: 'unchecked' };
+    }
+  }
+  return fromRecord(loanId, holder, record, recordedOffer) ?? leftoverFrom(await scanHolderOffers(opts));
+}
+
+/** The bounded scan of `holder`'s own offers — the whole answer on a
+ *  deployment without the record, the leftover search otherwise, and the
+ *  viewer's own-request scan (which never blocks) in every case. */
+export async function scanHolderOffers(opts: DiscoveryOpts): Promise<RefinanceDiscovery> {
   const { client, diamond, holder } = opts;
   try {
     const { ids, complete } = await candidateIds(

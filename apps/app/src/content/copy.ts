@@ -1651,6 +1651,17 @@ const copySource = {
       `when it expires with this loan’s grace window ({{date}}) — a refinance request can’t outlive the loan it replaces`,
       ['date'],
     ),
+    // #2429 r2 — the record answered but the search for an older request it
+    // does not name did not.
+    leftoversFailed:
+      'We couldn’t check this wallet’s offers just now for an older refinance request on this loan (one posted before the protocol kept a record of requests). Such a request can never be accepted and doesn’t hold the loan back, but it may still carry a standing payoff approval. If one is still open, you can cancel it under “Your open offers” on the Rate Desk; remove the token approval it relied on under “Standing token approvals” in Settings (Advanced mode) if nothing else needs it.',
+    leftoversCapped:
+      'This wallet has posted more offers since this loan’s offer was made than we can check here, so an older refinance request on this loan (one posted before the protocol kept a record of requests) may not be shown. Such a request can never be accepted and doesn’t hold the loan back, but it may still carry a standing payoff approval. If one is still open, you can cancel it under “Your open offers” on the Rate Desk; remove the token approval it relied on under “Standing token approvals” in Settings (Advanced mode) if nothing else needs it.',
+    pendingUntakeable:
+      'This refinance request can never be accepted: it isn’t the request the protocol has on record for this loan (it was posted before that record existed, or a newer request replaced it). It does not hold the loan back. Cancel it below to remove it. Its payoff approval is not removed with it, because the same approval serves every refinance request this wallet posts on this token; if nothing else needs it, remove it under “Standing token approvals” in Settings (Advanced mode).',
+    // #2429 r3 — cancelling a leftover never revokes the shared approval.
+    cancelledLeftoverApprovalKept:
+      'Request cancelled. Its payoff approval was left in place, because the same approval serves every refinance request this wallet posts on this token. If nothing else needs it, remove it under “Standing token approvals” in Settings (Advanced mode).',
     pendingPastGrace:
       'This loan has passed its due date and grace window, so no lender can accept this request any more — it no longer holds up your other actions here. Cancel it below to also remove its standing payoff approval.',
     cadenceChangeNote:

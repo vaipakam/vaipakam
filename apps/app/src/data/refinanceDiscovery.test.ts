@@ -1,10 +1,15 @@
 /** #2391 — refinance requests are found on chain, within a bounded scan,
  *  and an incomplete or failed scan is unknown, never "none". */
 import { describe, expect, it } from 'vitest';
+import { BaseError, ContractFunctionRevertedError, type PublicClient } from 'viem';
 import {
   DISCOVERY_MAX_PAGES,
   DISCOVERY_PAGE,
   candidateIds,
+  discoverRefinanceRequest,
+  fromRecord,
+  isUntakeable,
+  leftoverFrom,
   resolveScan,
   selectRequest,
   type OfferFacts,
@@ -141,3 +146,139 @@ describe('resolveScan (r7) — an incomplete scan still counts what it read', ()
   });
 });
 
+
+// ─── #2425 — the protocol's record first ───────────────────────────────
+
+describe('fromRecord', () => {
+  const offer = (over: Partial<Omit<OfferFacts, 'expiresAt' | 'id'>> = {}) => ({
+    creator: HOLDER,
+    accepted: false,
+    refinanceTargetLoanId: 7n,
+    ...over,
+  });
+  it('a standing record is the open request', () => {
+    expect(fromRecord(7n, HOLDER, { offerId: 9n, live: true }, null)).toEqual({
+      kind: 'found',
+      offerId: '9',
+      open: true,
+    });
+  });
+  it("a lapsed record that is still the holder's own uncancelled request is expired", () => {
+    expect(fromRecord(7n, HOLDER.toLowerCase(), { offerId: 9n, live: false }, offer())).toEqual({
+      kind: 'found',
+      offerId: '9',
+      open: false,
+    });
+  });
+  it('leaves everything else to the leftover scan', () => {
+    const lapsed = { offerId: 9n, live: false };
+    expect(fromRecord(7n, HOLDER, { offerId: 0n, live: false }, null)).toBeNull();
+    expect(fromRecord(7n, HOLDER, lapsed, offer({ accepted: true }))).toBeNull();
+    expect(fromRecord(7n, HOLDER, lapsed, offer({ creator: OTHER }))).toBeNull();
+    expect(fromRecord(7n, HOLDER, lapsed, offer({ creator: '0x0000000000000000000000000000000000000000' }))).toBeNull();
+    expect(fromRecord(7n, HOLDER, lapsed, offer({ refinanceTargetLoanId: 8n }))).toBeNull();
+  });
+});
+
+describe('leftoverFrom', () => {
+  it('marks a found leftover untakeable, and carries an unanswered scan as non-blocking', () => {
+    expect(leftoverFrom({ kind: 'found', offerId: '4', open: true })).toEqual({
+      kind: 'found',
+      offerId: '4',
+      open: true,
+      untakeable: true,
+    });
+    // #2429 r2 — an unanswered leftover search blocks nothing but is kept,
+    // so the page can say it could not check.
+    expect(leftoverFrom({ kind: 'unknown', reason: 'failed' })).toEqual({ kind: 'none', leftovers: 'failed' });
+    expect(leftoverFrom({ kind: 'unknown', reason: 'capped' })).toEqual({ kind: 'none', leftovers: 'capped' });
+    expect(leftoverFrom({ kind: 'none' })).toEqual({ kind: 'none' });
+  });
+});
+
+describe('discoverRefinanceRequest — record first', () => {
+  const fnMissing = () => {
+    const inner = new ContractFunctionRevertedError({ abi: [], functionName: 'getRefinanceRequest' });
+    inner.signature = '0xa9ad62f8';
+    const outer = new BaseError('reverted');
+    outer.walk = () => inner;
+    return outer;
+  };
+  /** A fake client: `record` answers getRefinanceRequest; the holder has one
+   *  offer (id 9, for loan 7) when `holderOffer` is set. */
+  function client(record: () => readonly [bigint, boolean], holderOffer?: Partial<OfferFacts>) {
+    const ids = holderOffer ? [9n] : [];
+    return {
+      readContract: async ({ functionName, args }: { functionName: string; args: readonly unknown[] }) => {
+        if (functionName === 'getRefinanceRequest') return record();
+        if (functionName === 'getUserOffersPaginated') {
+          return args[2] === 0n ? [[], BigInt(ids.length)] : [ids, BigInt(ids.length)];
+        }
+        if (functionName === 'getOfferDetails') return { ...req(9n), ...holderOffer };
+        throw new Error(`unexpected read ${functionName}`);
+      },
+      multicall: async () => ids.map(() => ({ ...req(9n), ...holderOffer })),
+      getBlock: async () => ({ timestamp: NOW }),
+    } as unknown as PublicClient;
+  }
+  const run = (c: PublicClient) =>
+    discoverRefinanceRequest({
+      client: c,
+      diamond: '0x00000000000000000000000000000000000000dd',
+      loanId: 7n,
+      sinceOfferId: 1n,
+      holder: HOLDER,
+    });
+
+  it('a standing record answers without a scan', async () => {
+    expect(await run(client(() => [9n, true]))).toEqual({ kind: 'found', offerId: '9', open: true });
+  });
+  it('with no record, a request the scan finds is a leftover the protocol will never take', async () => {
+    expect(await run(client(() => [0n, false], {}))).toEqual({
+      kind: 'found',
+      offerId: '9',
+      open: true,
+      untakeable: true,
+    });
+  });
+  it('on a deployment without the record, the scan alone decides, as before', async () => {
+    expect(
+      await run(
+        client(() => {
+          throw fnMissing();
+        }, {}),
+      ),
+    ).toEqual({ kind: 'found', offerId: '9', open: true });
+  });
+  // #2429 r3 — the record proved no request stands; only the lapsed
+  // request's details failed. Nothing is held back; the post is unconfirmed.
+  it('a lapsed record whose details cannot be read holds nothing back', async () => {
+    const c = {
+      readContract: async ({ functionName }: { functionName: string }) => {
+        if (functionName === 'getRefinanceRequest') return [9n, false];
+        throw new Error('fetch failed');
+      },
+    } as unknown as PublicClient;
+    expect(await run(c)).toEqual({ kind: 'none', leftovers: 'failed', lapsed: 'unchecked' });
+  });
+
+  it('any other failed read of the record is unknown, never none', async () => {
+    expect(
+      await run(
+        client(() => {
+          throw new Error('fetch failed');
+        }),
+      ),
+    ).toEqual({ kind: 'unknown', reason: 'failed' });
+  });
+});
+
+describe('isUntakeable', () => {
+  it('is untakeable only when the protocol records a different request, or none', () => {
+    expect(isUntakeable(9n, '9')).toBe(false);
+    expect(isUntakeable(8n, '9')).toBe(true);
+    expect(isUntakeable(0n, '9')).toBe(true);
+    // A deployment without the record: nothing is untakeable there.
+    expect(isUntakeable(null, '9')).toBe(false);
+  });
+});
