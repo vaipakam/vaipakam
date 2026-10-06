@@ -200,6 +200,18 @@ export function isUntakeable(recordedId: bigint | null, offerId: string): boolea
   return recordedId !== null && recordedId !== BigInt(offerId);
 }
 
+/** #2429 r1 — whether cancelling `offerId` must KEEP the standing payoff
+ *  approval: the protocol records a DIFFERENT request for the loan that still
+ *  stands, and it draws on the same approval (same wallet, same token), so
+ *  revoking it would strand that request. */
+export function keepsApprovalOnCancel(
+  recordedId: bigint | null,
+  recordLive: boolean,
+  offerId: string,
+): boolean {
+  return recordedId !== null && recordLive && recordedId !== BigInt(offerId);
+}
+
 /** #2425 — a leftover the scan found is never takeable; a scan that did not
  *  answer is none, since nothing the app would block depends on it. */
 export function leftoverFrom(scan: RefinanceDiscovery): RefinanceDiscovery {

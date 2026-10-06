@@ -1655,6 +1655,10 @@ const copySource = {
     // the protocol kept a record, or replaced by a newer request. The
     // protocol never takes it and it holds nothing back; cancelling it
     // removes it and its payoff approval.
+    // #2429 r1 — cancelling a leftover while the loan's recorded request
+    // still stands: the shared payoff approval is kept for that request.
+    cancelledKeptApproval:
+      'Request cancelled. Its payoff approval was kept, because your other refinance request for this loan still stands and uses the same approval.',
     pendingUntakeable:
       'This refinance request can never be accepted: it isn’t the request the protocol has on record for this loan (it was posted before that record existed, or a newer request replaced it). It does not hold the loan back. Cancel it below to remove it and its standing payoff approval.',
     pendingPastGrace:

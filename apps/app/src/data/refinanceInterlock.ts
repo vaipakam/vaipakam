@@ -62,7 +62,12 @@ export function resolveNamedRequest(a: {
     return { offerId: a.ownScan.offerId, fromOwnScan: true };
   }
   const h = a.holderScan;
-  const holderOpen = h?.kind === 'found' && h.open ? h.offerId : null;
+  // #2429 r1 — only a request the protocol could take outranks this device's
+  // marker. A leftover it will never take ranks with the expired ones: a
+  // request just posted from here (the marker) must be named over it until
+  // the next scan, or its card is hidden behind the leftover's.
+  const holderOpen =
+    h?.kind === 'found' && h.open && h.untakeable !== true ? h.offerId : null;
   const holderAny = h?.kind === 'found' ? h.offerId : null;
   return { offerId: holderOpen ?? a.markerId ?? holderAny, fromOwnScan: false };
 }

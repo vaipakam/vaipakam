@@ -105,7 +105,11 @@ export function RefinancePendingCard({
       // arrive context-free after the explanatory UI vanished, and a
       // rejected revoke would surface nowhere.
       let outcome: string;
-      try {
+      if (state?.keepApprovalOnCancel) {
+        // #2429 r1 — another request for this loan still stands and draws
+        // on the same approval: revoking it would strand that request.
+        outcome = copy.refinance.cancelledKeptApproval;
+      } else try {
         await revokeAllowance({
           publicClient,
           walletClient,

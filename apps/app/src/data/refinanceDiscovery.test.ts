@@ -9,6 +9,7 @@ import {
   discoverRefinanceRequest,
   fromRecord,
   isUntakeable,
+  keepsApprovalOnCancel,
   leftoverFrom,
   resolveScan,
   selectRequest,
@@ -266,5 +267,15 @@ describe('isUntakeable', () => {
     expect(isUntakeable(0n, '9')).toBe(true);
     // A deployment without the record: nothing is untakeable there.
     expect(isUntakeable(null, '9')).toBe(false);
+  });
+});
+
+describe('keepsApprovalOnCancel (#2429 r1)', () => {
+  it('keeps the shared approval only while ANOTHER recorded request stands', () => {
+    expect(keepsApprovalOnCancel(8n, true, '9')).toBe(true);
+    expect(keepsApprovalOnCancel(8n, false, '9')).toBe(false);
+    expect(keepsApprovalOnCancel(9n, true, '9')).toBe(false);
+    expect(keepsApprovalOnCancel(0n, false, '9')).toBe(false);
+    expect(keepsApprovalOnCancel(null, false, '9')).toBe(false);
   });
 });

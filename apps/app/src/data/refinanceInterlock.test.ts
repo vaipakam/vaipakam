@@ -22,6 +22,20 @@ const failed: RefinanceDiscovery = { kind: 'unknown', reason: 'failed' };
 const capped: RefinanceDiscovery = { kind: 'unknown', reason: 'capped' };
 
 describe('resolveNamedRequest', () => {
+  // #2429 r1 — a request just posted from this device (the marker) must be
+  // named over a leftover the protocol will never take, until the next scan.
+  it('names the marker over an untakeable leftover, and the leftover when there is no marker', () => {
+    expect(resolveNamedRequest({ holderScan: leftover('4'), ownScan: undefined, markerId: '9' })).toEqual({
+      offerId: '9',
+      fromOwnScan: false,
+    });
+    expect(resolveNamedRequest({ holderScan: leftover('4'), ownScan: undefined, markerId: null })).toEqual({
+      offerId: '4',
+      fromOwnScan: false,
+    });
+    // A request the protocol could take still outranks the marker.
+    expect(resolveNamedRequest({ holderScan: open('4'), ownScan: undefined, markerId: '9' }).offerId).toBe('4');
+  });
   it("names the viewer's own request when they are not the holder (r3: cleanup after a transfer)", () => {
     expect(
       resolveNamedRequest({ holderScan: open('9'), ownScan: expired('4'), markerId: null }),
