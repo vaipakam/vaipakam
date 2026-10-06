@@ -36,6 +36,13 @@
  * cause and the wrong remedy for a drive that had verified plenty and
  * found a defect. It exits 1 for that now (#1529 review round 5). A new
  * driver must pick from the three above rather than inventing a code.
+ *
+ * A FOURTH verdict, by declaration only (#2434 r2):
+ *
+ *   3  UNDETERMINED — the drive wrote to the chain and then could not
+ *                 establish its claims either way. Reported as such ONLY
+ *                 for a driver in FOUR_VERDICT_DRIVERS; from any other
+ *                 driver an exit 3 is a FAIL. It keeps the batch red.
  */
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
@@ -43,7 +50,9 @@ import { fileURLToPath } from 'node:url';
 
 import {
   batchDrivers,
+  classifyExit,
   driversOnDisk,
+  FOUR_VERDICT_DRIVERS,
   MANUAL_ONLY_DRIVERS,
   THREE_VERDICT_DRIVERS,
   TWO_VERDICT_DRIVERS,
@@ -108,8 +117,9 @@ if (undeclared.length) {
       ` exit from them will be reported as FAIL:\n` +
       undeclared.map((s) => `  ${s}`).join('\n') +
       `\n  → if they honour the three-verdict contract, add them to` +
-      ` THREE_VERDICT_DRIVERS; if they deliberately do not, record the reason` +
-      ` in TWO_VERDICT_DRIVERS.`,
+      ` THREE_VERDICT_DRIVERS (or FOUR_VERDICT_DRIVERS, with the reason, if they` +
+      ` also exit 3 = UNDETERMINED); if they deliberately do not, record the` +
+      ` reason in TWO_VERDICT_DRIVERS.`,
   );
 }
 
@@ -141,11 +151,13 @@ for (const script of scripts) {
   // unmigrated driver that exits 2 for its own reasons would have been
   // reported as "ran but verified nothing", a specific claim about a
   // surface nobody had checked. Now it is true by construction.
-  const honoursContract = THREE_VERDICT_DRIVERS.has(script);
+  // The classification itself is `classifyExit` (verdictContract.mjs), so it
+  // is unit-tested: exit 3 is UNDETERMINED only from a declared four-verdict
+  // driver (#2434 r2).
+  const honoursContract = THREE_VERDICT_DRIVERS.has(script) || FOUR_VERDICT_DRIVERS.has(script);
   results.push({
     script,
-    verdict:
-      res.status === 0 ? 'PASS' : res.status === 2 && honoursContract ? 'BLOCKED' : 'FAIL',
+    verdict: classifyExit(script, res.status),
     code: res.status,
     honoursContract,
   });
@@ -153,7 +165,7 @@ for (const script of scripts) {
 
 console.log('\n━━━ live batch summary ━━━');
 for (const s of skipped) {
-  console.log(`SKIPPED  ${s}  (manual-only — run it by hand; not covered by this batch)`);
+  console.log(`SKIPPED       ${s}  (manual-only — run it by hand; not covered by this batch)`);
 }
 for (const r of results) {
   // A DECLARED opt-out is not an unknown (#2099 round 1). Its exit 2 is
@@ -162,7 +174,7 @@ for (const r of results) {
   const undeclared =
     r.verdict === 'FAIL' && !r.honoursContract && !TWO_VERDICT_DRIVERS.has(r.script);
   console.log(
-    `${r.verdict.padEnd(7)}  ${r.script}` +
+    `${r.verdict.padEnd(12)}  ${r.script}` +
       (r.verdict === 'FAIL' && r.code !== 1 ? `  (exit ${r.code})` : '') +
       // Do not let this row be read as a confirmed product defect.
       (undeclared ? '  (undeclared driver — may be infrastructure)' : ''),
@@ -178,6 +190,16 @@ if (undeclaredFails.length) {
       ` site or RPC looks identical to a regression. Read those drives' output` +
       ` before treating them as defects, then declare them: register them if` +
       ` they honour the contract, or record the reason they do not.`,
+  );
+}
+const undetermined = results.filter((r) => r.verdict === 'UNDETERMINED');
+if (undetermined.length) {
+  console.log(
+    `\n${undetermined.length} drive(s) UNDETERMINED — they wrote to the chain and` +
+      ` could not establish their claims either way. Not a pass and not a` +
+      ` confirmed defect: read each drive's report, which prints what it left` +
+      ` standing:\n` +
+      undetermined.map((r) => `  ${r.script}`).join('\n'),
   );
 }
 const blocked = results.filter((r) => r.verdict === 'BLOCKED');

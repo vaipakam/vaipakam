@@ -212,10 +212,12 @@ export function createManifest({ verifiable, notVerified = [] }) {
  *
  * AFTER the first write, the drive claims only what a receipt and reads
  * pinned to the accept block prove, so:
- *   1 FAIL — ONLY when a chain read POSITIVELY CONTRADICTS one of the three
- *     outcome claims (`OUTCOME_CLAIMS`: the old loan still Active after our
- *     accept mined; our accept mined with no single replacement; the lien
- *     not carried) — or when the nonces show a transaction the write gate
+ *   1 FAIL — ONLY when a chain read POSITIVELY CONTRADICTS one of the
+ *     outcome claims (`OUTCOME_CLAIMS`: the app named a request other than
+ *     the one the createOffer receipt created (#2434 r2); the old loan still
+ *     Active after our accept mined; our accept mined with no single
+ *     replacement; the lien not carried) — or when the nonces show a
+ *     transaction the write gate
  *     never allowed (`gateEscape`), the one failure of the write discipline
  *     that is never somebody else's doing;
  *   0 PASS — every verifiable claim VERIFIED and nothing stopped;
@@ -230,7 +232,7 @@ export function createManifest({ verifiable, notVerified = [] }) {
  *           stopped: string|null, preWriteFailure: boolean, gateEscape: boolean }} a
  * @returns {{ exit: 0|1|3, line: string }}
  */
-export const OUTCOME_CLAIMS = Object.freeze(['oldLoanClosed', 'replacementOpened', 'collateralLienCarried']);
+export const OUTCOME_CLAIMS = Object.freeze(['requestIdentity', 'oldLoanClosed', 'replacementOpened', 'collateralLienCarried']);
 
 export function runVerdict({ rows, wrote, stopped, preWriteFailure, gateEscape }) {
   if (!wrote) {

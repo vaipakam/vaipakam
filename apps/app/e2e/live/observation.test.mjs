@@ -58,6 +58,48 @@ describe('observeAgainstChain', () => {
     expect(after.state).toBe('unreadable');
     expect(after.error).toMatch(/after the observation failed: rpc down/);
   });
+
+  it('an observation that THROWS is still followed by its after-read, and then classified (#2434 r2)', async () => {
+    const boom = new Error('banner locator timed out');
+    // The config MOVED around the failed observation: a race carrying the error.
+    const log = [];
+    const moved = await observeAgainstChain({
+      baseline: CONFIG,
+      readConfig: reader([CONFIG, { ...CONFIG, paused: true }], log),
+      observe: async () => {
+        log.push('observe');
+        throw boom;
+      },
+    });
+    expect(log).toEqual(['read', 'observe', 'read']);
+    expect(moved).toMatchObject({ state: 'race', observeError: 'banner locator timed out' });
+    expect(moved.changes).toEqual(['during the observation, paused: false → true']);
+    expect(observationVerdict(moved, { wrote: false, what: 'the banner' }).action).toBe('blocked');
+    const after = observationVerdict(moved, { wrote: true, what: 'the banner' });
+    expect(after.action).toBe('undetermined');
+    expect(after.why).toMatch(/the observation itself failed meanwhile: banner locator timed out$/);
+    // The config HELD: the observation's own error, rethrown unchanged — after the after-read.
+    const log2 = [];
+    await expect(
+      observeAgainstChain({
+        baseline: CONFIG,
+        readConfig: reader([CONFIG, CONFIG], log2),
+        observe: async () => {
+          log2.push('observe');
+          throw boom;
+        },
+      }),
+    ).rejects.toBe(boom);
+    expect(log2).toEqual(['read', 'observe', 'read']);
+    // The after-read itself failed: unreadable, still carrying the observation's error.
+    const unreadable = await observeAgainstChain({
+      readConfig: reader([CONFIG, new Error('rpc down')], []),
+      observe: async () => {
+        throw boom;
+      },
+    });
+    expect(unreadable).toMatchObject({ state: 'unreadable', observeError: 'banner locator timed out' });
+  });
 });
 
 describe('observationVerdict', () => {

@@ -16,7 +16,12 @@
  *      a STATE RACE: before any write the drive stops BLOCKED; after one,
  *      the check is UNDETERMINED. Never a FAIL: nothing was observed wrong.
  *   3. a config that cannot be read is treated the same way;
- *   4. otherwise the observation is judged against that one value.
+ *   4. an observation that THROWS is still followed by its after-read
+ *      (#2434 r2): a page that failed WHILE the config moved has not been
+ *      shown to be wrong, so a move (or an unreadable after-read) is the
+ *      race above, carrying the error; only when the config held is the
+ *      observation's own error rethrown, unchanged;
+ *   5. otherwise the observation is judged against that one value.
  *
  * Pure apart from the callbacks it is handed; `observation.test.mjs` pins
  * the ordering and every outcome.
@@ -39,8 +44,9 @@ export function configChanges(a, b) {
  * @param {{ baseline?: object, readConfig: () => Promise<object>,
  *           observe: () => Promise<any> }} a
  * @returns {Promise<{ state: 'stable', config: object, observed: any }
- *   | { state: 'race', changes: string[], observed: any }
- *   | { state: 'unreadable', error: string, observed?: any }>}
+ *   | { state: 'race', changes: string[], observed: any, observeError?: string }
+ *   | { state: 'unreadable', error: string, observed?: any, observeError?: string }>}
+ *   Throws the observation's own error when it threw and the config held.
  */
 export async function observeAgainstChain({ baseline, readConfig, observe }) {
   let before;
@@ -49,18 +55,28 @@ export async function observeAgainstChain({ baseline, readConfig, observe }) {
   } catch (e) {
     return { state: 'unreadable', error: `config read before the observation failed: ${errText(e)}` };
   }
-  const observed = await observe();
+  // The observation's error is HELD, not propagated, until the after-read
+  // has said whether the config moved around it.
+  let observed;
+  let observeError = null;
+  try {
+    observed = await observe();
+  } catch (e) {
+    observeError = e;
+  }
+  const thrown = observeError ? { observeError: errText(observeError) } : {};
   let after;
   try {
     after = await readConfig();
   } catch (e) {
-    return { state: 'unreadable', error: `config read after the observation failed: ${errText(e)}`, observed };
+    return { state: 'unreadable', error: `config read after the observation failed: ${errText(e)}`, observed, ...thrown };
   }
   const changes = [
     ...(baseline ? configChanges(baseline, before).map((c) => `since the preflight, ${c}`) : []),
     ...configChanges(before, after).map((c) => `during the observation, ${c}`),
   ];
-  if (changes.length) return { state: 'race', changes, observed };
+  if (changes.length) return { state: 'race', changes, observed, ...thrown };
+  if (observeError) throw observeError;
   return { state: 'stable', config: after, observed };
 }
 
@@ -79,7 +95,8 @@ export function observationVerdict(result, { wrote, what }) {
     result.state === 'race'
       ? `the chain config ${what} is judged against moved (${result.changes.join('; ')}) — a state race, not a product defect`
       : `the chain config ${what} is judged against could not be read (${result.error})`;
-  return { action: wrote ? 'undetermined' : 'blocked', why };
+  const also = result.observeError ? `; the observation itself failed meanwhile: ${result.observeError}` : '';
+  return { action: wrote ? 'undetermined' : 'blocked', why: why + also };
 }
 
 function errText(e) {

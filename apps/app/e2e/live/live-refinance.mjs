@@ -17,9 +17,10 @@
 //      approval, createOffer); each is allowed through the write gate
 //      below only if it is one of exactly those.
 //   2. The request is pinned ON CHAIN from the createOffer receipt's own
-//      `OfferCreated` event — never from "newest offer" alone — and must
-//      target this loan, take the carry-over path, and carry the terms
-//      typed into the form.
+//      `OfferCreated` event — never from "newest offer" alone — and the
+//      page's "Refinance request #N is live" must name that same id. (Its
+//      terms were matched field by field by the write gate before the
+//      createOffer was signed; they are not re-asserted as an outcome.)
 //   3. A DIFFERENT lender (role `lender`) finds the request in the Offer
 //      Book, presses its "Fund this request" CTA and accepts it through
 //      the guided review ("Fund this borrower"). If the indexer has not
@@ -83,14 +84,18 @@
 // #2431 re-cut to what a RECEIPT and reads PINNED TO THE ACCEPT BLOCK prove
 // directly. VERIFIED, each printed as verified only when every read it
 // declares ran and passed:
+//   requestIdentity       — the page's "Refinance request #N is live" names
+//                           the OfferCreated id in the createOffer receipt
+//                           (#2434 r2).
 //   oldLoanClosed         — getLoanDetails(old) at the accept block: Repaid.
 //   replacementOpened     — the accept receipt's OfferAccepted and
 //                           LoanRefinanced name exactly one replacement id,
 //                           and getLoanDetails(new) at the accept block shows
 //                           Active, the same borrower and the request's lender.
 //   collateralLienCarried — getLoanCollateralLien at the accept block: the
-//                           old lien released, the replacement's live with
-//                           the same asset/type/tokenId/amount; and the
+//                           old lien released, the replacement's live on the
+//                           borrower's vault (user = the borrower) with the
+//                           same asset/type/tokenId/amount; and the
 //                           receipt has no collateral-token transfer out of
 //                           the borrower's vault.
 //   writeDiscipline       — no refusal, and each role's nonces reconcile
@@ -115,18 +120,23 @@
 // participant's sanctions screening) before and after the observation and
 // compares both with the preflight's. A difference is a state race: BLOCKED
 // before any write; after one (the lender's review, the re-read just before
-// the lender is armed) the drive stops before that write. The request must
-// still be open when the lender is armed. These are WRITE GATES, not claims.
+// the lender is armed) the drive stops before that write. The same re-read
+// runs just before the BORROWER is armed (#2434 r2), where a move is
+// BLOCKED. An observation that THROWS is still followed by its after-read:
+// a moved config is a race, a stable one rethrows the observation's error.
+// The request must still be open when the lender is armed. These are WRITE
+// GATES, not claims.
 //
 // ONE FAILURE RULE (#2431 re-cut, `settleFailure` + `runVerdict`). Before
 // any write, a failure is FAIL (a pre-write race is BLOCKED). After the
 // first write, any stop is UNDETERMINED (exit 3), with the touched-state
 // ledger and the replacement state printed — EXCEPT when a chain read
-// positively contradicts an outcome claim: the old loan still Active after
+// positively contradicts an outcome claim: the app's "is live" banner
+// naming a request other than the receipt's, the old loan still Active after
 // our accept mined, our accept mined with no single replacement, or the lien
 // not carried. Those are FAIL (exit 1), and so is a nonce count showing a
 // transaction the gate never allowed. When the page fails after our accept
-// MINED, the three claims are read from its receipt anyway, so a
+// MINED, the accept's claims are read from its receipt anyway, so a
 // contradiction is never hidden behind a UI failure.
 //
 // THE REVIEW IS CHECKED BEFORE CONSENT (#2422 r7, reviewTerms.mjs). Before
@@ -211,7 +221,8 @@
 // separate scenario, not this one. Two hours is over three times this
 // drive's own worst case (about 35 minutes).
 //
-// Verdicts (the three-verdict contract in run-live-batch.mjs):
+// Verdicts (the FOUR-verdict contract — FOUR_VERDICT_DRIVERS in
+// verdictContract.mjs, which run-live-batch.mjs classifies by):
 //   0 PASS     — the drive ran to the end and every VERIFIED claim of the
 //                outcome manifest ran and passed (the NOT VERIFIED ones are
 //                printed with their reasons and coverage).
@@ -219,8 +230,9 @@
 //                disclosure, a page that would not complete a step) or a
 //                page asked to sign while the plan was closed. AFTER a
 //                write: only a chain read that contradicts an outcome claim
-//                (old loan not Repaid after our accept mined, no single
-//                replacement, the lien not carried), or a nonce count
+//                (the banner naming another request, old loan not Repaid
+//                after our accept mined, no single replacement, the lien
+//                not carried), or a nonce count
 //                showing a transaction the gate never allowed.
 //   2 BLOCKED  — a precondition did not hold BEFORE anything was written
 //                (no REFI_LOAN_ID, site build mismatch, chain facts differ,
@@ -239,11 +251,10 @@
 //                exit 0: an exit code is read without the line beside it,
 //                and 0 would certify claims nobody established. Not 1 (no
 //                chain read contradicts a claim) and not 2 (chain state has
-//                changed). This is a fourth code outside the
-//                batch's three-verdict contract, which is safe only because
-//                the driver is MANUAL_ONLY: were it ever batched, the runner
-//                classifies any code other than 0 and 2 as FAIL — the
-//                conservative reading, never a PASS.
+//                changed). The driver DECLARES this fourth code in
+//                FOUR_VERDICT_DRIVERS (#2434 r2), so a batch run would
+//                report it as UNDETERMINED rather than FAIL; an exit 3 from
+//                any undeclared driver stays a FAIL.
 //
 // ONE-SHOT BY NATURE, SO MANUAL-ONLY. A successful run closes the loan it
 // drives, so there is no loan this drive could default to that stays
@@ -619,6 +630,13 @@ function halt(why) {
 // ---------------------------------------------------------------------
 const MANIFEST = createManifest({
   verifiable: [
+    {
+      id: 'requestIdentity',
+      claim: 'the app named the request this run created',
+      checks: {
+        banner: 'the page\u2019s "Refinance request #N is live" banner: N equals the OfferCreated id in the createOffer receipt',
+      },
+    },
     {
       id: 'oldLoanClosed',
       claim: `loan ${LOAN_ID} is closed as Repaid`,
@@ -2034,7 +2052,7 @@ async function ourStepMined(id) {
  * stop is a product FAIL (a pre-write race exits BLOCKED where it is found).
  * After the first write, the stop is recorded and the run is UNDETERMINED
  * (exit 3) — unless the accept MINED and its outcome has not been verified
- * yet: then the three claims are read anyway, so a chain read that
+ * yet: then the accept's claims are read anyway, so a chain read that
  * contradicts one of them is still a FAIL. `runVerdict` decides the exit.
  */
 async function settleFailure(err) {
@@ -2048,7 +2066,7 @@ async function settleFailure(err) {
   }
   STOPPED = why;
   if (!ACCEPT_VERIFIED && (await ourStepMined('l-accept'))) {
-    console.log('info  our accept MINED although the drive stopped — reading the three outcome claims from its receipt anyway');
+    console.log('info  our accept MINED although the drive stopped — reading the accept\u2019s outcome claims from its receipt anyway');
     try {
       await verifyAcceptOutcome();
     } catch (e) {
@@ -2138,6 +2156,12 @@ try {
     stop('"Confirm — post refinance request" never enabled after consent');
   }
   beforeWriteStep('posting the refinance request');
+  // The same pre-arm re-read the lender gets (#2434 r2): the watched config
+  // must still equal the preflight's — the config the review above was
+  // judged against — IMMEDIATELY before the borrower is armed. Nothing has
+  // been written yet, so a move exits BLOCKED inside `observeConfig`.
+  const bArmObs = await observeConfig('the borrower\u2019s submit (fees, grace, posture, risk-terms epoch)', async () => null);
+  if (bArmObs.undetermined) stop(`not arming the borrower: ${bArmObs.undetermined}`);
   BORROWER_ANCHOR = await chainNow();
   console.log(`info  borrower anchor (chain time at submit start): ${BORROWER_ANCHOR}`);
   // Arm the borrower role NOW — the card, posture and review checks above
@@ -2168,6 +2192,20 @@ try {
 
   // 2. The request, from the createOffer's own receipt.
   await pinRequestFromReceipt();
+  // The app's own statement of WHICH request is live must be the one the
+  // receipt created (#2434 r2). A different id is the app naming the wrong
+  // lifecycle identity — a positive contradiction of `requestIdentity`, so
+  // a FAIL even though a write has happened, and the drive stops here.
+  if (
+    !check(
+      `the app's "Refinance request #N is live" names the request the createOffer receipt created (#${requestId})`,
+      BigInt(live) === requestId,
+      `page #${live}, receipt #${requestId}`,
+      'requestIdentity.banner',
+    )
+  ) {
+    stop(`the app reports request #${live} as live, but the createOffer receipt created #${requestId}`);
+  }
 
   await closeSession('borrower');
   // The request is pinned and every request check passed. The plan stays
@@ -2379,7 +2417,7 @@ for (const role of ['borrower', 'lender']) {
 const reconciliation = await report(baselineNonces);
 // ONE rule decides the exit (`runVerdict`, #2431 re-cut): before any write a
 // stop is FAIL; after one, FAIL only when a chain read contradicts one of the
-// three outcome claims or the nonces show a transaction the gate never
+// outcome claims or the nonces show a transaction the gate never
 // allowed — anything else that is not a clean PASS is UNDETERMINED (exit 3).
 const VERDICT = runVerdict({
   rows: MANIFEST.rows(),

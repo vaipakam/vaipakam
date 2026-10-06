@@ -137,7 +137,33 @@ describe('live-refinance wiring — one failure rule', () => {
   });
 });
 
+describe('live-refinance wiring — the app names the request it created (#2434 r2)', () => {
+  it('the "is live" banner id is compared with the receipt id, filed under requestIdentity, and a mismatch stops at once', () => {
+    const region = between(SRC, '  await pinRequestFromReceipt();', "await closeSession('borrower');");
+    const guard = blockFrom(region, 'if (');
+    expect(guard).toContain('BigInt(live) === requestId');
+    expect(guard).toContain("'requestIdentity.banner'");
+    expect(guard).toMatch(/\)\s*\{\s*stop\(/);
+    // The banner's N is the digits the poll captured, nothing else.
+    expect(SRC).toContain('const m = t.match(/Refinance request #(\\d+) is live/i);');
+    // A mismatch is a contradiction (FAIL), not merely a stop (UNDETERMINED).
+    expect(OUTCOME_CLAIMS).toContain('requestIdentity');
+  });
+});
+
 describe('live-refinance wiring — pre-write gates', () => {
+  it('the watched config is re-read immediately before the BORROWER is armed; a move is BLOCKED', () => {
+    const region = between(SRC, "beforeWriteStep('posting the refinance request');", "PLAN.arm('borrower');");
+    expect(region).toContain('const bArmObs = await observeConfig(');
+    expect(region).toContain('if (bArmObs.undetermined) stop(');
+    // Nothing else may sit between the re-read and the arming but the anchor.
+    expect(region).not.toMatch(/await (?!chainNow\(\))(?!observeConfig)/);
+    // Before any write, observeConfig's race is BLOCKED (exits, writes nothing).
+    expect(blockFrom(SRC, 'async function observeConfig(what, observe) {')).toContain(
+      "if (v.action === 'blocked') await blockedByRace(",
+    );
+  });
+
   it('the lender review reads the request as created at its create block, not "latest"', () => {
     expect(statementFrom(SRC, 'const reqNow =')).toBe('const reqNow = REQUEST_AS_CREATED;');
     expect(statementFrom(SRC, 'REQUEST_AS_CREATED = await')).toBe(

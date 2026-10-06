@@ -146,6 +146,7 @@ describe('outcomeManifest', () => {
 describe('runVerdict', () => {
   const row = (id, status) => ({ id, status });
   const all = (status = 'verified') => [
+    row('requestIdentity', status),
     row('oldLoanClosed', status),
     row('replacementOpened', status),
     row('collateralLienCarried', status),
@@ -170,6 +171,14 @@ describe('runVerdict', () => {
       expect(v.exit, id).toBe(1);
       expect(v.line, id).toMatch(new RegExp(`contradicts \\[${id}\\]`));
     }
+  });
+
+  it('the app naming the wrong request is a contradiction (FAIL), not a stop (#2434 r2)', () => {
+    expect(OUTCOME_CLAIMS).toEqual(['requestIdentity', 'oldLoanClosed', 'replacementOpened', 'collateralLienCarried']);
+    const rows = all().map((r) => (r.id === 'requestIdentity' ? row(r.id, 'failed') : row(r.id, r.id === 'settlementAmounts' ? 'not verified' : 'not run')));
+    const v = runVerdict({ ...base, rows, stopped: 'the app reports request #46 as live, but the createOffer receipt created #45' });
+    expect(v).toMatchObject({ exit: 1 });
+    expect(v.line).toMatch(/contradicts \[requestIdentity\]/);
   });
 
   it('…or when the nonces show a transaction the gate never allowed', () => {
