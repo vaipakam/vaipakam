@@ -16,6 +16,7 @@ import {
   amountPhrase,
   borrowerPayoutWhat,
   defaultRecoveryNote,
+  fallbackPendingNote,
   laneAmount,
   lenderPayoutWhat,
   nftClaimLabel,
@@ -34,7 +35,7 @@ describe('defaultRecoveryNote', () => {
   const fmt = (amount: bigint) => `${amount} USDC`;
   const recorded = (over: Partial<{ viaFallback: boolean }> = {}) =>
     ({ kind: 'recorded', principal: 1000n, interest: 30n, lateFee: 20n, viaFallback: false, ...over }) as const;
-  const base = { hasHeld: false, inKind: false, owed: none, recovered: 800n, format: fmt, labels } as const;
+  const base = { hasHeld: false, inKind: false, owed: none, recovered: 800n, format: fmt, formatUnreadable: false, labels } as const;
   const owedLine = labels.owedAtDefault('1050 USDC', '1000 USDC', '50 USDC');
 
   // ── no record: the #2373 behaviour, unchanged ──
@@ -93,8 +94,25 @@ describe('defaultRecoveryNote', () => {
     );
   });
 
-  it('falls back to the no-figure line while the asset details are not available', () => {
+  it('falls back to the no-figure line while the asset details are still loading', () => {
     expect(defaultRecoveryNote({ ...base, owed: recorded(), format: null })).toBe(labels.recoveryNotComparable);
+  });
+
+  // #2426 r2 — once the token's details have FAILED, the amounts cannot be
+  // written, but recovery and principal are in the same token units, so the
+  // comparison is still known and still stated.
+  it('keeps the principal comparison when the token details could not be read', () => {
+    const unread = { ...base, owed: recorded(), format: null, formatUnreadable: true };
+    expect(defaultRecoveryNote(unread)).toBe(
+      `${labels.owedAmountsUnreadable} ${labels.recoveryBelowPrincipalNoAmount}`,
+    );
+    expect(defaultRecoveryNote({ ...unread, recovered: 1000n })).toBe(
+      `${labels.owedAmountsUnreadable} ${labels.recoveryCoversPrincipalNoAmount}`,
+    );
+    expect(defaultRecoveryNote({ ...unread, owed: recorded({ viaFallback: true }) })).toBe(
+      labels.owedAmountsUnreadable,
+    );
+    expect(defaultRecoveryNote(unread)).not.toMatch(/\d/);
   });
 
   it('says the record could not be read, rather than that there is none', () => {
@@ -102,6 +120,23 @@ describe('defaultRecoveryNote', () => {
     expect(defaultRecoveryNote({ ...base, owed: { kind: 'unreadable' }, inKind: true })).toBe(
       `${labels.owedUnreadable} ${labels.compareInKind}`,
     );
+  });
+
+  // #2426 r2 — a claim still in the fallback states the recorded debt (the
+  // fallback's entry IS the default) before the provisional caveat, and never
+  // compares it: the payout itself can still change.
+  it('states the recorded debt beside a fallback-pending claim, without comparing it', () => {
+    const fb = { owed: recorded({ viaFallback: true }), format: fmt, formatUnreadable: false, labels };
+    expect(fallbackPendingNote(fb)).toBe(`${owedLine} ${labels.fallbackMayChange}`);
+    expect(fallbackPendingNote({ ...fb, owed: none })).toBe(labels.fallbackMayChange);
+    expect(fallbackPendingNote({ ...fb, owed: { kind: 'unreadable' } })).toBe(
+      `${labels.owedUnreadable} ${labels.fallbackMayChange}`,
+    );
+    expect(fallbackPendingNote({ ...fb, format: null })).toBe(labels.fallbackMayChange);
+    expect(fallbackPendingNote({ ...fb, format: null, formatUnreadable: true })).toBe(
+      `${labels.owedAmountsUnreadable} ${labels.fallbackMayChange}`,
+    );
+    expect(fallbackPendingNote(fb)).not.toMatch(/short of|covers the principal/);
   });
 
   it('phrases every figure for the current holder, never "you lent"', () => {

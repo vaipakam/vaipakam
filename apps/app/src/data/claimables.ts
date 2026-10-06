@@ -85,8 +85,8 @@ interface ClaimableTuple {
 }
 
 /** #2374 — what the loan owed at the moment it defaulted, as the protocol
- *  recorded it then (`getOwedAtDefault`). Read only for a defaulted lender
- *  claim on an ERC-20 loan. `none` covers every case the protocol keeps no
+ *  recorded it then (`getOwedAtDefault`). Read only for a defaulted or
+ *  fallback-pending lender claim on an ERC-20 loan. `none` covers every case the protocol keeps no
  *  record for (a default before the record existed, a deployment without
  *  the view); `unreadable` is a transport failure, stated as such. */
 export type OwedAtDefaultRead =
@@ -161,7 +161,8 @@ export interface ClaimDetail {
    *  NothingToClaim guard does not count it. */
   extraCollateral: { asset: string; amount: bigint } | null;
   /** #2374 — what the loan owed when it defaulted. `none` unless this is a
-   *  defaulted lender claim on an ERC-20 loan with a record. */
+   *  defaulted or fallback-pending lender claim on an ERC-20 loan with a
+   *  record. */
   owedAtDefault: OwedAtDefaultRead;
 }
 
@@ -340,7 +341,11 @@ export async function probeClaim(
     const owedAtDefault =
       isLender &&
       loan.assetType === AssetType.ERC20 &&
-      (loan.status === 'defaulted' || loan.status === 'liquidated')
+      (loan.status === 'defaulted' ||
+        loan.status === 'liquidated' ||
+        // #2426 r2 — the fallback's entry IS the default, and the protocol
+        // reports its record while the loan stands in the fallback.
+        loan.status === 'fallback_pending')
         ? await readOwedAtDefault(publicClient, diamond, loan.loanId)
         : OWED_NONE;
 

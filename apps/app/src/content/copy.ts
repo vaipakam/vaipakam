@@ -3498,6 +3498,14 @@ const copySource = {
         'This recovery isn’t compared with that figure, because it may have arrived in more than one part.',
       owedUnreadable:
         'What the loan still owed when it defaulted couldn’t be read just now, so no comparison is shown.',
+      // #2426 r2 — the record is known but the token's details (symbol,
+      // decimals) could not be read: no amount can be written, but the
+      // principal comparison is still known in the token's own units.
+      owedAmountsUnreadable:
+        'The protocol recorded what the loan still owed when it defaulted, but this token’s details couldn’t be read, so the amounts can’t be shown.',
+      recoveryBelowPrincipalNoAmount: 'This recovery is less than the principal alone.',
+      recoveryCoversPrincipalNoAmount:
+        'This recovery covers the principal in full. Interest and late fees are paid out after the protocol takes its share, so they are not compared here.',
       surplusAfterLiquidation: 'Anything left after liquidation',
       residualAfterMatch: 'Anything left after the internal match',
       whyRentalEnded: 'The rental ended — collect your earned fees and reclaim the NFT.',

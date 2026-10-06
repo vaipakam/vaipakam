@@ -1936,10 +1936,15 @@ is the borrower's own money.
   after the protocol's share and are not compared. No comparison is made, only
   the figure stated, when the recovery may have come in more than one part:
   proceeds held beside the claim, a claim in another asset, or a default that
-  went through the full-collateral fallback. With no record — a loan that
-  defaulted before the protocol kept one — the claim says the figure is not
-  available rather than computing one; when the record cannot be read, it says
-  that instead. The loan's current principal is never presented as what the
+  went through the full-collateral fallback. A claim on a loan still in the
+  fallback states the recorded figure too (entering the fallback is the
+  default), beside its existing note that the claim can still change the
+  payout, and never compares it. When the token's details cannot be read the
+  amounts are not written, but the principal comparison is still stated,
+  since the recovery and the principal are in the same token's own units.
+  With no record — a loan that defaulted before the protocol kept one — the
+  claim says the figure is not available rather than computing one; when the
+  record cannot be read, it says that instead. The loan's current principal is never presented as what the
   holder lent: partial repayments change it, and a holder who bought the
   position never lent it at all.
 - A stale indexed row must not remain actionable after the chain says it is no

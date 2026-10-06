@@ -299,13 +299,24 @@ describe('probeClaim — what the loan owed at default (#2374)', () => {
     expect(isMemoizableProbe(r)).toBe(false);
   });
 
-  it('does not read it outside a defaulted lender claim', async () => {
+  it('does not read it outside a defaulted or fallback-pending lender claim', async () => {
     // The fake client throws on any unexpected read, which would surface as
     // `unreadable` here rather than `none`.
-    for (const loan of [{ ...lenderLoan, status: 'repaid' }, { ...lenderLoan, status: 'fallback_pending' }]) {
+    for (const loan of [{ ...lenderLoan, status: 'repaid' }, { ...lenderLoan, status: 'internal_matched' }]) {
       const r = await probeClaim(client(lenderReads), DIAMOND, ME, loan as PositionLoan);
       expect(r.kind === 'claimable' && r.loan.claim.owedAtDefault).toEqual({ kind: 'none' });
     }
+  });
+
+  // #2426 r2 — the fallback's entry IS the default; its record is read too.
+  it('reads it for a fallback-pending lender claim', async () => {
+    const r = await probeClaim(
+      client({ ...lenderReads, getOwedAtDefault: [1000n, 30n, 20n, 1_700_000_000n, true] }),
+      DIAMOND,
+      ME,
+      { ...lenderLoan, status: 'fallback_pending' } as PositionLoan,
+    );
+    expect(r.kind === 'claimable' && r.loan.claim.owedAtDefault).toMatchObject({ kind: 'recorded', viaFallback: true });
   });
 
   it('never memoizes an unconfirmed probe', () => {
