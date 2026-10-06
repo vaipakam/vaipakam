@@ -300,6 +300,18 @@ const FRIENDLY_ERROR_BY_NAME: Record<string, string> = {
     'This feature is currently turned off by protocol governance. Please try again later.',
   PeriodicInterestDisabled:
     'Periodic interest payments are currently disabled on this deployment.',
+  // #2407 — a standing refinance request holds the loan as it is. Each copy
+  // names the one action that clears the refusal.
+  RefinanceRequestOpen:
+    'This loan has an open refinance request, which holds the loan as it is: partial repayments, early close, handing the loan over, offsetting, withdrawing collateral, extending and posting another request all wait while it stands. Cancel that request first, then try again.',
+  RefinanceRequestNotCancelled:
+    'Your earlier refinance request for this loan has expired but was never cancelled. Cancel it first (that returns anything it still holds), then post the new one.',
+  RefinanceRequestNotRecorded:
+    "This refinance request is not the loan's current request, so it can't be accepted. It may predate an upgrade or have been replaced; its borrower can cancel it and post a new one.",
+  RefinanceBlockedByOffset:
+    "An offset is open on this loan, so a refinance can't go ahead. The borrower has to cancel the offset first.",
+  RefinanceRequestNotLive:
+    'This refinance request can no longer be accepted: it has been taken, cancelled or has expired, or the loan no longer fits it.',
   AmountMustBePositive: 'Enter an amount greater than zero.',
   AmountMaxMustBePositive: 'Enter a maximum amount greater than zero.',
   CollateralMustBePositive: 'Enter a collateral amount greater than zero.',
@@ -638,6 +650,12 @@ export const KNOWN_ERROR_SELECTORS: Record<string, string> = {
   // ── Refinance (RefinanceFacet) ────────────────────────────────────────
   '0xbfa0482c': 'InvalidRefinanceOffer()',
   '0x88be51dc': 'OfferNotAccepted()',
+  // #2407 — the loan's standing refinance request (LibRefinanceRequest).
+  '0xdf811b45': 'RefinanceRequestOpen(uint256,uint256)',
+  '0x8365fae4': 'RefinanceRequestNotCancelled(uint256,uint256)',
+  '0xb93f752b': 'RefinanceRequestNotRecorded(uint256,uint256)',
+  '0xfda31e2c': 'RefinanceBlockedByOffset(uint256,uint256)',
+  '0xddbe651d': 'RefinanceRequestNotLive(uint256,uint256)',
 
   // ── Early withdrawal (EarlyWithdrawalFacet) ───────────────────────────
   '0x910fb9b3': 'InvalidSaleOffer()',

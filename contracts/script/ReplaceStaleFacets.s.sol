@@ -25,6 +25,7 @@ import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
 import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
 import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {RefinanceRecordRollout} from "./lib/RefinanceRecordRollout.sol";
 
 /**
  * @title ReplaceStaleFacets
@@ -79,6 +80,8 @@ contract ReplaceStaleFacets is DeployDiamond {
      */
     function runWith(address diamond, uint256 deployerKey) public {
         console.log("Diamond:", diamond);
+        // #2407 — see RefinanceRecordRollout.
+        RefinanceRecordRollout.assertInstalled(diamond);
 
         vm.startBroadcast(deployerKey);
 

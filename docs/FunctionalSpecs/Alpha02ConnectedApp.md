@@ -1463,7 +1463,7 @@ is the borrower's own money.
   does nothing or can only fail.
 - While a review is open or a send is in flight, the amount cannot be edited: the
   amount on screen is always the amount the wallet is asked to send.
-- While an acceptable refinance request is open on the loan, the surface says
+- While a refinance request stands on the loan, the surface says
   that taking collateral back would make every lender's acceptance fail and
   asks the borrower to cancel or wait — the same interlock partial repayment
   and early close-out apply — and the pre-check refuses. A request is found
@@ -1481,8 +1481,14 @@ is the borrower's own money.
   open request among them is found and shown as usual — only a search that
   found no open request in what it read is reported as unable to answer. The bound is the loan's own offer, which can be older
   than the loan itself, because the chain records no start for a loan that
-  later events do not rewrite; an on-chain index from a loan to its requests
-  would remove the search, and is tracked with #2407.
+  later events do not rewrite. The protocol now records each loan's request
+  and whether it still stands (#2407) — the same rule the search applies: not
+  taken, cancelled or expired, posted by the current holder of the borrower
+  position, on a loan that is still active. Whether a lender could fill it
+  right now is not part of either rule, so a request that can no longer fill
+  holds the loan until the borrower cancels it. Reading that record in place of the search
+  is a separate app change, and until it lands the search described here is
+  what the app does.
 - An open confirmation does not survive a network switch or a change of
   connected account: it closes, and the typed amount is cleared, so a review
   opened on one network or under one wallet can never send on another.
@@ -3191,16 +3197,19 @@ Its intended behaviour, as the test oracle for this surface:
   on that search, not on any other role the wallet holds in the loan. An expired
   request is still shown so it can be cancelled and its approval removed,
   and the card outlives the loan's settlement for the same reason. A new
-  request is not posted while the app can see one open — the protocol
-  accepts several, and taking one leaves the others impossible to fill —
-  and the form waits until the search has answered, checking again just
-  before posting. That check cannot stop two devices that both pass it in
-  the same moment: both requests can then be posted, sharing one payoff
-  approval, and taking either leaves the other impossible to fill. The
-  page names one open request at a time; once it is taken or cancelled,
-  the other is found and shown so it can be cancelled too. An on-chain
-  limit of one request per loan is tracked with #2407. An expired request
-  does not hold the form back, and a request the search has already found
+  request is not posted while the app can see one open, and the form waits until the search has answered, checking again just
+  before posting. The protocol enforces the same limit (#2407): while a
+  request stands against the loan, posting a second is refused, so two
+  devices that both pass the app's check in the same moment cannot both
+  post — the protocol refuses the second, naming the request already
+  open. Only the request the protocol has recorded for the loan can be
+  taken; a second request left over from before that limit can never be
+  taken, and the page shows it so it can be cancelled. An expired request
+  that was never cancelled must be cancelled before a new one is posted —
+  the protocol refuses the new one otherwise, because the expired request
+  may still hold a fresh collateral pledge and the loan's record is how it
+  is found — so the form says so and offers the cancel rather than letting
+  the post fail. A request the search has already found
   expired stays treated as expired even when the page's fuller check of
   it cannot finish. Loans on a periodic interest schedule carry a visible
   warning that an overdue period blocks completion until settled.
@@ -3234,12 +3243,16 @@ Its intended behaviour, as the test oracle for this surface:
   that reason. Each borrower action that would change or settle the
   loan — a partial, early close-out, an obligation handover, an offset,
   taking collateral back — repeats the search just before the wallet
-  opens. What no check made before signing can rule out is a request
-  posted in the moments between that last check and the transaction
-  being mined; the protocol does not refuse a partial on its own when a
-  request is standing, so that narrow race remains and is stated here
-  rather than described as a guarantee (an on-chain guard is tracked as
-  #2407). When one of those last checks — or any other check made after
+  opens. No check made before signing can rule out a request posted in
+  the moments between that last check and the transaction being mined,
+  so the protocol closes that race itself (#2407): while a request
+  stands against the loan it refuses a partial (paid directly or by swapping
+  collateral), an early close-out, an obligation handover, an offset and
+  taking collateral back, naming the request in its refusal, which the app
+  explains in plain words in every supported language even when the wallet
+  returns only the raw revert. Full
+  repayment, adding collateral and every enforcement action (including a
+  partial liquidation) are never held by it. When one of those last checks — or any other check made after
   the token approval — stops the action, the approval it granted is put
   back to what it was before (best effort, and only if nothing else has
   changed it since), and a failure to put it back is said alongside the

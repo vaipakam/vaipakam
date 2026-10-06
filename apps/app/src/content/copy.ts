@@ -1665,7 +1665,11 @@ const copySource = {
     // change or settle the loan found an open request.
     // #2406 r2 — posting a second request while one is already open.
     alreadyOpen:
-      'A refinance request is already open on this loan — perhaps from another device — so nothing was posted. Cancel it first, or wait until it is taken or expires: a second request would leave one of them impossible to fill.',
+      'A refinance request is already open on this loan — perhaps from another device — so nothing was posted. The protocol allows one request per loan: cancel this one first, or wait until a lender takes it. Waiting for it to expire is not enough — an expired request still has to be cancelled before a new one can be posted.',
+    // #2424 r7 — posting a new request while the holder's own expired one
+    // was never cancelled: the protocol refuses the new one until it is.
+    expiredBlocksNew:
+      'Your earlier refinance request for this loan has expired but was never cancelled, so a new one can’t be posted yet. Cancel the expired request first — it may still hold collateral or a token approval — then post again.',
     liveBlocksSettlement:
       'A refinance request is open on this loan. This would change or settle the loan and leave the request impossible to fill, so nothing was sent — cancel the refinance request first.',
     // #2391 — requests are found on chain from the borrower's own offers;
@@ -4468,6 +4472,10 @@ const copySource = {
         'One side of this trade is on an old vault version and needs to upgrade before it can trade. Nothing was sent.',
       selfTrade:
         'This is your own offer, so you can’t take it. Cancel it instead if you want it off the book.',
+      // #2407 — a refinance request can be taken only if it is its loan's
+      // recorded request and no early-close offset is open on that loan.
+      refinanceUntakeable:
+        'This refinance request can’t be taken right now — either it isn’t the request the protocol has on record for its loan (an older one, or one the borrower replaced), or the borrower has an early-close offset open on the loan. Nothing was sent.',
       // A refusal we have no words for — the app can be older than the
       // deployment it is talking to, and this vocabulary grows by
       // appending. Says only what is certainly true.

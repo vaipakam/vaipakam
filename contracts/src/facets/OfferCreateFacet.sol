@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibRefinanceRequest} from "../libraries/LibRefinanceRequest.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {IRateModel} from "../interfaces/IRateModel.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
@@ -845,6 +846,9 @@ contract OfferCreateFacet is
                 params.amount,
                 maxAmountEffective
             );
+            // #2407 — one standing request per loan, indexed so the borrower
+            // actions that would change the loan can refuse while it is live.
+            LibRefinanceRequest.record(params.refinanceTargetLoanId, offerId);
             // #576 — compute + PERSIST the carry-over decision ONCE, here, at
             // create (after validate has confirmed the asset/type identity +
             // caps). isCarryOver folds in the live-lien + exact

@@ -480,6 +480,30 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         vm.warp(block.timestamp + 2 days);
     }
 
+    /// @notice #2407 — an in-place extension rewrites the rate, term and
+    ///         accrual clock a standing refinance request was priced against,
+    ///         so it is refused while a live request targets the loan.
+    function test_2407_ExtendInPlace_RefusedWhileARefinanceRequestIsLive() public {
+        uint256 loanId = _setupExtendableLoan();
+        vm.prank(borrower);
+        _f().setAutoRefinanceCaps(loanId, true, 600, uint64(block.timestamp + 365 days));
+        vm.prank(borrower);
+        uint256 taggedOfferId = OfferCreateFacet(address(diamond))
+            .createOffer(_refinanceTaggedOfferParams(loanId, 400));
+
+        vm.prank(borrower);
+        vm.expectRevert(
+            abi.encodeWithSelector(IVaipakamErrors.RefinanceRequestOpen.selector, loanId, taggedOfferId)
+        );
+        _f().extendLoanInPlace(loanId, 500, 45);
+
+        // Once the request is cancelled the extension goes through.
+        vm.prank(borrower);
+        OfferCancelFacet(address(diamond)).cancelOffer(taggedOfferId);
+        vm.prank(borrower);
+        _f().extendLoanInPlace(loanId, 500, 45);
+    }
+
     /// @notice #1384 — an in-place extension downgrades a lender Full stamp so
     ///         the un-tariffed added term earns no `+10%` (#1354), while leaving
     ///         the per-loanId LIFETIME loan-side reward-cap budget (#1353) and
@@ -1203,7 +1227,13 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         // collateral was never deposited (it's the target loan's, already
         // liened), so transferObligation would double-lien the same NFT and
         // corrupt settlement. Reject before any state change.
+        //
+        // #2407 — offered against ITS OWN target loan, the tagged offer is that
+        // loan's live refinance request, so the refinance-request guard refuses
+        // the handover first. The #576 rejection is what still stands between
+        // a tagged offer and a DIFFERENT loan, so that is the case pinned here.
         uint256 oldLoanId = _buildActiveLoan();
+        uint256 otherLoanId = _buildActiveLoan();
         vm.prank(borrower);
         _f().setAutoRefinanceCaps(
             oldLoanId, true, 600, uint64(block.timestamp + 365 days)
@@ -1215,7 +1245,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         vm.prank(borrower);
         vm.expectRevert(PrecloseFacet.InvalidOfferTerms.selector);
         PrecloseFacet(address(diamond)).transferObligationViaOffer(
-            oldLoanId, taggedOfferId
+            otherLoanId, taggedOfferId
         );
     }
 

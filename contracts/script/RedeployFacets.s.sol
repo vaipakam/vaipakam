@@ -25,6 +25,7 @@ import {RepayPeriodicFacet} from "../src/facets/RepayPeriodicFacet.sol";
 import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
 import {Deployments} from "./lib/Deployments.sol";
 import {FacetSelectors} from "./lib/FacetSelectors.sol";
+import {RefinanceRecordRollout} from "./lib/RefinanceRecordRollout.sol";
 
 /**
  * @title RedeployFacets
@@ -85,6 +86,9 @@ contract RedeployFacets is Script {
      */
     function runWith(address diamond, uint256 deployerKey) public {
         console.log("Diamond:", diamond);
+        // #2407 — the refinance-request record spans facets this curated set
+        // does not carry; refuse a Diamond that has not had it rolled out.
+        RefinanceRecordRollout.assertInstalled(diamond);
 
         vm.startBroadcast(deployerKey);
 
@@ -684,13 +688,17 @@ contract RedeployFacets is Script {
     /// @dev #658 PR-B2 — RefinanceFacet selectors, mirrors
     ///      `DeployDiamond._getRefinanceSelectors` (kept in lockstep).
     function _refinanceSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](3);
+        s = new bytes4[](5);
         s[0] = RefinanceFacet.refinanceLoan.selector;
         s[1] = RefinanceFacet.refinanceLoanFromAccept.selector;
         // #2349 — the matcher-fill route's entry. NEW, so this list is cut via
         // the Add/Replace-by-routing partition (a Replace reverts on an
         // unrouted selector on any pre-#2349 target).
         s[2] = RefinanceFacet.refinanceLoanFromMatch.selector;
+        // #2407 — NEW, so cut through the same Add/Replace-by-routing
+        // partition as the #2349 entry above.
+        s[3] = RefinanceFacet.getRefinanceRequest.selector;
+        s[4] = RefinanceFacet.checkRefinanceRequest.selector;
     }
 
     /// @dev #658 PR-B2 — ClaimFacet selectors, mirrors

@@ -218,7 +218,25 @@ obligation handover, offset and taking collateral back are held from any
 device, and an unanswerable search holds them too. What remains is the race
 no client check can close — a request posted between the app's last check and
 the transaction mining — since `repayPartial` still carries no on-chain
-refinance guard; the spec states that race. The original entry follows.
+refinance guard; the spec states that race.
+
+**Race closed on chain, 2026-10-05 (#2407).** The protocol now records one
+refinance request per loan and refuses a partial repayment (direct and
+swap-to-repay), a direct preclose, an obligation handover, an offset and a
+partial collateral withdrawal (and an in-place extension) while that request
+stands — not taken, cancelled or expired, posted by the current holder, on an
+active loan — and refuses a second standing request for the same loan. Whether
+a lender could fill it right now is deliberately not part of the hold (#2424
+r10): a standing request that can no longer fill holds the loan until the
+borrower cancels it, which matches the app's own search rule. Only the recorded request can be taken, so a
+request that drops out of the record cannot revive unguarded. Full repayment, every enforcement action (including a
+partial liquidation) and adding collateral are deliberately not held (see `ProjectDetailsREADME.md`, the
+refinance section). This brings the code to the intent the spec already
+stated; the spec's race paragraph was rewritten to say the protocol closes it.
+The app still discovers the request by its bounded on-chain search; moving it
+to the protocol's record is a separate app change (#2425), as is the form
+offering to cancel an expired request the protocol now requires cancelled
+before a new one. The original entry follows.
 
 The connected app holds partial repayment while another arrangement is pinned
 to the loan's outstanding amount. Two of those holds are answered by the chain

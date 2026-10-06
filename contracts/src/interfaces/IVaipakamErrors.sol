@@ -1766,4 +1766,44 @@ interface IVaipakamErrors {
     ///         resolves or unwinds — never a trim, which only the lifetime
     ///         cap may cause (3b-ii-A2; Codex #2308 r4).
     error LoanSideReservedShortfall(uint256 loanId, uint8 side, uint256 needed, uint256 available);
+
+    /// @notice #2407 — a live refinance request (`offerId`, a refinance-tagged
+    ///         borrower offer) targets `loanId`. Raised by the borrower actions
+    ///         that would change the loan underneath the request — a partial
+    ///         repayment (direct or by swap), an early close, an obligation
+    ///         handover, an offset and a collateral withdrawal — and by a second
+    ///         request for the same loan. Cancel the request first. Full
+    ///         repayment and forced closes are not refused.
+    error RefinanceRequestOpen(uint256 loanId, uint256 offerId);
+
+    /// @notice #2407 — `loanId`'s recorded refinance request (`offerId`) has
+    ///         expired but was never cancelled, and its creator still holds the
+    ///         borrower position. Raised when that holder posts a new request:
+    ///         the record is the only way to find the old request from the
+    ///         loan, and a fresh-pledge request keeps its collateral locked until
+    ///         cancelled, so the old one must be cancelled first rather than
+    ///         dropped from view.
+    error RefinanceRequestNotCancelled(uint256 loanId, uint256 offerId);
+
+    /// @notice #2407 — `offerId` is refinance-tagged for `loanId` but is not
+    ///         the loan's recorded request, so it cannot complete a refinance.
+    ///         Only the recorded request is guarded against changes to the loan
+    ///         underneath it, so only it may be accepted. A request posted
+    ///         before the record existed, or one displaced from it, stays
+    ///         unacceptable — cancel it (and post a new one if still wanted).
+    error RefinanceRequestNotRecorded(uint256 loanId, uint256 offerId);
+
+    /// @notice #2407 — `loanId` has a live offset (`offsetOfferId`, the
+    ///         borrower's early-close offset offer), so a refinance request for
+    ///         it is refused: completing the offset closes the loan and would
+    ///         leave the request unfillable. Cancel the offset first. (The
+    ///         reverse order is refused too — an offset is not opened while a
+    ///         live refinance request targets the loan.)
+    error RefinanceBlockedByOffset(uint256 loanId, uint256 offsetOfferId);
+
+    /// @notice #2407 — `offerId` is not a standing refinance request for
+    ///         `loanId`: it no longer exists (cancelled), was already taken,
+    ///         targets another loan, or has expired. Raised by
+    ///         `RefinanceFacet.checkRefinanceRequest`.
+    error RefinanceRequestNotLive(uint256 loanId, uint256 offerId);
 }

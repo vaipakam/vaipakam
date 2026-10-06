@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibRefinanceRequest} from "../libraries/LibRefinanceRequest.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibAutoRefinanceCheck} from "../libraries/LibAutoRefinanceCheck.sol";
@@ -182,6 +183,19 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         uint256 oldLoanId,
         uint256 borrowerOfferId
     ) external onlyDiamondInternal whenNotPaused {
+        // #2407 — on the atomic routes only the loan's RECORDED request may
+        // complete, and only while no offset is open on the loan: the
+        // recorded request is the one the borrower-action guard watches, so a
+        // displaced or never-recorded request (which could otherwise revive
+        // when the position returns to its creator) can never be taken; and a
+        // refinance and an offset each close the loan, so they never both
+        // proceed. A revert here unwinds the whole acceptance, so nothing is
+        // stranded.
+        // The standalone {refinanceLoan} deliberately does not check it: it
+        // only ever completes an offer ALREADY accepted — post-#2407 every
+        // acceptance runs this check — and by then the replacement loan
+        // exists, so refusing would strand both loans (see the payoff body).
+        LibRefinanceRequest.assertTakeable(oldLoanId, borrowerOfferId);
         _authorizeRefinance(
             oldLoanId,
             borrowerOfferId,
@@ -209,6 +223,8 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         uint256 oldLoanId,
         uint256 borrowerOfferId
     ) external onlyDiamondInternal whenNotPaused {
+        // #2407 — see {refinanceLoanFromAccept}.
+        LibRefinanceRequest.assertTakeable(oldLoanId, borrowerOfferId);
         _authorizeRefinance(
             oldLoanId,
             borrowerOfferId,
@@ -1054,5 +1070,55 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         uint256 hfFloor =
             LibVaipakam.effectiveLoanMinHealthFactor(newLoan.minHealthFactorAtInit);
         if (newHf < hfFloor) revert HealthFactorTooLow();
+    }
+
+    // ─── #2407 — the loan → refinance-request index ─────────────────────
+
+    /// @notice The refinance request (a refinance-tagged borrower offer)
+    ///         recorded for `loanId`, and whether it is LIVE — whether it still
+    ///         STANDS: it exists, is not taken, still targets the loan, has not
+    ///         expired, the loan is Active and its creator still holds the
+    ///         borrower position. While `live` is true the borrower actions
+    ///         that would change the loan underneath it revert
+    ///         {IVaipakamErrors.RefinanceRequestOpen}; the moment it stops
+    ///         standing — taken, cancelled, expired, the position handed on, the
+    ///         loan closed — it stops holding the loan back, with no write
+    ///         anywhere. `live` does NOT say a lender could fill it now: the
+    ///         holder's caps, the payoff approval, an overdue period or the
+    ///         market can each refuse acceptance, and the remedy for a request
+    ///         that can no longer fill is to cancel it.
+    ///         {checkRefinanceRequest} reports the acceptance-side reasons it
+    ///         can know.
+    /// @dev    A recorded request that is no longer live is still reported, so
+    ///         a client can tell an expired-but-uncancelled request (whose token
+    ///         approval or pledge the borrower may want back) from no request at
+    ///         all; `offerId` is 0 only when nothing was ever recorded. Only
+    ///         the recorded request can be taken, so a request posted BEFORE
+    ///         the record existed is neither seen here nor takeable: it does not
+    ///         hold the loan back either, and its borrower cancels and re-posts
+    ///         it. (A migration that recorded such requests was tried and
+    ///         withdrawn — every rule it needed to decide which pre-upgrade
+    ///         request to trust opened another way to resurrect or race one.)
+    function getRefinanceRequest(
+        uint256 loanId
+    ) external view returns (uint256 offerId, bool live) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        offerId = s.refinanceRequestOfLoan[loanId];
+        if (offerId == 0) return (0, false);
+        live = LibRefinanceRequest.stands(s, loanId, offerId);
+    }
+
+    /// @notice Revert with the reason `offerId` could not be accepted as
+    ///         `loanId`'s refinance request right now; return if it could.
+    ///         {IVaipakamErrors.RefinanceRequestNotLive} covers the request's
+    ///         own state (gone, taken, retargeted, expired); every other reason
+    ///         is the one acceptance itself would give
+    ///         (`LibAutoRefinanceCheck`'s target, ownership, asset, principal
+    ///         and cap errors, and the offset, intent, overdue-period and
+    ///         carry-over checks). Informational: the guard reads
+    ///         {getRefinanceRequest}'s `live`, not this. Does not check that it
+    ///         is the RECORDED request, nor the payoff funding or the market.
+    function checkRefinanceRequest(uint256 loanId, uint256 offerId) external view {
+        LibRefinanceRequest.assertAcceptable(LibVaipakam.storageSlot(), loanId, offerId);
     }
 }

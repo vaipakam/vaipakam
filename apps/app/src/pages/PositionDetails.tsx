@@ -113,6 +113,7 @@ import {
 import { discoverRefinanceRequest } from '../data/refinanceDiscovery';
 import {
   liveRefinanceVerdict,
+  postRefinanceVerdict,
   refinanceInterlock,
   repayRefinanceDecision,
   type RefinanceCheck,
@@ -868,10 +869,32 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
    *  tagged offers, and accepting one leaves the others unfillable, so a
    *  request already open (from any device) blocks a second. */
   const assertRefinancePostSafe = useCallback(
-    async (): Promise<string | null> =>
-      (await assertSaleSettlementSafe()) ??
-      (await assertNoRefinanceRequestLive(copy.refinance.alreadyOpen)),
-    [assertSaleSettlementSafe, assertNoRefinanceRequestLive],
+    async (): Promise<string | null> => {
+      const sale = await assertSaleSettlementSafe();
+      if (sale) return sale;
+      if (loanIsRental) return null;
+      if (!publicClient || !walletChain || !loan.data || !address) {
+        return copy.refinance.uncheckedBlocks;
+      }
+      // #2424 r7 — posting uses its own verdict: an uncancelled expired
+      // request blocks a new one too, because the protocol refuses the post
+      // until it is cancelled.
+      const verdict = postRefinanceVerdict(
+        await discoverRefinanceRequest({
+          client: publicClient,
+          diamond: walletChain.diamondAddress,
+          loanId: BigInt(loanId),
+          sinceOfferId: BigInt(loan.data.offerId),
+          holder: address,
+        }),
+      );
+      if (verdict === 'open') return copy.refinance.alreadyOpen;
+      if (verdict === 'expired') return copy.refinance.expiredBlocksNew;
+      if (verdict === 'capped') return copy.refinance.cappedBlocks;
+      if (verdict === 'unchecked') return copy.refinance.uncheckedBlocks;
+      return null;
+    },
+    [assertSaleSettlementSafe, loanIsRental, publicClient, walletChain, loan.data, address, loanId],
   );
 
   // Live-offset state (preclose Option 3) — chain-authoritative

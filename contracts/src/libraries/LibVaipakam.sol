@@ -7691,6 +7691,13 @@ library LibVaipakam {
         ///      finds, and reserves nothing while an entry is unread, so a
         ///      restored epoch is never skipped for live funding.
         mapping(uint256 => bytes32[]) transportDayRestored;
+        /// @dev #2407 — the refinance request (a refinance-tagged borrower
+        ///      offer) recorded for each loan, by loan id; 0 = none. At most
+        ///      one per loan. Read ONLY through {LibRefinanceRequest.live}: a
+        ///      cancelled, accepted, expired or orphaned request stays in the
+        ///      slot but is not live, so no path that ends a request has to
+        ///      clear it.
+        mapping(uint256 => uint256) refinanceRequestOfLoan;
     }
 
     /// @notice 3b-ii-A2 (#2305) — one batch a staging record staged from, with
