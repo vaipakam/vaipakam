@@ -1797,9 +1797,13 @@ contract ClaimFacet is
     }
 
     /// @dev Distributes principal-asset proceeds from a successful retry
-    ///      swap. Lender first (up to their `lenderPrincipalDue` = principal
-    ///      + accrued + late fees + 3%), then treasury (2%), then borrower
-    ///      surplus. Rewrites the lender and borrower claim records to the
+    ///      swap. Lender first (up to the snapshot's `lenderPrincipalDue`),
+    ///      then treasury (`treasuryPrincipalDue`), then borrower surplus.
+    ///      How those figures are computed is defined in ONE place,
+    ///      `LibFallback.computeFallbackEntitlements` — read it there; it
+    ///      includes no late fee (#2428). A partial internal match after
+    ///      fallback entry scales the snapshot, so the figures are the
+    ///      snapshot's current values. Rewrites the lender and borrower claim records to the
     ///      principal asset so the normal withdrawal flow below works.
     function _distributeRetryProceeds(
         uint256 loanId,
@@ -2104,9 +2108,11 @@ contract ClaimFacet is
     ///         path — the other view return values are zero.
     /// @param loanId Loan to query.
     /// @return lenderCollateral     Collateral units routed to the lender if
-    ///                              the claim-time retry fails (principal +
-    ///                              interest + late fees + 3% bonus, capped
-    ///                              at available collateral).
+    ///                              the claim-time retry fails, capped at the
+    ///                              available collateral. Computed by
+    ///                              `LibFallback.computeFallbackEntitlements`
+    ///                              (no late fee — #2428); a partial internal
+    ///                              match after fallback entry scales it.
     /// @return treasuryCollateral   Collateral units routed to treasury
     ///                              (≈2% of principal, or zero if
     ///                              undercollateralized).
