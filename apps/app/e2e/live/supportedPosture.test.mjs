@@ -1,7 +1,8 @@
 /**
  * #2422 r13 — the supported loan posture: every Loan field is declared
  * (supported value + reason) or classified (why it does not affect the
- * model), and the fields the model reads are among the declared ones.
+ * drive), and the fields the kept code reads are among the declared ones —
+ * a PRE-WRITE gate since the #2431 re-cut.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -49,7 +50,7 @@ describe('supportedPosture — the declaration is complete', () => {
     expect([...listed].filter((f) => !LOAN_FIELDS.includes(f)), 'a listed name that is not a Loan field').toEqual([]);
   });
 
-  it('every Loan field the builders, the settlement model or the driver read is listed', () => {
+  it('every Loan field the builders, the outcome reads or the driver read is listed', () => {
     for (const f of ['refinanceExpected.mjs', 'refinanceOutcome.mjs', 'live-refinance.mjs']) {
       const read = loanFieldsIn(src(f));
       expect(read.length, f).toBeGreaterThan(0);

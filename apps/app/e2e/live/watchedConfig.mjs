@@ -2,11 +2,12 @@
  * THE ONE WATCHED-CONFIG SNAPSHOT (#2422 r12).
  *
  * Every mutable GOVERNANCE value the refinance drive reads — for an
- * expectation, a review, a precondition or the settlement model — is defined
- * here, once. Rule 1 (observation.mjs) races every observation against the
- * WHOLE snapshot; the settlement model is computed from the snapshot read at
- * the accept's prestate and must equal the snapshot the reviews were judged
- * against. Review rounds 10–12 each found one more governance value read
+ * expected payload, a review or a precondition — is defined here, once. It
+ * guards WRITES only (#2431 re-cut): the preflight reads it, and every
+ * observation that precedes a write (the posture banner, both reviews, the
+ * moment before the lender is armed) is raced against the WHOLE snapshot
+ * (observation.mjs), so a write never goes ahead on config that moved.
+ * Review rounds 10–12 each found one more governance value read
  * outside the snapshot (fees, grace, the risk-terms epoch, asset pauses);
  * the list is the structural answer, and `watchedConfig.test.mjs` fails on
  * any Diamond read in the driver that is neither listed here nor classified
@@ -35,11 +36,9 @@ export const WATCHED_CONFIG = Object.freeze([
   { key: 'paused', fn: 'paused' },
   { key: 'autoRefinance', fn: 'getAutoRefinanceEnabled' },
   { key: 'partialFill', fn: 'getMasterFlags', pick: (r) => r[2] },
-  // The fees both reviews quote and the settlement charges.
+  // The fees both reviews quote (and the borrower's reserve is sized with).
   { key: 'treasuryFeeBps', fn: 'getFeesConfig', pick: (r) => r[0] },
   { key: 'lifBps', fn: 'getLoanInitiationFeeBps' },
-  { key: 'lifMatcherFeeBps', fn: 'getLifMatcherFeeBps' },
-  { key: 'treasury', fn: 'getTreasury' },
   // The grace window the reviews show and the payoff approval is sized to.
   { key: 'graceBuckets', fn: 'getGraceBuckets' },
   // The risk-terms epoch the lender's AcceptTerms is anchored to.
@@ -89,16 +88,11 @@ export const STATE_READS = Object.freeze({
   getOfferDetails: 'one offer’s state',
   isOfferCancelled: 'one offer’s state',
   getUserOffersPaginated: 'one user’s offer index',
-  getUserActiveLoans: 'one user’s loan index',
   getAutoRefinanceCaps: 'one loan’s caps',
-  getClaimable: 'one loan’s claim',
   calculateRepaymentAmount: 'one loan’s payoff',
   getLoanCollateralLien: 'one loan’s lien',
   ownerOf: 'one position NFT’s holder',
   getUserVaultAddress: 'one user’s vault',
-  getVPFIDiscountConsent: 'one user’s consent',
-  getEffectiveDiscount: 'one user’s discount',
-  getFeeEntitlement: 'one loan’s fee entitlement',
   hasAcceptedCurrentTerms: 'one user’s terms acceptance',
   checkLiquidity: 'external oracle / pool state — a precondition on the collateral only, never a model input',
 });

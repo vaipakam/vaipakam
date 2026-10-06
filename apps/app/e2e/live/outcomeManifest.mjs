@@ -23,12 +23,13 @@
  *     does not cover — stated, with the reason, rather than passed.
  *
  * A third outcome, UNDETERMINED (#2422 r9), is for a check that RAN after
- * the irreversible write but whose model premises did not hold — a fee
- * posture the model does not cover, another transaction in the same block
- * touching the state it diffs, a block whose receipts could not be read. It
- * is distinct from FAILED: nothing was observed to be wrong; the claim could
- * not be substantiated, and the manifest says why. It is recorded per check
- * (`undetermined`), always with a reason.
+ * the irreversible write but could not be substantiated either way. It is
+ * distinct from FAILED: nothing was observed to be wrong, and the manifest
+ * says why. It is recorded per check (`undetermined`), always with a reason.
+ * (Since the #2431 re-cut, live-refinance records no per-check UNDETERMINED
+ * and defers nothing at runtime: its claims are only what a receipt and
+ * pinned reads prove, and an unfinished run is UNDETERMINED at the VERDICT
+ * level, through `runVerdict` below.)
  *
  * `passed()` is true only when no claim FAILED and no verifiable claim is
  * NOT RUN. Deferred, static not-verified and UNDETERMINED claims do not fail
@@ -204,52 +205,61 @@ export function createManifest({ verifiable, notVerified = [] }) {
 }
 
 /**
- * The run's exit code and outcome line, from the manifest's rows and what
- * else the drive knows (#2422 r10). One place, so the order of precedence
- * is a rule and not a sequence of `if`s at the bottom of a driver:
+ * The run's exit code and outcome line — ONE rule (#2431 re-cut).
  *
- *   1 FAIL — anything observed wrong: `failure` (a failed check, a refused
- *     write, an unreconciled send, a stop that was not a race), or a claim
- *     that FAILED.
- *   3 STOPPED, UNDETERMINED — the drive stopped because a state race or an
- *     unisolated block after a write left a claim it needed before the next
- *     write unestablished (`raceStop`). Claims after the stop are NOT RUN;
- *     nothing was observed wrong.
- *   1 FAIL — a verifiable claim NOT RUN without such a stop.
- *   3 COMPLETED, UNDETERMINED — every check that could judge held, and some
- *     claim is UNDETERMINED.
- *   0 PASS — otherwise.
+ * BEFORE any write: a stop or a failed check is a product FAIL (1); a
+ * missing precondition never reaches here (it exits BLOCKED, 2).
  *
- * @param {{ rows: Array<{ id: string, status: string }>, failure: boolean,
- *           raceStop: string|null }} a
+ * AFTER the first write, the drive claims only what a receipt and reads
+ * pinned to the accept block prove, so:
+ *   1 FAIL — ONLY when a chain read POSITIVELY CONTRADICTS one of the three
+ *     outcome claims (`OUTCOME_CLAIMS`: the old loan still Active after our
+ *     accept mined; our accept mined with no single replacement; the lien
+ *     not carried) — or when the nonces show a transaction the write gate
+ *     never allowed (`gateEscape`), the one failure of the write discipline
+ *     that is never somebody else's doing;
+ *   0 PASS — every verifiable claim VERIFIED and nothing stopped;
+ *   3 UNDETERMINED — anything else: a stop, a page that failed, a refused
+ *     write, a claim that did not run. The touched-state ledger and the
+ *     replacement state are printed with it.
+ *
+ * @param {{ rows: Array<{ id: string, status: string }>, wrote: boolean,
+ *           stopped: string|null, preWriteFailure: boolean, gateEscape: boolean }} a
  * @returns {{ exit: 0|1|3, line: string }}
  */
-export function runVerdict({ rows, failure, raceStop }) {
-  const ids = (status) => rows.filter((r) => r.status === status).map((r) => `[${r.id}]`);
-  if (failure || ids('failed').length) {
-    return { exit: 1, line: 'OUTCOME: FAIL — see the manifest and the report above' };
-  }
-  if (raceStop) {
-    return {
-      exit: 3,
-      line:
-        `OUTCOME: STOPPED, UNDETERMINED — the drive stopped before its next write because a claim it needed could not be established: ${raceStop}. ` +
-        'Nothing observed was wrong; the claims after the stop did not run, and the touched-state ledger above says what this run left standing',
-    };
-  }
-  if (ids('not run').length) return { exit: 1, line: `OUTCOME: FAIL — ${ids('not run').join(', ')} never ran` };
-  const undet = ids('undetermined');
-  if (undet.length) {
-    const completed = ['oldLoanClosed', 'replacement'].every((id) => rows.find((r) => r.id === id)?.status === 'verified');
-    return {
-      exit: 3,
-      line:
-        `OUTCOME: COMPLETED, ${undet.length} CLAIM(S) UNDETERMINED — ` +
-        (completed ? 'the refinance completed on chain and ' : '') +
-        `every claim under VERIFIED holds, but ${undet.join(', ')} could not be substantiated ` +
-        '(why, per check, under UNDETERMINED above) — not a failure, and not a pass of those claims',
-    };
-  }
-  return { exit: 0, line: 'OUTCOME: PASS — every claim under VERIFIED holds; the claims under NOT VERIFIED BY THIS DRIVER were not checked by it' };
-}
+export const OUTCOME_CLAIMS = Object.freeze(['oldLoanClosed', 'replacementOpened', 'collateralLienCarried']);
 
+export function runVerdict({ rows, wrote, stopped, preWriteFailure, gateEscape }) {
+  if (!wrote) {
+    if (preWriteFailure || stopped || rows.some((r) => r.status === 'failed')) {
+      return { exit: 1, line: `OUTCOME: FAIL — before any write: ${stopped ?? 'a check failed (see above)'}` };
+    }
+  }
+  const contradicted = rows.filter((r) => OUTCOME_CLAIMS.includes(r.id) && r.status === 'failed').map((r) => `[${r.id}]`);
+  if (contradicted.length || gateEscape) {
+    return {
+      exit: 1,
+      line:
+        'OUTCOME: FAIL — ' +
+        [
+          contradicted.length ? `a chain read contradicts ${contradicted.join(', ')}` : null,
+          gateEscape ? 'the nonces show a transaction the write gate never allowed' : null,
+        ]
+          .filter(Boolean)
+          .join('; '),
+    };
+  }
+  const open = rows.filter((r) => r.status !== 'verified' && r.status !== 'not verified').map((r) => `[${r.id}] ${r.status}`);
+  if (!stopped && open.length === 0) {
+    return { exit: 0, line: 'OUTCOME: PASS — every claim under VERIFIED holds; the claims under NOT VERIFIED BY THIS DRIVER were not checked by it' };
+  }
+  return {
+    exit: 3,
+    line:
+      'OUTCOME: UNDETERMINED — ' +
+      [stopped ? `the drive stopped after a write: ${stopped}` : null, open.length ? `not established: ${open.join(', ')}` : null]
+        .filter(Boolean)
+        .join('; ') +
+      '. No chain read contradicts a claim; the touched-state ledger above says what this run left standing',
+  };
+}

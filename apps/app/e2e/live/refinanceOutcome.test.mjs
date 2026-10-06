@@ -1,169 +1,70 @@
 /**
- * #2422 r8 — the refinance outcome helpers, pinned against the REAL accept
+ * #2422 (#2431 re-cut) — the outcome helpers, pinned against the REAL accept
  * that refinanced loan 22 into loan 23 on Base Sepolia (tx
  * 0x6651828509c9bcfd01746270a79f8602cc303a06aa1ef853b71ad24c29b0888c, block
- * 47711162). Every input below is a view value read at block 47711161 and
- * every expected output is the delta or log the chain recorded — the model
- * reproduces each to the wei.
+ * 47711162).
  */
 import { describe, expect, it } from 'vitest';
 
-import { createManifest, runVerdict } from './outcomeManifest.mjs';
+import { createManifest } from './outcomeManifest.mjs';
 import {
-  balanceDeltaMismatches,
   checkRoleNonces,
   collateralMovedOut,
-  expectedPrincipalTransfers,
-  expectedSettlement,
-  expectedStoredExpiry,
-  externalFillVerdict,
-  lienMismatches,
-  payoutOwnerOf,
+  lienCarried,
   requestStateOf,
   scanForReplacement,
-  scopeReason,
-  settlementBlocker,
-  settlementPremises,
   TOPIC,
-  transferMismatches,
-  txIsolation,
 } from './refinanceOutcome.mjs';
 
 const BORROWER = '0xC86BB89f8ddF703c34724Cf11137498bC69F039D';
 const LENDER = '0x1DAefA360ED370285f003Fa2d92DB75628088282';
 const LENDER_VAULT = '0x7bb370BA877c7f430CB3CD6f2E25e3eE788148F1';
+const BORROWER_VAULT = '0x5F2295e0D353D02324d12E32eE7304743b456Ac6';
 const TREASURY = '0xca3E735C593088D2f5ea5AEAa553a6bDaa6E7413';
 const OLD_LENDER_VAULT = '0xf0724B8448a30AA90cB4EfCFc93af63090B6d030';
 const TCOL = '0xF2c65Cd941FE681B575Adc8DFc155Bf612675037';
-
-const LOAN22_AT_P = {
-  repayDue: 5_039_726_027_397_260n, // calculateRepaymentAmount(22) @ 47711161
-  oldPrincipal: 5_000_000_000_000_000n,
-  treasuryFeeBpsAtInit: 200,
-  newPrincipal: 5_000_000_000_000_000n,
-  lifBps: 20n, // getProtocolConfigBundle()[1] @ 47711161
-  matcherBps: 100n, // getProtocolConfigBundle()[12] @ 47711161
-};
-const PARTIES = {
-  borrower: BORROWER,
-  lender: LENDER,
-  lenderVault: LENDER_VAULT,
-  treasury: TREASURY,
-  oldLenderVault: OLD_LENDER_VAULT,
-  newPrincipal: LOAN22_AT_P.newPrincipal,
-};
+const WETH = '0x4200000000000000000000000000000000000006';
+const pad = (a) => `0x${a.toLowerCase().replace(/^0x/, '').padStart(64, '0')}`;
 // The principal-token (WETH) Transfer logs of the real accept receipt, in
-// emission order.
-const REAL_TRANSFERS = [
-  { from: LENDER, to: LENDER_VAULT, value: 5_000_000_000_000_000n },
-  { from: LENDER_VAULT, to: TREASURY, value: 9_900_000_000_000n },
-  { from: LENDER_VAULT, to: LENDER, value: 100_000_000_000n },
-  { from: LENDER_VAULT, to: BORROWER, value: 4_990_000_000_000_000n },
-  { from: BORROWER, to: TREASURY, value: 794_520_547_945n },
-  { from: BORROWER, to: OLD_LENDER_VAULT, value: 5_038_931_506_849_315n },
-];
+// emission order, as raw logs.
+const REAL_ACCEPT_TOKEN_LOGS = [
+  [LENDER, LENDER_VAULT],
+  [LENDER_VAULT, TREASURY],
+  [LENDER_VAULT, LENDER],
+  [LENDER_VAULT, BORROWER],
+  [BORROWER, TREASURY],
+  [BORROWER, OLD_LENDER_VAULT],
+].map(([from, to]) => ({ address: WETH, topics: [TOPIC.transfer, pad(from), pad(to)] }));
 
-describe('refinanceOutcome — settlement from the contract views', () => {
-  it('reproduces the real loan-22 accept to the wei', () => {
-    const s = expectedSettlement(LOAN22_AT_P);
-    // The old lender's claim went 0 → 5038931506849315 and their vault rose
-    // by the same; the borrower's wallet fell 49726027397260; the accepting
-    // lender's wallet fell 4999900000000000 (principal less the matcher cut);
-    // the treasury rose 10694520547945.
-    expect(s.interestPortion).toBe(39_726_027_397_260n);
-    expect(s.treasuryShare).toBe(794_520_547_945n);
-    expect(s.lenderDue).toBe(5_038_931_506_849_315n);
-    expect(s.oldLenderVaultDelta).toBe(5_038_931_506_849_315n);
-    expect(s.lif).toBe(10_000_000_000_000n);
-    expect(s.matcherCut).toBe(100_000_000_000n);
-    expect(s.borrowerWalletDelta).toBe(-49_726_027_397_260n);
-    expect(s.lenderWalletDelta).toBe(-4_999_900_000_000_000n);
-    expect(s.treasuryDelta).toBe(10_694_520_547_945n);
-  });
-
-  it('falls back to the legacy 100 bps for an unstamped loan', () => {
-    const s = expectedSettlement({ ...LOAN22_AT_P, treasuryFeeBpsAtInit: 0 });
-    expect(s.feeBps).toBe(100n);
-    expect(s.treasuryShare).toBe(397_260_273_972n);
-  });
-
-  it('refuses a payoff view below the principal (not an Active loan’s payoff)', () => {
-    expect(() => expectedSettlement({ ...LOAN22_AT_P, repayDue: 0n })).toThrow(/below the principal/);
-  });
-
-  it('expects exactly the real receipt’s principal-token transfers', () => {
-    const want = expectedPrincipalTransfers(expectedSettlement(LOAN22_AT_P), PARTIES);
-    expect(transferMismatches(want, REAL_TRANSFERS)).toEqual([]);
-    // Order is not the claim; the multiset is.
-    expect(transferMismatches(want, [...REAL_TRANSFERS].reverse())).toEqual([]);
-  });
-
-  it('refuses a missing, an extra, or a mis-sized transfer', () => {
-    const want = expectedPrincipalTransfers(expectedSettlement(LOAN22_AT_P), PARTIES);
-    expect(transferMismatches(want, REAL_TRANSFERS.filter((t) => t.to !== OLD_LENDER_VAULT))).toEqual([
-      `missing transfer ${BORROWER.toLowerCase()}→${OLD_LENDER_VAULT.toLowerCase()}:5038931506849315`,
-    ]);
-    const extra = [...REAL_TRANSFERS, { from: BORROWER, to: '0x000000000000000000000000000000000000dEaD', value: 1n }];
-    expect(transferMismatches(want, extra)).toHaveLength(1);
-    expect(transferMismatches(want, extra)[0]).toMatch(/^unexpected transfer/);
-    // A payoff one wei short to the old lender is two mismatches: the
-    // expected leg missing and the actual one unexpected.
-    const short = REAL_TRANSFERS.map((t) => (t.to === OLD_LENDER_VAULT ? { ...t, value: t.value - 1n } : t));
-    expect(transferMismatches(want, short)).toHaveLength(2);
-    // A matcher cut paid to someone other than the accepting lender.
-    const elsewhere = REAL_TRANSFERS.map((t) => (t.to === LENDER ? { ...t, to: BORROWER } : t));
-    expect(transferMismatches(want, elsewhere)).toHaveLength(2);
-  });
-
-  it('omits zero-value legs the contract skips', () => {
-    const s = expectedSettlement({ ...LOAN22_AT_P, matcherBps: 0n });
-    const want = expectedPrincipalTransfers(s, PARTIES);
-    expect(want.some((t) => t.to === LENDER)).toBe(false);
-    expect(want).toHaveLength(5);
-  });
-});
-
-describe('refinanceOutcome — the collateral lien carries over', () => {
-  const live = { user: BORROWER, asset: TCOL, tokenId: 0n, amount: 100n * 10n ** 18n, assetType: 0, released: false };
-  const expected = { user: BORROWER, asset: TCOL, assetType: 0, tokenId: 0n, amount: 100n * 10n ** 18n };
-  // getLoanCollateralLien(22) @ 47711161, (22) @ 47711162, (23) @ 47711162.
+describe('refinanceOutcome — the collateral lien was carried (claim 3)', () => {
+  const expected = { asset: TCOL, assetType: 0, tokenId: 0n, amount: 100n * 10n ** 18n };
+  // getLoanCollateralLien(22) and (23) at the accept block 47711162.
   const REAL = {
-    oldBefore: live,
-    oldAfter: { ...live, amount: 0n, released: true },
-    newAfter: { ...live },
+    oldAfter: { user: BORROWER, asset: TCOL, tokenId: 0n, amount: 0n, assetType: 0, released: true },
+    newAfter: { user: BORROWER, asset: TCOL, tokenId: 0n, amount: 100n * 10n ** 18n, assetType: 0, released: false },
     expected,
   };
 
   it('accepts the real loan-22 → loan-23 liens', () => {
-    expect(lienMismatches(REAL)).toEqual([]);
+    expect(lienCarried(REAL)).toEqual([]);
   });
 
-  it('refuses an old lien left live or unzeroed', () => {
-    expect(lienMismatches({ ...REAL, oldAfter: { ...REAL.oldAfter, released: false } })).toEqual([
-      'old loan lien at the accept: released false, expected true',
-    ]);
-    expect(lienMismatches({ ...REAL, oldAfter: { ...REAL.oldAfter, amount: 1n } })).toEqual([
-      'old loan lien at the accept: amount 1, expected 0',
-    ]);
+  it('refuses an old lien left live', () => {
+    expect(lienCarried({ ...REAL, oldAfter: { ...REAL.oldAfter, released: false } })).toEqual(['old loan lien: released false, expected true']);
   });
 
-  it('refuses a replacement lien that differs in any field, or is not live', () => {
+  it('refuses a replacement lien that differs in asset, type, tokenId or amount, or is not live', () => {
     for (const [field, value] of [
-      ['user', LENDER],
       ['asset', BORROWER],
       ['assetType', 1],
       ['tokenId', 1n],
       ['amount', 99n * 10n ** 18n],
       ['released', true],
     ]) {
-      const r = lienMismatches({ ...REAL, newAfter: { ...REAL.newAfter, [field]: value } });
+      const r = lienCarried({ ...REAL, newAfter: { ...REAL.newAfter, [field]: value } });
       expect(r, field).toHaveLength(1);
-      expect(r[0], field).toMatch(new RegExp(`^replacement lien at the accept: ${field} `));
+      expect(r[0], field).toMatch(new RegExp(`^replacement lien: ${field} `));
     }
-  });
-
-  it('refuses an old lien that was not live before the accept', () => {
-    expect(lienMismatches({ ...REAL, oldBefore: { ...live, released: true } })[0]).toMatch(/^old loan lien before the accept: released true/);
   });
 });
 
@@ -198,128 +99,6 @@ describe('refinanceOutcome — the replacement scan states its limit', () => {
   });
 });
 
-// ---------------------------------------------------------------------
-// #2422 r9 — the model's premises, the block's scope, the vault, nonces.
-// ---------------------------------------------------------------------
-
-describe('refinanceOutcome — settlement premises (the default fee posture)', () => {
-  // Loan 22 at block 47711161: the borrower CONSENTS but
-  // its effective discount is 0 bps; request #45 not Full; the old lender
-  // holder has no consent; loan 22's lenderMode is None (0).
-  const LOAN22 = { borrowerEffBps: 0, requestCreatorFull: false, holderConsent: false, lenderMode: 0 };
-
-  it('holds for the real loan-22 posture', () => {
-    const p = settlementPremises(LOAN22);
-    expect(p.holds).toBe(true);
-    expect(p.failures).toEqual([]);
-    expect(p.basis.join(' | ')).toMatch(/effective discount 0 bps/);
-  });
-
-  // #2422 r11: the premise no longer reads liquidity (external oracle/pool
-  // state no isolation check covers). A non-zero discount or a Full opt-in
-  // is outside the model whatever the principal's liquidity.
-  it('a borrower discount or Full opt-in breaks the premise — liquidity is not an input', () => {
-    const tier = settlementPremises({ ...LOAN22, borrowerEffBps: 1000 });
-    expect(tier.holds).toBe(false);
-    expect(tier.failures[0].party).toBe('borrower');
-    expect(tier.failures[0].reason).toMatch(/effective discount is 1000 bps/);
-    expect(tier.failures[0].reason).toMatch(/does not depend on the principal\u2019s liquidity/);
-    expect(settlementPremises({ ...LOAN22, borrowerEffBps: 0, requestCreatorFull: true }).failures[0].reason).toMatch(/Full opt-in/);
-    // An illiquid-principal flag passed in is ignored: still outside the model.
-    expect(settlementPremises({ ...LOAN22, principalLiquidity: 1, borrowerEffBps: 1000 }).holds).toBe(false);
-  });
-
-  it('any yield-fee entitlement of the exiting holder breaks the premise (VPFI-paid or direct reduction)', () => {
-    const consent = settlementPremises({ ...LOAN22, holderConsent: true });
-    expect(consent.holds).toBe(false);
-    expect(consent.failures[0].party).toBe('exiting lender');
-    expect(consent.failures[0].coveredBy).toMatch(/FeeEntitlementFacetTest/);
-    expect(settlementPremises({ ...LOAN22, lenderMode: 2 }).failures[0].reason).toMatch(/Full tariff on the loan/);
-    // HoldOnly (1) alone is not eligibility: lenderYieldFeeEligible needs consent or Full.
-    expect(settlementPremises({ ...LOAN22, lenderMode: 1 }).holds).toBe(true);
-  });
-
-  it('reports both parties when both fail', () => {
-    expect(settlementPremises({ ...LOAN22, borrowerEffBps: 500, holderConsent: true }).failures.map((f) => f.party)).toEqual([
-      'borrower',
-      'exiting lender',
-    ]);
-  });
-});
-
-const ACCEPT = '0x6651828509c9bcfd01746270a79f8602cc303a06aa1ef853b71ad24c29b0888c';
-const DIAMOND = '0xd89fd7F787e4415460b23891E97570a4881fb995';
-const BORROWER_VAULT = '0x5F2295e0D353D02324d12E32eE7304743b456Ac6';
-const pad = (a) => `0x${a.toLowerCase().replace(/^0x/, '').padStart(64, '0')}`;
-const WATCHED = { borrower: BORROWER, lender: LENDER, borrowerVault: BORROWER_VAULT, oldLenderVault: OLD_LENDER_VAULT };
-const rc = (hash, over = {}) => ({ transactionHash: hash, status: '0x1', from: '0x000000000000000000000000000000000000aaaa', to: '0x000000000000000000000000000000000000bbbb', logs: [], ...over });
-const OTHER = `0x${'1'.repeat(64)}`;
-const ACCEPT_RCPT = { transactionHash: ACCEPT, blockNumber: 47_711_162n };
-
-describe('refinanceOutcome — the accept block’s other transactions', () => {
-  it('an unreadable block is not isolation', () => {
-    expect(txIsolation({ receipt: ACCEPT_RCPT, receipts: null, diamond: DIAMOND, watched: WATCHED })).toEqual({ known: false, isolated: false, touching: [], own: [] });
-    // A receipt list that does not even contain the accept is not the block.
-    expect(txIsolation({ receipt: ACCEPT_RCPT, receipts: [rc(OTHER)], diamond: DIAMOND, watched: WATCHED }).known).toBe(false);
-  });
-
-  it('receipts from another block are not this block', () => {
-    const r = txIsolation({ receipt: ACCEPT_RCPT, receipts: [rc(ACCEPT, { blockNumber: '0x2d80a3a' }), rc(OTHER, { blockNumber: '0x2d80a3b' })], diamond: DIAMOND, watched: WATCHED });
-    expect(r.known).toBe(false);
-    expect(r.touching[0]).toMatch(/from a block other than 47711162/);
-  });
-
-  it('takes ANY of this run\u2019s receipts — a createOffer\u2019s block is scoped the same way', () => {
-    const create = { transactionHash: OTHER, blockNumber: 47_700_000n };
-    const r = txIsolation({ receipt: create, receipts: [rc(OTHER), rc(ACCEPT, { logs: [{ address: DIAMOND, topics: [`0x${'2'.repeat(64)}`] }] })], diamond: DIAMOND, watched: WATCHED });
-    expect(r.isolated).toBe(false);
-    expect(r.touching[0]).toMatch(new RegExp(`^${ACCEPT}: a Diamond log`));
-  });
-
-  it('sets aside this run\u2019s OTHER plan transactions by name — and only those', () => {
-    const approve = `0x${'4'.repeat(64)}`;
-    const approveRc = rc(approve, { from: LENDER, logs: [{ address: '0x4200000000000000000000000000000000000006', topics: [`0x${'8'.repeat(64)}`, pad(LENDER), pad(DIAMOND)] }] });
-    const withOwn = txIsolation({ receipt: ACCEPT_RCPT, receipts: [rc(ACCEPT), approveRc], diamond: DIAMOND, watched: WATCHED, own: [approve] });
-    expect(withOwn).toEqual({ known: true, isolated: true, touching: [], own: [approve] });
-    // The same transaction, not declared as ours, breaks isolation.
-    const without = txIsolation({ receipt: ACCEPT_RCPT, receipts: [rc(ACCEPT), approveRc], diamond: DIAMOND, watched: WATCHED });
-    expect(without.isolated).toBe(false);
-    expect(without.touching[0]).toMatch(/from lender/);
-  });
-
-  it('states why a scope is not isolated, and nothing when it is', () => {
-    expect(scopeReason({ known: true, isolated: true, touching: [] }, { what: 'the accept', block: 9n })).toBeNull();
-    expect(scopeReason({ known: false, isolated: false, touching: [] }, { what: 'the accept', block: 9n, error: 'rpc down' })).toMatch(
-      /receipts of the accept's block 9 could not be established \(rpc down\)/,
-    );
-    expect(scopeReason({ known: true, isolated: false, touching: ['0xab: a Diamond log'] }, { what: 'createOffer', block: 9n })).toMatch(
-      /1 other transaction\(s\) in createOffer's block 9 touched the Diamond or a participant: 0xab: a Diamond log/,
-    );
-  });
-
-  it('unrelated traffic leaves the accept isolated (block 47711162 had 133 such transactions)', () => {
-    const unrelated = rc(OTHER, { logs: [{ address: '0x96e582dc68e66613bcb1996320844a3fb28c07d8', topics: [TOPIC.transfer, pad('0x000000000000000000000000000000000000cccc'), pad('0x000000000000000000000000000000000000dddd')] }] });
-    const r = txIsolation({ receipt: ACCEPT_RCPT, receipts: [unrelated, rc(ACCEPT, { from: LENDER, to: DIAMOND })], diamond: DIAMOND, watched: WATCHED });
-    expect(r).toEqual({ known: true, isolated: true, touching: [], own: [] });
-  });
-
-  it('flags a Diamond log, a participant named in a token transfer, a vault log, and a participant’s own transaction', () => {
-    const cases = [
-      [rc(OTHER, { logs: [{ address: DIAMOND, topics: [`0x${'2'.repeat(64)}`] }] }), /a Diamond log/],
-      [rc(OTHER, { logs: [{ address: TCOL, topics: [TOPIC.transfer, pad(BORROWER_VAULT), pad('0x000000000000000000000000000000000000dddd')] }] }), /naming borrowerVault/],
-      [rc(OTHER, { logs: [{ address: '0x4200000000000000000000000000000000000006', topics: [TOPIC.transfer, pad('0x000000000000000000000000000000000000dddd'), pad(OLD_LENDER_VAULT)] }] }), /naming oldLenderVault/],
-      [rc(OTHER, { logs: [{ address: BORROWER_VAULT, topics: [`0x${'3'.repeat(64)}`] }] }), /a log emitted by borrowerVault/],
-      [rc(OTHER, { from: LENDER }), /from lender/],
-      [rc(OTHER, { to: DIAMOND }), /sent to the Diamond/],
-    ];
-    for (const [other, why] of cases) {
-      const r = txIsolation({ receipt: ACCEPT_RCPT, receipts: [rc(ACCEPT), other], diamond: DIAMOND, watched: WATCHED });
-      expect(r.isolated, String(why)).toBe(false);
-      expect(r.touching[0], String(why)).toMatch(why);
-    }
-  });
-});
-
 describe('refinanceOutcome — collateral leaving the borrower’s vault (accept receipt only)', () => {
   const x = '0x000000000000000000000000000000000000dddd';
   it('finds an ERC-20 / ERC-721 Transfer out of the vault, and nothing else', () => {
@@ -341,9 +120,11 @@ describe('refinanceOutcome — collateral leaving the borrower’s vault (accept
   });
 
   it('the real loan-22 accept moved no collateral out of the borrower’s vault', () => {
-    // The real receipt's logs on the collateral token: none (its six token
-    // logs are all WETH — REAL_TRANSFERS above).
-    expect(collateralMovedOut({ logs: [], token: TCOL, from: BORROWER_VAULT, assetType: 0 })).toEqual([]);
+    // The real accept receipt's six token logs — all WETH, none on tCOL.
+    expect(collateralMovedOut({ logs: REAL_ACCEPT_TOKEN_LOGS, token: TCOL, from: BORROWER_VAULT, assetType: 0 })).toEqual([]);
+    // The same logs read for WETH out of the lender's vault do show legs:
+    // the helper is reading them, not skipping them.
+    expect(collateralMovedOut({ logs: REAL_ACCEPT_TOKEN_LOGS, token: WETH, from: LENDER_VAULT, assetType: 0 })).toHaveLength(3);
   });
 });
 
@@ -395,129 +176,15 @@ describe('refinanceOutcome — each role’s nonces are their own check', () => 
     expect(r.ok).toBe(false);
     expect(m.rows()[0].status).toBe('failed');
   });
-});
 
-// #2422 r11 — the payout owner follows the contract's consolidation.
-describe('refinanceOutcome — the old lender\u2019s payout owner', () => {
-  const OLD = '0x648897f2c549956eFfF626D57fBc3E39761e6792';
-  const BUYER = '0x000000000000000000000000000000000000b0b0';
-  it('is the stored lender AFTER the accept, not before (a transferred position)', () => {
-    // The position NFT was sold to BUYER; the accept consolidated the stored
-    // lender from OLD to BUYER and paid BUYER's vault.
-    const r = payoutOwnerOf({ storedLenderAtFloor: BUYER, storedLenderAtPrev: OLD, holderAtPrev: BUYER, floor: 9n, prev: 8n });
-    expect(r.owner).toBe(BUYER);
-    expect(r.consolidated).toBe(true);
-    expect(r.evidence).toMatch(/stored lender before the accept was 0x6488/);
-  });
-  it('states a skipped consolidation when the holder differs', () => {
-    const r = payoutOwnerOf({ storedLenderAtFloor: OLD, storedLenderAtPrev: OLD, holderAtPrev: BUYER, floor: 9n, prev: 8n });
-    expect(r.owner).toBe(OLD);
-    expect(r.consolidated).toBe(false);
-    expect(r.evidence).toMatch(/DIFFERS from the lender-NFT holder at block 8/);
-  });
-  it('loan 22: holder, stored lender and payout owner were all the original lender', () => {
-    const r = payoutOwnerOf({ storedLenderAtFloor: OLD, storedLenderAtPrev: OLD, holderAtPrev: OLD, floor: 47_711_162n, prev: 47_711_161n });
-    expect(r).toMatchObject({ owner: OLD, consolidated: true });
-    expect(r.evidence).not.toMatch(/DIFFERS|before the accept was/);
+  it('a transaction still pending is not a reconciled one', async () => {
+    const ok = await checkRoleNonces({ role: 'lender', readNonces: async () => ({ latest: 132, pending: 132 }), baseline: 130, hashed: 2, allowed: 2, record: () => {} });
+    expect(ok.ok).toBe(true);
+    const queued = await checkRoleNonces({ role: 'lender', readNonces: async () => ({ latest: 132, pending: 133 }), baseline: 130, hashed: 2, allowed: 2, record: () => {} });
+    expect(queued).toMatchObject({ recorded: true, ok: false, observed: 'mined +2, pending +1, allowed 2, hashed 2' });
   });
 });
 
-// #2422 r12 — balance deltas per UNIQUE address, summing every leg.
-describe('refinanceOutcome — balance deltas survive address aliasing', () => {
-  const S = expectedSettlement(LOAN22_AT_P);
-  const legsFor = (p) => expectedPrincipalTransfers(S, { ...PARTIES, ...p });
-  // The real accept, no aliasing: every party's observed delta.
-  it('judges the real loan-22 deltas, wallets and vaults', () => {
-    const legs = legsFor({});
-    expect(
-      balanceDeltaMismatches(legs, [
-        { label: 'borrower', address: BORROWER, delta: -49_726_027_397_260n },
-        { label: 'lender', address: LENDER, delta: -4_999_900_000_000_000n },
-      ]).mismatches,
-    ).toEqual([]);
-    expect(
-      balanceDeltaMismatches(legs, [
-        { label: 'payout vault', address: OLD_LENDER_VAULT, delta: 5_038_931_506_849_315n },
-        { label: 'borrower vault', address: BORROWER_VAULT, delta: 0n },
-        { label: 'lender vault', address: LENDER_VAULT, delta: 0n },
-      ]).mismatches,
-    ).toEqual([]);
-  });
-
-  // Each alias pair: the payout vault is ALSO another party's vault. The
-  // chain shows the sum, and the per-address expectation is the sum too.
-  for (const [pair, alias, otherLegsSum] of [
-    ['payout vault = borrower vault (the borrower held the old lender position)', BORROWER_VAULT, 0n],
-    ['payout vault = lender vault (the accepting lender held or bought the old lender position)', LENDER_VAULT, 0n],
-  ]) {
-    it(`aggregates an alias: ${pair}`, () => {
-      const legs = legsFor({ oldLenderVault: alias });
-      const summed = S.lenderDue + otherLegsSum;
-      const observed = [
-        { label: 'payout vault', address: alias, delta: summed },
-        { label: 'other role\u2019s vault', address: alias, delta: summed },
-      ];
-      expect(balanceDeltaMismatches(legs, observed).mismatches).toEqual([]);
-      // The per-name comparison this replaces would have demanded 0 of the
-      // other role's vault and failed a correct accept:
-      const wrong = [{ label: 'other role\u2019s vault', address: alias, delta: 0n }];
-      expect(balanceDeltaMismatches(legs, wrong).mismatches).toHaveLength(1);
-    });
-  }
-
-  it('aggregates an alias: borrower vault = lender vault', () => {
-    const legs = legsFor({ lenderVault: BORROWER_VAULT });
-    const observed = [
-      { label: 'borrower vault', address: BORROWER_VAULT, delta: 0n },
-      { label: 'lender vault', address: BORROWER_VAULT, delta: 0n },
-    ];
-    expect(balanceDeltaMismatches(legs, observed).mismatches).toEqual([]);
-  });
-
-  it('aggregates an alias: borrower wallet = lender wallet', () => {
-    const legs = legsFor({ lender: BORROWER });
-    const net = -49_726_027_397_260n + -4_999_900_000_000_000n;
-    const observed = [
-      { label: 'borrower', address: BORROWER, delta: net },
-      { label: 'lender', address: BORROWER, delta: net },
-    ];
-    expect(balanceDeltaMismatches(legs, observed).mismatches).toEqual([]);
-  });
-
-  it('a wrong delta is still a mismatch, and one address read two ways is refused', () => {
-    const legs = legsFor({});
-    expect(balanceDeltaMismatches(legs, [{ label: 'payout vault', address: OLD_LENDER_VAULT, delta: 1n }]).mismatches[0]).toMatch(
-      /payout vault .*moved 1, expected 5038931506849315/,
-    );
-    expect(
-      balanceDeltaMismatches(legs, [
-        { label: 'a', address: OLD_LENDER_VAULT, delta: 1n },
-        { label: 'b', address: OLD_LENDER_VAULT, delta: 2n },
-      ]).mismatches[0],
-    ).toMatch(/one address read with 2 different deltas/);
-  });
-});
-
-// #2422 r12 — the reviewed fees must be the settled ones.
-describe('refinanceOutcome — when the settlement model may not judge', () => {
-  const ok = { prev: 8n, isolation: null, reviewDrift: [], premisesAtPrev: { holds: true, failures: [] }, discountEvents: [], payoffStep: null };
-  it('judges only when every premise holds', () => {
-    expect(settlementBlocker(ok)).toBeNull();
-  });
-  it('config changed between review and accept: never certified', () => {
-    expect(settlementBlocker({ ...ok, reviewDrift: ['lifBps: "20n" → "30n"'] })).toMatch(
-      /^config changed between review and accept \(block 8\): lifBps: "20n" → "30n" — the settled fees are not the reviewed ones/,
-    );
-  });
-  it('isolation outranks drift, and each other premise has its own reason', () => {
-    expect(settlementBlocker({ ...ok, isolation: 'x', reviewDrift: ['y'] })).toMatch(/not isolated from the accept's block: x/);
-    expect(settlementBlocker({ ...ok, premisesAtPrev: { holds: false, failures: [{ reason: 'r' }] } })).toMatch(/no longer held at block 8 — r/);
-    expect(settlementBlocker({ ...ok, discountEvents: ['VPFIDiscountApplied'] })).toMatch(/emitted VPFIDiscountApplied/);
-    expect(settlementBlocker({ ...ok, payoffStep: { tsPrev: 1n, tsAccept: 2n } })).toMatch(/payoff stepped/);
-  });
-});
-
-// #2422 r13 finding 2 — one request-state rule, cancellation first.
 describe('refinanceOutcome — a request\u2019s state', () => {
   const offer = (over = {}) => ({ accepted: false, expiresAt: 2_000n, ...over });
   it('a cancelled request that has not expired is NOT open', () => {
@@ -530,46 +197,3 @@ describe('refinanceOutcome — a request\u2019s state', () => {
     expect(requestStateOf({ offer: offer({ expiresAt: 0n }), cancelled: false, blockTs: 9_999n })).toBe('open');
   });
 });
-
-// #2422 r13 finding 3 — a fill by someone else during the Offer Book wait.
-describe('refinanceOutcome — an external fill is a race, not a FAIL', () => {
-  const notRun = [{ id: 'lenderReview', status: 'not run' }, { id: 'replacement', status: 'not run' }];
-  it('a fill with a replacement loan: UNDETERMINED, exit 3 through runVerdict', () => {
-    const v = externalFillVerdict({ requestId: 45n, replacement: { id: 23n, status: 0, borrowerHolder: BORROWER, lenderHolder: '0xother' } });
-    expect(v.kind).toBe('race');
-    expect(v.why).toMatch(/filled by another party .*replacement loan #23/);
-    const r = runVerdict({ rows: notRun, failure: false, raceStop: v.why });
-    expect(r.exit).toBe(3);
-    expect(r.line).toMatch(/^OUTCOME: STOPPED, UNDETERMINED/);
-  });
-  it('a fill whose replacement could not be scanned: still a race, with the event lookup', () => {
-    const v = externalFillVerdict({ requestId: 45n, replacement: null, scanError: 'cap exhausted' });
-    expect(v.kind).toBe('race');
-    expect(v.why).toMatch(/LoanRefinanced events/);
-  });
-  it('accepted with NO loan carrying it is something actually wrong: FAIL, exit 1', () => {
-    const v = externalFillVerdict({ requestId: 45n, replacement: null });
-    expect(v.kind).toBe('fail');
-    expect(runVerdict({ rows: notRun, failure: true, raceStop: null }).exit).toBe(1);
-  });
-});
-
-// #2422 r13 finding 4 — the stored expiry is exact: submitted, or the grace clamp.
-describe('refinanceOutcome — the stored request expiry', () => {
-  // Loan 22: start 1790964520, 29 days, grace 1 day ⇒ deadline 1793556521.
-  const L22 = { startTime: 1_790_964_520n, durationDays: 29n, graceSeconds: 86_400n };
-  const deadline = 1_790_964_520n + 29n * 86_400n + 86_400n + 1n;
-  it('clamped: a submitted expiry past the grace deadline is stored AS the deadline (request #45)', () => {
-    // Request #45: createOffer calldata submitted 1793782280 (chain time + 30
-    // days), past loan 22's grace end; the chain stored 1793556521.
-    expect(deadline).toBe(1_793_556_521n);
-    expect(expectedStoredExpiry({ ...L22, submitted: 1_793_782_280n })).toBe(1_793_556_521n);
-    expect(expectedStoredExpiry({ ...L22, submitted: 0n })).toBe(deadline);
-  });
-  it('unclamped: an expiry at or before the deadline is stored as submitted', () => {
-    expect(expectedStoredExpiry({ ...L22, submitted: deadline })).toBe(deadline);
-    expect(expectedStoredExpiry({ ...L22, submitted: deadline - 1n })).toBe(deadline - 1n);
-    expect(expectedStoredExpiry({ ...L22, submitted: 1_791_200_000n })).toBe(1_791_200_000n);
-  });
-});
-

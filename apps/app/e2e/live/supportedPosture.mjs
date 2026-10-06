@@ -1,20 +1,22 @@
 /**
  * THE SUPPORTED LOAN POSTURE (#2422 r13) — the loan-side twin of
- * watchedConfig.mjs.
+ * watchedConfig.mjs, and a PRE-WRITE gate only (#2431 re-cut).
  *
- * The drive's expected builders (refinanceExpected.mjs), its settlement
- * model (refinanceOutcome.mjs) and the payoff mirror they share were written
- * for ONE kind of loan. Review rounds kept finding a loan mode the mirror did
- * not model (a pro-rata loan, a periodic one, a re-anchored clock). Modelling
- * each mode in turn has no end; instead this module DECLARES, once, every
- * field of `LibVaipakam.Loan` and either
- *   - the value or range the model supports (`SUPPORTED`), each with the
+ * The drive's expected builders (refinanceExpected.mjs) and the payoff
+ * mirror behind its reserve, its payoff-approval cap and its review checks
+ * were written for ONE kind of loan. Review rounds kept finding a loan mode
+ * the mirror did not model (a pro-rata loan, a periodic one, a re-anchored
+ * clock). Modelling each mode in turn has no end; instead this module
+ * DECLARES, once, every field of `LibVaipakam.Loan` and either
+ *   - the value or range the drive supports (`SUPPORTED`), each with the
  *     reason — a loan outside it is BLOCKED before the first write, naming
  *     the field; the mode is never modelled; or
- *   - why the field does not affect the model (`NOT_AFFECTING`).
+ *   - why the field does not affect what the drive builds or checks
+ *     (`NOT_AFFECTING`).
  * `supportedPosture.test.mjs` requires every Loan field in the compiled ABI
- * to be in exactly one of the two, and every Loan field the builders or the
- * driver read to be among them — so a new read cannot slip past the gate.
+ * to be in exactly one of the two, and every Loan field the builders, the
+ * outcome reads or the driver touch to be among them — so a new read cannot
+ * slip past the gate.
  *
  * The contract rules mirrored (LibEntitlement): `settlementInterest` floors
  * the interest days at the remaining term ONLY when `useFullTermInterest`;
@@ -27,7 +29,7 @@ const ACTIVE = 0;
 const ERC20 = 0;
 const ILLIQUID = 1;
 
-/** Fields whose value the model depends on, with the value it supports. */
+/** Fields whose value the drive depends on, with the value it supports. */
 export const SUPPORTED = Object.freeze({
   status: {
     ok: (v) => Number(v) === ACTIVE,
@@ -37,12 +39,12 @@ export const SUPPORTED = Object.freeze({
   assetType: {
     ok: (v) => Number(v) === ERC20,
     want: 'ERC-20 (0)',
-    why: 'the createOffer builder, the payoff mirror and the settlement legs are ERC-20 only; a rental settles on prepay, not principal + interest',
+    why: 'the createOffer builder, the payoff mirror and the approvals are ERC-20 only; a rental settles on prepay, not principal + interest',
   },
   collateralAssetType: {
     ok: (v) => Number(v) === ERC20,
     want: 'ERC-20 (0)',
-    why: 'the collateral wallet / vault balance checks read an ERC-20 balance',
+    why: 'the preflight and the review checks read the collateral as an ERC-20 (symbol, decimals, balance)',
   },
   useFullTermInterest: {
     ok: (v) => v === true,
@@ -67,9 +69,9 @@ export const SUPPORTED = Object.freeze({
   riskAndTermsConsentFromBoth: {
     ok: (v) => v === true,
     want: 'true',
-    why: 'an illiquid loan requires both parties’ consent; the replacement must carry it over',
+    why: 'an illiquid loan requires both parties’ consent; the createOffer and AcceptTerms builders sign the illiquid consent this presumes',
   },
-  principal: { ok: (v) => BigInt(v) > 0n, want: '> 0', why: 'the payoff, LIF and settlement legs scale with it' },
+  principal: { ok: (v) => BigInt(v) > 0n, want: '> 0', why: 'the payoff, the LIF reserve and the lender\u2019s approval scale with it' },
   interestRateBps: { ok: (v) => BigInt(v) >= 0n, want: '≥ 0', why: 'read by the payoff mirror; every rate is modelled' },
   startTime: { ok: (v) => BigInt(v) > 0n, want: '> 0', why: 'the maturity, grace end and request-expiry clamp are anchored to it' },
   durationDays: { ok: (v) => BigInt(v) > 0n, want: '> 0', why: 'the maturity, the grace window and the legacy remaining term derive from it' },
@@ -83,20 +85,15 @@ export const SUPPORTED = Object.freeze({
     want: '≤ durationDays when the clock is stamped',
     why: 'the remaining term the mirror floors interest at; one longer than the loan is not a state the contract produces',
   },
-  treasuryFeeBpsAtInit: {
-    ok: () => true,
-    want: 'any (0 = the frozen legacy 100 bps)',
-    why: 'the settlement model reads it, both the stamped and the legacy form',
-  },
 });
 
-/** Fields that do not affect the model, each with the reason. */
+/** Fields that do not affect what the drive builds or checks, each with the reason. */
 export const NOT_AFFECTING = Object.freeze({
   id: 'an identifier',
-  offerId: 'an identifier (the replacement’s is asserted to be the request)',
-  lender: 'compared as a party; the payout owner is the stored lender after the accept (payoutOwnerOf)',
+  offerId: 'an identifier',
+  lender: 'compared as a party (must not be the accepting lender); the old lender\u2019s payout is not verified by this drive',
   borrower: 'compared as a party (must be the borrower role)',
-  principalLiquidity: 'the LIF discount does not depend on it once the borrower premise is discount 0 (#2422 r11)',
+  principalLiquidity: 'the principal\u2019s liquidity tag; nothing the drive builds or checks reads it (a LIF discount it may affect feeds the settlement amounts, NOT VERIFIED here)',
   fallbackLenderBonusBpsAtInit: 'used only on a liquidation fallback, not on a refinance',
   fallbackTreasuryBpsAtInit: 'used only on a liquidation fallback, not on a refinance',
   liquidationLtvBpsAtInit: 'a liquidation parameter, not read by a refinance of an illiquid loan',
@@ -104,9 +101,9 @@ export const NOT_AFFECTING = Object.freeze({
   lenderTokenId: 'the position NFT whose holder is read',
   borrowerTokenId: 'the position NFT whose holder is read',
   principalAsset: 'the token every principal figure is read in',
-  collateralAsset: 'carried over verbatim; asserted equal on the replacement',
-  collateralAmount: 'carried over verbatim; asserted equal on the replacement',
-  collateralTokenId: 'carried over verbatim (0 for an ERC-20 collateral)',
+  collateralAsset: 'the expected lien asset: the replacement\u2019s lien must carry it',
+  collateralAmount: 'the expected lien amount: the replacement\u2019s lien must carry it',
+  collateralTokenId: 'the expected lien tokenId (0 for an ERC-20 collateral)',
   collateralQuantity: 'carried over verbatim (0 for an ERC-20 collateral)',
   tokenId: 'NFT-rental only; the loan is ERC-20',
   quantity: 'NFT-rental only; the loan is ERC-20',
@@ -128,12 +125,13 @@ export const NOT_AFFECTING = Object.freeze({
   lastPeriodicInterestSettledAt: 'periodic checkpoint, stamped at origination for every loan; read only under a periodic cadence (excluded above)',
   minHealthFactorAtInit: 'an HF gate parameter, not read for an illiquid refinance',
   initLtvCapBpsAtInit: 'an LTV gate parameter, not read for an illiquid refinance',
-  loanInitiationFeeBpsAtInit: 'the OLD loan’s stamp is not read; the replacement’s is asserted against the review',
+  loanInitiationFeeBpsAtInit: 'a fee stamp; the settlement amounts it feeds are NOT VERIFIED by this drive',
+  treasuryFeeBpsAtInit: 'a fee stamp; the settlement amounts it feeds are NOT VERIFIED by this drive',
 });
 
 /**
  * Every supported field the loan is OUTSIDE of, as `{ field, value, want,
- * why }`. Empty ⇔ the loan is inside the posture the model supports. A
+ * why }`. Empty ⇔ the loan is inside the posture the drive supports. A
  * field missing from the loan is reported as outside it.
  */
 export function postureMisses(loan) {

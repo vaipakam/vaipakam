@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { createManifest, runVerdict } from './outcomeManifest.mjs';
+import { createManifest, OUTCOME_CLAIMS, runVerdict } from './outcomeManifest.mjs';
 
 const spec = () => ({
   verifiable: [
@@ -142,31 +142,48 @@ describe('outcomeManifest', () => {
   });
 });
 
-// #2422 r10 — one precedence rule for the exit code.
+// #2431 re-cut — one rule for the exit code.
 describe('runVerdict', () => {
   const row = (id, status) => ({ id, status });
-  const done = [row('oldLoanClosed', 'verified'), row('replacement', 'verified')];
-  it('PASS only when nothing failed, nothing is missing and nothing is undetermined', () => {
-    expect(runVerdict({ rows: done, failure: false, raceStop: null }).exit).toBe(0);
+  const all = (status = 'verified') => [
+    row('oldLoanClosed', status),
+    row('replacementOpened', status),
+    row('collateralLienCarried', status),
+    row('writeDiscipline', status),
+    row('settlementAmounts', 'not verified'),
+  ];
+  const base = { wrote: true, stopped: null, preWriteFailure: false, gateEscape: false };
+
+  it('PASS only when every verifiable claim is verified and nothing stopped', () => {
+    expect(runVerdict({ ...base, rows: all() }).exit).toBe(0);
   });
-  it('a failure outranks everything, a race stop included', () => {
-    expect(runVerdict({ rows: done, failure: true, raceStop: 'x' }).exit).toBe(1);
-    expect(runVerdict({ rows: [...done, row('settlement', 'failed')], failure: false, raceStop: 'x' }).exit).toBe(1);
+
+  it('before any write, a stop or a failed check is a product FAIL', () => {
+    expect(runVerdict({ ...base, wrote: false, rows: all('not run'), stopped: 'the card never rendered' })).toMatchObject({ exit: 1 });
+    expect(runVerdict({ ...base, wrote: false, rows: all('not run'), preWriteFailure: true }).exit).toBe(1);
   });
-  it('a race stop is STOPPED, UNDETERMINED (exit 3) even though later claims never ran', () => {
-    const v = runVerdict({ rows: [row('lenderReview', 'undetermined'), row('replacement', 'not run')], failure: false, raceStop: 'the fee moved' });
-    expect(v.exit).toBe(3);
-    expect(v.line).toMatch(/^OUTCOME: STOPPED, UNDETERMINED — .*the fee moved/);
+
+  it('after a write, FAIL only when a chain read contradicts one of the three outcome claims', () => {
+    for (const id of OUTCOME_CLAIMS) {
+      const rows = all().map((r) => (r.id === id ? row(id, 'failed') : r));
+      const v = runVerdict({ ...base, rows, stopped: 'the page failed too' });
+      expect(v.exit, id).toBe(1);
+      expect(v.line, id).toMatch(new RegExp(`contradicts \\[${id}\\]`));
+    }
   });
-  it('a claim NOT RUN without a race stop is a FAIL', () => {
-    expect(runVerdict({ rows: [row('replacement', 'not run')], failure: false, raceStop: null })).toMatchObject({ exit: 1 });
+
+  it('…or when the nonces show a transaction the gate never allowed', () => {
+    expect(runVerdict({ ...base, rows: all(), gateEscape: true }).line).toMatch(/never allowed/);
   });
-  it('an undetermined claim is exit 3, and says the refinance completed only when that was verified', () => {
-    const v = runVerdict({ rows: [...done, row('settlement', 'undetermined')], failure: false, raceStop: null });
-    expect(v.exit).toBe(3);
-    expect(v.line).toMatch(/the refinance completed on chain and .*\[settlement\]/);
-    const w = runVerdict({ rows: [row('oldLoanClosed', 'undetermined'), row('replacement', 'verified')], failure: false, raceStop: null });
-    expect(w.line).not.toMatch(/completed on chain/);
+
+  it('after a write, anything else is UNDETERMINED (exit 3): a stop, a refused write, a claim that did not run', () => {
+    const stoppedRun = runVerdict({ ...base, rows: all('not run'), stopped: 'request #45 was filled by another party' });
+    expect(stoppedRun.exit).toBe(3);
+    expect(stoppedRun.line).toMatch(/^OUTCOME: UNDETERMINED — the drive stopped after a write: request #45 was filled/);
+    // A refused write fails the writeDiscipline claim's refusal check — the
+    // gate did its job; that is not a contradiction of an outcome claim.
+    expect(runVerdict({ ...base, rows: all().map((r) => (r.id === 'writeDiscipline' ? row(r.id, 'failed') : r)) }).exit).toBe(3);
+    // The UI failed after the accept mined, but the chain proves every claim.
+    expect(runVerdict({ ...base, rows: all(), stopped: 'the page never said "Loan opened"' }).exit).toBe(3);
   });
 });
-

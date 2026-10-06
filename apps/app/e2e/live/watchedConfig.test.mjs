@@ -35,8 +35,6 @@ describe('watchedConfig — the one snapshot', () => {
       'partialFill',
       'treasuryFeeBps',
       'lifBps',
-      'lifMatcherFeeBps',
-      'treasury',
       'graceBuckets',
       'riskTermsHash',
       'principalPaused',
@@ -65,7 +63,7 @@ describe('watchedConfig — the one snapshot', () => {
     expect(unclassified, 'classify each new read: watched config, or state with a reason').toEqual([]);
   });
 
-  it('the expected and settlement builders read nothing themselves — their config arrives from the snapshot', () => {
+  it('the expected-payload, outcome and review builders read nothing themselves — their config arrives from the snapshot', () => {
     for (const f of ['refinanceExpected.mjs', 'refinanceOutcome.mjs', 'reviewTerms.mjs']) {
       expect(readsIn(src(f)), f).toEqual([]);
       expect(src(f), f).not.toMatch(/readContract\(/);
