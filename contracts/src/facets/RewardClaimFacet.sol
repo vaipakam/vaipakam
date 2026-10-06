@@ -299,10 +299,22 @@ contract RewardClaimFacet is
         ) {
             // No legacy claim possible AND nothing to sweep — surface the
             // same waiting / empty states the prior API used.
+            // #1944 consequence 1 — and name WHICH wait. On this path the
+            // window clamp refused `fromDay` (== `last + 1`, set above) for
+            // exactly one of two reasons: the day's global denominator has
+            // not landed, or the day owes fresh value on this mirror and no
+            // delivery proven to list it has landed yet. The entry walk
+            // reports the day it parked on for the same gate in
+            // `res.awaitingDay`. Both are deferrals, not an empty balance:
+            // nothing moved, and the same claim pays once the proof lands.
+            // Reads `fromDay` and `res` in place — no new local in this
+            // at-viaIR-budget frame.
             if (!walkedWindow) {
                 if (last >= lastFinalized) revert NoInteractionRewardsToClaim();
-                revert InteractionDayGlobalNotFinalized(last + 1);
+                if (!s.knownGlobalSet[fromDay]) revert InteractionDayGlobalNotFinalized(fromDay);
+                revert InteractionDayAwaitingDelivery(fromDay);
             }
+            if (res.awaitingDay != 0) revert InteractionDayAwaitingDelivery(res.awaitingDay);
             revert NoInteractionRewardsToClaim();
         }
 

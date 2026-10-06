@@ -7957,6 +7957,29 @@ library LibVaipakam {
         ///      hostile one cannot compress it into one day. Base-tracked: the mirror
         ///      supplies neither its size (the ceiling trims it) nor its pace.
         mapping(uint32 => uint256) chainAttributionBacklog;
+        /// @dev #1944 consequence 1 — the first day the mirror-side DELIVERY GATE binds
+        ///      from; 0 = gate dark (byte-for-byte today's pricing order, one SLOAD per
+        ///      priced day-side on every chain). One-shot (0 → non-zero once) and
+        ///      Mirror-only, so a wrong value is a `--fresh` matter, never a re-opening
+        ///      of gated days. WHY a latch and not role alone: (a) the wait ends on a
+        ///      PROVEN delivery and nothing in `apps/keeper` proves day lists yet, so
+        ///      arming before that step exists makes every funded day wait on a human;
+        ///      (b) one SLOAD short-circuits Base/Unconfigured and every pre-upgrade day
+        ///      whose pre-3a packet carries no provable list. The setter refuses a
+        ///      mirror whose `custodyEraCurrent != 0` while Base still dispatches the
+        ///      PRE_REGISTRY era (RewardRemittanceFacet.REMIT_INTENDED_ERA_PRE_REGISTRY):
+        ///      there every d6 lands quarantined and no fresh exit exists (PR C fixes it).
+        uint256 dayDeliveryGateFromDay;
+        /// @dev #1944 consequence 1 — the ingress stamp of the FIRST non-quarantined,
+        ///      undisposed budget packet PROVEN to list `day`, for packets holding NO
+        ///      transport batch (typed d5, pre-activation d6/legacy). Written only by
+        ///      the two proof entries (`RewardEpochFacet.proveDeliveryDayList/Chunk`),
+        ///      never at ingress (the 300k destination budget — `TransportBatch`'s note)
+        ///      and never by the broadcast. Batched packets do NOT write it: their fact
+        ///      is `transportBatchesByDay[day]`, and a flag beside an index is a second
+        ///      statement of one fact. ONE reader ORs the two:
+        ///      `LibRewardCustody.dayDeliveryLanded`.
+        mapping(uint256 => bytes32) dayDeliveryProvedBy;
     }
 
     /// @notice 3b-ii-A2 (#2305) — one batch a staging record staged from, with

@@ -2509,7 +2509,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///      the answer and it cannot go stale. If you find a count for this
     ///      facet anywhere, delete it rather than correct it.
     function _getInteractionRewardsLensSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](22);
+        s = new bytes4[](23);
         s[0] = InteractionRewardsLensFacet.getInteractionLaunchTimestamp.selector;
         s[1] = InteractionRewardsLensFacet.getInteractionCurrentDay.selector;
         s[2] = InteractionRewardsLensFacet.getInteractionAnnualRateBps.selector;
@@ -2537,6 +2537,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // 3b-ii-A2 (#2305; Codex #2308 r5) — the reservations the settlements defer on.
         s[20] = InteractionRewardsLensFacet.getRewardReservations.selector;
         s[21] = InteractionRewardsLensFacet.getLoanSideRewardReserved.selector;
+        // #1944 — the expiry sweep's transfer test, self-staticcalled (host split).
+        s[22] = InteractionRewardsLensFacet.claimTransferable.selector;
     }
 
     /// @dev #1351 slice 2c — the CLAIM entry points, on their own facet for
@@ -3112,7 +3114,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](10);
+        s = new bytes4[](11);
         s[0] = RewardRemittanceFacet.remitRewardBudget.selector;
         s[1] = RewardRemittanceFacet.setRewardRemittanceKeeper.selector;
         s[2] = RewardRemittanceFacet.quoteRewardBudget.selector;
@@ -3124,6 +3126,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[8] = RewardRemittanceFacet.quoteRemitDayPlans.selector;
         // #1566 transport epochs PR 3a — the canonical split attestation send.
         s[9] = RewardRemittanceFacet.attestRemitSplit.selector;
+        // #1944 consequence 1 — the mirror's one-shot day-delivery gate.
+        s[10] = RewardRemittanceFacet.setDayDeliveryGateFromDay.selector;
     }
 
     /// #1566 transport epochs PR 3a — the mirror-side ingress half of the
@@ -3153,7 +3157,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](22);
+        s = new bytes4[](24);
         s[0] = RewardEpochFacet.materializeTransportBatchPage.selector;
         s[1] = RewardEpochFacet.parkTransportBatchRemainder.selector;
         s[2] = RewardEpochFacet.acknowledgeTransportBatchRemainder.selector;
@@ -3179,6 +3183,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[20] = RewardEpochFacet.getTransportBatchDays.selector;
         // 3d-1 — the rooted (d6) chunk index.
         s[21] = RewardEpochFacet.materializeTransportBatchChunk.selector;
+        // #1944 consequence 1 — the delivery proofs for packets holding no batch.
+        s[22] = RewardEpochFacet.proveDeliveryDayList.selector;
+        s[23] = RewardEpochFacet.proveDeliveryDayChunk.selector;
     }
 
     /// @dev 3b-ii-A (Codex #2276 r2) — the epochs' engine-inlining reads:
@@ -3491,7 +3498,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](39);
+        s = new bytes4[](42);
         s[0] = RewardRemittanceLensFacet.getDayCompensation.selector;
         s[1] = RewardRemittanceLensFacet.getStrandedRecoveryReserved.selector;
         s[2] = RewardRemittanceLensFacet.getStrandedRecovery.selector;
@@ -3550,6 +3557,11 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[37] = RewardRemittanceLensFacet.quoteSplitAttestationFee.selector;
         // #2459 r5 — the provisional compensation value held apart.
         s[38] = RewardRemittanceLensFacet.getProvisionalFreshHeld.selector;
+        // #1944 consequence 1 — the delivery gate's rule (the self-staticcall
+        // target) and its two operator reads.
+        s[39] = RewardRemittanceLensFacet.dayAwaitsFreshDelivery.selector;
+        s[40] = RewardRemittanceLensFacet.getDayDeliveryState.selector;
+        s[41] = RewardRemittanceLensFacet.getPacketDeliveryProof.selector;
     }
 
     function _getMetricsSelectors() internal pure returns (bytes4[] memory s) {

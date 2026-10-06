@@ -1,6 +1,72 @@
 [
   {
     "type": "function",
+    "name": "claimTransferable",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "need",
+        "type": "tuple",
+        "internalType": "struct LibInteractionRewards.ArmedNeed",
+        "components": [
+          {
+            "name": "armed",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "userLegs",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "treasuryLegs",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "legacyFresh",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "bucketRecycled",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "capHit",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "liveArmed",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "userPaid",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getInteractionAnnualRateBps",
     "inputs": [
       {
@@ -659,6 +725,11 @@
   {
     "type": "error",
     "name": "RecycleDayMetricsCanonicalChainOnly",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodyCallFailed",
     "inputs": []
   }
 ]

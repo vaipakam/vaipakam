@@ -1021,7 +1021,7 @@ slice even though it lands in M4-era order.
 | --- | --- | --- |
 | Recycle report missed past grace | Day finalizes with that chain's recycled delta = 0 (same rule as interest reports) | Conservative in the safe direction: Base over-remits tokens rather than under-funding claims; the cumulative counter catches up next report |
 | Broadcast (with `recycleConsume`) delayed/lost | Mirror doesn't consume; claims for that day wait exactly as they already do for the denominator; CCIP redelivery / governance replay as today | Consumption and denominator ride the same message — no new partial-state |
-| Remittance (shortfall send) fails | Existing #776 retriable path; claims revert on empty budget until funded — recoverable back-pressure | Unchanged from today |
+| Remittance (shortfall send) fails | Existing #776 retriable path. **Superseded (#1944 consequence 1):** on a mirror whose day delivery gate is armed, claims for that day defer by name until its delivery is proven landed. This row used to read "claims revert on empty budget until funded — recoverable back-pressure", which was not safe: the balance an early claim draws on also holds other owners' value (the governance runbook's containment note) | The day is priced only once a delivery proven to list it has landed; a mirror with the gate dark keeps the runbook's containment procedure |
 | Mirror reorg after report | Cumulative reporting self-heals; `(dayId, chainId)` idempotency unchanged | Same guarantees as §4a interest reports |
 | Bucket accounting bug suspected | The tracked-balance invariant is watcher-monitored per chain; drift alarms before insolvency. **Must gain the stranded-recovery reservation with Mode B (§3.1, §3.6a) — a three-way check would not alarm on a fresh claim spending recovery-reserved tokens** | Extends the existing supply-invariant watch |
 
@@ -1029,7 +1029,9 @@ slice even though it lands in M4-era order.
 
 - `claimInteractionRewards()` — signature, gating, bounded catch-up,
   sanctions Tier-1 status: untouched. Users cannot tell where the funding
-  came from.
+  came from. (Gating gained one later addition, #1944 consequence 1: on a
+  mirror whose day delivery gate is armed, a day owing fresh funding also
+  waits for its own proven delivery.)
 - The CCT token pools, lanes, rate limits, and the canonical-vs-mirror
   supply invariant: untouched (Option C's rejection is exactly about
   preserving this).

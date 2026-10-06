@@ -290,6 +290,12 @@ contract RewardRemittanceFacet is
     /// @custom:event-category informational/config
     event RewardRemittanceReceiverUpdated(address indexed receiver);
 
+    /// @notice #1944 consequence 1 — the mirror-side day-delivery gate was
+    ///         armed: from `fromDay` on, a day owing fresh value here is held
+    ///         until a delivery proven to list it has landed. One-shot.
+    /// @custom:event-category informational/reward-governor
+    event DayDeliveryGateArmed(uint256 indexed fromDay);
+
     // ─── Errors (facet-local; shared ones come from IVaipakamErrors) ──────
 
     /// @notice Caller is neither ADMIN nor the configured remittance keeper.
@@ -924,6 +930,60 @@ contract RewardRemittanceFacet is
         }
         LibVaipakam.storageSlot().rewardRemittanceReceiver = receiver;
         emit RewardRemittanceReceiverUpdated(receiver);
+    }
+
+    /**
+     * @notice #1944 consequence 1 — ARM the mirror-side day-delivery gate
+     *         from `fromDay`. ONE-SHOT: zero to non-zero once, never changed
+     *         or cleared afterwards.
+     * @dev    ADMIN-only. WHY a latch at all rather than role alone: the
+     *         wait ends on a PROVEN delivery, so arming before the keeper
+     *         proves day lists makes every funded day wait on a human; and
+     *         one zero read short-circuits Base, unconfigured chains and
+     *         every pre-upgrade day. WHY one-shot: a value moved later would
+     *         re-open days already held or priced; a wrong value is a
+     *         `--fresh` matter, not an edit.
+     *
+     *         Refusals, each for a reason the gate cannot survive:
+     *           - `fromDay == 0` (`InvalidAmount`) — zero IS the dark value;
+     *           - not a Mirror (`DeliveryGateNotMirror`) — the canonical chain
+     *             funds itself and an unconfigured or detached chain has no
+     *             delivery to wait for;
+     *           - already armed (`DeliveryGateAlreadyArmed`);
+     *           - `custodyEraCurrent != 0` (`DeliveryGateEraRegistryPending`)
+     *             — Base still dispatches the PRE_REGISTRY era
+     *             (`REMIT_INTENDED_ERA_PRE_REGISTRY`), so on a mirror past
+     *             era 0 every rooted delivery lands quarantined with no fresh
+     *             exit and every armed day would wait forever. A role change
+     *             AFTER arming re-opens that until the era registry ships;
+     *           - `fromDay` at or below either cumulative fold cursor
+     *             (`DeliveryGateBelowFold`). WHY: the hold is sound only while
+     *             it is monotone — a day a fold passed is never later found
+     *             held. Arming behind a cursor would re-hold days already
+     *             folded and paid, and the fold's re-derivation
+     *             (`_dayFreshRecycledDaily`), staging re-pricing and the window
+     *             clamp would halt on them; a day funded by a packet with no
+     *             committed day list can never be proven, so that halt would
+     *             be permanent. Same reason as `setGovernorCommitArmedFromDay`
+     *             refusing a non-future day. The cursors are the exact bound
+     *             of what the fold has passed; days above them that a window
+     *             or entry already paid are why the runbook arms a FRESH
+     *             mirror before its first broadcast.
+     *
+     *         Moves no value: it changes when a day may be priced, never
+     *         what any row holds.
+     */
+    function setDayDeliveryGateFromDay(uint256 fromDay) external onlyRole(LibAccessControl.ADMIN_ROLE) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (fromDay == 0) revert InvalidAmount();
+        if (LibVaipakam.rewardRole(s) != LibVaipakam.RewardRole.Mirror) revert DeliveryGateNotMirror();
+        if (s.dayDeliveryGateFromDay != 0) revert DeliveryGateAlreadyArmed(s.dayDeliveryGateFromDay);
+        if (s.custodyEraCurrent != 0) revert DeliveryGateEraRegistryPending(s.custodyEraCurrent);
+        if (fromDay <= s.cumLenderCursor || fromDay <= s.cumBorrowerCursor) {
+            revert DeliveryGateBelowFold(fromDay, s.cumLenderCursor, s.cumBorrowerCursor);
+        }
+        s.dayDeliveryGateFromDay = fromDay;
+        emit DayDeliveryGateArmed(fromDay);
     }
 
     // ─── Mirror-side ingress ──────────────────────────────────────────────

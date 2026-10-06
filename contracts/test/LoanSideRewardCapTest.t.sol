@@ -337,7 +337,10 @@ contract LoanSideRewardCapTest is SetupTest {
     function test_ArmedClaim_SpanningEntryCapsOnlyArmedPortion() public {
         // D* = day 2, so day 1 is PRE-cutover (uncapped, #1008 regime) and day 2
         // is armed. Only day 2's reward is loan-side-capped.
-        _seedArmedDay(1, 1e18, 1e18); // pre-cutover; pool from stamp is ignored (unarmed)
+        // #1944 c1 (S1-R1): a stamped day prices from its stamp whatever its
+        // arming, so the pre-cutover day is stamped as Base stamps an INCLUDED
+        // unarmed day -- at the schedule half -- and its reward is the schedule's.
+        _seedArmedDay(1, _lens().getInteractionHalfPoolForDay(1), 1e18); // pre-cutover, uncapped
         _seedArmedDay(2, 1e18, 1e18); // armed
         _mut().setGovernorCommitArmedFromDayRaw(2);
         _pushEntry(1e18, 1, 3); // [1,3): day 1 pre-D*, day 2 armed
@@ -346,7 +349,7 @@ contract LoanSideRewardCapTest is SetupTest {
         // capEff = 0.1e18 × min(1,2)/2 = 0.05e18. Day-1 pre-cutover reward stays.
         _stampCap({openDays: 2, capOpen: 0.1e18});
 
-        // Day 1 pre-cutover reward: halfPoolForDay(1) (NOT the stamp, unarmed).
+        // Day 1 pre-cutover reward: its stamp's half, which is halfPoolForDay(1).
         uint256 day1 = _lens().getInteractionHalfPoolForDay(1);
 
         vm.prank(rewardLender);

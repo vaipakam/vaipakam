@@ -2219,7 +2219,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](22);
+        selectors = new bytes4[](23);
         selectors[0] = InteractionRewardsLensFacet.getInteractionLaunchTimestamp.selector;
         selectors[1] = InteractionRewardsLensFacet.getInteractionCurrentDay.selector;
         selectors[2] = InteractionRewardsLensFacet.getInteractionAnnualRateBps.selector;
@@ -2246,6 +2246,8 @@ contract HelperTest {
         // The three armed-need reads moved to RewardEpochViewFacet (A2-iii, EIP-170).
         selectors[20] = InteractionRewardsLensFacet.getRewardReservations.selector;
         selectors[21] = InteractionRewardsLensFacet.getLoanSideRewardReserved.selector;
+        // #1944 — the expiry sweep's transfer test, self-staticcalled (host split).
+        selectors[22] = InteractionRewardsLensFacet.claimTransferable.selector;
         return selectors;
     }
 
@@ -2389,7 +2391,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](10);
+        selectors = new bytes4[](11);
         selectors[0] = RewardRemittanceFacet.remitRewardBudget.selector;
         selectors[1] = RewardRemittanceFacet.setRewardRemittanceKeeper.selector;
         selectors[2] = RewardRemittanceFacet.quoteRewardBudget.selector;
@@ -2401,6 +2403,8 @@ contract HelperTest {
         selectors[8] = RewardRemittanceFacet.quoteRemitDayPlans.selector;
         // #1566 transport epochs PR 3a — the canonical split attestation send.
         selectors[9] = RewardRemittanceFacet.attestRemitSplit.selector;
+        // #1944 consequence 1 — the mirror's one-shot day-delivery gate.
+        selectors[10] = RewardRemittanceFacet.setDayDeliveryGateFromDay.selector;
     }
 
     /// #1434 P2-w4 — the compensation dispatch pair (mirrors DeployDiamond).
@@ -2566,7 +2570,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](22);
+        selectors = new bytes4[](24);
         selectors[0] = RewardEpochFacet.materializeTransportBatchPage.selector;
         selectors[1] = RewardEpochFacet.parkTransportBatchRemainder.selector;
         selectors[2] = RewardEpochFacet.acknowledgeTransportBatchRemainder.selector;
@@ -2592,6 +2596,9 @@ contract HelperTest {
         selectors[20] = RewardEpochFacet.getTransportBatchDays.selector;
         // 3d-1 — the rooted (d6) chunk index.
         selectors[21] = RewardEpochFacet.materializeTransportBatchChunk.selector;
+        // #1944 consequence 1 — the delivery proofs for packets holding no batch.
+        selectors[22] = RewardEpochFacet.proveDeliveryDayList.selector;
+        selectors[23] = RewardEpochFacet.proveDeliveryDayChunk.selector;
     }
 
     /// 3b-ii-A (Codex #2276 r2) — the epochs' engine-inlining reads. Mirrors
@@ -2769,7 +2776,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](39);
+        selectors = new bytes4[](42);
         selectors[0] = RewardRemittanceLensFacet.getDayCompensation.selector;
         selectors[1] = RewardRemittanceLensFacet.getStrandedRecoveryReserved.selector;
         selectors[2] = RewardRemittanceLensFacet.getStrandedRecovery.selector;
@@ -2828,6 +2835,11 @@ contract HelperTest {
         selectors[37] = RewardRemittanceLensFacet.quoteSplitAttestationFee.selector;
         // #2459 r5 — the provisional compensation value held apart.
         selectors[38] = RewardRemittanceLensFacet.getProvisionalFreshHeld.selector;
+        // #1944 consequence 1 — the delivery gate's rule (the self-staticcall
+        // target) and its two operator reads.
+        selectors[39] = RewardRemittanceLensFacet.dayAwaitsFreshDelivery.selector;
+        selectors[40] = RewardRemittanceLensFacet.getDayDeliveryState.selector;
+        selectors[41] = RewardRemittanceLensFacet.getPacketDeliveryProof.selector;
     }
 
     /// #1222 M3 B2-c — mirror→Base per-loan headroom commitment report.

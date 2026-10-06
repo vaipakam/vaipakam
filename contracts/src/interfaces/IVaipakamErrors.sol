@@ -855,6 +855,14 @@ interface IVaipakamErrors {
     ///         Base aggregator to finalize and broadcast the day.
     /// @param dayId First day on the claim cursor that is missing a global.
     error InteractionDayGlobalNotFinalized(uint256 dayId);
+    /// @notice #1944 consequence 1 — the caller's next claimable day is
+    ///         priced, on this gate-armed mirror, to owe FRESH value that
+    ///         Base has not yet been proven to have delivered here. The claim
+    ///         DEFERS, moving no value: it pays once a budget packet proven
+    ///         to list the day has landed (`proveDeliveryDayList` /
+    ///         `proveDeliveryDayChunk`, or an indexed transport epoch).
+    /// @param dayId The first day the walk parked on for want of delivery.
+    error InteractionDayAwaitingDelivery(uint256 dayId);
     /// @notice User attempted to withdraw more VPFI than their vault
     ///         currently holds.
     error VPFIVaultBalanceInsufficient();
@@ -1794,6 +1802,27 @@ interface IVaipakamErrors {
     error TransportChunkLengthMismatch(bytes32 batchId, uint256 chunkIndex, uint256 expected, uint256 supplied);
     /// @notice The chunk's leaf does not verify against the packet's day-list root under the supplied proof (3d-1).
     error TransportChunkProofInvalid(bytes32 batchId, uint256 chunkIndex, bytes32 leaf);
+    /// @notice #1944 c1 — the packet holds a transport batch: its days land through the batch's own index
+    ///         (`materializeTransportBatchPage` / `Chunk`), which is the one fact the delivery gate reads for it.
+    error DeliveryProofRouteIsBatch(bytes32 packetHash);
+    /// @notice #1944 c1 — only a BUDGET packet funds days; any other kind proves no delivery.
+    error DeliveryProofNotBudget(bytes32 packetHash, uint8 kind);
+    /// @notice #1944 c1 — the packet's value was disposed of (returned / released), so it funds no day here.
+    error DeliveryPacketDisposed(bytes32 packetHash, uint256 disposed);
+    /// @notice #1944 c1 — the packet is era-quarantined and not yet classified final: it holds no epoch and
+    ///         funds no day until evidence classifies it (the ingress's own stated intent).
+    error TransportPacketEraQuarantined(bytes32 packetHash);
+    /// @notice #1944 c1 — the delivery gate exists only on a reward-mesh MIRROR: Base funds itself.
+    error DeliveryGateNotMirror();
+    /// @notice #1944 c1 — the delivery gate is one-shot and already armed from day `current`.
+    error DeliveryGateAlreadyArmed(uint256 current);
+    /// @notice #1944 c1 — the mirror's custody era is past zero while Base still dispatches the pre-registry era:
+    ///         every d6 would land quarantined with no fresh exit, so arming would wedge every day.
+    error DeliveryGateEraRegistryPending(uint64 current);
+    /// @notice #1944 c1 — arming from `fromDay` would re-hold days a cumulative fold already passed (lender
+    ///         cursor `lenderCursor`, borrower `borrowerCursor`): the hold must stay monotone, so the gate only
+    ///         ever arms ahead of both folds.
+    error DeliveryGateBelowFold(uint256 fromDay, uint256 lenderCursor, uint256 borrowerCursor);
     /// @notice A d6 delivery held as its own epoch needs a split that accounts for the whole delivery (3d-1).
     error TransportSplitNotWhole(bytes32 packetHash, uint256 fresh, uint256 recycled, uint256 amount);
     /// @notice The domain under `domainKey` is not in the phase this entry

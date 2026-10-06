@@ -25,8 +25,11 @@ import {LibVpfiRecycle} from "../libraries/LibVpfiRecycle.sol";
  *      selector regardless of which facet owns the code.
  *
  *      Every function here reads only library functions + shared storage;
- *      there are no cross-facet calls, no access control, no reentrancy /
- *      pausable guards, and no token movement.
+ *      there are no cross-facet writes, no access control, no reentrancy /
+ *      pausable guards, and no token movement. The one cross-facet READ is
+ *      #1944's delivery-gate staticcall
+ *      ({RewardRemittanceLensFacet.dayAwaitsFreshDelivery}), reached through
+ *      the window clamp on a gate-armed mirror only.
  */
 contract InteractionRewardsLensFacet {
     // ─── Public views ────────────────────────────────────────────────────────
@@ -472,6 +475,28 @@ contract InteractionRewardsLensFacet {
         returns (uint64 firstClaimableAt, uint64 expiresAt)
     {
         return LibInteractionRewards.rewardEntryExpiry(entryId);
+    }
+
+    /// @notice #1944 (host split) — the expiry clock's TRANSFER TEST for
+    ///         `user`'s claim of `need`: whether custody could pay it now.
+    /// @dev    The expiry sweep on {RewardSweepWalkFacet} reaches this by a
+    ///         self-staticcall ({LibInteractionRewards.callClaimTransferable})
+    ///         instead of inlining the test. WHY: the test pulls in the
+    ///         capped fresh total, the window reserve and the window clamp —
+    ///         which #1944 extends with the delivery-gate rung — and
+    ///         SweepWalk has no EIP-170 room for that growth. This facet
+    ///         already inlines the same body for {getRewardEntryExpiry}, so
+    ///         hosting the test here makes "one transfer test for the clock
+    ///         and its view mirror" literally one body. Reads only; moves no
+    ///         value, and any caller gets the same verdict the sweep reads.
+    /// @param  user The claimant whose claim is tested.
+    /// @param  need The grouped armed need the sweep priced for the entry.
+    function claimTransferable(address user, LibInteractionRewards.ArmedNeed calldata need)
+        external
+        view
+        returns (bool)
+    {
+        return LibInteractionRewards._claimTransferable(LibVaipakam.storageSlot(), user, need);
     }
 
     // ─── #1218 M5 — recycling transparency series ────────────────────────────

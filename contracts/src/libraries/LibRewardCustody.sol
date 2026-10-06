@@ -152,6 +152,13 @@ library LibRewardCustody {
         uint256 receivedAfter
     );
 
+    /// @notice #1944 consequence 1 — day `dayId`'s delivery was PROVEN landed on this mirror by budget packet
+    ///         `packetHash` (remit `remitId`), through `route` (1 = the packet's flat day-list hash, 2 = one
+    ///         chunk of its rooted d6 list). Provenance only: no value moves and no row changes — the mark is
+    ///         what lets the day's FRESH pricing proceed. Emitted once per day (the first lister stays).
+    /// @custom:event-category informational/reward-transport
+    event DayDeliveryProved(uint256 indexed dayId, bytes32 indexed packetHash, uint256 remitId, uint8 route);
+
     // ─── Types ──────────────────────────────────────────────────────────────
 
     /// @notice The custody a transport draws on (design §5d, "transports: an
@@ -2133,10 +2140,7 @@ library LibRewardCustody {
         // `dayIds.length` is not compared against `p.dayCount` separately —
         // the commitment is over the whole encoded array, so a list of a
         // different length cannot hash to it.
-        bytes32 supplied = keccak256(abi.encode(dayIds));
-        if (supplied != p.dayListHash) {
-            revert IVaipakamErrors.TransportDayListMismatch(packetHash, p.dayListHash, supplied);
-        }
+        _verifyFlatList(p, packetHash, dayIds);
         batchId = _openTransportBatch(s, p, packetHash, p.dayCount, p.unclassified);
     }
 
@@ -2155,6 +2159,11 @@ library LibRewardCustody {
     uint8 internal constant ROLLOUT_NO_DAY_LIST = 3;
     uint8 internal constant ROLLOUT_WIRE_TYPED = 4;
     uint8 internal constant ROLLOUT_NOTHING_UNTYPED = 5;
+    /// @dev #1944 c1 — an era-quarantined packet not yet classified final. The
+    ///      ingress quarantines it precisely so it holds NO epoch; admitting it
+    ///      here would open the epoch the ingress refused, and the delivery
+    ///      gate would then read its days as landed through the batch index.
+    uint8 internal constant ROLLOUT_ERA_QUARANTINED = 6;
 
     /// @notice #1566 transport epochs PR 3b (Codex #2232 r4) — whether the
     ///         ROLLOUT admission could still open an epoch over this packet,
@@ -2187,6 +2196,11 @@ library LibRewardCustody {
         returns (uint8)
     {
         if (p.arrivedAt == 0) return ROLLOUT_UNKNOWN_PACKET;
+        // #1944 c1 — the ingress's own rule, read where both consumers read
+        // it: quarantine means "no epoch" until classification is final, so
+        // the admission refuses by name and the classification gate lets
+        // `classifyLegacyPacket` reach the packet directly, its stated route.
+        if (p.eraQuarantined && !p.classificationFinal) return ROLLOUT_ERA_QUARANTINED;
         if (p.batchId != bytes32(0)) return ROLLOUT_ALREADY_ADMITTED;
         if (p.dayListHash == bytes32(0) || p.dayCount == 0) return ROLLOUT_NO_DAY_LIST;
         // This clause carries a SECOND guarantee beyond the one-accounting-path
@@ -2216,6 +2230,9 @@ library LibRewardCustody {
         }
         if (status == ROLLOUT_WIRE_TYPED) {
             revert IVaipakamErrors.TransportPacketWireTyped(packetHash);
+        }
+        if (status == ROLLOUT_ERA_QUARANTINED) {
+            revert IVaipakamErrors.TransportPacketEraQuarantined(packetHash);
         }
         revert IVaipakamErrors.TransportPacketNothingUntyped(packetHash);
     }
@@ -2306,11 +2323,7 @@ library LibRewardCustody {
         uint32 done = b.indexedDays;
         if (done >= b.dayCount) revert IVaipakamErrors.TransportBatchFullyIndexed(batchId);
         if (s.ingressPackets[batchId].dayListRoot != bytes32(0)) revert IVaipakamErrors.TransportBatchRooted(batchId);
-        bytes32 committed = s.ingressPackets[batchId].dayListHash;
-        bytes32 supplied = keccak256(abi.encode(dayIds));
-        if (supplied != committed) {
-            revert IVaipakamErrors.TransportDayListMismatch(batchId, committed, supplied);
-        }
+        _verifyFlatList(s.ingressPackets[batchId], batchId, dayIds);
         uint256 end = uint256(done) + TRANSPORT_INDEX_PAGE;
         if (end > dayIds.length) end = dayIds.length;
         // Each day's epochs are an ORDERED LIST by (arrival, batch id), kept
@@ -2400,19 +2413,7 @@ library LibRewardCustody {
         LibVaipakam.TransportBatch storage b = s.transportBatches[batchId];
         if (!transportBatchExists(b)) revert IVaipakamErrors.TransportBatchUnknown(batchId);
         LibVaipakam.IngressPacket storage p = s.ingressPackets[batchId];
-        if (p.dayListRoot == bytes32(0)) revert IVaipakamErrors.TransportBatchNotRooted(batchId);
-        uint256 chunks = p.chunkCount;
-        if (chunkIndex >= chunks) revert IVaipakamErrors.TransportChunkOutOfExtent(batchId, chunkIndex, chunks);
-        uint256 bit = 1 << chunkIndex;
-        if ((p.chunksIndexed & bit) != 0) revert IVaipakamErrors.TransportChunkAlreadyIndexed(batchId, chunkIndex);
-        uint256 expected = RemitWire.d6ChunkLength(p.dayCount, chunkIndex);
-        if (dayIds.length != expected) {
-            revert IVaipakamErrors.TransportChunkLengthMismatch(batchId, chunkIndex, expected, dayIds.length);
-        }
-        bytes32 leaf = RemitWire.d6Leaf(chunkIndex, dayIds);
-        if (!MerkleProof.verifyCalldata(proof, p.dayListRoot, leaf)) {
-            revert IVaipakamErrors.TransportChunkProofInvalid(batchId, chunkIndex, leaf);
-        }
+        uint256 expected = _verifyRootedChunk(p, batchId, chunkIndex, dayIds, proof);
         uint64 arrived = p.arrivedAt;
         LinkHint memory h;
         h.hinted = hints.length != 0;
@@ -2422,10 +2423,57 @@ library LibRewardCustody {
             if (h.lateHinted) h.latePrev = lateHints[i];
             _indexBatchDay(s, dayIds[i], batchId, arrived, h);
         }
-        p.chunksIndexed |= bit;
+        p.chunksIndexed |= 1 << chunkIndex;
         indexedDays = b.indexedDays + uint32(expected);
         b.indexedDays = indexedDays;
         emit TransportBatchChunkIndexed(batchId, chunkIndex, indexedDays, b.dayCount);
+    }
+
+    /// @dev THE flat-hash membership rule (#1944 c1 factored it out of the
+    ///      admission, the page and the park, and the delivery proof is its
+    ///      fourth caller): the supplied list is the one the packet's ingress
+    ///      committed to, compared over the whole encoded array, so a list of a
+    ///      different length or order cannot pass. One body, so the proof that
+    ///      unblocks a day's pricing can never accept a list the epoch index
+    ///      would refuse, or the reverse.
+    function _verifyFlatList(
+        LibVaipakam.IngressPacket storage p,
+        bytes32 h,
+        uint256[] calldata dayIds
+    ) private view {
+        bytes32 committed = p.dayListHash;
+        bytes32 supplied = keccak256(abi.encode(dayIds));
+        if (supplied != committed) revert IVaipakamErrors.TransportDayListMismatch(h, committed, supplied);
+    }
+
+    /// @dev THE rooted-chunk membership rule (#1944 c1 factored it out of
+    ///      {materializeTransportBatchChunk}; the delivery proof is its second
+    ///      caller): the packet is rooted, the index is inside the committed
+    ///      extent and not yet marked, the chunk is exactly the committed length
+    ///      for its index (a short or padded chunk cannot be proven), and its
+    ///      indexed leaf verifies against the root. One body, so a chunk the
+    ///      delivery gate accepts is a chunk the epoch index would accept. The
+    ///      caller sets the chunk's bit after writing its days.
+    /// @return expected The committed length of chunk `chunkIndex`.
+    function _verifyRootedChunk(
+        LibVaipakam.IngressPacket storage p,
+        bytes32 h,
+        uint256 chunkIndex,
+        uint256[] calldata dayIds,
+        bytes32[] calldata proof
+    ) private view returns (uint256 expected) {
+        if (p.dayListRoot == bytes32(0)) revert IVaipakamErrors.TransportBatchNotRooted(h);
+        uint256 chunks = p.chunkCount;
+        if (chunkIndex >= chunks) revert IVaipakamErrors.TransportChunkOutOfExtent(h, chunkIndex, chunks);
+        if ((p.chunksIndexed & (1 << chunkIndex)) != 0) revert IVaipakamErrors.TransportChunkAlreadyIndexed(h, chunkIndex);
+        expected = RemitWire.d6ChunkLength(p.dayCount, chunkIndex);
+        if (dayIds.length != expected) {
+            revert IVaipakamErrors.TransportChunkLengthMismatch(h, chunkIndex, expected, dayIds.length);
+        }
+        bytes32 leaf = RemitWire.d6Leaf(chunkIndex, dayIds);
+        if (!MerkleProof.verifyCalldata(proof, p.dayListRoot, leaf)) {
+            revert IVaipakamErrors.TransportChunkProofInvalid(h, chunkIndex, leaf);
+        }
     }
 
     /// @dev Where a day's scan starts: the first node AFTER its cursor in the
@@ -2712,9 +2760,7 @@ library LibRewardCustody {
             }
             count = s.transportBatchDays[batchId].length;
         } else {
-            bytes32 committed = s.ingressPackets[batchId].dayListHash;
-            bytes32 supplied = keccak256(abi.encode(dayIds));
-            if (supplied != committed) revert IVaipakamErrors.TransportDayListMismatch(batchId, committed, supplied);
+            _verifyFlatList(s.ingressPackets[batchId], batchId, dayIds);
             count = dayIds.length;
         }
         uint256 done = s.transportParkCursor[batchId];
@@ -4602,6 +4648,240 @@ library LibRewardCustody {
             )
         );
         r = abi.decode(ret, (AllocResult));
+    }
+
+    // ─── #1944 consequence 1 — the mirror-side DELIVERY GATE ─────────────────
+    //
+    // A mirror prices a day from the stamp Base's broadcast carries; Base funds
+    // it with a separate remit. The two land in either order, so a day could be
+    // priced (and paid from another day's fungible delivery) before its own
+    // fresh funding arrived. The gate is ONE predicate, read at TWO rungs (the
+    // day-halves derivation and the window clamp, both in
+    // LibInteractionRewards) — never a per-call-site guard. Nothing here moves
+    // value: the proof entries write provenance, and the predicate only HOLDS
+    // a fold before the day, which every consumer already turns into a named
+    // deferral.
+
+    /// @dev {DayDeliveryProved}'s `route`: the packet's flat day-list hash.
+    uint8 internal constant DELIVERY_ROUTE_FLAT_LIST = 1;
+    /// @dev {DayDeliveryProved}'s `route`: one proven chunk of a rooted (d6) list.
+    uint8 internal constant DELIVERY_ROUTE_ROOTED_CHUNK = 2;
+
+    /// @notice #1944 c1 — whether day `d`'s delivery has LANDED here: an
+    ///         indexed transport epoch lists it, or a batchless budget packet
+    ///         was proven to list it.
+    /// @dev    THE one reader of "landed". Two facts, one per population, and
+    ///         neither restated beside the other: a batched packet's membership
+    ///         IS `transportBatchesByDay` (written by the epoch index), and a
+    ///         batchless packet's is the proof mark. Landed is not drawable — a
+    ///         landed epoch is spendable only when whole and attested, which the
+    ///         delivered bound governs, not this gate.
+    function dayDeliveryLanded(LibVaipakam.Storage storage s, uint256 d) internal view returns (bool) {
+        return s.transportBatchesByDay[d].length != 0 || s.dayDeliveryProvedBy[d] != bytes32(0);
+    }
+
+    /// @notice #1944 c1 — whether day `d` is priced to owe FRESH value on
+    ///         `side` (0 lender, 1 borrower, any other value = either) that has
+    ///         not landed on this mirror: the ONE rule the delivery gate holds a
+    ///         day on.
+    /// @dev    Exact by construction, not by shared code: every exit below is a
+    ///         stored, Base-authored (or write-once local) figure that makes
+    ///         Base's own remit plan (`RewardRemittanceFacet._planDay` /
+    ///         `_sideLegs`) send this chain NO fresh value for the day, so
+    ///         `true` implies Base lists the day in the remit's funded days. A
+    ///         change to Base's send rule must change this predicate in the
+    ///         same diff (the lockstep the exactness test pins). Monotone: the
+    ///         tests are one-way or write-once, so a day a fold passed is never
+    ///         later found held.
+    ///
+    ///          1. gate dark or `d` below the gate's first day — today's order.
+    ///          2. not a Mirror — Base funds itself; Unconfigured / Detached are
+    ///             bounded elsewhere.
+    ///          3. landed — the wait is over.
+    ///          4. no stamp — a kind-2-only day carries no inclusion to read;
+    ///             it stays as today (stated residual).
+    ///          5. never reported — Base's interest figure for this chain is 0,
+    ///             so nothing is owed. `chainReportSentAt` is write-once in the
+    ///             transaction that reads the totals, which also freezes step 8.
+    ///          6. zero cap threshold — Base's fresh figure is 0 (the same
+    ///             stored word on both sides).
+    ///          7, 7b (Base's floored per-unit fresh delta), 8 and 9 per side,
+    ///          in {_sideOwesFresh}.
+    function dayAwaitsFreshDelivery(
+        LibVaipakam.Storage storage s,
+        uint8 side,
+        uint256 d
+    ) internal view returns (bool) {
+        uint256 from = s.dayDeliveryGateFromDay;
+        if (from == 0 || d < from) return false;
+        if (LibVaipakam.rewardRole(s) != LibVaipakam.RewardRole.Mirror) return false;
+        if (dayDeliveryLanded(s, d)) return false;
+        LibVaipakam.ChainDayFunding storage f = s.chainDayRecycledFunding[d][uint32(block.chainid)];
+        if (!f.stamped) return false;
+        if (s.chainReportSentAt[d] == 0) return false;
+        if (s.dayCapThreshold18[d] == 0) return false;
+        if (side != 1 && _sideOwesFresh(s, f, d, 0)) return true;
+        if (side != 0 && _sideOwesFresh(s, f, d, 1)) return true;
+        return false;
+    }
+
+    /// @dev Steps 7-9 (and 7b) of {dayAwaitsFreshDelivery} for one side (0 lender, 1
+    ///      borrower):
+    ///       7. the stamp's FRESH half is 0 — an excluded or zero-fresh
+    ///          destination; Base sends this side nothing fresh. Recycled is
+    ///          never gated: Base may send nothing for a locally-backed side,
+    ///          and the bucket deferral is already amount-keyed.
+    ///      7b. the FLOORED per-unit fresh delta is 0 (or the side's global is
+    ///          0). A non-zero half does not by itself mean Base sends fresh:
+    ///          Base sizes the slice from `half * 1e18 / global`, which floors
+    ///          to 0 whenever `0 < half * 1e18 < global` (e.g. the wei-scale
+    ///          remainder a drained pool keeps stamping), and a zero delta
+    ///          stays zero through the cap trim and the per-chain ceil — so
+    ///          Base sends no fresh, may close the day without listing it,
+    ///          and no proof could ever land it. The mirror's
+    ///          `knownGlobal*` IS the `dailyGlobal*` word Base sized against
+    ///          (carried by the broadcast), so this is Base's own test, not an
+    ///          approximation; and the mirror's claim prices the same floored
+    ///          delta at zero, so the hold would protect nothing. Without this
+    ///          exit such a day is held forever and, the cursor halting before
+    ///          it, every later day on the side with it.
+    ///       8. the chain's own interest total is 0 — the figure `closeDay`
+    ///          shipped to Base, so Base's slice for this chain is 0.
+    ///       9. an ARMED day whose commitment report was sent with zero
+    ///          liability on this side — Base clamps the fresh leg to 0.
+    ///          `isDayArmed` is inlined (LibCommitmentReport imports
+    ///          LibInteractionRewards, which imports this library). Armed with
+    ///          the report unsent is unknown, so it WAITS: Base waits on the
+    ///          same report before planning the day.
+    function _sideOwesFresh(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.ChainDayFunding storage f,
+        uint256 d,
+        uint8 side
+    ) private view returns (bool) {
+        uint256 half = side == 0 ? f.freshLenderHalf : f.freshBorrowerHalf;
+        if (half == 0) return false;
+        uint256 g = side == 0
+            ? s.knownGlobalLenderInterestNumeraire18[d]
+            : s.knownGlobalBorrowerInterestNumeraire18[d];
+        if (g == 0 || (half * 1e18) / g == 0) return false;
+        if ((side == 0 ? s.totalLenderInterestNumeraire18[d] : s.totalBorrowerInterestNumeraire18[d]) == 0) {
+            return false;
+        }
+        uint256 armedFrom = s.governorCommitArmedFromDay;
+        if (
+            armedFrom != 0 && d >= armedFrom && s.commitmentReportSent[d]
+                && s.commitmentLiabilityAccum18[d][side] == 0
+        ) return false;
+        return true;
+    }
+
+    /// @dev {dayAwaitsFreshDelivery} through the remittance lens, as a
+    ///      STATICCALL, so the inlining reward facets carry this encode/decode
+    ///      once each rather than the predicate's body. The prefix is read
+    ///      HERE, before the call, and is a strict subset of the view's own
+    ///      first tests, so the two cannot disagree: a dark gate, a day below
+    ///      it, or a landed day makes no call at all — which keeps the dark
+    ///      path at one SLOAD on every chain and keeps an unrouted lens
+    ///      selector unreachable until an operator arms the gate.
+    function callDayAwaitsFreshDelivery(
+        LibVaipakam.Storage storage s,
+        uint8 side,
+        uint256 d
+    ) internal view returns (bool) {
+        uint256 from = s.dayDeliveryGateFromDay;
+        if (from == 0 || d < from) return false;
+        if (dayDeliveryLanded(s, d)) return false;
+        return abi.decode(
+            _selfStatic(abi.encodeWithSignature("dayAwaitsFreshDelivery(uint8,uint256)", side, d)),
+            (bool)
+        );
+    }
+
+    /// @dev The packet gate both proof entries share: the packet exists, is a
+    ///      BUDGET packet, holds no transport batch (a batched packet's days
+    ///      land through the batch index — one fact, one writer), is not an
+    ///      era-quarantined packet still awaiting final classification (the
+    ///      ingress quarantined it so it would fund nothing until classified),
+    ///      and was not disposed of (its value left; it funds no day here).
+    function _requireProvablePacket(
+        LibVaipakam.Storage storage s,
+        bytes32 h
+    ) private view returns (LibVaipakam.IngressPacket storage p) {
+        p = s.ingressPackets[h];
+        if (p.arrivedAt == 0) revert IVaipakamErrors.IngressPacketUnknown(h);
+        if (p.kind != PACKET_KIND_BUDGET) revert IVaipakamErrors.DeliveryProofNotBudget(h, p.kind);
+        if (p.batchId != bytes32(0)) revert IVaipakamErrors.DeliveryProofRouteIsBatch(h);
+        if (p.eraQuarantined && !p.classificationFinal) revert IVaipakamErrors.TransportPacketEraQuarantined(h);
+        if (p.disposed != 0) revert IVaipakamErrors.DeliveryPacketDisposed(h, p.disposed);
+    }
+
+    /// @dev THE one writer of {LibVaipakam.Storage.dayDeliveryProvedBy}. The
+    ///      FIRST proven lister stays: a later packet listing the same day
+    ///      changes nothing and emits nothing, so the mark is idempotent per
+    ///      day and its provenance names the delivery that actually unblocked
+    ///      the day. Provenance only — no row, no balance, no value moves.
+    function _markDayDeliveryProved(
+        LibVaipakam.Storage storage s,
+        bytes32 h,
+        LibVaipakam.IngressPacket storage p,
+        uint256 d,
+        uint8 route
+    ) private {
+        if (s.dayDeliveryProvedBy[d] != bytes32(0)) return;
+        s.dayDeliveryProvedBy[d] = h;
+        emit DayDeliveryProved(d, h, p.remitId, route);
+    }
+
+    /// @notice #1944 c1 — prove a batchless budget packet's FLAT day list
+    ///         (typed d5; legacy / d2 before custody activation) and mark each
+    ///         listed day landed.
+    /// @dev    Permissionless: the ingress-stamped commitment is the authority,
+    ///         so anyone may supply the list and nobody can supply another.
+    ///         Idempotent per day rather than per packet (a repeat writes and
+    ///         emits nothing), so no flag beside the mark restates it. The list
+    ///         is bounded by the dispatch fan-out cap (`TRANSPORT_DAY_FANOUT_CAP`)
+    ///         for every Base-built send. A rooted packet proves by chunk; a
+    ///         pre-3a packet carries no list and is refused by name.
+    function proveDeliveryDayList(
+        LibVaipakam.Storage storage s,
+        bytes32 h,
+        uint256[] calldata dayIds
+    ) internal {
+        LibVaipakam.IngressPacket storage p = _requireProvablePacket(s, h);
+        if (p.dayListRoot != bytes32(0)) revert IVaipakamErrors.TransportBatchRooted(h);
+        if (p.dayListHash == bytes32(0)) revert IVaipakamErrors.TransportPacketHasNoDayList(h);
+        _verifyFlatList(p, h, dayIds);
+        uint256 n = dayIds.length;
+        for (uint256 i; i < n; ) {
+            _markDayDeliveryProved(s, h, p, dayIds[i], DELIVERY_ROUTE_FLAT_LIST);
+            unchecked { ++i; }
+        }
+    }
+
+    /// @notice #1944 c1 — prove ONE chunk of a batchless rooted (d6,
+    ///         pre-activation) packet's day list and mark each of its days
+    ///         landed.
+    /// @dev    The same rule the epoch index proves a chunk by
+    ///         ({_verifyRootedChunk}), and the same `chunksIndexed` bit with the
+    ///         same meaning (chunk `i` proven), so a chunk is proven once. No
+    ///         conflict with the epoch index is possible: this packet holds no
+    ///         batch, and a rooted packet carries no flat hash, so the rollout
+    ///         admission can never open one over it later.
+    function proveDeliveryDayChunk(
+        LibVaipakam.Storage storage s,
+        bytes32 h,
+        uint256 chunkIndex,
+        uint256[] calldata dayIds,
+        bytes32[] calldata proof
+    ) internal {
+        LibVaipakam.IngressPacket storage p = _requireProvablePacket(s, h);
+        uint256 expected = _verifyRootedChunk(p, h, chunkIndex, dayIds, proof);
+        for (uint256 i; i < expected; ) {
+            _markDayDeliveryProved(s, h, p, dayIds[i], DELIVERY_ROUTE_ROOTED_CHUNK);
+            unchecked { ++i; }
+        }
+        p.chunksIndexed |= 1 << chunkIndex;
     }
 
     /// @dev {drawTransportForDay} through the epoch facet. With both legs zero

@@ -1661,6 +1661,138 @@ contract MeshThreeChainE2ETest is Test {
         assertEq(c5, ABSORB_ARB, "day 5 credit attributed");
     }
 
+    // ─── #1944 consequence 1 -- the delivery-gate LOCKSTEP (cell 13) ──────
+
+    /**
+     * @notice #1944 consequence 1, cell 13 -- the EXACTNESS pin. A gate-armed
+     *         mirror waits on a day exactly when Base's remit plan would list
+     *         that day in the budget packet it sends the mirror: for every
+     *         (day, destination) here, Base's quoted slice is non-zero IFF the
+     *         mirror's `dayAwaitsFreshDelivery` is true for some side, before
+     *         any delivery landed. The two are separate code on separate
+     *         diamonds -- the mirror restates Base's `_planDay` / `_sideLegs`
+     *         from stored Base-authored figures -- so only a real mesh can pin
+     *         that they agree.
+     *
+     *         The scene, every figure produced by real facet code: day 3
+     *         UNARMED with ARB earning (both funded and waiting) and OP earning
+     *         nothing (neither); day 4 ARMED and force-finalized without ARB's
+     *         report (ARB excluded: zero-halved, remit-ineligible -- neither),
+     *         with OP included, which waits while its commitment report is
+     *         unsent (Base waits on the same report: a shared wait, not a
+     *         divergence) and is funded and waiting once the report lands.
+     *         No recycled value is seeded, so every quoted slice is fresh.
+     * @dev    Mutations: drop the predicate's zero-fresh-half step (7) and
+     *         ARB's excluded day 4 waits on a delivery Base never sends; drop
+     *         the zero-local-total step (8) and OP's day 3 does. The other
+     *         steps are pinned on a single mirror in `RewardDayDeliveryGateTest`,
+     *         each by a cell that turns red when that step alone is removed:
+     *         never reported (5) by cell 7f, zero threshold (6) by cell 7g,
+     *         zero liability with the report sent (9) by cell 8, and the
+     *         unsent-report wait by cell 9; the recycled-only side is cell 7c.
+     *         The zero-liability side is not reproduced HERE because real
+     *         finalization cannot hand it a zero ceiling beside a non-zero
+     *         fresh half: Base's ceiling is `(freshHalf + funded) x share / BPS`
+     *         with the share floored at 50 bps
+     *         (`LibInteractionRewards.snapshotDayUserSideShareCaps`,
+     *         `LibVaipakam.USER_SIDE_SHARE_CAP_MIN_BPS`), so it is zero only
+     *         when the fresh half is -- step 7's case -- short of dust entries
+     *         whose floored share rounds to zero, which this scene does not seed.
+     */
+    function test_E2E_1944_TheMirrorsDeliveryWait_IsBasesFundedDayList() public {
+        vm.chainId(ARB);
+        RewardRemittanceFacet(arbD).setDayDeliveryGateFromDay(1);
+        vm.chainId(OP);
+        RewardRemittanceFacet(opD).setDayDeliveryGateFromDay(1);
+        _arm(4);
+        _warpPast(6);
+
+        // Day 3 -- UNARMED. ARB and Base earn; OP closes the day with nothing.
+        _seedInterest(ARB, 3, alice, 2e18, 3e18);
+        _seedInterest(OP, 3, alice, 0, 0);
+        _seedInterest(BASE, 3, alice, 1e18, 7e18);
+        _runDayCycle(3);
+        _assertDeliveryLockstep(3, ARB, true);
+        _assertDeliveryLockstep(3, OP, false);
+
+        // Day 4 -- ARMED. ARB's report is lost; Base force-finalizes without it.
+        _seedInterest(ARB, 4, alice, 2e18, 3e18);
+        _seedInterest(OP, 4, alice, 1e18, 5e18);
+        _seedInterest(BASE, 4, alice, 1e18, 7e18);
+        uint256 opLender =
+            _mut(OP).pushRewardEntry(alice, 404, LibVaipakam.RewardSide.Lender, 1e18, 4);
+        _mut(OP).setRewardEntryEndDayRaw(opLender, 5);
+        uint256 opBorrower =
+            _mut(OP).pushRewardEntry(alice, 405, LibVaipakam.RewardSide.Borrower, 5e18, 4);
+        _mut(OP).setRewardEntryEndDayRaw(opBorrower, 5);
+        _allChainsCloseDay(4);
+        _dropReportAndDeliverRest(_findReport(4, ARB));
+        vm.chainId(BASE);
+        _agg().forceFinalizeDay(4);
+        _broadcast(4);
+        _deliverBroadcastFor(4, ARB);
+        _deliverBroadcastFor(4, OP);
+        _assertMirrorsArmedFrom(4);
+
+        _assertDeliveryLockstep(4, ARB, false);
+
+        // OP before its commitment report: BOTH sides of the mesh wait on it.
+        vm.chainId(BASE);
+        (, uint256[] memory early) =
+            RewardRemittanceFacet(baseD).quoteRewardBudget(uint32(OP), _one1944(4));
+        assertEq(early[0], 0, "Base plans nothing for an armed day until the report lands");
+        vm.chainId(OP);
+        assertTrue(
+            RewardRemittanceLensFacet(opD).dayAwaitsFreshDelivery(2, 4),
+            "and the mirror waits: unreported, the liability is unknown"
+        );
+
+        // OP's report, from OP's own accumulation, carried to Base as the lane would.
+        RewardCommitmentFacet(opD).submitCommitmentBatch(4, 0, _one1944(opLender));
+        RewardCommitmentFacet(opD).submitCommitmentBatch(4, 1, _one1944(opBorrower));
+        RewardCommitmentFacet(opD).sendCommitmentReport(4);
+        (, uint256 liabL, ) = RewardCommitmentFacet(opD).getCommitmentAccumulation(4, 0);
+        (, uint256 liabB, ) = RewardCommitmentFacet(opD).getCommitmentAccumulation(4, 1);
+        assertGt(liabL, 0, "fixture: OP reports a lender liability");
+        assertGt(liabB, 0, "fixture: and a borrower liability");
+        vm.chainId(BASE);
+        vm.prank(address(bus));
+        RewardAggregatorFacet(baseD).onCommitmentReportReceived(uint32(OP), 4, liabL, liabB);
+
+        _assertDeliveryLockstep(4, OP, true);
+    }
+
+    function _one1944(uint256 v) private pure returns (uint256[] memory a) {
+        a = new uint256[](1);
+        a[0] = v;
+    }
+
+    /// @dev Base's quoted slice for `(dayId, dest)` against the mirror's own
+    ///      wait, each read on its own chain id: the mirror's predicate reads
+    ///      its funding record under `block.chainid`.
+    function _assertDeliveryLockstep(uint256 dayId, uint256 dest, bool funded) private {
+        vm.chainId(BASE);
+        (, uint256[] memory perDay) =
+            RewardRemittanceFacet(baseD).quoteRewardBudget(uint32(dest), _one1944(dayId));
+        vm.chainId(dest);
+        RewardRemittanceLensFacet lens = RewardRemittanceLensFacet(diamondOf[dest]);
+        bool awaitsLender = lens.dayAwaitsFreshDelivery(0, dayId);
+        bool awaitsBorrower = lens.dayAwaitsFreshDelivery(1, dayId);
+        assertEq(perDay[0] != 0, funded, "Base's remit plan for the destination-day");
+        assertEq(
+            awaitsLender || awaitsBorrower,
+            funded,
+            "the mirror waits exactly on the days Base funds"
+        );
+        assertEq(
+            lens.dayAwaitsFreshDelivery(2, dayId),
+            awaitsLender || awaitsBorrower,
+            "the either-side form agrees"
+        );
+        (, , , bool landed, , , , , , ) = lens.getDayDeliveryState(dayId);
+        assertFalse(landed, "before landing: no delivery reached the mirror");
+    }
+
     // ─── Assertion helpers ─────────────────────────────────────────────────
 
     /// @dev The mirror's OWN stored funding stamp equals the packet Base sent.

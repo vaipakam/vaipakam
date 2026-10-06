@@ -225,6 +225,24 @@ Per-mirror UUPS contract mirroring `BuybackRemittanceReceiver`:
 Claims are unchanged: the Diamond's now-funded balance satisfies
 `safeTransfer(claimant, paid)`.
 
+> **SUPERSEDED IN PART (#1944 consequence 1, 2026-10).** The "safe revert" and
+> "remit-before-broadcast" arguments below, and the rejection of a per-day
+> claim-side funded gate that closes this subsection, no longer stand. An early
+> claim was never a safe revert: the mirror's balance also holds value owned by
+> others (borrower collateral among it), so a claim against a day whose budget had
+> not arrived could be paid out of it — the governance runbook's containment note
+> reclassified it as a fund-loss shape under #1566. And the operational invariant
+> cannot be kept, because the broadcast is permissionless and source order is not
+> delivery order. A mirror can now hold any day that owes it fresh funding until a
+> budget delivery PROVEN to list that day has landed there (a one-shot,
+> mirror-only switch, dark until armed). The gate reads only Base-authored figures
+> already on the mirror, and the proof records provenance only — no new wire,
+> nothing written at ingress, no value moved. Typed deliveries stay fungible
+> across days once landed, which is what the delivered bound governs. Separately,
+> and NOT behind that switch, a mirror now prices every stamped day from Base's
+> stamp, so an excluded or allocation-exhausted pre-cutover day no longer pays the
+> schedule there. The text below is kept as the reasoning that was superseded.
+
 **Why funding is deliberately fungible across days (not a per-day claim
 reserve).** The per-day remittance accounting (zero-slice, idempotent
 marker) lives on the *Base send* side; on the mirror, claims draw from the
@@ -252,7 +270,9 @@ A per-day claim-side *funded gate* was considered and rejected: it would
 re-couple the deliberately-decoupled remit and claim paths (adding
 mirror-side per-day funded state + a claim-path check) to convert a safe,
 self-healing liveness transient into a hard gate — net-negative for a flow
-whose failure mode is already "revert and retry."
+whose failure mode is already "revert and retry." *(Rejected then; adopted under
+#1944 consequence 1 once the failure mode was shown to be fund loss rather than a
+revert — see the banner at the head of this subsection.)*
 
 ## 7. Rate-limit & fee handling
 

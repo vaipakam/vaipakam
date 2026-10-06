@@ -332,6 +332,143 @@ contract RewardRemittanceLensFacet {
     }
 
     /**
+     * @notice #1944 consequence 1 — whether day `dayId` is priced to owe
+     *         FRESH reward value on this chain for `side` (0 lender,
+     *         1 borrower, 2 either) while no delivery proven to list it has
+     *         landed here. True means every pricing path on this mirror
+     *         holds the day — the cursors halt before it and every
+     *         settlement defers by name — until the proof lands.
+     * @dev    THE self-staticcall target of
+     *         {LibRewardCustody.callDayAwaitsFreshDelivery}. The rule is
+     *         inlined HERE, once, instead of into the five walk facets that
+     *         price days: they sit within a few hundred bytes of EIP-170 and
+     *         each carries only the cheap prefix (gate dark, day below the
+     *         gate, day landed) plus this call. The body is the library rule
+     *         verbatim, so the view and the rung cannot disagree.
+     *
+     *         ROUTING IS LOAD-BEARING once the gate is armed: an unrouted
+     *         selector on an armed mirror turns every claim, sweep and staging
+     *         call into a bubbled `FunctionDoesNotExist`. The gate ships dark
+     *         (`dayDeliveryGateFromDay == 0` returns before the call), which
+     *         covers deploy ORDER only — refresh this facet together with the
+     *         walk facets, never after arming. Reads only.
+     */
+    function dayAwaitsFreshDelivery(uint8 side, uint256 dayId) external view returns (bool) {
+        return LibRewardCustody.dayAwaitsFreshDelivery(LibVaipakam.storageSlot(), side, dayId);
+    }
+
+    /**
+     * @notice #1944 consequence 1 — the operator's readback of one day's
+     *         delivery gate on this chain, every input of
+     *         {dayAwaitsFreshDelivery} beside its verdict.
+     * @dev    Read the state off the tuple, in this order: NotApplied
+     *         (`!stamped` — Base's broadcast has not priced the day here);
+     *         Landed (`landed`); AwaitingReport (`reportSent == false` on an
+     *         armed day that awaits — Base itself waits for the mirror's
+     *         commitment report before it plans the fresh leg);
+     *         AwaitingDelivery (any other day that awaits); Open (nothing
+     *         awaits — the day owes no fresh value here, or the gate does not
+     *         bind it). The figures are returned raw rather than as an enum
+     *         so a state added later cannot be mis-decoded by an old reader.
+     * @return gateArmed     The gate binds this day (`fromDay != 0` and
+     *                       `dayId >= fromDay`).
+     * @return stamped       Base's per-chain funding stamp for the day has
+     *                       landed here.
+     * @return freshStamped  That stamp prices a non-zero FRESH half for
+     *                       either side.
+     * @return landed        A delivery listing the day has landed: an
+     *                       indexed transport epoch, or a proven mark.
+     * @return provedBy      The first packet PROVEN to list the day (zero
+     *                       for an epoch-path day, whose fact is the index).
+     * @return epochCount    Transport epochs indexed under the day.
+     * @return reported      This chain's day report has been sent to Base.
+     * @return reportSent    The day's commitment report has been sent.
+     * @return awaitsLender  {dayAwaitsFreshDelivery} for the lender side.
+     * @return awaitsBorrower {dayAwaitsFreshDelivery} for the borrower side.
+     */
+    function getDayDeliveryState(uint256 dayId)
+        external
+        view
+        returns (
+            bool gateArmed,
+            bool stamped,
+            bool freshStamped,
+            bool landed,
+            bytes32 provedBy,
+            uint256 epochCount,
+            bool reported,
+            bool reportSent,
+            bool awaitsLender,
+            bool awaitsBorrower
+        )
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        {
+            uint256 from = s.dayDeliveryGateFromDay;
+            gateArmed = from != 0 && dayId >= from;
+        }
+        {
+            LibVaipakam.ChainDayFunding storage f = s.chainDayRecycledFunding[dayId][uint32(block.chainid)];
+            stamped = f.stamped;
+            freshStamped = stamped && (f.freshLenderHalf != 0 || f.freshBorrowerHalf != 0);
+        }
+        landed = LibRewardCustody.dayDeliveryLanded(s, dayId);
+        provedBy = s.dayDeliveryProvedBy[dayId];
+        epochCount = s.transportBatchesByDay[dayId].length;
+        reported = s.chainReportSentAt[dayId] != 0;
+        reportSent = s.commitmentReportSent[dayId];
+        awaitsLender = LibRewardCustody.dayAwaitsFreshDelivery(s, 0, dayId);
+        awaitsBorrower = LibRewardCustody.dayAwaitsFreshDelivery(s, 1, dayId);
+    }
+
+    /**
+     * @notice #1944 consequence 1 — which proof route a landed packet takes,
+     *         and whether it is refused: `batched` → the batch materializers;
+     *         else `dayListRoot != 0` → {RewardEpochFacet.proveDeliveryDayChunk};
+     *         else `dayListHash != 0` → {RewardEpochFacet.proveDeliveryDayList};
+     *         neither → a pre-3a packet with no provable list. `quarantined`
+     *         without `classificationFinal`, or `disposed != 0`, is refused.
+     * @dev    A narrow read of existing packet fields rather than the whole
+     *         {getIngressPacket} record: the keeper's proof step needs only
+     *         these, and a fixed tuple keeps its decode stable when the
+     *         append-only packet struct's tail widens. Nothing new is stored.
+     * @return dayListHash         The flat day-list commitment (0 = none).
+     * @return dayListRoot         The rooted (d6) commitment (0 = none).
+     * @return chunkCount          The rooted list's chunk count.
+     * @return chunksIndexed       Bit `i` set = chunk `i` proven.
+     * @return batched             The packet holds a transport batch.
+     * @return quarantined         The packet landed era-quarantined.
+     * @return classificationFinal Its classification is final.
+     * @return disposed            Value disposed of by a non-classification exit.
+     */
+    function getPacketDeliveryProof(bytes32 packetHash)
+        external
+        view
+        returns (
+            bytes32 dayListHash,
+            bytes32 dayListRoot,
+            uint32 chunkCount,
+            uint256 chunksIndexed,
+            bool batched,
+            bool quarantined,
+            bool classificationFinal,
+            uint256 disposed
+        )
+    {
+        LibVaipakam.IngressPacket storage p = LibVaipakam.storageSlot().ingressPackets[packetHash];
+        return (
+            p.dayListHash,
+            p.dayListRoot,
+            p.chunkCount,
+            p.chunksIndexed,
+            p.batchId != bytes32(0),
+            p.eraQuarantined,
+            p.classificationFinal,
+            p.disposed
+        );
+    }
+
+    /**
      * @notice #1434 P1-a — how much of the reward funding delivered to this
      *         chain counts as ARMED FRESH, and how much did not.
      * @dev    The two are returned together because either alone misleads.

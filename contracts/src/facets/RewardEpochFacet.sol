@@ -27,6 +27,11 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
  *         shut to every caller until the closure proof existed; 3b-ii-B opened
  *         them, #2258.)
  *
+ *         The #1944 delivery proofs ({proveDeliveryDayList},
+ *         {proveDeliveryDayChunk}) are live and permissionless too: they write a
+ *         day's delivered-mark for a packet holding NO batch and never touch a
+ *         batch's membership.
+ *
  *         THE FUNDS FACT: {LibRewardCustody.takeFromReleasedRemainder} refuses
  *         a packet whose batch is not released BEFORE it looks at the
  *         fresh-versus-recycled split, so a packet holding an epoch is
@@ -154,6 +159,59 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
             revert TransportDayListMismatch(batchId, bytes32(0), bytes32(0));
         }
         return LibRewardCustody.materializeTransportBatchPage(LibVaipakam.storageSlot(), batchId, dayIds, hints, lateHints);
+    }
+
+    /// @notice #1944 consequence 1 — PROVE that a budget packet holding NO
+    ///         transport batch listed each of `dayIds`, against the FLAT
+    ///         day-list commitment its ingress stamped, so a gate-armed
+    ///         mirror stops holding those days. Repeat-safe per day.
+    /// @dev    WHY a separate step and not ingress: the destination's 300k
+    ///         execution budget is already spent by ingress, so no per-day
+    ///         write can ride the delivery itself. WHY permissionless: the
+    ///         authority is the commitment the delivery's own ingress
+    ///         stamped, not the caller — anyone may supply the list, nobody
+    ///         can supply a different one. WHY a packet holding a batch is
+    ///         refused: its days are already indexed by
+    ///         {materializeTransportBatchPage}/{materializeTransportBatchChunk},
+    ///         and a second mark beside that index would be a second
+    ///         statement of one fact. Era-quarantined (until classified) and
+    ///         disposed packets are refused because neither funds a day.
+    ///
+    ///         NOT `whenNotPaused`, for the facet's stated reason: this
+    ///         records a membership the delivery already committed to and
+    ///         pays nobody. NO VALUE MOVES — the mark is provenance
+    ///         (`LibRewardCustody.DayDeliveryProved`), the delivered value
+    ///         stays in whatever row its ingress put it. The rule is
+    ///         {LibRewardCustody.proveDeliveryDayList}.
+    /// @param  packetHash The packet's ingress stamp.
+    /// @param  dayIds     The delivery's WHOLE day list, re-supplied — the
+    ///                    commitment is flat, so only the whole list proves.
+    function proveDeliveryDayList(bytes32 packetHash, uint256[] calldata dayIds) external nonReentrant {
+        LibRewardCustody.proveDeliveryDayList(LibVaipakam.storageSlot(), packetHash, dayIds);
+    }
+
+    /// @notice #1944 consequence 1 — PROVE that a ROOTED (d6) budget packet
+    ///         holding NO transport batch — a pre-activation delivery, which
+    ///         {materializeTransportBatchChunk} refuses — listed each day of
+    ///         chunk `chunkIndex`, by the Merkle proof of that chunk's leaf
+    ///         against the root its ingress stamped. Any order; each chunk
+    ///         once.
+    /// @dev    The same verifier the batch materializer runs (one body per
+    ///         rule, in {LibRewardCustody}), so a chunk this entry accepts is
+    ///         exactly a chunk the materializer would. Permissionless and NOT
+    ///         `whenNotPaused` for the reasons {proveDeliveryDayList} gives;
+    ///         the same refusals apply. NO VALUE MOVES.
+    /// @param  packetHash The packet's ingress stamp.
+    /// @param  chunkIndex The chunk of the committed list being proven.
+    /// @param  dayIds     That chunk's days, in committed order.
+    /// @param  proof      The Merkle proof of the chunk's indexed leaf.
+    function proveDeliveryDayChunk(
+        bytes32 packetHash,
+        uint256 chunkIndex,
+        uint256[] calldata dayIds,
+        bytes32[] calldata proof
+    ) external nonReentrant {
+        LibRewardCustody.proveDeliveryDayChunk(LibVaipakam.storageSlot(), packetHash, chunkIndex, dayIds, proof);
     }
 
     /// @notice PARK what a batch's obligations left, under the batch's own key.

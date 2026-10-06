@@ -1797,6 +1797,107 @@ script does not broadcast either. So an operator who arms and then waits for
 mirrors to show `D*` can wait until the cutover day arrives with every mirror
 still unarmed.
 
+**The day delivery gate (#1944 consequence 1) — what changes on a mirror where it is ARMED.**
+Such a mirror holds any day that owes it fresh funding until a budget delivery
+PROVEN to list that day has landed there, whichever of the broadcast and the
+delivery arrives first. While a day is held, the chain's reward cursor stops before
+it and every claim, sweep, staging, domain-preparation and preview path defers,
+moving no value; a claim with nothing else to pay reverts
+`InteractionDayAwaitingDelivery(dayId)`. A day the canonical chain sends that chain
+nothing for never waits: an excluded destination, a side with zero local interest
+that day, an armed side whose reported liability is zero, a recycled-only side.
+
+- **Arming.** `RewardRemittanceFacet.setDayDeliveryGateFromDay(fromDay)` —
+  `ADMIN_ROLE`, one-shot, Mirror-only (`DeliveryGateNotMirror`,
+  `DeliveryGateAlreadyArmed`), emits `DayDeliveryGateArmed`. Arm ONLY when
+  (1) the keeper proves day lists on that mirror after every
+  `RewardBudgetReceived` / `RewardBudgetRootReceived` — **no such step exists in
+  `apps/keeper` today, so the gate stays dark until one ships** (arming earlier
+  makes every funded day wait on a human); and (2) the mirror is FRESH: the setter
+  refuses while `custodyEraCurrent != 0` (`DeliveryGateEraRegistryPending`),
+  because Base still dispatches the pre-registry era and every d6 would then land
+  era-quarantined with no fresh exit. The setter also refuses a `fromDay` at or
+  below either fold cursor (`DeliveryGateBelowFold(fromDay, lenderCursor,
+  borrowerCursor)`): the fold priced those days without the gate and the walk may
+  already have paid them. Arm with `fromDay = 1` before the mirror's first
+  broadcast, and read `gateArmed` back from `getDayDeliveryState`.
+- **Refresh the #1944 facet set in ONE cut, on every chain.**
+  `RewardSweepWalkFacet`, `RewardStagingFacet`, `RewardClaimWalkFacet`,
+  `RewardEpochViewFacet`, `RewardForfeitWalkFacet`, `RewardClaimFacet`,
+  `InteractionRewardsLensFacet`, `RewardEpochFacet`, `RewardRemittanceLensFacet`
+  and `RewardRemittanceFacet` carry one behaviour across inlined library code and
+  two self-call seams. The expiry sweep reaches its transfer test by staticcall to
+  `InteractionRewardsLensFacet.claimTransferable` on EVERY chain, gate armed or
+  not, so a sweep host refreshed without that selector routed reverts every
+  expiry sweep (bubbled `FunctionDoesNotExist`). On an ARMED mirror an unrouted
+  `RewardRemittanceLensFacet.dayAwaitsFreshDelivery` does the same to every
+  claim, sweep and staging call. `RefreshAllFacetsInPlace` refreshes them
+  together; never refresh a subset.
+- **Never perform an effective reward-role change on a gate-armed mirror before
+  the custody era registry (PR C) lands** — `RewardReporterFacet.setBaseChainId`
+  or `setIsCanonicalRewardChain` moving it out of, or back into, the Mirror role.
+  With reward custody active, the change bumps the custody era, every later d6
+  lands quarantined, and every included day then waits mesh-wide. The setter
+  refuses to ARM after such a change; nothing refuses the change after arming, so
+  this line is the guard (see also the CCIP cutover runbook's era rotation).
+- **Proving — permissionless, on the mirror.**
+  `RewardEpochFacet.materializeTransportBatchChunk` for a delivery that carries a
+  transport epoch (unchanged: indexing the day's chunk IS the landing);
+  `RewardEpochFacet.proveDeliveryDayChunk(packetHash, chunkIndex, dayIds, proof)`
+  for a rooted (d6) delivery that holds no epoch (one received before custody
+  activation); `RewardEpochFacet.proveDeliveryDayList(packetHash, dayIds)` for a
+  flat-list (d5 or legacy) delivery. Refusals by name:
+  `DeliveryProofRouteIsBatch` (use the epoch route), `DeliveryProofNotBudget`,
+  `TransportPacketEraQuarantined` (classify the packet to final first),
+  `DeliveryPacketDisposed`, `TransportPacketHasNoDayList` (a pre-3a delivery
+  carries no provable list). Each newly proven day emits
+  `DayDeliveryProved(dayId, packetHash, remitId, route)`; the first delivery to
+  list a day stays recorded, and a repeat proof writes nothing. A proof moves no
+  value.
+- **Keeper reconstruction rule — the funded list is NOT the reservation's day
+  list.** `getRemitReservation(remitId).dayIds` is every day the remit CLOSED, a
+  superset; the wire lists only the FUNDED days. Rebuild the wire's list as that
+  array, in order, filtered by `getRewardBudgetRemitted(dstChainId, d) != 0`, and
+  verify it against `getRemitReservation(remitId).dayListRoot` with the wire's own
+  chunking (`RemitWire.d6Chunks` / `d6Root`) before submitting any chunk proof.
+  `RewardBudgetRemitted` carries only the funded-day COUNT, never the list.
+- **Readbacks.** `RewardRemittanceLensFacet.getDayDeliveryState(dayId)` returns
+  `(gateArmed, stamped, freshStamped, landed, provedBy, epochCount, reported,
+  reportSent, awaitsLender, awaitsBorrower)`: not `stamped` = not applied yet;
+  an `awaits*` flag on an armed day with `reportSent == false` = waiting on the
+  commitment report; an `awaits*` flag otherwise = waiting on delivery; `landed` =
+  delivered. `getPacketDeliveryProof(packetHash)` shows a delivery's list
+  commitments, chunk progress and its batch / quarantine / classification /
+  disposal state. **Landed is not drawable**: an epoch still needs to be whole and
+  attested before value moves from it; the delivered bound governs that.
+- **Repair rule — there is no admin release on the mirror, by design.** A day
+  whose delivery can never execute is repaired on BASE:
+  `releaseRemitReservation(remitId)` (`ADMIN_ROLE`, at least seven days after the
+  send, reservation still pending) re-opens its days, then `remitRewardBudget`
+  sends them again. If the original message executes after the release,
+  `RemitAckAfterRelease` surfaces the double landing — reconcile it as that
+  event's notes describe.
+- **Liveness.** With `fromDay = 1`, every included pre-`D*` day also waits for its
+  remit and its proof, and armed days additionally wait for the chain's
+  commitment report (Base itself waits for that report before remitting an armed
+  day). A stalled keeper produces named deferrals, not loss.
+- **Not behind the gate: pricing from the stamp.** A mirror on the refreshed
+  reward facets prices EVERY day Base stamped from that stamp, armed or not —
+  the schedule for an included day, zero for a destination excluded from the day,
+  the reduced floor for a day stamped while the fresh allocation ran short. Until
+  #1944 an unarmed day was priced from the schedule, which paid excluded and
+  exhausted days against funding they never received.
+
+On a gate-ARMED mirror the propagation cycle is therefore: finalize the day, remit
+it to every destination, have the keeper (or anyone) PROVE each delivery's day list
+on each mirror (`materializeTransportBatchChunk` for an epoch delivery,
+`proveDeliveryDayChunk` / `proveDeliveryDayList` otherwise), confirm
+`getDayDeliveryState(d).landed` on each mirror, and broadcast in any order — a
+gate-armed mirror holds the day until both the stamp and a proven delivery have
+landed. The ordering paragraphs that follow are the PRE-GATE procedure: they still
+govern any mirror whose gate is dark or whose facets predate it, and each is marked
+where the gate supersedes it.
+
 **On a mesh where every reachable mirror enforces the per-day funding property**
 (not merely "has #1566" — see the warning further down), drive the cycle
 explicitly after arming: finalize a day that has
@@ -1804,6 +1905,10 @@ not yet been applied on the mirrors, **remit that day to every destination and
 wait for each mirror to CONFIRM receipt**, and only then call the payable
 `broadcastGlobal` (or `broadcastGlobalTo` per destination) and pay the transport
 fee.
+
+*(Superseded on a gate-ARMED mirror, #1944 consequence 1: there the mirror itself
+holds the day until its proven delivery lands, so an early broadcast opens nothing.
+This paragraph governs a mirror whose gate is dark.)*
 
 **Your ordering is not enforced.** Anyone willing to pay the CCIP fee can
 broadcast a newly finalized day between your remit submission and its arrival,
@@ -1842,6 +1947,12 @@ waits on the remit. Choosing a pre-`D*` day breaks the cycle, because a pre-`D*`
 remit does not need the report. **Confirm such a day will still be available
 when you execute** — this is another reason `D*` needs a real buffer beyond
 execution.
+
+*(This paragraph and the two after it — through "whichever side of the arm that
+falls on" — are superseded on a gate-ARMED mirror, #1944 consequence 1: the
+mirror holds the day until both messages have landed, so delivery order is a
+liveness matter there, not a safety one. They still govern a mirror whose gate is
+dark.)*
 
 **Source order is not delivery order.** The messenger sets
 `allowOutOfOrderExecution: true`, so sending the remit first does not guarantee
@@ -1890,7 +2001,9 @@ operator treat a recoverable cutover as irreparable.)
 
 **On a mirror that does NOT enforce the per-day funding property, do not run a propagation procedure at
 all.** Keep the reward messenger paused and leave that mirror out of the cutover
-until that property or a day-scoped protocol gate lands there (#1944). Everything below
+until that property or a day-scoped protocol gate lands there (#1944 — that gate
+has now landed as a dark, one-shot switch, and ARMING it is what gives a mirror
+the property; see "The day delivery gate" above). Everything below
 about pausing and unpausing applies ONLY to a mirror that already carries the
 property, where an early broadcast costs a user an empty balance until funding
 arrives rather than paying them out of borrower collateral. Read the dead-end
@@ -1908,6 +2021,15 @@ newly minted supply. Before treating any mirror as out of the block, confirm the
 DEPLOYED fix enforces the per-day property; where it only protects a subset of
 owners, containment stays for cross-day funding corruption even though borrower
 collateral is safe.
+
+**An ARMED day delivery gate (#1944 consequence 1) IS that property** for every day
+Base stamped, from the gate's first day: such a day cannot be priced on that mirror
+for a side Base priced fresh funding for until a delivery proven to list it has
+landed. Its stated residuals stay outside it — a day applied only by the legacy
+kind-2 broadcast (no stamp), days before the gate's first day, and a late Base-side
+inclusion backfill on a day the mirror stamped zero-halved (that late delivery then
+lands as ordinary value). A mirror carrying the facets with the gate DARK does NOT
+have the property.
 
 **Sequence the pause AFTER report coverage, or the ceremony stalls.**
 `VaipakamRewardMessenger.onCrossChainMessage` is itself `whenNotPaused`, so
@@ -1927,7 +2049,9 @@ guardian's separate pause transaction being mined, anyone can finalize and
 broadcast, both from one helper contract. On a property-enforcing mesh the cost
 is a claim outage and a spent day rather than a loss, but the window is real and
 cannot be closed here: report completion and the pause are two transactions and
-nothing makes them atomic. A day-scoped protocol gate is what would (#1944).
+nothing makes them atomic. A day-scoped protocol gate is what would (#1944) — and
+on a gate-ARMED mirror it does: an early broadcast holds the day there until its
+proven delivery lands, so the cost is a wait, not a spent day.
 
 **Where that property IS enforced, the messenger pause is a usable gate.**
 `VaipakamRewardMessenger` is `GuardianPausable` — `pause()` is guardian-or-owner
@@ -1954,6 +2078,13 @@ DEAD-END LIST so the next person does not re-derive them under time pressure:
 | Reconcile every broadcastable day first | An applied-but-unfunded day is ALREADY open and pausing Base cannot close it; and `finalizeDay` is permissionless, so new broadcastable days can appear after the inventory. |
 | Contain the destination's claim path meanwhile | `AdminFacet.pause()` is the Diamond's single global flag: `claimInteractionRewards` and `onRewardBudgetReceived` are BOTH `whenNotPaused`, so pausing claims also blocks the remittance receipt. "Wait until every pending day is funded" is unreachable — funding cannot land while claims are stopped, and unpausing to admit it re-opens the race. |
 | Safe-only executor + fresh reconciliation before execution | Restricting the executor controls only WHO unpauses. It does not make reconciliation and unpause atomic, and `finalizeDay` — permissionless and not routed through the paused messenger — lets a new unfunded day be created after the inventory, including by front-running the Safe's own unpause. |
+
+*(Scope, #1944 consequence 1: every row above, and the one safe branch below,
+concern a mirror WITHOUT an armed day delivery gate — one on facets that predate
+it, or carrying them with the gate dark. A gate-ARMED mirror closes the race the
+rows try to close by holding the day itself and needs no paused-mesh branch of its
+own; but the branch is MESH-WIDE, so any other reachable mirror without an armed
+gate still holds the whole mesh to it.)*
 
 **So there is ONE safe branch, and it is MESH-WIDE rather than per-mirror: while
 ANY REACHABLE mirror lacks the per-day funding property below, keep the reward
@@ -2109,10 +2240,15 @@ mirror's report, `_planDay` sees no included-chain budget, returns no close at
 all, and `remitRewardBudget` reverts `NothingToRemit` — so there is neither a
 receipt nor a zero-message close to observe. **Do not read that revert as permission to broadcast.** `NothingToRemit` means
 the day carries no budget FOR THAT DESTINATION — not that opening its gate is
-harmless. Before `D*` a mirror prices the day from its own local pool rather than
-from the per-destination slice, so an active mirror holding local entries will
-pay against a day it was never funded for. **Choose a day every destination was
-included in.** That is the only safe resolution, and it also avoids the
+harmless. On a mirror whose reward facets predate #1944, a pre-`D*` day is priced
+from the fixed schedule rather than from the per-destination slice, so an active
+mirror holding local entries will pay against a day it was never funded for.
+Since #1944 a mirror on the refreshed reward facets prices every stamped day from
+Base's stamp, armed or not — zero for a destination excluded from the day, the
+reduced floor for a day stamped while the fresh allocation ran short — so there
+such a day prices to zero; that fix is not behind the delivery gate. **Choose a
+day every destination was included in** regardless. That is the only safe
+resolution for a mirror on older facets, and it also avoids the
 `broadcastGlobalTo` restriction below.
 
 **A pre-`D*` day cannot produce a zero-total close at all** — the plan returns
@@ -2123,6 +2259,11 @@ fall back on. The zero-close exception below applies to ARMED days only: its
 stamped payable budget is zero, so opening its gate funds nothing and strands
 nobody. Confirm the zero-total close in the emitted event rather than assuming
 it.
+
+*(On a gate-ARMED mirror, #1944 consequence 1, the remit-first order IS enforced
+by the mirror — a day broadcast first is held until its proven delivery lands —
+and it becomes a liveness preference. The paragraph below governs a mirror whose
+gate is dark.)*
 
 The remit-first order is not a preference. The broadcast **opens the mirror's
 claim gate**, and it does so independently of the keeper's remittance cron — so a
