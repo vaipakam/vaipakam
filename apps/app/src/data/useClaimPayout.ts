@@ -16,7 +16,7 @@ import { copy } from '../content/copy';
 import { useTokenMeta } from '../contracts/erc20';
 import { AssetType } from '../lib/types';
 import { formatTokenAmount, shortAddress } from '../lib/format';
-import type { ClaimableLoan } from './claimables';
+import type { ClaimableLoan, OwedAtDefaultRead } from './claimables';
 
 export interface ClaimPayoutText {
   /** The payout itself. */
@@ -132,6 +132,18 @@ export function useClaimPayoutText(
         // be formatted yet: a cash recovery whose symbol is still loading
         // is not "the collateral itself".
         inKind: loan.claim.amount === 0n,
+        // #2374 — what the protocol recorded the loan owed at default, and
+        // the recovery in the same asset (null when the claim pays another).
+        owed: loan.claim.owedAtDefault,
+        recovered:
+          loan.claim.asset !== null &&
+          loan.claim.asset.toLowerCase() === loan.lendingAsset.toLowerCase()
+            ? loan.claim.amount
+            : null,
+        format: principalMeta.data
+          ? (amount: bigint) =>
+              `${formatTokenAmount(amount, principalMeta.data!.decimals)} ${principalMeta.data!.symbol}`
+          : null,
         labels,
       });
     }
@@ -333,10 +345,55 @@ export function defaultRecoveryNote(args: {
   hasHeld: boolean;
   /** True when the recovery is the collateral itself rather than an amount. */
   inKind: boolean;
-  labels: Pick<RowLabels, 'compareInKind' | 'recoveryNotComparable'>;
+  /** #2374 — what the protocol recorded the loan owed at default. */
+  owed: OwedAtDefaultRead;
+  /** The recovery in the loan's principal asset; null when the claim pays
+   *  in another asset. */
+  recovered: bigint | null;
+  /** Formats an amount of the principal asset; null while its details load
+   *  or if they cannot be read. */
+  format: ((amount: bigint) => string) | null;
+  labels: Pick<
+    RowLabels,
+    | 'compareInKind'
+    | 'recoveryNotComparable'
+    | 'owedAtDefault'
+    | 'recoveryShortOfPrincipal'
+    | 'recoveryCoversPrincipal'
+    | 'owedNotComparable'
+    | 'owedUnreadable'
+  >;
 }): string {
+  const { labels } = args;
   // An in-kind recovery with held proceeds beside it is not purely "the
   // collateral itself", so it gets the general statement.
-  if (args.inKind && !args.hasHeld) return args.labels.compareInKind;
-  return args.labels.recoveryNotComparable;
+  const kindLine =
+    args.inKind && !args.hasHeld ? labels.compareInKind : labels.recoveryNotComparable;
+  if (args.owed.kind === 'unreadable') {
+    return args.inKind && !args.hasHeld
+      ? `${labels.owedUnreadable} ${labels.compareInKind}`
+      : labels.owedUnreadable;
+  }
+  // No record, or no way yet to put the figure in words: say only what the
+  // app knows — never a figure it cannot substantiate.
+  if (args.owed.kind !== 'recorded' || args.format === null) return kindLine;
+  const { principal, interest, lateFee, viaFallback } = args.owed;
+  const owedLine = labels.owedAtDefault(
+    args.format(principal + interest + lateFee),
+    args.format(principal),
+    args.format(interest + lateFee),
+  );
+  if (args.inKind && !args.hasHeld) return `${owedLine} ${labels.compareInKind}`;
+  // Held proceeds beside the claim, a fallback default (its recovery can
+  // arrive in steps) or a claim in another asset: the claim alone is not
+  // the whole recovery, so it is not set against the figure.
+  if (args.inKind || args.hasHeld || viaFallback || args.recovered === null) {
+    return `${owedLine} ${labels.owedNotComparable}`;
+  }
+  // No protocol share is taken from principal, so a recovery below it is a
+  // substantiated shortfall; above it, the interest and late fees are paid
+  // net of the protocol's share and are not compared.
+  return args.recovered < principal
+    ? `${owedLine} ${labels.recoveryShortOfPrincipal(args.format(principal - args.recovered))}`
+    : `${owedLine} ${labels.recoveryCoversPrincipal}`;
 }

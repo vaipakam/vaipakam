@@ -19,6 +19,7 @@ import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
+import {LibOwedAtDefault} from "../libraries/LibOwedAtDefault.sol";
 
 /**
  * @title AddCollateralFacet
@@ -328,7 +329,9 @@ contract AddCollateralFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         }
         LibSanctionedLock.clearFrozenClaimant(s, loanId, false);
 
-        // Cure path: FallbackPending -> Active.
+        // Cure path: FallbackPending -> Active. The default did not stand, so
+        // its owed-at-default record goes with it (#2374).
+        LibOwedAtDefault.clear(s, loanId);
         LibLifecycle.transition(
             loan,
             LibVaipakam.LoanStatus.FallbackPending,

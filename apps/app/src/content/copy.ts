@@ -3472,12 +3472,32 @@ const copySource = {
       prepaidBufferBack: 'Your prepaid buffer back',
       repaidFunds: 'Repaid funds',
       // UX3-005 (revised #2373 r1) — what a default recovery is, and what
-      // the app cannot know about it. Never a computed shortfall: the amount
-      // owed at default is not available, and the loan's current principal
-      // is not what the current holder lent.
+      // the app cannot know about it. Never a shortfall against the loan's
+      // current principal (not what the current holder lent). Since #2374 a
+      // figure is shown when the protocol recorded what the loan owed at
+      // default; this line remains for a default with no such record.
       recoveryNotComparable:
         'This is what the default settlement recovered. How it compares with what the loan still owed when it defaulted isn’t available to the app, so no shortfall is shown.',
       compareInKind: 'This is the collateral itself, not a cash amount — what it is worth depends on its market value.',
+      // #2374 — the protocol now records what the loan owed at the moment it
+      // defaulted. Phrased for the CURRENT holder ("the loan still owed"),
+      // never "you lent". The recovery is compared only against principal:
+      // the protocol's share of interest and late fees is taken before the
+      // lender is paid, so a gap there is not all a loss.
+      owedAtDefault: tmpl(
+        'When it defaulted, the loan still owed {{total}}: {{principal}} principal plus {{charges}} in interest and late fees.',
+        ['total', 'principal', 'charges'],
+      ),
+      recoveryShortOfPrincipal: tmpl(
+        'This recovery is {{short}} short of the principal alone.',
+        ['short'],
+      ),
+      recoveryCoversPrincipal:
+        'This recovery covers the principal in full. Interest and late fees are paid out after the protocol takes its share, so they are not compared here.',
+      owedNotComparable:
+        'This recovery isn’t compared with that figure, because it may have arrived in more than one part.',
+      owedUnreadable:
+        'What the loan still owed when it defaulted couldn’t be read just now, so no comparison is shown.',
       surplusAfterLiquidation: 'Anything left after liquidation',
       residualAfterMatch: 'Anything left after the internal match',
       whyRentalEnded: 'The rental ended — collect your earned fees and reclaim the NFT.',

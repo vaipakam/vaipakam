@@ -84,6 +84,48 @@ interface ClaimableTuple {
   7?: boolean;
 }
 
+/** #2374 — what the loan owed at the moment it defaulted, as the protocol
+ *  recorded it then (`getOwedAtDefault`). Read only for a defaulted lender
+ *  claim on an ERC-20 loan. `none` covers every case the protocol keeps no
+ *  record for (a default before the record existed, a deployment without
+ *  the view); `unreadable` is a transport failure, stated as such. */
+export type OwedAtDefaultRead =
+  | {
+      kind: 'recorded';
+      principal: bigint;
+      interest: bigint;
+      lateFee: bigint;
+      /** The default entered the full-collateral fallback, so its recovery
+       *  may have arrived in more than one step. */
+      viaFallback: boolean;
+    }
+  | { kind: 'none' }
+  | { kind: 'unreadable' };
+
+const OWED_NONE: OwedAtDefaultRead = { kind: 'none' };
+
+/** Read `getOwedAtDefault` for one loan. Never fails the claim probe: the
+ *  figure is a comparison beside the payout, not part of it. */
+export async function readOwedAtDefault(
+  publicClient: PublicClient,
+  diamond: `0x${string}`,
+  loanId: string | number,
+): Promise<OwedAtDefaultRead> {
+  try {
+    const [principal, interest, lateFee, recordedAt, viaFallback] = (await publicClient.readContract({
+      address: diamond,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'getOwedAtDefault',
+      args: [BigInt(loanId)],
+    })) as readonly [bigint, bigint, bigint, bigint | number, boolean];
+    if (BigInt(recordedAt) === 0n) return OWED_NONE;
+    return { kind: 'recorded', principal, interest, lateFee, viaFallback };
+  } catch (e) {
+    // A deployment without the view reverts: it keeps no record.
+    return isRevert(e) ? OWED_NONE : { kind: 'unreadable' };
+  }
+}
+
 /** What the wallet would actually receive on claim — carried onto the
  *  row so the Claim Center can show the NUMBER instead of a vague
  *  "+ interest" / "proceeds or collateral" description (UX-002). The
@@ -118,6 +160,9 @@ export interface ClaimDetail {
    *  side. It never makes a claim actionable by itself — the contract's
    *  NothingToClaim guard does not count it. */
   extraCollateral: { asset: string; amount: bigint } | null;
+  /** #2374 — what the loan owed when it defaulted. `none` unless this is a
+   *  defaulted lender claim on an ERC-20 loan with a record. */
+  owedAtDefault: OwedAtDefaultRead;
 }
 
 export interface ClaimableLoan extends PositionLoan {
@@ -280,6 +325,15 @@ export async function probeClaim(
       }
     }
 
+    // #2374 — what the loan owed at default, for the comparison beside a
+    // defaulted lender claim.
+    const owedAtDefault =
+      isLender &&
+      loan.assetType === AssetType.ERC20 &&
+      (loan.status === 'defaulted' || loan.status === 'liquidated')
+        ? await readOwedAtDefault(publicClient, diamond, loan.loanId)
+        : OWED_NONE;
+
     // Mirror ClaimFacet's actionability guard.
     const actionable =
       amount > 0n ||
@@ -307,6 +361,7 @@ export async function probeClaim(
             lifRebate,
             surplus,
             extraCollateral,
+            owedAtDefault,
           },
         })
       : NONE;

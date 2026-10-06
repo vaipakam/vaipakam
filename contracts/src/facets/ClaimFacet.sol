@@ -2147,6 +2147,39 @@ contract ClaimFacet is
         );
     }
 
+    /// @notice #2374 — what `loanId` owed, in its principal asset, at the
+    ///         moment it defaulted (left `Active` for `Defaulted` or for the
+    ///         full-collateral fallback), as the protocol recorded it then.
+    /// @dev    GROSS debt — principal outstanding, accrued interest net of what
+    ///         was already settled, and the late fee — on the basis the forced
+    ///         close itself used. The protocol's share of `interest` and
+    ///         `lateFee` is taken before the lender is paid, so this is not the
+    ///         lender's entitlement; no fee is taken from `principal`. No
+    ///         record (`recordedAt == 0`) for a loan that never defaulted, that
+    ///         defaulted before this record existed, an NFT rental, a loan
+    ///         fully closed by internal matching, or a fallback the borrower
+    ///         cured or repaid.
+    /// @return principal   Principal outstanding at default.
+    /// @return interest    Accrued interest outstanding at default.
+    /// @return lateFee     Late fee owed at default.
+    /// @return recordedAt  Timestamp of the default; 0 when not recorded.
+    /// @return viaFallback True when the default entered the fallback, so its
+    ///                     recovery may have arrived in more than one step.
+    function getOwedAtDefault(uint256 loanId)
+        external
+        view
+        returns (
+            uint256 principal,
+            uint256 interest,
+            uint256 lateFee,
+            uint64 recordedAt,
+            bool viaFallback
+        )
+    {
+        LibVaipakam.OwedAtDefault storage o = LibVaipakam.storageSlot().owedAtDefault[loanId];
+        return (o.principal, o.interest, o.lateFee, o.recordedAt, o.viaFallback);
+    }
+
     /// @dev #1067 — shared default/liquidation-terminal reward + LIF close used
     ///      by the three claim-time default terminals (the backstop retry-swap
     ///      branch, `_absorbLenderSlice`, and the vanilla FallbackPending→Defaulted

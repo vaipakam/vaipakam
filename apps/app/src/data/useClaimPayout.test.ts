@@ -2,8 +2,10 @@
  * The claim payout, composed. Every rule here is a pure function so it is
  * tested rather than read:
  * - UX3-005 (revised #2373 r1) — the line beside a defaulted lender claim
- *   never states a figure: the amount owed at default is not available, and
- *   the loan's current principal is not what the current holder lent.
+ *   never states a figure it cannot substantiate: never the loan's current
+ *   principal (not what the current holder lent). #2374 — when the protocol
+ *   recorded what the loan owed at default, that figure is stated, and the
+ *   recovery is compared only against the principal.
  * - #2373 r3–r5 — every lane the claim transaction pays appears; a lane
  *   whose token details are loading or unreadable says so instead of
  *   vanishing or being replaced by another lane.
@@ -28,27 +30,86 @@ const loading: LaneAmount = { kind: 'loading' };
 const unreadable: LaneAmount = { kind: 'unreadable' };
 
 describe('defaultRecoveryNote', () => {
+  const none = { kind: 'none' } as const;
+  const fmt = (amount: bigint) => `${amount} USDC`;
+  const recorded = (over: Partial<{ viaFallback: boolean }> = {}) =>
+    ({ kind: 'recorded', principal: 1000n, interest: 30n, lateFee: 20n, viaFallback: false, ...over }) as const;
+  const base = { hasHeld: false, inKind: false, owed: none, recovered: 800n, format: fmt, labels } as const;
+  const owedLine = labels.owedAtDefault('1050 USDC', '1000 USDC', '50 USDC');
+
+  // ── no record: the #2373 behaviour, unchanged ──
   it('says an in-kind recovery is the collateral itself, not cash', () => {
-    expect(defaultRecoveryNote({ hasHeld: false, inKind: true, labels })).toBe(labels.compareInKind);
+    expect(defaultRecoveryNote({ ...base, inKind: true })).toBe(labels.compareInKind);
   });
 
   it('does not call an in-kind recovery with held cash beside it "the collateral itself"', () => {
-    expect(defaultRecoveryNote({ hasHeld: true, inKind: true, labels })).toBe(labels.recoveryNotComparable);
+    expect(defaultRecoveryNote({ ...base, hasHeld: true, inKind: true })).toBe(labels.recoveryNotComparable);
   });
 
-  it('states the unknown for a cash recovery instead of computing a shortfall', () => {
-    expect(defaultRecoveryNote({ hasHeld: false, inKind: false, labels })).toBe(labels.recoveryNotComparable);
+  it('states the unknown for a cash recovery with no record instead of computing a shortfall', () => {
+    expect(defaultRecoveryNote(base)).toBe(labels.recoveryNotComparable);
   });
 
   // The #2373 r1 P1 defect: the note told a holder "the 500 WETH you lent",
-  // computed from the loan's current principal. No case may claim the
-  // holder lent anything, or state a number.
-  it('never tells the holder what they lent, and never states a figure, in any case', () => {
+  // computed from the loan's current principal. Without a record no case may
+  // claim the holder lent anything, or state a number.
+  it('never tells the holder what they lent, and never states a figure without a record', () => {
     for (const hasHeld of [false, true]) {
       for (const inKind of [false, true]) {
-        const note = defaultRecoveryNote({ hasHeld, inKind, labels });
+        const note = defaultRecoveryNote({ ...base, hasHeld, inKind });
         expect(note).not.toMatch(/you lent/i);
         expect(note).not.toMatch(/\d/);
+      }
+    }
+  });
+
+  // ── #2374: a figure the protocol recorded at the default ──
+  it('states a shortfall against the principal when the recovery falls below it', () => {
+    expect(defaultRecoveryNote({ ...base, owed: recorded() })).toBe(
+      `${owedLine} ${labels.recoveryShortOfPrincipal('200 USDC')}`,
+    );
+  });
+
+  it('does not count the interest and late fees as a loss once the principal is covered', () => {
+    expect(defaultRecoveryNote({ ...base, owed: recorded(), recovered: 1040n })).toBe(
+      `${owedLine} ${labels.recoveryCoversPrincipal}`,
+    );
+    expect(defaultRecoveryNote({ ...base, owed: recorded(), recovered: 1000n })).toBe(
+      `${owedLine} ${labels.recoveryCoversPrincipal}`,
+    );
+  });
+
+  it('states the figure but does not compare a recovery that may have come in parts', () => {
+    const notComparable = `${owedLine} ${labels.owedNotComparable}`;
+    expect(defaultRecoveryNote({ ...base, owed: recorded(), hasHeld: true })).toBe(notComparable);
+    expect(defaultRecoveryNote({ ...base, owed: recorded({ viaFallback: true }) })).toBe(notComparable);
+    expect(defaultRecoveryNote({ ...base, owed: recorded(), recovered: null })).toBe(notComparable);
+    expect(defaultRecoveryNote({ ...base, owed: recorded(), inKind: true, hasHeld: true })).toBe(notComparable);
+  });
+
+  it('states the figure beside an in-kind recovery without comparing it', () => {
+    expect(defaultRecoveryNote({ ...base, owed: recorded(), inKind: true })).toBe(
+      `${owedLine} ${labels.compareInKind}`,
+    );
+  });
+
+  it('falls back to the no-figure line while the asset details are not available', () => {
+    expect(defaultRecoveryNote({ ...base, owed: recorded(), format: null })).toBe(labels.recoveryNotComparable);
+  });
+
+  it('says the record could not be read, rather than that there is none', () => {
+    expect(defaultRecoveryNote({ ...base, owed: { kind: 'unreadable' } })).toBe(labels.owedUnreadable);
+    expect(defaultRecoveryNote({ ...base, owed: { kind: 'unreadable' }, inKind: true })).toBe(
+      `${labels.owedUnreadable} ${labels.compareInKind}`,
+    );
+  });
+
+  it('phrases every figure for the current holder, never "you lent"', () => {
+    for (const recovered of [800n, 1040n, null]) {
+      for (const viaFallback of [false, true]) {
+        const note = defaultRecoveryNote({ ...base, owed: recorded({ viaFallback }), recovered });
+        expect(note).not.toMatch(/you lent/i);
+        expect(note).toMatch(/still owed/);
       }
     }
   });
