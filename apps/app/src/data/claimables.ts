@@ -179,6 +179,16 @@ const NONE: ClaimProbe = { kind: 'none' };
 const UNCONFIRMED: ClaimProbe = { kind: 'unconfirmed' };
 const claimable = (loan: ClaimableLoan): ClaimProbe => ({ kind: 'claimable', loan });
 
+/** Whether a probe's verdict may be memoized for reuse. A transport failure
+ *  is never memoized ("couldn't confirm" is not "not claimable"), and
+ *  neither is a claimable row whose owed-at-default read failed (#2374): the
+ *  payout is sound, but reusing it would repeat "couldn't be read just now"
+ *  for the cache's whole lifetime instead of retrying once the RPC recovers. */
+export function isMemoizableProbe(probe: ClaimProbe): boolean {
+  if (probe.kind === 'unconfirmed') return false;
+  return !(probe.kind === 'claimable' && probe.loan.claim.owedAtDefault.kind === 'unreadable');
+}
+
 /** Probe ONE candidate: does `me` still hold this side's position NFT,
  *  and what does `getClaimable` say it pays? The single implementation
  *  behind both the wallet-wide claim list and the loan page's own read
@@ -704,12 +714,9 @@ export function useMyClaimables() {
           if (memo.hit) return memo.value as ClaimableLoan | null;
           // Only a CLEAN verdict is memoizable: a transport failure is
           // "couldn't confirm", never a cacheable "not claimable".
-          let clean = true;
           const probe = await probeClaim(publicClient, diamond, me, loan);
-          if (probe.kind === 'unconfirmed') {
-            transportFailed = true;
-            clean = false;
-          }
+          if (probe.kind === 'unconfirmed') transportFailed = true;
+          const clean = isMemoizableProbe(probe);
           const verdict = probe.kind === 'claimable' ? probe.loan : null;
           // Cache only when the pass was CLEAN and the rail was
           // healthy when it started: a verdict captured while

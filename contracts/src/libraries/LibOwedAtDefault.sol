@@ -18,20 +18,31 @@ import {LibEntitlement} from "./LibEntitlement.sol";
  *         bytecode headroom left).
  *
  *         WHAT. Principal outstanding, per-second accrued interest net of the
- *         interest already settled, and the late fee — the basis every forced
- *         close settles its debt on, at the same block timestamp, so the figure
- *         equals the debt the close itself used. Computed only on an edge OUT
- *         OF `Active`: by a later `FallbackPending -> Defaulted` move the loan's
- *         stored state no longer describes the debt at default (interest keeps
- *         running, a partial internal match lowers principal), so the entry
- *         figure is kept, not restated.
+ *         interest already settled, and the late fee — the basis a swap-based
+ *         forced close (time default, HF liquidation) settles its debt on, at
+ *         the same block timestamp, so for those the figure equals the debt the
+ *         close itself used. A FALLBACK allocates collateral on its own basis
+ *         (principal plus interest plus a lender bonus and a treasury share, no
+ *         late fee); for a fallback this records the debt, not that
+ *         allocation. Computed only on an edge OUT OF `Active`: by a later
+ *         `FallbackPending -> Defaulted` move the loan's stored state no longer
+ *         describes the debt at default (interest keeps running, a partial
+ *         internal match lowers principal), so the entry figure is kept, not
+ *         restated.
+ *
+ *         WHEN IT IS REPORTED. The record is the loan's MOST RECENT default and
+ *         is never cleared. `ClaimFacet.getOwedAtDefault` reports it only while
+ *         the loan stands defaulted (`Defaulted` or `FallbackPending`), so a
+ *         fallback that is cured (back to `Active`), repaid, fully closed by an
+ *         internal match, or a loan that has since settled, reads as "no
+ *         record" by construction — no exit path has to remember to clear it,
+ *         and a new default from `Active` overwrites it. The history stays in
+ *         the {OwedAtDefaultRecorded} event.
  *
  *         NOT RECORDED: NFT rentals (their "principal" is a daily fee and the
- *         claim is the NFT), a loan fully closed by internal matching (its
- *         principal is already zero when it terminalizes), and any loan that
- *         defaulted before this record existed. A `FallbackPending` loan its
- *         borrower cures (back to `Active`) or repays loses the record: it did
- *         not, in the end, default.
+ *         claim is the NFT), a loan fully closed by internal matching straight
+ *         from `Active` (its principal is already zero when it terminalizes),
+ *         and any loan that defaulted before this record existed.
  */
 library LibOwedAtDefault {
     /// @notice What `loanId` owed in `asset` at the moment it defaulted.
@@ -48,24 +59,16 @@ library LibOwedAtDefault {
         bool viaFallback
     );
 
-    /// @notice `loanId`'s record was removed because the fallback it entered
-    ///         was cured or repaid, so the loan did not in the end default.
-    /// @custom:event-category informational/settlement
-    event OwedAtDefaultCleared(uint256 indexed loanId);
-
-    /// @notice Keep the record in step with a terminal status write from
-    ///         `from` to `to`. Called by `EncumbranceMutateFacet.terminalize*`
-    ///         BEFORE the status write, at the close's own timestamp.
+    /// @notice Record what `loanId` owed if the terminal status write from
+    ///         `from` to `to` is a default. Called by
+    ///         `EncumbranceMutateFacet.terminalize*` BEFORE the status write, at
+    ///         the close's own timestamp.
     function onTerminal(
         LibVaipakam.Storage storage s,
         uint256 loanId,
         LibVaipakam.LoanStatus from,
         LibVaipakam.LoanStatus to
     ) internal {
-        if (to == LibVaipakam.LoanStatus.Repaid) {
-            clear(s, loanId);
-            return;
-        }
         if (from != LibVaipakam.LoanStatus.Active) return;
         bool viaFallback = to == LibVaipakam.LoanStatus.FallbackPending;
         if (!viaFallback && to != LibVaipakam.LoanStatus.Defaulted) return;
@@ -91,12 +94,5 @@ library LibOwedAtDefault {
             viaFallback: viaFallback
         });
         emit OwedAtDefaultRecorded(loanId, loan.principalAsset, principal, interest, lateFee, viaFallback);
-    }
-
-    /// @notice Remove `loanId`'s record, if it has one.
-    function clear(LibVaipakam.Storage storage s, uint256 loanId) internal {
-        if (s.owedAtDefault[loanId].recordedAt == 0) return;
-        delete s.owedAtDefault[loanId];
-        emit OwedAtDefaultCleared(loanId);
     }
 }

@@ -9,7 +9,7 @@ import {
   ContractFunctionRevertedError,
   type PublicClient,
 } from 'viem';
-import { probeClaim } from './claimables';
+import { isMemoizableProbe, probeClaim } from './claimables';
 import type { PositionLoan } from './hooks';
 
 const ME = '0x00000000000000000000000000000000000000aa';
@@ -256,5 +256,60 @@ describe('probeClaim — ownership', () => {
       borrowerLoan,
     );
     expect(r.kind).toBe('none');
+  });
+});
+
+describe('probeClaim — what the loan owed at default (#2374)', () => {
+  const lenderLoan = { ...borrowerLoan, role: 'lender', lendingAsset: USDC } as unknown as PositionLoan;
+  const lenderReads = { ownerOf: ME, getClaimable: [USDC, 10n, false, 0n, 0n, 0n, 0n, false] };
+
+  it('carries the recorded figure on a defaulted lender claim', async () => {
+    const r = await probeClaim(
+      client({ ...lenderReads, getOwedAtDefault: [1000n, 30n, 20n, 1_700_000_000n, true] }),
+      DIAMOND,
+      ME,
+      lenderLoan,
+    );
+    expect(r.kind === 'claimable' && r.loan.claim.owedAtDefault).toEqual({
+      kind: 'recorded',
+      principal: 1000n,
+      interest: 30n,
+      lateFee: 20n,
+      viaFallback: true,
+    });
+    expect(isMemoizableProbe(r)).toBe(true);
+  });
+
+  it('reads no record as none, whether unwritten or from a deployment without the view', async () => {
+    for (const read of [[0n, 0n, 0n, 0n, false], () => { throw revert(); }]) {
+      const r = await probeClaim(client({ ...lenderReads, getOwedAtDefault: read }), DIAMOND, ME, lenderLoan);
+      expect(r.kind === 'claimable' && r.loan.claim.owedAtDefault).toEqual({ kind: 'none' });
+    }
+  });
+
+  it('keeps the claim when only that read fails, says so, and does not memoize it', async () => {
+    const r = await probeClaim(
+      client({ ...lenderReads, getOwedAtDefault: () => { throw new Error('fetch failed'); } }),
+      DIAMOND,
+      ME,
+      lenderLoan,
+    );
+    expect(r.kind).toBe('claimable');
+    expect(r.kind === 'claimable' && r.loan.claim.owedAtDefault).toEqual({ kind: 'unreadable' });
+    expect(isMemoizableProbe(r)).toBe(false);
+  });
+
+  it('does not read it outside a defaulted lender claim', async () => {
+    // The fake client throws on any unexpected read, which would surface as
+    // `unreadable` here rather than `none`.
+    for (const loan of [{ ...lenderLoan, status: 'repaid' }, { ...lenderLoan, status: 'fallback_pending' }]) {
+      const r = await probeClaim(client(lenderReads), DIAMOND, ME, loan as PositionLoan);
+      expect(r.kind === 'claimable' && r.loan.claim.owedAtDefault).toEqual({ kind: 'none' });
+    }
+  });
+
+  it('never memoizes an unconfirmed probe', () => {
+    expect(isMemoizableProbe({ kind: 'unconfirmed' })).toBe(false);
+    expect(isMemoizableProbe({ kind: 'none' })).toBe(true);
   });
 });

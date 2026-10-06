@@ -2386,9 +2386,11 @@ library LibVaipakam {
      *         or for `FallbackPending` (the fallback's entry IS the default; a
      *         later move from `FallbackPending` to `Defaulted` keeps this
      *         figure rather than restating it at the claim's timestamp).
-     * @dev    The same basis every forced close settles on: principal
-     *         outstanding, per-second accrued interest net of interest already
-     *         settled, and the late fee. It is the GROSS debt — the protocol's
+     * @dev    Principal outstanding, per-second accrued interest net of
+     *         interest already settled, and the late fee — the basis a
+     *         swap-based forced close settles its debt on (a fallback allocates
+     *         collateral on its own basis; for it this is the debt, not that
+     *         allocation). It is the GROSS debt — the protocol's
      *         share of interest and late fee is taken from it before the lender
      *         is paid, so it is not the lender's entitlement. It records no
      *         recovery: what the default paid out is a separate fact.
@@ -7722,11 +7724,12 @@ library LibVaipakam {
         ///      slot but is not live, so no path that ends a request has to
         ///      clear it.
         mapping(uint256 => uint256) refinanceRequestOfLoan;
-        /// @dev #2374 — what each ERC-20 loan owed at the moment it defaulted,
-        ///      by loan id. Written and cleared ONLY by {LibOwedAtDefault};
-        ///      `recordedAt == 0` means no record (never defaulted, defaulted
-        ///      before this record existed, a rental, or a fallback the
-        ///      borrower cured or repaid).
+        /// @dev #2374 — what each ERC-20 loan owed at its most recent default,
+        ///      by loan id. Written ONLY by {LibOwedAtDefault} and never
+        ///      cleared; `ClaimFacet.getOwedAtDefault` reports it only while
+        ///      the loan stands defaulted. `recordedAt == 0` means none was
+        ///      ever written (never defaulted, a default before this record
+        ///      existed, or a rental).
         mapping(uint256 => OwedAtDefault) owedAtDefault;
     }
 
