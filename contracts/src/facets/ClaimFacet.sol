@@ -1798,8 +1798,12 @@ contract ClaimFacet is
 
     /// @dev Distributes principal-asset proceeds from a successful retry
     ///      swap. Lender first (up to their `lenderPrincipalDue` = principal
-    ///      + accrued + late fees + 3%), then treasury (2%), then borrower
-    ///      surplus. Rewrites the lender and borrower claim records to the
+    ///      + accrued interest net of settled interest + the lender bonus,
+    ///      3% of principal by default; late fees are deliberately NOT
+    ///      included — see `LibFallback.computeFallbackEntitlements`), then
+    ///      treasury (its share, 2% of principal by default), then borrower
+    ///      surplus. Both shares are the per-loan values snapshotted at
+    ///      initiation (#2428). Rewrites the lender and borrower claim records to the
     ///      principal asset so the normal withdrawal flow below works.
     function _distributeRetryProceeds(
         uint256 loanId,
@@ -2105,8 +2109,10 @@ contract ClaimFacet is
     /// @param loanId Loan to query.
     /// @return lenderCollateral     Collateral units routed to the lender if
     ///                              the claim-time retry fails (principal +
-    ///                              interest + late fees + 3% bonus, capped
-    ///                              at available collateral).
+    ///                              interest net of settled interest + the
+    ///                              lender bonus, 3% of principal by default;
+    ///                              no late fee — #2428), capped at available
+    ///                              collateral.
     /// @return treasuryCollateral   Collateral units routed to treasury
     ///                              (≈2% of principal, or zero if
     ///                              undercollateralized).
