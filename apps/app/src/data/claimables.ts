@@ -187,7 +187,22 @@ const claimable = (loan: ClaimableLoan): ClaimProbe => ({ kind: 'claimable', loa
  *  for the cache's whole lifetime instead of retrying once the RPC recovers. */
 export function isMemoizableProbe(probe: ClaimProbe): boolean {
   if (probe.kind === 'unconfirmed') return false;
-  return !(probe.kind === 'claimable' && probe.loan.claim.owedAtDefault.kind === 'unreadable');
+  return !(probe.kind === 'claimable' && owedReadFailed(probe.loan));
+}
+
+/** #2374 — a claim row whose owed-at-default read failed in transport: the
+ *  payout is sound, but the figure should be read again soon. */
+export function owedReadFailed(loan: ClaimableLoan | null | undefined): boolean {
+  return loan?.claim.owedAtDefault.kind === 'unreadable';
+}
+
+/** #2426 r3 — how soon the loan page re-reads its claim: only while the
+ *  owed-at-default figure could not be read, so a transient RPC failure does
+ *  not leave "couldn't be read just now" on the page (the query otherwise
+ *  refetches only on an invalidation). */
+export const OWED_RETRY_MS = 30_000;
+export function loanClaimRefetchInterval(loan: ClaimableLoan | null | undefined): number | false {
+  return owedReadFailed(loan) ? OWED_RETRY_MS : false;
 }
 
 /** Probe ONE candidate: does `me` still hold this side's position NFT,
@@ -780,6 +795,7 @@ export function useLoanClaim(
     ],
     enabled: Boolean(publicClient && me && loan),
     staleTime: 30_000,
+    refetchInterval: (query) => loanClaimRefetchInterval(query.state.data),
     queryFn: async (): Promise<ClaimableLoan | null> => {
       const probe = await probeClaim(publicClient!, readChain.diamondAddress, me!, {
         ...loan!,

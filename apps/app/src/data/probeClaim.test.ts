@@ -9,7 +9,7 @@ import {
   ContractFunctionRevertedError,
   type PublicClient,
 } from 'viem';
-import { isMemoizableProbe, probeClaim } from './claimables';
+import { isMemoizableProbe, loanClaimRefetchInterval, OWED_RETRY_MS, probeClaim } from './claimables';
 import type { PositionLoan } from './hooks';
 
 const ME = '0x00000000000000000000000000000000000000aa';
@@ -297,6 +297,20 @@ describe('probeClaim — what the loan owed at default (#2374)', () => {
     expect(r.kind).toBe('claimable');
     expect(r.kind === 'claimable' && r.loan.claim.owedAtDefault).toEqual({ kind: 'unreadable' });
     expect(isMemoizableProbe(r)).toBe(false);
+    // #2426 r3 — the loan page re-reads soon instead of keeping the failure.
+    expect(loanClaimRefetchInterval(r.kind === 'claimable' ? r.loan : null)).toBe(OWED_RETRY_MS);
+  });
+
+  it('does not schedule a loan-page re-read once the figure was read, or with no claim', async () => {
+    const r = await probeClaim(
+      client({ ...lenderReads, getOwedAtDefault: [1000n, 30n, 20n, 1_700_000_000n, false] }),
+      DIAMOND,
+      ME,
+      lenderLoan,
+    );
+    expect(loanClaimRefetchInterval(r.kind === 'claimable' ? r.loan : null)).toBe(false);
+    expect(loanClaimRefetchInterval(null)).toBe(false);
+    expect(loanClaimRefetchInterval(undefined)).toBe(false);
   });
 
   it('does not read it outside a defaulted or fallback-pending lender claim', async () => {
