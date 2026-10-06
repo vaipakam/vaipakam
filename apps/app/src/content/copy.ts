@@ -1665,7 +1665,7 @@ const copySource = {
     // change or settle the loan found an open request.
     // #2406 r2 — posting a second request while one is already open.
     alreadyOpen:
-      'A refinance request is already open on this loan — perhaps from another device — so nothing was posted. Cancel it first, or wait until it is taken or expires: a second request would leave one of them impossible to fill.',
+      'A refinance request is already open on this loan — perhaps from another device — so nothing was posted. The protocol allows one request per loan: cancel this one first, or wait until a lender takes it. Waiting for it to expire is not enough — an expired request still has to be cancelled before a new one can be posted.',
     // #2424 r7 — posting a new request while the holder's own expired one
     // was never cancelled: the protocol refuses the new one until it is.
     expiredBlocksNew:
