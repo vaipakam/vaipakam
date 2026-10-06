@@ -1,4 +1,4 @@
-## Thread — A real illiquid-collateral loan refinanced through the live app; indexer ingest restored (PR #TBD)
+## Thread — A real illiquid-collateral loan refinanced through the live app; indexer ingest restored (PR #2434)
 
 Loan 22 on Base Sepolia was refinanced end to end through app.vaipakam.com on 5 October, using the dev test wallets. That loan is backed by illiquid collateral that both parties consented to, and it is the loan whose refinance used to fail (#2380). The borrower posted the refinance request from the loan's page (request #45, 12% for 30 days). A different lender funded it through the app's own review-and-sign steps. All five transactions succeeded, and each wallet's transaction count rose by exactly the transactions the drive saw.
 
