@@ -2247,6 +2247,7 @@
         "LoanSettled": "贷款已结算",
         "LoanSettlementBreakdown": "贷款已结算",
         "LoanDefaulted": "贷款已违约",
+        "OwedAtDefaultRecorded": "已记录违约时欠款",
         "LoanLiquidated": "贷款已清算",
         "BackstopAbsorbedLoan": "贷款被 backstop 吸收",
         "LoanExtended": "贷款已延长",

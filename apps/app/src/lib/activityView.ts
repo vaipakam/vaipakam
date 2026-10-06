@@ -65,6 +65,13 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   // represents a tx that also emitted the real LoanSettled.
   LoanSettlementBreakdown: { label: 'Loan settled', category: 'loan-close', priority: 10 },
   LoanDefaulted: { label: 'Loan defaulted', category: 'loan-default', priority: 90 },
+  // #2374 — the protocol's record of what the loan owed at the default.
+  // Book-keeping beside the default itself: it moves no funds, so it carries
+  // no value leg (the figure is stated on the claim), and its LOW priority
+  // keeps it from ever representing the transaction — even below the
+  // unmapped default (20), so `LoanStatusChanged` on a fallback entry still
+  // represents the row as it did before this event existed.
+  OwedAtDefaultRecorded: { label: 'Amount owed at default recorded', category: 'loan-default', priority: 8 },
   LoanLiquidated: { label: 'Loan liquidated', category: 'loan-default', priority: 90 },
   BackstopAbsorbedLoan: { label: 'Loan absorbed by backstop', category: 'loan-default', priority: 88 },
   LoanExtended: { label: 'Loan extended', category: 'loan-modify', priority: 75 },

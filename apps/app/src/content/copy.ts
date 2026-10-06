@@ -4857,6 +4857,7 @@ const copySource = {
       LoanSettled: 'Loan settled',
       LoanSettlementBreakdown: 'Loan settled',
       LoanDefaulted: 'Loan defaulted',
+      OwedAtDefaultRecorded: 'Amount owed at default recorded',
       LoanLiquidated: 'Loan liquidated',
       BackstopAbsorbedLoan: 'Loan absorbed by backstop',
       LoanExtended: 'Loan extended',

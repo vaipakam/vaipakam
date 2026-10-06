@@ -2247,6 +2247,7 @@
         "LoanSettled": "Préstamo saldado",
         "LoanSettlementBreakdown": "Préstamo saldado",
         "LoanDefaulted": "Préstamo en default",
+        "OwedAtDefaultRecorded": "Importe adeudado al impago registrado",
         "LoanLiquidated": "Préstamo liquidado",
         "BackstopAbsorbedLoan": "Préstamo absorbido por el backstop",
         "LoanExtended": "Préstamo extendido",

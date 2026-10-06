@@ -2247,6 +2247,7 @@
         "LoanSettled": "கடன் தீர்க்கப்பட்டது",
         "LoanSettlementBreakdown": "கடன் தீர்க்கப்பட்டது",
         "LoanDefaulted": "கடன் தவறியது",
+        "OwedAtDefaultRecorded": "தவறிய நேரத்து நிலுவைத் தொகை பதிவு",
         "LoanLiquidated": "கடன் கலைக்கப்பட்டது",
         "BackstopAbsorbedLoan": "பேக்ஸ்டாப்பால் கடன் உள்வாங்கப்பட்டது",
         "LoanExtended": "கடன் நீட்டிக்கப்பட்டது",

@@ -2247,6 +2247,7 @@
         "LoanSettled": "Kredit abgerechnet",
         "LoanSettlementBreakdown": "Kredit abgerechnet",
         "LoanDefaulted": "Kredit ausgefallen",
+        "OwedAtDefaultRecorded": "Betrag beim Ausfall festgehalten",
         "LoanLiquidated": "Kredit liquidiert",
         "BackstopAbsorbedLoan": "Kredit vom Backstop absorbiert",
         "LoanExtended": "Kredit verlängert",

@@ -2247,6 +2247,7 @@
         "LoanSettled": "loan settled",
         "LoanSettlementBreakdown": "loan settled",
         "LoanDefaulted": "loan defaulted",
+        "OwedAtDefaultRecorded": "부도 당시 채무액 기록됨",
         "LoanLiquidated": "loan liquidated",
         "BackstopAbsorbedLoan": "backstop이 loan을 흡수함",
         "LoanExtended": "loan 연장됨",

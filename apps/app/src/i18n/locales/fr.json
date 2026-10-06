@@ -2247,6 +2247,7 @@
         "LoanSettled": "Prêt réglé",
         "LoanSettlementBreakdown": "Prêt réglé",
         "LoanDefaulted": "Prêt en défaut",
+        "OwedAtDefaultRecorded": "Montant dû au défaut enregistré",
         "LoanLiquidated": "Prêt liquidé",
         "BackstopAbsorbedLoan": "Prêt absorbé par le backstop",
         "LoanExtended": "Prêt prolongé",

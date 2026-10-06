@@ -2247,6 +2247,7 @@
         "LoanSettled": "ローン決済済み",
         "LoanSettlementBreakdown": "ローン決済済み",
         "LoanDefaulted": "ローンがデフォルト",
+        "OwedAtDefaultRecorded": "デフォルト時の未払額を記録",
         "LoanLiquidated": "ローン清算",
         "BackstopAbsorbedLoan": "バックストップに吸収されたローン",
         "LoanExtended": "ローンを延長",
