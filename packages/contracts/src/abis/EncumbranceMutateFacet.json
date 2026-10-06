@@ -482,19 +482,6 @@
   },
   {
     "type": "event",
-    "name": "OwedAtDefaultCleared",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "OwedAtDefaultRecorded",
     "inputs": [
       {
