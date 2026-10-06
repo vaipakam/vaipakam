@@ -8,7 +8,9 @@
  * from any other driver as `FAIL (exit 2)`. Reading a BLOCKED off a
  * driver that never agreed to mean that by exiting 2 asserts something
  * about a surface nobody checked, which is why membership is opt-in and
- * stays opt-in.
+ * stays opt-in. The same holds for exit 3: UNDETERMINED only from a driver
+ * declared in `FOUR_VERDICT_DRIVERS`, FAIL from any other (`classifyExit`
+ * is the one rule, #2434 r2).
  *
  * WHY THIS IS ITS OWN MODULE (#2099). The lists lived in the runner,
  * which executes the whole batch on import — so nothing could read them
@@ -96,10 +98,41 @@ export const THREE_VERDICT_DRIVERS = new Set([
   // same run (Codex #1590 r3).
   'live-recover-locales.mjs',
   'live-risk-access.mjs',
+  // (live-refinance.mjs is NOT here: it also exits 3 = UNDETERMINED, so it
+  // is declared in FOUR_VERDICT_DRIVERS below — #2434 r2.)
   'live-rpc-audit.mjs',
   'live-signed-book.mjs',
   'live-support-ticket.mjs',
   'live-ux-sweep.mjs',
+]);
+
+/**
+ * Drivers that implement the three-verdict contract PLUS a fourth code —
+ * 3 UNDETERMINED — each with its reason (#2434 r2).
+ *
+ * UNDETERMINED means the drive WROTE to the chain and then could not
+ * establish its claims either way: nothing was observed wrong (that would be
+ * 1), and the drive did not stop before writing (that would be 2). It is NOT
+ * a pass and keeps the batch red, but it is reported as what it is rather
+ * than as a product FAIL. Exit 0, 1 and 2 mean what they mean for
+ * `THREE_VERDICT_DRIVERS`.
+ *
+ * Opt-in, like BLOCKED: an exit 3 from a driver NOT declared here is a FAIL,
+ * because reading UNDETERMINED off a driver that never agreed to mean it is
+ * the same dishonesty the three-verdict opt-in prevents.
+ */
+export const FOUR_VERDICT_DRIVERS = new Map([
+  [
+    'live-refinance.mjs',
+    // Exits 2 only BEFORE its first write (no REFI_LOAN_ID, site build
+    // mismatch, chain facts that differ from an eligible loan, short
+    // balances, an open request, missing credentials, a browser session that
+    // could not be set up). After the first write it FAILs only on a chain
+    // read contradicting an outcome claim or a gate escape; any other stop is
+    // 3. Also MANUAL-ONLY — see MANUAL_ONLY_DRIVERS below.
+    'after its first write, a stop that no chain read shows to be a defect is ' +
+      'UNDETERMINED (exit 3), with the touched-state ledger printed (#2431, #2434)',
+  ],
 ]);
 
 /**
@@ -117,6 +150,38 @@ export const TWO_VERDICT_DRIVERS = new Map([
   // (empty today: every driver in this directory honours the contract)
 ]);
 
+/**
+ * Drivers the batch runner SKIPS — run by hand, one deliberate invocation
+ * at a time — each with its reason.
+ *
+ * This is NOT a verdict contract and does not replace the ones above: a
+ * manual-only driver is still declared in exactly one of them,
+ * because an operator running it by hand reads its exit code the same
+ * way. What this list answers is a different question — whether a
+ * release batch should launch it at all. A driver belongs here when an
+ * unattended run cannot be green: it consumes the on-chain state it
+ * drives (a one-shot refinance closes its loan), so after its first
+ * success every batch would show it BLOCKED, and a batch that is red by
+ * construction trains people to ignore red.
+ *
+ * Skipping is never silent: the runner prints each skipped driver with
+ * its reason before the batch and again in the summary, so a reviewer
+ * reading a green batch can see what it did not cover.
+ */
+export const MANUAL_ONLY_DRIVERS = new Map([
+  [
+    'live-refinance.mjs',
+    'one-shot on-chain refinance: a success closes the loan it drives, and it ' +
+      'needs REFI_LOAN_ID naming a fresh eligible loan — run it by hand',
+  ],
+]);
+
+/** The drivers a batch run actually launches: everything on disk minus
+ *  the manual-only ones. */
+export function batchDrivers(names = driversOnDisk()) {
+  return names.filter((n) => !MANUAL_ONLY_DRIVERS.has(n));
+}
+
 /** Every driver on disk, the way the batch runner discovers them. */
 export function driversOnDisk(dir = HERE) {
   return fs
@@ -126,7 +191,7 @@ export function driversOnDisk(dir = HERE) {
 }
 
 /**
- * Drivers in NEITHER list — added without anyone saying which verdicts
+ * Drivers in NO list — added without anyone saying which verdicts
  * they speak, so the batch will report their BLOCKED as a product FAIL.
  *
  * A hand-maintained list against an auto-discovered directory is the
@@ -135,11 +200,33 @@ export function driversOnDisk(dir = HERE) {
  * fix was a check that fails, not a reminder to remember.
  */
 export function undeclaredDrivers(names = driversOnDisk()) {
-  return names.filter((n) => !THREE_VERDICT_DRIVERS.has(n) && !TWO_VERDICT_DRIVERS.has(n));
+  return names.filter((n) => declarationsOf(n) === 0);
+}
+
+/** How many of the three verdict declarations name `n`. */
+function declarationsOf(n) {
+  return [THREE_VERDICT_DRIVERS.has(n), FOUR_VERDICT_DRIVERS.has(n), TWO_VERDICT_DRIVERS.has(n)].filter(Boolean).length;
 }
 
 /**
- * Drivers declared in BOTH lists — two contracts for one driver, which
+ * The batch verdict for one driver's exit code — the ONE place the runner's
+ * classification lives, so it can be tested without launching a batch.
+ *
+ *   0 → PASS, from any driver.
+ *   2 → BLOCKED only from a driver that honours the contract (three- or
+ *       four-verdict); otherwise FAIL.
+ *   3 → UNDETERMINED only from a FOUR_VERDICT_DRIVERS driver; otherwise FAIL.
+ *   anything else (1, a crash's null, an invented code) → FAIL.
+ */
+export function classifyExit(script, code) {
+  if (code === 0) return 'PASS';
+  if (code === 2 && (THREE_VERDICT_DRIVERS.has(script) || FOUR_VERDICT_DRIVERS.has(script))) return 'BLOCKED';
+  if (code === 3 && FOUR_VERDICT_DRIVERS.has(script)) return 'UNDETERMINED';
+  return 'FAIL';
+}
+
+/**
+ * Drivers declared in MORE THAN ONE list — two contracts for one driver, which
  * is worse than none.
  *
  * The way in is converting a driver: add it to the opt-out list, forget
@@ -152,5 +239,6 @@ export function undeclaredDrivers(names = driversOnDisk()) {
  * Exactly one declaration per driver, or the lists are not a contract.
  */
 export function doublyDeclaredDrivers() {
-  return [...THREE_VERDICT_DRIVERS].filter((n) => TWO_VERDICT_DRIVERS.has(n)).sort();
+  const all = new Set([...THREE_VERDICT_DRIVERS, ...FOUR_VERDICT_DRIVERS.keys(), ...TWO_VERDICT_DRIVERS.keys()]);
+  return [...all].filter((n) => declarationsOf(n) > 1).sort();
 }

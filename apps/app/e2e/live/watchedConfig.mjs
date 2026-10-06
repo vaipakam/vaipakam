@@ -1,0 +1,129 @@
+/**
+ * THE ONE WATCHED-CONFIG SNAPSHOT (#2422 r12).
+ *
+ * Every mutable GOVERNANCE value the refinance drive reads — for an
+ * expected payload, a review or a precondition — is defined here, once. It
+ * guards WRITES only (#2431 re-cut): the preflight reads it, and every
+ * observation that precedes a write (the posture banner, both reviews, the
+ * moment before the lender is armed) is raced against the WHOLE snapshot
+ * (observation.mjs), so a write never goes ahead on config that moved.
+ * Review rounds 10–12 each found one more governance value read
+ * outside the snapshot (fees, grace, the risk-terms epoch, asset pauses);
+ * the list is the structural answer, and `watchedConfig.test.mjs` fails on
+ * any Diamond read in the driver that is neither listed here nor classified
+ * as per-loan / per-user / per-offer STATE below — so a new read cannot
+ * silently bypass it.
+ *
+ * Each entry: `key` (the snapshot field), `fn` (the Diamond getter), `args`
+ * (from a context of the loan's assets), `pick` (a field of a tuple result).
+ * Getters sharing (fn, args) are read once per snapshot.
+ */
+
+/**
+ * @typedef {{ principalAsset: string, collateralAsset: string,
+ *   participants?: Record<string, string>,
+ *   readOracle?: (oracle: string, who: string, blockNumber?: bigint) => Promise<boolean> }} WatchedContext
+ * `participants` (label → address) are SCREENED as part of the snapshot
+ * (#2422 r14): each one's tri-state sanctions result is a snapshot field
+ * `screen:<label>`, so the race helper and the post-write classifier compare
+ * it like any other governance value. `readOracle` asks the oracle directly
+ * (ISanctionsList.isSanctioned), as the Diamond does without its fail-open
+ * try/catch.
+ */
+
+export const WATCHED_CONFIG = Object.freeze([
+  // The auto-match posture the banners disclose.
+  { key: 'paused', fn: 'paused' },
+  { key: 'autoRefinance', fn: 'getAutoRefinanceEnabled' },
+  { key: 'partialFill', fn: 'getMasterFlags', pick: (r) => r[2] },
+  // The fees both reviews quote (and the borrower's reserve is sized with).
+  { key: 'treasuryFeeBps', fn: 'getFeesConfig', pick: (r) => r[0] },
+  { key: 'lifBps', fn: 'getLoanInitiationFeeBps' },
+  // The grace window the reviews show and the payoff approval is sized to.
+  { key: 'graceBuckets', fn: 'getGraceBuckets' },
+  // The risk-terms epoch the lender's AcceptTerms is anchored to.
+  { key: 'riskTermsHash', fn: 'getCurrentRiskTermsHash' },
+  // Per-asset pauses (RefinanceFlow's assertAssetNotPausedLive, both legs).
+  { key: 'principalPaused', fn: 'isAssetPaused', args: (c) => [c.principalAsset] },
+  { key: 'collateralPaused', fn: 'isAssetPaused', args: (c) => [c.collateralAsset] },
+  // The form's upper bound on the new length.
+  { key: 'maxOfferDurationDays', fn: 'getProtocolConfigBundle', pick: (r) => r[14] },
+  // Preconditions that change what an accept requires.
+  { key: 'riskAccessGate', fn: 'getRiskAccessGateEnabled' },
+  { key: 'sanctionsOracle', fn: 'getSanctionsOracle' },
+]);
+
+/** The Diamond getter the per-participant screening reads (with the oracle). */
+export const SCREEN_GETTER = 'isSanctionedAddress';
+
+/**
+ * One participant's sanctions screening, TRI-STATE — the rule the preflight
+ * has used since #2422 r3/r4, now part of the snapshot:
+ *   oracle unset → `unset` (it screened nobody — stated, never "clean");
+ *   oracle set   → asked DIRECTLY; `flagged` if it or the Diamond says so,
+ *                  `clean` only if it ANSWERED not-flagged and the Diamond
+ *                  agrees; a failed oracle call is `unavailable`.
+ * Error text is left out on purpose: the snapshot is compared field by
+ * field, and the wording of one RPC failure must not read as a change.
+ */
+export async function screenParticipant({ read, readOracle, who, oracle, blockNumber }) {
+  const diamondSays = await read(SCREEN_GETTER, [who], blockNumber);
+  if (/^0x0{40}$/i.test(String(oracle))) return { state: 'unset', diamondSays };
+  try {
+    const oracleSays = await readOracle(oracle, who, blockNumber);
+    return { state: oracleSays || diamondSays ? 'flagged' : 'clean', oracleSays, diamondSays };
+  } catch {
+    return { state: 'unavailable', diamondSays };
+  }
+}
+
+/**
+ * Diamond reads the driver makes that are NOT governance config: state of a
+ * particular loan, offer, user, vault or position — or, for `checkLiquidity`,
+ * external oracle and pool state the model no longer depends on (#2422 r11).
+ * Each is classified with its reason; a read in neither list fails the test.
+ */
+export const STATE_READS = Object.freeze({
+  getLoanDetails: 'one loan’s state',
+  getOfferDetails: 'one offer’s state',
+  isOfferCancelled: 'one offer’s state',
+  getUserOffersPaginated: 'one user’s offer index',
+  getAutoRefinanceCaps: 'one loan’s caps',
+  calculateRepaymentAmount: 'one loan’s payoff',
+  getLoanCollateralLien: 'one loan’s lien',
+  ownerOf: 'one position NFT’s holder',
+  getUserVaultAddress: 'one user’s vault',
+  hasAcceptedCurrentTerms: 'one user’s terms acceptance',
+  checkLiquidity: 'external oracle / pool state — a precondition on the collateral only, never a model input',
+});
+
+/** The Diamond getters the snapshot reads (the screening's included). */
+export const WATCHED_GETTERS = Object.freeze([...new Set([...WATCHED_CONFIG.map((e) => e.fn), SCREEN_GETTER])]);
+
+/**
+ * Read the whole snapshot at `blockNumber` (undefined ⇒ latest) through
+ * `read(fn, args, blockNumber)`. Returns `{ key: value }` for every entry.
+ *
+ * @param {(fn: string, args: any[], blockNumber?: bigint) => Promise<any>} read
+ * @param {WatchedContext} ctx
+ */
+export async function readWatchedConfig(read, ctx, blockNumber) {
+  const calls = new Map();
+  for (const e of WATCHED_CONFIG) {
+    const args = e.args ? e.args(ctx) : [];
+    const id = `${e.fn}(${args.join(',')})`;
+    if (!calls.has(id)) calls.set(id, read(e.fn, args, blockNumber));
+  }
+  const results = new Map();
+  await Promise.all([...calls.entries()].map(async ([id, p]) => results.set(id, await p)));
+  const out = {};
+  for (const e of WATCHED_CONFIG) {
+    const args = e.args ? e.args(ctx) : [];
+    const r = results.get(`${e.fn}(${args.join(',')})`);
+    out[e.key] = e.pick ? e.pick(r) : r;
+  }
+  for (const [label, who] of Object.entries(ctx.participants ?? {})) {
+    out[`screen:${label}`] = await screenParticipant({ read, readOracle: ctx.readOracle, who, oracle: out.sanctionsOracle, blockNumber });
+  }
+  return out;
+}
