@@ -76,7 +76,16 @@ export type RefinanceDiscovery =
    *  request it does not name did not (`failed` / `capped`). Never blocks —
    *  such a request is never accepted — but a leftover and its payoff
    *  approval may exist unseen, so the page says it could not check. */
-  | { kind: 'none'; leftovers?: 'failed' | 'capped' }
+  | {
+      kind: 'none';
+      leftovers?: 'failed' | 'capped';
+      /** #2429 r3 — the record said no request STANDS, but whether its lapsed
+       *  request is the holder's uncancelled one could not be read. Nothing is
+       *  held back (the record already proved none stands); only a new POST
+       *  is unconfirmed, since the protocol refuses one while that request is
+       *  uncancelled. */
+      lapsed?: 'unchecked';
+    }
   /** `failed`: a read did not answer (may on retry). `capped`: the holder
    *  has posted more offers since the boundary than one scan reads. */
   | { kind: 'unknown'; reason: 'failed' | 'capped' };
@@ -204,77 +213,6 @@ export function isUntakeable(recordedId: bigint | null, offerId: string): boolea
   return recordedId !== null && recordedId !== BigInt(offerId);
 }
 
-/** #2429 r1/r2 — whether cancelling `offerId` must KEEP the standing payoff
- *  approval: the protocol records a DIFFERENT request for the loan that still
- *  stands AND was posted by the cancelling wallet, so it draws on that same
- *  approval and revoking it would strand that request. Another wallet's
- *  request uses that wallet's own approval, so it never keeps this one. */
-export function keepsApprovalOnCancel(a: {
-  recordedId: bigint | null;
-  recordLive: boolean;
-  recordedCreator: string | null;
-  canceller: string;
-  offerId: string;
-}): boolean {
-  return (
-    a.recordedId !== null &&
-    a.recordLive &&
-    a.recordedId !== BigInt(a.offerId) &&
-    a.recordedCreator !== null &&
-    a.recordedCreator.toLowerCase() === a.canceller.toLowerCase()
-  );
-}
-
-/** #2429 r2 — the keep-or-revoke decision at the moment of cancelling, read
- *  from the chain then (another tab or device may have posted a new request
- *  since the page last looked). `unknown` when the record cannot be read:
- *  the caller keeps the approval and says it could not confirm, since a
- *  revoke it cannot take back is the worse error. A deployment without the
- *  record has no recorded request to protect: `revoke`. */
-export async function approvalOnCancel(opts: {
-  client: PublicClient;
-  diamond: `0x${string}`;
-  loanId: bigint;
-  canceller: string;
-  offerId: string;
-}): Promise<'keep' | 'revoke' | 'unknown'> {
-  const { client, diamond } = opts;
-  let recordedId: bigint;
-  let recordLive: boolean;
-  try {
-    [recordedId, recordLive] = (await client.readContract({
-      address: diamond,
-      abi: DIAMOND_ABI_VIEM,
-      functionName: 'getRefinanceRequest',
-      args: [opts.loanId],
-    })) as readonly [bigint, boolean];
-  } catch (e) {
-    return isFunctionDoesNotExistRevert(e) ? 'revoke' : 'unknown';
-  }
-  let recordedCreator: string | null = null;
-  if (recordLive && recordedId !== BigInt(opts.offerId)) {
-    try {
-      recordedCreator = ((await client.readContract({
-        address: diamond,
-        abi: DIAMOND_ABI_VIEM,
-        functionName: 'getOfferDetails',
-        args: [recordedId],
-      })) as { creator: string }).creator;
-    } catch {
-      return 'unknown';
-    }
-  }
-  return keepsApprovalOnCancel({
-    recordedId,
-    recordLive,
-    recordedCreator,
-    canceller: opts.canceller,
-    offerId: opts.offerId,
-  })
-    ? 'keep'
-    : 'revoke';
-}
-
 /** #2425 — a leftover the scan found is never takeable. A scan that did not
  *  answer blocks nothing (nothing the protocol would refuse depends on it),
  *  but it is not "none": it is carried as `leftovers` so the page can say it
@@ -314,7 +252,10 @@ export async function discoverRefinanceRequest(opts: DiscoveryOpts): Promise<Ref
         args: [record.offerId],
       })) as Omit<OfferFacts, 'expiresAt' | 'id'>;
     } catch {
-      return { kind: 'unknown', reason: 'failed' };
+      // #2429 r3 — the record already proved no request stands, so this
+      // failure holds nothing back; it leaves only the cleanup and the
+      // posting question open.
+      return { kind: 'none', leftovers: 'failed', lapsed: 'unchecked' };
     }
   }
   return fromRecord(loanId, holder, record, recordedOffer) ?? leftoverFrom(await scanHolderOffers(opts));

@@ -38,7 +38,6 @@ import { readGraceSecondsLive } from '../contracts/preflights';
 import {
   discoverRefinanceRequest,
   isUntakeable,
-  keepsApprovalOnCancel,
   scanHolderOffers,
   type RefinanceDiscovery,
 } from './refinanceDiscovery';
@@ -100,11 +99,6 @@ export interface RefinancePendingState {
    *  none: this one can never be taken and holds nothing back, so only
    *  cancel-to-unwind remains. False on a deployment without the record. */
   untakeable: boolean;
-  /** #2429 r1/r2 — the protocol records a DIFFERENT request for the loan
-   *  that still stands and was posted by THIS wallet: cancelling this one
-   *  should keep the shared payoff approval that request draws on. A hint for
-   *  the card's wording; the cancel itself re-decides from the chain. */
-  keepApprovalOnCancel: boolean;
   /** Chain time says the cancel cooldown has elapsed. */
   cancelUnlocked: boolean;
   /** Standing approval no longer covers the request's approval
@@ -287,15 +281,15 @@ export function useRefinancePending(
                 args: [address],
               }) as Promise<bigint>)
             : Promise.resolve(0n),
-          // #2425 — the loan's recorded request and whether it stands; null on
-          // a deployment that predates the record (nothing is untakeable there).
+          // #2425 — the loan's recorded request; null on a deployment that
+          // predates the record (nothing is untakeable there).
           (readClient!.readContract({
             address: diamond,
             abi: DIAMOND_ABI_VIEM,
             functionName: 'getRefinanceRequest',
             args: [BigInt(loanId)],
           }) as Promise<readonly [bigint, boolean]>).then(
-            ([id, live]) => ({ id, live }),
+            ([id]) => ({ id }),
             (e: unknown) => {
               if (isFunctionDoesNotExistRevert(e)) return null;
               throw e;
@@ -355,33 +349,6 @@ export function useRefinancePending(
       const expired =
         offer.expiresAt !== 0n && latestBlock.timestamp >= offer.expiresAt;
       const untakeable = isUntakeable(record?.id ?? null, candidateId!);
-      // #2429 r2 — who posted the recorded request: only the canceller's own
-      // standing request shares this approval. Read only when it matters; a
-      // failed read just leaves the hint off (the cancel re-decides from the
-      // chain anyway).
-      let recordedCreator: string | null = null;
-      if (record && record.live && record.id !== BigInt(candidateId!) && address) {
-        recordedCreator = await readClient!
-          .readContract({
-            address: diamond,
-            abi: DIAMOND_ABI_VIEM,
-            functionName: 'getOfferDetails',
-            args: [record.id],
-          })
-          .then(
-            (d) => (d as { creator: string }).creator,
-            () => null,
-          );
-      }
-      const keepApprovalOnCancel =
-        address !== undefined &&
-        keepsApprovalOnCancel({
-          recordedId: record?.id ?? null,
-          recordLive: record?.live ?? false,
-          recordedCreator,
-          canceller: address,
-          offerId: candidateId!,
-        });
       return {
         creator: offer.creator,
         loanActive: live.status === LOAN_STATUS_ACTIVE,
@@ -390,7 +357,6 @@ export function useRefinancePending(
         expired,
         pastGrace,
         untakeable,
-        keepApprovalOnCancel,
         cancelUnlocked:
           latestBlock.timestamp >= offer.createdAt + CANCEL_COOLDOWN_SECONDS,
         // Funding warnings stop past grace too — like expiry, there

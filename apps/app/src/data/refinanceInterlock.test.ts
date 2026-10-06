@@ -4,6 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import type { RefinanceDiscovery } from './refinanceDiscovery';
 import {
+  cancelRevokesApproval,
   liveRefinanceVerdict,
   postRefinanceVerdict,
   ownScanUnresolved,
@@ -207,6 +208,14 @@ describe('postRefinanceVerdict (#2424 r7)', () => {
     expect(liveRefinanceVerdict(leftover('1'))).toBe('clear');
     expect(liveRefinanceVerdict(open('1'))).toBe('open');
   });
+
+  // #2429 r3 — the record proved no request stands but its lapsed request
+  // could not be checked: settlement is clear, a new post is unconfirmed.
+  it('lets settlement through but not a post when the lapsed request is unchecked', () => {
+    const lapsed: RefinanceDiscovery = { kind: 'none', leftovers: 'failed', lapsed: 'unchecked' };
+    expect(liveRefinanceVerdict(lapsed)).toBe('clear');
+    expect(postRefinanceVerdict(lapsed)).toBe('unchecked');
+  });
 });
 
 describe('ownScanUnresolved (r4/r5)', () => {
@@ -240,3 +249,10 @@ describe('repayRefinanceDecision (r4/r5) — every confirm re-checks', () => {
   });
 });
 
+
+describe('cancelRevokesApproval (#2429 r3)', () => {
+  it('never revokes the shared approval when cancelling a leftover; revokes for the loan\'s own request', () => {
+    expect(cancelRevokesApproval({ untakeable: true })).toBe(false);
+    expect(cancelRevokesApproval({ untakeable: false })).toBe(true);
+  });
+});

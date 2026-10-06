@@ -9,8 +9,6 @@ import {
   discoverRefinanceRequest,
   fromRecord,
   isUntakeable,
-  keepsApprovalOnCancel,
-  approvalOnCancel,
   leftoverFrom,
   resolveScan,
   selectRequest,
@@ -252,6 +250,18 @@ describe('discoverRefinanceRequest — record first', () => {
       ),
     ).toEqual({ kind: 'found', offerId: '9', open: true });
   });
+  // #2429 r3 — the record proved no request stands; only the lapsed
+  // request's details failed. Nothing is held back; the post is unconfirmed.
+  it('a lapsed record whose details cannot be read holds nothing back', async () => {
+    const c = {
+      readContract: async ({ functionName }: { functionName: string }) => {
+        if (functionName === 'getRefinanceRequest') return [9n, false];
+        throw new Error('fetch failed');
+      },
+    } as unknown as PublicClient;
+    expect(await run(c)).toEqual({ kind: 'none', leftovers: 'failed', lapsed: 'unchecked' });
+  });
+
   it('any other failed read of the record is unknown, never none', async () => {
     expect(
       await run(
@@ -270,81 +280,5 @@ describe('isUntakeable', () => {
     expect(isUntakeable(0n, '9')).toBe(true);
     // A deployment without the record: nothing is untakeable there.
     expect(isUntakeable(null, '9')).toBe(false);
-  });
-});
-
-describe('keepsApprovalOnCancel (#2429 r1/r2)', () => {
-  const base = { recordedId: 8n, recordLive: true, recordedCreator: HOLDER, canceller: HOLDER, offerId: '9' };
-  it("keeps the approval only while ANOTHER recorded request of the canceller's own stands", () => {
-    expect(keepsApprovalOnCancel(base)).toBe(true);
-    expect(keepsApprovalOnCancel({ ...base, canceller: HOLDER.toLowerCase() })).toBe(true);
-    expect(keepsApprovalOnCancel({ ...base, recordLive: false })).toBe(false);
-    expect(keepsApprovalOnCancel({ ...base, recordedId: 9n })).toBe(false);
-    expect(keepsApprovalOnCancel({ ...base, recordedId: null })).toBe(false);
-    // #2429 r2 — another wallet's request uses that wallet's own approval.
-    expect(keepsApprovalOnCancel({ ...base, recordedCreator: OTHER })).toBe(false);
-    expect(keepsApprovalOnCancel({ ...base, recordedCreator: null })).toBe(false);
-  });
-});
-
-describe('approvalOnCancel — decided from the chain at cancel time (#2429 r2)', () => {
-  const fnMissing = () => {
-    const inner = new ContractFunctionRevertedError({ abi: [], functionName: 'getRefinanceRequest' });
-    inner.signature = '0xa9ad62f8';
-    const outer = new BaseError('reverted');
-    outer.walk = () => inner;
-    return outer;
-  };
-  const client = (record: () => readonly [bigint, boolean], creator: () => string = () => HOLDER) =>
-    ({
-      readContract: async ({ functionName }: { functionName: string }) => {
-        if (functionName === 'getRefinanceRequest') return record();
-        if (functionName === 'getOfferDetails') return { creator: creator() };
-        throw new Error(`unexpected read ${functionName}`);
-      },
-    }) as unknown as PublicClient;
-  const run = (c: PublicClient) =>
-    approvalOnCancel({
-      client: c,
-      diamond: '0x00000000000000000000000000000000000000dd',
-      loanId: 7n,
-      canceller: HOLDER,
-      offerId: '9',
-    });
-  it("keeps it for the canceller's own other standing request", async () => {
-    expect(await run(client(() => [8n, true]))).toBe('keep');
-  });
-  it("revokes it when the standing request is another wallet's, or none stands", async () => {
-    expect(await run(client(() => [8n, true], () => OTHER))).toBe('revoke');
-    expect(await run(client(() => [8n, false]))).toBe('revoke');
-    expect(await run(client(() => [0n, false]))).toBe('revoke');
-  });
-  it('revokes on a deployment without the record (nothing recorded to protect)', async () => {
-    expect(
-      await run(
-        client(() => {
-          throw fnMissing();
-        }),
-      ),
-    ).toBe('revoke');
-  });
-  it('is unknown when the record or its creator cannot be read', async () => {
-    expect(
-      await run(
-        client(() => {
-          throw new Error('fetch failed');
-        }),
-      ),
-    ).toBe('unknown');
-    expect(
-      await run(
-        client(
-          () => [8n, true],
-          () => {
-            throw new Error('fetch failed');
-          },
-        ),
-      ),
-    ).toBe('unknown');
   });
 });

@@ -32,7 +32,7 @@ import type { RefinancePendingState } from '../data/refinancePending';
 import { useAutoRefinancePosture } from '../data/protocol';
 import { AutoMatchPostureBanner } from './AutoMatchPostureBanner';
 import { ZERO_ADDRESS } from '../lib/offerSchema';
-import { approvalOnCancel } from '../data/refinanceDiscovery';
+import { cancelRevokesApproval } from '../data/refinanceInterlock';
 import { formatDate, formatTokenAmount } from '../lib/format';
 
 export function RefinancePendingCard({
@@ -106,21 +106,14 @@ export function RefinancePendingCard({
       // arrive context-free after the explanatory UI vanished, and a
       // rejected revoke would surface nowhere.
       let outcome: string;
-      // #2429 r2 — decided from the chain NOW, not from the page's cached
-      // state: another tab or device may have posted a new request since.
-      const onApproval = await approvalOnCancel({
-        client: publicClient,
-        diamond: walletChain.diamondAddress,
-        loanId: BigInt(loanId),
-        canceller: address,
-        offerId,
-      });
-      if (onApproval === 'keep') {
-        // Another request of this wallet's still stands and draws on the
-        // same approval: revoking it would strand that request.
-        outcome = copy.refinance.cancelledKeptApproval;
-      } else if (onApproval === 'unknown') {
-        outcome = copy.refinance.cancelledApprovalUnconfirmed;
+      if (state && !cancelRevokesApproval(state)) {
+        // #2429 r3 — a leftover's payoff approval is the SAME approval every
+        // refinance request of this wallet on this token draws on, and
+        // another may be standing now or be posted from another device at
+        // any moment; no read before a separate revoke transaction can rule
+        // that out. So cancelling a leftover never revokes: the card says so
+        // up front and names the manual removal.
+        outcome = copy.refinance.cancelledLeftoverApprovalKept;
       } else try {
         await revokeAllowance({
           publicClient,
@@ -241,12 +234,9 @@ export function RefinancePendingCard({
               ? copy.refinance.pendingAccepted
               : state.untakeable
                 ? // #2425 — not the loan's recorded request: the protocol
-                  // will never take it, and it holds nothing back. #2429 r2:
-                  // never promise to remove an approval another standing
-                  // request of this wallet's still uses.
-                  state.keepApprovalOnCancel
-                  ? copy.refinance.pendingUntakeableKeepsApproval
-                  : copy.refinance.pendingUntakeable
+                  // will never take it, and it holds nothing back; its cancel
+                  // leaves the shared approval in place (#2429 r3).
+                  copy.refinance.pendingUntakeable
               : state.expired
                 ? copy.refinance.pendingExpired(
                     formatDate(Number(state.expiresAt)),

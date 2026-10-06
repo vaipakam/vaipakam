@@ -148,6 +148,9 @@ export function postRefinanceVerdict(
   // #2425 — the protocol refuses a new request only for the loan's RECORDED
   // one (open, or expired and uncancelled); a leftover never blocks a post.
   if (d.kind === 'found' && d.untakeable !== true) return d.open ? 'open' : 'expired';
+  // #2429 r3 — the record's lapsed request could not be checked: a post may
+  // be refused while it stays uncancelled, so the post is unconfirmed.
+  if (d.kind === 'none' && d.lapsed === 'unchecked') return 'unchecked';
   return liveRefinanceVerdict(d);
 }
 
@@ -186,3 +189,15 @@ export function repayRefinanceDecision(
   return { proceed: covered, notice: needed };
 }
 
+
+/** #2429 r3 — whether cancelling the named request also revokes its payoff
+ *  approval. Never for a leftover the protocol will never take: the same
+ *  approval serves every refinance request this wallet posts on the token,
+ *  and another may stand now or be posted from another device at any moment
+ *  — no read before a separate revoke transaction can rule that out, so the
+ *  card leaves it and names the manual removal. Cancelling the loan's own
+ *  request revokes as before (a request posted meanwhile elsewhere shows its
+ *  short approval on its own card, with Re-approve). */
+export function cancelRevokesApproval(state: Pick<NamedRequestFacts, 'untakeable'>): boolean {
+  return !state.untakeable;
+}

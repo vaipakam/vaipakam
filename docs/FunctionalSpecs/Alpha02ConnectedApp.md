@@ -1477,11 +1477,17 @@ is the borrower's own money.
   protocol kept the record, or one a newer request replaced — can never be
   accepted and holds nothing back; the app still looks for one among the
   current holder's own offers and, when it finds it, shows it as a request
-  that can never be accepted and offers to cancel it (with its payoff
-  approval — kept instead when, at the moment of cancelling, the record names
-  a different request of the same wallet that still stands and uses that
-  approval, or when that cannot be confirmed; the card never promises a
-  removal it will not make). That look is best effort: when it cannot answer,
+  that can never be accepted and offers to cancel it. Cancelling such a
+  request never removes its payoff approval: the same approval serves every
+  refinance request the wallet posts on that token, and another may stand now
+  or be posted from another device at any moment, which no check made before
+  a separate revoke transaction can rule out. The card says so before and
+  after the cancel and names where to remove the approval by hand. (Cancelling
+  the loan's own request still removes it; a request posted elsewhere in the
+  meantime then shows its short approval on its own card, with the action to
+  re-approve.) When the record proves no request stands but the details of
+  its lapsed request cannot be read, nothing is held back and only a new post
+  is reported as unconfirmed. That look is best effort: when it cannot answer,
   nothing is held back, because nothing the protocol would refuse depends on
   it, and the page says it could not check for an older request and names the
   manual cleanup (Your open offers; the standing token approvals in Settings). On a deployment that
