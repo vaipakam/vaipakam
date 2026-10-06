@@ -1430,7 +1430,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](10);
+        selectors = new bytes4[](11);
         selectors[0] = ClaimFacet.claimAsLender.selector;
         selectors[1] = ClaimFacet.claimAsBorrower.selector;
         selectors[2] = ClaimFacet.getClaimableAmount.selector;
@@ -1442,6 +1442,7 @@ contract HelperTest {
         selectors[7] = ClaimFacet.setLenderBackstopOptIn.selector;
         selectors[8] = ClaimFacet.claimAsLenderViaBackstop.selector;
         selectors[9] = ClaimFacet.getBorrowerSurplusClaim.selector;
+        selectors[10] = ClaimFacet.getOwedAtDefault.selector; // #2374
         return selectors;
     }
 

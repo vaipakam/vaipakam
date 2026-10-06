@@ -1650,6 +1650,15 @@ Watcher and notification support:
   - For ERC-721: The borrower's 'user' status is revoked by the platform. The NFT remains in Vaipakam Vault until it is returned to the lender through the normal rental/default settlement flow.
   - For ERC-1155: The NFT held in the Vaipakam Vault is returned to the lender. The borrower's 'user' status is revoked.
 
+### Record of What the Loan Owed at Default (owner decision 2026-10-05, #2374)
+
+- When an ERC-20 loan defaults — it is liquidated, defaults on time, or enters the full-collateral fallback because its collateral could not be sold — the protocol records, at that moment and in the loan's principal asset, what the loan still owed: the principal outstanding, the interest outstanding (net of interest already settled), and the late fee — the basis a liquidation or time-based default settles its debt on, so for those the figure equals the debt the close itself used. The record names whether the default went through the fallback. A fallback divides the collateral on its own basis (principal plus interest plus a lender bonus and a treasury share, with no late fee); for a fallback the record states the debt, not that division.
+- Entering the fallback IS the default. A later step that moves the fallback loan to defaulted (the lender's claim) keeps the figure from the fallback's entry rather than restating it at the claim's time.
+- The figure is the GROSS debt. The protocol's share of interest and late fee is taken from it before the lender is paid; no share is taken from principal. It records no recovery: what the default paid out is a separate fact.
+- The record is reported only while the loan stands defaulted (defaulted, or in the fallback). A fallback the borrower cures (by adding collateral) or repays in full, one fully closed by an internal match, and a loan that has since settled therefore read as having no record — the loan did not in the end default, or the record has done its job. A new default overwrites it. The history of every recorded figure stays public as an event.
+- No record is kept for an NFT rental (its principal is a daily fee and the lender's claim is the NFT), for a loan fully closed by internal matching straight from active, or for a loan that defaulted before the protocol kept this record.
+- The record is public, so any surface can show a lender-position holder the recovery against a figure the protocol itself substantiates, rather than against the loan's current principal (which partial repayment changes, and which a holder who bought the position never lent).
+
 ### NFT Status Updates on Default/Liquidation
 
 - The status of the relevant Vaipakam NFTs is updated to "Loan Defaulted" or "Loan Liquidated."

@@ -282,6 +282,45 @@
   },
   {
     "type": "function",
+    "name": "getOwedAtDefault",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "principal",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "interest",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "lateFee",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "recordedAt",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "viaFallback",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "setLenderBackstopOptIn",
     "inputs": [
       {

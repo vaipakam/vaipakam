@@ -6396,6 +6396,8 @@ export function pluckActivityRefs(
     case 'LoanLiquidated':
     case 'LoanSettlementBreakdown':
     case 'LoanSettled':
+    // #2374 — what the loan owed at default, on the loan's own timeline.
+    case 'OwedAtDefaultRecorded':
       return {
         actor: null,
         loanId: Number(args.loanId as bigint),

@@ -2147,6 +2147,52 @@ contract ClaimFacet is
         );
     }
 
+    /// @notice #2374 — what `loanId` owed, in its principal asset, at the
+    ///         moment it defaulted (left `Active` for `Defaulted` or for the
+    ///         full-collateral fallback), as the protocol recorded it then.
+    ///         Reported only while the loan STANDS defaulted — `Defaulted` or
+    ///         `FallbackPending`; in any other status it reads as no record.
+    /// @dev    GROSS debt — principal outstanding, accrued interest net of what
+    ///         was already settled, and the late fee — on the basis a
+    ///         swap-based forced close settles on. A fallback allocates
+    ///         collateral on its own basis (principal plus interest plus a
+    ///         lender bonus and a treasury share, no late fee), so for a
+    ///         fallback this is the debt, not that allocation. The protocol's
+    ///         share of `interest` and `lateFee` is taken before the lender is
+    ///         paid, so this is not the lender's entitlement; no fee is taken
+    ///         from `principal`. No record (`recordedAt == 0`) for a loan not
+    ///         standing defaulted (never defaulted, cured, repaid, closed by an
+    ///         internal match, or settled since), a default before this record
+    ///         existed, or an NFT rental. The {LibOwedAtDefault} event keeps
+    ///         the history.
+    /// @return principal   Principal outstanding at default.
+    /// @return interest    Accrued interest outstanding at default.
+    /// @return lateFee     Late fee owed at default.
+    /// @return recordedAt  Timestamp of the default; 0 when not reported.
+    /// @return viaFallback True when the default entered the fallback, so its
+    ///                     recovery may have arrived in more than one step.
+    function getOwedAtDefault(uint256 loanId)
+        external
+        view
+        returns (
+            uint256 principal,
+            uint256 interest,
+            uint256 lateFee,
+            uint64 recordedAt,
+            bool viaFallback
+        )
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.LoanStatus st = s.loans[loanId].status;
+        // The record is never cleared; it is meaningful only while the loan
+        // still stands defaulted (see {LibOwedAtDefault}).
+        if (st != LibVaipakam.LoanStatus.Defaulted && st != LibVaipakam.LoanStatus.FallbackPending) {
+            return (0, 0, 0, 0, false);
+        }
+        LibVaipakam.OwedAtDefault storage o = s.owedAtDefault[loanId];
+        return (o.principal, o.interest, o.lateFee, o.recordedAt, o.viaFallback);
+    }
+
     /// @dev #1067 — shared default/liquidation-terminal reward + LIF close used
     ///      by the three claim-time default terminals (the backstop retry-swap
     ///      branch, `_absorbLenderSlice`, and the vanilla FallbackPending→Defaulted

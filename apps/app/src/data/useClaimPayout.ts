@@ -16,7 +16,7 @@ import { copy } from '../content/copy';
 import { useTokenMeta } from '../contracts/erc20';
 import { AssetType } from '../lib/types';
 import { formatTokenAmount, shortAddress } from '../lib/format';
-import type { ClaimableLoan } from './claimables';
+import type { ClaimableLoan, OwedAtDefaultRead } from './claimables';
 
 export interface ClaimPayoutText {
   /** The payout itself. */
@@ -79,6 +79,14 @@ export function useClaimPayoutText(
     ? `${formatTokenAmount(loan.collateralAmount, collateralMeta.data.decimals)} ${collateralMeta.data.symbol}`
     : 'collateral';
 
+  // #2374 — writes an amount of the principal asset; null while its details
+  // load or once they failed (`formatUnreadable` tells the two apart).
+  const format = principalMeta.data
+    ? (amount: bigint) =>
+        `${formatTokenAmount(amount, principalMeta.data!.decimals)} ${principalMeta.data!.symbol}`
+    : null;
+  const formatUnreadable = !principalMeta.data && principalMeta.isError;
+
   let what: string;
   let why: string;
   /** Optional one-line comparison or caveat beside the payout. */
@@ -117,7 +125,9 @@ export function useClaimPayoutText(
       // (the app sends no retry-swap quotes, so that is the only rewrite it
       // can trigger), and a full or partial match pays the loan asset
       // instead. What is recorded now is therefore not a promise.
-      note = labels.fallbackMayChange;
+      // #2426 r2 — the fallback's entry IS the default, so its recorded debt
+      // is stated too; never compared, since the payout itself can change.
+      note = fallbackPendingNote({ owed: loan.claim.owedAtDefault, format, formatUnreadable, labels });
       provisional = true;
     } else {
       why = labels.whyDefaultLender;
@@ -132,6 +142,16 @@ export function useClaimPayoutText(
         // be formatted yet: a cash recovery whose symbol is still loading
         // is not "the collateral itself".
         inKind: loan.claim.amount === 0n,
+        // #2374 — what the protocol recorded the loan owed at default, and
+        // the recovery in the same asset (null when the claim pays another).
+        owed: loan.claim.owedAtDefault,
+        recovered:
+          loan.claim.asset !== null &&
+          loan.claim.asset.toLowerCase() === loan.lendingAsset.toLowerCase()
+            ? loan.claim.amount
+            : null,
+        format,
+        formatUnreadable,
         labels,
       });
     }
@@ -329,14 +349,101 @@ function capitalizeFirst(text: string): string {
  *  the amount the loan owed at default is not available to the app, and
  *  the loan's current principal is not a substitute (it moves with partial
  *  repayment and settlement, and a buyer of the position never lent it). */
+type OwedLabels = Pick<
+  RowLabels,
+  | 'compareInKind'
+  | 'recoveryNotComparable'
+  | 'owedAtDefault'
+  | 'recoveryShortOfPrincipal'
+  | 'recoveryCoversPrincipal'
+  | 'owedNotComparable'
+  | 'owedUnreadable'
+  | 'owedAmountsUnreadable'
+  | 'recoveryBelowPrincipalNoAmount'
+  | 'recoveryCoversPrincipalNoAmount'
+>;
+
+/** #2374 — the sentence stating what the loan still owed at default, or null
+ *  when there is nothing the app can say about it yet (no record, or the
+ *  token's details still loading). */
+function owedStatement(args: {
+  owed: OwedAtDefaultRead;
+  format: ((amount: bigint) => string) | null;
+  formatUnreadable: boolean;
+  labels: OwedLabels;
+}): string | null {
+  const { owed, format, labels } = args;
+  if (owed.kind === 'unreadable') return labels.owedUnreadable;
+  if (owed.kind !== 'recorded') return null;
+  if (format === null) return args.formatUnreadable ? labels.owedAmountsUnreadable : null;
+  return labels.owedAtDefault(
+    format(owed.principal + owed.interest + owed.lateFee),
+    format(owed.principal),
+    format(owed.interest + owed.lateFee),
+  );
+}
+
 export function defaultRecoveryNote(args: {
   hasHeld: boolean;
   /** True when the recovery is the collateral itself rather than an amount. */
   inKind: boolean;
-  labels: Pick<RowLabels, 'compareInKind' | 'recoveryNotComparable'>;
+  /** #2374 — what the protocol recorded the loan owed at default. */
+  owed: OwedAtDefaultRead;
+  /** The recovery in the loan's principal asset; null when the claim pays
+   *  in another asset. */
+  recovered: bigint | null;
+  /** Formats an amount of the principal asset; null while its details load
+   *  or once they failed. */
+  format: ((amount: bigint) => string) | null;
+  /** The principal asset's details could not be read (not merely loading). */
+  formatUnreadable: boolean;
+  labels: OwedLabels;
 }): string {
+  const { labels } = args;
+  const pureInKind = args.inKind && !args.hasHeld;
   // An in-kind recovery with held proceeds beside it is not purely "the
   // collateral itself", so it gets the general statement.
-  if (args.inKind && !args.hasHeld) return args.labels.compareInKind;
-  return args.labels.recoveryNotComparable;
+  const owedLine = owedStatement(args);
+  // No record, or the asset details still loading: say only what the app
+  // knows — never a figure it cannot substantiate.
+  if (owedLine === null) return pureInKind ? labels.compareInKind : labels.recoveryNotComparable;
+  if (args.owed.kind !== 'recorded') {
+    return pureInKind ? `${owedLine} ${labels.compareInKind}` : owedLine;
+  }
+  const { principal, viaFallback } = args.owed;
+  if (pureInKind) return `${owedLine} ${labels.compareInKind}`;
+  // Held proceeds beside the claim, a fallback default (its recovery can
+  // arrive in steps) or a claim in another asset: the claim alone is not
+  // the whole recovery, so it is not set against the figure.
+  if (args.inKind || args.hasHeld || viaFallback || args.recovered === null) {
+    return args.format === null ? owedLine : `${owedLine} ${labels.owedNotComparable}`;
+  }
+  // No protocol share is taken from principal, so a recovery below it is a
+  // substantiated shortfall; above it, the interest and late fees are paid
+  // net of the protocol's share and are not compared. Both amounts are in
+  // the same token units, so the comparison holds even when the token's
+  // details could not be read — only the written amount is lost.
+  const below = args.recovered < principal;
+  if (args.format === null) {
+    return `${owedLine} ${below ? labels.recoveryBelowPrincipalNoAmount : labels.recoveryCoversPrincipalNoAmount}`;
+  }
+  return below
+    ? `${owedLine} ${labels.recoveryShortOfPrincipal(args.format(principal - args.recovered))}`
+    : `${owedLine} ${labels.recoveryCoversPrincipal}`;
+}
+
+/** #2426 r2 — the note beside a lender claim on a loan still in the
+ *  fallback: its recorded debt (the fallback's entry is the default) before
+ *  the existing "the claim can still change this" caveat. Never a
+ *  comparison — the payout itself is provisional. */
+export function fallbackPendingNote(args: {
+  owed: OwedAtDefaultRead;
+  format: ((amount: bigint) => string) | null;
+  formatUnreadable: boolean;
+  labels: OwedLabels & Pick<RowLabels, 'fallbackMayChange'>;
+}): string {
+  const owedLine = owedStatement(args);
+  return owedLine === null
+    ? args.labels.fallbackMayChange
+    : `${owedLine} ${args.labels.fallbackMayChange}`;
 }

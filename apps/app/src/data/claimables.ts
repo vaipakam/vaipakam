@@ -84,6 +84,48 @@ interface ClaimableTuple {
   7?: boolean;
 }
 
+/** #2374 — what the loan owed at the moment it defaulted, as the protocol
+ *  recorded it then (`getOwedAtDefault`). Read only for a defaulted or
+ *  fallback-pending lender claim on an ERC-20 loan. `none` covers every case the protocol keeps no
+ *  record for (a default before the record existed, a deployment without
+ *  the view); `unreadable` is a transport failure, stated as such. */
+export type OwedAtDefaultRead =
+  | {
+      kind: 'recorded';
+      principal: bigint;
+      interest: bigint;
+      lateFee: bigint;
+      /** The default entered the full-collateral fallback, so its recovery
+       *  may have arrived in more than one step. */
+      viaFallback: boolean;
+    }
+  | { kind: 'none' }
+  | { kind: 'unreadable' };
+
+const OWED_NONE: OwedAtDefaultRead = { kind: 'none' };
+
+/** Read `getOwedAtDefault` for one loan. Never fails the claim probe: the
+ *  figure is a comparison beside the payout, not part of it. */
+export async function readOwedAtDefault(
+  publicClient: PublicClient,
+  diamond: `0x${string}`,
+  loanId: string | number,
+): Promise<OwedAtDefaultRead> {
+  try {
+    const [principal, interest, lateFee, recordedAt, viaFallback] = (await publicClient.readContract({
+      address: diamond,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'getOwedAtDefault',
+      args: [BigInt(loanId)],
+    })) as readonly [bigint, bigint, bigint, bigint | number, boolean];
+    if (BigInt(recordedAt) === 0n) return OWED_NONE;
+    return { kind: 'recorded', principal, interest, lateFee, viaFallback };
+  } catch (e) {
+    // A deployment without the view reverts: it keeps no record.
+    return isRevert(e) ? OWED_NONE : { kind: 'unreadable' };
+  }
+}
+
 /** What the wallet would actually receive on claim — carried onto the
  *  row so the Claim Center can show the NUMBER instead of a vague
  *  "+ interest" / "proceeds or collateral" description (UX-002). The
@@ -118,6 +160,10 @@ export interface ClaimDetail {
    *  side. It never makes a claim actionable by itself — the contract's
    *  NothingToClaim guard does not count it. */
   extraCollateral: { asset: string; amount: bigint } | null;
+  /** #2374 — what the loan owed when it defaulted. `none` unless this is a
+   *  defaulted or fallback-pending lender claim on an ERC-20 loan with a
+   *  record. */
+  owedAtDefault: OwedAtDefaultRead;
 }
 
 export interface ClaimableLoan extends PositionLoan {
@@ -133,6 +179,31 @@ export type ClaimProbe =
 const NONE: ClaimProbe = { kind: 'none' };
 const UNCONFIRMED: ClaimProbe = { kind: 'unconfirmed' };
 const claimable = (loan: ClaimableLoan): ClaimProbe => ({ kind: 'claimable', loan });
+
+/** Whether a probe's verdict may be memoized for reuse. A transport failure
+ *  is never memoized ("couldn't confirm" is not "not claimable"), and
+ *  neither is a claimable row whose owed-at-default read failed (#2374): the
+ *  payout is sound, but reusing it would repeat "couldn't be read just now"
+ *  for the cache's whole lifetime instead of retrying once the RPC recovers. */
+export function isMemoizableProbe(probe: ClaimProbe): boolean {
+  if (probe.kind === 'unconfirmed') return false;
+  return !(probe.kind === 'claimable' && owedReadFailed(probe.loan));
+}
+
+/** #2374 — a claim row whose owed-at-default read failed in transport: the
+ *  payout is sound, but the figure should be read again soon. */
+export function owedReadFailed(loan: ClaimableLoan | null | undefined): boolean {
+  return loan?.claim.owedAtDefault.kind === 'unreadable';
+}
+
+/** #2426 r3 — how soon the loan page re-reads its claim: only while the
+ *  owed-at-default figure could not be read, so a transient RPC failure does
+ *  not leave "couldn't be read just now" on the page (the query otherwise
+ *  refetches only on an invalidation). */
+export const OWED_RETRY_MS = 30_000;
+export function loanClaimRefetchInterval(loan: ClaimableLoan | null | undefined): number | false {
+  return owedReadFailed(loan) ? OWED_RETRY_MS : false;
+}
 
 /** Probe ONE candidate: does `me` still hold this side's position NFT,
  *  and what does `getClaimable` say it pays? The single implementation
@@ -280,6 +351,19 @@ export async function probeClaim(
       }
     }
 
+    // #2374 — what the loan owed at default, for the comparison beside a
+    // defaulted lender claim.
+    const owedAtDefault =
+      isLender &&
+      loan.assetType === AssetType.ERC20 &&
+      (loan.status === 'defaulted' ||
+        loan.status === 'liquidated' ||
+        // #2426 r2 — the fallback's entry IS the default, and the protocol
+        // reports its record while the loan stands in the fallback.
+        loan.status === 'fallback_pending')
+        ? await readOwedAtDefault(publicClient, diamond, loan.loanId)
+        : OWED_NONE;
+
     // Mirror ClaimFacet's actionability guard.
     const actionable =
       amount > 0n ||
@@ -307,6 +391,7 @@ export async function probeClaim(
             lifRebate,
             surplus,
             extraCollateral,
+            owedAtDefault,
           },
         })
       : NONE;
@@ -649,12 +734,9 @@ export function useMyClaimables() {
           if (memo.hit) return memo.value as ClaimableLoan | null;
           // Only a CLEAN verdict is memoizable: a transport failure is
           // "couldn't confirm", never a cacheable "not claimable".
-          let clean = true;
           const probe = await probeClaim(publicClient, diamond, me, loan);
-          if (probe.kind === 'unconfirmed') {
-            transportFailed = true;
-            clean = false;
-          }
+          if (probe.kind === 'unconfirmed') transportFailed = true;
+          const clean = isMemoizableProbe(probe);
           const verdict = probe.kind === 'claimable' ? probe.loan : null;
           // Cache only when the pass was CLEAN and the rail was
           // healthy when it started: a verdict captured while
@@ -713,6 +795,7 @@ export function useLoanClaim(
     ],
     enabled: Boolean(publicClient && me && loan),
     staleTime: 30_000,
+    refetchInterval: (query) => loanClaimRefetchInterval(query.state.data),
     queryFn: async (): Promise<ClaimableLoan | null> => {
       const probe = await probeClaim(publicClient!, readChain.diamondAddress, me!, {
         ...loan!,

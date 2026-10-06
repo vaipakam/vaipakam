@@ -136,6 +136,21 @@ describe('coalesceByTx', () => {
     expect(rows[0].hiddenCount).toBe(2);
   });
 
+  // #2374 / #2426 r4 — the owed-at-default record never represents a
+  // transaction: a default or fallback entry is labelled by the default (or
+  // by the status change, as before the record existed).
+  it('never lets the owed-at-default record represent the transaction', () => {
+    for (const lead of ['LoanDefaulted', 'LoanLiquidated', 'LoanStatusChanged']) {
+      const rows = coalesceByTx([
+        ev({ kind: 'OwedAtDefaultRecorded', logIndex: 0, loanId: 7 }),
+        ev({ kind: lead, logIndex: 1, loanId: 7 }),
+      ]);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].event.kind).toBe(lead);
+      expect(rows[0].hiddenCount).toBe(1);
+    }
+  });
+
   it('keeps events from different transactions separate', () => {
     const rows = coalesceByTx([
       ev({ txHash: '0xa', kind: 'OfferCreated', blockNumber: 2 }),

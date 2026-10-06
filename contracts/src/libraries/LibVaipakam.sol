@@ -2381,6 +2381,32 @@ library LibVaipakam {
     }
 
     /**
+     * @notice #2374 — what an ERC-20 loan owed, in its principal asset, at the
+     *         moment it defaulted: the moment it left `Active` for `Defaulted`
+     *         or for `FallbackPending` (the fallback's entry IS the default; a
+     *         later move from `FallbackPending` to `Defaulted` keeps this
+     *         figure rather than restating it at the claim's timestamp).
+     * @dev    Principal outstanding, per-second accrued interest net of
+     *         interest already settled, and the late fee — the basis a
+     *         swap-based forced close settles its debt on (a fallback allocates
+     *         collateral on its own basis; for it this is the debt, not that
+     *         allocation). It is the GROSS debt — the protocol's
+     *         share of interest and late fee is taken from it before the lender
+     *         is paid, so it is not the lender's entitlement. It records no
+     *         recovery: what the default paid out is a separate fact.
+     */
+    struct OwedAtDefault {
+        uint256 principal;
+        uint256 interest;
+        uint256 lateFee;
+        /// @dev Block timestamp of the default; 0 = no record.
+        uint64 recordedAt;
+        /// @dev True when the default entered `FallbackPending` (the swap
+        ///      could not run), so the recovery may arrive in several steps.
+        bool viaFallback;
+    }
+
+    /**
      * @notice Per-day numeraire-quoted price snapshot for an asset.
      * @dev Captured by {OracleFacet.captureDailyPriceSnapshot}
      *      (permissionless, first-caller-per-day-per-asset wins,
@@ -7698,6 +7724,13 @@ library LibVaipakam {
         ///      slot but is not live, so no path that ends a request has to
         ///      clear it.
         mapping(uint256 => uint256) refinanceRequestOfLoan;
+        /// @dev #2374 — what each ERC-20 loan owed at its most recent default,
+        ///      by loan id. Written ONLY by {LibOwedAtDefault} and never
+        ///      cleared; `ClaimFacet.getOwedAtDefault` reports it only while
+        ///      the loan stands defaulted. `recordedAt == 0` means none was
+        ///      ever written (never defaulted, a default before this record
+        ///      existed, or a rental).
+        mapping(uint256 => OwedAtDefault) owedAtDefault;
     }
 
     /// @notice 3b-ii-A2 (#2305) — one batch a staging record staged from, with
