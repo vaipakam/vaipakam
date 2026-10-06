@@ -1,6 +1,9 @@
 /**
  * census-storage-read.mjs — the ERA-COMPLETE storage read the custody census
- * uses where a Diamond routes no getter (#1566, design §7 + §7a).
+ * takes on every Diamond (#1566, design §7 + §7a), and the pure helpers the
+ * one judge (`census-verdict.mjs`) derives its verdict with. Nothing here
+ * writes a verdict: the readers return raw readings, the helpers return
+ * attributions and partitions, and only the judge turns them into a status.
  *
  * Pure over an injected `readSlot(slotHex) → Promise<bigint>`, so the rules
  * are unit-tested with a fake reader and the census supplies the hash-pinned
@@ -8,14 +11,16 @@
  * pinned by test: `storage-slots.json` (HEAD, forge probe) and
  * `storage-slot-eras.json` (every layout era since the walk began).
  *
- * What it certifies: a row is ABSENT only when it reads zero at EVERY era's
- * slot for that mapping; a Diamond has NO LOANS only when `nextLoanId` (whose
- * slot never moved) is zero and the other counters are zero at every era slot.
- * A non-zero read is a ROW CANDIDATE reported with the era slot it was found
- * at — never silently dropped and never a bound. If the era table is
- * incomplete, or the row member offsets differ between eras, the read is
- * refused up front (`prepareStorageRead().ok === false`) and the cells stay
- * indeterminate with the reason recorded.
+ * What the judge may conclude from it: a row is ABSENT only when it reads zero
+ * at EVERY era's slot for that mapping; a Diamond has NO LOANS only when
+ * `nextLoanId` (whose slot never moved) is zero and every KEPT reading of the
+ * other counters is zero (`attributeCounters`: an earlier era's counter slot
+ * that a current value field occupies reads that field, and is set aside). A
+ * non-zero read is a ROW CANDIDATE reported with the era slot it was found at
+ * — never silently dropped and never a bound. If the era
+ * table is incomplete, or the row member offsets differ between eras, the read
+ * is refused up front (`prepareStorageRead().ok === false`) with the reason,
+ * and the judge records the range as unknown.
  */
 import { rowSlot, memberSlot } from './storage-slots.mjs';
 import { expandBytecode, normalizeFieldType } from './storage-layout-eras.mjs';
@@ -133,7 +138,12 @@ export function prepareStorageRead({ slots, eras: rawEras }) {
 
 const hex = (s) => s;
 
-/** The counters at every era slot. */
+/**
+ * The counters at every era slot, raw. Whether they bound anything is the
+ * judge's to say, over the readings `attributeCounters` keeps — so nothing
+ * here summarises them (a summary over the RAW readings once stood beside the
+ * kept ones and disagreed with them).
+ */
 export async function readCountersByStorage({ readSlot, eraSlots }) {
   const nextLoanId = await readSlot(hex(eraSlots.nextLoanId[0].slot));
   const perEra = async (field) => {
@@ -143,13 +153,19 @@ export async function readCountersByStorage({ readSlot, eraSlots }) {
   };
   const totalLoansEverCreated = await perEra('totalLoansEverCreated');
   const intentLiveCommitCount = await perEra('intentLiveCommitCount');
-  const allZero = nextLoanId === 0n && totalLoansEverCreated.every((x) => x.value === 0n) && intentLiveCommitCount.every((x) => x.value === 0n);
   return {
     nextLoanId,
     totalLoansEverCreated,
     intentLiveCommitCount,
-    allZero,
     slotsRead: 1 + totalLoansEverCreated.length + intentLiveCommitCount.length,
+    // what was read, per field — the judge's era-coverage test compares it with
+    // the table it judges WITH, so a table regenerated after this read names
+    // any slot the read never covered (#2095 root arrest, S2-9)
+    slotsScanned: {
+      nextLoanId: [eraSlots.nextLoanId[0].slot],
+      totalLoansEverCreated: totalLoansEverCreated.map((x) => x.slot),
+      intentLiveCommitCount: intentLiveCommitCount.map((x) => x.slot),
+    },
   };
 }
 
@@ -179,97 +195,28 @@ export async function scanRowsByStorage({ readSlot, loanIds, eraSlots, classes =
         const tc = await rd(memberSlot(id, slot, ROW.FallbackSnapshot.treasuryCollateral));
         const bc = await rd(memberSlot(id, slot, ROW.FallbackSnapshot.borrowerCollateral));
         const custody = lc + tc + bc;
-        if (active || custody > 0n) rows.fallbackSnapshotCustody.push({ loanId: id.toString(), active, collateralTotal: custody.toString(), asset: 'unreadable without the getter', mappingSlot: slot, eras });
+        // no asset: storage holds amounts only, and the judge files a storage row's asset as unread
+        if (active || custody > 0n) rows.fallbackSnapshotCustody.push({ loanId: id.toString(), active, collateralTotal: custody.toString(), mappingSlot: slot, eras });
       }
     }
     if (classes.includes('liveIntentCommits')) {
       for (const { slot, eras } of eraSlots.intentCommits ?? []) {
         const oh = await rd(memberSlot(id, slot, ROW.SwapToRepayIntentCommit.orderHash));
-        if (oh !== 0n) rows.liveIntentCommits.push({ loanId: id.toString(), orderHash: '0x' + oh.toString(16).padStart(64, '0'), asset: 'unreadable without the getter', mappingSlot: slot, eras });
+        if (oh !== 0n) rows.liveIntentCommits.push({ loanId: id.toString(), orderHash: '0x' + oh.toString(16).padStart(64, '0'), mappingSlot: slot, eras });
       }
     }
   }
-  return { rows, slotsRead, loansScanned: loanIds.length, erasPerField: Object.fromEntries(Object.entries(eraSlots).map(([f, v]) => [f, v.length])) };
-}
-
-/**
- * #2095 r1 P1 — the verdict for the intent class from a storage scan. The
- * live-commit counter is corroboration and never sufficient alone, but it can
- * CONTRADICT: a non-zero counter at any era slot beside an empty row scan
- * means a row the scan did not reach (a missing era, a wrong slot), and the
- * class must not be certified. Pure; exported for the test.
- */
-export function intentVerdictFromStorage({ rows, liveCommitCounts }) {
-  const nonZero = (liveCommitCounts ?? []).filter((c) => BigInt(c.value) !== 0n);
-  if (rows.length) return { status: 'indeterminate', reason: `${rows.length} live intent row(s) exist at era slots (read from storage); their asset cannot be read without the getter, so they are not provably VPFI or non-VPFI` };
-  if (nonZero.length) {
-    return {
-      status: 'indeterminate',
-      reason: `the row scan found no intent row, but intentLiveCommitCount reads ${nonZero.map((c) => `${c.value} at ${c.slot} (${c.eras.map((e) => e.date).join(',')})`).join('; ')} — the protocol's own counter says a commit exists that the scan did not reach; refusing to certify`,
-      contradiction: true,
-    };
-  }
-  return { status: 'proven', provenBy: 'storage-read-calibrated' };
-}
-
-/** The era slots of each field EXCEPT the one HEAD's layout uses — what a routed getter cannot see. */
-export function eraSlotsExcept(eraSlots, headSlots) {
-  const out = {};
-  for (const [f, list] of Object.entries(eraSlots)) out[f] = list.filter((x) => x.slot !== headSlots[f]);
-  return out;
-}
-
-/**
- * #2095 r3 P1 — a routed getter reads TODAY's layout; rows written by earlier
- * facets sit at earlier era slots where no getter looks. This merges the
- * historical scan into a class's routed verdict: a rebate or held row is VPFI
- * by definition and simply counts; a fallback or intent row has no readable
- * asset and makes the class indeterminate. Pure; exported for the test.
- */
-export function mergeHistoricalRows(cls, historical, className) {
-  const all = historical?.rows?.[className] ?? [];
-  if (!all.length) return { ...cls, historicalRows: 0 };
-  // #2095 r20 P1 — a getter row may absorb a historical (earlier-slot) row only
-  // when the getter cannot be reading HEAD's row for that loan: if storage holds
-  // a row for the same loan at HEAD's slot, the getter (reading HEAD) is that
-  // row, and a same-valued row at an older slot is a DISTINCT liability
-  const headLoanIds = new Set(((historical?.headRows ?? {})[className] ?? []).map((r) => String(r.loanId)));
-  // #2095 r7 P2 — a routed getter compiled against an EARLIER layout returns
-  // the very row the era scan finds at that era's slot. Such a row is already
-  // in the getter's set; merging it again would double the count, the total
-  // and the shortfall. Each getter row absorbs at most ONE historical row
-  // with the same key (and the same amount where the row carries one); the
-  // HEAD-slot reconciliation still records the layout disagreement. A row
-  // that carries no amount (intent) is never absorbed — see below.
-  // An intent row is NEVER absorbed (#2095 r8 P1): storage reads its orderHash
-  // and the routed getter returns the order, not the hash, so a historical
-  // intent row cannot be proven to be the getter's — an old-layout commit A
-  // left behind under a current-layout commit B for the same loan is a
-  // distinct candidate and must survive as one.
-  const amountField = { vpfiHeldCustody: 'vpfiHeld', rebateRows: 'rebateAmount', fallbackSnapshotCustody: 'collateralTotal' }[className];
-  const unclaimed = amountField ? [...(cls.rows ?? []), ...(cls.nonVpfiRowsExcluded ?? []), ...(cls.unknownAssetRows ?? [])] : [];
-  const hist = [];
-  let alreadyReported = 0;
-  for (const r of all) {
-    const i = headLoanIds.has(String(r.loanId)) ? -1 : unclaimed.findIndex((g) => String(g.loanId) === String(r.loanId) && String(g[amountField]) === String(r[amountField]));
-    if (i >= 0) { unclaimed.splice(i, 1); alreadyReported += 1; } else hist.push(r);
-  }
-  const base = { historicalRows: hist.length, historicalRowsAlreadyReportedByGetter: alreadyReported };
-  if (!hist.length) return { ...cls, ...base };
-  if (className === 'vpfiHeldCustody' || className === 'rebateRows') {
-    const rows = [...(cls.rows ?? []), ...hist.map((r) => ({ ...r, layoutEra: 'earlier' }))];
-    const total = rows.reduce((a, r) => a + BigInt(r[amountField]), 0n).toString();
-    return { ...cls, count: rows.length, total, rows, ...base };
-  }
-  return {
-    ...cls,
-    status: 'indeterminate',
-    provenBy: undefined,
-    indeterminateReason: `${hist.length} row candidate(s) at an EARLIER layout era's slot (no getter reads them)${hist.some((r) => r.ambiguous) ? `; ${hist.filter((r) => r.ambiguous).length} of them alias a current field's rows (${[...new Set(hist.filter((r) => r.ambiguous).map((r) => r.aliasesCurrentField))].join(', ')}) and may be today's rows of that field for the same key` : ''}; their asset cannot be read without a getter for that era`,
-    unknownAssetRows: [...(cls.unknownAssetRows ?? []), ...hist],
-    count: (cls.count ?? 0) + hist.length,
-    ...base,
-  };
+  // the slot set EVERY scanned id was read at, per mapping field — the table's
+  // set at read time, independent of how many ids there were, so a deployment
+  // with no loans still records which layouts the (empty) scan stood for and
+  // `--rejudge` can tell a later table's new slot from one this read covered
+  const scannedFields = [
+    ...(classes.includes('vpfiHeldCustody') || classes.includes('rebateRows') ? ['borrowerLifRebate'] : []),
+    ...(classes.includes('fallbackSnapshotCustody') ? ['fallbackSnapshot'] : []),
+    ...(classes.includes('liveIntentCommits') ? ['intentCommits'] : []),
+  ];
+  const slotsScanned = Object.fromEntries(scannedFields.map((f) => [f, (eraSlots[f] ?? []).map((x) => x.slot)]));
+  return { rows, slotsRead, loansScanned: loanIds.length, slotsScanned };
 }
 
 /**
@@ -337,47 +284,78 @@ export function splitByHeadSlot(rows, headSlots) {
 }
 
 /**
+ * A ledger value as a bigint, or `null` when it is not a whole number. In
+ * memory the collector holds bigints; a committed ledger holds their decimal
+ * strings — both read identically. The judge reads every numeric ledger value
+ * through this one parser, so a value is "unparseable" by one definition
+ * wherever it is tested. Pure.
+ */
+export function wholeNumber(v) {
+  if (typeof v === 'bigint') return v;
+  if (typeof v === 'number') return Number.isSafeInteger(v) ? BigInt(v) : null;
+  if (typeof v === 'string') {
+    const s = v.trim();
+    if (/^-?\d+$/.test(s) || /^0x[0-9a-fA-F]+$/.test(s)) return BigInt(s);
+  }
+  return null;
+}
+
+/**
+ * A row's amount as a bigint, or `null` when it cannot be one: every amount a
+ * custody row carries is a uint256 (`vpfiHeld`, `rebateAmount`, a collateral
+ * sum, an order's `makerAmount`), so a negative value is as unreadable as a
+ * word. Pure.
+ */
+export function amountOf(v) {
+  const n = wholeNumber(v);
+  return n !== null && n >= 0n ? n : null;
+}
+
+/**
+ * The ONE test of whether two reads of a row agree on its amount. The judge's
+ * HEAD merge (a HEAD-slot storage row and its routed twin are one row) and
+ * `getterAgreement` (the routed getter and HEAD storage agree) both ask it, so
+ * the merge never pairs what the agreement check calls a disagreement, or the
+ * reverse. They used to be two rules that differed on a missing amount: the
+ * merge refused to pair `null` with `null` while the agreement check compared
+ * `String(null) === String(null)` and agreed, so one physical row was counted
+ * twice under a class that still reached `proven`. An amount nobody can read
+ * agrees with nothing, itself included. Pure.
+ */
+export function amountsAgree(a, b) {
+  const x = amountOf(a);
+  const y = amountOf(b);
+  return x !== null && y !== null && x === y;
+}
+
+/**
  * #2095 r4 P1 — a routed getter reads the layout of the FACET that was cut,
  * which need not be HEAD's. So the HEAD-slot rows the storage read finds
  * are not merged; they are reconciled against what the routed getter said,
  * per loan id and in BOTH directions. A row storage sees at the HEAD slot
- * that the getter did not report, or a row the getter reported that storage
- * does not see at the HEAD slot, means the getter reads another layout — the
+ * that the getter did not report, a row the getter reported that storage
+ * does not see at the HEAD slot, or an amount the two do not provably share
+ * (`amountsAgree` — a missing or unparseable amount on either side is a
+ * disagreement, never a match) means the getter reads another layout — the
  * class is indeterminate. Pure; exported for the test.
  */
 export function getterAgreement({ headRows, routed }) {
   const out = {};
   // every class that carries an amount compares it (#2095 r8 P1 — fallback included); an intent row has no amount storage reads
   const amount = { vpfiHeldCustody: 'vpfiHeld', rebateRows: 'rebateAmount', fallbackSnapshotCustody: 'collateralTotal' };
+  // a side with no amount is named as such, never as the word "null" — the spelling that once made two missing amounts look equal
+  const shown = (v) => (v === null || v === undefined ? 'no amount read' : String(v));
   for (const cls of Object.keys(headRows)) {
     const storage = new Map(headRows[cls].map((r) => [String(r.loanId), r]));
     const getter = new Map((routed[cls] ?? []).map((r) => [String(r.loanId), r]));
     const mismatches = [];
     for (const [id, r] of storage) {
       const g = getter.get(id);
-      if (!g) { mismatches.push({ loanId: id, storage: amount[cls] ? r[amount[cls]] : 'present', getter: 'absent' }); continue; }
-      if (amount[cls] && String(g[amount[cls]]) !== String(r[amount[cls]])) mismatches.push({ loanId: id, storage: r[amount[cls]], getter: String(g[amount[cls]]) });
+      if (!g) { mismatches.push({ loanId: id, storage: amount[cls] ? shown(r[amount[cls]]) : 'present', getter: 'absent' }); continue; }
+      if (amount[cls] && !amountsAgree(g[amount[cls]], r[amount[cls]])) mismatches.push({ loanId: id, storage: shown(r[amount[cls]]), getter: shown(g[amount[cls]]) });
     }
     for (const [id] of getter) if (!storage.has(id)) mismatches.push({ loanId: id, storage: 'absent at the HEAD slot', getter: 'present' });
     out[cls] = mismatches;
-  }
-  return out;
-}
-
-/**
- * #2095 r5 P1 — without the era-complete read there is no proof on the
- * enumerable path. A routed getter reads only the layout its facet was
- * compiled from, so a row written under another era's layout is invisible to
- * it; the era-complete read is what excludes that. When that read is
- * unavailable (no table, a rejected table, a HEAD mismatch) every class the
- * getters called proven is downgraded to indeterminate. Pure; exported for
- * the test.
- */
-export function downgradeWithoutEraRead(classes, reason) {
-  const out = {};
-  for (const [name, c] of Object.entries(classes)) {
-    if (c.status !== 'proven') { out[name] = c; continue; }
-    out[name] = { ...c, status: 'indeterminate', provenBy: undefined, indeterminateReason: `the era-complete storage read is unavailable (${reason}) — a routed getter reads only its facet's layout, so a row at another era's slot cannot be excluded; refusing to certify` };
   }
   return out;
 }
@@ -391,7 +369,7 @@ export function downgradeWithoutEraRead(classes, reason) {
  * table has an old `totalLoansEverCreated` slot that is now a list length and
  * an old `intentLiveCommitCount` slot that is now `tierTableVersion`, so a
  * getter-less Diamond with offers but no loans must not read as a
- * contradiction). `allZero` is recomputed over the kept readings. Pure.
+ * contradiction). The kept lists are what the judge's zero bound reads. Pure.
  */
 export function attributeCounters(counters, headSlots, occupied) {
   const earlier = (list, which) => list.filter((x) => x.slot !== headSlots[which]).map((x) => ({ ...x, which, value: x.value.toString() }));
@@ -401,16 +379,14 @@ export function attributeCounters(counters, headSlots, occupied) {
   const totalLoansEverCreated = keep(counters.totalLoansEverCreated, 'totalLoansEverCreated');
   const intentLiveCommitCount = keep(counters.intentLiveCommitCount, 'intentLiveCommitCount');
   return {
-    counters: {
-      ...counters,
-      totalLoansEverCreated,
-      intentLiveCommitCount,
-      allZero: counters.nextLoanId === 0n && totalLoansEverCreated.every((x) => x.value === 0n) && intentLiveCommitCount.every((x) => x.value === 0n),
-    },
+    counters: { ...counters, totalLoansEverCreated, intentLiveCommitCount },
     unexplained: contradictions.map((x) => ({ which: x.which, slot: x.slot, value: String(x.value), eras: x.eras, atMappingHead: x.atMappingHead })),
     aliased: aliased.map((x) => ({ which: x.which, slot: x.slot, value: String(x.value), aliases: x.aliases })),
   };
 }
+
+/** keccak256 of empty code — the one hash that says an address held no code at the block read. */
+export const EMPTY_CODE_HASH = '0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470';
 
 /**
  * #2095 r9 P1 — attribute every facet that ever wrote to a deployment to the
@@ -420,29 +396,22 @@ export function attributeCounters(counters, headSlots, occupied) {
  * the storage library, or an unmerged branch — and the era-complete read
  * cannot claim to cover its layout. Empty code is a contract that never
  * existed (post-Cancun, code cannot vanish — EIP-6780), so it never wrote.
- * Pure; exported for the test.
+ * ONLY the empty-code hash says that: a hash that is missing was never read,
+ * and a read nobody took is not a read of empty code (round-3 review P2) — it
+ * matches no catalogue, so it is unattributed, which refuses. Pure; exported
+ * for the test.
  */
 export function attributeFacetCode({ facets, eras }) {
-  const EMPTY = '0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470'; // keccak256('0x')
   const attributed = [];
   const unattributed = [];
   const noCode = [];
   for (const f of facets) {
-    if (!f.codeHash || f.codeHash === EMPTY) { noCode.push({ address: f.address, sources: f.sources }); continue; }
+    if (f.codeHash === EMPTY_CODE_HASH) { noCode.push({ address: f.address, sources: f.sources }); continue; }
     const hits = (eras ?? []).filter((e) => e.bytecode?.[f.codeHash]).map((e) => ({ commit: e.commit.slice(0, 9), date: String(e.date).slice(0, 10), name: e.bytecode[f.codeHash], kind: e.kind ?? 'era', layoutEra: e.layoutEra ? String(e.layoutEra).slice(0, 9) : e.commit.slice(0, 9) }));
     if (hits.length) attributed.push({ address: f.address, name: hits[0].name, eras: hits.map((h) => ({ commit: h.commit, date: h.date, kind: h.kind, layoutEra: h.layoutEra })), sources: f.sources });
-    else unattributed.push({ address: f.address, codeHash: f.codeHash, sources: f.sources });
+    else unattributed.push({ address: f.address, codeHash: f.codeHash ?? null, sources: f.sources, ...(typeof f.codeHash === 'string' && f.codeHash ? {} : { note: 'its code hash was never read' }) });
   }
   return { attributed, unattributed, noCode, verdict: unattributed.length ? 'unattributed' : 'attributed' };
-}
-
-/** Every class the getters or the storage read called proven becomes indeterminate with `reason`; nothing else changes. Pure. */
-export function downgradeProvenClasses(classes, reason) {
-  const out = {};
-  for (const [name, c] of Object.entries(classes)) {
-    out[name] = c.status !== 'proven' ? c : { ...c, status: 'indeterminate', provenBy: undefined, indeterminateReason: reason };
-  }
-  return out;
 }
 
 /**
@@ -509,23 +478,6 @@ export function cutHistoryCompleteness({ verdict, cuts, constructorCutSeen, addr
 }
 
 /**
- * #2095 r13 P1 — under the ROUTED standard only a class proven by a routed
- * getter keeps its proof when provenance refuses; a class proven by the
- * storage read alone (a getter-less shell's counter twin, or the intent read
- * at every era slot) still depends on the era table covering every writer's
- * layout, which is exactly what an unattributed facet or an incomplete
- * population denies. Pure; exported for the test.
- */
-export const STORAGE_ONLY_PROOFS = new Set(['no-loans-ever-created-by-storage', 'storage-read-calibrated']);
-export function downgradeStorageOnlyProofs(classes, reason) {
-  const out = {};
-  for (const [name, c] of Object.entries(classes)) {
-    out[name] = c.status === 'proven' && STORAGE_ONLY_PROOFS.has(c.provenBy) ? { ...c, status: 'indeterminate', provenBy: undefined, indeterminateReason: reason } : c;
-  }
-  return out;
-}
-
-/**
  * #2095 r17 P1 — an address the CUT HISTORY names (a facet or an initializer)
  * with empty code at the census block is unreadable, not "never wrote":
  * `LibDiamond.addFacet` checks extcodesize, so the cut proves the facet had
@@ -533,12 +485,28 @@ export function downgradeStorageOnlyProofs(classes, reason) {
  * one transaction vanish — a transient facet can be cut in, invoked, removed
  * and destroyed within one transaction. Only an address named by a RECORD
  * alone and never seen cut may count as never having written. Pure.
+ *
+ * "Named by the cut history" is MEMBERSHIP in the cut history's own lists
+ * (`addresses` ∪ `initializers`), which the caller must hand in — never the
+ * facet entry's `sources` label alone (round-3 review P2). The label is the
+ * collector's copy of that membership; a ledger whose label omits it (a
+ * hand-edited or re-judged record) would otherwise let an address the cut
+ * history names pass as "never wrote". A label that claims the cut history
+ * still counts: it can only refuse, never excuse. The refused entry carries
+ * the source the membership established, so its published sources say why.
  */
-export function refuseUnreadableCutSources(attribution) {
+export function refuseUnreadableCutSources(attribution, cutHistory) {
+  if (cutHistory === null || typeof cutHistory !== 'object') throw new TypeError('refuseUnreadableCutSources: the cut history is required — membership in it, not a label, decides what a cut named');
+  const lower = (list) => new Set((Array.isArray(list) ? list : []).filter((a) => typeof a === 'string').map((a) => a.toLowerCase()));
+  const initializers = lower(cutHistory.initializers);
+  const added = lower(cutHistory.addresses);
   const keep = [];
   for (const n of attribution.noCode) {
-    if (n.sources.some((x) => x.startsWith('cut-history'))) {
-      attribution.unattributed.push({ address: n.address, codeHash: null, sources: n.sources, note: n.sources.includes('cut-history:initializer') ? 'initializer delegatecalled by a cut, its code unreadable at the census block' : 'facet the cut history names, its code unreadable at the census block (a cut proves it had code)' });
+    const a = String(n.address).toLowerCase();
+    const member = initializers.has(a) ? 'cut-history:initializer' : added.has(a) ? 'cut-history' : null;
+    const sources = member && !n.sources.includes(member) ? [...n.sources, member] : n.sources;
+    if (sources.some((x) => x.startsWith('cut-history'))) {
+      attribution.unattributed.push({ address: n.address, codeHash: null, sources, note: sources.includes('cut-history:initializer') ? 'initializer delegatecalled by a cut, its code unreadable at the census block' : 'facet the cut history names, its code unreadable at the census block (a cut proves it had code)' });
     } else keep.push(n);
   }
   attribution.noCode = keep;
@@ -568,51 +536,6 @@ export function gettersShareLayout(attributed, hosts) {
   return common.length ? { shared: true, reason: `all attribute to layout era ${common[0]}` } : { shared: false, reason: 'the hosts attribute to different layout eras' };
 }
 
-/**
- * #2095 r26 P1 — INCLUSION is as scope-dependent as exclusion, and one rule now
- * says so for both.
- *
- * A row enters a class, or is filed away from it, by the SAME comparison: the
- * row getter's asset against the token getter's answer. Rounds 24 and 25 gated
- * only the rows that comparison EXCLUDED, so a row whose asset happened to
- * equal the token getter's answer was still counted as a proven VPFI liability
- * while the two getters read different layouts — the census reporting a figure
- * its own evidence could not substantiate. There is no asymmetry to preserve
- * here: when the hosts do not share a layout the comparison is uninterpretable,
- * whichever way it came out.
- *
- * So every scope-dependent row — counted and excluded alike — becomes
- * unknown-asset evidence and the class is not certified. The rows and their
- * AMOUNTS are kept (those were read, and dropping them would hide what is
- * there); the class TOTAL is withdrawn, because stating it would assert the
- * asset the comparison could not settle. Same shape as the storage-path
- * downgrade: `count` names how many rows are in evidence, `rows` is empty,
- * `total` is null beside a `totalUnavailable` that says why.
- *
- * Pure; exported for the test.
- */
-export function downgradeUnreconciledScope(cls, share, { getters } = {}) {
-  if (!cls || share?.shared) return cls;
-  const included = cls.rows ?? [];
-  const excluded = cls.nonVpfiRowsExcluded ?? [];
-  if (!included.length && !excluded.length) return cls;
-  const who = getters ?? 'the scope getters';
-  return {
-    ...cls,
-    status: 'indeterminate',
-    provenBy: undefined,
-    count: included.length + excluded.length,
-    rows: [],
-    total: null,
-    totalUnavailable: `the asset of every row is unreconciled — ${who} do not attribute to a common layout`,
-    nonVpfiRowsExcluded: [],
-    unknownAssetRows: [...(cls.unknownAssetRows ?? []), ...included, ...excluded],
-    indeterminateReason:
-      `${included.length} row(s) counted as VPFI and ${excluded.length} filed non-VPFI, but ${who} do not attribute to a ` +
-      `common layout (${share?.reason ?? 'no layout agreement'}) — the asset is not reconciled either way; refusing to certify`,
-  };
-}
-
 /** The four liability classes and the row field each one's amount lives in. One list, because every figure derived from a class reads it. */
 export const LIABILITY_CLASS_FIELDS = {
   vpfiHeldCustody: 'vpfiHeld',
@@ -622,118 +545,61 @@ export const LIABILITY_CLASS_FIELDS = {
 };
 
 /**
- * #2095 r27 P1 — unknown-asset evidence is never certified, whatever pass put
- * it there.
+ * #2095 r27 P1 — the liability aggregates are DERIVED from the classes as the
+ * judge (census-verdict.mjs) finally states them, and published only where
+ * every contributing class was established.
  *
- * A class can hold rows whose asset could not be read — `getFallbackSnapshot`
- * routed while `getLoanDetails` is not records every observed row that way, and
- * so does the scope downgrade when the getters read different layouts. Neither
- * populates `rows` or `nonVpfiRowsExcluded`, so until now such a class could
- * stand as `proven` with `count: 0`, and `allClassesEmpty` could go true over
- * an observed custody row.
+ * A class contributes a figure only where its proof CHAIN is non-empty. The
+ * judge proves a class exactly when it can give that chain (a class is never
+ * established by a label alone), so the aggregate rests on the same evidence
+ * the class does. An unestablished class may still carry a total, and that
+ * total is a lower bound at best: summing it into a headline liability would
+ * state a completeness nothing proved, and re-deriving the sum from the
+ * surviving rows would quietly UNDERSTATE it by exactly the rows withdrawn.
+ * So any unestablished class — or one whose total is withdrawn, or that holds
+ * rows of unknown asset — withdraws both aggregates, with the reason named;
+ * the rows it did read stay on the class itself.
  *
- * The rule is about the EVIDENCE, not about the pass that collected it, so it
- * is stated once here rather than as a clause inside each downgrade. `count`
- * takes the unknown rows in as well: a zero beside a non-empty
- * `unknownAssetRows` is a misstatement of what the census found, and the total
- * is withdrawn because it would bound a liability the asset read cannot bound.
- * Pure.
- */
-export function withholdUnknownAssetEvidence(classes) {
-  const out = {};
-  for (const [name, c] of Object.entries(classes ?? {})) {
-    const unknown = c?.unknownAssetRows ?? [];
-    if (!c || c.status !== 'proven' || !unknown.length) { out[name] = c; continue; }
-    const counted = (c.rows ?? []).length;
-    out[name] = {
-      ...c,
-      status: 'indeterminate',
-      provenBy: undefined,
-      count: counted + unknown.length,
-      total: null,
-      totalUnavailable: `${unknown.length} row(s) in evidence have an unreadable asset — a total here would bound a liability the asset read cannot bound`,
-      indeterminateReason:
-        `${unknown.length} row(s) were observed whose asset could not be read${counted ? `, beside ${counted} counted as VPFI` : ''} — ` +
-        `their custody is neither provably VPFI nor provably not; refusing to certify`,
-    };
-  }
-  return out;
-}
-
-/**
- * #2095 r27 P1 — the liability aggregates are DERIVED from the classes as they
- * finally stand, and stated only where every contributing class was
- * established.
+ * #2095 root arrest, S1-R5 — the shortfall compares the liability with the
+ * Diamond's balance OF THE SCOPING TOKEN, so it means something only when that
+ * token was read from the chain. An artifact-sourced token may predate a
+ * rotation via setVPFIToken, and the balance of it then says nothing about the
+ * live token's backing; the shortfall is withheld with that reason. The scope
+ * is the ledger's (`result.scope`, or `result.ledger.scope` on a verdict).
  *
- * `vpfiRowsTotal` and `backingShortfall` were written while the census still
- * held the rows, and the layout-provenance pass runs afterwards: the scope
- * downgrade moves counted rows into unknown-asset evidence and sets the class
- * total to `null`, and the two aggregates kept publishing the amount as a
- * substantiated VPFI liability and shortfall. Recomputing from `rows` alone
- * would be worse than leaving them — it would quietly UNDERSTATE the liability
- * by exactly the rows the downgrade withdrew.
- *
- * So an unestablished class withdraws the aggregates too, with the reason
- * named and the rows it did read left on the class itself; a shortfall is not
- * computable against a liability that is not stated, so it goes with it. Where
- * every class stands, this reproduces the figures already there — the rule only
- * ever takes away. Pure.
+ * Where every class stands, this states the figures; the rule only ever takes
+ * away. Pure.
  */
 export function deriveLiabilityAggregates(result) {
   const classes = result?.classes;
   const names = Object.keys(LIABILITY_CLASS_FIELDS).filter((n) => classes?.[n]);
   if (!names.length) return result;
-  // A class contributes a figure only where it was ESTABLISHED. An
-  // indeterminate class may still carry a total, and that total is a lower
-  // bound at best — the census did not settle that its rows are all of them —
-  // so summing it into a headline liability states a completeness nothing
-  // proved. This is broader than the round's finding, which asked only for the
-  // scope downgrade to be carried through; it is the same rule without the
-  // question of which kinds of withdrawal count, which is how this one was
-  // missed in the first place.
-  const withheld = names.filter((n) => classes[n].status !== 'proven' || classes[n].total === null || classes[n].totalUnavailable || (classes[n].unknownAssetRows ?? []).length);
-  if (withheld.length) {
-    const why =
-      `${withheld.join(', ')} ${withheld.length === 1 ? 'is not established' : 'are not established'} ` +
-      `(${withheld.map((n) => classes[n].totalUnavailable ?? classes[n].indeterminateReason ?? 'not certified').map((r) => String(r).split(' — ')[0]).join('; ')}) — ` +
-      `the liability across the classes is not established; the rows each class did read are reported on the class itself`;
-    return {
-      ...result,
-      vpfiRowsTotal: null,
-      vpfiRowsTotalUnavailable: why,
-      backingShortfall: null,
-      backingShortfallUnavailable: `no shortfall can be computed against a liability that is not stated: ${why}`,
-    };
-  }
-  const total = names.reduce(
-    (acc, n) => acc + (classes[n].rows ?? []).reduce((a, r) => a + (r[LIABILITY_CLASS_FIELDS[n]] !== undefined ? BigInt(r[LIABILITY_CLASS_FIELDS[n]]) : 0n), 0n),
-    0n,
-  );
+  const established = (c) => (c.evidence ?? []).length > 0 && c.total !== null && !c.totalUnavailable && !(c.unknownAssetRows ?? []).length;
+  const withheld = names.filter((n) => !established(classes[n]));
+  const why = withheld.length
+    ? `${withheld.join(', ')} ${withheld.length === 1 ? 'is not established' : 'are not established'} ` +
+      `(${withheld.map((n) => classes[n].totalUnavailable ?? ((classes[n].reasons ?? []).map((r) => r.obligation).join(', ') || 'no proof chain')).map((r) => String(r).split(' — ')[0]).join('; ')}) — ` +
+      `the liability across the classes is not established; the rows each class did read are reported on the class itself`
+    : null;
+  const total = why
+    ? null
+    : names.reduce((acc, n) => acc + (classes[n].rows ?? []).reduce((a, r) => a + (r[LIABILITY_CLASS_FIELDS[n]] !== undefined ? BigInt(r[LIABILITY_CLASS_FIELDS[n]]) : 0n), 0n), 0n);
   const backing = result.diamondVpfiBacking === null || result.diamondVpfiBacking === undefined ? null : BigInt(result.diamondVpfiBacking);
+  const scopeSource = (result.scope ?? result.ledger?.scope)?.source ?? null;
+  const shortfallWithheldBecause = why
+    ? `no shortfall can be computed against a liability that is not stated: ${why}`
+    : backing === null
+      ? 'the Diamond\'s VPFI balance could not be read, so a shortfall cannot be computed'
+      : scopeSource !== 'on-chain'
+        ? `the VPFI token was not read from the chain (${scopeSource ?? 'unresolved'}), so the Diamond's balance of it may be a rotated-away token's — a shortfall against it would compare the liability with the wrong backing`
+        : undefined;
+  const vpfiRowsTotal = total === null ? null : total.toString();
+  const backingShortfall = shortfallWithheldBecause ? null : (total > backing ? total - backing : 0n).toString();
   return {
     ...result,
-    vpfiRowsTotal: total.toString(),
-    vpfiRowsTotalUnavailable: undefined,
-    backingShortfall: backing === null ? null : (total > backing ? total - backing : 0n).toString(),
-    backingShortfallUnavailable: backing === null ? 'the Diamond\'s VPFI balance could not be read, so a shortfall cannot be computed' : undefined,
+    vpfiRowsTotal,
+    vpfiRowsTotalUnavailable: why ?? undefined,
+    backingShortfall,
+    backingShortfallUnavailable: shortfallWithheldBecause,
   };
-}
-
-/**
- * #2095 r27 — ONE finalization, because both of that round's code findings are
- * one invariant: a class's verdict, and every figure derived from it, must be
- * computed from the evidence the result FINALLY holds — never from an
- * intermediate state a later pass has since withdrawn.
- *
- * Round 26 replaced five hand-written routing gates with one boundary for the
- * same reason a round earlier. This is that shape one level up, and it is why
- * neither finding is fixed where it was raised: a clause added to the scope
- * downgrade would leave the next pass that withdraws a class free to forget
- * the aggregates again, exactly as this one did.
- *
- * Runs at the end of every deployment's census, on both paths. Pure.
- */
-export function finalizeVerdictFromEvidence(result) {
-  if (!result?.classes) return result;
-  return deriveLiabilityAggregates({ ...result, classes: withholdUnknownAssetEvidence(result.classes) });
 }

@@ -80,24 +80,46 @@
  * SCANNING NOTHING IS A HARD ERROR. A census that quietly reads zero loans
  * would report "empty" for every class and look like the good outcome.
  *
+ * EVIDENCE, THEN ONE JUDGE (#2095 root arrest). This file READS: each
+ * deployment's reads go into an evidence ledger — every value tagged with its
+ * source, nothing derived — which is frozen and handed to
+ * `census-verdict.mjs`, whose one pure function derives every published
+ * figure (each class's status, proof chain, count, total, the disagreement
+ * flags, the aggregates, the provenance attribution). No read here is gated on
+ * a verdict and no site here can write one. Each ledger is published beside
+ * the artifact (its `.ledgers.json` sidecar, named by content address — see
+ * `artifactTexts`), so `--rejudge` re-derives the verdicts offline against the
+ * checkout's rule and era table; a rerun is owed only when that table names a
+ * slot the reads never covered, or a record changed after they were taken.
+ *
  * Usage:
  *   node packages/contracts/scripts/census-grandfathered-custody.mjs \
  *     [--chain base-sepolia|all] [--rpc URL] [--out DIR] [--block N]
+ *     [--proof-standard provenance|routed] [--corroborate]
+ *     [--rejudge [--rejudge-from PATH] [--rejudge-allow-coverage-gaps]]
+ *   `--help` lists every flag (`CLI_FLAGS`, the one list the command line is
+ *   checked against); an unknown flag, a value flag with no value, or a
+ *   companion flag without the mode it modifies exits 2 before anything is
+ *   read.
  *
  * RPC resolution order: `--rpc`, then `CENSUS_RPC_<SLUG_WITH_UNDERSCORES>`,
  * then `CENSUS_RPC_URL`, then the public default for known testnets.
  */
 
-import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync, renameSync, rmSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, readdirSync, existsSync, renameSync, rmSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { tmpdir } from 'node:os';
 import { readManifest, regenerateEntries, withManifestLock, writeSnapshotGuarded, livePublicationsInProgress, sameEntry } from './archive-manifest.mjs';
 import { loadSlots, loadEras } from './storage-slots.mjs';
 import { commitsAround, deployedAtIso, interpolateTimestamp, CANDIDATES_FILE } from './storage-layout-eras.mjs';
-import { prepareStorageRead, readCountersByStorage, scanRowsByStorage, intentVerdictFromStorage, mergeHistoricalRows, markAliasedRows, splitByHeadSlot, getterAgreement, downgradeWithoutEraRead, attributeCounters, attributeFacetCode, downgradeProvenClasses, downgradeStorageOnlyProofs, STORAGE_ONLY_PROOFS, requireHexData, cutHistoryCompleteness, refuseUnreadableCutSources, gettersShareLayout, downgradeUnreconciledScope, finalizeVerdictFromEvidence, DIAMOND_CUT_SELECTOR, MAX_STORAGE_LOAN_SCAN } from './census-storage-read.mjs';
-
-/** Sum a row field as a decimal string. A function declaration, so it is hoisted above every branch that returns early (#2095 r1 P2). */
-function sum(rows, field) {
-  return rows.reduce((a, r) => a + BigInt(r[field]), 0n).toString();
-}
+import { prepareStorageRead, readCountersByStorage, scanRowsByStorage, requireHexData, DIAMOND_CUT_SELECTOR, MAX_STORAGE_LOAN_SCAN, CLASSES, LIABILITY_CLASS_FIELDS } from './census-storage-read.mjs';
+import { verdictFromEvidence, reportVerdict, isVerdict } from './census-verdict.mjs';
+import { basename, dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createPublicClient, http, toFunctionSelector, parseAbiItem, encodeFunctionData, decodeFunctionResult, decodeErrorResult, keccak256 } from 'viem';
+import { Agent as HttpsAgent, request as httpsRequest } from 'node:https';
+import { resolve as resolvePath } from 'node:path';
+import { Agent as HttpAgent, request as httpRequest } from 'node:http';
 
 /**
  * #1566 design §7/§7a — the ERA-COMPLETE storage read, prepared once from the
@@ -112,12 +134,97 @@ const STORAGE_READ = (() => {
     return { ok: false, reason: `slot tables unreadable: ${String(err.message).split('\n')[0]}` };
   }
 })();
-import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { createPublicClient, http, toFunctionSelector, parseAbiItem, encodeFunctionData, decodeFunctionResult, decodeErrorResult, keccak256 } from 'viem';
-import { Agent as HttpsAgent, request as httpsRequest } from 'node:https';
-import { resolve as resolvePath } from 'node:path';
-import { Agent as HttpAgent, request as httpRequest } from 'node:http';
+
+/**
+ * Every flag the census reads — the ONE list the command line is checked
+ * against and `--help` prints. Without it a flag the census does not know was
+ * silently ignored, so a typo of an offline mode (`--re-judge` for
+ * `--rejudge`) started a full archive-RPC census that rewrites the canonical
+ * artifact. `value` names the argument a flag takes (null: a switch).
+ * `requires` names the mode a companion flag modifies: given without that mode
+ * it modifies nothing, and the run would fall through to the default — a full
+ * archive-RPC census — so the command line refuses it, naming both. Reading a
+ * flag that is not listed here throws (`arg`, `hasFlag`), so the list and the
+ * reads cannot drift apart.
+ */
+export const CLI_FLAGS = Object.freeze({
+  '--chain': { value: 'SLUG|all', help: "census one chain's deployments — a partial run, written to its own file — or every chain (default: all)" },
+  '--rpc': { value: 'URL', help: "the chain's endpoint (else CENSUS_RPC_<SLUG>, then CENSUS_RPC_URL, then the public default)" },
+  '--out': { value: 'DIR', help: 'where the artifact and its ledger sidecar are written (default: docs/DesignsAndPlans/census)' },
+  '--block': { value: 'N', help: "read at this block rather than the endpoint's finalized head (never above it)" },
+  '--proof-standard': { value: 'provenance|routed', help: "the proof standard (default: provenance; --rejudge keeps the artifact's unless this is given)" },
+  '--corroborate': { value: null, help: 'also reconstruct live intent commits from the event lifecycle, as an independent second source' },
+  '--rejudge': { value: null, help: 're-derive every verdict of the committed artifact from its recorded ledgers and republish through the same guards (no RPC when re-judging the artifact it replaces; a --rejudge-from pair above that snapshot walks ancestry through the chain endpoint, and an unverified walk refuses it)' },
+  '--rejudge-from': { value: 'PATH', requires: '--rejudge', help: 'the artifact to re-derive (default: the one the run would replace)' },
+  '--rejudge-allow-coverage-gaps': { value: null, requires: '--rejudge', help: 'publish even where the reads do not cover the era table (a rerun owed), those classes indeterminate as judged; a changed inventory is never overridden' },
+  '--acknowledge-identity-change': { value: 'SLUG|LABEL[,...]', help: 'identity changes the regression guard records instead of refusing' },
+  '--write-archive-manifest': { value: null, help: 'regenerate the archive manifest and exit (no census)' },
+  '--force-archive-manifest-rewrite': { value: null, requires: '--write-archive-manifest', help: 'allow dropping entries, or writing an empty inventory' },
+  '--acknowledge-manifest-displacement': { value: 'SLUG|STAMP[,...]', requires: '--write-archive-manifest', help: 'archived labels that now name a different Diamond, acknowledged by key' },
+  '--ancestry-walk-max': { value: 'N', help: 'the longest block range the ancestry walk fetches (default: 250000)' },
+  '--ancestry-batch': { value: 'N', help: 'blocks per batched ancestry request, the starting size (default: 25)' },
+  '--ancestry-batch-pause-ms': { value: 'MS', help: 'pause between ancestry batches, the starting pause (default: 100)' },
+  '--ancestry-concurrency': { value: 'N', help: 'batched ancestry requests in flight (default: 3)' },
+  '--help': { value: null, help: 'print this list and exit, reading nothing' },
+});
+
+function listedFlag(flag, wantsValue) {
+  const spec = CLI_FLAGS[flag];
+  if (!spec || Boolean(spec.value) !== wantsValue) throw new Error(`census: ${flag} is read as a ${wantsValue ? 'value flag' : 'switch'} but CLI_FLAGS ${spec ? 'lists it otherwise' : 'does not list it'} — the command line would refuse or ignore it`);
+}
+/** The value given for a listed value flag, or `fallback`. */
+function arg(flag, fallback = undefined) {
+  listedFlag(flag, true);
+  const i = process.argv.indexOf(flag);
+  return i !== -1 && process.argv[i + 1] ? process.argv[i + 1] : fallback;
+}
+/** Whether a listed switch was given. */
+function hasFlag(flag) {
+  listedFlag(flag, false);
+  return process.argv.includes(flag);
+}
+
+/**
+ * The command line checked against `CLI_FLAGS`, before anything is read:
+ * `{ help, problems }`. A problem is an unknown flag or argument, a value
+ * flag with no value (`arg` would fall back to its default — `--chain` with
+ * nothing after it censuses every chain), a flag given twice (`arg` reads
+ * only the first), or a companion flag without the mode its `requires` names
+ * (the run would ignore it and census every endpoint instead). Pure.
+ */
+export function parseCliFlags(argv) {
+  const problems = [];
+  const seen = new Set();
+  let help = false;
+  for (let i = 0; i < argv.length; i++) {
+    const token = argv[i];
+    const spec = CLI_FLAGS[token];
+    if (!spec) {
+      problems.push(token.startsWith('-') ? `unknown flag ${token}` : `unexpected argument ${JSON.stringify(token)}`);
+      continue;
+    }
+    if (seen.has(token)) problems.push(`${token} is given more than once — only the first would be read`);
+    seen.add(token);
+    if (token === '--help') help = true;
+    if (spec.value) {
+      const v = argv[i + 1];
+      if (v === undefined || v === '' || v.startsWith('--')) problems.push(`${token} needs a value (${spec.value})`);
+      else i += 1;
+    }
+  }
+  for (const flag of seen) {
+    const mode = CLI_FLAGS[flag].requires;
+    if (mode && !seen.has(mode)) problems.push(`${flag} is given without ${mode} — it only modifies ${mode}, and without it the run would be a full archive-RPC census`);
+  }
+  return { help, problems };
+}
+
+/** The `--help` text: every flag `CLI_FLAGS` lists, with its argument and what it does. */
+export function usage() {
+  const spelled = Object.entries(CLI_FLAGS).map(([flag, s]) => [s.value ? `${flag} ${s.value}` : flag, s.requires ? `with ${s.requires}: ${s.help}` : s.help]);
+  const width = Math.max(...spelled.map(([f]) => f.length)) + 2;
+  return `usage: node packages/contracts/scripts/census-grandfathered-custody.mjs [flags]\n\n${spelled.map(([f, help]) => `  ${f.padEnd(width)}${help}`).join('\n')}\n`;
+}
 
 /**
  * EIP-2535's cut event — the COMPLETE routing history of a Diamond. Declared
@@ -455,19 +562,26 @@ const PROOF_STANDARD = (() => { const v = arg('--proof-standard', 'provenance');
 
 /** Candidates written this run, for the closing report. */
 let CANDIDATES_WRITTEN = 0;
+/** The candidates file as it stands, or null when there is none. */
+function readCandidatesText() {
+  try {
+    return readFileSync(CANDIDATES_FILE, 'utf8');
+  } catch {
+    return null;
+  }
+}
 /**
- * Merge candidate commits into `contracts/deployments/facet-build-candidates.json`
- * — the census's request to the era tool: "build these, I saw facets cut at
- * these moments that no catalogued build explains". Deterministic content
- * (sorted, no timestamp), written only when it changes, so a re-run does not
- * churn the file. The era tool reads it; `--check` fails until every entry
- * is catalogued.
+ * The ONE merge of candidate commits into
+ * `contracts/deployments/facet-build-candidates.json` — the census's request
+ * to the era tool: "build these, I saw facets cut at these moments that no
+ * catalogued build explains". Pure over the file's current text: returns the
+ * next text and how many commits it adds. Deterministic content (sorted, no
+ * timestamp), so a re-run that asks nothing new reproduces the file byte for
+ * byte. The era tool reads it; `--check` fails until every entry is
+ * catalogued.
  */
-function recordBuildCandidates(candidates) {
-  if (!candidates.length) return 0;
+function mergeBuildCandidates(currentText, candidates) {
   let current = { candidates: [] };
-  let currentText = null;
-  try { currentText = readFileSync(CANDIDATES_FILE, 'utf8'); } catch { currentText = null; }
   if (currentText !== null) {
     // present but unreadable: refuse rather than overwrite committed candidates as if there were none (#2095 r16 P2)
     try { current = JSON.parse(currentText); } catch (err) { throw new Error(`${CANDIDATES_FILE} is present but malformed (${err.message}); refusing to overwrite it — restore it from version control`); }
@@ -484,54 +598,88 @@ function recordBuildCandidates(candidates) {
     purpose: 'Commits the custody census asks the era tool to build (#1566 §7a, #2095 r9): a facet on chain carried code no catalogued build produced, and these are the commits around the moment it was cut or deployed. Regenerate the era table (storage-layout-eras.mjs) to catalogue them, then re-run the census. Written by census-grandfathered-custody.mjs; never hand-edit.',
     candidates: [...byCommit.entries()].map(([commit, reasons]) => ({ commit, reasons: [...reasons].sort() })).sort((x, y) => x.commit.localeCompare(y.commit)),
   };
-  const text = JSON.stringify(next, null, 2) + '\n';
+  return { text: JSON.stringify(next, null, 2) + '\n', added };
+}
+/**
+ * How many commits a publication would add to the candidates file — read
+ * BEFORE anything is published, so the report can say so and a malformed file
+ * refuses the publication before any file is touched. Writes nothing.
+ */
+function plannedBuildCandidates(candidates) {
+  return candidates.length ? mergeBuildCandidates(readCandidatesText(), candidates).added : 0;
+}
+/**
+ * Write the request, AFTER the artifact it was made from is published. The
+ * candidates file is owner-gated and turns the era tool's `--check` red until
+ * every entry is catalogued, so a publication the ancestry, inventory or
+ * regression guard refuses must leave it exactly as it was: the request then
+ * describes an artifact that was never kept (root-arrest review r1 P3). Merged
+ * against the file as it stands at that moment, and written only when the
+ * text changes.
+ */
+function recordBuildCandidates(candidates) {
+  if (!candidates.length) return 0;
+  const currentText = readCandidatesText();
+  const { text, added } = mergeBuildCandidates(currentText, candidates);
   if (currentText !== text) writeFileSync(CANDIDATES_FILE, text);
   CANDIDATES_WRITTEN += added;
   return added;
 }
 
 /**
- * #2095 r9 P1 — attribute every facet that may have written to this Diamond
- * to the layout era it was compiled against, and refuse every proof when one
- * cannot be. A routed getter and the era-complete read together cover every
- * COMMITTED layout; a facet built from a tree whose dirt reached the storage
- * library, or from an unmerged branch, carries a layout the walk never saw —
- * and its code hash is in no era's catalogue. The facet set is the union of
- * the loupe's current facets, every local record naming this Diamond, and
- * the cut history (refutation-only). Empty code never wrote (EIP-6780).
+ * #2095 r9 P1 — the READS layout provenance needs: every facet that may have
+ * written to this Diamond, with its code hash at the census block, the loupe
+ * as it stands, the cut history, and the timestamp of every block a cut
+ * happened in. The facet set is the union of the loupe's current facets,
+ * every local record naming this Diamond, and the cut history (refutation-
+ * only). Empty code never wrote (EIP-6780).
+ *
+ * Nothing is ATTRIBUTED here (#2095 root arrest, S3-4): attribution is a
+ * function of these reads AND the era table, and the judge holds the table.
+ * A collector-side attribution was frozen into the artifact, so every table
+ * regeneration forced an archive-node rerun to restate what the reads already
+ * answered; recorded raw, the verdict is re-derivable offline (`--rejudge`).
+ *
+ * S3-3 — three gates stay HERE, as read short-circuits: a contract with no
+ * code or that is not a Diamond has no facets of this protocol to read, and
+ * without the era table the reads have nothing to be judged against (were they
+ * taken, every facet would come out unattributed and the build-candidate
+ * request would ask the era tool to catalogue the whole population).
  */
-async function applyLayoutProvenance(result, { client, censusBlock, atBlock, diamond, slug, label, deployBlock, readFacets, who, manifestEntry = null, scopeSelectors = null }) {
-  result.scanned.sourceRecord = sourceRecordFor(slug, label);
-  result.proofStandard = PROOF_STANDARD;
-  if (result.scanned.notADiamond) {
-    result.scanned.layoutProvenance = { verdict: 'not-a-diamond', reason: 'the record names no Vaipakam Diamond; there are no facets of this protocol to attribute' };
-    return finalizeVerdictFromEvidence(result);
-  }
-  if (!STORAGE_READ.ok) {
-    // #2095 r27 — finalized on the way out like every other exit: this one
-    // carries a FULL result, so skipping it would certify a class holding
-    // unknown-asset evidence whenever the era table happens to be unreadable.
-    result.scanned.layoutProvenance = { verdict: 'not-checked', reason: STORAGE_READ.reason };
-    return finalizeVerdictFromEvidence(result);
+async function collectProvenance(ledger, { client, censusBlock, atBlock, diamond, slug, deployBlock, readFacets, who, manifestEntry = null, scopeSelectors }) {
+  const skip = ledger.flags.codeAbsent
+    ? 'no-code'
+    : ledger.flags.notADiamond
+      ? 'not-a-diamond'
+      : !STORAGE_READ.ok
+        ? `storage read unavailable: ${STORAGE_READ.reason}`
+        : null;
+  if (skip) {
+    ledger.provenance = { read: false, reason: skip };
+    return;
   }
   const recorded = recordedFacetAddresses(slug, diamond, manifestEntry);
   let loupe = null;
+  let list = null;
   let cutFacetHost = null;
   let loupeReadFailed = false;
-  let hostOf = () => null;
-  if (result.scanned.loupeRouted && readFacets) {
+  let loupeError = null;
+  if (readFacets) {
     try {
-      const list = await readFacets();
+      list = await readFacets();
       loupe = list.map((f) => `${f.facetAddress ?? f[0]}`.toLowerCase());
-      hostOf = (selector) => list.find((f) => (f.functionSelectors ?? f[1] ?? []).some((x) => String(x).toLowerCase() === String(selector).toLowerCase()))?.facetAddress?.toLowerCase() ?? null;
       // the facet hosting diamondCut was installed by the constructor's storage write, never by a cut
-      cutFacetHost = list.find((f) => (f.functionSelectors ?? f[1] ?? []).some((x) => String(x).toLowerCase() === DIAMOND_CUT_SELECTOR))?.facetAddress?.toLowerCase() ?? null;
+      cutFacetHost = hostOfSelector(list, DIAMOND_CUT_SELECTOR);
     } catch (err) {
+      list = null;
       loupe = null;
       loupeReadFailed = true;
-      result.scanned.layoutProvenanceLoupeError = String(err?.shortMessage ?? err?.message ?? err).slice(0, 200);
+      loupeError = String(err?.shortMessage ?? err?.message ?? err).slice(0, 200);
     }
   }
+  // #2095 r24/r25 P1 — which facet answers each scope getter, keyed by the
+  // selector the loupe answered for; the judge tests whether they read one layout
+  ledger.hostOf = Object.fromEntries(Object.values(scopeSelectors).map((selector) => [selector, hostOfSelector(list, selector)]));
   const cut = await facetsFromCutHistory(client, diamond, deployBlock, atBlock);
   const all = new Map();
   const add = (a, src) => { const k = a.toLowerCase(); if (!all.has(k)) all.set(k, new Set()); all.get(k).add(src); };
@@ -543,24 +691,16 @@ async function applyLayoutProvenance(result, { client, censusBlock, atBlock, dia
     const codeHash = await withReplicaRetry(atBlock, () => codeHashAtHash(client, censusBlock, address), { client });
     facets.push({ address, sources: [...sources], codeHash });
   }
-  const attribution = attributeFacetCode({ facets, eras: STORAGE_READ.eras });
-  // an address the cut history names with empty code now is unreadable, not
-  // "never wrote" (#2095 r15/r17 P1) — see refuseUnreadableCutSources
-  refuseUnreadableCutSources(attribution);
-  const population = cutHistoryCompleteness({ verdict: cut.verdict.split(' ')[0], cuts: cut.cuts, constructorCutSeen: cut.constructorCutSeen, addresses: cut.addresses, loupe, cutFacetHost, loupeReadFailed, recordedFacets: recorded.facets.map((f) => f.address) });
-  // For every unattributed facet: the commits around the moments it was cut
-  // (block timestamps, hash-pinned by number under the census block) and
-  // around the deployedAt of every record that names it — the era tool builds
-  // them, and the next run attributes against them.
-  // A cut block below the endpoint's pruning floor has no readable header:
-  // that moment yields no candidate (recorded), the record's deployedAt
-  // still does, and the verdict is unaffected — an unattributed facet
-  // already refuses every proof. A candidate is help for the next run, never
-  // a reason to fail this one.
+  // The timestamp of EVERY block a cut happened in — the moments the build-
+  // candidate request is made of. Read for all of them, not only for the
+  // facets this run's table leaves unattributed: which facets those are is the
+  // judge's answer, and a `--rejudge` against another table must be able to ask
+  // about any of them. A cut block below the endpoint's pruning floor has no
+  // readable header: it is ESTIMATED from the census block and the record's
+  // deployedAt where both exist, and recorded as unreadable either way. A
+  // timestamp only ever feeds the candidate request, never a verdict.
   const blockIso = new Map();
   const unreadableBlocks = [];
-  // anchors for an ESTIMATE when a header is unreadable: the census block's own
-  // timestamp and the record's deployedAt at its deployBlock (when both exist)
   let censusIso = null;
   const censusTimestamp = async () => {
     if (censusIso === null) {
@@ -569,105 +709,87 @@ async function applyLayoutProvenance(result, { client, censusBlock, atBlock, dia
     return censusIso || null;
   };
   const anchor0 = recorded.deployedAt.length && deployBlock > 0n ? { b0: deployBlock, t0: recorded.deployedAt[0].iso } : null;
-  const isoOfBlock = async (n) => {
-    if (!blockIso.has(n)) {
-      try {
-        const b = await withReplicaRetry(atBlock, () => client.getBlock({ blockNumber: n }), { client });
-        blockIso.set(n, { iso: new Date(Number(b.timestamp) * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z'), estimated: false });
-      } catch (err) {
-        const t1 = anchor0 ? await censusTimestamp() : null;
-        const est = anchor0 && t1 ? interpolateTimestamp({ block: n, b0: anchor0.b0, t0: anchor0.t0, b1: atBlock, t1 }) : null;
-        blockIso.set(n, est ? { iso: est, estimated: true } : null);
-        unreadableBlocks.push({ block: String(n), reason: String(err?.shortMessage ?? err?.message ?? err).split('\n')[0].slice(0, 160), estimatedTimestamp: est ?? undefined });
-      }
+  const byNumber = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+  const cutBlocks = [...new Set([...cut.blocksOf.values()].flatMap((s) => [...s]))].sort(byNumber);
+  for (const n of cutBlocks) {
+    try {
+      const b = await withReplicaRetry(atBlock, () => client.getBlock({ blockNumber: n }), { client });
+      blockIso.set(n, { iso: new Date(Number(b.timestamp) * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z'), estimated: false });
+    } catch (err) {
+      const t1 = anchor0 ? await censusTimestamp() : null;
+      const est = anchor0 && t1 ? interpolateTimestamp({ block: n, b0: anchor0.b0, t0: anchor0.t0, b1: atBlock, t1 }) : null;
+      blockIso.set(n, est ? { iso: est, estimated: true } : null);
+      unreadableBlocks.push({ block: String(n), reason: String(err?.shortMessage ?? err?.message ?? err).split('\n')[0].slice(0, 160), ...(est ? { estimatedTimestamp: est } : {}) });
     }
-    return blockIso.get(n);
+  }
+  ledger.cutHistory = {
+    verdict: cut.verdict,
+    cuts: cut.cuts,
+    constructorCutSeen: cut.constructorCutSeen,
+    constructorCutEvidence: cut.constructorCutEvidence ?? null,
+    addresses: cut.addresses,
+    initializers: cut.initializers,
+    blocksOf: Object.fromEntries([...cut.blocksOf].map(([a, s]) => [a, [...s].sort(byNumber).map(String)])),
+    blockTimestamps: Object.fromEntries(cutBlocks.map((n) => [String(n), blockIso.get(n)])),
+    unreadableBlocks,
+    ...(cut.reason ? { reason: cut.reason } : {}),
   };
+  ledger.provenance = {
+    read: true,
+    facets,
+    loupe,
+    loupeReadFailed,
+    ...(loupeError ? { loupeError } : {}),
+    cutFacetHost,
+    recorded: { records: recorded.records, facets: recorded.facets.map((f) => f.address), deployedAt: recorded.deployedAt },
+  };
+  process.stderr.write(`census: ${who} — layout provenance read: ${facets.length} facet address(es) (${recorded.records.length} record(s), loupe ${loupe ? loupe.length : loupeReadFailed ? 'read failed' : 'unrouted'}, cut history ${cut.verdict.split(' ')[0]}, ${cutBlocks.length} cut block(s), ${unreadableBlocks.length} unreadable)\n`);
+}
+
+/** The facet the loupe says answers `selector`, lower-cased; null with no loupe list or no host. */
+function hostOfSelector(list, selector) {
+  const want = String(selector).toLowerCase();
+  const f = (list ?? []).find((x) => (x.functionSelectors ?? x[1] ?? []).some((s) => String(s).toLowerCase() === want));
+  return f ? `${f.facetAddress ?? f[0]}`.toLowerCase() : null;
+}
+
+/**
+ * S3-3/S3-4 — the census's request to the era tool, made from what the JUDGE
+ * found unattributed: the commits around every moment an unattributed facet
+ * was cut, and around the deployedAt of every record naming it. It reads only
+ * the verdict and its ledger, so a `--rejudge` asks exactly what a live run
+ * would, and a run whose provenance was never read (no table, no Diamond)
+ * asks nothing — the case that once wrote the whole population as candidates
+ * and reddened the era tool's `--check`. A duplicate record's reads are the
+ * original's, which already asked.
+ */
+export function proposeBuildCandidates(results) {
   const candidates = new Map();
   const propose = (c, reason) => { if (!candidates.has(c.commit)) candidates.set(c.commit, new Set()); candidates.get(c.commit).add(reason); };
-  for (const u of attribution.unattributed) {
-    u.cutBlocks = [...(cut.blocksOf.get(u.address) ?? [])].map(String);
-    u.candidates = [];
-    for (const n of cut.blocksOf.get(u.address) ?? []) {
-      const t = await isoOfBlock(n);
-      if (!t) continue;
-      // an estimate may be hours off: widen to the commits around ±6 h as well
-      const moments = t.estimated ? [t.iso, new Date(Date.parse(t.iso) - 6 * 3600e3).toISOString().replace(/\.\d{3}Z$/, 'Z'), new Date(Date.parse(t.iso) + 6 * 3600e3).toISOString().replace(/\.\d{3}Z$/, 'Z')] : [t.iso];
-      for (const iso of moments) for (const c of commitsAround(iso)) { propose(c, `${c.relation} ${who}'s cut at block ${n} (${t.estimated ? 'estimated ' : ''}${iso})`); u.candidates.push(c.commit.slice(0, 9)); }
-    }
-    for (const rec of recorded.deployedAt) if (u.sources.includes(rec.record)) for (const c of commitsAround(rec.iso)) { propose(c, `${c.relation} ${who}'s ${rec.record} deployedAt ${rec.iso}`); u.candidates.push(c.commit.slice(0, 9)); }
-    u.candidates = [...new Set(u.candidates)];
-  }
-  const candidateList = [...candidates.entries()].map(([commit, reasons]) => ({ commit, reasons: [...reasons] }));
-  const newCandidates = recordBuildCandidates(candidateList);
-  result.scanned.layoutProvenance = {
-    verdict: facets.length ? attribution.verdict : 'no-facet-known',
-    standard: PROOF_STANDARD,
-    populationComplete: population.complete,
-    populationIncompleteBecause: population.complete ? undefined : population.reasons,
-    facetsChecked: facets.length,
-    attributed: attribution.attributed.map((a) => ({ address: a.address, name: a.name, eras: a.eras.map((e) => e.date), sources: a.sources })),
-    unattributed: attribution.unattributed,
-    noCode: attribution.noCode,
-    sources: { records: recorded.records, loupe: loupe ? loupe.length : loupeReadFailed ? 'read failed' : 'unrouted', cutHistory: cut.verdict, cuts: cut.cuts, initializers: cut.initializers.length, constructorCut: cut.constructorCutEvidence, cutHistoryError: cut.reason },
-    buildCandidates: candidateList.length ? { proposed: candidateList.length, newInFile: newCandidates, file: 'contracts/deployments/facet-build-candidates.json' } : undefined,
-    cutBlocksUnreadable: unreadableBlocks.length ? unreadableBlocks : undefined,
-    residual: 'a facet cut in and replaced with no local record and no readable cut history is not seen here; the cut history can only refute',
-  };
-  // #2095 r24 P1 — a fallback row is filed non-VPFI by the LOAN getter's asset;
-  // on a partially refreshed Diamond the snapshot getter and the loan getter
-  // can read different layouts, and then the asset says nothing about the row.
-  // The two hosts must attribute to a common layout era for the exclusion to
-  // stand; otherwise the excluded rows are unknown-asset and the class is not
-  // certified.
-  if (scopeSelectors) {
-    // #2095 r25 P1 — the TOKEN getter is part of every exclusion: a row is
-    // filed non-VPFI by comparing the row getter's asset with getVPFIToken(),
-    // so the token getter must read the same layout as the row getters
-    const fbShare = gettersShareLayout(attribution.attributed, [hostOf(scopeSelectors.fallback), hostOf(scopeSelectors.loan), hostOf(scopeSelectors.token)]);
-    const intentShare = gettersShareLayout(attribution.attributed, [hostOf(scopeSelectors.intent), hostOf(scopeSelectors.token)]);
-    result.scanned.layoutProvenance.scopeGetters = { fallback: fbShare, intent: intentShare };
-    // #2095 r26 P1 — ONE rule for both sides of the comparison and both
-    // classes: a row counted as VPFI rests on the same getter agreement as a
-    // row filed away from it, so an unshared layout withdraws both. The rule
-    // itself lives in census-storage-read.mjs, where the test can reach it.
-    result.classes.fallbackSnapshotCustody = downgradeUnreconciledScope(result.classes.fallbackSnapshotCustody, fbShare, {
-      getters: 'the snapshot, loan and token getters',
-    });
-    result.classes.liveIntentCommits = downgradeUnreconciledScope(result.classes.liveIntentCommits, intentShare, {
-      getters: 'the intent getter and the token getter',
-    });
-  }
-  process.stderr.write(`census: ${who} — layout provenance: ${facets.length} facet address(es) (${recorded.records.length} record(s), loupe ${loupe ? loupe.length : 'unrouted'}, cut history ${cut.verdict.split(' ')[0]}): ${attribution.attributed.length} attributed, ${attribution.unattributed.length} unattributed, ${attribution.noCode.length} without code${candidateList.length ? `; ${candidateList.length} build candidate(s) proposed (${newCandidates} new in the candidates file)` : ''}\n`);
-  const refusals = [];
-  if (attribution.unattributed.length) refusals.push(`${attribution.unattributed.length} facet(s) of this Diamond carry code no layout era's build produced (${attribution.unattributed.slice(0, 4).map((u) => `${u.address} via ${u.sources.join('+')}`).join('; ')}${attribution.unattributed.length > 4 ? '; …' : ''}) — compiled from sources the walk never saw (a dirty tree, an unmerged branch), so the era-complete read cannot claim to cover their layout`);
-  if (!population.complete) refusals.push(`the facet population is not exhaustive — ${population.reasons.join('; ')} — so a writer cut in and out between the records could be missing from the set`);
-  result.scanned.layoutProvenance.unattributedSeenOnlyInRecords = attribution.unattributed.filter((u) => u.sources.every((x) => /^(record|manifest):/.test(x))).length;
-  if (refusals.length) {
-    // What the classes say under the ROUTED standard is kept beside the
-    // provenance verdict either way, so the owner can see exactly what the
-    // rule withdraws (or would withdraw) and decide on it (#1566).
-    result.scanned.layoutProvenance.withoutProvenanceRule = Object.fromEntries(Object.entries(result.classes).map(([k, v]) => [k, v.status]));
-    const why = `${refusals.join('; and ')}; refusing to certify under the provenance standard`;
-    result.scanned.layoutProvenance.provenanceRefusal = why;
-    if (PROOF_STANDARD === 'provenance') {
-      result.provenBy = undefined;
-      result.classes = downgradeProvenClasses(result.classes, why);
-      result.scanned.layoutProvenanceContradiction = why;
-    } else {
-      // the routed exception covers a routed-getter proof only (#2095 r13 P1):
-      // a class proven by the storage read alone still needs every writer's
-      // layout in the era table, which is what the refusal denies
-      result.scanned.layoutProvenance.wouldRefuseUnderProvenanceStandard = true;
-      result.classes = downgradeStorageOnlyProofs(result.classes, `${why} — a storage-only proof keeps no exception under the routed standard`);
-      if (STORAGE_ONLY_PROOFS.has(result.provenBy)) result.provenBy = undefined;
+  const around = new Map();
+  const commitsAt = (iso) => { if (!around.has(iso)) around.set(iso, commitsAround(iso)); return around.get(iso); };
+  const shifted = (iso, hours) => new Date(Date.parse(iso) + hours * 3600e3).toISOString().replace(/\.\d{3}Z$/, 'Z');
+  for (const v of results) {
+    const ledger = v.ledger;
+    if (v.duplicateOfDeployment || !ledger?.provenance?.read || !ledger.cutHistory) continue;
+    const who = `${v.chainSlug} (${v.deployment})`;
+    const sourcesOf = new Map(ledger.provenance.facets.map((f) => [String(f.address).toLowerCase(), f.sources]));
+    for (const u of v.scanned?.provenance?.unattributed ?? []) {
+      const address = String(u?.address ?? u).toLowerCase();
+      for (const n of ledger.cutHistory.blocksOf?.[address] ?? []) {
+        const t = ledger.cutHistory.blockTimestamps?.[n];
+        if (!t) continue;
+        // an estimate may be hours off: widen to the commits around ±6 h as well
+        const moments = t.estimated ? [t.iso, shifted(t.iso, -6), shifted(t.iso, 6)] : [t.iso];
+        for (const iso of moments) for (const c of commitsAt(iso)) propose(c, `${c.relation} ${who}'s cut at block ${n} (${t.estimated ? 'estimated ' : ''}${iso})`);
+      }
+      for (const rec of ledger.provenance.recorded?.deployedAt ?? []) {
+        if (!(sourcesOf.get(address) ?? []).includes(rec.record)) continue;
+        for (const c of commitsAt(rec.iso)) propose(c, `${c.relation} ${who}'s ${rec.record} deployedAt ${rec.iso}`);
+      }
     }
   }
-  // #2095 r27 — the LAST thing a deployment's census does, on both paths,
-  // because every pass above can withdraw a class and the figures derived from
-  // one are written before any of them run. The rule is in
-  // census-storage-read.mjs where the test reaches it.
-  return finalizeVerdictFromEvidence(result);
+  return [...candidates.entries()].map(([commit, reasons]) => ({ commit, reasons: [...reasons] }));
 }
 /**
  * r28 P1 — the hash the census pins must be what EVERY replica serves at that
@@ -882,7 +1004,7 @@ function isNoCommitRevert(err) {
   if (named) return named === 'IntentNoCommit';
   return /IntentNoCommit/.test(`${err?.metaMessages?.join(' ') ?? ''} ${err?.shortMessage ?? ''} ${err?.message ?? ''}`);
 }
-const WANT_CORROBORATION = process.argv.includes('--corroborate');
+const WANT_CORROBORATION = hasFlag('--corroborate');
 
 function loadAbi(name) {
   const raw = JSON.parse(readFileSync(join(ABIS, `${name}.json`), 'utf8'));
@@ -902,10 +1024,6 @@ function pick(abi, names) {
   return got;
 }
 
-function arg(flag, fallback = undefined) {
-  const i = process.argv.indexOf(flag);
-  return i !== -1 && process.argv[i + 1] ? process.argv[i + 1] : fallback;
-}
 
 /** The endpoint HOST that served a result — provenance for a reader comparing runs (never the full URL: it may carry a key). */
 function rpcHostOf(rpc) {
@@ -1022,9 +1140,36 @@ function writeArchiveManifest() {
   // different Diamond, the scheduled correction of the non-Diamond archive
   // being exactly this) is acknowledged BY KEY, never by the blanket force:
   //   --write-archive-manifest --acknowledge-manifest-displacement <slug|stamp>[,...]
-  const force = process.argv.includes('--force-archive-manifest-rewrite');
+  const force = hasFlag('--force-archive-manifest-rewrite');
   const displaceKeys = (arg('--acknowledge-manifest-displacement', '') || '').split(',').map((k) => k.trim()).filter(Boolean);
   return regenerateEntries(ARCHIVE_MANIFEST, () => localArchivedDiamonds(), { allowDrop: force, allowEmpty: force, allowDisplace: displaceKeys }).manifest;
+}
+
+/** The facet population a deployment record names, as one sorted key — an input of the verdict (#2095 r14/r20 P1: layout provenance is per record). */
+function recordFacetsKey(d) {
+  const list = d.manifestEntry?.facets ?? Object.values(d.addresses.facets ?? {});
+  return [...new Set(list.filter((v) => typeof v === 'string').map((v) => v.toLowerCase()))].sort().join(',');
+}
+/** The VPFI token a record names (what scopes a row where the token getter is unrouted, Codex #2070 r16 P1), lower-cased; 'none' without one. */
+function recordScopeToken(d) {
+  const token = d.addresses.vpfiToken ?? d.addresses.vpfiMirror;
+  return token ? String(token).toLowerCase() : 'none';
+}
+const recordDeployedAt = (d) => deployedAtIso(d.manifestEntry?.deployedAt ?? d.addresses.deployedAt) ?? 'null';
+
+/**
+ * ONE record's complete inventory identity: every field of the record a
+ * verdict rests on — the Diamond and chain, the scoping token, the deploy
+ * block the no-code evidence was read against (Codex #2070 r18 P1), the
+ * deploy time and the facet population (#2095 r14 P1). The one key three
+ * checks compare: publication against the inventory re-taken under the
+ * manifest lock (Codex #2070 r17/r19/r20 P1), the ledger at collection
+ * (`identity.inventoryKey`), and `--rejudge` against the record as it stands
+ * NOW — reads taken for a record corrected since describe a record that no
+ * longer exists, and re-judging them would re-certify its label.
+ */
+export function inventoryKeyOf(d) {
+  return [d.slug, d.label, String(d.addresses.diamond ?? '').toLowerCase(), recordScopeToken(d), d.addresses.chainId ?? 'null', d.addresses.deployBlock ?? 'null', recordDeployedAt(d), recordFacetsKey(d)].join('|');
 }
 
 function deployedDiamonds() {
@@ -1227,6 +1372,22 @@ const PRIOR_COMMITTED_HASH = new Map();
  */
 const ANCESTRY_SEEN = new Map();
 /**
+ * Whether a committed result names a chain and a height — the two keys every
+ * reader of a committed artifact (the height floor, the replacement target,
+ * the regression guard) is keyed on. A schema-2 result keeps its identity
+ * FLAT (C7); one that lacks it would read here as "no result", silently
+ * emptying the floor, the ancestry evidence and the identity comparison all at
+ * once (S1-R7/S3-1), so it is refused instead. An older result without the
+ * keys is skipped, as it always was.
+ */
+function readableResult(r, where) {
+  // schema 2 is where identity became flat; every later schema keeps it so
+  if (Number(r?.schema) >= 2 && (!r.chainSlug || r.atBlock == null)) {
+    throw new Error(`${where}: a schema ${r.schema} census result has no flat chainSlug/atBlock — its identity is nested or missing, and reading past it would drop that deployment from every committed-artifact check`);
+  }
+  return Boolean(r?.chainSlug) && r?.atBlock != null;
+}
+/**
  * The snapshot this run will REPLACE — the canonical artifact for a full run,
  * the chain's partial file for a `--chain` run (Codex #2070 r24 P2: the
  * guard compares against that file, so ancestry must be proven against ITS
@@ -1245,7 +1406,7 @@ function loadTargetSnapshot(targetPath) {
     throw new Error(`${targetPath} exists but cannot be parsed (${err.message}); it is the snapshot this run would replace — restore or remove it deliberately`);
   }
   for (const r of t.results ?? []) {
-    if (!r?.chainSlug || r?.atBlock == null) continue;
+    if (!readableResult(r, targetPath)) continue;
     const h = BigInt(r.atBlock);
     if (!TARGET_HEIGHT.has(r.chainSlug) || h > TARGET_HEIGHT.get(r.chainSlug)) {
       TARGET_HEIGHT.set(r.chainSlug, h);
@@ -1393,7 +1554,7 @@ function loadPriorCommittedHeights(canonicalPath) {
     throw new Error(`${canonicalPath} parses but carries no results[] — not a census artifact; restore it from version control.`);
   }
   for (const r of prior.results ?? []) {
-    if (!r?.chainSlug || r?.atBlock == null) continue;
+    if (!readableResult(r, canonicalPath)) continue;
     const h = BigInt(r.atBlock);
     const cur = PRIOR_COMMITTED_HEIGHT.get(r.chainSlug);
     if (cur === undefined || h > cur) {
@@ -1841,34 +2002,179 @@ async function refuteProducerNeverRouted({
   }
 }
 
-async function censusDeployment(dep) {
+/**
+ * #2095 root arrest — the census of ONE deployment is two steps with one
+ * seam: collect the evidence (`collectEvidence`, every read, nothing derived),
+ * then judge it (`verdictFromEvidence`, the only code that can write a class
+ * status, a proof chain, a count, a total or an aggregate). Twenty-eight review
+ * rounds found a verdict written early and a later pass that forgot to
+ * withdraw it; with no verdict anywhere before the judge, there is no earlier
+ * verdict to forget. This is the census's only exit, and `publish` refuses
+ * anything the judge did not derive.
+ */
+export async function censusDeployment(dep, reuse = null) {
+  // `reuse`: an earlier record's ledger for the same Diamond, re-judged under
+  // this record's label (S1-R1) — the verdict is derived again, never copied.
+  // Frozen at the hand-off: the evidence cannot grow under the derivation.
+  const ledger = deepFreeze(reuse ? relabel(reuse, dep) : await collectEvidence(dep));
+  return publish(verdictFromEvidence(ledger, { proofStandard: PROOF_STANDARD, storageRead: STORAGE_READ }));
+}
+
+/**
+ * Every result the census records passes through here (S1-R1/S3-2): only an
+ * object the judge itself returned carries its private brand, so a spread copy
+ * of a verdict, or a result assembled by hand, is refused rather than written
+ * as if it had been derived.
+ */
+export function publish(verdict) {
+  if (!isVerdict(verdict)) {
+    throw new Error('census: refusing to publish a result verdictFromEvidence() did not return — a copied or hand-built verdict states figures no derivation produced');
+  }
+  return verdict;
+}
+
+/** The evidence-ledger schema this collector writes and `--rejudge` requires. */
+const LEDGER_SCHEMA = 2;
+/** Every selector whose routing the ledger records: 'routed' | 'unrouted' | 'not-probed'. */
+const SURFACES = ['getProtocolStats', 'getAllLoansPaginated', 'getBorrowerLifRebate', 'getFallbackSnapshot', 'getLoanDetails', 'getIntentCommit', 'getVPFIToken', 'commitSwapToRepayIntent', 'facets', 'facetAddress', 'facetAddresses'];
+
+/**
+ * A fresh evidence ledger for one deployment. It holds READS ONLY — each value
+ * tagged with where it came from — so the verdict is re-derivable offline
+ * against the checkout's rule and era table. There is deliberately no
+ * `classes` key and no status anywhere: a collector site has nowhere to write
+ * a verdict, which is what makes "the judge is the only writer" structural
+ * rather than a convention.
+ */
+function newLedger(dep) {
+  const { slug, label } = dep;
+  return {
+    schema: LEDGER_SCHEMA,
+    // `inventoryKey`: the record these reads are taken FOR, so `--rejudge` can
+    // tell reads of the record as it stands from reads of one corrected since
+    identity: { chainSlug: slug, deployment: label, chainId: null, diamond: null, atBlock: null, atBlockHash: null, blockTag: null, rpcHost: null, sourceRecord: sourceRecordFor(slug, label), inventoryKey: inventoryKeyOf(dep) },
+    flags: { codeAbsent: false, codeAbsentReason: null, notADiamond: false, loupeRouted: false, custodySurfaceUnrouted: false },
+    scope: { vpfiToken: null, source: null },
+    backing: null,
+    range: { storage: null, storageUnavailable: null, routed: null },
+    surfaces: Object.fromEntries(SURFACES.map((s) => [s, 'not-probed'])),
+    hostOf: {},
+    idsAskedOfGetter: {},
+    observations: [],
+    corroboration: null,
+    cutHistory: null,
+    provenance: null,
+  };
+}
+
+/** Record one row observation. Once the ledger is frozen this throws: the evidence a verdict was derived from cannot grow under it. */
+export function observe(ledger, observation) {
+  ledger.observations.push(observation);
+}
+
+/** Freeze a ledger all the way down — the judge receives evidence no later step can amend (a shallow freeze would still let `observations` grow). */
+export function deepFreeze(node) {
+  if (node && typeof node === 'object') {
+    Object.freeze(node);
+    for (const v of Object.values(node)) deepFreeze(v);
+  }
+  return node;
+}
+
+/**
+ * A committed ledger made ready to judge: a private copy, frozen all the way
+ * down, as every ledger the judge receives is. STRUCTURAL only. The artifact
+ * holds each bigint as its decimal string, and that needs no inverse here: the
+ * judge reads every integer through one normalisation (`big` in
+ * census-verdict.mjs) that takes a bigint and its decimal string alike — a
+ * second, numeric revival here was a duplicate of that rule, and one that
+ * threw an unnamed SyntaxError on a malformed value the judge would have filed
+ * indeterminate by name. The copy keeps the freeze off the parsed artifact
+ * the caller still holds. `--rejudge` and the artifact self-verification (T-E)
+ * both judge through this, so they re-derive the same input.
+ */
+export function reviveLedger(json) {
+  return deepFreeze(structuredClone(json));
+}
+
+/**
+ * The same reads under another record's label — a config-only archive that
+ * names the SAME Diamond as an earlier record. The verdict is RE-DERIVED from
+ * the relabelled ledger, never copied (S1-R1): a copied verdict is unbranded
+ * and `publish` refuses it.
+ */
+function relabel(ledger, dep) {
+  return {
+    ...ledger,
+    identity: { ...ledger.identity, deployment: dep.label, duplicateOfDeployment: ledger.identity.deployment, sourceRecord: sourceRecordFor(dep.slug, dep.label), inventoryKey: inventoryKeyOf(dep) },
+  };
+}
+
+/** A loan-id list as the ledger records it: `'1..N'` when it is exactly the ids 1..N in order, else the ids themselves. */
+function idRangeOf(ids) {
+  return ids.length && ids.every((id, i) => BigInt(id) === BigInt(i + 1)) ? `1..${ids.length}` : ids.map((id) => BigInt(id));
+}
+
+/**
+ * Collect every read of one deployment into its ledger. A read that fails
+ * leaves the ledger as far as it got on the error (§3.3), so the failure row
+ * shows what WAS read — evidence of the failure, never judged.
+ */
+export async function collectEvidence(dep) {
+  const ledger = newLedger(dep);
+  try {
+    await readDeployment(dep, ledger);
+  } catch (err) {
+    if (err && typeof err === 'object') err.partialLedger = ledger;
+    throw err;
+  }
+  return ledger;
+}
+
+/**
+ * Every read of one deployment, in order: the block identity, the code, the
+ * Diamond's routing and scope, the one storage read, the routed reads over the
+ * storage range, and the provenance reads; then the cross-replica identity
+ * check once, after the last read (r13 P2: a proof-capable ledger must not
+ * leave a replica at another block unchecked).
+ */
+async function readDeployment(dep, ledger) {
   const { slug, label, addresses } = dep;
   const who = `${slug} (${label})`;
   const diamond = addresses.diamond;
   const rpc = rpcFor(slug);
   if (!diamond) throw new Error(`${who}: addresses.json carries no diamond address`);
   if (!rpc) throw new Error(`${who}: no RPC — pass --rpc or set CENSUS_RPC_${slug.toUpperCase().replace(/-/g, '_')}`);
-  const claim = pick(loadAbi('ClaimFacet'), ['getBorrowerLifRebate', 'getFallbackSnapshot']);
-  const loanView = pick(loadAbi('LoanFacet'), ['getLoanDetails']);
-  const vpfiView = pick(loadAbi('VPFITokenFacet'), ['getVPFIToken']);
-  const metrics = pick(loadAbi('MetricsFacet'), ['getProtocolStats', 'getAllLoansPaginated']);
-  // The error entry must travel with the function: `getIntentCommit` REVERTS
-  // `IntentNoCommit` when no commit is live, and that revert is the proof of
-  // absence. Without the error in the ABI viem cannot name it, and an absent
-  // commit would be indistinguishable from a genuine failure.
-  const intentView = pick(loadAbi('SwapToRepayIntentFacet'), ['getIntentCommit', 'IntentNoCommit']);
-  // The PRODUCER, for the routing-history REFUTATION: an unrouted getter says
-  // nothing about whether this selector was ever callable.
-  const intentProducer = pick(loadAbi('SwapToRepayIntentFacet'), ['commitSwapToRepayIntent']);
-  // `facets()` gives the Diamond's CURRENT routed surface, which is what makes
-  // the cut history checkable for continuity — see {refuteProducerNeverRouted}.
-  const loupe = pick(loadAbi('DiamondLoupeFacet'), ['facetAddress', 'facetAddresses', 'facets']);
-  const intentEvents = pick(loadAbi('SwapToRepayIntentFacet'), [
-    'SwapToRepayIntentCommitted',
-    'SwapToRepayIntentFilled',
-    'SwapToRepayIntentCancelled',
-    'SwapToRepayIntentForceCancelled',
-  ]);
+  const abi = {
+    claim: pick(loadAbi('ClaimFacet'), ['getBorrowerLifRebate', 'getFallbackSnapshot']),
+    loanView: pick(loadAbi('LoanFacet'), ['getLoanDetails']),
+    vpfiView: pick(loadAbi('VPFITokenFacet'), ['getVPFIToken']),
+    metrics: pick(loadAbi('MetricsFacet'), ['getProtocolStats', 'getAllLoansPaginated']),
+    // The error entry must travel with the function: `getIntentCommit` REVERTS
+    // `IntentNoCommit` when no commit is live, and that revert is the proof of
+    // absence. Without the error in the ABI viem cannot name it, and an absent
+    // commit would be indistinguishable from a genuine failure.
+    intentView: pick(loadAbi('SwapToRepayIntentFacet'), ['getIntentCommit', 'IntentNoCommit']),
+    // The PRODUCER, for the routing-history REFUTATION: an unrouted getter says
+    // nothing about whether this selector was ever callable.
+    intentProducer: pick(loadAbi('SwapToRepayIntentFacet'), ['commitSwapToRepayIntent']),
+    // `facets()` gives the Diamond's CURRENT routed surface, which is what makes
+    // the cut history checkable for continuity — see {refuteProducerNeverRouted}.
+    loupe: pick(loadAbi('DiamondLoupeFacet'), ['facetAddress', 'facetAddresses', 'facets']),
+    intentEvents: pick(loadAbi('SwapToRepayIntentFacet'), [
+      'SwapToRepayIntentCommitted',
+      'SwapToRepayIntentFilled',
+      'SwapToRepayIntentCancelled',
+      'SwapToRepayIntentForceCancelled',
+    ]),
+  };
+  const selectorOf = (list, name) => toFunctionSelector(list.find((e) => e.name === name));
+  const scopeSelectors = {
+    fallback: selectorOf(abi.claim, 'getFallbackSnapshot'),
+    loan: selectorOf(abi.loanView, 'getLoanDetails'),
+    token: selectorOf(abi.vpfiView, 'getVPFIToken'),
+    intent: selectorOf(abi.intentView, 'getIntentCommit'),
+  };
 
   const client = createPublicClient({ transport: http(rpc, { fetchFn: fetchViaNodeAgents }) });
   const chainId = await client.getChainId();
@@ -1886,6 +2192,7 @@ async function censusDeployment(dep) {
   // integrity is checkable after the fact.
   const censusBlock = await censusBlockFor(client, slug, who);
   const atBlock = censusBlock.number;
+  Object.assign(ledger.identity, { chainId: Number(chainId), diamond, atBlock: atBlock.toString(), atBlockHash: censusBlock.hash, blockTag: censusBlock.tag, rpcHost: rpcHostOf(rpc) });
 
   const read = (functionName, args = []) =>
     withReplicaRetry(
@@ -1893,26 +2200,16 @@ async function censusDeployment(dep) {
       () =>
         callAtHash(client, censusBlock, {
           address: diamond,
-          abi: [...claim, ...metrics, ...intentView, ...intentProducer, ...loupe, ...loanView, ...vpfiView], // the producer too: it is probed directly where the loupe is unrouted (#2095 r24 P1)
+          abi: [...abi.claim, ...abi.metrics, ...abi.intentView, ...abi.intentProducer, ...abi.loupe, ...abi.loanView, ...abi.vpfiView], // the producer too: it is probed directly where the loupe is unrouted (#2095 r24 P1)
           functionName,
           args,
         }),
       { client },
     );
 
-  // ── Three history-free bounds, taken BEFORE any enumeration ──────────────
-  // Each is a STATE read an endpoint cannot misreport by omission, and each
-  // on its own proves every class empty. Enumeration then only refines counts.
-  //
-  // (1) No code at the address ⇒ nothing on-chain to census — BUT ONLY at a
-  //     block at or after the deployment. Codex #2070 r7 P1: a finalized/safe
-  //     head that still predates a freshly deployed Diamond, or an operator
-  //     `--block` older than the deploy, reads `0x` at an address that simply
-  //     did not exist YET, and "no code" would certify every class empty
-  //     without ever reading the deployment's storage. A census block that
-  //     predates the deployment is refused outright. (Since r30 an empty read
-  //     is never a proof at all — see below — but a read that predates the
-  //     deployment describes nothing and is still refused.)
+  // Codex #2070 r7 P1 — a census block that PREDATES the recorded deployment
+  // describes nothing about this Diamond's storage (a finalized head behind a
+  // fresh deploy, or an operator `--block` older than it). Refused outright.
   const deployBlockKnown = addresses.deployBlock !== null && addresses.deployBlock !== undefined;
   if (deployBlockKnown && atBlock < BigInt(addresses.deployBlock)) {
     throw new Error(
@@ -1921,7 +2218,6 @@ async function censusDeployment(dep) {
     );
   }
   const code = await withReplicaRetry(atBlock, () => codeAtHash(client, censusBlock, diamond), { client });
-  const codeAbsent = !code || code === '0x';
   // Codex #2070 r17 → r30 — an empty read is NEVER a proof, and needs no
   // creation evidence to say so. Every deployment in this inventory postdates
   // Cancun on its chain (EIP-6780: SELFDESTRUCT deletes an account only inside
@@ -1931,24 +2227,34 @@ async function censusDeployment(dep) {
   // EVER lived at the recorded address on this chain: the artifact names no
   // Diamond, and the deployment's real Diamond — if the deploy happened at all
   // — is uncensused. That is a COVERAGE gap, undetermined until the operator
-  // corrects the artifact from the broadcast record, exactly like an address
-  // that holds a non-Diamond. Rows at THIS address are indeed impossible
-  // (storage cannot outlive code, and a CREATE-derived address never carries
-  // an EIP-7702 delegation), but the census certifies deployments, not
-  // addresses. The r17 rule certified "no code here WITH code at the deploy
-  // block" as proven; that pair cannot occur on one post-Cancun chain, so any
-  // read producing it came from two histories — rounds 29 and 30 were spent
-  // binding it before that was seen — and the rule is retired, not bound.
-  const codeAbsentUnexplained = codeAbsent;
-  const codeAbsentReason = `the address has no code at the census block; on a post-Cancun chain (EIP-6780) no persistent contract ever lived here, so the artifact names no Diamond and the real deployment, if any, is uncensused — undetermined until the artifact is corrected from the broadcast record${deployBlockKnown ? ` (recorded deployBlock ${addresses.deployBlock})` : ' (the artifact records no deployBlock either)'}`;
-  // (2) No CUSTODY SURFACE routed ⇒ no facet can have written a custody row.
-  //     "The loupe is unrouted" is NOT sufficient on its own: a Diamond whose
-  //     facets were cut without a loupe still answers its custody views, and
-  //     those facets may have written rows. So when the loupe does not answer,
-  //     every custody view is probed DIRECTLY, and `noFacets` holds only when
-  //     ALL of them revert too — the signature of a bare shell whose
-  //     diamondCut never ran (three base-sepolia archives, 178 bytes each).
-  //     Only a REVERT counts; an RPC failure must never be read as absence.
+  // corrects the artifact from the broadcast record. Recorded as a flag; there
+  // is nothing further at this address to read.
+  ledger.flags.codeAbsent = !code || code === '0x';
+  if (ledger.flags.codeAbsent) {
+    ledger.flags.codeAbsentReason = `the address has no code at the census block; on a post-Cancun chain (EIP-6780) no persistent contract ever lived here, so the artifact names no Diamond and the real deployment, if any, is uncensused — undetermined until the artifact is corrected from the broadcast record${deployBlockKnown ? ` (recorded deployBlock ${addresses.deployBlock})` : ' (the artifact records no deployBlock either)'}`;
+    ledger.range.storageUnavailable = 'not read: the recorded address has no code';
+  }
+  const { readFacets } = ledger.flags.codeAbsent ? { readFacets: null } : await readDiamond({ dep, who, client, censusBlock, atBlock, diamond, read, abi }, ledger);
+  await collectProvenance(ledger, { client, censusBlock, atBlock, diamond, slug, deployBlock: BigInt(addresses.deployBlock ?? 0), readFacets, who, manifestEntry: dep.manifestEntry ?? null, scopeSelectors });
+  await assertBlockIdentity(client, censusBlock, who);
+}
+
+/**
+ * The reads of a contract that has code. Nothing here decides anything about
+ * a class: a read gate exists only where the read is impossible or
+ * meaningless (a non-Diamond answers nothing of this protocol; an unrouted
+ * selector cannot be called), and every gate records the routing answer it
+ * acted on in `ledger.surfaces`, so the judge sees why a read is absent.
+ */
+async function readDiamond({ dep, who, client, censusBlock, atBlock, diamond, read, abi }, ledger) {
+  const { addresses } = dep;
+  const { claim, loanView, vpfiView, metrics, intentView, intentProducer, loupe, intentEvents } = abi;
+  // A Diamond whose loupe does not answer may still route custody views, so
+  // when the loupe is silent every custody view is probed DIRECTLY: the
+  // contract is a bare shell (custody surface unrouted) only when ALL of them
+  // answer with the Diamond fallback's own FunctionDoesNotExist, and NOT a
+  // Vaipakam Diamond when they revert in any other shape. Only a REVERT counts;
+  // an RPC failure must never be read as absence.
   // CodeQL (js/regex/missing-regexp-anchor): the end anchor belongs to the
   // bare-`0x` case ONLY — a revert with empty return data — so it is written
   // as its own test rather than as an alternative whose precedence a reader
@@ -1967,16 +2273,15 @@ async function censusDeployment(dep) {
     const kind = classifyRpcError(err);
     if (kind === 'pruned' || kind === 'rate' || !isRevert(err)) throw err;
   };
-  let noFacets = false;
-  let notADiamond = false;
   let loupeRouted = true;
-  // Code is present from here on: an empty read returned above.
   try {
     await read('facetAddresses');
   } catch (err) {
     rethrowUnlessRevert(err);
     loupeRouted = false;
   }
+  ledger.flags.loupeRouted = loupeRouted;
+  ledger.surfaces.facetAddresses = loupeRouted ? 'routed' : 'unrouted';
   if (!loupeRouted) {
     const custodyProbes = [
       ['getProtocolStats', []],
@@ -1999,134 +2304,18 @@ async function censusDeployment(dep) {
       }
       if (anyAnswered) break;
     }
-    // Proven facet-less ONLY when the Diamond fallback itself said so on
-    // every custody selector. Reverts of any other shape mean the contract
-    // at this address is not a Vaipakam Diamond — undetermined, not empty.
-    noFacets = !anyAnswered && allUnroutedOnDiamond;
-    notADiamond = !anyAnswered && !allUnroutedOnDiamond;
+    // `FunctionDoesNotExist` on every custody selector proves those selectors
+    // unrouted NOW, not that they never wrote rows: facets can be cut in, write
+    // loan-keyed rows and be cut out with storage intact (Codex #2070 r6 P1),
+    // and a Diamond whose getters are all unrouted can still route a WRITER
+    // (#2095 r7 P1). Recorded, never a proof.
+    ledger.flags.custodySurfaceUnrouted = !anyAnswered && allUnroutedOnDiamond;
+    ledger.flags.notADiamond = !anyAnswered && !allUnroutedOnDiamond;
   }
-  // (3) VPFI BACKING — recorded, never a proof (Codex #2070 r6 P1: a zero
-  //     balance proves rows UNBACKED, not absent). The token is resolved
-  //     ON-CHAIN first (`getVPFIToken`) — the Diamond's own answer — and from
-  //     the artifact ONLY when that selector is CONFIRMED unrouted. Codex r8
-  //     P1: `setVPFIToken` permits rotations, so the artifact can lag the live
-  //     token; a swallowed rate-limit / transport / decode failure that fell
-  //     back to the artifact would read the OLD token's balance and file rows
-  //     denominated in the live VPFI as non-VPFI — a false proven-zero. So
-  //     every operational failure propagates; only a confirmed absence of the
-  //     selector reaches the artifact.
-  let vpfiToken = null;
-  let vpfiTokenSource = 'unresolvable';
-  // `notADiamond` is already known here (the custody-surface probes run first).
-  // A contract that is not a Vaipakam Diamond reverts EMPTY on this call too,
-  // and an empty revert is — correctly — not "unrouted", so the propagation
-  // rule would fail the deployment before its own indeterminate verdict could
-  // be recorded. It has no token to resolve; skip the read.
-  if (!noFacets && !notADiamond) {
-    const vpfiSelector = toFunctionSelector(vpfiView.find((e) => e.name === 'getVPFIToken'));
-    let vpfiGetterRouted;
-    let loupeAnswered = false;
-    if (loupeRouted) {
-      // facetAddress(bytes4) is its own selector (#2095 r25 P2): if the Diamond
-      // answers facetAddresses() but not facetAddress(), fall through to the
-      // direct probe below rather than aborting
-      try { vpfiGetterRouted = (await read('facetAddress', [vpfiSelector])) !== ZERO_ADDRESS; loupeAnswered = true; } catch (err) { if (!isUnroutedOnDiamond(err)) rethrowUnlessRevert(err); }
-    }
-    if (!loupeAnswered) {
-      // No loupe: the only admissible evidence of absence is the Diamond
-      // fallback's own FunctionDoesNotExist on the call itself.
-      try {
-        const onChain = await read('getVPFIToken');
-        vpfiGetterRouted = true;
-        if (onChain && onChain !== ZERO_ADDRESS) { vpfiToken = onChain; vpfiTokenSource = 'on-chain getVPFIToken()'; }
-      } catch (err) {
-        if (!isUnroutedOnDiamond(err)) throw err; // rate limit, transport, decode, pruned: never fall back
-        vpfiGetterRouted = false;
-      }
-    }
-    if (loupeRouted && vpfiGetterRouted) {
-      const onChain = await read('getVPFIToken'); // any failure here propagates
-      if (onChain && onChain !== ZERO_ADDRESS) { vpfiToken = onChain; vpfiTokenSource = 'on-chain getVPFIToken()'; }
-    }
-  }
-  if (!vpfiToken && (addresses.vpfiToken || addresses.vpfiMirror)) {
-    vpfiToken = addresses.vpfiToken ?? addresses.vpfiMirror;
-    vpfiTokenSource = 'deployment artifact';
-  }
-  // Codex #2070 r22 P1 — an artifact token is NOT an authoritative scope.
-  // `setVPFIToken` permits rotations; if the Diamond rotated A → B and the
-  // getter was later cut out, the artifact still says A, and a live fallback
-  // or intent row denominated in B would be filed as non-VPFI and the class
-  // certified empty. Confirming the getter is unrouted NOW says nothing about
-  // whether the token ever changed, and a rotation-event history can only
-  // refute. So the artifact token is used to READ and file rows (so a reader
-  // can see what it would have scoped), never to CERTIFY: classes 2 and 3 —
-  // the scope-dependent ones — stay indeterminate unless the scope came from
-  // the chain itself or the no-loans bound settles them.
-  const vpfiScopeAuthoritative = vpfiTokenSource === 'on-chain getVPFIToken()';
-  const scopeNotAuthoritativeReason =
-    'the VPFI token getter is unrouted, so the effective token cannot be read; the artifact token may predate a rotation via setVPFIToken, ' +
-    'and a row denominated in the live token would be filed as non-VPFI — undetermined pending routing of the getter or a calibrated read of the token slot';
-  const diamondVpfiBalance = vpfiToken
-    ? await withReplicaRetry(atBlock, () => callAtHash(client, censusBlock, { address: vpfiToken, abi: [ERC20_BALANCE_OF], functionName: 'balanceOf', args: [diamond] }), { client })
-    : null;
-  // Codex #2070 r6 P1 ×2 — TWO of the earlier bounds were NOT proofs of
-  // absence and are withdrawn as such:
-  //   • a ZERO VPFI BALANCE proves the rows are UNBACKED, not absent. The
-  //     design's own §0 (pre-migration solvency reconciliation) is the
-  //     counterexample: reward payouts may already have spent the backing
-  //     while the row — the entitlement — survives. Zero VPFI with live rows
-  //     is the WORST case for slice 0, not a no-op. The balance is therefore
-  //     recorded as `diamondVpfiBacking` and compared against row totals to
-  //     produce the shortfall figure that reconciliation needs — never used to
-  //     certify emptiness.
-  //   • `FunctionDoesNotExist` on every custody selector proves those
-  //     selectors are unrouted NOW, not that they never wrote rows: facets can
-  //     be cut in, write loan-keyed rows, and be cut out with storage intact.
-  //     Recorded as `custodySurfaceUnrouted`; not a proof. And the probes are
-  //     GETTERS (#2095 r7 P1): a Diamond whose loupe and getters are all
-  //     unrouted can still route a writer — RiskFacet, DefaultedFacet, the
-  //     intent producer — so this says nothing about whether producers are
-  //     live. Without a loupe the writer surface cannot be enumerated, so a
-  //     bare shell is treated as able to write until it is known not to.
-  // What remains sound: where the counter is routed, zero loans ever created
-  // (every class is loan-keyed). An empty-code read is a coverage gap, not a
-  // proof (r30).
-  const custodySurfaceUnrouted = noFacets;
-  if (codeAbsentUnexplained) {
-    // No code: the artifact names no contract on this chain; cannot certify.
-    await assertBlockIdentity(client, censusBlock, who); // before EVERY proven-capable return (r13 P2)
-    // #2095 r27 — finalized like every other exit, so there is no path around
-    // the rule. A no-op here today (every class is already indeterminate); the
-    // point is that it stays one when this branch's classes change.
-    return finalizeVerdictFromEvidence({
-      chainSlug: slug,
-      deployment: label,
-      chainId: Number(chainId),
-      diamond,
-      vpfiToken: null,
-      vpfiTokenSource: 'unresolvable',
-      vpfiScopeAuthoritative: false,
-      provenBy: undefined,
-      diamondVpfiBacking: null,
-      vpfiRowsTotal: null,
-      backingShortfall: null,
-      atBlock: atBlock.toString(),
-      atBlockHash: censusBlock.hash,
-      blockTag: censusBlock.tag,
-      rpcHost: rpcHostOf(rpc),
-      scanned: { loanIdsEnumerated: 0, totalLoansEverCreated: 'n/a', loanIdRange: 'none', enumerable: false, noCode: false, codeAbsentUnexplained: true, custodySurfaceUnrouted: false, notADiamond: false, loupeRouted: false, intentSurfaceRouted: false, intentProducerRouted: false, intentCorroboration: null, producersMayBeLive: true },
-      classes: Object.fromEntries(['vpfiHeldCustody', 'rebateRows', 'fallbackSnapshotCustody', 'liveIntentCommits'].map((k) => [k, {
-        status: 'indeterminate',
-        indeterminateReason: codeAbsentReason,
-        count: 0, total: '0', rows: [],
-      }])),
-    });
-  }
+  const { notADiamond } = ledger.flags;
 
-  // Enumeration needs the metrics surface. Where it is unrouted and no bound
-  // has already proven emptiness, the deployment is INDETERMINATE — a result,
-  // not a thrown failure, so it stays inside coverage and blocks the verdict.
+  // The routing boundary (#2095 r26): every gate and every payload read below
+  // asks it, and it records each selector's answer in the ledger exactly once.
   // A selector is routed when the Diamond answers it with anything but its own
   // FunctionDoesNotExist — a return, a validation revert, IntentNoCommit. Used
   // wherever the loupe cannot be asked (#2095 r23 P2): cuts are per selector.
@@ -2149,479 +2338,230 @@ async function censusDeployment(dep) {
       return true; // any other revert is the facet answering
     }
   };
-  // facetAddress(bytes4) is its own selector (#2095 r24 P2): cuts are per
+  // facetAddress(bytes4) is its own selector (#2095 r24/r25 P2): cuts are per
   // selector, so a Diamond may route facetAddresses() and not facetAddress()
   let facetAddressRouted = false;
   if (loupeRouted) {
     try { await read('facetAddress', [toFunctionSelector(metrics.find((e) => e.name === 'getProtocolStats'))]); facetAddressRouted = true; } catch (err) { if (!isUnroutedOnDiamond(err)) rethrowUnlessRevert(err); }
+    ledger.surfaces.facetAddress = facetAddressRouted ? 'routed' : 'unrouted';
   }
   const routedByLoupeOrProbe = async (fn, abiList, args) => {
     const item = abiList.find((e) => e.name === fn);
-    if (facetAddressRouted) return (await read('facetAddress', [toFunctionSelector(item)])) !== ZERO_ADDRESS;
-    return selectorRoutedDirect(fn, args ?? zeroArgsFor(item));
+    const routed = facetAddressRouted ? (await read('facetAddress', [toFunctionSelector(item)])) !== ZERO_ADDRESS : await selectorRoutedDirect(fn, args ?? zeroArgsFor(item));
+    ledger.surfaces[fn] = routed ? 'routed' : 'unrouted';
+    return routed;
   };
-  // Every gate and every payload read below goes through this one boundary —
-  // see `makeRoutingBoundary` for why the per-site boolean it replaces was the
-  // seam four review rounds kept landing on.
   const { selectorRouted, readRouted } = makeRoutingBoundary(routedByLoupeOrProbe, read);
-  // The loupe enumeration the provenance pass reads, through the same boundary.
-  // It already treats a failure as "surface unreadable" and records the reason,
-  // so here the sentinel becomes that reason rather than a second convention.
+  // The loupe enumeration the provenance reads use, through the same boundary;
+  // an unrouted facets() is a failed loupe read there, recorded with its reason.
   const readFacetsThroughBoundary = async () => {
     const list = await readRouted('facets', loupe, []);
     if (list === UNROUTED) throw new Error('facets() is not routed on this Diamond (facetAddresses() is — cuts are per selector)');
     return list;
   };
-  // enumeration needs BOTH the stats and the pagination selector (#2095 r23 P2)
-  let enumerable = false;
+
+  // VPFI SCOPE — the token is resolved ON-CHAIN first (`getVPFIToken`, the
+  // Diamond's own answer) and from the artifact ONLY when that selector is
+  // CONFIRMED unrouted or answers no token (Codex r8 P1: `setVPFIToken` permits
+  // rotations, so the artifact can lag the live token; a swallowed failure
+  // that fell back to it would read the OLD token). Every operational failure
+  // propagates. A non-Diamond reverts EMPTY here too and has no token to
+  // resolve, so it is not asked; a bare shell is asked like any Diamond and
+  // records the getter unrouted (C5: a shell is a ledger whose surfaces all
+  // answer unrouted, not a separate path). Where the token came from is
+  // recorded, because only an on-chain token can scope a row (Codex #2070 r22
+  // P1) — the judge decides what that permits.
   if (!notADiamond) {
-    const statsRouted = await selectorRouted('getProtocolStats', metrics, []);
-    const pageRouted = statsRouted && await selectorRouted('getAllLoansPaginated', metrics, [0n, 1n]);
-    enumerable = statsRouted && pageRouted;
-    if (statsRouted && !pageRouted) process.stderr.write(`census: ${who} — getProtocolStats routed but getAllLoansPaginated is not; taking the storage path\n`);
+    const onChain = await readRouted('getVPFIToken', vpfiView, []);
+    if (onChain !== UNROUTED && onChain && onChain !== ZERO_ADDRESS) ledger.scope = { vpfiToken: onChain, source: 'on-chain' };
   }
-  if (!enumerable) {
-    // #1566 §7a — a Diamond that routes no loan enumeration can still be READ:
-    // the loan counter's slot never moved, so zero there (with the other
-    // counters zero at every era slot) is the storage twin of the routed
-    // zero-loans proof; a non-zero counter gives the id range, and every class
-    // is then scanned at every era's slot. A non-Diamond is never read.
-    let storage = null;
-    if (!notADiamond && STORAGE_READ.ok) {
-      const readSlot = (slot) => withReplicaRetry(atBlock, () => storageAtHash(client, censusBlock, diamond, slot), { client });
-      // #2095 r6 P2 — an earlier era's counter slot may be a current field's slot
-      // today (a list length, tierTableVersion): such a reading is that field, not
-      // a counter, and is set aside before the range and the verdict are judged
-      const attributed = attributeCounters(await readCountersByStorage({ readSlot, eraSlots: STORAGE_READ.eraSlots }), STORAGE_READ.headSlots, STORAGE_READ.occupied);
-      const counters = attributed.counters;
-      // #2095 r2 P1 — the corroborating counters can CONTRADICT the range: a lifetime
-      // counter above nextLoanId, or any counter non-zero while nextLoanId is zero,
-      // means rows the id range cannot reach; nothing is certified then.
-      const contradiction = counters.totalLoansEverCreated.filter((x) => x.value > counters.nextLoanId).map((x) => `totalLoansEverCreated=${x.value} at ${x.slot} (${x.eras.map((e) => e.date).join(',')}) > nextLoanId=${counters.nextLoanId}`)
-        .concat(counters.nextLoanId === 0n ? counters.intentLiveCommitCount.filter((x) => x.value > 0n).map((x) => `intentLiveCommitCount=${x.value} at ${x.slot} with nextLoanId=0`) : []);
-      if (contradiction.length) {
-        storage = { kind: 'counter-contradiction', counters, scan: null, truncated: false, contradiction, aliased: attributed.aliased };
-      } else if (counters.allZero) {
-        storage = { kind: 'no-loans-ever-created-by-storage', counters, scan: null, truncated: false, aliased: attributed.aliased };
-      } else {
-        const cap = BigInt(MAX_STORAGE_LOAN_SCAN);
-        const n = counters.nextLoanId > cap ? cap : counters.nextLoanId;
-        const ids = Array.from({ length: Number(n) }, (_, i) => BigInt(i + 1));
-        const scan = await scanRowsByStorage({ readSlot, loanIds: ids, eraSlots: STORAGE_READ.eraSlots });
-        storage = { kind: 'storage-read-calibrated', counters, scan, truncated: counters.nextLoanId > n, aliased: attributed.aliased };
-      }
-      process.stderr.write(`census: ${who} — storage read (${storage.kind}): nextLoanId=${counters.nextLoanId}${storage.scan ? `, ${storage.scan.loansScanned} id(s) scanned over ${storage.scan.slotsRead} slot(s)` : ''}${attributed.aliased.length ? `, ${attributed.aliased.length} aliased reading(s) ignored` : ''}\n`);
-    }
-    const status = 'indeterminate';
-    const reason = notADiamond
-        ? 'the contract at the recorded address is NOT a Vaipakam Diamond (every custody selector reverts without the Diamond fallback\'s FunctionDoesNotExist signature) — it cannot be scoped, and its rows, if any, are not this protocol\'s; undetermined until the artifact is corrected'
-        : STORAGE_READ.ok
-          ? storage?.kind === 'counter-contradiction'
-            ? `the storage counters contradict the loan-id range (${storage.contradiction.join('; ')}) — rows the range cannot reach may exist; refusing to certify`
-            : storage?.truncated
-              ? `the storage read found nextLoanId=${storage.counters.nextLoanId}, above the ${MAX_STORAGE_LOAN_SCAN}-id scan cap — undetermined until scanned in full`
-              : undefined
-          : `${custodySurfaceUnrouted ? 'every custody selector is UNROUTED on this Diamond today' : 'this Diamond routes no loan-enumeration surface'}, and the calibrated storage read is unavailable: ${STORAGE_READ.reason}`;
-    const storageEvidence = storage
-      ? {
-          ...STORAGE_READ.evidence,
-          kind: storage.kind,
-          counters: {
-            nextLoanId: storage.counters.nextLoanId.toString(),
-            totalLoansEverCreated: storage.counters.totalLoansEverCreated.map((x) => ({ slot: x.slot, value: x.value.toString(), eras: x.eras })),
-            intentLiveCommitCount: storage.counters.intentLiveCommitCount.map((x) => ({ slot: x.slot, value: x.value.toString(), eras: x.eras })),
-          },
-          slotsRead: storage.counters.slotsRead + (storage.scan?.slotsRead ?? 0),
-          loansScanned: storage.scan?.loansScanned ?? 0,
-          truncated: storage.truncated,
-          aliasedCountersIgnored: storage.aliased,
-        }
-      : undefined;
-    // one verdict per class from the storage read; the routed-path conventions apply:
-    // a rebate/held row is VPFI by definition, a fallback/intent row's asset is unreadable here
-    const cls = (name, extra = {}) => {
-      if (!storage || storage.kind === 'counter-contradiction') return { status, indeterminateReason: reason, provenBy: undefined, count: 0, total: '0', rows: [], counterContradiction: storage?.kind === 'counter-contradiction' || undefined, ...extra };
-      if (storage.kind === 'no-loans-ever-created-by-storage') return { status: 'proven', provenBy: storage.kind, count: 0, total: '0', rows: [], ...extra };
-      // #2095 r9 P2 — a scan cut off at the cap still READ its prefix: what it
-      // found there is reported with its exact totals; only the verdict is withheld
-      if (storage.truncated) {
-        const v = clsFromScan(name, extra);
-        return { ...v, status: 'indeterminate', provenBy: undefined, indeterminateReason: v.indeterminateReason ? `${reason}; ${v.indeterminateReason}` : reason, scannedPrefix: `1..${storage.scan.loansScanned}` };
-      }
-      return clsFromScan(name, extra);
-    };
-    const clsFromScan = (name, extra) => {
-      const rows = storage.scan.rows[name];
-      if (name === 'liveIntentCommits') {
-        // the storage row carries no amount (only the orderHash is read), and the live counter can contradict an empty scan
-        const v = intentVerdictFromStorage({ rows, liveCommitCounts: storage.counters.intentLiveCommitCount.map((x) => ({ slot: x.slot, value: x.value.toString(), eras: x.eras })) });
-        return v.status === 'proven'
-          ? { status: 'proven', provenBy: storage.kind, count: 0, total: '0', rows: [], ...extra }
-          : { status: 'indeterminate', indeterminateReason: v.reason, provenBy: undefined, count: rows.length, total: null, totalUnavailable: 'an intent row\'s amount is not read from storage', rows: [], unknownAssetRows: rows, counterContradiction: v.contradiction ?? false, ...extra };
-      }
-      if (rows.length && name === 'fallbackSnapshotCustody') {
-        return { status: 'indeterminate', indeterminateReason: `${rows.length} row(s) exist at era slots for this class; their asset cannot be read without the getter, so they are not provably VPFI or non-VPFI`, provenBy: undefined, count: rows.length, total: sum(rows, 'collateralTotal'), rows: [], unknownAssetRows: rows, ...extra };
-      }
-      return { status: 'proven', provenBy: storage.kind, count: rows.length, total: name === 'vpfiHeldCustody' ? sum(rows, 'vpfiHeld') : name === 'rebateRows' ? sum(rows, 'rebateAmount') : '0', rows, ...extra };
-    };
-    await assertBlockIdentity(client, censusBlock, who); // before EVERY proven-capable return (r13 P2)
-    const classes = {
-      vpfiHeldCustody: cls('vpfiHeldCustody'),
-      rebateRows: cls('rebateRows'),
-      fallbackSnapshotCustody: cls('fallbackSnapshotCustody', { nonVpfiRowsExcluded: [] }),
-      liveIntentCommits: cls('liveIntentCommits', { nonVpfiRowsExcluded: [] }),
-    };
-    const everyClassProven = Object.values(classes).every((c) => c.status === 'proven');
-    const shellResult = {
-      chainSlug: slug,
-      deployment: label,
-      chainId: Number(chainId),
-      diamond,
-      vpfiToken,
-      vpfiTokenSource,
-      vpfiScopeAuthoritative: vpfiTokenSource === 'on-chain getVPFIToken()',
-      provenBy: everyClassProven ? storage.kind : undefined,
-      diamondVpfiBacking: diamondVpfiBalance === null ? null : diamondVpfiBalance.toString(),
-      // #2095 r14 P1 — a held or rebate row the storage scan found is a VPFI
-      // liability by construction (proven class or not): it reaches the
-      // reconciliation figures, and the shortfall follows from it
-      ...(() => {
-        const rows = BigInt(sum(classes.vpfiHeldCustody.rows ?? [], 'vpfiHeld')) + BigInt(sum(classes.rebateRows.rows ?? [], 'rebateAmount'));
-        return { vpfiRowsTotal: rows.toString(), backingShortfall: diamondVpfiBalance === null ? null : (rows > diamondVpfiBalance ? rows - diamondVpfiBalance : 0n).toString() };
-      })(),
-      atBlock: atBlock.toString(),
-      atBlockHash: censusBlock.hash,
-      blockTag: censusBlock.tag,
-      rpcHost: rpcHostOf(rpc),
-      // producers may still be live where custody selectors route (the prior indeterminate return said so too; #2095 r2 P1)
-      scanned: { loanIdsEnumerated: storage?.scan?.loansScanned ?? 0, totalLoansEverCreated: storage ? storage.counters.totalLoansEverCreated.map((x) => x.value.toString()).join('|') : 'n/a', loanIdRange: storage?.scan?.loansScanned ? `1..${storage.scan.loansScanned}` : 'none', enumerable: false, noCode: false, custodySurfaceUnrouted, notADiamond, loupeRouted, producersMayBeLive: !notADiamond, storageRead: storageEvidence, storageReadUnavailable: STORAGE_READ.ok ? undefined : STORAGE_READ.reason },
-      classes,
-    };
-    return applyLayoutProvenance(shellResult, { client, censusBlock, atBlock, diamond, slug, label, deployBlock: BigInt(addresses.deployBlock ?? 0), readFacets: loupeRouted ? readFacetsThroughBoundary : null, who, manifestEntry: dep.manifestEntry ?? null });
+  if (!ledger.scope.vpfiToken && (addresses.vpfiToken || addresses.vpfiMirror)) {
+    ledger.scope = { vpfiToken: addresses.vpfiToken ?? addresses.vpfiMirror, source: 'artifact' };
+  }
+  // VPFI BACKING — recorded, never a proof (Codex #2070 r6 P1: a zero balance
+  // proves rows UNBACKED, not absent; zero VPFI with live rows is the WORST
+  // case for slice 0). The figure the shortfall is computed against.
+  if (ledger.scope.vpfiToken) {
+    const token = ledger.scope.vpfiToken;
+    const balance = await withReplicaRetry(atBlock, () => callAtHash(client, censusBlock, { address: token, abi: [ERC20_BALANCE_OF], functionName: 'balanceOf', args: [diamond] }), { client });
+    ledger.backing = { token, balance };
+  }
+  if (notADiamond) {
+    // Its rows, if any, are not this protocol's, and every read below would
+    // decode another contract's storage as ours: nothing further is read.
+    ledger.range.storageUnavailable = 'not read: the contract at the recorded address is not a Vaipakam Diamond';
+    return { readFacets: null };
   }
 
-  const stats = await read('getProtocolStats');
-  const totalLoansEverCreated = stats[3];
-
-  // How much VPFI does this Diamond HOLD, at the census block? Recorded as
-  // BACKING — an upper bound on what the rows of every class could pay out —
-  // and NEVER as an absence proof. An earlier revision of this comment said a
-  // zero balance "settles class 3 even where its getter is unrouted"; that
-  // was withdrawn (Codex #2070 r6 P1, the comment caught in r12 P2): a payout
-  // can spend the backing while the row survives, so a zero balance proves
-  // the rows would be UNBACKED, not that they are absent — zero balance with
-  // live rows is the WORST case, not the settled one. The implementation
-  // below records `diamondVpfiBacking` / `backingShortfall` and leaves an
-  // unrouted class 3 indeterminate. (`diamondVpfiBalance` was read above,
-  // before enumeration.)
-
-  // ── Enumerate every loan id ever created ──────────────────────────────
-  const loanIds = [];
-  let offset = 0n;
-  let reportedTotal = 0n;
-  for (;;) {
-    const [ids, total] = await read('getAllLoansPaginated', [offset, PAGE]);
-    reportedTotal = total;
-    loanIds.push(...ids);
-    if (ids.length === 0 || BigInt(loanIds.length) >= total) break;
-    offset += PAGE;
-  }
-
-  if (totalLoansEverCreated > 0n && loanIds.length === 0) {
-    throw new Error(
-      `${who}: the chain reports ${totalLoansEverCreated} loans ever created but enumeration returned NONE — ` +
-        `refusing to report an empty census from a scan that read nothing`,
-    );
-  }
-  if (BigInt(loanIds.length) !== reportedTotal) {
-    throw new Error(
-      `${who}: enumerated ${loanIds.length} loan ids but pagination reports ${reportedTotal} — incomplete scan`,
-    );
-  }
-
-  // (4) NO LOAN EVER CREATED ⇒ every class is empty. All four classes are
-  //     per-loan rows (`borrowerLifRebate[loanId]`, `fallbackSnapshot[loanId]`,
-  //     `intentCommits[loanId]`), and loan ids exist only by creation — so a
-  //     Diamond whose loan counter is zero cannot hold a row in any of them.
-  //     This bound needs no VPFI token and no asset scoping, which is exactly
-  //     what settles a `--fresh` snapshot whose artifact names no token and
-  //     whose Diamond never minted a loan. Sound only when BOTH the counter
-  //     and the enumeration agree on zero (the enumeration guard above has
-  //     already refused a non-zero counter with an empty scan).
-  const noLoansEver = totalLoansEverCreated === 0n && loanIds.length === 0;
-  const provenByEnumerable = noLoansEver ? 'no-loans-ever-created' : null; // may be withdrawn below by an earlier-era counter (r3 P1)
-
-  // ── Classes 1 & 4 — vpfiHeld custody and rebate rows ──────────────────
-  // ── Class 2 — fallback snapshot custody ───────────────────────────────
-  // Is the intent surface even ROUTED on this Diamond? Ask the loupe directly
-  // rather than inferring it from a `FunctionDoesNotExist` revert.
-  //
-  // Codex #2070 P1 — an unrouted GETTER is NOT proof of absence, and an earlier
-  // revision of this comment claimed it was. Diamond routing is mutable and the
-  // PRODUCER (`commitSwapToRepayIntent`) has its own selector: a facet that was
-  // cut in, wrote `intentCommits`, and was later cut out leaves rows behind that
-  // an unrouted getter cannot see. "The getter does not answer" and "no commit
-  // was ever created" are different claims.
-  //
-  // Nor is the Diamond's routing HISTORY a proof (Codex #2070 r5 P1; this
-  // comment still called it "a complete proof" until r13 P2). `DiamondCut` is
-  // emitted by every cut, but an endpoint that omits an Add/Remove PAIR leaves
-  // the current surface fully accounted for, so the scan can only REFUTE
-  // absence (the producer seen routed) or report itself unreadable — see
-  // {refuteProducerNeverRouted}. With the getter unrouted the class is
-  // INDETERMINATE pending a state read of the rows, which blocks the empty
-  // verdict instead of passing as a zero.
-  const intentSelector = toFunctionSelector(intentView.find((e) => e.name === 'getIntentCommit'));
-  // with the loupe unrouted the getter and the producer are probed directly (#2095 r23 P2)
-  const intentSurfaceRouted = await selectorRouted('getIntentCommit', intentView, [1n]);
-
-  const producerSelector = toFunctionSelector(
-    intentProducer.find((e) => e.name === 'commitSwapToRepayIntent'),
-  );
-  const producerRouted = await selectorRouted('commitSwapToRepayIntent', intentProducer);
-
-  // Only needed when the getter is unrouted; when it IS routed we read live
-  // state directly, which subsumes the history question entirely.
-  // #1566 §7a — with the intent getter unrouted and loans enumerable, the rows
-  // are read at EVERY era's slot; the live-commit counter at every era slot is
-  // recorded as corroboration and is never sufficient alone.
-  let intentStorage = null;
-  if (!intentSurfaceRouted && !provenByEnumerable && STORAGE_READ.ok) {
-    const readSlot = (slot) => withReplicaRetry(atBlock, () => storageAtHash(client, censusBlock, diamond, slot), { client });
-    // #2095 r6 P2 — the same attribution rule as every other counter read;
-    // #2095 r17 P1 — the id range comes from STORAGE (1..nextLoanId, whose slot
-    // never moved), never from the routed pagination, which a partially
-    // refreshed metrics facet may skip an older loan of
-    const { counters, aliased } = attributeCounters(await readCountersByStorage({ readSlot, eraSlots: STORAGE_READ.eraSlots }), STORAGE_READ.headSlots, STORAGE_READ.occupied);
-    const cap = BigInt(MAX_STORAGE_LOAN_SCAN);
-    const n = counters.nextLoanId > cap ? cap : counters.nextLoanId;
-    const ids = Array.from({ length: Number(n) }, (_, i) => BigInt(i + 1));
-    const scan = await scanRowsByStorage({ readSlot, loanIds: ids, eraSlots: STORAGE_READ.eraSlots, classes: ['liveIntentCommits'] });
-    intentStorage = { rows: scan.rows.liveIntentCommits, slotsRead: scan.slotsRead + counters.slotsRead, loansScanned: scan.loansScanned, truncated: counters.nextLoanId > n, nextLoanIdFromStorage: counters.nextLoanId.toString(), liveCommitCounts: counters.intentLiveCommitCount.map((x) => ({ slot: x.slot, value: x.value.toString(), eras: x.eras })), aliasedCountersIgnored: aliased };
-    intentStorage.verdict = intentStorage.truncated
-      ? { status: 'indeterminate', reason: `the intent storage scan was truncated at ${MAX_STORAGE_LOAN_SCAN} ids (nextLoanId=${counters.nextLoanId}); rows beyond it were not read` }
-      : intentVerdictFromStorage(intentStorage);
-    process.stderr.write(`census: ${who} — intent rows read from storage at ${STORAGE_READ.eraSlots.intentCommits.length} era slot(s) for ${ids.length} loan id(s) (1..nextLoanId from storage): ${intentStorage.rows.length} row(s)\n`);
-  }
-  // #2095 r3 P1 — a routed getter reads TODAY's layout only. Every class is
-  // therefore also read at every EARLIER era's slot over the id range the
-  // era-stable loan counter gives (1..nextLoanId, not today's pagination),
-  // and the era counters are read too: a non-zero counter at an earlier era
-  // slot contradicts a routed zero-loans proof. Nothing here replaces a
-  // routed getter; it reads what no getter can see.
-  let historical = null;
+  // ── The ONE storage read (C4–C6) ───────────────────────────────────────
+  // The loan counter's slot never moved, so storage gives the loan-id range
+  // (1..nextLoanId) whatever the Diamond routes; every class is then read at
+  // every era's slot over that range, HEAD's slot included (#2095 r4 P1: a
+  // routed getter reads the layout of the facet that was cut, not necessarily
+  // HEAD's, so its rows are reconciled, never assumed covered). Raw readings
+  // only: the HEAD/earlier split, aliasing and every bound are the judge's.
+  let rangeIds = [];
   if (STORAGE_READ.ok) {
     const readSlot = (slot) => withReplicaRetry(atBlock, () => storageAtHash(client, censusBlock, diamond, slot), { client });
-    const { counters, unexplained: earlierCounters, aliased } = attributeCounters(await readCountersByStorage({ readSlot, eraSlots: STORAGE_READ.eraSlots }), STORAGE_READ.headSlots, STORAGE_READ.occupied);
-    const headSlots = STORAGE_READ.headSlots;
+    const counters = await readCountersByStorage({ readSlot, eraSlots: STORAGE_READ.eraSlots });
     const cap = BigInt(MAX_STORAGE_LOAN_SCAN);
     const n = counters.nextLoanId > cap ? cap : counters.nextLoanId;
-    const ids = Array.from({ length: Number(n) }, (_, i) => BigInt(i + 1));
-    // EVERY era slot, HEAD's included (#2095 r4 P1): a routed getter reads the
-    // layout of the facet that was cut, not necessarily HEAD's, so HEAD-slot
-    // rows are reconciled against the getter rather than assumed covered by
-    // it. The intent class is left out where intentStorage already read it
-    // at every era (r4 P2).
-    const scanClasses = intentStorage ? ['vpfiHeldCustody', 'rebateRows', 'fallbackSnapshotCustody'] : undefined;
-    const scan = await scanRowsByStorage({ readSlot, loanIds: ids, eraSlots: STORAGE_READ.eraSlots, classes: scanClasses });
-    // an earlier-era slot may be a CURRENT field's slot today: attributeCounters set those readings aside above
-    const split = splitByHeadSlot(scan.rows, headSlots);
-    for (const k of Object.keys(split.earlier)) split.earlier[k] = markAliasedRows(split.earlier[k], STORAGE_READ.occupied);
-    // HEAD-slot rows are reconciled against the routed getters AFTER the
-    // enumeration below has filled the routed row sets (see the post-merge block).
-    // #2095 r11 P1 — the HEAD-slot readings are the counters TODAY and are
-    // judged too: a live-commit counter above zero with no intent row found,
-    // or a lifetime counter above the id range, contradicts a routed proof
-    const headOf = (list, f) => list.find((x) => x.slot === headSlots[f]);
-    historical = {
-      headCounters: {
-        totalLoansEverCreated: headOf(counters.totalLoansEverCreated, 'totalLoansEverCreated')?.value?.toString() ?? null,
-        intentLiveCommitCount: headOf(counters.intentLiveCommitCount, 'intentLiveCommitCount')?.value?.toString() ?? null,
-      },
-      rows: split.earlier,
-      headRows: split.head,
-      aliasedCountersIgnored: aliased,
-      slotsRead: scan.slotsRead + counters.slotsRead,
-      loansScanned: ids.length,
-      truncated: counters.nextLoanId > n,
-      nextLoanIdFromStorage: counters.nextLoanId.toString(),
-      earlierEraCounters: earlierCounters,
-      erasPerField: scan.erasPerField,
+    rangeIds = Array.from({ length: Number(n) }, (_, i) => BigInt(i + 1));
+    const scan = await scanRowsByStorage({ readSlot, loanIds: rangeIds, eraSlots: STORAGE_READ.eraSlots, classes: CLASSES });
+    // A counter reading is what was READ: the slot and its value. Which eras a
+    // slot stands for is the era table's answer, and the judge maps it from
+    // the table it is handed — a copy taken here would be a second slot→era
+    // mapping, frozen at read time, that an offline re-judgement against a
+    // regenerated table would have to disagree with.
+    const raw = (list) => list.map(({ slot, value }) => ({ slot, value }));
+    ledger.range.storage = {
+      nextLoanId: counters.nextLoanId,
+      truncatedAt: counters.nextLoanId > n ? Number(n) : null,
+      counters: { totalLoansEverCreated: raw(counters.totalLoansEverCreated), intentLiveCommitCount: raw(counters.intentLiveCommitCount) },
+      read: { ...structuredClone(STORAGE_READ.evidence), slotsRead: counters.slotsRead + scan.slotsRead, loansScanned: scan.loansScanned, slotsScanned: { ...counters.slotsScanned, ...scan.slotsScanned } },
     };
-    const found = Object.values(split.earlier).reduce((a, r) => a + r.length, 0);
-    const atHead = Object.values(split.head).reduce((a, r) => a + r.length, 0);
-    process.stderr.write(`census: ${who} — era-complete storage read: ${ids.length} id(s) × ${Object.values(scan.erasPerField).reduce((a, b) => a + b, 0)} era slot set(s), ${scan.slotsRead} slot(s), ${found} earlier-era row(s), ${atHead} HEAD-slot row(s) to reconcile${earlierCounters.length ? `, ${earlierCounters.length} unexplained non-zero earlier-era counter(s)` : ''}${aliased.length ? `, ${aliased.length} aliased reading(s) ignored` : ''}\n`);
+    for (const cls of CLASSES) {
+      for (const r of scan.rows[cls]) {
+        // the amount storage reads for the class (an intent row's orderHash is
+        // not an amount — that row's amount is unread, hence null)
+        const amount = r[LIABILITY_CLASS_FIELDS[cls]];
+        const extra = cls === 'fallbackSnapshotCustody' ? { active: r.active } : cls === 'liveIntentCommits' ? { orderHash: r.orderHash } : null;
+        observe(ledger, { class: cls, loanId: r.loanId, amount: amount === undefined ? null : BigInt(amount), assetAddr: null, source: 'storage', slot: r.mappingSlot, ...(extra ? { extra } : {}) });
+      }
+    }
+    process.stderr.write(`census: ${who} — storage read: nextLoanId=${counters.nextLoanId}, ${scan.loansScanned} id(s) × ${Object.values(scan.slotsScanned).reduce((a, s) => a + s.length, 0)} era slot(s), ${ledger.range.storage.read.slotsRead} slot(s), ${ledger.observations.length} row candidate(s)${ledger.range.storage.truncatedAt !== null ? `; TRUNCATED at ${MAX_STORAGE_LOAN_SCAN}` : ''}\n`);
+  } else {
+    ledger.range.storageUnavailable = STORAGE_READ.reason;
   }
-  let intentAbsenceProof = null;
+
+  // ── The routed range witness (S1-R9: the ONLY reads `enumerable` gates) ──
+  // Enumeration needs BOTH the stats and the pagination selector (#2095 r23
+  // P2). What it returns is a WITNESS of the storage range, never the range:
+  // a partially refreshed metrics facet may skip an older loan (#2095 r17 P1).
+  const statsRouted = await selectorRouted('getProtocolStats', metrics, []);
+  const pageRouted = statsRouted && await selectorRouted('getAllLoansPaginated', metrics, [0n, 1n]);
+  if (statsRouted && !pageRouted) process.stderr.write(`census: ${who} — getProtocolStats routed but getAllLoansPaginated is not; no routed range witness\n`);
+  if (statsRouted && pageRouted) {
+    const stats = await read('getProtocolStats');
+    const totalLoansEverCreated = stats[3];
+    const loanIds = [];
+    let offset = 0n;
+    let reportedTotal = 0n;
+    for (;;) {
+      const [ids, total] = await read('getAllLoansPaginated', [offset, PAGE]);
+      reportedTotal = total;
+      loanIds.push(...ids);
+      if (ids.length === 0 || BigInt(loanIds.length) >= total) break;
+      offset += PAGE;
+    }
+    // The routed surface contradicting ITSELF is not a witness of anything
+    // (design §5615): the deployment is a recorded failure, its partial ledger
+    // attached.
+    if (totalLoansEverCreated > 0n && loanIds.length === 0) {
+      throw new Error(
+        `${who}: the chain reports ${totalLoansEverCreated} loans ever created but enumeration returned NONE — ` +
+          `refusing to report an empty census from a scan that read nothing`,
+      );
+    }
+    if (BigInt(loanIds.length) !== reportedTotal) {
+      throw new Error(
+        `${who}: enumerated ${loanIds.length} loan ids but pagination reports ${reportedTotal} — incomplete scan`,
+      );
+    }
+    ledger.range.routed = { totalLoansEverCreated, enumeratedIds: idRangeOf(loanIds), reportedTotal };
+  }
+
+  // ── The intent surface ────────────────────────────────────────────────
+  // Codex #2070 P1 — an unrouted GETTER is not proof of absence: the PRODUCER
+  // (`commitSwapToRepayIntent`) has its own selector, and a facet cut in, used
+  // and cut out leaves rows no getter can see (the storage read above reads
+  // them). With the loupe unrouted both are probed directly (#2095 r23 P2).
+  const intentSurfaceRouted = await selectorRouted('getIntentCommit', intentView, [1n]);
+  const producerRouted = await selectorRouted('commitSwapToRepayIntent', intentProducer);
   if (!intentSurfaceRouted) {
-    // PROOF: the VPFI balance bound (above). REFUTATION ONLY: the cut history.
-    // Codex #2070 r5 P1 — an endpoint that returns the deployment cut but
-    // omits a later Add/Remove PAIR for the producer leaves every continuity
-    // test satisfied (net routing change zero) while a commit written inside
-    // that interval may still be live. No test over eth_getLogs can rule that
-    // out, so the cut scan can DOWNGRADE (producer seen routed ⇒ cannot be
-    // empty by this route) but never certify. Certification comes only from
-    // a state read the endpoint cannot misreport by omission.
-    // The Diamond's CURRENT routed surface — the yardstick the cut history has
-    // to explain for its continuity to be established.
-    // #2095 r24 P2 — without a loupe the current surface cannot be enumerated,
-    // so the routing history is UNREADABLE (its continuity has no yardstick),
-    // not a thrown failure.
-    // #2095 r26 P2 — and `facets()` is its OWN selector: `loupeRouted` says
-    // `facetAddresses()` answered, which a Diamond can route while `facets()`
-    // is cut out. Through the routing boundary, so an unrouted `facets()`
-    // reaches the same UNREADABLE verdict as a wholly unrouted loupe instead
-    // of throwing out of the middle of this deployment.
-    const unreadableSurface = () =>
+    // REFUTATION ONLY (Codex #2070 r5 P1): the cut history can show the
+    // producer WAS routed, or that the history is incomplete; an omitted
+    // Add/Remove pair is invisible to any test over eth_getLogs, so it never
+    // certifies. Without facets() there is no continuity yardstick (#2095
+    // r24/r26 P2), and that is an UNREADABLE history, not a thrown failure.
+    const producerSelector = toFunctionSelector(intentProducer.find((e) => e.name === 'commitSwapToRepayIntent'));
+    const unreadableSurface = (why) =>
       producerRouted
         ? { refuted: true, verdict: 'refuted', reason: 'the intent producer answers a direct probe now — rows may exist' }
-        : { refuted: false, verdict: 'unreadable', reason: 'the current surface cannot be enumerated (facets() is not routed), so the routing history has no continuity yardstick' };
+        : { refuted: false, verdict: 'unreadable', reason: why };
     const cutHistory = loupeRouted
       ? await (async () => {
           const facetList = await readRouted('facets', loupe, []);
-          if (facetList === UNROUTED) return unreadableSurface();
+          if (facetList === UNROUTED) return unreadableSurface('the current surface cannot be enumerated (facets() is not routed), so the routing history has no continuity yardstick');
           const routedSelectors = facetList.flatMap((f) => f.functionSelectors ?? f[1] ?? []);
           return refuteProducerNeverRouted({ client, diamond, fromBlock: BigInt(addresses.deployBlock ?? 0), toBlock: atBlock, producerSelector, producerRouted, routedSelectors });
         })()
-      : (producerRouted
-          ? { refuted: true, verdict: 'refuted', reason: 'the intent producer answers a direct probe now — rows may exist' }
-          : { refuted: false, verdict: 'unreadable', reason: 'the loupe is unrouted, so the current surface cannot be enumerated and the routing history has no continuity yardstick' });
-    // Codex #2070 r6 P1 — a zero balance does NOT prove the intent rows are
-    // absent (a payout may have spent the backing while the row survives), and
-    // cut history can only refute. With the getter unrouted there is NO sound
-    // certification available to this script: the class is INDETERMINATE
-    // pending a CALIBRATED storage read of `intentCommits[loanId].orderHash`
-    // (slot derived from the Storage layout and proven against a routed getter
-    // on a live commit before it is trusted) — or routing the getter.
-    intentAbsenceProof = {
-      proven: false,
-      reason:
-        (cutHistory.refuted
-          ? 'the intent getter is unrouted and the cut history REFUTES absence (the producer was routed) — rows may exist that cannot be read; '
-          : 'the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — ') +
-        'undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter',
-      diamondVpfiBacking: diamondVpfiBalance === null ? null : diamondVpfiBalance.toString(),
-      // Refutation-only: `{refuted, verdict, reason}`, never `proven` (r12 P2).
-      cutHistoryRefutation: cutHistory,
-    };
+      : unreadableSurface('the loupe is unrouted, so the current surface cannot be enumerated and the routing history has no continuity yardstick');
+    ledger.refutations = { cutHistory };
   }
 
-  const vpfiHeldRows = [];
-  const rebateRows = [];
-  const fallbackRows = [];
-  // Rows whose asset is NOT this deployment's VPFI. Recorded, never silently
-  // dropped: they are outside #1566's scope, but a reader must be able to see
-  // what the filter removed.
-  const nonVpfiFallbackRows = [];
-  const nonVpfiIntentRows = [];
-  // Rows whose asset could not be COMPARED because no VPFI token resolved.
-  // Unknown ≠ excluded: these keep their class indeterminate.
-  const unknownAssetFallbackRows = [];
-  const unknownAssetIntentRows = [];
-  const intentRows = [];
-  // #2095 r25 P2 — cuts are per selector: each custody getter is probed before
-  // the loop; an unrouted one is recorded and its classes stay indeterminate
-  // (the era-complete storage read still reports what it finds)
+  // ── The custody getters, over the STORAGE range (C6, S1-R9) ─────────────
+  // Each is probed whatever the metrics surface says (cuts are per selector,
+  // #2095 r25 P2) and, where routed, asked for EVERY id in 1..nextLoanId — so
+  // a HEAD-slot row a stale metrics facet cannot enumerate is still asked of
+  // the getter, and reconciled by the judge. Getters are plain mapping reads
+  // on any id; vehicle loans included.
   const rebateGetterRouted = await selectorRouted('getBorrowerLifRebate', claim, [1n]);
   const snapshotGetterRouted = await selectorRouted('getFallbackSnapshot', claim, [1n]);
-  if (!rebateGetterRouted || !snapshotGetterRouted) process.stderr.write(`census: ${who} — custody getter(s) unrouted: ${[!rebateGetterRouted && 'getBorrowerLifRebate', !snapshotGetterRouted && 'getFallbackSnapshot'].filter(Boolean).join(', ')}; their classes stay indeterminate\n`);
-  for (const id of loanIds) {
+  // C6 coverage is RECORDED, not restated: each getter's entry is the ids that
+  // getter actually answered in this loop, so a loop over anything but the
+  // storage range (the routed enumeration, a subset) leaves the record short
+  // and the judge's getter-coverage names it. Writing the range here instead
+  // would discharge coverage by a copy of the range whatever the loop asked.
+  const askedOf = { getBorrowerLifRebate: [], getFallbackSnapshot: [], getIntentCommit: [] };
+  for (const id of rangeIds) {
+    const loanId = id.toString();
     if (rebateGetterRouted) {
       const [rebateAmount, vpfiHeld] = await read('getBorrowerLifRebate', [id]);
-      if (vpfiHeld > 0n) vpfiHeldRows.push({ loanId: id.toString(), vpfiHeld: vpfiHeld.toString() });
-      if (rebateAmount > 0n) rebateRows.push({ loanId: id.toString(), rebateAmount: rebateAmount.toString() });
+      askedOf.getBorrowerLifRebate.push(id);
+      if (vpfiHeld > 0n) observe(ledger, { class: 'vpfiHeldCustody', loanId, amount: vpfiHeld, assetAddr: null, source: 'routed-getter' });
+      if (rebateAmount > 0n) observe(ledger, { class: 'rebateRows', loanId, amount: rebateAmount, assetAddr: null, source: 'routed-getter' });
     }
-    if (!snapshotGetterRouted) { if (!intentSurfaceRouted) continue; } else {
-    const snap = await read('getFallbackSnapshot', [id]);
-    const [lenderCollateral, treasuryCollateral, borrowerCollateral, lenderPrincipalDue, treasuryPrincipalDue, active] =
-      snap;
-    const custody = lenderCollateral + treasuryCollateral + borrowerCollateral;
-    if (active || custody > 0n) {
-      // The snapshot carries amounts, not the asset — the LOAN names it.
-      // #2095 r26 P2 — and `getLoanDetails` is its own selector: a Diamond can
-      // route the snapshot getter with the loan getter cut out, and this read
-      // used to throw FunctionDoesNotExist and abort the whole deployment.
-      // Through the routing boundary the row keeps its amount and goes to the
-      // unknown-asset evidence the census already has for exactly this case
-      // (an asset it cannot name is not an asset it may exclude).
-      const loan = await readRouted('getLoanDetails', loanView, [id]);
-      // Classified by branch, never by `continue` (#2095 r26): these three
-      // early exits sat inside the loan loop, so a row the fallback pass filed
-      // non-VPFI — or could not name — skipped this id's INTENT read as well,
-      // while class 3 still reported itself proven over ids it had not read.
-      // Same shape as the finding above: a verdict certifying evidence it
-      // never collected. Filing a fallback row now ends the fallback pass for
-      // this id and nothing else.
-      if (loan === UNROUTED) {
-        unknownAssetFallbackRows.push({ loanId: id.toString(), asset: 'unknown — getLoanDetails is not routed on this Diamond', collateralTotal: custody.toString() });
-      } else {
-        const asset = (loan.collateralAsset ?? loan[0]?.collateralAsset ?? '').toString();
-        if (!vpfiToken) {
-          // Codex #2070 r7 P2 — with no resolvable VPFI token the asset is UNKNOWN,
-          // not proven non-VPFI. Recorded separately; the class stays indeterminate.
-          unknownAssetFallbackRows.push({ loanId: id.toString(), asset, collateralTotal: custody.toString() });
-        } else if (asset.toLowerCase() !== vpfiToken.toLowerCase()) {
-          nonVpfiFallbackRows.push({ loanId: id.toString(), asset, collateralTotal: custody.toString() });
-        } else {
-          fallbackRows.push({
-            loanId: id.toString(),
-            active,
-            collateralTotal: custody.toString(),
-            lenderPrincipalDue: lenderPrincipalDue.toString(),
-            treasuryPrincipalDue: treasuryPrincipalDue.toString(),
-          });
-        }
+    if (snapshotGetterRouted) {
+      const [lenderCollateral, treasuryCollateral, borrowerCollateral, lenderPrincipalDue, treasuryPrincipalDue, active] = await read('getFallbackSnapshot', [id]);
+      askedOf.getFallbackSnapshot.push(id);
+      const custody = lenderCollateral + treasuryCollateral + borrowerCollateral;
+      if (active || custody > 0n) {
+        // The snapshot carries amounts, not the asset — the LOAN names it, and
+        // `getLoanDetails` is its own selector (#2095 r26 P2): unrouted, the
+        // row keeps its amount with no asset, and the judge files it unknown.
+        const loan = await readRouted('getLoanDetails', loanView, [id]);
+        const asset = loan === UNROUTED ? null : `${loan.collateralAsset ?? loan[0]?.collateralAsset ?? ''}` || null;
+        observe(ledger, { class: 'fallbackSnapshotCustody', loanId, amount: custody, assetAddr: asset, assetSource: 'getLoanDetails', source: 'routed-getter', extra: { active, lenderPrincipalDue, treasuryPrincipalDue } });
       }
-    }
-
     }
     // Class 3 — live intent commit, read from state. The view reverts
     // `IntentNoCommit` exactly when `commit.orderHash == 0`, and both teardown
-    // paths delete the struct — so that revert IS the proof of absence. Any
+    // paths delete the struct — so that revert IS the absence of a row. Any
     // other revert is a real failure and must not be read as "no commit".
-    if (!intentSurfaceRouted) continue;
-    try {
-      const order = await read('getIntentCommit', [id]);
-      if (!vpfiToken) {
-        unknownAssetIntentRows.push({ loanId: id.toString(), asset: `${order.makerAsset}`, custodialCollateral: order.makerAmount.toString() });
-        continue;
+    if (intentSurfaceRouted) {
+      try {
+        const order = await read('getIntentCommit', [id]);
+        observe(ledger, { class: 'liveIntentCommits', loanId, amount: order.makerAmount, assetAddr: `${order.makerAsset}`, assetSource: 'getIntentCommit.makerAsset', source: 'routed-getter', extra: { maker: order.maker, deadline: order.deadline } });
+      } catch (err) {
+        if (!isNoCommitRevert(err)) throw err;
       }
-      if (`${order.makerAsset}`.toLowerCase() !== vpfiToken.toLowerCase()) {
-        nonVpfiIntentRows.push({ loanId: id.toString(), asset: `${order.makerAsset}`, custodialCollateral: order.makerAmount.toString() });
-        continue;
-      }
-      intentRows.push({
-        loanId: id.toString(),
-        maker: order.maker,
-        makerAsset: order.makerAsset,
-        custodialCollateral: order.makerAmount.toString(),
-        deadline: order.deadline.toString(),
-      });
-    } catch (err) {
-      if (!isNoCommitRevert(err)) throw err;
+      askedOf.getIntentCommit.push(id); // answered: a commit, or IntentNoCommit
     }
   }
+  for (const [getter, routed] of [['getBorrowerLifRebate', rebateGetterRouted], ['getFallbackSnapshot', snapshotGetterRouted], ['getIntentCommit', intentSurfaceRouted]]) {
+    if (routed) ledger.idsAskedOfGetter[getter] = askedOf[getter].length ? idRangeOf(askedOf[getter]) : '';
+  }
 
-  // ── Class 3 — live VPFI intent commits, from the event lifecycle ──────
-  // A commit is keyed by loanId and can only be created against a live loan,
-  // so a chain that has never created a loan cannot hold one. Short-circuiting
-  // there is sound AND material: the log scan walks every block since deploy,
-  // which on fast testnets is millions of blocks of provably empty range.
-  const deployBlock = BigInt(addresses.deployBlock ?? 0);
-  const skippedLogScan = loanIds.length === 0;
-  // OPTIONAL corroboration — an independent reconstruction of class 3 from the
-  // event lifecycle. The view above is authoritative; this exists to catch a
-  // disagreement between live state and history, and its failure is a NOTE
-  // rather than a verdict, because a pruned node cannot refute live state.
-  let corroboration = null;
-  if (WANT_CORROBORATION && !skippedLogScan && intentSurfaceRouted) {
+  // OPTIONAL corroboration (`--corroborate`) — an independent reconstruction
+  // of class 3 from the event lifecycle, pairing commit → teardown by
+  // `(loanId, orderHash)`. Recorded raw; the judge compares it with every
+  // intent the view observed (S1-R4). Its failure is a note, never a verdict:
+  // a pruned node cannot refute live state. With no id in range there is no
+  // loan a commit could key, so the walk from deploy to head is skipped.
+  if (WANT_CORROBORATION && rangeIds.length && intentSurfaceRouted) {
     try {
-      const logs = await getLogsChunked(client, {
-        address: diamond,
-        events: intentEvents,
-        fromBlock: deployBlock,
-        toBlock: atBlock,
-      });
+      const logs = await getLogsChunked(client, { address: diamond, events: intentEvents, fromBlock: BigInt(addresses.deployBlock ?? 0), toBlock: atBlock });
       const live = new Map(); // `${loanId}:${orderHash}` -> makerAmount
       for (const log of logs) {
         const { loanId, orderHash, makerAmount } = log.args ?? {};
@@ -2630,270 +2570,15 @@ async function censusDeployment(dep) {
         if (log.eventName === 'SwapToRepayIntentCommitted') live.set(key, makerAmount ?? 0n);
         else live.delete(key); // Filled / Cancelled / ForceCancelled all tear the commit down
       }
-      const fromLogs = [...live.keys()].map((k) => k.split(':')[0]).sort();
-      // Codex #2070 r6 P2 — the view saw every live intent, VPFI or not; the
-      // VPFI filter is a SCOPE decision, not an observation, so agreement is
-      // tested against everything the view observed.
-      const fromView = [...intentRows, ...nonVpfiIntentRows].map((r) => r.loanId).sort();
-      corroboration = {
-        source: 'event-lifecycle',
-        logsSeen: logs.length,
-        liveLoanIdsFromLogs: fromLogs,
-        agreesWithView: JSON.stringify(fromLogs) === JSON.stringify(fromView),
-      };
-      // Codex #2070 P1 — a DISAGREEMENT is the one outcome this corroboration
-      // exists to catch, so it must not be recorded as a note beside an
-      // otherwise-certified verdict. History contradicting live state means the
-      // primary absence proof is no longer trustworthy, and the honest answer
-      // is that class 3 is undetermined — which blocks the empty verdict.
-      if (!corroboration.agreesWithView) {
-        corroboration.contradictsPrimaryProof = true;
-      }
+      ledger.corroboration = { source: 'event-lifecycle', logsSeen: logs.length, liveLoanIdsFromLogs: [...live.keys()].map((k) => k.split(':')[0]).sort() };
     } catch (err) {
-      corroboration = {
+      ledger.corroboration = {
         source: 'event-lifecycle',
-        unavailable: `${classifyRpcError(err)}: ${(err?.details ?? err?.shortMessage ?? err?.message ?? '')
-          .toString()
-          .split('\n')[0]
-          .slice(0, 180)}`,
+        unavailable: `${classifyRpcError(err)}: ${(err?.details ?? err?.shortMessage ?? err?.message ?? '').toString().split('\n')[0].slice(0, 180)}`,
       };
     }
   }
-
-  await assertBlockIdentity(client, censusBlock, who);
-
-
-  const result = {
-    chainSlug: slug,
-    deployment: label,
-    chainId: Number(chainId),
-    diamond,
-    vpfiToken,
-    vpfiTokenSource,
-    vpfiScopeAuthoritative,
-    // #2095 r19 P2 — the deployment-level label is withdrawn with the bound it names
-    provenBy: corroboration?.contradictsPrimaryProof ? undefined : (provenByEnumerable ?? undefined),
-    // BACKING, not a proof: what the Diamond holds, against what its rows claim.
-    // Rows total > backing is exactly the shortfall slice 0 must reconcile.
-    diamondVpfiBacking: diamondVpfiBalance === null ? null : diamondVpfiBalance.toString(),
-    vpfiRowsTotal: (BigInt(sum(vpfiHeldRows, 'vpfiHeld')) + BigInt(sum(rebateRows, 'rebateAmount')) + BigInt(sum(fallbackRows, 'collateralTotal')) + BigInt(sum(intentRows, 'custodialCollateral'))).toString(),
-    backingShortfall:
-      diamondVpfiBalance === null
-        ? null
-        : (() => {
-            const rows = BigInt(sum(vpfiHeldRows, 'vpfiHeld')) + BigInt(sum(rebateRows, 'rebateAmount')) + BigInt(sum(fallbackRows, 'collateralTotal')) + BigInt(sum(intentRows, 'custodialCollateral'));
-            return (rows > diamondVpfiBalance ? rows - diamondVpfiBalance : 0n).toString();
-          })(),
-    atBlock: atBlock.toString(),
-    // The block IDENTITY, not just its height — a height alone is not
-    // reproducible across a reorg.
-    atBlockHash: censusBlock.hash,
-    blockTag: censusBlock.tag,
-    rpcHost: rpcHostOf(rpc),
-    scanned: {
-      loanIdsEnumerated: loanIds.length,
-      totalLoansEverCreated: totalLoansEverCreated.toString(),
-      loanIdRange: loanIds.length ? `${loanIds[0]}..${loanIds[loanIds.length - 1]}` : 'none',
-      enumerable: true,
-      noCode: false,
-      custodySurfaceUnrouted: false,
-      loupeRouted,
-      // r3 P1 — what no routed getter can see: every class at every earlier era slot over 1..nextLoanId
-      earlierEraRead: historical ? { ...STORAGE_READ.evidence, headCounters: historical.headCounters, slotsRead: historical.slotsRead, loansScanned: historical.loansScanned, truncated: historical.truncated, nextLoanIdFromStorage: historical.nextLoanIdFromStorage, erasPerField: historical.erasPerField, rowsFound: Object.fromEntries(Object.entries(historical.rows).map(([k, v]) => [k, v.length])), headSlotRows: Object.fromEntries(Object.entries(historical.headRows).map(([k, v]) => [k, v.length])), earlierEraCounters: historical.earlierEraCounters, aliasedCountersIgnored: historical.aliasedCountersIgnored } : undefined,
-      intentSource: intentSurfaceRouted
-        ? 'getIntentCommit view (live state, history-independent)'
-        : intentStorage
-          ? `getter unrouted — intentCommits rows read from storage at every layout era's slot (${STORAGE_READ.eraSlots.intentCommits.length} era slot(s)), hash-pinned`
-          : `getter unrouted — intentCommits storage NOT read: ${STORAGE_READ.ok ? 'the no-loans bound already settles the class' : STORAGE_READ.reason}`,
-      storageRead: intentStorage ? { ...STORAGE_READ.evidence, kind: 'storage-read-calibrated', aliasedCountersIgnored: intentStorage.aliasedCountersIgnored, slotsRead: intentStorage.slotsRead, loansScanned: intentStorage.loansScanned, liveCommitCounts: intentStorage.liveCommitCounts } : undefined,
-      storageReadUnavailable: STORAGE_READ.ok ? undefined : STORAGE_READ.reason,
-      intentSurfaceRouted,
-      intentProducerRouted: producerRouted,
-      intentCorroboration: corroboration,
-      // Codex #2070 r13 P1 — the fallback producers (RiskFacet / DefaultedFacet
-      // full-collateral fallback) and the intent producer can write a
-      // qualifying row the moment after this read; a census cannot see a
-      // freeze, so a Diamond whose custody surface is routed is assumed live.
-      // The report's `migrationRetirable` is derived from this, conservatively.
-      producersMayBeLive: true,
-    },
-    classes: {
-      // Classes 1 & 4 are VPFI by construction (`vpfiHeld` / `rebateAmount`
-      // ARE VPFI amounts), so they need no asset filter — but they are still
-      // VPFI custody, so a missing token address leaves them unscoped too.
-      vpfiHeldCustody: {
-        status: vpfiToken || provenByEnumerable ? 'proven' : 'indeterminate',
-        provenBy: provenByEnumerable ?? undefined,
-        indeterminateReason: vpfiToken || provenByEnumerable ? undefined : 'VPFI token unresolvable (neither on-chain nor in the artifact); VPFI custody cannot be scoped',
-        count: vpfiHeldRows.length,
-        total: sum(vpfiHeldRows, 'vpfiHeld'),
-        rows: vpfiHeldRows,
-      },
-      rebateRows: {
-        status: vpfiToken || provenByEnumerable ? 'proven' : 'indeterminate',
-        provenBy: provenByEnumerable ?? undefined,
-        indeterminateReason: vpfiToken || provenByEnumerable ? undefined : 'VPFI token unresolvable (neither on-chain nor in the artifact); VPFI custody cannot be scoped',
-        count: rebateRows.length,
-        total: sum(rebateRows, 'rebateAmount'),
-        rows: rebateRows,
-      },
-      fallbackSnapshotCustody: {
-        status: provenByEnumerable || (vpfiToken && vpfiScopeAuthoritative) ? 'proven' : 'indeterminate',
-        provenBy: provenByEnumerable ?? undefined,
-        indeterminateReason: provenByEnumerable || (vpfiToken && vpfiScopeAuthoritative)
-          ? undefined
-          : vpfiToken
-            ? scopeNotAuthoritativeReason
-            : 'VPFI token unresolvable (neither on-chain nor in the artifact); VPFI custody cannot be scoped',
-        count: fallbackRows.length,
-        total: sum(fallbackRows, 'collateralTotal'),
-        rows: fallbackRows,
-        nonVpfiRowsExcluded: nonVpfiFallbackRows,
-        unknownAssetRows: unknownAssetFallbackRows,
-      },
-      // Class 3 earns `proven` in exactly two ways: the no-loans bound, or the
-      // getter was routed and live state was read. With the getter UNROUTED
-      // there is no sound certification in this script (r6 P1): the cut
-      // history can only refute and `intentAbsenceProof.proven` is always
-      // false on that branch — the class is `indeterminate`, which blocks the
-      // empty verdict rather than passing as a zero.
-      liveIntentCommits: {
-        // Class 3 is loan-keyed too, so the no-loans bound settles it as well.
-        status:
-          provenByEnumerable && !corroboration?.contradictsPrimaryProof
-            ? 'proven'
-            : intentSurfaceRouted
-              ? corroboration?.contradictsPrimaryProof || !vpfiToken || !vpfiScopeAuthoritative
-                ? 'indeterminate'
-                : 'proven'
-              : intentStorage
-                ? intentStorage.verdict.status
-                : intentAbsenceProof?.proven
-                  ? 'proven'
-                  : 'indeterminate',
-        // #2095 r19 P2 — a bound the corroboration refuted carries no proof label
-        provenBy: corroboration?.contradictsPrimaryProof ? undefined : (provenByEnumerable ?? (intentStorage?.verdict.status === 'proven' ? 'storage-read-calibrated' : undefined)),
-        unknownAssetRows: intentSurfaceRouted ? unknownAssetIntentRows : intentStorage ? intentStorage.rows : unknownAssetIntentRows,
-        // Codex #2070 r8 P2 — every field below derives from ONE verdict. When
-        // the no-loans bound proves the class, no indeterminate reason and no
-        // failed absence proof may ride along, or a consumer reads "proven"
-        // beside text saying "undetermined".
-        indeterminateReason:
-          provenByEnumerable && !corroboration?.contradictsPrimaryProof
-            ? undefined
-            : intentSurfaceRouted
-              ? corroboration?.contradictsPrimaryProof
-                ? 'the event-lifecycle reconstruction disagrees with the live-state view'
-                : !vpfiToken
-                  ? 'the intent getter answered but no VPFI token resolved, so every returned intent has an UNKNOWN asset — not provably non-VPFI'
-                  : !vpfiScopeAuthoritative
-                    ? scopeNotAuthoritativeReason
-                    : undefined
-              : intentStorage
-                ? intentStorage.verdict.reason
-                : intentAbsenceProof?.reason,
-        absenceProof:
-          provenByEnumerable && !corroboration?.contradictsPrimaryProof ? undefined : intentSurfaceRouted || intentStorage ? undefined : intentAbsenceProof,
-        // on the storage path the candidates ARE the count (#2095 r2 P2); their amount is not read from storage
-        count: intentSurfaceRouted ? intentRows.length : intentStorage ? intentStorage.rows.length : intentRows.length,
-        total: intentSurfaceRouted || !intentStorage ? sum(intentRows, 'custodialCollateral') : intentStorage.rows.length ? null : '0',
-        totalUnavailable: !intentSurfaceRouted && intentStorage?.rows.length ? "an intent row's amount is not read from storage" : undefined,
-        rows: intentRows,
-        nonVpfiRowsExcluded: nonVpfiIntentRows,
-      },
-    },
-  };
-  // #2095 r3 P1 — merge what the earlier-era read found into every class, and
-  // withdraw the routed zero-loans proof when an earlier era's counter says
-  // loans were created under a layout today's counter does not read.
-  // #2095 r25 P2 — a class whose routed getter is unrouted is never certified by
-  // the remaining reads alone; what storage found is still reported
-  if (!rebateGetterRouted) for (const name of ['vpfiHeldCustody', 'rebateRows']) result.classes[name] = { ...result.classes[name], status: 'indeterminate', provenBy: undefined, indeterminateReason: 'getBorrowerLifRebate is unrouted on this Diamond today — the class cannot be read through a getter; rows the storage read found are reported, none certified' };
-  if (!snapshotGetterRouted) result.classes.fallbackSnapshotCustody = { ...result.classes.fallbackSnapshotCustody, status: 'indeterminate', provenBy: undefined, indeterminateReason: 'getFallbackSnapshot is unrouted on this Diamond today — the class cannot be read through a getter; rows the storage read found are reported, none certified' };
-  if (historical) {
-    for (const name of Object.keys(result.classes)) result.classes[name] = mergeHistoricalRows(result.classes[name], historical, name);
-    // r4 P1 — the routed getter and the HEAD-slot storage read must agree per loan id, both ways
-    historical.agreement = getterAgreement({
-      headRows: historical.headRows,
-      routed: {
-        vpfiHeldCustody: vpfiHeldRows,
-        rebateRows,
-        fallbackSnapshotCustody: [...fallbackRows, ...nonVpfiFallbackRows, ...unknownAssetFallbackRows],
-        liveIntentCommits: [...intentRows, ...nonVpfiIntentRows, ...unknownAssetIntentRows],
-      },
-    });
-    const disagreements = Object.values(historical.agreement).reduce((a, r) => a + r.length, 0);
-    result.scanned.earlierEraRead.getterDisagreements = Object.fromEntries(Object.entries(historical.agreement).map(([k, v]) => [k, v.length]));
-    if (disagreements) process.stderr.write(`census: ${who} — ${disagreements} getter/HEAD-slot disagreement(s)\n`);
-    for (const [name, mism] of Object.entries(historical.agreement)) {
-      if (!mism.length) continue;
-      const c = result.classes[name];
-      result.classes[name] = { ...c, status: 'indeterminate', provenBy: undefined, getterDisagreements: mism, indeterminateReason: `the routed getter and the storage read at HEAD's slot disagree for ${mism.length} loan id(s) (${mism.slice(0, 3).map((x) => `#${x.loanId}: storage ${x.storage}, getter ${x.getter}`).join('; ')}${mism.length > 3 ? '; …' : ''}) — the cut getter reads a layout other than HEAD's; refusing to certify` };
-    }
-    // r4 P1 — an unexplained non-zero earlier-era LIVE-COMMIT counter contradicts the intent class on every path
-    const oldIntent = historical.earlierEraCounters.filter((c) => c.which === 'intentLiveCommitCount');
-    if (oldIntent.length && result.classes.liveIntentCommits.status === 'proven') {
-      result.classes.liveIntentCommits = { ...result.classes.liveIntentCommits, status: 'indeterminate', provenBy: undefined, counterContradiction: true, indeterminateReason: `intentLiveCommitCount is non-zero at an earlier era's slot no current field occupies (${oldIntent.map((c) => `${c.value} at ${c.slot} (${c.eras.map((e) => e.date).join(',')})`).join('; ')}) — a commit was written under an earlier layout that neither the getter nor the row scan matched; refusing to certify` };
-    }
-    // r4 P1 — the liability figures must include what the earlier-era read merged
-    const rowsTotal = ['vpfiHeldCustody', 'rebateRows', 'fallbackSnapshotCustody', 'liveIntentCommits'].reduce((acc, name) => {
-      const field = { vpfiHeldCustody: 'vpfiHeld', rebateRows: 'rebateAmount', fallbackSnapshotCustody: 'collateralTotal', liveIntentCommits: 'custodialCollateral' }[name];
-      return acc + (result.classes[name].rows ?? []).reduce((a, r) => a + (r[field] !== undefined ? BigInt(r[field]) : 0n), 0n);
-    }, 0n);
-    result.vpfiRowsTotal = rowsTotal.toString();
-    result.backingShortfall = diamondVpfiBalance === null ? null : (rowsTotal > diamondVpfiBalance ? rowsTotal - diamondVpfiBalance : 0n).toString();
-    if (historical.earlierEraCounters.length && provenByEnumerable) {
-      const why = `the routed loan counter reads zero, but an earlier layout era's counter is non-zero (${historical.earlierEraCounters.map((c) => `${c.which}=${c.value} at ${c.slot} (${c.eras.map((e) => e.date).join(',')})`).join('; ')}) — loans were created under an earlier layout; the zero-loans proof is withdrawn`;
-      result.provenBy = undefined;
-      for (const name of Object.keys(result.classes)) {
-        const c = result.classes[name];
-        if (c.provenBy === 'no-loans-ever-created') result.classes[name] = { ...c, status: 'indeterminate', provenBy: undefined, indeterminateReason: why };
-      }
-      result.scanned.earlierEraCounterContradiction = why;
-    }
-    // #2095 r11 P1 — HEAD's own counters, judged like the earlier eras': the
-    // lifetime counter above the id range refuses every proof; a live-commit
-    // counter above zero with no intent row found contradicts the intent class
-    const hc = historical.headCounters ?? {};
-    if (hc.totalLoansEverCreated !== null && hc.totalLoansEverCreated !== undefined && BigInt(hc.totalLoansEverCreated) > BigInt(historical.nextLoanIdFromStorage)) {
-      const why = `totalLoansEverCreated at HEAD's slot (${hc.totalLoansEverCreated}) is ABOVE the loan-id range (nextLoanId=${historical.nextLoanIdFromStorage}) — rows the range cannot reach may exist; refusing to certify`;
-      result.provenBy = undefined;
-      result.classes = downgradeProvenClasses(result.classes, why);
-      result.scanned.headCounterContradiction = why;
-    }
-    // #2095 r12 P2 — the counter is protocol-wide: an intent the getter filed
-    // as non-VPFI or unknown-asset is a live commit it counts, so every
-    // candidate of every scope is accounted before the counter contradicts
-    const intentCandidatesFound = intentRows.length + nonVpfiIntentRows.length + unknownAssetIntentRows.length + (intentStorage?.rows.length ?? 0) + ((historical.rows?.liveIntentCommits ?? []).length);
-    if (hc.intentLiveCommitCount !== null && hc.intentLiveCommitCount !== undefined && BigInt(hc.intentLiveCommitCount) > BigInt(intentCandidatesFound) && result.classes.liveIntentCommits.status === 'proven') {
-      const why = `intentLiveCommitCount at HEAD's slot reads ${hc.intentLiveCommitCount} while only ${intentCandidatesFound} live intent candidate(s) of any scope were found by the routed getter or at any era slot — the protocol's own counter says a commit exists that no read reached; refusing to certify`;
-      result.classes.liveIntentCommits = { ...result.classes.liveIntentCommits, status: 'indeterminate', provenBy: undefined, counterContradiction: true, indeterminateReason: why };
-      result.scanned.headCounterContradiction = `${result.scanned.headCounterContradiction ? `${result.scanned.headCounterContradiction}; ` : ''}${why}`;
-    }
-    // #2095 r9 — a stale lifetime counter ABOVE the storage id range (the same
-    // rule the shell path applies) means loans the range cannot reach
-    const over = historical.earlierEraCounters.filter((c) => c.which === 'totalLoansEverCreated' && BigInt(c.value) > BigInt(historical.nextLoanIdFromStorage));
-    if (over.length) {
-      const why = `an earlier layout era's totalLoansEverCreated is ABOVE the loan-id range (${over.map((c) => `${c.value} at ${c.slot}${c.atMappingHead ? ` (now the head of ${c.atMappingHead}, which holds nothing)` : ''}`).join('; ')} > nextLoanId=${historical.nextLoanIdFromStorage}) — rows the range cannot reach may exist; refusing to certify`;
-      result.provenBy = undefined;
-      result.classes = downgradeProvenClasses(result.classes, why);
-      result.scanned.earlierEraCounterContradiction = why;
-    }
-    if (historical.truncated) {
-      const why = `the earlier-era scan was truncated at ${MAX_STORAGE_LOAN_SCAN} ids (nextLoanId=${historical.nextLoanIdFromStorage}); rows beyond it were not read`;
-      for (const name of Object.keys(result.classes)) {
-        const c = result.classes[name];
-        result.classes[name] = { ...c, status: 'indeterminate', provenBy: undefined, indeterminateReason: c.indeterminateReason ? `${c.indeterminateReason}; ${why}` : why };
-      }
-    }
-  } else {
-    // #2095 r5 P1 — no era-complete read, no getter-derived proof: the routed
-    // getters alone cannot exclude a row written under another era's layout
-    result.scanned.earlierEraReadUnavailable = STORAGE_READ.reason;
-    result.provenBy = undefined;
-    result.classes = downgradeWithoutEraRead(result.classes, STORAGE_READ.reason);
-  }
-  return applyLayoutProvenance(result, { client, censusBlock, atBlock, diamond, slug, label, deployBlock, readFacets: loupeRouted ? readFacetsThroughBoundary : null, who, manifestEntry: dep.manifestEntry ?? null, scopeSelectors: { fallback: toFunctionSelector(claim.find((e) => e.name === 'getFallbackSnapshot')), loan: toFunctionSelector(loanView.find((e) => e.name === 'getLoanDetails')), token: toFunctionSelector(vpfiView.find((e) => e.name === 'getVPFIToken')), intent: intentSelector } });
+  return { readFacets: loupeRouted ? readFacetsThroughBoundary : null };
 }
 
 /**
@@ -2921,7 +2606,7 @@ export function snapshotRegression({ current, results, ancestry, acknowledged, n
   const theirs = new Map();
   const theirsHash = new Map();
   for (const r of current.results ?? []) {
-    if (!r?.chainSlug || r?.atBlock == null) continue;
+    if (!readableResult(r, 'the committed snapshot')) continue;
     const h = BigInt(r.atBlock);
     if (!theirs.has(r.chainSlug) || h > theirs.get(r.chainSlug)) {
       theirs.set(r.chainSlug, h);
@@ -3009,7 +2694,7 @@ export function snapshotRegression({ current, results, ancestry, acknowledged, n
 }
 
 async function main() {
-  if (process.argv.includes('--write-archive-manifest')) {
+  if (hasFlag('--write-archive-manifest')) {
     const m = writeArchiveManifest();
     process.stdout.write(`archive manifest written: ${ARCHIVE_MANIFEST} (${m.entries.length} archived deployments)\n`);
     return;
@@ -3019,11 +2704,13 @@ async function main() {
   const deployments = which === 'all' ? everything : everything.filter((d) => d.slug === which);
   if (which !== 'all' && deployments.length === 0) throw new Error(`no deployment directory for chain '${which}'`);
   const outDir = arg('--out', join(REPO, 'docs/DesignsAndPlans/census'));
-  loadPriorCommittedHeights(join(outDir, 'grandfathered-custody-census.json'));
   // The snapshot this run will replace (r24 P2): the canonical for a full run,
   // the chain's partial file for a --chain run. Its heights join the floor,
   // and ancestry is proven against ITS blocks.
   const targetPath = which === 'all' ? join(outDir, 'grandfathered-custody-census.json') : join(outDir, `grandfathered-custody-census.partial-${which}.json`);
+  if (hasFlag('--rejudge')) return rejudge({ everything, deployments, outDir, sourcePath: arg('--rejudge-from', targetPath) });
+
+  loadPriorCommittedHeights(join(outDir, 'grandfathered-custody-census.json'));
   loadTargetSnapshot(targetPath);
   for (const [slug, h] of TARGET_HEIGHT) {
     if (!PRIOR_COMMITTED_HEIGHT.has(slug) || h > PRIOR_COMMITTED_HEIGHT.get(slug)) {
@@ -3041,48 +2728,39 @@ async function main() {
   const failures = [];
   // An archive can name the SAME Diamond as the live artifact (a config-only
   // snapshot). Coverage stays per-ARTIFACT — that is what the archive finding
-  // asked for — but the chain is not read twice: the later entry reuses the
-  // earlier result under its own label and says whose it is.
-  const byAddress = new Map(); // `${slug}|${diamond.toLowerCase()}` -> result
+  // asked for — but the chain is not read twice: the later entry re-judges the
+  // earlier LEDGER under its own label and says whose reads they are.
+  const byAddress = new Map(); // reuse key -> the frozen ledger it was read into
   // Codex #2070 r8 P1 — a chain reads at ONE block identity, full stop. When a
   // later deployment forces the `safe` downgrade, every result already
   // collected for that chain was read at the OLD finalized height, and a row
   // created on one of those Diamonds between the two heights would be absent
-  // from every result while present at the report's effective state. An
-  // earlier revision recorded the split as "an honest exception"; it was a
-  // hole. The downgrade now DISCARDS that chain's results and reruns the
-  // whole chain at `safe` — the queue is a worklist so a slug can be re-queued.
+  // from every result while present at the report's effective state. The
+  // downgrade DISCARDS that chain's results and reruns the whole chain at
+  // `safe` — the queue is a worklist so a slug can be re-queued.
   const queue = [...deployments];
   while (queue.length) {
     const dep = queue.shift();
     const who = `${dep.slug} (${dep.label})`;
-    // Codex #2070 r16 P1 — a result is reused across artifacts naming the
-    // same Diamond ONLY when their scoping metadata is identical. Where the
-    // token getter is unrouted the artifact's VPFI token is what scopes rows,
-    // so two config snapshots straddling a token rotation would file a live
-    // row as non-VPFI under the first token and copy that verdict to the
-    // second. Same Diamond, different artifact token ⇒ its own scan.
-    const scopeToken = (dep.addresses.vpfiToken ?? dep.addresses.vpfiMirror ?? 'none').toString().toLowerCase();
-    // #2095 r20 P1 — layout provenance is a per-record verdict: two records of
-    // one Diamond differ in the facets they name (the in-place-refresh case) and
-    // in their deploy time, so a result is reused only when those match too
-    const provenanceKey = (() => {
-      const list = dep.manifestEntry?.facets ?? Object.values(dep.addresses.facets ?? {});
-      const facets = [...new Set(list.filter((v) => typeof v === 'string').map((v) => v.toLowerCase()))].sort().join(',');
-      return `${deployedAtIso(dep.manifestEntry?.deployedAt ?? dep.addresses.deployedAt) ?? 'null'}|${facets}`;
-    })();
-    const addrKey = `${dep.slug}|${(dep.addresses.diamond || '').toLowerCase()}|${scopeToken}|${provenanceKey}`;
-    if (byAddress.has(addrKey)) {
-      const prior = byAddress.get(addrKey);
-      results.push({ ...prior, deployment: dep.label, duplicateOfDeployment: prior.deployment });
-      process.stderr.write(`census: ${who} — same Diamond, scoping metadata AND facet population as "${prior.deployment}"; reusing that result\n`);
-      continue;
-    }
-    process.stderr.write(`census: ${who} …\n`);
+    // Codex #2070 r16 P1 — reads are reused across artifacts naming the same
+    // Diamond ONLY when their scoping metadata is identical. Where the token
+    // getter is unrouted the artifact's VPFI token is what scopes rows, so two
+    // config snapshots straddling a token rotation would file a live row as
+    // non-VPFI under the first token and copy that to the second. Same Diamond,
+    // different artifact token ⇒ its own scan.
+    // #2095 r20 P1 — layout provenance is per record: two records of one
+    // Diamond differ in the facets they name (the in-place-refresh case) and in
+    // their deploy time, so reads are reused only when those match too
+    const addrKey = [dep.slug, String(dep.addresses.diamond || '').toLowerCase(), recordScopeToken(dep), recordDeployedAt(dep), recordFacetsKey(dep)].join('|');
+    const prior = byAddress.get(addrKey);
+    process.stderr.write(prior
+      ? `census: ${who} — same Diamond, scoping metadata AND facet population as "${prior.identity.deployment}"; re-judging those reads under this label\n`
+      : `census: ${who} …\n`);
     try {
-      const r = await censusDeployment(dep);
-      results.push(r);
-      byAddress.set(addrKey, r);
+      const verdict = await censusDeployment(dep, prior ?? null);
+      // the census's ONE results.push: only a branded verdict reaches the artifact
+      results.push(publish(verdict));
+      if (!prior) byAddress.set(addrKey, verdict.ledger);
     } catch (err) {
       // A lagging replica that outlasted the rotated retries: cap the chain's
       // height at that replica's head (still finalized) and restart the chain
@@ -3092,7 +2770,16 @@ async function main() {
         laggingHead !== null
           ? await capChainAtLaggingHead(createPublicClient({ transport: http(rpcFor(dep.slug), { fetchFn: fetchViaNodeAgents }) }), dep.slug, who, laggingHead).catch(() => null)
           : null;
-      if (cappedAt) {
+      const restartReason = cappedAt
+        ? `state reads kept landing on a replica at ${laggingHead}; re-resolving ${dep.slug} at that height (${cappedAt.tag})`
+        : classifyRpcError(err) === 'pruned' && downgradeChainToSafe(dep.slug)
+          ? `finalized state pruned by the endpoint; re-resolving ${dep.slug} at 'safe'`
+          : null;
+      if (restartReason) {
+        // Restart THIS CHAIN from scratch at the new block. Codex #2070 r12 P2 —
+        // a restart re-reads EVERY deployment on the chain, so a failure
+        // recorded for one of them at the old height is stale too: left in
+        // place it would report a recovered chain as failed.
         const dropped = results.filter((r) => r.chainSlug === dep.slug).length;
         for (let i = results.length - 1; i >= 0; i--) if (results[i].chainSlug === dep.slug) results.splice(i, 1);
         for (const k of [...byAddress.keys()]) if (k.startsWith(`${dep.slug}|`)) byAddress.delete(k);
@@ -3101,104 +2788,309 @@ async function main() {
         const chainDeps = deployments.filter((d) => d.slug === dep.slug);
         for (let i = queue.length - 1; i >= 0; i--) if (queue[i].slug === dep.slug) queue.splice(i, 1);
         queue.unshift(...chainDeps);
-        process.stderr.write(
-          `census: ${who} — state reads kept landing on a replica at ${laggingHead}; re-resolving ${dep.slug} at that height (${cappedAt.tag}) and RESTARTING the chain ` +
-            `(discarding ${dropped} result(s) and ${staleFailures} recorded failure(s))\n`,
-        );
+        process.stderr.write(`census: ${who} — ${restartReason} and RESTARTING the chain (discarding ${dropped} result(s) and ${staleFailures} recorded failure(s))\n`);
         continue;
       }
-      if (classifyRpcError(err) === 'pruned' && downgradeChainToSafe(dep.slug)) {
-        // Restart THIS CHAIN from scratch at `safe`.
-        const dropped = results.filter((r) => r.chainSlug === dep.slug).length;
-        for (let i = results.length - 1; i >= 0; i--) if (results[i].chainSlug === dep.slug) results.splice(i, 1);
-        for (const k of [...byAddress.keys()]) if (k.startsWith(`${dep.slug}|`)) byAddress.delete(k);
-        // Codex #2070 r12 P2 — a restart re-reads EVERY deployment on the
-        // chain, so a failure recorded for one of them at the old height is
-        // stale too: left in place it would report a recovered chain as
-        // failed, force `allClassesEmpty` false and fail the run.
-        const staleFailures = failures.filter((f) => f.chainSlug === dep.slug).length;
-        for (let i = failures.length - 1; i >= 0; i--) if (failures[i].chainSlug === dep.slug) failures.splice(i, 1);
-        const chainDeps = deployments.filter((d) => d.slug === dep.slug);
-        // Remove any still-queued entries for this slug, then re-queue the whole chain in order.
-        for (let i = queue.length - 1; i >= 0; i--) if (queue[i].slug === dep.slug) queue.splice(i, 1);
-        queue.unshift(...chainDeps);
-        process.stderr.write(
-          `census: ${who} — finalized state pruned by the endpoint; re-resolving ${dep.slug} at 'safe' and RESTARTING the chain ` +
-            `(discarding ${dropped} result(s) and ${staleFailures} recorded failure(s) from the finalized height)\n`,
-        );
-        continue;
-      }
-      failures.push({ chainSlug: dep.slug, deployment: dep.label, error: err.message });
+      // §3.3 — what WAS read rides with the failure: evidence of how far the
+      // census got, never judged (a failure is outside the per-class model)
+      failures.push({ chainSlug: dep.slug, deployment: dep.label, error: err.message, partialLedger: err.partialLedger ?? null });
       process.stderr.write(`census: ${who} FAILED — ${err.message}\n`);
     }
   }
+  return reportAndPublish({ results, failures, everything, outDir, proofStandard: PROOF_STANDARD });
+}
 
-  // "Empty" is only claimable where every class was actually ESTABLISHED. An
-  // indeterminate class is not evidence of absence, so it blocks the verdict
-  // rather than passing as a zero.
-  const allProven = results.every((r) => Object.values(r.classes).every((c) => c.status === 'proven'));
-  const empty = allProven && results.every((r) => Object.values(r.classes).every((c) => c.count === 0));
-  const indeterminate = results.flatMap((r) =>
-    Object.entries(r.classes)
-      .filter(([, c]) => c.status !== 'proven')
-      .map(([name, c]) => ({ chainSlug: r.chainSlug, deployment: r.deployment, class: name, reason: c.indeterminateReason })),
+/**
+ * `--rejudge` (S3-4) — re-derive every verdict of the committed artifact from
+ * the evidence ledger it carries, with the checkout's rule and era table, and
+ * republish through the SAME guarded publication a live run uses. No RPC when
+ * the source is the artifact it replaces: the results keep their blocks, so
+ * the ancestry check is the equal-height case. A `--rejudge-from` pair whose
+ * blocks sit above that snapshot (the pair a size refusal saved) makes the
+ * ancestry check walk the chain through its endpoint, and an unverified walk
+ * refuses it.
+ *
+ * A rule change or a regenerated era table therefore no longer costs an
+ * archive-node rerun — except where the reads cannot answer the table it is
+ * judged with: the table names a slot the original reads never covered, or
+ * the reads took no storage read on a Diamond with code because the table was
+ * unusable at collection, so their coverage cannot be computed at all. The
+ * judge fails `era-coverage` by name and marks the rerun owed
+ * (`scanned.eraCoverage.rerunOwed`), and this stops (exit 2) WITHOUT
+ * publishing; `--rejudge-allow-coverage-gaps` publishes anyway, with those
+ * classes indeterminate as the judge states them.
+ *
+ * It stops the same way when the reads no longer describe the INVENTORY: a
+ * record corrected since the run (its Diamond, chain, deploy block, token,
+ * deploy time or facet list), removed, or added. Each ledger names the record
+ * it was read for (`identity.inventoryKey`); re-judging reads of a record that
+ * has since changed would re-certify its label against a Diamond or a facet
+ * population the inventory no longer names. The publication's own inventory
+ * re-check cannot see this — it compares two snapshots that are both taken
+ * after the reads.
+ *
+ * The source is the artifact the run would replace, or `--rejudge-from PATH`:
+ * the pair a publication refused for size saved (see `refuseOversized`).
+ */
+export async function rejudge({ everything, deployments, outDir, sourcePath }) {
+  let artifact;
+  try {
+    artifact = loadCensusArtifact(sourcePath);
+  } catch (err) {
+    throw new Error(`--rejudge: ${sourcePath} cannot be re-derived — ${err.message}`);
+  }
+  const schema = Number(artifact?.schema ?? 1);
+  if (!(schema >= LEDGER_SCHEMA)) {
+    throw new Error(
+      `--rejudge: ${sourcePath} is schema ${schema}, which predates the evidence ledger (schema ${LEDGER_SCHEMA}) — its results record verdicts, ` +
+        `not the reads they came from, so there is nothing to re-derive; a full census run is owed`,
+    );
+  }
+  // without a table every class would come out unread: that is a broken
+  // checkout, not a verdict, and it must not replace the committed one
+  if (!STORAGE_READ.ok) throw new Error(`--rejudge: the era table cannot be used (${STORAGE_READ.reason}); fix the checkout's tables before re-judging`);
+  const ledgerless = (artifact.results ?? []).filter((r) => !r?.ledger).map((r) => `${r?.chainSlug}/${r?.deployment}`);
+  if (ledgerless.length) throw new Error(`--rejudge: ${sourcePath} has result(s) without an evidence ledger (${ledgerless.join(', ')}); refusing to republish verdicts it cannot re-derive`);
+  const drift = rejudgeInventoryDrift({ results: artifact.results, failures: artifact.chainsFailed ?? [], records: deployments });
+  if (drift.length) {
+    process.stderr.write(
+      `census --rejudge: the committed reads no longer describe the deployment inventory — a rerun is owed, nothing was published:\n` +
+        drift.map((d) => `  ${d}\n`).join(''),
+    );
+    process.exitCode = 2;
+    return;
+  }
+  // the standard the operator names, else the one the artifact was judged under
+  const proofStandard = arg('--proof-standard') !== undefined ? PROOF_STANDARD : (artifact.proofStandard ?? PROOF_STANDARD);
+  const results = artifact.results.map((r) => publish(verdictFromEvidence(reviveLedger(r.ledger), { proofStandard, storageRead: STORAGE_READ })));
+  // The judge decides when a rerun is owed (`scanned.eraCoverage.rerunOwed`):
+  // the era table names a slot the reads never covered, or no storage read was
+  // taken on a Diamond with code because the table was unusable at collection,
+  // so coverage cannot be computed at all. This only collects its answers. A
+  // no-code or non-Diamond address has nothing more to read, and owes nothing.
+  const gaps = results.filter((v) => v.scanned?.eraCoverage?.rerunOwed).map((v) => `${v.chainSlug} [${v.deployment}]: ${v.scanned.eraCoverage.rerunOwedBecause}`);
+  if (gaps.length && !hasFlag('--rejudge-allow-coverage-gaps')) {
+    process.stderr.write(
+      `census --rejudge: the committed reads do not cover what the era table names — a rerun is owed, nothing was published:\n` +
+        gaps.map((g) => `  ${g}\n`).join('') +
+        `(pass --rejudge-allow-coverage-gaps to publish those classes indeterminate)\n`,
+    );
+    process.exitCode = 2;
+    return;
+  }
+  return reportAndPublish({ results, failures: artifact.chainsFailed ?? [], everything, outDir, proofStandard, rejudgedFrom: artifact.generatedAt ?? null });
+}
+
+/**
+ * Every way committed reads no longer describe the records `--rejudge` would
+ * publish them for: a result whose record was corrected or removed since its
+ * reads were taken (by `inventoryKeyOf`, the key its ledger recorded at
+ * collection), a result whose ledger names no record, and a record of the
+ * re-judged scope the run never read. Pure; one line per drift, empty when
+ * the reads still describe every record.
+ */
+export function rejudgeInventoryDrift({ results, failures = [], records }) {
+  const now = new Map(records.map((d) => [`${d.slug}|${d.label}`, inventoryKeyOf(d)]));
+  const out = [];
+  const read = new Set(failures.map((f) => `${f?.chainSlug}|${f?.deployment}`));
+  for (const r of results ?? []) {
+    const id = r?.ledger?.identity ?? {};
+    const k = `${id.chainSlug}|${id.deployment}`;
+    read.add(k);
+    if (typeof id.inventoryKey !== 'string') out.push(`${k}: its ledger names no inventory record, so whether its reads describe the record as it stands cannot be checked`);
+    else if (!now.has(k)) out.push(`${k}: the record is no longer in the inventory`);
+    else if (now.get(k) !== id.inventoryKey) out.push(`${k}: the record was corrected after its reads were taken (read for ${id.inventoryKey}; now ${now.get(k)})`);
+  }
+  for (const k of now.keys()) if (!read.has(k)) out.push(`${k}: in the inventory, but the committed run never read it`);
+  return out;
+}
+
+/**
+ * The cron-slot gate's scan cap (`MAX_SCAN_BYTES`, .github/scripts/check-cron-slots.mjs):
+ * a tracked text file above it fails that gate. Every census file is checked
+ * against it on the bytes about to be written, never on an estimate: the
+ * schema-2 artifact with its ledgers inline measured 2.11 MB at the committed
+ * population in review, with the verdict shape it was first measured with
+ * (past the cap), which is why they moved to a sidecar; with today's shape the
+ * same census inline is about 1.72 MB (see `artifactTexts`). T-E reads the
+ * gate's own constant and requires this one to equal it.
+ */
+export const MAX_ARTIFACT_BYTES = 2 * 1024 * 1024;
+
+/** On disk a bigint is its decimal string; the judge reads either alike, so nothing converts it back. */
+const bigintAsDecimal = (_, v) => (typeof v === 'bigint' ? v.toString() : v);
+const sha256Of = (text) => createHash('sha256').update(text).digest('hex');
+/**
+ * A ledger's content address: the sha256 of its compact JSON. Parsing that
+ * JSON and writing it compactly again reproduces it byte for byte (bigints are
+ * decimal strings by then; key order survives the round trip), so a reader
+ * re-derives the address from what it parsed, and an edited ledger cannot keep it.
+ */
+const ledgerAddressOf = (ledger) => sha256Of(JSON.stringify(ledger, bigintAsDecimal));
+/** The ledger sidecar beside an artifact: `x.json` → `x.ledgers.json`. */
+const ledgersPathOf = (artifactPath) => artifactPath.replace(/\.json$/, '.ledgers.json');
+
+/**
+ * The one place a census becomes text: two files. The verdicts stay in the
+ * artifact, indented, where a diff reads them. Every evidence ledger — each
+ * result's, and each failure's partial ledger — goes to the sidecar, one
+ * compact line per ledger keyed by its content address, and the artifact names
+ * each by that address. Measured at run 31's committed scale (2,330 facets
+ * over twenty deployments) by T-E's committed-scale cell, which runs this
+ * writer on every test run: the artifact is about 0.42 MB and the sidecar
+ * about 0.84 MB, each under the cap with room for the inventory to grow; the
+ * same census inline is about 1.72 MB in one file (2.11 MB with the verdict
+ * shape it was first measured with). Returns `{ [path]: text }` for both.
+ */
+export function artifactTexts(report, outFile) {
+  const ledgers = new Map();
+  const addressOf = (ledger) => {
+    if (ledger === null || ledger === undefined) return null;
+    const text = JSON.stringify(ledger, bigintAsDecimal);
+    const address = sha256Of(text);
+    ledgers.set(address, text); // one line per distinct ledger
+    return address;
+  };
+  const results = report.results.map(({ ledger, ...verdict }) => ({ ...verdict, ledgerSha256: addressOf(ledger) }));
+  const chainsFailed = (report.chainsFailed ?? []).map(({ partialLedger, ...failure }) => ({ ...failure, partialLedgerSha256: addressOf(partialLedger) }));
+  const lines = [...ledgers].map(([address, text]) => `    ${JSON.stringify(address)}: ${text}`);
+  const purpose = `The evidence ledgers of ${basename(outFile)}, one per line, each keyed by the sha256 of its compact JSON — the address the artifact names it by. Written with the artifact by census-grandfathered-custody.mjs; never hand-edit.`;
+  return {
+    [outFile]: `${JSON.stringify({ ...report, chainsFailed, results }, bigintAsDecimal, 2)}\n`,
+    [ledgersPathOf(outFile)]: `{\n  "schema": ${LEDGER_SCHEMA},\n  "purpose": ${JSON.stringify(purpose)},\n  "ledgers": {${lines.length ? `\n${lines.join(',\n')}\n  ` : ''}}\n}\n`,
+  };
+}
+
+/**
+ * Read a census artifact with every evidence ledger joined back in from its
+ * sidecar — the one reader of the published pair (`--rejudge`, and the
+ * artifact self-verification, read through it). Each join is content-checked:
+ * a ledger must hash to the address its row names, so an edit to either file,
+ * or a pair assembled from two runs, is refused rather than re-judged. An
+ * artifact that names no ledger by address is returned as read (run 31's
+ * predates the ledger).
+ */
+export function loadCensusArtifact(path) {
+  const report = JSON.parse(readFileSync(path, 'utf8'));
+  const named = [...(report.results ?? []).map((row) => [row, 'ledger']), ...(report.chainsFailed ?? []).map((row) => [row, 'partialLedger'])]
+    .filter(([row, key]) => row !== null && typeof row === 'object' && Object.hasOwn(row, `${key}Sha256`));
+  if (!named.length) return report;
+  const file = report.ledgers?.file;
+  if (typeof file !== 'string' || basename(file) !== file) throw new Error(`${path} names its ledgers by address but no sidecar beside it (ledgers.file ${JSON.stringify(file ?? null)})`);
+  const sidecarPath = join(dirname(path), file);
+  let held;
+  try {
+    held = JSON.parse(readFileSync(sidecarPath, 'utf8')).ledgers;
+  } catch (err) {
+    throw new Error(`${sidecarPath}, the ledger sidecar ${path} names, cannot be read (${err.message})`);
+  }
+  if (held === null || typeof held !== 'object') throw new Error(`${sidecarPath} carries no ledgers map`);
+  for (const [row, key] of named) {
+    const address = row[`${key}Sha256`];
+    delete row[`${key}Sha256`];
+    if (address === null) { row[key] = null; continue; }
+    const ledger = typeof address === 'string' && /^[0-9a-f]{64}$/.test(address) && Object.hasOwn(held, address) ? held[address] : undefined;
+    if (ledger === undefined || ledgerAddressOf(ledger) !== address) {
+      throw new Error(
+        `${sidecarPath} does not hold the ledger ${path} names for ${row.chainSlug}/${row.deployment} (${address})` +
+          `${ledger === undefined ? '' : ' — the one under that address was edited after it was written'}; restore the pair from one commit`,
+      );
+    }
+    row[key] = ledger;
+  }
+  return report;
+}
+
+/**
+ * Refuse a publication any of whose files would cross the cron-slot cap —
+ * committed, it would fail that gate. The reads are not lost with it: the
+ * pair is saved to a temporary directory, from which `--rejudge
+ * --rejudge-from` can republish it once the census fits again, re-reading no
+ * Diamond. It is not a guaranteed offline path: the ancestry evidence this run
+ * gathered is not saved, so wherever the saved results sit above the snapshot
+ * they would replace (a live run's usual case), publication first walks that
+ * chain's block ancestry again through its endpoint (`ensureAncestryFor`), and
+ * the regression guard refuses it if the walk cannot verify the descent —
+ * a re-run of the census is the path then.
+ */
+function refuseOversized(texts, outFile) {
+  const over = Object.entries(texts).filter(([, text]) => Buffer.byteLength(text) > MAX_ARTIFACT_BYTES);
+  if (!over.length) return;
+  const kept = mkdtempSync(join(tmpdir(), 'census-oversized-'));
+  for (const [p, text] of Object.entries(texts)) writeFileSync(join(kept, basename(p)), text);
+  throw new Error(
+    `refusing to publish ${outFile}: ${over.map(([p, text]) => `${basename(p)} would be ${Buffer.byteLength(text)} bytes`).join('; ')}, above the ` +
+      `${MAX_ARTIFACT_BYTES}-byte cap the cron-slot gate reads tracked files at. Nothing was published. This run's results and ledgers are saved in ` +
+      `${kept}. Once the census fits, --rejudge --rejudge-from ${join(kept, basename(outFile))} republishes them without re-reading any Diamond — ` +
+      `but this run's ancestry evidence is not saved: where they sit above the snapshot they would replace, publication walks that chain's block ` +
+      `ancestry again through its endpoint, and the regression guard refuses it if the walk cannot verify the descent; re-run the census then`,
   );
-  // Codex #2070 r3 P1 — `allClassesEmpty` is a claim about EVERY deployed
-  // chain, so only a run that actually covered every deployed chain may assert
-  // it. A `--chain <slug>` run (the documented mode for the outstanding
-  // op-sepolia archive re-run) proves nothing about the chains it skipped, and
-  // must never replace five-chain evidence with a one-chain positive.
-  // Coverage is per DEPLOYMENT: a chain with archived Diamonds is covered only
-  // when every one of them was censused.
-  const allDeployed = everything.map((d) => `${d.slug}|${d.label}`);
+}
+
+/**
+ * The report a run publishes, built from its verdicts — pure. The aggregates
+ * are the judge's (`reportVerdict`); everything else here is bookkeeping about
+ * which deployments the run covered. Shared by a live run, `--rejudge` and the
+ * committed-scale size test, so the bytes the size cap is checked on in that
+ * test are assembled exactly as a publication assembles them.
+ *
+ * A partial run names its OWN file: the canonical artifact is the programme's
+ * evidence for every deployed chain, and a single-chain follow-up overwriting
+ * it would destroy that evidence to publish a narrower claim.
+ */
+export function censusReport({ results, failures, allDeployed, proofStandard, eraTableIdentity, rejudgedFrom = null, buildCandidates = null, generatedAt = new Date().toISOString() }) {
   const covered = new Set(results.map((r) => `${r.chainSlug}|${r.deployment}`));
-  const coversEveryDeployedChain =
-    allDeployed.length > 0 && allDeployed.every((k) => covered.has(k));
+  const aggregates = reportVerdict(results, { allDeployed, failures, proofStandard });
+  const fileName =
+    aggregates.scope === 'all-deployed-chains'
+      ? 'grandfathered-custody-census.json'
+      : `grandfathered-custody-census.partial-${[...new Set(results.map((r) => r.chainSlug))].join('-') || 'none'}.json`;
   const report = {
-    generatedAt: new Date().toISOString(),
+    generatedAt,
     purpose: '#1566 grandfathered-custody census — decides whether slices 0-3 are live work or a certified no-op',
-    scope: coversEveryDeployedChain ? 'all-deployed-chains' : 'partial',
-    // `null`, not `false`: a partial run did not establish the global claim
-    // either way, and a `false` here would read as "something was found".
-    allClassesEmpty: coversEveryDeployedChain
-      ? failures.length === 0 && results.length > 0 && empty
-      : null,
+    schema: LEDGER_SCHEMA,
+    proofStandard,
+    verdictRule: aggregates.verdictRule,
+    eraTableIdentity,
+    ledgers: { file: basename(ledgersPathOf(fileName)) },
+    ...(rejudgedFrom ? { rejudgedFrom } : {}),
+    scope: aggregates.scope,
+    allClassesEmpty: aggregates.allClassesEmpty,
     deploymentsDeployed: allDeployed,
     deploymentsCensused: results.length,
     chainsFailed: failures,
     deploymentsNotCensused: allDeployed.filter((k) => !covered.has(k)),
-    indeterminateClasses: indeterminate,
+    indeterminateClasses: aggregates.indeterminateClasses,
     results,
+    migrationRetirable: aggregates.migrationRetirable,
+    migrationRetirableReason: aggregates.migrationRetirableReason,
+    ...(buildCandidates ? { buildCandidates } : {}),
   };
-  // Codex #2070 r13 P1 — "every class is empty at block X" retires the
-  // MIGRATION half only if no qualifying row can be written AFTER X and before
-  // the prospective isolation lands: a row written in that window sits in
-  // shared custody with no migration path once the movers are dropped. The
-  // design records the two conditions (a producer freeze that finalized before
-  // the scan, or isolation already deployed); this run can see neither, so the
-  // verdict says what it establishes and what it does not.
-  const liveProducerDeployments = results.filter((r) => r.scanned?.producersMayBeLive).map((r) => `${r.chainSlug}/${r.deployment}`);
-  report.proofStandard = PROOF_STANDARD;
-  report.migrationRetirable = report.allClassesEmpty === true && liveProducerDeployments.length === 0;
-  report.migrationRetirableReason =
-    report.allClassesEmpty !== true
-      ? 'the population is not established empty'
-      : liveProducerDeployments.length
-        ? `empty at the census block, but producers may be live on ${liveProducerDeployments.length} deployment(s) ` +
-          `(${liveProducerDeployments.join(', ')}); a row written after the census block and before isolation lands would ` +
-          `have no migration path — re-run after a producer freeze that has finalized, or after isolation is deployed`
-        : 'empty at the census block and no deployment has a live producer';
+  return { fileName, report };
+}
 
+/**
+ * The report phase, shared by a live run and `--rejudge`: the report is built
+ * from the published verdicts (`censusReport`), and the artifact is written
+ * through the same guarded publication either way.
+ */
+async function reportAndPublish({ results, failures, everything, outDir, proofStandard, rejudgedFrom = null }) {
+  const allDeployed = everything.map((d) => `${d.slug}|${d.label}`);
+  const candidates = proposeBuildCandidates(results);
+  const { fileName, report } = censusReport({
+    results,
+    failures,
+    allDeployed,
+    proofStandard,
+    eraTableIdentity: STORAGE_READ.evidence?.eraTableIdentity ?? null,
+    rejudgedFrom,
+    buildCandidates: candidates.length ? { proposed: candidates.length, newInFile: plannedBuildCandidates(candidates), file: 'contracts/deployments/facet-build-candidates.json' } : null,
+  });
+  const outFile = join(outDir, fileName);
+  const indeterminate = report.indeterminateClasses ?? [];
   mkdirSync(outDir, { recursive: true });
-  // A partial run writes to its OWN file. The canonical artifact is the
-  // programme's evidence for every deployed chain; a single-chain follow-up
-  // overwriting it would destroy that evidence to publish a narrower claim.
-  const outFile = join(
-    outDir,
-    coversEveryDeployedChain
-      ? 'grandfathered-custody-census.json'
-      : `grandfathered-custody-census.partial-${[...new Set(results.map((r) => r.chainSlug))].join('-') || 'none'}.json`,
-  );
+  // the size is checked on the bytes, before anything is locked or written
+  refuseOversized(artifactTexts(report, outFile), outFile);
   // Codex #2070 r13 P2 — temp + rename, so an interrupted run can never leave
   // a truncated artifact behind; r14 P1 — and under the artifact's lock, with
   // the file as it stands re-read immediately before the rename and the
@@ -3232,20 +3124,12 @@ async function main() {
     // a concurrent regeneration may correct `deployBlock` — a permitted
     // correction — and this run's no-code creation evidence was read at the
     // OLD block.
-    const scopeOfInv = (v) => (v ? String(v).toLowerCase() : 'none');
-    // #2095 r14 P1 — the facet population and deploy time are inputs of the
-    // verdict now: a record corrected on either while this run was reading
-    // would otherwise pass the revalidation on an identical key
-    const facetsOfInv = (d) => {
-      const list = d.manifestEntry?.facets ?? Object.values(d.addresses.facets ?? {});
-      return [...new Set(list.filter((v) => typeof v === 'string').map((v) => v.toLowerCase()))].sort().join(',');
-    };
-    const inventoryKey = (d) =>
-      `${d.slug}|${d.label}|${String(d.addresses.diamond ?? '').toLowerCase()}|${scopeOfInv(d.addresses.vpfiToken ?? d.addresses.vpfiMirror)}|` +
-      `${d.addresses.chainId ?? 'null'}|${d.addresses.deployBlock ?? 'null'}|${deployedAtIso(d.manifestEntry?.deployedAt ?? d.addresses.deployedAt) ?? 'null'}|${facetsOfInv(d)}`;
-    const scannedInv = new Set(everything.map(inventoryKey)); // the FULL snapshot taken at start — a --chain run scans a subset of it
+    // (#2095 r14 P1: the facet population and deploy time are in the key — a
+    // record corrected on either while this run was reading would otherwise
+    // pass on an identical key)
+    const scannedInv = new Set(everything.map(inventoryKeyOf)); // the FULL snapshot taken at start — a --chain run scans a subset of it
     const generationAtStart = LIVE_GENERATION_SEEN;
-    const nowInv = new Set(deployedDiamondsUnderLock().map(inventoryKey));
+    const nowInv = new Set(deployedDiamondsUnderLock().map(inventoryKeyOf));
     // Codex #2070 r20 P1 — the deploy scripts write the live artifact through
     // forge, outside any lock, then bump `liveGeneration` under the lock; a
     // changed counter means a Diamond went live during this run even if its
@@ -3265,7 +3149,20 @@ async function main() {
       );
     }
     process.stderr.write(`census: inventory re-validated at publication under the manifest lock — ${nowInv.size} deployment record(s) unchanged since the start snapshot (liveGeneration ${LIVE_GENERATION_SEEN})\n`);
-    return writeSnapshotGuarded(outFile, () => `${JSON.stringify(report, null, 2)}\n`, {
+    writeSnapshotGuarded(outFile, () => {
+      // produced AFTER the regression check, which may record identityChanges,
+      // so the size is checked again on exactly the bytes written
+      const texts = artifactTexts(report, outFile);
+      refuseOversized(texts, outFile);
+      // The sidecar is replaced inside the artifact's lock, after the
+      // artifact's regression check (its only regression: the artifact names
+      // every ledger by content address) and before the artifact is renamed
+      // in. A fault between the two renames leaves the old artifact naming
+      // ledgers the new sidecar no longer holds — which the loader refuses by
+      // name, never re-judges.
+      writeSnapshotGuarded(ledgersPathOf(outFile), texts[ledgersPathOf(outFile)], { regressedBy: () => null });
+      return texts[outFile];
+    }, {
       regressedBy: (current) => {
         const verdict = snapshotRegression({
           current,
@@ -3280,6 +3177,10 @@ async function main() {
         return null;
       },
     });
+    // Reached only once every publication guard has passed and the artifact
+    // is renamed in (each refusal above throws): the build-candidate request
+    // describes an artifact that was kept, never one that was refused.
+    recordBuildCandidates(candidates);
   });
 
   for (const r of results) {
@@ -3288,7 +3189,7 @@ async function main() {
       // #2095 r27 — a withdrawn shortfall is SAID, not left blank: silence
       // here reads exactly like the "no shortfall" a zero would report.
       `${r.chainSlug} [${r.deployment}] (chainId ${r.chainId}, block ${r.atBlock}, backing ${r.diamondVpfiBacking ?? '?'} VPFI wei${r.backingShortfall && r.backingShortfall !== '0' ? `, SHORTFALL ${r.backingShortfall}` : r.backingShortfallUnavailable ? ', SHORTFALL unknown' : ''}): ` +
-        `loans=${r.scanned.loanIdsEnumerated} ` +
+        `loans=${r.scanned?.loanIdsEnumerated ?? '?'} ` +
         `vpfiHeld=${c.vpfiHeldCustody.count} rebate=${c.rebateRows.count} ` +
         `fallback=${c.fallbackSnapshotCustody.count} liveIntents=${c.liveIntentCommits.count}\n`,
     );
@@ -3296,7 +3197,8 @@ async function main() {
   process.stdout.write(`\nartifact: ${outFile}\n`);
   if (indeterminate.length) {
     process.stdout.write('\nINDETERMINATE (not evidence of absence):\n');
-    for (const i of indeterminate) process.stdout.write(`  ${i.chainSlug} [${i.deployment}]/${i.class}: ${i.reason}\n`);
+    // the report's index names the failed obligations; their detail is on the class in the artifact
+    for (const i of indeterminate) process.stdout.write(`  ${i.chainSlug} [${i.deployment}]/${i.class}: ${i.obligations.join(', ')}\n`);
   }
   process.stdout.write(
     report.allClassesEmpty
@@ -3320,7 +3222,8 @@ async function main() {
   );
   if (CANDIDATES_WRITTEN) process.stderr.write(
     `census: ${CANDIDATES_WRITTEN} new facet-build candidate commit(s) written to contracts/deployments/facet-build-candidates.json — ` +
-    'regenerate the era table (node scripts/storage-layout-eras.mjs --reuse contracts/deployments/storage-slot-eras.json) so they are catalogued, then re-run\n',
+    'regenerate the era table (node scripts/storage-layout-eras.mjs --reuse contracts/deployments/storage-slot-eras.json) so they are catalogued, then re-judge with --rejudge ' +
+    '(no RPC when re-judging the artifact it replaces; a rerun is owed only where it reports an era-coverage gap)\n',
   );
 
   // A partial run has not established the programme's claim, so it must not
@@ -3330,9 +3233,20 @@ async function main() {
   }
 }
 
+
 if (process.argv[1] && fileURLToPath(import.meta.url) === resolvePath(process.argv[1])) {
-  main().catch((err) => {
-    process.stderr.write(`census: ${err.stack || err.message}\n`);
-    process.exitCode = 1;
-  });
+  // The command line is checked BEFORE main(): an unknown flag must stop the
+  // run before the inventory is read or any endpoint is called.
+  const cli = parseCliFlags(process.argv.slice(2));
+  if (cli.help) {
+    process.stdout.write(usage());
+  } else if (cli.problems.length) {
+    process.stderr.write(`census: ${cli.problems.join('; ')} — nothing was read or written\n\n${usage()}`);
+    process.exitCode = 2;
+  } else {
+    main().catch((err) => {
+      process.stderr.write(`census: ${err.stack || err.message}\n`);
+      process.exitCode = 1;
+    });
+  }
 }

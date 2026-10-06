@@ -7716,3 +7716,369 @@ upgrade depends on. That is outside this document's scope and is raised as
 its own issue with the walker's evidence; the census's own reads are
 unaffected, because they are era-complete by construction.
 
+### 7b. The evidence ledger and the one derivation (2026-10-05)
+
+Rounds 26 to 28 found the same defect three times in three places. A
+deployment's verdict was not computed; it was written — by a result
+constructor that set a status at sixteen sites, by a shell fork with a verdict
+builder of its own, by thirteen passes that each revisited a finished result
+to withdraw something, and by a finalizer that recomputed the figures but
+exempted any class already withdrawn. Each review round found a door between
+two writers: a bound one site granted that another never saw revoked (r28 P1,
+a routed zero-loans proof standing beside a storage range of five), or a count
+one helper kept beside rows another had filed as unknown (r28 P2). Another
+guard at another site would have been the twenty-ninth. The arrest is
+structural: the census now separates what it READ from what it CONCLUDES, and
+the conclusion has exactly one writer.
+
+**The ledger.** Collection produces an evidence ledger per deployment: every
+read the census took, tagged with its source, and nothing derived from it —
+the block identity; the code, Diamond and routing flags; the token scope and
+where it came from; the Diamond's token balance; the storage range
+(`nextLoanId`, the scan cap if one bit) with every counter reading at every
+era slot, raw; the routed range witnesses where both metrics selectors route;
+which selectors route; which ids each routed custody getter was asked; every
+row observation, routed or storage, with its raw asset address and the slot it
+was found at; the event corroboration's raw log figures; the raw cut history,
+loupe and facet code hashes. It holds no class, no status and no attribution.
+It is frozen before anything is derived from it, and a read after the freeze
+throws. A collection that fails mid-way still lands in the report's failures,
+now carrying the ledger as far as it got.
+
+**The derivation.** One pure function, `verdictFromEvidence`, takes the frozen
+ledger, the proof standard and the era table, and publishes every figure: each
+class's status, its evidence chain, its count and total, the partition of its
+rows, every disagreement flag, the deployment's liability and shortfall
+figures, and the provenance attribution. A class is `proven` when every named
+obligation in an ordered list holds, each discharged by evidence PRESENT in the
+ledger and never by the absence of a refusal; it is `indeterminate` otherwise,
+naming every obligation that failed and the observation that was absent,
+refused, unattributed or disagreeing. Every obligation's outcome is recorded
+whatever the status. Storage decides the loan-id range (`1..nextLoanId`, §7a)
+and the existence of every row; a routed read is a range witness, an
+observation reconciled against HEAD storage, or an asset label whose soundness
+is itself derived — nothing routed grants a bound. No read is gated on a
+verdict, because no verdict exists while reading. Attribution is derived inside
+the judge from the recorded code hashes and the table it is given, which is why
+a regenerated table no longer forces a rerun.
+
+**Seven corollaries the tests pin.**
+
+- **C1** — the verdict words and the published figure keys (status, evidence,
+  count, total, the deployment liability and shortfall) occur in one module.
+- **C2** — no function in that module reads a status, proof, count or total
+  off its INPUT; there is no prior verdict to exempt or revise.
+- **C3** — a class's count is its VPFI rows plus its unknown-asset rows; its
+  total is withheld exactly when an unknown-asset row exists or a row's amount
+  could not be read, and is otherwise their sum.
+- **C4** — the only zero-loans bound is storage's `nextLoanId` at zero with
+  HEAD's reading of both counter kinds present and every KEPT counter reading
+  of both kinds, at every era slot, also zero (a reading is kept unless it is
+  a current value field's, below).
+- **C5** — a getter-less shell is a ledger whose routed surfaces are all
+  unrouted; there is no separate shell path and no shell verdict builder.
+- **C6** — every routed custody getter is asked over `1..nextLoanId` read from
+  storage, never over the routed pagination, which is a subset witness.
+- **C7** — the nine block-identity keys sit flat on the published verdict, so
+  every reader of the committed artifact finds them where it always has.
+
+**What this restates, and what it supersedes.**
+
+*The zero-loans bound* (§5c's "No loan ever created", and §7's storage twin
+of it). The bound now has exactly one form: `nextLoanId` read from storage is
+zero AND every kept reading of `totalLoansEverCreated` and of
+`intentLiveCommitCount`, at every era's slot, is zero AND HEAD's reading of
+each kind is among them. "Every kept reading is zero" is true of no readings
+at all, so a counters record with no reading, with one kind missing, or
+without HEAD's slot withholds the bound instead of granting it vacuously;
+HEAD's slot holds each counter today and is never set aside. A reading is KEPT
+unless it sits at an earlier era's counter slot that a current VALUE field
+occupies today — a list length, a version number — where it reads that field
+and is set aside, named with its slot and value in the evidence chain (the
+attribution rule of #2095 r6 P2, which the shell path held before the arrest).
+Setting it aside cannot hide a loan: `nextLoanId`'s slot never moved and every
+loan id is issued from it, so at zero no era ever issued one, and every row of
+the four classes is keyed by a loan id. A non-zero reading at HEAD's slot, or
+at an earlier slot nothing current explains (a mapping head stores nothing, so
+a non-zero there is the old counter itself), is kept and withholds the bound.
+Counting the aliased readings instead would refuse the bound on every
+loan-less Diamond carrying offers or a tier table. A routed zero — the
+protocol-stats lifetime counter, an empty pagination, a reported total of
+zero — is an agreeing witness to that bound, never the bound itself: the r28
+P1 shape was a routed zero standing as proof while storage counted five
+loans. The earlier text's "taken only when the counter AND the enumeration
+agree on zero" becomes: taken only when storage says zero at every kept
+reading, with every routed witness required not to contradict it. A storage
+`nextLoanId` of zero beside ANY non-zero kept counter reading, of either kind
+— or beside a reading that does not parse, which nobody can show to be zero —
+is a range that is neither non-empty nor bounded, and every class is
+indeterminate on it; there
+is no "proven by scan" escape at zero, because a scan of an empty range proves
+nothing. The bound's label no longer exists either — a zero-loans class carries
+an evidence chain naming the storage range, the zero counters and their era
+slot count, and any routed witnesses that agreed.
+
+*The earlier-era live-commit counter* (§7, round 4's "contradicts the intent
+class on every path"). It contradicts the INTENT CLASS on every path, and only
+that class: the counter is the intent mapping's, so an unexplained non-zero
+reading at an earlier era withholds class 3 and leaves the held, rebate and
+fallback classes to their own evidence. "On every path" survives as "recorded
+unconditionally" — the obligation is evaluated whether or not the deployment is
+enumerable. The one place the counter reaches the whole deployment is the
+zero-range case above, where it is a range fact rather than an intent fact. HEAD's
+reading is held to the same class: it may not exceed the intent candidates of
+every scope, routed and storage.
+
+*The routed waiver* (§7, round 13: "only a class proven by a routed getter
+keeps its proof when provenance refuses"). Under the `routed` standard, a class
+whose provenance is refused keeps its proof only when BOTH hold: its evidence
+chain carries a routed entry, and the routed enumeration is sound — both
+metrics selectors route, the routed lifetime counter equals HEAD's storage
+counter, every enumerated id lies inside the storage range, the reported total
+does not exceed `nextLoanId`, and the enumeration lists at least as many
+distinct loans as each kept lifetime-counter reading counted — HEAD's, and each
+earlier era's that no current field explains (round 28 P1b). The comparisons
+are subset and bound, not equality, because the pagination legitimately skips
+internal vehicle loans that the lifetime counter never counted. The listing
+bound holds for the same reason: the pagination lists every id that has a loan
+record and is not a vehicle, and loan records are never deleted; the counter
+is incremented once per initialized loan and never for a vehicle; and the two
+vehicle rules arrived together, so every loan any era counted is one the
+pagination lists. A one-vehicle Diamond of five ids therefore reads a counter
+of 4 at HEAD and through the routed getter, four listed ids and a reported
+total of 4 — sound. HEAD's reading is not exempt because it equals the routed
+counter: that equality shows the stats getter reads HEAD's counter slot, not
+that the pagination reads HEAD's loan records, and an earlier draft that
+exempted it passed HEAD 5 = routed 5 beside an empty listing — or one id, a
+shape the collector does not refuse — as agreement, the round-28 P1 shape at
+HEAD (round-3 review P1). Each reading is bounded on its own, never their sum,
+because an upgrade may have copied the old value forward: an old counter of 3
+beside HEAD's 2 and ids 1..5 is sound. A reading that cannot be read withholds
+soundness, since nobody can show the loans it counted are listed. Round 13's rule keyed the waiver on the KIND of proof; r28
+P1 showed a getter proof asked over a storage range — because the routed
+enumeration disagreed with storage — rests on exactly the era table the refusal
+doubts. So the waiver now keys on whether the routed enumeration agrees with
+storage, and an absent routed enumeration is not agreement: a shell never
+qualifies, not even on the zero-loans bound — its classes rest on storage
+alone, which is the storage-only proof round 13 already withdrew under refusal,
+naming "a getter-less shell's counter twin". Whether the routed enumeration
+agreed, and the figure that disagreed, is published on every deployment.
+
+*The getter enumeration* (§7, "the orderHash slot is zero for EVERY loan id the
+routed enumeration returns"). Read now as every id in `1..nextLoanId` from
+storage (C6); the routed set is a witness to that range, not the range.
+
+*The empty-scan refusal* (§5c, "a non-zero counter with an empty scan is
+already a hard refusal"). A routed counter that disagrees with the routed
+pagination is still a thrown failure, as the scanning-nothing rule requires; it
+now carries its partial ledger. A storage-versus-routed disagreement is
+recorded evidence, not a throw.
+
+**Recorded defaults, each one obligation, each one line to veto.** Where the
+design text and the code disagreed, this derivation chose the stricter reading
+and records the choice here. Each default is one entry in the obligation list;
+the owner vetoes any of them with one line on #1566, and the change that
+follows is a rule change, re-judged offline without a rerun.
+
+1. **A VPFI token is required for the held and rebate classes** wherever they
+   are not discharged by the zero-loans bound, although both rows are VPFI by
+   construction and the shell path once proved them token-less.
+2. **The fallback and intent classes need an on-chain token even with zero
+   observations.** Loosening this moves the fallback and intent classes of one
+   recorded routed-standard result — arb-sepolia's archive of
+   2026-07-01T01-36-25Z, whose token is unresolvable over thirteen loans — from
+   indeterminate to proven; its held and rebate classes move as well only if
+   default 1 is loosened too, since each needs a token wherever loans exist.
+3. **A zero `nextLoanId` beside a non-zero live-commit counter is a hard
+   refusal**, although the treasury buyback arm shares that counter and its
+   commits are loan-less; every intent-counter obligation is over-strict on a
+   deployment carrying a live buyback intent. The precise rule is
+   "contradicts only when the buyback arm is known empty", which needs a
+   reading of the buyback arm the census does not yet take.
+4. **A routed id set smaller than the storage range is a witness, never a
+   contradiction**; a stale routed lifetime counter revokes only the routed
+   waiver, never a class under the provenance standard.
+5. **Routed-versus-routed disagreements stay thrown failures**, per the
+   scanning-nothing rule, rather than becoming indeterminate classes; the
+   failure row now carries the partial ledger.
+6. **A class's count includes its unknown-asset rows**, and the census's
+   printed summary line changes accordingly.
+
+**What the judge refuses to read as "nothing wrong".** Every obligation is
+discharged by evidence present, so a ledger the collector could not have
+written is indeterminate by name rather than quietly passing: a flags record
+that does not say the address has code and is a Diamond; a scan whose own
+count of the ids it read falls short of `nextLoanId`, or whose rows are not a
+list; a counter reading, a routed lifetime counter or a routed id set that
+does not parse (none of them can be shown to stay inside the range, so
+`no-range-contradiction` fails on it, and a reading that does not parse
+cannot be zero, so it withholds the zero bound); routed metrics recorded as
+routed with no routed witness beside them; a counters record with no reading
+of a kind, or none at HEAD's slot (it withholds the zero bound, and a missing
+HEAD lifetime counter is a range witness nobody recorded); a routing answer
+the surfaces record neither way, for a custody getter that returned no row or
+for the metrics selectors beside no routed witness — only a recorded
+"unrouted" takes a getter's reconciliation and coverage, or the routed range
+witness, out of the conjunction; a corroboration record that is neither a
+list of live loan ids, an unavailable reason, nor the null of a walk not
+taken; one key read twice (a getter
+answering twice for a loan, or one storage slot read twice), whose reads are
+filed unknown and withdraw the class's total, since the reconciliation joins
+by loan id and a second read would silently replace the first; a row
+observation the judge cannot read — a loan id that does not parse or exceeds
+`nextLoanId` (no read of the range was asked about it), an amount that does
+not parse or is missing on a read that has one (every read but a storage
+intent row, whose slot holds an orderHash), or a source that is neither
+storage nor a routed getter — which is filed unknown, withdraws the total and
+fails `row-attributed` by name exactly as a key read twice does, and joins no
+reconciliation; a writer the cut history, the loupe or the records name
+whose code hash was never read, which fails attribution exactly as an
+unattributed writer does; a facet entry whose code hash is not a
+keccak256 word (null, a number, a short string), which is no read — it is named
+malformed, its address counts as unhashed, and it is never taken for empty
+code, which would read as "never wrote" (round-3 review P2); an address
+carrying two facet entries, alike or not and in any spelling — which entry is
+its code is unknowable, so the pair is named malformed and neither entry is
+attributed, and no derived fact (a slot's attribution, a scope host's layout)
+depends on their order; a scope getter's host recorded under two key forms
+that disagree, which leaves the host unknown instead of settled by whichever
+form is consulted first; and a writer population that names no attributed
+writer at all, since "every writer is attributed" holds of no writers only
+vacuously, and the Diamond's constructor installs at least the facet hosting
+`diamondCut`. Each duplicate is a refuting read in the judge's MONOTONE
+statement: removing one record of the pair may restore a proof, while
+removing every record of the key never does. Whether the cut
+history named an address with empty code is decided by membership in the cut
+history's own address and initializer lists, never by the facet entry's
+self-reported source label, which a re-judged ledger may carry without it; a
+label that does claim the cut history still counts, since it can only refuse. Two reads of one row are paired, and agree, only
+under one predicate (`amountsAgree`) that the HEAD merge and the getter
+agreement both ask: before it they were two rules that differed on a missing
+amount, and a HEAD row and its routed twin with none were left apart by the
+merge, agreed by the agreement check, and counted twice under `proven`.
+
+**The artifact, and when a rerun is owed.** The published file moves to schema
+2: each result carries the proof standard, the identity of the era table it
+was judged with, the identity of the rule that judged it (recorded
+provenance, not a gate — a comment edit to the rule module changes it and
+fails nothing), and the content address (sha256) of its ledger. The ledgers
+themselves sit in a sidecar beside the artifact, one compact line per ledger
+under that address, and the one reader joins each back and refuses a pair in
+which either file was edited. A test re-derives every committed result from
+its own ledger with the checkout's rule and table and requires the published
+result to match exactly, so an artifact that predates its generator — a
+finding review raised eighteen times — becomes a red test rather than a review
+finding. Both files are checked against the cron-slot gate's 2,097,152-byte
+cap on the exact bytes about to be written, and a publication either would
+cross is refused, its reads saved for a republish by `--rejudge-from` that
+re-reads no Diamond — though not one guaranteed offline: the run's ancestry
+evidence is not saved, so where the saved results sit above the snapshot they
+would replace, publication walks that chain's ancestry again through its
+endpoint, and an unverified walk refuses it (a re-run is the path then).
+Measured at run 31's committed scale — 2,330 facets over twenty deployments,
+through the real report builder and writer, by a test that runs on every
+change — the artifact is about 0.42 MB and the sidecar about 0.84 MB; the same
+census with its ledgers inline is one file of about 1.72 MB (2.11 MB with the
+verdict shape it was first measured with, over the cap).
+
+Under the default `provenance` standard, **no committed verdict moves**: the
+same ten of twenty proven, each on the evidence it stood on before, now
+published as an evidence chain rather than a proof label.
+
+**One recorded routed-standard figure does move — an owner item.** The three
+bare shells base-sepolia archived at 2026-07-01T00-15-58Z, 00-27-51Z and
+00-39-00Z each record four proven classes beside their refusal
+(`withoutProvenanceRule`), from the storage zero bound. Under this derivation
+they record four indeterminate: a shell has no routed enumeration, so its
+classes rest on storage alone, and a storage-only proof keeps no exception when
+provenance refuses (the waiver paragraph above). This is round 13's rule, not a
+new one — round 13 named the shell's counter twin as falling under either
+standard — and the committed artifact simply predates it: run 31 was committed
+the same day, hours before round 13 landed. Every other recorded
+routed-standard result is expected to stand, since each enumerable deployment
+recorded its routed lifetime counter, its enumerated ids and storage's
+`nextLoanId` at the same figure, and no earlier-era counter reading it recorded
+exceeds that figure (the four that carry one read 24 and 9, 33 and 9, 13, and
+24 and 14 beside 24, 33, 13 and 24 enumerated ids); the listing bound's HEAD
+term (round-3 review P1) binds on none of them either, since HEAD's reading
+must equal the routed counter, which equals the ids listed; run 46 confirms
+it. The
+consequence for the owner's standard decision: ratifying the routed standard
+would now certify fourteen of twenty, not the seventeen the committed file
+implies. If the owner wants storage's zero bound to stand for a shell under the
+routed standard, that is a new waiver term with its own obligation-breaker test
+— a bound the routed enumeration cannot witness — not a relaxation of the
+enumeration test.
+
+**A ratified test cell is re-shaped — an owner item.** The brief's T-B vehicle
+cell asserted soundness for a routed counter of 5 equal to HEAD's 5 beside ids
+{1,2,4,5} and a reported total of 4 over `nextLoanId` 5. The contract cannot
+produce that shape: one vehicle among five ids leaves the lifetime counter at
+4, so a HEAD counter of 5 beside four listed ids names a counted loan the
+pagination does not list. The cell now reads 4, 4, {1,2,4,5} and 4, which the
+judge holds sound, and the generated family's vehicle axis moves with it; the
+old figures are pinned as a refusal. To keep the brief's cell instead, the
+owner exempts HEAD's reading from the listing bound with one line on #1566 —
+and the residual below then widens to any HEAD counter that equals the routed
+one, whatever the listing.
+
+The committed artifact is run 31's and carries no ledger; it is the single
+ledger-less artifact the self-verification test admits, named by its
+generation time.
+
+**Run 46 is owed once** — the archive-RPC rerun that writes the first schema-2
+artifact. After it, every change to the rule or to the era table is a
+`--rejudge`: the census loads the committed artifact, refuses one older than
+schema 2 by name, re-derives every result from its recorded ledger, and
+publishes through the same ancestry, inventory and regression guards as a live
+run — with no RPC when it re-judges the artifact it replaces (a saved pair
+above that snapshot walks ancestry through the endpoint, as above). A rerun is owed again in three cases, and in each the
+re-judge names the deployment, exits 2 and publishes nothing: the
+era-coverage obligation names a slot the current table lists that the
+recorded reads never covered; the reads took no storage read on a Diamond with
+code because the table was unusable at collection, so their coverage cannot be
+computed at all; or a deployment record was corrected, removed or added since
+the reads were taken (each ledger records the record it was read for). The
+first two can be overridden deliberately, publishing those classes
+indeterminate as judged; the third cannot. The build-candidate request to the
+era tool is written only after a publication passes every guard, so a refused
+publication leaves that owner-gated file as it was; and the command line is
+checked against one list of flags before anything is read, so a mistyped
+offline flag stops with exit 2 instead of starting an archive-RPC census.
+
+**Residuals, stated.** The table's integrity is a CI guarantee, not a runtime
+one: the judge trusts the table it is handed, and re-judging inherits that
+trust. The token address has no storage twin yet; the census still reads it
+only through the routed getter. A row is counted only when it sits at its
+field's slot in a layout era of an ATTRIBUTED facet, so under the routed
+standard a row written by an unattributed facet is unknown — conservative. That
+rule has two blind spots. A facet attributed to the wrong era by identical code
+across a layout change is one. The other: a slot counts as a field's slot when
+ANY attributed era placed the field there, even if another attributed era used
+the same slot for a different mapping — the ambiguity test consults only HEAD's
+occupied ranges, the only era that carries them — so a row can be over-counted,
+never hidden, and a proven total may then be overstated. The routed waiver has
+a blind spot of its own (round 28 P1b): an EMPTY routed enumeration against a
+storage range of five is accepted as sound when HEAD's lifetime counter reads
+zero AND every earlier era's counter reading is zero too, since the routed
+counter then equals HEAD's, the empty id set is a subset of the range, a
+reported total of zero does not exceed it, and no counted loan is left for the
+enumeration to list. That is exactly the shape of a Diamond whose loans were
+all internal vehicle loans, which the lifetime counter never counted — and no
+read the census takes tells it apart from a Diamond whose counter was simply
+never written. Under the routed standard with a refused provenance, the waiver
+is then granted to every class whose routed getter was asked over the storage
+range and agreed with HEAD storage. The residual is that shape and no wider:
+any kept lifetime reading that exceeds the distinct ids listed — HEAD's, even
+where it equals the routed counter, or an earlier era's that no current field
+explains — is a count of loans the pagination should list and does not, which
+storage CAN tell apart, so it denies the waiver and names the reading. (Until
+the round-3 review the bound held only the earlier readings, and HEAD 5 =
+routed 5 beside an empty listing, one id, or one id repeated, passed as
+agreement — a wider residual than this paragraph then claimed.) An earlier
+reading at a current value field's slot reads that field, not a counter, and
+does not withhold it. The cut history's omitted-pair blind
+spot (§7, round 10) is unchanged. And one function now carries the whole rule,
+so a defect there is global — which is the point, and why the
+obligation-breaker and source-mutation tests are not optional.
+

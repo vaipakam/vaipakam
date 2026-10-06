@@ -1,7 +1,7 @@
 // census-storage-read.test.mjs — the era-complete storage read's rules (#1566 §7/§7a), over fake readers.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { prepareStorageRead, readCountersByStorage, scanRowsByStorage, intentVerdictFromStorage, eraSlotsExcept, mergeHistoricalRows, aliasOf, classifyEarlierCounters, markAliasedRows, splitByHeadSlot, getterAgreement, downgradeWithoutEraRead, attributeCounters, attributeFacetCode, downgradeProvenClasses, downgradeStorageOnlyProofs, requireHexData, cutHistoryCompleteness, refuseUnreadableCutSources, gettersShareLayout, downgradeUnreconciledScope, withholdUnknownAssetEvidence, deriveLiabilityAggregates, finalizeVerdictFromEvidence, ROW } from './census-storage-read.mjs';
+import { prepareStorageRead, readCountersByStorage, scanRowsByStorage, aliasOf, classifyEarlierCounters, markAliasedRows, splitByHeadSlot, getterAgreement, amountsAgree, attributeCounters, attributeFacetCode, requireHexData, cutHistoryCompleteness, refuseUnreadableCutSources, gettersShareLayout, deriveLiabilityAggregates, ROW } from './census-storage-read.mjs';
 import { memberSlot, rowSlot } from './storage-slots.mjs';
 
 const H = (n) => '0x' + n.toString(16).padStart(64, '0');
@@ -70,6 +70,10 @@ test('scanRowsByStorage: a row written under an OLD era is found at the old slot
   assert.deepEqual(r.rows.rebateRows, []);
   assert.deepEqual(r.rows.fallbackSnapshotCustody.map((x) => [x.loanId, x.active, x.collateralTotal]), [['9', true, '11']]);
   assert.ok(r.slotsRead > 0);
+  // reads only: no per-field era count beside the slot lists, and no asset on a
+  // storage row (storage holds amounts; the judge files a storage row's asset as unread)
+  assert.deepEqual(Object.keys(r).sort(), ['loansScanned', 'rows', 'slotsRead', 'slotsScanned']);
+  assert.ok(Object.values(r.rows).flat().every((x) => !('asset' in x)), 'a storage row names no asset it never read');
   // every slot zero: every class empty
   const empty = await scanRowsByStorage({ readSlot: async () => 0n, loanIds: [1n, 2n], eraSlots: p.eraSlots });
   assert.deepEqual(Object.values(empty.rows).map((x) => x.length), [0, 0, 0, 0]);
@@ -77,51 +81,29 @@ test('scanRowsByStorage: a row written under an OLD era is found at the old slot
   const only = await scanRowsByStorage({ readSlot, loanIds: [7n], eraSlots: p.eraSlots, classes: ['liveIntentCommits'] });
   assert.equal(only.rows.liveIntentCommits.length, 1);
   assert.equal(only.rows.vpfiHeldCustody, undefined);
+  // the slot set the read stood for, per mapping field — what the judge's
+  // era-coverage compares with the table it judges WITH, so a regenerated
+  // table names any slot this read never covered (#2095 root arrest, S2-9)
+  for (const f of ['borrowerLifRebate', 'fallbackSnapshot', 'intentCommits']) assert.deepEqual(r.slotsScanned[f], p.eraSlots[f].map((x) => x.slot), f);
+  assert.deepEqual(Object.keys(only.slotsScanned), ['intentCommits'], 'a subset scan claims only the fields it read');
+  const noIds = await scanRowsByStorage({ readSlot, loanIds: [], eraSlots: p.eraSlots });
+  assert.deepEqual(noIds.slotsScanned.intentCommits, p.eraSlots.intentCommits.map((x) => x.slot), 'a zero-loan scan still records the layouts it stood for');
 });
 
-test('readCountersByStorage: no loans only when nextLoanId is zero and every era counter is zero', async () => {
+test('readCountersByStorage: nextLoanId at its one slot and every counter at every era slot, raw — no summary of them', async () => {
   const p = prepareStorageRead({ slots, eras });
   const zero = await readCountersByStorage({ readSlot: async () => 0n, eraSlots: p.eraSlots });
-  assert.equal(zero.allZero, true);
+  // the reader returns readings only: whether they bound anything is the
+  // judge's call over the KEPT readings, and a summary over the raw ones once
+  // disagreed with it (#2095 root arrest)
+  assert.deepEqual(Object.keys(zero).sort(), ['intentLiveCommitCount', 'nextLoanId', 'slotsRead', 'slotsScanned', 'totalLoansEverCreated']);
+  assert.equal(zero.nextLoanId, 0n);
+  for (const f of ['totalLoansEverCreated', 'intentLiveCommitCount']) assert.deepEqual(zero[f].map((x) => [x.slot, x.value]), p.eraSlots[f].map((x) => [x.slot, 0n]), `${f}: one reading per era slot`);
   assert.equal(zero.slotsRead, 1 + 2 + 2);
+  assert.deepEqual(zero.slotsScanned, { nextLoanId: p.eraSlots.nextLoanId.map((x) => x.slot), totalLoansEverCreated: p.eraSlots.totalLoansEverCreated.map((x) => x.slot), intentLiveCommitCount: p.eraSlots.intentLiveCommitCount.map((x) => x.slot) }, 'every counter era slot the read covered');
   const oldCounter = await readCountersByStorage({ readSlot: async (s) => (s === slotOf(OLDREL.totalLoansEverCreated) ? 4n : 0n), eraSlots: p.eraSlots });
-  assert.equal(oldCounter.allZero, false, 'a counter left non-zero at an OLD era slot still counts');
+  assert.deepEqual(oldCounter.totalLoansEverCreated.filter((x) => x.value !== 0n).map((x) => x.slot), [slotOf(OLDREL.totalLoansEverCreated)], 'a counter left non-zero at an OLD era slot is read and reported there');
   assert.equal(oldCounter.totalLoansEverCreated.find((x) => x.value === 4n).eras[0].commit, 'oldold001');
-});
-
-test('intentVerdictFromStorage: an empty scan is proven only when every live-commit counter era slot is zero (#2095 r1 P1)', () => {
-  const zero = [{ slot: '0x01', value: '0', eras: [{ date: '2026-06-23' }] }, { slot: '0x02', value: '0', eras: [{ date: '2026-09-09' }] }];
-  assert.deepEqual(intentVerdictFromStorage({ rows: [], liveCommitCounts: zero }), { status: 'proven', provenBy: 'storage-read-calibrated' });
-  const contradiction = intentVerdictFromStorage({ rows: [], liveCommitCounts: [{ slot: '0x01', value: '1', eras: [{ date: '2026-06-23' }] }, zero[1]] });
-  assert.equal(contradiction.status, 'indeterminate');
-  assert.equal(contradiction.contradiction, true);
-  assert.match(contradiction.reason, /intentLiveCommitCount reads 1 at 0x01/);
-  const rows = intentVerdictFromStorage({ rows: [{ loanId: '7' }], liveCommitCounts: zero });
-  assert.equal(rows.status, 'indeterminate');
-  assert.match(rows.reason, /1 live intent row/);
-});
-
-test('eraSlotsExcept drops exactly the slot HEAD uses; mergeHistoricalRows counts VPFI rows and marks unreadable-asset rows indeterminate (#2095 r3 P1)', () => {
-  const p = prepareStorageRead({ slots, eras });
-  const nonHead = eraSlotsExcept(p.eraSlots, slots.fields);
-  assert.equal(nonHead.intentCommits.length, 1, 'the OLD intent slot remains');
-  assert.equal(nonHead.intentCommits[0].slot, slotOf(OLDREL.intentCommits));
-  assert.equal(nonHead.fallbackSnapshot.length, 0, 'a field that never moved has no earlier slot');
-  assert.equal(nonHead.nextLoanId.length, 0);
-  const held = mergeHistoricalRows({ status: 'proven', provenBy: 'x', count: 0, total: '0', rows: [] }, { rows: { vpfiHeldCustody: [{ loanId: '3', vpfiHeld: '7', mappingSlot: '0xold', eras: [] }] } }, 'vpfiHeldCustody');
-  assert.equal(held.status, 'proven');
-  assert.equal(held.count, 1);
-  assert.equal(held.total, '7');
-  assert.equal(held.rows[0].layoutEra, 'earlier');
-  const intent = mergeHistoricalRows({ status: 'proven', provenBy: 'x', count: 0, total: '0', rows: [], unknownAssetRows: [] }, { rows: { liveIntentCommits: [{ loanId: '9', orderHash: '0xab', mappingSlot: '0xold', eras: [] }] } }, 'liveIntentCommits');
-  assert.equal(intent.status, 'indeterminate');
-  assert.equal(intent.provenBy, undefined);
-  assert.equal(intent.count, 1);
-  assert.equal(intent.unknownAssetRows.length, 1);
-  assert.match(intent.indeterminateReason, /EARLIER layout era/);
-  const same = mergeHistoricalRows({ status: 'proven', provenBy: 'x', count: 0, total: '0', rows: [] }, { rows: { rebateRows: [] } }, 'rebateRows');
-  assert.equal(same.status, 'proven');
-  assert.equal(same.historicalRows, 0);
 });
 
 test('aliasing: an earlier-era slot that is a current field today is that field, not an old counter or row (#2095 r3 follow-up)', () => {
@@ -144,9 +126,6 @@ test('aliasing: an earlier-era slot that is a current field today is that field,
   assert.equal(rows[1].ambiguous, undefined, 'no current field at the old head');
   assert.equal(rows[2].ambiguous, undefined, 'a current VALUE field at the old head occupies one slot, never a hashed row');
   assert.equal(rows[2].oldHeadNowHolds, 'someCounterToday');
-  // the merge names the ambiguity
-  const merged = mergeHistoricalRows({ status: 'proven', count: 0, total: '0', rows: [] }, { rows: { liveIntentCommits: [rows[0]] } }, 'liveIntentCommits');
-  assert.match(merged.indeterminateReason, /alias a current field's rows \(otherMapping\)/);
   // without occupied ranges the read is refused
   const bare = { ...era('headhead1', '2026-09-09T00:00:00Z', HEADREL) }; delete bare.occupied;
   const noOcc = { ...eras, eras: [era('oldold001', '2026-05-10T00:00:00Z', OLDREL), bare] };
@@ -177,20 +156,16 @@ test('HEAD-slot rows are reconciled with the routed getter both ways, never merg
   assert.deepEqual(getterAgreement({ headRows: fbHead, routed: { fallbackSnapshotCustody: [{ loanId: '4', collateralTotal: '10' }] } }).fallbackSnapshotCustody, []);
 });
 
-test('without the era-complete read no getter-derived class stays proven (#2095 r5 P1)', () => {
-  const classes = {
-    vpfiHeldCustody: { status: 'proven', provenBy: undefined, count: 0, total: '0', rows: [] },
-    rebateRows: { status: 'proven', provenBy: 'no-loans-ever-created', count: 0, total: '0', rows: [] },
-    fallbackSnapshotCustody: { status: 'indeterminate', indeterminateReason: 'already undetermined', count: 0, total: '0', rows: [] },
-    liveIntentCommits: { status: 'non-empty', count: 1, total: '5', rows: [{ loanId: '1' }] },
-  };
-  const out = downgradeWithoutEraRead(classes, 'HEAD mismatch');
-  assert.equal(out.vpfiHeldCustody.status, 'indeterminate');
-  assert.equal(out.rebateRows.status, 'indeterminate');
-  assert.equal(out.rebateRows.provenBy, undefined, 'the routed zero-loans proof is withdrawn too');
-  assert.match(out.rebateRows.indeterminateReason, /HEAD mismatch/);
-  assert.equal(out.fallbackSnapshotCustody.indeterminateReason, 'already undetermined', 'an already-indeterminate class keeps its reason');
-  assert.equal(out.liveIntentCommits.status, 'non-empty', 'a found row is not hidden by the downgrade');
+test('amountsAgree is the ONE amounts-agree predicate: a whole amount agrees in either spelling, and an amount nobody can read agrees with nothing, itself included — on the agreement path too', () => {
+  assert.equal(amountsAgree(5n, '5'), true, 'the collector holds bigints, a committed ledger their decimal strings');
+  assert.equal(amountsAgree('5', '6'), false);
+  for (const v of [null, undefined, 'x', '-1', 1.5, {}]) assert.equal(amountsAgree(v, v), false, `${String(v)} agreed with itself`);
+  // getterAgreement used to compare String(null) === String(null) and agree,
+  // while the merge refused the same pair — one row counted twice under proof
+  for (const v of [null, 'x']) {
+    const m = getterAgreement({ headRows: { vpfiHeldCustody: [{ loanId: '1', vpfiHeld: v }] }, routed: { vpfiHeldCustody: [{ loanId: '1', vpfiHeld: v }] } }).vpfiHeldCustody;
+    assert.deepEqual(m, [{ loanId: '1', storage: v === null ? 'no amount read' : v, getter: v === null ? 'no amount read' : v }], `${String(v)}: two unreadable amounts read as agreement`);
+  }
 });
 
 test('counter readings are attributed on every path: an old counter slot a current field occupies is that field, not a counter (#2095 r6 P2)', () => {
@@ -206,52 +181,22 @@ test('counter readings are attributed on every path: an old counter slot a curre
     nextLoanId: 0n,
     totalLoansEverCreated: [{ slot: headSlots.totalLoansEverCreated, value: 0n, eras: [] }, { slot: oldTotal, value: 4n, eras: [{ date: '2026-05' }] }],
     intentLiveCommitCount: [{ slot: headSlots.intentLiveCommitCount, value: 0n, eras: [] }, { slot: oldIntent, value: 3n, eras: [{ date: '2026-06' }] }],
-    allZero: false,
     slotsRead: 5,
   };
+  const kept = (x) => [...x.counters.totalLoansEverCreated, ...x.counters.intentLiveCommitCount];
   const a = attributeCounters(counters, headSlots, occupied);
-  assert.equal(a.counters.allZero, true, 'offers and a tier-table version are not loans or commits');
+  assert.ok(kept(a).every((x) => x.value === 0n), 'offers and a tier-table version are not loans or commits: every KEPT reading is zero');
   assert.deepEqual(a.aliased.map((x) => [x.which, x.value, x.aliases]), [['totalLoansEverCreated', '4', 'activeOfferIdsList'], ['intentLiveCommitCount', '3', 'tierTableVersion']]);
   assert.deepEqual(a.unexplained, []);
   assert.equal(a.counters.intentLiveCommitCount.length, 1, 'the HEAD-slot reading stays');
   // a non-zero at a slot no current field occupies is kept and is unexplained
   const b = attributeCounters({ ...counters, intentLiveCommitCount: [{ slot: headSlots.intentLiveCommitCount, value: 0n, eras: [] }, { slot: orphan, value: 1n, eras: [{ date: '2026-06' }] }] }, headSlots, occupied);
-  assert.equal(b.counters.allZero, false);
+  assert.deepEqual(kept(b).filter((x) => x.value !== 0n).map((x) => [x.slot, x.value]), [[orphan, 1n]], 'the unexplained reading is KEPT');
   assert.deepEqual(b.unexplained.map((x) => [x.which, x.value]), [['intentLiveCommitCount', '1']]);
   // a non-zero at HEAD's slot is the counter today: kept, never unexplained, never aliased
   const c = attributeCounters({ ...counters, totalLoansEverCreated: [{ slot: headSlots.totalLoansEverCreated, value: 7n, eras: [] }] }, headSlots, occupied);
-  assert.equal(c.counters.allZero, false);
   assert.deepEqual(c.unexplained.filter((x) => x.which === 'totalLoansEverCreated'), []);
   assert.equal(c.counters.totalLoansEverCreated[0].value, 7n);
-});
-
-test('a historical row an older routed getter already returned is not merged twice (#2095 r7 P2)', () => {
-  const cls = { status: 'proven', count: 1, total: '5', rows: [{ loanId: '1', vpfiHeld: '5' }] };
-  const historical = { rows: { vpfiHeldCustody: [{ loanId: '1', vpfiHeld: '5', mappingSlot: '0x01' }, { loanId: '2', vpfiHeld: '7', mappingSlot: '0x01' }] } };
-  const m = mergeHistoricalRows(cls, historical, 'vpfiHeldCustody');
-  assert.equal(m.count, 2, 'loan 1 once, loan 2 once');
-  // a same-valued row at an older slot while storage holds loan 1 at HEAD's slot too: the getter reads HEAD, the older row is a distinct liability (#2095 r20 P1)
-  const withHead = mergeHistoricalRows(cls, { ...historical, headRows: { vpfiHeldCustody: [{ loanId: '1', vpfiHeld: '5', mappingSlot: '0xhead' }] } }, 'vpfiHeldCustody');
-  assert.equal(withHead.count, 3, 'loan 1 twice (HEAD via the getter, the older slot as history) and loan 2');
-  assert.equal(withHead.historicalRowsAlreadyReportedByGetter, 0);
-  assert.equal(m.total, '12');
-  assert.equal(m.historicalRows, 1);
-  assert.equal(m.historicalRowsAlreadyReportedByGetter, 1);
-  // a different amount for the same key is a different physical row and is kept
-  const d = mergeHistoricalRows(cls, { rows: { vpfiHeldCustody: [{ loanId: '1', vpfiHeld: '6', mappingSlot: '0x01' }] } }, 'vpfiHeldCustody');
-  assert.equal(d.count, 2); assert.equal(d.total, '11'); assert.equal(d.historicalRowsAlreadyReportedByGetter, 0);
-  // one getter row absorbs at most one historical row: two era rows for one key with the same amount keep one
-  const two = mergeHistoricalRows(cls, { rows: { vpfiHeldCustody: [{ loanId: '1', vpfiHeld: '5', mappingSlot: '0x01' }, { loanId: '1', vpfiHeld: '5', mappingSlot: '0x02' }] } }, 'vpfiHeldCustody');
-  assert.equal(two.count, 2); assert.equal(two.historicalRowsAlreadyReportedByGetter, 1);
-  // a getter row filed as non-VPFI or unknown-asset counts as reported too (fallback: same key and amount)
-  const fb = mergeHistoricalRows({ status: 'proven', count: 0, rows: [], nonVpfiRowsExcluded: [{ loanId: '9', asset: '0xab', collateralTotal: '3' }] }, { rows: { fallbackSnapshotCustody: [{ loanId: '9', collateralTotal: '3', mappingSlot: '0x01' }] } }, 'fallbackSnapshotCustody');
-  assert.equal(fb.status, 'proven', 'nothing new to merge'); assert.equal(fb.historicalRowsAlreadyReportedByGetter, 1);
-  // an intent row is NEVER absorbed (#2095 r8 P1): the getter does not expose the orderHash, so commit A under an old
-  // layout and commit B under today's for the same loan are distinct candidates — A survives as unknown-asset
-  const intent = mergeHistoricalRows({ status: 'proven', count: 1, rows: [], nonVpfiRowsExcluded: [{ loanId: '9', asset: '0xab' }] }, { rows: { liveIntentCommits: [{ loanId: '9', orderHash: '0xcd', mappingSlot: '0x01' }] } }, 'liveIntentCommits');
-  assert.equal(intent.status, 'indeterminate');
-  assert.equal(intent.historicalRowsAlreadyReportedByGetter, 0);
-  assert.deepEqual(intent.unknownAssetRows.map((r) => r.orderHash), ['0xcd']);
 });
 
 test('a non-zero at an old counter slot that is now a MAPPING head is a stale counter, not the mapping (#2095 r9 P1)', () => {
@@ -269,8 +214,8 @@ test('a non-zero at an old counter slot that is now a MAPPING head is a stale co
   assert.deepEqual(contradictions.map((x) => [x.which, x.atMappingHead]), [['intentLiveCommitCount', 'lastUpdateDayId']], 'a mapping head holds nothing — the reading is the old counter');
   // and through attributeCounters the stale live-commit counter stays a contradiction candidate
   const headSlots = { totalLoansEverCreated: at(999), intentLiveCommitCount: at(998) };
-  const a = attributeCounters({ nextLoanId: 0n, totalLoansEverCreated: [{ slot: at(16), value: 4n, eras: [] }], intentLiveCommitCount: [{ slot: at(32), value: 2n, eras: [] }], allZero: false, slotsRead: 3 }, headSlots, occupied);
-  assert.equal(a.counters.allZero, false);
+  const a = attributeCounters({ nextLoanId: 0n, totalLoansEverCreated: [{ slot: at(16), value: 4n, eras: [] }], intentLiveCommitCount: [{ slot: at(32), value: 2n, eras: [] }], slotsRead: 3 }, headSlots, occupied);
+  assert.deepEqual(a.counters.intentLiveCommitCount.map((x) => [x.slot, x.value]), [[at(32), 2n]], 'the stale live-commit reading is KEPT — the zero bound reads it');
   assert.deepEqual(a.unexplained.map((x) => [x.which, x.value, x.atMappingHead]), [['intentLiveCommitCount', '2', 'lastUpdateDayId']]);
 });
 
@@ -323,8 +268,11 @@ test('a facet is attributed to the era whose catalogue holds its code hash; unkn
   assert.deepEqual(r.unattributed.map((x) => x.address), ['0xC']);
   assert.deepEqual(r.noCode.map((x) => x.address), ['0xD']);
   assert.equal(attributeFacetCode({ facets: [{ address: '0xA', codeHash: '0x11', sources: [] }], eras: erasT }).verdict, 'attributed');
-  const d = downgradeProvenClasses({ a: { status: 'proven', provenBy: 'x' }, b: { status: 'indeterminate', indeterminateReason: 'kept' } }, 'why');
-  assert.deepEqual(d, { a: { status: 'indeterminate', provenBy: undefined, indeterminateReason: 'why' }, b: { status: 'indeterminate', indeterminateReason: 'kept' } });
+  // round-3 review P2 — only the empty-code hash is "no code": a hash nobody read is unattributed, never "never wrote"
+  const unread = attributeFacetCode({ facets: [null, undefined, 12345, ''].map((codeHash, i) => ({ address: `0xE${i}`, codeHash, sources: ['record:live'] })), eras: erasT });
+  assert.deepEqual(unread.noCode, []);
+  assert.deepEqual(unread.unattributed.map((x) => x.note), Array(4).fill('its code hash was never read'));
+  assert.equal(unread.verdict, 'unattributed');
 });
 
 test('a state response that is not hex data throws instead of reading as zero or empty (#2095 r10 P1)', () => {
@@ -348,13 +296,19 @@ test('the facet population is exhaustive only with a read history that holds the
   assert.deepEqual(cutHistoryCompleteness({ verdict: 'read', cuts: 1, constructorCutSeen: true, addresses: [], loupe: null, recordedFacets: ['0xnever'] }).reasons.filter((r) => /records name/.test(r)), [], 'a shell: recorded facets absent from the history are not an omission (the loupe reason stands alone)');
   // an address the cut history names with empty code is unreadable, not "never wrote"; a record-only one may be
   const att = { attributed: [], unattributed: [], noCode: [{ address: '0x1', sources: ['cut-history'] }, { address: '0x2', sources: ['record:live'] }, { address: '0x3', sources: ['cut-history:initializer'] }], verdict: 'attributed' };
-  refuseUnreadableCutSources(att);
+  refuseUnreadableCutSources(att, { addresses: ['0x1', '0x3'], initializers: ['0x3'] });
   assert.deepEqual(att.noCode.map((x) => x.address), ['0x2']);
   assert.deepEqual(att.unattributed.map((x) => [x.address, /initializer/.test(x.note)]), [['0x1', false], ['0x3', true]]);
   assert.equal(att.verdict, 'unattributed');
-  // routed standard: a storage-only proof still falls on a provenance refusal; a routed proof keeps
-  const d = downgradeStorageOnlyProofs({ a: { status: 'proven', provenBy: undefined }, b: { status: 'proven', provenBy: 'no-loans-ever-created' }, c: { status: 'proven', provenBy: 'no-loans-ever-created-by-storage' }, e: { status: 'proven', provenBy: 'storage-read-calibrated' } }, 'why');
-  assert.deepEqual(Object.fromEntries(Object.entries(d).map(([k, v]) => [k, v.status])), { a: 'proven', b: 'proven', c: 'indeterminate', e: 'indeterminate' });
+  // round-3 review P2 — MEMBERSHIP in the cut history decides, not the entry's
+  // label: a record-labelled address the history names is refused, its
+  // published sources gaining the membership; a cut-labelled one the history
+  // omits still refuses (a label can only refuse); the record-only one stays
+  const byList = { attributed: [], unattributed: [], noCode: [{ address: '0xAA', sources: ['record:live'] }, { address: '0xbb', sources: [] }, { address: '0xcc', sources: ['cut-history'] }, { address: '0xdd', sources: ['record:live'] }], verdict: 'attributed' };
+  refuseUnreadableCutSources(byList, { addresses: ['0xaa', '0xbb'], initializers: ['0xBB'] });
+  assert.deepEqual(byList.unattributed.map((x) => [x.address, x.sources, /initializer/.test(x.note)]), [['0xAA', ['record:live', 'cut-history'], false], ['0xbb', ['cut-history:initializer'], true], ['0xcc', ['cut-history'], false]]);
+  assert.deepEqual(byList.noCode.map((x) => x.address), ['0xdd']);
+  assert.throws(() => refuseUnreadableCutSources({ attributed: [], unattributed: [], noCode: [] }), /cut history is required/, 'a caller that hands in no cut history would decide by the label alone');
 });
 
 test('the snapshot getter and the loan getter must attribute to a common layout for an excluded fallback row to be scoped (#2095 r24 P1)', () => {
@@ -374,142 +328,69 @@ test('the snapshot getter and the loan getter must attribute to a common layout 
   assert.equal(gettersShareLayout(withToken, ['0xClaim', '0xLoanNew', '0xTokenOld']).shared, false, 'a token getter on another layout breaks the exclusion');
 });
 
-test('an unshared layout withdraws the rows it COUNTED, not only the rows it excluded (#2095 r26 P1)', () => {
-  const cls = {
-    status: 'proven',
-    provenBy: 'routed-getter',
-    count: 2,
-    total: '30',
-    rows: [{ loanId: '1', collateralTotal: '10' }, { loanId: '2', collateralTotal: '20' }],
-    nonVpfiRowsExcluded: [{ loanId: '3', asset: '0xother', collateralTotal: '5' }],
-    unknownAssetRows: [{ loanId: '4' }],
-  };
-  // shared: nothing moves, and the class keeps its proof
-  assert.deepEqual(downgradeUnreconciledScope(cls, { shared: true, reason: 'one facet hosts every getter' }, { getters: 'g' }), cls);
-
-  // the round-25 shape — rows were excluded — still downgrades
-  const share = { shared: false, reason: 'the hosts attribute to different layout eras' };
-  const d = downgradeUnreconciledScope(cls, share, { getters: 'the snapshot, loan and token getters' });
-  assert.equal(d.status, 'indeterminate');
-  assert.equal(d.provenBy, undefined);
-  assert.deepEqual(d.rows, [], 'a counted row is no longer presented as a counted row');
-  assert.deepEqual(d.nonVpfiRowsExcluded, []);
-  assert.equal(d.unknownAssetRows.length, 4, 'every scope-dependent row joins the unknown-asset evidence, the pre-existing one kept');
-  assert.equal(d.count, 3, 'the count names the rows in evidence');
-  assert.equal(d.total, null, 'a total would assert the asset the comparison could not settle');
-  assert.match(d.totalUnavailable, /unreconciled/);
-  assert.match(d.indeterminateReason, /2 row\(s\) counted as VPFI and 1 filed non-VPFI/);
-  assert.match(d.indeterminateReason, /different layout eras/);
-
-  // THE REGRESSION: rows counted, none excluded — this passed through untouched before r26
-  const includedOnly = { ...cls, nonVpfiRowsExcluded: [] };
-  const only = downgradeUnreconciledScope(includedOnly, share, { getters: 'g' });
-  assert.equal(only.status, 'indeterminate', 'an included row is as scope-dependent as an excluded one');
-  assert.equal(only.total, null);
-  assert.equal(only.unknownAssetRows.length, 3);
-
-  // no scope-dependent row at all (the no-loans bound): nothing to withdraw
-  const none = { status: 'proven', provenBy: 'no-loans-ever-created', count: 0, total: '0', rows: [], nonVpfiRowsExcluded: [] };
-  assert.deepEqual(downgradeUnreconciledScope(none, share, { getters: 'g' }), none, 'an unshared layout cannot unprove a class that read no rows');
-});
-
-test('#2095 r27 — a class holding unknown-asset evidence is never certified, and a zero count never hides it', () => {
-  // THE REGRESSION: getFallbackSnapshot routed, getLoanDetails not. Every
-  // observed row is recorded unknown-asset; neither `rows` nor
-  // `nonVpfiRowsExcluded` is populated, so no scope downgrade fires and the
-  // class stood as proven with count 0 — which `allClassesEmpty` read as
-  // absence over an observed custody row.
-  const classes = {
-    fallbackSnapshotCustody: { status: 'proven', provenBy: 'routed-getter', count: 0, total: '0', rows: [], nonVpfiRowsExcluded: [], unknownAssetRows: [{ loanId: '7' }] },
-    rebateRows: { status: 'proven', provenBy: 'routed-getter', count: 1, total: '5', rows: [{ loanId: '1', rebateAmount: '5' }], unknownAssetRows: [] },
-  };
-  const out = withholdUnknownAssetEvidence(classes);
-  assert.equal(out.fallbackSnapshotCustody.status, 'indeterminate', 'an observed row whose asset is unreadable cannot be certified absent');
-  assert.equal(out.fallbackSnapshotCustody.provenBy, undefined);
-  assert.equal(out.fallbackSnapshotCustody.count, 1, 'the count states the row in evidence rather than reporting zero beside it');
-  assert.equal(out.fallbackSnapshotCustody.total, null);
-  assert.match(out.fallbackSnapshotCustody.totalUnavailable, /unreadable asset/);
-  assert.match(out.fallbackSnapshotCustody.indeterminateReason, /asset could not be read/);
-  assert.deepEqual(out.rebateRows, classes.rebateRows, 'a class with no unknown-asset evidence is untouched');
-
-  // counted rows beside unknown ones: the count states both
-  const mixed = withholdUnknownAssetEvidence({
-    c: { status: 'proven', provenBy: 'routed-getter', count: 2, total: '30', rows: [{ a: 1 }, { a: 2 }], unknownAssetRows: [{ loanId: '9' }] },
-  });
-  assert.equal(mixed.c.count, 3);
-  assert.match(mixed.c.indeterminateReason, /beside 2 counted as VPFI/);
-
-  // already indeterminate: the rule takes away, it never re-states a verdict
-  const already = { c: { status: 'indeterminate', count: 4, total: '7', unknownAssetRows: [{ loanId: '1' }], indeterminateReason: 'an earlier pass said why' } };
-  assert.deepEqual(withholdUnknownAssetEvidence(already), already);
-});
-
-test('#2095 r27 — the liability aggregates are derived from the final classes and withdrawn with the class total', () => {
+test('#2095 r27 + S1-R5 — the liability aggregates are derived from ESTABLISHED classes only, and a shortfall only against an on-chain token', () => {
+  // established = the judge gave the class a proof chain; the helper keys on
+  // that evidence, never on a status word a caller could have written
+  const chain = [{ kind: 'range', source: 'storage', detail: 'nextLoanId=5' }];
+  const est = (c) => ({ evidence: chain, reasons: [], ...c });
   const rows = {
-    vpfiHeldCustody: { status: 'proven', count: 1, total: '10', rows: [{ vpfiHeld: '10' }] },
-    rebateRows: { status: 'proven', count: 1, total: '5', rows: [{ rebateAmount: '5' }] },
-    fallbackSnapshotCustody: { status: 'proven', count: 1, total: '20', rows: [{ collateralTotal: '20' }] },
-    liveIntentCommits: { status: 'proven', count: 0, total: '0', rows: [] },
+    vpfiHeldCustody: est({ count: 1, total: '10', rows: [{ vpfiHeld: '10' }] }),
+    rebateRows: est({ count: 1, total: '5', rows: [{ rebateAmount: '5' }] }),
+    fallbackSnapshotCustody: est({ count: 1, total: '20', rows: [{ collateralTotal: '20' }] }),
+    liveIntentCommits: est({ count: 0, total: '0', rows: [] }),
   };
-  // nothing withdrawn: the derivation reproduces the figures, shortfall included
-  const clean = deriveLiabilityAggregates({ classes: rows, diamondVpfiBacking: '30', vpfiRowsTotal: '35', backingShortfall: '5' });
+  const onChain = { vpfiToken: '0xt1', source: 'on-chain' };
+  // nothing withdrawn: the derivation states the figures, shortfall included
+  const clean = deriveLiabilityAggregates({ classes: rows, diamondVpfiBacking: '30', scope: onChain });
   assert.equal(clean.vpfiRowsTotal, '35');
   assert.equal(clean.backingShortfall, '5');
   assert.equal(clean.vpfiRowsTotalUnavailable, undefined);
 
-  const covered = deriveLiabilityAggregates({ classes: rows, diamondVpfiBacking: '100', vpfiRowsTotal: '35', backingShortfall: '0' });
+  const covered = deriveLiabilityAggregates({ classes: rows, diamondVpfiBacking: '100', scope: onChain });
   assert.equal(covered.backingShortfall, '0', 'backing above the liability is a real zero, not a withdrawal');
 
-  // THE REGRESSION: the scope downgrade emptied `rows` into unknown-asset
+  // THE REGRESSION (r27): the scope downgrade emptied `rows` into unknown-asset
   // evidence and withdrew the class total AFTER these two figures were
   // written. They kept publishing the amount as a substantiated liability.
   const downgraded = {
     ...rows,
-    fallbackSnapshotCustody: { status: 'indeterminate', count: 1, total: null, totalUnavailable: 'the asset of every row is unreconciled — the getters do not attribute to a common layout', rows: [], unknownAssetRows: [{ collateralTotal: '20' }] },
+    fallbackSnapshotCustody: { evidence: [], reasons: [{ obligation: 'asset-settled', detail: 'hosts do not share a layout' }], count: 1, total: null, totalUnavailable: 'the asset of every row is unreconciled — the getters do not attribute to a common layout', rows: [], unknownAssetRows: [{ collateralTotal: '20' }] },
   };
-  const w = deriveLiabilityAggregates({ classes: downgraded, diamondVpfiBacking: '30', vpfiRowsTotal: '35', backingShortfall: '5' });
+  const w = deriveLiabilityAggregates({ classes: downgraded, diamondVpfiBacking: '30', scope: onChain });
   assert.equal(w.vpfiRowsTotal, null, 'a liability no class can total is not stated');
   assert.notEqual(w.vpfiRowsTotal, '15', 'and it is NOT re-derived from the surviving rows, which would understate it');
   assert.match(w.vpfiRowsTotalUnavailable, /fallbackSnapshotCustody/);
   assert.equal(w.backingShortfall, null, 'no shortfall is computable against a liability that is not stated');
   assert.match(w.backingShortfallUnavailable, /not stated/);
 
-  // an indeterminate class still carrying a total contributes nothing: its
+  // an unestablished class still carrying a total contributes nothing: its
   // total is a lower bound at best, and summing it would state a completeness
   // nothing proved
-  const unestablished = { ...rows, liveIntentCommits: { status: 'indeterminate', count: 0, total: '0', rows: [], indeterminateReason: 'getLoanDetails is unrouted on this Diamond today' } };
-  const u = deriveLiabilityAggregates({ classes: unestablished, diamondVpfiBacking: '30', vpfiRowsTotal: '35', backingShortfall: '5' });
+  const unestablished = { ...rows, liveIntentCommits: { evidence: [], reasons: [{ obligation: 'getter-coverage', detail: 'getIntentCommit asked over 1..2 of 1..5' }], count: 0, total: '0', rows: [] } };
+  const u = deriveLiabilityAggregates({ classes: unestablished, diamondVpfiBacking: '30', scope: onChain });
   assert.equal(u.vpfiRowsTotal, null);
   assert.match(u.vpfiRowsTotalUnavailable, /liveIntentCommits is not established/);
   assert.equal(u.backingShortfall, null);
 
+  // a status word without a chain is not establishment (the root arrest: the
+  // judge is the only writer of `proven`, and it always writes the chain)
+  const labelled = { ...rows, rebateRows: { status: 'proven', count: 1, total: '5', rows: [{ rebateAmount: '5' }] } };
+  assert.equal(deriveLiabilityAggregates({ classes: labelled, diamondVpfiBacking: '30', scope: onChain }).vpfiRowsTotal, null);
+
   // an unreadable Diamond balance withholds the shortfall and says so
-  const noBacking = deriveLiabilityAggregates({ classes: rows, diamondVpfiBacking: null, vpfiRowsTotal: '35', backingShortfall: null });
+  const noBacking = deriveLiabilityAggregates({ classes: rows, diamondVpfiBacking: null, scope: onChain });
   assert.equal(noBacking.vpfiRowsTotal, '35');
   assert.equal(noBacking.backingShortfall, null);
   assert.match(noBacking.backingShortfallUnavailable, /balance could not be read/);
+
+  // S1-R5 — a balance of an artifact-sourced (possibly rotated-away) token is
+  // no backing figure: the liability stands, the shortfall is withheld; the
+  // scope is read off a verdict's ledger as well
+  for (const scoped of [{ scope: { vpfiToken: '0xt1', source: 'artifact' } }, { ledger: { scope: { vpfiToken: null, source: null } } }]) {
+    const a = deriveLiabilityAggregates({ classes: rows, diamondVpfiBacking: '30', ...scoped });
+    assert.equal(a.vpfiRowsTotal, '35');
+    assert.equal(a.backingShortfall, null);
+    assert.match(a.backingShortfallUnavailable, /not read from the chain/);
+  }
 });
 
-test('#2095 r27 — the finalization composes the two: unknown-asset evidence withdraws the aggregates too', () => {
-  const result = {
-    diamondVpfiBacking: '100',
-    vpfiRowsTotal: '0',
-    backingShortfall: '0',
-    classes: {
-      vpfiHeldCustody: { status: 'proven', count: 0, total: '0', rows: [] },
-      rebateRows: { status: 'proven', count: 0, total: '0', rows: [] },
-      // the r27 shape: proven, count 0, one observed row with an unreadable asset
-      fallbackSnapshotCustody: { status: 'proven', provenBy: 'routed-getter', count: 0, total: '0', rows: [], unknownAssetRows: [{ loanId: '7' }] },
-      liveIntentCommits: { status: 'proven', count: 0, total: '0', rows: [] },
-    },
-  };
-  const f = finalizeVerdictFromEvidence(result);
-  assert.equal(f.classes.fallbackSnapshotCustody.status, 'indeterminate');
-  assert.equal(f.classes.fallbackSnapshotCustody.count, 1);
-  assert.equal(f.vpfiRowsTotal, null, 'the class the finalization just withdrew withdraws the aggregate in the same pass');
-  assert.equal(f.backingShortfall, null);
-  assert.notEqual(f.backingShortfall, '0', 'the shortfall must not report zero over a row whose asset is unknown');
-
-  // a result with no classes (the shell path) passes through
-  assert.deepEqual(finalizeVerdictFromEvidence({ vpfiRowsTotal: null }), { vpfiRowsTotal: null });
-});
