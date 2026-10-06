@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import { OUTCOME_CLAIMS } from './outcomeManifest.mjs';
+import { LIEN_FIELDS } from './refinanceOutcome.mjs';
 import { between, blockFrom, statementFrom } from './sourceBlock.mjs';
 import { WATCHED_GETTERS } from './watchedConfig.mjs';
 
@@ -74,12 +75,21 @@ describe('live-refinance wiring — the three outcome claims', () => {
     const lien = statementFrom(VERIFY, 'const lienDiff = lienCarried({');
     expect(lien).toContain('oldAfter: oldLienAfter');
     expect(lien).toContain('newAfter: newLien');
-    expect(lien).toContain('asset: loan.collateralAsset, assetType: loan.collateralAssetType, tokenId: loan.collateralTokenId, amount: loan.collateralAmount');
+    expect(lien).toContain('user: loan.borrower, asset: loan.collateralAsset, assetType: loan.collateralAssetType, tokenId: loan.collateralTokenId, amount: loan.collateralAmount');
     expect(between(VERIFY, '`the collateral lien moved', "'collateralLienCarried.liens'")).toContain('lienDiff.length === 0');
     const out = statementFrom(VERIFY, 'const out = collateralMovedOut({');
     expect(out).toContain('logs: acc.logs, token: loan.collateralAsset, from: borrowerVault');
     expect(VERIFY).toContain("read('getUserVaultAddress', [BORROWER], floor)");
     expect(between(VERIFY, "check('the accept receipt moves no collateral", "'collateralLienCarried.noCollateralOut'")).toContain('out.length === 0');
+  });
+
+  it('every old-lien field lienCarried does not compare is named under NOT VERIFIED (#2434 r1 P1)', () => {
+    const entry = between(SRC, "id: 'oldLienTombstone',", 'coveredBy:');
+    const fields = Object.keys(LIEN_FIELDS.old.notVerified);
+    expect(fields.length).toBeGreaterThan(0);
+    for (const f of fields) expect(entry, f).toMatch(new RegExp(`\\b${f}\\b`));
+    // The replacement side leaves nothing unverified.
+    expect(Object.keys(LIEN_FIELDS.replacement.notVerified)).toEqual([]);
   });
 });
 

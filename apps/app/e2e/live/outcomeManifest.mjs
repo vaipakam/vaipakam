@@ -219,9 +219,12 @@ export function createManifest({ verifiable, notVerified = [] }) {
  *     never allowed (`gateEscape`), the one failure of the write discipline
  *     that is never somebody else's doing;
  *   0 PASS — every verifiable claim VERIFIED and nothing stopped;
- *   3 UNDETERMINED — anything else: a stop, a page that failed, a refused
- *     write, a claim that did not run. The touched-state ledger and the
- *     replacement state are printed with it.
+ *   3 UNDETERMINED — anything else: a stop, a page that failed, a claim
+ *     that did not run, or a failed write-discipline check short of a gate
+ *     escape (a refusal, a nonce mismatch, a transaction still pending) —
+ *     stated as FAILED in its own clause, never as "not established", and
+ *     the line's "no contradiction" sentence names only the outcome claims.
+ *     The touched-state ledger and the replacement state are printed with it.
  *
  * @param {{ rows: Array<{ id: string, status: string }>, wrote: boolean,
  *           stopped: string|null, preWriteFailure: boolean, gateEscape: boolean }} a
@@ -249,17 +252,37 @@ export function runVerdict({ rows, wrote, stopped, preWriteFailure, gateEscape }
           .join('; '),
     };
   }
-  const open = rows.filter((r) => r.status !== 'verified' && r.status !== 'not verified').map((r) => `[${r.id}] ${r.status}`);
-  if (!stopped && open.length === 0) {
+  // A FAILED claim that is not an outcome claim (the write discipline: a
+  // nonce mismatch, a transaction still pending, a refusal — anything short
+  // of a gate escape, which FAILed above) is stated as FAILED, by check, in
+  // its own clause (#2434 r1 P2). It never reads as "not established", and
+  // the closing "no contradiction" sentence is scoped to the outcome claims.
+  const failedOther = rows
+    .filter((r) => r.status === 'failed')
+    .map((r) => {
+      const keys = (r.checks ?? []).filter((k) => k.status === 'failed').map((k) => k.key);
+      return `[${r.id}] FAILED${keys.length ? ` (${keys.join(', ')})` : ''}`;
+    });
+  const open = rows
+    .filter((r) => !['verified', 'not verified', 'failed'].includes(r.status))
+    .map((r) => `[${r.id}] ${r.status}`);
+  if (!stopped && open.length === 0 && failedOther.length === 0) {
     return { exit: 0, line: 'OUTCOME: PASS — every claim under VERIFIED holds; the claims under NOT VERIFIED BY THIS DRIVER were not checked by it' };
   }
   return {
     exit: 3,
     line:
       'OUTCOME: UNDETERMINED — ' +
-      [stopped ? `the drive stopped after a write: ${stopped}` : null, open.length ? `not established: ${open.join(', ')}` : null]
+      [
+        stopped ? `the drive stopped after a write: ${stopped}` : null,
+        failedOther.length
+          ? `a check outside the outcome claims FAILED: ${failedOther.join(', ')} — see the nonce reconciliation and refusals above`
+          : null,
+        open.length ? `not established: ${open.join(', ')}` : null,
+      ]
         .filter(Boolean)
         .join('; ') +
-      '. No chain read contradicts a claim; the touched-state ledger above says what this run left standing',
+      `. No chain read contradicts the outcome claims (${OUTCOME_CLAIMS.join(', ')}); ` +
+      'the touched-state ledger above says what this run left standing',
   };
 }

@@ -4,17 +4,26 @@
  * 0x6651828509c9bcfd01746270a79f8602cc303a06aa1ef853b71ad24c29b0888c, block
  * 47711162).
  */
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import { createManifest } from './outcomeManifest.mjs';
 import {
   checkRoleNonces,
   collateralMovedOut,
+  LIEN_FIELDS,
   lienCarried,
   requestStateOf,
   scanForReplacement,
   TOPIC,
 } from './refinanceOutcome.mjs';
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const ABI = JSON.parse(fs.readFileSync(path.join(HERE, '../../../../packages/contracts/src/diamondAbi.json'), 'utf8'));
+/** The fields of LibVaipakam.Encumbrance, from the compiled ABI. */
+const ENCUMBRANCE_FIELDS = ABI.find((e) => e.name === 'getLoanCollateralLien').outputs[0].components.map((c) => c.name);
 
 const BORROWER = '0xC86BB89f8ddF703c34724Cf11137498bC69F039D';
 const LENDER = '0x1DAefA360ED370285f003Fa2d92DB75628088282';
@@ -37,34 +46,50 @@ const REAL_ACCEPT_TOKEN_LOGS = [
 ].map(([from, to]) => ({ address: WETH, topics: [TOPIC.transfer, pad(from), pad(to)] }));
 
 describe('refinanceOutcome — the collateral lien was carried (claim 3)', () => {
-  const expected = { asset: TCOL, assetType: 0, tokenId: 0n, amount: 100n * 10n ** 18n };
+  const expected = { user: BORROWER, asset: TCOL, assetType: 0, tokenId: 0n, amount: 100n * 10n ** 18n };
   // getLoanCollateralLien(22) and (23) at the accept block 47711162.
   const REAL = {
     oldAfter: { user: BORROWER, asset: TCOL, tokenId: 0n, amount: 0n, assetType: 0, released: true },
     newAfter: { user: BORROWER, asset: TCOL, tokenId: 0n, amount: 100n * 10n ** 18n, assetType: 0, released: false },
     expected,
   };
+  // A value that differs from the real one, per Encumbrance field.
+  const OTHER = { user: LENDER, asset: BORROWER, tokenId: 1n, amount: 99n * 10n ** 18n, assetType: 1, released: null };
+  const flipped = (lien, field) => ({ ...lien, [field]: field === 'released' ? !lien.released : OTHER[field] });
 
   it('accepts the real loan-22 → loan-23 liens', () => {
     expect(lienCarried(REAL)).toEqual([]);
   });
 
-  it('refuses an old lien left live', () => {
-    expect(lienCarried({ ...REAL, oldAfter: { ...REAL.oldAfter, released: false } })).toEqual(['old loan lien: released false, expected true']);
+  it('LIEN_FIELDS accounts for every Encumbrance field, on both sides, exactly once (#2434 r1 P1)', () => {
+    expect(Object.keys(REAL.newAfter).sort()).toEqual([...ENCUMBRANCE_FIELDS].sort());
+    for (const side of ['replacement', 'old']) {
+      const { compared, notVerified } = LIEN_FIELDS[side];
+      const declared = [...compared, ...Object.keys(notVerified)];
+      expect(declared.sort(), side).toEqual([...ENCUMBRANCE_FIELDS].sort());
+      expect(new Set(declared).size, side).toBe(declared.length);
+      for (const [f, why] of Object.entries(notVerified)) expect(why, `${side}.${f}`).toMatch(/\S/);
+    }
   });
 
-  it('refuses a replacement lien that differs in asset, type, tokenId or amount, or is not live', () => {
-    for (const [field, value] of [
-      ['asset', BORROWER],
-      ['assetType', 1],
-      ['tokenId', 1n],
-      ['amount', 99n * 10n ** 18n],
-      ['released', true],
-    ]) {
-      const r = lienCarried({ ...REAL, newAfter: { ...REAL.newAfter, [field]: value } });
-      expect(r, field).toHaveLength(1);
-      expect(r[0], field).toMatch(new RegExp(`^replacement lien: ${field} `));
+  it('every field declared compared IS compared, and every field declared not verified is not', () => {
+    for (const [side, key] of [['replacement', 'newAfter'], ['old', 'oldAfter']]) {
+      for (const field of LIEN_FIELDS[side].compared) {
+        const r = lienCarried({ ...REAL, [key]: flipped(REAL[key], field) });
+        expect(r, `${side}.${field}`).toHaveLength(1);
+        expect(r[0], `${side}.${field}`).toMatch(new RegExp(`^${side === 'old' ? 'old loan' : 'replacement'} lien: ${field} `));
+      }
+      for (const field of Object.keys(LIEN_FIELDS[side].notVerified)) {
+        expect(lienCarried({ ...REAL, [key]: flipped(REAL[key], field) }), `${side}.${field}`).toEqual([]);
+      }
     }
+  });
+
+  it('the replacement lien must lock the BORROWER\u2019s vault: user is the vault owner, compared with the borrower', () => {
+    const r = lienCarried({ ...REAL, newAfter: { ...REAL.newAfter, user: BORROWER_VAULT } });
+    expect(r).toEqual([`replacement lien: user (vault owner) ${BORROWER_VAULT}, expected the borrower ${BORROWER}`]);
+    // Address case is not a difference.
+    expect(lienCarried({ ...REAL, newAfter: { ...REAL.newAfter, user: BORROWER.toLowerCase() } })).toEqual([]);
   });
 });
 

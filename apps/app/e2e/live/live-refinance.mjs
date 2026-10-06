@@ -636,7 +636,7 @@ const MANIFEST = createManifest({
       id: 'collateralLienCarried',
       claim: 'the collateral lien moved from the old loan to the replacement, and the accept took no collateral out of the borrower\u2019s vault',
       checks: {
-        liens: 'getLoanCollateralLien(old) and (replacement) pinned to the accept block: the old released, the replacement live with the same asset, type, tokenId and amount',
+        liens: 'getLoanCollateralLien(old) and (replacement) pinned to the accept block: the old released, the replacement live, locking the borrower\u2019s vault (user = the borrower), with the same asset, type, tokenId and amount',
         noCollateralOut: 'the accept receipt\u2019s collateral-token logs: no Transfer (ERC-20/721) or TransferSingle/Batch (ERC-1155) out of the borrower\u2019s vault',
       },
     },
@@ -668,6 +668,13 @@ const MANIFEST = createManifest({
       claim: 'what the review screens showed: their figures and disclosures',
       reason: 'each is checked before consent as a WRITE GATE (a mismatch stops the write), not claimed as an outcome',
       coveredBy: 'apps/app/e2e/live/reviewTerms.test.mjs (the parser, on the real loan-22 receipts)',
+    },
+    {
+      id: 'oldLienTombstone',
+      claim: 'the released old lien\u2019s remaining Encumbrance fields: user, asset, tokenId, amount, assetType',
+      reason:
+        'a released lien is a tombstone and `released` is the contract\u2019s source of truth; the claim is only that it is released (every field is declared in refinanceOutcome.mjs LIEN_FIELDS)',
+      coveredBy: 'contracts/test/T092AutoLifecycleIntegrationTest.t.sol test_576_atomicRefinance_carriesCollateralOverViaLienRetag (released, amount zeroed)',
     },
     {
       id: 'sameBlockLater',
@@ -1998,12 +2005,12 @@ async function verifyAcceptOutcome() {
   const lienDiff = lienCarried({
     oldAfter: oldLienAfter,
     newAfter: newLien,
-    expected: { asset: loan.collateralAsset, assetType: loan.collateralAssetType, tokenId: loan.collateralTokenId, amount: loan.collateralAmount },
+    expected: { user: loan.borrower, asset: loan.collateralAsset, assetType: loan.collateralAssetType, tokenId: loan.collateralTokenId, amount: loan.collateralAmount },
   });
   check(
-    `the collateral lien moved: loan ${LOAN_ID}'s released, loan ${newLoanId}'s live with the same asset, type, tokenId and amount`,
+    `the collateral lien moved: loan ${LOAN_ID}'s released, loan ${newLoanId}'s live on the borrower's vault with the same asset, type, tokenId and amount`,
     lienDiff.length === 0,
-    lienDiff.join(' | ') || `old released ${oldLienAfter.released}; new ${newLien.asset} type ${newLien.assetType} #${newLien.tokenId} × ${newLien.amount}`,
+    lienDiff.join(' | ') || `old released ${oldLienAfter.released}; new user ${newLien.user}, ${newLien.asset} type ${newLien.assetType} #${newLien.tokenId} × ${newLien.amount}`,
     'collateralLienCarried.liens',
   );
   const out = collateralMovedOut({ logs: acc.logs, token: loan.collateralAsset, from: borrowerVault, assetType: loan.collateralAssetType });

@@ -186,4 +186,29 @@ describe('runVerdict', () => {
     // The UI failed after the accept mined, but the chain proves every claim.
     expect(runVerdict({ ...base, rows: all(), stopped: 'the page never said "Loan opened"' }).exit).toBe(3);
   });
+
+  it('a failed write discipline without a gate escape is stated as FAILED; "no contradiction" names only the outcome claims (#2434 r1 P2)', () => {
+    // A transaction still pending: the borrower's nonce check failed, nothing
+    // stopped, every outcome claim verified.
+    const rows = all().map((r) =>
+      r.id === 'writeDiscipline'
+        ? {
+            ...row(r.id, 'failed'),
+            checks: [
+              { key: 'borrowerNonces', status: 'failed' },
+              { key: 'lenderNonces', status: 'passed' },
+              { key: 'noRefusals', status: 'passed' },
+            ],
+          }
+        : r,
+    );
+    const v = runVerdict({ ...base, rows });
+    expect(v.exit).toBe(3);
+    expect(v.line).toContain('a check outside the outcome claims FAILED: [writeDiscipline] FAILED (borrowerNonces)');
+    expect(v.line).not.toMatch(/not established: .*writeDiscipline/);
+    expect(v.line).not.toMatch(/No chain read contradicts a claim\b/);
+    expect(v.line).toContain(`No chain read contradicts the outcome claims (${OUTCOME_CLAIMS.join(', ')})`);
+    // Without the failed check, the same run is a PASS — the clause is what made it 3.
+    expect(runVerdict({ ...base, rows: all() }).exit).toBe(0);
+  });
 });

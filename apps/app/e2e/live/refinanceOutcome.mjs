@@ -63,18 +63,52 @@ export async function scanForReplacement({ readLoan, startId, requestId, cap }) 
 // ---------------------------------------------------------------------
 
 /**
+ * EVERY field of `LibVaipakam.Encumbrance`, on each side of the carry-over,
+ * declared as compared by `lienCarried` or NOT VERIFIED with its reason
+ * (#2434 r1 P1). `refinanceOutcome.test.mjs` requires both sides to name
+ * exactly the struct's fields in the compiled ABI, proves each `compared`
+ * field is compared (changing it alone yields a mismatch) and each
+ * `notVerified` one is not, and the driver's NOT VERIFIED list must name
+ * every `notVerified` field — so no field is skipped silently.
+ *
+ * `user` is the VAULT OWNER whose balance the lien locks, not the vault
+ * address (LibVaipakam: "vault owner — the side whose vault is locked";
+ * LibEncumbrance keys `encumbered[lien.user]` and the refinance retag
+ * requires `oldLien.user == newLoan.borrower`), so it is compared with the
+ * borrower.
+ */
+export const LIEN_FIELDS = Object.freeze({
+  replacement: Object.freeze({
+    compared: Object.freeze(['user', 'asset', 'tokenId', 'amount', 'assetType', 'released']),
+    notVerified: Object.freeze({}),
+  }),
+  old: Object.freeze({
+    compared: Object.freeze(['released']),
+    notVerified: Object.freeze({
+      user: 'a released lien is a tombstone: `released` is the contract’s source of truth, and the claim is only that it is released',
+      asset: 'a released lien is a tombstone (see user)',
+      tokenId: 'a released lien is a tombstone (see user)',
+      amount: 'zeroed on the retag by the contract (LibEncumbrance #576 P3), but a tombstone field all the same (see user)',
+      assetType: 'a released lien is a tombstone (see user)',
+    }),
+  }),
+});
+
+/**
  * `getLoanCollateralLien` at the accept block: the OLD loan's lien released,
- * and the REPLACEMENT's live with the same asset, asset type, tokenId and
- * amount as the old loan's collateral. Returns readable mismatch lines;
- * empty ⇔ the lien was carried.
+ * and the REPLACEMENT's live, locking the BORROWER's vault, with the same
+ * asset, asset type, tokenId and amount as the old loan's collateral. Every
+ * Encumbrance field is accounted for in `LIEN_FIELDS`. Returns readable
+ * mismatch lines; empty ⇔ the lien was carried.
  *
  * @param {{ oldAfter: object, newAfter: object,
- *           expected: { asset: string, assetType: number|bigint, tokenId: bigint, amount: bigint } }} a
+ *           expected: { user: string, asset: string, assetType: number|bigint, tokenId: bigint, amount: bigint } }} a
  */
 export function lienCarried({ oldAfter, newAfter, expected }) {
   const out = [];
   if (oldAfter.released !== true) out.push(`old loan lien: released ${oldAfter.released}, expected true`);
   if (newAfter.released !== false) out.push(`replacement lien: released ${newAfter.released}, expected false (a live lien)`);
+  if (lc(newAfter.user) !== lc(expected.user)) out.push(`replacement lien: user (vault owner) ${newAfter.user}, expected the borrower ${expected.user}`);
   if (lc(newAfter.asset) !== lc(expected.asset)) out.push(`replacement lien: asset ${newAfter.asset}, expected ${expected.asset}`);
   if (Number(newAfter.assetType) !== Number(expected.assetType)) out.push(`replacement lien: assetType ${newAfter.assetType}, expected ${expected.assetType}`);
   if (BigInt(newAfter.tokenId) !== BigInt(expected.tokenId)) out.push(`replacement lien: tokenId ${newAfter.tokenId}, expected ${expected.tokenId}`);
