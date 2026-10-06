@@ -7,7 +7,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {RewardCustodyFacet} from "../src/facets/RewardCustodyFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet.sol";
-import {RewardEpochViewFacet} from "../src/facets/RewardEpochViewFacet.sol";
+import {RewardStagingDomainFacet} from "../src/facets/RewardStagingDomainFacet.sol";
 import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
@@ -180,7 +180,7 @@ contract ActivateRewardCustody is RewardCustodyCeremonyBase {
         // the record's remaining pages (permissionless; it only completes),
         // re-establish the figures under a fresh pause, and rerun.
         {
-            uint256 encumbered = RewardEpochViewFacet(diamond).getStagingEncumberedCount();
+            uint256 encumbered = RewardStagingDomainFacet(diamond).getStagingEncumberedCount();
             require(
                 encumbered == 0,
                 "ActivateRewardCustody: a staging record holds a RESERVATION (reserved or resolving) -- its reservations count against this balance and a resolving record's consumed epoch value rests here under no attribution until its last page pays it, so the activation would strand it; unpause, settle the records (resolveStagedDayPage) or unwind them (unwindStagedDayPage) -- both permissionless -- re-establish the figures under a fresh pause, then rerun"

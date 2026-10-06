@@ -196,8 +196,17 @@ contract RewardClaimFacet is
         // enforced only by the alpha02 UI. Arrest it at the contract level so
         // every integrator (keeper bots, third-party frontends, direct callers)
         // gets the same protection. (The sibling `sweepForfeitedInteractionRewards`
-        // routes to treasury, not the caller, so it stays ungated by design.)
-        LibVaipakam._assertNotSanctioned(user);
+        // routes to the recycle bucket, not the caller, so it stays ungated by
+        // design; so does the owner forfeit sweep.)
+        // #1566 sanctions slice — the BARRED screen, not the fail-open one: a
+        // wallet carrying a committed flag (the #1123 marker) stays refused
+        // while the oracle is unreachable. The expiry clock pauses on exactly
+        // this predicate (the sweep seam reads {LibVaipakam.isRecipientBarred}
+        // too), so a refused claimant's entries never age toward removal while
+        // the refusal stands, and a confirmed flag forfeits them through the
+        // owner sweep instead.
+        // Same `SanctionedAddress` error; the simulation follows through here.
+        LibVaipakam.assertRecipientNotBarred(user);
         if (s.interactionLaunchTimestamp == 0) {
             revert InteractionEmissionsNotStarted();
         }

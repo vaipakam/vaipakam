@@ -1,6 +1,79 @@
 [
   {
     "type": "function",
+    "name": "forfeitFlaggedOwnerRewards",
+    "inputs": [
+      {
+        "name": "owner",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "fromIndex",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "maxEntries",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "maxSteps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "decision",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "stamped",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "settledTotal",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "nextIndex",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "unfinished",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "recordRewardSanctionsEvidence",
+    "inputs": [
+      {
+        "name": "who",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "retireZeroPricedRemainders",
     "inputs": [
       {
@@ -41,6 +114,124 @@
       }
     ],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "event",
+    "name": "RewardEntryForfeitSettled",
+    "inputs": [
+      {
+        "name": "entryId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "user",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "fresh",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "recycledReleased",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RewardEntrySanctionsForfeited",
+    "inputs": [
+      {
+        "name": "entryId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "user",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "side",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      },
+      {
+        "name": "flaggedAt",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RewardSanctionsEvidenceCleared",
+    "inputs": [
+      {
+        "name": "who",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RewardSanctionsEvidenceRecorded",
+    "inputs": [
+      {
+        "name": "who",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "oracle",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "flaggedAt",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      },
+      {
+        "name": "forfeitableAt",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      }
+    ],
+    "anonymous": false
   },
   {
     "type": "error",

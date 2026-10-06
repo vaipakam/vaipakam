@@ -140,7 +140,14 @@ library LibKeeperReward {
         // sanctioned address just gets no payout. Mirrors the
         // existing "soft skip" pattern used for the other
         // preconditions in this function.
-        if (LibVaipakam.isSanctionedAddress(keeper)) {
+        //
+        // #1566 — the screen is `isRecipientBarred`, not the fail-open
+        // `isSanctionedAddress`: a keeper carrying a committed flag (the #1123
+        // marker, set by an authoritative Flagged read while the oracle was
+        // up) is skipped during an oracle outage too, instead of being paid
+        // the moment the oracle stops answering. Still a view
+        // that never reverts, so the no-revert contract above holds.
+        if (LibVaipakam.isRecipientBarred(keeper)) {
             emit KeeperRewardSkipped(keeper, actionKind, "sanctioned-keeper");
             return 0;
         }

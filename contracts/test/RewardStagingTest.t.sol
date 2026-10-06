@@ -8,6 +8,7 @@ import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {RewardEpochFacet} from "../src/facets/RewardEpochFacet.sol";
 import {RewardEpochViewFacet} from "../src/facets/RewardEpochViewFacet.sol";
+import {RewardStagingDomainFacet} from "../src/facets/RewardStagingDomainFacet.sol";
 import {RewardIngressFacet} from "../src/facets/RewardIngressFacet.sol";
 import {RewardClaimFacet} from "../src/facets/RewardClaimFacet.sol";
 import {LibVpfiRecycle} from "../src/libraries/LibVpfiRecycle.sol";
@@ -29,6 +30,7 @@ import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {RewardHorizonSweepFacet} from "../src/facets/RewardHorizonSweepFacet.sol";
+import {LibRewardSanctions} from "../src/libraries/LibRewardSanctions.sol";
 
 /// @title RewardStagingTest
 /// @notice #1566 transport epochs 3b-ii-A2 (#2305) — the staging record's
@@ -93,8 +95,10 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         return RewardEpochFacet(address(diamond));
     }
 
-    function _view() internal view returns (RewardEpochViewFacet) {
-        return RewardEpochViewFacet(address(diamond));
+    /// @dev The staging records' reads — hosted on RewardStagingDomainFacet
+    ///      since the #1566 sanctions slice (moved from RewardEpochViewFacet).
+    function _view() internal view returns (RewardStagingDomainFacet) {
+        return RewardStagingDomainFacet(address(diamond));
     }
 
     function _staging() internal view returns (RewardStagingFacet) {
@@ -212,7 +216,7 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         return keccak256(abi.encode(alice, LibVaipakam.RewardSide.Lender, uint256(1)));
     }
 
-    function _rec() internal view returns (RewardEpochViewFacet.StagingRecordView memory) {
+    function _rec() internal view returns (RewardStagingDomainFacet.StagingRecordView memory) {
         return _view().getStagingRecord(_key());
     }
 
@@ -292,11 +296,49 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         assertTrue(_rec().scanComplete, "the second reaches the list's end");
     }
 
+    /// @dev #1566 sanctions slice - the last page of a claimant whose sanctions
+    ///      flag is not yet CONFIRMED holds: the record's pages run until its
+    ///      payout first observes the flag (the evidence's first sighting); that
+    ///      page returns false with the record still `Resolving`, every batch
+    ///      resolved and nothing paid or retired; then one more page every
+    ///      `MAX_OBS_GAP_SECS` keeps the chain of observations unbroken, each
+    ///      still holding, the last of them one second short of
+    ///      `CONFIRM_SECS`. It stops AT the window's end without calling, so the
+    ///      caller's own next page is the one that forfeits and its
+    ///      `expectEmit` can stand right before it. Replaces the old
+    ///      `while (!resolve) {}`, which would spin forever on the hold.
+    function _holdThenConfirm() internal {
+        uint256 pages;
+        while (_sanctionsLastSeen(alice) == 0) {
+            assertFalse(_settle().resolveStagedDayPage(_key()), "no page completes before the flag is confirmed");
+            assertLt(++pages, 8, "the last page is reached");
+        }
+        uint256 t0 = vm.getBlockTimestamp();
+        RewardStagingDomainFacet.StagingRecordView memory r = _rec();
+        assertEq(r.phase, uint8(LibVaipakam.StagingPhase.Resolving), "held, not closed");
+        assertEq(r.resolveCursor, r.batchCount, "every batch resolved: only the payout waits");
+        uint256 t = t0;
+        while (t + LibRewardSanctions.MAX_OBS_GAP_SECS < t0 + LibRewardSanctions.CONFIRM_SECS) {
+            t += LibRewardSanctions.MAX_OBS_GAP_SECS;
+            vm.warp(t);
+            assertFalse(_settle().resolveStagedDayPage(_key()), "held inside the confirmation window");
+        }
+        vm.warp(t0 + LibRewardSanctions.CONFIRM_SECS - 1);
+        assertFalse(_settle().resolveStagedDayPage(_key()), "held one second short of the window");
+        vm.warp(t0 + LibRewardSanctions.CONFIRM_SECS);
+    }
+
+    /// @dev The sanctions evidence's last sighting of `who` (0 = none yet), as
+    ///      the lens reports it.
+    function _sanctionsLastSeen(address who) internal view returns (uint64 lastSeenAt) {
+        (, , lastSeenAt, , , , ) = InteractionRewardsLensFacet(address(diamond)).getRewardSanctionsStatus(who);
+    }
+
     // ───────────────────────────── the walk stages ─────────────────────────────
 
     function test_ACapHitDeferral_StagesTheWindow_AndPaysNothing() public {
         (bytes32[] memory hs, ) = _stagedScene();
-        RewardEpochViewFacet.StagingRecordView memory r = _rec();
+        RewardStagingDomainFacet.StagingRecordView memory r = _rec();
         assertEq(r.phase, uint8(LibVaipakam.StagingPhase.Staging), "a record stands, staging");
         assertEq(r.user, alice);
         assertEq(r.day, 1);
@@ -369,7 +411,7 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         (sf, sr) = _staging().prepareStagedDay(_key());
         assertEq(sf, TINY, "the one epoch past the window, and no rescan of the staged prefix");
         assertEq(sr, 0);
-        RewardEpochViewFacet.StagingRecordView memory r = _rec();
+        RewardStagingDomainFacet.StagingRecordView memory r = _rec();
         assertEq(r.batchCount, WIDE);
         assertEq(r.stagedFresh, WIDE * TINY);
         (uint256 sf65, , uint256 refs65) = _staged(hs[64]);
@@ -478,7 +520,7 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         _mut().setInteractionPoolPaidOut(LibVaipakam.VPFI_INTERACTION_POOL_CAP - 0.2e18); // the pool shrank
         _liveFresh(1e18);
         _staging().reserveStagedDay(_key());
-        RewardEpochViewFacet.StagingRecordView memory r = _rec();
+        RewardStagingDomainFacet.StagingRecordView memory r = _rec();
         assertEq(r.epochUserFresh, 0.2e18, "the reprice assigns what the pool still allows");
         assertEq(r.cappedOffFresh, 0.2e18, "and records what the cap trimmed");
         uint256 aliceBefore = vpfi.balanceOf(alice);
@@ -509,17 +551,22 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         _assertConserved(hs);
     }
 
-    /// @dev A claimant flagged BETWEEN resolution pages is not paid: the last
-    ///      page forfeits their share into the recycle bucket with the
-    ///      treasury's forfeit legs, and closes the record (owner decision
-    ///      2026-10-02; Codex #2308 r21 — a vault-only delivery trapped the
-    ///      record in `Resolving` for a claimant with no vault).
+    /// @dev A claimant flagged BETWEEN resolution pages is not paid: once the
+    ///      flag is CONFIRMED the last page forfeits their share into the
+    ///      recycle bucket with the treasury's forfeit legs, and closes the
+    ///      record (owner decision 2026-10-02; Codex #2308 r21 - a vault-only
+    ///      delivery trapped the record in `Resolving` for a claimant with no
+    ///      vault). #1566 sanctions slice: a first flag is not a confirmed one,
+    ///      so the last page first HOLDS, paying and retiring nothing, and the
+    ///      page that lands once the chain of observations spans the
+    ///      confirmation window forfeits ({_holdThenConfirm}). Before the slice
+    ///      this page forfeited on one read.
     function test_AClaimantFlaggedMidResolution_IsForfeited_NotTrapped() public {
         _stagedAndScanned();
         _liveFresh(1e18);
         _staging().reserveStagedDay(_key());
         _settle().resolveStagedDayPage(_key());
-        RewardEpochViewFacet.StagingRecordView memory r = _rec();
+        RewardStagingDomainFacet.StagingRecordView memory r = _rec();
         assertEq(r.phase, uint8(LibVaipakam.StagingPhase.Resolving), "fixture: one page in");
         MockSanctionsList m = new MockSanctionsList();
         ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
@@ -533,10 +580,13 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         uint8 sideKey = uint8(LibVaipakam.RewardSide.Lender);
         uint256 sidePaidBefore = _mut().loanSideRewardPaidRaw(LOAN, sideKey);
         assertGt(_mut().loanSideRewardReservedRaw(LOAN, sideKey), 0, "fixture: the reservation holds the loan side");
+        // #1566 sanctions slice - the hold and the observations inside the
+        // window; the page below is the one at the window's end.
+        _holdThenConfirm();
         vm.recordLogs();
         vm.expectEmit(true, true, false, true, address(diamond));
         emit StagingClaimantForfeited(_key(), alice, userFresh, userRecycled);
-        assertTrue(_settle().resolveStagedDayPage(_key()), "the last page completes");
+        assertTrue(_settle().resolveStagedDayPage(_key()), "the last page completes once the flag is confirmed");
         assertEq(vpfi.balanceOf(alice), aliceBefore, "nothing delivered to the flagged wallet");
         // Codex #2308 r22 — a forfeited share is not emitted to the side: the
         // loan side's reward cap is untouched, its reservation released, and
@@ -685,7 +735,7 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         _scene();
         _wideDayTyped(2); // the window: 2 typed staged, 62 untyped passed over
         assertEq(_claim(), 0);
-        RewardEpochViewFacet.StagingRecordView memory r = _rec();
+        RewardStagingDomainFacet.StagingRecordView memory r = _rec();
         assertEq(r.batchCount, 2);
         assertEq(r.skippedCount, 0, "the walk notes nothing: the record's own scan does");
         _staging().prepareStagedDay(_key()); // the window: 62 untyped remembered
@@ -745,7 +795,7 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
         assertEq(paid, 0);
         bytes32 bobKey = keccak256(abi.encode(bob, LibVaipakam.RewardSide.Lender, uint256(1)));
-        RewardEpochViewFacet.StagingRecordView memory r = _view().getStagingRecord(bobKey);
+        RewardStagingDomainFacet.StagingRecordView memory r = _view().getStagingRecord(bobKey);
         assertEq(r.phase, uint8(LibVaipakam.StagingPhase.Staging));
         // 65 members left past the cursor → two pages → two cadences plus grace.
         assertEq(r.deadline, r.openedAt + 2 days + 3 days, "sized from the 65 left, not the 130 the day has seen");
@@ -778,7 +828,7 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         _liveFresh(1e18);
         uint256 poolBefore = _mut().poolAvailableRaw();
         _staging().reserveStagedDay(_key());
-        RewardEpochViewFacet.StagingRecordView memory r = _rec();
+        RewardStagingDomainFacet.StagingRecordView memory r = _rec();
         assertEq(r.phase, uint8(LibVaipakam.StagingPhase.Reserved));
         assertEq(_mut().rewardBudgetArmedFreshReservedRaw(), NEED - WIDE * TINY, "the delivered ledger holds the live fresh");
         assertEq(r.needUserFresh, NEED, "the day's need, priced");
@@ -801,7 +851,7 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         uint256 unclassifiedBefore = _row(LibVaipakam.RewardCustodyRow.Unclassified);
 
         assertFalse(_settle().resolveStagedDayPage(_key()), "page one: 64 of 65");
-        RewardEpochViewFacet.StagingRecordView memory r = _rec();
+        RewardStagingDomainFacet.StagingRecordView memory r = _rec();
         assertEq(r.phase, uint8(LibVaipakam.StagingPhase.Resolving), "irrevocable from the first page");
         assertEq(r.resolveCursor, 64, "sixty-four of the sixty-five consumed");
         assertEq(r.batchCount, WIDE, "the lifetime count stands; the cursor is the progress, and each batch was released as it was processed");
@@ -1153,7 +1203,7 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         }
         vm.warp(arrivedAt[64] + 100);
         assertEq(_claim(), 0);
-        RewardEpochViewFacet.StagingRecordView memory r = _rec();
+        RewardStagingDomainFacet.StagingRecordView memory r = _rec();
         assertEq(r.lateWorkBase, 70, "the chain's count at opening");
         // 135 members past the cursor, no late work: three pages.
         assertEq(r.deadline, r.openedAt + 3 days + 3 days);
@@ -1195,7 +1245,7 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
     ///      cadence took that call.
     function test_AForcedRestart_IsALeasePageOfItsOwn_HoweverSmall() public {
         _stagedAndScanned();
-        RewardEpochViewFacet.StagingRecordView memory r = _rec();
+        RewardStagingDomainFacet.StagingRecordView memory r = _rec();
         assertTrue(r.scanComplete, "fixture: nothing left to scan");
         assertEq(r.forcedPages, 0, "fixture: no forced page yet");
         uint64 leaseBefore = r.deadline;
@@ -1258,7 +1308,7 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         vm.stopPrank();
         _liveFresh(1e18);
         // The blocker is readable (Codex #2308 r16): 65 restorations unread.
-        RewardEpochViewFacet.StagingRecordView memory bv = _view().getStagingRecord(bobKey);
+        RewardStagingDomainFacet.StagingRecordView memory bv = _view().getStagingRecord(bobKey);
         assertEq(bv.restoredLogLength - bv.restoredSeen, 65, "the view names the unread restorations");
         // A2-ii: each restored batch carries a priority window; the record's
         // re-check stops at the first windowed restoration and leaves it
@@ -1290,9 +1340,13 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
     }
 
     /// @dev A claimant ALREADY flagged when resolution begins is not refused
-    ///      and not trapped: the record resolves and its share is forfeited
-    ///      (owner decision 2026-10-02). No pre-flight is needed — a forfeit
-    ///      cannot fail.
+    ///      and not trapped: the pages before the last resolve as for anyone,
+    ///      the last one HOLDS while the flag is unconfirmed (#1566 sanctions
+    ///      slice - the `while (!resolve) {}` this cell used would now spin
+    ///      forever on that hold), and the page that lands once the chain of
+    ///      observations spans the confirmation window forfeits the share and
+    ///      closes the record (owner decision 2026-10-02). No pre-flight is
+    ///      needed - a forfeit cannot fail.
     function test_AClaimantFlaggedBeforeResolution_ResolvesToAForfeit() public {
         _stagedAndScanned();
         _liveFresh(1e18);
@@ -1302,7 +1356,16 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         m.setFlagged(alice, true);
         ProfileFacet(address(diamond)).refreshSanctionsFlag(alice);
         uint256 aliceBefore = vpfi.balanceOf(alice);
-        while (!_settle().resolveStagedDayPage(_key())) {}
+        _holdThenConfirm();
+        vm.recordLogs();
+        assertTrue(_settle().resolveStagedDayPage(_key()), "the page at the window's end completes");
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 forfeitedTopic = keccak256("StagingClaimantForfeited(bytes32,address,uint256,uint256)");
+        bool announced;
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].topics.length != 0 && logs[i].topics[0] == forfeitedTopic) announced = true;
+        }
+        assertTrue(announced, "the share is forfeited by the record's own payout");
         assertEq(vpfi.balanceOf(alice), aliceBefore, "nothing delivered to the flagged wallet");
         assertEq(_rec().phase, uint8(LibVaipakam.StagingPhase.None), "the record closed");
     }
@@ -1350,7 +1413,7 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         _wideDay(true);
         uint256 bucketBefore = _bucket();
         assertEq(InteractionRewardsFacet(address(diamond)).sweepForfeitedInteractionRewards(LOAN), 0, "deferred: the wide day is staged, not swept short");
-        RewardEpochViewFacet.StagingRecordView memory r = _rec();
+        RewardStagingDomainFacet.StagingRecordView memory r = _rec();
         assertEq(r.phase, uint8(LibVaipakam.StagingPhase.Staging), "a record stands");
         assertEq(r.op, uint8(LibVaipakam.StagingOp.Forfeit), "under the forfeit's own commitment");
         _staging().prepareStagedDay(_key());
@@ -1458,7 +1521,7 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         uint256 bucketBefore = _bucket();
         assertEq(sweep.sweepExpiredInteractionRewards(ids), 0, "day 2 is wide: staged, not swept short");
         bytes32 key2 = keccak256(abi.encode(alice, LibVaipakam.RewardSide.Lender, uint256(2)));
-        RewardEpochViewFacet.StagingRecordView memory r = _view().getStagingRecord(key2);
+        RewardStagingDomainFacet.StagingRecordView memory r = _view().getStagingRecord(key2);
         assertEq(r.phase, uint8(LibVaipakam.StagingPhase.Staging), "a record stands on day 2");
         assertEq(r.op, uint8(LibVaipakam.StagingOp.Expiry), "under the expiry's own commitment");
         _staging().prepareStagedDay(key2);
@@ -1526,7 +1589,7 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         _mut().setRewardEntryForfeitedRaw(id);
         _mut().setLoanActiveLenderEntryId(LOAN, id);
         assertEq(InteractionRewardsFacet(address(diamond)).sweepForfeitedInteractionRewards(LOAN), 0, "deferred on the claim's record");
-        RewardEpochViewFacet.StagingRecordView memory r = _rec();
+        RewardStagingDomainFacet.StagingRecordView memory r = _rec();
         assertEq(r.op, uint8(LibVaipakam.StagingOp.Claim), "the claim's record stands, unchanged");
         assertEq(r.phase, uint8(LibVaipakam.StagingPhase.Staging));
     }
@@ -1562,7 +1625,7 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
 
     function test_TheView_PagesTheRecordsEntriesAndPending() public {
         (, uint256 id) = _scene2Typed();
-        RewardEpochViewFacet.StagingRecordView memory r = _rec();
+        RewardStagingDomainFacet.StagingRecordView memory r = _rec();
         assertEq(r.entryCount, 1);
         (uint256[] memory eids, uint256[] memory amounts, bool[] memory chargeable) = _view().getStagingRecordEntries(_key(), 0, 10);
         assertEq(eids.length, 1); assertEq(eids[0], id);
@@ -1587,7 +1650,7 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         vm.prank(alice);
         (uint256 paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(LibVaipakam.RewardDelivery.Wallet);
         assertEq(paid, 0);
-        RewardEpochViewFacet.StagingRecordView memory r = _rec();
+        RewardStagingDomainFacet.StagingRecordView memory r = _rec();
         assertTrue(r.venueSet, "the explicit venue is bound at opening");
         assertEq(r.venue, uint8(LibVaipakam.RewardDelivery.Wallet));
         _staging().prepareStagedDay(_key());
@@ -1833,7 +1896,7 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         _staging().prepareStagedDay(bobKey); // bob's one reservation on hs[0]
         assertTrue(_view().isTransportBatchPriorityUsed(hs[0], bobKey));
         // Bob unwinds: the batch returns, a new window opens, bob is out.
-        RewardEpochViewFacet.StagingRecordView memory br = _view().getStagingRecord(bobKey);
+        RewardStagingDomainFacet.StagingRecordView memory br = _view().getStagingRecord(bobKey);
         vm.warp(uint256(br.deadline) + 1);
         while (!_settle().unwindStagedDayPage(bobKey)) {}
         (uint64 closesAt2, bytes32 oldest, , bool open) = _window(hs[0]);

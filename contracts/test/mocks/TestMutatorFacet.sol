@@ -2333,6 +2333,22 @@ contract TestMutatorFacet {
         return LibVaipakam.storageSlot().rewardEntries[id].expiryBegun;
     }
 
+    /// @notice #1566 sanctions reward-forfeit slice test-only - set or lift an
+    ///         entry's REMOVAL POINT (`expiryBegun`) directly. The production
+    ///         writer is the expiry sweep's first crediting chunk, reachable
+    ///         only after a full horizon-plus-notice of executable time; the
+    ///         sanctions suite needs the flag itself, to show the owner sweep
+    ///         leaves a removed entry to the expiry route (T9), and lifted for
+    ///         one call, to isolate the Expiry-record stamp blocker from the
+    ///         removal-point one (T11b). Bumps the claimant-side lifecycle
+    ///         version as the real transition does, so a staging domain reads
+    ///         the change instead of a silently edited entry.
+    function setRewardEntryExpiryBegunRaw(uint256 id, bool begun) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.rewardEntries[id].expiryBegun = begun;
+        LibInteractionRewards.noteEntryLifecycle(s, s.rewardEntries[id]);
+    }
+
     /// @notice Pre-merge review 2026-08-17 test-only — the aggregate uncapped
     ///         pending the claim-executable gates measure, so a test can
     ///         assert a REMOVED entry no longer inflates it.
@@ -2785,12 +2801,6 @@ contract TestMutatorFacet {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         s.isAggregatorAdapter[adapter] = true;
         s.adapterOperator[adapter] = operator;
-    }
-
-    /// @dev #1566 PR 1 re-review (B-N1) — mark an entry's expiry begun, as the
-    ///      expiry sweep does at the removal point.
-    function setRewardEntryExpiryBegunRaw(uint256 id, bool begun) external {
-        LibVaipakam.storageSlot().rewardEntries[id].expiryBegun = begun;
     }
 
     /// @dev #1566 PR 1 re-review (C-1) — set the in-holder re-credit tally.

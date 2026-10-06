@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity 0.8.29;
 
+import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 
@@ -29,6 +30,12 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
  *      the Diamond's (the `completeOffsetInternal` shape). The legs the walk
  *      folds are returned and copied back by the seam, so the facade's struct
  *      reads as the inlined walk left it.
+ *
+ *      #1566 sanctions slice — the owner forfeit sweep
+ *      (`RewardHorizonSweepFacet.forfeitFlaggedOwnerRewards`) settles through
+ *      {epochForfeitEntryChunk}, the SAME evented chunk the loan sweep's three
+ *      sites call, so the two forfeit routes price, bound, settle and announce
+ *      a chunk by one body.
  */
 contract RewardForfeitWalkFacet is IVaipakamErrors {
     function epochSweepForfeitedByLoanId(
@@ -74,6 +81,39 @@ contract RewardForfeitWalkFacet is IVaipakamErrors {
         _requireDiamondInternal();
         (retired, expired, freshCredited, armedDelivered) =
             LibInteractionRewards.retireZeroPricedRemainder(id, freshHeadroom, deliveredAllowance, tp);
+        legs = tp;
+    }
+
+    /// @notice #1566 sanctions slice — ONE forfeited entry's settlement chunk for the
+    ///         owner forfeit sweep ({RewardHorizonSweepFacet.forfeitFlaggedOwnerRewards}),
+    ///         reached by Diamond self-call
+    ///         ({LibInteractionRewards.callForfeitEntryChunkWalk}); gated.
+    /// @dev    Hosted here because this facet already carries the forfeit chunk and its
+    ///         day primitive for the loan sweep: the owner sweep reuses
+    ///         {LibInteractionRewards.forfeitEntryChunkEvented} rather than inlining a
+    ///         second copy onto the sweep facet. That wrapper refuses an entry that is
+    ///         not forfeited (zeros, nothing moved), so no self-call can route a live
+    ///         entry's value to the bucket, and it announces every moved chunk with
+    ///         `RewardEntryForfeitSettled`. Diamond-internal and unguarded for the
+    ///         reasons the contract header gives; the legs are returned for the seam.
+    function epochForfeitEntryChunk(
+        uint256 id,
+        uint256 freshHeadroom,
+        uint256 deliveredAllowance,
+        LibInteractionRewards.TransportLegs memory tp
+    )
+        external
+        returns (
+            uint256 freshCredited,
+            uint256 recycledReleased,
+            uint256 armedOwed,
+            uint256 armedDelivered,
+            LibInteractionRewards.TransportLegs memory legs
+        )
+    {
+        _requireDiamondInternal();
+        (freshCredited, recycledReleased, armedOwed, armedDelivered) = LibInteractionRewards
+            .forfeitEntryChunkEvented(LibVaipakam.storageSlot(), id, freshHeadroom, deliveredAllowance, tp);
         legs = tp;
     }
 

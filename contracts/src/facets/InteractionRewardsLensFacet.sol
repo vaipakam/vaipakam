@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {LibVpfiRecycle} from "../libraries/LibVpfiRecycle.sol";
+import {LibRewardSanctions} from "../libraries/LibRewardSanctions.sol";
 
 /**
  * @title InteractionRewardsLensFacet
@@ -29,7 +30,12 @@ import {LibVpfiRecycle} from "../libraries/LibVpfiRecycle.sol";
  *      pausable guards, and no token movement. The one cross-facet READ is
  *      #1944's delivery-gate staticcall
  *      ({RewardRemittanceLensFacet.dayAwaitsFreshDelivery}), reached through
- *      the window clamp on a gate-armed mirror only.
+ *      the window clamp on a gate-armed mirror only. The one EXTERNAL read
+ *      beyond storage is the sanctions oracle (at most two staticcalls per
+ *      read): {getRewardSanctionsStatus} reaches it through the classifier,
+ *      exactly as the writing observation does, and {getRewardEntryExpiry}
+ *      through the countdown's barred-screen mirror
+ *      ({LibVaipakam.isRecipientBarred}).
  */
 contract InteractionRewardsLensFacet {
     // ─── Public views ────────────────────────────────────────────────────────
@@ -468,7 +474,11 @@ contract InteractionRewardsLensFacet {
     /// @return expiresAt        Earliest terminal-removal instant ASSUMING
     ///         the entry stays continuously claim-executable and observed
     ///         from now (0 = dark or unstarted). A forward estimate, not a
-    ///         fixed deadline: a funding outage or sanction pauses accrual.
+    ///         fixed deadline: a funding outage or a sanctions bar (the owner
+    ///         flagged, or carrying a committed flag (the #1123 marker) while
+    ///         the oracle is unreachable) pauses accrual. A FORFEITED entry reads
+    ///         0: it never expires — the forfeit sweeps settle it into the
+    ///         recycle bucket.
     function getRewardEntryExpiry(uint256 entryId)
         external
         view
@@ -497,6 +507,94 @@ contract InteractionRewardsLensFacet {
         returns (bool)
     {
         return LibInteractionRewards._claimTransferable(LibVaipakam.storageSlot(), user, need);
+    }
+
+    // ─── #1566 sanctions slice — the reward forfeit rule's reads ─────────────
+
+    /// @notice #1566 sanctions slice — where `who` stands under the reward forfeit
+    ///         rule: what {RewardHorizonSweepFacet.forfeitFlaggedOwnerRewards} would
+    ///         decide if it observed now, and the chain a keeper must keep alive.
+    /// @dev    Reads the ONE classifier ({LibRewardSanctions.decide}: the writing
+    ///         observation's predicates, no writes), so this view and the sweep
+    ///         cannot disagree. A view records nothing: a Hold one observation short
+    ///         of Forfeit stays Hold here until someone calls the sweep or
+    ///         {RewardHorizonSweepFacet.recordRewardSanctionsEvidence}. The deadlines
+    ///         are derived from the classifier's two constants, never restated.
+    /// @param  who The wallet to classify.
+    /// @return decision       0 Deliver, 1 Hold, 2 Forfeit.
+    /// @return flaggedAt      Start of the observation chain, as `decide` reports it
+    ///                        (0 = none).
+    /// @return lastSeenAt     Latest Flagged observation of the chain (0 = none).
+    /// @return forfeitableAt  `flaggedAt + CONFIRM_SECS`: the earliest instant the
+    ///                        chain can confirm (0 = no chain).
+    /// @return observeBy      `lastSeenAt + MAX_OBS_GAP_SECS`: the chain breaks, and
+    ///                        the window restarts, unless it is observed again by then
+    ///                        — a keeper's deadline (0 = no chain).
+    /// @return evidenceOracle The oracle the stored evidence was recorded under; a
+    ///                        different live oracle restarts the window.
+    /// @return marker         The committed flag (the #1123 marker,
+    ///                        `sanctionsConfirmedFlagged`): the outage backstop, one read,
+    ///                        no time — not the confirmed observation chain.
+    function getRewardSanctionsStatus(address who)
+        external
+        view
+        returns (
+            uint8 decision,
+            uint64 flaggedAt,
+            uint64 lastSeenAt,
+            uint64 forfeitableAt,
+            uint64 observeBy,
+            address evidenceOracle,
+            bool marker
+        )
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibRewardSanctions.Decision d;
+        (d, flaggedAt, lastSeenAt) = LibRewardSanctions.decide(s, who);
+        decision = uint8(d);
+        if (flaggedAt != 0) forfeitableAt = uint64(uint256(flaggedAt) + LibRewardSanctions.CONFIRM_SECS);
+        if (lastSeenAt != 0) observeBy = uint64(uint256(lastSeenAt) + LibRewardSanctions.MAX_OBS_GAP_SECS);
+        (evidenceOracle, , ) = LibRewardSanctions.unpackEvidence(s.rewardSanctionsEvidence[who]);
+        marker = s.sanctionsConfirmedFlagged[who];
+    }
+
+    /// @notice #1566 sanctions slice — a page of `owner`'s reward entries the owner
+    ///         forfeit sweep's STAMP would mark forfeited at this state, should
+    ///         `owner` be confirmed.
+    /// @dev    Filters with {LibInteractionRewards.sanctionsStampBlocker}, the very
+    ///         function the stamp gates on, so the listed ids are exactly the ids a
+    ///         sweep at this state stamps — there is no second copy of the
+    ///         eligibility rule to drift. INDEPENDENT of the owner's verdict (pair it
+    ///         with {getRewardSanctionsStatus}); it lists nothing already forfeited,
+    ///         because such an entry is settled by the sweep, never stamped again.
+    ///         Scans at most `max` ids of the owner's list from index `from`,
+    ///         clamped to 500 for RPC-node friendliness — callers page.
+    /// @param  owner The wallet whose entries are screened.
+    /// @param  from  First index into {getUserRewardEntryIds}`(owner)`.
+    /// @param  max   Ids to scan, clamped to 500.
+    /// @return ids   Stampable entry ids among those scanned, in list order.
+    /// @return next  The index to resume from; at or past the list length when done.
+    function getSanctionsForfeitableRewardEntries(address owner, uint256 from, uint256 max)
+        external
+        view
+        returns (uint256[] memory ids, uint256 next)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256[] storage all = s.userRewardEntryIds[owner];
+        uint256 end = all.length;
+        if (max > 500) max = 500;
+        if (from >= end) end = from;
+        else if (end - from > max) end = from + max;
+        ids = new uint256[](end - from);
+        uint256 k;
+        for (uint256 i = from; i < end; ++i) {
+            uint256 id = all[i];
+            if (LibInteractionRewards.sanctionsStampBlocker(s, id, owner) == 0) ids[k++] = id;
+        }
+        assembly ("memory-safe") {
+            mstore(ids, k)
+        }
+        next = end;
     }
 
     // ─── #1218 M5 — recycling transparency series ────────────────────────────

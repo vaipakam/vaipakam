@@ -179,9 +179,13 @@ for the following platform areas:
   creation, offer modification, and match materialization.
 - Fee rates are snapshotted at loan origination. Later governance changes do
   not rewrite the economics of an already-open loan.
-- Sanctioned proceeds are frozen, not seized. Must-complete close-outs continue
-  so clean counterparties can be made whole, but spendable value is not released
-  to a confirmed sanctioned holder until that holder is proven clean.
+- Sanctioned loan proceeds are frozen, not seized. Must-complete close-outs
+  continue so clean counterparties can be made whole, but spendable loan value
+  is not released to a sanctioned holder carrying a committed flag (the #1123
+  marker) until that holder is proven clean. Protocol interaction rewards are the one exception: reward VPFI not yet
+  delivered to a wallet whose flag is confirmed is forfeited into the recycle
+  bucket, each forfeit recorded on-chain; reward already in that wallet's vault
+  stays frozen with everything else there.
 - Fallback-pending loans are active for dashboard and operator purposes because
   they can still be cured or rescued before final fallback claim.
 

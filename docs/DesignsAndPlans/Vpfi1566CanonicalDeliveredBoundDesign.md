@@ -7279,8 +7279,8 @@ on the live era alone.
 >   side pay out). Until then every batch listing its days waits with it;
 > - **the entry's owner sanctioned** — the claim refuses them and the
 >   expiry clock does not advance while they are flagged, so the entry
->   can stand for as long as the flag does, and nothing the platform
->   controls clears it.
+>   can stand until the flag is confirmed; a confirmed flag's entry is
+>   then forfeited by the permissionless owner sweep (resolution below).
 >
 > While any of these holds, every batch listing that day is unparkable,
 > and therefore unclassifiable and unrepatriable: the value stays
@@ -7296,6 +7296,21 @@ on the live era alone.
 > day closed over entries blocked ONLY by a sanctions flag, with the
 > write-off recorded — which is the kind of machine-bypass B otherwise
 > exists to remove. B proceeds on the first absent a different answer.
+>
+> **Resolved (owner 2026-10-02, #1566 sanctions reward forfeit):**
+> neither answer is taken. Interaction reward not yet delivered to a
+> wallet whose flag is CONFIRMED — authoritative oracle reads across a
+> three-day window with no gap over one day, under the same oracle —
+> is forfeited into the recycle bucket as forfeited reward by a
+> permissionless owner sweep. Its stamp records the entry where the
+> permissionless per-loan forfeit sweep reads it, so after a stamp the
+> loan sweep, run by any caller, is the guaranteed settle path whatever
+> the owner's later status or the oracle setting; the entry terminates
+> and stops holding the day: there is no indefinite hold and no operator
+> write-off. Until the flag is confirmed (and, for an entry whose loan
+> is still open or awaiting its fallback resolution, until the loan
+> resolves) the entry still holds the day, as above. Reward already in
+> the vault stays frozen; loan value is untouched.
 >
 > Owner questions carried, unchanged: may 3b-ii-A defer CONTESTED
 > allocations to 3c (the plan recommends yes, and A is written that way);
@@ -7513,7 +7528,12 @@ on the live era alone.
 > named exception above, an operator stamping a day closed over an entry
 > blocked only by a sanctions flag, with the write-off recorded. That is
 > an owner question; B proceeds WITHOUT the exception, and without it
-> offers no replacement funding at all. Where the exception is taken, the
+> offers no replacement funding at all. **Since resolved (owner
+> 2026-10-02):** the exception is not taken — a confirmed flag forfeits
+> the entry instead (the sanctioned-owner resolution above) — so
+> replacement funding has lost its only named case and B carries none;
+> the rest of this paragraph is kept as the record of the alternative.
+> Where the exception is taken, the
 > write-off record is the consumer: it names the claimant, the day and
 > the two legs written off, and a replacement transfer "clears the
 > disposition by amount" by stepping that record's outstanding figure
@@ -8031,9 +8051,13 @@ closure 2's cutover PR.**
 >    and no longer holds a neighbour; their ENTRY still stands, and
 >    whether B may stamp such a day closed over it with a write-off
 >    recorded remains the owner's question for B, unchanged.
+>    **Resolved (owner 2026-10-02):** a confirmed flag forfeits the
+>    entry through the permissionless owner sweep, so the ENTRY half
+>    closes too; no stamp-closed-with-write-off exception is taken.
 > 6. **Replacement funding.** Exists only for that exception's recorded
 >    surviving liability, consumed by the write-off record and never by a
->    draw. A2 changes nothing here; a replacement packet is never staged
+>    draw (resolved with item 5: the exception is not taken, so there is
+>    none). A2 changes nothing here; a replacement packet is never staged
 >    against.
 > 7. **The split's flexible-leg tie (#2296 item 1).** A1's split spends
 >    in plan order with the suffix reservation; its remaining tie sends
@@ -8295,11 +8319,21 @@ closure 2's cutover PR.**
 >   the two does not trap the record (r2 P1: a refused payout after
 >   earlier pages consumed counters and released references would leave
 >   a record that can be neither finished nor unwound). The last page
->   delivers the user figures into the claimant's vault under the
->   freeze-at-source lock the sanctions path already applies to
->   proceeds, the treasury figures as usual, and persists the day — the
->   Tier-2 shape: the close-out completes, the flagged party's value is
->   locked, nothing is refused mid-walk.
+>   pays a claimant whose flag is confirmed nothing: the user figures
+>   join the day's treasury forfeit legs into the recycle bucket as
+>   forfeited reward (`StagingClaimantForfeited`), no loan-side cap, no
+>   venue; while the flag is unconfirmed, or the oracle is down for a
+>   holder of a committed flag (the #1123 marker), a page with a user share waits — bounded by the
+>   confirmation window or the outage (owner 2026-10-02). "Confirmed" is
+>   the chained-observation rule the owner forfeit sweep uses: the flag
+>   observed by authoritative reads across a three-day window with no
+>   gap over one day, under the same oracle, so the window bounds the
+>   wait only while someone observes at least once per gap. A waiting
+>   page records only the observation, pays and retires nothing, and is
+>   retried, so the record is never trapped
+>   and nothing is refused mid-walk; a delisting before the window
+>   completes pays the claimant, and a page with no user share never
+>   waits.
 > - **Deadline, unwind, cooldown, priority.** A record in staging carries
 >   a deadline derived from the WORK the day needs, not a fixed multiple
 >   of the retry cadence (r2 P1: a day spread across more batches than a
@@ -8432,7 +8466,9 @@ closure 2's cutover PR.**
 >
 > *What A2 does not do.* It does not reorder or displace allocations
 > (3c), close out a batch (B), or change the wire (3d). It does not decide
-> the sanctions exception (B). It does not resolve first-caller-wins for
+> the sanctions exception (B); the owner has since resolved it
+> (2026-10-02): a confirmed flag forfeits, and no exception is taken.
+> It does not resolve first-caller-wins for
 > an unprepared obligation, and it resolves the cross-chunk case only by
 > keeping multi-chunk decisions staged and challengeable, not by
 > reallocating them. It does not touch the split's reservation, the
@@ -8449,7 +8485,8 @@ closure 2's cutover PR.**
 > balance, so staging five of ten leaves five available; an untyped
 > batch refuses staging and accepts a one-call draw, and its attestation
 > asserts no staged component; a claimant flagged between pages is
-> paid into the frozen vault and the record completes; the deadline
+> forfeited once confirmed and the record completes (until then the
+> last page waits, retiring nothing); the deadline
 > grows with the day's list and never by the stager's action; a stale
 > queue prefix longer than one budget is cleared across calls; the
 > mutating seam reverts for any caller but the Diamond; a multi-chunk

@@ -38,8 +38,12 @@ contract RewardStagingSettleFacet is DiamondReentrancyGuard, DiamondPausable, IV
 
     /// @notice Permissionless: one page of resolution. The first page makes the
     ///         record irrevocable; the page that consumes its last batch pays
-    ///         the day and closes the record.
-    /// @return done Whether the record was paid and closed by this page.
+    ///         the day and closes the record - unless the #1566 sanctions screen
+    ///         HOLDS a claimant payout (`LibRewardStaging._pay`): that page then
+    ///         pays nothing, the record stays Resolving, and a later page retries
+    ///         the payout alone.
+    /// @return done Whether the record was paid and closed by this page (false
+    ///         on a held last page).
     function resolveStagedDayPage(bytes32 key) external nonReentrant whenNotPaused returns (bool done) {
         return LibRewardStaging.resolvePage(LibVaipakam.storageSlot(), key);
     }

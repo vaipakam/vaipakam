@@ -2203,10 +2203,12 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](2);
+        selectors = new bytes4[](4);
         selectors[0] =
             RewardHorizonSweepFacet.sweepExpiredInteractionRewards.selector;
         selectors[1] = RewardHorizonSweepFacet.retireZeroPricedRemainders.selector; // 3b-ii-B (B-6)
+        selectors[2] = RewardHorizonSweepFacet.forfeitFlaggedOwnerRewards.selector; // #1566 sanctions slice
+        selectors[3] = RewardHorizonSweepFacet.recordRewardSanctionsEvidence.selector; // #1566 sanctions slice
         return selectors;
     }
 
@@ -2219,7 +2221,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](23);
+        selectors = new bytes4[](25);
         selectors[0] = InteractionRewardsLensFacet.getInteractionLaunchTimestamp.selector;
         selectors[1] = InteractionRewardsLensFacet.getInteractionCurrentDay.selector;
         selectors[2] = InteractionRewardsLensFacet.getInteractionAnnualRateBps.selector;
@@ -2248,6 +2250,9 @@ contract HelperTest {
         selectors[21] = InteractionRewardsLensFacet.getLoanSideRewardReserved.selector;
         // #1944 — the expiry sweep's transfer test, self-staticcalled (host split).
         selectors[22] = InteractionRewardsLensFacet.claimTransferable.selector;
+        // #1566 sanctions slice — the forfeit rule's status and the stampable-entry page.
+        selectors[23] = InteractionRewardsLensFacet.getRewardSanctionsStatus.selector;
+        selectors[24] = InteractionRewardsLensFacet.getSanctionsForfeitableRewardEntries.selector;
         return selectors;
     }
 
@@ -2608,18 +2613,13 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](10);
-        selectors[0] = RewardEpochViewFacet.getStagingRecord.selector;
-        selectors[1] = RewardEpochViewFacet.getStagingRecordBatches.selector;
-        selectors[2] = RewardEpochViewFacet.getStagingRecordEntries.selector;
-        selectors[3] = RewardEpochViewFacet.getStagingRecordPending.selector;
-        selectors[4] = RewardEpochViewFacet.getTransportBatchWindow.selector; // A2-ii
-        selectors[9] = RewardEpochViewFacet.isTransportBatchPriorityUsed.selector; // A2-ii
-        selectors[5] = RewardEpochViewFacet.getStagingEncumberedCount.selector;
+        // #1566 sanctions slice — the staging records' reads moved to
+        // RewardStagingDomainFacet (host split).
+        selectors = new bytes4[](3);
         // A2-iii — the static armed-need reads, hosted here (EIP-170).
-        selectors[6] = RewardEpochViewFacet.getUserArmedFreshNeed.selector;
-        selectors[7] = RewardEpochViewFacet.getUserArmedFreshNeedWithLegs.selector;
-        selectors[8] = RewardEpochViewFacet.getRewardEntryArmedNeed.selector;
+        selectors[0] = RewardEpochViewFacet.getUserArmedFreshNeed.selector;
+        selectors[1] = RewardEpochViewFacet.getUserArmedFreshNeedWithLegs.selector;
+        selectors[2] = RewardEpochViewFacet.getRewardEntryArmedNeed.selector;
     }
 
     /// 3b-ii-A2 (#2305) — the claim's entry walk, hosted. Mirrors
@@ -2706,7 +2706,7 @@ contract HelperTest {
     /// 3b-ii-A2-ii (#2305) — the domain lifecycle entries. Mirrors
     /// `DeployDiamond._getRewardStagingDomainSelectors`.
     function getRewardStagingDomainFacetSelectors() public pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](9);
+        selectors = new bytes4[](16);
         selectors[0] = RewardStagingDomainFacet.reserveDomainPage.selector;
         selectors[1] = RewardStagingDomainFacet.resolveDomainPage.selector;
         selectors[2] = RewardStagingDomainFacet.unwindDomainPage.selector;
@@ -2716,6 +2716,14 @@ contract HelperTest {
         selectors[6] = RewardStagingDomainFacet.getLegacySliceDomain.selector; // A2-ii (c)
         selectors[7] = RewardStagingDomainFacet.legacySliceEpochsInternal.selector; // A2-ii (c): the hosted gate (Diamond-gated)
         selectors[8] = RewardStagingDomainFacet.legacySliceSettledInternal.selector; // A2-ii (c): the hosted settle (Diamond-gated)
+        // The staging records' reads, hosted here since the #1566 sanctions slice.
+        selectors[9] = RewardStagingDomainFacet.getStagingRecord.selector;
+        selectors[10] = RewardStagingDomainFacet.getStagingRecordBatches.selector;
+        selectors[11] = RewardStagingDomainFacet.getStagingRecordEntries.selector;
+        selectors[12] = RewardStagingDomainFacet.getStagingRecordPending.selector;
+        selectors[13] = RewardStagingDomainFacet.getTransportBatchWindow.selector; // A2-ii
+        selectors[14] = RewardStagingDomainFacet.isTransportBatchPriorityUsed.selector; // A2-ii
+        selectors[15] = RewardStagingDomainFacet.getStagingEncumberedCount.selector;
     }
 
     function getRewardStagingSettleFacetSelectors()
@@ -2763,9 +2771,10 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](2);
+        selectors = new bytes4[](3);
         selectors[0] = RewardForfeitWalkFacet.epochSweepForfeitedByLoanId.selector;
         selectors[1] = RewardForfeitWalkFacet.epochRetireZeroPricedRemainder.selector; // 3b-ii-B (B-6)
+        selectors[2] = RewardForfeitWalkFacet.epochForfeitEntryChunk.selector; // #1566 sanctions slice
     }
 
     /// #1434 P2-w4 — the remittance read surface (lens split). Mirrors

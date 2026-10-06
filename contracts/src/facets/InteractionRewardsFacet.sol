@@ -167,8 +167,11 @@ contract InteractionRewardsFacet is
         // leg it drew is treasury's — the user legs are folded in so a set
         // that ever carried them would be absorbed rather than dropped. The
         // three operations are hosted on the epoch facet
-        // ({epochSettleLegs}): this facet sits within 100 bytes of
-        // EIP-170 with them inlined.
+        // ({epochSettleLegs}): this facet sat within 100 bytes of EIP-170
+        // with them inlined when they moved. It has since shed its entry
+        // walk to `RewardForfeitWalkFacet` and measures about 9 KB (8,953 B
+        // at the #1566 sanctions slice); the legs stay hosted because every
+        // close-out shares that one implementation, not for room.
         uint256 epochFresh = tp.treasuryFresh + tp.userFresh;
         uint256 eraFresh = tp.treasuryEraFresh + tp.userEraFresh; // PR C-2: era-funded, absorbed by the hosted settle with no bound charge
         LibRewardCustody.callSettleLegs(

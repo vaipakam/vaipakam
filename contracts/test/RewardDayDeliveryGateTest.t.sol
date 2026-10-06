@@ -1293,7 +1293,7 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
 
     /// @dev The phase of alice's lender staging record for day `d`.
     function _recordPhase(uint256 d) internal view returns (uint8) {
-        return RewardEpochViewFacet(address(diamond)).getStagingRecord(
+        return RewardStagingDomainFacet(address(diamond)).getStagingRecord(
             LibRewardCustody.stagingKey(alice, LibVaipakam.RewardSide.Lender, d)
         ).phase;
     }

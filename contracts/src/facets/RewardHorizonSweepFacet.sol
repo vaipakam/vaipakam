@@ -9,6 +9,7 @@ import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {LibRewardCustody} from "../libraries/LibRewardCustody.sol";
+import {LibRewardSanctions} from "../libraries/LibRewardSanctions.sol";
 
 /**
  * @title  RewardHorizonSweepFacet
@@ -40,6 +41,29 @@ import {LibRewardCustody} from "../libraries/LibRewardCustody.sol";
  *      The 4-byte selector is unchanged throughout, so on-chain callers at the
  *      Diamond address are unaffected; only the per-facet ABI json and the
  *      deploy wiring move.
+ *
+ *      #1566 sanctions slice — the OWNER forfeit sweep
+ *      ({forfeitFlaggedOwnerRewards}) and the sanctions evidence host
+ *      ({recordRewardSanctionsEvidence}) live here too. The owner sweep shares
+ *      this facet's budgets and its ONE post-loop settle ({_settleSweepTotals},
+ *      now parameterised by recycle source), so an expiry, a retirement and a
+ *      sanctions forfeit book the same rows by one body. The evidence host is
+ *      the self-call target `LibRewardStaging._pay` screens a staged claim
+ *      through, so the classifier's writes are hosted once, here, instead of
+ *      inlined into the staging settle facet. Refresh this facet together with
+ *      `RewardStagingSettleFacet`, `RewardForfeitWalkFacet` and
+ *      `RewardSweepWalkFacet` — a settle facet refreshed without the evidence
+ *      host reverts every Claim-op last page that carries a user share, and
+ *      the owner sweep without the hosted chunk reverts on its first settle.
+ *      The expiry walk no longer screens sanctions itself: its barred-owner
+ *      test moved into the seam inlined HERE (`_barredObservation`, at the
+ *      head of `LibInteractionRewards.callSweepExpiredEntryWalk`). A new walk
+ *      facet behind an old copy of this one screens on neither side, so a
+ *      barred owner's expiry clock would run while the claim gate refuses
+ *      them and their entries could expire into the bucket. That breaks the
+ *      clock's rule that nothing is reaped while its claimant cannot claim,
+ *      and it hits an unconfirmed (Hold) owner who is later delisted. The
+ *      walk is therefore never refreshed without this facet.
  */
 contract RewardHorizonSweepFacet is
     DiamondAccessControl,
@@ -47,6 +71,27 @@ contract RewardHorizonSweepFacet is
     DiamondPausable,
     IVaipakamErrors
 {
+    /// @notice Declared for the exported ABI: `LibInteractionRewards.forfeitEntryChunkEvented`
+    ///         emits it on `RewardForfeitWalkFacet` (Diamond-internal, outside the
+    ///         exported ABI set) for every settled chunk of BOTH forfeit sweeps, the
+    ///         owner sweep here and the per-loan sweep. Without this declaration no
+    ///         consumer ABI (DIAMOND_ABI, or the indexer EVENT_ABI derived from it) can
+    ///         decode the per-entry settlement row. Same signature as the library event.
+    /// @dev    UNTRIMMED FORFEIT PRICING: `fresh` / `recycledReleased` are the forfeit
+    ///         route's pricing of the entry's day, which the loan-side reward cap never
+    ///         binds (a forfeit pays no side), so they can exceed what the same day would
+    ///         have paid the owner as a claim. This row is per-entry PROVENANCE, not the
+    ///         ledger: reconcile amounts from `VpfiRecycled` (source `ForfeitedReward`)
+    ///         and the custody-row events, never from this.
+    /// @custom:event-category state-change/reward-claim
+    event RewardEntryForfeitSettled(
+        uint256 indexed entryId,
+        address indexed user,
+        uint256 indexed loanId,
+        uint256 fresh,
+        uint256 recycledReleased
+    );
+
     /**
      * @notice RL-3 (#1305, ratified §10.2; Codex #1317 r7) — permissionless
      *         claim-horizon sweep. For each entry it advances an
@@ -181,7 +226,12 @@ contract RewardHorizonSweepFacet is
             ) = LibInteractionRewards.callSweepExpiredEntryWalk(
                 entryIds[i], headroom, allowance, tp
             );
-            headroom -= freshCredited;
+            // #1566 sanctions slice (S3-A3) — FLOORED: a chunk reports its live
+            // credit PLUS the epoch-funded leg riding on top of it, so the figure
+            // can exceed the headroom it was handed, and an unfloored subtraction
+            // panicked (0x11) the whole permissionless batch. The 69M cap itself is
+            // still enforced inside the engine; this is only the running budget.
+            headroom = headroom > freshCredited ? headroom - freshCredited : 0;
             // #1566 closure 2 — the allowance depletes by the FRESH credited,
             // legacy and armed alike: that is exactly what the reward
             // operation charges against the delivered ledger below. (Codex
@@ -230,18 +280,23 @@ contract RewardHorizonSweepFacet is
         // The comment below already promised this retirement happens "even
         // when the pool cap truncated the creditable fresh". This is the
         // guard that was contradicting it.
-        expiredTotal = _settleSweepTotals(s, paidOut, t, tp);
+        expiredTotal = _settleSweepTotals(s, paidOut, t, tp, LibVpfiRecycle.RecycleSource.ExpiredReward);
     }
 
-    /// @dev The sweep's post-loop settle: the pool reservation check, the paid-out
-    ///      and armed-commitment bookkeeping, and the one leg settle under the
-    ///      expired-reward source. (The retirement, B-6, settles its own: it draws
-    ///      and credits nothing.)
+    /// @dev The sweeps' post-loop settle, shared by the expiry sweep and the owner
+    ///      forfeit sweep (#1566 sanctions slice): the pool reservation check, the
+    ///      paid-out and armed-commitment bookkeeping, and the one leg settle under
+    ///      `source` — `ExpiredReward` for an expiry, `ForfeitedReward` for a
+    ///      forfeit. The source is a PARAMETER rather than a second copy of this
+    ///      body, so the close-outs cannot drift in how they book the same pool,
+    ///      commitment and leg rows; refId is 0 (each pass spans loans). (The
+    ///      retirement, B-6, settles its own: it draws and credits nothing.)
     function _settleSweepTotals(
         LibVaipakam.Storage storage s,
         uint256 paidOut,
         SweepTotals memory t,
-        LibInteractionRewards.TransportLegs memory tp
+        LibInteractionRewards.TransportLegs memory tp,
+        LibVpfiRecycle.RecycleSource source
     ) private returns (uint256 total) {
         if (t.fresh + t.recycled == 0 && t.armedFresh == 0) return 0;
 
@@ -275,11 +330,12 @@ contract RewardHorizonSweepFacet is
         uint256 epochFresh = tp.treasuryFresh + tp.userFresh;
         uint256 eraFresh = tp.treasuryEraFresh + tp.userEraFresh; // PR C-2: era-funded, absorbed by the hosted settle with no bound charge
         // ONE leg settle for every close-out (A2-ii): the live-funded fresh
-        // absorbed as expired reward, the epoch-funded legs recycled in
+        // absorbed under the caller's source (expired or forfeited reward),
+        // the epoch-funded legs recycled in
         // place, the recycled commitment released — the same implementation
         // the forfeit, the claim and a staged expiry day's payout use.
         LibRewardCustody.callSettleLegs(
-            uint8(LibVpfiRecycle.RecycleSource.ExpiredReward),
+            uint8(source),
             t.fresh > epochFresh + eraFresh ? t.fresh - epochFresh - eraFresh : 0,
             epochFresh + tp.treasuryRecycled + tp.userRecycled,
             t.recycled,
@@ -350,5 +406,239 @@ contract RewardHorizonSweepFacet is
             uint8(LibVpfiRecycle.RecycleSource.ForfeitedReward), 0, 0, t.recycled, 0, 0, 0
         );
         settledTotal = t.armedFresh + t.recycled;
+    }
+
+    // ─── #1566 sanctions slice — the owner forfeit sweep + the evidence host ───
+
+    /// @dev The owner forfeit sweep pages at most this many entries per call. A
+    ///      constant, not a caller knob: each entry costs a stamp check, a possible
+    ///      stamp and up to the step budget's chunk self-calls, and the bound keeps
+    ///      one permissionless call inside a block whatever the owner's history.
+    uint256 private constant OWNER_FORFEIT_PAGE = 32;
+
+    /// @dev The owner forfeit pass's running state, ONE memory pointer. The stamp
+    ///      inputs (`owner`, `flaggedAt`) ride with the budgets so the per-entry
+    ///      frames take four arguments, not seven — the same viaIR reason
+    ///      {SweepTotals} exists. A LOCAL memory struct, never an ABI type.
+    /// @param owner     The confirmed-flagged wallet.
+    /// @param flaggedAt Start of its confirmed observation chain (the stamp event's).
+    /// @param paidOut   `interactionPoolPaidOut` at pass start (the settle's base).
+    /// @param headroom  69M pool room, depleted per chunk and floored.
+    /// @param allowance Delivered allowance capped by backing room, depleted by the
+    ///                  LIVE fresh per chunk and floored.
+    /// @param steps     Chunk self-calls left for the whole call.
+    struct ForfeitBudget {
+        address owner;
+        uint64 flaggedAt;
+        uint256 paidOut;
+        uint256 headroom;
+        uint256 allowance;
+        uint256 steps;
+    }
+
+    /// @notice #1566 sanctions slice — the OWNER forfeit sweep. Interaction reward
+    ///         not yet delivered to a wallet whose sanctions flag is CONFIRMED is
+    ///         forfeited into the recycle bucket as `ForfeitedReward` —
+    ///         permanently; a later delisting does not restore it. Permissionless,
+    ///         page by page over the owner's entry-id list.
+    /// @dev    WHY one facade both observes and forfeits: confirmation is a CHAIN of
+    ///         committed oracle observations ({LibRewardSanctions}: a span of at
+    ///         least `CONFIRM_SECS` with no gap over `MAX_OBS_GAP_SECS`), so every
+    ///         call first records one ({LibRewardSanctions.observe}) and acts only on
+    ///         its verdict. A Deliver or Hold verdict returns at once WITHOUT
+    ///         reverting, so that observation commits and the chain grows — a keeper
+    ///         driving this facade is the heartbeat the chain needs. An unset oracle,
+    ///         an outage, a first flag or a broken chain never forfeits.
+    ///
+    ///         On Forfeit, each entry of the page is first STAMPED forfeited when
+    ///         {LibInteractionRewards.sanctionsStampBlocker} clears it — the one
+    ///         eligibility rule, which the lens
+    ///         ({InteractionRewardsLensFacet.getSanctionsForfeitableRewardEntries})
+    ///         reads too, so the preview cannot disagree with the write. Then every
+    ///         entry of the page that routes to the treasury legs (stamped now,
+    ///         stamped earlier, or forfeited by its loan's terminal state) is SETTLED
+    ///         chunk by chunk through the forfeit route's own day engine, hosted on
+    ///         `RewardForfeitWalkFacet` — the same chunk the loan sweep runs, which
+    ///         emits `RewardEntryForfeitSettled` per moved chunk. The totals settle
+    ///         ONCE through {_settleSweepTotals} under `ForfeitedReward`, refId 0:
+    ///         the same pool, commitment and leg rows the loan sweep moves, priced
+    ///         untrimmed by the loan-side cap as every forfeit is.
+    ///
+    ///         Budgets are the retirement's (the 69M pool headroom; the delivered
+    ///         allowance capped by backing room), both depleted per chunk and
+    ///         FLOORED. Bounded per call: at most `OWNER_FORFEIT_PAGE` entries and
+    ///         `min(maxSteps, MAX_INTERACTION_CLAIM_DAYS)` chunk self-calls in total;
+    ///         stamping does not spend steps.
+    ///
+    ///         `nextIndex` ALWAYS advances past the page: an entry that cannot
+    ///         finish this call (a deferred or staged day, or no steps left) never
+    ///         pins the cursor. It is counted in `unfinished` instead, and a caller
+    ///         re-runs from index 0 while any page reported a non-zero count. An
+    ///         entry the stamp may not touch (open loan, expiry already begun, a
+    ///         resolving staging record) is not this call's work and is not
+    ///         counted; the lens lists when it becomes stampable.
+    ///
+    ///         A pool-reservation shortfall at the settle reverts the whole call,
+    ///         exactly as the other sweeps defer, and the observation goes with it;
+    ///         {recordRewardSanctionsEvidence} keeps a chain alive meanwhile.
+    ///
+    ///         Deliberately NOT sanctions-gated on the caller: value moves only into
+    ///         protocol custody, never to `msg.sender`. `whenNotPaused` stops the
+    ///         observation, the stamp and the settle together.
+    /// @param  owner      The wallet whose undelivered reward is screened.
+    /// @param  fromIndex  First index into the owner's entry-id list
+    ///                    ({InteractionRewardsLensFacet.getUserRewardEntryIds}).
+    /// @param  maxEntries Page size, clamped to `OWNER_FORFEIT_PAGE`.
+    /// @param  maxSteps   Chunk self-calls this call may spend, clamped to
+    ///                    `MAX_INTERACTION_CLAIM_DAYS`.
+    /// @return decision     The observation's verdict (0 Deliver, 1 Hold, 2 Forfeit).
+    /// @return stamped      Entries this call stamped forfeited.
+    /// @return settledTotal VPFI wei this call settled into the bucket (fresh + recycled).
+    /// @return nextIndex    Where the next page starts (`fromIndex` unless Forfeit).
+    /// @return unfinished   Entries of this page still routing to the treasury unprocessed.
+    function forfeitFlaggedOwnerRewards(
+        address owner,
+        uint256 fromIndex,
+        uint256 maxEntries,
+        uint256 maxSteps
+    )
+        external
+        nonReentrant
+        whenNotPaused
+        returns (uint8 decision, uint256 stamped, uint256 settledTotal, uint256 nextIndex, uint256 unfinished)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (s.interactionLaunchTimestamp == 0) revert InteractionEmissionsNotStarted();
+        if (s.vpfiToken == address(0)) revert VPFITokenNotSet();
+        LibRewardSanctions.Decision d = LibRewardSanctions.observe(s, owner);
+        decision = uint8(d);
+        nextIndex = fromIndex;
+        // Not confirmed: return, never revert, so the observation just written commits.
+        if (d != LibRewardSanctions.Decision.Forfeit) return (decision, 0, 0, nextIndex, 0);
+
+        ForfeitBudget memory b = _openForfeitPass(s, owner, maxSteps);
+        uint256[] storage ids = s.userRewardEntryIds[owner];
+        uint256 end = ids.length;
+        if (maxEntries > OWNER_FORFEIT_PAGE) maxEntries = OWNER_FORFEIT_PAGE;
+        if (nextIndex < end && end - nextIndex > maxEntries) end = nextIndex + maxEntries;
+        SweepTotals memory t;
+        LibInteractionRewards.TransportLegs memory tp;
+        while (nextIndex < end) {
+            (bool didStamp, bool pending) = _forfeitOne(ids[nextIndex], t, b, tp);
+            if (didStamp) ++stamped;
+            if (pending) ++unfinished;
+            unchecked { ++nextIndex; }
+        }
+        settledTotal = _settleSweepTotals(s, b.paidOut, t, tp, LibVpfiRecycle.RecycleSource.ForfeitedReward);
+    }
+
+    /// @notice #1566 sanctions slice — record ONE committed sanctions observation of
+    ///         `who` for the reward forfeit rule. Permissionless. Returns the verdict
+    ///         (0 Deliver, 1 Hold, 2 Forfeit) as {LibRewardSanctions.observe} wrote it.
+    /// @dev    WHY it exists: confirmation needs observations no more than
+    ///         `MAX_OBS_GAP_SECS` apart, and the owner sweep's own observation is lost
+    ///         whenever that sweep reverts — this entry only observes, so a keeper can
+    ///         keep a chain alive without settling anything. It is also the host of
+    ///         `LibRewardStaging._pay`'s claimant screen, reached by Diamond self-call
+    ///         ({LibRewardSanctions.callObserve}): the classifier's writes live here
+    ///         once instead of inlined into the staging settle facet.
+    ///
+    ///         NO reentrancy guard, deliberately: `_pay` calls it from inside a frame
+    ///         that already holds the Diamond's guard, so `nonReentrant` here would
+    ///         revert every staged claim's last page. Safe without one — it moves no
+    ///         value, and its only external calls are the oracle STATICCALLs. Nobody
+    ///         can forge or break a chain through it: every write follows from an
+    ///         authoritative oracle read. `whenNotPaused` freezes the evidence with the
+    ///         sweeps; a pause longer than the gap restarts the window, by design.
+    /// @param  who The wallet to observe.
+    /// @return The verdict, `uint8(LibRewardSanctions.Decision)`.
+    function recordRewardSanctionsEvidence(address who) external whenNotPaused returns (uint8) {
+        return uint8(LibRewardSanctions.observe(LibVaipakam.storageSlot(), who));
+    }
+
+    /// @dev The owner pass's budgets — the retirement's computation, read once at
+    ///      pass start: the 69M pool headroom net of what is paid and remitted, and
+    ///      the delivered allowance capped by backing room, carried SEPARATELY for
+    ///      the reason {sweepExpiredInteractionRewards} gives (opposite recovery
+    ///      semantics). `flaggedAt` is read back from the evidence word the
+    ///      observation just confirmed, so the stamp events carry the chain's start
+    ///      without a second oracle read.
+    function _openForfeitPass(LibVaipakam.Storage storage s, address owner, uint256 maxSteps)
+        private
+        view
+        returns (ForfeitBudget memory b)
+    {
+        b.owner = owner;
+        (, uint64 flaggedAt, ) = LibRewardSanctions.unpackEvidence(s.rewardSanctionsEvidence[owner]);
+        b.flaggedAt = flaggedAt;
+        b.paidOut = s.interactionPoolPaidOut;
+        uint256 reserved = b.paidOut + s.rewardBudgetRemittedGlobal;
+        b.headroom = LibVaipakam.VPFI_INTERACTION_POOL_CAP > reserved
+            ? LibVaipakam.VPFI_INTERACTION_POOL_CAP - reserved
+            : 0;
+        b.allowance = LibInteractionRewards.deliveredFreshBound(s);
+        uint256 backingCap = LibVpfiRecycle.freshBackingRoom(s);
+        if (backingCap < b.allowance) b.allowance = backingCap;
+        b.steps = maxSteps < LibVaipakam.MAX_INTERACTION_CLAIM_DAYS
+            ? maxSteps
+            : LibVaipakam.MAX_INTERACTION_CLAIM_DAYS;
+    }
+
+    /// @dev One entry of the owner pass — a PRIVATE frame rather than a predicate
+    ///      in the facade's loop (S3-C3): the sweeps' loop frames sit at the viaIR
+    ///      ceiling, and a per-entry function keeps this one off it. Asks the stamp,
+    ///      the only writer, which gates itself on
+    ///      {LibInteractionRewards.sanctionsStampBlocker} and leaves a blocked entry
+    ///      untouched — so the facade carries no copy of the eligibility test. Then
+    ///      settles while steps remain and the entry still routes to the treasury
+    ///      legs unprocessed, stopping at the first chunk that makes no progress (a
+    ///      deferral retries on a later call, never in a spin).
+    /// @return didStamp Whether this call stamped the entry.
+    /// @return pending  Whether the entry still routes to the treasury unprocessed.
+    function _forfeitOne(
+        uint256 id,
+        SweepTotals memory t,
+        ForfeitBudget memory b,
+        LibInteractionRewards.TransportLegs memory tp
+    ) private returns (bool didStamp, bool pending) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        didStamp = LibInteractionRewards.stampSanctionsForfeit(s, id, b.owner, b.flaggedAt);
+        LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
+        while (b.steps != 0 && !e.processed && LibInteractionRewards.entryRoutesToTreasury(s, e, false)) {
+            unchecked { --b.steps; }
+            if (!_forfeitChunk(s, id, t, b, tp)) break;
+        }
+        pending = !e.processed && LibInteractionRewards.entryRoutesToTreasury(s, e, false);
+    }
+
+    /// @dev One chunk of one forfeited entry, through the hosted walk
+    ///      ({LibInteractionRewards.callForfeitEntryChunkWalk} ->
+    ///      `RewardForfeitWalkFacet.epochForfeitEntryChunk`), folded into the pass:
+    ///      the headroom falls by the fresh credited, the allowance by the LIVE
+    ///      fresh only (net of all four epoch- and era-funded fresh legs, which the
+    ///      delivered ledger never received — as the expiry loop nets them), both
+    ///      FLOORED (S3-A3: a chunk can report more than it was handed). The armed
+    ///      figure folded is what the chunk OWED (cappedOff included), the forfeit
+    ///      route's commitment-retirement rule.
+    /// @return progressed Whether the entry finished or its day cursor moved.
+    function _forfeitChunk(
+        LibVaipakam.Storage storage s,
+        uint256 id,
+        SweepTotals memory t,
+        ForfeitBudget memory b,
+        LibInteractionRewards.TransportLegs memory tp
+    ) private returns (bool progressed) {
+        uint64 cursorBefore = s.rewardEntryClaimNextDay[id];
+        uint256 legsBefore = tp.treasuryFresh + tp.userFresh + tp.treasuryEraFresh + tp.userEraFresh;
+        (uint256 fresh, uint256 recycled, uint256 owed, ) =
+            LibInteractionRewards.callForfeitEntryChunkWalk(id, b.headroom, b.allowance, tp);
+        t.recycled += recycled;
+        t.armedFresh += owed;
+        t.fresh += fresh;
+        b.headroom = b.headroom > fresh ? b.headroom - fresh : 0;
+        uint256 epochPaid = tp.treasuryFresh + tp.userFresh + tp.treasuryEraFresh + tp.userEraFresh - legsBefore;
+        uint256 liveFresh = fresh > epochPaid ? fresh - epochPaid : 0;
+        b.allowance = b.allowance > liveFresh ? b.allowance - liveFresh : 0;
+        progressed = s.rewardEntries[id].processed || s.rewardEntryClaimNextDay[id] != cursorBefore;
     }
 }

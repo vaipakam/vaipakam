@@ -6,7 +6,6 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 import {VPFIToken} from "../src/token/VPFIToken.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
-import {RewardEpochViewFacet} from "../src/facets/RewardEpochViewFacet.sol";
 import {RewardEpochFacet} from "../src/facets/RewardEpochFacet.sol";
 import {RewardIngressFacet} from "../src/facets/RewardIngressFacet.sol";
 import {RewardClaimFacet} from "../src/facets/RewardClaimFacet.sol";
@@ -71,7 +70,7 @@ contract RewardStagingDomainTest is SetupTest, IVaipakamErrors {
 
     // ───────────────────────── fixtures ─────────────────────────
 
-    function _view() internal view returns (RewardEpochViewFacet) { return RewardEpochViewFacet(address(diamond)); }
+    function _view() internal view returns (RewardStagingDomainFacet) { return RewardStagingDomainFacet(address(diamond)); }
     function _staging() internal view returns (RewardStagingFacet) { return RewardStagingFacet(address(diamond)); }
     function _settle() internal view returns (RewardStagingSettleFacet) { return RewardStagingSettleFacet(address(diamond)); }
     function _domain() internal view returns (RewardStagingDomainFacet) { return RewardStagingDomainFacet(address(diamond)); }

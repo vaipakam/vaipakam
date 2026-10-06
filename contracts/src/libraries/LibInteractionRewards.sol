@@ -180,6 +180,55 @@ library LibInteractionRewards {
     /// @custom:event-category state-change/reward-claim
     event RewardEntryExpiryBegun(uint256 indexed entryId, address indexed user);
 
+    /// @notice #1566 sanctions reward-forfeit — entry `entryId` was STAMPED
+    ///         forfeited because its owner's sanctions flag is CONFIRMED
+    ///         ({LibRewardSanctions}: an authoritative Flagged read now, on a
+    ///         chain of committed Flagged observations under the same oracle
+    ///         that spans the confirmation window with no gap past the maximum
+    ///         observation gap). This is a sanctions forfeit's REMOVAL POINT:
+    ///         from here a claim routes the entry to the treasury legs (its
+    ///         owner receives nothing for it, delisted or not) and the forfeit
+    ///         sweeps settle it into the recycle bucket as `ForfeitedReward`.
+    ///         PERMANENT — a later delisting restores nothing. Emitted once per
+    ///         entry: the stamp refuses an entry that is already forfeited.
+    /// @param entryId   Reward entry stamped.
+    /// @param user      Its owner — the confirmed-flagged wallet.
+    /// @param loanId    The loan the entry accrued on.
+    /// @param side      The entry's `RewardSide` (0 lender, 1 borrower).
+    /// @param flaggedAt When the confirming chain of observations began.
+    /// @custom:event-category state-change/reward-claim
+    event RewardEntrySanctionsForfeited(
+        uint256 indexed entryId,
+        address indexed user,
+        uint256 indexed loanId,
+        uint8 side,
+        uint64 flaggedAt
+    );
+
+    /// @notice #1566 — one settled CHUNK of a forfeited entry, from either
+    ///         forfeit sweep: the loan sweep ({sweepForfeitedByLoanId}) and the
+    ///         sanctions owner sweep (`forfeitFlaggedOwnerRewards`). `fresh` is
+    ///         the fresh this chunk forfeited into the recycle bucket — the
+    ///         live part and the epoch-funded part the host absorbs in place
+    ///         alike — and `recycledReleased` the recycled commitment it
+    ///         released.
+    /// @dev    UNTRIMMED FORFEIT PRICING: the figures are the forfeit route's
+    ///         pricing of the entry's day, which the loan-side reward cap never
+    ///         binds (a forfeit pays no side), so they can exceed what the same
+    ///         day would have paid the owner as a claim. Only the 69M lifetime
+    ///         pool cap trims them, terminally. Per-entry PROVENANCE: the
+    ///         authoritative accounting feeds stay `VpfiRecycled` (source
+    ///         `ForfeitedReward`) and the custody-row events the facade emits
+    ///         for the batch — reconcile amounts from those, never from this.
+    /// @custom:event-category state-change/reward-claim
+    event RewardEntryForfeitSettled(
+        uint256 indexed entryId,
+        address indexed user,
+        uint256 indexed loanId,
+        uint256 fresh,
+        uint256 recycledReleased
+    );
+
     // ─── Schedule helpers ────────────────────────────────────────────────────
 
     uint256 private constant CUTOFF_0 = 182;
@@ -1693,12 +1742,66 @@ library LibInteractionRewards {
         tp.treasuryEraFresh = legs.treasuryEraFresh;
     }
 
+    /// @dev #1566 sanctions reward-forfeit — the expiry clock's SANCTIONS test,
+    ///      at the seam in front of the hosted walk instead of inside it. When
+    ///      entry `id` is still before its removal point and its owner is
+    ///      barred, record the observed block ({noteNonExecutableObservation})
+    ///      and report true, so the stub skips the self-call.
+    ///
+    ///      WHY {LibVaipakam.isRecipientBarred} and not the fail-open
+    ///      {LibVaipakam.isSanctionedAddress} the walk used to read: it is the
+    ///      predicate the claim gate refuses on, so the clock pauses exactly
+    ///      when the claim is refused — including a wallet that carries a
+    ///      confirmed flag while the oracle is unreachable, whose claim is now
+    ///      refused and whose clock the fail-open read kept running. The
+    ///      countdown mirror ({_entryExecutableNow}) reads the same predicate.
+    ///
+    ///      WHY at the seam: the barred read inlines the oracle legs, and
+    ///      keeping them off the walk's host (`RewardSweepWalkFacet`) keeps that
+    ///      host's EIP-170 room for the day primitive; here it is inlined once
+    ///      into the facade's host,
+    ///      inside this stub, so it adds no slot to the facade's loop frame
+    ///      (at the viaIR ceiling). {callSweepExpiredEntryWalk} is the ONLY
+    ///      path into `epochSweepExpiredEntry`, so screening here screens the
+    ///      walk; a new caller of {sweepExpiredEntry} must enter through it.
+    ///
+    ///      SCOPE = the walk's own pre-removal gate. A processed entry is a
+    ///      no-op in the walk too, and a REMOVED one (`expiryBegun`) must keep
+    ///      settling whoever its owner is — its claim is already closed and
+    ///      part of its value already in the bucket — so neither is screened.
+    ///      The seam fires ahead of some early returns the walk had (feature
+    ///      dark, forfeited, not claimable, cursor behind); there it can only
+    ///      mark blocked an interval the walk would have left alone, so the
+    ///      clock credits less, never more.
+    ///
+    ///      COUPLING — refresh the two hosts TOGETHER: this seam is inlined into
+    ///      `RewardHorizonSweepFacet` (the only caller of
+    ///      {callSweepExpiredEntryWalk}) and REPLACES the walk's own sanctions
+    ///      term, which `RewardSweepWalkFacet` no longer carries. So
+    ///      `RewardSweepWalkFacet` must never be refreshed without
+    ///      `RewardHorizonSweepFacet`: a new walk behind an old facade screens
+    ///      on neither side (the old facade has no seam, the new walk no term).
+    function _barredObservation(uint256 id) private returns (bool) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
+        if (e.processed || e.expiryBegun || !LibVaipakam.isRecipientBarred(e.user)) return false;
+        noteNonExecutableObservation(s, id);
+        return true;
+    }
+
+    /// @dev 3b-ii-A2 (#2305) — {sweepExpiredEntry} reached through the Diamond
+    ///      on `RewardSweepWalkFacet`; the legs the walk folds are returned and
+    ///      copied back. #1566 — preceded by the sanctions seam
+    ///      ({_barredObservation}): a barred owner's entry records the observed
+    ///      block and returns zeros without the self-call. The seam lives HERE,
+    ///      inside the stub, so it adds no local to the facade's loop.
     function callSweepExpiredEntryWalk(
         uint256 id,
         uint256 freshHeadroom,
         uint256 deliveredAllowance,
         TransportLegs memory tp
     ) internal returns (EntrySplit memory expired, uint256 freshCredited, uint256 armedDelivered) {
+        if (_barredObservation(id)) return (expired, 0, 0);
         (bool ok, bytes memory ret) = address(this).call(
             abi.encodeWithSignature(
                 "epochSweepExpiredEntry(uint256,uint256,uint256,(uint256,uint256,uint256,uint256,uint256,uint256))",
@@ -1739,6 +1842,51 @@ library LibInteractionRewards {
             abi.encodeWithSignature(
                 "epochSweepForfeitedByLoanId(uint256,uint256,uint256,(uint256,uint256,uint256,uint256,uint256,uint256))",
                 loanId,
+                freshHeadroom,
+                deliveredAllowance,
+                tp
+            )
+        );
+        if (!ok) {
+            if (ret.length == 0) revert IVaipakamErrors.RewardCustodyCallFailed();
+            assembly ("memory-safe") {
+                revert(add(ret, 0x20), mload(ret))
+            }
+        }
+        TransportLegs memory legs;
+        (freshCredited, recycledReleased, armedOwed, armedDelivered, legs) =
+            abi.decode(ret, (uint256, uint256, uint256, uint256, TransportLegs));
+        tp.userFresh = legs.userFresh;
+        tp.userRecycled = legs.userRecycled;
+        tp.treasuryFresh = legs.treasuryFresh;
+        tp.treasuryRecycled = legs.treasuryRecycled;
+        tp.userEraFresh = legs.userEraFresh;
+        tp.treasuryEraFresh = legs.treasuryEraFresh;
+    }
+
+    /// @dev #1566 sanctions reward-forfeit — {forfeitEntryChunkEvented} reached
+    ///      through the Diamond on `RewardForfeitWalkFacet`
+    ///      (`epochForfeitEntryChunk`), the host that already carries the loan
+    ///      sweep's walk and so the day primitive: the owner sweep's facade
+    ///      (`RewardHorizonSweepFacet.forfeitFlaggedOwnerRewards`) does not
+    ///      inline a second copy. Same shape as {callSweepForfeitedWalk}: the
+    ///      legs the chunk folds are returned and copied back, so the caller's
+    ///      struct reads as the inlined chunk left it. A failure re-raises the
+    ///      host's revert data unchanged; an empty one (an unrouted selector on
+    ///      a partly refreshed Diamond) reverts `RewardCustodyCallFailed` —
+    ///      fail closed, nothing settled. The host's own guard refuses an entry
+    ///      that is not forfeited, so this stub cannot route a payable day to
+    ///      the bucket whatever id it is handed.
+    function callForfeitEntryChunkWalk(
+        uint256 id,
+        uint256 freshHeadroom,
+        uint256 deliveredAllowance,
+        TransportLegs memory tp
+    ) internal returns (uint256 freshCredited, uint256 recycledReleased, uint256 armedOwed, uint256 armedDelivered) {
+        (bool ok, bytes memory ret) = address(this).call(
+            abi.encodeWithSignature(
+                "epochForfeitEntryChunk(uint256,uint256,uint256,(uint256,uint256,uint256,uint256,uint256,uint256))",
+                id,
                 freshHeadroom,
                 deliveredAllowance,
                 tp
@@ -3424,11 +3572,14 @@ library LibInteractionRewards {
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
 
+        // #1566 — every chunk enters through {forfeitEntryChunkEvented}, whose
+        // own guard refuses an entry that is not forfeited (zeros, nothing
+        // touched), so these sites test only for a pointer.
         uint256 lenderId = s.loanActiveLenderEntryId[loanId];
-        if (lenderId != 0 && _isForfeited(s, s.rewardEntries[lenderId])) {
+        if (lenderId != 0) {
             uint256 tBefore = tp.treasuryFresh;
             (uint256 f, uint256 r, uint256 o, uint256 d) =
-                _forfeitEntryChunk(
+                forfeitEntryChunkEvented(
                     s, lenderId, freshHeadroom, deliveredAllowance,
                     tp
                 );
@@ -3442,10 +3593,10 @@ library LibInteractionRewards {
             deliveredAllowance = deliveredAllowance > f ? deliveredAllowance - f : 0;
         }
         uint256 borrowerId = s.loanBorrowerEntryId[loanId];
-        if (borrowerId != 0 && _isForfeited(s, s.rewardEntries[borrowerId])) {
+        if (borrowerId != 0) {
             uint256 tBefore = tp.treasuryFresh;
             (uint256 f, uint256 r, uint256 o, uint256 d) =
-                _forfeitEntryChunk(
+                forfeitEntryChunkEvented(
                     s, borrowerId, freshHeadroom, deliveredAllowance,
                     tp
                 );
@@ -3459,14 +3610,26 @@ library LibInteractionRewards {
             deliveredAllowance = deliveredAllowance > f ? deliveredAllowance - f : 0;
         }
         // #953 (Codex) — lender entries a position sale orphaned from the
-        // active pointer. Forfeited by construction; a processed one adds 0.
+        // active pointer, and (#1566) every sanctions-stamped entry of either
+        // side, which {stampSanctionsForfeit} records here because the loan's
+        // pointers can move off it. Forfeited by construction; a processed one
+        // adds 0.
         uint256[] storage orphaned = s.loanForfeitedLenderEntryIds[loanId];
         uint256 olen = orphaned.length;
         for (uint256 i = 0; i < olen; ) {
-            if (_isForfeited(s, s.rewardEntries[orphaned[i]])) {
+            // #1566 — a sanctions stamp records EVERY entry it marks here (see
+            // {stampSanctionsForfeit}), including one a pointer above still
+            // names; skip those so one call settles each entry once. A #953
+            // sale orphan is never a current pointer (ids are never reused),
+            // so this skips nothing that list held before. The forfeit test is
+            // the wrapper's own guard.
+            if (
+                orphaned[i] != s.loanActiveLenderEntryId[loanId]
+                    && orphaned[i] != s.loanBorrowerEntryId[loanId]
+            ) {
                 uint256 tBefore = tp.treasuryFresh;
                 (uint256 f, uint256 r, uint256 o, uint256 d) =
-                    _forfeitEntryChunk(
+                    forfeitEntryChunkEvented(
                         s, orphaned[i], freshHeadroom, deliveredAllowance,
                         tp
                     );
@@ -3479,6 +3642,193 @@ library LibInteractionRewards {
                 deliveredAllowance = deliveredAllowance > f ? deliveredAllowance - f : 0;
             }
             unchecked { ++i; }
+        }
+    }
+
+    // ─── #1566 sanctions reward-forfeit: the stamp ───────────────────────────
+
+    /// @dev {sanctionsStampBlocker}'s codes: 0 eligible, else the FIRST reason
+    ///      the entry may not be stamped, in the order the view tests them.
+    uint8 internal constant STAMP_ELIGIBLE = 0;
+    /// @dev The entry is not `owner`'s, or `owner` is the zero address.
+    uint8 internal constant STAMP_NOT_OWNER = 1;
+    /// @dev Already processed: nothing is left to forfeit.
+    uint8 internal constant STAMP_PROCESSED = 2;
+    /// @dev The expiry sweep has begun removing it; the expiry route owns it.
+    uint8 internal constant STAMP_EXPIRY_BEGUN = 3;
+    /// @dev Not claimable yet: its loan is open or FallbackPending and the
+    ///      entry is unclosed.
+    uint8 internal constant STAMP_NOT_CLAIMABLE = 4;
+    /// @dev Already forfeited (its own flag, an earlier stamp, or its loan's
+    ///      terminal state): settle it, do not stamp it.
+    uint8 internal constant STAMP_ALREADY_FORFEITED = 5;
+    /// @dev The staging record at its cursor day is Resolving.
+    uint8 internal constant STAMP_RECORD_RESOLVING = 6;
+    /// @dev The staging record at its cursor day is an Expiry operation, in
+    ///      any live phase.
+    uint8 internal constant STAMP_RECORD_EXPIRY = 7;
+    /// @dev The owner's staging domain on the entry's side is Resolving.
+    uint8 internal constant STAMP_DOMAIN_RESOLVING = 8;
+
+    /// @notice #1566 sanctions reward-forfeit — THE stamp-eligibility rule for
+    ///         entry `id` of `owner`: 0 when {stampSanctionsForfeit} may mark
+    ///         it forfeited, else the first blocking code (`STAMP_*`). ONE view
+    ///         for the stamp and for the lens that lists stampable entries
+    ///         (`InteractionRewardsLensFacet.getSanctionsForfeitableRewardEntries`),
+    ///         so the list a keeper reads and the stamp it then runs cannot
+    ///         disagree. It decides WHICH entry; WHETHER the owner is confirmed
+    ///         is {LibRewardSanctions}' alone, and the caller asks it first.
+    /// @dev    Why each code:
+    ///           1 — the owner sweep pages `owner`'s own entry list; a foreign
+    ///               id would forfeit another holder's reward.
+    ///           2 — a processed entry has nothing left to move.
+    ///           3 — past the expiry removal point the expiry route owns the
+    ///               entry's remaining value ({sweepExpiredEntry} settles it as
+    ///               expired); a forfeit stamp would race that route.
+    ///           4 — gated on {_entryClaimable}, NOT on `closed`: the
+    ///               loan-terminal fallback never closes the entries it makes
+    ///               claimable (the close hooks are best-effort), so a `closed`
+    ///               gate would strand a terminal-but-unclosed entry outside
+    ///               the forfeit for good. An open or FallbackPending loan's
+    ///               entry is still accruing and waits for its loan to close.
+    ///           5 — already forfeited, by its own flag or by its loan's
+    ///               terminal state: the sweep settles it as it stands; a
+    ///               second stamp would re-announce a forfeit already in force.
+    ///           6 — a Resolving record at the entry's cursor day is
+    ///               irrevocable and pays on its last page, where the claimant
+    ///               screen in {LibRewardStaging} decides a confirmed
+    ///               claimant's share itself; stamping under it would change
+    ///               the destination of a day already being paid.
+    ///           7 — an Expiry-operation record at the cursor day, in any live
+    ///               phase, is never made stale and begins the removal point
+    ///               when it pays; a stamp would bypass the `expiryBegun` gate.
+    ///           8 — as 6, for the owner's Resolving domain on the side.
+    ///         A Staging or Reserved Claim record is NOT a blocker: a Reserved
+    ///         one goes stale on the stamp (its slices' routing no longer
+    ///         matches what the day primitive would route) and anyone may
+    ///         unwind it; a Staging one is re-priced as a forfeit when it is
+    ///         reserved. Neither can pay the stamped entry to its owner.
+    function sanctionsStampBlocker(
+        LibVaipakam.Storage storage s,
+        uint256 id,
+        address owner
+    ) internal view returns (uint8) {
+        LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
+        if (owner == address(0) || e.user != owner) return STAMP_NOT_OWNER;
+        if (e.processed) return STAMP_PROCESSED;
+        if (e.expiryBegun) return STAMP_EXPIRY_BEGUN;
+        if (!_entryClaimable(s, e)) return STAMP_NOT_CLAIMABLE;
+        if (_isForfeited(s, e)) return STAMP_ALREADY_FORFEITED;
+        LibVaipakam.StagingRecord storage r =
+            s.stagingRecords[LibRewardCustody.stagingKey(owner, e.side, _shareOfPoolCursorDay(s, id, e))];
+        if (r.phase == LibVaipakam.StagingPhase.Resolving) return STAMP_RECORD_RESOLVING;
+        if (r.phase != LibVaipakam.StagingPhase.None && r.op == LibVaipakam.StagingOp.Expiry) {
+            return STAMP_RECORD_EXPIRY;
+        }
+        if (s.stagingDomains[LibRewardCustody.domainKey(owner, e.side)].phase == LibVaipakam.DomainPhase.Resolving) {
+            return STAMP_DOMAIN_RESOLVING;
+        }
+        return STAMP_ELIGIBLE;
+    }
+
+    /// @notice #1566 sanctions reward-forfeit — THE only writer of a sanctions
+    ///         forfeit: marks entry `id` of `owner` forfeited when
+    ///         {sanctionsStampBlocker} reads 0, and announces it. Returns
+    ///         whether it stamped; a blocked entry is left untouched (no
+    ///         revert — the owner sweep pages past it).
+    /// @dev    PRECONDITION, the caller's: {LibRewardSanctions.observe} returned
+    ///         `Forfeit` for `owner` in this transaction. This function does
+    ///         not read the oracle again — the classifier is the ONE
+    ///         Hold/Forfeit split, and `flaggedAt` is its evidence, carried into
+    ///         the event.
+    ///
+    ///         Writes exactly what `_closeEntry` writes for a forfeit — the
+    ///         `forfeited` flag — plus the lifecycle bump every entry
+    ///         transition passes ({noteEntryLifecycle}), which is what makes a
+    ///         staging domain that priced this entry re-read it — and the
+    ///         loan-sweep record described below. Durable:
+    ///         nothing ever clears `forfeited` (`_closeEntry` only sets it), so
+    ///         the stamp is permanent and a later delisting restores nothing.
+    ///         Moves no value: the forfeit route ({forfeitEntryChunkEvented})
+    ///         settles the entry afterwards in its own evented chunks, and
+    ///         until it does a claim routes the entry to the treasury legs.
+    ///
+    ///         The #953 pattern, for the same reason: the stamped entry is
+    ///         pushed onto its loan's `loanForfeitedLenderEntryIds`, the list
+    ///         the PERMISSIONLESS loan sweep ({sweepForfeitedByLoanId}) walks,
+    ///         so its settlement never depends on the owner's later status.
+    ///         Without it a stamped entry could be reached only by the owner
+    ///         sweep (which runs only while the owner reads Forfeit) or by the
+    ///         owner's own claim: `closeLoan` clears the lender pointer, a
+    ///         re-registration after an obligation transfer overwrites both,
+    ///         and a stamp made while a pointer still names the entry can see
+    ///         that pointer cleared afterwards. A settlement left unfinished
+    ///         in the stamping call (zero step budget, empty backing room, a
+    ///         deferred day) would then strand behind a delisting or an unset
+    ///         oracle, its armed commitment still counted in
+    ///         `outstandingCommitFresh` and its day still held. Pushed
+    ///         UNCONDITIONALLY (either side — the sweep reads the side from
+    ///         the entry) because the pointers can move after the stamp; the
+    ///         sweep skips an id a current pointer still names, and the stamp
+    ///         is one-shot (code 5 afterwards), so each id is pushed once.
+    function stampSanctionsForfeit(
+        LibVaipakam.Storage storage s,
+        uint256 id,
+        address owner,
+        uint64 flaggedAt
+    ) internal returns (bool stamped) {
+        if (sanctionsStampBlocker(s, id, owner) != STAMP_ELIGIBLE) return false;
+        LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
+        e.forfeited = true;
+        s.loanForfeitedLenderEntryIds[e.loanId].push(id);
+        noteEntryLifecycle(s, e);
+        emit RewardEntrySanctionsForfeited(id, owner, e.loanId, uint8(e.side), flaggedAt);
+        return true;
+    }
+
+    /// @notice #1566 — ONE forfeited entry's settlement chunk, GUARDED and
+    ///         EVENTED: the only entry into {_forfeitEntryChunk} for both
+    ///         forfeit sweeps — the loan sweep ({sweepForfeitedByLoanId}, its
+    ///         three sites) and the sanctions owner sweep
+    ///         (`RewardHorizonSweepFacet.forfeitFlaggedOwnerRewards`, through
+    ///         `RewardForfeitWalkFacet.epochForfeitEntryChunk`). Same
+    ///         parameters and returns as the chunk.
+    /// @dev    The guard is HERE, not at the call sites (it used to sit only at
+    ///         the loan sweep's three): the chunk's armed branch keeps only the
+    ///         TREASURY legs and {_persistDay} advances the cursor, so a chunk
+    ///         run on a live entry would route a payable day to the recycle
+    ///         bucket and move the claimant's cursor past it. An entry that is
+    ///         not forfeited — by its own flag, a sanctions stamp included, or
+    ///         by its loan's terminal state — returns zeros and touches
+    ///         nothing, whoever calls.
+    ///
+    ///         The event makes each settled chunk a per-entry row (every value
+    ///         move is an explicit row move with an event): it fires when the
+    ///         chunk moved anything — fresh credited, recycled released or
+    ///         armed commitment retired — and carries the chunk's own figures,
+    ///         at the forfeit route's untrimmed pricing
+    ///         ({RewardEntryForfeitSettled}).
+    function forfeitEntryChunkEvented(
+        LibVaipakam.Storage storage s,
+        uint256 id,
+        uint256 freshHeadroom,
+        uint256 deliveredAllowance,
+        TransportLegs memory tp
+    )
+        internal
+        returns (
+            uint256 freshCredited,
+            uint256 recycledReleased,
+            uint256 armedOwed,
+            uint256 armedDelivered
+        )
+    {
+        LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
+        if (!_isForfeited(s, e)) return (0, 0, 0, 0);
+        (freshCredited, recycledReleased, armedOwed, armedDelivered) =
+            _forfeitEntryChunk(s, id, freshHeadroom, deliveredAllowance, tp);
+        if ((freshCredited | recycledReleased | armedOwed) != 0) {
+            emit RewardEntryForfeitSettled(id, e.user, e.loanId, freshCredited, recycledReleased);
         }
     }
 
@@ -3786,6 +4136,23 @@ library LibInteractionRewards {
         unchecked { ++s.rewardLifecycleVersion[e.user][uint8(e.side)]; }
     }
 
+    /// @notice RL-3 — record an OBSERVED non-executable state of entry `id`'s
+    ///         expiry clock. ONE body for the walk's own executability gate
+    ///         ({sweepExpiredEntry}) and the sanctions seam in front of it
+    ///         ({_barredObservation}), so the two block the clock identically.
+    /// @dev    Before the first executable observation there is no clock to
+    ///         break, so an unstarted entry (`rewardEntryExecObsAt == 0`) stays
+    ///         unstarted and nothing is written. Afterwards the block is
+    ///         recorded and the stamp advances, so the interval spanning this
+    ///         OBSERVED outage — however short — is never credited on recovery
+    ///         (Codex #1317 r8). It reads the stamp itself rather than taking
+    ///         the caller's copy, so the seam needs no local of its own.
+    function noteNonExecutableObservation(LibVaipakam.Storage storage s, uint256 id) internal {
+        if (s.rewardEntryExecObsAt[id] == 0) return;
+        s.rewardEntryObsBlocked[id] = true;
+        s.rewardEntryExecObsAt[id] = uint64(block.timestamp);
+    }
+
     function _beginExpiry(
         LibVaipakam.Storage storage s,
         uint256 id,
@@ -3808,7 +4175,7 @@ library LibInteractionRewards {
      *         threshold ONLY if the entry was claim-executable at both ends
      *         AND the gap is ≤ `REWARD_CLAIM_NOTICE_MAX_OBS_GAP_DAYS` (short
      *         enough to trust as continuous). A longer gap — or any observed
-     *         non-executable state (unfunded / zero-payable / sanctioned) —
+     *         non-executable state (unfunded / zero-payable / sanctions-barred) —
      *         is never counted, so an unobserved outage can never let the
      *         clock run past a window the claimant could not actually claim.
      *
@@ -3816,7 +4183,8 @@ library LibInteractionRewards {
      *           - feature dark (`rewardClaimHorizonDays == 0`)        → no-op
      *           - processed / not claimable (finalization) / forfeited → no-op
      *           - not claim-EXECUTABLE now (zero post-cap payable, local
-     *             VPFI can't cover it, or owner sanctioned) → no-op, and do
+     *             VPFI can't cover it, or owner sanctions-barred — screened at the
+     *             seam, {_barredObservation}) → no-op, and do
      *             NOT advance the observation stamp (the outage interval
      *             will exceed the gap bound and stay uncredited)
      *           - executable, first observation → STAMP + start accumulator
@@ -3828,9 +4196,10 @@ library LibInteractionRewards {
      *             the entry and return its {EntrySplit} for source-split
      *             routing.
      *
-     *         Forfeited entries are excluded — {sweepForfeitedByLoanId}
-     *         owns those; this sweep only ever expires PAYABLE value whose
-     *         owner never came back.
+     *         Forfeited entries are excluded — {sweepForfeitedByLoanId} and
+     *         the sanctions owner sweep (`forfeitFlaggedOwnerRewards`) own
+     *         those; this sweep only ever expires PAYABLE value whose owner
+     *         never came back.
      * @param  freshHeadroom Remaining fresh-pool capacity the CALLER's
      *                       batch may still consume — the fresh share is
      *                       capped to it per entry, so a batch can never
@@ -3953,7 +4322,9 @@ library LibInteractionRewards {
         // could not have claimed. Blocked when:
         //   1. this entry's pool-capped payable is zero (a reap of it would
         //      recycle nothing — nothing a claim could pay for it),
-        //   2. the owner is sanctioned (the claim path rejects them),
+        //   2. the owner is barred by the sanctions screen (the claim path
+        //      rejects them) — tested at the seam in front of this walk
+        //      ({_barredObservation}) with the claim gate's own predicate,
         //   3. the protocol is paused (every claim reverts under the pause),
         //   4. the balance can't cover the user's whole aggregate claim.
         // Codex #1410 r7 P1 — advance ALL the user's cursors BEFORE the
@@ -3982,9 +4353,10 @@ library LibInteractionRewards {
             // aggregate ONCE and share it with every gate below.
             // `userClaimFundingNeed` stays for its own callers; inlining its
             // two steps here is what makes a swept entry pay for each walk a
-            // single time instead of twice. `userRewardEntryIds` never shrinks
-            // — processed ids stay in it — so the duplicate pass grew without
-            // bound for a long-lived account.
+            // single time instead of twice. `userRewardEntryIds` shrinks only
+            // when a position transfer re-points an entry away (the swap-pop in
+            // {_removeUserEntry}) — processed ids stay in it — so the duplicate
+            // pass grew without bound for a long-lived account.
             _advanceUserCursors(s, e.user);
             ArmedNeed memory need = _entryArmedNeed(id);
             // The transfer test is {_claimTransferable} — the ONE
@@ -4046,24 +4418,24 @@ library LibInteractionRewards {
             // that day, and the pause ends with the permissionless prune.
             // 3b-ii-A2 — nor one it would defer on a staging reservation of
             // a loan side; that pause ends with the record (Codex #2308 r4).
+            // #1566 sanctions reward-forfeit — the owner's sanctions bar is NOT
+            // tested here any more: {_barredObservation}, at the seam in front
+            // of the only path into this walk ({callSweepExpiredEntryWalk}),
+            // screens it before the self-call with the claim gate's own
+            // predicate ({LibVaipakam.isRecipientBarred}), which also bars a
+            // confirmed holder during an oracle outage — the fail-open read
+            // that stood here did not.
             bool executable = !_recycledDroughtWith(s, need.bucketRecycled) &&
                 !need.capHit &&
                 _poolCappedPayable(toUser) != 0 &&
                 deliveredPayable &&
-                !LibVaipakam.isSanctionedAddress(e.user) &&
                 !LibPausable.paused() &&
                 transferable;
 
             if (!executable) {
-                // Observed non-executable. Before the first executable
-                // observation there is no clock to break (stay unstarted).
-                // Afterwards, record the block and advance the stamp so the
-                // interval spanning this OBSERVED outage — however short — is
-                // never credited on recovery (Codex #1317 r8).
-                if (lastObs != 0) {
-                    s.rewardEntryObsBlocked[id] = true;
-                    s.rewardEntryExecObsAt[id] = uint64(block.timestamp);
-                }
+                // Observed non-executable: the one body the sanctions seam
+                // shares ({noteNonExecutableObservation}).
+                noteNonExecutableObservation(s, id);
                 return (expired, 0, 0);
             }
         }
@@ -4634,10 +5006,10 @@ library LibInteractionRewards {
     ///                          earliest instant the entry could be reaped,
     ///                          assuming it stays continuously claim-executable
     ///                          from now (0 = dark, unstarted, OR already
-    ///                          processed). The on-chain sweep is
+    ///                          processed, removed or forfeited). The on-chain sweep is
     ///                          authoritative; this view only estimates.
     ///                          Removal is gated on claim-EXECUTABLE-elapsed
-    ///                          time, so a funding outage or sanction pauses
+    ///                          time, so a funding outage or a sanctions bar pauses
     ///                          the countdown (the pending heartbeat interval
     ///                          is folded in only while the entry is
     ///                          claim-executable now). The estimate errs
@@ -4669,7 +5041,12 @@ library LibInteractionRewards {
         // What remains after removal is settlement PROGRESS, not a claimant
         // deadline — and the removal signal (`RewardEntryExpiryBegun`) is the
         // event surface for that.
-        if (e.processed || e.expiryBegun) return (firstClaimableAt, 0);
+        // #1566 sanctions reward-forfeit — a FORFEITED entry (its own flag, a
+        // sanctions stamp included, or its loan's terminal state) is never
+        // expired by the horizon sweep ({sweepExpiredEntry} returns at its
+        // forfeit gate): the forfeit sweeps own it, so it has no claimant
+        // deadline either.
+        if (e.processed || e.expiryBegun || _isForfeited(s, e)) return (firstClaimableAt, 0);
 
         uint256 hSec = uint256(horizonDays) * 1 days;
         uint256 elapsed = s.rewardEntryExecElapsed[id];
@@ -4685,7 +5062,7 @@ library LibInteractionRewards {
         ) {
             // Fold in the pending interval a sweep-now would credit — but
             // ONLY while the entry is claim-executable at this block (owner
-            // unsanctioned, pool-capped payable non-zero, balance covers it),
+            // not sanctions-barred, pool-capped payable non-zero, balance covers it),
             // mirroring the sweep's accrual gate. A blocked claimant's
             // countdown pauses here instead of ticking down through the block.
             // An interval that straddled a pause boundary is dropped, matching
@@ -4715,7 +5092,9 @@ library LibInteractionRewards {
     ///      {sweepExpiredEntry}'s accrual gate exactly: the accumulator
     ///      advances only while the CLAIMANT could claim the entry now —
     ///      mirroring the sweep gate exactly: the entry's own pool-capped share
-    ///      is payable, the owner is unsanctioned, the protocol is unpaused,
+    ///      is payable, the owner is not sanctions-barred (the claim gate's
+    ///      {LibVaipakam.isRecipientBarred}, which the sweep's seam reads too),
+    ///      the protocol is unpaused,
     ///      and the local balance covers the user's FULL aggregate claim (the
     ///      claim is atomic across all their entries + the legacy window).
     ///      #1499 — BACKING IS NOW PART OF THIS TEST, and the previous
@@ -4731,7 +5110,11 @@ library LibInteractionRewards {
         uint256 id,
         LibVaipakam.RewardEntry storage e
     ) internal view returns (bool) {
-        if (LibVaipakam.isSanctionedAddress(e.user)) return false;
+        // #1566 sanctions reward-forfeit — the claim gate's own predicate,
+        // which the sweep's seam ({_barredObservation}) reads too: a wallet
+        // carrying a confirmed flag while the oracle is unreachable is barred,
+        // so the countdown pauses with the claim it mirrors.
+        if (LibVaipakam.isRecipientBarred(e.user)) return false;
         if (LibPausable.paused()) return false; // every claim reverts paused
         // Codex #1499 r5 P2 — ONE walk for the bound, shared with the funding
         // need below. Ordered so the cheap refusals still short-circuit ahead

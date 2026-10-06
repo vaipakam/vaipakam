@@ -5,6 +5,7 @@ import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibRewardCustody} from "./LibRewardCustody.sol";
 import {LibInteractionRewards} from "./LibInteractionRewards.sol";
 import {LibVpfiRecycle} from "./LibVpfiRecycle.sol";
+import {LibRewardSanctions} from "./LibRewardSanctions.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -86,7 +87,10 @@ library LibRewardStaging {
     ///         r22).
     /// @custom:event-category state-change/reward-staging
     event StagingDelivered(bytes32 indexed key, address indexed user, uint256 amount, uint8 venue);
-    /// @notice The record's claimant `user` is sanctions-flagged, so the
+    /// @notice The record's claimant `user` has a CONFIRMED sanctions flag
+    ///         ({LibRewardSanctions}: a chain of authoritative Flagged
+    ///         observations spanning its confirmation window with no gap over
+    ///         its maximum observation gap), so the
     ///         day's user share — `fresh` and `recycled`, every source — was
     ///         FORFEITED into the recycle bucket instead of delivered, with the
     ///         treasury's own forfeit legs (owner decision 2026-10-02: reward
@@ -503,7 +507,10 @@ library LibRewardStaging {
     ///         held into `Resolving` — and the page that consumes the last
     ///         batch pays the day and closes a record whose arrays are then
     ///         bounded (Codex #2308 r12).
-    /// @return done Whether the record was paid and closed by this page.
+    /// @return done Whether the record was paid and closed by this page —
+    ///         false also on a page whose payout the sanctions screen HELD
+    ///         (see {_pay}): the record then stays `Resolving` with every batch
+    ///         consumed, and the next page retries the payout alone.
     function resolvePage(LibVaipakam.Storage storage s, bytes32 key) internal returns (bool done) {
         LibVaipakam.StagingRecord storage r = record(s, key);
         if (r.domainKey != bytes32(0)) revert IVaipakamErrors.StagingRecordInDomain(key, r.domainKey);
@@ -573,10 +580,11 @@ library LibRewardStaging {
             );
             r.heldEpoch += held;
         }
-        if (i == n) {
-            _pay(s, key, r);
-            done = true;
-        }
+        // The last page pays — unless the sanctions screen HOLDS the payout,
+        // when `_pay` writes nothing and returns false: `resolveCursor` already
+        // equals `n`, so the next page walks no batch and retries the payout
+        // alone (a domain waits on a record that is not done).
+        if (i == n) done = _pay(s, key, r);
     }
 
     /// @dev One batch of a resolution page, in a frame of its own (the page
@@ -631,23 +639,54 @@ library LibRewardStaging {
     ///      reserved counter converts to paid, and the day is settled by the
     ///      A1 claim's own primitives for one day: persistence, the pool and
     ///      commitment writes, the delivery, the treasury legs.
-    function _pay(LibVaipakam.Storage storage s, bytes32 key, LibVaipakam.StagingRecord storage r) private {
+    /// @return False when the sanctions screen HELD a claimant's payout: the
+    ///         page then wrote nothing here and the record stays `Resolving`
+    ///         for a later page to retry; true once the day is paid and the
+    ///         record closed.
+    function _pay(LibVaipakam.Storage storage s, bytes32 key, LibVaipakam.StagingRecord storage r)
+        private
+        returns (bool)
+    {
         address user = r.user;
         uint256 liveUserFresh = r.reservedLiveUserFresh;
         uint256 liveTreasuryFresh = r.reservedLiveTreasuryFresh;
         uint256 liveUserRecycled = r.reservedLiveUserRecycled;
         uint256 freshSpend = r.reservedPoolCap;
         LibVaipakam.StagingOp op = r.op;
-        // A claimant flagged by the sanctions oracle is not paid: reward VPFI
-        // not yet delivered to a flagged wallet is FORFEITED, while value
-        // already in their vault stays frozen there (owner decision
-        // 2026-10-02, rewards only — loan proceeds keep the wind-down freeze).
-        // Their share settles exactly as the day's forfeit (treasury) leg
-        // does, into the recycle bucket, so this page cannot fail for it and
-        // the record can never be trapped in `Resolving` (Codex #2308 r18,
-        // r21: a vault-only delivery reverted for a claimant with no vault).
-        // A sweep's record (A2-ii) carries no user share to begin with.
-        bool forfeit = op == LibVaipakam.StagingOp.Claim && LibVaipakam.isSanctionedAddress(user);
+        // Every term is the record's own, fixed at reservation, so the share
+        // is known before anything is written.
+        uint256 userTotal = liveUserFresh + liveUserRecycled + r.epochUserFresh + r.epochUserRecycled + r.eraUserFresh;
+        // THE SANCTIONS SCREEN (#1566; owner decision 2026-10-02, rewards only
+        // — loan proceeds keep the wind-down freeze), decided by the ONE
+        // classifier, {LibRewardSanctions}, through its evidence host: the
+        // observation must COMMIT even when this page withholds, and the
+        // classifier's writes are hosted once, there, rather than inlined on
+        // this facet ({LibRewardSanctions.callObserve}).
+        //   - Deliver (not barred): paid as below.
+        //   - Forfeit (the flag is CONFIRMED — a chain of authoritative Flagged
+        //     observations spanning the confirmation window, no gap over the
+        //     maximum observation gap): reward VPFI not yet delivered to a
+        //     flagged wallet is FORFEITED, while value already in their vault
+        //     stays frozen there. Their share settles exactly as the day's
+        //     forfeit (treasury) leg does, into the recycle bucket, so this
+        //     page cannot fail for it and the record can never be trapped in
+        //     `Resolving` (Codex #2308 r18, r21: a vault-only delivery
+        //     reverted for a claimant with no vault).
+        //   - Hold (barred, not confirmed — a first flag, a broken chain, or an
+        //     outage over a committed flag): return BEFORE any write, so the
+        //     record stays `Resolving` with its batches consumed and the next
+        //     page retries the payout alone. One read never forfeits (before
+        //     #1566 this page forfeited on one fail-open read).
+        // Screened only when there is a user share to decide on: a Claim
+        // whose user share is zero, and every Expiry / Forfeit / legacy-slice
+        // record (a sweep's record carries no user share, A2-ii), has nothing
+        // to withhold, so it never waits on the screen or on an outage.
+        bool forfeit;
+        if (op == LibVaipakam.StagingOp.Claim && userTotal != 0) {
+            LibRewardSanctions.Decision d = LibRewardSanctions.callObserve(user);
+            if (d == LibRewardSanctions.Decision.Hold) return false;
+            forfeit = d == LibRewardSanctions.Decision.Forfeit;
+        }
         // What the pages CONSUMED of the epochs is paid out below, so it
         // leaves the staged earmark here and not a page earlier (Codex #2308
         // r14): the budget the reservation assigned, less what the batches
@@ -739,7 +778,6 @@ library LibRewardStaging {
         }
         bool toVault = venue == LibVaipakam.RewardDelivery.Vault
             || (venue == LibVaipakam.RewardDelivery.Default && user.code.length == 0);
-        uint256 userTotal = liveUserFresh + liveUserRecycled + r.epochUserFresh + r.epochUserRecycled + r.eraUserFresh;
         bool vaulted;
         if (forfeit) {
             emit StagingClaimantForfeited(
@@ -802,6 +840,7 @@ library LibRewardStaging {
             r.needTreasuryRecycled
         );
         _close(s, key, true);
+        return true;
     }
 
     // ─────────────────────────────── unwind ───────────────────────────────
@@ -1013,8 +1052,14 @@ library LibRewardStaging {
     }
 
     /// @dev The claim facet's inactive-custody delivery, for one record: the
-    ///      vault credit from the Diamond's balance, else a wallet transfer —
-    ///      never the wallet for a flagged claimant.
+    ///      vault credit from the Diamond's balance, else a wallet transfer.
+    ///      A claim's payout reaches it only after `_pay`'s sanctions screen
+    ///      decided Deliver — the claimant is not barred
+    ///      ({LibVaipakam.isRecipientBarred}): a flagged claimant, or one
+    ///      carrying a committed flag during an oracle outage, was held or
+    ///      forfeited before this point. An outage over a wallet with no
+    ///      committed flag still pays (the fail-open posture for an
+    ///      unconfirmed wallet).
     function _payFromDiamond(
         LibVaipakam.Storage storage s,
         address user,
@@ -1219,7 +1264,9 @@ library LibRewardStaging {
 
     /// @notice One RESOLVING page (A2-ii), permissionless: the records resolve
     ///         in day order, each through its own pages, each paying on its
-    ///         last; the domain is irrevocable here. Cleared (deleted) once
+    ///         last - a last page the #1566 sanctions screen HOLDS returns not
+    ///         done, and this page stops on that record until it pays; the
+    ///         domain is irrevocable here. Cleared (deleted) once
     ///         the cursor passes the extent and no record is live.
     /// @return done True once the domain is cleared.
     function resolveDomainPage(LibVaipakam.Storage storage s, bytes32 dk) internal returns (bool done) {

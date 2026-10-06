@@ -3603,11 +3603,15 @@ library LibVaipakam {
         // Which source mainnets use is open (#2443): Chainalysis retired
         // its on-chain oracle (last updated 2026-03-18) and it must not be
         // configured; testnets use the admin's `TestnetSanctionsOverlay`. When the
-        // slot is non-zero, {OfferFacet.createOffer} and
-        // {OfferFacet.acceptOffer} both refuse calls from (or involving)
+        // slot is non-zero, {OfferCreateFacet.createOffer} and
+        // {OfferAcceptFacet.acceptOffer} both refuse calls from (or involving)
         // flagged addresses — the OFAC-aligned "no new business" posture.
-        // Ongoing actions (repay, claim) stay unrestricted so existing
-        // counterparties aren't stranded. `address(0)` disables the
+        // Close-out actions (repay, default, liquidation) stay open so an
+        // unflagged counterparty is never stranded, while a flagged wallet's
+        // own claims and payouts are refused and its UNDELIVERED protocol
+        // rewards are forfeited once the flag is confirmed — the full
+        // Tier-1 / Tier-2 split is the policy block on
+        // {LibVaipakam.isSanctionedAddress}. `address(0)` disables the
         // check entirely (fail-open); a retail deploy must not route real
         // value while it is zero.
         address sanctionsOracle;
@@ -5403,6 +5407,14 @@ library LibVaipakam {
         // permissionless, sanctions-open sweep still route it to treasury.
         // Append-only per loan; `_processEntry` is idempotent so a re-sweep (or a
         // later un-flagged claim) double-counts nothing.
+        // #1566 — no longer sale orphans only: it also carries every
+        // sanctions-STAMPED entry of EITHER side (lender or borrower), pushed
+        // by `LibInteractionRewards.stampSanctionsForfeit`, so the same
+        // permissionless loan sweep settles a stamp whatever the owner's later
+        // status. The "Lender" in the name is historical: the field keeps its
+        // name (every reader - the #953 sale path, the test mutator - uses it,
+        // and a rename buys no layout change) and its slot (Storage is
+        // append-only).
         mapping(uint256 => uint256[]) loanForfeitedLenderEntryIds;
         // ─── #954 (Codex #981 P1/P2) — frozen swap-surplus borrower claim ─────
         // `SwapToRepayFacet.swapToRepayFull` normally hands the borrower's
@@ -7980,6 +7992,24 @@ library LibVaipakam {
         ///      statement of one fact. ONE reader ORs the two:
         ///      `LibRewardCustody.dayDeliveryLanded`.
         mapping(uint256 => bytes32) dayDeliveryProvedBy;
+        /// @dev #1566 sanctions reward-forfeit — per wallet, the EVIDENCE CHAIN
+        ///      that its sanctions flag is CONFIRMED, packed
+        ///      `oracle(160) | flaggedAt(48) | lastSeenAt(48)` (the one codec is
+        ///      `LibRewardSanctions.packEvidence`): the oracle the observations
+        ///      were made against, when the chain started, and its latest
+        ///      authoritative Flagged observation. Written ONLY by
+        ///      `LibRewardSanctions.observe`, after an authoritative read, so
+        ///      nobody can forge a chain or break one: a Flagged read with no
+        ///      live chain (no #1123 marker, another oracle, or a gap over
+        ///      `MAX_OBS_GAP_SECS`) restarts it at now; a Flagged read on a live
+        ///      chain moves `lastSeenAt`; a Clean read deletes it. Undelivered
+        ///      interaction reward is forfeitable only once a live chain spans
+        ///      `CONFIRM_SECS`. WHY a word of its own beside
+        ///      `sanctionsConfirmedFlagged`: that marker carries no time and is
+        ///      set by several paths on one read, while a forfeit is
+        ///      irreversible and must never follow one read. Appended — the
+        ///      Storage struct is append-only.
+        mapping(address => uint256) rewardSanctionsEvidence;
     }
 
     /// @notice 3b-ii-A2 (#2305) — one batch a staging record staged from, with
@@ -11573,73 +11603,6 @@ library LibVaipakam {
         emit SanctionsOracleSet(prev, oracle);
     }
 
-    /// @notice Read-through helper: true iff the configured oracle
-    ///         reports `who` as currently sanctioned. Returns false
-    ///         when no oracle is configured (the gate is disabled)
-    ///         OR when the oracle call reverts (fail-open on
-    ///         infrastructure failure — the alternative would brick
-    ///         every interaction on the chain whenever the oracle has
-    ///         an outage, which would over-react to an availability
-    ///         issue).
-    ///
-    /// ─── Sanctions enforcement policy (Phase 1, retail deploy) ───
-    ///
-    /// The retail deploy may have a sanctions oracle configured (which
-    /// source is open, #2443). When set, the gate splits the
-    /// callable surface into two tiers:
-    ///
-    /// **Tier 1 — BLOCK** when `msg.sender` is sanctioned (revert
-    /// with `ProfileFacet.SanctionedAddress(who)`). Any entry point
-    /// that creates new state or routes funds TO the caller:
-    ///   - `OfferFacet.createOffer` / `acceptOffer` (creator + acceptor checks)
-    ///   - `VaultFactoryFacet.getOrCreateUserVault` (no vault ever
-    ///     exists for a sanctioned wallet)
-    ///   - `ClaimFacet.claimAsLender` / `claimAsBorrower` (funds OUT)
-    ///   - `VPFIDiscountFacet.buyVPFI` (token purchase)
-    ///   - `RiskFacet.triggerLiquidation` (3% liquidator bonus → caller)
-    ///   - `EarlyWithdrawalFacet.withdrawEarly` (lender pulls early)
-    ///   - `PrecloseFacet.transferObligationViaOffer` (funds + state)
-    ///   - `RefinanceFacet.refinanceLoan` (funds + new loan state)
-    ///
-    /// **Tier 2 — ALLOW** even when `msg.sender` is sanctioned. Each
-    /// entry point either CLOSES exposure to the sanctioned party or
-    /// is a permissionless safety action that benefits the
-    /// non-sanctioned counterparty:
-    ///   - `RepayFacet.repay` / `repayPartial` — closes the loan,
-    ///     unsanctioned lender gets paid. Refusing this would force
-    ///     default → liquidation, which routes the same value through
-    ///     a worse path; counter-productive for compliance.
-    ///   - `AddCollateralFacet.addCollateral` — borrower puts MORE
-    ///     skin in to keep loan healthy; pro-protocol.
-    ///   - `DefaultedFacet.markDefaulted` — anyone unflagged calls
-    ///     this; value flows to lender, not msg.sender.
-    ///
-    /// ─── Legal reasoning for Tier-2 carve-outs ───
-    ///
-    /// Liquidation of a sanctioned-borrower's collateral is allowed
-    /// because the lender's claim was established BEFORE the
-    /// sanction (security interest in the collateral, contractually
-    /// pledged at loan-init). Executing on a pre-existing security
-    /// interest is the pattern OFAC General Licenses authorize for
-    /// "wind-down of contracts entered into prior to designation".
-    /// The sanctioned party's residual interest (collateral surplus
-    /// after debt + bonus) stays frozen in their own vault — Tier-1
-    /// blocks `claimAsBorrower`, so no value flows to the sanctioned
-    /// wallet. Lender (unsanctioned) receives principal+interest;
-    /// liquidator (must be unsanctioned, Tier-1 blocks the bonus)
-    /// receives the 3% bonus. Sanctioned residue is held but not
-    /// transferred to any other address.
-    ///
-    /// ─── What about funds frozen in a sanctioned wallet's vault? ───
-    ///
-    /// The protocol does not seize, redirect, or release these funds.
-    /// They remain in the sanctioned wallet's own vault and become
-    /// claimable again if the oracle delists the address. This is
-    /// the same behaviour as Circle's USDC blocklist — frozen, not
-    /// seized. The frontend communicates this to a sanctioned wallet
-    /// when it connects; the public Terms of Service carries one
-    /// generic disclosure line about restricted access.
-    ///
     /// @notice #1222 M3 B2-b — TRUE when this chain is a reward-mesh
     ///         MIRROR: explicitly non-canonical AND a canonical chain is
     ///         configured (the same pair `RewardReporterFacet.closeDay`
@@ -11694,6 +11657,106 @@ library LibVaipakam {
             : RewardRole.Unconfigured;
     }
 
+    /// @notice Read-through helper: true iff the configured oracle
+    ///         reports `who` as currently sanctioned. Returns false
+    ///         when no oracle is configured (the gate is disabled)
+    ///         OR when the oracle call reverts (fail-open on
+    ///         infrastructure failure — the alternative would brick
+    ///         every interaction on the chain whenever the oracle has
+    ///         an outage, which would over-react to an availability
+    ///         issue).
+    ///
+    /// ─── Sanctions enforcement policy (Phase 1, retail deploy) ───
+    ///
+    /// The retail deploy may have a sanctions oracle configured (which
+    /// source is open, #2443). When set, the gate splits the
+    /// callable surface into two tiers:
+    ///
+    /// **Tier 1 — BLOCK** when `msg.sender` is sanctioned (revert
+    /// with `ProfileFacet.SanctionedAddress(who)`). Any entry point
+    /// that creates new state or routes funds TO the caller:
+    ///   - `OfferCreateFacet.createOffer` / `OfferAcceptFacet.acceptOffer`
+    ///     (creator + acceptor checks)
+    ///   - `VaultFactoryFacet.getOrCreateUserVault` (no vault ever
+    ///     exists for a sanctioned wallet)
+    ///   - `ClaimFacet.claimAsLender` / `claimAsBorrower` (funds OUT)
+    ///   - `RewardClaimFacet.claimInteractionRewards` /
+    ///     `claimInteractionRewardsTo` (funds OUT) — screened with
+    ///     {assertRecipientNotBarred}, not this helper: a wallet carrying a
+    ///     committed flag is refused during an oracle outage too, so the claim
+    ///     pauses in step with the reward-expiry clock, which reads the same
+    ///     predicate
+    ///   - `VPFIDiscountFacet.depositVPFIToVault` / `withdrawVPFIFromVault`
+    ///     (no VPFI accumulates in, or leaves, a sanctioned wallet's vault)
+    ///   - `RiskFacet.triggerLiquidation` (3% liquidator bonus → caller)
+    ///   - `EarlyWithdrawalFacet.createLoanSaleOffer` /
+    ///     `EarlyWithdrawalDirectFacet.sellLoanViaBuyOffer` (lender exits early)
+    ///   - `PrecloseFacet.transferObligationViaOffer` (funds + state)
+    ///   - `RefinanceFacet.refinanceLoan` (funds + new loan state)
+    ///
+    /// **Tier 2 — ALLOW** even when `msg.sender` is sanctioned. Each
+    /// entry point either CLOSES exposure to the sanctioned party or
+    /// is a permissionless safety action that benefits the
+    /// non-sanctioned counterparty:
+    ///   - `RepayFacet.repayLoan` / `repayPartial` — closes the loan,
+    ///     unsanctioned lender gets paid. Refusing this would force
+    ///     default → liquidation, which routes the same value through
+    ///     a worse path; counter-productive for compliance.
+    ///   - `AddCollateralFacet.addCollateral` — borrower puts MORE
+    ///     skin in to keep loan healthy; pro-protocol.
+    ///   - `DefaultedFacet.triggerDefault` — anyone unflagged calls
+    ///     this; value flows to lender, not msg.sender.
+    ///
+    /// ─── Legal reasoning for Tier-2 carve-outs ───
+    ///
+    /// Liquidation of a sanctioned-borrower's collateral is allowed
+    /// because the lender's claim was established BEFORE the
+    /// sanction (security interest in the collateral, contractually
+    /// pledged at loan-init). Executing on a pre-existing security
+    /// interest is the pattern OFAC General Licenses authorize for
+    /// "wind-down of contracts entered into prior to designation".
+    /// The sanctioned party's residual interest (collateral surplus
+    /// after debt + bonus) stays frozen in their own vault — Tier-1
+    /// blocks `claimAsBorrower`, so no value flows to the sanctioned
+    /// wallet. Lender (unsanctioned) receives principal+interest;
+    /// liquidator (must be unsanctioned, Tier-1 blocks the bonus)
+    /// receives the 3% bonus. Sanctioned residue is held but not
+    /// transferred to any other address.
+    ///
+    /// ─── What about funds frozen in a sanctioned wallet's vault? ───
+    ///
+    /// The protocol does not seize, redirect, or release these funds.
+    /// They remain in the sanctioned wallet's own vault and become
+    /// claimable again if the oracle delists the address. This is
+    /// the same behaviour as Circle's USDC blocklist — frozen, not
+    /// seized. The frontend communicates this to a sanctioned wallet
+    /// when it connects; the public Terms of Service carries one
+    /// generic disclosure line about restricted access. Undelivered
+    /// protocol rewards are the one exception — see the next section.
+    ///
+    /// ─── Undelivered protocol rewards: forfeited once confirmed ───
+    ///
+    /// Owner decision 2026-10-02. Interaction-reward entries, and staged
+    /// interaction-reward payouts, not yet delivered to a wallet whose
+    /// flag is CONFIRMED are forfeited into the recycle bucket as
+    /// `RecycleSource.ForfeitedReward` — permanently; a later delisting
+    /// restores nothing. CONFIRMED is `LibRewardSanctions`' rule: the
+    /// wallet reads Flagged on a chain of committed, authoritative
+    /// observations against one oracle that spans `CONFIRM_SECS` with no
+    /// gap over `MAX_OBS_GAP_SECS` (anyone may observe, and anyone may run
+    /// the forfeit sweep once the chain confirms). NEVER on an outage, an
+    /// unset oracle, a first flag or a broken chain: until confirmed, a
+    /// barred wallet's reward is only WITHHELD — its claim refused, its
+    /// entries' expiry clock paused, a staged payout waiting. Reward value
+    /// already delivered into the wallet's vault stays frozen with
+    /// everything else there, and loan value — principal, interest,
+    /// collateral, claimables, the borrower-LIF rebate — is untouched.
+    /// WHY rewards differ from loan value: a loan's value rests on a
+    /// contract entered before the listing (the wind-down reasoning
+    /// above), while an undelivered reward is the protocol's own emission
+    /// not yet paid; withholding it without end would keep reward budget
+    /// encumbered for a wallet that may never be delisted.
+    ///
     /// @param who The address to check.
     function isSanctionedAddress(address who) internal view returns (bool) {
         address oracle = storageSlot().sanctionsOracle;
@@ -11833,13 +11896,29 @@ library LibVaipakam {
     ///         Deliberately NOT `assertNotSanctionedFailClosed`, which hard-reverts
     ///         on ANY outage (bricking an honest holder). `address(0)` (a burned-NFT
     ///         holder resolved via `_ownerOfRaw`) is never barred.
-    function isRecipientBarred(address who) internal view returns (bool) {
-        if (who == address(0)) return false;
-        if (storageSlot().sanctionsOracle == address(0)) return false; // disabled regime
-        SanctionsRead st = sanctionsStatus(who);
-        if (st == SanctionsRead.Flagged) return true; // oracle-up authoritative flag
-        if (st == SanctionsRead.Clean) return false; // oracle-up clean — stale marker ignored
-        return storageSlot().sanctionsConfirmedFlagged[who]; // Unavailable ⇒ outage backstop
+    function isRecipientBarred(address who) internal view returns (bool barred) {
+        (barred, ) = recipientBarredRead(who);
+    }
+
+    /// @notice #1566 — {isRecipientBarred}'s ONE body, returning also the read
+    ///         it decided on. `LibRewardSanctions` splits "barred" into Hold
+    ///         and Forfeit by `st` (Flagged vs. the outage backstop) and must
+    ///         never re-decide "barred" itself, so the predicate lives here
+    ///         once and both readers take it from this function.
+    /// @dev    `st` is `Unavailable` WITHOUT a read when `who == 0` or the
+    ///         regime is disabled (oracle unset); `barred` is false then, and
+    ///         `st` makes no claim about the oracle.
+    /// @param  who The recipient to screen.
+    /// @return barred Whether `who` is barred, exactly as {isRecipientBarred}.
+    /// @return st     The {sanctionsStatus} read `barred` was decided on.
+    function recipientBarredRead(address who) internal view returns (bool barred, SanctionsRead st) {
+        st = SanctionsRead.Unavailable;
+        if (who == address(0)) return (false, st);
+        if (storageSlot().sanctionsOracle == address(0)) return (false, st); // disabled regime
+        st = sanctionsStatus(who);
+        if (st == SanctionsRead.Flagged) return (true, st); // oracle-up authoritative flag
+        if (st == SanctionsRead.Clean) return (false, st); // oracle-up clean — stale marker ignored
+        return (storageSlot().sanctionsConfirmedFlagged[who], st); // Unavailable ⇒ outage backstop
     }
 
     /// @notice Revert `SanctionedAddress(who)` when {isRecipientBarred} holds.
