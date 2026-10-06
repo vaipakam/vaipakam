@@ -223,8 +223,12 @@ refinance guard; the spec states that race.
 **Race closed on chain, 2026-10-05 (#2407).** The protocol now records one
 refinance request per loan and refuses a partial repayment (direct and
 swap-to-repay), a direct preclose, an obligation handover, an offset and a
-partial collateral withdrawal while that request is live, and refuses a second
-live request for the same loan. Only the recorded request can be taken, so a
+partial collateral withdrawal (and an in-place extension) while that request
+stands — not taken, cancelled or expired, posted by the current holder, on an
+active loan — and refuses a second standing request for the same loan. Whether
+a lender could fill it right now is deliberately not part of the hold (#2424
+r10): a standing request that can no longer fill holds the loan until the
+borrower cancels it, which matches the app's own search rule. Only the recorded request can be taken, so a
 request that drops out of the record cannot revive unguarded. Full repayment, every enforcement action (including a
 partial liquidation) and adding collateral are deliberately not held (see `ProjectDetailsREADME.md`, the
 refinance section). This brings the code to the intent the spec already

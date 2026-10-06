@@ -32,9 +32,11 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
  * @title RefinanceRequestGuardTest
  * @notice #2407 — a loan's standing refinance request is indexed on chain, one
  *         per loan, and the borrower actions that would change the loan
- *         underneath it are refused while it is live. A request stops being
- *         live — with no write anywhere — when it is cancelled, accepted,
- *         expires, or its creator no longer holds the borrower position.
+ *         underneath it are refused while it STANDS. A request stops standing
+ *         — with no write anywhere — when it is cancelled, accepted, expires,
+ *         the loan closes, or its creator no longer holds the borrower
+ *         position. Whether it could be filled right now is not part of that
+ *         rule; `checkRefinanceRequest` reports it.
  */
 contract RefinanceRequestGuardTest is SetupTest {
     uint256 internal constant LOAN_PRINCIPAL = 100 ether;
@@ -114,7 +116,7 @@ contract RefinanceRequestGuardTest is SetupTest {
         );
     }
 
-    /// The live request for `loanId`, or 0.
+    /// The standing request for `loanId` (`getRefinanceRequest`'s `live`), or 0.
     function _live(uint256 loanId) internal view returns (uint256) {
         (uint256 offerId, bool live) = RefinanceFacet(address(diamond)).getRefinanceRequest(loanId);
         return live ? offerId : 0;
@@ -465,58 +467,53 @@ contract RefinanceRequestGuardTest is SetupTest {
         );
     }
 
-    // ─── #2424 r7 — live means "could be accepted right now" ─────────
+    // ─── #2424 r10 — a request holds the loan while it STANDS ────────
+    //
+    // Whether a lender could fill it right now is deliberately not part of the
+    // rule (r7/r8 tried, and each round found another prerequisite to model).
+    // A standing request that can no longer fill keeps holding the loan until
+    // the borrower cancels it; `checkRefinanceRequest` says why it cannot fill.
 
-    /// Withdrawing the refinance caps makes the request unacceptable, so it
-    /// stops holding the loan back at once — and, being the holder's own
-    /// uncancelled request, still has to be cancelled before a new one.
-    function test_withdrawingTheCapsStopsTheRequestHoldingTheLoan() public {
+    /// Withdrawing the refinance caps leaves the request unfillable but still
+    /// standing: it keeps holding the loan, the check names the reason, and
+    /// cancelling it is the way out.
+    function test_withdrawingTheCapsLeavesTheRequestStanding() public {
         uint256 loanId = _activeLoan();
         uint256 r1 = _request(loanId, 0);
-        assertEq(_live(loanId), r1);
-
         vm.prank(borrower);
         AutoLifecycleFacet(address(diamond)).setAutoRefinanceCaps(
             loanId, false, 600, uint64(block.timestamp + 365 days)
         );
-        assertEq(_live(loanId), 0, "an unacceptable request is not live");
-        assertEq(_recorded(loanId), r1, "but still reported");
+        assertEq(_live(loanId), r1, "an unfillable request still stands");
+        assertEq(
+            _selectorOf(abi.encodeCall(RepayFacet.repayPartial, (loanId, 1))),
+            IVaipakamErrors.RefinanceRequestOpen.selector,
+            "and still holds the loan"
+        );
+        vm.expectRevert(LibAutoRefinanceCheck.RefinanceCapsRequired.selector);
+        RefinanceFacet(address(diamond)).checkRefinanceRequest(loanId, r1);
+
+        vm.prank(borrower);
+        OfferCancelFacet(address(diamond)).cancelOffer(r1);
+        assertEq(_live(loanId), 0, "cancelling lifts it");
         assertTrue(
             _selectorOf(abi.encodeCall(RepayFacet.repayPartial, (loanId, 1)))
                 != IVaipakamErrors.RefinanceRequestOpen.selector,
             "the guard lifted"
         );
-        // A new request inside re-enabled but tighter caps (which leave R1,
-        // at 400 bps, unacceptable) is refused until R1 is cancelled.
-        vm.prank(borrower);
-        AutoLifecycleFacet(address(diamond)).setAutoRefinanceCaps(
-            loanId, true, 300, uint64(block.timestamp + 365 days)
-        );
-        assertEq(_live(loanId), 0, "still not live under the tighter cap");
-        vm.prank(borrower);
-        vm.expectRevert(
-            abi.encodeWithSelector(IVaipakamErrors.RefinanceRequestNotCancelled.selector, loanId, r1)
-        );
-        OfferCreateFacet(address(diamond)).createOffer(
-            _params(LibVaipakam.OfferType.Borrower, 250, LibVaipakam.FillMode.Aon, loanId, 0)
-        );
     }
 
     /// Tightening the rate cap below the request's rate does the same.
-    function test_tighteningTheRateCapBelowTheRequestStopsItBeingLive() public {
+    function test_tighteningTheRateCapLeavesTheRequestStanding() public {
         uint256 loanId = _activeLoan();
         uint256 r1 = _request(loanId, 0); // rate 400
         vm.prank(borrower);
         AutoLifecycleFacet(address(diamond)).setAutoRefinanceCaps(
             loanId, true, 300, uint64(block.timestamp + 365 days)
         );
-        assertEq(_live(loanId), 0);
-        // Restoring the cap makes it live again — liveness is read, not stored.
-        vm.prank(borrower);
-        AutoLifecycleFacet(address(diamond)).setAutoRefinanceCaps(
-            loanId, true, 600, uint64(block.timestamp + 365 days)
-        );
         assertEq(_live(loanId), r1);
+        vm.expectRevert(LibAutoRefinanceCheck.RefinanceRateExceedsCap.selector);
+        RefinanceFacet(address(diamond)).checkRefinanceRequest(loanId, r1);
     }
 
     /// The public check gives the reason a request could not be accepted now.
@@ -540,59 +537,58 @@ contract RefinanceRequestGuardTest is SetupTest {
         RefinanceFacet(address(diamond)).checkRefinanceRequest(loanId, r1);
     }
 
-    // ─── #2424 r8 — every loan-side prerequisite is part of liveness ──
-
     /// A carry-over request must match the loan's collateral exactly, so a
-    /// top-up (which stays allowed) makes it unacceptable — and not live.
-    function test_aCollateralTopUpStopsACarryOverRequestBeingLive() public {
+    /// top-up (which stays allowed) leaves it unfillable — still standing, and
+    /// the check says so.
+    function test_aCollateralTopUpLeavesACarryOverRequestStandingButUnfillable() public {
         uint256 loanId = _activeLoan();
         uint256 r1 = _request(loanId, 0);
-        assertEq(_live(loanId), r1, "precondition: live");
         vm.prank(borrower);
         AddCollateralFacet(address(diamond)).addCollateral(loanId, 1 ether);
-        assertEq(_live(loanId), 0, "a carry-over request no longer matching the collateral is not live");
+        assertEq(_live(loanId), r1, "still stands");
         vm.expectRevert(
             abi.encodeWithSelector(IVaipakamErrors.RefinanceRequestNotLive.selector, loanId, r1)
         );
         RefinanceFacet(address(diamond)).checkRefinanceRequest(loanId, r1);
     }
 
-    /// Liveness is reversible (caps can be toggled), so an offset can be opened
-    /// while the request is momentarily not live. Re-enabling the caps must not
-    /// make both flows takeable: the request is not live while the offset is
-    /// open, cannot be taken, and is previewed as untakeable.
-    function test_aRequestCannotBeTakenWhileAnOffsetIsOpen() public {
+    /// Standing is reversible only through the position coming back to the
+    /// request's creator, and an open offset locks the position — so a request
+    /// can never stand again beside an offset opened while it did not. A
+    /// handed-away request lets the new holder open an offset; the position
+    /// cannot return while it is open, and the request cannot be taken.
+    function test_aRequestCannotStandOrBeTakenBesideAnOffset() public {
         uint256 loanId = _activeLoan();
         uint256 r1 = _request(loanId, 0);
+        uint256 tokenId = LoanFacet(address(diamond)).getLoanDetails(loanId).borrowerTokenId;
+
+        address holderB = makeAddr("offsetHolder");
         vm.prank(borrower);
-        AutoLifecycleFacet(address(diamond)).setAutoRefinanceCaps(
-            loanId, false, 600, uint64(block.timestamp + 365 days)
-        );
-        address borrowerVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower);
-        vm.startPrank(borrower);
-        ERC20(mockERC20).approve(borrowerVault, type(uint256).max);
+        IERC721(address(diamond)).transferFrom(borrower, holderB, tokenId);
+        address vaultB = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(holderB);
+        ERC20Mock(mockERC20).mint(holderB, LOAN_PRINCIPAL * 4);
+        vm.startPrank(holderB);
+        ERC20(mockERC20).approve(vaultB, type(uint256).max);
         ERC20(mockERC20).approve(address(diamond), type(uint256).max);
         uint256 offsetOfferId = PrecloseFacet(address(diamond)).offsetWithNewOffer(
             loanId, 500, 30, mockCollateralERC20, LOAN_COLLATERAL, true, mockERC20
         );
-        AutoLifecycleFacet(address(diamond)).setAutoRefinanceCaps(
-            loanId, true, 600, uint64(block.timestamp + 365 days)
-        );
+        assertGt(offsetOfferId, 0, "precondition: the offset is open");
+        vm.expectRevert();
+        IERC721(address(diamond)).transferFrom(holderB, borrower, tokenId);
         vm.stopPrank();
 
-        assertEq(_live(loanId), 0, "not live while an offset is open");
-        assertEq(
-            uint8(OfferPreviewFacet(address(diamond)).previewAccept(r1, makeAddr("previewLender")).errorCode),
-            uint8(OfferAcceptFacet.AcceptError.RefinanceRequestUntakeable)
+        assertEq(_live(loanId), 0, "R1 does not stand beside the offset");
+        assertTrue(
+            OfferPreviewFacet(address(diamond)).previewAccept(r1, makeAddr("previewLender")).errorCode
+                != OfferAcceptFacet.AcceptError.None,
+            "previewed as unable to complete"
         );
+        // Acceptance refuses on the creator no longer holding the position,
+        // before the take-side offset check is reached.
         _acceptExpectingRevert(
-            r1,
-            abi.encodeWithSelector(IVaipakamErrors.RefinanceBlockedByOffset.selector, loanId, offsetOfferId)
+            r1, abi.encodeWithSelector(LibAutoRefinanceCheck.RefinanceTargetNotBorrower.selector)
         );
-
-        vm.prank(borrower);
-        OfferCancelFacet(address(diamond)).cancelOffer(offsetOfferId);
-        assertEq(_live(loanId), r1, "live again once the offset is withdrawn");
     }
 
     /// The storage slot holding `loanId`'s indexed request, found by observing

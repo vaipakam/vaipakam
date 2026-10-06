@@ -22,9 +22,9 @@ import {LibPeriodicInterest} from "./LibPeriodicInterest.sol";
  *         protocol refuses those actions while a LIVE request targets the
  *         loan; the borrower cancels the request first.
  *
- *         WHAT IS LIVE. The index stores at most one request per loan, and a
- *         stored request counts only while ALL of the following hold — the
- *         same conditions under which the request could still be accepted:
+ *         WHAT IS LIVE — a request holds the loan while it STANDS. The
+ *         record stores at most one request per loan, and it stands while
+ *         ALL of the following hold:
  *           - it still exists and is not accepted (a cancel either deletes
  *             the offer or marks it accepted);
  *           - it still targets this loan;
@@ -34,9 +34,20 @@ import {LibPeriodicInterest} from "./LibPeriodicInterest.sol";
  *           - its creator still holds the loan's borrower position (accept
  *             re-checks this, so a request orphaned by a position transfer
  *             cannot fill — and must not block the new holder).
- *         Because liveness is read, never stored, a request that lapses for
- *         any of those reasons stops blocking with no write anywhere, and no
- *         path that ends a request has to remember to clear the slot.
+ *         Whether a lender could fill it at this moment is DELIBERATELY not
+ *         part of the rule: the holder's refinance caps, the payoff approval
+ *         and balance, an overdue period, a collateral top-up and the market
+ *         can each make acceptance fail, and every one of them can change
+ *         back. A rule that tried to track them grew an edge per review round
+ *         and still lagged acceptance itself, so this one is bounded instead:
+ *         a standing request holds the loan, and the borrower's remedy — to
+ *         cancel their own request — is always available.
+ *         `RefinanceFacet.checkRefinanceRequest` answers the other question
+ *         ("could it be accepted right now, and if not, why"), for display.
+ *         Because standing is read, never stored, a request that stops
+ *         standing for any of those reasons stops blocking with no write
+ *         anywhere, and no path that ends a request has to remember to clear
+ *         the slot.
  *
  *         THE RECORD IS AUTHORITATIVE. Liveness is not one-way — a position
  *         that leaves its creator can come back — so a request the record no
@@ -74,15 +85,13 @@ interface IRefinanceRequestView {
 }
 
 library LibRefinanceRequest {
-    /// @notice The live refinance request targeting `loanId`, or 0.
+    /// @notice The standing refinance request targeting `loanId`, or 0.
     /// @dev    Asks `RefinanceFacet.getRefinanceRequest` through the Diamond
-    ///         rather than inlining the rule, so liveness has ONE definition —
-    ///         "could be accepted right now", which `RefinanceFacet` evaluates
-    ///         with the same `LibAutoRefinanceCheck.validate` acceptance runs —
-    ///         and the size-tight guard facets carry only this call. A failed
-    ///         call (a Diamond without the view) reads as "none": the guard
-    ///         protects a request from the borrower's own actions, and must not
-    ///         be able to brick repayment on a misconfigured Diamond.
+    ///         rather than inlining {stands}, so the size-tight guard facets
+    ///         carry only this call. A failed call (a Diamond without the
+    ///         view) reads as "none": the guard protects a request from the
+    ///         borrower's own actions, and must not be able to brick repayment
+    ///         on a misconfigured Diamond.
     function live(uint256 loanId) internal view returns (uint256 offerId) {
         (bool ok, bytes memory ret) = address(this).staticcall(
             abi.encodeCall(IRefinanceRequestView.getRefinanceRequest, (loanId))
@@ -92,23 +101,47 @@ library LibRefinanceRequest {
         return isLive_ ? id : 0;
     }
 
+    /// @notice Whether `offerId` stands as `loanId`'s refinance request — the
+    ///         rule the guard enforces (see the library notes).
+    function stands(
+        LibVaipakam.Storage storage s,
+        uint256 loanId,
+        uint256 offerId
+    ) internal view returns (bool) {
+        LibVaipakam.Offer storage o = s.offers[offerId];
+        // `accepted` is defensive today: every route that marks a request
+        // accepted (direct accept, matcher fill, a partial match's dust-close)
+        // chains the refinance in the same transaction, so the loan is already
+        // no longer Active by the time it reads true — and a cancel of an
+        // all-or-nothing request deletes it.
+        if (o.creator == address(0) || o.accepted) return false;
+        if (o.refinanceTargetLoanId != loanId) return false;
+        if (LibVaipakam.isOfferExpired(o)) return false;
+        LibVaipakam.Loan storage loan = s.loans[loanId];
+        if (loan.status != LibVaipakam.LoanStatus.Active) return false;
+        // Non-reverting read: a missing token simply means "not standing".
+        return LibERC721._ownerOfRaw(loan.borrowerTokenId) == o.creator;
+    }
+
     /// @notice Revert with the reason `offerId` could not be accepted as
     ///         `loanId`'s refinance request right now; return if it could.
-    ///         This IS liveness: the request's own state (it exists, is not
+    ///         This is NOT the guard's rule ({stands} is): it is the
+    ///         informational answer `RefinanceFacet.checkRefinanceRequest`
+    ///         serves. It checks the request's own state (it exists, is not
     ///         taken, still targets the loan, has not expired), then the very
     ///         check acceptance re-runs — the loan is Active and not past
     ///         grace, its creator holds the borrower position, the assets and
     ///         principal still fit, and the holder's refinance caps still admit
-    ///         it — then every further prerequisite of completing the refinance
-    ///         that depends on the LOAN's or the REQUEST's own state: no offset
+    ///         it — then the further prerequisites of completing the refinance
+    ///         that depend on the LOAN's or the REQUEST's own state: no offset
     ///         open on the loan, no swap-to-repay intent committed against it,
     ///         no periodic interest overdue past its grace, and, for a
     ///         carry-over request, the old collateral still matching it exactly
-    ///         under a live lien. What it deliberately does NOT model is the
-    ///         MARKET — the replacement loan's health factor and LTV at the
-    ///         moment of acceptance — which no standing check can know in
-    ///         advance; a request can be live and still be refused on those.
-    ///         Used only by `RefinanceFacet`, which serves it to everyone.
+    ///         under a live lien. It does not model the payoff funding (the
+    ///         holder's approval and balance of the principal asset) or the
+    ///         MARKET (the replacement loan's health factor and LTV at the
+    ///         moment of acceptance); a request can pass and still be refused
+    ///         on those.
     function assertAcceptable(
         LibVaipakam.Storage storage s,
         uint256 loanId,
@@ -166,16 +199,16 @@ library LibRefinanceRequest {
         ) revert IVaipakamErrors.RefinanceRequestNotLive(loanId, offerId);
     }
 
-    /// @notice Revert {IVaipakamErrors.RefinanceRequestOpen} while a live
-    ///         request targets `loanId`.
+    /// @notice Revert {IVaipakamErrors.RefinanceRequestOpen} while a request
+    ///         stands against `loanId`.
     function assertNone(uint256 loanId) internal view {
         uint256 offerId = live(loanId);
         if (offerId != 0) revert IVaipakamErrors.RefinanceRequestOpen(loanId, offerId);
     }
 
     /// @notice Revert unless `loanId`'s recorded request may be replaced: a
-    ///         live one reverts {IVaipakamErrors.RefinanceRequestOpen}; an
-    ///         outstanding one of the current holder's that is no longer live
+    ///         standing one reverts {IVaipakamErrors.RefinanceRequestOpen}; an
+    ///         outstanding one of the current holder's that no longer stands
     ///         (in practice, expired) reverts
     ///         {IVaipakamErrors.RefinanceRequestNotCancelled}.
     function assertReplaceable(uint256 loanId) internal view {
@@ -186,7 +219,7 @@ library LibRefinanceRequest {
     }
 
     /// @notice The recorded request that a new one may not displace, or 0:
-    ///         a live one (`isLiveNow`), or an outstanding one — never
+    ///         a standing one (`isLiveNow`), or an outstanding one — never
     ///         accepted, never cancelled — posted by the current holder.
     function blockingRecord(
         uint256 loanId
@@ -224,7 +257,12 @@ library LibRefinanceRequest {
     ///         ({IVaipakamErrors.RefinanceRequestNotRecorded}) and no offset may
     ///         be open on the loan ({IVaipakamErrors.RefinanceBlockedByOffset})
     ///         — the two flows each close the loan, so whichever settled second
-    ///         would find it closed underneath it. An untagged offer passes: it
+    ///         would find it closed underneath it. The offset half is defence
+    ///         in depth: a request cannot be recorded beside an offset, an
+    ///         offset cannot be opened beside a standing request, and an open
+    ///         offset locks the position, so the one way back to standing (the
+    ///         position returning to the request's creator) is closed while it
+    ///         is open. An untagged offer passes: it
     ///         is not a refinance request, and the routes that accept one gate
     ///         it themselves.
     function assertTakeable(uint256 loanId, uint256 offerId) internal view {

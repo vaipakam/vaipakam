@@ -1463,7 +1463,7 @@ is the borrower's own money.
   does nothing or can only fail.
 - While a review is open or a send is in flight, the amount cannot be edited: the
   amount on screen is always the amount the wallet is asked to send.
-- While an acceptable refinance request is open on the loan, the surface says
+- While a refinance request stands on the loan, the surface says
   that taking collateral back would make every lender's acceptance fail and
   asks the borrower to cancel or wait — the same interlock partial repayment
   and early close-out apply — and the pre-check refuses. A request is found
@@ -1482,7 +1482,11 @@ is the borrower's own money.
   found no open request in what it read is reported as unable to answer. The bound is the loan's own offer, which can be older
   than the loan itself, because the chain records no start for a loan that
   later events do not rewrite. The protocol now records each loan's request
-  and whether it is live (#2407); reading that record in place of the search
+  and whether it still stands (#2407) — the same rule the search applies: not
+  taken, cancelled or expired, posted by the current holder of the borrower
+  position, on a loan that is still active. Whether a lender could fill it
+  right now is not part of either rule, so a request that can no longer fill
+  holds the loan until the borrower cancels it. Reading that record in place of the search
   is a separate app change, and until it lands the search described here is
   what the app does.
 - An open confirmation does not survive a network switch or a change of
@@ -3195,7 +3199,7 @@ Its intended behaviour, as the test oracle for this surface:
   and the card outlives the loan's settlement for the same reason. A new
   request is not posted while the app can see one open, and the form waits until the search has answered, checking again just
   before posting. The protocol enforces the same limit (#2407): while a
-  live request targets the loan, posting a second is refused, so two
+  request stands against the loan, posting a second is refused, so two
   devices that both pass the app's check in the same moment cannot both
   post — the protocol refuses the second, naming the request already
   open. Only the request the protocol has recorded for the loan can be
@@ -3241,10 +3245,12 @@ Its intended behaviour, as the test oracle for this surface:
   taking collateral back — repeats the search just before the wallet
   opens. No check made before signing can rule out a request posted in
   the moments between that last check and the transaction being mined,
-  so the protocol closes that race itself (#2407): while a live request
-  targets the loan it refuses a partial (paid directly or by swapping
+  so the protocol closes that race itself (#2407): while a request
+  stands against the loan it refuses a partial (paid directly or by swapping
   collateral), an early close-out, an obligation handover, an offset and
-  taking collateral back, naming the request in its refusal. Full
+  taking collateral back, naming the request in its refusal, which the app
+  explains in plain words in every supported language even when the wallet
+  returns only the raw revert. Full
   repayment, adding collateral and every enforcement action (including a
   partial liquidation) are never held by it. When one of those last checks — or any other check made after
   the token approval — stops the action, the approval it granted is put
