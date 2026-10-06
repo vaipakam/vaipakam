@@ -12,7 +12,12 @@
  *
  *  The second context's lack of a marker is ASSERTED, not assumed: if the
  *  fixture ever shared storage between contexts, the spec would pass on
- *  the marker it set out to do without. */
+ *  the marker it set out to do without.
+ *
+ *  #2425 — CI deploys the current contracts, which record each loan's
+ *  request, so device B now finds it through the protocol's record
+ *  (`getRefinanceRequest`) rather than the scan; the scan's fallback and
+ *  leftover rules are pinned in the unit tests. */
 import { test, expect } from '../lib/wallet-fixture';
 import { seedDeskOffer, acceptOfferDirect } from '../lib/desk';
 

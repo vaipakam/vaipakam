@@ -1,0 +1,9 @@
+## Thread — the app finds a loan's refinance request from the protocol's own record (PR #TBD)
+
+Since #2407, the protocol keeps a record of each loan's refinance request. It holds the loan back only for that recorded request, and only that request can be accepted. The connected app was still finding requests the old way: a bounded search over the borrower's own offers. That search had two limits. It could fail to answer, and it could stop short for a holder with more offers than one search reads. In both cases the app held back partial repayment, early close, handover, offset and taking collateral back, and said it could not tell.
+
+The app now reads the record first. A request that still stands is the one that holds the loan back, with no search needed. If the recorded request has expired but the current holder never cancelled it, the app shows it as expired so it can be cleaned up, and the refinance form waits for that cancel, as the protocol requires.
+
+The old search now runs only to find leftovers. These are requests the record does not name: one posted before the record existed, or one a newer request replaced. The protocol will never accept a leftover, and it holds nothing back. So when the app finds one, the request card says plainly that it can never be accepted and offers to cancel it along with its standing payoff approval. A leftover never stops any action. If the leftover search cannot answer, nothing is held back either, because nothing the protocol would refuse depends on it, and the holder's offer list still shows every offer.
+
+On a deployment that predates the record, the app keeps using the search alone, as before. If the record itself cannot be read, the affected actions hold back and say so. The new card text is translated in every supported language. Closes #2425.

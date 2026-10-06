@@ -233,10 +233,11 @@ request that drops out of the record cannot revive unguarded. Full repayment, ev
 partial liquidation) and adding collateral are deliberately not held (see `ProjectDetailsREADME.md`, the
 refinance section). This brings the code to the intent the spec already
 stated; the spec's race paragraph was rewritten to say the protocol closes it.
-The app still discovers the request by its bounded on-chain search; moving it
-to the protocol's record is a separate app change (#2425), as is the form
-offering to cancel an expired request the protocol now requires cancelled
-before a new one. The original entry follows.
+Since #2425 the app finds the request from the protocol's record first, and
+uses its bounded on-chain search only for leftovers (requests the record does
+not name, which the protocol never accepts and which block nothing) and on a
+deployment without the record. The refinance form stops on an uncancelled
+expired request before posting (#2424). The original entry follows.
 
 The connected app holds partial repayment while another arrangement is pinned
 to the loan's outstanding amount. Two of those holds are answered by the chain

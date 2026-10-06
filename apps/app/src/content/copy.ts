@@ -1651,6 +1651,12 @@ const copySource = {
       `when it expires with this loan’s grace window ({{date}}) — a refinance request can’t outlive the loan it replaces`,
       ['date'],
     ),
+    // #2425 — a request that is not the loan's RECORDED one: posted before
+    // the protocol kept a record, or replaced by a newer request. The
+    // protocol never takes it and it holds nothing back; cancelling it
+    // removes it and its payoff approval.
+    pendingUntakeable:
+      'This refinance request can never be accepted: it isn’t the request the protocol has on record for this loan (it was posted before that record existed, or a newer request replaced it). It does not hold the loan back. Cancel it below to remove it and its standing payoff approval.',
     pendingPastGrace:
       'This loan has passed its due date and grace window, so no lender can accept this request any more — it no longer holds up your other actions here. Cancel it below to also remove its standing payoff approval.',
     cadenceChangeNote:

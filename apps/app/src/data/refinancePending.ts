@@ -35,12 +35,18 @@ import {
   refinancePayoffOf,
 } from '../contracts/loanLive';
 import { readGraceSecondsLive } from '../contracts/preflights';
-import { discoverRefinanceRequest, type RefinanceDiscovery } from './refinanceDiscovery';
+import {
+  discoverRefinanceRequest,
+  isUntakeable,
+  scanHolderOffers,
+  type RefinanceDiscovery,
+} from './refinanceDiscovery';
 import { ownScanUnresolved, resolveNamedRequest } from './refinanceInterlock';
 import { readLiveProtocolFees } from './fees';
 import { ZERO_ADDRESS } from '../lib/offerSchema';
 import { makePendingMarkerStore } from '../lib/pendingMarker';
 import { useActiveChain } from '../chain/useActiveChain';
+import { isFunctionDoesNotExistRevert } from '../contracts/preflights';
 import { tipAware } from '../chain/railHealth';
 import { idleAware } from '../lib/idle';
 
@@ -89,6 +95,10 @@ export interface RefinancePendingState {
    *  `expired` the request can never complete and only
    *  cancel-to-unwind remains. */
   pastGrace: boolean;
+  /** #2425 — the protocol records a DIFFERENT request for the loan, or
+   *  none: this one can never be taken and holds nothing back, so only
+   *  cancel-to-unwind remains. False on a deployment without the record. */
+  untakeable: boolean;
   /** Chain time says the cancel cooldown has elapsed. */
   cancelUnlocked: boolean;
   /** Standing approval no longer covers the request's approval
@@ -131,19 +141,21 @@ export function useRefinancePending(
   // 'refinancePending' (#2406 r1): that root is re-fetched on every block,
   // and discovery is a multi-read scan that only needs a minute's cadence
   // (a borrower action re-runs it live before sending anyway).
-  // Keyed by the SCANNED wallet ('burned' = nothing to scan), so the
-  // holder's scan and a viewer's own scan of the same wallet share a cache.
-  const scan = (target: string | undefined, enabled: boolean) => ({
-    queryKey: refinanceDiscoveryKey(
-      readChain.chainId,
-      loanId,
-      target?.toLowerCase() ?? 'burned',
-    ),
+  // Keyed by the SCANNED wallet ('burned' = nothing to scan) and the mode.
+  // `own` (#2425): the viewer's OWN offers when they are not the holder —
+  // a plain scan, never the loan's record, which can only name the
+  // holder's request — so the two modes answer different questions and
+  // must not share a cache entry.
+  const scan = (target: string | undefined, enabled: boolean, own = false) => ({
+    queryKey: [
+      ...refinanceDiscoveryKey(readChain.chainId, loanId, target?.toLowerCase() ?? 'burned'),
+      own ? 'own' : 'holder',
+    ],
     enabled: enabled && Boolean(readClient) && loanOfferId !== undefined,
     refetchInterval: idleAware(60_000),
     queryFn: async (): Promise<RefinanceDiscovery> => {
       if (target === undefined || loanOfferId === undefined) return { kind: 'none' };
-      const result = await discoverRefinanceRequest({
+      const result = await (own ? scanHolderOffers : discoverRefinanceRequest)({
         client: readClient!,
         diamond: readChain.diamondAddress,
         loanId: BigInt(loanId),
@@ -175,7 +187,7 @@ export function useRefinancePending(
       (holderAddr !== undefined && holderAddr.toLowerCase() !== address.toLowerCase()))
       ? address
       : undefined;
-  const ownQuery = useQuery(scan(ownTarget, ownTarget !== undefined));
+  const ownQuery = useQuery(scan(ownTarget, ownTarget !== undefined, true));
   // A failed refetch is an unknown, not the last answer heard.
   const holderScan: RefinanceDiscovery | undefined = holderQuery.isError
     ? { kind: 'unknown', reason: 'failed' }
@@ -231,7 +243,7 @@ export function useRefinancePending(
     refetchInterval: tipAware(30_000, Boolean(readChain.wsUrl)),
     queryFn: async (): Promise<RefinancePendingState | 'gone'> => {
       const diamond = readChain.diamondAddress;
-      const [offer, live, fees, latestBlock, allowance, balance] =
+      const [offer, live, fees, latestBlock, allowance, balance, recordedId] =
         await Promise.all([
           readClient!.readContract({
             address: diamond,
@@ -264,6 +276,20 @@ export function useRefinancePending(
                 args: [address],
               }) as Promise<bigint>)
             : Promise.resolve(0n),
+          // #2425 — the loan's recorded request; null on a deployment that
+          // predates the record (nothing is untakeable there).
+          (readClient!.readContract({
+            address: diamond,
+            abi: DIAMOND_ABI_VIEM,
+            functionName: 'getRefinanceRequest',
+            args: [BigInt(loanId)],
+          }) as Promise<readonly [bigint, boolean]>).then(
+            ([id]) => id,
+            (e: unknown) => {
+              if (isFunctionDoesNotExistRevert(e)) return null;
+              throw e;
+            },
+          ),
         ]);
       // cancelOffer DELETES the record — zeroed creator = gone. Also
       // treat a marker pointing at some other loan's offer as gone.
@@ -317,6 +343,7 @@ export function useRefinancePending(
       // to fund) and only cancel-to-unwind remains.
       const expired =
         offer.expiresAt !== 0n && latestBlock.timestamp >= offer.expiresAt;
+      const untakeable = isUntakeable(recordedId, candidateId!);
       return {
         creator: offer.creator,
         loanActive: live.status === LOAN_STATUS_ACTIVE,
@@ -324,6 +351,7 @@ export function useRefinancePending(
         expiresAt: offer.expiresAt,
         expired,
         pastGrace,
+        untakeable,
         cancelUnlocked:
           latestBlock.timestamp >= offer.createdAt + CANCEL_COOLDOWN_SECONDS,
         // Funding warnings stop past grace too — like expiry, there
@@ -333,12 +361,14 @@ export function useRefinancePending(
           !offer.accepted &&
           !expired &&
           !pastGrace &&
+          !untakeable &&
           allowance < approvalTarget,
         balanceShort:
           fundingKnown &&
           !offer.accepted &&
           !expired &&
           !pastGrace &&
+          !untakeable &&
           balance < topUp,
         payoff,
         topUp,

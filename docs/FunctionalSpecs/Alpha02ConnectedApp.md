@@ -1468,9 +1468,22 @@ is the borrower's own money.
   asks the borrower to cancel or wait — the same interlock partial repayment
   and early close-out apply — and the pre-check refuses. A request is found
   wherever it was made — on another device or through another tool — because
-  the app looks for it on chain among the current borrower-position holder's
-  own offers, the only ones the protocol will settle; the pre-check repeats that
-  search just before the wallet opens. When the search cannot answer, the
+  the app reads the protocol's record of the loan's refinance request (#2425):
+  a request that still stands is the one that holds the loan back, and a
+  recorded request that has lapsed but was never cancelled by the current
+  holder is shown as expired, for cleanup (the protocol refuses a new request
+  until it is cancelled). The pre-check repeats that read just before the
+  wallet opens. A request the record does not name — one posted before the
+  protocol kept the record, or one a newer request replaced — can never be
+  accepted and holds nothing back; the app still looks for one among the
+  current holder's own offers and, when it finds it, shows it as a request
+  that can never be accepted and offers to cancel it (with its payoff
+  approval). That look is best effort: when it cannot answer, nothing is held
+  back, because nothing the protocol would refuse depends on it, and the
+  holder's own offer list still shows every offer. On a deployment that
+  predates the record, the search over the holder's own offers decides
+  everything, as described next. When the record cannot be read, the
+  surfaces a request would be stranded by hold back and say so. When the search cannot answer, the
   surfaces a request would be stranded by — taking collateral back, partial
   repayment, early close-out, obligation handover and offset — hold back and
   say why, rather than assume there is none, and say which of two reasons
@@ -1486,9 +1499,10 @@ is the borrower's own money.
   taken, cancelled or expired, posted by the current holder of the borrower
   position, on a loan that is still active. Whether a lender could fill it
   right now is not part of either rule, so a request that can no longer fill
-  holds the loan until the borrower cancels it. Reading that record in place of the search
-  is a separate app change, and until it lands the search described here is
-  what the app does.
+  holds the loan until the borrower cancels it. The app reads that record first
+  wherever the deployment has it (#2425), so the search's two limits — a read
+  that fails and a holder with too many offers to read — no longer decide
+  whether a request holds the loan back there.
 - An open confirmation does not survive a network switch or a change of
   connected account: it closes, and the typed amount is cleared, so a review
   opened on one network or under one wallet can never send on another.

@@ -77,7 +77,11 @@ export function RefinancePendingCard({
   const { posture: autoRefinancePosture } = useAutoRefinancePosture();
   const requestTerminal =
     state !== undefined &&
-    (state.accepted || state.expired || !state.loanActive || state.pastGrace);
+    (state.accepted ||
+      state.expired ||
+      !state.loanActive ||
+      state.pastGrace ||
+      state.untakeable);
 
   const walletReady =
     onSupportedChain && Boolean(walletClient) && Boolean(publicClient);
@@ -219,6 +223,10 @@ export function RefinancePendingCard({
             ? copy.refinance.pendingChecking(offerId)
             : state.accepted
               ? copy.refinance.pendingAccepted
+              : state.untakeable
+                ? // #2425 — not the loan's recorded request: the protocol
+                  // will never take it, and it holds nothing back.
+                  copy.refinance.pendingUntakeable
               : state.expired
                 ? copy.refinance.pendingExpired(
                     formatDate(Number(state.expiresAt)),
