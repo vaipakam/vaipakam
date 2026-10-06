@@ -5073,6 +5073,17 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
               : copy.refinance.ownScanFailed}
           </span>
         </div>
+      ) : refi.leftoversUnresolved !== null && !isRental ? (
+        // #2429 r2 — the record answered, but the search for an older request
+        // it does not name did not: nothing is held back, and the page says
+        // it could not check rather than staying silent.
+        <div className="banner banner-info" role="status">
+          <span className="banner-body">
+            {refi.leftoversUnresolved === 'capped'
+              ? copy.refinance.leftoversCapped
+              : copy.refinance.leftoversFailed}
+          </span>
+        </div>
       ) : null}
 
       {/* Per-loan keeper enables — third leg of the keeper trio

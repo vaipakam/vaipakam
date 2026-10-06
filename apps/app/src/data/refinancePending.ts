@@ -100,9 +100,10 @@ export interface RefinancePendingState {
    *  none: this one can never be taken and holds nothing back, so only
    *  cancel-to-unwind remains. False on a deployment without the record. */
   untakeable: boolean;
-  /** #2429 r1 — the protocol records a DIFFERENT request for the loan that
-   *  still stands: cancelling this one must keep the shared payoff approval
-   *  that request draws on. */
+  /** #2429 r1/r2 — the protocol records a DIFFERENT request for the loan
+   *  that still stands and was posted by THIS wallet: cancelling this one
+   *  should keep the shared payoff approval that request draws on. A hint for
+   *  the card's wording; the cancel itself re-decides from the chain. */
   keepApprovalOnCancel: boolean;
   /** Chain time says the cancel cooldown has elapsed. */
   cancelUnlocked: boolean;
@@ -354,11 +355,33 @@ export function useRefinancePending(
       const expired =
         offer.expiresAt !== 0n && latestBlock.timestamp >= offer.expiresAt;
       const untakeable = isUntakeable(record?.id ?? null, candidateId!);
-      const keepApprovalOnCancel = keepsApprovalOnCancel(
-        record?.id ?? null,
-        record?.live ?? false,
-        candidateId!,
-      );
+      // #2429 r2 — who posted the recorded request: only the canceller's own
+      // standing request shares this approval. Read only when it matters; a
+      // failed read just leaves the hint off (the cancel re-decides from the
+      // chain anyway).
+      let recordedCreator: string | null = null;
+      if (record && record.live && record.id !== BigInt(candidateId!) && address) {
+        recordedCreator = await readClient!
+          .readContract({
+            address: diamond,
+            abi: DIAMOND_ABI_VIEM,
+            functionName: 'getOfferDetails',
+            args: [record.id],
+          })
+          .then(
+            (d) => (d as { creator: string }).creator,
+            () => null,
+          );
+      }
+      const keepApprovalOnCancel =
+        address !== undefined &&
+        keepsApprovalOnCancel({
+          recordedId: record?.id ?? null,
+          recordLive: record?.live ?? false,
+          recordedCreator,
+          canceller: address,
+          offerId: candidateId!,
+        });
       return {
         creator: offer.creator,
         loanActive: live.status === LOAN_STATUS_ACTIVE,
@@ -420,6 +443,12 @@ export function useRefinancePending(
      *  exist unseen, so the page says so and names the manual cleanup
      *  rather than staying silent. Never blocks — the contract will not
      *  settle such a request. */
+    /** #2429 r2 — the record answered but the holder's search for an
+     *  older request it does not name did not. Never blocks; the page says
+     *  it could not check, since such a request and its payoff approval may
+     *  exist unseen. */
+    leftoversUnresolved:
+      holderQuery.data?.kind === 'none' ? (holderQuery.data.leftovers ?? null) : null,
     ownScanUnresolved: ownScanUnresolved(
       ownTarget === undefined ? undefined : ownQuery.isError ? 'error' : ownQuery.data,
     ),

@@ -72,7 +72,11 @@ export type RefinanceDiscovery =
   /** `untakeable` (#2425): not the loan's recorded request, so the protocol
    *  will never take it and it holds nothing back — named for cleanup only. */
   | { kind: 'found'; offerId: string; open: boolean; untakeable?: true }
-  | { kind: 'none' }
+  /** `leftovers` (#2429 r2): the record answered, but the search for a
+   *  request it does not name did not (`failed` / `capped`). Never blocks —
+   *  such a request is never accepted — but a leftover and its payoff
+   *  approval may exist unseen, so the page says it could not check. */
+  | { kind: 'none'; leftovers?: 'failed' | 'capped' }
   /** `failed`: a read did not answer (may on retry). `capped`: the holder
    *  has posted more offers since the boundary than one scan reads. */
   | { kind: 'unknown'; reason: 'failed' | 'capped' };
@@ -200,22 +204,85 @@ export function isUntakeable(recordedId: bigint | null, offerId: string): boolea
   return recordedId !== null && recordedId !== BigInt(offerId);
 }
 
-/** #2429 r1 — whether cancelling `offerId` must KEEP the standing payoff
+/** #2429 r1/r2 — whether cancelling `offerId` must KEEP the standing payoff
  *  approval: the protocol records a DIFFERENT request for the loan that still
- *  stands, and it draws on the same approval (same wallet, same token), so
- *  revoking it would strand that request. */
-export function keepsApprovalOnCancel(
-  recordedId: bigint | null,
-  recordLive: boolean,
-  offerId: string,
-): boolean {
-  return recordedId !== null && recordLive && recordedId !== BigInt(offerId);
+ *  stands AND was posted by the cancelling wallet, so it draws on that same
+ *  approval and revoking it would strand that request. Another wallet's
+ *  request uses that wallet's own approval, so it never keeps this one. */
+export function keepsApprovalOnCancel(a: {
+  recordedId: bigint | null;
+  recordLive: boolean;
+  recordedCreator: string | null;
+  canceller: string;
+  offerId: string;
+}): boolean {
+  return (
+    a.recordedId !== null &&
+    a.recordLive &&
+    a.recordedId !== BigInt(a.offerId) &&
+    a.recordedCreator !== null &&
+    a.recordedCreator.toLowerCase() === a.canceller.toLowerCase()
+  );
 }
 
-/** #2425 — a leftover the scan found is never takeable; a scan that did not
- *  answer is none, since nothing the app would block depends on it. */
+/** #2429 r2 — the keep-or-revoke decision at the moment of cancelling, read
+ *  from the chain then (another tab or device may have posted a new request
+ *  since the page last looked). `unknown` when the record cannot be read:
+ *  the caller keeps the approval and says it could not confirm, since a
+ *  revoke it cannot take back is the worse error. A deployment without the
+ *  record has no recorded request to protect: `revoke`. */
+export async function approvalOnCancel(opts: {
+  client: PublicClient;
+  diamond: `0x${string}`;
+  loanId: bigint;
+  canceller: string;
+  offerId: string;
+}): Promise<'keep' | 'revoke' | 'unknown'> {
+  const { client, diamond } = opts;
+  let recordedId: bigint;
+  let recordLive: boolean;
+  try {
+    [recordedId, recordLive] = (await client.readContract({
+      address: diamond,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'getRefinanceRequest',
+      args: [opts.loanId],
+    })) as readonly [bigint, boolean];
+  } catch (e) {
+    return isFunctionDoesNotExistRevert(e) ? 'revoke' : 'unknown';
+  }
+  let recordedCreator: string | null = null;
+  if (recordLive && recordedId !== BigInt(opts.offerId)) {
+    try {
+      recordedCreator = ((await client.readContract({
+        address: diamond,
+        abi: DIAMOND_ABI_VIEM,
+        functionName: 'getOfferDetails',
+        args: [recordedId],
+      })) as { creator: string }).creator;
+    } catch {
+      return 'unknown';
+    }
+  }
+  return keepsApprovalOnCancel({
+    recordedId,
+    recordLive,
+    recordedCreator,
+    canceller: opts.canceller,
+    offerId: opts.offerId,
+  })
+    ? 'keep'
+    : 'revoke';
+}
+
+/** #2425 — a leftover the scan found is never takeable. A scan that did not
+ *  answer blocks nothing (nothing the protocol would refuse depends on it),
+ *  but it is not "none": it is carried as `leftovers` so the page can say it
+ *  could not check (#2429 r2). */
 export function leftoverFrom(scan: RefinanceDiscovery): RefinanceDiscovery {
-  return scan.kind === 'found' ? { ...scan, untakeable: true } : { kind: 'none' };
+  if (scan.kind === 'found') return { ...scan, untakeable: true };
+  if (scan.kind === 'unknown') return { kind: 'none', leftovers: scan.reason };
+  return { kind: 'none' };
 }
 
 /** Live discovery of the HOLDER's request — used by the polling hook and

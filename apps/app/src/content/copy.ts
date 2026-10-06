@@ -1659,6 +1659,20 @@ const copySource = {
     // still stands: the shared payoff approval is kept for that request.
     cancelledKeptApproval:
       'Request cancelled. Its payoff approval was kept, because your other refinance request for this loan still stands and uses the same approval.',
+    // #2429 r2 — the same, when another standing request of this wallet's
+    // uses the same payoff approval: the cancel keeps it.
+    pendingUntakeableKeepsApproval:
+      'This refinance request can never be accepted: it isn’t the request the protocol has on record for this loan (it was posted before that record existed, or a newer request replaced it). It does not hold the loan back. Cancel it below to remove it; its standing payoff approval stays, because your other refinance request for this loan still uses it.',
+    // #2429 r2 — the cancel landed but the record could not be read to
+    // decide whether another request still needs the approval: kept.
+    cancelledApprovalUnconfirmed:
+      'Request cancelled. We couldn’t confirm whether another of your refinance requests still uses its payoff approval, so the approval was kept. If nothing else needs it, remove it under “Standing token approvals” in Settings (Advanced mode).',
+    // #2429 r2 — the record answered but the search for an older request it
+    // does not name did not.
+    leftoversFailed:
+      'We couldn’t check this wallet’s offers just now for an older refinance request on this loan (one posted before the protocol kept a record of requests). Such a request can never be accepted and doesn’t hold the loan back, but it may still carry a standing payoff approval. If one is still open, you can cancel it under “Your open offers” on the Rate Desk; remove the token approval it relied on under “Standing token approvals” in Settings (Advanced mode) if nothing else needs it.',
+    leftoversCapped:
+      'This wallet has posted more offers since this loan’s offer was made than we can check here, so an older refinance request on this loan (one posted before the protocol kept a record of requests) may not be shown. Such a request can never be accepted and doesn’t hold the loan back, but it may still carry a standing payoff approval. If one is still open, you can cancel it under “Your open offers” on the Rate Desk; remove the token approval it relied on under “Standing token approvals” in Settings (Advanced mode) if nothing else needs it.',
     pendingUntakeable:
       'This refinance request can never be accepted: it isn’t the request the protocol has on record for this loan (it was posted before that record existed, or a newer request replaced it). It does not hold the loan back. Cancel it below to remove it and its standing payoff approval.',
     pendingPastGrace:

@@ -10,6 +10,7 @@ import {
   fromRecord,
   isUntakeable,
   keepsApprovalOnCancel,
+  approvalOnCancel,
   leftoverFrom,
   resolveScan,
   selectRequest,
@@ -182,15 +183,17 @@ describe('fromRecord', () => {
 });
 
 describe('leftoverFrom', () => {
-  it('marks a found leftover untakeable, and an unanswered scan as none', () => {
+  it('marks a found leftover untakeable, and carries an unanswered scan as non-blocking', () => {
     expect(leftoverFrom({ kind: 'found', offerId: '4', open: true })).toEqual({
       kind: 'found',
       offerId: '4',
       open: true,
       untakeable: true,
     });
-    expect(leftoverFrom({ kind: 'unknown', reason: 'failed' })).toEqual({ kind: 'none' });
-    expect(leftoverFrom({ kind: 'unknown', reason: 'capped' })).toEqual({ kind: 'none' });
+    // #2429 r2 — an unanswered leftover search blocks nothing but is kept,
+    // so the page can say it could not check.
+    expect(leftoverFrom({ kind: 'unknown', reason: 'failed' })).toEqual({ kind: 'none', leftovers: 'failed' });
+    expect(leftoverFrom({ kind: 'unknown', reason: 'capped' })).toEqual({ kind: 'none', leftovers: 'capped' });
     expect(leftoverFrom({ kind: 'none' })).toEqual({ kind: 'none' });
   });
 });
@@ -270,12 +273,78 @@ describe('isUntakeable', () => {
   });
 });
 
-describe('keepsApprovalOnCancel (#2429 r1)', () => {
-  it('keeps the shared approval only while ANOTHER recorded request stands', () => {
-    expect(keepsApprovalOnCancel(8n, true, '9')).toBe(true);
-    expect(keepsApprovalOnCancel(8n, false, '9')).toBe(false);
-    expect(keepsApprovalOnCancel(9n, true, '9')).toBe(false);
-    expect(keepsApprovalOnCancel(0n, false, '9')).toBe(false);
-    expect(keepsApprovalOnCancel(null, false, '9')).toBe(false);
+describe('keepsApprovalOnCancel (#2429 r1/r2)', () => {
+  const base = { recordedId: 8n, recordLive: true, recordedCreator: HOLDER, canceller: HOLDER, offerId: '9' };
+  it("keeps the approval only while ANOTHER recorded request of the canceller's own stands", () => {
+    expect(keepsApprovalOnCancel(base)).toBe(true);
+    expect(keepsApprovalOnCancel({ ...base, canceller: HOLDER.toLowerCase() })).toBe(true);
+    expect(keepsApprovalOnCancel({ ...base, recordLive: false })).toBe(false);
+    expect(keepsApprovalOnCancel({ ...base, recordedId: 9n })).toBe(false);
+    expect(keepsApprovalOnCancel({ ...base, recordedId: null })).toBe(false);
+    // #2429 r2 — another wallet's request uses that wallet's own approval.
+    expect(keepsApprovalOnCancel({ ...base, recordedCreator: OTHER })).toBe(false);
+    expect(keepsApprovalOnCancel({ ...base, recordedCreator: null })).toBe(false);
+  });
+});
+
+describe('approvalOnCancel — decided from the chain at cancel time (#2429 r2)', () => {
+  const fnMissing = () => {
+    const inner = new ContractFunctionRevertedError({ abi: [], functionName: 'getRefinanceRequest' });
+    inner.signature = '0xa9ad62f8';
+    const outer = new BaseError('reverted');
+    outer.walk = () => inner;
+    return outer;
+  };
+  const client = (record: () => readonly [bigint, boolean], creator: () => string = () => HOLDER) =>
+    ({
+      readContract: async ({ functionName }: { functionName: string }) => {
+        if (functionName === 'getRefinanceRequest') return record();
+        if (functionName === 'getOfferDetails') return { creator: creator() };
+        throw new Error(`unexpected read ${functionName}`);
+      },
+    }) as unknown as PublicClient;
+  const run = (c: PublicClient) =>
+    approvalOnCancel({
+      client: c,
+      diamond: '0x00000000000000000000000000000000000000dd',
+      loanId: 7n,
+      canceller: HOLDER,
+      offerId: '9',
+    });
+  it("keeps it for the canceller's own other standing request", async () => {
+    expect(await run(client(() => [8n, true]))).toBe('keep');
+  });
+  it("revokes it when the standing request is another wallet's, or none stands", async () => {
+    expect(await run(client(() => [8n, true], () => OTHER))).toBe('revoke');
+    expect(await run(client(() => [8n, false]))).toBe('revoke');
+    expect(await run(client(() => [0n, false]))).toBe('revoke');
+  });
+  it('revokes on a deployment without the record (nothing recorded to protect)', async () => {
+    expect(
+      await run(
+        client(() => {
+          throw fnMissing();
+        }),
+      ),
+    ).toBe('revoke');
+  });
+  it('is unknown when the record or its creator cannot be read', async () => {
+    expect(
+      await run(
+        client(() => {
+          throw new Error('fetch failed');
+        }),
+      ),
+    ).toBe('unknown');
+    expect(
+      await run(
+        client(
+          () => [8n, true],
+          () => {
+            throw new Error('fetch failed');
+          },
+        ),
+      ),
+    ).toBe('unknown');
   });
 });

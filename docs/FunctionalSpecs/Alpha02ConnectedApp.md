@@ -1478,9 +1478,13 @@ is the borrower's own money.
   accepted and holds nothing back; the app still looks for one among the
   current holder's own offers and, when it finds it, shows it as a request
   that can never be accepted and offers to cancel it (with its payoff
-  approval). That look is best effort: when it cannot answer, nothing is held
-  back, because nothing the protocol would refuse depends on it, and the
-  holder's own offer list still shows every offer. On a deployment that
+  approval — kept instead when, at the moment of cancelling, the record names
+  a different request of the same wallet that still stands and uses that
+  approval, or when that cannot be confirmed; the card never promises a
+  removal it will not make). That look is best effort: when it cannot answer,
+  nothing is held back, because nothing the protocol would refuse depends on
+  it, and the page says it could not check for an older request and names the
+  manual cleanup (Your open offers; the standing token approvals in Settings). On a deployment that
   predates the record, the search over the holder's own offers decides
   everything, as described next. When the record cannot be read, the
   surfaces a request would be stranded by hold back and say so. When the search cannot answer, the
