@@ -17,6 +17,7 @@ import {
   borrowerPayoutWhat,
   defaultRecoveryNote,
   fallbackPendingNote,
+  internalMatchNote,
   laneAmount,
   lenderPayoutWhat,
   nftClaimLabel,
@@ -364,5 +365,58 @@ describe('receiptPayout', () => {
   });
   it('leaves the fallback to the caller when nothing is known', () => {
     expect(receiptPayout(null, null)).toBeNull();
+  });
+});
+
+describe('internalMatchNote (#2427)', () => {
+  const fmt = (amount: bigint) => `${amount} USDC`;
+  const recorded = (over: Partial<{ interest: bigint; lateFee: bigint; lenderProceeds: bigint }> = {}) =>
+    ({ kind: 'recorded', principal: 1000n, interest: 30n, lateFee: 20n, lenderProceeds: 990n, ...over }) as const;
+  const base = { owed: recorded(), format: fmt, formatUnreadable: false, labels } as const;
+
+  it('states what matching cleared and the matcher fee as the whole principal gap', () => {
+    expect(internalMatchNote(base)).toBe(
+      `${labels.matchCleared('1000 USDC', '50 USDC')} ${labels.matchPaidShort('990 USDC', '10 USDC')}`,
+    );
+  });
+
+  it('says the principal was paid in full when no fee was taken', () => {
+    expect(internalMatchNote({ ...base, owed: recorded({ lenderProceeds: 1000n }) })).toBe(
+      `${labels.matchCleared('1000 USDC', '50 USDC')} ${labels.matchPaidFull}`,
+    );
+  });
+
+  it('drops the interest clause when nothing had accrued', () => {
+    expect(internalMatchNote({ ...base, owed: recorded({ interest: 0n, lateFee: 0n }) })).toBe(
+      `${labels.matchClearedNoCharges('1000 USDC')} ${labels.matchPaidShort('990 USDC', '10 USDC')}`,
+    );
+  });
+
+  it('states every case without a whole record instead of a figure', () => {
+    expect(internalMatchNote({ ...base, owed: { kind: 'incomplete' } })).toBe(labels.matchIncomplete);
+    expect(internalMatchNote({ ...base, owed: { kind: 'none' } })).toBe(labels.matchNotRecorded);
+    expect(internalMatchNote({ ...base, owed: { kind: 'unreadable' } })).toBe(labels.matchUnreadable);
+    for (const kind of ['incomplete', 'none', 'unreadable'] as const) {
+      expect(internalMatchNote({ ...base, owed: { kind } })).not.toMatch(/\d/);
+    }
+  });
+
+  it('keeps the comparison, without amounts, when the token details failed', () => {
+    expect(internalMatchNote({ ...base, format: null, formatUnreadable: true })).toBe(
+      `${labels.matchAmountsUnreadable} ${labels.matchPaidShortNoAmount}`,
+    );
+    expect(
+      internalMatchNote({ ...base, owed: recorded({ lenderProceeds: 1000n }), format: null, formatUnreadable: true }),
+    ).toBe(`${labels.matchAmountsUnreadable} ${labels.matchPaidFull}`);
+  });
+
+  it('says nothing while the token details are still loading', () => {
+    expect(internalMatchNote({ ...base, format: null, formatUnreadable: false })).toBeUndefined();
+  });
+
+  it('never tells the holder what they lent', () => {
+    for (const owed of [recorded(), recorded({ lenderProceeds: 1000n })]) {
+      expect(internalMatchNote({ ...base, owed })).not.toMatch(/you lent/i);
+    }
   });
 });

@@ -2199,6 +2199,54 @@ contract ClaimFacet is
         return (o.principal, o.interest, o.lateFee, o.recordedAt, o.viaFallback);
     }
 
+    /// @notice #2427 — what internal matching cleared from `loanId`, in its
+    ///         principal asset, when a match step closed it from `Active`, and
+    ///         what the lender side was paid for it, as the protocol recorded
+    ///         them step by step. Reported only while the loan STANDS
+    ///         `InternalMatched`.
+    /// @dev    A match can clear a loan in several steps; each step adds the
+    ///         debt it discharged on the {getOwedAtDefault} basis (principal
+    ///         moved, the accrued interest on it now never charged, and the
+    ///         late fee on it). `principal + interest + lateFee` is GROSS debt.
+    ///         `lenderProceeds` is the moved principal less the matcher
+    ///         incentive; interest and late fee are never charged on this path.
+    ///         `incomplete` with no figures: the loan was matched while in the
+    ///         fallback, or the lender had already been paid in part when the
+    ///         first recorded step ran (a step before this record existed, or a
+    ///         preclose / offset), so no whole figure exists. Neither set
+    ///         (`recordedAt == 0`, `incomplete == false`): no record — the loan
+    ///         is not standing `InternalMatched`, it was closed in one step
+    ///         before this record existed, or it is an NFT rental.
+    /// @return principal      Principal internal matching cleared.
+    /// @return interest       Accrued interest on it, never charged.
+    /// @return lateFee        Late fee on it, never charged.
+    /// @return lenderProceeds What the matches paid the lender side.
+    /// @return recordedAt     Timestamp of the closing step; 0 when not reported.
+    /// @return incomplete     True when a record exists but is not whole.
+    function getOwedAtInternalMatch(uint256 loanId)
+        external
+        view
+        returns (
+            uint256 principal,
+            uint256 interest,
+            uint256 lateFee,
+            uint256 lenderProceeds,
+            uint64 recordedAt,
+            bool incomplete
+        )
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        // The record is never cleared; it is meaningful only while the loan
+        // still stands internally matched (see {LibOwedAtInternalMatch}).
+        if (s.loans[loanId].status != LibVaipakam.LoanStatus.InternalMatched) {
+            return (0, 0, 0, 0, 0, false);
+        }
+        LibVaipakam.OwedAtInternalMatch storage o = s.owedAtInternalMatch[loanId];
+        if (o.incomplete) return (0, 0, 0, 0, 0, true);
+        if (o.recordedAt == 0) return (0, 0, 0, 0, 0, false);
+        return (o.principal, o.interest, o.lateFee, o.lenderProceeds, o.recordedAt, false);
+    }
+
     /// @dev #1067 — shared default/liquidation-terminal reward + LIF close used
     ///      by the three claim-time default terminals (the backstop retry-swap
     ///      branch, `_absorbLenderSlice`, and the vanilla FallbackPending→Defaulted

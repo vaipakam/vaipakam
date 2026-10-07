@@ -41,7 +41,8 @@ import {LibEntitlement} from "./LibEntitlement.sol";
  *
  *         NOT RECORDED: NFT rentals (their "principal" is a daily fee and the
  *         claim is the NFT), a loan fully closed by internal matching straight
- *         from `Active` (its principal is already zero when it terminalizes),
+ *         from `Active` (its principal is already zero when it terminalizes;
+ *         {LibOwedAtInternalMatch} records that close instead, step by step),
  *         and any loan that defaulted before this record existed.
  */
 library LibOwedAtDefault {
@@ -76,16 +77,7 @@ library LibOwedAtDefault {
         if (loan.assetType != LibVaipakam.AssetType.ERC20) return;
 
         uint256 principal = loan.principal;
-        uint256 start = LibVaipakam.interestAccrualStartOf(loan);
-        uint256 elapsed = block.timestamp > start ? block.timestamp - start : 0;
-        uint256 interest = LibEntitlement.creditSettledInterest(
-            loan,
-            (principal * loan.interestRateBps * elapsed) /
-                (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS)
-        );
-        uint256 lateFee = LibVaipakam.calculateLateFee(
-            loanId, loan.startTime + loan.durationDays * 1 days
-        );
+        (uint256 interest, uint256 lateFee) = debtOn(loan, principal);
         s.owedAtDefault[loanId] = LibVaipakam.OwedAtDefault({
             principal: principal,
             interest: interest,
@@ -94,5 +86,28 @@ library LibOwedAtDefault {
             viaFallback: viaFallback
         });
         emit OwedAtDefaultRecorded(loanId, loan.principalAsset, principal, interest, lateFee, viaFallback);
+    }
+
+    /// @notice The interest and late fee `loan` owes now on `principal`, on
+    ///         the basis {onTerminal} records: per-second accrued interest
+    ///         since the accrual start, net of interest already settled, and
+    ///         the late fee past the loan's end.
+    /// @dev    Takes `principal` as a parameter so #2427's internal-match
+    ///         record can price a step's debt before and after its principal
+    ///         decrement on the one formula.
+    function debtOn(LibVaipakam.Loan storage loan, uint256 principal)
+        internal
+        view
+        returns (uint256 interest, uint256 lateFee)
+    {
+        uint256 start = LibVaipakam.interestAccrualStartOf(loan);
+        uint256 elapsed = block.timestamp > start ? block.timestamp - start : 0;
+        interest = LibEntitlement.creditSettledInterest(
+            loan,
+            (principal * loan.interestRateBps * elapsed) /
+                (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS)
+        );
+        lateFee = (principal * LibVaipakam.lateFeeBps(loan.startTime + loan.durationDays * 1 days)) /
+            LibVaipakam.BASIS_POINTS;
     }
 }

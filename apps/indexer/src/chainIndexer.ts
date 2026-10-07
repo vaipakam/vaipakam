@@ -6398,6 +6398,8 @@ export function pluckActivityRefs(
     case 'LoanSettled':
     // #2374 — what the loan owed at default, on the loan's own timeline.
     case 'OwedAtDefaultRecorded':
+    // #2427 — what internal matching cleared, on the loan's own timeline.
+    case 'OwedAtInternalMatchRecorded':
       return {
         actor: null,
         loanId: Number(args.loanId as bigint),

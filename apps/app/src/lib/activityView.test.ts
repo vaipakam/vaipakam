@@ -151,6 +151,18 @@ describe('coalesceByTx', () => {
     }
   });
 
+  it('never lets the internal-match record represent the transaction', () => {
+    for (const lead of ['InternalMatchExecuted', 'LoanStatusChanged']) {
+      const rows = coalesceByTx([
+        ev({ kind: 'OwedAtInternalMatchRecorded', logIndex: 0, loanId: 7 }),
+        ev({ kind: lead, logIndex: 1, loanId: 7 }),
+      ]);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].event.kind).toBe(lead);
+      expect(rows[0].hiddenCount).toBe(1);
+    }
+  });
+
   it('keeps events from different transactions separate', () => {
     const rows = coalesceByTx([
       ev({ txHash: '0xa', kind: 'OfferCreated', blockNumber: 2 }),
