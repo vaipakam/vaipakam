@@ -112,7 +112,7 @@ const asList = (v) => (Array.isArray(v) ? v : [v]);
 
 /**
  * The ledger. `reads` maps a kind to a `watchedRead`. Entries are
- * `{ kind, startedAt, answered, value }`; `answered` stays undefined while
+ * `{ kind, startedAt, answeredAt, answered, value }`; `answered` stays undefined while
  * the read is in flight.
  */
 export function createReadLedger(reads, now = () => Date.now()) {
@@ -130,7 +130,7 @@ export function createReadLedger(reads, now = () => Date.now()) {
     const pending = new Map();
     for (const c of calls) {
       for (const m of matchCall(c, reads)) {
-        const entry = { kind: m.kind, startedAt: now(), answered: undefined, value: undefined, match: m };
+        const entry = { kind: m.kind, startedAt: now(), answeredAt: undefined, answered: undefined, value: undefined, match: m };
         entries.push(entry);
         if (!pending.has(c.id)) pending.set(c.id, []);
         pending.get(c.id).push(entry);
@@ -156,21 +156,25 @@ export function createReadLedger(reads, now = () => Date.now()) {
         const a = readAnswer(byId.get(id), e.match);
         e.answered = a.answered;
         e.value = a.value;
+        e.answeredAt = now();
       }
     }
   }
 
   /**
-   * Assess the page's `kind` reads STARTED at or after `since`:
+   * Assess the page's `kind` reads STARTED at or after `since` — and, when
+   * `until` is given, only the answers that had ARRIVED by then, so a
+   * banner observed at `until` is judged against what the page knew when
+   * it showed it, not against a later refresh:
    *   - `none`       — the page never started one: the app did not ask;
    *   - `unanswered` — it asked and no answer came back (in flight counts);
    *   - `disagrees`  — the latest answer says the opposite of `expected`;
    *   - `agrees`     — the latest answer says `expected`.
    */
-  function judge(kind, since, expected) {
-    const inWindow = entries.filter((e) => e.kind === kind && e.startedAt >= since);
+  function judge(kind, since, expected, until = Infinity) {
+    const inWindow = entries.filter((e) => e.kind === kind && e.startedAt >= since && e.startedAt <= until);
     if (inWindow.length === 0) return { state: 'none' };
-    const answered = inWindow.filter((e) => e.answered === true);
+    const answered = inWindow.filter((e) => e.answered === true && e.answeredAt <= until);
     if (answered.length === 0) return { state: 'unanswered', attempts: inWindow.length };
     const latest = answered[answered.length - 1];
     return { state: latest.value === expected ? 'agrees' : 'disagrees', value: latest.value };

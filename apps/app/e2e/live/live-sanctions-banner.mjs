@@ -20,12 +20,17 @@
 //     SANCTIONS_ROLE=newBorrower node live-sanctions-banner.mjs
 //
 // Every banner verdict is judged against what the PAGE was told, through
-// one rule (`pageSanctionsReads.mjs`'s `judge`, applied by `check` below):
-// the page's own reads of this wallet, started inside the window, decoded.
-// The page never asking is FAIL; asking and getting no answer, or an answer
+// one rule (`check` below): the page's own flag reads of this wallet,
+// started inside the window and decoded (`pageSanctionsReads.mjs`). The
+// page never asking is FAIL; asking and getting no answer, or an answer
 // that contradicts the chain, is BLOCKED (its RPC, not the banner); an
-// answer that matches the chain leaves the banner to decide. A request the
-// read-only session refused is a FAIL and outranks every BLOCKED.
+// answer that matches the chain leaves the banner to decide. The banner's
+// EXPLANATION is judged by its own words: a recourse line in which the app
+// says it could not read why is BLOCKED. A request the read-only session
+// refused is a FAIL and outranks every BLOCKED.
+//
+// Not keyless yet: it launches through the signing harness, so it needs the
+// role's key in the wallet file although it never signs (#2447).
 //
 // Exit codes follow the batch contract: 0 PASS, 1 FAIL, 2 BLOCKED.
 import fs from 'node:fs';
@@ -92,6 +97,26 @@ const TITLE = en?.copy?.sanctions?.title;
 const TEST_LIST_LINE = en?.copy?.sanctions?.recourseTestList;
 if (typeof TITLE !== 'string' || typeof TEST_LIST_LINE !== 'string') {
   blockedSync('en.json no longer carries copy.sanctions.title / recourseTestList');
+}
+// The recourse lines in which the APP says it could not read part of the
+// explanation (`recourseUnknown` and every `…Unread` line). When the banner
+// carries one, the page itself is reporting a failed read, so the run is
+// BLOCKED on the page's own words rather than on a guess about its RPC.
+const UNREAD_LINES = Object.entries(en.copy.sanctions)
+  .filter(([k, v]) => k.startsWith('recourse') && (k === 'recourseUnknown' || k.endsWith('Unread')) && typeof v === 'string')
+  .map(([, v]) => v);
+if (UNREAD_LINES.length === 0) {
+  blockedSync('en.json no longer carries the unread recourse lines (recourseUnknown / …Unread)');
+}
+
+/** What the banner's recourse says, in the app's own copy:
+ *  `unread` — the page says it could not read part of why;
+ *  `expected` — exactly the test-list line, which is this wallet's case
+ *  (flagged on the test list, no flagged recovery sender — preflighted);
+ *  `wrong` — any other explanation. */
+function recourseOf(text) {
+  if (UNREAD_LINES.some((l) => text.includes(l))) return 'unread';
+  return text.includes(TEST_LIST_LINE) ? 'expected' : 'wrong';
 }
 
 const ABI = parseAbi([
@@ -179,13 +204,11 @@ await ctx.addInitScript(() => {
   }
 });
 
-// The page's own reads the banner rests on.
+// The page's own flag read — what shows or hides the banner. The
+// EXPLANATION needs no wire tracking: the banner states in its own words
+// when it could not read why (see `recourseOf`).
 const ledger = createReadLedger({
-  /** The flag itself — what shows or hides the banner. */
   flag: watchedRead('isSanctionedAddress(address)', DIAMOND, WALLET),
-  /** The test-list explanation the contact line rests on. The page only
-   *  sends it after reading the configured oracle and finding the list. */
-  testList: watchedRead('flaggedByOverlay(address)', OVERLAY, WALLET),
 });
 attachLedger(page, ledger);
 
@@ -234,73 +257,86 @@ async function waitForBanner(want, windowMs) {
   const deadline = Date.now() + windowMs;
   let text = null;
   let seen = null;
+  let seenAt = null;
   for (;;) {
     text = await bannerText();
-    if (seen === null && text !== null) seen = text;
-    if (want(text) || Date.now() > deadline) return { text, seen };
+    if (seen === null && text !== null) {
+      seen = text;
+      seenAt = Date.now();
+    }
+    if (want(text) || Date.now() > deadline) return { text, seen, seenAt };
     await page.waitForTimeout(2_000);
   }
 }
 
-const READ_NAMES = {
-  flag: 'its sanctions read of this wallet',
-  testList: 'its test-list read for this wallet',
-};
 let failures = 0;
 
 /**
- * One banner check. `bannerOk` is what the banner did; `restsOn` lists the
- * page reads that outcome depends on, each with the value the chain holds,
- * judged over reads the page STARTED at or after `since`. The banner only
- * decides once every read it rests on was answered with the chain's value.
+ * One banner check, through one rule. `expected` is the flag the chain
+ * holds; the page's own flag reads STARTED at or after `since` (and, with
+ * `until`, ANSWERED by then — what the page knew when the banner was
+ * seen) are judged first:
+ *   - never sent            → FAIL: the app did not ask;
+ *   - sent, never answered  → BLOCKED: its RPC, not the banner;
+ *   - answered the opposite → BLOCKED: a stale provider, not the banner;
+ *   - answered `expected`   → `outcome` decides: 'pass', 'fail', or
+ *                             'unread' (the banner's own words say it could
+ *                             not read why — BLOCKED).
  */
-async function check(label, bannerOk, restsOn, since, banner) {
-  const judged = restsOn.map(([kind, expected]) => ({ kind, expected, ...ledger.judge(kind, since, expected) }));
-  const never = judged.find((j) => j.state === 'none');
-  if (never) {
-    console.log(`FAIL ${label}: the page never sent ${READ_NAMES[never.kind]} in this window`);
+async function check(label, expected, since, until, outcome, banner) {
+  const j = ledger.judge('flag', since, expected, until);
+  const show = () => {
+    if (banner !== undefined) console.log(`  banner: ${banner === null ? '(none)' : JSON.stringify(banner)}`);
+  };
+  if (j.state === 'none') {
+    console.log(`FAIL ${label}: the page never sent its sanctions read of this wallet in this window`);
+    show();
     failures++;
     return;
   }
-  const silent = judged.find((j) => j.state === 'unanswered');
-  if (silent) {
+  if (j.state === 'unanswered') {
     await stopBlocked(
-      `${label}: the page sent ${READ_NAMES[silent.kind]} ${silent.attempts} time(s) in this window and got no ` +
-        'answer — its RPC is the cause, not the banner',
+      `${label}: the page sent its sanctions read of this wallet ${j.attempts} time(s) in this window and got ` +
+        'no answer — its RPC is the cause, not the banner',
     );
   }
-  const stale = judged.find((j) => j.state === 'disagrees');
-  if (stale) {
+  if (j.state === 'disagrees') {
     await stopBlocked(
-      `${label}: the page's RPC answered ${stale.value} to ${READ_NAMES[stale.kind]} where the chain holds ` +
-        `${stale.expected} — a stale provider, not the banner`,
+      `${label}: the page's RPC answered ${j.value} where the chain holds ${expected} — a stale provider, ` +
+        'not the banner',
     );
   }
-  console.log(`${bannerOk ? 'PASS' : 'FAIL'} ${label}`);
-  if (banner !== undefined) console.log(`  banner: ${banner === null ? '(none)' : JSON.stringify(banner)}`);
-  if (!bannerOk) failures++;
+  if (outcome === 'unread') {
+    show();
+    await stopBlocked(`${label}: the banner says the page could not read why the wallet is flagged`);
+  }
+  console.log(`${outcome === 'pass' ? 'PASS' : 'FAIL'} ${label}`);
+  show();
+  if (outcome !== 'pass') failures++;
 }
 
-const shown = (t) => t !== null && t.includes(TEST_LIST_LINE);
-
 if (wantFlagged) {
-  const { text } = await waitForBanner(shown, BANNER_WINDOW_MS);
-  // A shown banner rests on the flag read; its contact line on the
-  // test-list read. No banner at all rests on the flag read alone.
+  // Wait for the expected line or the deadline; an `unread` or `wrong`
+  // explanation can still be replaced by the next refresh.
+  const { text } = await waitForBanner((t) => t !== null && recourseOf(t) === 'expected', BANNER_WINDOW_MS);
+  const recourse = text === null ? null : recourseOf(text);
   await check(
     'flagged: banner with the test-list contact line',
-    shown(text),
-    text === null ? [['flag', true]] : [['flag', true], ['testList', true]],
+    true,
     loadedAt,
+    Infinity,
+    recourse === null ? 'fail' : recourse === 'expected' ? 'pass' : recourse === 'unread' ? 'unread' : 'fail',
     text,
   );
 } else {
-  const { seen } = await waitForBanner(() => false, BANNER_WINDOW_MS);
+  const { seen, seenAt } = await waitForBanner(() => false, BANNER_WINDOW_MS);
+  // A banner seen at any point is judged against what the page knew THEN.
   await check(
     `clear: no sanctions banner at any point across ${BANNER_WINDOW_MS / 1000}s`,
-    seen === null,
-    [['flag', false]],
+    false,
     loadedAt,
+    seenAt ?? Infinity,
+    seen === null ? 'pass' : 'fail',
     seen,
   );
 }
@@ -337,13 +373,20 @@ if (EXPECT === 'flagged-then-clear' && failures === 0) {
             `flagged=${last.flagged}; ${readErrors} failed reads during the wait)`,
     );
   }
-  const { text } = await waitForBanner((t) => t === null, BANNER_WINDOW_MS);
+  // Done only when the banner is gone AND the page has read the cleared
+  // flag — a read the page made just before `clearedAt` does not count, so
+  // keep polling for the next refresh rather than judging too early.
+  const { text } = await waitForBanner(
+    (t) => t === null && ledger.judge('flag', clearedAt, false).state === 'agrees',
+    BANNER_WINDOW_MS,
+  );
   const secs = Math.round((Date.now() - clearedAt) / 1000);
   await check(
-    `cleared without reload: banner ${text === null ? `gone ${secs}s after the chain cleared` : 'still shown'}`,
-    text === null,
-    [['flag', false]],
+    `cleared without reload: banner ${text === null ? `gone, page read the clear within ${secs}s` : 'still shown'}`,
+    false,
     clearedAt,
+    Infinity,
+    text === null ? 'pass' : 'fail',
     text,
   );
 }

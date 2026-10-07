@@ -108,4 +108,15 @@ describe('page sanctions read ledger', () => {
     l.onResponse(b, JSON.stringify({ id: 2, result: bool(false) }));
     expect(l.judge('flag', 0, false).state).toBe('agrees');
   });
+
+  it('with `until`, judges only what had arrived by then', () => {
+    // started 100, answered 110 (true); started 200, answered 210 (false)
+    const l = ledgerAt([100, 110, 200, 210]);
+    const a = l.onRequest(JSON.stringify(plain(1, DIAMOND, flagRead.calldata)));
+    l.onResponse(a, JSON.stringify({ id: 1, result: bool(true) }));
+    const b = l.onRequest(JSON.stringify(plain(2, DIAMOND, flagRead.calldata)));
+    l.onResponse(b, JSON.stringify({ id: 2, result: bool(false) }));
+    expect(l.judge('flag', 0, false, 150)).toEqual({ state: 'disagrees', value: true });
+    expect(l.judge('flag', 0, false).state).toBe('agrees');
+  });
 });
