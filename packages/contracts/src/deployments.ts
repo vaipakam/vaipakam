@@ -299,6 +299,19 @@ export interface Deployment {
    *  reads it until slice 4 PR B's cutover. */
   rewardCustodyHolder?: HexAddress;
 
+  /** #2439 — the sanctions oracle `ConfigureSanctionsOracle` set on this
+   *  Diamond. Absent on a chain that has not run it. The Diamond's own
+   *  `getSanctionsOracle()` is the live answer; this records what the
+   *  configure step set. */
+  sanctionsOracle?: HexAddress;
+  /** What `sanctionsOracle` is: Chainalysis's oracle directly (mainnets),
+   *  or a `TestnetSanctionsOverlay` (testnets) — Chainalysis's list plus
+   *  addresses this network's admin flagged for testing. */
+  sanctionsOracleKind?: 'chainalysis' | 'testnet-overlay';
+  /** For a testnet overlay: the Chainalysis oracle it extends. Absent when
+   *  the chain has none and the overlay is the whole list. */
+  sanctionsUpstream?: HexAddress;
+
   /** #625 WI-1 — the production keeper bot's signing EOA on this chain.
    *  The dapp's auto-lend surface reads it to delegate the keeper-driven
    *  actions a standing LenderIntent needs (auto-roll, and signed-fill

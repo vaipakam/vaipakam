@@ -403,6 +403,10 @@ library Deployments {
     ///         `.rewardCustodyHolder`. Zero on a chain that predates the
     ///         holder and has not yet run `DeployRewardCustodyHolder`.
     function readRewardCustodyHolderOptional() internal view returns (address) { return _tryReadAddr(".rewardCustodyHolder"); }
+    /// @notice #2439 — optional, non-reverting read of `.sanctionsOracle`, the
+    ///         oracle `ConfigureSanctionsOracle` last set on this Diamond. Zero
+    ///         on a chain that has not run it.
+    function readSanctionsOracleOptional() internal view returns (address) { return _tryReadAddr(".sanctionsOracle"); }
 
     // Track-C mock infra (Base Sepolia testnet only). Falls back to env on chains
     // where these aren't deployed; readers pre-check for `address(0)` and skip.
@@ -500,6 +504,13 @@ library Deployments {
     ///         `DeployDiamond` (fresh deploys) or `DeployRewardCustodyHolder`
     ///         (live chains); replaced only by the paused ceremony.
     function writeRewardCustodyHolder(address a) internal { _writeAddr(".rewardCustodyHolder", a); }
+    /// @notice #2439 — the sanctions oracle `ConfigureSanctionsOracle` set on
+    ///         this Diamond, what kind it is ("chainalysis" | "testnet-overlay"),
+    ///         and, for an overlay that extends one, the Chainalysis oracle
+    ///         under it. The upstream key is omitted where there is none.
+    function writeSanctionsOracle(address a) internal { _writeAddr(".sanctionsOracle", a); }
+    function writeSanctionsOracleKind(string memory kind) internal { _writeString(".sanctionsOracleKind", kind); }
+    function writeSanctionsUpstream(address a) internal { _writeAddr(".sanctionsUpstream", a); }
     function writeWeth(address a)            internal { _writeAddr(".weth",            a); }
     function writeTreasury(address a)        internal { _writeAddr(".treasury",        a); }
     function writeAdmin(address a)           internal { _writeAddr(".admin",           a); }

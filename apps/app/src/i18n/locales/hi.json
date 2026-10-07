@@ -2312,7 +2312,11 @@
       "title": "यह wallet compliance oracle में listed है।",
       "line1": "Connected address उस on-chain sanctions oracle पर दिखाई देता है जिसके against Vaipakam screen करता है।",
       "line2": "New positions (offers, loans, rentals, deposits) blocked हैं और pass नहीं होंगी।",
-      "line3": "Existing positions repay और close करना open रहता है ताकि counterparties whole हो सकें, लेकिन इस wallet को claims और payouts flag रहने तक blocked हैं। अगर आपको लगता है यह error है, oracle provider (Chainalysis) से contact करें।"
+      "line3": "Existing positions repay और close करना open रहता है ताकि counterparties whole हो सकें, लेकिन इस wallet को claims और payouts flag रहने तक blocked हैं। अगर आपको लगता है यह error है, oracle provider (Chainalysis) से contact करें।",
+      "line3TestList": "Existing positions repay और close करना open रहता है ताकि counterparties whole हो सकें, लेकिन इस wallet को claims और payouts flag रहने तक blocked हैं। यह wallet इस test network की अपनी test list पर है, जिसे इसका operator testing के लिए रखता है; sanctions-data provider (Chainalysis) ने इसे flag नहीं किया है। अगर आपको इसकी उम्मीद नहीं थी, तो इस test network के operator से contact करें।",
+      "line3Both": "Existing positions repay और close करना open रहता है ताकि counterparties whole हो सकें, लेकिन इस wallet को claims और payouts flag रहने तक blocked हैं। यह wallet इस test network की अपनी test list और sanctions-data provider (Chainalysis) की list, दोनों पर है। Test list से हटाने पर provider का flag नहीं हटेगा; अगर आपको लगता है वह flag error है, तो Chainalysis से contact करें।",
+      "line3TestListProviderUnread": "Existing positions repay और close करना open रहता है ताकि counterparties whole हो सकें, लेकिन इस wallet को claims और payouts flag रहने तक blocked हैं। यह wallet इस test network की अपनी test list पर है। Sanctions-data provider (Chainalysis) भी इसे list करता है या नहीं, यह अभी check नहीं हो सका। अगर आपको इसकी उम्मीद नहीं थी, तो इस test network के operator से contact करें।",
+      "line3Unknown": "Existing positions repay और close करना open रहता है ताकि counterparties whole हो सकें, लेकिन इस wallet को claims और payouts flag रहने तक blocked हैं। किस list ने इस wallet को flag किया, यह अभी पढ़ा नहीं जा सका, इसलिए सही contact अभी नहीं बताया जा सकता। फिर से try करने के लिए reload करें।"
     },
     "risk": {
       "healthTitle": "Health {{ratio}} — 1.00 liquidation line है",
