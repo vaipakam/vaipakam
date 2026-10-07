@@ -4944,6 +4944,8 @@ const copySource = {
     // provider's. These name the list that actually flagged the wallet.
     line3TestList:
       'Repaying and closing existing positions stays open so your counterparties can be made whole, but claims and payouts to this wallet are blocked while it is flagged. This wallet is on this test network’s own test list, which its operator keeps for testing; the sanctions-data provider (Chainalysis) has not flagged it. If you did not expect this, contact the operator of this test network.',
+    line3TestListNoProvider:
+      'Repaying and closing existing positions stays open so your counterparties can be made whole, but claims and payouts to this wallet are blocked while it is flagged. This wallet is on this test network’s own test list, which its operator keeps for testing. The sanctions-data provider (Chainalysis) publishes no oracle on this network, so its list was not consulted. If you did not expect this, contact the operator of this test network.',
     line3Both:
       'Repaying and closing existing positions stays open so your counterparties can be made whole, but claims and payouts to this wallet are blocked while it is flagged. This wallet is on both this test network’s own test list and the sanctions-data provider’s list (Chainalysis). Removing it from the test list would not clear the provider’s flag; if you believe that flag is an error, contact Chainalysis.',
     line3TestListProviderUnread:

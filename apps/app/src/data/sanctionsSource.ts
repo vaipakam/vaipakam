@@ -24,18 +24,24 @@ import { DIAMOND_ABI_VIEM, TestnetSanctionsOverlayABI } from '@vaipakam/contract
 const OVERLAY_ABI = TestnetSanctionsOverlayABI as unknown as Abi;
 
 /**
- * - `provider`: the sanctions-data provider (Chainalysis) flags it, and no
- *   test list is involved — either the oracle is the provider's own, or it is
- *   a test list that has not flagged this wallet.
- * - `testList`: only this test network's test list flags it.
+ * - `provider`: the sanctions-data provider (Chainalysis) flags it — either
+ *   the oracle is the provider's own, or it is a test list that reads the
+ *   provider as flagging the wallet and has not flagged it itself.
+ * - `testList`: only this test network's test list flags it; the provider
+ *   was read and reports the wallet clean.
+ * - `testListNoProvider`: the test list flags it on a network where the
+ *   provider publishes no oracle, so there was no provider list to read.
  * - `both`: the test list and the provider both flag it.
  * - `testListProviderUnread`: the test list flags it; whether the provider
  *   also does could not be read.
- * - `unknown`: which list flagged it could not be determined.
+ * - `unknown`: which list flagged it could not be determined — a read
+ *   failed, or at the block read neither list flags it (the flag changed
+ *   after the banner's own check).
  */
 export type SanctionsSource =
   | 'provider'
   | 'testList'
+  | 'testListNoProvider'
   | 'both'
   | 'testListProviderUnread'
   | 'unknown';
@@ -54,39 +60,54 @@ export function isNoSuchFunction(err: unknown): boolean {
   );
 }
 
-/** What the overlay's own reads said, for {@link classifySanctionsSource}. */
+/** What the overlay's own reads said, all at ONE block, for
+ *  {@link classifySanctionsSource}. */
 export interface OverlayReads {
   /** `upstream()` — the provider's oracle the test list extends, or the
    *  zero address when the network has none. */
   upstream: `0x${string}`;
-  /** `flaggedByOverlay(wallet)`. */
+  /** The test list's own flag on the wallet. */
   byOverlay: boolean;
-  /** `sanctionSource(wallet).byUpstream`, or null when that read failed. */
+  /** The provider's answer, as the overlay read it; null when there is no
+   *  provider or that read failed. */
   byUpstream: boolean | null;
 }
 
-/** Pure decision over the reads, so every branch is testable without a chain. */
+/** Pure decision over one consistent snapshot, so every branch is testable
+ *  without a chain. Never names a list it did not read as flagging. */
 export function classifySanctionsSource(reads: OverlayReads | 'notOverlay'): SanctionsSource {
   if (reads === 'notOverlay') return 'provider';
-  if (!reads.byOverlay) return 'provider';
-  if (reads.upstream === zeroAddress) return 'testList';
-  if (reads.byUpstream === null) return 'testListProviderUnread';
-  return reads.byUpstream ? 'both' : 'testList';
+  if (reads.upstream === zeroAddress) return reads.byOverlay ? 'testListNoProvider' : 'unknown';
+  if (reads.byUpstream === null) return reads.byOverlay ? 'testListProviderUnread' : 'unknown';
+  if (reads.byOverlay) return reads.byUpstream ? 'both' : 'testList';
+  return reads.byUpstream ? 'provider' : 'unknown';
 }
 
 /** Reads the configured oracle and attributes `wallet`'s flag. Never throws:
- *  a read that cannot be completed yields `unknown`. */
+ *  a read that cannot be completed yields `unknown`.
+ *
+ *  Every read is pinned to one block, so the answer describes a single
+ *  on-chain state: an owner flag or a provider delisting landing between two
+ *  reads cannot be stitched into an attribution no block ever had. */
 export async function readSanctionsSource(
   publicClient: PublicClient,
   diamond: `0x${string}`,
   wallet: `0x${string}`,
 ): Promise<SanctionsSource> {
+  let blockNumber: bigint;
+  try {
+    blockNumber = await publicClient.getBlockNumber();
+  } catch {
+    return 'unknown';
+  }
+
   let oracle: `0x${string}`;
   try {
     oracle = (await publicClient.readContract({
       address: diamond,
       abi: DIAMOND_ABI_VIEM,
       functionName: 'getSanctionsOracle',
+      blockNumber,
     })) as `0x${string}`;
   } catch {
     return 'unknown';
@@ -101,9 +122,27 @@ export async function readSanctionsSource(
       address: oracle,
       abi: OVERLAY_ABI,
       functionName: 'upstream',
+      blockNumber,
     })) as `0x${string}`;
   } catch (err) {
     return isNoSuchFunction(err) ? classifySanctionsSource('notOverlay') : 'unknown';
+  }
+
+  // One call answers both lists, so they cannot disagree about the moment.
+  if (upstream !== zeroAddress) {
+    try {
+      const [byOverlay, byUpstream] = (await publicClient.readContract({
+        address: oracle,
+        abi: OVERLAY_ABI,
+        functionName: 'sanctionSource',
+        args: [wallet],
+        blockNumber,
+      })) as readonly [boolean, boolean];
+      return classifySanctionsSource({ upstream, byOverlay, byUpstream });
+    } catch {
+      // The provider could not be read (its outage reverts the whole call);
+      // the test list's own flag still can be.
+    }
   }
 
   let byOverlay: boolean;
@@ -113,24 +152,10 @@ export async function readSanctionsSource(
       abi: OVERLAY_ABI,
       functionName: 'flaggedByOverlay',
       args: [wallet],
+      blockNumber,
     })) as boolean;
   } catch {
     return 'unknown';
   }
-
-  let byUpstream: boolean | null = null;
-  if (byOverlay && upstream !== zeroAddress) {
-    try {
-      const [, up] = (await publicClient.readContract({
-        address: oracle,
-        abi: OVERLAY_ABI,
-        functionName: 'sanctionSource',
-        args: [wallet],
-      })) as readonly [boolean, boolean];
-      byUpstream = up;
-    } catch {
-      byUpstream = null;
-    }
-  }
-  return classifySanctionsSource({ upstream, byOverlay, byUpstream });
+  return classifySanctionsSource({ upstream, byOverlay, byUpstream: null });
 }

@@ -50,10 +50,19 @@ function unreachable(fn: string): Error {
 
 type Answer = unknown | Error;
 
-/** A client whose `readContract` answers by function name. */
-function client(answers: Record<string, Answer>): PublicClient {
+const BLOCK = 123_456n;
+
+/** A client whose `readContract` answers by function name, and which records
+ *  the block every read was pinned to. */
+function client(answers: Record<string, Answer>, blocks: (bigint | undefined)[] = []): PublicClient {
   return {
-    readContract: async ({ functionName }: { functionName: string }) => {
+    getBlockNumber: async () => {
+      const a = answers.getBlockNumber ?? BLOCK;
+      if (a instanceof Error) throw a;
+      return a;
+    },
+    readContract: async ({ functionName, blockNumber }: { functionName: string; blockNumber?: bigint }) => {
+      blocks.push(blockNumber);
       if (!(functionName in answers)) throw new Error(`unexpected read ${functionName}`);
       const a = answers[functionName];
       if (a instanceof Error) throw a;
@@ -64,6 +73,8 @@ function client(answers: Record<string, Answer>): PublicClient {
 
 const read = (answers: Record<string, Answer>) =>
   readSanctionsSource(client(answers), DIAMOND, WALLET);
+
+const overlay = { getSanctionsOracle: ORACLE, upstream: CHAINALYSIS };
 
 describe('readSanctionsSource', () => {
   it('names the provider when the oracle is the provider’s own (no upstream() on it: revert)', async () => {
@@ -78,49 +89,47 @@ describe('readSanctionsSource', () => {
     expect(await read({ getSanctionsOracle: ORACLE, upstream: unreachable('upstream') })).toBe('unknown');
   });
 
-  it('names the provider on a test list that has not flagged the wallet', async () => {
-    expect(
-      await read({ getSanctionsOracle: ORACLE, upstream: CHAINALYSIS, flaggedByOverlay: false }),
-    ).toBe('provider');
+  it('names the provider when the test list reads the provider as flagging and has not flagged it', async () => {
+    expect(await read({ ...overlay, sanctionSource: [false, true] })).toBe('provider');
   });
 
   it('names the test list alone when only it flags the wallet', async () => {
-    expect(
-      await read({
-        getSanctionsOracle: ORACLE,
-        upstream: CHAINALYSIS,
-        flaggedByOverlay: true,
-        sanctionSource: [true, false],
-      }),
-    ).toBe('testList');
+    expect(await read({ ...overlay, sanctionSource: [true, false] })).toBe('testList');
   });
 
   it('names both when both lists flag the wallet', async () => {
-    expect(
-      await read({
-        getSanctionsOracle: ORACLE,
-        upstream: CHAINALYSIS,
-        flaggedByOverlay: true,
-        sanctionSource: [true, true],
-      }),
-    ).toBe('both');
+    expect(await read({ ...overlay, sanctionSource: [true, true] })).toBe('both');
   });
 
-  it('says the provider side is unread when the attribution read fails (upstream outage)', async () => {
+  it('is unknown, not the provider, when neither list flags the wallet at the block read', async () => {
+    // The banner's own check said flagged; by the attribution's block the
+    // test-list flag was cleared. Naming the provider here would send the user
+    // to a list that never flagged them.
+    expect(await read({ ...overlay, sanctionSource: [false, false] })).toBe('unknown');
+  });
+
+  it('says the provider side is unread when the provider read fails (upstream outage)', async () => {
     expect(
-      await read({
-        getSanctionsOracle: ORACLE,
-        upstream: CHAINALYSIS,
-        flaggedByOverlay: true,
-        sanctionSource: reverted('sanctionSource'),
-      }),
+      await read({ ...overlay, sanctionSource: reverted('sanctionSource'), flaggedByOverlay: true }),
     ).toBe('testListProviderUnread');
   });
 
-  it('names the test list alone on a network the provider does not cover', async () => {
+  it('is unknown when the provider is unreadable and the test list has not flagged the wallet', async () => {
+    expect(
+      await read({ ...overlay, sanctionSource: reverted('sanctionSource'), flaggedByOverlay: false }),
+    ).toBe('unknown');
+  });
+
+  it('says there is no provider list on a network the provider does not cover', async () => {
     expect(
       await read({ getSanctionsOracle: ORACLE, upstream: zeroAddress, flaggedByOverlay: true }),
-    ).toBe('testList');
+    ).toBe('testListNoProvider');
+  });
+
+  it('is unknown on a no-provider network when the test list has not flagged the wallet', async () => {
+    expect(
+      await read({ getSanctionsOracle: ORACLE, upstream: zeroAddress, flaggedByOverlay: false }),
+    ).toBe('unknown');
   });
 
   it('is unknown when the Diamond’s oracle cannot be read', async () => {
@@ -131,14 +140,29 @@ describe('readSanctionsSource', () => {
     expect(await read({ getSanctionsOracle: zeroAddress })).toBe('unknown');
   });
 
-  it('is unknown when the test list’s own flag cannot be read', async () => {
+  it('is unknown when the test list’s own flag cannot be read either', async () => {
     expect(
       await read({
-        getSanctionsOracle: ORACLE,
-        upstream: CHAINALYSIS,
+        ...overlay,
+        sanctionSource: reverted('sanctionSource'),
         flaggedByOverlay: unreachable('flaggedByOverlay'),
       }),
     ).toBe('unknown');
+  });
+
+  it('is unknown when the current block cannot be read', async () => {
+    expect(await read({ getBlockNumber: unreachable('getBlockNumber') })).toBe('unknown');
+  });
+
+  it('pins every read to the same block', async () => {
+    const blocks: (bigint | undefined)[] = [];
+    await readSanctionsSource(
+      client({ ...overlay, sanctionSource: reverted('sanctionSource'), flaggedByOverlay: true }, blocks),
+      DIAMOND,
+      WALLET,
+    );
+    expect(blocks).toHaveLength(4);
+    expect(blocks.every((b) => b === BLOCK)).toBe(true);
   });
 });
 
@@ -146,9 +170,20 @@ describe('classifySanctionsSource', () => {
   it('a non-overlay oracle is the provider', () => {
     expect(classifySanctionsSource('notOverlay')).toBe('provider');
   });
-  it('an overlay flag with no upstream is the test list, whatever byUpstream says', () => {
+  it('an overlay flag with no upstream is the no-provider test list, whatever byUpstream says', () => {
     expect(classifySanctionsSource({ upstream: zeroAddress, byOverlay: true, byUpstream: null })).toBe(
-      'testList',
+      'testListNoProvider',
+    );
+    expect(classifySanctionsSource({ upstream: zeroAddress, byOverlay: true, byUpstream: false })).toBe(
+      'testListNoProvider',
+    );
+  });
+  it('never names a list that the snapshot does not show flagging', () => {
+    expect(classifySanctionsSource({ upstream: CHAINALYSIS, byOverlay: false, byUpstream: false })).toBe(
+      'unknown',
+    );
+    expect(classifySanctionsSource({ upstream: CHAINALYSIS, byOverlay: false, byUpstream: null })).toBe(
+      'unknown',
     );
   });
 });

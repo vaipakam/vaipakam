@@ -128,6 +128,35 @@ contract ConfigureSanctionsOracleTest is Test {
         assertEq(vm.parseJsonAddress(json, ".sanctionsOracle"), address(overlay));
         assertEq(vm.parseJsonString(json, ".sanctionsOracleKind"), "testnet-overlay");
         assertEq(vm.parseJsonAddress(json, ".sanctionsUpstream"), chainalysis);
+        assertEq(vm.parseJsonAddress(json, ".sanctionsTestnetOverlay"), address(overlay), "the deployment is recorded");
+        _cleanup();
+    }
+
+    /// @notice A testnet Diamond the admin does not own: the overlay is still
+    ///         deployed and recorded (a revert would have discarded it, and the
+    ///         printed call would then name an address with no code), the
+    ///         oracle is left unchanged and NOT recorded as configured. Once the
+    ///         owner makes the call, a re-run reuses that overlay and records.
+    function test_Testnet_DiamondNotOwnedByAdmin_DeploysAndRecordsTheOverlay_LeavesTheOracle() public {
+        address timelock = makeAddr("timelock");
+        StubSanctionsDiamond d = new StubSanctionsDiamond(timelock);
+        ConfigureSanctionsOracle s = _script(84532, "testnet-timelock", address(d));
+        _etchChainalysis(s.CHAINALYSIS_DEFAULT(), s.CHAINALYSIS_OWNER());
+
+        s.run();
+
+        assertEq(d.getSanctionsOracle(), address(0), "the oracle is not changed");
+        string memory json = _artifact();
+        address overlay = vm.parseJsonAddress(json, ".sanctionsTestnetOverlay");
+        assertTrue(overlay.code.length != 0, "the overlay the call names exists");
+        assertFalse(vm.keyExistsJson(json, ".sanctionsOracle"), "not recorded as configured");
+
+        vm.prank(timelock);
+        d.setSanctionsOracle(overlay);
+        s.run();
+
+        assertEq(d.getSanctionsOracle(), overlay, "the scheduled overlay stays");
+        assertEq(vm.parseJsonAddress(_artifact(), ".sanctionsOracle"), overlay, "now recorded as configured");
         _cleanup();
     }
 
@@ -170,7 +199,7 @@ contract ConfigureSanctionsOracleTest is Test {
         _etchChainalysis(s.CHAINALYSIS_DEFAULT(), s.CHAINALYSIS_OWNER());
         TestnetSanctionsOverlay stale = new TestnetSanctionsOverlay(admin, address(0));
         string memory file = string.concat(root, "/", Deployments.chainSlug(), "/addresses.json");
-        vm.writeJson(vm.toString(address(stale)), file, ".sanctionsOracle");
+        vm.writeJson(vm.toString(address(stale)), file, ".sanctionsTestnetOverlay");
 
         s.run();
 
@@ -233,16 +262,20 @@ contract ConfigureSanctionsOracleTest is Test {
         _cleanup();
     }
 
-    /// @notice A Diamond the admin key does not own (a timelock) is refused,
-    ///         and the oracle is left as it was.
-    function test_DiamondNotOwnedByAdmin_IsRefused() public {
+    /// @notice A mainnet Diamond the admin key does not own (a timelock): the
+    ///         oracle is left as it was and nothing is recorded as configured;
+    ///         the run prints the call to schedule instead.
+    function test_Mainnet_DiamondNotOwnedByAdmin_LeavesTheOracleUnrecorded() public {
         StubSanctionsDiamond d = new StubSanctionsDiamond(makeAddr("timelock"));
         ConfigureSanctionsOracle s = _script(8453, "timelock", address(d));
         _etchChainalysis(s.CHAINALYSIS_BASE(), s.CHAINALYSIS_OWNER());
 
-        vm.expectRevert(bytes("ConfigureSanctionsOracle: ADMIN_PRIVATE_KEY is not the Diamond owner"));
         s.run();
+
         assertEq(d.getSanctionsOracle(), address(0));
+        string memory json = _artifact();
+        assertFalse(vm.keyExistsJson(json, ".sanctionsOracle"), "not recorded as configured");
+        assertFalse(vm.keyExistsJson(json, ".sanctionsOracleKind"));
         _cleanup();
     }
 

@@ -18,13 +18,21 @@ import { useSanctionsCheck } from '../data/sanctions';
 import { readSanctionsSource, type SanctionsSource } from '../data/sanctionsSource';
 import { useActiveChain } from '../chain/useActiveChain';
 
+/** How often a shown banner re-reads which list flagged the wallet. */
+const ATTRIBUTION_REFRESH_MS = 30_000;
+
 function useSanctionsSource(flagged: boolean): SanctionsSource | undefined {
   const { readChain, address } = useActiveChain();
   const publicClient = usePublicClient({ chainId: readChain.chainId });
   const { data } = useQuery({
     queryKey: ['sanctionsSource', readChain.chainId, address?.toLowerCase()],
     enabled: flagged && Boolean(address) && Boolean(publicClient),
-    staleTime: 5 * 60_000,
+    // Attribution is live state, not configuration: the operator can clear
+    // a test-list flag and the provider can delist a wallet while the overall
+    // flag stays up. Re-read on a short cycle for as long as the banner
+    // shows, so a stale answer cannot keep naming a list that has let go.
+    staleTime: ATTRIBUTION_REFRESH_MS,
+    refetchInterval: ATTRIBUTION_REFRESH_MS,
     queryFn: () => readSanctionsSource(publicClient!, readChain.diamondAddress, address!),
   });
   return data;
@@ -37,6 +45,8 @@ export function recourseLine(source: SanctionsSource): string {
       return copy.sanctions.line3;
     case 'testList':
       return copy.sanctions.line3TestList;
+    case 'testListNoProvider':
+      return copy.sanctions.line3TestListNoProvider;
     case 'both':
       return copy.sanctions.line3Both;
     case 'testListProviderUnread':

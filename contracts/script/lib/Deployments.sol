@@ -407,6 +407,10 @@ library Deployments {
     ///         oracle `ConfigureSanctionsOracle` last set on this Diamond. Zero
     ///         on a chain that has not run it.
     function readSanctionsOracleOptional() internal view returns (address) { return _tryReadAddr(".sanctionsOracle"); }
+    /// @notice #2439 — optional, non-reverting read of
+    ///         `.sanctionsTestnetOverlay`, the overlay `ConfigureSanctionsOracle`
+    ///         last deployed on this testnet. Zero where none was deployed.
+    function readSanctionsTestnetOverlayOptional() internal view returns (address) { return _tryReadAddr(".sanctionsTestnetOverlay"); }
 
     // Track-C mock infra (Base Sepolia testnet only). Falls back to env on chains
     // where these aren't deployed; readers pre-check for `address(0)` and skip.
@@ -511,6 +515,10 @@ library Deployments {
     function writeSanctionsOracle(address a) internal { _writeAddr(".sanctionsOracle", a); }
     function writeSanctionsOracleKind(string memory kind) internal { _writeString(".sanctionsOracleKind", kind); }
     function writeSanctionsUpstream(address a) internal { _writeAddr(".sanctionsUpstream", a); }
+    /// @notice #2439 — the overlay deployed on this testnet, recorded when it
+    ///         is deployed and independently of whether the Diamond has been
+    ///         pointed at it yet.
+    function writeSanctionsTestnetOverlay(address a) internal { _writeAddr(".sanctionsTestnetOverlay", a); }
     function writeWeth(address a)            internal { _writeAddr(".weth",            a); }
     function writeTreasury(address a)        internal { _writeAddr(".treasury",        a); }
     function writeAdmin(address a)           internal { _writeAddr(".admin",           a); }

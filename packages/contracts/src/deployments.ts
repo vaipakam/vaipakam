@@ -311,6 +311,10 @@ export interface Deployment {
   /** For a testnet overlay: the Chainalysis oracle it extends. Absent when
    *  the chain has none and the overlay is the whole list. */
   sanctionsUpstream?: HexAddress;
+  /** For a testnet: the `TestnetSanctionsOverlay` deployed for this chain,
+   *  recorded when deployed. Equals `sanctionsOracle` once the Diamond is
+   *  configured with it; set alone while that call awaits a timelock. */
+  sanctionsTestnetOverlay?: HexAddress;
 
   /** #625 WI-1 — the production keeper bot's signing EOA on this chain.
    *  The dapp's auto-lend surface reads it to delegate the keeper-driven
