@@ -403,10 +403,10 @@ library Deployments {
     ///         `.rewardCustodyHolder`. Zero on a chain that predates the
     ///         holder and has not yet run `DeployRewardCustodyHolder`.
     function readRewardCustodyHolderOptional() internal view returns (address) { return _tryReadAddr(".rewardCustodyHolder"); }
-    /// @notice #2439 — optional, non-reverting read of `.sanctionsOracle`, the
+    /// @notice #2439 — optional, non-reverting read of `.sanctions.oracle`, the
     ///         oracle `ConfigureSanctionsOracle` last set on this Diamond. Zero
     ///         on a chain that has not run it.
-    function readSanctionsOracleOptional() internal view returns (address) { return _tryReadAddr(".sanctionsOracle"); }
+    function readSanctionsOracleOptional() internal view returns (address) { return _tryReadAddr(".sanctions.oracle"); }
     /// @notice #2439 — optional, non-reverting read of
     ///         `.sanctionsTestnetOverlay`, the overlay `ConfigureSanctionsOracle`
     ///         last deployed on this testnet. Zero where none was deployed.
@@ -509,12 +509,35 @@ library Deployments {
     ///         (live chains); replaced only by the paused ceremony.
     function writeRewardCustodyHolder(address a) internal { _writeAddr(".rewardCustodyHolder", a); }
     /// @notice #2439 — the sanctions oracle `ConfigureSanctionsOracle` set on
-    ///         this Diamond, what kind it is ("chainalysis" | "testnet-overlay"),
-    ///         and, for an overlay that extends one, the Chainalysis oracle
-    ///         under it. The upstream key is omitted where there is none.
-    function writeSanctionsOracle(address a) internal { _writeAddr(".sanctionsOracle", a); }
-    function writeSanctionsOracleKind(string memory kind) internal { _writeString(".sanctionsOracleKind", kind); }
-    function writeSanctionsUpstream(address a) internal { _writeAddr(".sanctionsUpstream", a); }
+    ///         this Diamond, recorded as ONE `.sanctions` object:
+    ///         `{oracle, kind, upstream?}`. `kind` is "chainalysis" or
+    ///         "testnet-overlay"; `upstream` is the Chainalysis oracle an
+    ///         overlay extends, and is omitted where there is none.
+    ///
+    /// @dev    The object is replaced WHOLE on every write. The typed writers
+    ///         merge into the file and have no way to delete a key, so writing
+    ///         the three fields as separate top-level keys let a field from an
+    ///         earlier configuration outlive the one that replaced it — an
+    ///         overlay with no upstream recorded beside the previous overlay's
+    ///         upstream (Codex #2442 r3). One object, one write: the record
+    ///         describes one configuration or none.
+    ///
+    ///         The JSON is assembled by hand rather than with `serialize*`,
+    ///         whose per-object-key state persists across calls in a run and
+    ///         would carry an `upstream` from a previous call into this one —
+    ///         the same stale-field defect by another door.
+    function writeSanctionsRecord(address oracle, string memory kind, address upstream) internal {
+        if (_dryRunSkips(".sanctions")) return;
+        _ensureFile();
+        string memory obj = string.concat(
+            "{\"oracle\":\"", CHEATS.toString(oracle), "\",\"kind\":\"", kind, "\""
+        );
+        if (upstream != address(0)) {
+            obj = string.concat(obj, ",\"upstream\":\"", CHEATS.toString(upstream), "\"");
+        }
+        // forge-lint: disable-next-line(unsafe-cheatcode)
+        CHEATS.writeJson(string.concat(obj, "}"), path(), ".sanctions");
+    }
     /// @notice #2439 — the overlay deployed on this testnet, recorded when it
     ///         is deployed and independently of whether the Diamond has been
     ///         pointed at it yet.

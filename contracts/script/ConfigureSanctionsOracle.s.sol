@@ -134,11 +134,11 @@ contract ConfigureSanctionsOracle is Script, ArtifactRootBase {
         _verify(diamond, target, admin);
 
         if (writes) {
-            Deployments.writeSanctionsOracle(target);
-            Deployments.writeSanctionsOracleKind(kind);
-            if (TestnetChains.isTestnet(cid) && chainalysis != address(0)) {
-                Deployments.writeSanctionsUpstream(chainalysis);
-            }
+            // One object, replaced whole: an upstream recorded by an earlier
+            // configuration cannot outlive it (Codex #2442 r3).
+            Deployments.writeSanctionsRecord(
+                target, kind, TestnetChains.isTestnet(cid) ? chainalysis : address(0)
+            );
         }
 
         console.log("Sanctions oracle configured:", target);

@@ -300,19 +300,21 @@ export interface Deployment {
   rewardCustodyHolder?: HexAddress;
 
   /** #2439 — the sanctions oracle `ConfigureSanctionsOracle` set on this
-   *  Diamond. Absent on a chain that has not run it. The Diamond's own
-   *  `getSanctionsOracle()` is the live answer; this records what the
-   *  configure step set. */
-  sanctionsOracle?: HexAddress;
-  /** What `sanctionsOracle` is: Chainalysis's oracle directly (mainnets),
-   *  or a `TestnetSanctionsOverlay` (testnets) — Chainalysis's list plus
-   *  addresses this network's admin flagged for testing. */
-  sanctionsOracleKind?: 'chainalysis' | 'testnet-overlay';
-  /** For a testnet overlay: the Chainalysis oracle it extends. Absent when
-   *  the chain has none and the overlay is the whole list. */
-  sanctionsUpstream?: HexAddress;
+   *  Diamond, as one record replaced whole on every configure run. Absent on
+   *  a chain that has not run it. The Diamond's own `getSanctionsOracle()` is
+   *  the live answer; this records what the configure step set. */
+  sanctions?: {
+    oracle: HexAddress;
+    /** Chainalysis's oracle directly (mainnets), or a
+     *  `TestnetSanctionsOverlay` (testnets): Chainalysis's list plus
+     *  addresses this network's admin flagged for testing. */
+    kind: 'chainalysis' | 'testnet-overlay';
+    /** For a testnet overlay: the Chainalysis oracle it extends. Absent when
+     *  the chain has none and the overlay is the whole list. */
+    upstream?: HexAddress;
+  };
   /** For a testnet: the `TestnetSanctionsOverlay` deployed for this chain,
-   *  recorded when deployed. Equals `sanctionsOracle` once the Diamond is
+   *  recorded when deployed. Equals `sanctions.oracle` once the Diamond is
    *  configured with it; set alone while that call awaits a timelock. */
   sanctionsTestnetOverlay?: HexAddress;
 

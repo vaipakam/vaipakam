@@ -125,9 +125,9 @@ contract ConfigureSanctionsOracleTest is Test {
         assertEq(overlay.owner(), admin, "owned by the admin");
 
         string memory json = _artifact();
-        assertEq(vm.parseJsonAddress(json, ".sanctionsOracle"), address(overlay));
-        assertEq(vm.parseJsonString(json, ".sanctionsOracleKind"), "testnet-overlay");
-        assertEq(vm.parseJsonAddress(json, ".sanctionsUpstream"), chainalysis);
+        assertEq(vm.parseJsonAddress(json, ".sanctions.oracle"), address(overlay));
+        assertEq(vm.parseJsonString(json, ".sanctions.kind"), "testnet-overlay");
+        assertEq(vm.parseJsonAddress(json, ".sanctions.upstream"), chainalysis);
         assertEq(vm.parseJsonAddress(json, ".sanctionsTestnetOverlay"), address(overlay), "the deployment is recorded");
         _cleanup();
     }
@@ -149,14 +149,14 @@ contract ConfigureSanctionsOracleTest is Test {
         string memory json = _artifact();
         address overlay = vm.parseJsonAddress(json, ".sanctionsTestnetOverlay");
         assertTrue(overlay.code.length != 0, "the overlay the call names exists");
-        assertFalse(vm.keyExistsJson(json, ".sanctionsOracle"), "not recorded as configured");
+        assertFalse(vm.keyExistsJson(json, ".sanctions.oracle"), "not recorded as configured");
 
         vm.prank(timelock);
         d.setSanctionsOracle(overlay);
         s.run();
 
         assertEq(d.getSanctionsOracle(), overlay, "the scheduled overlay stays");
-        assertEq(vm.parseJsonAddress(_artifact(), ".sanctionsOracle"), overlay, "now recorded as configured");
+        assertEq(vm.parseJsonAddress(_artifact(), ".sanctions.oracle"), overlay, "now recorded as configured");
         _cleanup();
     }
 
@@ -171,8 +171,34 @@ contract ConfigureSanctionsOracleTest is Test {
         TestnetSanctionsOverlay overlay = TestnetSanctionsOverlay(d.getSanctionsOracle());
         assertEq(address(overlay.upstream()), address(0));
         string memory json = _artifact();
-        assertEq(vm.parseJsonString(json, ".sanctionsOracleKind"), "testnet-overlay");
-        assertFalse(vm.keyExistsJson(json, ".sanctionsUpstream"), "no upstream recorded where there is none");
+        assertEq(vm.parseJsonString(json, ".sanctions.kind"), "testnet-overlay");
+        assertFalse(vm.keyExistsJson(json, ".sanctions.upstream"), "no upstream recorded where there is none");
+        _cleanup();
+    }
+
+    /// @notice Codex #2442 r3 — a record left by an earlier configuration that
+    ///         had an upstream does not survive a configuration without one.
+    ///         The `.sanctions` record is replaced whole, so the new overlay is
+    ///         never described as extending the old one's Chainalysis oracle.
+    function test_Testnet_PriorRecordWithUpstream_IsReplacedWhole() public {
+        StubSanctionsDiamond d = new StubSanctionsDiamond(admin);
+        ConfigureSanctionsOracle s = _script(421614, "stale-upstream", address(d));
+        string memory file = string.concat(root, "/", Deployments.chainSlug(), "/addresses.json");
+        vm.writeJson(
+            string.concat(
+                "{\"oracle\":\"", vm.toString(address(0xBEEF)),
+                "\",\"kind\":\"testnet-overlay\",\"upstream\":\"", vm.toString(address(0xC0FFEE)), "\"}"
+            ),
+            file,
+            ".sanctions"
+        );
+
+        s.run();
+
+        string memory json = _artifact();
+        assertEq(vm.parseJsonAddress(json, ".sanctions.oracle"), d.getSanctionsOracle());
+        assertEq(vm.parseJsonString(json, ".sanctions.kind"), "testnet-overlay");
+        assertFalse(vm.keyExistsJson(json, ".sanctions.upstream"), "the earlier upstream is gone");
         _cleanup();
     }
 
@@ -187,7 +213,7 @@ contract ConfigureSanctionsOracleTest is Test {
         s.run();
 
         assertEq(d.getSanctionsOracle(), first, "the same overlay");
-        assertEq(vm.parseJsonAddress(_artifact(), ".sanctionsOracle"), first);
+        assertEq(vm.parseJsonAddress(_artifact(), ".sanctions.oracle"), first);
         _cleanup();
     }
 
@@ -259,9 +285,9 @@ contract ConfigureSanctionsOracleTest is Test {
 
         assertEq(d.getSanctionsOracle(), chainalysis);
         string memory json = _artifact();
-        assertEq(vm.parseJsonAddress(json, ".sanctionsOracle"), chainalysis);
-        assertEq(vm.parseJsonString(json, ".sanctionsOracleKind"), "chainalysis");
-        assertFalse(vm.keyExistsJson(json, ".sanctionsUpstream"));
+        assertEq(vm.parseJsonAddress(json, ".sanctions.oracle"), chainalysis);
+        assertEq(vm.parseJsonString(json, ".sanctions.kind"), "chainalysis");
+        assertFalse(vm.keyExistsJson(json, ".sanctions.upstream"));
         _cleanup();
     }
 
@@ -310,8 +336,8 @@ contract ConfigureSanctionsOracleTest is Test {
 
         assertEq(d.getSanctionsOracle(), address(0));
         string memory json = _artifact();
-        assertFalse(vm.keyExistsJson(json, ".sanctionsOracle"), "not recorded as configured");
-        assertFalse(vm.keyExistsJson(json, ".sanctionsOracleKind"));
+        assertFalse(vm.keyExistsJson(json, ".sanctions.oracle"), "not recorded as configured");
+        assertFalse(vm.keyExistsJson(json, ".sanctions.kind"));
         _cleanup();
     }
 
@@ -328,7 +354,7 @@ contract ConfigureSanctionsOracleTest is Test {
 
         s.run();
 
-        assertEq(vm.parseJsonAddress(_artifact(), ".sanctionsOracle"), chainalysis);
+        assertEq(vm.parseJsonAddress(_artifact(), ".sanctions.oracle"), chainalysis);
         _cleanup();
     }
 
