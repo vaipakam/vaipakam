@@ -8,10 +8,10 @@
   "deployedAtCommit": "unknown \u2014 the 2026-07-01 deploy of this Diamond did not record its commit in this file, which kept naming the retired 0x725C\u2026 Diamond until this update",
   "deployedAtSource": "on-chain: creation tx 0x6ef294cab3f6314ae51af96b05a3d7176dddfaab7a1616adc1199bedc16db0f2, block 43549990, creator 0xb985\u2026EBCA",
   "lastInPlaceRefresh": {
-    "kind": "RefreshAllFacetsInPlace, single run (no migration due: seeded, rebased and role-recorded since 2026-10-03)",
-    "monorepoCommit": "d03179705feade5b9916717484067b8697f04510",
-    "completedAt": "2026-10-07T09:06:05Z",
+    "kind": "RefreshAllFacetsInPlace, single run (no migration due: seeded, rebased and role-recorded since 2026-10-03; REWARD_ROLE_EXPECTED=canonical matched the live role)",
+    "monorepoCommit": "2c1ecc7f37028edeb2c693e474d50d05dbf72b6d",
+    "completedAt": "2026-10-07T16:12:32Z",
     "signer": "0xF718BaE5e0dc36140F16dAEF73289294c2372030",
-    "scope": "every facet DeployDiamond cuts, replaced; adds swapToRepayPartialFacet (#2423 split); diamondCutFacet (constructor-installed) unchanged; no stale routes found or removed; ships #2418, #2423, #2424, #2426, #2430; full regression NOT run before this refresh (owner decision 2026-10-07: regression deferred until after the current development batch); vault template unchanged; reward custody NOT activated (owner decision 2026-10-04: deferred until the VPFI recycling work is ready)"
+    "scope": "every facet DeployDiamond cuts, replaced; adds getOwedAtInternalMatch on claimFacet (#2444); diamondCutFacet (constructor-installed) unchanged; no stale routes found or removed; ships #2444 (#2427); 103 transactions, all status 1; full regression NOT run before this refresh (owner decision 2026-10-07: regression deferred until after the current development batch); vault template unchanged; reward custody NOT activated (owner decision 2026-10-04: deferred until the VPFI recycling work is ready)"
   }
 }
