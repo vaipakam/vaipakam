@@ -1433,7 +1433,10 @@ to a decision. Listed by category.
   on-chain oracle (last updated 2026-03-18) and it must NOT be configured
   anywhere; which supported source mainnets use is open (#2443), and
   `ConfigureSanctionsOracle.s.sol` refuses every mainnet until then.
-  Testnets screen against the admin's `TestnetSanctionsOverlay` alone. Tier-1 entry points
+  On a testnet that script installs the admin's `TestnetSanctionsOverlay`
+  as the whole screen. It is a SEPARATE step: `deploy-testnet.sh` does not
+  run it yet (wiring it in, with a verify-time check, is #946), so a fresh
+  testnet screens against nothing until it is run. Tier-1 entry points
   revert for flagged callers; Tier-2 close-out paths stay open so the
   unflagged counterparty can be made whole. While unset, sanctions
   screening fails open (intentional pre-`setSanctionsOracle` window).

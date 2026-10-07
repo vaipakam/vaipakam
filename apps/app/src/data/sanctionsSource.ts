@@ -298,6 +298,26 @@ export interface SanctionsSnapshot {
  *  pinned was replaced while it read, before giving up on the explanation. */
 const SNAPSHOT_ATTEMPTS = 3;
 
+/** How long one attempt may spend explaining a flag it has already read. The
+ *  flag restricts the wallet whether or not its reason is known, so a slow or
+ *  hung explanation must never hold the flag back: past this budget the
+ *  attempt reports the flag with an `unknown` reason, and the next refresh
+ *  tries again. */
+export const EXPLANATION_BUDGET_MS = 8_000;
+
+/** `work`, or `fallback` if it has not settled within `ms`. */
+async function within<T>(work: Promise<T>, ms: number, fallback: T): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<T>((resolve) => {
+    timer = setTimeout(() => resolve(fallback), ms);
+  });
+  try {
+    return await Promise.race([work, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** Reads whether the Diamond flags `wallet` and, when it does, why — both at
  *  ONE block, in one call, so the flag and its explanation cannot disagree.
  *  The flag is the Diamond's own `isSanctionedAddress`; the explanation never
@@ -307,6 +327,9 @@ const SNAPSHOT_ATTEMPTS = 3;
  *  answer it already had rather than reading an outage as a delisting. Never
  *  throws over the explanation: a failed read there yields `unknown`, or a
  *  reason saying what could not be read.
+ *
+ *  The explanation is bounded by {@link EXPLANATION_BUDGET_MS}: a flag already
+ *  read is never held back by a slow explanation of it.
  *
  *  A wallet that is not flagged costs one read, which cannot straddle two
  *  states. A flagged one takes several, and a block NUMBER does not name one
@@ -338,7 +361,12 @@ export async function readSanctionsSnapshot(
     })) as boolean;
     if (!flagged) return { flagged: false, reasons: [] };
 
-    const reasons = await explainAtBlock(publicClient, diamond, wallet, pinned.number);
+    const reasons = await within(
+      explainAtBlock(publicClient, diamond, wallet, pinned.number),
+      EXPLANATION_BUDGET_MS,
+      ['unknown'] as SanctionsSource[],
+    );
+    if (reasons.length === 1 && reasons[0] === 'unknown') return { flagged: true, reasons };
 
     let after: `0x${string}`;
     try {

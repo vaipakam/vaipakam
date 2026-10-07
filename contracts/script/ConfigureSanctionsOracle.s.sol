@@ -64,9 +64,9 @@ contract ConfigureSanctionsOracle is Script, ArtifactRootBase {
         address admin = vm.addr(adminKey);
         address owner = IERC173(diamond).owner();
 
-        address target = _overlayFor(admin, writes);
-
         address current = ProfileFacet(diamond).getSanctionsOracle();
+        address target = _overlayFor(current, admin, writes);
+
         if (current != target) {
             if (owner != admin) {
                 // NOT a revert. `target` may be an overlay this run just
@@ -100,14 +100,27 @@ contract ConfigureSanctionsOracle is Script, ArtifactRootBase {
         console.log("  previous:", current);
     }
 
-    /// @dev The recorded overlay when it is still fit to reuse (see
-    ///      {_reusable}); otherwise a fresh one, owned by the chain's admin and
-    ///      recorded under `.sanctionsTestnetOverlay` as soon as it is deployed
-    ///      — a separate fact from which oracle the Diamond is configured with,
-    ///      so a run that cannot configure (a timelock owner) still lets the
-    ///      next run reuse the overlay instead of deploying another.
-    function _overlayFor(address admin, bool writes) internal returns (address) {
+    /// @dev The overlay to configure, in order of preference:
+    ///      1. the one the Diamond ALREADY screens against, when it is fit to
+    ///         reuse (see {_reusable}) — its flags are the live screen, so
+    ///         replacing it would silently delist every wallet it flags. The
+    ///         record is backfilled to it if missing or stale (a manual setup,
+    ///         a restored artifact);
+    ///      2. the recorded overlay, when it is fit to reuse;
+    ///      3. a fresh one, owned by the chain's admin and recorded under
+    ///         `.sanctionsTestnetOverlay` as soon as it is deployed — a separate
+    ///         fact from which oracle the Diamond is configured with, so a run
+    ///         that cannot configure (a timelock owner) still lets the next run
+    ///         reuse the overlay instead of deploying another.
+    function _overlayFor(address current, address admin, bool writes) internal returns (address) {
         address recorded = Deployments.readSanctionsTestnetOverlayOptional();
+        if (current != address(0) && current.code.length != 0) {
+            if (_reusable(TestnetSanctionsOverlay(current), admin)) {
+                console.log("Keeping the overlay the Diamond already screens against:", current);
+                if (writes && recorded != current) Deployments.writeSanctionsTestnetOverlay(current);
+                return current;
+            }
+        }
         if (recorded != address(0) && recorded.code.length != 0) {
             if (_reusable(TestnetSanctionsOverlay(recorded), admin)) {
                 console.log("Reusing the recorded overlay:", recorded);

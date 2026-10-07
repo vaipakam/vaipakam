@@ -253,6 +253,46 @@ contract ConfigureSanctionsOracleTest is Test {
         _cleanup();
     }
 
+    /// @notice Codex #2442 r16 — the Diamond already screens against a fit
+    ///         overlay that the artifact does not record (a manual setup, a
+    ///         restored artifact): it is kept, its flags stay in force, and the
+    ///         record is backfilled to it rather than replaced by a fresh one.
+    function test_Testnet_LiveOverlayMissingFromTheRecord_IsKeptAndBackfilled() public {
+        StubSanctionsDiamond d = new StubSanctionsDiamond(admin);
+        ConfigureSanctionsOracle s = _script(84532, "live-unrecorded", address(d));
+        TestnetSanctionsOverlay live = new TestnetSanctionsOverlay(admin, address(0));
+        vm.startPrank(admin);
+        d.setSanctionsOracle(address(live));
+        live.setFlagged(makeAddr("flagged"), true);
+        vm.stopPrank();
+
+        s.run();
+
+        assertEq(d.getSanctionsOracle(), address(live), "the live overlay is kept");
+        assertTrue(d.isSanctionedAddress(makeAddr("flagged")), "its flags stay in force");
+        string memory json = _artifact();
+        assertEq(vm.parseJsonAddress(json, ".sanctionsTestnetOverlay"), address(live), "the record is backfilled");
+        assertEq(vm.parseJsonAddress(json, ".sanctions.oracle"), address(live));
+        _cleanup();
+    }
+
+    /// @notice A live oracle that is NOT fit to reuse (here one someone else
+    ///         owns) is still replaced by the admin's test list.
+    function test_Testnet_LiveOverlayOwnedByAnother_IsReplaced() public {
+        StubSanctionsDiamond d = new StubSanctionsDiamond(admin);
+        ConfigureSanctionsOracle s = _script(84532, "live-foreign", address(d));
+        TestnetSanctionsOverlay foreign = new TestnetSanctionsOverlay(makeAddr("someone"), address(0));
+        vm.prank(admin);
+        d.setSanctionsOracle(address(foreign));
+
+        s.run();
+
+        address configured = d.getSanctionsOracle();
+        assertTrue(configured != address(foreign), "an overlay someone else owns is not kept");
+        assertEq(TestnetSanctionsOverlay(configured).owner(), admin);
+        _cleanup();
+    }
+
     // ── Mainnets ──────────────────────────────────────────────────────
 
     /// @notice Every mainnet is refused — including the ones Chainalysis's

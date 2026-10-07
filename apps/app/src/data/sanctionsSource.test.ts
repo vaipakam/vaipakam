@@ -6,7 +6,7 @@
  * declared recovery sender — or a read failure reported as a definite answer. Every branch of the attribution is here, with a stubbed
  * client standing in for the chain.
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   ContractFunctionExecutionError,
   ContractFunctionRevertedError,
@@ -20,6 +20,7 @@ import {
   classifySubject,
   explain,
   isNoSuchFunction,
+  EXPLANATION_BUDGET_MS,
   readSanctionsSnapshot,
 } from './sanctionsSource';
 
@@ -297,6 +298,21 @@ describe('readSanctionsSnapshot — reads', () => {
       await readSanctionsSnapshot(client({ isSanctionedAddress: false }, blocks), DIAMOND, WALLET),
     ).toEqual({ flagged: false, reasons: [] });
     expect(blocks).toEqual([BLOCK]);
+  });
+
+  it('publishes the flag with an unknown reason when its explanation hangs', async () => {
+    vi.useFakeTimers();
+    try {
+      const pending = readSanctionsSnapshot(
+        client({ isSanctionedAddress: true, getSanctionsOracle: () => new Promise(() => {}) }),
+        DIAMOND,
+        WALLET,
+      );
+      await vi.advanceTimersByTimeAsync(EXPLANATION_BUDGET_MS);
+      expect(await pending).toEqual({ flagged: true, reasons: ['unknown'] });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('keeps the flag when its explanation cannot be read', async () => {
