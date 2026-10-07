@@ -18,7 +18,7 @@ import { OctagonAlert } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { usePublicClient } from 'wagmi';
 import { copy } from '../content/copy';
-import { SANCTIONS_FLAGGED_REFRESH_MS, useSanctionsCheck } from '../data/sanctions';
+import { SANCTIONS_REFRESH_MS, useSanctionsCheck } from '../data/sanctions';
 import { readSanctionsSource, type SanctionsSource } from '../data/sanctionsSource';
 import { useActiveChain } from '../chain/useActiveChain';
 
@@ -33,8 +33,8 @@ function useSanctionsSource(flagged: boolean): SanctionsSource[] | undefined {
     // overall flag stays up. Re-read on the same cycle as the flag itself
     // (which decides whether the banner shows at all), so a stale answer can
     // neither keep naming a list that has let go nor outlive a cleared flag.
-    staleTime: SANCTIONS_FLAGGED_REFRESH_MS,
-    refetchInterval: SANCTIONS_FLAGGED_REFRESH_MS,
+    staleTime: SANCTIONS_REFRESH_MS,
+    refetchInterval: SANCTIONS_REFRESH_MS,
     queryFn: () => readSanctionsSource(publicClient!, readChain.diamondAddress, address!),
   });
   return data;
