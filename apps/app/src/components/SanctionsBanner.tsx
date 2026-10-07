@@ -10,7 +10,7 @@
  * and the last can hold alongside any of the others, in which case both are
  * said. Each has a different party to contact. What is already known (blocked
  * actions, close-outs that stay open) shows at once; only the recourse waits
- * for the attribution, rather than being guessed.
+ * for the attribution, rather than being guessed, and says so while it does.
  */
 import { OctagonAlert } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
@@ -89,11 +89,15 @@ export function SanctionsBanner() {
         <p style={{ margin: '6px 0 0' }}>{copy.sanctions.line1}</p>
         <p style={{ margin: '6px 0 0' }}>{copy.sanctions.line2}</p>
         <p style={{ margin: '6px 0 0' }}>{copy.sanctions.line3}</p>
-        {reasons?.map((reason) => (
-          <p key={reason} style={{ margin: '6px 0 0' }}>
-            {recourseLine(reason)}
-          </p>
-        ))}
+        {reasons === undefined ? (
+          <p style={{ margin: '6px 0 0' }}>{copy.sanctions.recoursePending}</p>
+        ) : (
+          reasons.map((reason) => (
+            <p key={reason} style={{ margin: '6px 0 0' }}>
+              {recourseLine(reason)}
+            </p>
+          ))
+        )}
       </div>
     </div>
   );
