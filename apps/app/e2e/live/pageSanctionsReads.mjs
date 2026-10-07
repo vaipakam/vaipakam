@@ -52,6 +52,11 @@ function asBool(returnData) {
   }
 }
 
+/** Multicall3's canonical address — the same on every chain viem knows,
+ *  Base Sepolia included. Only an `aggregate3` sent HERE is trusted to
+ *  have executed its nested calls. */
+export const MULTICALL3 = '0xca11bde05977b3631167028862be2a173976ca11';
+
 /**
  * The watched reads one JSON-RPC call carries: `[{ kind, index }]`, where
  * `index` is the position inside an `aggregate3` or null for a plain call.
@@ -66,6 +71,9 @@ export function matchCall(call, reads) {
     if (to === r.target && data === r.calldata) out.push({ kind, index: null });
   }
   if (out.length > 0) return out;
+  // Nested calls count only inside the real Multicall3: the same calldata
+  // sent to any other contract proves nothing about what was executed.
+  if (to !== MULTICALL3) return [];
   let decoded;
   try {
     decoded = decodeFunctionData({ abi: multicall3Abi, data });
@@ -184,8 +192,15 @@ export function createReadLedger(reads, now = () => Date.now()) {
 }
 
 /** Feed `ledger` from everything the page sends: HTTP POSTs and
- *  WebSocket frames. */
-export function attachLedger(page, ledger) {
+ *  WebSocket frames.
+ *
+ *  The WebSocket is also the one door `launch`'s read-only guard does not
+ *  cover (it gates the injected wallet and HTTP routes). Every JSON-RPC
+ *  method the page SENDS on a socket is checked against `readMethods`, and
+ *  one outside it is recorded in the returned `wsViolations` — observed,
+ *  not prevented, so the drive must fail on any entry. */
+export function attachLedger(page, ledger, readMethods) {
+  const wsViolations = [];
   page.on('request', (req) => {
     if (req.method() !== 'POST') return;
     const pending = ledger.onRequest(req.postData());
@@ -207,6 +222,15 @@ export function attachLedger(page, ledger) {
   page.on('websocket', (ws) => {
     const open = new Map(); // JSON-RPC id -> pending, per connection
     ws.on('framesent', (f) => {
+      try {
+        for (const m of asList(JSON.parse(String(f.payload)))) {
+          if (m && typeof m.method === 'string' && !readMethods.has(m.method)) {
+            wsViolations.push({ reason: `websocket rpc ${m.method} (not a permitted read)`, url: ws.url() });
+          }
+        }
+      } catch {
+        /* not JSON-RPC: nothing to judge */
+      }
       const pending = ledger.onRequest(String(f.payload));
       if (pending === null) return;
       for (const [id] of pending) open.set(id, pending);
@@ -230,4 +254,5 @@ export function attachLedger(page, ledger) {
       open.clear();
     });
   });
+  return { wsViolations };
 }

@@ -673,6 +673,35 @@ export function requireSigningRole(role) {
   walletFor(role);
 }
 
+/** The JSON-RPC methods a read-only session lets through — ONE allowlist
+ *  for every door a page can reach the chain by (see the note in `launch`). */
+export const READ_METHODS = new Set([
+  'eth_accounts',
+  'eth_blockNumber',
+  'eth_call',
+  'eth_chainId',
+  'eth_estimateGas',
+  'eth_feeHistory',
+  'eth_gasPrice',
+  'eth_getBalance',
+  'eth_getBlockByHash',
+  'eth_getBlockByNumber',
+  'eth_getCode',
+  'eth_getLogs',
+  'eth_getProof',
+  'eth_getStorageAt',
+  'eth_getTransactionByHash',
+  'eth_getTransactionCount',
+  'eth_getTransactionReceipt',
+  'eth_maxPriorityFeePerGas',
+  'eth_syncing',
+  'eth_subscribe',
+  'eth_unsubscribe',
+  'net_version',
+  'web3_clientVersion',
+  'wallet_getPermissions',
+]);
+
 export async function launch({
   role,
   startChainId = 84532,
@@ -948,32 +977,8 @@ export async function launch({
   // and a second independently-drifting answer is the same failure in a
   // new place. A too-narrow list costs a refused read, which surfaces
   // LOUDLY in a live drive; a denylist gap surfaces not at all.
-  const READ_METHODS = new Set([
-    'eth_accounts',
-    'eth_blockNumber',
-    'eth_call',
-    'eth_chainId',
-    'eth_estimateGas',
-    'eth_feeHistory',
-    'eth_gasPrice',
-    'eth_getBalance',
-    'eth_getBlockByHash',
-    'eth_getBlockByNumber',
-    'eth_getCode',
-    'eth_getLogs',
-    'eth_getProof',
-    'eth_getStorageAt',
-    'eth_getTransactionByHash',
-    'eth_getTransactionCount',
-    'eth_getTransactionReceipt',
-    'eth_maxPriorityFeePerGas',
-    'eth_syncing',
-    'eth_subscribe',
-    'eth_unsubscribe',
-    'net_version',
-    'web3_clientVersion',
-    'wallet_getPermissions',
-  ]);
+  // READ_METHODS is a module-level export (above `launch`) so callers can import it:
+  // the THIRD door, a page's own WebSocket RPC, is judged by the same list.
 
   const RPC_WRITE_METHODS = new Set([
     'eth_sendRawTransaction',

@@ -44,6 +44,7 @@ import {
   clientsFor,
   ensureConnected,
   launch,
+  READ_METHODS,
   requireSiteUrl,
   requireSigningRole,
   visit,
@@ -109,14 +110,22 @@ if (UNREAD_LINES.length === 0) {
   blockedSync('en.json no longer carries the unread recourse lines (recourseUnknown / …Unread)');
 }
 
+/** Every recourse line the app can render, from the same catalogue. */
+const RECOURSE_LINES = Object.entries(en.copy.sanctions)
+  .filter(([k, v]) => k.startsWith('recourse') && typeof v === 'string')
+  .map(([, v]) => v);
+
 /** What the banner's recourse says, in the app's own copy:
  *  `unread` — the page says it could not read part of why;
- *  `expected` — exactly the test-list line, which is this wallet's case
- *  (flagged on the test list, no flagged recovery sender — preflighted);
- *  `wrong` — any other explanation. */
+ *  `expected` — the test-list line and NO other recourse line, which is
+ *  this wallet's case (on the test list only, no upstream, no flagged
+ *  recovery sender — all preflighted);
+ *  `wrong` — any other explanation, including the test-list line beside
+ *  a cause that does not exist. */
 function recourseOf(text) {
   if (UNREAD_LINES.some((l) => text.includes(l))) return 'unread';
-  return text.includes(TEST_LIST_LINE) ? 'expected' : 'wrong';
+  const present = RECOURSE_LINES.filter((l) => text.includes(l));
+  return present.length === 1 && present[0] === TEST_LIST_LINE ? 'expected' : 'wrong';
 }
 
 const ABI = parseAbi([
@@ -125,7 +134,7 @@ const ABI = parseAbi([
   'function flaggedByOverlay(address) view returns (bool)',
   'function vaultBannedSource(address) view returns (address)',
   'function isSanctioned(address) view returns (bool)',
-  'function sanctionSource(address) view returns (bool byOverlay, bool byUpstream)',
+  'function upstream() view returns (address)',
 ]);
 
 const { pub } = clientsFor(CHAIN_ID);
@@ -166,19 +175,14 @@ async function flaggedSender() {
 
 let state;
 let sender;
-let byUpstream;
+let upstream;
 try {
   state = await chainState();
   sender = await flaggedSender();
-  // The list the test list extends, if any. A wallet it flags is not in the
-  // test-list-only case this drive asserts: the banner then rightly names
-  // both lists, and clearing the test-list entry cannot lift the flag.
-  [, byUpstream] = await pub.readContract({
-    address: OVERLAY,
-    abi: ABI,
-    functionName: 'sanctionSource',
-    args: [WALLET],
-  });
+  // The list the test list extends. `upstream` is IMMUTABLE on the overlay,
+  // so checking it once settles it for the whole run (and the wait below
+  // re-checks that the Diamond still screens against this overlay).
+  upstream = await pub.readContract({ address: OVERLAY, abi: ABI, functionName: 'upstream' });
 } catch (err) {
   await blocked('could not read the sanctions state from the chain', err);
 }
@@ -194,10 +198,13 @@ if (sender !== null) {
       'whatever the test list says — pick another SANCTIONS_ROLE, or clear that sender first',
   );
 }
-if (byUpstream) {
+if (upstream !== zeroAddress) {
+  // With an upstream, the explanation the banner gives depends on a second
+  // list this drive does not control (and whose outage the Diamond fails
+  // open on), so the test-list-only claim it asserts cannot be established.
   await blocked(
-    'the list the test list extends also flags this wallet, so it is not the test-list-only case this drive ' +
-      'asserts and clearing the test-list entry would not lift the flag — pick another SANCTIONS_ROLE',
+    `the test list extends another list (${upstream}); this drive asserts the test-list-only setup and ` +
+      'needs an overlay with no upstream',
   );
 }
 const wantFlagged = EXPECT !== 'clear';
@@ -227,14 +234,17 @@ await ctx.addInitScript(() => {
 const ledger = createReadLedger({
   flag: watchedRead('isSanctionedAddress(address)', DIAMOND, WALLET),
 });
-attachLedger(page, ledger);
+const { wsViolations } = attachLedger(page, ledger, READ_METHODS);
 
 /** A request the read-only session refused outranks every other outcome:
  *  print it and FAIL, before any BLOCKED can hide it. */
 async function failIfRefused() {
-  if (blockedRequests.length === 0) return;
-  console.log(`FAIL read-only: the page attempted ${blockedRequests.length} refused request(s)`);
-  for (const b of blockedRequests) console.log(`  ${b.reason} — ${b.url}`);
+  // The guard's refusals, plus non-read methods the page sent on its own
+  // WebSocket (a door the guard does not cover; those were not prevented).
+  const all = [...blockedRequests, ...wsViolations];
+  if (all.length === 0) return;
+  console.log(`FAIL read-only: the page attempted ${all.length} non-read request(s)`);
+  for (const b of all) console.log(`  ${b.reason} — ${b.url}`);
   await done();
   process.exit(1);
 }

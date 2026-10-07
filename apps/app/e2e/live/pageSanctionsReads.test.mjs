@@ -6,16 +6,17 @@ import { createReadLedger, watchedRead } from './pageSanctionsReads.mjs';
 const DIAMOND = '0xd89fd7F787e4415460b23891E97570a4881fb995';
 const OTHER = '0x2E4033Ae1200CC14D33E09021C4098d12b54341c';
 const MULTICALL = '0xcA11bde05977b3631167028862bE2a173976CA11';
+const IMPOSTOR = '0x648897f2c549956eFfF626D57fBc3E39761e6792';
 const WALLET = '0xCeF8D4D9FF706B39baF07Ff9630AE81d632e55dc';
 const STRANGER = '0x1DAefA360ED370285f003Fa2d92DB75628088282';
 
 const flagRead = watchedRead('isSanctionedAddress(address)', DIAMOND, WALLET);
 const bool = (b) => encodeAbiParameters([{ type: 'bool' }], [b]);
 const plain = (id, to, data) => ({ jsonrpc: '2.0', id, method: 'eth_call', params: [{ to, data }, '0x10'] });
-const aggregate = (id, calls) =>
+const aggregate = (id, calls, to = MULTICALL) =>
   plain(
     id,
-    MULTICALL,
+    to,
     encodeFunctionData({
       abi: multicall3Abi,
       functionName: 'aggregate3',
@@ -118,5 +119,12 @@ describe('page sanctions read ledger', () => {
     l.onResponse(b, JSON.stringify({ id: 2, result: bool(false) }));
     expect(l.judge('flag', 0, false, 150)).toEqual({ state: 'disagrees', value: true });
     expect(l.judge('flag', 0, false).state).toBe('agrees');
+  });
+
+  it('trusts nested calls only inside the canonical Multicall3', () => {
+    const l = ledgerAt([100]);
+    const body = aggregate(7, [[DIAMOND, flagRead.calldata]], IMPOSTOR);
+    expect(l.onRequest(JSON.stringify(body))).toBeNull();
+    expect(l.judge('flag', 0, true)).toEqual({ state: 'none' });
   });
 });
