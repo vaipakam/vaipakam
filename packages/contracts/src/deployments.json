@@ -195,6 +195,11 @@
     "rewardCustodyHolder": "0xE8BdF004C264c60F7F4B641FCCCB705E43630265",
     "rewardMessenger": "0x1132055D90E9cFD77f30b6420a591781Ac3f10Fe",
     "rewardMessengerImpl": "0x4296D7D939cf55D144e99E04082Ac50e263532cA",
+    "sanctions": {
+      "kind": "testnet-overlay",
+      "oracle": "0x2E4033Ae1200CC14D33E09021C4098d12b54341c"
+    },
+    "sanctionsTestnetOverlay": "0x2E4033Ae1200CC14D33E09021C4098d12b54341c",
     "testnetMocks": {
       "ethUsdFeed": "0x81915F4b8FBcc3B32bf4df565EEFb9207E5B25bA",
       "feedRegistry": "0x5B0b0e517C1244243f0706377126dc918f5D1912",

@@ -1033,8 +1033,6 @@
     }
   },
   "banners": {
-    "sanctionsMatchTitle": "{{label}}: تطابق في فرز العقوبات.",
-    "sanctionsMatchBody": "يدرج أوراكل العقوبات على السلسلة (Chainalysis) هذا العنوان حالياً. سيتم التراجع عن أي معاملة لإنشاء عرض أو قبوله على مستوى البروتوكول. في حال كان التطابق غير صحيح، يُرجى التواصل مع دعم Chainalysis — لا يحتفظ Vaipakam بقائمة عقوبات خاصة به.",
     "sanctionsLabelWallet": "المحفظة المتصلة",
     "sanctionsLabelOfferCreator": "منشئ العرض",
     "vaultUpgradeBody": "يلزم ترقية الضمان — الضمان على الإصدار v{{userVersion}}، والحد الأدنى الإلزامي v{{mandatoryVersion}} (الأحدث v{{currentVersion}}). سيتم التراجع عن تدفقات Diamond حتى الترقية.",

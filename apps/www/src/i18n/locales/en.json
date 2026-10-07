@@ -56,11 +56,6 @@
     "ariaLabel": "Display language"
   },
   "banners": {
-    "sanctionsMatchTitle": "{{label}}: sanctions-screening match.",
-    "sanctionsMatchLine1": "This address is currently listed by the on-chain sanctions oracle (Chainalysis). The protocol cannot create a vault, accept a new deposit, or open a new position for this wallet.",
-    "sanctionsMatchLine2": "Existing-position close-out paths remain open so the unflagged counterparty can be made whole — borrowers can still repay, lenders can still trigger recovery, and either side can still claim what is contractually owed back to them.",
-    "sanctionsMatchLine3": "If you believe this is a mismatch, contact Chainalysis support — Vaipakam does not maintain its own sanctions list and cannot override an oracle decision.",
-    "sanctionsMatchBody": "The on-chain sanctions oracle (Chainalysis) currently lists this address. Any offer-creation or offer-acceptance transaction will revert at the protocol layer. If this is a mis-match, contact Chainalysis support — Vaipakam does not maintain its own sanctions list.",
     "sanctionsLabelWallet": "Connected wallet",
     "sanctionsLabelOfferCreator": "Offer creator",
     "vaultUpgradeBody": "Vault upgrade required — the vault is at v{{userVersion}}, mandatory floor is v{{mandatoryVersion}} (latest v{{currentVersion}}). Diamond flows will revert until upgrade.",

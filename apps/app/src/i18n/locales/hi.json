@@ -967,7 +967,7 @@
       "errDomainDrift": "इस नेटवर्क का सिग्नेचर कॉन्फ़िगरेशन ऐप की अपेक्षा से मेल नहीं खाता, इसलिए साइन करना रोक दिया गया — कुछ भी भेजा नहीं गया। ऐप रीलोड करें; अगर ऐसा होता रहे तो ऐप को अपडेट चाहिए।",
       "errOracleUnset": "कुछ भी साइन नहीं हुआ और कुछ भी भेजा नहीं गया: यह रिकवरी जिस स्क्रीनिंग सेवा पर निर्भर है वह इस नेटवर्क पर कॉन्फ़िगर नहीं है, इसलिए रिकवरी का नतीजा तय नहीं किया जा सकता।",
       "errOracleUnreachable": "कुछ भी साइन नहीं हुआ और कुछ भी भेजा नहीं गया: जो जाँच यह तय करती है कि यहाँ रिकवरी चल सकती है या नहीं, उसने अभी जवाब नहीं दिया। थोड़ी देर बाद जाँच दोबारा आज़माएँ।",
-      "sanctionedBlockedBody": "यह वॉलेट प्रतिबंध ऑरेकल द्वारा फ़्लैग किया गया है, इसलिए इसके लिए रिकवरी बंद है। कुछ भी हिला नहीं — टोकन वहीं रहते हैं जहाँ हैं, और मौजूदा पोज़िशन चुकाना या बंद करना खुला रहता है।",
+      "sanctionedBlockedBody": "यह वॉलेट Vaipakam की sanctions screening द्वारा फ़्लैग किया गया है, इसलिए इसके लिए रिकवरी बंद है। कुछ भी हिला नहीं — टोकन वहीं रहते हैं जहाँ हैं, और मौजूदा पोज़िशन चुकाना या बंद करना खुला रहता है।",
       "errTxReverted": "भेजे जाने के बाद नेटवर्क ने ट्रांज़ैक्शन ठुकरा दिया — कुछ भी वापस नहीं लिया गया और टोकन वहीं रहे जहाँ थे। कृपया दोबारा कोशिश करें।",
       "helpSection": {
         "title": "आपके Vault में टोकन फँसे हैं?",
@@ -2033,7 +2033,7 @@
       "noRpcClient": "Active chain के लिए कोई RPC client नहीं।",
       "txRejected": "आपने wallet में cancel किया। कुछ भेजा नहीं गया।",
       "txFailed": "Transaction नहीं हुई। Network gas के अलावा कुछ taken नहीं हुआ। Please try again.",
-      "sanctionsBlocked": "यह wallet sanctions oracle द्वारा flagged है, इसलिए new positions और payouts blocked हैं। कुछ भेजा नहीं गया। Existing positions repay और close करना open रहता है।",
+      "sanctionsBlocked": "यह wallet Vaipakam की sanctions screening द्वारा flagged है, इसलिए new positions और payouts blocked हैं। कुछ भेजा नहीं गया। Existing positions repay और close करना open रहता है।",
       "sanctionsCheckRetry": "अभी compliance check run नहीं कर सके — कुछ भेजा नहीं गया। थोड़ी देर में try करें।",
       "checkRetry": "अभी on-chain verify नहीं कर सके — कुछ भेजा नहीं गया। थोड़ी देर में try करें।",
       "assetPaused": "इस deal का एक asset protocol द्वारा temporarily paused है, इसलिए यह action अभी नहीं हो सकता। कुछ भेजा नहीं गया — बाद में try करें।",
@@ -2319,10 +2319,24 @@
       "readyToClaim": "{{amount}} VPFI claim के लिए ready।"
     },
     "sanctions": {
-      "title": "यह wallet compliance oracle में listed है।",
-      "line1": "Connected address उस on-chain sanctions oracle पर दिखाई देता है जिसके against Vaipakam screen करता है।",
+      "title": "यह wallet Vaipakam की sanctions screening द्वारा flag है।",
+      "line1": "Connected wallet Vaipakam की sanctions screening द्वारा flag है, जो wallet और tokens recover करते समय इसके declare किए गए किसी भी sender को configured on-chain sanctions oracle के against check करती है।",
       "line2": "New positions (offers, loans, rentals, deposits) blocked हैं और pass नहीं होंगी।",
-      "line3": "Existing positions repay और close करना open रहता है ताकि counterparties whole हो सकें, लेकिन इस wallet को claims और payouts flag रहने तक blocked हैं। अगर आपको लगता है यह error है, oracle provider (Chainalysis) से contact करें।"
+      "line3": "Existing positions repay और close करना open रहता है ताकि counterparties whole हो सकें, लेकिन इस wallet को claims और payouts flag रहने तक blocked हैं।",
+      "recourseTestList": "यह wallet इस test network की अपनी test list पर है, जिसे इसका operator testing के लिए रखता है। अगर आपको इसकी उम्मीद नहीं थी, तो इस test network के operator से contact करें।",
+      "recourseBoth": "यह wallet इस test network की अपनी test list और उस sanctions list, दोनों पर है जिसे यह test list extend करती है। Test list से हटाने पर दूसरी list का flag नहीं हटेगा; अगर आपको लगता है वह flag error है, तो उस list के provider से contact करें।",
+      "recourseTestListUpstreamUnread": "यह wallet इस test network की अपनी test list पर है। जिस sanctions list को यह extend करती है, वह भी इसे flag करती है या नहीं, यह अभी check नहीं हो सका। अगर आपको इसकी उम्मीद नहीं थी, तो इस test network के operator से contact करें।",
+      "recourseOtherList": "यह wallet उस sanctions list पर है जिसके against यह deployment screening करता है। अगर आपको लगता है यह error है, तो उस list के provider से contact करें।",
+      "recourseBannedSource": "जिन lists के against यह deployment screening करता है, उनमें से कोई भी इस wallet को खुद flag नहीं करती: यह इसलिए flag है क्योंकि tokens recover करते समय इसने जो sender declare किया था, वह flag है। जिस list ने उस sender को flag किया है, उससे हटते ही यह flag अपने आप हट जाएगा।",
+      "recourseAlsoBannedSource": "Tokens recover करते समय इस wallet ने जो sender declare किया था, वह भी flag है, इसलिए जब तक वह sender भी list से नहीं हटता, wallet flag रहेगा।",
+      "recourseBannedSourceWalletUnread": "Tokens recover करते समय इस wallet ने जो sender declare किया था, वह flag है, और सिर्फ़ इसी से wallet flag हो जाता है। Wallet खुद भी किसी list पर है या नहीं, यह अभी check नहीं हो सका।",
+      "recourseSenderTestList": "वह sender इस test network की अपनी test list पर है, जिसे इसका operator testing के लिए रखता है। अगर आपको इसकी उम्मीद नहीं थी, तो इस test network के operator से contact करें।",
+      "recourseSenderBoth": "वह sender इस test network की अपनी test list और उस sanctions list, दोनों पर है जिसे यह test list extend करती है। Test list से हटाने पर दूसरी list का flag नहीं हटेगा; अगर आपको लगता है वह flag error है, तो उस list के provider से contact करें।",
+      "recourseSenderTestListUpstreamUnread": "वह sender इस test network की अपनी test list पर है। जिस sanctions list को यह extend करती है, वह भी उसे flag करती है या नहीं, यह अभी check नहीं हो सका। अगर आपको इसकी उम्मीद नहीं थी, तो इस test network के operator से contact करें।",
+      "recourseSenderOtherList": "वह sender उस sanctions list पर है जिसके against यह deployment screening करता है। अगर आपको लगता है यह error है, तो उस list के provider से contact करें।",
+      "recourseBannedSourceUnread": "इस wallet ने tokens recover करते समय एक sender भी declare किया था, और वह sender भी flag है या नहीं, यह अभी check नहीं हो सका। अगर है, तो जब तक वह sender भी list से नहीं हटता, wallet flag रहेगा।",
+      "recourseSenderLookupUnread": "Tokens recover करते समय इस wallet ने कोई sender declare किया था या नहीं, यह अभी check नहीं हो सका। अगर किया था और वह sender flag है, तो जब तक वह sender भी list से नहीं हटता, wallet flag रहेगा।",
+      "recourseUnknown": "यह wallet क्यों flag है, यह अभी पढ़ा नहीं जा सका, इसलिए सही contact अभी नहीं बताया जा सकता। फिर से try करने के लिए reload करें।"
     },
     "risk": {
       "healthTitle": "Health {{ratio}} — 1.00 liquidation line है",

@@ -1380,7 +1380,9 @@ follow-up drain.
 
 ### Sanctions oracle address
 
-(Chainalysis-style). Zero leaves the
+(any `ISanctionsList`; never Chainalysis's retired on-chain oracle —
+which supported source mainnets use is open, #2443; testnets use the
+admin's `TestnetSanctionsOverlay`). Zero leaves the
 sanctions check fail-open during the deploy window (intentional);
 non-zero enables Tier-1 sanctions screening on protocol entrypoints.
 See CLAUDE.md "Retail-deploy policy" — sanctions ON, KYC + country-

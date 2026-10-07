@@ -145,6 +145,7 @@ import FlashLoanLiquidatorABI from './FlashLoanLiquidator.json';
 // deliberately NOT spread into DIAMOND_ABI below (not part of the diamond's
 // selector set) — admin tooling / keeper call it as a separate contract.
 import RiskPremiumRateModelABI from './RiskPremiumRateModel.json';
+import TestnetSanctionsOverlayABI from './TestnetSanctionsOverlay.json';
 
 export {
   OfferCreateFacetABI,
@@ -241,6 +242,7 @@ export {
   RewardSweepWalkFacetABI,
   FlashLoanLiquidatorABI,
   RiskPremiumRateModelABI,
+  TestnetSanctionsOverlayABI,
 };
 
 import type { Abi } from 'viem';

@@ -1033,8 +1033,6 @@
     }
   },
   "banners": {
-    "sanctionsMatchTitle": "{{label}}: प्रतिबंध स्क्रीनिंग में मिलान।",
-    "sanctionsMatchBody": "ऑन-चेन प्रतिबंध ऑरेकल (Chainalysis) वर्तमान में इस पते को सूचीबद्ध करता है। कोई भी ऑफर बनाने या स्वीकार करने का लेन-देन प्रोटोकॉल स्तर पर वापस हो जाएगा। यदि यह गलत मिलान है, तो Chainalysis सहायता से संपर्क करें — Vaipakam अपनी स्वयं की प्रतिबंध सूची नहीं रखता है।",
     "sanctionsLabelWallet": "जुड़ा वॉलेट",
     "sanctionsLabelOfferCreator": "ऑफर निर्माता",
     "vaultUpgradeBody": "Vault अपग्रेड आवश्यक है — Vault v{{userVersion}} पर है, अनिवार्य न्यूनतम v{{mandatoryVersion}} है (नवीनतम v{{currentVersion}})। अपग्रेड तक Diamond फ्लो वापस होंगे।",
