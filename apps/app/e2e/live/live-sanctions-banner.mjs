@@ -118,7 +118,7 @@ const RECOURSE_LINES = Object.entries(en.copy.sanctions)
 /** What the banner's recourse says, in the app's own copy:
  *  `unread` — the page says it could not read part of why;
  *  `expected` — the test-list line and NO other recourse line, which is
- *  this wallet's case (on the test list only, no upstream, no flagged
+ *  this wallet's case (on the test list only, no upstream, no recorded
  *  recovery sender — all preflighted);
  *  `wrong` — any other explanation, including the test-list line beside
  *  a cause that does not exist. */
@@ -149,28 +149,21 @@ async function chainState() {
   return { oracle, flagged, onTestList };
 }
 
-/** Whether the wallet has a SECOND active cause: a recovery sender it
- *  declared that is itself flagged. Clearing the wallet's own test-list
- *  entry would not lift that one, so the clear step could never pass. */
-async function flaggedSender() {
+/** The recovery sender the wallet has on record, or null. Any recorded
+ *  sender can be a second cause (the Diamond folds the sender's own flag
+ *  into the wallet's), and the record is WRITE-ONCE: the Diamond sets
+ *  `vaultBannedSource` on a banned recovery attempt and never deletes it.
+ *  So requiring none at all settles it at every block, including the
+ *  older block a lagging page RPC may read; whether the sender is flagged
+ *  NOW would not, since it may have been delisted since. */
+async function recordedSender() {
   const source = await pub.readContract({
     address: DIAMOND,
     abi: ABI,
     functionName: 'vaultBannedSource',
     args: [WALLET],
   });
-  if (source === zeroAddress) return null;
-  // The configured list's own answer for the sender — the cause the Diamond
-  // folds into the wallet's flag. Not the Diamond's composite view, which
-  // would also count the sender's own recovery sender, a cause that does
-  // not reach this wallet.
-  const flagged = await pub.readContract({
-    address: OVERLAY,
-    abi: ABI,
-    functionName: 'isSanctioned',
-    args: [source],
-  });
-  return flagged ? source : null;
+  return source === zeroAddress ? null : source;
 }
 
 let state;
@@ -178,7 +171,7 @@ let sender;
 let upstream;
 try {
   state = await chainState();
-  sender = await flaggedSender();
+  sender = await recordedSender();
   // The list the test list extends. `upstream` is IMMUTABLE on the overlay,
   // so checking it once settles it for the whole run (and the wait below
   // re-checks that the Diamond still screens against this overlay).
@@ -194,8 +187,8 @@ if (state.oracle.toLowerCase() !== OVERLAY.toLowerCase()) {
 }
 if (sender !== null) {
   await blocked(
-    `the wallet's declared recovery sender ${sender} is flagged, which flags the wallet ` +
-      'whatever the test list says — pick another SANCTIONS_ROLE, or clear that sender first',
+    `the wallet has a recovery sender on record (${sender}); that record is permanent and can ` +
+      'add a second cause to the banner, so this drive needs a wallet with none — pick another SANCTIONS_ROLE',
   );
 }
 if (upstream !== zeroAddress) {
