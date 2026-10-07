@@ -14,6 +14,7 @@ What it carries:
 - `src/abis/_source.json` — provenance stamp (contracts commit hash).
 - `src/deployments.json` — consolidated per-chain Diamond + facet addresses, keyed by `chainId`.
 - `src/deployments.ts` — typed loader (`getDeployment(chainId)`); the entry point every consumer uses.
+- `src/recycleBacking.ts` (`@vaipakam/contracts/recycle-backing`) — the one pure function deciding whether a recycle-backing reading is backed, by the relation `RewardCustodyFacet.getRecycleBackingSnapshotV2`'s natspec states. Hand-written, not exported from `contracts/`; the indexer serves its verdict and the dashboard displays it, so neither re-derives the relation. Unit tests live in `apps/indexer/test/recycleBackingVerdict.test.ts`.
 
 **Non-goals:** this package doesn't carry Solidity source, doesn't run forge, doesn't deploy anything. It's a sync target only.
 

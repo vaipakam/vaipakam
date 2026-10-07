@@ -5607,6 +5607,263 @@ const copySource = {
     ageMinutes: tmpl('{{n}} min ago', ['n']),
     ageHours: tmpl('{{n}} h ago', ['n']),
   },
+  /* M5 (#1218 / #1349) — the public recycling account on /analytics.
+     Ported from the retired dashboard's `recycling.*` keys, with two
+     defects fixed: both recovery reservations are now listed beside the
+     remainder they are subtracted from, and "is the pool backed?" is the
+     indexer's answer (by the comparison the custody arrangement selects)
+     rather than one this page worked out itself.
+
+     COPY GATE (RL-6, VPFITokenomicsRedesignResearch.md §A.4): programme
+     longevity and bookkeeping only — never yield, rate, income, supply,
+     scarcity or price; nothing here is sized by holding, offers a
+     purchase, or implies anyone decides an amount. "Drawn" is what the
+     programme committed, not supply.
+
+     HONESTY GATE: a figure that is not determined says WHY in its own
+     cell. The retired dashboard left those cells blank under a footnote
+     saying blanks were not zeros; a blank reads as zero to anyone who
+     skips the footnote, so each refusal now carries its reason where it
+     is shown. */
+  recycling: {
+    title: 'Recycling account',
+    lede: 'Where each day’s reward pool came from, and how much of it was drawn. Figures are recorded as the programme runs; nothing here is decided after the fact.',
+    loading: 'Loading the recycling account…',
+    unavailable:
+      'The recycling account is not available right now. Nothing is shown rather than showing zeros, which would look like a quiet programme.',
+    scopeLocalOnly:
+      'This deployment has not closed a programme day itself, so programme-wide totals are not available from it. What it observed locally is shown instead.',
+    scopeEmpty:
+      'This deployment has not recorded any programme day yet, so programme-wide totals are not available from it.',
+    absorbedTotal: 'Absorbed into the recycling balance',
+    drawnTotal: 'Drawn from the scheduled floor',
+    // The two programme-wide totals on a deployment that cannot state
+    // them. Shown as DECLINED, with the reason, rather than omitted or
+    // printed as the 0 the endpoint leaves there — a declined total and
+    // a zero one are opposite claims.
+    totalDeclined:
+      'Not stated here: this deployment has not closed a programme day itself, so it cannot give a programme-wide figure.',
+    absorbedLocal: 'Absorbed on this deployment',
+    absorbedMirror: 'Absorbed on other reward chains',
+    absorbedPreLaunch: 'Absorbed on this deployment before the schedule started',
+    runway: 'Programme longevity',
+    runwayDays: tmpl('About {{days}} days of the recent daily pool', ['days']),
+    // A positive runway under a tenth of a day: labelled, never "About 0".
+    runwayBelowPrecision: tmpl(
+      'Less than {{days}} days of the recent daily pool',
+      ['days'],
+    ),
+    runwaySelfFunded: 'Self-funding — the scheduled floor is currently zero',
+    runwayNoArmedDays:
+      'Not calculable yet: no closed day has run under the committed schedule.',
+    runwayBackfilledMirror:
+      'Not calculable: recovered cross-chain absorption cannot be attributed per chain, so any figure would be a guess.',
+    runwayAttributionRebuilding:
+      'Not calculable yet: the attribution records are still being rebuilt.',
+    runwayUnknown: 'Not calculable from the records available.',
+    runwayUnrecognised: tmpl(
+      'Not calculable from the records available (reason code: {{code}}).',
+      ['code'],
+    ),
+    splitScopeNote:
+      'The two figures above count every day on record, including days that have not closed yet. The combined total counts only days that have closed. That is why the parts add up to more than the total here — a difference in what each figure covers, not a discrepancy.',
+    coverageFrom: tmpl(
+      'Records begin at programme day {{day}}. Earlier days are not shown rather than shown as quiet.',
+      ['day'],
+    ),
+    // The window is stated from the day range the indexer actually served,
+    // never from the number of days requested: a deployment with five
+    // recorded days answering a 30-day request shows five rows, and "the
+    // most recent 30 days" would describe a table that is not on screen.
+    windowRange: tmpl('The table covers programme days {{from}} to {{to}}.', [
+      'from',
+      'to',
+    ]),
+    windowSingleDay: tmpl('The table covers programme day {{day}}.', ['day']),
+    // Scope-dependent second sentence. "Whole programme" is true only where
+    // the programme-wide totals are actually displayed (global scope); on a
+    // local-only deployment those totals are declined, and what remains
+    // above is this deployment's own absorption record — every recorded
+    // day, not only the table's. An empty deployment shows no table, so it
+    // carries neither sentence.
+    windowTotalsWholeProgramme: 'The totals above are for the whole programme.',
+    windowTotalsRecordedHere:
+      'The absorbed figures above count every day recorded here, not only the days in the table.',
+    tableCaption: 'Per-day composition of the reward pool, by programme day',
+    colDay: 'Programme day',
+    colFloor: 'Scheduled floor',
+    colRecycled: 'Recycled portion',
+    colSelfFunded: 'Self-funded share',
+    colDrawn: 'Drawn',
+    colAbsorbedLocal: 'Absorbed here',
+    colAbsorbedMirror: 'Absorbed elsewhere',
+    colAbsorbed: 'Absorbed (combined)',
+    dayLabel: tmpl('Day {{day}}', ['day']),
+    estimateBadge: 'estimate',
+    recomputedBadge: 'recomputed',
+    // Per-cell refusals. Each names its reason in the cell itself.
+    cellNoPool: 'no pool — the day has not closed',
+    cellEmptyPool: 'not applicable — the day’s pool was empty',
+    cellNotCommitted: 'none committed — estimate',
+    cellMirrorPending: 'not reported until the day closes',
+    cellCombinedPending: 'not combined until the day closes',
+    noRecordedDays: 'No programme day has been recorded yet in this window.',
+    belowPrecision: tmpl('less than {{min}}', ['min']),
+    sharePct: tmpl('{{pct}}%', ['pct']),
+    // A positive share that rounds down to zero tenths — labelled, never
+    // "0%". Shared with the loop-closure proportions.
+    shareBelowPrecision: tmpl('less than {{min}}%', ['min']),
+    // The footnote is split so each badge's explanation appears only when
+    // a row on screen carries that badge; the cell rules always apply.
+    footnoteEstimate:
+      'An “estimate” day is one the programme had scheduled but not yet committed to, so nothing is shown as drawn for it.',
+    footnoteRecomputed:
+      'A “recomputed” day was reconstructed afterwards rather than recorded as it happened, from state a later role handover can rewrite.',
+    footnoteCells:
+      'Where a figure is not determined, its cell says why — no unknown is shown as a blank or as zero. Amounts are in VPFI, shown to four decimal places; a positive amount smaller than that is labelled as such rather than shown as zero.',
+    drawnBounds:
+      'What was drawn is what the day committed, not what was finally paid, and it can differ in both directions. It reads high near the lifetime issuance limit, where the amount finally transferred is trimmed below what was committed. It reads low for a day whose chain contribution was zeroed and later made good by a separate disbursement, and for a cross-chain payment that was stranded and re-sent, because no commitment was recorded for that value. It is therefore not an upper bound, and anything built on it should expect both.',
+
+    // ── The retained reserve and the tokens behind it ──────────────────
+    backingHeading: 'The retained reserve and the tokens behind it',
+    platformRetained: 'Retained by the platform',
+    outstandingRecycled: 'Committed to users, not yet paid out',
+    keeperBudget: 'Set aside inside the pool for upkeep',
+    bucketLabel: 'Recycled pool',
+    retainedNote:
+      'Retained by the platform is the recycled pool, less what is committed to users and not yet paid out, less the share set aside for upkeep, floored at zero. Every amount it subtracts is listed here so the figure can be checked.',
+    vpfiBalance: 'VPFI held by the platform contract',
+    strandedRecoveryReserved: 'Reserved: value held back mid-transfer, awaiting its return',
+    recoveryPositionReserved: 'Reserved: earmarked against the recovery position',
+    olderReading: 'not determinable — this reading predates the figure',
+    outsideBucket: 'Platform contract balance after the amounts set against it',
+    // Which amounts the remainder above subtracts depends on where reward
+    // custody is held, so the note says which — and, when the reading
+    // does not record it, says that instead of guessing.
+    outsideBucketNoteDiamond:
+      'This is the platform contract’s balance less the recycled pool and both reservations listed above, floored at zero. It is not a measure of free or unclaimed value: value the platform holds for users in other ways still sits inside it.',
+    outsideBucketNoteHolder:
+      'This is the platform contract’s balance less the value held back mid-transfer, floored at zero — the recycled pool and the recovery earmark are held at the custody address, not in this balance. It is not a measure of free or unclaimed value: value the platform holds for users in other ways still sits inside it.',
+    outsideBucketNoteUnknown:
+      'This is the platform contract’s balance less whichever of the amounts listed above are held in it, floored at zero. Which ones apply depends on where reward custody is held, which this reading does not record. It is not a measure of free or unclaimed value.',
+    strandedLabel: 'Released from the pool and never credited back',
+    custodyLabel: 'Where reward custody is held',
+    custodyDiamond: 'In the platform contract — custody has not moved',
+    custodyHolder: 'At the dedicated custody address',
+    custodyUnknown: 'Not determinable — this reading does not record it',
+    holderBalance: 'VPFI held at the custody address',
+    holderAttributed: 'Attributed to the custody address',
+    holderBalanceUnreadable: 'could not be read for this reading',
+    holderNotDeterminable: 'not determinable for this reading',
+    // Once custody has moved, the reserve is backed at the custody address,
+    // not by the platform contract's balance. When that address could not be
+    // read, the reserve is withheld rather than shown beside a balance that
+    // does not back it — the pair is published together or not at all.
+    retainedWithheldHolderUnread:
+      'not shown — custody is at the dedicated custody address, and the balance behind this figure there could not be read for this reading. It is published only alongside that balance, never on its own.',
+    holderAttributedWithheld:
+      'not shown — the custody address’s balance it is set against could not be read for this reading',
+    comparisonLabel: 'Comparison used',
+    comparisonDiamond:
+      'The platform contract’s balance against the recycled pool plus both reservations',
+    comparisonHolder:
+      'The custody address against everything attributed to it, and the platform contract against the reservation it keeps',
+    backedLabel: 'Recycled pool fully backed?',
+    backedYesDiamond:
+      'Yes — the platform contract holds at least the recycled pool plus both reservations',
+    backedYesHolder:
+      'Yes — the custody address holds at least everything attributed to it, and the platform contract covers the reservation it keeps',
+    backedShortDiamond: tmpl(
+      'No — the platform contract is short by {{amount}} VPFI of the recycled pool plus both reservations',
+      ['amount'],
+    ),
+    backedNo: 'No',
+    backedShortHolder: tmpl(
+      'The custody address holds {{amount}} VPFI less than is attributed to it.',
+      ['amount'],
+    ),
+    backedShortHolderDiamond: tmpl(
+      'The platform contract is short by {{amount}} VPFI of the reservation it keeps.',
+      ['amount'],
+    ),
+    backedCustodyUnknown:
+      'Not determinable: this reading does not record where reward custody is held, so which comparison applies cannot be chosen. Neither is assumed.',
+    backedHolderBalanceUnknown:
+      'Not determinable: custody is at the dedicated custody address, and that address’s balance could not be read for this reading.',
+    backedSubtrahendUnknown:
+      'Not determinable: an amount this comparison subtracts is missing from this reading.',
+    backedNotServed:
+      'Not determinable: this indexer does not publish the answer, and this page does not work it out for itself.',
+    backedMalformed:
+      'Not determinable: the published answer could not be read as a valid one.',
+    asOfLabel: 'Chain state as of',
+    asOfValue: tmpl(
+      'Block {{block}} ({{at}}), read from contract {{contract}}. The platform reads these figures on a rotating schedule, so they trail the chain.',
+      ['block', 'at', 'contract'],
+    ),
+    backingUnavailable:
+      'The retained reserve is not shown. It is published only alongside the tokens actually behind it, never on its own, and no current reading of those tokens is available to publish.',
+    backingReasonNotCaptured: 'No reading of the chain has been taken yet.',
+    backingReasonReadFailed: 'The latest reading of the chain could not be taken or stored.',
+    backingReasonStale: 'The latest reading is older than the capture schedule allows.',
+    backingReasonChainBehind: 'The chain the reading came from has stopped advancing.',
+    backingReasonOtherDeployment:
+      'The stored reading belongs to a different deployment of the platform contract.',
+    backingReasonNotServed: 'This indexer does not publish the reading.',
+    backingReasonMalformed: 'A figure in the reading is not a well-formed amount.',
+    backingReasonIncomplete:
+      'The reading is missing a figure, the moment it describes, or the contract it came from.',
+    backingReasonUnrecognised: tmpl(
+      'The indexer gave a reason this page does not recognise (reason code: {{code}}).',
+      ['code'],
+    ),
+  },
+  /* RL-2 (#1303) loop closure on /analytics, shown for the first time.
+     Same copy gate and honesty gate as the recycling account above. The
+     daily figure is a FLOW and the lifetime one a STOCK; the copy keeps
+     them apart because they are not interchangeable. */
+  loopClosure: {
+    title: 'Loop closure',
+    lede: 'How much of the reward VPFI paid out by claims stays inside the platform — kept in users’ vaults or absorbed back into the recycling balance.',
+    loading: 'Loading the loop-closure figures…',
+    unavailable:
+      'The loop-closure figures are not available right now. Nothing is shown rather than showing zeros.',
+    lifetimeRatio: 'Proportion still inside the platform, lifetime',
+    retainedStock: 'Reward VPFI still held in users’ vaults',
+    cumAbsorbed: 'Absorbed into the recycling balance, lifetime',
+    cumDistributed: 'Paid out by claims, lifetime',
+    notApplicable: 'not applicable — nothing paid out',
+    measuresNote:
+      'The daily proportion is a flow: of what claims paid out that day, the part kept in vaults or absorbed that day. The lifetime proportion is a stock: reward VPFI still held in vaults plus everything absorbed, over everything ever paid out. They measure different things, so neither can be read off the other.',
+    lowerBoundNote:
+      'Both are deliberately conservative. A reward that is spent on a platform fee the same day it lands is counted once, never twice, so these proportions can understate how much stays inside but never overstate it. They are rounded down.',
+    daysNote:
+      'Days here are calendar days in UTC — the day the tokens left the platform — not programme days, so they do not line up with the recycling account’s days.',
+    windowNote: tmpl(
+      'The table covers the most recent {{days}} calendar days, including days with nothing paid out.',
+      ['days'],
+    ),
+    tableCaption: 'Per-day loop closure, by calendar day (UTC)',
+    colDay: 'Day (UTC)',
+    colDistributed: 'Paid out by claims',
+    colKept: 'Kept in vaults',
+    colAbsorbed: 'Absorbed',
+    colRatio: 'Proportion kept inside',
+    /* #1349 M5 — which days are KNOWN. The indexer states the moment before
+       which every claim is recorded, and marks each day complete, still
+       being recorded, or not yet reached. A day it has not recorded is
+       never shown as zero or "nothing paid out": that would state as a fact
+       something the record does not cover. */
+    recordedBefore: tmpl(
+      'Claims are recorded up to {{at}}. A day still being recorded shows its amounts so far and no proportion; a day the record has not reached yet shows as not yet recorded, never as zero.',
+      ['at'],
+    ),
+    recordedBeforeUnknown:
+      'The indexer has not yet stated how far its record of claims reaches, so no day is shown as complete.',
+    dayPartial: 'still being recorded — amounts so far',
+    ratioNotFinal: 'not final — the day is still being recorded',
+    notRecorded: 'not yet recorded',
+  },
   /* Public, read-only governance parameters (#1959). */
   protocolConsole: {
     title: 'Protocol console',

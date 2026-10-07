@@ -117,6 +117,7 @@ import {
 import {
   applyRewardLoopLedger,
   ensureRewardLoopBackfill,
+  INGESTED_BEFORE_TIME_KIND,
 } from './rewardLoopLedger';
 import {
   applyRecycleDaySeries,
@@ -359,6 +360,34 @@ async function _writeNotifiedCursor(env: Env, chainId: number, kind: string, blo
       .run();
   } catch (err) {
     console.error(`[chainIndexer] ${kind} cursor stamp failed`, err);
+  }
+}
+
+/** #1349 M5 (loop closure) — the ingest's TIME watermark,
+ *  {@link INGESTED_BEFORE_TIME_KIND}: `last_block = headTimestamp` in
+ *  seconds, MONOTONIC — a regressed head never moves it back, because the
+ *  time it last recorded was true when written. Stamped at the two
+ *  caught-up sites beside the notified watermark (whose own stamp carries
+ *  the replay planning of Codex #2489 and stays apart from this one), so a
+ *  loop-closure reader can tell a complete day from one still being
+ *  ingested. Fail-open: a missed stamp leaves the recorded-before moment
+ *  where it was (an understatement, never an overstatement) and never fails
+ *  a scan whose authoritative writes already landed. Exported for its unit
+ *  test only. */
+export async function _stampIngestedBeforeTime(env: Env, chainId: number, headTimestamp: bigint): Promise<void> {
+  try {
+    await env.DB.prepare(
+      `INSERT INTO indexer_cursor (chain_id, kind, last_block, updated_at)
+       VALUES (?1, ?2, ?3, ?4)
+       ON CONFLICT(chain_id, kind) DO UPDATE SET
+         last_block = excluded.last_block,
+         updated_at = excluded.updated_at
+       WHERE excluded.last_block > indexer_cursor.last_block`,
+    )
+      .bind(chainId, INGESTED_BEFORE_TIME_KIND, Number(headTimestamp), Math.floor(Date.now() / 1000))
+      .run();
+  } catch (err) {
+    console.error('[chainIndexer] ingested-before-time stamp failed', err);
   }
 }
 
@@ -2215,6 +2244,10 @@ async function runChainPass(
     // valid "notifications complete through lastBlock" point too — once any
     // gap a failed insert left below it has been replayed (#2489 r3).
     await stampNotifiedWatermark(env, chainId, lastBlock, null, false);
+    // #1349 M5 (loop closure) — every block up to `head` is ingested
+    // (`lastBlock >= head` here), so the settled head's time is a true
+    // recorded-before moment, even when the head regressed below the cursor.
+    await _stampIngestedBeforeTime(env, chainId, settledHead.timestamp);
     // #2382 r6 — a caught-up tick heals too, or a backlog the scanning ticks
     // did not finish (or a soft-stopped heal) would wait for the next new
     // block. Pinned to the cursor: every event up to it is processed.
@@ -2612,6 +2645,9 @@ async function runChainPass(
   // (Codex #2489 r6) — the head pass replays from there.
   if (scanTo === head) {
     await stampNotifiedWatermark(env, chainId, scanTo, scanFrom, notifiedOk);
+    // #1349 M5 — caught up to the settled head: its time is recorded as the
+    // loop-closure moment (monotonic; a regressed head never moves it back).
+    await _stampIngestedBeforeTime(env, chainId, settledHead.timestamp);
   } else if (!notifiedOk) {
     await holdNotifiedWatermark(env, chainId, scanFrom);
   } else {

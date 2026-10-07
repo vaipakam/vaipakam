@@ -50,6 +50,8 @@ import {
   type OfferStats,
 } from '../data/indexer';
 import { useActiveChain } from '../chain/useActiveChain';
+import { RecyclingAccount } from '../components/analytics/RecyclingAccount';
+import { LoopClosure } from '../components/analytics/LoopClosure';
 import { useNowSec } from '../hooks/useNowSec';
 import { idleAware } from '../lib/idle';
 import { useEffect, useRef } from 'react';
@@ -432,6 +434,21 @@ export function Analytics() {
           </section>
         </>
       )}
+
+      {/*
+        M5 (#1218 / #1349) — THE RECYCLING ACCOUNT AND LOOP CLOSURE.
+
+        Outside the counters' guard on purpose: they are separate indexer
+        reads with their own loading and "cannot say" states, and an outage
+        of the loan/offer counters is no reason to hide the programme's
+        account (nor the reverse). Each section carries its anchor
+        (`#recycling`, `#loop-closure`) in every state, so a deep link
+        resolves on the first render through the same fragment effect
+        above. Placed before the transparency section so its "every
+        figure above is read from the public indexer" stays true of them.
+      */}
+      <RecyclingAccount chainId={chainId} />
+      <LoopClosure chainId={chainId} />
 
       {/*
         THE DEEP-LINK TARGET, AND DELIBERATELY OUTSIDE EVERY GUARD ABOVE.

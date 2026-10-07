@@ -2532,6 +2532,124 @@ a.item-row:hover {
   max-width: 72ch;
 }
 
+/* M5 (#1349) — the recycling account and loop closure on /analytics.
+
+   Figure rows STACK on a phone and pair label/value from 640px up. These
+   labels are long ("Reserved: value held back mid-transfer, awaiting its
+   return") and so are some values (a verdict sentence, a contract
+   address), so a fixed two-column grid at 360px would push the value off
+   screen — the opposite of a page whose claim is that each figure sits
+   beside its name. */
+.rc-figures {
+  margin: 0 0 8px;
+}
+
+.rc-figures > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2px 16px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+@media (min-width: 640px) {
+  .rc-figures > div {
+    grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  }
+}
+
+.rc-figures dt {
+  color: var(--text-muted);
+}
+
+.rc-figures dd {
+  margin: 0;
+  color: var(--text-strong);
+  font-variant-numeric: tabular-nums;
+}
+
+/* A refusal is a statement, not a figure: readable, but visibly not a
+   number, so it cannot be mistaken for one at a glance. */
+.rc-refusal {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* A contract address must wrap rather than widen the page. */
+.rc-wrap {
+  overflow-wrap: anywhere;
+}
+
+.rc-legs {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+
+.rc-subheading {
+  font-size: 0.95rem;
+  margin: 20px 0 8px;
+}
+
+.rc-lede {
+  margin: 0 0 12px;
+}
+
+/* The day tables scroll inside their own box: an eight-column table with
+   no scroller widens the DOCUMENT on a phone and pushes the drawn and
+   absorbed columns — the figures the section exists for — off screen. */
+.rc-table-wrap {
+  overflow-x: auto;
+  margin: 12px 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.rc-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8125rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.rc-table th,
+.rc-table td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  text-align: right;
+  white-space: nowrap;
+  vertical-align: top;
+}
+
+.rc-table thead th {
+  color: var(--text-muted);
+  font-weight: 600;
+  background: var(--surface-sunken);
+}
+
+.rc-table tbody th {
+  text-align: left;
+  font-weight: 500;
+}
+
+/* A refusal cell wraps (a sentence on one line would make the table very
+   wide) but keeps enough width to stay legible. */
+.rc-table td.rc-refusal {
+  white-space: normal;
+  min-width: 14ch;
+}
+
+/* A day's recording status, under its date: muted and wrapping, so a day
+   still being recorded is told apart from a final one without widening
+   the row header. */
+.rc-day-note {
+  display: block;
+  color: var(--text-muted);
+  font-style: italic;
+  font-weight: 400;
+  white-space: normal;
+  min-width: 14ch;
+}
+
 /* The console's rows. A label and its value are laid out as one row so
    the pairing survives every width — the console's whole claim is that
    a number is shown against the right name. */

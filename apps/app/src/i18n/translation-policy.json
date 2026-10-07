@@ -282,6 +282,33 @@
         "fr": "{{s}} s"
       }
     },
+    "copy.recycling.backedNo": {
+      "reason": "\"No\" is the ordinary Spanish negative answer, spelled as the English one; there is no other correct word. It answers the sibling question copy.recycling.backedLabel, which Spanish renders \"¿Está el fondo reciclado totalmente respaldado?\", and its neighbours copy.recycling.backedYesDiamond (\"Sí: …\") and copy.recycling.backedShortDiamond (\"No: al contrato de la plataforma le faltan …\") are translated in full — so this leaf is settled vocabulary, not an untouched string. Recorded here for the same reason as copy.analytics.total: a translation already correct could only leave a shrink-only baseline by being replaced with a worse synonym.",
+      "source": "No",
+      "locales": [
+        "es"
+      ]
+    },
+    "copy.recycling.sharePct": {
+      "reason": "One placeholder and the percent sign — the recycling account's per-day self-funded share. There are no words in this string, so a value made of the same marks is the correct localization rather than an untouched string. It is NOT invariant, for the same reason as copy.protocolConsole.bpsValue: German, Spanish and French insert the space their typography requires before %, recorded below so changing one retires this entry instead of leaving it armed. Arabic, Hindi, Japanese, Korean, Tamil and Chinese correctly keep the English marks, matching how each of those bundles already writes a percentage in bpsValue and the desk's rate labels.",
+      "source": "{{pct}}%",
+      "locales": [
+        "ar",
+        "de",
+        "es",
+        "fr",
+        "hi",
+        "ja",
+        "ko",
+        "ta",
+        "zh"
+      ],
+      "values": {
+        "de": "{{pct}} %",
+        "es": "{{pct}} %",
+        "fr": "{{pct}} %"
+      }
+    },
     "copy.riskAccess.strict.title": {
       "reason": "French 'Mode strict' is the correct rendering of 'Strict mode' — the noun-adjective order is French grammar, and both words are French. The guard asks whether everything the reader sees is made only of the English source's own words, in any arrangement, so it cannot tell this from a rearranged English sentence; the accepted French is recorded below so rewording it retires this entry.",
       "source": "Strict mode",

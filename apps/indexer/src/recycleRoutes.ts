@@ -77,7 +77,12 @@ import { getDeployment } from '@vaipakam/contracts/deployments';
 import {
   InteractionRewardsLensFacetABI,
   RewardAggregatorFacetABI,
+  RewardCustodyFacetABI,
 } from '@vaipakam/contracts/abis';
+import {
+  recycleBackingVerdict,
+  type RecycleBackingVerdict,
+} from '@vaipakam/contracts/recycle-backing';
 
 import type { Env } from './env';
 import { getChainConfigs, getDeployedChainCount } from './env';
@@ -129,14 +134,18 @@ const RUNWAY_WINDOW_DAYS = 7;
  * transport errors embed the RPC URL and this repository's RPC URLs carry
  * provider API keys. Detail goes to the log; the caller gets a code.
  */
-type BackingReason =
+export type BackingReason =
   | 'not-captured-yet'
   | 'read-failed'
   | 'snapshot-stale'
   | 'chain-behind'
   | 'snapshot-other-deployment';
 
-interface BackingSnapshot {
+/**
+ * The served `backing` block of `GET /metrics/recycling`. Exported so the
+ * contract a consumer reads is the type the route actually builds.
+ */
+export interface BackingSnapshot {
   vpfiBalance: string | null;
   bucket: string | null;
   unearmarked: string | null;
@@ -189,6 +198,64 @@ interface BackingSnapshot {
    */
   strandedRecoveryReserved: string | null;
   recoveryPositionReserved: string | null;
+  /**
+   * #1566 slice 4 — the reading's CUSTODY STATE, from
+   * `RewardCustodyFacet.getRecycleBackingSnapshotV2` (migration 0056).
+   *
+   * It decides WHICH relation backs the pool: before activation the
+   * Diamond's own balance must cover the bucket and both reservations;
+   * after it, the bucket and the recovery position are the holder's, so the
+   * holder must cover its attributed rows and the Diamond only its one
+   * remaining reservation. `null` means the reading does not know — a row
+   * captured before 0056, or a capture that fell back to the legacy lens
+   * because V2 is not in the Diamond's cut — and is NEVER read as "not
+   * activated": the flag lives on the same facet as V2, so a Diamond that
+   * cannot answer V2 cannot establish non-activation either.
+   */
+  custodyActivated: boolean | null;
+  /** `false` = the chain reported the holder's balance unreadable. */
+  holderBalanceKnown: boolean | null;
+  /**
+   * The holder's VPFI balance. `null` whenever it is not KNOWN — the view
+   * returns a placeholder there, and publishing it would present an
+   * unreadable holder as an empty one.
+   */
+  holderBalance: string | null;
+  /** Sum of the holder's attributed custody rows. */
+  holderAttributed: string | null;
+  /**
+   * THE ANSWER to "is the pool backed?", stated rather than left to the
+   * reader (TokenomicsTechSpec: the comparison is published as its own
+   * answer and the shortfall quantified). Computed by the ONE shared
+   * {@link recycleBackingVerdict} — no consumer re-derives the relation.
+   * `null` only when the whole block is unavailable (`unavailableReason`
+   * set); an available reading that cannot be judged carries
+   * `determinable: false` WITH its reason instead. Its `relation` is null
+   * only for `'custody-state-unknown'`; a known custody state still names
+   * the relation it selected even when that relation could not be evaluated.
+   * On the activated (`'holder'`) relation BOTH legs must be readable: an
+   * unreadable holder balance, or a missing term of either leg, makes the
+   * answer not determinable even when the other leg is read and fails — a
+   * one-leg shortfall published as the answer would present part of the
+   * relation as the whole of it (TokenomicsTechSpec, and the API contract).
+   */
+  backed: RecycleBackingVerdict | null;
+  /**
+   * A database migration this block needs and the indexer's database has
+   * NOT applied — today only {@link CUSTODY_MIGRATION} — or `null`.
+   *
+   * Published because the rollout fallbacks that keep the block up while
+   * the migration is pending also make every reading's custody state
+   * unknown, so `backed` answers `'custody-state-unknown'` on every chain.
+   * That is the honest answer, but it is ALSO the answer an old row gives,
+   * and without this field a migration that was skipped or failed would
+   * pass for that normal state indefinitely. It says nothing about the
+   * figures; it names why the verdict cannot clear, so an operator (or a
+   * watcher polling this route) can tell deploy state from chain state.
+   * Set on every outcome of the read, withheld ones included: it is a fact
+   * about the database, not about one reading.
+   */
+  pendingMigration: string | null;
   unavailableReason: BackingReason | null;
   asOf: string | null;
 }
@@ -204,11 +271,57 @@ const BACKING_UNAVAILABLE = (reason: BackingReason): BackingSnapshot => ({
   releasedRemitStranded: null,
   strandedRecoveryReserved: null,
   recoveryPositionReserved: null,
+  custodyActivated: null,
+  holderBalanceKnown: null,
+  holderBalance: null,
+  holderAttributed: null,
+  backed: null,
+  pendingMigration: null,
   blockNumber: null,
   diamond: null,
   unavailableReason: reason,
   asOf: null,
 });
+
+/**
+ * The migration that adds the four custody columns. Named once, so the two
+ * rollout fallbacks below, their warnings and the `pendingMigration` field
+ * cannot disagree about which migration is missing.
+ */
+export const CUSTODY_MIGRATION = '0056_recycle_backing_custody';
+
+/** Read-side latch: requests are unbounded, so the read warns once per isolate. */
+let custodyMigrationReadWarned = false;
+
+/**
+ * Say, loudly and by name, that a rollout fallback ran.
+ *
+ * Both fallbacks are correct for the window they were written for — the
+ * Worker deploys before `d1 migrations apply` — and both are SILENT by
+ * construction: they keep the block up by serving custody state as unknown,
+ * which is also what a pre-migration row legitimately reads as. If the
+ * apply step fails or is skipped, the window never closes, every chain's
+ * verdict stays "not determinable" for good, and nothing distinguishes that
+ * from the ordinary unknown. This line is what does.
+ *
+ * The capture side warns on EVERY capture: it runs on a schedule, one chain
+ * per tick, so the volume is bounded and the warning stays in every log
+ * window for as long as the fault lasts. The read side warns once per
+ * isolate; its standing signal is the `pendingMigration` field instead.
+ */
+function warnCustodyMigrationMissing(side: 'capture' | 'read'): void {
+  if (side === 'read') {
+    if (custodyMigrationReadWarned) return;
+    custodyMigrationReadWarned = true;
+  }
+  console.warn(
+    `[recycling] migration ${CUSTODY_MIGRATION} is NOT applied to this ` +
+      `database: the backing ${side === 'capture' ? 'capture wrote' : 'read served'} ` +
+      `the pre-migration shape, so every reading's custody state is unknown ` +
+      `and the published backing verdict is "not determinable" on every ` +
+      `chain until it is applied. Apply the migration; no redeploy is needed.`,
+  );
+}
 
 /**
  * `platformRetained = bucket − outstandingRecycled − keeperBudget`, floored
@@ -267,37 +380,69 @@ export function isAbiShapeMismatch(err: unknown): boolean {
     'DecodeAbiParametersError',
   ]);
   for (let e: unknown = err, depth = 0; e && depth < 8; depth += 1) {
-    const named = e as {
-      name?: unknown;
-      cause?: unknown;
-      data?: unknown;
-      signature?: unknown;
-      errorName?: unknown;
-    };
+    const named = e as { name?: unknown; cause?: unknown };
     if (typeof named.name === 'string' && NAMES.has(named.name)) return true;
-    // THE MISSING-SELECTOR CASE, which the decode-error names above do not
-    // cover and which is the scenario this predicate exists to diagnose
-    // (Codex #2031 r4). A view absent from the Diamond's CURRENT CUT never
-    // reaches a decoder at all: `VaipakamDiamond.fallback` reverts
-    // `FunctionDoesNotExist()` when no facet owns the selector, and viem
-    // surfaces that as an ordinary contract revert. The first version of
-    // this predicate therefore returned false for exactly the stale-facet
-    // case it claimed to name, and the operator got the generic log.
-    //
-    // Matched on the EXACT four-byte error data, never on "a revert
-    // happened": an arbitrary revert from a live facet is a different
-    // condition with a different remedy, and reading it as ABI drift would
-    // send an operator to redeploy a healthy facet. `errorName` is checked
-    // too because viem decodes it when the consulted ABI happens to carry
-    // the error, but the raw selector is the reliable half — the per-facet
-    // ABIs do not declare the Diamond's own errors.
-    if (
-      named.errorName === 'FunctionDoesNotExist' ||
-      (typeof named.data === 'string' &&
-        named.data.toLowerCase() === FUNCTION_DOES_NOT_EXIST_SELECTOR) ||
-      (typeof named.signature === 'string' &&
-        named.signature.toLowerCase() === FUNCTION_DOES_NOT_EXIST_SELECTOR)
-    ) {
+    e = named.cause;
+  }
+  // THE MISSING-SELECTOR CASE, which the decode-error names above do not
+  // cover and which is the scenario this predicate exists to diagnose
+  // (Codex #2031 r4) — see {@link isMissingSelectorRevert}.
+  return isMissingSelectorRevert(err);
+}
+
+/**
+ * Did the Diamond refuse this call because NO FACET OWNS THE SELECTOR?
+ *
+ * Split out of {@link isAbiShapeMismatch} because one caller needs this
+ * case ALONE (#1566 slice 4): the backing capture falls back from
+ * `getRecycleBackingSnapshotV2` to the legacy lens only when V2 is absent
+ * from the cut. A decode failure on V2 is a different condition — the view
+ * exists and answered something this tree cannot read — and falling back
+ * there would quietly drop the custody state of a Diamond that has one.
+ *
+ * A view absent from the Diamond's CURRENT CUT never reaches a decoder at
+ * all: `VaipakamDiamond.fallback` reverts `FunctionDoesNotExist()` when no
+ * facet owns the selector, and viem surfaces that as an ordinary contract
+ * revert. The first version of the shape predicate therefore returned false
+ * for exactly the stale-facet case it claimed to name, and the operator got
+ * the generic log.
+ *
+ * Matched on the EXACT four-byte error data, never on "a revert happened":
+ * an arbitrary revert from a live facet is a different condition with a
+ * different remedy, and reading it as ABI drift would send an operator to
+ * redeploy a healthy facet — or, for the capture, would discard a custody
+ * state on a transient revert.
+ *
+ * EXACT means the whole payload, not its first four bytes. The fallback's
+ * `FunctionDoesNotExist()` takes no arguments, so its revert data is the
+ * bare selector and nothing else; a payload that merely STARTS with it is
+ * some other contract (or another error that happens to share the
+ * selector) talking. This is the same rule as the census's
+ * `isFunctionDoesNotExistRevert` (#2088 r2 P2,
+ * `packages/contracts/scripts/census-grandfathered-custody.mjs`) — two
+ * copies of one predicate at different strictness is a drift waiting to be
+ * found, so this copy now matches that one rather than being looser.
+ *
+ * Where the raw bytes live: viem's `ContractFunctionRevertedError` keeps
+ * the full payload on `raw` (its `data` is the DECODED object when an ABI
+ * carried the error, otherwise undefined), while a bare RPC-layer error
+ * keeps it on `data` as a hex string. Its `signature` and a decoded
+ * `errorName` are deliberately NOT evidence on their own: `signature` is
+ * only the payload's first four bytes, so it matches the selector followed
+ * by anything; a name is only meaningful alongside the exact payload, and
+ * the exact payload already decides. The walk follows `cause` because the
+ * informative error is the wrapped one.
+ */
+export function isMissingSelectorRevert(err: unknown): boolean {
+  for (let e: unknown = err, depth = 0; e && depth < 8; depth += 1) {
+    const named = e as { cause?: unknown; data?: unknown; raw?: unknown };
+    const payload =
+      typeof named.raw === 'string'
+        ? named.raw
+        : typeof named.data === 'string'
+          ? named.data
+          : null;
+    if (payload !== null && payload.toLowerCase() === FUNCTION_DOES_NOT_EXIST_SELECTOR) {
       return true;
     }
     e = named.cause;
@@ -450,7 +595,7 @@ export async function captureBackingSnapshot(
   // told apart — the decode itself (#1930 follow-up).
   //
   // The facet is named AT THE CALL SITE, not inferred from the rejection.
-  // Two reads on two facets settle together here, so one shared handler has
+  // Reads on several facets settle together here, so one shared handler has
   // to guess which of them failed — and a guess that names the wrong facet
   // sends an operator to refresh something healthy while the stale one keeps
   // aging. Tagging each read removes the guess: whichever rejects already
@@ -474,26 +619,97 @@ export async function captureBackingSnapshot(
       // WHICH failure this is, and on WHICH facet.
       throw err;
     });
-  const [snap, composition] = await Promise.all([
-    tagged(
+  // #1566 slice 4 — the VERSIONED snapshot first, the legacy lens only when
+  // V2 is absent from the cut.
+  //
+  // V2 returns the legacy eight with the same meaning each, plus the custody
+  // state that decides WHICH backing relation applies (see migration 0056).
+  // Reading it is the only way to know that state: the legacy tuple carries
+  // none, and "V2 missing" cannot be read as "not activated", because the
+  // activation flag lives on the same facet — a partial refresh that dropped
+  // RewardCustodyFacet leaves an activated chain's storage flag set and
+  // unreadable. So the fallback publishes the eight figures (still a true
+  // reading) and records the custody state as UNKNOWN, which the read
+  // surface reports as a not-determinable verdict with its reason.
+  //
+  // Fallback ONLY on the exact missing-selector revert. Any other V2 failure
+  // — transport, a decode the tree cannot read — fails the capture as every
+  // failure here always has; falling back there would quietly discard the
+  // custody state of a Diamond that has one. Sequential rather than raced:
+  // the legacy read costs a subrequest only on the chain that needs it.
+  type Legacy8 = readonly [
+    bigint, bigint, bigint, bigint, bigint, bigint, bigint, bigint,
+  ];
+  type V2Tuple = readonly [
+    bigint, bigint, bigint, bigint, bigint, bigint, bigint, bigint,
+    boolean, boolean, bigint, bigint,
+  ];
+  const readBackingFigures = async (): Promise<{
+    snap: Legacy8;
+    custody: {
+      activated: 0 | 1;
+      known: 0 | 1;
+      balance: string | null;
+      attributed: string;
+    } | null;
+  }> => {
+    const v2 = await tagged(
+      (
+        client.readContract({
+          address: chain.diamond as Address,
+          abi: RewardCustodyFacetABI,
+          functionName: 'getRecycleBackingSnapshotV2',
+          blockNumber,
+        }) as Promise<V2Tuple>
+      ).catch((err: unknown) => {
+        if (isMissingSelectorRevert(err)) return null;
+        throw err;
+      }),
+      'RewardCustodyFacet',
+      'getRecycleBackingSnapshotV2',
+    );
+    if (v2) {
+      return {
+        snap: v2.slice(0, 8) as unknown as Legacy8,
+        custody: {
+          activated: v2[8] ? 1 : 0,
+          known: v2[9] ? 1 : 0,
+          // The view reports an unreadable holder as `known = false` beside a
+          // placeholder balance. Stored as NULL, never as that placeholder:
+          // a stored zero would publish as a real, empty holder.
+          balance: v2[9] ? v2[10].toString() : null,
+          attributed: v2[11].toString(),
+        },
+      };
+    }
+    console.warn(
+      `[recycling] chain ${chainId} diamond ${chain.diamond} has no ` +
+        `getRecycleBackingSnapshotV2 in its cut — capturing the legacy ` +
+        `eight figures with the custody state UNKNOWN, so the backing ` +
+        `verdict is withheld (custody-state-unknown) until RewardCustodyFacet ` +
+        `is cut in. Non-activation is NOT assumed.`,
+    );
+    const legacy = await tagged(
       client.readContract({
         address: chain.diamond as Address,
         abi: InteractionRewardsLensFacetABI,
         functionName: 'getRecycleBackingSnapshot',
         blockNumber,
-          // EIGHT outputs, matching the compiled ABI. This cast said SIX until
-          // #1930 — `strandedRecoveryReserved` (#1434 P2-w2) and
-          // `recoveryPositionReserved` (P2-w5) were appended to the view and
-          // never picked up here, so the destructure below silently dropped
-          // them. Both are subtrahends INSIDE `unearmarked`, published so a
-          // reader can recompute it from components; omitting them left the
-          // series unable to do the one thing they exist for.
-      }) as Promise<
-        readonly [bigint, bigint, bigint, bigint, bigint, bigint, bigint, bigint]
-      >,
+        // EIGHT outputs, matching the compiled ABI. This cast said SIX until
+        // #1930 — `strandedRecoveryReserved` (#1434 P2-w2) and
+        // `recoveryPositionReserved` (P2-w5) were appended to the view and
+        // never picked up here, so the destructure below silently dropped
+        // them. Both are subtrahends INSIDE `unearmarked`, published so a
+        // reader can recompute it from components; omitting them left the
+        // series unable to do the one thing they exist for.
+      }) as Promise<Legacy8>,
       'InteractionRewardsLensFacet',
       'getRecycleBackingSnapshot',
-    ),
+    );
+    return { snap: legacy, custody: null };
+  };
+  const [{ snap, custody }, composition] = await Promise.all([
+    readBackingFigures(),
     tagged(
       client.readContract({
         address: chain.diamond as Address,
@@ -527,42 +743,101 @@ export async function captureBackingSnapshot(
     strandedRecoveryReserved: strandedRecoveryReserved.toString(),
     recoveryPositionReserved: recoveryPositionReserved.toString(),
   };
-  await env.DB.prepare(
-    `INSERT INTO recycle_backing_snapshot
-       (chain_id, payload, diamond, observed_at, block_time, block_number,
-        chain_count, tick_minutes)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-     ON CONFLICT(chain_id) DO UPDATE SET
-       payload = excluded.payload,
-       diamond = excluded.diamond,
-       observed_at = excluded.observed_at,
-       block_time = excluded.block_time,
-       block_number = excluded.block_number,
-       chain_count = excluded.chain_count,
-       tick_minutes = excluded.tick_minutes
-     WHERE
-       -- NEVER GO BACKWARDS. A load-balanced RPC can serve an older safe
-       -- head, and two captures can complete out of order; an
-       -- unconditional upsert then replaces a newer reading with an older
-       -- one AND refreshes observed_at, so the regression passes every
-       -- freshness check and the dashboard silently moves back to a
-       -- previous verdict. A different Diamond is not a regression — it
-       -- is a new subject, and must always win.
-       recycle_backing_snapshot.diamond != excluded.diamond
-       OR CAST(excluded.block_number AS INTEGER)
-          >= CAST(recycle_backing_snapshot.block_number AS INTEGER)`,
-  )
-    .bind(
-      chainId,
-      JSON.stringify(payload),
-      chain.diamond,
-      new Date().toISOString(),
-      new Date(Number(head.timestamp) * 1000).toISOString(),
-      blockNumber.toString(),
-      chainCount,
-      tickMinutes,
+  const observedAt = new Date().toISOString();
+  const blockTime = new Date(Number(head.timestamp) * 1000).toISOString();
+  // ALL FOUR custody columns are written on EVERY capture — set from V2, or
+  // cleared to NULL on the legacy fallback — so a newer reading that does not
+  // know its custody state never inherits an older reading's.
+  try {
+    await env.DB.prepare(
+      `INSERT INTO recycle_backing_snapshot
+         (chain_id, payload, diamond, observed_at, block_time, block_number,
+          chain_count, tick_minutes, custody_activated, holder_balance_known,
+          holder_balance, holder_attributed)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+       ON CONFLICT(chain_id) DO UPDATE SET
+         payload = excluded.payload,
+         diamond = excluded.diamond,
+         observed_at = excluded.observed_at,
+         block_time = excluded.block_time,
+         block_number = excluded.block_number,
+         chain_count = excluded.chain_count,
+         tick_minutes = excluded.tick_minutes,
+         custody_activated = excluded.custody_activated,
+         holder_balance_known = excluded.holder_balance_known,
+         holder_balance = excluded.holder_balance,
+         holder_attributed = excluded.holder_attributed
+       WHERE
+         -- NEVER GO BACKWARDS. A load-balanced RPC can serve an older safe
+         -- head, and two captures can complete out of order; an
+         -- unconditional upsert then replaces a newer reading with an older
+         -- one AND refreshes observed_at, so the regression passes every
+         -- freshness check and the dashboard silently moves back to a
+         -- previous verdict. A different Diamond is not a regression — it
+         -- is a new subject, and must always win.
+         recycle_backing_snapshot.diamond != excluded.diamond
+         OR CAST(excluded.block_number AS INTEGER)
+            >= CAST(recycle_backing_snapshot.block_number AS INTEGER)`,
     )
-    .run();
+      .bind(
+        chainId,
+        JSON.stringify(payload),
+        chain.diamond,
+        observedAt,
+        blockTime,
+        blockNumber.toString(),
+        chainCount,
+        tickMinutes,
+        custody?.activated ?? null,
+        custody?.known ?? null,
+        custody?.balance ?? null,
+        custody?.attributed ?? null,
+      )
+      .run();
+  } catch (err) {
+    // ROLLOUT WINDOW. Every deploy script deploys the Worker BEFORE applying
+    // migrations, so until 0056 lands the four columns do not exist and the
+    // statement above fails on every capture — the snapshot would age into
+    // `snapshot-stale` and the backing block would go dark for the length of
+    // the rollout, an outage caused by adding a field. The pre-0056
+    // statement writes the eight figures, which read back with the custody
+    // state unknown — exactly what a pre-0056 row is. Delete this branch once
+    // 0056 is applied on every environment. Until then it is never silent:
+    // a migration that failed to apply would otherwise leave every verdict
+    // "not determinable" with nothing to say why.
+    if (!/no column named|no such column/i.test(String(err))) throw err;
+    warnCustodyMigrationMissing('capture');
+    await env.DB.prepare(
+      `INSERT INTO recycle_backing_snapshot
+         (chain_id, payload, diamond, observed_at, block_time, block_number,
+          chain_count, tick_minutes)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+       ON CONFLICT(chain_id) DO UPDATE SET
+         payload = excluded.payload,
+         diamond = excluded.diamond,
+         observed_at = excluded.observed_at,
+         block_time = excluded.block_time,
+         block_number = excluded.block_number,
+         chain_count = excluded.chain_count,
+         tick_minutes = excluded.tick_minutes
+       WHERE
+         -- Same never-go-backwards rule as the statement above.
+         recycle_backing_snapshot.diamond != excluded.diamond
+         OR CAST(excluded.block_number AS INTEGER)
+            >= CAST(recycle_backing_snapshot.block_number AS INTEGER)`,
+    )
+      .bind(
+        chainId,
+        JSON.stringify(payload),
+        chain.diamond,
+        observedAt,
+        blockTime,
+        blockNumber.toString(),
+        chainCount,
+        tickMinutes,
+      )
+      .run();
+  }
 }
 
 /**
@@ -709,23 +984,130 @@ export function storedPayloadIsComplete(v: unknown): v is Record<string, string>
   );
 }
 
+/** The four custody columns as stored (migration 0056). */
+export interface StoredCustodyColumns {
+  custody_activated?: unknown;
+  holder_balance_known?: unknown;
+  holder_balance?: unknown;
+  holder_attributed?: unknown;
+}
+
+/** The four custody fields as served. */
+export type ServedCustody = Pick<
+  BackingSnapshot,
+  'custodyActivated' | 'holderBalanceKnown' | 'holderBalance' | 'holderAttributed'
+>;
+
+const CUSTODY_UNKNOWN: ServedCustody = {
+  custodyActivated: null,
+  holderBalanceKnown: null,
+  holderBalance: null,
+  holderAttributed: null,
+};
+
+/**
+ * Read the custody columns back as one unit — the two shapes the writer
+ * produces, and nothing else.
+ *
+ * `captureBackingSnapshot` writes either all four from one V2 read, or all
+ * four NULL (a pre-0056 row, or the legacy-lens fallback). A row matching
+ * neither — a flag that is not 0/1, a known balance with no figure, an
+ * unknown one WITH a figure — is corruption or a hand repair, and its
+ * custody state cannot be trusted. It degrades to UNKNOWN, which the verdict
+ * reports as not determinable WITH its reason: the reading's eight figures
+ * stay published (refusing its own figures and no more), and no zero is
+ * substituted for a value that was rejected. A partial quad is never served
+ * as-is, because a flag served beside a missing operand would let a reader
+ * evaluate a relation the indexer itself declined to.
+ */
+export function storedCustodyFrom(row: StoredCustodyColumns): ServedCustody {
+  const a = row.custody_activated ?? null;
+  const k = row.holder_balance_known ?? null;
+  const bal = row.holder_balance ?? null;
+  const att = row.holder_attributed ?? null;
+  if (a === null && k === null && bal === null && att === null) {
+    return CUSTODY_UNKNOWN;
+  }
+  const flag = (v: unknown) => v === 0 || v === 1;
+  const dec = (v: unknown) => typeof v === 'string' && DECIMAL_STRING.test(v);
+  const wellFormed =
+    flag(a) &&
+    flag(k) &&
+    dec(att) &&
+    // Known ⇔ a figure. The writer stores NULL for an unknown balance rather
+    // than the view's placeholder, so a figure beside `known = 0` is a value
+    // nothing here would have written.
+    (k === 1 ? dec(bal) : bal === null);
+  if (!wellFormed) {
+    console.warn(
+      '[recycling] backing snapshot custody columns are malformed; ' +
+        'serving the custody state as unknown',
+    );
+    return CUSTODY_UNKNOWN;
+  }
+  return {
+    custodyActivated: a === 1,
+    holderBalanceKnown: k === 1,
+    holderBalance: k === 1 ? (bal as string) : null,
+    holderAttributed: att as string,
+  };
+}
+
+interface StoredBackingRow extends StoredCustodyColumns {
+  payload: string;
+  diamond: string;
+  observed_at: string;
+  block_time: string;
+  block_number: string;
+  chain_count: number;
+  tick_minutes: number;
+}
+
 async function readBacking(env: Env, chainId: number): Promise<BackingSnapshot> {
+  // Set by the read-side rollout fallback, and carried on EVERY outcome of
+  // this read — withheld ones included — because missing columns are a fact
+  // about the database, not about the reading.
+  const schema: { pendingMigration: string | null } = { pendingMigration: null };
+  const backing = await readStoredBacking(env, chainId, schema);
+  return schema.pendingMigration === null
+    ? backing
+    : { ...backing, pendingMigration: schema.pendingMigration };
+}
+
+async function readStoredBacking(
+  env: Env,
+  chainId: number,
+  schema: { pendingMigration: string | null },
+): Promise<BackingSnapshot> {
   try {
     const row = await env.DB.prepare(
       `SELECT payload, diamond, observed_at, block_time, block_number,
-              chain_count, tick_minutes
+              chain_count, tick_minutes, custody_activated,
+              holder_balance_known, holder_balance, holder_attributed
          FROM recycle_backing_snapshot WHERE chain_id = ?1`,
     )
       .bind(chainId)
-      .first<{
-        payload: string;
-        diamond: string;
-        observed_at: string;
-        block_time: string;
-        block_number: string;
-        chain_count: number;
-        tick_minutes: number;
-      }>();
+      .first<StoredBackingRow>()
+      .catch((err: unknown) => {
+        // ROLLOUT WINDOW — the read-side twin of the capture's fallback: the
+        // Worker deploys before 0056 applies, and an uncaught `no such
+        // column` here would withhold the WHOLE block as `read-failed` for
+        // the length of the rollout. A pre-0056 table holds pre-0056 rows,
+        // whose custody state is unknown — which is what the absent columns
+        // read back as. Delete once 0056 is applied everywhere — and until
+        // then, say so: the response names the missing migration and the log
+        // carries a warning, so a skipped apply cannot pass for old rows.
+        if (!/no such column/i.test(String(err))) throw err;
+        schema.pendingMigration = CUSTODY_MIGRATION;
+        warnCustodyMigrationMissing('read');
+        return env.DB.prepare(
+          `SELECT payload, diamond, observed_at, block_time, block_number,
+                  chain_count, tick_minutes
+             FROM recycle_backing_snapshot WHERE chain_id = ?1`,
+        )
+          .bind(chainId)
+          .first<StoredBackingRow>();
+      });
     if (!row) return BACKING_UNAVAILABLE('not-captured-yet');
 
     // WHOSE figures are these? A `--fresh` redeploy puts a new Diamond on
@@ -784,23 +1166,45 @@ async function readBacking(env: Env, chainId: number): Promise<BackingSnapshot> 
     }
     if (!storedPayloadIsComplete(parsed)) return BACKING_UNAVAILABLE('read-failed');
 
+    // Absent on a pre-#1930 row. The spread below would leave the keys
+    // MISSING rather than null, which JSON drops entirely — a consumer
+    // reading `.strandedRecoveryReserved` would get `undefined` where the
+    // published contract promises `string | null`.
+    const strandedRecoveryReserved =
+      (parsed as Record<string, unknown>).strandedRecoveryReserved as
+        | string
+        | undefined ?? null;
+    const recoveryPositionReserved =
+      (parsed as Record<string, unknown>).recoveryPositionReserved as
+        | string
+        | undefined ?? null;
+    const custody = storedCustodyFrom(row);
+
     return {
       ...(parsed as unknown as Omit<
         BackingSnapshot,
-        'unavailableReason' | 'asOf' | 'blockNumber'
+        | 'unavailableReason'
+        | 'asOf'
+        | 'blockNumber'
+        | keyof ServedCustody
+        | 'backed'
+        | 'pendingMigration'
       >),
-      // Absent on a pre-#1930 row. The spread would leave the keys
-      // MISSING rather than null, which JSON drops entirely — a consumer
-      // reading `.strandedRecoveryReserved` would get `undefined` where the
-      // published contract promises `string | null`.
-      strandedRecoveryReserved:
-        (parsed as Record<string, unknown>).strandedRecoveryReserved as
-          | string
-          | undefined ?? null,
-      recoveryPositionReserved:
-        (parsed as Record<string, unknown>).recoveryPositionReserved as
-          | string
-          | undefined ?? null,
+      strandedRecoveryReserved,
+      recoveryPositionReserved,
+      ...custody,
+      // Decided HERE, from the same stored figures served beside it, by the
+      // one shared function — so the answer and its operands cannot
+      // disagree, and no consumer has a reason to re-derive the relation.
+      backed: recycleBackingVerdict({
+        vpfiBalance: parsed.vpfiBalance,
+        bucket: parsed.bucket,
+        strandedRecoveryReserved,
+        recoveryPositionReserved,
+        ...custody,
+      }),
+      // Overwritten by `readBacking` when the columns turned out missing.
+      pendingMigration: null,
       blockNumber: row.block_number,
       diamond: row.diamond,
       unavailableReason: null,

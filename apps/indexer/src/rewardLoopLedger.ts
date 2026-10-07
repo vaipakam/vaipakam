@@ -78,6 +78,30 @@ ratio-critical apply-one path, then stamps
 
 import type { Env } from './env';
 
+/**
+ * `indexer_cursor.kind` of the INGEST TIME WATERMARK: `last_block` holds a
+ * unix time in SECONDS (the `MARKET_SWEEP_CURSOR_KIND` precedent), not a
+ * block number. Every event in a block timestamped STRICTLY BEFORE it has
+ * been ingested — and, since this ledger applies inside the scan before the
+ * cursor advances, folded into the loop-closure tables.
+ *
+ * WHY A TIME, AND WHY STRICTLY BEFORE. Loop closure buckets by the UTC day
+ * of the block timestamp, so the only way to say which days are COMPLETE is
+ * to know how far in time the record reaches; a block number cannot answer
+ * that without an RPC read the route must not make. The stamp is the
+ * timestamp of the settled head a caught-up pass reached. A later block can
+ * share that timestamp on some chains, so the head's own second is not
+ * claimed — only everything before it.
+ *
+ * Without it the route padded every day in its window with zeros, so the day
+ * in progress and any day the indexer had not reached yet read as "nothing
+ * paid out" — a guess presented as a fact.
+ *
+ * Written by `chainIndexer`'s caught-up stamp, monotonically (a regressed
+ * head never moves it back); read by `/metrics/loop-closure`.
+ */
+export const INGESTED_BEFORE_TIME_KIND = 'ingested-before-time';
+
 /** The decoded-log slice this module consumes (structural subset of the
  *  ingest's DecodedLog — kept local so the module stays unit-testable). */
 export interface RewardLoopLog {

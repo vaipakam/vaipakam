@@ -27,6 +27,10 @@
       "types": "./src/chain-config.ts",
       "default": "./src/chain-config.ts"
     },
+    "./recycle-backing": {
+      "types": "./src/recycleBacking.ts",
+      "default": "./src/recycleBacking.ts"
+    },
     "./abis/*.json": "./src/abis/*.json",
     "./deployments": {
       "types": "./src/deployments.ts",
