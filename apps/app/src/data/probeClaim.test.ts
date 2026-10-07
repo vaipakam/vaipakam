@@ -338,3 +338,72 @@ describe('probeClaim — what the loan owed at default (#2374)', () => {
     expect(isMemoizableProbe({ kind: 'none' })).toBe(true);
   });
 });
+
+describe('probeClaim — what internal matching cleared (#2427)', () => {
+  const matchedLoan = {
+    ...borrowerLoan,
+    role: 'lender',
+    lendingAsset: USDC,
+    status: 'internal_matched',
+  } as unknown as PositionLoan;
+  const lenderReads = { ownerOf: ME, getClaimable: [USDC, 990n, false, 0n, 0n, 0n, 0n, false] };
+
+  it('carries the recorded figure on an internally matched lender claim', async () => {
+    const r = await probeClaim(
+      client({ ...lenderReads, getOwedAtInternalMatch: [1000n, 30n, 20n, 990n, 1_700_000_000n, false] }),
+      DIAMOND,
+      ME,
+      matchedLoan,
+    );
+    expect(r.kind === 'claimable' && r.loan.claim.owedAtInternalMatch).toEqual({
+      kind: 'recorded',
+      principal: 1000n,
+      interest: 30n,
+      lateFee: 20n,
+      lenderProceeds: 990n,
+    });
+    expect(isMemoizableProbe(r)).toBe(true);
+  });
+
+  it('reads an incomplete record as incomplete, never as a figure', async () => {
+    const r = await probeClaim(
+      client({ ...lenderReads, getOwedAtInternalMatch: [0n, 0n, 0n, 0n, 0n, true] }),
+      DIAMOND,
+      ME,
+      matchedLoan,
+    );
+    expect(r.kind === 'claimable' && r.loan.claim.owedAtInternalMatch).toEqual({ kind: 'incomplete' });
+  });
+
+  it('reads no record as none, whether unwritten or from a deployment without the view', async () => {
+    for (const read of [[0n, 0n, 0n, 0n, 0n, false], () => { throw revert(); }]) {
+      const r = await probeClaim(client({ ...lenderReads, getOwedAtInternalMatch: read }), DIAMOND, ME, matchedLoan);
+      expect(r.kind === 'claimable' && r.loan.claim.owedAtInternalMatch).toEqual({ kind: 'none' });
+    }
+  });
+
+  it('keeps the claim when only that read fails, says so, and re-reads it soon', async () => {
+    const r = await probeClaim(
+      client({ ...lenderReads, getOwedAtInternalMatch: () => { throw new Error('fetch failed'); } }),
+      DIAMOND,
+      ME,
+      matchedLoan,
+    );
+    expect(r.kind).toBe('claimable');
+    expect(r.kind === 'claimable' && r.loan.claim.owedAtInternalMatch).toEqual({ kind: 'unreadable' });
+    expect(isMemoizableProbe(r)).toBe(false);
+    expect(loanClaimRefetchInterval(r.kind === 'claimable' ? r.loan : null)).toBe(OWED_RETRY_MS);
+  });
+
+  it('does not read it outside an internally matched lender claim', async () => {
+    // The fake client throws on any unexpected read, which would surface as
+    // `unreadable` here rather than `none`.
+    for (const loan of [
+      { ...matchedLoan, status: 'repaid' },
+      { ...matchedLoan, role: 'borrower' },
+    ]) {
+      const r = await probeClaim(client(lenderReads), DIAMOND, ME, loan as PositionLoan);
+      if (r.kind === 'claimable') expect(r.loan.claim.owedAtInternalMatch).toEqual({ kind: 'none' });
+    }
+  });
+});

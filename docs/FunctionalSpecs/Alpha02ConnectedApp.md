@@ -1971,6 +1971,20 @@ is the borrower's own money.
   record cannot be read, it says that instead. The loan's current principal is never presented as what the
   holder lent: partial repayments change it, and a holder who bought the
   position never lent it at all.
+- A lender's claim on a loan closed by internal matching states what the
+  protocol recorded that matching cleared (#2427): the principal, and, when any
+  had built up, the interest and late fees that are not charged when a loan
+  closes this way. It says what the matches paid toward that principal and
+  compares only those two: the gap is the matcher's fee, and the claim says so
+  in those words. It is phrased about the loan and the matches, never "you
+  lent", since the holder may have bought the position. When the protocol's
+  record is incomplete (part of the loan was matched during the fallback, or
+  the lender had already been paid in part), the claim says no figure can be
+  shown and why. With no record it says the figure is not recorded for this
+  loan; when the record cannot be read it says that, and the loan page reads
+  it again shortly. When the token's details cannot be read the amounts are
+  not written, but whether the matches paid the principal in full is still
+  stated.
 - A stale indexed row must not remain actionable after the chain says it is no
   longer claimable.
 - Once a candidate has been verified on chain, an IDENTICAL candidate (same
