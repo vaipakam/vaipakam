@@ -19,15 +19,18 @@
 //   SITE_URL=https://<deployment> EXPECT=flagged-then-clear \
 //     SANCTIONS_ROLE=newBorrower node live-sanctions-banner.mjs
 //
-// A banner verdict is only drawn from an answer the PAGE got: the app fails
-// open (no banner) when its own sanctions read errors, so a missing banner
-// with no answered sanctions read on the page's RPC is BLOCKED, not FAIL.
+// A banner verdict is only drawn from an answer the PAGE got. The app fails
+// open (no banner) when its own read of this wallet errors, and words the
+// recourse as unknown when an explanation read errors, so each verdict
+// needs the page's own read behind it, answered, for THIS wallet on THIS
+// Diamond / list: without it the run is BLOCKED, not FAIL. A write the
+// read-only session refused is a FAIL whatever the banner did.
 //
 // Exit codes follow the batch contract: 0 PASS, 1 FAIL, 2 BLOCKED.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parseAbi, toFunctionSelector, zeroAddress } from 'viem';
+import { pad, parseAbi, toFunctionSelector, zeroAddress } from 'viem';
 import {
   addressOf,
   blocked,
@@ -94,10 +97,27 @@ const ABI = parseAbi([
   'function isSanctionedAddress(address) view returns (bool)',
   'function flaggedByOverlay(address) view returns (bool)',
   'function vaultBannedSource(address) view returns (address)',
+  'function isSanctioned(address) view returns (bool)',
 ]);
-/** The Diamond's sanctions read, as hex in a request body (plain or inside
- *  a multicall), without the 0x — how the page's own reads are recognised. */
-const SANCTIONS_SELECTOR = toFunctionSelector('isSanctionedAddress(address)').slice(2).toLowerCase();
+
+/** One of the page's reads, recognised in an `eth_call`: the selector with
+ *  this wallet as its argument (contiguous in the calldata whether the call
+ *  is plain or inside a multicall), addressed to `target` directly or
+ *  carried for it inside a multicall's calldata. */
+function pageRead(signature, target) {
+  const strip = (hex) => hex.slice(2).toLowerCase();
+  return {
+    call: strip(toFunctionSelector(signature)) + strip(pad(WALLET)),
+    target: strip(target),
+  };
+}
+const PAGE_READS = {
+  /** The flag itself — what shows or hides the banner. */
+  flag: pageRead('isSanctionedAddress(address)', DIAMOND),
+  /** The test-list explanation — what the test-list contact line rests on.
+   *  It is only sent once the page has read the configured oracle. */
+  testList: pageRead('flaggedByOverlay(address)', OVERLAY),
+};
 const { pub } = clientsFor(CHAIN_ID);
 
 /** What the chain says right now about the wallet. */
@@ -121,10 +141,14 @@ async function flaggedSender() {
     args: [WALLET],
   });
   if (source === zeroAddress) return null;
+  // The configured list's own answer for the sender — the cause the Diamond
+  // folds into the wallet's flag. Not the Diamond's composite view, which
+  // would also count the sender's own recovery sender, a cause that does
+  // not reach this wallet.
   const flagged = await pub.readContract({
-    address: DIAMOND,
+    address: OVERLAY,
     abi: ABI,
-    functionName: 'isSanctionedAddress',
+    functionName: 'isSanctioned',
     args: [source],
   });
   return flagged ? source : null;
@@ -159,7 +183,7 @@ if (state.flagged !== wantFlagged || state.onTestList !== wantFlagged) {
   );
 }
 
-const { page, ctx, done } = await launch({ role: ROLE, readOnly: true, freshProfile: true });
+const { page, ctx, done, blockedRequests } = await launch({ role: ROLE, readOnly: true, freshProfile: true });
 // English before the first paint: the expected lines come from the English
 // catalogue, and a fresh profile would otherwise follow the machine's
 // locale (the shared i18n factory's key, as live-refinance.mjs seeds it).
@@ -171,22 +195,39 @@ await ctx.addInitScript(() => {
   }
 });
 
-// The page's own sanctions reads: the time of the last one that came back
-// with a JSON-RPC result and no error. A transport failure, an HTTP error
-// or an RPC error leaves it unset.
-let lastPageAnswer = null;
+// When each of the page's own reads last came back answered: the matching
+// JSON-RPC request, by id, got a `result` and no `error`. A transport
+// failure, an HTTP error, an RPC error or an unreadable body leaves it as it
+// was.
+const lastAnswered = { flag: null, testList: null };
+const asList = (v) => (Array.isArray(v) ? v : [v]);
 page.on('response', (res) => {
   const req = res.request();
-  if (req.method() !== 'POST') return;
-  const body = (req.postData() ?? '').toLowerCase();
-  if (!body.includes(SANCTIONS_SELECTOR) || res.status() !== 200) return;
+  if (req.method() !== 'POST' || res.status() !== 200) return;
+  let calls;
+  try {
+    calls = asList(JSON.parse(req.postData() ?? 'null'));
+  } catch {
+    return;
+  }
+  const wanted = new Map(); // JSON-RPC id -> which reads it carries
+  for (const c of calls) {
+    if (!c || c.method !== 'eth_call') continue;
+    const tx = c.params?.[0] ?? {};
+    const data = String(tx.data ?? tx.input ?? '').toLowerCase();
+    const to = String(tx.to ?? '').toLowerCase().replace(/^0x/, '');
+    const kinds = Object.entries(PAGE_READS)
+      .filter(([, r]) => data.includes(r.call) && (to === r.target || data.includes(r.target)))
+      .map(([k]) => k);
+    if (kinds.length > 0) wanted.set(c.id, kinds);
+  }
+  if (wanted.size === 0) return;
   res
     .text()
     .then((text) => {
-      const parsed = JSON.parse(text);
-      const items = Array.isArray(parsed) ? parsed : [parsed];
-      if (items.length > 0 && items.every((r) => r && r.result !== undefined && r.error === undefined)) {
-        lastPageAnswer = Date.now();
+      for (const r of asList(JSON.parse(text))) {
+        if (!r || !wanted.has(r.id) || r.result === undefined || r.error !== undefined) continue;
+        for (const k of wanted.get(r.id)) lastAnswered[k] = Date.now();
       }
     })
     .catch(() => {
@@ -232,12 +273,16 @@ async function waitForBanner(want, windowMs) {
 const shown = (t) => t !== null && t.includes(TEST_LIST_LINE);
 let failures = 0;
 
-/** No banner where one is expected only counts against the app when the
- *  page got an answer to its own sanctions read after `since`. */
-async function blockedUnlessAnswered(since, what) {
-  if (lastPageAnswer === null || lastPageAnswer < since) {
+/** A banner verdict counts against the app only when the page's own read
+ *  of `kind` was answered after `since`; otherwise the page never had the
+ *  answer the verdict would hold against it, and the run is BLOCKED. */
+async function blockedUnlessAnswered(kind, since, what) {
+  if (lastAnswered[kind] === null || lastAnswered[kind] < since) {
     await done();
-    await blocked(`${what}, but the page's own sanctions read got no answer after that point — its RPC is the cause, not the banner`);
+    await blocked(
+      `${what}, but the page's own ${kind === 'flag' ? 'sanctions read of this wallet' : 'test-list read for this wallet'} ` +
+        'got no answer in that window — its RPC is the cause, not the banner',
+    );
   }
 }
 
@@ -245,13 +290,24 @@ if (wantFlagged) {
   const started = Date.now();
   const { text } = await waitForBanner(shown, BANNER_WINDOW_MS);
   const ok = shown(text);
-  if (!ok) await blockedUnlessAnswered(started, 'no flagged banner appeared');
+  // No banner at all rests on the flag read; a banner without the
+  // test-list line rests on the test-list read.
+  if (!ok) {
+    await blockedUnlessAnswered(
+      text === null ? 'flag' : 'testList',
+      started,
+      text === null ? 'no flagged banner appeared' : 'the banner lacks the test-list contact line',
+    );
+  }
   console.log(`${ok ? 'PASS' : 'FAIL'} flagged: banner with the test-list contact line`);
   console.log(`  banner: ${text === null ? '(none)' : JSON.stringify(text)}`);
   if (!ok) failures++;
 } else {
+  const started = Date.now();
   const { seen } = await waitForBanner(() => false, BANNER_WINDOW_MS);
   const ok = seen === null;
+  // An absent banner is coverage only if the page actually read the flag.
+  if (ok) await blockedUnlessAnswered('flag', started, 'no banner appeared');
   console.log(`${ok ? 'PASS' : 'FAIL'} clear: no sanctions banner at any point across ${BANNER_WINDOW_MS / 1000}s`);
   if (!ok) {
     console.log(`  banner: ${JSON.stringify(seen)}`);
@@ -281,12 +337,21 @@ if (EXPECT === 'flagged-then-clear' && failures === 0) {
   }
   const { text } = await waitForBanner((t) => t === null, BANNER_WINDOW_MS);
   const ok = text === null;
-  if (!ok) await blockedUnlessAnswered(clearedAt, 'the banner stayed after the chain cleared');
+  if (!ok) await blockedUnlessAnswered('flag', clearedAt, 'the banner stayed after the chain cleared');
   const secs = Math.round((Date.now() - clearedAt) / 1000);
   console.log(
     `${ok ? 'PASS' : 'FAIL'} cleared without reload: banner ${ok ? `gone ${secs}s after the chain cleared` : 'still shown'}`,
   );
   if (!ok) failures++;
+}
+
+// The read-only session refused something the page asked for: a signature,
+// a state-changing wallet call, or a request outside the read-only
+// boundary. Whatever the banner did, that is a defect to surface.
+if (blockedRequests.length > 0) {
+  console.log(`FAIL read-only: the page attempted ${blockedRequests.length} refused request(s)`);
+  for (const b of blockedRequests) console.log(`  ${b.reason} — ${b.url}`);
+  failures++;
 }
 
 await done();
