@@ -2326,7 +2326,6 @@
       "recourseSenderOtherList": "Ese remitente está en la lista de sanciones con la que este despliegue realiza la verificación. Si crees que es un error, contacta al proveedor de esa lista.",
       "recourseBannedSourceUnread": "Esta billetera también declaró un remitente al recuperar tokens, y no se pudo comprobar en este momento si ese remitente también está marcado. Si lo está, la billetera seguirá marcada hasta que ese remitente también se elimine de la lista.",
       "recourseSenderLookupUnread": "No se pudo comprobar en este momento si esta billetera declaró un remitente al recuperar tokens. Si lo hizo y ese remitente está marcado, la billetera seguirá marcada hasta que ese remitente también se elimine de la lista.",
-      "recoursePending": "Todavía se está comprobando por qué esta billetera está marcada y a quién contactar.",
       "recourseUnknown": "No se pudo leer en este momento por qué esta billetera está marcada, así que todavía no se puede indicar a quién contactar. Recarga para volver a intentarlo."
     },
     "risk": {

@@ -2326,7 +2326,6 @@
       "recourseSenderOtherList": "Cet expéditeur figure sur la liste de sanctions utilisée par ce déploiement pour son contrôle. Si vous pensez qu'il s'agit d'une erreur, contactez le fournisseur de cette liste.",
       "recourseBannedSourceUnread": "Ce portefeuille a aussi déclaré un expéditeur lors de la récupération de jetons, et il n'a pas été possible de vérifier pour l'instant si cet expéditeur est signalé lui aussi. Si c'est le cas, le portefeuille reste signalé tant que cet expéditeur n'est pas également retiré de la liste.",
       "recourseSenderLookupUnread": "Il n'a pas été possible de vérifier pour l'instant si ce portefeuille a déclaré un expéditeur lors de la récupération de jetons. Si c'est le cas et que cet expéditeur est signalé, le portefeuille reste signalé tant que cet expéditeur n'est pas également retiré de la liste.",
-      "recoursePending": "Vérification en cours de la raison du signalement de ce portefeuille et du contact approprié.",
       "recourseUnknown": "Impossible de lire pour l'instant pourquoi ce portefeuille est signalé ; le bon contact ne peut donc pas encore être indiqué. Rechargez la page pour réessayer."
     },
     "risk": {

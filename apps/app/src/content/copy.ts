@@ -4987,8 +4987,6 @@ const copySource = {
       'Whether this wallet declared a sender when recovering tokens could not be checked just now. If it did and that sender is flagged, the wallet stays flagged until that sender is also removed from the list.',
     // Shown until the first reading settles, so the banner never omits the
     // cause without saying it is still being checked.
-    recoursePending:
-      'Still checking why this wallet is flagged and whom to contact.',
     recourseUnknown:
       'Why this wallet is flagged could not be read just now, so the right contact cannot be named yet. Reload to try again.',
   },

@@ -20,7 +20,7 @@ import {
   classifySubject,
   explain,
   isNoSuchFunction,
-  readSanctionsSource,
+  readSanctionsSnapshot,
 } from './sanctionsSource';
 
 const DIAMOND = '0x00000000000000000000000000000000000000d1' as const;
@@ -88,8 +88,11 @@ function client(answers: Record<string, Answer>, blocks: (bigint | undefined)[] 
   } as unknown as PublicClient;
 }
 
-const read = (answers: Record<string, Answer>) =>
-  readSanctionsSource(client(answers), DIAMOND, WALLET);
+/** The explanation for a wallet the Diamond flags (its `isSanctionedAddress`
+ *  answers true unless a test overrides it). */
+const read = async (answers: Record<string, Answer>) =>
+  (await readSanctionsSnapshot(client({ isSanctionedAddress: true, ...answers }), DIAMOND, WALLET))
+    .reasons;
 
 /** Each oracle fixture declares no recovery sender unless a test adds one;
  *  the sender is read on every path, flagged wallet or not. */
@@ -110,7 +113,7 @@ const bannedSender = {
   isSanctioned: (who: string) => who === SENDER,
 };
 
-describe('readSanctionsSource — a test list alone', () => {
+describe('readSanctionsSnapshot — a test list alone', () => {
   it('names the test list when it flags the wallet', async () => {
     expect(await read({ ...alone, flaggedByOverlay: true })).toEqual(['testList']);
   });
@@ -124,7 +127,7 @@ describe('readSanctionsSource — a test list alone', () => {
   });
 });
 
-describe('readSanctionsSource — a test list over another list', () => {
+describe('readSanctionsSnapshot — a test list over another list', () => {
   it('names the test list alone when only it flags the wallet', async () => {
     expect(await read({ ...layered, sanctionSource: [true, false] })).toEqual(['testList']);
   });
@@ -157,7 +160,7 @@ describe('readSanctionsSource — a test list over another list', () => {
   });
 });
 
-describe('readSanctionsSource — an oracle that is not a test list', () => {
+describe('readSanctionsSnapshot — an oracle that is not a test list', () => {
   it('names the configured list when it flags the wallet at the block read', async () => {
     expect(await read({ ...direct, isSanctioned: true })).toEqual(['otherList']);
   });
@@ -179,7 +182,7 @@ describe('readSanctionsSource — an oracle that is not a test list', () => {
   });
 });
 
-describe('readSanctionsSource — a declared recovery sender', () => {
+describe('readSanctionsSnapshot — a declared recovery sender', () => {
   /** A test-list answer per address: `listed` are on the test list. */
   const overlayFlags =
     (...listed: string[]) =>
@@ -269,7 +272,7 @@ describe('readSanctionsSource — a declared recovery sender', () => {
   });
 });
 
-describe('readSanctionsSource — reads', () => {
+describe('readSanctionsSnapshot — reads', () => {
   it('is unknown when the Diamond’s oracle cannot be read', async () => {
     expect(await read({ getSanctionsOracle: unreachable('getSanctionsOracle') })).toEqual(['unknown']);
   });
@@ -278,8 +281,32 @@ describe('readSanctionsSource — reads', () => {
     expect(await read({ getSanctionsOracle: zeroAddress })).toEqual(['unknown']);
   });
 
-  it('is unknown when the current block cannot be read', async () => {
-    expect(await read({ getBlock: unreachable('getBlock') })).toEqual(['unknown']);
+  it('throws when the current block cannot be read, so the caller keeps its last answer', async () => {
+    await expect(read({ getBlock: unreachable('getBlock') })).rejects.toThrow();
+  });
+
+  it('throws when the Diamond’s flag cannot be read, so an outage is never a delisting', async () => {
+    await expect(
+      read({ ...alone, isSanctionedAddress: unreachable('isSanctionedAddress') }),
+    ).rejects.toThrow();
+  });
+
+  it('reads nothing else for a wallet the Diamond does not flag', async () => {
+    const blocks: (bigint | undefined)[] = [];
+    expect(
+      await readSanctionsSnapshot(client({ isSanctionedAddress: false }, blocks), DIAMOND, WALLET),
+    ).toEqual({ flagged: false, reasons: [] });
+    expect(blocks).toEqual([BLOCK]);
+  });
+
+  it('keeps the flag when its explanation cannot be read', async () => {
+    expect(
+      await readSanctionsSnapshot(
+        client({ isSanctionedAddress: true, getSanctionsOracle: unreachable('getSanctionsOracle') }),
+        DIAMOND,
+        WALLET,
+      ),
+    ).toEqual({ flagged: true, reasons: ['unknown'] });
   });
 
   it('repeats the reads when the pinned block is replaced while they run', async () => {
@@ -306,22 +333,34 @@ describe('readSanctionsSource — reads', () => {
 
   it('pins every read on a layered test list to the same block', async () => {
     const blocks: (bigint | undefined)[] = [];
-    await readSanctionsSource(
-      client({ ...layered, sanctionSource: reverted('sanctionSource'), flaggedByOverlay: true }, blocks),
+    await readSanctionsSnapshot(
+      client(
+        {
+          isSanctionedAddress: true,
+          ...layered,
+          sanctionSource: reverted('sanctionSource'),
+          flaggedByOverlay: true,
+        },
+        blocks,
+      ),
       DIAMOND,
       WALLET,
     );
-    // oracle, upstream, sanctionSource, flaggedByOverlay, vaultBannedSource
-    expect(blocks).toHaveLength(5);
+    // flag, oracle, upstream, sanctionSource, flaggedByOverlay, vaultBannedSource
+    expect(blocks).toHaveLength(6);
     expect(blocks.every((b) => b === BLOCK)).toBe(true);
   });
 
   it('pins every read on the declared-sender path to the same block', async () => {
     const blocks: (bigint | undefined)[] = [];
-    await readSanctionsSource(client({ ...direct, ...bannedSender }, blocks), DIAMOND, WALLET);
-    // oracle, upstream + isSanctioned for the wallet, vaultBannedSource,
+    await readSanctionsSnapshot(
+      client({ isSanctionedAddress: true, ...direct, ...bannedSender }, blocks),
+      DIAMOND,
+      WALLET,
+    );
+    // flag, oracle, upstream + isSanctioned for the wallet, vaultBannedSource,
     // upstream + isSanctioned for the sender
-    expect(blocks).toHaveLength(6);
+    expect(blocks).toHaveLength(7);
     expect(blocks.every((b) => b === BLOCK)).toBe(true);
   });
 });

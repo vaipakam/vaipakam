@@ -10,35 +10,14 @@
  * network's own test list, the list it extends, the list the deployment
  * screens against, or the sender the wallet declared during token recovery —
  * and the last can hold alongside any of the others, in which case both are
- * said. Each has a different party to contact. What is already known (blocked
- * actions, close-outs that stay open) shows at once; only the recourse waits
- * for the attribution, rather than being guessed, and says so while it does.
+ * said. Each has a different party to contact. The flag and the reason are
+ * one read at one block, so the banner never pairs a flag with a reason from
+ * another moment.
  */
 import { OctagonAlert } from 'lucide-react';
-import { useQuery } from '@tanstack/react-query';
-import { usePublicClient } from 'wagmi';
 import { copy } from '../content/copy';
-import { SANCTIONS_REFRESH_MS, useSanctionsCheck } from '../data/sanctions';
-import { readSanctionsSource, type SanctionsSource } from '../data/sanctionsSource';
-import { useActiveChain } from '../chain/useActiveChain';
-
-function useSanctionsSource(flagged: boolean): SanctionsSource[] | undefined {
-  const { readChain, address } = useActiveChain();
-  const publicClient = usePublicClient({ chainId: readChain.chainId });
-  const { data } = useQuery({
-    queryKey: ['sanctionsSource', readChain.chainId, address?.toLowerCase()],
-    enabled: flagged && Boolean(address) && Boolean(publicClient),
-    // Attribution is live state, not configuration: the operator can clear
-    // a test-list flag and a list's provider can delist a wallet while the
-    // overall flag stays up. Re-read on the same cycle as the flag itself
-    // (which decides whether the banner shows at all), so a stale answer can
-    // neither keep naming a list that has let go nor outlive a cleared flag.
-    staleTime: SANCTIONS_REFRESH_MS,
-    refetchInterval: SANCTIONS_REFRESH_MS,
-    queryFn: () => readSanctionsSource(publicClient!, readChain.diamondAddress, address!),
-  });
-  return data;
-}
+import { useSanctionsCheck } from '../data/sanctions';
+import type { SanctionsSource } from '../data/sanctionsSource';
 
 /** One line of the settled explanation — the only part of the banner that
  *  depends on why the wallet is flagged. A flag that comes from the declared
@@ -78,8 +57,9 @@ export function recourseLine(source: SanctionsSource): string {
 }
 
 export function SanctionsBanner() {
-  const { flagged } = useSanctionsCheck();
-  const reasons = useSanctionsSource(flagged);
+  // The flag and its explanation come from one read at one block, so they
+  // arrive, refresh and clear together.
+  const { flagged, reasons } = useSanctionsCheck();
   if (!flagged) return null;
   return (
     <div className="banner banner-danger" role="alert">
@@ -89,15 +69,11 @@ export function SanctionsBanner() {
         <p style={{ margin: '6px 0 0' }}>{copy.sanctions.line1}</p>
         <p style={{ margin: '6px 0 0' }}>{copy.sanctions.line2}</p>
         <p style={{ margin: '6px 0 0' }}>{copy.sanctions.line3}</p>
-        {reasons === undefined ? (
-          <p style={{ margin: '6px 0 0' }}>{copy.sanctions.recoursePending}</p>
-        ) : (
-          reasons.map((reason) => (
-            <p key={reason} style={{ margin: '6px 0 0' }}>
-              {recourseLine(reason)}
-            </p>
-          ))
-        )}
+        {reasons.map((reason) => (
+          <p key={reason} style={{ margin: '6px 0 0' }}>
+            {recourseLine(reason)}
+          </p>
+        ))}
       </div>
     </div>
   );

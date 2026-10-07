@@ -14,8 +14,8 @@
  * accepts any address as its oracle, so a list's provider cannot be inferred
  * from the oracle alone.
  *
- * Read ONLY once the Diamond has already reported the wallet flagged; it
- * explains a flag, it never decides one.
+ * The flag itself is always the Diamond's own answer, read at the same block
+ * as its explanation; this module explains a flag, it never decides one.
  */
 import {
   BaseError,
@@ -32,7 +32,7 @@ const OVERLAY_ABI = TestnetSanctionsOverlayABI as unknown as Abi;
 const ORACLE_ABI = parseAbi(['function isSanctioned(address) view returns (bool)']);
 
 /**
- * One line in an explanation — {@link readSanctionsSource} returns one or
+ * One line in an explanation — {@link readSanctionsSnapshot} returns one or
  * more of these, because a wallet can be flagged for two reasons at once and
  * each reason names its own list.
  *
@@ -59,8 +59,8 @@ const ORACLE_ABI = parseAbi(['function isSanctioned(address) view returns (bool)
  * - `senderLookupUnread`: follows the wallet's own line — whether the wallet
  *   declared a sender at all could not be read.
  * - `unknown`: why the wallet is flagged could not be determined — a read
- *   failed, or at the block read nothing flags it any more (the flag changed
- *   after the banner's own check).
+ *   failed, the block was replaced while it was read, or no list the oracle
+ *   exposes accounts for the Diamond's flag.
  */
 export type SanctionsSource =
   | 'testList'
@@ -287,58 +287,73 @@ async function readSender(
   };
 }
 
-/** How many times {@link readSanctionsSource} re-reads when the block it
- *  pinned was replaced while it read, before saying it could not tell. */
+/** One answer to "is this wallet flagged, and why", read at one block.
+ *  `reasons` is empty when the wallet is not flagged. */
+export interface SanctionsSnapshot {
+  flagged: boolean;
+  reasons: SanctionsSource[];
+}
+
+/** How many times {@link readSanctionsSnapshot} re-reads when the block it
+ *  pinned was replaced while it read, before giving up on the explanation. */
 const SNAPSHOT_ATTEMPTS = 3;
 
-/** Reads the configured oracle and explains `wallet`'s flag as one or two
- *  reasons (see {@link explain}). Never throws: a read that cannot be
- *  completed yields `unknown`, or a reason saying what could not be read.
+/** Reads whether the Diamond flags `wallet` and, when it does, why — both at
+ *  ONE block, in one call, so the flag and its explanation cannot disagree.
+ *  The flag is the Diamond's own `isSanctionedAddress`; the explanation never
+ *  decides it.
  *
- *  Every read is pinned to one block, so the answer describes a single
- *  on-chain state: a flag added or cleared between two reads cannot be
- *  stitched into an explanation no block ever had. A block NUMBER does not
- *  name one block across a reorganisation, and `eth_call` through viem takes
- *  a number, not a hash, so the hash at that height is taken before the reads
- *  and checked again after them: if it changed, the reads may have straddled
- *  two chains and are discarded and repeated, and after
- *  {@link SNAPSHOT_ATTEMPTS} such tries the answer is `unknown`. This detects
- *  a replacement that lands during the reads; it cannot detect one that is
- *  replaced and then restored in between, which no read by height can.
+ *  THROWS when the block or the flag cannot be read, so a caller keeps the
+ *  answer it already had rather than reading an outage as a delisting. Never
+ *  throws over the explanation: a failed read there yields `unknown`, or a
+ *  reason saying what could not be read.
+ *
+ *  A wallet that is not flagged costs one read, which cannot straddle two
+ *  states. A flagged one takes several, and a block NUMBER does not name one
+ *  block across a reorganisation (`eth_call` through viem takes a number, not
+ *  a hash), so the hash at that height is taken before the reads and checked
+ *  again after them: if it changed, the reads are discarded and repeated, and
+ *  after {@link SNAPSHOT_ATTEMPTS} such tries the flag is kept and the
+ *  explanation is `unknown`. This detects a replacement that lands during the
+ *  reads; it cannot detect one replaced and then restored in between, which no
+ *  read by height can.
  *
  *  The Diamond flags a wallet when the oracle flags the wallet itself OR the
  *  sender it declared during token recovery (`vaultBannedSource`), so both
  *  subjects are read every time, through the same classification, and a
  *  failed read of one never discards what was established about the other. */
-export async function readSanctionsSource(
+export async function readSanctionsSnapshot(
   publicClient: PublicClient,
   diamond: `0x${string}`,
   wallet: `0x${string}`,
-): Promise<SanctionsSource[]> {
+): Promise<SanctionsSnapshot> {
   for (let attempt = 0; attempt < SNAPSHOT_ATTEMPTS; attempt++) {
-    let pinned: { number: bigint; hash: `0x${string}` };
-    try {
-      const block = await publicClient.getBlock({ blockTag: 'latest' });
-      pinned = { number: block.number, hash: block.hash };
-    } catch {
-      return ['unknown'];
-    }
+    const pinned = await publicClient.getBlock({ blockTag: 'latest' });
+    const flagged = (await publicClient.readContract({
+      address: diamond,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'isSanctionedAddress',
+      args: [wallet],
+      blockNumber: pinned.number,
+    })) as boolean;
+    if (!flagged) return { flagged: false, reasons: [] };
 
-    const reasons = await readAtBlock(publicClient, diamond, wallet, pinned.number);
+    const reasons = await explainAtBlock(publicClient, diamond, wallet, pinned.number);
 
     let after: `0x${string}`;
     try {
       after = (await publicClient.getBlock({ blockNumber: pinned.number })).hash;
     } catch {
-      return ['unknown'];
+      return { flagged: true, reasons: ['unknown'] };
     }
-    if (after === pinned.hash) return reasons;
+    if (after === pinned.hash) return { flagged: true, reasons };
   }
-  return ['unknown'];
+  return { flagged: true, reasons: ['unknown'] };
 }
 
-/** Every read behind {@link readSanctionsSource}, pinned to `blockNumber`. */
-async function readAtBlock(
+/** Why the Diamond flags `wallet` at `blockNumber` — called only once it has
+ *  reported the wallet flagged at that same block. */
+async function explainAtBlock(
   publicClient: PublicClient,
   diamond: `0x${string}`,
   wallet: `0x${string}`,

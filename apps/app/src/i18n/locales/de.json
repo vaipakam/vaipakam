@@ -2326,7 +2326,6 @@
       "recourseSenderOtherList": "Dieser Absender steht auf der Sanktionsliste, gegen die diese Bereitstellung prüft. Wenn Sie dies für einen Fehler halten, wenden Sie sich an den Anbieter dieser Liste.",
       "recourseBannedSourceUnread": "Diese Wallet hat bei der Wiederherstellung von Token außerdem einen Absender angegeben; ob dieser ebenfalls markiert ist, konnte gerade nicht geprüft werden. Falls ja, bleibt die Wallet markiert, bis auch dieser Absender von der Liste entfernt wird.",
       "recourseSenderLookupUnread": "Ob diese Wallet bei der Wiederherstellung von Token einen Absender angegeben hat, konnte gerade nicht geprüft werden. Falls ja und dieser Absender markiert ist, bleibt die Wallet markiert, bis auch dieser Absender von der Liste entfernt wird.",
-      "recoursePending": "Es wird noch geprüft, warum diese Wallet markiert ist und an wen Sie sich wenden können.",
       "recourseUnknown": "Warum diese Wallet markiert ist, konnte gerade nicht gelesen werden, daher kann noch keine Kontaktstelle genannt werden. Laden Sie die Seite neu, um es erneut zu versuchen."
     },
     "risk": {

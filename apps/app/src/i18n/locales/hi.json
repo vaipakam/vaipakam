@@ -2326,7 +2326,6 @@
       "recourseSenderOtherList": "वह sender उस sanctions list पर है जिसके against यह deployment screening करता है। अगर आपको लगता है यह error है, तो उस list के provider से contact करें।",
       "recourseBannedSourceUnread": "इस wallet ने tokens recover करते समय एक sender भी declare किया था, और वह sender भी flag है या नहीं, यह अभी check नहीं हो सका। अगर है, तो जब तक वह sender भी list से नहीं हटता, wallet flag रहेगा।",
       "recourseSenderLookupUnread": "Tokens recover करते समय इस wallet ने कोई sender declare किया था या नहीं, यह अभी check नहीं हो सका। अगर किया था और वह sender flag है, तो जब तक वह sender भी list से नहीं हटता, wallet flag रहेगा।",
-      "recoursePending": "यह wallet क्यों flag है और किससे contact करना है, यह अभी check किया जा रहा है।",
       "recourseUnknown": "यह wallet क्यों flag है, यह अभी पढ़ा नहीं जा सका, इसलिए सही contact अभी नहीं बताया जा सकता। फिर से try करने के लिए reload करें।"
     },
     "risk": {

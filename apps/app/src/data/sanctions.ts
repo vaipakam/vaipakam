@@ -17,22 +17,29 @@ import type { PublicClient } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
 import { copy } from '../content/copy';
+import { readSanctionsSnapshot, type SanctionsSource } from './sanctionsSource';
 
 export interface SanctionsState {
   flagged: boolean;
   /** True once the check settled (or no wallet is connected). */
   ready: boolean;
+  /** Why the wallet is flagged, read at the same block as the flag itself
+   *  (#2439); empty when it is not flagged or no answer has arrived yet. */
+  reasons: SanctionsSource[];
 }
 
 /** How often the check re-reads, flagged or not. A flag can be added (an
  *  operator flags the wallet or the sender it declared during recovery) or
  *  cleared (an operator clears it, a list's provider delists it), and the
  *  banner and every blocked action hang off this answer, so it is re-read on
- *  this cycle rather than held until a reload. The banner's attribution
- *  refreshes on the same cycle, so the two cannot drift apart for longer than
- *  one of them. */
+ *  this cycle rather than held until a reload. */
 export const SANCTIONS_REFRESH_MS = 30_000;
 
+/** THE sanctions check — one query, one cache entry, one refresh cycle and
+ *  one error policy for the flag and its explanation alike. They are read
+ *  together at one block ({@link readSanctionsSnapshot}), so the banner can
+ *  never show a flag with an explanation from another moment, nor outlive or
+ *  lag a flag that changed. */
 export function useSanctionsCheck(): SanctionsState {
   const { readChain, address } = useActiveChain();
   const publicClient = usePublicClient({ chainId: readChain.chainId });
@@ -45,22 +52,16 @@ export function useSanctionsCheck(): SanctionsState {
     // A failed read settles the check at once (no retry delay before `ready`)
     // and is retried on the next cycle instead.
     retry: false,
-    // A failed read THROWS rather than answering `false`, so it never
+    // A failed flag read THROWS rather than answering `false`, so it never
     // overwrites an answer: a failed refresh keeps the last answer the oracle
     // gave (a known flag stays up through an outage; nothing is read as a
     // delisting), and only a check that has never been answered falls open.
-    queryFn: async (): Promise<boolean> =>
-      (await publicClient!.readContract({
-        address: readChain.diamondAddress,
-        abi: DIAMOND_ABI_VIEM,
-        functionName: 'isSanctionedAddress',
-        args: [address!],
-      })) as boolean,
+    queryFn: () => readSanctionsSnapshot(publicClient!, readChain.diamondAddress, address!),
   });
 
-  if (!address) return { flagged: false, ready: true };
+  if (!address) return { flagged: false, ready: true, reasons: [] };
   // Fail open on ERRORS only: no answer yet after a settled (failed) read.
-  return { flagged: data ?? false, ready: isFetched };
+  return { flagged: data?.flagged ?? false, ready: isFetched, reasons: data?.reasons ?? [] };
 }
 
 /** LIVE submit-time re-read. The hook above re-reads every

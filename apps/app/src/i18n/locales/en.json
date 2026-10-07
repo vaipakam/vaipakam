@@ -2399,7 +2399,6 @@
       "recourseSenderOtherList": "That sender is on the sanctions list this deployment screens against. If you believe this is an error, contact that list’s provider.",
       "recourseBannedSourceUnread": "This wallet also declared a sender when recovering tokens, and whether that sender is flagged too could not be checked just now. If it is, the wallet stays flagged until that sender is also removed from the list.",
       "recourseSenderLookupUnread": "Whether this wallet declared a sender when recovering tokens could not be checked just now. If it did and that sender is flagged, the wallet stays flagged until that sender is also removed from the list.",
-      "recoursePending": "Still checking why this wallet is flagged and whom to contact.",
       "recourseUnknown": "Why this wallet is flagged could not be read just now, so the right contact cannot be named yet. Reload to try again."
     },
     "risk": {
