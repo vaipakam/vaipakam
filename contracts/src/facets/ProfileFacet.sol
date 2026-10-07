@@ -672,7 +672,7 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
     //
     // Country-level sanctions already live above (setUserCountry +
     // tradeAllowance). Phase 4.3 layers in address-level screening via a
-    // Chainalysis-style on-chain oracle. The check is a read-through to
+    // on-chain sanctions oracle (any `ISanctionsList`). The check is a read-through to
     // the configured oracle contract; on chains where no oracle is
     // deployed (some l2 testnets), governance leaves the oracle address
     // zero and the check becomes a no-op.
@@ -685,7 +685,7 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
 
     /**
      * @notice Reverts when a call from `who` is blocked because the
-     *         Chainalysis oracle has them flagged. Also fires when an
+     *         configured sanctions oracle has them flagged. Also fires when an
      *         `acceptOffer` call would pair the acceptor with a
      *         now-flagged offer creator — the offer author may have
      *         been clean when they posted but is sanctioned now.
@@ -693,14 +693,15 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
     error SanctionedAddress(address who);
 
     /**
-     * @notice Installs the Chainalysis-style sanctions oracle address
-     *         for this chain. Pass `address(0)` to disable screening
-     *         entirely (correct on chains where Chainalysis has not
-     *         deployed an oracle).
+     * @notice Installs the sanctions oracle address (any
+     *         `ISanctionsList`) for this chain. Pass `address(0)` to
+     *         disable screening entirely. Never pass Chainalysis's
+     *         retired on-chain oracle (#2443): it still answers but no
+     *         longer updates; testnets use `TestnetSanctionsOverlay`.
      * @dev Owner-only (enforced inside `LibVaipakam.setSanctionsOracle`),
      *      so timelock-gated after the governance handover. Emits
      *      `LibVaipakam.SanctionsOracleSet`.
-     * @param oracle The Chainalysis oracle contract address, or zero.
+     * @param oracle The sanctions oracle contract address, or zero.
      */
     function setSanctionsOracle(address oracle) external {
         LibVaipakam.setSanctionsOracle(oracle);
