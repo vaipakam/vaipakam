@@ -40,9 +40,10 @@ function useSanctionsSource(flagged: boolean): SanctionsSource[] | undefined {
   return data;
 }
 
-/** The recourse for one settled reason — the only part of the banner that
- *  depends on why the wallet is flagged. A wallet flagged for two reasons
- *  shows two lines. */
+/** One line of the settled explanation — the only part of the banner that
+ *  depends on why the wallet is flagged. A flag that comes from the declared
+ *  recovery sender takes two lines: that the sender is the cause, then which
+ *  list flags the sender and so whom to contact. */
 export function recourseLine(source: SanctionsSource): string {
   switch (source) {
     case 'testList':
@@ -57,8 +58,20 @@ export function recourseLine(source: SanctionsSource): string {
       return copy.sanctions.recourseBannedSource;
     case 'alsoBannedSource':
       return copy.sanctions.recourseAlsoBannedSource;
+    case 'bannedSourceWalletUnread':
+      return copy.sanctions.recourseBannedSourceWalletUnread;
+    case 'senderTestList':
+      return copy.sanctions.recourseSenderTestList;
+    case 'senderBoth':
+      return copy.sanctions.recourseSenderBoth;
+    case 'senderTestListUpstreamUnread':
+      return copy.sanctions.recourseSenderTestListUpstreamUnread;
+    case 'senderOtherList':
+      return copy.sanctions.recourseSenderOtherList;
     case 'bannedSourceUnread':
       return copy.sanctions.recourseBannedSourceUnread;
+    case 'senderLookupUnread':
+      return copy.sanctions.recourseSenderLookupUnread;
     case 'unknown':
       return copy.sanctions.recourseUnknown;
   }

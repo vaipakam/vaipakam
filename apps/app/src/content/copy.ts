@@ -4958,14 +4958,31 @@ const copySource = {
     recourseOtherList:
       'This wallet is on the sanctions list this deployment screens against. If you believe this is an error, contact that list’s provider.',
     recourseBannedSource:
-      'The wallet itself is not on the sanctions list: it is flagged because the sender it declared when recovering tokens is. The flag lifts on its own if that sender is removed from the list.',
-    // Shown AFTER one of the lines above, when the wallet is listed itself
-    // and its declared recovery sender is too: clearing either alone leaves
-    // the wallet flagged.
+      'The wallet itself is not on any list: it is flagged because the sender it declared when recovering tokens is. The flag lifts on its own once that sender is removed from the list that flags it.',
+    // Shown AFTER the wallet's own line, when its declared recovery sender
+    // is flagged too: clearing either alone leaves the wallet flagged.
     recourseAlsoBannedSource:
       'The sender this wallet declared when recovering tokens is flagged as well, so the wallet stays flagged until that sender is also removed from the list.',
+    // The sender is flagged, which flags the wallet by itself; whether the
+    // wallet is ALSO listed could not be read, so it is not said either way.
+    recourseBannedSourceWalletUnread:
+      'The sender this wallet declared when recovering tokens is flagged, and that alone flags the wallet. Whether the wallet itself is also on a list could not be checked just now.',
+    // Each sender line follows one of the three lines above and names the
+    // list that flags the sender, so the user knows whom to contact.
+    recourseSenderTestList:
+      'That sender is on this test network’s own test list, which its operator keeps for testing. If you did not expect this, contact the operator of this test network.',
+    recourseSenderBoth:
+      'That sender is on this test network’s own test list and on the sanctions list it extends. Removing it from the test list would not clear the other list’s flag; if you believe that flag is an error, contact that list’s provider.',
+    recourseSenderTestListUpstreamUnread:
+      'That sender is on this test network’s own test list. Whether the sanctions list it extends also flags it could not be checked just now. If you did not expect this, contact the operator of this test network.',
+    recourseSenderOtherList:
+      'That sender is on the sanctions list this deployment screens against. If you believe this is an error, contact that list’s provider.',
     recourseBannedSourceUnread:
       'This wallet also declared a sender when recovering tokens, and whether that sender is flagged too could not be checked just now. If it is, the wallet stays flagged until that sender is also removed from the list.',
+    // The lookup itself failed: not even whether a sender was declared is
+    // known, so none is asserted.
+    recourseSenderLookupUnread:
+      'Whether this wallet declared a sender when recovering tokens could not be checked just now. If it did and that sender is flagged, the wallet stays flagged until that sender is also removed from the list.',
     recourseUnknown:
       'Why this wallet is flagged could not be read just now, so the right contact cannot be named yet. Reload to try again.',
   },

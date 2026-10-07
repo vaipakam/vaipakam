@@ -32,8 +32,9 @@ const OVERLAY_ABI = TestnetSanctionsOverlayABI as unknown as Abi;
 const ORACLE_ABI = parseAbi(['function isSanctioned(address) view returns (bool)']);
 
 /**
- * One reason in an explanation — {@link readSanctionsSource} returns one or
- * two of these, because a wallet can be flagged for two reasons at once.
+ * One line in an explanation — {@link readSanctionsSource} returns one or
+ * more of these, because a wallet can be flagged for two reasons at once and
+ * each reason names its own list.
  *
  * - `testList`: this test network's own test list flags the wallet, and no
  *   other list it extends does (or it extends none).
@@ -45,10 +46,18 @@ const ORACLE_ABI = parseAbi(['function isSanctioned(address) view returns (bool)
  *   test list extends — and the test list does not.
  * - `bannedSource`: no list flags the wallet itself; the sender it declared
  *   during token recovery is flagged.
- * - `alsoBannedSource`: follows a reason above — the wallet's declared sender
+ * - `alsoBannedSource`: follows the wallet's own line — its declared sender
  *   is flagged as well, so clearing the wallet alone would not lift the flag.
- * - `bannedSourceUnread`: follows a reason above — the wallet declared a
- *   sender, and whether that sender is flagged too could not be read.
+ * - `bannedSourceWalletUnread`: the declared sender is flagged, which flags
+ *   the wallet by itself; whether the wallet is also listed could not be read.
+ * - `senderTestList` / `senderBoth` / `senderTestListUpstreamUnread` /
+ *   `senderOtherList`: follow one of the three sender lines above — which
+ *   list flags the declared sender, and so whom to contact about it, with
+ *   the same meanings as the wallet's lines.
+ * - `bannedSourceUnread`: follows the wallet's own line — the wallet
+ *   declared a sender, and whether that sender is flagged could not be read.
+ * - `senderLookupUnread`: follows the wallet's own line — whether the wallet
+ *   declared a sender at all could not be read.
  * - `unknown`: why the wallet is flagged could not be determined — a read
  *   failed, or at the block read nothing flags it any more (the flag changed
  *   after the banner's own check).
@@ -60,7 +69,13 @@ export type SanctionsSource =
   | 'otherList'
   | 'bannedSource'
   | 'alsoBannedSource'
+  | 'bannedSourceWalletUnread'
+  | 'senderTestList'
+  | 'senderBoth'
+  | 'senderTestListUpstreamUnread'
+  | 'senderOtherList'
   | 'bannedSourceUnread'
+  | 'senderLookupUnread'
   | 'unknown';
 
 /** True iff `err` is the CONTRACT's answer that it has no such function — a
@@ -98,9 +113,10 @@ export type OracleReads =
       byUpstream: boolean | null;
     };
 
-/** What a snapshot says about the wallet ITSELF: an attribution, or that
- *  nothing flags it (`notFlagged`), or that it cannot be told (`unread`). */
-export type WalletReading =
+/** What a snapshot says about one screened address — the wallet, or the
+ *  sender it declared during token recovery: which list flags it, or that
+ *  nothing does (`notFlagged`), or that it cannot be told (`unread`). */
+export type SubjectReading =
   | 'testList'
   | 'both'
   | 'testListUpstreamUnread'
@@ -108,26 +124,64 @@ export type WalletReading =
   | 'notFlagged'
   | 'unread';
 
-/** What a snapshot says about the sender the wallet declared during token
- *  recovery: none declared, flagged, not flagged, or unreadable. */
-export type SenderReading = 'none' | 'flagged' | 'clear' | 'unread';
+type Listing = Exclude<SubjectReading, 'notFlagged' | 'unread'>;
+
+/** What is known of the sender the wallet declared during token recovery
+ *  (`vaultBannedSource`): none declared; the lookup itself failed, so not
+ *  even whether one exists is known; or one is declared, classified through
+ *  the same path as the wallet. */
+export type SenderReading =
+  | { kind: 'none' }
+  | { kind: 'lookupFailed' }
+  | { kind: 'declared'; reading: SubjectReading };
+
+function isListing(r: SubjectReading): r is Listing {
+  return r !== 'notFlagged' && r !== 'unread';
+}
+
+/** The line naming the list that flags the declared sender, and so whom to
+ *  contact about it — the sender's counterpart of the wallet's own line. */
+const SENDER_LINE: Record<Listing, SanctionsSource> = {
+  testList: 'senderTestList',
+  both: 'senderBoth',
+  testListUpstreamUnread: 'senderTestListUpstreamUnread',
+  otherList: 'senderOtherList',
+};
 
 /** Pure combination of the two subjects the Diamond screens for a wallet —
  *  the wallet itself and its declared recovery sender — into the reasons the
- *  banner states. Both are always read, so a wallet flagged for both reasons
- *  is told both: naming only one would point it at a recourse that cannot
- *  lift the flag on its own. */
-export function explain(own: WalletReading, sender: SenderReading): SanctionsSource[] {
-  if (own === 'unread') return ['unknown'];
-  if (own === 'notFlagged') return sender === 'flagged' ? ['bannedSource'] : ['unknown'];
-  if (sender === 'flagged') return [own, 'alsoBannedSource'];
-  if (sender === 'unread') return [own, 'bannedSourceUnread'];
-  return [own];
+ *  banner states, in order. Each subject is judged on its own reading, so
+ *  what is established about one is never lost to a failed read of the
+ *  other, and nothing is said about a subject that was not established:
+ *  a failed lookup is not reported as a declared sender. When nothing is
+ *  established about either, the answer is `unknown`. */
+export function explain(own: SubjectReading, sender: SenderReading): SanctionsSource[] {
+  const lines: SanctionsSource[] = [];
+  const walletListed = isListing(own);
+  if (walletListed) lines.push(own);
+  if (sender.kind === 'lookupFailed') {
+    if (walletListed) lines.push('senderLookupUnread');
+  } else if (sender.kind === 'declared') {
+    const r = sender.reading;
+    if (isListing(r)) {
+      lines.push(
+        walletListed
+          ? 'alsoBannedSource'
+          : own === 'unread'
+            ? 'bannedSourceWalletUnread'
+            : 'bannedSource',
+        SENDER_LINE[r],
+      );
+    } else if (r === 'unread' && walletListed) {
+      lines.push('bannedSourceUnread');
+    }
+  }
+  return lines.length > 0 ? lines : ['unknown'];
 }
 
 /** Pure decision over one snapshot, so every branch is testable without a
  *  chain. Never names a list the snapshot does not show flagging. */
-export function classifyWallet(reads: OracleReads): WalletReading {
+export function classifySubject(reads: OracleReads): SubjectReading {
   if (reads.kind === 'direct') {
     if (reads.flagged === null) return 'unread';
     return reads.flagged ? 'otherList' : 'notFlagged';
@@ -138,13 +192,13 @@ export function classifyWallet(reads: OracleReads): WalletReading {
   return reads.byUpstream ? 'otherList' : 'notFlagged';
 }
 
-/** How `oracle` answers for `wallet` at `blockNumber`. */
-async function readWallet(
+/** How `oracle` answers for `subject` at `blockNumber`. */
+async function readSubject(
   publicClient: PublicClient,
   oracle: `0x${string}`,
-  wallet: `0x${string}`,
+  subject: `0x${string}`,
   blockNumber: bigint,
-): Promise<WalletReading> {
+): Promise<SubjectReading> {
   // `upstream()` never touches the upstream oracle, so an upstream outage
   // cannot make a test list look like a direct oracle.
   let upstream: `0x${string}`;
@@ -164,13 +218,13 @@ async function readWallet(
         address: oracle,
         abi: ORACLE_ABI,
         functionName: 'isSanctioned',
-        args: [wallet],
+        args: [subject],
         blockNumber,
       })) as boolean;
     } catch {
       flagged = null;
     }
-    return classifyWallet({ kind: 'direct', flagged });
+    return classifySubject({ kind: 'direct', flagged });
   }
 
   // One call answers both lists, so they cannot disagree about the moment.
@@ -180,10 +234,10 @@ async function readWallet(
         address: oracle,
         abi: OVERLAY_ABI,
         functionName: 'sanctionSource',
-        args: [wallet],
+        args: [subject],
         blockNumber,
       })) as readonly [boolean, boolean];
-      return classifyWallet({ kind: 'overlay', upstream, byOverlay, byUpstream });
+      return classifySubject({ kind: 'overlay', upstream, byOverlay, byUpstream });
     } catch {
       // The upstream could not be read (its outage reverts the whole call);
       // the test list's own flag still can be.
@@ -195,17 +249,18 @@ async function readWallet(
       address: oracle,
       abi: OVERLAY_ABI,
       functionName: 'flaggedByOverlay',
-      args: [wallet],
+      args: [subject],
       blockNumber,
     })) as boolean;
-    return classifyWallet({ kind: 'overlay', upstream, byOverlay, byUpstream: null });
+    return classifySubject({ kind: 'overlay', upstream, byOverlay, byUpstream: null });
   } catch {
     return 'unread';
   }
 }
 
-/** How the Diamond's declared recovery sender for `wallet` stands with
- *  `oracle` at `blockNumber`. */
+/** The sender `wallet` declared during token recovery, and how `oracle`
+ *  answers for it at `blockNumber`. A failed LOOKUP is kept apart from a
+ *  failed screening read: only the latter establishes that a sender exists. */
 async function readSender(
   publicClient: PublicClient,
   diamond: `0x${string}`,
@@ -213,26 +268,23 @@ async function readSender(
   wallet: `0x${string}`,
   blockNumber: bigint,
 ): Promise<SenderReading> {
+  let source: `0x${string}`;
   try {
-    const source = (await publicClient.readContract({
+    source = (await publicClient.readContract({
       address: diamond,
       abi: DIAMOND_ABI_VIEM,
       functionName: 'vaultBannedSource',
       args: [wallet],
       blockNumber,
     })) as `0x${string}`;
-    if (source === zeroAddress) return 'none';
-    const flagged = (await publicClient.readContract({
-      address: oracle,
-      abi: ORACLE_ABI,
-      functionName: 'isSanctioned',
-      args: [source],
-      blockNumber,
-    })) as boolean;
-    return flagged ? 'flagged' : 'clear';
   } catch {
-    return 'unread';
+    return { kind: 'lookupFailed' };
   }
+  if (source === zeroAddress) return { kind: 'none' };
+  return {
+    kind: 'declared',
+    reading: await readSubject(publicClient, oracle, source, blockNumber),
+  };
 }
 
 /** Reads the configured oracle and explains `wallet`'s flag as one or two
@@ -245,7 +297,8 @@ async function readSender(
  *
  *  The Diamond flags a wallet when the oracle flags the wallet itself OR the
  *  sender it declared during token recovery (`vaultBannedSource`), so both
- *  subjects are read every time. */
+ *  subjects are read every time, through the same classification, and a
+ *  failed read of one never discards what was established about the other. */
 export async function readSanctionsSource(
   publicClient: PublicClient,
   diamond: `0x${string}`,
@@ -271,8 +324,7 @@ export async function readSanctionsSource(
   }
   if (oracle === zeroAddress) return ['unknown'];
 
-  const own = await readWallet(publicClient, oracle, wallet, blockNumber);
-  if (own === 'unread') return ['unknown'];
+  const own = await readSubject(publicClient, oracle, wallet, blockNumber);
   const sender = await readSender(publicClient, diamond, oracle, wallet, blockNumber);
   return explain(own, sender);
 }

@@ -17,7 +17,7 @@ import {
   type PublicClient,
 } from 'viem';
 import {
-  classifyWallet,
+  classifySubject,
   explain,
   isNoSuchFunction,
   readSanctionsSource,
@@ -139,8 +139,8 @@ describe('readSanctionsSource — a test list over another list', () => {
   });
 
   it('is unknown when the other list is unreadable and the test list has not flagged the wallet', async () => {
-    // Nothing is known about the wallet's own listing, so a declared sender
-    // cannot be offered as the reason either.
+    // Neither subject can be told: the outage hides the other list's answer
+    // for the wallet and for its declared sender alike.
     expect(
       await read({
         ...layered,
@@ -175,25 +175,51 @@ describe('readSanctionsSource — an oracle that is not a test list', () => {
 });
 
 describe('readSanctionsSource — a declared recovery sender', () => {
-  it('names the declared sender when no list flags the wallet itself and the sender is listed', async () => {
-    expect(await read({ ...direct, ...bannedSender })).toEqual(['bannedSource']);
-    expect(await read({ ...alone, flaggedByOverlay: false, ...bannedSender })).toEqual(['bannedSource']);
+  /** A test-list answer per address: `listed` are on the test list. */
+  const overlayFlags =
+    (...listed: string[]) =>
+    (who: string) =>
+      listed.includes(who);
+
+  it('names the sender as the cause, and the list that flags it, when no list flags the wallet itself', async () => {
+    expect(await read({ ...direct, ...bannedSender })).toEqual(['bannedSource', 'senderOtherList']);
+    expect(
+      await read({ ...alone, vaultBannedSource: SENDER, flaggedByOverlay: overlayFlags(SENDER) }),
+    ).toEqual(['bannedSource', 'senderTestList']);
+  });
+
+  it('keeps each subject’s own list on a layered test list', async () => {
+    // The wallet is on the test list; its sender only on the list it extends.
+    expect(
+      await read({
+        ...layered,
+        vaultBannedSource: SENDER,
+        sanctionSource: (who: string) => (who === SENDER ? [false, true] : [true, false]),
+      }),
+    ).toEqual(['testList', 'alsoBannedSource', 'senderOtherList']);
   });
 
   it('names both reasons when the wallet and its declared sender are flagged: clearing one alone would not lift the flag', async () => {
-    expect(await read({ ...alone, flaggedByOverlay: true, ...bannedSender })).toEqual([
-      'testList',
-      'alsoBannedSource',
-    ]);
+    expect(
+      await read({ ...alone, vaultBannedSource: SENDER, flaggedByOverlay: overlayFlags(WALLET, SENDER) }),
+    ).toEqual(['testList', 'alsoBannedSource', 'senderTestList']);
     expect(
       await read({ ...direct, vaultBannedSource: SENDER, isSanctioned: () => true }),
-    ).toEqual(['otherList', 'alsoBannedSource']);
+    ).toEqual(['otherList', 'alsoBannedSource', 'senderOtherList']);
   });
 
-  it('says the sender is unread, not absent, when the wallet is flagged and its sender cannot be read', async () => {
+  it('keeps a sender established by the test list when the wallet’s own reading fails (upstream outage)', async () => {
     expect(
-      await read({ ...alone, flaggedByOverlay: true, vaultBannedSource: unreachable('vaultBannedSource') }),
-    ).toEqual(['testList', 'bannedSourceUnread']);
+      await read({
+        ...layered,
+        vaultBannedSource: SENDER,
+        sanctionSource: reverted('sanctionSource'),
+        flaggedByOverlay: overlayFlags(SENDER),
+      }),
+    ).toEqual(['bannedSourceWalletUnread', 'senderTestListUpstreamUnread']);
+  });
+
+  it('says a declared sender is unread when its screening read fails', async () => {
     expect(
       await read({
         ...direct,
@@ -203,24 +229,25 @@ describe('readSanctionsSource — a declared recovery sender', () => {
     ).toEqual(['otherList', 'bannedSourceUnread']);
   });
 
+  it('does not assert a declared sender when the lookup itself fails', async () => {
+    expect(
+      await read({ ...alone, flaggedByOverlay: true, vaultBannedSource: unreachable('vaultBannedSource') }),
+    ).toEqual(['testList', 'senderLookupUnread']);
+  });
+
   it('names the wallet’s own listing alone when its declared sender is not flagged', async () => {
     expect(
-      await read({
-        ...alone,
-        flaggedByOverlay: true,
-        vaultBannedSource: SENDER,
-        isSanctioned: (who: string) => who !== SENDER,
-      }),
+      await read({ ...alone, vaultBannedSource: SENDER, flaggedByOverlay: overlayFlags(WALLET) }),
     ).toEqual(['testList']);
   });
 
-  it('is unknown when the declared sender is no longer listed at the block read', async () => {
+  it('is unknown when the declared sender is no longer flagged and nothing flags the wallet', async () => {
     expect(
       await read({ ...direct, vaultBannedSource: SENDER, isSanctioned: () => false }),
     ).toEqual(['unknown']);
   });
 
-  it('is unknown when the declared sender cannot be read', async () => {
+  it('is unknown when nothing about either subject could be established', async () => {
     expect(
       await read({ ...direct, isSanctioned: false, vaultBannedSource: unreachable('vaultBannedSource') }),
     ).toEqual(['unknown']);
@@ -230,6 +257,9 @@ describe('readSanctionsSource — a declared recovery sender', () => {
         vaultBannedSource: SENDER,
         isSanctioned: (who: string) => (who === SENDER ? unreachable('isSanctioned') : false),
       }),
+    ).toEqual(['unknown']);
+    expect(
+      await read({ ...direct, isSanctioned: unreachable('isSanctioned'), vaultBannedSource: zeroAddress }),
     ).toEqual(['unknown']);
   });
 });
@@ -262,47 +292,62 @@ describe('readSanctionsSource — reads', () => {
   it('pins every read on the declared-sender path to the same block', async () => {
     const blocks: (bigint | undefined)[] = [];
     await readSanctionsSource(client({ ...direct, ...bannedSender }, blocks), DIAMOND, WALLET);
-    // oracle, upstream, isSanctioned(wallet), vaultBannedSource, isSanctioned(sender)
-    expect(blocks).toHaveLength(5);
+    // oracle, upstream + isSanctioned for the wallet, vaultBannedSource,
+    // upstream + isSanctioned for the sender
+    expect(blocks).toHaveLength(6);
     expect(blocks.every((b) => b === BLOCK)).toBe(true);
   });
 });
 
 describe('explain', () => {
-  it('a wallet that cannot be read is unknown, whatever its sender', () => {
-    for (const sender of ['none', 'flagged', 'clear', 'unread'] as const)
+  const none = { kind: 'none' } as const;
+  const lookupFailed = { kind: 'lookupFailed' } as const;
+  const declared = (reading: 'testList' | 'both' | 'otherList' | 'notFlagged' | 'unread') =>
+    ({ kind: 'declared', reading }) as const;
+
+  it('nothing established about either subject is unknown', () => {
+    for (const sender of [none, lookupFailed, declared('notFlagged'), declared('unread')]) {
       expect(explain('unread', sender)).toEqual(['unknown']);
-  });
-
-  it('a wallet no list flags: the sender when it is flagged, else unknown', () => {
-    expect(explain('notFlagged', 'flagged')).toEqual(['bannedSource']);
-    for (const sender of ['none', 'clear', 'unread'] as const)
       expect(explain('notFlagged', sender)).toEqual(['unknown']);
+    }
   });
 
-  it('a listed wallet: its listing, then what is known of its sender', () => {
-    expect(explain('both', 'flagged')).toEqual(['both', 'alsoBannedSource']);
-    expect(explain('both', 'unread')).toEqual(['both', 'bannedSourceUnread']);
-    expect(explain('both', 'clear')).toEqual(['both']);
-    expect(explain('both', 'none')).toEqual(['both']);
+  it('a flagged sender is named with its own list, whatever is known of the wallet', () => {
+    expect(explain('notFlagged', declared('both'))).toEqual(['bannedSource', 'senderBoth']);
+    expect(explain('unread', declared('otherList'))).toEqual([
+      'bannedSourceWalletUnread',
+      'senderOtherList',
+    ]);
+    expect(explain('both', declared('testList'))).toEqual([
+      'both',
+      'alsoBannedSource',
+      'senderTestList',
+    ]);
+  });
+
+  it('a listed wallet: its listing, then only what is established of its sender', () => {
+    expect(explain('both', declared('unread'))).toEqual(['both', 'bannedSourceUnread']);
+    expect(explain('both', lookupFailed)).toEqual(['both', 'senderLookupUnread']);
+    expect(explain('both', declared('notFlagged'))).toEqual(['both']);
+    expect(explain('both', none)).toEqual(['both']);
   });
 });
 
-describe('classifyWallet', () => {
+describe('classifySubject', () => {
   it('a direct oracle: its answer, or unread', () => {
-    expect(classifyWallet({ kind: 'direct', flagged: true })).toBe('otherList');
-    expect(classifyWallet({ kind: 'direct', flagged: false })).toBe('notFlagged');
-    expect(classifyWallet({ kind: 'direct', flagged: null })).toBe('unread');
+    expect(classifySubject({ kind: 'direct', flagged: true })).toBe('otherList');
+    expect(classifySubject({ kind: 'direct', flagged: false })).toBe('notFlagged');
+    expect(classifySubject({ kind: 'direct', flagged: null })).toBe('unread');
   });
   it('a test list with no upstream is the whole list, whatever byUpstream says', () => {
     const base = { kind: 'overlay', upstream: zeroAddress, byOverlay: true } as const;
-    expect(classifyWallet({ ...base, byUpstream: null })).toBe('testList');
-    expect(classifyWallet({ ...base, byUpstream: true })).toBe('testList');
+    expect(classifySubject({ ...base, byUpstream: null })).toBe('testList');
+    expect(classifySubject({ ...base, byUpstream: true })).toBe('testList');
   });
   it('never names a list that the snapshot does not show flagging', () => {
     const base = { kind: 'overlay', upstream: UPSTREAM, byOverlay: false } as const;
-    expect(classifyWallet({ ...base, byUpstream: false })).toBe('notFlagged');
-    expect(classifyWallet({ ...base, byUpstream: null })).toBe('unread');
+    expect(classifySubject({ ...base, byUpstream: false })).toBe('notFlagged');
+    expect(classifySubject({ ...base, byUpstream: null })).toBe('unread');
   });
 });
 

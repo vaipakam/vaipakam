@@ -2317,9 +2317,15 @@
       "recourseBoth": "यह wallet इस test network की अपनी test list और उस sanctions list, दोनों पर है जिसे यह test list extend करती है। Test list से हटाने पर दूसरी list का flag नहीं हटेगा; अगर आपको लगता है वह flag error है, तो उस list के provider से contact करें।",
       "recourseTestListUpstreamUnread": "यह wallet इस test network की अपनी test list पर है। जिस sanctions list को यह extend करती है, वह भी इसे flag करती है या नहीं, यह अभी check नहीं हो सका। अगर आपको इसकी उम्मीद नहीं थी, तो इस test network के operator से contact करें।",
       "recourseOtherList": "यह wallet उस sanctions list पर है जिसके against यह deployment screening करता है। अगर आपको लगता है यह error है, तो उस list के provider से contact करें।",
-      "recourseBannedSource": "यह wallet खुद sanctions list पर नहीं है: यह इसलिए flag है क्योंकि tokens recover करते समय इसने जो sender declare किया था, वह list पर है। अगर वह sender list से हटा दिया जाता है, तो flag अपने आप हट जाएगा।",
+      "recourseBannedSource": "यह wallet खुद किसी list पर नहीं है: यह इसलिए flag है क्योंकि tokens recover करते समय इसने जो sender declare किया था, वह flag है। जिस list ने उस sender को flag किया है, उससे हटते ही यह flag अपने आप हट जाएगा।",
       "recourseAlsoBannedSource": "Tokens recover करते समय इस wallet ने जो sender declare किया था, वह भी flag है, इसलिए जब तक वह sender भी list से नहीं हटता, wallet flag रहेगा।",
+      "recourseBannedSourceWalletUnread": "Tokens recover करते समय इस wallet ने जो sender declare किया था, वह flag है, और सिर्फ़ इसी से wallet flag हो जाता है। Wallet खुद भी किसी list पर है या नहीं, यह अभी check नहीं हो सका।",
+      "recourseSenderTestList": "वह sender इस test network की अपनी test list पर है, जिसे इसका operator testing के लिए रखता है। अगर आपको इसकी उम्मीद नहीं थी, तो इस test network के operator से contact करें।",
+      "recourseSenderBoth": "वह sender इस test network की अपनी test list और उस sanctions list, दोनों पर है जिसे यह test list extend करती है। Test list से हटाने पर दूसरी list का flag नहीं हटेगा; अगर आपको लगता है वह flag error है, तो उस list के provider से contact करें।",
+      "recourseSenderTestListUpstreamUnread": "वह sender इस test network की अपनी test list पर है। जिस sanctions list को यह extend करती है, वह भी उसे flag करती है या नहीं, यह अभी check नहीं हो सका। अगर आपको इसकी उम्मीद नहीं थी, तो इस test network के operator से contact करें।",
+      "recourseSenderOtherList": "वह sender उस sanctions list पर है जिसके against यह deployment screening करता है। अगर आपको लगता है यह error है, तो उस list के provider से contact करें।",
       "recourseBannedSourceUnread": "इस wallet ने tokens recover करते समय एक sender भी declare किया था, और वह sender भी flag है या नहीं, यह अभी check नहीं हो सका। अगर है, तो जब तक वह sender भी list से नहीं हटता, wallet flag रहेगा।",
+      "recourseSenderLookupUnread": "Tokens recover करते समय इस wallet ने कोई sender declare किया था या नहीं, यह अभी check नहीं हो सका। अगर किया था और वह sender flag है, तो जब तक वह sender भी list से नहीं हटता, wallet flag रहेगा।",
       "recourseUnknown": "यह wallet क्यों flag है, यह अभी पढ़ा नहीं जा सका, इसलिए सही contact अभी नहीं बताया जा सकता। फिर से try करने के लिए reload करें।"
     },
     "risk": {
