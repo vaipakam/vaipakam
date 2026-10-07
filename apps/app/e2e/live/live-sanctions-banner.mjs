@@ -125,6 +125,7 @@ const ABI = parseAbi([
   'function flaggedByOverlay(address) view returns (bool)',
   'function vaultBannedSource(address) view returns (address)',
   'function isSanctioned(address) view returns (bool)',
+  'function sanctionSource(address) view returns (bool byOverlay, bool byUpstream)',
 ]);
 
 const { pub } = clientsFor(CHAIN_ID);
@@ -165,9 +166,19 @@ async function flaggedSender() {
 
 let state;
 let sender;
+let byUpstream;
 try {
   state = await chainState();
   sender = await flaggedSender();
+  // The list the test list extends, if any. A wallet it flags is not in the
+  // test-list-only case this drive asserts: the banner then rightly names
+  // both lists, and clearing the test-list entry cannot lift the flag.
+  [, byUpstream] = await pub.readContract({
+    address: OVERLAY,
+    abi: ABI,
+    functionName: 'sanctionSource',
+    args: [WALLET],
+  });
 } catch (err) {
   await blocked('could not read the sanctions state from the chain', err);
 }
@@ -181,6 +192,12 @@ if (sender !== null) {
   await blocked(
     `the wallet's declared recovery sender ${sender} is flagged, which flags the wallet ` +
       'whatever the test list says — pick another SANCTIONS_ROLE, or clear that sender first',
+  );
+}
+if (byUpstream) {
+  await blocked(
+    'the list the test list extends also flags this wallet, so it is not the test-list-only case this drive ' +
+      'asserts and clearing the test-list entry would not lift the flag — pick another SANCTIONS_ROLE',
   );
 }
 const wantFlagged = EXPECT !== 'clear';
