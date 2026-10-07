@@ -2309,16 +2309,16 @@
       "readyToClaim": "{{amount}} VPFI claim के लिए ready।"
     },
     "sanctions": {
-      "title": "यह wallet compliance oracle में listed है।",
-      "line1": "Connected address उस on-chain sanctions oracle पर दिखाई देता है जिसके against Vaipakam screen करता है।",
+      "title": "यह wallet compliance oracle द्वारा flag किया गया है।",
+      "line1": "Connected wallet उस on-chain sanctions oracle द्वारा flag किया गया है जिसके against Vaipakam screen करता है।",
       "line2": "New positions (offers, loans, rentals, deposits) blocked हैं और pass नहीं होंगी।",
       "line3": "Existing positions repay और close करना open रहता है ताकि counterparties whole हो सकें, लेकिन इस wallet को claims और payouts flag रहने तक blocked हैं।",
-      "recourseProvider": "अगर आपको लगता है यह error है, oracle provider (Chainalysis) से contact करें।",
-      "recourseTestList": "यह wallet इस test network की अपनी test list पर है, जिसे इसका operator testing के लिए रखता है; sanctions-data provider (Chainalysis) ने इसे flag नहीं किया है। अगर आपको इसकी उम्मीद नहीं थी, तो इस test network के operator से contact करें।",
-      "recourseTestListNoProvider": "यह wallet इस test network की अपनी test list पर है, जिसे इसका operator testing के लिए रखता है। Sanctions-data provider (Chainalysis) इस network पर कोई oracle publish नहीं करता, इसलिए उसकी list check नहीं की गई। अगर आपको इसकी उम्मीद नहीं थी, तो इस test network के operator से contact करें।",
-      "recourseBoth": "यह wallet इस test network की अपनी test list और sanctions-data provider (Chainalysis) की list, दोनों पर है। Test list से हटाने पर provider का flag नहीं हटेगा; अगर आपको लगता है वह flag error है, तो Chainalysis से contact करें।",
-      "recourseTestListProviderUnread": "यह wallet इस test network की अपनी test list पर है। Sanctions-data provider (Chainalysis) भी इसे list करता है या नहीं, यह अभी check नहीं हो सका। अगर आपको इसकी उम्मीद नहीं थी, तो इस test network के operator से contact करें।",
-      "recourseUnknown": "किस list ने इस wallet को flag किया, यह अभी पढ़ा नहीं जा सका, इसलिए सही contact अभी नहीं बताया जा सकता। फिर से try करने के लिए reload करें।"
+      "recourseTestList": "यह wallet इस test network की अपनी test list पर है, जिसे इसका operator testing के लिए रखता है। अगर आपको इसकी उम्मीद नहीं थी, तो इस test network के operator से contact करें।",
+      "recourseBoth": "यह wallet इस test network की अपनी test list और उस sanctions list, दोनों पर है जिसे यह test list extend करती है। Test list से हटाने पर दूसरी list का flag नहीं हटेगा; अगर आपको लगता है वह flag error है, तो उस list के provider से contact करें।",
+      "recourseTestListUpstreamUnread": "यह wallet इस test network की अपनी test list पर है। जिस sanctions list को यह extend करती है, वह भी इसे flag करती है या नहीं, यह अभी check नहीं हो सका। अगर आपको इसकी उम्मीद नहीं थी, तो इस test network के operator से contact करें।",
+      "recourseOtherList": "यह wallet उस sanctions list पर है जिसके against यह deployment screening करता है। अगर आपको लगता है यह error है, तो उस list के provider से contact करें।",
+      "recourseBannedSource": "यह wallet खुद sanctions list पर नहीं है: यह इसलिए flag है क्योंकि tokens recover करते समय इसने जो sender declare किया था, वह list पर है। अगर वह sender list से हटा दिया जाता है, तो flag अपने आप हट जाएगा।",
+      "recourseUnknown": "यह wallet क्यों flag है, यह अभी पढ़ा नहीं जा सका, इसलिए सही contact अभी नहीं बताया जा सकता। फिर से try करने के लिए reload करें।"
     },
     "risk": {
       "healthTitle": "Health {{ratio}} — 1.00 liquidation line है",

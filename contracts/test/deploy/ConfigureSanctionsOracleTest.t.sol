@@ -38,19 +38,9 @@ contract StubSanctionsDiamond {
     }
 }
 
-/// @dev A Chainalysis-shaped oracle whose owner is baked into its code, so it
-///      survives `vm.etch` onto the real Chainalysis addresses.
-contract FakeChainalysisOracle {
-    address internal immutable OWNER;
-
-    constructor(address owner_) {
-        OWNER = owner_;
-    }
-
-    function owner() external view returns (address) {
-        return OWNER;
-    }
-
+/// @dev A list with a fixed answer, standing in for an upstream a recorded
+///      overlay might extend.
+contract FixedSanctionsList {
     function isSanctioned(address) external pure returns (bool) {
         return false;
     }
@@ -58,11 +48,10 @@ contract FakeChainalysisOracle {
 
 /**
  * @title  ConfigureSanctionsOracleTest
- * @notice #2439 — what `ConfigureSanctionsOracle` sets and records: an overlay
- *         over Chainalysis on a testnet that has it, an overlay alone on one
- *         that does not, Chainalysis directly on a mainnet, a refusal on a
- *         mainnet without it, reuse of a recorded overlay, and the refusals
- *         for a foreign owner on either side.
+ * @notice #2439 — what `ConfigureSanctionsOracle` sets and records: on a
+ *         testnet, the admin's test list alone (no upstream), reused while it
+ *         is fit; on a mainnet, a refusal, because the only on-chain source the
+ *         script was written for — Chainalysis's oracle — was retired (#2443).
  */
 contract ConfigureSanctionsOracleTest is Test {
     uint256 internal adminKey = 0xA11CE;
@@ -75,10 +64,6 @@ contract ConfigureSanctionsOracleTest is Test {
         admin = vm.addr(adminKey);
         vm.setEnv("ADMIN_PRIVATE_KEY", vm.toString(adminKey));
         vm.setEnv("DEPLOYER_PRIVATE_KEY", vm.toString(deployerKey));
-    }
-
-    function _etchChainalysis(address at, address owner_) internal {
-        vm.etch(at, address(new FakeChainalysisOracle(owner_)).code);
     }
 
     /// @dev A fresh script on `chainId` whose artifact (under a scratch root)
@@ -99,8 +84,12 @@ contract ConfigureSanctionsOracleTest is Test {
         );
     }
 
+    function _file() internal view returns (string memory) {
+        return string.concat(root, "/", Deployments.chainSlug(), "/addresses.json");
+    }
+
     function _artifact() internal view returns (string memory) {
-        return vm.readFile(string.concat(root, "/", Deployments.chainSlug(), "/addresses.json"));
+        return vm.readFile(_file());
     }
 
     function _cleanup() internal {
@@ -109,25 +98,23 @@ contract ConfigureSanctionsOracleTest is Test {
 
     // ── Testnets ──────────────────────────────────────────────────────
 
-    /// @notice Base Sepolia: a fresh overlay over Chainalysis, owned by the
-    ///         admin, set on the Diamond and recorded with its upstream.
-    function test_Testnet_WithChainalysis_SetsAnOverlayOverIt() public {
+    /// @notice Base Sepolia: a fresh overlay with no upstream, owned by the
+    ///         admin, set on the Diamond and recorded.
+    function test_Testnet_SetsTheAdminsTestListAlone() public {
         StubSanctionsDiamond d = new StubSanctionsDiamond(admin);
         ConfigureSanctionsOracle s = _script(84532, "base-sepolia", address(d));
-        address chainalysis = s.CHAINALYSIS_DEFAULT();
-        _etchChainalysis(chainalysis, s.CHAINALYSIS_OWNER());
 
         s.run();
 
         TestnetSanctionsOverlay overlay = TestnetSanctionsOverlay(d.getSanctionsOracle());
-        assertTrue(address(overlay) != address(0) && address(overlay) != chainalysis, "an overlay is configured");
-        assertEq(address(overlay.upstream()), chainalysis, "over Chainalysis");
+        assertTrue(address(overlay).code.length != 0, "an overlay is configured");
+        assertEq(address(overlay.upstream()), address(0), "no upstream: the retired oracle is not layered in");
         assertEq(overlay.owner(), admin, "owned by the admin");
 
         string memory json = _artifact();
         assertEq(vm.parseJsonAddress(json, ".sanctions.oracle"), address(overlay));
         assertEq(vm.parseJsonString(json, ".sanctions.kind"), "testnet-overlay");
-        assertEq(vm.parseJsonAddress(json, ".sanctions.upstream"), chainalysis);
+        assertFalse(vm.keyExistsJson(json, ".sanctions.upstream"));
         assertEq(vm.parseJsonAddress(json, ".sanctionsTestnetOverlay"), address(overlay), "the deployment is recorded");
         _cleanup();
     }
@@ -141,7 +128,6 @@ contract ConfigureSanctionsOracleTest is Test {
         address timelock = makeAddr("timelock");
         StubSanctionsDiamond d = new StubSanctionsDiamond(timelock);
         ConfigureSanctionsOracle s = _script(84532, "testnet-timelock", address(d));
-        _etchChainalysis(s.CHAINALYSIS_DEFAULT(), s.CHAINALYSIS_OWNER());
 
         s.run();
 
@@ -149,7 +135,7 @@ contract ConfigureSanctionsOracleTest is Test {
         string memory json = _artifact();
         address overlay = vm.parseJsonAddress(json, ".sanctionsTestnetOverlay");
         assertTrue(overlay.code.length != 0, "the overlay the call names exists");
-        assertFalse(vm.keyExistsJson(json, ".sanctions.oracle"), "not recorded as configured");
+        assertFalse(vm.keyExistsJson(json, ".sanctions"), "not recorded as configured");
 
         vm.prank(timelock);
         d.setSanctionsOracle(overlay);
@@ -160,36 +146,18 @@ contract ConfigureSanctionsOracleTest is Test {
         _cleanup();
     }
 
-    /// @notice A testnet Chainalysis does not cover gets an overlay that is the
-    ///         whole list, and no upstream key.
-    function test_Testnet_WithoutChainalysis_SetsAnOverlayAlone() public {
+    /// @notice Codex #2442 r3 — the `.sanctions` record is replaced whole, so
+    ///         a field written by an earlier configuration (here an upstream)
+    ///         does not survive.
+    function test_Testnet_PriorRecord_IsReplacedWhole() public {
         StubSanctionsDiamond d = new StubSanctionsDiamond(admin);
-        ConfigureSanctionsOracle s = _script(421614, "arb-sepolia", address(d));
-
-        s.run();
-
-        TestnetSanctionsOverlay overlay = TestnetSanctionsOverlay(d.getSanctionsOracle());
-        assertEq(address(overlay.upstream()), address(0));
-        string memory json = _artifact();
-        assertEq(vm.parseJsonString(json, ".sanctions.kind"), "testnet-overlay");
-        assertFalse(vm.keyExistsJson(json, ".sanctions.upstream"), "no upstream recorded where there is none");
-        _cleanup();
-    }
-
-    /// @notice Codex #2442 r3 — a record left by an earlier configuration that
-    ///         had an upstream does not survive a configuration without one.
-    ///         The `.sanctions` record is replaced whole, so the new overlay is
-    ///         never described as extending the old one's Chainalysis oracle.
-    function test_Testnet_PriorRecordWithUpstream_IsReplacedWhole() public {
-        StubSanctionsDiamond d = new StubSanctionsDiamond(admin);
-        ConfigureSanctionsOracle s = _script(421614, "stale-upstream", address(d));
-        string memory file = string.concat(root, "/", Deployments.chainSlug(), "/addresses.json");
+        ConfigureSanctionsOracle s = _script(421614, "stale-record", address(d));
         vm.writeJson(
             string.concat(
                 "{\"oracle\":\"", vm.toString(address(0xBEEF)),
-                "\",\"kind\":\"testnet-overlay\",\"upstream\":\"", vm.toString(address(0xC0FFEE)), "\"}"
+                "\",\"kind\":\"chainalysis\",\"upstream\":\"", vm.toString(address(0xC0FFEE)), "\"}"
             ),
-            file,
+            _file(),
             ".sanctions"
         );
 
@@ -198,7 +166,7 @@ contract ConfigureSanctionsOracleTest is Test {
         string memory json = _artifact();
         assertEq(vm.parseJsonAddress(json, ".sanctions.oracle"), d.getSanctionsOracle());
         assertEq(vm.parseJsonString(json, ".sanctions.kind"), "testnet-overlay");
-        assertFalse(vm.keyExistsJson(json, ".sanctions.upstream"), "the earlier upstream is gone");
+        assertFalse(vm.keyExistsJson(json, ".sanctions.upstream"), "the earlier field is gone");
         _cleanup();
     }
 
@@ -206,44 +174,42 @@ contract ConfigureSanctionsOracleTest is Test {
     function test_Testnet_SecondRun_ReusesTheRecordedOverlay() public {
         StubSanctionsDiamond d = new StubSanctionsDiamond(admin);
         ConfigureSanctionsOracle s = _script(84532, "reuse", address(d));
-        _etchChainalysis(s.CHAINALYSIS_DEFAULT(), s.CHAINALYSIS_OWNER());
 
         s.run();
         address first = d.getSanctionsOracle();
+        vm.prank(admin);
+        TestnetSanctionsOverlay(first).setFlagged(makeAddr("flagged"), true);
         s.run();
 
         assertEq(d.getSanctionsOracle(), first, "the same overlay");
+        assertTrue(TestnetSanctionsOverlay(first).isSanctioned(makeAddr("flagged")), "its flags survive");
         assertEq(vm.parseJsonAddress(_artifact(), ".sanctions.oracle"), first);
         _cleanup();
     }
 
-    /// @notice A recorded overlay over a different upstream is replaced, not
-    ///         reused.
-    function test_Testnet_RecordedOverlayWithAnotherUpstream_IsReplaced() public {
+    /// @notice A recorded overlay that layers over an upstream (e.g. the
+    ///         retired Chainalysis oracle) is replaced, not reused.
+    function test_Testnet_RecordedOverlayWithAnUpstream_IsReplaced() public {
         StubSanctionsDiamond d = new StubSanctionsDiamond(admin);
         ConfigureSanctionsOracle s = _script(84532, "replace", address(d));
-        _etchChainalysis(s.CHAINALYSIS_DEFAULT(), s.CHAINALYSIS_OWNER());
-        TestnetSanctionsOverlay stale = new TestnetSanctionsOverlay(admin, address(0));
-        string memory file = string.concat(root, "/", Deployments.chainSlug(), "/addresses.json");
-        vm.writeJson(vm.toString(address(stale)), file, ".sanctionsTestnetOverlay");
+        TestnetSanctionsOverlay layered = new TestnetSanctionsOverlay(admin, address(new FixedSanctionsList()));
+        vm.writeJson(vm.toString(address(layered)), _file(), ".sanctionsTestnetOverlay");
 
         s.run();
 
         address configured = d.getSanctionsOracle();
-        assertTrue(configured != address(stale), "the stale overlay is not reused");
-        assertEq(address(TestnetSanctionsOverlay(configured).upstream()), s.CHAINALYSIS_DEFAULT());
+        assertTrue(configured != address(layered), "the layered overlay is not reused");
+        assertEq(address(TestnetSanctionsOverlay(configured).upstream()), address(0));
         _cleanup();
     }
 
-    /// @notice A recorded overlay with the right upstream but another owner is
-    ///         not reused: its owner decides who is flagged.
+    /// @notice A recorded overlay owned by someone else is not reused: its
+    ///         owner decides who is flagged.
     function test_Testnet_RecordedOverlayOwnedByAnother_IsReplaced() public {
         StubSanctionsDiamond d = new StubSanctionsDiamond(admin);
         ConfigureSanctionsOracle s = _script(84532, "foreign-owner", address(d));
-        _etchChainalysis(s.CHAINALYSIS_DEFAULT(), s.CHAINALYSIS_OWNER());
-        TestnetSanctionsOverlay foreign = new TestnetSanctionsOverlay(makeAddr("someone"), s.CHAINALYSIS_DEFAULT());
-        string memory file = string.concat(root, "/", Deployments.chainSlug(), "/addresses.json");
-        vm.writeJson(vm.toString(address(foreign)), file, ".sanctionsTestnetOverlay");
+        TestnetSanctionsOverlay foreign = new TestnetSanctionsOverlay(makeAddr("someone"), address(0));
+        vm.writeJson(vm.toString(address(foreign)), _file(), ".sanctionsTestnetOverlay");
 
         s.run();
 
@@ -258,12 +224,10 @@ contract ConfigureSanctionsOracleTest is Test {
     function test_Testnet_RecordedOverlayWithPendingTransfer_IsReplaced() public {
         StubSanctionsDiamond d = new StubSanctionsDiamond(admin);
         ConfigureSanctionsOracle s = _script(84532, "pending-owner", address(d));
-        _etchChainalysis(s.CHAINALYSIS_DEFAULT(), s.CHAINALYSIS_OWNER());
-        TestnetSanctionsOverlay pending = new TestnetSanctionsOverlay(admin, s.CHAINALYSIS_DEFAULT());
+        TestnetSanctionsOverlay pending = new TestnetSanctionsOverlay(admin, address(0));
         vm.prank(admin);
         pending.transferOwnership(makeAddr("next"));
-        string memory file = string.concat(root, "/", Deployments.chainSlug(), "/addresses.json");
-        vm.writeJson(vm.toString(address(pending)), file, ".sanctionsTestnetOverlay");
+        vm.writeJson(vm.toString(address(pending)), _file(), ".sanctionsTestnetOverlay");
 
         s.run();
 
@@ -271,107 +235,46 @@ contract ConfigureSanctionsOracleTest is Test {
         _cleanup();
     }
 
+    /// @notice Already pointing at the recorded overlay, a run sends nothing
+    ///         and still records — so an artifact can be backfilled for a
+    ///         Diamond whose owner made the call by hand.
+    function test_Testnet_AlreadyConfigured_RecordsWithoutResetting() public {
+        address timelock = makeAddr("timelock");
+        StubSanctionsDiamond d = new StubSanctionsDiamond(timelock);
+        ConfigureSanctionsOracle s = _script(84532, "backfill", address(d));
+        TestnetSanctionsOverlay overlay = new TestnetSanctionsOverlay(admin, address(0));
+        vm.writeJson(vm.toString(address(overlay)), _file(), ".sanctionsTestnetOverlay");
+        vm.prank(timelock);
+        d.setSanctionsOracle(address(overlay));
+
+        s.run();
+
+        assertEq(vm.parseJsonAddress(_artifact(), ".sanctions.oracle"), address(overlay));
+        _cleanup();
+    }
+
     // ── Mainnets ──────────────────────────────────────────────────────
 
-    /// @notice Base: Chainalysis's Base address directly, kind recorded, no
-    ///         overlay and no upstream key.
-    function test_Mainnet_SetsChainalysisDirectly() public {
-        StubSanctionsDiamond d = new StubSanctionsDiamond(admin);
-        ConfigureSanctionsOracle s = _script(8453, "base", address(d));
-        address chainalysis = s.CHAINALYSIS_BASE();
-        _etchChainalysis(chainalysis, s.CHAINALYSIS_OWNER());
+    /// @notice Every mainnet is refused — including the ones Chainalysis's
+    ///         retired oracle still answers on — and nothing is deployed,
+    ///         configured or recorded.
+    function test_Mainnet_IsRefused() public {
+        uint256[6] memory mainnets = [uint256(1), 8453, 42161, 10, 137, 56];
+        for (uint256 i; i < mainnets.length; ++i) {
+            StubSanctionsDiamond d = new StubSanctionsDiamond(admin);
+            ConfigureSanctionsOracle s = _script(mainnets[i], string.concat("mainnet-", vm.toString(mainnets[i])), address(d));
 
-        s.run();
+            vm.expectRevert(
+                bytes(
+                    "ConfigureSanctionsOracle: no supported on-chain sanctions source for a mainnet (Chainalysis retired its oracle on 2026-03-18; see #2443)"
+                )
+            );
+            s.run();
 
-        assertEq(d.getSanctionsOracle(), chainalysis);
-        string memory json = _artifact();
-        assertEq(vm.parseJsonAddress(json, ".sanctions.oracle"), chainalysis);
-        assertEq(vm.parseJsonString(json, ".sanctions.kind"), "chainalysis");
-        assertFalse(vm.keyExistsJson(json, ".sanctions.upstream"));
-        _cleanup();
-    }
-
-    /// @notice A mainnet with no verified Chainalysis oracle is refused, not
-    ///         left unscreened and not given an overlay.
-    function test_Mainnet_WithoutChainalysis_IsRefused() public {
-        StubSanctionsDiamond d = new StubSanctionsDiamond(admin);
-        ConfigureSanctionsOracle s = _script(1101, "zkevm", address(d));
-
-        vm.expectRevert(
-            bytes(
-                "ConfigureSanctionsOracle: no verified Chainalysis oracle on this mainnet; configuring another screen needs a recorded decision"
-            )
-        );
-        s.run();
-        assertEq(d.getSanctionsOracle(), address(0));
-        _cleanup();
-    }
-
-    // ── Refusals ──────────────────────────────────────────────────────
-
-    /// @notice A contract at the Chainalysis address that Chainalysis does not
-    ///         own is refused before anything is configured.
-    function test_ForeignOwnerAtTheChainalysisAddress_IsRefused() public {
-        StubSanctionsDiamond d = new StubSanctionsDiamond(admin);
-        ConfigureSanctionsOracle s = _script(8453, "impostor", address(d));
-        _etchChainalysis(s.CHAINALYSIS_BASE(), makeAddr("impostor"));
-
-        vm.expectRevert(
-            bytes("ConfigureSanctionsOracle: the oracle at the Chainalysis address is not owned by Chainalysis")
-        );
-        s.run();
-        assertEq(d.getSanctionsOracle(), address(0));
-        _cleanup();
-    }
-
-    /// @notice A mainnet Diamond the admin key does not own (a timelock): the
-    ///         oracle is left as it was and nothing is recorded as configured;
-    ///         the run prints the call to schedule instead.
-    function test_Mainnet_DiamondNotOwnedByAdmin_LeavesTheOracleUnrecorded() public {
-        StubSanctionsDiamond d = new StubSanctionsDiamond(makeAddr("timelock"));
-        ConfigureSanctionsOracle s = _script(8453, "timelock", address(d));
-        _etchChainalysis(s.CHAINALYSIS_BASE(), s.CHAINALYSIS_OWNER());
-
-        s.run();
-
-        assertEq(d.getSanctionsOracle(), address(0));
-        string memory json = _artifact();
-        assertFalse(vm.keyExistsJson(json, ".sanctions.oracle"), "not recorded as configured");
-        assertFalse(vm.keyExistsJson(json, ".sanctions.kind"));
-        _cleanup();
-    }
-
-    /// @notice Already pointing at the target, a run sends nothing and still
-    ///         records — so an artifact can be backfilled for a Diamond someone
-    ///         configured by hand.
-    function test_AlreadyConfigured_RecordsWithoutResetting() public {
-        StubSanctionsDiamond d = new StubSanctionsDiamond(makeAddr("timelock"));
-        ConfigureSanctionsOracle s = _script(8453, "backfill", address(d));
-        address chainalysis = s.CHAINALYSIS_BASE();
-        _etchChainalysis(chainalysis, s.CHAINALYSIS_OWNER());
-        vm.prank(makeAddr("timelock"));
-        d.setSanctionsOracle(chainalysis);
-
-        s.run();
-
-        assertEq(vm.parseJsonAddress(_artifact(), ".sanctions.oracle"), chainalysis);
-        _cleanup();
-    }
-
-    // ── The table ─────────────────────────────────────────────────────
-
-    function test_ChainalysisTable() public {
-        ConfigureSanctionsOracle s = new ConfigureSanctionsOracle();
-        address d = s.CHAINALYSIS_DEFAULT();
-        assertEq(s.chainalysisFor(1), d);
-        assertEq(s.chainalysisFor(42161), d);
-        assertEq(s.chainalysisFor(10), d);
-        assertEq(s.chainalysisFor(137), d);
-        assertEq(s.chainalysisFor(56), d);
-        assertEq(s.chainalysisFor(84532), d);
-        assertEq(s.chainalysisFor(8453), s.CHAINALYSIS_BASE());
-        assertEq(s.chainalysisFor(11155111), address(0));
-        assertEq(s.chainalysisFor(421614), address(0));
-        assertEq(s.chainalysisFor(31337), address(0));
+            assertEq(d.getSanctionsOracle(), address(0));
+            assertFalse(vm.keyExistsJson(_artifact(), ".sanctions"));
+            assertFalse(vm.keyExistsJson(_artifact(), ".sanctionsTestnetOverlay"));
+            _cleanup();
+        }
     }
 }

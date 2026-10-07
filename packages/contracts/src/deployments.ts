@@ -305,13 +305,11 @@ export interface Deployment {
    *  the live answer; this records what the configure step set. */
   sanctions?: {
     oracle: HexAddress;
-    /** Chainalysis's oracle directly (mainnets), or a
-     *  `TestnetSanctionsOverlay` (testnets): Chainalysis's list plus
-     *  addresses this network's admin flagged for testing. */
-    kind: 'chainalysis' | 'testnet-overlay';
-    /** For a testnet overlay: the Chainalysis oracle it extends. Absent when
-     *  the chain has none and the overlay is the whole list. */
-    upstream?: HexAddress;
+    /** A `TestnetSanctionsOverlay` with no upstream: this network admin's
+     *  test list is the whole screen. No mainnet kind exists yet: the
+     *  configure step refuses a mainnet until a supported source is chosen
+     *  (#2443), since Chainalysis retired its on-chain oracle. */
+    kind: 'testnet-overlay';
   };
   /** For a testnet: the `TestnetSanctionsOverlay` deployed for this chain,
    *  recorded when deployed. Equals `sanctions.oracle` once the Diamond is

@@ -510,33 +510,29 @@ library Deployments {
     function writeRewardCustodyHolder(address a) internal { _writeAddr(".rewardCustodyHolder", a); }
     /// @notice #2439 — the sanctions oracle `ConfigureSanctionsOracle` set on
     ///         this Diamond, recorded as ONE `.sanctions` object:
-    ///         `{oracle, kind, upstream?}`. `kind` is "chainalysis" or
-    ///         "testnet-overlay"; `upstream` is the Chainalysis oracle an
-    ///         overlay extends, and is omitted where there is none.
+    ///         `{oracle, kind}`. `kind` is "testnet-overlay" today; the record
+    ///         is an object so that a later source (#2443) can add fields.
     ///
     /// @dev    The object is replaced WHOLE on every write. The typed writers
-    ///         merge into the file and have no way to delete a key, so writing
-    ///         the three fields as separate top-level keys let a field from an
-    ///         earlier configuration outlive the one that replaced it — an
-    ///         overlay with no upstream recorded beside the previous overlay's
-    ///         upstream (Codex #2442 r3). One object, one write: the record
-    ///         describes one configuration or none.
+    ///         merge into the file and have no way to delete a key, so fields
+    ///         written as separate top-level keys let one from an earlier
+    ///         configuration outlive the configuration that replaced it
+    ///         (Codex #2442 r3). One object, one write: the record describes
+    ///         one configuration or none.
     ///
     ///         The JSON is assembled by hand rather than with `serialize*`,
     ///         whose per-object-key state persists across calls in a run and
-    ///         would carry an `upstream` from a previous call into this one —
-    ///         the same stale-field defect by another door.
-    function writeSanctionsRecord(address oracle, string memory kind, address upstream) internal {
+    ///         would carry a field from a previous call into this one — the
+    ///         same stale-field defect by another door.
+    function writeSanctionsRecord(address oracle, string memory kind) internal {
         if (_dryRunSkips(".sanctions")) return;
         _ensureFile();
-        string memory obj = string.concat(
-            "{\"oracle\":\"", CHEATS.toString(oracle), "\",\"kind\":\"", kind, "\""
-        );
-        if (upstream != address(0)) {
-            obj = string.concat(obj, ",\"upstream\":\"", CHEATS.toString(upstream), "\"");
-        }
         // forge-lint: disable-next-line(unsafe-cheatcode)
-        CHEATS.writeJson(string.concat(obj, "}"), path(), ".sanctions");
+        CHEATS.writeJson(
+            string.concat("{\"oracle\":\"", CHEATS.toString(oracle), "\",\"kind\":\"", kind, "\"}"),
+            path(),
+            ".sanctions"
+        );
     }
     /// @notice #2439 — the overlay deployed on this testnet, recorded when it
     ///         is deployed and independently of whether the Diamond has been

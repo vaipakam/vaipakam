@@ -2309,16 +2309,16 @@
       "readyToClaim": "{{amount}} VPFI listos para reclamar."
     },
     "sanctions": {
-      "title": "Esta billetera aparece en el oráculo de cumplimiento.",
-      "line1": "La dirección conectada aparece en el oráculo de sanciones on-chain contra el que Vaipakam revisa.",
+      "title": "Esta billetera está marcada por el oráculo de cumplimiento.",
+      "line1": "La billetera conectada está marcada por el oráculo de sanciones on-chain contra el que Vaipakam revisa.",
       "line2": "Las nuevas posiciones (ofertas, préstamos, alquileres, depósitos) están bloqueadas y no pasarán.",
       "line3": "Reembolsar y cerrar posiciones existentes sigue abierto para que tus contrapartes puedan quedar cubiertas, pero los reclamos y cobros de fondos hacia esta billetera están bloqueados mientras esté marcada.",
-      "recourseProvider": "Si crees que es un error, contacta al proveedor del oráculo (Chainalysis).",
-      "recourseTestList": "Esta billetera está en la lista de prueba propia de esta red de prueba, que su operador mantiene para pruebas; el proveedor de datos de sanciones (Chainalysis) no la ha marcado. Si no esperabas esto, contacta al operador de esta red de prueba.",
-      "recourseTestListNoProvider": "Esta billetera está en la lista de prueba propia de esta red de prueba, que su operador mantiene para pruebas. El proveedor de datos de sanciones (Chainalysis) no publica ningún oráculo en esta red, así que su lista no se consultó. Si no esperabas esto, contacta al operador de esta red de prueba.",
-      "recourseBoth": "Esta billetera está tanto en la lista de prueba propia de esta red de prueba como en la lista del proveedor de datos de sanciones (Chainalysis). Quitarla de la lista de prueba no eliminaría la marca del proveedor; si crees que esa marca es un error, contacta a Chainalysis.",
-      "recourseTestListProviderUnread": "Esta billetera está en la lista de prueba propia de esta red de prueba. No se pudo comprobar en este momento si el proveedor de datos de sanciones (Chainalysis) también la incluye. Si no esperabas esto, contacta al operador de esta red de prueba.",
-      "recourseUnknown": "No se pudo leer en este momento qué lista marcó esta billetera, así que todavía no se puede indicar a quién contactar. Recarga para volver a intentarlo."
+      "recourseTestList": "Esta billetera está en la lista de prueba propia de esta red de prueba, que su operador mantiene para pruebas. Si no esperabas esto, contacta al operador de esta red de prueba.",
+      "recourseBoth": "Esta billetera está tanto en la lista de prueba propia de esta red de prueba como en la lista de sanciones que esta amplía. Quitarla de la lista de prueba no eliminaría la marca de la otra lista; si crees que esa marca es un error, contacta al proveedor de esa lista.",
+      "recourseTestListUpstreamUnread": "Esta billetera está en la lista de prueba propia de esta red de prueba. No se pudo comprobar en este momento si la lista de sanciones que esta amplía también la marca. Si no esperabas esto, contacta al operador de esta red de prueba.",
+      "recourseOtherList": "Esta billetera está en la lista de sanciones con la que este despliegue realiza la verificación. Si crees que es un error, contacta al proveedor de esa lista.",
+      "recourseBannedSource": "La billetera en sí no está en la lista de sanciones: está marcada porque el remitente que declaró al recuperar tokens sí lo está. La marca se levanta automáticamente si ese remitente se elimina de la lista.",
+      "recourseUnknown": "No se pudo leer en este momento por qué esta billetera está marcada, así que todavía no se puede indicar a quién contactar. Recarga para volver a intentarlo."
     },
     "risk": {
       "healthTitle": "Salud {{ratio}} — 1,00 es la línea de liquidación",

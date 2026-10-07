@@ -2309,16 +2309,16 @@
       "readyToClaim": "{{amount}} VPFI prêts à réclamer."
     },
     "sanctions": {
-      "title": "Ce portefeuille est listé par l'oracle de conformité.",
-      "line1": "L'adresse connectée apparaît sur l'oracle de sanctions on-chain contre lequel Vaipakam vérifie.",
+      "title": "Ce portefeuille est signalé par l'oracle de conformité.",
+      "line1": "Le portefeuille connecté est signalé par l'oracle de sanctions on-chain contre lequel Vaipakam vérifie.",
       "line2": "Les nouvelles positions (offres, prêts, locations, dépôts) sont bloquées et ne passeront pas.",
       "line3": "Rembourser et clôturer les positions existantes reste ouvert afin que vos contreparties puissent être indemnisées, mais les réclamations et retraits de fonds vers ce portefeuille sont bloqués tant qu'il est signalé.",
-      "recourseProvider": "Si vous pensez qu'il s'agit d'une erreur, contactez le fournisseur de l'oracle (Chainalysis).",
-      "recourseTestList": "Ce portefeuille figure sur la liste de test propre à ce réseau de test, tenue par son opérateur à des fins de test ; le fournisseur de données de sanctions (Chainalysis) ne l'a pas signalé. Si vous ne vous y attendiez pas, contactez l'opérateur de ce réseau de test.",
-      "recourseTestListNoProvider": "Ce portefeuille figure sur la liste de test propre à ce réseau de test, tenue par son opérateur à des fins de test. Le fournisseur de données de sanctions (Chainalysis) ne publie aucun oracle sur ce réseau ; sa liste n'a donc pas été consultée. Si vous ne vous y attendiez pas, contactez l'opérateur de ce réseau de test.",
-      "recourseBoth": "Ce portefeuille figure à la fois sur la liste de test propre à ce réseau de test et sur la liste du fournisseur de données de sanctions (Chainalysis). Le retirer de la liste de test ne lèverait pas le signalement du fournisseur ; si vous pensez que ce signalement est une erreur, contactez Chainalysis.",
-      "recourseTestListProviderUnread": "Ce portefeuille figure sur la liste de test propre à ce réseau de test. Il n'a pas été possible de vérifier pour l'instant si le fournisseur de données de sanctions (Chainalysis) le répertorie aussi. Si vous ne vous y attendiez pas, contactez l'opérateur de ce réseau de test.",
-      "recourseUnknown": "Impossible de lire pour l'instant quelle liste a signalé ce portefeuille ; le bon contact ne peut donc pas encore être indiqué. Rechargez la page pour réessayer."
+      "recourseTestList": "Ce portefeuille figure sur la liste de test propre à ce réseau de test, tenue par son opérateur à des fins de test. Si vous ne vous y attendiez pas, contactez l'opérateur de ce réseau de test.",
+      "recourseBoth": "Ce portefeuille figure à la fois sur la liste de test propre à ce réseau de test et sur la liste de sanctions qu'elle étend. Le retirer de la liste de test ne lèverait pas le signalement de l'autre liste ; si vous pensez que ce signalement est une erreur, contactez le fournisseur de cette liste.",
+      "recourseTestListUpstreamUnread": "Ce portefeuille figure sur la liste de test propre à ce réseau de test. Il n'a pas été possible de vérifier pour l'instant si la liste de sanctions qu'elle étend le signale aussi. Si vous ne vous y attendiez pas, contactez l'opérateur de ce réseau de test.",
+      "recourseOtherList": "Ce portefeuille figure sur la liste de sanctions utilisée par ce déploiement pour son contrôle. Si vous pensez qu'il s'agit d'une erreur, contactez le fournisseur de cette liste.",
+      "recourseBannedSource": "Le portefeuille lui-même ne figure pas sur la liste de sanctions : il est signalé parce que l'expéditeur qu'il a déclaré lors de la récupération de jetons y figure. Le signalement est levé automatiquement si cet expéditeur est retiré de la liste.",
+      "recourseUnknown": "Impossible de lire pour l'instant pourquoi ce portefeuille est signalé ; le bon contact ne peut donc pas encore être indiqué. Rechargez la page pour réessayer."
     },
     "risk": {
       "healthTitle": "Santé {{ratio}} — 1,00 est la ligne de liquidation",

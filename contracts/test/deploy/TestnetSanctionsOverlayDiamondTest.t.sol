@@ -11,7 +11,7 @@ import {MockSanctionsList} from "../mocks/MockSanctionsList.sol";
 /**
  * @title  TestnetSanctionsOverlayDiamondTest
  * @notice #2439 — a real Diamond configured with the overlay screens exactly as
- *         it would against Chainalysis: either list's flag is seen, a Tier-1
+ *         it would against a real oracle: either list's flag is seen, a Tier-1
  *         entry point refuses an overlay-flagged wallet, and an upstream outage
  *         reaches the fail-open screen as "not flagged" and the fail-closed
  *         registry sync as "unavailable" — the same split the real oracle gets.
@@ -72,7 +72,7 @@ contract TestnetSanctionsOverlayDiamondTest is SetupTest {
     }
 
     /// @notice ...and the fail-closed registry sync as "unavailable", as it
-    ///         would against Chainalysis directly.
+    ///         would against a real oracle directly.
     function test_UpstreamOutage_FailClosedSyncReadsUnavailable() public {
         upstream.setRevertOnRead(true);
         vm.expectRevert(IVaipakamErrors.SanctionsOracleUnavailable.selector);

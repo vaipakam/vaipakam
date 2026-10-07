@@ -104,7 +104,7 @@ contract TestnetSanctionsOverlayTest is Test {
     }
 
     /// @notice Clearing the overlay flag leaves an upstream flag standing: the
-    ///         overlay can add to Chainalysis's list, never subtract from it.
+    ///         overlay can add to its upstream's list, never subtract from it.
     function test_ClearingTheOverlayFlag_DoesNotClearAnUpstreamFlag() public {
         upstream.setFlagged(wallet, true);
         vm.startPrank(admin);
@@ -129,7 +129,7 @@ contract TestnetSanctionsOverlayTest is Test {
 
     /// @notice An upstream outage reaches the caller unchanged for an address
     ///         the overlay has not flagged, so the Diamond's fail-open and
-    ///         fail-closed screens see exactly what Chainalysis would give them.
+    ///         fail-closed screens see exactly what the upstream would give them.
     function test_UpstreamOutage_PropagatesForAnUnflaggedAddress() public {
         upstream.setRevertOnRead(true);
         vm.expectRevert(bytes("oracle-outage"));

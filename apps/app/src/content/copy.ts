@@ -4933,29 +4933,34 @@ const copySource = {
   },
 
   sanctions: {
-    title: 'This wallet is listed by the compliance oracle.',
+    // "Flagged", not "listed": a wallet can be flagged because the sender it
+    // declared during token recovery is listed (#2439 recourseBannedSource).
+    title: 'This wallet is flagged by the compliance oracle.',
     line1:
-      'The connected address appears on the on-chain sanctions oracle Vaipakam screens against.',
+      'The connected wallet is flagged by the on-chain sanctions oracle Vaipakam screens against.',
     line2:
       'New positions (offers, loans, rentals, deposits) are blocked and will not go through.',
     // The restriction holds whoever flagged the wallet, so it is shown at
     // once; only the recourse below depends on which list flagged it.
     line3:
       'Repaying and closing existing positions stays open so your counterparties can be made whole, but claims and payouts to this wallet are blocked while it is flagged.',
-    // #2439 — the recourse names the list that actually flagged the wallet:
-    // test networks screen against a test list that extends the provider's.
-    recourseProvider:
-      'If you believe this is an error, contact the oracle provider (Chainalysis).',
+    // #2439 — the recourse names why the wallet is flagged: a test network's
+    // own test list, the list it extends, the list a deployment screens
+    // against, or the sender the wallet declared during token recovery. No
+    // provider is named: the Diamond accepts any oracle, so its provider
+    // cannot be inferred (and Chainalysis retired its on-chain oracle, #2443).
     recourseTestList:
-      'This wallet is on this test network’s own test list, which its operator keeps for testing; the sanctions-data provider (Chainalysis) has not flagged it. If you did not expect this, contact the operator of this test network.',
-    recourseTestListNoProvider:
-      'This wallet is on this test network’s own test list, which its operator keeps for testing. The sanctions-data provider (Chainalysis) publishes no oracle on this network, so its list was not consulted. If you did not expect this, contact the operator of this test network.',
+      'This wallet is on this test network’s own test list, which its operator keeps for testing. If you did not expect this, contact the operator of this test network.',
     recourseBoth:
-      'This wallet is on both this test network’s own test list and the sanctions-data provider’s list (Chainalysis). Removing it from the test list would not clear the provider’s flag; if you believe that flag is an error, contact Chainalysis.',
-    recourseTestListProviderUnread:
-      'This wallet is on this test network’s own test list. Whether the sanctions-data provider (Chainalysis) also lists it could not be checked just now. If you did not expect this, contact the operator of this test network.',
+      'This wallet is on this test network’s own test list and on the sanctions list it extends. Removing it from the test list would not clear the other list’s flag; if you believe that flag is an error, contact that list’s provider.',
+    recourseTestListUpstreamUnread:
+      'This wallet is on this test network’s own test list. Whether the sanctions list it extends also flags it could not be checked just now. If you did not expect this, contact the operator of this test network.',
+    recourseOtherList:
+      'This wallet is on the sanctions list this deployment screens against. If you believe this is an error, contact that list’s provider.',
+    recourseBannedSource:
+      'The wallet itself is not on the sanctions list: it is flagged because the sender it declared when recovering tokens is. The flag lifts on its own if that sender is removed from the list.',
     recourseUnknown:
-      'Which list flagged this wallet could not be read just now, so the right contact cannot be named yet. Reload to try again.',
+      'Why this wallet is flagged could not be read just now, so the right contact cannot be named yet. Reload to try again.',
   },
 
   risk: {

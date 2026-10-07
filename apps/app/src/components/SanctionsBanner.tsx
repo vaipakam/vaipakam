@@ -4,11 +4,12 @@
  * Per the retail-deploy policy this is the one place the full
  * three-line message appears; marketing surfaces never mention it.
  *
- * #2439 — the recourse depends on WHICH list flagged the wallet: on a test
- * network the oracle may be a test list that extends Chainalysis's, and a
- * wallet only the test list flagged must not be sent to Chainalysis. What is
- * already known (blocked actions, close-outs that stay open) shows at once;
- * only the recourse waits for the attribution, rather than being guessed.
+ * #2439 — the recourse depends on WHY the wallet is flagged: a test
+ * network's own test list, the list it extends, the list the deployment
+ * screens against, or the sender the wallet declared during token recovery.
+ * Each has a different party to contact. What is already known (blocked
+ * actions, close-outs that stay open) shows at once; only the recourse waits
+ * for the attribution, rather than being guessed.
  */
 import { OctagonAlert } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
@@ -28,8 +29,8 @@ function useSanctionsSource(flagged: boolean): SanctionsSource | undefined {
     queryKey: ['sanctionsSource', readChain.chainId, address?.toLowerCase()],
     enabled: flagged && Boolean(address) && Boolean(publicClient),
     // Attribution is live state, not configuration: the operator can clear
-    // a test-list flag and the provider can delist a wallet while the overall
-    // flag stays up. Re-read on a short cycle for as long as the banner
+    // a test-list flag and a list's provider can delist a wallet while the
+    // overall flag stays up. Re-read on a short cycle for as long as the banner
     // shows, so a stale answer cannot keep naming a list that has let go.
     staleTime: ATTRIBUTION_REFRESH_MS,
     refetchInterval: ATTRIBUTION_REFRESH_MS,
@@ -42,16 +43,16 @@ function useSanctionsSource(flagged: boolean): SanctionsSource | undefined {
  *  depends on which list flagged the wallet. */
 export function recourseLine(source: SanctionsSource): string {
   switch (source) {
-    case 'provider':
-      return copy.sanctions.recourseProvider;
     case 'testList':
       return copy.sanctions.recourseTestList;
-    case 'testListNoProvider':
-      return copy.sanctions.recourseTestListNoProvider;
     case 'both':
       return copy.sanctions.recourseBoth;
-    case 'testListProviderUnread':
-      return copy.sanctions.recourseTestListProviderUnread;
+    case 'testListUpstreamUnread':
+      return copy.sanctions.recourseTestListUpstreamUnread;
+    case 'otherList':
+      return copy.sanctions.recourseOtherList;
+    case 'bannedSource':
+      return copy.sanctions.recourseBannedSource;
     case 'unknown':
       return copy.sanctions.recourseUnknown;
   }

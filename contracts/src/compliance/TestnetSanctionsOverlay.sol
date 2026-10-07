@@ -8,14 +8,14 @@ import {TestnetChains} from "./TestnetChains.sol";
 
 /**
  * @title  TestnetSanctionsOverlay
- * @notice A TESTNET-ONLY sanctions oracle: an address is sanctioned when the
- *         chain's real upstream oracle (Chainalysis) reports it, OR when this
- *         contract's owner has flagged it.
+ * @notice A TESTNET-ONLY sanctions oracle: an address is sanctioned when this
+ *         contract's owner has flagged it, OR when an optional upstream
+ *         sanctions oracle reports it.
  *
- * @dev    #2439. Why it exists: only Chainalysis can add an address to its
- *         oracle, so on a testnet that points straight at it no wallet we
- *         control can ever be flagged, and every path that runs only for a
- *         flagged wallet (the in-app banner, the Tier-1 refusals, Tier-2
+ * @dev    #2439. Why it exists: a real sanctions oracle is written only by
+ *         its provider, so on a testnet that points straight at one no
+ *         wallet we control can ever be flagged, and every path that runs
+ *         only for a flagged wallet (the in-app banner, the Tier-1 refusals, Tier-2
  *         close-outs staying open, `refreshSanctionsFlag`, the frozen-claimant
  *         bookkeeping, recovery's banned-source branch) cannot be driven on a
  *         live deployment. `MockSanctionsList` cannot fill that gap on a
@@ -32,23 +32,26 @@ import {TestnetChains} from "./TestnetChains.sol";
  *            unchanged. The Diamond wraps every oracle read in `try`, so its
  *            fail-open screens and its fail-closed screens (recovery,
  *            `refreshSanctionsFlag`) see the same outcome they would see
- *            against Chainalysis directly. An owner-flagged address answers
+ *            against that oracle directly. An owner-flagged address answers
  *            `true` without reading upstream: the owner's flag is a fact this
  *            contract holds, and no upstream outage can make it less true.
  *
  *         3. **Every answer can be attributed.** `sanctionSource` says which
  *            list flagged an address, so a surface that tells a flagged user
- *            whom to contact can tell the truth: Chainalysis for an upstream
- *            flag, this test network's operator for an overlay flag.
+ *            whom to contact can tell the truth: the upstream list's
+ *            provider for an upstream flag, this test network's operator
+ *            for an overlay flag.
  *
- *         `upstream` may be `address(0)` on a testnet Chainalysis does not
- *         cover; the overlay is then the whole list. It is immutable: a
- *         different upstream is a different overlay, deployed and configured
- *         on the Diamond in the open.
+ *         `upstream` may be `address(0)`; the overlay is then the whole list.
+ *         That is how `ConfigureSanctionsOracle` deploys it today: the one
+ *         on-chain source it was written to layer over, Chainalysis's oracle,
+ *         was retired by Chainalysis on 2026-03-18 and no longer updates
+ *         (#2443). It is immutable: a different upstream is a different
+ *         overlay, deployed and configured on the Diamond in the open.
  */
 contract TestnetSanctionsOverlay is ISanctionsList, Ownable2Step {
-    /// @notice The real oracle this overlay extends, or `address(0)` when the
-    ///         chain has none.
+    /// @notice The real oracle this overlay extends, or `address(0)` when it
+    ///         extends none.
     ISanctionsList public immutable upstream;
 
     /// @notice Addresses the owner has flagged on this test network.
@@ -69,8 +72,7 @@ contract TestnetSanctionsOverlay is ISanctionsList, Ownable2Step {
 
     /// @param owner_     The chain's admin. Two-step ownership applies to every
     ///                   later transfer.
-    /// @param upstream_  The chain's Chainalysis oracle, or `address(0)` when
-    ///                   the chain has none.
+    /// @param upstream_  The oracle to extend, or `address(0)` for none.
     constructor(address owner_, address upstream_) Ownable(owner_) {
         if (!TestnetChains.isTestnet(block.chainid)) revert NotATestnet(block.chainid);
         if (upstream_ != address(0) && upstream_.code.length == 0) {

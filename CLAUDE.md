@@ -1139,6 +1139,16 @@ KYC and country gating are the industrial-fork knobs that stay dormant.
 
 **Sanctions oracle — REQUIRED on retail post-deploy:**
 
+> **Source open (#2443, owner decision 2026-10-07).** Chainalysis retired its
+> on-chain Sanctions Oracle: last updated 2026-03-18, "no longer supported or
+> maintained", not for production screening. Its contracts still answer, so a
+> Diamond pointed at it screens against a frozen list with nothing on-chain to
+> say so. Do NOT configure it anywhere. `ConfigureSanctionsOracle.s.sol`
+> refuses every mainnet until a supported source is chosen, and testnets screen
+> against the admin's `TestnetSanctionsOverlay` alone (#2439). The requirement
+> below — a sanctions oracle MUST be set before retail routes real value —
+> stands; only the Chainalysis address it names is retired.
+
 `ProfileFacet.setSanctionsOracle(<chainalysis-oracle>)` MUST be called
 on the retail deploy once the oracle's address is known on-chain. While
 unset (`address(0)`), `LibVaipakam.isSanctionedAddress(...)` returns
