@@ -171,8 +171,9 @@ so a client can never record acceptance of a stale or mismatched Terms revision.
 - Fails open: while the oracle is unset or a read errors, the banner renders
   nothing (matches the protocol's fail-open).
 - Copy must distinguish **blocked fresh-value actions** from **permitted
-  recovery / wind-down paths**, and point the user to the sanctions-data
-  provider (Chainalysis) for recourse — never present a flagged wallet as
+  recovery / wind-down paths**, and point the user to the party that can act
+  on the flag — the list that flagged the wallet or its declared recovery
+  sender, never a named provider the app cannot substantiate (#2439) — never present a flagged wallet as
   permanently and totally frozen when close-out paths remain open.
 - Currently mounted on these connected-app surfaces: **Dashboard, Offer Book
   (the accept/review modal only — NOT the offer-list page itself), Create Offer,

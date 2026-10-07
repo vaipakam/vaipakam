@@ -967,7 +967,7 @@
       "errDomainDrift": "La configuration de signature de ce réseau ne correspond pas à ce qu’attend l’app : la signature est donc bloquée — rien n’a été envoyé. Rechargez l’app ; si cela persiste, l’app a besoin d’une mise à jour.",
       "errOracleUnset": "Rien n’a été signé et rien n’a été envoyé : le service de vérification dont dépend cette récupération n’est pas configuré sur ce réseau, l’issue d’une récupération ne pourrait donc pas être décidée.",
       "errOracleUnreachable": "Rien n’a été signé et rien n’a été envoyé : la vérification qui décide si la récupération peut s’exécuter ici n’a pas répondu à l’instant. Réessayez la vérification dans un moment.",
-      "sanctionedBlockedBody": "Ce portefeuille est signalé par l’oracle de sanctions, la récupération est donc bloquée pour lui. Rien n’a bougé — les tokens restent où ils sont, et le remboursement ou la clôture des positions existantes reste possible.",
+      "sanctionedBlockedBody": "Ce portefeuille est signalé par le contrôle de sanctions de Vaipakam, la récupération est donc bloquée pour lui. Rien n’a bougé — les tokens restent où ils sont, et le remboursement ou la clôture des positions existantes reste possible.",
       "errTxReverted": "Le réseau a rejeté la transaction après son envoi — rien n’a été récupéré et les tokens sont restés où ils étaient. Veuillez réessayer.",
       "helpSection": {
         "title": "Des tokens bloqués dans votre Vault ?",
@@ -2033,7 +2033,7 @@
       "noRpcClient": "Aucun client RPC pour la chaîne active.",
       "txRejected": "Vous avez annulé dans votre portefeuille. Rien n'a été envoyé.",
       "txFailed": "La transaction n'est pas passée. Rien n'a été pris au-delà du gas réseau. Réessayez.",
-      "sanctionsBlocked": "Ce portefeuille est signalé par l'oracle de sanctions : les nouvelles positions et les retraits de fonds sont donc bloqués. Rien n'a été envoyé. Rembourser et clôturer les positions existantes reste ouvert.",
+      "sanctionsBlocked": "Ce portefeuille est signalé par le contrôle de sanctions de Vaipakam : les nouvelles positions et les retraits de fonds sont donc bloqués. Rien n'a été envoyé. Rembourser et clôturer les positions existantes reste ouvert.",
       "sanctionsCheckRetry": "Impossible d'exécuter le contrôle de conformité pour le moment — rien n'a été envoyé. Réessayez dans un instant.",
       "checkRetry": "Impossible de vérifier cela on-chain pour le moment — rien n'a été envoyé. Réessayez dans un instant.",
       "assetPaused": "Un des actifs de cette opération est temporairement mis en pause par le protocole, cette action ne peut donc pas passer pour le moment. Rien n'a été envoyé — réessayez plus tard.",
@@ -2319,10 +2319,24 @@
       "readyToClaim": "{{amount}} VPFI prêts à réclamer."
     },
     "sanctions": {
-      "title": "Ce portefeuille est listé par l'oracle de conformité.",
-      "line1": "L'adresse connectée apparaît sur l'oracle de sanctions on-chain contre lequel Vaipakam vérifie.",
+      "title": "Ce portefeuille est signalé par le contrôle de sanctions de Vaipakam.",
+      "line1": "Le portefeuille connecté est signalé par le contrôle de sanctions de Vaipakam, qui vérifie le portefeuille et tout expéditeur qu'il a déclaré lors de la récupération de jetons auprès de l'oracle de sanctions on-chain configuré.",
       "line2": "Les nouvelles positions (offres, prêts, locations, dépôts) sont bloquées et ne passeront pas.",
-      "line3": "Rembourser et clôturer les positions existantes reste ouvert afin que vos contreparties puissent être indemnisées, mais les réclamations et retraits de fonds vers ce portefeuille sont bloqués tant qu'il est signalé. Si vous pensez qu'il s'agit d'une erreur, contactez le fournisseur de l'oracle (Chainalysis)."
+      "line3": "Rembourser et clôturer les positions existantes reste ouvert afin que vos contreparties puissent être indemnisées, mais les réclamations et retraits de fonds vers ce portefeuille sont bloqués tant qu'il est signalé.",
+      "recourseTestList": "Ce portefeuille figure sur la liste de test propre à ce réseau de test, tenue par son opérateur à des fins de test. Si vous ne vous y attendiez pas, contactez l'opérateur de ce réseau de test.",
+      "recourseBoth": "Ce portefeuille figure à la fois sur la liste de test propre à ce réseau de test et sur la liste de sanctions qu'elle étend. Le retirer de la liste de test ne lèverait pas le signalement de l'autre liste ; si vous pensez que ce signalement est une erreur, contactez le fournisseur de cette liste.",
+      "recourseTestListUpstreamUnread": "Ce portefeuille figure sur la liste de test propre à ce réseau de test. Il n'a pas été possible de vérifier pour l'instant si la liste de sanctions qu'elle étend le signale aussi. Si vous ne vous y attendiez pas, contactez l'opérateur de ce réseau de test.",
+      "recourseOtherList": "Ce portefeuille figure sur la liste de sanctions utilisée par ce déploiement pour son contrôle. Si vous pensez qu'il s'agit d'une erreur, contactez le fournisseur de cette liste.",
+      "recourseBannedSource": "Aucune des listes utilisées par ce déploiement pour son contrôle ne signale le portefeuille lui-même : il est signalé parce que l'expéditeur qu'il a déclaré lors de la récupération de jetons est signalé. Le signalement est levé automatiquement dès que cet expéditeur est retiré de la liste qui le signale.",
+      "recourseAlsoBannedSource": "L'expéditeur que ce portefeuille a déclaré lors de la récupération de jetons est lui aussi signalé ; le portefeuille reste donc signalé tant que cet expéditeur n'est pas également retiré de la liste.",
+      "recourseBannedSourceWalletUnread": "L'expéditeur que ce portefeuille a déclaré lors de la récupération de jetons est signalé, ce qui suffit à signaler le portefeuille. Il n'a pas été possible de vérifier pour l'instant si le portefeuille lui-même figure aussi sur une liste.",
+      "recourseSenderTestList": "Cet expéditeur figure sur la liste de test propre à ce réseau de test, tenue par son opérateur à des fins de test. Si vous ne vous y attendiez pas, contactez l'opérateur de ce réseau de test.",
+      "recourseSenderBoth": "Cet expéditeur figure à la fois sur la liste de test propre à ce réseau de test et sur la liste de sanctions qu'elle étend. Le retirer de la liste de test ne lèverait pas le signalement de l'autre liste ; si vous pensez que ce signalement est une erreur, contactez le fournisseur de cette liste.",
+      "recourseSenderTestListUpstreamUnread": "Cet expéditeur figure sur la liste de test propre à ce réseau de test. Il n'a pas été possible de vérifier pour l'instant si la liste de sanctions qu'elle étend le signale aussi. Si vous ne vous y attendiez pas, contactez l'opérateur de ce réseau de test.",
+      "recourseSenderOtherList": "Cet expéditeur figure sur la liste de sanctions utilisée par ce déploiement pour son contrôle. Si vous pensez qu'il s'agit d'une erreur, contactez le fournisseur de cette liste.",
+      "recourseBannedSourceUnread": "Ce portefeuille a aussi déclaré un expéditeur lors de la récupération de jetons, et il n'a pas été possible de vérifier pour l'instant si cet expéditeur est signalé lui aussi. Si c'est le cas, le portefeuille reste signalé tant que cet expéditeur n'est pas également retiré de la liste.",
+      "recourseSenderLookupUnread": "Il n'a pas été possible de vérifier pour l'instant si ce portefeuille a déclaré un expéditeur lors de la récupération de jetons. Si c'est le cas et que cet expéditeur est signalé, le portefeuille reste signalé tant que cet expéditeur n'est pas également retiré de la liste.",
+      "recourseUnknown": "Impossible de lire pour l'instant pourquoi ce portefeuille est signalé ; le bon contact ne peut donc pas encore être indiqué. Rechargez la page pour réessayer."
     },
     "risk": {
       "healthTitle": "Santé {{ratio}} — 1,00 est la ligne de liquidation",

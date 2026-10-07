@@ -967,7 +967,7 @@
       "errDomainDrift": "Die Signatur-Konfiguration dieses Netzwerks stimmt nicht mit dem überein, was die App erwartet, deshalb ist das Signieren gesperrt — es wurde nichts gesendet. Lade die App neu; wenn das weiter passiert, braucht die App ein Update.",
       "errOracleUnset": "Es wurde nichts signiert und nichts gesendet: Der Prüfdienst, von dem diese Rückholung abhängt, ist in diesem Netzwerk nicht eingerichtet, deshalb ließe sich der Ausgang einer Rückholung nicht entscheiden.",
       "errOracleUnreachable": "Es wurde nichts signiert und nichts gesendet: Die Prüfung, die entscheidet, ob die Rückholung hier laufen kann, hat gerade nicht geantwortet. Versuch die Prüfung gleich noch einmal.",
-      "sanctionedBlockedBody": "Diese Wallet ist vom Sanktions-Oracle markiert, deshalb ist die Rückholung für sie gesperrt. Nichts wurde bewegt — die Tokens bleiben, wo sie sind, und das Zurückzahlen oder Schließen bestehender Positionen bleibt möglich.",
+      "sanctionedBlockedBody": "Diese Wallet ist durch das Sanktions-Screening von Vaipakam markiert, deshalb ist die Rückholung für sie gesperrt. Nichts wurde bewegt — die Tokens bleiben, wo sie sind, und das Zurückzahlen oder Schließen bestehender Positionen bleibt möglich.",
       "errTxReverted": "Das Netzwerk hat die Transaktion nach dem Senden abgelehnt — es wurde nichts zurückgeholt und die Tokens sind geblieben, wo sie waren. Bitte versuch es erneut.",
       "helpSection": {
         "title": "Tokens in deiner Vault festgesteckt?",
@@ -2033,7 +2033,7 @@
       "noRpcClient": "Kein RPC-Client für die aktive Chain.",
       "txRejected": "Sie haben in Ihrer Wallet abgebrochen. Es wurde nichts gesendet.",
       "txFailed": "Die Transaktion wurde nicht ausgeführt. Außer Netzwerk-Gas wurde nichts abgezogen. Bitte versuchen Sie es erneut.",
-      "sanctionsBlocked": "Diese Wallet ist vom Sanktions-Oracle markiert, daher sind neue Positionen und Auszahlungen blockiert. Es wurde nichts gesendet. Die Rückzahlung und das Schließen bestehender Positionen bleiben weiterhin möglich.",
+      "sanctionsBlocked": "Diese Wallet ist durch das Sanktions-Screening von Vaipakam markiert, daher sind neue Positionen und Auszahlungen blockiert. Es wurde nichts gesendet. Die Rückzahlung und das Schließen bestehender Positionen bleiben weiterhin möglich.",
       "sanctionsCheckRetry": "Wir konnten die Compliance-Prüfung gerade nicht durchführen — es wurde nichts gesendet. Bitte versuchen Sie es gleich noch einmal.",
       "checkRetry": "Wir konnten das gerade nicht on-chain verifizieren — es wurde nichts gesendet. Bitte versuchen Sie es gleich noch einmal.",
       "assetPaused": "Eines der Assets dieses Geschäfts ist vorübergehend vom Protokoll pausiert, daher kann diese Aktion gerade nicht durchgeführt werden. Es wurde nichts gesendet — bitte versuchen Sie es später erneut.",
@@ -2319,10 +2319,24 @@
       "readyToClaim": "{{amount}} VPFI bereit zum Beanspruchen."
     },
     "sanctions": {
-      "title": "Diese Wallet ist vom Compliance-Oracle gelistet.",
-      "line1": "Die verbundene Adresse steht auf dem On-Chain-Sanktions-Oracle, gegen das Vaipakam prüft.",
+      "title": "Diese Wallet ist durch das Sanktions-Screening von Vaipakam markiert.",
+      "line1": "Die verbundene Wallet ist durch das Sanktions-Screening von Vaipakam markiert. Es prüft die Wallet und jeden Absender, den sie bei der Wiederherstellung von Token angegeben hat, gegen das konfigurierte On-Chain-Sanktions-Oracle.",
       "line2": "Neue Positionen (Angebote, Kredite, Vermietungen, Einzahlungen) sind blockiert und gehen nicht durch.",
-      "line3": "Die Rückzahlung und das Schließen bestehender Positionen bleiben offen, damit Ihre Gegenparteien schadlos gestellt werden können; Ansprüche und Auszahlungen an diese Wallet sind jedoch blockiert, solange sie markiert ist. Wenn Sie dies für einen Fehler halten, wenden Sie sich an den Oracle-Anbieter (Chainalysis)."
+      "line3": "Die Rückzahlung und das Schließen bestehender Positionen bleiben offen, damit Ihre Gegenparteien schadlos gestellt werden können; Ansprüche und Auszahlungen an diese Wallet sind jedoch blockiert, solange sie markiert ist.",
+      "recourseTestList": "Diese Wallet steht auf der eigenen Testliste dieses Testnetzes, die dessen Betreiber für Tests führt. Wenn Sie das nicht erwartet haben, wenden Sie sich an den Betreiber dieses Testnetzes.",
+      "recourseBoth": "Diese Wallet steht sowohl auf der eigenen Testliste dieses Testnetzes als auch auf der Sanktionsliste, die diese erweitert. Das Entfernen von der Testliste würde die Markierung der anderen Liste nicht aufheben; wenn Sie diese für einen Fehler halten, wenden Sie sich an den Anbieter dieser Liste.",
+      "recourseTestListUpstreamUnread": "Diese Wallet steht auf der eigenen Testliste dieses Testnetzes. Ob die Sanktionsliste, die diese erweitert, sie ebenfalls markiert, konnte gerade nicht geprüft werden. Wenn Sie das nicht erwartet haben, wenden Sie sich an den Betreiber dieses Testnetzes.",
+      "recourseOtherList": "Diese Wallet steht auf der Sanktionsliste, gegen die diese Bereitstellung prüft. Wenn Sie dies für einen Fehler halten, wenden Sie sich an den Anbieter dieser Liste.",
+      "recourseBannedSource": "Keine der Listen, gegen die diese Bereitstellung prüft, markiert die Wallet selbst: Sie ist markiert, weil der Absender, den sie bei der Wiederherstellung von Token angegeben hat, markiert ist. Die Markierung wird automatisch aufgehoben, sobald dieser Absender von der Liste entfernt wird, die ihn markiert.",
+      "recourseAlsoBannedSource": "Der Absender, den diese Wallet bei der Wiederherstellung von Token angegeben hat, ist ebenfalls markiert; die Wallet bleibt daher markiert, bis auch dieser Absender von der Liste entfernt wird.",
+      "recourseBannedSourceWalletUnread": "Der Absender, den diese Wallet bei der Wiederherstellung von Token angegeben hat, ist markiert, und das allein markiert die Wallet. Ob die Wallet selbst ebenfalls auf einer Liste steht, konnte gerade nicht geprüft werden.",
+      "recourseSenderTestList": "Dieser Absender steht auf der eigenen Testliste dieses Testnetzes, die dessen Betreiber für Tests führt. Wenn Sie das nicht erwartet haben, wenden Sie sich an den Betreiber dieses Testnetzes.",
+      "recourseSenderBoth": "Dieser Absender steht sowohl auf der eigenen Testliste dieses Testnetzes als auch auf der Sanktionsliste, die diese erweitert. Das Entfernen von der Testliste würde die Markierung der anderen Liste nicht aufheben; wenn Sie diese für einen Fehler halten, wenden Sie sich an den Anbieter dieser Liste.",
+      "recourseSenderTestListUpstreamUnread": "Dieser Absender steht auf der eigenen Testliste dieses Testnetzes. Ob die Sanktionsliste, die diese erweitert, ihn ebenfalls markiert, konnte gerade nicht geprüft werden. Wenn Sie das nicht erwartet haben, wenden Sie sich an den Betreiber dieses Testnetzes.",
+      "recourseSenderOtherList": "Dieser Absender steht auf der Sanktionsliste, gegen die diese Bereitstellung prüft. Wenn Sie dies für einen Fehler halten, wenden Sie sich an den Anbieter dieser Liste.",
+      "recourseBannedSourceUnread": "Diese Wallet hat bei der Wiederherstellung von Token außerdem einen Absender angegeben; ob dieser ebenfalls markiert ist, konnte gerade nicht geprüft werden. Falls ja, bleibt die Wallet markiert, bis auch dieser Absender von der Liste entfernt wird.",
+      "recourseSenderLookupUnread": "Ob diese Wallet bei der Wiederherstellung von Token einen Absender angegeben hat, konnte gerade nicht geprüft werden. Falls ja und dieser Absender markiert ist, bleibt die Wallet markiert, bis auch dieser Absender von der Liste entfernt wird.",
+      "recourseUnknown": "Warum diese Wallet markiert ist, konnte gerade nicht gelesen werden, daher kann noch keine Kontaktstelle genannt werden. Laden Sie die Seite neu, um es erneut zu versuchen."
     },
     "risk": {
       "healthTitle": "Gesundheit {{ratio}} — 1,00 ist die Liquidationslinie",

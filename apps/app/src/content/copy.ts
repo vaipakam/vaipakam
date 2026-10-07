@@ -2137,7 +2137,7 @@ const copySource = {
     // wording stays off marketing surfaces (retail-deploy policy);
     // this renders only to the flagged wallet.
     sanctionedBlockedBody:
-      'This wallet is flagged by the sanctions oracle, so recovery is blocked for it. Nothing moved — the tokens stay where they are, and repaying or closing existing positions stays open.',
+      'This wallet is flagged by Vaipakam’s sanctions screen, so recovery is blocked for it. Nothing moved — the tokens stay where they are, and repaying or closing existing positions stays open.',
     // The tx mined but REVERTED — waitForTransactionReceipt resolves on
     // reverted receipts too (Codex #1547 r1), and decoding events from
     // a reverted receipt would misread the outcome.
@@ -4559,7 +4559,7 @@ const copySource = {
     txFailed:
       'The transaction didn’t go through. Nothing was taken beyond network gas. Please try again.',
     sanctionsBlocked:
-      'This wallet is flagged by the sanctions oracle, so new positions and payouts are blocked. Nothing was sent. Repaying and closing existing positions stays open.',
+      'This wallet is flagged by Vaipakam’s sanctions screen, so new positions and payouts are blocked. Nothing was sent. Repaying and closing existing positions stays open.',
     sanctionsCheckRetry:
       'We couldn’t run the compliance check just now — nothing was sent. Please try again in a moment.',
     checkRetry:
@@ -4959,13 +4959,62 @@ const copySource = {
   },
 
   sanctions: {
-    title: 'This wallet is listed by the compliance oracle.',
+    // "Flagged", not "listed", and by Vaipakam's SCREEN rather than by the
+    // oracle: a wallet can be flagged because the sender it declared during
+    // token recovery is listed while the oracle does not list the wallet
+    // itself (#2439 recourseBannedSource).
+    title: 'This wallet is flagged by Vaipakam’s sanctions screen.',
     line1:
-      'The connected address appears on the on-chain sanctions oracle Vaipakam screens against.',
+      'The connected wallet is flagged by Vaipakam’s sanctions screen, which checks the wallet and any sender it declared when recovering tokens against the configured on-chain sanctions oracle.',
     line2:
       'New positions (offers, loans, rentals, deposits) are blocked and will not go through.',
+    // The restriction holds whoever flagged the wallet, so it is shown at
+    // once; only the recourse below depends on which list flagged it.
     line3:
-      'Repaying and closing existing positions stays open so your counterparties can be made whole, but claims and payouts to this wallet are blocked while it is flagged. If you believe this is an error, contact the oracle provider (Chainalysis).',
+      'Repaying and closing existing positions stays open so your counterparties can be made whole, but claims and payouts to this wallet are blocked while it is flagged.',
+    // #2439 — the recourse names why the wallet is flagged: a test network's
+    // own test list, the list it extends, the list a deployment screens
+    // against, or the sender the wallet declared during token recovery. No
+    // provider is named: the Diamond accepts any oracle, so its provider
+    // cannot be inferred (and Chainalysis retired its on-chain oracle, #2443).
+    recourseTestList:
+      'This wallet is on this test network’s own test list, which its operator keeps for testing. If you did not expect this, contact the operator of this test network.',
+    recourseBoth:
+      'This wallet is on this test network’s own test list and on the sanctions list it extends. Removing it from the test list would not clear the other list’s flag; if you believe that flag is an error, contact that list’s provider.',
+    recourseTestListUpstreamUnread:
+      'This wallet is on this test network’s own test list. Whether the sanctions list it extends also flags it could not be checked just now. If you did not expect this, contact the operator of this test network.',
+    recourseOtherList:
+      'This wallet is on the sanctions list this deployment screens against. If you believe this is an error, contact that list’s provider.',
+    recourseBannedSource:
+      'None of the lists this deployment screens against flags the wallet itself: it is flagged because the sender it declared when recovering tokens is. The flag lifts on its own once that sender is removed from the list that flags it.',
+    // Shown AFTER the wallet's own line, when its declared recovery sender
+    // is flagged too: clearing either alone leaves the wallet flagged.
+    recourseAlsoBannedSource:
+      'The sender this wallet declared when recovering tokens is flagged as well, so the wallet stays flagged until that sender is also removed from the list.',
+    // The sender is flagged, which flags the wallet by itself; whether the
+    // wallet is ALSO listed could not be read, so it is not said either way.
+    recourseBannedSourceWalletUnread:
+      'The sender this wallet declared when recovering tokens is flagged, and that alone flags the wallet. Whether the wallet itself is also on a list could not be checked just now.',
+    // Each sender line follows one of the three lines above and names the
+    // list that flags the sender, so the user knows whom to contact.
+    recourseSenderTestList:
+      'That sender is on this test network’s own test list, which its operator keeps for testing. If you did not expect this, contact the operator of this test network.',
+    recourseSenderBoth:
+      'That sender is on this test network’s own test list and on the sanctions list it extends. Removing it from the test list would not clear the other list’s flag; if you believe that flag is an error, contact that list’s provider.',
+    recourseSenderTestListUpstreamUnread:
+      'That sender is on this test network’s own test list. Whether the sanctions list it extends also flags it could not be checked just now. If you did not expect this, contact the operator of this test network.',
+    recourseSenderOtherList:
+      'That sender is on the sanctions list this deployment screens against. If you believe this is an error, contact that list’s provider.',
+    recourseBannedSourceUnread:
+      'This wallet also declared a sender when recovering tokens, and whether that sender is flagged too could not be checked just now. If it is, the wallet stays flagged until that sender is also removed from the list.',
+    // The lookup itself failed: not even whether a sender was declared is
+    // known, so none is asserted.
+    recourseSenderLookupUnread:
+      'Whether this wallet declared a sender when recovering tokens could not be checked just now. If it did and that sender is flagged, the wallet stays flagged until that sender is also removed from the list.',
+    // Shown until the first reading settles, so the banner never omits the
+    // cause without saying it is still being checked.
+    recourseUnknown:
+      'Why this wallet is flagged could not be read just now, so the right contact cannot be named yet. Reload to try again.',
   },
 
   risk: {

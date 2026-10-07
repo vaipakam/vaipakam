@@ -4,25 +4,21 @@ pragma solidity ^0.8.29;
 /**
  * @title ISanctionsList
  * @notice Shape of the on-chain sanctions oracle used by Vaipakam's
- *         compliance gate. Chainalysis publishes an oracle at a
- *         deterministic address on every chain it supports; the
- *         address is surfaced at
- *         https://go.chainalysis.com/chainalysis-oracle-docs.html.
+ *         compliance gate: a single read that returns true iff the
+ *         queried address is flagged.
  *
- * @dev The oracle exposes a single read that returns true iff the
- *      queried address is on any sanctions programme Chainalysis is
- *      currently monitoring (the OFAC SDN list is the primary driver,
- *      but the oracle also covers UK / EU / UN / others). Reads are
- *      free gas-wise because they hit a static mapping in the oracle
- *      contract.
+ * @dev This is the interface Chainalysis's on-chain oracle exposed, but
+ *      Chainalysis retired that oracle (last updated 2026-03-18, "no
+ *      longer supported or maintained") and it must not be configured:
+ *      it still answers, so nothing on-chain shows it is frozen. Which
+ *      source mainnets use is open (#2443); testnets use the admin's
+ *      `TestnetSanctionsOverlay`.
  *
- *      Chainalysis ships the oracle on most major chains but NOT on
- *      every l2 or testnet. For chains where no oracle is deployed
- *      Vaipakam sets `sanctionsOracle = address(0)`, which disables
- *      the check entirely (see `LibVaipakam.isSanctionedAddress`). A
- *      no-oracle chain is NOT fail-closed — the alternative is
- *      blocking every user on chains Chainalysis doesn't cover, which
- *      would be an over-reaction to a vendor gap.
+ *      Where no oracle is configured, `sanctionsOracle = address(0)`
+ *      disables the check entirely (see `LibVaipakam.isSanctionedAddress`).
+ *      That is fail-OPEN by design — the alternative is blocking every
+ *      user on a chain with no source — so a retail deploy must not
+ *      route real value while it is zero.
  */
 interface ISanctionsList {
     /// @notice Returns true iff `addr` is currently flagged by the

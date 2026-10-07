@@ -86,7 +86,7 @@ require a manual override floor / ceiling per asset?
 | `setDepthTieredLtvEnabled(bool)` | TimelockController (post-handover) | 48h schedule + execute | Default `false` ⇒ today's HF≥1.5 still binding. Flipping ON keeps the old `maxLtvBps` ceiling AND the per-tier cap (init gate takes the `min`). |
 | `setDiscountPathEnabled(bool)` | TimelockController (post-handover) | 48h schedule + execute | Independent of depth-tier. Default `false` ⇒ discount path closed entirely. **EC-002 verification**: when ON, the discount path enforces principal-first-then-collateral at three layers (see [Issue #11](https://github.com/vaipakam/vaipakam/issues/11) closing note + `OffchainDataFetchAudit-2026-05-15.md` Part 7). |
 | `Pausable.pause()` | ADMIN_ROLE (governance Safe; no 48h delay) | Immediate | Emergency lever — halts all state-changing entry points. Repayments + claims may stay live per facet (see `Pausable` overrides). |
-| `setSanctionsOracle` rotation | ADMIN_ROLE + 48h timelock | 48h | Chainalysis-style oracle address |
+| `setSanctionsOracle` rotation | ADMIN_ROLE + 48h timelock | 48h | Sanctions oracle address (`ISanctionsList`); never Chainalysis's retired oracle — source open in #2443 |
 | `setInternalMatchEnabled(bool)` | TimelockController | 48h | Independent kill-switch for B.2 internal-match path |
 
 Internal-match has its own kill-switch path documented at

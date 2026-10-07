@@ -370,6 +370,10 @@ FACETS=(
   # barrel; admin tooling / keeper construct calls (setTierPremiumBps,
   # getTierPremiums, …) to it directly by named ABI export.
   "RiskPremiumRateModel"
+  # #2439 — testnet-only sanctions overlay (the admin's test list,
+  # optionally layered over another list). NOT a diamond facet; the connected app reads
+  # its `sanctionSource` to say which list flagged a wallet.
+  "TestnetSanctionsOverlay"
   # #2399 — the Diamond PROXY itself. Not a facet: its fallback raises
   # `FunctionDoesNotExist()` for an unrouted selector, the revert a stale ABI
   # produces. Listed under `proxy` in diamond-facets.json, and the combined

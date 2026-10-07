@@ -3589,16 +3589,18 @@ library LibVaipakam {
         //     staleness to avoid false stalenesss reverts overnight.
         mapping(address => FeedOverride) feedOverrides;
         // ─── Address-level sanctions oracle (Phase 4.3) ─────────────────
-        // Chainalysis operates a free on-chain sanctions oracle on every
-        // chain it supports; governance sets this slot to the per-chain
-        // oracle address via {ProfileFacet.setSanctionsOracle}. When the
+        // Governance sets this slot to the chain's on-chain sanctions
+        // oracle (any `ISanctionsList`) via {ProfileFacet.setSanctionsOracle}.
+        // Which source mainnets use is open (#2443): Chainalysis retired
+        // its on-chain oracle (last updated 2026-03-18) and it must not be
+        // configured; testnets use the admin's `TestnetSanctionsOverlay`. When the
         // slot is non-zero, {OfferFacet.createOffer} and
         // {OfferFacet.acceptOffer} both refuse calls from (or involving)
         // flagged addresses — the OFAC-aligned "no new business" posture.
         // Ongoing actions (repay, claim) stay unrestricted so existing
         // counterparties aren't stranded. `address(0)` disables the
-        // check entirely, which is the correct state on chains where
-        // Chainalysis does not deploy an oracle.
+        // check entirely (fail-open); a retail deploy must not route real
+        // value while it is zero.
         address sanctionsOracle;
         // ─── Legal: Terms of Service acceptance (Phase 4.1) ──────────────
         // On-chain record of every wallet's acceptance of the current ToS
@@ -11027,12 +11029,13 @@ library LibVaipakam {
     /// @custom:event-category informational/config
     event SanctionsOracleSet(address indexed previous, address indexed next);
 
-    /// @notice Installs the per-chain Chainalysis sanctions oracle
-    ///         address. Owner-only — timelock-gated after the
+    /// @notice Installs the chain's sanctions oracle address (any
+    ///         `ISanctionsList`). Owner-only — timelock-gated after the
     ///         governance handover. Setting to `address(0)` disables
-    ///         sanctions screening across the chain (correct when
-    ///         Chainalysis has not deployed an oracle there).
-    /// @param oracle The Chainalysis oracle contract address, or zero.
+    ///         sanctions screening across the chain. Never set it to
+    ///         Chainalysis's retired on-chain oracle (#2443): it still
+    ///         answers but no longer updates.
+    /// @param oracle The sanctions oracle contract address, or zero.
     function setSanctionsOracle(address oracle) internal {
         LibDiamond.enforceIsContractOwner();
         Storage storage s = storageSlot();
@@ -11046,14 +11049,14 @@ library LibVaipakam {
     ///         when no oracle is configured (the gate is disabled)
     ///         OR when the oracle call reverts (fail-open on
     ///         infrastructure failure — the alternative would brick
-    ///         every interaction on the chain whenever Chainalysis's
-    ///         oracle has an outage, which would over-react to a
-    ///         vendor availability issue).
+    ///         every interaction on the chain whenever the oracle has
+    ///         an outage, which would over-react to an availability
+    ///         issue).
     ///
     /// ─── Sanctions enforcement policy (Phase 1, retail deploy) ───
     ///
-    /// The retail deploy may have a sanctions oracle configured (e.g.
-    /// Chainalysis on-chain SDN list). When set, the gate splits the
+    /// The retail deploy may have a sanctions oracle configured (which
+    /// source is open, #2443). When set, the gate splits the
     /// callable surface into two tiers:
     ///
     /// **Tier 1 — BLOCK** when `msg.sender` is sanctioned (revert

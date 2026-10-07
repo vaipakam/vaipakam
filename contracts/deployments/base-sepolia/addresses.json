@@ -132,5 +132,10 @@
   "weth": "0x4200000000000000000000000000000000000006",
   "rewardMessengerImpl": "0x4296D7D939cf55D144e99E04082Ac50e263532cA",
   "ccipMessengerImpl": "0x14e35D25c117790c3D9b4d9ed6daF5121767285d",
-  "rewardCustodyHolder": "0xE8BdF004C264c60F7F4B641FCCCB705E43630265"
+  "rewardCustodyHolder": "0xE8BdF004C264c60F7F4B641FCCCB705E43630265",
+  "sanctionsTestnetOverlay": "0x2E4033Ae1200CC14D33E09021C4098d12b54341c",
+  "sanctions": {
+    "oracle": "0x2E4033Ae1200CC14D33E09021C4098d12b54341c",
+    "kind": "testnet-overlay"
+  }
 }
