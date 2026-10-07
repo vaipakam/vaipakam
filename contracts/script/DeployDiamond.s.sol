@@ -95,6 +95,7 @@ import {RewardClosureFacet} from "../src/facets/RewardClosureFacet.sol";
 import {RewardEraFacet} from "../src/facets/RewardEraFacet.sol";
 import {ServiceCapacityFacet} from "../src/facets/ServiceCapacityFacet.sol";
 import {OfferMatchIntentFacet} from "../src/facets/OfferMatchIntentFacet.sol";
+import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {RewardSweepWalkFacet} from "../src/facets/RewardSweepWalkFacet.sol";
 import {RewardForfeitWalkFacet} from "../src/facets/RewardForfeitWalkFacet.sol";
 import {LibPausable} from "../src/libraries/LibPausable.sol";
@@ -107,6 +108,7 @@ import {LegalFacet} from "../src/facets/LegalFacet.sol";
 import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
 import {Deployments} from "./lib/Deployments.sol";
 import {ArtifactRootBase} from "./lib/ArtifactRoot.sol";
+import {FacetSelectors} from "./lib/FacetSelectors.sol";
 
 contract DeployDiamond is Script, ArtifactRootBase {
     // ── Deployed addresses (logged at the end) ──────────────────────────
@@ -365,6 +367,10 @@ contract DeployDiamond is Script, ArtifactRootBase {
         RewardEraFacet rewardEraFacet = new RewardEraFacet();
         ServiceCapacityFacet serviceCapacityFacet = new ServiceCapacityFacet();
         OfferMatchIntentFacet offerMatchIntentFacet = new OfferMatchIntentFacet();
+        // #1566 slice 2 - the fallback-custody host. RiskFacet and DefaultedFacet
+        // enter the fallback, and ClaimFacet retries its swap and disposes of it,
+        // through this facet's Diamond-internal entries (self-calls).
+        FallbackCustodyFacet fallbackCustodyFacet = new FallbackCustodyFacet();
         RewardCompensationDispatchFacet rewardCompensationDispatchFacet =
             new RewardCompensationDispatchFacet();
         RewardCommitmentFacet rewardCommitmentFacet = new RewardCommitmentFacet();
@@ -399,7 +405,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](93);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](94);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -487,6 +493,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         cuts[89] = _buildCut(address(rewardEraFacet), _getRewardEraSelectors());
         cuts[90] = _buildCut(address(serviceCapacityFacet), _getServiceCapacitySelectors());
         cuts[91] = _buildCut(address(offerMatchIntentFacet), _getOfferMatchIntentSelectors());
+        cuts[93] = _buildCut(address(fallbackCustodyFacet), _getFallbackCustodySelectors());
         cuts[26] = _buildCut(address(rewardReporterFacet), _getRewardReporterSelectors());
         cuts[27] = _buildCut(address(rewardAggregatorFacet), _getRewardAggregatorSelectors());
         cuts[28] = _buildCut(address(configFacet), _getConfigSelectors());
@@ -1170,6 +1177,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeFacet("rewardEraFacet", address(rewardEraFacet));
         Deployments.writeFacet("serviceCapacityFacet", address(serviceCapacityFacet));
         Deployments.writeFacet("offerMatchIntentFacet", address(offerMatchIntentFacet));
+        Deployments.writeFacet("fallbackCustodyFacet", address(fallbackCustodyFacet));
         Deployments.writeFacet("repatriationFacet",       address(repatriationFacet));
         Deployments.writeFacet("configFacet",             address(configFacet));
         // #394 (Codex #647 round-8 P2) — persist the carved-out NumeraireConfigFacet
@@ -3294,6 +3302,15 @@ contract DeployDiamond is Script, ArtifactRootBase {
     function _getOfferMatchIntentSelectors() internal pure returns (bytes4[] memory s) {
         s = new bytes4[](1);
         s[0] = OfferMatchIntentFacet.matchIntent.selector;
+    }
+
+    /// @dev #1566 slice 2 - the fallback-custody host. Returns the ONE list in
+    ///      `FacetSelectors.fallbackCustody()` instead of a copy: the curated
+    ///      `RedeployFacets` cuts this facet from that library and
+    ///      `RedeploySelectorParityTest` pins it to the compiled ABI, so a
+    ///      second hand-list here could only drift from the checked one.
+    function _getFallbackCustodySelectors() internal pure returns (bytes4[] memory s) {
+        s = FacetSelectors.fallbackCustody();
     }
 
     /// @dev 3b-ii-B (#1566) — the per-day closure proof.

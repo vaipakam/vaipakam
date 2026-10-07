@@ -26,6 +26,7 @@ import {DiamondCutFacet} from "../../src/facets/DiamondCutFacet.sol";
 import {AccessControlFacet} from "../../src/facets/AccessControlFacet.sol";
 import {MetricsFacet} from "../../src/facets/MetricsFacet.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {FallbackCustodyFacet} from "../../src/facets/FallbackCustodyFacet.sol";
 import {HelperTest} from "../HelperTest.sol";
 import {ERC20Mock} from "../mocks/ERC20Mock.sol";
 import {TestMutatorFacet} from "../mocks/TestMutatorFacet.sol";
@@ -128,7 +129,7 @@ contract InvariantBase is Test {
         TestMutatorFacet mutatorFacet = new TestMutatorFacet();
         MetricsFacet metricsFacet = new MetricsFacet();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](20);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](21);
         cuts[0] = IDiamondCut.FacetCut({facetAddress: address(offerCreateFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCreateFacetSelectors()});
         cuts[17] = IDiamondCut.FacetCut({
             facetAddress: address(offerAcceptFacet),
@@ -172,6 +173,18 @@ contract InvariantBase is Test {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getEncumbranceMutateFacetSelectors()
         });
+        // #1566 S2a - RiskFacet, DefaultedFacet and ClaimFacet reach the
+        // fallback custody flows (entry, retry swap, in-kind distribution)
+        // through a Diamond self-call into FallbackCustodyFacet, the one host
+        // of those flows. A hand-built Diamond that cuts any of the three must
+        // cut this host too, or a failed-swap liquidation or default and the
+        // fallback claim revert FunctionDoesNotExist at that self-call.
+        cuts[20] = IDiamondCut.FacetCut({
+            facetAddress: address(new FallbackCustodyFacet()),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getFallbackCustodyFacetSelectors()
+        });
+
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
     }
 

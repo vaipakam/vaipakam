@@ -103,11 +103,47 @@ Cross-facet calls use `address(this).call(abi.encodeWithSelector(...))` — this
 | **RepayFacet**         | Full/partial repayment, NFT daily deductions, late fees                     |
 | **DefaultedFacet**     | Time-based defaults (grace period expired)                                  |
 | **RiskFacet**          | LTV/Health Factor calculation, HF-based liquidation via 0x swap             |
+| **FallbackCustodyFacet** | The ONE host of the liquidation-fallback custody flows (#1566 slice 2, #2141), split out in #1566 step S2a. When every swap adapter the caller listed is tried and fails (an empty or all-disabled try-list reverts `NoEnabledSwapRoute` instead, #1005), RiskFacet's HF liquidation and DefaultedFacet's time-based default both self-call `enterFallback`; before S2a each carried its own copy of `_fullCollateralTransferFallback` — one producer written out twice, in two facets close to EIP-170 (RiskFacet had about 67 bytes of headroom). ClaimFacet self-calls `retryFallbackSwap` (the retry swap and its soft-fail adapter loop) and `disposeFallbackCustody` (the in-kind split of the fallback snapshot); the retry *distribution* (`_distributeRetryProceeds`), the `retryAttempted` stamp and `ClaimRetryExecuted` stay in ClaimFacet. The three mutators are `address(this)`-gated and carry no `nonReentrant` of their own, because every caller already holds the Diamond guard. `LiquidationFallback` / `LiquidationFallbackSplit` / `LiquidationFallbackOracleUnavailable` are re-declared here byte-identical, so their topic hashes are unchanged. **S2a moves code, not custody**: the fallback collateral still rests in the Diamond, and the view `getFallbackCustody` reports it as `legacyDiamondHeld` (with `vaultHeld` = 0) until S2b puts it in the borrower's vault under a lien. **Refreshed together with its family** — see "Refresh-together families" below this table |
 | **OracleFacet**        | Chainlink price feeds, v3-style concentrated-liquidity AMM liquidity checks |
 | **VaultFactoryFacet** | Per-user UUPS vault proxy deployment                                       |
 | **VaipakamNFTFacet**   | Mint/update/burn position NFTs (ERC721, on-chain metadata)                  |
 | **ProfileFacet**       | User country (sanctions), KYC verification                                  |
 | **AdminFacet**         | Treasury, 0x proxy, allowance target config                                 |
+
+**Refresh-together families (#1566 slices 2–3).** Two facet sets each carry one
+behaviour across a self-call or a fill, so refreshing a subset runs half of it on
+old code:
+
+- **FallbackCustodyFacet + RiskFacet + DefaultedFacet + ClaimFacet +
+  AddCollateralFacet + RepayFacet + RiskMatchLiquidationFacet.** From S2a, Risk,
+  Defaulted and Claim self-call selectors only FallbackCustodyFacet carries, so a
+  caller refreshed without the host reverts `FunctionDoesNotExist` on every
+  fallback entry, retry and in-kind claim (a hard revert, not a split Diamond).
+  From S2b the producer leaves the collateral in the borrower's vault under a
+  lien, and every consumer of the fallback row must read that same source: the
+  cure (AddCollateralFacet), the repay cure (RepayFacet), the match legs
+  (RiskMatchLiquidationFacet) and the claim and backstop paths (ClaimFacet). A
+  consumer left on pre-S2b code pays the snapshot out of whatever else the
+  Diamond holds, or reverts. The set is written down whole now so nobody
+  refreshes a subset across the S2b boundary. The curated `RedeployFacets` script
+  carries neither AddCollateralFacet nor RepayFacet, so it cannot refresh this
+  family whole.
+- **SwapToRepayIntentFacet + IntentDispatchFacet — binding from #1566 slice 3
+  (S3), written down ahead of it.** By the S3 design the lot leaves the
+  borrower's vault inside the fill's pre-hook (IntentDispatchFacet) instead of at
+  commit (SwapToRepayIntentFacet). A new commit with an old hook would let the
+  limit-order fill draw the lot from whatever else the Diamond holds; an old
+  commit with a new hook refuses every fill. Neither facet is in
+  `RedeployFacets`.
+
+How these reach a chain is settled (owner, 2026-10-07, decision O1 = A): **every
+chain that runs slices 2–3 gets a fresh deploy.** Nothing is upgraded in place
+across this boundary and no pre-slice row is migrated; slices 2–3 make a
+consumer that finds such a row fail closed instead. So these notes bind test
+Diamonds, rehearsals and any refresh between the S2a, S2b and S3 steps of the
+build; they do not license an in-place upgrade of a live chain. The step plan and
+the decisions are recorded under slice 2 of
+[`docs/DesignsAndPlans/Vpfi1566CanonicalDeliveredBoundDesign.md`](docs/DesignsAndPlans/Vpfi1566CanonicalDeliveredBoundDesign.md).
 
 **Early-exit / settlement facets — all LIVE, none a placeholder** (#1657). An
 earlier version of this table called these "Placeholder facets (Phase 2)". They
@@ -153,6 +189,10 @@ unrelated to delivery status.
 
 1. **HF-based** (RiskFacet): HF < 1e18 → permissionless 0x swap, liquidator gets bonus
 2. **Time-based** (DefaultedFacet): Grace period expired → liquid assets get swapped, illiquid get transferred directly to lender
+
+Both end in the same fallback when every swap adapter fails: each self-calls
+`FallbackCustodyFacet.enterFallback`, the one producer of the `FallbackPending`
+snapshot (#1566 S2a).
 
 ### Key Constants (LibVaipakam.sol)
 

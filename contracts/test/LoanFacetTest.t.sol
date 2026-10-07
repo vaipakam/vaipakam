@@ -38,6 +38,7 @@ import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
  // For vault impl
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {HelperTest} from "./HelperTest.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
@@ -166,7 +167,7 @@ contract LoanFacetTest is Test {
         vaultImpl = new VaipakamVaultImplementation();
 
         // Cut facets into diamond
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](15);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](16);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -245,6 +246,18 @@ contract LoanFacetTest is Test {
         // sibling lien mutators. Without this cut every offer-create here
         // reverts `FunctionDoesNotExist`, which broke the whole suite.
         cuts[13] = IDiamondCut.FacetCut({facetAddress: address(new EncumbranceMutateFacet()), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getEncumbranceMutateFacetSelectors()});
+        // #1566 S2a - RiskFacet, DefaultedFacet and ClaimFacet reach the
+        // fallback custody flows (entry, retry swap, in-kind distribution)
+        // through a Diamond self-call into FallbackCustodyFacet, the one host
+        // of those flows. A hand-built Diamond that cuts any of the three must
+        // cut this host too, or a failed-swap liquidation or default and the
+        // fallback claim revert FunctionDoesNotExist at that self-call.
+        cuts[15] = IDiamondCut.FacetCut({
+            facetAddress: address(new FallbackCustodyFacet()),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getFallbackCustodyFacetSelectors()
+        });
+
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
         AccessControlFacet(address(diamond)).initializeAccessControl();
         // Diamond born paused (LibPausable). Clear via direct
@@ -1718,7 +1731,7 @@ contract LoanFacetTest is Test {
         vm.mockCall(
             address(diamond),
             abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector),
-            abi.encode(uint256(16 * 1e17)) // 1.6e18 — above 1.5 default, below 1.8
+            abi.encode(uint256(16 * 1e17)) // 1.6e18 — above the default 1.5, below 1.8
         );
 
         // #998 S15: 2000 ether clears the non-tiered create floor (~1875 ether);

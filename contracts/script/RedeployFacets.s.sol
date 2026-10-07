@@ -23,6 +23,7 @@ import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
 import {RepayPeriodicFacet} from "../src/facets/RepayPeriodicFacet.sol";
 import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
+import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {Deployments} from "./lib/Deployments.sol";
 import {FacetSelectors} from "./lib/FacetSelectors.sol";
 import {RefinanceRecordRollout} from "./lib/RefinanceRecordRollout.sol";
@@ -178,6 +179,16 @@ contract RedeployFacets is Script {
         // being over-charged.
         RepayPeriodicFacet repayPeriodicFacet = new RepayPeriodicFacet();
         EncumbranceMutateFacet encumbranceMutateFacet = new EncumbranceMutateFacet();
+        // #1566 slice 2 - RiskFacet and DefaultedFacet now ENTER the fallback, and
+        // ClaimFacet retries its swap and disposes of it, by self-calling this
+        // host. Its selectors are NEW on any Diamond cut before the split, so
+        // refreshing those three without it installs code that calls unrouted
+        // selectors: a liquidation or default whose swap fails, and every claim
+        // of a fallback-pending loan, would revert `FunctionDoesNotExist` through
+        // the Diamond fallback - the half-applied family #658 and #1649 document.
+        // Deploy it alongside and route its FULL surface (partitioned by live
+        // routing below), in the same cut as its callers.
+        FallbackCustodyFacet fallbackCustodyFacet = new FallbackCustodyFacet();
 
         console.log("RiskFacet:            ", address(riskFacet));
         console.log("RiskSplitLiquidation: ", address(riskSplitLiquidationFacet));
@@ -195,6 +206,7 @@ contract RedeployFacets is Script {
         console.log("RiskPreviewFacet:     ", address(riskPreviewFacet));
         console.log("RepayPeriodicFacet:   ", address(repayPeriodicFacet));
         console.log("EncumbranceMutate:    ", address(encumbranceMutateFacet));
+        console.log("FallbackCustodyFacet: ", address(fallbackCustodyFacet));
 
         // #394 (Codex #647 rounds 5+7) — the runtime HF-floor knob selectors
         // need an Add on a PRE-#394 diamond (not yet routed → Replace reverts on
@@ -315,6 +327,11 @@ contract RedeployFacets is Script {
         retiredResident[0] = FacetSelectors.retiredResidentPayoutSelector();
         (, bytes4[] memory encToRemove) =
             _partitionByRouting(diamond, retiredResident);
+        // #1566 slice 2 - the fallback-custody host: an Add on a Diamond cut
+        // before the split (nothing routes its selectors yet), a Replace on a
+        // current one. Sourced from the one list the deploy also cuts.
+        (bytes4[] memory fcToAdd, bytes4[] memory fcToReplace) =
+            _partitionByRouting(diamond, FacetSelectors.fallbackCustody());
 
         uint256 nExtra =
             (hfToAdd.length > 0 ? 1 : 0) + (hfToReplace.length > 0 ? 1 : 0) +
@@ -332,7 +349,8 @@ contract RedeployFacets is Script {
             (encToAdd.length > 0 ? 1 : 0) + (encToReplace.length > 0 ? 1 : 0) +
             (encToRemove.length > 0 ? 1 : 0) +
             (profToRemove.length > 0 ? 1 : 0) +
-            (rpToRemove.length > 0 ? 1 : 0);
+            (rpToRemove.length > 0 ? 1 : 0) +
+            (fcToAdd.length > 0 ? 1 : 0) + (fcToReplace.length > 0 ? 1 : 0);
         IDiamondCut.FacetCut[] memory cuts =
             new IDiamondCut.FacetCut[](9 + nExtra);
         cuts[0] = _replace(address(riskFacet), _riskSelectors());
@@ -481,6 +499,15 @@ contract RedeployFacets is Script {
         if (rpsToAdd.length > 0) {
             cuts[idx++] = _add(address(repayPeriodicFacet), rpsToAdd);
         }
+        // #1566 slice 2 - the fallback-custody host rides the SAME diamondCut as
+        // the Risk / Defaulted / Claim refresh above, so no block ever sees the
+        // new callers without their host.
+        if (fcToReplace.length > 0) {
+            cuts[idx++] = _replace(address(fallbackCustodyFacet), fcToReplace);
+        }
+        if (fcToAdd.length > 0) {
+            cuts[idx++] = _add(address(fallbackCustodyFacet), fcToAdd);
+        }
 
         IDiamondCut(diamond).diamondCut(cuts, address(0), "");
 
@@ -505,6 +532,8 @@ contract RedeployFacets is Script {
         console.log("  EncumbranceMutate repl.:      ", encToReplace.length);
         console.log("  EncumbranceMutate added:      ", encToAdd.length);
         console.log("  Retired resident-payout removed:", encToRemove.length);
+        console.log("  FallbackCustody selectors added: ", fcToAdd.length);
+        console.log("  FallbackCustody selectors repl.: ", fcToReplace.length);
     }
 
     function _replace(address facet, bytes4[] memory selectors)

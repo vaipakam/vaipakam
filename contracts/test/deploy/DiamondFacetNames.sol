@@ -76,6 +76,8 @@ abstract contract DiamondFacetNames {
     ///      88 → 93 with the #1566 build stack's five: `RewardStagingDomainFacet`,
     ///      `RewardClosureFacet`, `RewardEraFacet`, `ServiceCapacityFacet` and
     ///      `OfferMatchIntentFacet`.
+    ///      93 → 94 with `FallbackCustodyFacet` (#1566 slice 2 — the fallback
+    ///      entry, retry swap and disposal hosted once).
     function cutFacetNames() internal pure returns (string[93] memory) {
         return [
             "AccessControlFacet",
@@ -189,6 +191,8 @@ abstract contract DiamondFacetNames {
             "ServiceCapacityFacet",
             // #1219 (S-4) — the standing-intent fill, split out of OfferMatchFacet (EIP-170).
             "OfferMatchIntentFacet",
+            // #1566 slice 2 - the fallback-custody host (entry, retry swap, disposal).
+            "FallbackCustodyFacet",
             "RiskFacet",
             "RiskMatchLiquidationFacet",
             "RiskSplitLiquidationFacet",

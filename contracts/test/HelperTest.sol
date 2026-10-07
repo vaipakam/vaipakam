@@ -95,6 +95,7 @@ import {RewardClosureFacet} from "../src/facets/RewardClosureFacet.sol";
 import {RewardEraFacet} from "../src/facets/RewardEraFacet.sol";
 import {ServiceCapacityFacet} from "../src/facets/ServiceCapacityFacet.sol";
 import {OfferMatchIntentFacet} from "../src/facets/OfferMatchIntentFacet.sol";
+import {FacetSelectors} from "../script/lib/FacetSelectors.sol";
 import {RewardSweepWalkFacet} from "../src/facets/RewardSweepWalkFacet.sol";
 import {RewardForfeitWalkFacet} from "../src/facets/RewardForfeitWalkFacet.sol";
 import {RewardCompensationDispatchFacet} from "../src/facets/RewardCompensationDispatchFacet.sol";
@@ -2707,6 +2708,13 @@ contract HelperTest {
     function getOfferMatchIntentFacetSelectors() public pure returns (bytes4[] memory selectors) {
         selectors = new bytes4[](1);
         selectors[0] = OfferMatchIntentFacet.matchIntent.selector;
+    }
+
+    /// #1566 slice 2 - the fallback-custody host. Returns the one list in
+    /// `FacetSelectors.fallbackCustody()` (the same one `DeployDiamond` cuts),
+    /// so every test Diamond routes exactly the production surface.
+    function getFallbackCustodyFacetSelectors() public pure returns (bytes4[] memory selectors) {
+        selectors = FacetSelectors.fallbackCustody();
     }
 
     /// 3b-ii-B (#1566) — the per-day closure proof. Mirrors `DeployDiamond._getRewardClosureSelectors`.

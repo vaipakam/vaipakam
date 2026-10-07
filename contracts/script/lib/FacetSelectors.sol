@@ -9,6 +9,7 @@ import {RiskPreviewFacet} from "../../src/facets/RiskPreviewFacet.sol";
 import {OfferPreviewFacet} from "../../src/facets/OfferPreviewFacet.sol";
 import {RepayPeriodicFacet} from "../../src/facets/RepayPeriodicFacet.sol";
 import {EncumbranceMutateFacet} from "../../src/facets/EncumbranceMutateFacet.sol";
+import {FallbackCustodyFacet} from "../../src/facets/FallbackCustodyFacet.sol";
 
 /**
  * @title  FacetSelectors
@@ -360,5 +361,33 @@ library FacetSelectors {
     function offerPreview() internal pure returns (bytes4[] memory s) {
         s = new bytes4[](1);
         s[0] = OfferPreviewFacet.previewAccept.selector;
+    }
+
+    /// @notice Full external selector surface of {FallbackCustodyFacet} (4).
+    ///
+    /// @dev    #1566 slice 2. The fallback flows - entering the fallback, the
+    ///         retried swap and the disposal of the fallback collateral - moved
+    ///         out of `RiskFacet`, `DefaultedFacet` and `ClaimFacet` into this
+    ///         host, which those three reach by self-call. A curated refresh of
+    ///         the three WITHOUT this facet installs code that calls selectors
+    ///         nothing routes: a liquidation or default whose swap fails, and
+    ///         every claim of a fallback-pending loan, would revert
+    ///         `FunctionDoesNotExist` through the Diamond fallback - the
+    ///         half-applied family #658 and #1649 document. `RedeployFacets`
+    ///         therefore cuts it from this list.
+    ///
+    ///         This is also the ONLY copy of the list. `DeployDiamond`
+    ///         (`_getFallbackCustodySelectors`, which `RefreshAllFacetsInPlace`
+    ///         inherits) and `HelperTest` (`getFallbackCustodyFacetSelectors`,
+    ///         which every test Diamond cuts) return it rather than keeping
+    ///         their own, so the deploy, the in-place refresh, the curated
+    ///         refresh and the tests cannot disagree about the surface, and
+    ///         `RedeploySelectorParityTest` pins it to the compiled ABI.
+    function fallbackCustody() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](4);
+        s[0] = FallbackCustodyFacet.enterFallback.selector;
+        s[1] = FallbackCustodyFacet.retryFallbackSwap.selector;
+        s[2] = FallbackCustodyFacet.disposeFallbackCustody.selector;
+        s[3] = FallbackCustodyFacet.getFallbackCustody.selector;
     }
 }

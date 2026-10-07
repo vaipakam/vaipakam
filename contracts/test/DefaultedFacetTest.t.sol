@@ -54,6 +54,7 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
+import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {HelperTest} from "./HelperTest.sol";
 import {defaultAdapterCalls, emptyAdapterCalls} from "./helpers/AdapterCallHelpers.sol";
 import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
@@ -218,7 +219,7 @@ contract DefaultedFacetTest is Test {
         vaultImpl = new VaipakamVaultImplementation();
 
         // Cut facets into diamond
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](21);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](22);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -340,6 +341,18 @@ contract DefaultedFacetTest is Test {
 
         });
 
+
+        // #1566 S2a - RiskFacet, DefaultedFacet and ClaimFacet reach the
+        // fallback custody flows (entry, retry swap, in-kind distribution)
+        // through a Diamond self-call into FallbackCustodyFacet, the one host
+        // of those flows. A hand-built Diamond that cuts any of the three must
+        // cut this host too, or a failed-swap liquidation or default and the
+        // fallback claim revert FunctionDoesNotExist at that self-call.
+        cuts[21] = IDiamondCut.FacetCut({
+            facetAddress: address(new FallbackCustodyFacet()),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getFallbackCustodyFacetSelectors()
+        });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
         AccessControlFacet(address(diamond)).initializeAccessControl();

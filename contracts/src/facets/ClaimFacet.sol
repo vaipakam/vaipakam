@@ -15,7 +15,6 @@ import {LenderIntentFacet} from "./LenderIntentFacet.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {InteractionRewardsFacet} from "./InteractionRewardsFacet.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
@@ -25,11 +24,10 @@ import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {ConsolidationFacet} from "./ConsolidationFacet.sol";
-import {OracleFacet} from "./OracleFacet.sol";
 import {LibBackstopOracleGate} from "../libraries/LibBackstopOracleGate.sol";
 import {RiskMatchLiquidationFacet} from "./RiskMatchLiquidationFacet.sol";
 import {LibSwap} from "../libraries/LibSwap.sol";
-import {ISwapAdapter} from "../interfaces/ISwapAdapter.sol";
+import {FallbackCustodyFacet} from "./FallbackCustodyFacet.sol";
 
 /**
  * @title ClaimFacet
@@ -44,6 +42,15 @@ import {ISwapAdapter} from "../interfaces/ISwapAdapter.sol";
  *      Treasury fees are transferred immediately at resolution time and do not go through this facet.
  *      Custom errors, ReentrancyGuard, Pausable. Cross-facet calls for vault and NFT operations.
  *      Expand for Phase 2 (e.g., partial claims, time-locked claims, NFT-based access control delegation).
+ *
+ *      Refresh together (#1566 slice 2): {FallbackCustodyFacet}, RiskFacet,
+ *      DefaultedFacet, ClaimFacet, AddCollateralFacet, RepayFacet and
+ *      RiskMatchLiquidationFacet. A FallbackPending claim self-calls
+ *      {FallbackCustodyFacet.retryFallbackSwap} and
+ *      {FallbackCustodyFacet.disposeFallbackCustody}; refreshing this facet
+ *      without cutting that one leaves the selectors unrouted, and every
+ *      FallbackPending lender claim (and every backstop call that retries)
+ *      reverts `FunctionDoesNotExist`.
  */
 contract ClaimFacet is
     DiamondReentrancyGuard,
@@ -412,7 +419,7 @@ contract ClaimFacet is
         // proceeds + go terminal; lender claims normally (no backstop spend).
         if (retryCalls.length > 0 && !snap.retryAttempted) {
             snap.retryAttempted = true;
-            (bool ok, uint256 proceeds) = _attemptRetrySwap(loanId, loan, retryCalls);
+            (bool ok, uint256 proceeds) = _retryFallbackSwap(loanId, retryCalls);
             emit ClaimRetryExecuted(loanId, ok, proceeds);
             if (ok) {
                 _distributeRetryProceeds(loanId, loan, snap, proceeds);
@@ -536,8 +543,9 @@ contract ClaimFacet is
         s.backstopAbsorbExposure[p][c] += due;
 
         // ── Distribute the Diamond-held collateral. Treasury + borrower slices
-        //    route exactly as {_distributeFallbackCollateral}; ONLY the lender
-        //    slice is diverted to the backstop vault (warehoused for resale).
+        //    route exactly as {FallbackCustodyFacet.disposeFallbackCustody};
+        //    ONLY the lender slice is diverted to the backstop vault
+        //    (warehoused for resale).
         if (snap.treasuryCollateral > 0) {
             IERC20(c).safeTransfer(s.treasury, snap.treasuryCollateral);
             LibFacet.recordTreasuryAccrual(c, snap.treasuryCollateral);
@@ -901,7 +909,8 @@ contract ClaimFacet is
             // vault collateral lien into the borrower claim. The lien
             // tracks EXACTLY the collateral sitting in loan.borrower's vault
             // owed to the borrower-position holder: the fallback snapshot
-            // residual (re-liened in `_distributeFallbackCollateral`, Gap A)
+            // residual (re-liened by the in-kind distribution,
+            // `FallbackCustodyFacet.disposeFallbackCustody`, Gap A)
             // PLUS any FallbackPending top-up (folded into loan.collateralAmount
             // and liened, round-4). Recording that TOTAL as the borrower
             // claim (and KEEPING the lien) lets the verified-NFT-owner
@@ -1661,7 +1670,8 @@ contract ClaimFacet is
         uint256 proceeds;
         // #591 — a topped-up FallbackPending loan's collateral is split between
         // the borrower's vault (the AddCollateral top-up, liened) and Diamond
-        // custody (the snapshot). `_attemptRetrySwap` now swaps ONLY the
+        // custody (the snapshot). The retry swap
+        // ({FallbackCustodyFacet.retryFallbackSwap}) swaps ONLY the
         // Diamond-held portion (it derives `diamondPortion` from the lien), so
         // it never draws on same-token custody belonging to OTHER fallback
         // loans. The vault top-up stays liened, owed to the borrower, and is
@@ -1671,14 +1681,14 @@ contract ClaimFacet is
             !snap.retryAttempted
         ) {
             snap.retryAttempted = true;
-            (retrySucceeded, proceeds) = _attemptRetrySwap(loanId, loan, retryCalls);
+            (retrySucceeded, proceeds) = _retryFallbackSwap(loanId, retryCalls);
             emit ClaimRetryExecuted(loanId, retrySucceeded, proceeds);
         }
 
         if (retrySucceeded) {
             _distributeRetryProceeds(loanId, loan, snap, proceeds);
         } else {
-            _distributeFallbackCollateral(loanId, loan, snap);
+            _disposeFallbackCustody(loanId);
         }
         snap.active = false;
         // Partial-match / no-match / retry-swap: the (scaled) residual is
@@ -1687,113 +1697,45 @@ contract ClaimFacet is
         return false;
     }
 
-    /// @dev Phase 7a — runs the retry swap through {LibSwap.swapWithFailover}.
-    ///      `retryCalls` is the lender / keeper-supplied ranked
-    ///      try-list across registered adapters. Returns (false, 0) if
-    ///      every adapter reverted or the try-list was empty (still
-    ///      over the 6% slippage ceiling, thin liquidity, or any
-    ///      technical failure).
-    function _attemptRetrySwap(
+    /// @dev #1566 S2a: the claim-time retry swap lives in
+    ///      {FallbackCustodyFacet.retryFallbackSwap}, the one fallback-custody
+    ///      host (it replaced this facet's `_attemptRetrySwap` and
+    ///      `_swapWithFailoverMem`, unchanged). A thin self-call: the try-list
+    ///      is ABI-encoded across the Diamond-internal boundary and the host's
+    ///      non-empty revert bytes bubble verbatim (an empty one surfaces
+    ///      as `bytes4(0)`). `retryAttempted`,
+    ///      {ClaimRetryExecuted} and the proceeds distribution
+    ///      ({_distributeRetryProceeds}) stay in this facet.
+    function _retryFallbackSwap(
         uint256 loanId,
-        LibVaipakam.Loan storage loan,
         LibSwap.AdapterCall[] memory retryCalls
-    ) internal returns (bool, uint256) {
-        // #591 — swap ONLY the Diamond-held portion of the collateral. For a
-        // topped-up FallbackPending loan, `loan.collateralAmount` includes the
-        // AddCollateral top-up which sits in the borrower's vault (liened), NOT
-        // in Diamond custody; swapping the whole `collateralAmount` from the
-        // Diamond would draw on same-token custody belonging to OTHER fallback
-        // loans. The snapshot `lenderPrincipalDue` / `treasuryPrincipalDue`
-        // that `_distributeRetryProceeds` distributes against already describe
-        // only the Diamond (snapshot) portion, and the vault top-up stays
-        // liened — owed to the borrower — through the in-kind path. For a loan
-        // with no top-up the lien amount is 0, so this equals
-        // `loan.collateralAmount` (unchanged behaviour).
-        uint256 diamondPortion = LibVaipakam.hasActiveFallbackTopUp(loanId)
-            ? loan.collateralAmount - LibVaipakam.storageSlot().loanCollateralLien[loanId].amount
-            : loan.collateralAmount;
-        uint256 expected = _expectedSwapOutput(
-            loan.collateralAsset,
-            loan.principalAsset,
-            diamondPortion
-        );
-        uint256 minOut = (expected *
-            (LibVaipakam.BASIS_POINTS -
-                LibVaipakam.cfgMaxLiquidationSlippageBps())) /
-            LibVaipakam.BASIS_POINTS;
-
-        // LibSwap takes calldata; we have memory here. Solidity
-        // doesn't auto-convert memory→calldata for library internal
-        // calls, so swap to an inline assembly trick OR call a small
-        // wrapper that takes calldata. Cleanest: declare a tiny
-        // external `_libSwapWrapper(...)` selector via address(this).
-        // Skipping that complexity by inlining the iteration here —
-        // mirrors LibSwap.swapWithFailover with a memory try-list.
-        return _swapWithFailoverMem(
-            loanId,
-            loan.collateralAsset,
-            loan.principalAsset,
-            diamondPortion,
-            minOut,
-            address(this),
-            retryCalls
+    ) internal returns (bool ok, uint256 proceeds) {
+        (ok, proceeds) = abi.decode(
+            LibFacet.crossFacetCallReturn(
+                abi.encodeWithSelector(
+                    FallbackCustodyFacet.retryFallbackSwap.selector,
+                    loanId,
+                    retryCalls
+                ),
+                bytes4(0)
+            ),
+            (bool, uint256)
         );
     }
 
-    /// @dev Memory-array variant of {LibSwap.swapWithFailover}.
-    ///      Identical semantics + invariants — only the try-list is
-    ///      `memory` (came from the storage-copied retry list above)
-    ///      instead of `calldata`. Kept local to ClaimFacet because
-    ///      the only caller is {_attemptRetrySwap}; promoting it to
-    ///      LibSwap would force every caller to overload their try-
-    ///      list location.
-    function _swapWithFailoverMem(
-        uint256 loanId,
-        address inputToken,
-        address outputToken,
-        uint256 inputAmount,
-        uint256 minOutputAmount,
-        address recipient,
-        LibSwap.AdapterCall[] memory calls
-    ) internal returns (bool, uint256) {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        uint256 registered = s.swapAdapters.length;
-        if (registered == 0) revert LibSwap.NoSwapAdaptersConfigured();
-        uint256 n = calls.length;
-        if (n == 0) return (false, 0);
-
-        for (uint256 i = 0; i < n; ++i) {
-            uint256 idx = calls[i].adapterIdx;
-            if (idx >= registered) {
-                revert LibSwap.AdapterIndexOutOfRange(idx, registered);
-            }
-            address adapter = s.swapAdapters[idx];
-            // #633 — skip a governance-paused venue (mirrors LibSwap.swapWithFailover),
-            // so the per-venue kill-switch also covers claim/backstop retry swaps.
-            if (s.swapAdapterDisabled[adapter]) continue;
-            SafeERC20.forceApprove(IERC20(inputToken), adapter, 0);
-            SafeERC20.forceApprove(IERC20(inputToken), adapter, inputAmount);
-            try
-                ISwapAdapter(adapter).execute(
-                    inputToken,
-                    outputToken,
-                    inputAmount,
-                    minOutputAmount,
-                    recipient,
-                    calls[i].data
-                )
-            returns (uint256 out_) {
-                SafeERC20.forceApprove(IERC20(inputToken), adapter, 0);
-                emit LibSwap.SwapAdapterAttempted(loanId, idx, adapter, true);
-                emit LibSwap.SwapAdapterSucceeded(loanId, idx, adapter, out_);
-                return (true, out_);
-            } catch {
-                SafeERC20.forceApprove(IERC20(inputToken), adapter, 0);
-                emit LibSwap.SwapAdapterAttempted(loanId, idx, adapter, false);
-            }
-        }
-        emit LibSwap.SwapAllAdaptersFailed(loanId);
-        return (false, 0);
+    /// @dev #1566 S2a: the in-kind split distribution lives in
+    ///      {FallbackCustodyFacet.disposeFallbackCustody} (it replaced this
+    ///      facet's `_distributeFallbackCollateral`, unchanged). Used when the
+    ///      retry swap failed or was not run. The caller still clears
+    ///      `snap.active` afterwards.
+    function _disposeFallbackCustody(uint256 loanId) internal {
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                FallbackCustodyFacet.disposeFallbackCustody.selector,
+                loanId
+            ),
+            bytes4(0)
+        );
     }
 
     /// @dev Distributes principal-asset proceeds from a successful retry
@@ -1881,87 +1823,6 @@ contract ClaimFacet is
             quantity: 0,
             claimed: borrowerGets == 0
         });
-    }
-
-    /// @dev Pushes the pre-recorded collateral split from the Diamond into
-    ///      the lender vault / treasury / borrower vault. Used when the
-    ///      retry swap failed or was skipped (borrower-first claim).
-    function _distributeFallbackCollateral(
-        uint256 loanId,
-        LibVaipakam.Loan storage loan,
-        LibVaipakam.FallbackSnapshot storage snap
-    ) internal {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-
-        if (snap.treasuryCollateral > 0) {
-            IERC20(loan.collateralAsset).safeTransfer(
-                s.treasury,
-                snap.treasuryCollateral
-            );
-            LibFacet.recordTreasuryAccrual(loan.collateralAsset, snap.treasuryCollateral);
-        }
-
-        if (snap.lenderCollateral > 0) {
-            // #821 (Codex #832 r4 P1) — vault-lock so a flagged stored lender
-            // doesn't brick the fallback-collateral distribution.
-            LibSanctionedLock.depositLocked(
-                s, loan.lender, loanId, loan.collateralAsset, snap.lenderCollateral
-            );
-        }
-        if (snap.borrowerCollateral > 0) {
-            // #821 (Codex #832 r4 P1) — vault-lock so a flagged stored borrower
-            // doesn't brick the fallback-collateral distribution.
-            LibSanctionedLock.depositLocked(
-                s, loan.borrower, loanId, loan.collateralAsset, snap.borrowerCollateral
-            );
-            // #998 S10 (#1006) — the borrower freeze marker is recorded by the
-            // Class A `recordSanctionsFrozenClaimantBoth` at the top of this
-            // function (registry-aware), plus the fallback-ENTRY marker.
-            // #569 Gap A — RE-LIEN the borrower residual pushed BACK into
-            // the vault here. The lien was released at liquidation/default
-            // ENTRY (when the full collateral left to Diamond custody); the
-            // borrower-residual claim row was recorded then too. This is the
-            // custody RETURN leg — the residual now sits in loan.borrower's
-            // vault owed to the borrower-position holder, so it must be
-            // encumbered through the window until `claimAsBorrower` releases
-            // it (and the burn backstop guarantees release). Without this,
-            // a transferred-away stored borrower could drain the residual
-            // (VPFI via withdrawVPFIFromVault) before the rightful holder
-            // claims. ERC20-only (create-if-absent on the released row).
-            LibFacet.crossFacetCall(
-                abi.encodeWithSelector(
-                    EncumbranceMutateFacet.incrementCollateralLien.selector,
-                    loanId,
-                    snap.borrowerCollateral
-                ),
-                bytes4(0)
-            );
-        }
-        // Claim records were already written in the collateral asset at
-        // fallback time; nothing to rewrite here. loanId retained for
-        // symmetry with _distributeRetryProceeds and for future hooks.
-        loanId;
-    }
-
-    /// @dev Oracle-derived expected swap output in principal-asset units.
-    ///      Mirrors RiskFacet/DefaultedFacet so the retry path uses the
-    ///      same 6% slippage semantics.
-    function _expectedSwapOutput(
-        address collateralAsset,
-        address principalAsset,
-        uint256 collateralAmount
-    ) internal view returns (uint256) {
-        (uint256 colPrice, uint8 colFeedDec) = OracleFacet(address(this))
-            .getAssetPrice(collateralAsset);
-        (uint256 prinPrice, uint8 prinFeedDec) = OracleFacet(address(this))
-            .getAssetPrice(principalAsset);
-        if (prinPrice == 0) return 0;
-        uint8 colTokenDec = IERC20Metadata(collateralAsset).decimals();
-        uint8 prinTokenDec = IERC20Metadata(principalAsset).decimals();
-        return
-            (collateralAmount * colPrice * (10 ** prinTokenDec) *
-                (10 ** prinFeedDec)) /
-            (prinPrice * (10 ** colTokenDec) * (10 ** colFeedDec));
     }
 
     // ─── View Functions ───────────────────────────────────────────────────────

@@ -692,7 +692,7 @@ library LibVpfiRecycle {
      *              ({SwapToRepayIntentFacet}). **NOT subtracted.**
      *           8. liquidation `fallbackSnapshot` custody — an exhausted
      *              swap try-list leaves the full VPFI collateral on the
-     *              Diamond ({RiskFacet._fullCollateralTransferFallback}).
+     *              Diamond ({FallbackCustodyFacet.enterFallback}).
      *              **NOT subtracted.**
      *
      *           9. funded payroll streams — {PayrollFacet.fundPayrollStream}

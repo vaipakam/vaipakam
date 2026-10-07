@@ -36,6 +36,7 @@ import {LibSwap} from "../libraries/LibSwap.sol";
 // HF-liquidation entry points here still dispatch through it.
 import {RiskMatchLiquidationFacet} from "./RiskMatchLiquidationFacet.sol";
 import {ConsolidationFacet} from "./ConsolidationFacet.sol";
+import {FallbackCustodyFacet} from "./FallbackCustodyFacet.sol";
  // Phase 7a — ordered adapter failover for liquidation swaps
 
 /**
@@ -61,10 +62,18 @@ import {ConsolidationFacet} from "./ConsolidationFacet.sol";
  *      Liquidation ({triggerLiquidation}): permissionless when HF < 1e18.
  *      Swaps collateral → principal-asset via 0x (slippage ≤
  *      `MAX_LIQUIDATION_SLIPPAGE_BPS` = 6%). On swap failure or slippage
- *      breach, falls back to {LibFallback.record} — full collateral stays
- *      in the Diamond until {ClaimFacet} retries or distributes the split.
+ *      breach, falls back to {FallbackCustodyFacet.enterFallback}: full
+ *      collateral stays in the Diamond until {ClaimFacet} retries or
+ *      distributes the split (both through {FallbackCustodyFacet}).
  *      On success: liqBonus to liquidator, remainder split per
  *      {LibEntitlement.splitTreasury} (1% treasury, 99% lender).
+ *
+ *      Refresh together (#1566 slice 2): {FallbackCustodyFacet}, RiskFacet,
+ *      DefaultedFacet, ClaimFacet, AddCollateralFacet, RepayFacet and
+ *      RiskMatchLiquidationFacet. The swap-failure fallback entry is a
+ *      self-call into {FallbackCustodyFacet.enterFallback}; refreshing this
+ *      facet without cutting that one leaves the selector unrouted, and
+ *      every swap-failure liquidation reverts `FunctionDoesNotExist`.
  */
 contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessControl, IVaipakamErrors {
     using SafeERC20 for IERC20;
@@ -123,6 +132,10 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
 
     // MAX_LIQUIDATION_SLIPPAGE_BPS consolidated in LibVaipakam
 
+    // #1566 S2a: the three fallback-entry events below are emitted by
+    // {FallbackCustodyFacet.enterFallback}, which re-declares them with
+    // byte-identical signatures (same topic hashes). They stay declared here
+    // so this facet's ABI, and every consumer decoding against it, keeps them.
     /// @notice Emitted when an HF-triggered liquidation falls back to the
     ///         claim-time settlement path because the DEX swap reverted or
     ///         exceeded the 6% slippage ceiling (README §7).
@@ -757,9 +770,10 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // adapters. `adapterCalls` is the keeper-supplied try-list,
         // ranked by expected output (best first). LibSwap iterates in
         // submitted order, handles per-adapter exact-scope approvals,
-        // and commits on the first success. Total failure (all adapters
-        // reverted, or empty try-list) routes to the same full-
-        // collateral fallback path as pre-7a.
+        // and commits on the first success. Total failure (every enabled
+        // adapter reverted) routes to the same full-collateral fallback
+        // path as pre-7a; an empty or all-disabled try-list reverts
+        // `NoEnabledSwapRoute` inside LibSwap instead (#1005).
         (bool swapSuccess, uint256 proceedsFromSwap, ) = LibSwap.swapWithFailover(
             loanId,
             loan.collateralAsset,
@@ -770,7 +784,7 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             adapterCalls
         );
         if (!swapSuccess) {
-            _fullCollateralTransferFallback(loanId, loan);
+            _enterFallback(loanId);
             return;
         }
         uint256 proceeds = proceedsFromSwap;
@@ -1881,120 +1895,23 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             revert KYCRequired();
     }
 
-    /// @dev Fallback from triggerLiquidation when the DEX swap reverts or
-    ///      would exceed the 6% slippage ceiling (README §7 lines 142–153).
-    ///      The collateral is already inside the diamond (withdrawn before
-    ///      the swap attempt). Instead of pushing full collateral to the
-    ///      lender, we record the README §7 three-way split in a
-    ///      FallbackSnapshot and hold the collateral in the diamond so
-    ///      ClaimFacet may attempt liquidation one more time during the
-    ///      lender claim. If that retry also fails — or if the borrower
-    ///      claims first — ClaimFacet distributes the collateral per the
-    ///      snapshot.
-    function _fullCollateralTransferFallback(
-        uint256 loanId,
-        LibVaipakam.Loan storage loan
-    ) internal {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-
-        (
-            uint256 lenderCol,
-            uint256 treasuryCol,
-            uint256 borrowerCol,
-            uint256 lenderPrincDue,
-            uint256 treasuryPrincDue,
-            bool oracleAvailable
-        ) = LibFallback.computeFallbackEntitlements(address(this), loan, loanId);
-
-        s.fallbackSnapshot[loanId] = LibVaipakam.FallbackSnapshot({
-            lenderCollateral: lenderCol,
-            treasuryCollateral: treasuryCol,
-            borrowerCollateral: borrowerCol,
-            lenderPrincipalDue: lenderPrincDue,
-            treasuryPrincipalDue: treasuryPrincDue,
-            active: true,
-            retryAttempted: false
-        });
-
-        // Record claims in collateral units. ClaimFacet will either rewrite
-        // these to principal-asset amounts on a successful retry, or push
-        // the collateral to lender/treasury/borrower vaults per this split
-        // if the retry fails (or the borrower claims first).
-        s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
-            asset: loan.collateralAsset,
-            amount: lenderCol,
-            assetType: LibVaipakam.AssetType.ERC20,
-            tokenId: 0,
-            quantity: 0,
-            claimed: false
-        });
-        s.borrowerClaims[loanId] = LibVaipakam.ClaimInfo({
-            asset: loan.collateralAsset,
-            amount: borrowerCol,
-            assetType: LibVaipakam.AssetType.ERC20,
-            tokenId: 0,
-            quantity: 0,
-            claimed: borrowerCol == 0
-        });
-
-        // #998 S10 (#1006 / #1132) — capture a confirmed freeze at fallback ENTRY,
-        // where the oracle is up (this path is HF-gated). Unlike an atomic
-        // liquidation, the lender + borrower shares here are distributed LATER inside
-        // a claim that can itself run during an oracle outage (fallback distribution
-        // needs no oracle), so entry is the only reliable moment to record an
-        // affirmative flag for BOTH the lender claim and the deferred borrower claim.
-        // The `EncumbranceMutateFacet.terminalize` host records both holders AT this
-        // Active→FallbackPending entry transition (design §2 Invariant A —
-        // fallback-entry is a register-triggering edge).
-
-        // Enter fallback-pending state. Borrower may still cure via addCollateral
-        // or repayLoan until the lender claims; see LibVaipakam.LoanStatus docs.
-        // #1132 (S10 central enforcement) — route through the
-        // `EncumbranceMutateFacet.terminalize` host so the validated Active→FallbackPending
-        // transition AND both holders' fail-closed frozen-claimant markers land
-        // in one place (the standalone registers above were folded here).
+    /// @dev #1566 S2a: the swap failed, so enter FallbackPending through the
+    ///      one fallback-custody host, {FallbackCustodyFacet.enterFallback}.
+    ///      It replaced this facet's `_fullCollateralTransferFallback`, whose
+    ///      code was identical to DefaultedFacet's copy. The entry reads no
+    ///      caller context (only `loanId`, storage and the Diamond's own
+    ///      address), so the self-call is behaviour-identical; its
+    ///      non-empty revert bytes bubble verbatim (an empty one surfaces as
+    ///      `bytes4(0)`). A private helper so the call's encoding
+    ///      stays out of `triggerLiquidation`'s near-ceiling viaIR frame.
+    function _enterFallback(uint256 loanId) private {
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
-                EncumbranceMutateFacet.terminalize.selector,
-                loanId,
-                LibVaipakam.LoanStatus.Active,
-                LibVaipakam.LoanStatus.FallbackPending
+                FallbackCustodyFacet.enterFallback.selector,
+                loanId
             ),
             bytes4(0)
         );
-
-        // Mark NFTs with pending status — final Defaulted/Liquidated label is
-        // written once the lender claims (or the borrower cures back to Active).
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                VaipakamNFTFacet.updateNFTStatus.selector,
-                loan.lenderTokenId,
-                loanId,
-                LibVaipakam.LoanPositionStatus.LoanFallbackPending
-            ),
-            NFTStatusUpdateFailed.selector
-        );
-
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                VaipakamNFTFacet.updateNFTStatus.selector,
-                loan.borrowerTokenId,
-                loanId,
-                LibVaipakam.LoanPositionStatus.LoanFallbackPending
-            ),
-            NFTStatusUpdateFailed.selector
-        );
-
-        // §1.4 + §1.5 — informational events carry only the loanId primary
-        // key. lender + split are recoverable from s.loans[loanId] and
-        // s.fallbackSnapshot[loanId] respectively. The
-        // {LiquidationFallbackOracleUnavailable} extra event (Phase 2
-        // of AutonomousLtvAndOracleFallback.md) fires when the
-        // fair-value split was impossible due to stale oracle quorum
-        // — the lender absorbed everything in that case.
-        emit LiquidationFallback(loanId);
-        emit LiquidationFallbackSplit(loanId);
-        if (!oracleAvailable) emit LiquidationFallbackOracleUnavailable(loanId);
     }
 
     // Internal helper for current borrow balance with accrued interest

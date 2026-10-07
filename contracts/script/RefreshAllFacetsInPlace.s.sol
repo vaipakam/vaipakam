@@ -96,6 +96,7 @@ import {RewardClosureFacet} from "../src/facets/RewardClosureFacet.sol";
 import {RewardEraFacet} from "../src/facets/RewardEraFacet.sol";
 import {ServiceCapacityFacet} from "../src/facets/ServiceCapacityFacet.sol";
 import {OfferMatchIntentFacet} from "../src/facets/OfferMatchIntentFacet.sol";
+import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
 import {RewardSweepWalkFacet} from "../src/facets/RewardSweepWalkFacet.sol";
 import {RewardForfeitWalkFacet} from "../src/facets/RewardForfeitWalkFacet.sol";
 import {LibPausable} from "../src/libraries/LibPausable.sol";
@@ -247,7 +248,9 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     // route split off SwapToRepayFacet, which was 73 bytes under EIP-170.
     // 92 -> 93: the merge of main brings SwapToRepayPartialFacet (#2416) to the
     // #1566 build stack's 92 (87 + the stack's five).
-    uint256 public constant EXPECTED_FACETS = 93;
+    // 93 -> 94: FallbackCustodyFacet (#1566 slice 2) - the fallback entry, retry
+    // swap and disposal hosted once, self-called by Risk / Defaulted / Claim.
+    uint256 public constant EXPECTED_FACETS = 94;
 
     function refresh() external {
         uint256 cid = block.chainid;
@@ -1397,6 +1400,8 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         // #2416 — refreshed WITH swapToRepayFacet (items[43]): one surface
         // across the two, so refreshing either alone splits the routes.
         items[92] = Item("swapToRepayPartialFacet", address(new SwapToRepayPartialFacet()), _getSwapToRepayPartialFacetSelectors());
+        // #1566 slice 2 - the fallback-custody host its three callers self-call.
+        items[93] = Item("fallbackCustodyFacet", address(new FallbackCustodyFacet()), _getFallbackCustodySelectors());
         items[26] = Item("rewardReporterFacet", address(new RewardReporterFacet()), _getRewardReporterSelectors());
         // #1222 M3 B3 — `getChainRecycledLedger` /
         // `getChainDailyRecycledCredit` moved here from ConfigFacet (EIP-170).

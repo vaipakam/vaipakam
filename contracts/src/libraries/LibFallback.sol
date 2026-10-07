@@ -55,8 +55,8 @@ library LibFallback {
     ///      the full-collateral fallback instead of having the whole
     ///      liquidation revert. Sentinel return when oracle fails is `0`
     ///      — the surrounding {computeFallbackEntitlements} surfaces
-    ///      this via its `oracleAvailable` flag, and {RiskFacet}'s
-    ///      `_fullCollateralTransferFallback` switches branches
+    ///      this via its `oracleAvailable` flag, and
+    ///      {FallbackCustodyFacet.enterFallback} switches branches
     ///      accordingly.
     function collateralEquivalent(
         address diamond,

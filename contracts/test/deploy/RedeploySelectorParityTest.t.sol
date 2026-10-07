@@ -86,6 +86,17 @@ contract RedeploySelectorParityTest is Test {
         _assertParity("EncumbranceMutateFacet", FacetSelectors.encumbranceMutate());
     }
 
+    /// @dev #1566 slice 2 - RiskFacet, DefaultedFacet and ClaimFacet self-call
+    ///      this host for the fallback entry, the retried swap and the
+    ///      disposal, so `RedeployFacets` refreshes it with them. The list is
+    ///      also the one `DeployDiamond` and `HelperTest` return. Pin it so a
+    ///      selector added to the host cannot be left unrouted by a curated
+    ///      refresh: the omission would not fail a compile, it would fail a
+    ///      live liquidation, default or fallback claim.
+    function test_FallbackCustodySelectors_MatchCompiledAbi() public view {
+        _assertParity("FallbackCustodyFacet", FacetSelectors.fallbackCustody());
+    }
+
     /// @dev #1503 item 28 — the RETIRED 3-argument resident-payout selector must
     ///      be GONE from the facet's compiled surface, so the curated refresh's
     ///      Remove leg targets a genuinely-retired entry point and no dual entry

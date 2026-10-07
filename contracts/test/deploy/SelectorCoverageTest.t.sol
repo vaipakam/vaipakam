@@ -270,6 +270,8 @@ contract SelectorCoverageTest is Test, DeployDiamond, DiamondFacetNames {
         _addAll(_getRewardEraSelectors());
         _addAll(_getServiceCapacitySelectors());
         _addAll(_getOfferMatchIntentSelectors());
+        // #1566 slice 2 - the fallback-custody host.
+        _addAll(_getFallbackCustodySelectors());
         _addAll(_getRepatriationSelectors());
         _addAll(_getConfigSelectors());
         _addAll(_getNumeraireConfigSelectors());

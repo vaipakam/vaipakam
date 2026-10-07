@@ -808,7 +808,7 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
     ///           scale its reference fields + the claim records
     ///           proportionally to the surviving collateral. A later
     ///           match OR claim resolves the residual via the standard
-    ///           snapshot-driven path (`_distributeFallbackCollateral`,
+    ///           snapshot-driven path (`FallbackCustodyFacet.disposeFallbackCustody`,
     ///           Diamond → vaults) — exactly as a fresh, smaller
     ///           FallbackPending loan would.
     /// @param principalMoved The principal this step cleared from `loan` (its

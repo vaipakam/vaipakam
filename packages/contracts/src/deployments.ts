@@ -116,6 +116,10 @@ export interface DeploymentFacets {
   serviceCapacityFacet?: HexAddress;
   /** #1219 (S-4) — the standing-intent fill, split out of OfferMatchFacet (EIP-170). */
   offerMatchIntentFacet?: HexAddress;
+  /** #1566 slice 2 - the fallback-custody host (entry, retry swap, disposal,
+   *  and the `getFallbackCustody` read). Optional: a chain deployed before
+   *  the split has no such key. */
+  fallbackCustodyFacet?: HexAddress;
   rewardReporterFacet?: HexAddress;
   riskFacet?: HexAddress;
   stakingRewardsFacet?: HexAddress;

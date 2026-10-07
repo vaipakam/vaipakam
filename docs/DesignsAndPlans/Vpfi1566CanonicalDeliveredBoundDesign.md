@@ -1240,6 +1240,102 @@ durable rather than a snapshot of one moment.
   paginated scan migrates them, with the same completion proof. **Arming waits
   on that scan.**
 
+> **S2a LANDED (local build, 2026-10-07): host split only, custody unchanged.**
+> Recorded on the build-first local stack, ahead of review. S2a changes no
+> behaviour and moves no custody; the quadruple this slice requires (vault
+> deposit, lien, tracked-balance record, VPFI tier exclusion) lands in S2b.
+>
+> - **What S2a does.** A new Diamond-internal `FallbackCustodyFacet` becomes the
+>   one home of the fallback-custody flows. `enterFallback` replaces the two
+>   copies of `_fullCollateralTransferFallback`: RiskFacet and DefaultedFacet now
+>   self-call it when every swap adapter fails. `retryFallbackSwap` takes
+>   ClaimFacet's retry swap and its soft-fail adapter loop;
+>   `disposeFallbackCustody` takes ClaimFacet's in-kind distribution. The view
+>   `getFallbackCustody` reports `(vaultHeld, legacyDiamondHeld)`, which in S2a is
+>   `(0, the active snapshot's total)` because nothing is vault-held yet. The
+>   retry distribution, the `retryAttempted` stamp and `ClaimRetryExecuted` stay
+>   in ClaimFacet. The mutators are gated to the Diamond's own self-calls and take
+>   no reentrancy guard of their own, since every caller already holds the
+>   Diamond's guard. Storage writes happen in the same order, and the events,
+>   token movements and every revert that carries data are the same (an inner
+>   revert with no data now surfaces as the 4-byte zero selector at the
+>   self-call); the three fallback events are
+>   re-declared byte-identical, so their topic hashes do not change. The
+>   collateral still rests in the Diamond. No storage is
+>   added. The facet is registered like any new facet, and the hand-built test
+>   Diamonds that reach these paths cut it.
+>   A dedicated cell (`FallbackCustodyFacetGateTest`) pins the gate: each
+>   mutator refuses any outside caller (the loan's own parties and the admin
+>   included) with `OnlyDiamondInternal`, and the same entry succeeds with the
+>   Diamond as the caller. It matters because the in-kind split has no state
+>   precondition of its own: it pays the snapshot's slices on every call, and
+>   only its caller checks and clears the snapshot. S2b changes that entry's
+>   signature, so the cell must follow it.
+> - **Why split first.** RiskFacet had about 67 bytes of EIP-170 headroom, and the
+>   producer was written out twice. Slice 2 grows every one of these flows.
+>   Splitting before the behaviour change gives slice 2 one producer to change
+>   instead of two, and keeps the S2b diff to the custody rule alone (owner rule:
+>   a clean host split before byte-shaving).
+> - **Owner decisions, 2026-10-07**, taken on the slices 2–3 implementation
+>   brief:
+>   - **O1 = A: fresh deploy only.** Every chain that runs slices 2–3 gets a fresh
+>     deploy. There are no version-0 branches. Under slices 2–3 a consumer that
+>     meets a pre-slice row fails closed (`FallbackCustodyNotVaultHeld` for this class,
+>     `IntentCustodyNotVaultHeld` for intents) instead of paying it from the
+>     Diamond. So the migration bullets of this slice and of slice 3, and slice
+>     0's reconciliation for these two classes, describe work that will not be
+>     built. They stay as written until the slices 2–3 docs pass retires them.
+>     The census section's second no-op condition ("the prospective custody
+>     changes are already deployed on that chain") holds by construction on a
+>     fresh deploy. The in-place alternative (A') is not taken. It needed a
+>     determinate-zero, all-asset census read after a finalized pause, and it
+>     needed O5 (ii) (the lock in the reentrancy guard), because a Diamond
+>     contract cannot be replaced in place.
+>   - **O5 = (i): the slice-3 fill lock is enforced in `VaipakamDiamond.fallback`.**
+>     While the lock is held, the Diamond admits only its own self-calls and
+>     `postInteraction`. That covers every entry: guarded and unguarded
+>     mutators, views and `multicall`. It also lets the lock open before the pull,
+>     as slice 3 requires ("set before the pull"). It costs one transient load on
+>     every Diamond call, adds no facet bytes, and needs a new Diamond contract,
+>     which O1 = A provides. Lands in S3b.
+>   - **O6: pause stops fills.** The fill pre-hook is pause-gated for both order
+>     kinds (swap-to-repay and buyback). Pull-at-use puts a vault outflow inside a
+>     third-party transaction, and an emergency pause must be able to stop it. The
+>     cost: fills revert while paused, and orders stay live until their deadline.
+>     The text of slices 0 and 3 that relies on the hooks not being pause-gated
+>     describes the code before S3b. Lands in S3b.
+> - **Build order** (local stack; compile checks and targeted suites only; no
+>   deploy until the programme ends):
+>   1. **S0**: #2141's `DiamondCustodyAttribution` invariant suite, on the code as
+>      it stood before S2a. Per asset, the Diamond's balance equals the protocol
+>      ledgers plus the user custody still known to rest there, less at most two
+>      wei of unowned rounding per partial internal-match leg (K5, removed in
+>      S2b). It lands green.
+>      The strict form (user-custody term zero) is recorded failing, as proof
+>      that it can fail.
+>   2. **S2a**: this host split.
+>   3. **S2b**: custody moves into the borrower's vault. This step adds the
+>      storage append, the row primitive and its move event, every consumer, the
+>      tier-exclusion clause, the helper redefinitions, the fixture rewrites and
+>      the slice-2 cells. The strict term turns on for this class.
+>   4. **S2c**: DefaultedFacet's missing VPFI restamp, in its own commit.
+>   5. **S3a**: the fork cell and the slice-3 fill cells (the faithful
+>      limit-order mock and the callback token already land with S0).
+>   6. **S3b**: pull at use, with the fill lock (O5 (i)) and the pause gate (O6).
+>      This step also adds the exact-amount checks and the bit-invalidator teardown
+>      check. The strict term then covers intents.
+>   7. **S4**: the mutation runs. Each must turn its named invariant red.
+>   8. **S5**: the remaining work. This covers the ABI export, the
+>      `RedeployFacets` custody-boundary refusal (its selector getter and parity
+>      case landed in S2a; the refusal must key on a selector or marker that first
+>      exists at S2b, not on `getFallbackCustody`, which S2a already routes), the
+>      census changes, docs and release notes, and the #2141
+>      comment.
+> - **Functional specs: none for S2a.** It is behaviour-identical, and S0 is a
+>   test. The intended-behaviour rule (no user asset rests in protocol custody
+>   across transactions) enters `docs/FunctionalSpecs/` with S2b and S3b, which
+>   change behaviour.
+
 **3. The intent class — via the `preInteraction` pull point.**
 
 - **Lien decrement, pull, and VPFI restamp are ONE atomic step** inside
