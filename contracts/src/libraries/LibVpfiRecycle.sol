@@ -690,9 +690,14 @@ library LibVpfiRecycle {
      *              debt-sized auction lot into the Diamond (#2322 — formerly
      *              the whole collateral) and returns it on cancel
      *              ({SwapToRepayIntentFacet}). **NOT subtracted.**
-     *           8. liquidation `fallbackSnapshot` custody — an exhausted
-     *              swap try-list leaves the full VPFI collateral on the
-     *              Diamond ({FallbackCustodyFacet.enterFallback}).
+     *           8. liquidation `fallbackSnapshot` custody — no longer
+     *              resting on a Diamond built from this source: an
+     *              exhausted swap try-list returns the collateral to the
+     *              borrower's vault, vault-held under the loan's lien
+     *              ({FallbackCustodyFacet.enterFallback}, #1566 slice 2),
+     *              so it never enters this balance. A Diamond refreshed
+     *              in place may carry pre-slice rows (they fail closed,
+     *              `FallbackCustodyNotVaultHeld`); see the custody census.
      *              **NOT subtracted.**
      *
      *           9. funded payroll streams — {PayrollFacet.fundPayrollStream}
@@ -925,7 +930,10 @@ library LibVpfiRecycle {
         //
         // Some of those owners are USER COLLATERAL rather than protocol
         // ledgers — a live swap-to-repay intent's custody, and liquidation
-        // fallback custody. A reward payout drawing on those spends a
+        // fallback custody on a Diamond refreshed in place across #1566
+        // slice 2 (a pre-slice row; on a Diamond built from this source
+        // fallback custody is vault-held under the loan's lien and never
+        // enters this balance). A reward payout drawing on those spends a
         // BORROWER's collateral, which is a different severity from
         // over-drawing an operational budget.
         //

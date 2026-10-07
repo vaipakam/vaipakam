@@ -432,13 +432,17 @@ contract AddCollateralFacetTest is Test {
 
     // ─── Additional branch coverage tests ────────────────────────────────────
 
-    /// @dev Covers line 101: `if (!success) revert CrossFacetCallFailed("Get borrower vault failed")`.
+    /// @dev A failed deposit into the borrower's vault aborts the whole top-up and bubbles
+    ///      the vault's own revert data (the name is kept for history; the eager vault lookup
+    ///      it once covered was removed in #1566 S2b with the Diamond-held cure transfer).
     function testAddCollateralGetVaultFails() public {
         uint256 loanId = _createActiveLiquidLoan();
-        // Mock getOrCreateUserVault to revert → CrossFacetCallFailed
+        // #1566 S2b — the top-up's ONLY vault call is the deposit into the borrower's vault
+        // (the eager vault lookup that fed the old Diamond-held cure transfer is gone). A
+        // failure there must still abort the top-up, bubbling the vault's own revert.
         vm.mockCallRevert(
             address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.getOrCreateUserVault.selector),
+            abi.encodeWithSelector(VaultFactoryFacet.vaultDepositERC20From.selector),
             "vault fail"
         );
         vm.prank(borrower);

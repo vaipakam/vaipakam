@@ -11,6 +11,7 @@ import {LibSettlement} from "../libraries/LibSettlement.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
+import {LibFallbackCustody} from "../libraries/LibFallbackCustody.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
@@ -59,8 +60,17 @@ import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
  *      only resolution path.
  *
  *      FallbackPending cure: {repayLoan} accepts the FallbackPending
- *      status, pushes the diamond-held collateral back into the
- *      borrower's vault, and transitions to Repaid.
+ *      status and transitions to Repaid. #1566 slice 2 — the fallback
+ *      custody already rests in the borrower's vault under the collateral
+ *      lien (the `fallbackVaultCustody` row), so the cure moves no tokens:
+ *      it refuses a legacy Diamond-held row by name
+ *      (`FallbackCustodyNotVaultHeld`) and returns the row to the ordinary
+ *      pledge.
+ *      REFRESH TOGETHER: {FallbackCustodyFacet, RiskFacet, DefaultedFacet,
+ *      ClaimFacet, AddCollateralFacet, RepayFacet, RiskMatchLiquidationFacet}
+ *      share that one custody rule. Pre-slice-2 code here would re-deposit a
+ *      cured row out of the Diamond's own balance although slice-2 producers
+ *      left it in the vault.
  */
 contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors {
     using SafeERC20 for IERC20;
@@ -214,8 +224,9 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
      */
     function repayLoan(uint256 loanId) external nonReentrant whenNotPaused {
         // T-090 v1.1 (#389) §5.8 — block voluntary close while an
-        // intent-based swap-to-repay commit is live (custody has
-        // already moved out of `loan.borrower`'s vault).
+        // intent-based swap-to-repay commit is live: its lot is promised
+        // to a live LOP order that may still fill, so closing the loan
+        // here would settle collateral that order can still take.
         LibVaipakam.assertNoLiveIntentCommit(loanId);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
@@ -228,8 +239,9 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         LibConsolidation.consolidateToHolder(loanId, false, LibConsolidation.Ctx.Tier2CloseOut);
         LibConsolidation.consolidateToHolder(loanId, true, LibConsolidation.Ctx.Tier2CloseOut);
         // FallbackPending is accepted: a full repay cures the failed
-        // liquidation, clears the snapshot, and returns diamond-held collateral
-        // to the borrower vault before the normal Repaid flow runs.
+        // liquidation and clears the snapshot. The fallback custody is
+        // already in the borrower vault under the lien (#1566 slice 2), so
+        // the cure only returns that row to the ordinary pledge (below).
         if (
             loan.status != LibVaipakam.LoanStatus.Active &&
             loan.status != LibVaipakam.LoanStatus.FallbackPending
@@ -248,6 +260,13 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         // those prior held proceeds release with no fail-closed marker. The borrower
         // side has no such cross-episode accumulator, so it always clears.
         if (curingFallback) {
+            // #1566 slice 2 — refuse a legacy Diamond-held fallback row by
+            // name before this cure changes any state (owner decision
+            // O1 = A: fresh deploys only, no migration). The cure below
+            // assumes the custody is in the borrower's vault under the lien;
+            // on a Diamond-held row it would close the loan with the custody
+            // still resting in the Diamond.
+            LibFallbackCustody.requireVaultHeld(loanId);
             if (s.heldForLender[loanId] == 0) {
                 LibSanctionedLock.clearFrozenClaimant(s, loanId, true);
             }
@@ -656,46 +675,22 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         // fee path at init (vpfiHeld == 0).
         LibVPFIDiscount.settleBorrowerLifProper(loan);
 
-        // Fallback cure: collateral was moved to the Diamond during the failed
-        // swap attempt. Push it into the borrower vault so the borrowerClaim
-        // record written above (points at borrower vault) is satisfiable,
-        // then wipe the snapshot so the lender cannot double-dip.
+        // Fallback cure (#1566 slice 2): the fallback custody never left
+        // `loan.borrower`'s vault. `FallbackCustodyFacet.enterFallback`
+        // deposited it there under the collateral lien, and every
+        // FallbackPending top-up was liened on arrival, so the vault already
+        // holds `collateralAmount` under a lien of exactly that size: the
+        // borrower claim recorded above is satisfiable as is and stays
+        // protected through the Repaid -> claim gap (`claimAsBorrower`
+        // releases the lien atomically). Nothing moves. The snapshot is
+        // wiped first, so the lender cannot double-dip, then the row returns
+        // to the ordinary pledge (`ReturnedToPledge`; its tier notify
+        // re-derives the VPFI exclusion against the Repaid status the
+        // terminalize above set). The former re-deposit and re-lien by
+        // `held` would pay the custody twice and double the lien.
         if (curingFallback) {
-            LibVaipakam.FallbackSnapshot storage snap = s.fallbackSnapshot[loanId];
-            uint256 held = snap.lenderCollateral +
-                snap.treasuryCollateral +
-                snap.borrowerCollateral;
-            if (held > 0) {
-                // #821 (Codex #832 r2 P1) — vault-lock the restored collateral so
-                // a flagged stored borrower doesn't brick the fallback cure; it
-                // lands in the borrower's OWN vault, frozen behind the claim gate
-                // (T-051 — the Diamond-side transfer ticks protocolTrackedVaultBalance).
-                LibSanctionedLock.depositLocked(
-                    s, loan.borrower, loanId, loan.collateralAsset, held
-                );
-                // #998 S10 (#1006 / #1132) — the borrower-side fail-closed marker
-                // is recorded centrally at the `Repaid` transition above
-                // (terminalizeFromAny); the restored collateral just satisfies the
-                // borrower claim recorded earlier.
-                // #569 Codex #572 round-5 P1 — RE-LIEN the restored
-                // collateral. The lien was released at default-entry
-                // (when the loan went FallbackPending), so the snapshot
-                // collateral just pushed back into the borrower vault is
-                // currently UNencumbered while it sits as the borrower
-                // claim recorded above. Re-create the lien for `held`
-                // (create-if-absent on the released row) so it stays
-                // protected through the Repaid→claim gap and is released
-                // atomically inside `ClaimFacet.claimAsBorrower`. Without
-                // this, the stored borrower could drain the restored
-                // collateral (VPFI via `withdrawVPFIFromVault`) before a
-                // transferee claimant claims it. ERC20-only (D-1).
-                _callEncumb2(
-                    EncumbranceMutateFacet.incrementCollateralLien.selector,
-                    loanId,
-                    held
-                );
-            }
             delete s.fallbackSnapshot[loanId];
+            LibFallbackCustody.returnToPledge(loanId);
             // #630 — drop any Role-B cash-exit opt-in on cure; a later fallback
             // must be re-authorized by the then-current lender-NFT owner.
             delete s.lenderBackstopOptIn[loanId];
@@ -1233,26 +1228,6 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         }
 
         totalDue += lateFee;
-    }
-
-    /// @dev #407 PR 4 (T-407-B, 2026-06-12) — extracted from
-    ///      `repayLoan` so the cross-facet release-call's transient
-    ///      locals (`abi.encodeWithSelector` payload + selector) live
-    ///      in their own stack frame. The inline form inside
-    ///      `repayLoan` tripped viaIR's "Variable size 1 too deep" —
-    ///      that function carries the asset-type branch + settlement
-    ///      plan + Tier-1 / Tier-2 transfer scaffolding, so it's
-    ///      perpetually close to solc's stack ceiling.
-    /// @dev #407 PR 4 round-1 (2026-06-12) — consolidated cross-facet
-    ///      lien helpers. One per arg-shape; each call site picks the
-    ///      selector. Replaces the per-selector helpers that grew
-    ///      bytecode without saving anything material (#568 tracks the
-    ///      structural fix).
-    function _callEncumb2(bytes4 selector, uint256 loanId, uint256 arg2) private {
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(selector, loanId, arg2),
-            bytes4(0)
-        );
     }
 
     /// @dev #1383 — resolve the lender yield-fee discount for `settlingLender`

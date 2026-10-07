@@ -55,6 +55,17 @@ ratio-critical apply-one path, then stamps
  * wall-clock sentinel from a historical RPC hiccup — it is the best
  * available record for history and accepted as-is for the backfill only.)
  *
+ * Known understatement: liquidation-fallback round trips (#1566 slice 2).
+ * A VPFI-collateral fallback moves the borrower's collateral out of the
+ * vault and back in within one transaction: the liquidation's pull before
+ * a swap attempt in which every route fails, and a claim-time retry's pull
+ * when the retry fails. Each pull emits `VaultVpfiDebited`; each return is a
+ * protocol deposit with no credit event, and by design nothing re-inflates
+ * this ledger. So that borrower's retention reads low by up to the
+ * round-tripped amount, clamped at the ledger balance. The metric stays
+ * the conservative lower bound TokenomicsTechSpec's RL-2 rules require (it
+ * may never overstate closure). Observability only: no funds move on it.
+ *
  * `absorbed[D]` / `cum_absorbed`: deliberately ZERO until the governor
  * stack's recycle-bucket events exist. When PR-3a lands its
  * `VpfiRecycled(class, …)` credit event, add a branch here crediting

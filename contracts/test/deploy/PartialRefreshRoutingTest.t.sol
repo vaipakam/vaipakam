@@ -11,6 +11,7 @@ import {FacetSelectors} from "../../script/lib/FacetSelectors.sol";
 import {VaipakamDiamond} from "../../src/VaipakamDiamond.sol";
 import {RiskPreviewFacet} from "../../src/facets/RiskPreviewFacet.sol";
 import {RefinanceFacet} from "../../src/facets/RefinanceFacet.sol";
+import {FallbackCustodyFacet} from "../../src/facets/FallbackCustodyFacet.sol";
 
 /**
  * @title  PartialRefreshRoutingTest
@@ -446,6 +447,50 @@ contract PartialRefreshRoutingTest is Test {
             4,
             "OfferCreateFacet surface must exceed the 4 the drifted list carried"
         );
+    }
+
+    // --- 7. #1566 S2b: the custody boundary is never crossed here ---------
+
+    /// @notice `RedeployFacets` refuses a Diamond from before #1566 S2b's
+    ///         vault-held fallback custody. Its curated family carries neither
+    ///         AddCollateralFacet nor RepayFacet, so on such a Diamond it would
+    ///         leave both cures paying the fallback amount out of the Diamond's
+    ///         shared balance beside a producer that no longer puts it there.
+    ///         The fixture removes the S2b marker
+    ///         (`disposeFallbackCustody(uint256,address,uint8)`), which is what
+    ///         an older Diamond presents to the loupe, and leaves
+    ///         `getFallbackCustody` routed, as the S2a host split already had
+    ///         it: that view is routed on both sides of the boundary, so it
+    ///         cannot be the marker.
+    /// @dev    Straddle: the same script against a current Diamond runs to
+    ///         completion ({test_RedeployFacets_IsIdempotent_OnCurrentDiamond}).
+    function test_RedeployFacets_RefusesADiamondBeforeVaultHeldFallbackCustody() public {
+        bytes4[] memory sels = new bytes4[](1);
+        sels[0] = FallbackCustodyFacet.disposeFallbackCustody.selector;
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
+        cuts[0] = IDiamondCut.FacetCut({
+            facetAddress: address(0),
+            action: IDiamondCut.FacetCutAction.Remove,
+            functionSelectors: sels
+        });
+        vm.prank(deployer);
+        IDiamondCut(diamond).diamondCut(cuts, address(0), "");
+        assertEq(
+            IDiamondLoupe(diamond).facetAddress(sels[0]),
+            address(0),
+            "fixture-live: the S2b marker is unrouted"
+        );
+        assertTrue(
+            IDiamondLoupe(diamond).facetAddress(FallbackCustodyFacet.getFallbackCustody.selector)
+                != address(0),
+            "fixture-live: getFallbackCustody stays routed, as on an S2a Diamond"
+        );
+
+        RedeployFacets script = new RedeployFacets();
+        vm.expectRevert(
+            abi.encodeWithSelector(RedeployFacets.PredatesVaultHeldFallbackCustody.selector, diamond)
+        );
+        script.runWith(diamond, DEPLOYER_KEY);
     }
 
     // ─── Shared assertions ────────────────────────────────────────────

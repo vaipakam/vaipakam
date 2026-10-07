@@ -33,29 +33,41 @@ import {LibERC721} from "./LibERC721.sol";
  *                      AND the side's position NFT is held (not burned)
  *                      AND its holder is not the stored party
  *             ? the VPFI in that side's per-loan encumbrance records
+ *             : the borrower side of a FallbackPending loan whose
+ *               collateral is VPFI
+ *             ? the loan's fallback custody row (#1566 slice 2; the
+ *               non-terminal clause below)
  *             : nothing
  *
  *         charged to the stored party, whose vault holds the funds. The
  *         amount comes from `LibEncumbrance.vpfiReservedOnSide` — the ledger
  *         that already reserves owed VPFI against the stored party's spend
- *         paths — so this library never keeps a second account of what is
- *         owed. {sync} recomputes the rule and applies the difference to the
- *         per-owner `frozenVpfiOwedByVault` aggregate the tier stamp reads.
+ *         paths — or, for the fallback clause, from `fallbackVaultCustody`,
+ *         the custody row `LibFallbackCustody` keeps; so this library never
+ *         keeps a second account of what is owed. {sync} recomputes the rule
+ *         and applies the difference to the per-owner `frozenVpfiOwedByVault`
+ *         aggregate the tier stamp reads.
  *
- *         The inputs change at exactly three kinds of event, and each re-runs
+ *         The inputs change at exactly four kinds of event, and each re-runs
  *         {sync}:
- *           - the terminal transition — `EncumbranceMutateFacet.terminalize*`,
+ *           - a status edge — the terminal transitions and the entry into
+ *             FallbackPending go through `EncumbranceMutateFacet.terminalize*`,
  *             the single host every register-triggering close-out already
- *             routes through;
+ *             routes through; the one non-terminal exit from FallbackPending
+ *             (the cure back to Active) is followed by
+ *             `LibFallbackCustody.returnToPledge`, whose notify re-runs it;
  *           - a position-NFT transfer or burn — `VaipakamNFTFacet`;
  *           - a change to a per-loan encumbrance record — every
  *             `LibEncumbrance` per-loan mutator, via its tier-exclusion
- *             notify.
+ *             notify;
+ *           - a fallback custody row move — every `LibFallbackCustody`
+ *             mutator, via the same notify (#1566 slice 2).
  *         The stored party itself never changes on a terminal loan:
  *         consolidation, the only re-anchor, is a no-op once a loan is
  *         terminal (`LibConsolidation.consolidateToHolder`, step 1).
  *
- *         Scope: TERMINAL loans only — decided, not deferred (#2357). A
+ *         Scope: TERMINAL loans only, plus the one fallback clause below —
+ *         decided, not deferred (#2357). A
  *         live loan whose position changed hands leaves the stored party
  *         with fee-tier credit on the live collateral until the funds are
  *         re-anchored to the holder (consolidation, or a sale that
@@ -79,6 +91,27 @@ import {LibERC721} from "./LibERC721.sol";
  *         sale paths currently allow. ProjectDetailsREADME states the
  *         decision and its reasons.
  *
+ *         The one non-terminal clause — #1566 slice 2, fallback custody.
+ *         When a liquidation or default swap fails, the collateral it
+ *         withdrew returns to the stored borrower's vault under the loan's
+ *         lien, counted by `fallbackVaultCustody`, so no user asset rests
+ *         in protocol custody. That custody is owed per the fallback
+ *         snapshot to the lender, the treasury and the borrower; it used to
+ *         rest in the Diamond, where it carried no tier credit. The clause
+ *         keeps the move into the vault from handing the stored borrower
+ *         tier credit they did not have: while the loan is FallbackPending
+ *         and its collateral is VPFI, the whole custody row is excluded from
+ *         the stored borrower's tier, whoever holds the position. Only VPFI:
+ *         a non-VPFI snapshot is outside the tier's balance anyway. The #2357
+ *         staleness argument does not reach it, because consolidation
+ *         refuses a FallbackPending loan (`LibConsolidation._isExcludedLive`),
+ *         so the stored borrower cannot change under the record. The record
+ *         stays charged while the row is momentarily zero (a claim-time
+ *         retry has pulled the custody out to swap it), so the row's restore
+ *         after a failed swap re-runs this rule through the notify; when the
+ *         loan leaves FallbackPending, the terminal rule above, or nothing,
+ *         takes over.
+ *
  *         Sanctions are NOT an input. They explain why a holder may be unable
  *         to claim, but the funds are owed to a different wallet either way;
  *         a clean holder who bought the claim after the loan closed is owed
@@ -89,13 +122,17 @@ library LibTierExclusion {
     /// @notice #2342 — a loan side's VPFI fee-tier exclusion is now as stated:
     ///         `excludedVpfi` of `vaultOwner`'s vault is kept out of
     ///         `vaultOwner`'s fee-discount tier because it is owed to the
-    ///         side's position holder. `vaultOwner == address(0)` means the
-    ///         side no longer excludes anything (claimed, burned, bought back,
-    ///         or never transferred). A non-zero `vaultOwner` with
-    ///         `excludedVpfi == 0` means the rule applies to the side but
-    ///         nothing it reserves is VPFI right now. Emitted only when the side's state
-    ///         changes, so the latest event per `(loanId, lenderSide)` is the
-    ///         current state.
+    ///         side's position holder, or (borrower side, #1566 slice 2)
+    ///         because it is the loan's FallbackPending custody, owed per the
+    ///         fallback split. `vaultOwner == address(0)` means the side no
+    ///         longer excludes anything (claimed, burned, bought back, never
+    ///         transferred, or the fallback episode ended). A non-zero
+    ///         `vaultOwner` with `excludedVpfi == 0` means the rule applies to
+    ///         the side but nothing it reserves is VPFI right now (for the
+    ///         fallback clause: the custody row is momentarily empty, e.g.
+    ///         pulled out for a retry swap). Emitted only when the side's
+    ///         state changes, so the latest event per `(loanId, lenderSide)`
+    ///         is the current state.
     /// @custom:event-category state-change/vault-mutation
     event TierExclusionUpdated(
         uint256 indexed loanId,
@@ -161,6 +198,17 @@ library LibTierExclusion {
                 charged = stored;
                 amount = LibEncumbrance.vpfiReservedOnSide(loanId, lenderSide);
             }
+        } else if (
+            !lenderSide &&
+            loan.status == LibVaipakam.LoanStatus.FallbackPending &&
+            loan.collateralAsset == s.vpfiToken
+        ) {
+            // #1566 slice 2 — the fallback custody clause (see the header):
+            // the whole custody row, charged to the stored borrower whoever
+            // holds the position, and kept charged at zero so the row's
+            // restore after a failed retry re-notifies.
+            charged = stored;
+            amount = s.fallbackVaultCustody[loanId];
         }
 
         address prevCharged = lenderSide

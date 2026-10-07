@@ -15,6 +15,8 @@ import {RewardRemittanceLensFacet} from "../../src/facets/RewardRemittanceLensFa
 import {SwapToRepayIntentFacet} from "../../src/facets/SwapToRepayIntentFacet.sol";
 import {TreasuryFacet} from "../../src/facets/TreasuryFacet.sol";
 import {VaultFactoryFacet} from "../../src/facets/VaultFactoryFacet.sol";
+import {FallbackCustodyFacet} from "../../src/facets/FallbackCustodyFacet.sol";
+import {TestMutatorFacet} from "../mocks/TestMutatorFacet.sol";
 
 /**
  * @title  DiamondCustodyAttributionInvariant
@@ -27,34 +29,43 @@ import {VaultFactoryFacet} from "../../src/facets/VaultFactoryFacet.sol";
  *         T ranges over USDC (the principal), WETH and VPFI (the collaterals).
  *
  *         V0 (`afterInvariant`) -- every action ran, and every custody family was OBSERVED in every
- *            run: fallback entered through both producers, a failed retry (S2b: failed and
- *            restored), a successful retry, the in-kind dispose, the backstop absorb, cure by
- *            top-up, cure by repayment, a FallbackPending partial match leg, a full match rescue,
- *            and intent commit, fill and cancel. An invariant over a path the run never took
- *            proves nothing.
+ *            run: fallback entered through both producers, a failed retry that restored the
+ *            custody row (S2b), a successful retry, the in-kind dispose, the backstop absorb, cure
+ *            by top-up, cure by repayment, a FallbackPending partial match leg, a full match
+ *            rescue, and intent commit, fill and cancel. An invariant over a path the run never
+ *            took proves nothing.
  *         V0b -- the protocol-owned balances outside the handler's closed action set stay zero
  *            (buyback budgets, emissions and keeper budgets, the treasury balance -- the treasury
  *            is external -- and payroll). A handler that starts exercising one must add it to V1.
  *         V1 -- `balanceOf(T, diamond) == ledger(T) + legacyFallback(T) + legacyIntent(T)`, where
  *            ledger is zero for USDC and WETH and, for VPFI, the recycle bucket + the stranded-
  *            recovery reservation + every loan's grandfathered LIF custody (`vpfiHeld + rebate`);
- *            legacyFallback is the total of every ACTIVE fallback snapshot in T; legacyIntent is
- *            every live commit's lot in T. One recorded debt, K5: on today's code a partial
- *            internal match floors the three snapshot slices independently, so up to two wei per
- *            partial leg rest in the Diamond attributed to no row. V1 bounds that residue by
- *            {V1_K5_DUST_PER_PARTIAL_LEG} per observed partial leg; S2b's fix (the borrower
- *            absorbs the floor remainder) sets it to zero, after which V1 has no tolerance at all.
+ *            legacyFallback is every tracked fallback loan's
+ *            `getFallbackCustody(id).legacyDiamondHeld` in T (S2b: fallback custody is
+ *            vault-held, so this is zero on a fresh deploy, and a non-zero value is a pre-slice
+ *            row every consumer refuses); legacyIntent is every live commit's lot in T. V1 has NO
+ *            tolerance: the K5 residue S0 allowed (a partial internal match flooring the three
+ *            snapshot slices independently, up to two wei per leg resting in the Diamond) is
+ *            gone with S2b -- the custody never enters the Diamond, and the borrower slice
+ *            absorbs the floor remainder so the snapshot total equals the row.
  *         V2 -- #2141's end state: no user custody rests in the Diamond at all
- *            (`legacyFallback + legacyIntent + LIF custody == 0`). PRESENT BUT DISABLED at S0 via
- *            {V2_ENFORCED}: it is red on today's code by construction (see
- *            {test_V2InputsAreNonZeroOnTodaysCode}, which is the proof it can fail).
+ *            (`legacyFallback + legacyIntent + LIF custody == 0`), enforced per class through
+ *            {V2_ENFORCED}. S2b enforces the fallback and LIF classes; the intent class stays
+ *            off until S3b pulls the lot at use, and is red today by construction (see
+ *            {test_V2_FallbackClassIsVaultHeld_IntentClassStillRests}, the proof V2 can fail).
+ *         V3 -- every fallback custody row agrees with its snapshot and its lien: for a
+ *            FallbackPending loan with an active snapshot the row equals the snapshot total and
+ *            the lien covers the row; outside FallbackPending the row is zero; and no row reads
+ *            as Diamond-held. A consumer that left a snapshot disagreeing with the row it
+ *            debited (S1-20) turns it red.
  *         V3a -- for every vault owner and T, the protocol-tracked vault balance covers the
  *            encumbrance on it.
  *
- *         Brief mutation map: 1 (slice-2 entry reverted to the Diamond-held body) and 2 (slice-3
- *         commit pulling at commit) and 3 (no retry restore) turn V2 red once it is enabled;
- *         4 (treasury slice sent to the Diamond) turns V1 red; 5 (a lender-slice lien decrement
- *         dropped) turns V3a red.
+ *         Brief mutation map: 1 (slice-2 entry reverted to the Diamond-held body) and 3 (no
+ *         retry restore) turn V2 red now that its fallback class is enforced, and 2 (slice-3
+ *         commit pulling at commit) turns it red once S3b enforces the intent class; 4 (treasury
+ *         slice sent to the Diamond) turns V1 red; 5 (a lender-slice lien decrement dropped)
+ *         turns V3a red.
  *
  * @dev    Run: `forge test --match-path test/invariants/DiamondCustodyAttribution.invariant.t.sol`
  *         (the `cifast` profile does not compile `test/invariants`).
@@ -64,13 +75,13 @@ contract DiamondCustodyAttributionInvariant is CustodyInvariantBase {
     uint256 internal constant V2_CLASS_FALLBACK = 1;
     uint256 internal constant V2_CLASS_INTENT = 2;
     uint256 internal constant V2_CLASS_LIF = 4;
-    /// @dev The ONE switch for V2. S0: 0 (today the fallback and intent classes rest in the Diamond
-    ///      by design). S2b sets `V2_CLASS_FALLBACK | V2_CLASS_LIF` when fallback custody moves into
-    ///      the borrower's vault (LIF custody is grandfathered-only and zero on a fresh deploy).
-    ///      S3b adds `V2_CLASS_INTENT` when the lot is pulled at use.
-    uint256 internal constant V2_ENFORCED = 0;
-    /// @dev K5 (see the contract notice). S2b sets this to 0.
-    uint256 internal constant V1_K5_DUST_PER_PARTIAL_LEG = 2;
+    /// @dev The ONE switch for V2, one bit per class. S2b (#1566 slice 2) enforces the fallback
+    ///      class, now vault-held, and the LIF class (grandfathered-only, zero on a fresh deploy).
+    ///      The intent class stays off until S3b pulls the lot at use: until then its lot rests in
+    ///      the Diamond by design.
+    uint256 internal constant V2_ENFORCED = V2_CLASS_FALLBACK | V2_CLASS_LIF;
+    /// @dev K5 (see the contract notice): no partial-leg dust since S2b, so V1 has no tolerance.
+    uint256 internal constant V1_K5_DUST_PER_PARTIAL_LEG = 0;
 
     CustodyHandler internal handler;
 
@@ -104,6 +115,10 @@ contract DiamondCustodyAttributionInvariant is CustodyInvariantBase {
         _assertV3a();
     }
 
+    function invariant_V3_FallbackRowAgreesWithSnapshotAndLien() public view {
+        _assertV3();
+    }
+
     function invariant_V2_NoUserCustodyRestsInTheDiamond() public view {
         if (V2_ENFORCED == 0) return;
         assertEq(_v2Residue(V2_ENFORCED), 0, "V2: user custody rests in the Diamond");
@@ -120,11 +135,13 @@ contract DiamondCustodyAttributionInvariant is CustodyInvariantBase {
     //  Deterministic cells
     // ============================================================================================
 
-    /// @notice The evidence V2 is red on today's code: a REAL failed HF liquidation (the reverting
-    ///         venue, no mocked withdraw) leaves the fallback collateral resting in the Diamond, and
-    ///         a REAL intent commit leaves the lot there. Both legacy terms are non-zero, and V1
-    ///         attributes the Diamond's balance to them exactly.
-    function test_V2InputsAreNonZeroOnTodaysCode() public {
+    /// @notice S2b's half of V2, and the evidence V2 can fail. A REAL failed HF liquidation (the
+    ///         reverting venue, no mocked withdraw) leaves the fallback custody in the borrower's
+    ///         vault as the loan's custody row: none of it reads as Diamond-held, and the Diamond
+    ///         holds only the protocol ledgers of that asset. A REAL intent commit still leaves
+    ///         the lot in the Diamond (until S3b), so the intent class of V2 is red today, while
+    ///         the enforced classes are clean; V1 attributes the Diamond's balance exactly.
+    function test_V2_FallbackClassIsVaultHeld_IntentClassStillRests() public {
         handler.liquidate(1, true);
         assertEq(handler.fallbackViaLiquidation(), 1, _why());
         uint256[] memory fb = handler.fallbackLoanIds();
@@ -135,19 +152,26 @@ contract DiamondCustodyAttributionInvariant is CustodyInvariantBase {
             "fixture-live: the loan is FallbackPending"
         );
         address fc = handler.collateralOf(fb[0]);
-        uint256 legacyF = _legacyFallback(fc);
-        assertGt(legacyF, 0, "V2 input: fallback collateral rests in the Diamond");
-        assertEq(IERC20(fc).balanceOf(address(diamond)), legacyF, "and it is the Diamond's whole balance of it");
+        (uint256 row, uint256 legacyF) = FallbackCustodyFacet(address(diamond)).getFallbackCustody(fb[0]);
+        (uint256 l, uint256 tr, uint256 b,,, bool active,) = ClaimFacet(address(diamond)).getFallbackSnapshot(fb[0]);
+        assertTrue(active, "fixture-live: the snapshot is active");
+        assertGt(row, 0, "fixture-live: fallback custody exists");
+        assertEq(row, l + tr + b, "all of it is the vault-held custody row");
+        assertEq(legacyF, 0, "none of it reads as Diamond-held");
+        assertEq(IERC20(fc).balanceOf(address(diamond)), _ledger(fc), "the Diamond holds only protocol ledgers of it");
+        assertEq(_v2Residue(V2_CLASS_FALLBACK), 0, "V2's fallback class is clean");
 
         handler.commitIntent(2);
         assertEq(handler.intentCommits(), 1, _why());
         uint256[] memory it = handler.intentLoanIds();
         address ic = handler.collateralOf(it[0]);
         uint256 legacyI = _legacyIntent(ic);
-        assertGt(legacyI, 0, "V2 input: the intent lot rests in the Diamond");
+        assertGt(legacyI, 0, "V2 input: the intent lot still rests in the Diamond");
 
-        assertGt(_v2Residue(V2_CLASS_FALLBACK | V2_CLASS_INTENT | V2_CLASS_LIF), 0, "V2 is red on today's code");
+        assertGt(_v2Residue(V2_CLASS_INTENT), 0, "V2's intent class is red until S3b: the proof V2 can fail");
+        assertEq(_v2Residue(V2_ENFORCED), 0, "the enforced classes are clean");
         _assertV1();
+        _assertV3();
         _assertV3a();
     }
 
@@ -178,6 +202,7 @@ contract DiamondCustodyAttributionInvariant is CustodyInvariantBase {
         assertGt(handler.fallbackViaLiquidation(), 0, _why());
         handler.claimLender(32, 1);
         assertGt(handler.retryFailed(), 0, _why());
+        assertGt(handler.retryRestored(), 0, _why());
         assertGt(handler.disposed(), 0, _why());
         handler.claimLender(33, 2);
         assertGt(handler.retrySucceeded(), 0, _why());
@@ -206,6 +231,7 @@ contract DiamondCustodyAttributionInvariant is CustodyInvariantBase {
         _assertV0();
         _assertV1();
         _assertV0b();
+        _assertV3();
         _assertV3a();
     }
 
@@ -220,7 +246,8 @@ contract DiamondCustodyAttributionInvariant is CustodyInvariantBase {
         }
         assertGt(handler.fallbackViaLiquidation(), 0, "V0: fallback entered through the RiskFacet producer");
         assertGt(handler.fallbackViaDefault(), 0, "V0: fallback entered through the DefaultedFacet producer");
-        assertGt(handler.retryFailed(), 0, "V0: claim-time retry failed (S2b: failed and restored)");
+        assertGt(handler.retryFailed(), 0, "V0: claim-time retry failed");
+        assertGt(handler.retryRestored(), 0, "V0: a failed retry restored the custody row (S2b)");
         assertGt(handler.retrySucceeded(), 0, "V0: claim-time retry succeeded");
         assertGt(handler.disposed(), 0, "V0: in-kind fallback distribution (dispose)");
         assertGt(handler.absorbed(), 0, "V0: backstop absorb");
@@ -321,14 +348,37 @@ contract DiamondCustodyAttributionInvariant is CustodyInvariantBase {
             + RewardRemittanceLensFacet(address(diamond)).getStrandedRecoveryReserved() + _lifCustody();
     }
 
-    /// @dev S0's legacy fallback term: the total of every ACTIVE fallback snapshot whose collateral is
-    ///      `t`. S2b replaces it with `getFallbackCustody(id).legacyDiamondHeld`.
+    /// @dev The legacy fallback term: every tracked fallback loan's Diamond-held custody in `t`, as the
+    ///      one custody read reports it (`getFallbackCustody(id).legacyDiamondHeld`, S2b). It replaced
+    ///      S0's active-snapshot total, which was the right term while the custody rested in the
+    ///      Diamond and would now count vault-held custody as Diamond-held.
     function _legacyFallback(address t) internal view returns (uint256 sum) {
         uint256[] memory ids = handler.fallbackLoanIds();
         for (uint256 i; i < ids.length; ++i) {
             if (handler.collateralOf(ids[i]) != t) continue;
-            (uint256 l, uint256 tr, uint256 b,,, bool active,) = ClaimFacet(address(diamond)).getFallbackSnapshot(ids[i]);
-            if (active) sum += l + tr + b;
+            (, uint256 legacy) = FallbackCustodyFacet(address(diamond)).getFallbackCustody(ids[i]);
+            sum += legacy;
+        }
+    }
+
+    /// @dev V3 over every loan the handler opened: a FallbackPending loan's custody row equals its
+    ///      active snapshot's total and its lien covers the row; any other loan holds no row; no
+    ///      row reads as Diamond-held.
+    function _assertV3() internal view {
+        uint256[] memory ids = handler.loanIds();
+        for (uint256 i; i < ids.length; ++i) {
+            uint256 id = ids[i];
+            (uint256 row, uint256 legacy) = FallbackCustodyFacet(address(diamond)).getFallbackCustody(id);
+            assertEq(legacy, 0, "V3: no fallback row reads as Diamond-held on a fresh deploy");
+            if (LoanFacet(address(diamond)).getLoanDetails(id).status != LibVaipakam.LoanStatus.FallbackPending) {
+                assertEq(row, 0, "V3: a loan outside FallbackPending holds no fallback custody row");
+                continue;
+            }
+            (uint256 l, uint256 tr, uint256 b,,, bool active,) = ClaimFacet(address(diamond)).getFallbackSnapshot(id);
+            if (!active) continue;
+            assertEq(row, l + tr + b, "V3: the custody row equals its active snapshot's total");
+            (uint256 lien,) = TestMutatorFacet(address(diamond)).getLoanCollateralLienAmount(id);
+            assertGe(lien, row, "V3: the collateral lien covers the custody row");
         }
     }
 

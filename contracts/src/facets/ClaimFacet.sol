@@ -28,6 +28,7 @@ import {LibBackstopOracleGate} from "../libraries/LibBackstopOracleGate.sol";
 import {RiskMatchLiquidationFacet} from "./RiskMatchLiquidationFacet.sol";
 import {LibSwap} from "../libraries/LibSwap.sol";
 import {FallbackCustodyFacet} from "./FallbackCustodyFacet.sol";
+import {LibFallbackCustody} from "../libraries/LibFallbackCustody.sol";
 
 /**
  * @title ClaimFacet
@@ -50,7 +51,11 @@ import {FallbackCustodyFacet} from "./FallbackCustodyFacet.sol";
  *      {FallbackCustodyFacet.disposeFallbackCustody}; refreshing this facet
  *      without cutting that one leaves the selectors unrouted, and every
  *      FallbackPending lender claim (and every backstop call that retries)
- *      reverts `FunctionDoesNotExist`.
+ *      reverts `FunctionDoesNotExist`. Since S2b the fallback custody rests
+ *      in the borrower's vault under the lien, not in the Diamond: this
+ *      facet never moves it itself, and keeps only the retry bookkeeping
+ *      (`retryAttempted`, {ClaimRetryExecuted}, the proceeds split) and the
+ *      backstop's cash side.
  */
 contract ClaimFacet is
     DiamondReentrancyGuard,
@@ -542,43 +547,29 @@ contract ClaimFacet is
         s.backstopAbsorbCash[p][c] -= due;
         s.backstopAbsorbExposure[p][c] += due;
 
-        // ── Distribute the Diamond-held collateral. Treasury + borrower slices
-        //    route exactly as {FallbackCustodyFacet.disposeFallbackCustody};
-        //    ONLY the lender slice is diverted to the backstop vault
-        //    (warehoused for resale).
-        if (snap.treasuryCollateral > 0) {
-            IERC20(c).safeTransfer(s.treasury, snap.treasuryCollateral);
-            LibFacet.recordTreasuryAccrual(c, snap.treasuryCollateral);
-        }
-        if (snap.borrowerCollateral > 0) {
-            // #821 (Codex #832 r4 P1) — vault-lock the borrower residual so a
-            // flagged stored borrower doesn't brick the backstop absorb.
-            LibSanctionedLock.depositLocked(
-                s, loan.borrower, loanId, c, snap.borrowerCollateral
-            );
-            // #998 S10 (#1006 / #1132) — the borrower-side fail-closed marker for
-            // this deferred collateral residual is recorded centrally at the
-            // FallbackPending→Defaulted transition below (terminalizeFromAny records
-            // BOTH holders; the burned lender side no-ops, the live borrower side is
-            // stamped). The standalone borrower register here was folded into it.
-            LibFacet.crossFacetCall(
-                abi.encodeWithSelector(
-                    EncumbranceMutateFacet.incrementCollateralLien.selector,
-                    loanId,
-                    snap.borrowerCollateral
-                ),
-                bytes4(0)
-            );
-        }
-        uint256 absorbed = snap.lenderCollateral;
-        if (absorbed > 0) {
-            address bsVault = LibFacet.getOrCreateVault(vault);
-            IERC20(c).safeTransfer(bsVault, absorbed);
-            LibVaipakam.recordVaultDeposit(vault, c, absorbed);
-            // Track the warehoused collateral so `sweepBackstopAbsorbCollateral`
-            // can never reach seeded absorb CASH sharing the same vault/token.
-            s.backstopWarehousedCollateral[c] += absorbed;
-        }
+        // ── Dispose the fallback custody through the one host (#1566 S2b). It
+        //    rests in loan.borrower's vault under the lien, not in the Diamond.
+        //    The treasury slice and the borrower residual route exactly as the
+        //    vanilla in-kind claim; ONLY the lender slice is diverted, vault to
+        //    vault, into the backstop vault (warehoused for resale). The host
+        //    drops the lien by each slice that leaves and KEEPS it on the
+        //    borrower residual, so there is no re-lien here: one would lien the
+        //    residual twice. A flagged stored borrower cannot brick the absorb:
+        //    every leg runs under the move-out / receive-side exemptions.
+        //    #998 S10 (#1006 / #1132) — the borrower-side fail-closed marker for
+        //    the deferred residual is recorded centrally at the
+        //    FallbackPending→Defaulted transition below (terminalizeFromAny records
+        //    BOTH holders; the burned lender side no-ops, the live borrower side is
+        //    stamped).
+        //    `absorbed` is the slice the host actually moved (its return value),
+        //    never a snapshot field re-read afterwards. The par guard above priced
+        //    the same slice: the host reads the snapshot and never mutates it.
+        uint256 absorbed = _disposeFallbackCustody(
+            loanId, vault, LibFallbackCustody.Move.ToBackstop
+        );
+        // Track the warehoused collateral so `sweepBackstopAbsorbCollateral`
+        // can never reach seeded absorb CASH sharing the same vault/token.
+        if (absorbed > 0) s.backstopWarehousedCollateral[c] += absorbed;
         snap.active = false;
         // The lender claim is cash-satisfied here (not paid via the record).
         s.lenderClaims[loanId].claimed = true;
@@ -710,7 +701,7 @@ contract ClaimFacet is
         );
 
         // #569 borrower-lien fold (same as the vanilla Defaulted path): record the
-        // re-liened borrower residual as the borrower claim so the verified
+        // still-liened borrower residual as the borrower claim so the verified
         // borrower-NFT owner can withdraw + release it atomically.
         {
             LibVaipakam.ClaimInfo storage bClaim = s.borrowerClaims[loanId];
@@ -909,8 +900,9 @@ contract ClaimFacet is
             // vault collateral lien into the borrower claim. The lien
             // tracks EXACTLY the collateral sitting in loan.borrower's vault
             // owed to the borrower-position holder: the fallback snapshot
-            // residual (re-liened by the in-kind distribution,
-            // `FallbackCustodyFacet.disposeFallbackCustody`, Gap A)
+            // residual (kept liened by the in-kind distribution,
+            // `FallbackCustodyFacet.disposeFallbackCustody`, which drops the
+            // lien only by the slices that leave the vault, #1566 S2b)
             // PLUS any FallbackPending top-up (folded into loan.collateralAmount
             // and liened, round-4). Recording that TOTAL as the borrower
             // claim (and KEEPING the lien) lets the verified-NFT-owner
@@ -1280,7 +1272,7 @@ contract ClaimFacet is
         if (claim.claimed) revert AlreadyClaimed();
 
         // #998 S10 (#1006) — fail-closed release of sanctioned-LOCKED borrower
-        // proceeds (surplus / re-liened collateral / residual). Mirror of the
+        // proceeds (surplus / liened collateral / residual). Mirror of the
         // lender gate: if this borrower side was frozen at close-out on an
         // affirmative flag of the intended recipient, re-screen the RECORDED
         // frozen claimant FAIL-CLOSED so the freeze survives an oracle outage and
@@ -1606,13 +1598,16 @@ contract ClaimFacet is
     ///      `retryCalls` is non-empty and no retry has yet been tried,
     ///      we run the swap one more time through the Phase-7a adapter
     ///      failover chain under the same 6% slippage gate used at
-    ///      liquidation time. On success: collateral held in the
-    ///      Diamond is converted to principal-asset proceeds and split
+    ///      liquidation time. On success: the fallback custody (held in
+    ///      loan.borrower's vault under the lien since entry, #1566 S2b)
+    ///      is pulled and converted to principal-asset proceeds and split
     ///      per README §7 (lender due first, then 2% treasury, surplus
     ///      to borrower); claims are rewritten accordingly. On failure
-    ///      (empty try-list, all adapters reverted, or borrower claim
-    ///      path): the pre-recorded collateral split is pushed from
-    ///      the Diamond to lender/treasury/borrower vaults.
+    ///      (empty try-list or all adapters reverted; the host has put
+    ///      the custody back): the pre-recorded collateral split is moved
+    ///      out of the borrower's vault, the treasury slice to the
+    ///      treasury, the lender slice into the stored lender's vault, and
+    ///      the borrower residual stays in place under the lien.
     /// @dev Returns `true` when a claim-time internal match FULLY resolved
     ///      the loan (transitioned it to `InternalMatched`). Returns `false`
     ///      for the partial-match, no-match, and retry-swap paths.
@@ -1668,14 +1663,13 @@ contract ClaimFacet is
 
         bool retrySucceeded;
         uint256 proceeds;
-        // #591 — a topped-up FallbackPending loan's collateral is split between
-        // the borrower's vault (the AddCollateral top-up, liened) and Diamond
-        // custody (the snapshot). The retry swap
-        // ({FallbackCustodyFacet.retryFallbackSwap}) swaps ONLY the
-        // Diamond-held portion (it derives `diamondPortion` from the lien), so
-        // it never draws on same-token custody belonging to OTHER fallback
-        // loans. The vault top-up stays liened, owed to the borrower, and is
-        // resolved through the in-kind distribution. No top-up guard needed.
+        // #591 / #1566 S2b — a topped-up FallbackPending loan's vault holds two
+        // things under one lien: the fallback custody (the snapshot, counted by
+        // the custody row) and the AddCollateral top-up. The retry swap
+        // ({FallbackCustodyFacet.retryFallbackSwap}) sells ONLY the custody
+        // row, so the top-up stays liened, owed to the borrower, and is
+        // resolved by the Defaulted fold. A retry that fails puts the row back
+        // into the vault before it returns. No top-up guard needed.
         if (
             retryCalls.length > 0 &&
             !snap.retryAttempted
@@ -1688,7 +1682,9 @@ contract ClaimFacet is
         if (retrySucceeded) {
             _distributeRetryProceeds(loanId, loan, snap, proceeds);
         } else {
-            _disposeFallbackCustody(loanId);
+            // The lender slice goes into the STORED lender's vault, where the
+            // lender claim's payout withdraws it to the verified NFT owner.
+            _disposeFallbackCustody(loanId, loan.lender, LibFallbackCustody.Move.ToLender);
         }
         snap.active = false;
         // Partial-match / no-match / retry-swap: the (scaled) residual is
@@ -1697,11 +1693,17 @@ contract ClaimFacet is
         return false;
     }
 
-    /// @dev #1566 S2a: the claim-time retry swap lives in
+    /// @dev #1566 S2b: the claim-time retry swap lives in
     ///      {FallbackCustodyFacet.retryFallbackSwap}, the one fallback-custody
-    ///      host (it replaced this facet's `_attemptRetrySwap` and
-    ///      `_swapWithFailoverMem`, unchanged). A thin self-call: the try-list
-    ///      is ABI-encoded across the Diamond-internal boundary and the host's
+    ///      host. It sells ONLY the custody row, pulled out of
+    ///      `loan.borrower`'s vault with its delivery checked, never a
+    ///      FallbackPending top-up. On failure it RESTORES the row before
+    ///      returning (tokens back into the vault, row re-credited, lien
+    ///      raised back), so a caller that returns without disposing (the
+    ///      backstop's zero-lender-slice exit) leaves the custody exactly
+    ///      where it was. A legacy (Diamond-held) row reverts
+    ///      `FallbackCustodyNotVaultHeld`. A thin self-call: the try-list is
+    ///      ABI-encoded across the Diamond-internal boundary and the host's
     ///      non-empty revert bytes bubble verbatim (an empty one surfaces
     ///      as `bytes4(0)`). `retryAttempted`,
     ///      {ClaimRetryExecuted} and the proceeds distribution
@@ -1723,18 +1725,35 @@ contract ClaimFacet is
         );
     }
 
-    /// @dev #1566 S2a: the in-kind split distribution lives in
-    ///      {FallbackCustodyFacet.disposeFallbackCustody} (it replaced this
-    ///      facet's `_distributeFallbackCollateral`, unchanged). Used when the
-    ///      retry swap failed or was not run. The caller still clears
-    ///      `snap.active` afterwards.
-    function _disposeFallbackCustody(uint256 loanId) internal {
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                FallbackCustodyFacet.disposeFallbackCustody.selector,
-                loanId
+    /// @dev #1566 S2b: the in-kind split distribution lives in
+    ///      {FallbackCustodyFacet.disposeFallbackCustody}, the one
+    ///      fallback-custody host. It moves the recorded split out of
+    ///      `loan.borrower`'s vault: the treasury slice to the treasury, the
+    ///      lender slice vault to vault into `lenderSliceOwner`'s vault,
+    ///      labelled `lenderMove` (`ToLender` = the stored lender on a claim,
+    ///      `ToBackstop` = the backstop vault on an absorb), and the borrower
+    ///      residual stays in place under the lien. It never mutates the
+    ///      snapshot; the caller still clears `snap.active` afterwards.
+    ///      Returns the lender slice the host actually moved, which the
+    ///      backstop absorb warehouses. A legacy (Diamond-held) row reverts
+    ///      `FallbackCustodyNotVaultHeld`, bubbled verbatim like every other
+    ///      non-empty host revert.
+    function _disposeFallbackCustody(
+        uint256 loanId,
+        address lenderSliceOwner,
+        LibFallbackCustody.Move lenderMove
+    ) internal returns (uint256 toLenderSlice) {
+        (, toLenderSlice, ) = abi.decode(
+            LibFacet.crossFacetCallReturn(
+                abi.encodeWithSelector(
+                    FallbackCustodyFacet.disposeFallbackCustody.selector,
+                    loanId,
+                    lenderSliceOwner,
+                    lenderMove
+                ),
+                bytes4(0)
             ),
-            bytes4(0)
+            (uint256, uint256, uint256)
         );
     }
 

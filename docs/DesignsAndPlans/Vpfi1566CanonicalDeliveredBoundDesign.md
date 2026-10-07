@@ -647,6 +647,17 @@ reward claims may have spent part of the very backing the grandfathered
 enough VPFI to back every enumerated row independently of payroll, treasury and
 the other commingled owners.
 
+> **The fallback class leaves this slice (O1 = A, 2026-10-07).** Every chain
+> that runs slice 2 is a fresh deploy, so no Diamond-held fallback row exists to
+> reconcile, write down or migrate. The fallback-specific requirements below (the
+> five-ledger write-down, the two-moment timing rule and its top-up carve-out)
+> describe work that will not be built. Two requirements stated in this slice
+> are prospective rules rather than migration rules, and S2b builds them: a
+> failed retry restores the vault custody it borrowed, ending with one restamp
+> after the inverse moves; and the full-repayment terminal does not re-count the
+> fallback amount into the lien. The intent class and the grandfathered fee
+> classes are outside this docs pass.
+
 **The enumeration covers all FOUR grandfathered classes — including the
 VPFI-denominated live intent commits (`custodialCollateral`) that slice 3
 leaves in Diamond custody until fill or cancellation.** An earlier revision
@@ -1166,7 +1177,11 @@ durable rather than a snapshot of one moment.
   collateral lien that `_cureFallback` has already completed. Get either wrong
   and the consumer either reverts or leaves a phantom counter that strands a
   later withdrawal — the migration's own failure mode, relocated to the exit.
-- **Migration uses CREATE-IF-ABSENT: it adds to a live lien and creates one
+- *(Retired as a migration step, O1 = A (2026-10-07): no chain that runs slice 2
+  carries a pre-slice row to migrate. Its create-if-absent rule survives: the
+  fallback producer re-creates the lien exactly this way. See the S2b LANDED
+  note below.)*
+  **Migration uses CREATE-IF-ABSENT: it adds to a live lien and creates one
   where none exists — never replaces.** An earlier revision said "never creates",
   which inverts into a fund-safety hole on the **common** row: the fallback path
   calls `releaseCollateralLien` (`RiskFacet.sol:2138`), so a `FallbackPending`
@@ -1184,7 +1199,12 @@ durable rather than a snapshot of one moment.
   **discards the top-up reservation and makes that collateral withdrawable**.
   The scan adds only the migrated snapshot amount to the existing lien, and only
   that amount to the tier exclusion.
-- **Install the exclusion BEFORE the vault credit** (VPFI snapshots), exactly as
+- *(Superseded for the producer, and retired as a migration rule under O1 = A:
+  S2b takes this bullet's own second option, "an explicit final restamp after
+  both mutations". The producer deposits with no tier rollup, and the one tier
+  sync at the fallback-entry transition installs the exclusion and restamps
+  once, so the tier never dips.)*
+  **Install the exclusion BEFORE the vault credit** (VPFI snapshots), exactly as
   the `vpfiHeld` migration requires. `vaultCreditFromDiamondERC20` performs its
   tier rollup immediately after the transfer (`VaultFactoryFacet.sol:549-557`),
   so an implementation can reasonably read the helper's built-in rollup as
@@ -1216,13 +1236,21 @@ durable rather than a snapshot of one moment.
   scan therefore goes through the Diamond-funded vault-credit chokepoint, or
   records the deposit for the exact user, token and amount in the same
   transaction as the custody move.
-- **Pre-upgrade rows get a custody-SOURCE discriminator before any consumer is
+- *(Retired in this form, O1 = A (2026-10-07). The discriminator exists, defined
+  once: an active snapshot whose total differs from the loan's vault-held
+  fallback row. It routes a pre-slice row to a refusal by name
+  (`FallbackCustodyNotVaultHeld`), never to a Diamond branch.)*
+  **Pre-upgrade rows get a custody-SOURCE discriminator before any consumer is
   switched.** Existing snapshots already hold their collateral in the Diamond
   (`RiskFacet.sol:1884-1917`, `DefaultedFacet.sol:846-877`); the
   lien-at-fallback rule governs only later fallbacks. Switch consumers first and
   every existing row either pulls vault funds nobody deposited, or keeps the
   Diamond branch this slice exists to delete.
-- **The discriminator routes consumers; it does NOT protect the tokens.** A
+- *(Retired, O1 = A (2026-10-07): every chain that runs slice 2 is a fresh
+  deploy, so no pre-slice row exists to protect, and there is no paused
+  migration and no arming gate waiting on one. Kept as the record of why the
+  in-place route was not taken.)*
+  **The discriminator routes consumers; it does NOT protect the tokens.** A
   pre-upgrade row stays commingled for as long as it waits to be consumed, so a
   reward claim can drain it before any consumer reaches the discriminator at
   all.
@@ -1335,6 +1363,105 @@ durable rather than a snapshot of one moment.
 >   test. The intended-behaviour rule (no user asset rests in protocol custody
 >   across transactions) enters `docs/FunctionalSpecs/` with S2b and S3b, which
 >   change behaviour.
+
+> **S2b LANDED (local build, 2026-10-07): fallback custody is vault-held
+> under a lien.** Recorded on the build-first local stack, ahead of review. The
+> quadruple this slice requires (vault deposit, lien, tracked-balance record,
+> VPFI tier exclusion) now ships with the custody discriminator, and the Diamond
+> keeps none of the fallback collateral between transactions.
+>
+> - **One producer, in the order that keeps the tier from dipping.**
+>   `FallbackCustodyFacet.enterFallback` computes the entitlements and writes the
+>   snapshot and both claim rows as before. Then one private routine (shared
+>   with the retry restore, so custody always goes back into the vault one way)
+>   deposits the collateral the caller withdrew into `loan.borrower`'s vault
+>   through the pinned receive path (`LibSanctionedLock.depositLocked`: transfer
+>   and tracked-balance record, no tier rollup), credits the new per-loan row
+>   `fallbackVaultCustody` (`Entered`), re-creates the collateral lien for it
+>   (`incrementCollateralLien`, create-if-absent), and requires the row to equal
+>   the snapshot total (`FallbackSnapshotMismatch`). Only then does the entry
+>   terminalize Active→FallbackPending, whose single tier sync installs the
+>   exclusion and restamps once (the notifies before it are no-ops, the loan
+>   being still Active). This is the exclusion bullet's second option ("an
+>   explicit final restamp after both mutations"), not exclusion-before-credit.
+> - **One row, one move event, one notify rule.** `LibFallbackCustody` owns the
+>   row: its reads (`held`, `snapshotTotal`, `isLegacy`, `requireVaultHeld`) and
+>   its only writers (`credit`, `debit`, `returnToPledge`, each refusing a move
+>   kind that is not its own). Every writer updates
+>   the row, emits `FallbackCustodyMoved(loanId, move, counterparty, asset,
+>   amount, custodyAfter)` and re-derives the tier exclusion through
+>   `LibEncumbrance.notifyTierExclusion`, the one notify rule every per-loan
+>   encumbrance mutator already uses (promoted from private), so no call site can
+>   forget it. Ten move kinds: `Entered`, `ToTreasury`, `ToLender`, `ToBackstop`,
+>   `RetainedForBorrower`, `RetryPulled`, `RetryRestored`, `MatchToLender`,
+>   `MatchToMatcher`, `ReturnedToPledge`. The event is tagged
+>   `state-change/loan-mutation` and allowlisted in the indexer's event-coverage
+>   check: it is custody provenance, the loan's status still derives from the
+>   status events, and surfacing it is deferred.
+> - **The discriminator, defined once.** A row is legacy when the snapshot is
+>   active and its total differs from the row. A snapshot a partial match scaled
+>   to zero stays active with total and row both zero, so "row zero" is not the
+>   test. Under O1 = A a legacy row fails closed at every consumer with
+>   `FallbackCustodyNotVaultHeld`; no migration code exists. `getFallbackCustody`
+>   reports `(row, legacy ? snapshotTotal : 0)`.
+> - **Every consumer reads the vault row.** Each slice that leaves the vault is
+>   debited from the row and the lien before it moves, through the forced
+>   move-out path, so recovery for the lender never depends on the borrower's
+>   status. In kind (`disposeFallbackCustody(loanId, lenderSliceOwner,
+>   lenderMove)`): the treasury slice goes vault to treasury, the lender slice
+>   vault to the lender's vault (or the backstop's, `ToBackstop`), and the
+>   borrower slice stays in place as the residual claim's lien. The snapshot is
+>   read, never mutated, the amounts are returned, and a zero row
+>   short-circuits. Retry: the pull checks the Diamond's balance delta exactly
+>   (`FallbackRetryShortDelivery`), the soft-fail adapter loop is kept, and a
+>   failed retry restores vault, row and lien in the same transaction. The
+>   backstop absorb warehouses the lender slice that dispose returned; the old
+>   re-lien would double-lien and is deleted. Cure by top-up and the
+>   full-repayment cure move no tokens: the lien already covers the fallback
+>   amount, and `returnToPledge` after the FallbackPending→Active edge zeroes the
+>   row. Internal match: one leg primitive keyed on the PAYING loan debits
+>   `MatchToLender` and `MatchToMatcher` and lowers that loan's lien by exactly
+>   the moved amount, and the Diamond-custody leg branch is deleted. A full
+>   rescue is `returnToPledge`. A partial match rescales the split with the
+>   borrower absorbing the floor remainder, so the snapshot total equals the row
+>   exactly; the invariant suite's two-wei allowance from S0 is now zero.
+> - **Tier and helpers.** One clause in `LibTierExclusion._syncSide`: a
+>   FallbackPending loan with VPFI collateral charges the borrower the row.
+>   `fallbackTopUp` (the lien in excess of the row) is the one home of the
+>   top-up figure, and `hasActiveFallbackTopUp` reads it. That is load-bearing:
+>   with the snapshot liened, the old `lien > 0` test would read every fallback
+>   loan as topped up and switch off backstop absorb.
+>   `internalMatchableCollateral` returns the row.
+> - **Refresh boundary.** `RedeployFacets` refuses a target Diamond that does
+>   not route the S2b `disposeFallbackCustody(uint256,address,uint8)`
+>   (`PredatesVaultHeldFallbackCustody`, checked before any broadcast). Its
+>   curated family carries neither AddCollateralFacet nor RepayFacet, which on
+>   the old rule would pay a cure out of the Diamond's shared balance a
+>   second time and lien it twice. Keying on the routing of
+>   `getFallbackCustody` would not see this boundary: the S2a host split
+>   already routes that view, with the Diamond-held meaning.
+> - **Cells and invariants.** F1 to F17 and F19 to F21 in `FallbackCustodyTest`;
+>   #2141's suite now enforces V2 (no user custody rests in the Diamond) for the
+>   fallback class and V3 (each fallback row agrees with its snapshot and its
+>   lien), with V2's intent class still recorded red until S3b.
+> - **Retired by this landing, in place:** this slice's migration bullets above
+>   and slice 0's fallback-class reconciliation, under O1 = A.
+> - **Residual risks.** An issuer blacklist of the borrower's vault strands the
+>   lender and treasury slices. A mandatory vault upgrade delays the lender's
+>   claim but cannot veto it, since anyone may upgrade any vault. Mirror tiers
+>   lag after the local restamps. The RL-2 retention ledger understates a VPFI
+>   borrower whose collateral makes a fallback round trip: the liquidation's
+>   pull before the failed swap, and a failed retry's pull, each emit
+>   `VaultVpfiDebited`; the return has no credit counterpart, and the ledger
+>   never re-inflates. That is observability only, inside RL-2's
+>   conservative-lower-bound rule, and is documented in
+>   `apps/indexer/src/rewardLoopLedger.ts`.
+> - **Functional specs.** ProjectDetailsREADME now states the owner rule (no user
+>   asset rests in protocol custody across transactions), the vault-held
+>   fallback custody, the FallbackPending tier clause, the residual risks and
+>   the fallback test expectations. The audit records the open intent-class
+>   divergence (slice 3), the forced-close restamp propagation question and the
+>   non-VPFI lender-leg reservation wording.
 
 **3. The intent class — via the `preInteraction` pull point.**
 

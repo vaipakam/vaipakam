@@ -62,9 +62,10 @@ import {FallbackCustodyFacet} from "./FallbackCustodyFacet.sol";
  *      Liquidation ({triggerLiquidation}): permissionless when HF < 1e18.
  *      Swaps collateral → principal-asset via 0x (slippage ≤
  *      `MAX_LIQUIDATION_SLIPPAGE_BPS` = 6%). On swap failure or slippage
- *      breach, falls back to {FallbackCustodyFacet.enterFallback}: full
- *      collateral stays in the Diamond until {ClaimFacet} retries or
- *      distributes the split (both through {FallbackCustodyFacet}).
+ *      breach, falls back to {FallbackCustodyFacet.enterFallback}: the full
+ *      collateral goes back into the borrower's vault under the loan's lien
+ *      (the fallback custody row, #1566 slice 2) until {ClaimFacet} retries
+ *      or distributes the split (both through {FallbackCustodyFacet}).
  *      On success: liqBonus to liquidator, remainder split per
  *      {LibEntitlement.splitTreasury} (1% treasury, 99% lender).
  *

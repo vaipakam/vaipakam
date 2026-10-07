@@ -11,6 +11,10 @@ import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {LibBackstopOracleGate} from "../src/libraries/LibBackstopOracleGate.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
+import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
+import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
+import {IZeroExProxy} from "../src/interfaces/IZeroExProxy.sol";
+import {defaultAdapterCalls} from "./helpers/AdapterCallHelpers.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
@@ -32,11 +36,17 @@ import {LibSwap} from "../src/libraries/LibSwap.sol";
  *         treasury / borrower slices route normally. Plus the par-guard,
  *         cap, kill-switch, opt-in, and exposure-release paths.
  *
- * @dev    Reuses the InternalMatchExecution scaffolding pattern: seed an Active
- *         loan via TestMutatorFacet, populate a FallbackSnapshot, transition to
- *         FallbackPending, and mock the position NFT. `owner` holds KEEPER_ROLE
- *         (granted at init) so it doubles as the designated keeper. $1/18-dec
- *         oracle ⇒ the snapshot's 1:1 collateral≡principal equivalence holds.
+ * @dev    Seeds an Active loan via TestMutatorFacet the way initiation leaves
+ *         it (the collateral in the borrower's vault, protocol-tracked and
+ *         liened), then drives it into FallbackPending the way production does
+ *         (#1566 S2b): `triggerDefault` past the grace period with every swap
+ *         route reverting, so the REAL producer leaves the custody in the
+ *         borrower's vault under the loan's lien with the custody row equal to
+ *         the snapshot total, and every slice of an absorb leaves the
+ *         BORROWER's vault. The loan's own fallback terms (a 10% lender bonus,
+ *         a 2% treasury cut, no interest) give this suite's split at the
+ *         $1/18-dec oracle. The position NFTs are mocked. `owner` holds
+ *         KEEPER_ROLE (granted at init) so it doubles as the designated keeper.
  */
 contract BackstopAbsorbTest is SetupTest {
     address internal vault;
@@ -51,6 +61,14 @@ contract BackstopAbsorbTest is SetupTest {
     uint256 internal constant TREASURY_COL = 10 ether;
     uint256 internal constant BORROWER_COL = 440 ether;
     uint256 internal constant DUE = 550 ether;
+    /// @dev #1566 S2b -- the term the loan runs and the prices the real
+    ///      producer sees: SetupTest's $1 par, and the above-par price the
+    ///      par-guard cell defaults at.
+    uint256 internal constant DURATION_DAYS = 30;
+    /// @dev Past the 30-day term and any grace bucket of up to 30 days.
+    uint256 internal constant DEFAULT_AFTER = DURATION_DAYS * 1 days + 31 days;
+    uint256 internal constant PAR_PRICE = 1e8;
+    uint256 internal constant PAR_GUARD_ENTRY_PRICE = 110_000_000;
 
     function setUp() public {
         setupHelper();
@@ -86,7 +104,15 @@ contract BackstopAbsorbTest is SetupTest {
         vm.stopPrank();
     }
 
-    /// @dev Scaffold an Active loan (lends mockERC20 vs mockCollateralERC20).
+    /// @dev Scaffold an Active loan (lends mockERC20 vs mockCollateralERC20)
+    ///      the way initiation leaves it: the collateral in the borrower's
+    ///      vault, protocol-tracked and under the loan's collateral lien, with
+    ///      distinct position-NFT ids whose `ownerOf` is the stored party (so
+    ///      the default's both-side consolidation is a no-op). #1566 S2b: the
+    ///      loan's own snapshotted fallback terms -- a 10% lender bonus, a 2%
+    ///      treasury cut, no interest -- make the REAL producer compute this
+    ///      suite's split at par: lender 550 (= the 550 due), treasury 10,
+    ///      borrower 440.
     function _seedLoan(uint256 id, address lender_, address borrower_) internal {
         LibVaipakam.Loan memory l;
         l.id = id;
@@ -100,7 +126,23 @@ contract BackstopAbsorbTest is SetupTest {
         l.principalLiquidity = LibVaipakam.LiquidityStatus.Liquid;
         l.collateralLiquidity = LibVaipakam.LiquidityStatus.Liquid;
         l.liquidationLtvBpsAtInit = 8_500;
+        l.startTime = uint64(block.timestamp);
+        l.durationDays = DURATION_DAYS;
+        l.fallbackLenderBonusBpsAtInit = 1_000;
+        l.fallbackTreasuryBpsAtInit = 200;
+        l.borrowerTokenId = id * 2;
+        l.lenderTokenId = id * 2 + 1;
         TestMutatorFacet(address(diamond)).scaffoldActiveLoan(id, l);
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(IERC721.ownerOf.selector, id * 2),
+            abi.encode(borrower_)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(IERC721.ownerOf.selector, id * 2 + 1),
+            abi.encode(lender_)
+        );
 
         address bVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(
             borrower_
@@ -109,41 +151,73 @@ contract BackstopAbsorbTest is SetupTest {
         TestMutatorFacet(address(diamond)).setProtocolTrackedVaultBalanceRaw(
             borrower_, mockCollateralERC20, COLLATERAL
         );
+        TestMutatorFacet(address(diamond)).setLoanCollateralLienRaw(
+            id, borrower_, mockCollateralERC20, 0, COLLATERAL, LibVaipakam.AssetType.ERC20
+        );
     }
 
-    /// @dev Move the seeded loan into FallbackPending with the Diamond holding
-    ///      the collateral and a snapshot recorded (`lenderCol` overridable for
-    ///      the par-guard test).
-    function _moveToFallbackPending(
-        uint256 id,
-        address borrower_,
-        uint256 lenderCol
-    ) internal {
-        address bVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(
-            borrower_
+    /// @dev Drive the seeded loan into FallbackPending the way production does
+    ///      (#1566 S2b; slices 2-3 brief (i)): past its grace period,
+    ///      `triggerDefault` with every swap route reverting, so the REAL
+    ///      producer (`FallbackCustodyFacet.enterFallback`) writes the snapshot
+    ///      and both claim rows from the loan's own terms, returns the
+    ///      collateral to the borrower's vault under the lien it re-creates,
+    ///      and credits the custody row (`Entered`). The reverting venue stays
+    ///      mocked for the rest of the cell, so an absorb passed {_failedRetry}
+    ///      runs the objective retry and sees it fail (the retry puts the row
+    ///      back): that is how a real loan reaches the absorb with
+    ///      `retryAttempted` set. Fixture-live: this suite's split (550 / 10 /
+    ///      440 against a 550 due) and no retry attempted yet.
+    function _moveToFallbackPending(uint256 id, address borrower_) internal {
+        _moveToFallbackPendingAt(id, borrower_, PAR_PRICE);
+        (uint256 l, uint256 t, uint256 b, uint256 due, uint256 tDue, , bool retried) =
+            ClaimFacet(address(diamond)).getFallbackSnapshot(id);
+        assertEq(l, LENDER_COL, "fixture-live: the producer's lender slice");
+        assertEq(t, TREASURY_COL, "fixture-live: the producer's treasury slice");
+        assertEq(b, BORROWER_COL, "fixture-live: the producer's borrower slice");
+        assertEq(due, DUE, "fixture-live: the lender's principal due");
+        assertEq(tDue, TREASURY_COL, "fixture-live: the treasury's principal due");
+        assertFalse(retried, "fixture-live: no retry attempted yet");
+    }
+
+    /// @dev {_moveToFallbackPending} with the collateral priced at
+    ///      `collateralPrice` (8 decimals) for the default itself and back at
+    ///      par afterwards. The producer sizes the slices at the entry price,
+    ///      so collateral that falls after the default leaves the lender's
+    ///      slice worth less than the due (the par-guard cell). Fixture-live:
+    ///      FallbackPending, the whole collateral vault-held as the custody
+    ///      row and back in the borrower's vault, nothing left in the Diamond.
+    function _moveToFallbackPendingAt(uint256 id, address borrower_, uint256 collateralPrice) internal {
+        address bVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower_);
+        uint256 diamond0 = IERC20(mockCollateralERC20).balanceOf(address(diamond));
+        vm.warp(block.timestamp + DEFAULT_AFTER);
+        vm.mockCallRevert(
+            mockZeroExProxy,
+            abi.encodeWithSelector(IZeroExProxy.swap.selector),
+            "swap failed"
         );
-        vm.prank(bVault);
-        IERC20(mockCollateralERC20).transfer(address(diamond), COLLATERAL);
-        TestMutatorFacet(address(diamond)).setProtocolTrackedVaultBalanceRaw(
-            borrower_, mockCollateralERC20, 0
+        mockOraclePrice(mockCollateralERC20, collateralPrice, 8);
+        DefaultedFacet(address(diamond)).triggerDefault(id, defaultAdapterCalls());
+        mockOraclePrice(mockCollateralERC20, PAR_PRICE, 8);
+
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(id).status),
+            uint8(LibVaipakam.LoanStatus.FallbackPending),
+            "fixture-live: the default entered FallbackPending"
         );
-        LibVaipakam.FallbackSnapshot memory snap = LibVaipakam.FallbackSnapshot({
-            lenderCollateral: lenderCol,
-            treasuryCollateral: TREASURY_COL,
-            borrowerCollateral: BORROWER_COL,
-            lenderPrincipalDue: DUE,
-            treasuryPrincipalDue: TREASURY_COL,
-            active: true,
-            // Simulate a prior claimAsLenderWithRetry having attempted the
-            // objective swap (so the empty-retryCalls absorb path is allowed —
-            // the dedicated retry-required gate is covered separately).
-            retryAttempted: true
-        });
-        TestMutatorFacet(address(diamond)).setFallbackSnapshotRaw(id, snap);
-        TestMutatorFacet(address(diamond)).scaffoldLoanStatusChange(
-            id,
-            LibVaipakam.LoanStatus.Active,
-            LibVaipakam.LoanStatus.FallbackPending
+        (uint256 vaultHeld, uint256 legacy) =
+            FallbackCustodyFacet(address(diamond)).getFallbackCustody(id);
+        assertEq(vaultHeld, COLLATERAL, "fixture-live: the whole collateral is the custody row");
+        assertEq(legacy, 0, "fixture-live: nothing reads as Diamond-held");
+        assertEq(
+            IERC20(mockCollateralERC20).balanceOf(bVault),
+            COLLATERAL,
+            "fixture-live: the collateral is back in the borrower's vault"
+        );
+        assertEq(
+            IERC20(mockCollateralERC20).balanceOf(address(diamond)),
+            diamond0,
+            "fixture-live: the default left nothing in the Diamond"
         );
     }
 
@@ -171,7 +245,7 @@ contract BackstopAbsorbTest is SetupTest {
     /// @dev Full FallbackPending fixture with the lender opted into the cash exit.
     function _fallbackOptedIn(address lender_, address borrower_) internal {
         _seedLoan(LOAN, lender_, borrower_);
-        _moveToFallbackPending(LOAN, borrower_, LENDER_COL);
+        _moveToFallbackPending(LOAN, borrower_);
         _mockLenderNft(LOAN, lender_);
         vm.prank(lender_);
         ClaimFacet(address(diamond)).setLenderBackstopOptIn(LOAN, true);
@@ -181,12 +255,22 @@ contract BackstopAbsorbTest is SetupTest {
         return new LibSwap.AdapterCall[](0);
     }
 
+    /// @dev The objective retry a real backstop absorb runs first (#1566
+    ///      S2b): the default adapter try-list against the venue the fixture
+    ///      keeps reverting, so the retry pulls the custody row, fails and
+    ///      puts it back, leaving `retryAttempted` set; the absorb then
+    ///      proceeds. Every absorb cell passes it except the one pinning the
+    ///      retry-required gate.
+    function _failedRetry() internal pure returns (LibSwap.AdapterCall[] memory) {
+        return defaultAdapterCalls();
+    }
+
     // ─── opt-in ───────────────────────────────────────────────────────────────
 
     function test_optIn_byNftOwner() public {
         address lender_ = makeAddr("lender7");
         _seedLoan(LOAN, lender_, makeAddr("borrower7"));
-        _moveToFallbackPending(LOAN, makeAddr("borrower7"), LENDER_COL);
+        _moveToFallbackPending(LOAN, makeAddr("borrower7"));
         _mockLenderNft(LOAN, lender_);
         vm.prank(lender_);
         ClaimFacet(address(diamond)).setLenderBackstopOptIn(LOAN, true);
@@ -196,7 +280,7 @@ contract BackstopAbsorbTest is SetupTest {
     function test_optIn_notNftOwner_reverts() public {
         address lender_ = makeAddr("lender7");
         _seedLoan(LOAN, lender_, makeAddr("borrower7"));
-        _moveToFallbackPending(LOAN, makeAddr("borrower7"), LENDER_COL);
+        _moveToFallbackPending(LOAN, makeAddr("borrower7"));
         _mockLenderNft(LOAN, lender_);
         vm.prank(makeAddr("stranger"));
         vm.expectRevert(); // NotNFTOwner (LibAuth)
@@ -229,7 +313,7 @@ contract BackstopAbsorbTest is SetupTest {
                 uint8(2)
             )
         );
-        ClaimFacet(address(diamond)).claimAsLenderViaBackstop(LOAN, _emptyRetry());
+        ClaimFacet(address(diamond)).claimAsLenderViaBackstop(LOAN, _failedRetry());
     }
 
     /// @dev Knob default 0 ⇒ absorb proceeds regardless of coverage (covered by
@@ -243,7 +327,7 @@ contract BackstopAbsorbTest is SetupTest {
         );
         _fallbackOptedIn(makeAddr("lender7b"), makeAddr("borrower7b"));
         vm.prank(owner);
-        ClaimFacet(address(diamond)).claimAsLenderViaBackstop(LOAN, _emptyRetry());
+        ClaimFacet(address(diamond)).claimAsLenderViaBackstop(LOAN, _failedRetry());
         // Reaching here without the coverage revert proves the no-op path.
     }
 
@@ -259,10 +343,12 @@ contract BackstopAbsorbTest is SetupTest {
             TreasuryFacet(address(diamond)).getTreasuryBalance(mockCollateralERC20);
         address bsVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(vault);
         uint256 bsColBefore = IERC20(mockCollateralERC20).balanceOf(bsVault);
+        address bVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower_);
+        uint256 bVaultBefore = IERC20(mockCollateralERC20).balanceOf(bVault);
 
         // owner holds KEEPER_ROLE (granted at init) → it is the designated keeper.
         vm.prank(owner);
-        ClaimFacet(address(diamond)).claimAsLenderViaBackstop(LOAN, _emptyRetry());
+        ClaimFacet(address(diamond)).claimAsLenderViaBackstop(LOAN, _failedRetry());
 
         // Lender (NFT owner) paid cash = lenderPrincipalDue.
         assertEq(IERC20(mockERC20).balanceOf(lender_) - ownerCashBefore, DUE, "cash to owner");
@@ -283,6 +369,17 @@ contract BackstopAbsorbTest is SetupTest {
             BackstopFacet(address(diamond)).getBackstopAbsorbInfo(mockERC20, mockCollateralERC20);
         assertEq(exposure, DUE, "exposure ++ by due");
         assertEq(cash, SEED_CASH - DUE, "cash bucket debited");
+        // #1566 S2b -- the slices left the BORROWER's vault (the Diamond held
+        // none of the custody), and the residual kept the lien it already had.
+        assertEq(
+            bVaultBefore - IERC20(mockCollateralERC20).balanceOf(bVault),
+            LENDER_COL + TREASURY_COL,
+            "only the lender + treasury slices left the borrower's vault"
+        );
+        (uint256 lienAfter, ) = TestMutatorFacet(address(diamond)).getLoanCollateralLienAmount(LOAN);
+        assertEq(lienAfter, BORROWER_COL, "the lien is exactly the retained borrower slice");
+        (uint256 rowAfter, ) = FallbackCustodyFacet(address(diamond)).getFallbackCustody(LOAN);
+        assertEq(rowAfter, 0, "the custody row is spent");
         // Loan terminal.
         LibVaipakam.LoanStatus st = LoanFacet(address(diamond)).getLoanDetails(LOAN).status;
         assertTrue(
@@ -314,7 +411,7 @@ contract BackstopAbsorbTest is SetupTest {
         vm.expectRevert(
             abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, lender_)
         );
-        ClaimFacet(address(diamond)).claimAsLenderViaBackstop(LOAN, _emptyRetry());
+        ClaimFacet(address(diamond)).claimAsLenderViaBackstop(LOAN, _failedRetry());
     }
 
     // ─── guards ────────────────────────────────────────────────────────────
@@ -322,16 +419,24 @@ contract BackstopAbsorbTest is SetupTest {
     function test_absorb_parGuard_underwater_reverts() public {
         address lender_ = makeAddr("lender7");
         address borrower_ = makeAddr("borrower7");
-        // lenderCollateral (500) worth LESS than lenderPrincipalDue (550) at 1:1.
+        // lenderCollateral (500) worth LESS than lenderPrincipalDue (550) at 1:1,
+        // reached through the real producer (#1566 S2b): at the default the
+        // collateral is priced 10% above par, so the snapshot sizes the
+        // lender's slice at 550 / 1.1 = 500 collateral; back at par those 500
+        // are worth less than the 550 due.
         _seedLoan(LOAN, lender_, borrower_);
-        _moveToFallbackPending(LOAN, borrower_, 500 ether);
+        _moveToFallbackPendingAt(LOAN, borrower_, PAR_GUARD_ENTRY_PRICE);
+        (uint256 lenderSlice, , , uint256 lenderDue, , , ) =
+            ClaimFacet(address(diamond)).getFallbackSnapshot(LOAN);
+        assertEq(lenderSlice, 500 ether, "fixture-live: the lender slice is 500");
+        assertEq(lenderDue, DUE, "fixture-live: against the 550 due");
         _mockLenderNft(LOAN, lender_);
         vm.prank(lender_);
         ClaimFacet(address(diamond)).setLenderBackstopOptIn(LOAN, true);
 
         vm.prank(owner);
         vm.expectRevert(ClaimFacet.BackstopUndercollateralized.selector);
-        ClaimFacet(address(diamond)).claimAsLenderViaBackstop(LOAN, _emptyRetry());
+        ClaimFacet(address(diamond)).claimAsLenderViaBackstop(LOAN, _failedRetry());
     }
 
     function test_absorb_capExceeded_reverts() public {
@@ -343,7 +448,7 @@ contract BackstopAbsorbTest is SetupTest {
         _fallbackOptedIn(lender_, makeAddr("borrower7"));
         vm.prank(owner);
         vm.expectRevert(ClaimFacet.BackstopAbsorbCapExceeded.selector);
-        ClaimFacet(address(diamond)).claimAsLenderViaBackstop(LOAN, _emptyRetry());
+        ClaimFacet(address(diamond)).claimAsLenderViaBackstop(LOAN, _failedRetry());
     }
 
     function test_absorb_insufficientCash_reverts() public {
@@ -360,7 +465,7 @@ contract BackstopAbsorbTest is SetupTest {
         address lender_ = makeAddr("lender7");
         address borrower_ = makeAddr("borrower7");
         _seedLoan(LOAN, lender_, borrower_);
-        _moveToFallbackPending(LOAN, borrower_, LENDER_COL);
+        _moveToFallbackPending(LOAN, borrower_);
         _mockLenderNft(LOAN, lender_);
         vm.prank(lender_);
         ClaimFacet(address(diamond)).setLenderBackstopOptIn(LOAN, true);
@@ -371,18 +476,18 @@ contract BackstopAbsorbTest is SetupTest {
         );
         vm.prank(owner);
         vm.expectRevert(ClaimFacet.BackstopAbsorbInsufficientCash.selector);
-        ClaimFacet(address(diamond)).claimAsLenderViaBackstop(LOAN, _emptyRetry());
+        ClaimFacet(address(diamond)).claimAsLenderViaBackstop(LOAN, _failedRetry());
     }
 
     function test_absorb_notOptedIn_reverts() public {
         address lender_ = makeAddr("lender7");
         _seedLoan(LOAN, lender_, makeAddr("borrower7"));
-        _moveToFallbackPending(LOAN, makeAddr("borrower7"), LENDER_COL);
+        _moveToFallbackPending(LOAN, makeAddr("borrower7"));
         _mockLenderNft(LOAN, lender_);
         // no opt-in
         vm.prank(owner);
         vm.expectRevert(ClaimFacet.NotBackstopAbsorbable.selector);
-        ClaimFacet(address(diamond)).claimAsLenderViaBackstop(LOAN, _emptyRetry());
+        ClaimFacet(address(diamond)).claimAsLenderViaBackstop(LOAN, _failedRetry());
     }
 
     function test_absorb_keepersPaused_reverts() public {
@@ -393,7 +498,7 @@ contract BackstopAbsorbTest is SetupTest {
         AdminFacet(address(diamond)).setKeepersPaused(true);
         vm.prank(owner);
         vm.expectRevert(ClaimFacet.KeepersPaused.selector);
-        ClaimFacet(address(diamond)).claimAsLenderViaBackstop(LOAN, _emptyRetry());
+        ClaimFacet(address(diamond)).claimAsLenderViaBackstop(LOAN, _failedRetry());
     }
 
     function test_absorb_disabled_reverts() public {
@@ -403,7 +508,7 @@ contract BackstopAbsorbTest is SetupTest {
         BackstopFacet(address(diamond)).setBackstopAbsorbEnabled(false);
         vm.prank(owner);
         vm.expectRevert(ClaimFacet.BackstopAbsorbDisabled.selector);
-        ClaimFacet(address(diamond)).claimAsLenderViaBackstop(LOAN, _emptyRetry());
+        ClaimFacet(address(diamond)).claimAsLenderViaBackstop(LOAN, _failedRetry());
     }
 
     function test_absorb_nonKeeper_reverts() public {
@@ -411,7 +516,7 @@ contract BackstopAbsorbTest is SetupTest {
         _fallbackOptedIn(lender_, makeAddr("borrower7"));
         vm.prank(makeAddr("notKeeper"));
         vm.expectRevert(); // AccessControl: missing KEEPER_ROLE
-        ClaimFacet(address(diamond)).claimAsLenderViaBackstop(LOAN, _emptyRetry());
+        ClaimFacet(address(diamond)).claimAsLenderViaBackstop(LOAN, _failedRetry());
     }
 
     // ─── realized-cash release ───────────────────────────────────────────────
@@ -420,7 +525,7 @@ contract BackstopAbsorbTest is SetupTest {
         address lender_ = makeAddr("lender7");
         _fallbackOptedIn(lender_, makeAddr("borrower7"));
         vm.prank(owner);
-        ClaimFacet(address(diamond)).claimAsLenderViaBackstop(LOAN, _emptyRetry());
+        ClaimFacet(address(diamond)).claimAsLenderViaBackstop(LOAN, _failedRetry());
 
         (, uint256 exposureBefore, ) =
             BackstopFacet(address(diamond)).getBackstopAbsorbInfo(mockERC20, mockCollateralERC20);
@@ -442,25 +547,7 @@ contract BackstopAbsorbTest is SetupTest {
         address lender_ = makeAddr("lender7");
         address borrower_ = makeAddr("borrower7");
         _seedLoan(LOAN, lender_, borrower_);
-        address bVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower_);
-        vm.prank(bVault);
-        IERC20(mockCollateralERC20).transfer(address(diamond), COLLATERAL);
-        TestMutatorFacet(address(diamond)).setProtocolTrackedVaultBalanceRaw(
-            borrower_, mockCollateralERC20, 0
-        );
-        LibVaipakam.FallbackSnapshot memory snap = LibVaipakam.FallbackSnapshot({
-            lenderCollateral: LENDER_COL,
-            treasuryCollateral: TREASURY_COL,
-            borrowerCollateral: BORROWER_COL,
-            lenderPrincipalDue: DUE,
-            treasuryPrincipalDue: TREASURY_COL,
-            active: true,
-            retryAttempted: false
-        });
-        TestMutatorFacet(address(diamond)).setFallbackSnapshotRaw(LOAN, snap);
-        TestMutatorFacet(address(diamond)).scaffoldLoanStatusChange(
-            LOAN, LibVaipakam.LoanStatus.Active, LibVaipakam.LoanStatus.FallbackPending
-        );
+        _moveToFallbackPending(LOAN, borrower_);
         _mockLenderNft(LOAN, lender_);
         vm.prank(lender_);
         ClaimFacet(address(diamond)).setLenderBackstopOptIn(LOAN, true);
@@ -476,7 +563,7 @@ contract BackstopAbsorbTest is SetupTest {
         address a = makeAddr("lenderA");
         address b = makeAddr("lenderB");
         _seedLoan(LOAN, a, makeAddr("borrower7"));
-        _moveToFallbackPending(LOAN, makeAddr("borrower7"), LENDER_COL);
+        _moveToFallbackPending(LOAN, makeAddr("borrower7"));
         _mockLenderNft(LOAN, a);
         vm.prank(a);
         ClaimFacet(address(diamond)).setLenderBackstopOptIn(LOAN, true);
@@ -484,7 +571,7 @@ contract BackstopAbsorbTest is SetupTest {
         _mockLenderNft(LOAN, b);
         vm.prank(owner);
         vm.expectRevert(ClaimFacet.NotBackstopAbsorbable.selector);
-        ClaimFacet(address(diamond)).claimAsLenderViaBackstop(LOAN, _emptyRetry());
+        ClaimFacet(address(diamond)).claimAsLenderViaBackstop(LOAN, _failedRetry());
     }
 
     // ─── collateral sweep ─────────────────────────────────────────────────────
@@ -493,7 +580,7 @@ contract BackstopAbsorbTest is SetupTest {
         address lender_ = makeAddr("lender7");
         _fallbackOptedIn(lender_, makeAddr("borrower7"));
         vm.prank(owner);
-        ClaimFacet(address(diamond)).claimAsLenderViaBackstop(LOAN, _emptyRetry());
+        ClaimFacet(address(diamond)).claimAsLenderViaBackstop(LOAN, _failedRetry());
 
         // Over-sweep (more than warehoused LENDER_COL) reverts.
         vm.prank(owner);
@@ -536,14 +623,14 @@ contract BackstopAbsorbTest is SetupTest {
         VPFITokenFacet(address(diamond)).setVPFIToken(mockERC20);
         vm.prank(owner);
         vm.expectRevert(ClaimFacet.BackstopVpfiPrincipalUnsupported.selector);
-        ClaimFacet(address(diamond)).claimAsLenderViaBackstop(LOAN, _emptyRetry());
+        ClaimFacet(address(diamond)).claimAsLenderViaBackstop(LOAN, _failedRetry());
     }
 
     function test_sweepAbsorbCollateral_toDiamond_creditsTreasury() public {
         address lender_ = makeAddr("lender7");
         _fallbackOptedIn(lender_, makeAddr("borrower7"));
         vm.prank(owner);
-        ClaimFacet(address(diamond)).claimAsLenderViaBackstop(LOAN, _emptyRetry());
+        ClaimFacet(address(diamond)).claimAsLenderViaBackstop(LOAN, _failedRetry());
 
         uint256 before =
             TreasuryFacet(address(diamond)).getTreasuryBalance(mockCollateralERC20);

@@ -5,6 +5,7 @@ import {SetupTest} from "./SetupTest.t.sol";
 import {defaultAdapterCalls} from "./helpers/AdapterCallHelpers.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibSwap} from "../src/libraries/LibSwap.sol";
+import {LibFallbackCustody} from "../src/libraries/LibFallbackCustody.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
@@ -17,7 +18,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 /**
  * @title  FallbackCustodyFacetGateTest
- * @notice #1566 S2a: the access gate on the three fund-moving entries of
+ * @notice #1566 S2a/S2b: the access gate on the three fund-moving entries of
  *         {FallbackCustodyFacet} (`enterFallback`, `retryFallbackSwap`,
  *         `disposeFallbackCustody`), and the ungated custody read
  *         (`getFallbackCustody`).
@@ -25,21 +26,21 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
  *         functions of RiskFacet, DefaultedFacet and ClaimFacet, reachable
  *         only through their callers. S2a made them routed selectors, so
  *         `onlyDiamondInternal` is now the only thing between an outside
- *         caller and the Diamond's fallback collateral:
- *         - `disposeFallbackCustody` has no state precondition of its own. It
- *           checks neither `snap.active` nor the loan status, and it pays the
- *           snapshot's treasury, lender and borrower slices out of the
- *           Diamond's balance on EVERY call. Its caller, the lender claim,
- *           checks `snap.active` first and clears it afterwards. Reached from
- *           outside, it would replay a payout out of the same-token custody of
- *           other fallback loans.
+ *         caller and a loan's fallback custody, which since S2b rests in the
+ *         borrower's vault under the loan's lien:
+ *         - `disposeFallbackCustody` checks neither the loan status nor
+ *           `snap.active`. Reached from outside it would move the treasury
+ *           and lender slices out of the borrower's vault, to recipients the
+ *           caller names (`lenderSliceOwner`, `lenderMove`), before the
+ *           lender ever claimed: the custody row bounds a repeat, not a first
+ *           call out of turn.
  *         - `enterFallback` would force an Active, past-grace loan into
  *           FallbackPending with no swap ever attempted.
- *         - `retryFallbackSwap` would sell the Diamond-held collateral.
+ *         - `retryFallbackSwap` would pull the custody out of the borrower's
+ *           vault and sell it.
  *         Every other cell reaches these entries only through the legitimate
- *         callers. If a refactor dropped the modifier from one of them (S2b
- *         changes the signature of `disposeFallbackCustody`), the rest of the
- *         suite would stay green and these cells would not.
+ *         callers. If a refactor dropped the modifier from one of them, the
+ *         rest of the suite would stay green and these cells would not.
  *
  *         Mutations killed: drop or weaken the gate on any one entry, and the
  *         matching `expectRevert(OnlyDiamondInternal)` sees a success or a
@@ -51,7 +52,8 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
  *         Fixture: a real loan, defaulted past grace through the real
  *         producer (DefaultedFacet) with the only swap venue reverting, an
  *         external treasury, and no mocked vault withdraw. Every slice of the
- *         in-kind split is therefore an observable token transfer.
+ *         in-kind split is therefore an observable token transfer out of the
+ *         borrower's vault.
  */
 contract FallbackCustodyFacetGateTest is SetupTest {
     uint256 internal constant PRINCIPAL = 1000 ether;
@@ -62,19 +64,21 @@ contract FallbackCustodyFacetGateTest is SetupTest {
     address internal treasury;
     address internal attacker;
 
-    // Recorded by `_fcEnter` from the live snapshot and the Diamond's balance.
+    // Recorded by `_fcEnter` from the live snapshot and the balances.
     uint256 internal lenderCol;
     uint256 internal treasuryCol;
     uint256 internal borrowerCol;
     uint256 internal diamondHeldAfterEntry;
+    uint256 internal borrowerVaultAfterEntry;
 
     function setUp() public {
         setupHelper();
         treasury = makeAddr("fallback-gate-treasury");
         attacker = makeAddr("fallback-gate-attacker");
         // External treasury (the documented mainnet topology): the treasury
-        // slice of the in-kind split then leaves the Diamond, so it is an
-        // observable transfer like the other two.
+        // slice of the in-kind split then leaves the borrower's vault for an
+        // address other than the Diamond, so it is an observable transfer like
+        // the other two.
         AdminFacet(address(diamond)).setTreasury(treasury);
         loanId = _fcOpenLoanPastGrace();
     }
@@ -131,8 +135,9 @@ contract FallbackCustodyFacetGateTest is SetupTest {
 
     /// @dev Drive the real producer into FallbackPending and record the split.
     ///      Asserts the fixture is live: an active snapshot with a non-zero
-    ///      lender slice, a split covering the whole collateral, and (S2a) the
-    ///      whole collateral resting in the Diamond.
+    ///      lender slice, a split covering the whole collateral, and (S2b) the
+    ///      whole collateral back in the borrower's vault as the custody row,
+    ///      with the Diamond's balance unchanged by the entry.
     function _fcEnter() internal {
         uint256 heldBefore = _bal(address(diamond));
         DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
@@ -147,7 +152,11 @@ contract FallbackCustodyFacetGateTest is SetupTest {
         assertGt(l, 0, "fixture-live: a non-zero lender slice");
         assertEq(l + t + b, COLLATERAL, "fixture-live: the split covers the whole collateral");
         diamondHeldAfterEntry = _bal(address(diamond));
-        assertEq(diamondHeldAfterEntry - heldBefore, COLLATERAL, "fixture-live: S2a leaves the collateral in the Diamond");
+        assertEq(diamondHeldAfterEntry, heldBefore, "fixture-live: S2b leaves nothing in the Diamond");
+        (uint256 row, uint256 legacy) = FallbackCustodyFacet(address(diamond)).getFallbackCustody(loanId);
+        assertEq(row, COLLATERAL, "fixture-live: the collateral is the borrower's vault-held custody row");
+        assertEq(legacy, 0, "fixture-live: nothing reads as Diamond-held");
+        borrowerVaultAfterEntry = _bal(_borrowerVault());
         lenderCol = l;
         treasuryCol = t;
         borrowerCol = b;
@@ -159,6 +168,10 @@ contract FallbackCustodyFacetGateTest is SetupTest {
 
     function _bal(address who) internal view returns (uint256) {
         return IERC20(mockCollateralERC20).balanceOf(who);
+    }
+
+    function _borrowerVault() internal view returns (address) {
+        return VaultFactoryFacet(address(diamond)).getUserVaultAddress(borrower);
     }
 
     /// @dev Each mutator, called by `caller`, reverts with exactly the gate's
@@ -178,21 +191,25 @@ contract FallbackCustodyFacetGateTest is SetupTest {
 
         vm.prank(caller);
         vm.expectRevert(FallbackCustodyFacet.OnlyDiamondInternal.selector);
-        FallbackCustodyFacet(address(diamond)).disposeFallbackCustody(loanId);
+        FallbackCustodyFacet(address(diamond)).disposeFallbackCustody(
+            loanId, caller, LibFallbackCustody.Move.ToLender
+        );
     }
 
     /// @dev Nothing moved: still FallbackPending, snapshot active and unretried,
-    ///      the Diamond's custody unchanged, and the read still (0, total).
+    ///      the Diamond's balance and the borrower's vault unchanged, and the
+    ///      read still (total, 0).
     function _fcAssertCustodyUntouched() internal view {
         assertEq(uint8(_fcStatus(loanId)), uint8(LibVaipakam.LoanStatus.FallbackPending), "still FallbackPending");
         (, , , , , bool active, bool retried) = ClaimFacet(address(diamond)).getFallbackSnapshot(loanId);
         assertTrue(active, "the snapshot is still active");
         assertFalse(retried, "no retry was recorded");
-        assertEq(_bal(address(diamond)), diamondHeldAfterEntry, "the Diamond's custody did not move");
+        assertEq(_bal(address(diamond)), diamondHeldAfterEntry, "the Diamond's balance did not move");
+        assertEq(_bal(_borrowerVault()), borrowerVaultAfterEntry, "the borrower's vault did not move");
         (uint256 vaultHeld, uint256 legacyDiamondHeld) =
             FallbackCustodyFacet(address(diamond)).getFallbackCustody(loanId);
-        assertEq(vaultHeld, 0, "S2a: nothing is vault-held");
-        assertEq(legacyDiamondHeld, COLLATERAL, "the whole split still rests in the Diamond");
+        assertEq(vaultHeld, COLLATERAL, "the whole split is still vault-held");
+        assertEq(legacyDiamondHeld, 0, "and none of it reads as Diamond-held");
     }
 
     // --- G1. enterFallback --------------------------------------------------
@@ -244,9 +261,9 @@ contract FallbackCustodyFacetGateTest is SetupTest {
     // --- G3. The read is ungated --------------------------------------------
 
     /// @notice `getFallbackCustody` is a plain view anyone may call: (0, 0)
-    ///         before fallback, then (0, total) while the snapshot is active,
-    ///         where the total is what the producer actually moved into the
-    ///         Diamond.
+    ///         before fallback, then (total, 0) while the snapshot is active,
+    ///         where the total is what the producer put back into the
+    ///         borrower's vault.
     function test_G3_getFallbackCustody_isUngated() public {
         vm.prank(attacker);
         (uint256 vaultHeld0, uint256 diamondHeld0) =
@@ -254,60 +271,70 @@ contract FallbackCustodyFacetGateTest is SetupTest {
         assertEq(vaultHeld0, 0, "Active loan: nothing vault-held");
         assertEq(diamondHeld0, 0, "Active loan: no fallback custody");
 
-        uint256 heldBefore = _bal(address(diamond));
         _fcEnter();
         vm.prank(attacker);
         (uint256 vaultHeld1, uint256 diamondHeld1) =
             FallbackCustodyFacet(address(diamond)).getFallbackCustody(loanId);
-        assertEq(vaultHeld1, 0, "S2a: nothing is vault-held");
-        assertEq(diamondHeld1, lenderCol + treasuryCol + borrowerCol, "the active split");
-        assertEq(diamondHeld1, _bal(address(diamond)) - heldBefore, "what the producer moved into the Diamond");
+        assertEq(vaultHeld1, lenderCol + treasuryCol + borrowerCol, "the active split, vault-held");
+        assertEq(diamondHeld1, 0, "none of it in the Diamond");
+        assertEq(vaultHeld1, borrowerVaultAfterEntry, "and it is what the borrower's vault holds");
     }
 
     // --- G4. dispose: only the caller differs --------------------------------
 
-    /// @notice The same `disposeFallbackCustody(loanId)` on the same state is
-    ///         refused for an outside caller and executed for the Diamond,
-    ///         paying each snapshot slice out of the Diamond's balance.
-    /// @dev    The host does not clear the snapshot; its caller does. That is
-    ///         why the gate is the only guard against a replayed payout.
+    /// @notice The same `disposeFallbackCustody` on the same state is refused
+    ///         for an outside caller and executed for the Diamond, moving the
+    ///         treasury and lender slices out of the borrower's vault and
+    ///         leaving the borrower slice there.
+    /// @dev    The host does not clear the snapshot; its caller does. The row
+    ///         drains, so a repeat moves nothing, but a FIRST call out of turn
+    ///         would pay the slices before the lender claimed: the gate is the
+    ///         only guard against that.
     function test_G4_dispose_onlyTheCallerDiffers() public {
         _fcEnter();
         vm.prank(attacker);
         vm.expectRevert(FallbackCustodyFacet.OnlyDiamondInternal.selector);
-        FallbackCustodyFacet(address(diamond)).disposeFallbackCustody(loanId);
+        FallbackCustodyFacet(address(diamond)).disposeFallbackCustody(
+            loanId, attacker, LibFallbackCustody.Move.ToLender
+        );
 
         address lenderVault = VaultFactoryFacet(address(diamond)).getUserVaultAddress(lender);
-        address borrowerVault = VaultFactoryFacet(address(diamond)).getUserVaultAddress(borrower);
         uint256 treasury0 = _bal(treasury);
         uint256 lenderVault0 = _bal(lenderVault);
-        uint256 borrowerVault0 = _bal(borrowerVault);
 
         vm.prank(address(diamond));
-        FallbackCustodyFacet(address(diamond)).disposeFallbackCustody(loanId);
+        (uint256 toTreasury, uint256 toLenderSlice, uint256 retained) = FallbackCustodyFacet(address(diamond))
+            .disposeFallbackCustody(loanId, lender, LibFallbackCustody.Move.ToLender);
 
+        assertEq(toTreasury, treasuryCol, "returns the treasury slice");
+        assertEq(toLenderSlice, lenderCol, "returns the lender slice");
+        assertEq(retained, borrowerCol, "returns the retained borrower slice");
         assertEq(_bal(treasury) - treasury0, treasuryCol, "treasury slice paid");
         assertEq(_bal(lenderVault) - lenderVault0, lenderCol, "lender slice into the lender's vault");
-        assertEq(_bal(borrowerVault) - borrowerVault0, borrowerCol, "borrower slice into the borrower's vault");
-        assertEq(diamondHeldAfterEntry - _bal(address(diamond)), COLLATERAL, "the whole split left the Diamond");
+        assertEq(borrowerVaultAfterEntry - _bal(_borrowerVault()), treasuryCol + lenderCol, "only those left the borrower's vault");
+        assertEq(_bal(address(diamond)), diamondHeldAfterEntry, "the Diamond is never a waypoint");
     }
 
     // --- G5. dispose through the legitimate caller ----------------------------
 
     /// @notice The lender claim reaches the same entry exactly once and
-    ///         resolves the fallback: every slice leaves the Diamond, the
-    ///         lender is paid their slice, the snapshot is closed, and the
-    ///         read drops to (0, 0).
+    ///         resolves the fallback: the treasury and lender slices leave the
+    ///         borrower's vault, the lender is paid their slice, the borrower
+    ///         slice stays in the vault, the snapshot is closed, and the read
+    ///         drops to (0, 0).
     function test_G5_dispose_reachedThroughClaimAsLender() public {
         _fcEnter();
-        address borrowerVault = VaultFactoryFacet(address(diamond)).getUserVaultAddress(borrower);
         uint256 lender0 = _bal(lender);
         uint256 treasury0 = _bal(treasury);
-        uint256 borrowerVault0 = _bal(borrowerVault);
 
         vm.expectCall(
             address(diamond),
-            abi.encodeWithSelector(FallbackCustodyFacet.disposeFallbackCustody.selector, loanId),
+            abi.encodeWithSelector(
+                FallbackCustodyFacet.disposeFallbackCustody.selector,
+                loanId,
+                lender,
+                LibFallbackCustody.Move.ToLender
+            ),
             1
         );
         vm.prank(lender);
@@ -315,13 +342,13 @@ contract FallbackCustodyFacetGateTest is SetupTest {
 
         assertEq(_bal(lender) - lender0, lenderCol, "the lender is paid their slice");
         assertEq(_bal(treasury) - treasury0, treasuryCol, "treasury slice paid");
-        assertEq(_bal(borrowerVault) - borrowerVault0, borrowerCol, "borrower slice parked in the borrower's vault");
-        assertEq(diamondHeldAfterEntry - _bal(address(diamond)), COLLATERAL, "the whole split left the Diamond");
+        assertEq(_bal(_borrowerVault()), borrowerCol, "the borrower slice stays in the borrower's vault");
+        assertEq(_bal(address(diamond)), diamondHeldAfterEntry, "the Diamond is never a waypoint");
         (, , , , , bool active, ) = ClaimFacet(address(diamond)).getFallbackSnapshot(loanId);
         assertFalse(active, "the claim closed the snapshot");
         (uint256 vaultHeld, uint256 diamondHeld) =
             FallbackCustodyFacet(address(diamond)).getFallbackCustody(loanId);
-        assertEq(vaultHeld, 0, "nothing vault-held");
+        assertEq(vaultHeld, 0, "the custody row is spent");
         assertEq(diamondHeld, 0, "a resolved fallback holds nothing");
     }
 }

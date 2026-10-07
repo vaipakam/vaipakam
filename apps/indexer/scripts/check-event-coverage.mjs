@@ -48,6 +48,8 @@ const DELIBERATELY_NOT_HANDLED = {
     'transient status — the indexer keeps loans.status=active through the fallback episode; the eventual terminal event still applies',
   LoanCuredFromFallback:
     'transient — pairs with LoanFallbackPending; D1 status was never moved off active',
+  FallbackCustodyMoved:
+    '#1566 slice 2 — custody provenance for liquidation-fallback collateral held in the borrower vault under a lien: one event per row move (entry, each settlement slice, retry pull and restore, match legs, return to the pledge) with its amount and the amount still held. Loan status still derives from the status events (LoanFallbackPending, LoanCuredFromFallback and the terminal events), so no loans-row field changes; indexer surfacing of the custody trail is deferred',
   LoanKeeperEnabled: 'per-loan keeper authorization — not modelled in the indexer schema',
   OfferKeeperEnabled: 'per-offer keeper authorization — not modelled',
   OfferCreatorFullTariffSet:

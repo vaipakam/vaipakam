@@ -202,8 +202,14 @@ library LibConsolidation {
     /// @dev True if `loan` is in an excluded *live* state for the given side.
     ///      Borrower-side exclusions (live prepay listing / offer-keyed
     ///      parallel-sale listing / live swap-to-repay intent) do NOT block the
-    ///      lender side. `FallbackPending` is excluded for both (the collateral
-    ///      lien is released + the snapshot sits in Diamond custody).
+    ///      lender side. `FallbackPending` is excluded for both. Since #1566
+    ///      slice 2 its fallback custody sits in the STORED borrower's vault
+    ///      under the loan's lien (`fallbackVaultCustody`), owed per the
+    ///      snapshot split to the lender, the treasury and the borrower, so a
+    ///      re-anchor would move other parties' funds. The refusal is also
+    ///      load-bearing for the fee tier: the FallbackPending tier exclusion
+    ///      is charged to the stored borrower (`LibTierExclusion`), and it
+    ///      cannot go stale only because this keeps that party fixed.
     function _isExcludedLive(
         LibVaipakam.Storage storage s,
         LibVaipakam.Loan storage loan,

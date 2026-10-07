@@ -2363,11 +2363,21 @@ library LibVaipakam {
     /**
      * @notice Snapshot of a liquid-collateral loan that fell back to the
      *         claim-time settlement path (README §7 lines 142–153, 251, 290).
-     * @dev Written by RiskFacet / DefaultedFacet when the DEX swap reverts
-     *      (or is skipped for slippage > 6%). While `active == true`, the
-     *      collateral is held inside the Diamond, the snapshot records the
-     *      split that would apply if the lender-claim retry also fails,
-     *      and ClaimFacet may attempt liquidation one more time.
+     * @dev Written at fallback entry ({FallbackCustodyFacet.enterFallback},
+     *      for RiskFacet and DefaultedFacet) when the DEX swap reverts (or is
+     *      skipped for slippage > 6%). While `active == true`, the snapshot
+     *      records the split that would apply if the lender-claim retry also
+     *      fails, and ClaimFacet may attempt liquidation one more time.
+     *      #1566 slice 2 — the collateral it describes is NOT in the Diamond:
+     *      entry returns it to `loan.borrower`'s vault under the loan's
+     *      collateral lien and counts it in `fallbackVaultCustody[loanId]`,
+     *      which equals lender + treasury + borrower collateral at every
+     *      transaction boundary while the snapshot is active. A custody move
+     *      never changes the three collateral slices; only a partial internal
+     *      match rescales them (to the row it leaves), and a cure deletes the
+     *      snapshot. An active snapshot whose total differs from that row is
+     *      a pre-slice-2 Diamond-held row and fails closed
+     *      ({LibFallbackCustody.isLegacy}).
      *      lenderCollateral / treasuryCollateral / borrowerCollateral are
      *      denominated in the collateral asset; lenderPrincipalDue /
      *      treasuryPrincipalDue are denominated in the principal asset and
@@ -2866,9 +2876,17 @@ library LibVaipakam {
      *          paid out. Only written by PrecloseFacet / RefinanceFacet /
      *          PartialWithdrawalFacet — never by repay paths.
      *        • `fallbackSnapshot[loanId].active == true` ⇔ the loan is in
-     *          status FallbackPending. Set exclusively by RiskFacet /
-     *          DefaultedFacet at fallback time; cleared by ClaimFacet on the
-     *          first lender/borrower claim. Never mutated outside these sites.
+     *          status FallbackPending. Set exclusively at fallback entry
+     *          ({FallbackCustodyFacet.enterFallback}, for RiskFacet /
+     *          DefaultedFacet); cleared or deleted when the fallback episode
+     *          ends (lender claim, backstop absorb, cure, curing repayment,
+     *          internal-match rescue); rescaled by a partial internal match.
+     *        • #1566 slice 2 — `fallbackVaultCustody[loanId]` equals the active
+     *          snapshot's collateral total (lender + treasury + borrower) and
+     *          is zero whenever the loan is not FallbackPending. That custody
+     *          rests in `loan.borrower`'s vault under the loan's collateral
+     *          lien, never in the Diamond, and moves only through
+     *          {LibFallbackCustody}: one `FallbackCustodyMoved` event per move.
      *        • `treasuryBalances[asset]`: IOU of treasury-earmarked tokens
      *          still physically held at the Diamond. Written by
      *          {LibFacet.recordTreasuryAccrual} only when `treasury ==
@@ -3118,9 +3136,11 @@ library LibVaipakam {
         uint256 kycTier1ThresholdNumeraire; // Tier1 max (default 10_000 * 1e18)
         mapping(address => bool) keeperAccessEnabled; // User-level master switch — quick "pause all keepers for me" (default: false)
         // Snapshot of liquid-collateral liquidations that fell back to the
-        // claim-time settlement path (README §7). Written by RiskFacet /
-        // DefaultedFacet at fallback time; consumed by ClaimFacet on the
-        // first lender/borrower claim.
+        // claim-time settlement path (README §7). Written at fallback entry
+        // (`FallbackCustodyFacet.enterFallback`, for RiskFacet /
+        // DefaultedFacet); consumed by ClaimFacet on the first lender/borrower
+        // claim. The custody it describes is counted by `fallbackVaultCustody`
+        // (appended at the Storage tail, #1566 slice 2).
         mapping(uint256 => FallbackSnapshot) fallbackSnapshot;
         // Phase 6: per-user whitelist of approved keepers + their per-action
         // authorization bitmask. The uint16 bitmask uses the KEEPER_ACTION_*
@@ -4849,6 +4869,13 @@ library LibVaipakam {
         // identity may change; the lien must be re-keyed to the new
         // collateral fields.
         //
+        // #1566 slice 2 — a liquidation or default whose swap fails
+        // re-creates it at fallback ENTRY over the custody returned to the
+        // borrower's vault (`FallbackCustodyFacet.enterFallback`, via the
+        // create-if-absent `incrementCollateralLien`); each fallback slice
+        // that leaves the vault decrements it, and the borrower's retained
+        // slice stays under it until `claimAsBorrower`.
+        //
         // See `docs/DesignsAndPlans/PerLoanCollateralLien.md` §§2-6.
         mapping(uint256 => Encumbrance) loanCollateralLien;
 
@@ -5435,6 +5462,13 @@ library LibVaipakam {
         // (repay, preclose, default, liquidation) left owed VPFI in the stored
         // party's tier. A holder who is the stored party is never excluded:
         // their own money counts toward their own tier.
+        //
+        // #1566 slice 2 — it also carries the one non-terminal case: the
+        // borrower side of a FallbackPending VPFI-collateral loan charges its
+        // whole fallback custody row (`fallbackVaultCustody`) to the stored
+        // borrower, because that custody, now held in the borrower's vault
+        // under the loan's lien, used to rest in the Diamond with no tier
+        // credit (`LibTierExclusion`, the fallback clause).
         // See docs/DesignsAndPlans/SanctionsCloseoutSweepAndSaleVehicleFixes.md §2.2.
         mapping(address => uint256) frozenVpfiOwedByVault;
         // LEGACY (pre-#2342) per-loan records of what a swap-to-repay-FULL
@@ -7687,9 +7721,12 @@ library LibVaipakam {
         // side); `*Vpfi` is the amount currently added to
         // `frozenVpfiOwedByVault[*Vault]`. The amount is DERIVED, never written
         // independently: it always equals the VPFI in that side's per-loan
-        // encumbrance records (`LibEncumbrance.vpfiReservedOnSide`), kept in
-        // step by `LibTierExclusion.sync`, which every per-loan ledger mutator,
-        // every terminal transition and every position-NFT transfer or burn
+        // encumbrance records (`LibEncumbrance.vpfiReservedOnSide`) or, for
+        // the borrower side of a FallbackPending VPFI-collateral loan, its
+        // fallback custody row (`fallbackVaultCustody`, #1566 slice 2), kept
+        // in step by `LibTierExclusion.sync`, which every per-loan ledger
+        // mutator, every fallback custody row move, every terminal transition
+        // (and fallback entry) and every position-NFT transfer or burn
         // re-runs. Zero on the common path (untransferred or live loans).
         mapping(uint256 => address) tierExclusionLenderVault;
         mapping(uint256 => uint256) tierExclusionLenderVpfi;
@@ -8051,6 +8088,19 @@ library LibVaipakam {
         ///      must equal at custody activation, and the earmark the fresh
         ///      backing room nets out of the Diamond's balance before it.
         uint256 rewardSanctionsHeldTotal;
+        /// @dev #1566 slice 2 — per loan, the collateral units of the CURRENT fallback episode
+        ///      held in `loan.borrower`'s vault under `loanCollateralLien[loanId]`. Non-zero only
+        ///      while FallbackPending; equals the active snapshot's total; the custody
+        ///      discriminator (`snapshot active && total != this` = legacy Diamond-held row).
+        ///      WHY a row of its own beside `fallbackSnapshot`: the snapshot is the SPLIT (who
+        ///      is owed what), this is the CUSTODY (what the vault holds for the episode). They
+        ///      agree at every transaction boundary, and the one state in which they disagree is
+        ///      exactly the pre-slice-2 Diamond-held row, which fails closed (owner decision
+        ///      O1 = A, 2026-10-07: fresh deploy, no migration). Written ONLY through
+        ///      `LibFallbackCustody`, one `FallbackCustodyMoved` event per change, and read by
+        ///      the FallbackPending clause of `LibTierExclusion`.
+        ///      Appended — the Storage struct is append-only.
+        mapping(uint256 => uint256) fallbackVaultCustody;
     }
 
     /// @notice 3b-ii-A2 (#2305) — one batch a staging record staged from, with
@@ -10353,51 +10403,67 @@ library LibVaipakam {
         return storageSlot().backstopVault;
     }
 
-    /// @dev #577 / #585 — true when a FallbackPending loan still carries a
-    ///      vault-held AddCollateral top-up: an active (non-released)
-    ///      collateral lien. At fallback the original collateral moves to
-    ///      Diamond custody and its lien is released; a non-curing
-    ///      `AddCollateral` on the still-FallbackPending loan lands the top-up
-    ///      in the borrower's vault and seeds a fresh active lien sized to that
-    ///      vault portion (`AddCollateralFacet` accepts FallbackPending). Every
-    ///      claim-time / liquidation mechanism that draws
-    ///      `loan.collateralAmount` from Diamond custody — internal match and
-    ///      the claim-time retry swap — would then mis-account the vault-held
-    ///      top-up, drawing on same-token Diamond custody belonging to OTHER
-    ///      fallback loans. Such a loan is therefore ineligible for internal
-    ///      matching (rejected at the trigger gate / skipped by auto-dispatch /
-    ///      filtered out of candidate scans) and for retry swaps, until the
-    ///      top-up-aware unwind lands (#585); it resolves safely through the
-    ///      in-kind fallback distribution, which only touches the snapshot
-    ///      (the Diamond-held portion) and leaves the vault top-up liened.
-    ///      Shared by `RiskMatchLiquidationFacet`, `MetricsFacet`, and
-    ///      `ClaimFacet` so the "topped-up" definition lives in one place.
-    ///      ERC-20-only (the lien is ERC-20-gated per D-1), so a non-zero lien
-    ///      is always the ERC-20 top-up.
-    function hasActiveFallbackTopUp(uint256 loanId) internal view returns (bool) {
+    /// @dev #1566 slice 2 — the AddCollateral top-up a FallbackPending loan
+    ///      carries in the borrower's vault BEYOND its fallback custody: the
+    ///      loan's active collateral lien minus the custody row
+    ///      (`fallbackVaultCustody`). Fallback entry re-liens the custody it
+    ///      returns to that vault, so the lien is `custody + top-up` and the
+    ///      top-up is the excess. The one home of that subtraction, so the
+    ///      "topped-up" figure cannot be derived two ways: {hasActiveFallbackTopUp}
+    ///      reads it, and so should every consumer that needs the top-up
+    ///      amount. 0 when the loan is not FallbackPending, the lien is
+    ///      released, or no top-up landed. A pre-slice-2 Diamond-held row has
+    ///      a zero custody row, so its top-up reads as the whole lien, exactly
+    ///      the pre-slice-2 figure. ERC-20-only (the lien is ERC-20-gated per
+    ///      D-1).
+    function fallbackTopUp(uint256 loanId) internal view returns (uint256) {
         Storage storage s = storageSlot();
-        if (s.loans[loanId].status != LoanStatus.FallbackPending) return false;
+        if (s.loans[loanId].status != LoanStatus.FallbackPending) return 0;
         Encumbrance storage lien = s.loanCollateralLien[loanId];
-        return !lien.released && lien.amount > 0;
+        if (lien.released) return 0;
+        uint256 custody = s.fallbackVaultCustody[loanId];
+        // Saturating: only mid-flow (a retry restore between its custody
+        // credit and its lien increment) can the lien fall short of the row,
+        // and nothing reads the top-up there.
+        return lien.amount > custody ? lien.amount - custody : 0;
     }
 
-    /// @dev #591 — the collateral a loan can contribute to an internal match
-    ///      (the "Diamond-matchable" portion). For a topped-up FallbackPending
-    ///      loan the AddCollateral top-up sits in the borrower's vault (liened),
-    ///      NOT in Diamond custody, so only `collateralAmount − lien.amount`
-    ///      (the at-fallback snapshot still in Diamond) may be matched; matching
-    ///      against the full `collateralAmount` would over-draw Diamond custody.
-    ///      For every other loan it is the full `collateralAmount`.
+    /// @dev #577 / #585 — true when a FallbackPending loan carries a
+    ///      vault-held AddCollateral top-up beyond its fallback custody
+    ///      ({fallbackTopUp} > 0). The backstop refuses such a loan
+    ///      (`ClaimFacet.setLenderBackstopOptIn` /
+    ///      `claimAsLenderViaBackstop`): a top-up routes the normal lender
+    ///      claim, which leaves it liened as the borrower's.
+    ///      N9 (#1566 slice 2) — LOAD-BEARING: this reads the lien IN EXCESS
+    ///      of the custody row, not "any active lien". Once fallback entry
+    ///      liens the custody itself, `lien.amount > 0` holds for EVERY
+    ///      fallback loan, and that old reading would refuse every loan and
+    ///      so disable backstop absorb entirely.
+    function hasActiveFallbackTopUp(uint256 loanId) internal view returns (bool) {
+        return fallbackTopUp(loanId) != 0;
+    }
+
+    /// @dev #591 — the collateral a loan can contribute to an internal match.
+    ///      #1566 slice 2 — for a FallbackPending loan that is its fallback
+    ///      custody row (`fallbackVaultCustody`): the custody sits in the
+    ///      borrower's vault under the loan's lien and each match leg debits
+    ///      it, while an AddCollateral top-up in the same vault
+    ///      ({fallbackTopUp}) stays the borrower's and is never matched. For
+    ///      every other loan it is the full `collateralAmount`.
     ///
     ///      CRITICAL (Codex #605 P1): this can be `0` while `collateralAmount`
-    ///      stays `> 0` — a topped-up FallbackPending loan whose Diamond
-    ///      snapshot was fully consumed by an earlier partial match still
-    ///      carries the vault top-up. Such a leg has NOTHING to contribute, so
-    ///      every internal-match eligibility gate treats `== 0` as
-    ///      non-matchable; otherwise it would receive a one-sided match that
-    ///      drains the counterparty's collateral with no reciprocal debt
-    ///      reduction. Single source of truth for `RiskMatchLiquidationFacet`
-    ///      (leg sizing + gate) and `MetricsFacet` (candidate scan).
+    ///      stays `> 0` — a topped-up FallbackPending loan whose custody was
+    ///      fully consumed by an earlier partial match still carries the vault
+    ///      top-up. Such a leg has NOTHING to contribute, so every
+    ///      internal-match eligibility gate treats `== 0` as non-matchable;
+    ///      otherwise it would receive a one-sided match that drains the
+    ///      counterparty's collateral with no reciprocal debt reduction. A
+    ///      pre-slice-2 Diamond-held row has a zero custody row and so reads 0
+    ///      here too: it is never matched, so no match can pay it out of the
+    ///      Diamond (every custody consumer refuses it,
+    ///      `FallbackCustodyNotVaultHeld`). Single source of truth for
+    ///      `RiskMatchLiquidationFacet` (leg sizing + gate) and `MetricsFacet`
+    ///      (candidate scan).
     function internalMatchableCollateral(uint256 loanId) internal view returns (uint256) {
         Storage storage s = storageSlot();
         // #2322 — a loan with a live swap-to-repay intent has NO collateral
@@ -10411,11 +10477,7 @@ library LibVaipakam {
         if (s.intentCommits[loanId].orderHash != bytes32(0)) return 0;
         Loan storage loan = s.loans[loanId];
         if (loan.status == LoanStatus.FallbackPending) {
-            Encumbrance storage lien = s.loanCollateralLien[loanId];
-            if (!lien.released && lien.amount > 0) {
-                // Diamond portion = snapshot total = collateralAmount − top-up.
-                return loan.collateralAmount - lien.amount;
-            }
+            return s.fallbackVaultCustody[loanId];
         }
         return loan.collateralAmount;
     }

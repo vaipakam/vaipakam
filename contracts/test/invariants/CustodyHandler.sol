@@ -27,6 +27,7 @@ import {LibAcceptTestSigner} from "../helpers/LibAcceptTestSigner.sol";
 import {ERC20Mock} from "../mocks/ERC20Mock.sol";
 import {MockLopFill} from "../mocks/MockLopFill.sol";
 import {MockSanctionsList} from "../mocks/MockSanctionsList.sol";
+import {LibFallbackCustody} from "../../src/libraries/LibFallbackCustody.sol";
 
 /// @dev The intent cancel grace the harness configures and the handler waits out on the
 ///      permissionless expired-cancel path. One constant, read by both, so they cannot disagree.
@@ -168,6 +169,9 @@ contract CustodyHandler is Test {
     uint256 public fallbackViaLiquidation;
     uint256 public fallbackViaDefault;
     uint256 public retryFailed;
+    /// @notice Failed claim-time retries observed to RESTORE the custody row they pulled (S2b):
+    ///         a `RetryRestored` row move for the claimed loan in the same call.
+    uint256 public retryRestored;
     uint256 public retrySucceeded;
     uint256 public disposed;
     uint256 public absorbed;
@@ -255,7 +259,7 @@ contract CustodyHandler is Test {
 
     /// @notice A collateral top-up WITHOUT touching the loan's risk mocks: on an Active loan a plain
     ///         top-up, on a FallbackPending loan a non-curing top-up (the vault-held, liened top-up
-    ///         that sits beside Diamond-held fallback custody).
+    ///         that sits beside the loan's vault-held fallback custody row, S2b).
     function addCollateral(uint256 seed, uint256 amount) external {
         ++calls["addCollateral"];
         uint256 loanId = _pick(seed, Want.ActiveOrFallback);
@@ -410,7 +414,7 @@ contract CustodyHandler is Test {
     ///         (A -> InternalMatched, the full rescue); otherwise to 30-80% of it (A stays
     ///         FallbackPending with its snapshot scaled -- the partial leg). B's WETH principal is the
     ///         most the protocol's own create-time floor admits against that collateral, scaled down by
-    ///         the open margin, and kept below A's Diamond portion so A keeps a residual either way.
+    ///         the open margin, and kept below A's custody row so A keeps a residual either way.
     /// @dev    Counted only on the observed effect: InternalMatched for the rescue; still
     ///         FallbackPending with an active snapshot strictly smaller than before for the partial leg.
     function internalMatch(uint256 seed, bool rescueFully) external {
@@ -418,13 +422,13 @@ contract CustodyHandler is Test {
         uint256 a = _fallbackSubject(seed, false, false, true);
         if (a == 0) return;
         uint256 aPrincipal = _loan(a).principal;
-        uint256 aDiamondPortion = _snapshotTotal(a);
-        if (aDiamondPortion < 4 || aPrincipal < 4) return;
+        uint256 aCustodyRow = _snapshotTotal(a);
+        if (aCustodyRow < 4 || aPrincipal < 4) return;
         uint256 bCollateral = rescueFully
             ? aPrincipal + 1e18
             : (aPrincipal * (3_000 + (_mix(seed, "bCollateral") % 5_001))) / 10_000;
         uint256 bPrincipal = _maxPrincipalFor(bCollateral, weth, usdc, seed);
-        if (bPrincipal >= aDiamondPortion) bPrincipal = aDiamondPortion / 2;
+        if (bPrincipal >= aCustodyRow) bPrincipal = aCustodyRow / 2;
         if (bPrincipal == 0 || bCollateral == 0) return;
         uint256 b = _openLoanExplicit(Kind.Reverse, seed, bPrincipal, bCollateral, LOAN_DAYS);
         if (b == 0) return;
@@ -435,7 +439,7 @@ contract CustodyHandler is Test {
                 ++fullRescues;
             } else if (st == LibVaipakam.LoanStatus.FallbackPending) {
                 (,,,,, bool activeAfter,) = ClaimFacet(diamond).getFallbackSnapshot(a);
-                if (activeAfter && _snapshotTotal(a) < aDiamondPortion) {
+                if (activeAfter && _snapshotTotal(a) < aCustodyRow) {
                     ++fallbackPartialLegs;
                     ++partialLegsByAsset[collateralOf[a]];
                 }
@@ -624,7 +628,7 @@ contract CustodyHandler is Test {
                 _noteRevert("claimLender.retry", err);
             }
         }
-        (bool retryRan, bool retryOk) = _retryOutcome(loanId);
+        (bool retryRan, bool retryOk, bool restored) = _retryOutcome(loanId);
         if (!ok) return;
         ++lenderClaims;
         if (!fallbackBefore) return;
@@ -637,22 +641,30 @@ contract CustodyHandler is Test {
             ++retrySucceeded;
             return;
         }
-        if (retryRan) ++retryFailed;
+        if (retryRan) {
+            ++retryFailed;
+            if (restored) ++retryRestored;
+        }
         ++disposed;
     }
 
     /// @dev Reads the claim's `ClaimRetryExecuted` from the recorded logs: whether the one-shot retry
-    ///      ran in this call, and whether it succeeded.
-    function _retryOutcome(uint256 loanId) internal view returns (bool ran, bool ok) {
+    ///      ran in this call, and whether it succeeded; and whether a `RetryRestored` custody row move
+    ///      for the loan was emitted (S2b: a failed retry puts the row it pulled back into the vault).
+    function _retryOutcome(uint256 loanId) internal view returns (bool ran, bool ok, bool restored) {
         Vm.Log[] memory logs = vm.getRecordedLogs();
         bytes32 sig = ClaimFacet.ClaimRetryExecuted.selector;
+        bytes32 moveSig = LibFallbackCustody.FallbackCustodyMoved.selector;
+        bytes32 restoredTopic = bytes32(uint256(uint8(LibFallbackCustody.Move.RetryRestored)));
         for (uint256 i; i < logs.length; ++i) {
-            if (
-                logs[i].emitter == diamond && logs[i].topics.length > 1 && logs[i].topics[0] == sig
-                    && logs[i].topics[1] == bytes32(loanId)
-            ) {
+            if (logs[i].emitter != diamond || logs[i].topics.length < 2 || logs[i].topics[1] != bytes32(loanId)) {
+                continue;
+            }
+            if (logs[i].topics[0] == sig) {
                 ran = true;
                 (ok,) = abi.decode(logs[i].data, (bool, uint256));
+            } else if (logs[i].topics[0] == moveSig && logs[i].topics.length > 2 && logs[i].topics[2] == restoredTopic) {
+                restored = true;
             }
         }
     }

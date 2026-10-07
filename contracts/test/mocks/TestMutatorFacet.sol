@@ -929,6 +929,24 @@ contract TestMutatorFacet {
         LibVaipakam.storageSlot().fallbackSnapshot[loanId] = snap;
     }
 
+    /// @notice #1566 S2b -- overwrite the fallback custody row
+    ///         (`s.fallbackVaultCustody[loanId]`) directly. Test-only, and only
+    ///         for the shapes the real producer never leaves behind
+    ///         (FallbackCustodyTest): the legacy fixture (F16), which zeroes the
+    ///         row under a live snapshot to reproduce a pre-slice-2
+    ///         Diamond-held row every consumer must refuse by name, and the
+    ///         scaled-to-zero fixture (F16b). Every reachable FallbackPending
+    ///         fixture enters through the real producer instead (SetupTest
+    ///         `_enterFallbackViaProducer*`, or a trigger with a reverting
+    ///         venue), so its row carries the producer's provenance: the
+    ///         `Entered` move, the lien from the real increment and the tier
+    ///         sync (slices 2-3 brief (h) row 23 and (i)). Writes the row ONLY:
+    ///         no event, no lien, no tracked balance, no tier sync -- the
+    ///         caller owns the consistency of everything around it.
+    function setFallbackVaultCustodyRaw(uint256 loanId, uint256 amount) external {
+        LibVaipakam.storageSlot().fallbackVaultCustody[loanId] = amount;
+    }
+
     function pushRewardEntry(
         address user,
         uint64 loanId,
