@@ -2137,7 +2137,7 @@ const copySource = {
     // wording stays off marketing surfaces (retail-deploy policy);
     // this renders only to the flagged wallet.
     sanctionedBlockedBody:
-      'This wallet is flagged by the sanctions oracle, so recovery is blocked for it. Nothing moved — the tokens stay where they are, and repaying or closing existing positions stays open.',
+      'This wallet is flagged by Vaipakam’s sanctions screen, so recovery is blocked for it. Nothing moved — the tokens stay where they are, and repaying or closing existing positions stays open.',
     // The tx mined but REVERTED — waitForTransactionReceipt resolves on
     // reverted receipts too (Codex #1547 r1), and decoding events from
     // a reverted receipt would misread the outcome.
@@ -4534,7 +4534,7 @@ const copySource = {
     txFailed:
       'The transaction didn’t go through. Nothing was taken beyond network gas. Please try again.',
     sanctionsBlocked:
-      'This wallet is flagged by the sanctions oracle, so new positions and payouts are blocked. Nothing was sent. Repaying and closing existing positions stays open.',
+      'This wallet is flagged by Vaipakam’s sanctions screen, so new positions and payouts are blocked. Nothing was sent. Repaying and closing existing positions stays open.',
     sanctionsCheckRetry:
       'We couldn’t run the compliance check just now — nothing was sent. Please try again in a moment.',
     checkRetry:
@@ -4933,11 +4933,13 @@ const copySource = {
   },
 
   sanctions: {
-    // "Flagged", not "listed": a wallet can be flagged because the sender it
-    // declared during token recovery is listed (#2439 recourseBannedSource).
-    title: 'This wallet is flagged by the compliance oracle.',
+    // "Flagged", not "listed", and by Vaipakam's SCREEN rather than by the
+    // oracle: a wallet can be flagged because the sender it declared during
+    // token recovery is listed while the oracle does not list the wallet
+    // itself (#2439 recourseBannedSource).
+    title: 'This wallet is flagged by Vaipakam’s sanctions screen.',
     line1:
-      'The connected wallet is flagged by the on-chain sanctions oracle Vaipakam screens against.',
+      'The connected wallet is flagged by Vaipakam’s sanctions screen, which checks the wallet and any sender it declared when recovering tokens against the configured on-chain sanctions oracle.',
     line2:
       'New positions (offers, loans, rentals, deposits) are blocked and will not go through.',
     // The restriction holds whoever flagged the wallet, so it is shown at

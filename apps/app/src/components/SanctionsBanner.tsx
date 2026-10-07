@@ -1,6 +1,8 @@
 /**
  * Sanctions-screening banner — renders ONLY when the connected wallet
- * is flagged by the configured on-chain oracle (fail-open otherwise).
+ * is flagged by Vaipakam's sanctions screen — the configured on-chain
+ * oracle, applied to the wallet and its declared recovery sender
+ * (fail-open otherwise).
  * Per the retail-deploy policy this is the one place the full
  * three-line message appears; marketing surfaces never mention it.
  *

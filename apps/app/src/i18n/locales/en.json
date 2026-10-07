@@ -985,7 +985,7 @@
       "errDomainDrift": "This network’s signing configuration doesn’t match what the app expects, so signing is blocked — nothing was sent. Reload the app; if this keeps happening, the app needs an update.",
       "errOracleUnset": "Nothing was signed and nothing was sent: the screening service this recovery depends on isn’t configured on this network, so a recovery’s outcome couldn’t be decided.",
       "errOracleUnreachable": "Nothing was signed and nothing was sent: the check that decides whether recovery can run here didn’t answer just now. Try the check again in a moment.",
-      "sanctionedBlockedBody": "This wallet is flagged by the sanctions oracle, so recovery is blocked for it. Nothing moved — the tokens stay where they are, and repaying or closing existing positions stays open.",
+      "sanctionedBlockedBody": "This wallet is flagged by Vaipakam’s sanctions screen, so recovery is blocked for it. Nothing moved — the tokens stay where they are, and repaying or closing existing positions stays open.",
       "errTxReverted": "The network rejected the transaction after it was submitted — nothing was recovered and the tokens stayed where they were. Please try again.",
       "helpSection": {
         "title": "Tokens stuck in your vault?",
@@ -2122,7 +2122,7 @@
       "noRpcClient": "No RPC client for the active chain.",
       "txRejected": "You cancelled in your wallet. Nothing was sent.",
       "txFailed": "The transaction didn’t go through. Nothing was taken beyond network gas. Please try again.",
-      "sanctionsBlocked": "This wallet is flagged by the sanctions oracle, so new positions and payouts are blocked. Nothing was sent. Repaying and closing existing positions stays open.",
+      "sanctionsBlocked": "This wallet is flagged by Vaipakam’s sanctions screen, so new positions and payouts are blocked. Nothing was sent. Repaying and closing existing positions stays open.",
       "sanctionsCheckRetry": "We couldn’t run the compliance check just now — nothing was sent. Please try again in a moment.",
       "checkRetry": "We couldn’t verify this on-chain just now — nothing was sent. Please try again in a moment.",
       "assetPaused": "One of this deal’s assets is temporarily paused by the protocol, so this action can’t go through right now. Nothing was sent — please try again later.",
@@ -2382,8 +2382,8 @@
       "readyToClaim": "{{amount}} VPFI ready to claim."
     },
     "sanctions": {
-      "title": "This wallet is flagged by the compliance oracle.",
-      "line1": "The connected wallet is flagged by the on-chain sanctions oracle Vaipakam screens against.",
+      "title": "This wallet is flagged by Vaipakam’s sanctions screen.",
+      "line1": "The connected wallet is flagged by Vaipakam’s sanctions screen, which checks the wallet and any sender it declared when recovering tokens against the configured on-chain sanctions oracle.",
       "line2": "New positions (offers, loans, rentals, deposits) are blocked and will not go through.",
       "line3": "Repaying and closing existing positions stays open so your counterparties can be made whole, but claims and payouts to this wallet are blocked while it is flagged.",
       "recourseTestList": "This wallet is on this test network’s own test list, which its operator keeps for testing. If you did not expect this, contact the operator of this test network.",

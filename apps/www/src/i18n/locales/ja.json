@@ -1033,8 +1033,6 @@
     }
   },
   "banners": {
-    "sanctionsMatchTitle": "{{label}}：制裁スクリーニングに一致しました。",
-    "sanctionsMatchBody": "オンチェーン制裁オラクル（Chainalysis）は現在このアドレスを掲載しています。オファー作成またはオファー受諾のトランザクションはプロトコル層でリバートされます。誤判定の場合はChainalysisのサポートに連絡してください — Vaipakamは独自の制裁リストを保持していません。",
     "sanctionsLabelWallet": "接続中のウォレット",
     "sanctionsLabelOfferCreator": "オファー作成者",
     "vaultUpgradeBody": "Vaultのアップグレードが必要です — Vaultはv{{userVersion}}、必須最低はv{{mandatoryVersion}}（最新v{{currentVersion}}）です。アップグレードまでDiamondフローはリバートします。",

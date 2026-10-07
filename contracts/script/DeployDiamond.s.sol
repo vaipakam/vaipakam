@@ -1378,7 +1378,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[20] = ProfileFacet.isLoanKeeperEnabled.selector;
         s[21] = ProfileFacet.isOfferKeeperEnabled.selector;
         // Phase 4.3 sanctions-screen surface. The oracle is set per
-        // chain (Chainalysis-style); when unset the on-chain
+        // chain (any `ISanctionsList`); when unset the on-chain
         // `isSanctionedAddress` returns false and offer-create /
         // offer-accept simply skip the screen.
         s[22] = ProfileFacet.setSanctionsOracle.selector;

@@ -1033,8 +1033,6 @@
     }
   },
   "banners": {
-    "sanctionsMatchTitle": "{{label}}: 제재 스크리닝 일치.",
-    "sanctionsMatchBody": "온체인 제재 오라클(Chainalysis)은 현재 이 주소를 등재하고 있습니다. 오퍼 생성 또는 오퍼 수락 트랜잭션은 프로토콜 계층에서 되돌려집니다. 잘못된 일치인 경우 Chainalysis 지원에 문의하십시오 — Vaipakam은 자체 제재 목록을 유지하지 않습니다.",
     "sanctionsLabelWallet": "연결된 지갑",
     "sanctionsLabelOfferCreator": "오퍼 생성자",
     "vaultUpgradeBody": "Vault 업그레이드 필요 — Vault는 v{{userVersion}}이며, 필수 최소 버전은 v{{mandatoryVersion}}(최신 v{{currentVersion}})입니다. 업그레이드 전까지 Diamond 흐름은 되돌려집니다.",

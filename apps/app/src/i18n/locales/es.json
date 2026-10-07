@@ -967,7 +967,7 @@
       "errDomainDrift": "La configuración de firma de esta red no coincide con la que espera la app, así que la firma está bloqueada: no se envió nada. Recarga la app; si esto sigue ocurriendo, la app necesita una actualización.",
       "errOracleUnset": "No se firmó nada y no se envió nada: el servicio de verificación del que depende esta recuperación no está configurado en esta red, así que no se podría decidir el resultado de una recuperación.",
       "errOracleUnreachable": "No se firmó nada y no se envió nada: la comprobación que decide si la recuperación puede ejecutarse aquí no respondió justo ahora. Vuelve a intentar la comprobación en un momento.",
-      "sanctionedBlockedBody": "Esta billetera está marcada por el oráculo de sanciones, así que la recuperación está bloqueada para ella. No se movió nada: los tokens se quedan donde están, y pagar o cerrar posiciones existentes sigue disponible.",
+      "sanctionedBlockedBody": "Esta billetera está marcada por el control de sanciones de Vaipakam, así que la recuperación está bloqueada para ella. No se movió nada: los tokens se quedan donde están, y pagar o cerrar posiciones existentes sigue disponible.",
       "errTxReverted": "La red rechazó la transacción después de enviarse: no se recuperó nada y los tokens se quedaron donde estaban. Inténtalo de nuevo.",
       "helpSection": {
         "title": "¿Tienes tokens atascados en tu Vault?",
@@ -2024,7 +2024,7 @@
       "noRpcClient": "No hay cliente RPC para la cadena activa.",
       "txRejected": "Cancelaste en tu billetera. No se envió nada.",
       "txFailed": "La transacción no pasó. No se tomó nada más allá del gas de red. Inténtalo de nuevo.",
-      "sanctionsBlocked": "Esta billetera está marcada por el oráculo de sanciones, así que las nuevas posiciones y los cobros de fondos están bloqueados. No se envió nada. Reembolsar y cerrar posiciones existentes sigue abierto.",
+      "sanctionsBlocked": "Esta billetera está marcada por el control de sanciones de Vaipakam, así que las nuevas posiciones y los cobros de fondos están bloqueados. No se envió nada. Reembolsar y cerrar posiciones existentes sigue abierto.",
       "sanctionsCheckRetry": "No pudimos ejecutar la revisión de cumplimiento ahora mismo — no se envió nada. Inténtalo de nuevo en un momento.",
       "checkRetry": "No pudimos verificar esto on-chain ahora mismo — no se envió nada. Inténtalo de nuevo en un momento.",
       "assetPaused": "Uno de los activos de esta operación está pausado temporalmente por el protocolo, así que esta acción no puede pasar ahora mismo. No se envió nada — inténtalo de nuevo más tarde.",
@@ -2309,8 +2309,8 @@
       "readyToClaim": "{{amount}} VPFI listos para reclamar."
     },
     "sanctions": {
-      "title": "Esta billetera está marcada por el oráculo de cumplimiento.",
-      "line1": "La billetera conectada está marcada por el oráculo de sanciones on-chain contra el que Vaipakam revisa.",
+      "title": "Esta billetera está marcada por el control de sanciones de Vaipakam.",
+      "line1": "La billetera conectada está marcada por el control de sanciones de Vaipakam, que verifica la billetera y cualquier remitente que haya declarado al recuperar tokens frente al oráculo de sanciones on-chain configurado.",
       "line2": "Las nuevas posiciones (ofertas, préstamos, alquileres, depósitos) están bloqueadas y no pasarán.",
       "line3": "Reembolsar y cerrar posiciones existentes sigue abierto para que tus contrapartes puedan quedar cubiertas, pero los reclamos y cobros de fondos hacia esta billetera están bloqueados mientras esté marcada.",
       "recourseTestList": "Esta billetera está en la lista de prueba propia de esta red de prueba, que su operador mantiene para pruebas. Si no esperabas esto, contacta al operador de esta red de prueba.",

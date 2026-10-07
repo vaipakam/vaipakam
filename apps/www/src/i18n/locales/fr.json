@@ -1033,8 +1033,6 @@
     }
   },
   "banners": {
-    "sanctionsMatchTitle": "{{label}} : correspondance dans le filtrage des sanctions.",
-    "sanctionsMatchBody": "L'oracle de sanctions on-chain (Chainalysis) répertorie actuellement cette adresse. Toute transaction de création ou d'acceptation d'offre sera annulée au niveau du protocole. En cas de fausse correspondance, contactez le support Chainalysis — Vaipakam ne maintient pas sa propre liste de sanctions.",
     "sanctionsLabelWallet": "Portefeuille connecté",
     "sanctionsLabelOfferCreator": "Créateur de l'offre",
     "vaultUpgradeBody": "Mise à niveau du vault requise — votre Vaipakam Vault est en v{{userVersion}}, le minimum obligatoire est v{{mandatoryVersion}} (dernière v{{currentVersion}}). Les flux du Diamond seront annulés jusqu'à la mise à niveau.",

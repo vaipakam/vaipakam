@@ -79,7 +79,7 @@ The industrial fork's scope (in addition to retail features):
   thresholds calibrated to the customer's compliance regime via
   `ProfileFacet.updateKYCThresholds`.
 - `ProfileFacet.setSanctionsOracle(<oracle>)` configured per chain
-  (Chainalysis or equivalent). Offer creation + acceptance check
+  (a supported source; never Chainalysis's retired on-chain oracle, #2443). Offer creation + acceptance check
   caller / counterparty on the configured oracle.
 - `LibVaipakam.canTradeBetween` replaced with the gated implementation
   that consults the `allowedTrades[bytes32][bytes32]` storage. Pairs

@@ -1428,8 +1428,12 @@ to a decision. Listed by category.
   deploy. See ADR-0002.
 
 - **Sanctions screening: REQUIRED on retail.** Distinct from KYC.
-  `ProfileFacet.setSanctionsOracle(<chainalysis-oracle>)` MUST be
-  called once the oracle's address is known. Tier-1 entry points
+  `ProfileFacet.setSanctionsOracle(<supported-sanctions-oracle>)` MUST
+  be called before the deploy routes real value. Chainalysis retired its
+  on-chain oracle (last updated 2026-03-18) and it must NOT be configured
+  anywhere; which supported source mainnets use is open (#2443), and
+  `ConfigureSanctionsOracle.s.sol` refuses every mainnet until then.
+  Testnets screen against the admin's `TestnetSanctionsOverlay` alone. Tier-1 entry points
   revert for flagged callers; Tier-2 close-out paths stay open so the
   unflagged counterparty can be made whole. While unset, sanctions
   screening fails open (intentional pre-`setSanctionsOracle` window).
