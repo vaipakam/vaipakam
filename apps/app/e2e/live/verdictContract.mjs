@@ -101,6 +101,11 @@ export const THREE_VERDICT_DRIVERS = new Set([
   // (live-refinance.mjs is NOT here: it also exits 3 = UNDETERMINED, so it
   // is declared in FOUR_VERDICT_DRIVERS below — #2434 r2.)
   'live-rpc-audit.mjs',
+  // Exits 2 when the chain is not in the state its EXPECT mode needs (the
+  // operator's flag/clear write on the test list not done, or the Diamond
+  // not screening against the recorded list): a missing precondition, never
+  // a banner defect. Also MANUAL-ONLY — see MANUAL_ONLY_DRIVERS below.
+  'live-sanctions-banner.mjs',
   'live-signed-book.mjs',
   'live-support-ticket.mjs',
   'live-ux-sweep.mjs',
@@ -173,6 +178,12 @@ export const MANUAL_ONLY_DRIVERS = new Map([
     'live-refinance.mjs',
     'one-shot on-chain refinance: a success closes the loan it drives, and it ' +
       'needs REFI_LOAN_ID naming a fresh eligible loan — run it by hand',
+  ],
+  [
+    'live-sanctions-banner.mjs',
+    'observes a wallet the operator flags and clears on the test list ' +
+      '(owner-only setFlagged writes it never makes) and needs EXPECT naming ' +
+      'that state — run it by hand around those writes (#2439)',
   ],
 ]);
 
