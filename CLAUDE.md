@@ -1133,7 +1133,7 @@ release gate, not optional style guidance.
 
 The retail Vaipakam deploy is permissionless for KYC and country-pair
 trade restrictions, but **does** screen wallets against an on-chain
-sanctions oracle (Chainalysis-style). Don't conflate the three —
+sanctions oracle (an `ISanctionsList`; which source is open, #2443). Don't conflate the three —
 sanctions screening protects the protocol from OFAC-listed addresses;
 KYC and country gating are the industrial-fork knobs that stay dormant.
 
@@ -1147,10 +1147,11 @@ KYC and country gating are the industrial-fork knobs that stay dormant.
 > refuses every mainnet until a supported source is chosen, and testnets screen
 > against the admin's `TestnetSanctionsOverlay` alone (#2439). The requirement
 > below — a sanctions oracle MUST be set before retail routes real value —
-> stands; only the Chainalysis address it names is retired.
+> stands; the source it names is whatever #2443 decides.
 
-`ProfileFacet.setSanctionsOracle(<chainalysis-oracle>)` MUST be called
-on the retail deploy once the oracle's address is known on-chain. While
+`ProfileFacet.setSanctionsOracle(<supported-sanctions-oracle>)` MUST be
+called on the retail deploy once a supported source (#2443) is chosen and
+its address is known on-chain. While
 unset (`address(0)`), `LibVaipakam.isSanctionedAddress(...)` returns
 `false` for every address (intentional fail-open during the deploy
 window). Once set, the Tier-1 entry points
@@ -1194,11 +1195,13 @@ and gate accordingly.
   product is KYC-free and country-pair-free end-state, not
   "permissionless for now."
 - Put detailed sanctions wording in publicly visible copy. ToS keeps
-  ONE defensive bullet under "Prohibited use." The full three-line
-  message ("listed by oracle / new positions blocked / close-outs
-  stay open / contact Chainalysis") is shown ONLY when a flagged
-  wallet connects (in-app `SanctionsBanner`) and in contract revert
-  messages — never on marketing surfaces.
+  ONE defensive bullet under "Prohibited use." The full message
+  ("flagged by the oracle / new positions blocked / close-outs stay
+  open / why it is flagged and whom to contact") is shown ONLY when a
+  flagged wallet connects (in-app `SanctionsBanner`) and in contract
+  revert messages — never on marketing surfaces. The banner's recourse
+  names no provider: it says which list flagged the wallet, or that its
+  declared recovery sender did (#2439).
 
 **Why the OFF gates are still in the code:** the industrial-user
 variant is a separate deploy on a separate fork that re-uses the
