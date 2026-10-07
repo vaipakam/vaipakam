@@ -1,4 +1,4 @@
-## Thread — a testnet sanctions test list, and one script that configures each chain's oracle (PR #<n>)
+## Thread — a testnet sanctions test list, and one script that configures each chain's oracle (PR #2442)
 
 Until now no script set a Diamond's sanctions oracle on any chain; the step was done by hand or not at all, and on Base Sepolia it had not been done. This adds a configure script that does it, by chain. On a mainnet it points the Diamond straight at Chainalysis's oracle for that chain, after checking that the contract at the known address really is Chainalysis's (it must report Chainalysis's owner and answer a screening read). Chainalysis does not use one address everywhere: Base has its own, and the script's table holds only addresses read on-chain on 7 October 2026. A mainnet with no known Chainalysis oracle is refused, not left quietly unscreened. A Diamond owned by a timelock is also refused, with the call to schedule printed, and the oracle is left as it was. The configured oracle, its kind, and on a test network the Chainalysis oracle under it, are written into the chain's deployment record.
 
