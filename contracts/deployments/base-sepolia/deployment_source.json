@@ -9,9 +9,9 @@
   "deployedAtSource": "on-chain: creation tx 0x6ef294cab3f6314ae51af96b05a3d7176dddfaab7a1616adc1199bedc16db0f2, block 43549990, creator 0xb985\u2026EBCA",
   "lastInPlaceRefresh": {
     "kind": "RefreshAllFacetsInPlace, single run (no migration due: seeded, rebased and role-recorded since 2026-10-03)",
-    "monorepoCommit": "90c88195faf35d39601ef748616ef7a6c185e417",
-    "completedAt": "2026-10-05T01:05:10Z",
+    "monorepoCommit": "d03179705feade5b9916717484067b8697f04510",
+    "completedAt": "2026-10-07T09:06:05Z",
     "signer": "0xF718BaE5e0dc36140F16dAEF73289294c2372030",
-    "scope": "every facet DeployDiamond cuts, replaced; diamondCutFacet (constructor-installed) unchanged; no stale routes found or removed; ships #2380 (a consented illiquid-collateral loan refinances); vault template unchanged; reward custody NOT activated (owner decision 2026-10-04: deferred until the VPFI recycling work is ready)"
+    "scope": "every facet DeployDiamond cuts, replaced; adds swapToRepayPartialFacet (#2423 split); diamondCutFacet (constructor-installed) unchanged; no stale routes found or removed; ships #2418, #2423, #2424, #2426, #2430; full regression NOT run before this refresh (owner decision 2026-10-07: regression deferred until after the current development batch); vault template unchanged; reward custody NOT activated (owner decision 2026-10-04: deferred until the VPFI recycling work is ready)"
   }
 }
