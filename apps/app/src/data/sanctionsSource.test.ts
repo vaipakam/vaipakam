@@ -53,14 +53,19 @@ function unreachable(fn: string): Error {
 type Answer = unknown | Error;
 
 const BLOCK = 123_456n;
+const HASH = `0x${'aa'.repeat(32)}` as const;
+const OTHER_HASH = `0x${'bb'.repeat(32)}` as const;
 
 /** A client whose `readContract` answers by function name — or, for an
  *  answer given as a function, by its arguments — and which records the block
  *  every read was pinned to. */
 function client(answers: Record<string, Answer>, blocks: (bigint | undefined)[] = []): PublicClient {
   return {
-    getBlockNumber: async () => {
-      const a = answers.getBlockNumber ?? BLOCK;
+    // `getBlock` answers by call order when given a function, so a test can
+    // replace the pinned block between the first and the second look.
+    getBlock: async (params: { blockTag?: string; blockNumber?: bigint }) => {
+      let a: unknown = answers.getBlock ?? { number: BLOCK, hash: HASH };
+      if (typeof a === 'function') a = (a as (p: unknown) => unknown)(params);
       if (a instanceof Error) throw a;
       return a;
     },
@@ -274,7 +279,29 @@ describe('readSanctionsSource — reads', () => {
   });
 
   it('is unknown when the current block cannot be read', async () => {
-    expect(await read({ getBlockNumber: unreachable('getBlockNumber') })).toEqual(['unknown']);
+    expect(await read({ getBlock: unreachable('getBlock') })).toEqual(['unknown']);
+  });
+
+  it('repeats the reads when the pinned block is replaced while they run', async () => {
+    let looks = 0;
+    // First attempt: pinned at HASH, then the height holds OTHER_HASH. Every
+    // later look agrees.
+    const getBlock = () => ({ number: BLOCK, hash: looks++ === 1 ? OTHER_HASH : HASH });
+    expect(await read({ ...alone, flaggedByOverlay: true, getBlock })).toEqual(['testList']);
+    expect(looks).toBe(4);
+  });
+
+  it('is unknown when the pinned block keeps being replaced', async () => {
+    let looks = 0;
+    const getBlock = () => ({ number: BLOCK, hash: looks++ % 2 === 0 ? HASH : OTHER_HASH });
+    expect(await read({ ...alone, flaggedByOverlay: true, getBlock })).toEqual(['unknown']);
+    expect(looks).toBe(6);
+  });
+
+  it('is unknown when the pinned block cannot be looked up again', async () => {
+    let looks = 0;
+    const getBlock = () => (looks++ === 0 ? { number: BLOCK, hash: HASH } : unreachable('getBlock'));
+    expect(await read({ ...alone, flaggedByOverlay: true, getBlock })).toEqual(['unknown']);
   });
 
   it('pins every read on a layered test list to the same block', async () => {

@@ -287,13 +287,24 @@ async function readSender(
   };
 }
 
+/** How many times {@link readSanctionsSource} re-reads when the block it
+ *  pinned was replaced while it read, before saying it could not tell. */
+const SNAPSHOT_ATTEMPTS = 3;
+
 /** Reads the configured oracle and explains `wallet`'s flag as one or two
  *  reasons (see {@link explain}). Never throws: a read that cannot be
  *  completed yields `unknown`, or a reason saying what could not be read.
  *
  *  Every read is pinned to one block, so the answer describes a single
  *  on-chain state: a flag added or cleared between two reads cannot be
- *  stitched into an explanation no block ever had.
+ *  stitched into an explanation no block ever had. A block NUMBER does not
+ *  name one block across a reorganisation, and `eth_call` through viem takes
+ *  a number, not a hash, so the hash at that height is taken before the reads
+ *  and checked again after them: if it changed, the reads may have straddled
+ *  two chains and are discarded and repeated, and after
+ *  {@link SNAPSHOT_ATTEMPTS} such tries the answer is `unknown`. This detects
+ *  a replacement that lands during the reads; it cannot detect one that is
+ *  replaced and then restored in between, which no read by height can.
  *
  *  The Diamond flags a wallet when the oracle flags the wallet itself OR the
  *  sender it declared during token recovery (`vaultBannedSource`), so both
@@ -304,13 +315,35 @@ export async function readSanctionsSource(
   diamond: `0x${string}`,
   wallet: `0x${string}`,
 ): Promise<SanctionsSource[]> {
-  let blockNumber: bigint;
-  try {
-    blockNumber = await publicClient.getBlockNumber();
-  } catch {
-    return ['unknown'];
-  }
+  for (let attempt = 0; attempt < SNAPSHOT_ATTEMPTS; attempt++) {
+    let pinned: { number: bigint; hash: `0x${string}` };
+    try {
+      const block = await publicClient.getBlock({ blockTag: 'latest' });
+      pinned = { number: block.number, hash: block.hash };
+    } catch {
+      return ['unknown'];
+    }
 
+    const reasons = await readAtBlock(publicClient, diamond, wallet, pinned.number);
+
+    let after: `0x${string}`;
+    try {
+      after = (await publicClient.getBlock({ blockNumber: pinned.number })).hash;
+    } catch {
+      return ['unknown'];
+    }
+    if (after === pinned.hash) return reasons;
+  }
+  return ['unknown'];
+}
+
+/** Every read behind {@link readSanctionsSource}, pinned to `blockNumber`. */
+async function readAtBlock(
+  publicClient: PublicClient,
+  diamond: `0x${string}`,
+  wallet: `0x${string}`,
+  blockNumber: bigint,
+): Promise<SanctionsSource[]> {
   let oracle: `0x${string}`;
   try {
     oracle = (await publicClient.readContract({

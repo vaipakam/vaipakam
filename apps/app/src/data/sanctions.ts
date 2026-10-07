@@ -23,6 +23,17 @@ export interface SanctionsState {
   ready: boolean;
 }
 
+/** How often the check re-reads while it holds a wallet flagged. A flag can
+ *  be cleared (a test list's operator clears it, a list's provider delists
+ *  the wallet or its declared sender), and the banner and every blocked
+ *  action hang off this answer — so a flagged answer is re-read on this
+ *  cycle rather than held for the five-minute cache. The banner's
+ *  attribution refreshes on the same cycle, so the two cannot drift apart
+ *  for longer than one of them. An unflagged answer keeps the longer cache:
+ *  a newly flagged wallet is caught at submit time by
+ *  {@link assertWalletNotSanctionedLive} instead. */
+export const SANCTIONS_FLAGGED_REFRESH_MS = 30_000;
+
 export function useSanctionsCheck(): SanctionsState {
   const { readChain, address } = useActiveChain();
   const publicClient = usePublicClient({ chainId: readChain.chainId });
@@ -31,6 +42,7 @@ export function useSanctionsCheck(): SanctionsState {
     queryKey: ['sanctions', readChain.chainId, address?.toLowerCase()],
     enabled: Boolean(address) && Boolean(publicClient),
     staleTime: 5 * 60_000,
+    refetchInterval: (query) => (query.state.data === true ? SANCTIONS_FLAGGED_REFRESH_MS : false),
     queryFn: async (): Promise<boolean> => {
       try {
         return (await publicClient!.readContract({
