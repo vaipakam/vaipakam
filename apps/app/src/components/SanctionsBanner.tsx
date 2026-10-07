@@ -4,11 +4,11 @@
  * Per the retail-deploy policy this is the one place the full
  * three-line message appears; marketing surfaces never mention it.
  *
- * #2439 — the third line names the recourse, and that depends on WHICH list
- * flagged the wallet: on a test network the oracle may be a test list that
- * extends Chainalysis's, and a wallet only the test list flagged must not be
- * sent to Chainalysis. The line is withheld until attribution settles rather
- * than shown with a guess.
+ * #2439 — the recourse depends on WHICH list flagged the wallet: on a test
+ * network the oracle may be a test list that extends Chainalysis's, and a
+ * wallet only the test list flagged must not be sent to Chainalysis. What is
+ * already known (blocked actions, close-outs that stay open) shows at once;
+ * only the recourse waits for the attribution, rather than being guessed.
  */
 import { OctagonAlert } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
@@ -38,21 +38,22 @@ function useSanctionsSource(flagged: boolean): SanctionsSource | undefined {
   return data;
 }
 
-/** The recourse line for a settled attribution. */
+/** The recourse for a settled attribution — the only part of the banner that
+ *  depends on which list flagged the wallet. */
 export function recourseLine(source: SanctionsSource): string {
   switch (source) {
     case 'provider':
-      return copy.sanctions.line3;
+      return copy.sanctions.recourseProvider;
     case 'testList':
-      return copy.sanctions.line3TestList;
+      return copy.sanctions.recourseTestList;
     case 'testListNoProvider':
-      return copy.sanctions.line3TestListNoProvider;
+      return copy.sanctions.recourseTestListNoProvider;
     case 'both':
-      return copy.sanctions.line3Both;
+      return copy.sanctions.recourseBoth;
     case 'testListProviderUnread':
-      return copy.sanctions.line3TestListProviderUnread;
+      return copy.sanctions.recourseTestListProviderUnread;
     case 'unknown':
-      return copy.sanctions.line3Unknown;
+      return copy.sanctions.recourseUnknown;
   }
 }
 
@@ -67,6 +68,7 @@ export function SanctionsBanner() {
         <div className="banner-title">{copy.sanctions.title}</div>
         <p style={{ margin: '6px 0 0' }}>{copy.sanctions.line1}</p>
         <p style={{ margin: '6px 0 0' }}>{copy.sanctions.line2}</p>
+        <p style={{ margin: '6px 0 0' }}>{copy.sanctions.line3}</p>
         {source !== undefined && (
           <p style={{ margin: '6px 0 0' }}>{recourseLine(source)}</p>
         )}

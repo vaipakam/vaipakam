@@ -209,6 +209,42 @@ contract ConfigureSanctionsOracleTest is Test {
         _cleanup();
     }
 
+    /// @notice A recorded overlay with the right upstream but another owner is
+    ///         not reused: its owner decides who is flagged.
+    function test_Testnet_RecordedOverlayOwnedByAnother_IsReplaced() public {
+        StubSanctionsDiamond d = new StubSanctionsDiamond(admin);
+        ConfigureSanctionsOracle s = _script(84532, "foreign-owner", address(d));
+        _etchChainalysis(s.CHAINALYSIS_DEFAULT(), s.CHAINALYSIS_OWNER());
+        TestnetSanctionsOverlay foreign = new TestnetSanctionsOverlay(makeAddr("someone"), s.CHAINALYSIS_DEFAULT());
+        string memory file = string.concat(root, "/", Deployments.chainSlug(), "/addresses.json");
+        vm.writeJson(vm.toString(address(foreign)), file, ".sanctionsTestnetOverlay");
+
+        s.run();
+
+        address configured = d.getSanctionsOracle();
+        assertTrue(configured != address(foreign), "an overlay someone else owns is not reused");
+        assertEq(TestnetSanctionsOverlay(configured).owner(), admin);
+        _cleanup();
+    }
+
+    /// @notice A recorded overlay the admin owns but has begun handing to
+    ///         someone else is not reused either.
+    function test_Testnet_RecordedOverlayWithPendingTransfer_IsReplaced() public {
+        StubSanctionsDiamond d = new StubSanctionsDiamond(admin);
+        ConfigureSanctionsOracle s = _script(84532, "pending-owner", address(d));
+        _etchChainalysis(s.CHAINALYSIS_DEFAULT(), s.CHAINALYSIS_OWNER());
+        TestnetSanctionsOverlay pending = new TestnetSanctionsOverlay(admin, s.CHAINALYSIS_DEFAULT());
+        vm.prank(admin);
+        pending.transferOwnership(makeAddr("next"));
+        string memory file = string.concat(root, "/", Deployments.chainSlug(), "/addresses.json");
+        vm.writeJson(vm.toString(address(pending)), file, ".sanctionsTestnetOverlay");
+
+        s.run();
+
+        assertTrue(d.getSanctionsOracle() != address(pending), "an overlay mid-transfer is not reused");
+        _cleanup();
+    }
+
     // ── Mainnets ──────────────────────────────────────────────────────
 
     /// @notice Base: Chainalysis's Base address directly, kind recorded, no

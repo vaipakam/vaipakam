@@ -147,8 +147,11 @@ contract ConfigureSanctionsOracle is Script, ArtifactRootBase {
         if (chainalysis != address(0)) console.log("  chainalysis:", chainalysis);
     }
 
-    /// @dev The recorded overlay when its upstream is still `chainalysis`;
-    ///      otherwise a fresh one, owned by the chain's admin and recorded
+    /// @dev The recorded overlay when it is still fit to reuse — its upstream
+    ///      is still `chainalysis`, it is owned by `admin`, and no ownership
+    ///      transfer is pending (the owner decides who is flagged, so an
+    ///      overlay anyone else controls or is about to control is never
+    ///      configured); otherwise a fresh one, owned by the chain's admin and recorded
     ///      under `.sanctionsTestnetOverlay` as soon as it is deployed — a
     ///      separate fact from which oracle the Diamond is configured with, so
     ///      a run that cannot configure (a timelock owner) still lets the next
@@ -156,12 +159,11 @@ contract ConfigureSanctionsOracle is Script, ArtifactRootBase {
     function _overlayFor(address chainalysis, address admin, bool writes) internal returns (address) {
         address recorded = Deployments.readSanctionsTestnetOverlayOptional();
         if (recorded != address(0) && recorded.code.length != 0) {
-            try TestnetSanctionsOverlay(recorded).upstream() returns (ISanctionsList up) {
-                if (address(up) == chainalysis) {
-                    console.log("Reusing the recorded overlay:", recorded);
-                    return recorded;
-                }
-            } catch {}
+            if (_reusable(TestnetSanctionsOverlay(recorded), chainalysis, admin)) {
+                console.log("Reusing the recorded overlay:", recorded);
+                return recorded;
+            }
+            console.log("Recorded overlay not reusable (upstream, owner or pending owner differs):", recorded);
         }
         vm.startBroadcast(vm.envUint("DEPLOYER_PRIVATE_KEY"));
         TestnetSanctionsOverlay overlay = new TestnetSanctionsOverlay(admin, chainalysis);
@@ -169,6 +171,31 @@ contract ConfigureSanctionsOracle is Script, ArtifactRootBase {
         console.log("Deployed TestnetSanctionsOverlay:", address(overlay));
         if (writes) Deployments.writeSanctionsTestnetOverlay(address(overlay));
         return address(overlay);
+    }
+
+    /// @dev True iff `overlay` extends `chainalysis`, is owned by `admin`, and
+    ///      has no pending ownership transfer. Any read that fails — not an
+    ///      overlay at all — is a no.
+    function _reusable(TestnetSanctionsOverlay overlay, address chainalysis, address admin)
+        internal
+        view
+        returns (bool)
+    {
+        try overlay.upstream() returns (ISanctionsList up) {
+            if (address(up) != chainalysis) return false;
+        } catch {
+            return false;
+        }
+        try overlay.owner() returns (address o) {
+            if (o != admin) return false;
+        } catch {
+            return false;
+        }
+        try overlay.pendingOwner() returns (address pending) {
+            return pending == address(0);
+        } catch {
+            return false;
+        }
     }
 
     /// @dev Refuses an address that is not, on this chain, Chainalysis's
