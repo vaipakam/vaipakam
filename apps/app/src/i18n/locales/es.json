@@ -2318,6 +2318,8 @@
       "recourseTestListUpstreamUnread": "Esta billetera está en la lista de prueba propia de esta red de prueba. No se pudo comprobar en este momento si la lista de sanciones que esta amplía también la marca. Si no esperabas esto, contacta al operador de esta red de prueba.",
       "recourseOtherList": "Esta billetera está en la lista de sanciones con la que este despliegue realiza la verificación. Si crees que es un error, contacta al proveedor de esa lista.",
       "recourseBannedSource": "La billetera en sí no está en la lista de sanciones: está marcada porque el remitente que declaró al recuperar tokens sí lo está. La marca se levanta automáticamente si ese remitente se elimina de la lista.",
+      "recourseAlsoBannedSource": "El remitente que esta billetera declaró al recuperar tokens también está marcado, así que la billetera seguirá marcada hasta que ese remitente también se elimine de la lista.",
+      "recourseBannedSourceUnread": "Esta billetera también declaró un remitente al recuperar tokens, y no se pudo comprobar en este momento si ese remitente también está marcado. Si lo está, la billetera seguirá marcada hasta que ese remitente también se elimine de la lista.",
       "recourseUnknown": "No se pudo leer en este momento por qué esta billetera está marcada, así que todavía no se puede indicar a quién contactar. Recarga para volver a intentarlo."
     },
     "risk": {

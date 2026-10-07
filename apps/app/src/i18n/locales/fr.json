@@ -2318,6 +2318,8 @@
       "recourseTestListUpstreamUnread": "Ce portefeuille figure sur la liste de test propre à ce réseau de test. Il n'a pas été possible de vérifier pour l'instant si la liste de sanctions qu'elle étend le signale aussi. Si vous ne vous y attendiez pas, contactez l'opérateur de ce réseau de test.",
       "recourseOtherList": "Ce portefeuille figure sur la liste de sanctions utilisée par ce déploiement pour son contrôle. Si vous pensez qu'il s'agit d'une erreur, contactez le fournisseur de cette liste.",
       "recourseBannedSource": "Le portefeuille lui-même ne figure pas sur la liste de sanctions : il est signalé parce que l'expéditeur qu'il a déclaré lors de la récupération de jetons y figure. Le signalement est levé automatiquement si cet expéditeur est retiré de la liste.",
+      "recourseAlsoBannedSource": "L'expéditeur que ce portefeuille a déclaré lors de la récupération de jetons est lui aussi signalé ; le portefeuille reste donc signalé tant que cet expéditeur n'est pas également retiré de la liste.",
+      "recourseBannedSourceUnread": "Ce portefeuille a aussi déclaré un expéditeur lors de la récupération de jetons, et il n'a pas été possible de vérifier pour l'instant si cet expéditeur est signalé lui aussi. Si c'est le cas, le portefeuille reste signalé tant que cet expéditeur n'est pas également retiré de la liste.",
       "recourseUnknown": "Impossible de lire pour l'instant pourquoi ce portefeuille est signalé ; le bon contact ne peut donc pas encore être indiqué. Rechargez la page pour réessayer."
     },
     "risk": {

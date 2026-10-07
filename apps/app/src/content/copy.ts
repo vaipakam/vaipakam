@@ -4959,6 +4959,13 @@ const copySource = {
       'This wallet is on the sanctions list this deployment screens against. If you believe this is an error, contact that list’s provider.',
     recourseBannedSource:
       'The wallet itself is not on the sanctions list: it is flagged because the sender it declared when recovering tokens is. The flag lifts on its own if that sender is removed from the list.',
+    // Shown AFTER one of the lines above, when the wallet is listed itself
+    // and its declared recovery sender is too: clearing either alone leaves
+    // the wallet flagged.
+    recourseAlsoBannedSource:
+      'The sender this wallet declared when recovering tokens is flagged as well, so the wallet stays flagged until that sender is also removed from the list.',
+    recourseBannedSourceUnread:
+      'This wallet also declared a sender when recovering tokens, and whether that sender is flagged too could not be checked just now. If it is, the wallet stays flagged until that sender is also removed from the list.',
     recourseUnknown:
       'Why this wallet is flagged could not be read just now, so the right contact cannot be named yet. Reload to try again.',
   },

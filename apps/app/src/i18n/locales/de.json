@@ -2318,6 +2318,8 @@
       "recourseTestListUpstreamUnread": "Diese Wallet steht auf der eigenen Testliste dieses Testnetzes. Ob die Sanktionsliste, die diese erweitert, sie ebenfalls markiert, konnte gerade nicht geprüft werden. Wenn Sie das nicht erwartet haben, wenden Sie sich an den Betreiber dieses Testnetzes.",
       "recourseOtherList": "Diese Wallet steht auf der Sanktionsliste, gegen die diese Bereitstellung prüft. Wenn Sie dies für einen Fehler halten, wenden Sie sich an den Anbieter dieser Liste.",
       "recourseBannedSource": "Die Wallet selbst steht nicht auf der Sanktionsliste: Sie ist markiert, weil der Absender, den sie bei der Wiederherstellung von Token angegeben hat, darauf steht. Die Markierung wird automatisch aufgehoben, wenn dieser Absender von der Liste entfernt wird.",
+      "recourseAlsoBannedSource": "Der Absender, den diese Wallet bei der Wiederherstellung von Token angegeben hat, ist ebenfalls markiert; die Wallet bleibt daher markiert, bis auch dieser Absender von der Liste entfernt wird.",
+      "recourseBannedSourceUnread": "Diese Wallet hat bei der Wiederherstellung von Token außerdem einen Absender angegeben; ob dieser ebenfalls markiert ist, konnte gerade nicht geprüft werden. Falls ja, bleibt die Wallet markiert, bis auch dieser Absender von der Liste entfernt wird.",
       "recourseUnknown": "Warum diese Wallet markiert ist, konnte gerade nicht gelesen werden, daher kann noch keine Kontaktstelle genannt werden. Laden Sie die Seite neu, um es erneut zu versuchen."
     },
     "risk": {

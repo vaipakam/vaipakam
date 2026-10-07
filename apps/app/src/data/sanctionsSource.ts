@@ -32,6 +32,9 @@ const OVERLAY_ABI = TestnetSanctionsOverlayABI as unknown as Abi;
 const ORACLE_ABI = parseAbi(['function isSanctioned(address) view returns (bool)']);
 
 /**
+ * One reason in an explanation — {@link readSanctionsSource} returns one or
+ * two of these, because a wallet can be flagged for two reasons at once.
+ *
  * - `testList`: this test network's own test list flags the wallet, and no
  *   other list it extends does (or it extends none).
  * - `both`: the test list flags it, and so does the list it extends.
@@ -42,6 +45,10 @@ const ORACLE_ABI = parseAbi(['function isSanctioned(address) view returns (bool)
  *   test list extends — and the test list does not.
  * - `bannedSource`: no list flags the wallet itself; the sender it declared
  *   during token recovery is flagged.
+ * - `alsoBannedSource`: follows a reason above — the wallet's declared sender
+ *   is flagged as well, so clearing the wallet alone would not lift the flag.
+ * - `bannedSourceUnread`: follows a reason above — the wallet declared a
+ *   sender, and whether that sender is flagged too could not be read.
  * - `unknown`: why the wallet is flagged could not be determined — a read
  *   failed, or at the block read nothing flags it any more (the flag changed
  *   after the banner's own check).
@@ -52,6 +59,8 @@ export type SanctionsSource =
   | 'testListUpstreamUnread'
   | 'otherList'
   | 'bannedSource'
+  | 'alsoBannedSource'
+  | 'bannedSourceUnread'
   | 'unknown';
 
 /** True iff `err` is the CONTRACT's answer that it has no such function — a
@@ -92,9 +101,29 @@ export type OracleReads =
 /** What a snapshot says about the wallet ITSELF: an attribution, or that
  *  nothing flags it (`notFlagged`), or that it cannot be told (`unread`). */
 export type WalletReading =
-  | Exclude<SanctionsSource, 'bannedSource' | 'unknown'>
+  | 'testList'
+  | 'both'
+  | 'testListUpstreamUnread'
+  | 'otherList'
   | 'notFlagged'
   | 'unread';
+
+/** What a snapshot says about the sender the wallet declared during token
+ *  recovery: none declared, flagged, not flagged, or unreadable. */
+export type SenderReading = 'none' | 'flagged' | 'clear' | 'unread';
+
+/** Pure combination of the two subjects the Diamond screens for a wallet —
+ *  the wallet itself and its declared recovery sender — into the reasons the
+ *  banner states. Both are always read, so a wallet flagged for both reasons
+ *  is told both: naming only one would point it at a recourse that cannot
+ *  lift the flag on its own. */
+export function explain(own: WalletReading, sender: SenderReading): SanctionsSource[] {
+  if (own === 'unread') return ['unknown'];
+  if (own === 'notFlagged') return sender === 'flagged' ? ['bannedSource'] : ['unknown'];
+  if (sender === 'flagged') return [own, 'alsoBannedSource'];
+  if (sender === 'unread') return [own, 'bannedSourceUnread'];
+  return [own];
+}
 
 /** Pure decision over one snapshot, so every branch is testable without a
  *  chain. Never names a list the snapshot does not show flagging. */
@@ -175,26 +204,58 @@ async function readWallet(
   }
 }
 
-/** Reads the configured oracle and explains `wallet`'s flag. Never throws:
- *  a read that cannot be completed yields `unknown`.
+/** How the Diamond's declared recovery sender for `wallet` stands with
+ *  `oracle` at `blockNumber`. */
+async function readSender(
+  publicClient: PublicClient,
+  diamond: `0x${string}`,
+  oracle: `0x${string}`,
+  wallet: `0x${string}`,
+  blockNumber: bigint,
+): Promise<SenderReading> {
+  try {
+    const source = (await publicClient.readContract({
+      address: diamond,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'vaultBannedSource',
+      args: [wallet],
+      blockNumber,
+    })) as `0x${string}`;
+    if (source === zeroAddress) return 'none';
+    const flagged = (await publicClient.readContract({
+      address: oracle,
+      abi: ORACLE_ABI,
+      functionName: 'isSanctioned',
+      args: [source],
+      blockNumber,
+    })) as boolean;
+    return flagged ? 'flagged' : 'clear';
+  } catch {
+    return 'unread';
+  }
+}
+
+/** Reads the configured oracle and explains `wallet`'s flag as one or two
+ *  reasons (see {@link explain}). Never throws: a read that cannot be
+ *  completed yields `unknown`, or a reason saying what could not be read.
  *
  *  Every read is pinned to one block, so the answer describes a single
  *  on-chain state: a flag added or cleared between two reads cannot be
  *  stitched into an explanation no block ever had.
  *
- *  The wallet's own listing is checked first, and wins: if the wallet itself
- *  is listed, clearing its declared sender would not lift the flag, so the
- *  sender is not the recourse. */
+ *  The Diamond flags a wallet when the oracle flags the wallet itself OR the
+ *  sender it declared during token recovery (`vaultBannedSource`), so both
+ *  subjects are read every time. */
 export async function readSanctionsSource(
   publicClient: PublicClient,
   diamond: `0x${string}`,
   wallet: `0x${string}`,
-): Promise<SanctionsSource> {
+): Promise<SanctionsSource[]> {
   let blockNumber: bigint;
   try {
     blockNumber = await publicClient.getBlockNumber();
   } catch {
-    return 'unknown';
+    return ['unknown'];
   }
 
   let oracle: `0x${string}`;
@@ -206,34 +267,12 @@ export async function readSanctionsSource(
       blockNumber,
     })) as `0x${string}`;
   } catch {
-    return 'unknown';
+    return ['unknown'];
   }
-  if (oracle === zeroAddress) return 'unknown';
+  if (oracle === zeroAddress) return ['unknown'];
 
   const own = await readWallet(publicClient, oracle, wallet, blockNumber);
-  if (own === 'unread') return 'unknown';
-  if (own !== 'notFlagged') return own;
-
-  // Nothing lists the wallet itself; the Diamond also flags a wallet whose
-  // declared recovery sender is listed (`vaultBannedSource`).
-  try {
-    const source = (await publicClient.readContract({
-      address: diamond,
-      abi: DIAMOND_ABI_VIEM,
-      functionName: 'vaultBannedSource',
-      args: [wallet],
-      blockNumber,
-    })) as `0x${string}`;
-    if (source === zeroAddress) return 'unknown';
-    const sourceFlagged = (await publicClient.readContract({
-      address: oracle,
-      abi: ORACLE_ABI,
-      functionName: 'isSanctioned',
-      args: [source],
-      blockNumber,
-    })) as boolean;
-    return sourceFlagged ? 'bannedSource' : 'unknown';
-  } catch {
-    return 'unknown';
-  }
+  if (own === 'unread') return ['unknown'];
+  const sender = await readSender(publicClient, diamond, oracle, wallet, blockNumber);
+  return explain(own, sender);
 }

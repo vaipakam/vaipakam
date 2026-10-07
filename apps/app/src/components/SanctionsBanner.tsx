@@ -6,8 +6,9 @@
  *
  * #2439 — the recourse depends on WHY the wallet is flagged: a test
  * network's own test list, the list it extends, the list the deployment
- * screens against, or the sender the wallet declared during token recovery.
- * Each has a different party to contact. What is already known (blocked
+ * screens against, or the sender the wallet declared during token recovery —
+ * and the last can hold alongside any of the others, in which case both are
+ * said. Each has a different party to contact. What is already known (blocked
  * actions, close-outs that stay open) shows at once; only the recourse waits
  * for the attribution, rather than being guessed.
  */
@@ -22,7 +23,7 @@ import { useActiveChain } from '../chain/useActiveChain';
 /** How often a shown banner re-reads which list flagged the wallet. */
 const ATTRIBUTION_REFRESH_MS = 30_000;
 
-function useSanctionsSource(flagged: boolean): SanctionsSource | undefined {
+function useSanctionsSource(flagged: boolean): SanctionsSource[] | undefined {
   const { readChain, address } = useActiveChain();
   const publicClient = usePublicClient({ chainId: readChain.chainId });
   const { data } = useQuery({
@@ -39,8 +40,9 @@ function useSanctionsSource(flagged: boolean): SanctionsSource | undefined {
   return data;
 }
 
-/** The recourse for a settled attribution — the only part of the banner that
- *  depends on which list flagged the wallet. */
+/** The recourse for one settled reason — the only part of the banner that
+ *  depends on why the wallet is flagged. A wallet flagged for two reasons
+ *  shows two lines. */
 export function recourseLine(source: SanctionsSource): string {
   switch (source) {
     case 'testList':
@@ -53,6 +55,10 @@ export function recourseLine(source: SanctionsSource): string {
       return copy.sanctions.recourseOtherList;
     case 'bannedSource':
       return copy.sanctions.recourseBannedSource;
+    case 'alsoBannedSource':
+      return copy.sanctions.recourseAlsoBannedSource;
+    case 'bannedSourceUnread':
+      return copy.sanctions.recourseBannedSourceUnread;
     case 'unknown':
       return copy.sanctions.recourseUnknown;
   }
@@ -60,7 +66,7 @@ export function recourseLine(source: SanctionsSource): string {
 
 export function SanctionsBanner() {
   const { flagged } = useSanctionsCheck();
-  const source = useSanctionsSource(flagged);
+  const reasons = useSanctionsSource(flagged);
   if (!flagged) return null;
   return (
     <div className="banner banner-danger" role="alert">
@@ -70,9 +76,11 @@ export function SanctionsBanner() {
         <p style={{ margin: '6px 0 0' }}>{copy.sanctions.line1}</p>
         <p style={{ margin: '6px 0 0' }}>{copy.sanctions.line2}</p>
         <p style={{ margin: '6px 0 0' }}>{copy.sanctions.line3}</p>
-        {source !== undefined && (
-          <p style={{ margin: '6px 0 0' }}>{recourseLine(source)}</p>
-        )}
+        {reasons?.map((reason) => (
+          <p key={reason} style={{ margin: '6px 0 0' }}>
+            {recourseLine(reason)}
+          </p>
+        ))}
       </div>
     </div>
   );
