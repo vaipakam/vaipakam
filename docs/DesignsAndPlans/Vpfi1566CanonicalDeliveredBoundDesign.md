@@ -1463,6 +1463,14 @@ durable rather than a snapshot of one moment.
 >   divergence (slice 3), the forced-close restamp propagation question and the
 >   non-VPFI lender-leg reservation wording.
 
+> **S2c LANDED (local build, 2026-10-07): DefaultedFacet's VPFI restamp.** One
+> broadcast-free restamp of the borrower after the ERC-20 collateral branch
+> covers both the swap and the in-kind withdrawal (cells F18 and F18b,
+> `DefaultedRestampTest`). It is local on purpose: a permissionless time-based
+> default must not inherit the cross-chain push's budget revert. RiskFacet's
+> existing restamp still broadcasts; the inconsistency is recorded in the
+> code-vs-docs audit and not changed here.
+
 **3. The intent class — via the `preInteraction` pull point.**
 
 - **Lien decrement, pull, and VPFI restamp are ONE atomic step** inside
