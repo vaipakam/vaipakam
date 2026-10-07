@@ -2407,6 +2407,44 @@ library LibVaipakam {
     }
 
     /**
+     * @notice #2427 — what internal matching cleared from an ERC-20 loan that
+     *         it closed: the debt every match step discharged, and what the
+     *         lender was paid for it.
+     * @dev    A match can clear a loan in several steps while it stays
+     *         `Active`, so one snapshot at the closing step would miss the
+     *         earlier ones. Each step instead adds the debt it discharged —
+     *         the principal it moved, the accrued interest that is now never
+     *         charged on that principal, and the late fee on it — measured on
+     *         the {OwedAtDefault} basis, before and after the step's principal
+     *         decrement at the step's own timestamp. Repayments between steps
+     *         are not match steps and are not counted.
+     *
+     *         `principal + interest + lateFee` is GROSS debt: had the loan
+     *         been repaid, the protocol's share of interest and late fee would
+     *         have come out of it first. `lenderProceeds` is what the lender
+     *         side was actually paid by the steps: each step's moved principal
+     *         less the matcher incentive. Interest and late fee are never
+     *         charged on this path.
+     */
+    struct OwedAtInternalMatch {
+        uint256 principal;
+        uint256 interest;
+        uint256 lateFee;
+        uint256 lenderProceeds;
+        /// @dev Block timestamp of the step that closed the loan from
+        ///      `Active`; 0 while the loan is still open or when the close did
+        ///      not happen from `Active`.
+        uint64 recordedAt;
+        /// @dev True when the sum cannot be the whole of what matching
+        ///      cleared: a step ran while the loan was `FallbackPending` (it
+        ///      settles on the fallback's own basis, which the loan's
+        ///      {OwedAtDefault} entry figure describes), or the lender already
+        ///      held proceeds when the first recorded step ran (a step before
+        ///      this record existed, or a preclose / offset). Never stamped.
+        bool incomplete;
+    }
+
+    /**
      * @notice Per-day numeraire-quoted price snapshot for an asset.
      * @dev Captured by {OracleFacet.captureDailyPriceSnapshot}
      *      (permissionless, first-caller-per-day-per-asset wins,
@@ -7733,6 +7771,11 @@ library LibVaipakam {
         ///      ever written (never defaulted, a default before this record
         ///      existed, or a rental).
         mapping(uint256 => OwedAtDefault) owedAtDefault;
+        /// @dev #2427 — what internal matching cleared from each ERC-20 loan,
+        ///      by loan id. Written ONLY by {LibOwedAtInternalMatch} and never
+        ///      cleared; `ClaimFacet.getOwedAtInternalMatch` reports it only
+        ///      while the loan stands `InternalMatched`, closed from `Active`.
+        mapping(uint256 => OwedAtInternalMatch) owedAtInternalMatch;
     }
 
     /// @notice 3b-ii-A2 (#2305) — one batch a staging record staged from, with
@@ -10115,16 +10158,20 @@ library LibVaipakam {
         uint256 loanId,
         uint256 endTime
     ) internal view returns (uint256 fee) {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        LibVaipakam.Loan storage loan = s.loans[loanId];
+        return (storageSlot().loans[loanId].principal * lateFeeBps(endTime)) / 10000; // Basis points
+    }
 
+    /// @dev #2427 — the late-fee rate {calculateLateFee} applies, in BPS of
+    ///      principal: 0 within `endTime`, then 1% on the first day past due,
+    ///      +0.5% each subsequent day, capped at 5%. Split out so a caller can
+    ///      price the fee on a principal other than the loan's stored one.
+    function lateFeeBps(uint256 endTime) internal view returns (uint256) {
         if (block.timestamp <= endTime) return 0;
 
         uint256 daysLate = (block.timestamp - endTime) / 1 days;
         uint256 feePercent = 100 + (daysLate * 50); // 1% + 0.5% per day (in basis points)
         if (feePercent > 500) feePercent = 500; // Cap 5%
-
-        return (loan.principal * feePercent) / 10000; // Basis points
+        return feePercent;
     }
 
     /// @dev NFT-rental late fee (#998 S8 / #1004). The shared

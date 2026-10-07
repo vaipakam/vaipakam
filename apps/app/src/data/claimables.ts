@@ -126,6 +126,52 @@ export async function readOwedAtDefault(
   }
 }
 
+/** #2427 — what internal matching cleared from a loan it closed, and what
+ *  the matches paid the lender side, as the protocol recorded them step by
+ *  step (`getOwedAtInternalMatch`). Read only for an internally matched
+ *  lender claim on an ERC-20 loan. `incomplete`: the protocol has a record
+ *  but it is not the whole of it (matched in the fallback, or the lender had
+ *  been paid in part before the record saw the loan). `none`: no record (a
+ *  close before the record existed, a deployment without the view).
+ *  `unreadable` is a transport failure, stated as such. */
+export type OwedAtInternalMatchRead =
+  | {
+      kind: 'recorded';
+      principal: bigint;
+      interest: bigint;
+      lateFee: bigint;
+      lenderProceeds: bigint;
+    }
+  | { kind: 'incomplete' }
+  | { kind: 'none' }
+  | { kind: 'unreadable' };
+
+const MATCH_NONE: OwedAtInternalMatchRead = { kind: 'none' };
+
+/** Read `getOwedAtInternalMatch` for one loan. Never fails the claim probe:
+ *  the figure is a comparison beside the payout, not part of it. */
+export async function readOwedAtInternalMatch(
+  publicClient: PublicClient,
+  diamond: `0x${string}`,
+  loanId: string | number,
+): Promise<OwedAtInternalMatchRead> {
+  try {
+    const [principal, interest, lateFee, lenderProceeds, recordedAt, incomplete] =
+      (await publicClient.readContract({
+        address: diamond,
+        abi: DIAMOND_ABI_VIEM,
+        functionName: 'getOwedAtInternalMatch',
+        args: [BigInt(loanId)],
+      })) as readonly [bigint, bigint, bigint, bigint, bigint | number, boolean];
+    if (incomplete) return { kind: 'incomplete' };
+    if (BigInt(recordedAt) === 0n) return MATCH_NONE;
+    return { kind: 'recorded', principal, interest, lateFee, lenderProceeds };
+  } catch (e) {
+    // A deployment without the view reverts: it keeps no record.
+    return isRevert(e) ? MATCH_NONE : { kind: 'unreadable' };
+  }
+}
+
 /** What the wallet would actually receive on claim — carried onto the
  *  row so the Claim Center can show the NUMBER instead of a vague
  *  "+ interest" / "proceeds or collateral" description (UX-002). The
@@ -164,6 +210,10 @@ export interface ClaimDetail {
    *  defaulted or fallback-pending lender claim on an ERC-20 loan with a
    *  record. */
   owedAtDefault: OwedAtDefaultRead;
+  /** #2427 — what internal matching cleared from the loan. `none` unless
+   *  this is an internally matched lender claim on an ERC-20 loan with a
+   *  record. */
+  owedAtInternalMatch: OwedAtInternalMatchRead;
 }
 
 export interface ClaimableLoan extends PositionLoan {
@@ -190,10 +240,14 @@ export function isMemoizableProbe(probe: ClaimProbe): boolean {
   return !(probe.kind === 'claimable' && owedReadFailed(probe.loan));
 }
 
-/** #2374 — a claim row whose owed-at-default read failed in transport: the
- *  payout is sound, but the figure should be read again soon. */
+/** #2374 — a claim row whose owed-at-default (or, #2427, owed-at-internal-
+ *  match) read failed in transport: the payout is sound, but the figure
+ *  should be read again soon. */
 export function owedReadFailed(loan: ClaimableLoan | null | undefined): boolean {
-  return loan?.claim.owedAtDefault.kind === 'unreadable';
+  return (
+    loan?.claim.owedAtDefault.kind === 'unreadable' ||
+    loan?.claim.owedAtInternalMatch?.kind === 'unreadable'
+  );
 }
 
 /** #2426 r3 — how soon the loan page re-reads its claim: only while the
@@ -363,6 +417,12 @@ export async function probeClaim(
         loan.status === 'fallback_pending')
         ? await readOwedAtDefault(publicClient, diamond, loan.loanId)
         : OWED_NONE;
+    // #2427 — what internal matching cleared, for the comparison beside an
+    // internally matched lender claim.
+    const owedAtInternalMatch =
+      isLender && loan.assetType === AssetType.ERC20 && loan.status === 'internal_matched'
+        ? await readOwedAtInternalMatch(publicClient, diamond, loan.loanId)
+        : MATCH_NONE;
 
     // Mirror ClaimFacet's actionability guard.
     const actionable =
@@ -392,6 +452,7 @@ export async function probeClaim(
             surplus,
             extraCollateral,
             owedAtDefault,
+            owedAtInternalMatch,
           },
         })
       : NONE;

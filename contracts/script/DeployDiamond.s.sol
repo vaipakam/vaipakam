@@ -2140,7 +2140,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getClaimSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](11);
+        s = new bytes4[](12);
         s[0] = ClaimFacet.claimAsLender.selector;
         s[1] = ClaimFacet.claimAsBorrower.selector;
         s[2] = ClaimFacet.getClaimableAmount.selector;
@@ -2153,6 +2153,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[8] = ClaimFacet.claimAsLenderViaBackstop.selector;
         s[9] = ClaimFacet.getBorrowerSurplusClaim.selector;
         s[10] = ClaimFacet.getOwedAtDefault.selector; // #2374
+        s[11] = ClaimFacet.getOwedAtInternalMatch.selector; // #2427
     }
 
     function _getAddCollateralSelectors() internal pure returns (bytes4[] memory s) {

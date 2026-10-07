@@ -16,7 +16,7 @@ import { copy } from '../content/copy';
 import { useTokenMeta } from '../contracts/erc20';
 import { AssetType } from '../lib/types';
 import { formatTokenAmount, shortAddress } from '../lib/format';
-import type { ClaimableLoan, OwedAtDefaultRead } from './claimables';
+import type { ClaimableLoan, OwedAtDefaultRead, OwedAtInternalMatchRead } from './claimables';
 
 export interface ClaimPayoutText {
   /** The payout itself. */
@@ -119,6 +119,11 @@ export function useClaimPayoutText(
     });
     if (kind === 'proper') {
       why = loan.status === 'repaid' ? labels.whyRepaidLender : labels.whyInternalMatchLender;
+      // #2427 — what internal matching cleared, and what the matches paid
+      // toward its principal, as the protocol recorded them.
+      if (loan.status === 'internal_matched') {
+        note = internalMatchNote({ owed: loan.claim.owedAtInternalMatch, format, formatUnreadable, labels });
+      }
     } else if (kind === 'fallback') {
       why = labels.whyFallbackPending;
       // #2373 r3 (P1) — `claimAsLender` first attempts an internal match
@@ -446,4 +451,51 @@ export function fallbackPendingNote(args: {
   return owedLine === null
     ? args.labels.fallbackMayChange
     : `${owedLine} ${args.labels.fallbackMayChange}`;
+}
+
+/** #2427 — the line beside an internally matched lender claim. Pure, so the
+ *  rule is tested rather than read. States what internal matching cleared
+ *  only from the protocol's own record, and compares only principal with
+ *  what the matches paid: interest and late fees are never charged on this
+ *  path, and the protocol records the whole principal gap as the matcher's
+ *  fee. Every case without a whole record says so instead of a figure. */
+export function internalMatchNote(args: {
+  owed: OwedAtInternalMatchRead;
+  /** Formats an amount of the principal asset; null while its details load
+   *  or once they failed. */
+  format: ((amount: bigint) => string) | null;
+  /** The principal asset's details could not be read (not merely loading). */
+  formatUnreadable: boolean;
+  labels: Pick<
+    RowLabels,
+    | 'matchCleared'
+    | 'matchClearedNoCharges'
+    | 'matchPaidShort'
+    | 'matchPaidFull'
+    | 'matchPaidShortNoAmount'
+    | 'matchIncomplete'
+    | 'matchNotRecorded'
+    | 'matchUnreadable'
+    | 'matchAmountsUnreadable'
+  >;
+}): string | undefined {
+  const { owed, format, labels } = args;
+  if (owed.kind === 'unreadable') return labels.matchUnreadable;
+  if (owed.kind === 'incomplete') return labels.matchIncomplete;
+  if (owed.kind === 'none') return labels.matchNotRecorded;
+  const short = owed.principal > owed.lenderProceeds ? owed.principal - owed.lenderProceeds : 0n;
+  // Both amounts are in the same token units, so the comparison holds even
+  // when the token's details could not be read — only the amounts are lost.
+  if (format === null) {
+    if (!args.formatUnreadable) return undefined; // still loading
+    return `${labels.matchAmountsUnreadable} ${short > 0n ? labels.matchPaidShortNoAmount : labels.matchPaidFull}`;
+  }
+  const charges = owed.interest + owed.lateFee;
+  const cleared =
+    charges > 0n
+      ? labels.matchCleared(format(owed.principal), format(charges))
+      : labels.matchClearedNoCharges(format(owed.principal));
+  return short > 0n
+    ? `${cleared} ${labels.matchPaidShort(format(owed.lenderProceeds), format(short))}`
+    : `${cleared} ${labels.matchPaidFull}`;
 }

@@ -3517,6 +3517,31 @@ const copySource = {
       recoveryBelowPrincipalNoAmount: 'This recovery is less than the principal alone.',
       recoveryCoversPrincipalNoAmount:
         'This recovery covers the principal in full. Interest and late fees are paid out after the protocol takes its share, so they are not compared here.',
+      // #2427 — what internal matching cleared from a loan it closed, as the
+      // protocol recorded it step by step. Phrased about the LOAN and "the
+      // matches", never "you lent": the holder may have bought the position.
+      // The payout is compared only against principal, and the whole gap is
+      // the matcher's fee — the protocol records it as exactly that.
+      matchCleared: tmpl(
+        'Internal matching cleared {{principal}} of principal from this loan. The {{charges}} in interest and late fees it had run up are not charged when a loan closes this way.',
+        ['principal', 'charges'],
+      ),
+      matchClearedNoCharges: tmpl('Internal matching cleared {{principal}} of principal from this loan.', ['principal']),
+      matchPaidShort: tmpl(
+        'The matches paid {{paid}} toward it, {{short}} short of that principal: the difference went to the matcher as its fee.',
+        ['paid', 'short'],
+      ),
+      matchPaidFull: 'The matches paid that principal in full.',
+      matchPaidShortNoAmount:
+        'The matches paid less than that principal: the difference went to the matcher as its fee.',
+      matchIncomplete:
+        'Part of this loan was matched in a way the protocol could not add up in full (during the fallback, or after the lender had already been paid in part), so what internal matching cleared isn’t shown.',
+      matchNotRecorded:
+        'What internal matching cleared from this loan isn’t recorded for it, so no comparison is shown.',
+      matchUnreadable:
+        'What internal matching cleared from this loan couldn’t be read just now, so no comparison is shown.',
+      matchAmountsUnreadable:
+        'The protocol recorded what internal matching cleared from this loan, but this token’s details couldn’t be read, so the amounts can’t be shown.',
       surplusAfterLiquidation: 'Anything left after liquidation',
       residualAfterMatch: 'Anything left after the internal match',
       whyRentalEnded: 'The rental ended — collect your earned fees and reclaim the NFT.',
@@ -4869,6 +4894,7 @@ const copySource = {
       LoanSettlementBreakdown: 'Loan settled',
       LoanDefaulted: 'Loan defaulted',
       OwedAtDefaultRecorded: 'Amount owed at default recorded',
+      OwedAtInternalMatchRecorded: 'Amount cleared by internal matching recorded',
       LoanLiquidated: 'Loan liquidated',
       BackstopAbsorbedLoan: 'Loan absorbed by backstop',
       LoanExtended: 'Loan extended',
