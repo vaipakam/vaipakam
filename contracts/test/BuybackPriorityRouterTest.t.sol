@@ -10,12 +10,14 @@ import {LibTreasuryBuyback} from "../src/libraries/LibTreasuryBuyback.sol";
 import {LibBuybackOrderValidation} from "../src/libraries/LibBuybackOrderValidation.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
+import {MockEip712Lop} from "./mocks/MockEip712Lop.sol";
 import {LibOneTxBuybackFill} from "./helpers/LibOneTxBuybackFill.sol";
 
 contract _Stub {}
-contract _MockLOP {
-    bytes32 public constant DOMAIN_SEPARATOR =
-        keccak256("vaipakam.test.lop.priority-router");
+contract _MockLOP is MockEip712Lop {
+    // #2449 -- a declared domain (ERC-5267), as the Diamond reads it.
+    function _lopName() internal pure override returns (string memory) { return "vaipakam.test.lop.priority-router"; }
+    function _lopVersion() internal pure override returns (string memory) { return "1"; }
 }
 
 /// @title BuybackPriorityRouterTest

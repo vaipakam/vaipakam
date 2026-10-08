@@ -1482,7 +1482,14 @@ considers it finished.
   returns the lot and the loan is exactly as it was before. When even the
   whole collateral at the worst case cannot cover the debt plus buffer,
   no lot can back a repayment and the commit is refused before anything
-  moves. The protocol exposes a read-only preview of the lot and of the
+  moves. The order the protocol signs for is exactly the order the
+  limit-order protocol it is configured with will present: the protocol
+  reads how that limit-order protocol identifies itself for signatures
+  from the limit-order protocol itself, so it works against the deployed
+  one as well as against any other build, and it refuses to commit when
+  that identity cannot be read in the standard form. The same holds for
+  the treasury's validated buyback orders. The protocol exposes a
+  read-only preview of the lot and of the
   least principal a commit accepts, so a borrower can see both before
   committing; the lot actually taken is the one the committed order
   reports, since interest and prices can move in between. The auction

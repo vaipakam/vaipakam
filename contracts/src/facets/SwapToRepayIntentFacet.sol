@@ -29,6 +29,7 @@ import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {RiskFacet} from "./RiskFacet.sol";
 import {LibSwapToRepaySizing} from "../libraries/LibSwapToRepaySizing.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
+import {LibLopDomain} from "../libraries/LibLopDomain.sol";
 
 /**
  * @title SwapToRepayIntentFacet
@@ -608,9 +609,11 @@ contract SwapToRepayIntentFacet is
 
         // ── §5.1 step 9: compute canonical 1inch LOP v4 orderHash ───
         // Replicates `OrderLib.hash`: EIP-712 over the 8-field Order
-        // struct using LOP's own DOMAIN_SEPARATOR (fetched on-chain
-        // for the pinned `cfgFusionLimitOrderProtocol`).
-        bytes32 lopDomainSeparator = _fetchLopDomainSeparator(s.cfgFusionLimitOrderProtocol);
+        // struct under the LOP's own domain, read from the pinned
+        // `cfgFusionLimitOrderProtocol` the way the deployed LOP declares
+        // it (ERC-5267 `eip712Domain()`; #2449: the deployed v4 LOP has no
+        // `DOMAIN_SEPARATOR()` getter).
+        bytes32 lopDomainSeparator = LibLopDomain.separator(s.cfgFusionLimitOrderProtocol);
         bytes32 structHash = keccak256(abi.encode(
             _LIMIT_ORDER_TYPEHASH,
             params.salt,
@@ -685,18 +688,6 @@ contract SwapToRepayIntentFacet is
             params.takerAmount,
             params.deadline
         );
-    }
-
-    /// @dev Fetch LOP's EIP-712 DOMAIN_SEPARATOR via staticcall (no
-    ///      IDomainSeparator interface in the LOP submodule, but
-    ///      the standard EIP-712 `DOMAIN_SEPARATOR()` selector
-    ///      `0x3644e515` is honoured by every audited LOP build).
-    function _fetchLopDomainSeparator(address lop) private view returns (bytes32) {
-        (bool ok, bytes memory ret) = lop.staticcall(
-            abi.encodeWithSignature("DOMAIN_SEPARATOR()")
-        );
-        require(ok && ret.length == 32, "lop ds");
-        return abi.decode(ret, (bytes32));
     }
 
     /// @notice Returns the canonical LOP v4 extension bytes the

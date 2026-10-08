@@ -11,6 +11,7 @@ import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
+import {MockEip712Lop} from "./mocks/MockEip712Lop.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IOrderMixin} from "@1inch/limit-order-protocol/contracts/interfaces/IOrderMixin.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
@@ -667,9 +668,14 @@ contract SwapToRepayIntentFacetTest is SetupTest {
 //  during commit + cancel paths
 // ══════════════════════════════════════════════════════════════════
 
-contract MockFusionLOP {
-    function DOMAIN_SEPARATOR() external pure returns (bytes32) {
-        return keccak256("MockFusionLOP-v1");
+contract MockFusionLOP is MockEip712Lop {
+    // #2449 -- a declared domain (ERC-5267), as the Diamond reads it.
+    function _lopName() internal pure override returns (string memory) { return "MockFusionLOP"; }
+    function _lopVersion() internal pure override returns (string memory) { return "1"; }
+    /// @dev Like the deployed v4 LOP (inside the Aggregation Router v6): no `DOMAIN_SEPARATOR()`, so a
+    ///      commit that went back to that getter fails this suite (#2449).
+    function DOMAIN_SEPARATOR() public pure override returns (bytes32) {
+        revert("MockFusionLOP: no DOMAIN_SEPARATOR(), as deployed");
     }
 
     function rawRemainingInvalidatorForOrder(

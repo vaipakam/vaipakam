@@ -21,6 +21,7 @@ import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {CallbackERC20} from "./mocks/CallbackERC20.sol";
 import {MockLopFill} from "./mocks/MockLopFill.sol";
+import {LibLopDomain} from "../src/libraries/LibLopDomain.sol";
 
 /**
  * @title  TakerReentry
@@ -463,5 +464,43 @@ contract SwapToRepayIntentFillForkTest is Test {
         assertEq(mock.bitInvalidatorForOrder(maker, nonce), realSlot, "the mock sets the same slot");
         assertEq(real.rawRemainingInvalidatorForOrder(maker, realHash), 0, "deployed raw remaining 0");
         assertEq(mock.rawRemainingInvalidatorForOrder(maker, mockHash), 0, "mock raw remaining 0");
+    }
+
+    /// @notice I0g: the Diamond reads the deployed LOP's domain the way the deployed LOP declares it
+    ///         ({LibLopDomain}: ERC-5267 `eip712Domain()`), so the order the Diamond hashes and signs
+    ///         for is the order the deployed LOP hashes: `hashOrder` over the same struct hash under
+    ///         the separator the library derives. Before this read, a commit against the deployed
+    ///         router reverted outright on its missing `DOMAIN_SEPARATOR()`.
+    function test_I0g_theDiamondsDomainRead_matchesTheDeployedLop() public {
+        if (!forked) vm.skip(true);
+        ILopV4Read real = ILopV4Read(LOP_V4);
+        IOrderMixin.Order memory order = IOrderMixin.Order({
+            salt: uint256(keccak256("i0g-salt")),
+            maker: LopAddress.wrap(uint256(uint160(address(this)))),
+            receiver: LopAddress.wrap(uint256(uint160(address(this)))),
+            makerAsset: LopAddress.wrap(uint256(uint160(makeAddr("makerAsset")))),
+            takerAsset: LopAddress.wrap(uint256(uint160(makeAddr("takerAsset")))),
+            makingAmount: 3e18,
+            takingAmount: 5e18,
+            makerTraits: MakerTraits.wrap(TRAIT_FLAGS | (uint256(block.timestamp + 600) << 80) | (uint256(77) << 120))
+        });
+        bytes32 structHash = keccak256(
+            abi.encode(
+                LIMIT_ORDER_TYPEHASH,
+                order.salt,
+                LopAddress.unwrap(order.maker),
+                LopAddress.unwrap(order.receiver),
+                LopAddress.unwrap(order.makerAsset),
+                LopAddress.unwrap(order.takerAsset),
+                order.makingAmount,
+                order.takingAmount,
+                MakerTraits.unwrap(order.makerTraits)
+            )
+        );
+        assertEq(
+            keccak256(abi.encodePacked(bytes2(0x1901), LibLopDomain.separator(LOP_V4), structHash)),
+            real.hashOrder(order),
+            "the Diamond's domain read reproduces the deployed LOP's order hash"
+        );
     }
 }

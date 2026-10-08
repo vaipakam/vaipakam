@@ -16,6 +16,7 @@ import {OracleFacet} from "./OracleFacet.sol";
 import {ICrossChainMessenger} from "../crosschain/ICrossChainMessenger.sol";
 import {LibTreasuryBuyback} from "../libraries/LibTreasuryBuyback.sol";
 import {LibBuybackOrderValidation} from "../libraries/LibBuybackOrderValidation.sol";
+import {LibLopDomain} from "../libraries/LibLopDomain.sol";
 import {LibTreasuryYield} from "../libraries/LibTreasuryYield.sol";
 import {LibKeeperReward} from "../libraries/LibKeeperReward.sol";
 
@@ -935,7 +936,9 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
         }
 
         // ── 2. Recompute orderHash on-chain + field validation ──────
-        bytes32 lopDomainSeparator = _fetchLopDomainSeparator(
+        // #2449 -- the LOP's own domain, read through ERC-5267
+        // `eip712Domain()`: the deployed v4 LOP has no `DOMAIN_SEPARATOR()`.
+        bytes32 lopDomainSeparator = LibLopDomain.separator(
             s.cfgFusionLimitOrderProtocol
         );
         LibBuybackOrderValidation.validateBuybackOrder(
@@ -1001,15 +1004,6 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
         returns (uint128)
     {
         return LibVaipakam.storageSlot().buybackConsumedSoFar[orderHash];
-    }
-
-    /// @dev Fetch the LOP's EIP-712 DOMAIN_SEPARATOR via staticcall.
-    function _fetchLopDomainSeparator(address lop) private view returns (bytes32) {
-        (bool ok, bytes memory ret) = lop.staticcall(
-            abi.encodeWithSignature("DOMAIN_SEPARATOR()")
-        );
-        require(ok && ret.length == 32, "lop ds");
-        return abi.decode(ret, (bytes32));
     }
 
     // ─── T-087 Sub 3 add-on #472 — priority router config ────────────

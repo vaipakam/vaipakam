@@ -10,6 +10,7 @@ import {LibTreasuryBuyback} from "../src/libraries/LibTreasuryBuyback.sol";
 import {LibBuybackOrderValidation} from "../src/libraries/LibBuybackOrderValidation.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
+import {MockEip712Lop} from "./mocks/MockEip712Lop.sol";
 import {IERC1271} from "@openzeppelin/contracts/interfaces/IERC1271.sol";
 import {LibOneTxBuybackFill} from "./helpers/LibOneTxBuybackFill.sol";
 
@@ -18,12 +19,12 @@ import {LibOneTxBuybackFill} from "./helpers/LibOneTxBuybackFill.sol";
 contract _StubReceiver {}
 
 /// @dev Mock LOP that satisfies the Sub 3.C orderHash recomputation
-///      requirement (`DOMAIN_SEPARATOR()` static) and acts as the
-///      authorised caller for the diamond's pre/post-interaction
-///      hooks during end-to-end simulation.
-contract _MockLOP {
-    bytes32 public constant DOMAIN_SEPARATOR =
-        keccak256("vaipakam.test.lop.e2e");
+///      requirement (a declared EIP-712 domain, read through ERC-5267 since
+///      #2449) and acts as the authorised caller for the diamond's
+///      pre/post-interaction hooks during end-to-end simulation.
+contract _MockLOP is MockEip712Lop {
+    function _lopName() internal pure override returns (string memory) { return "vaipakam.test.lop.e2e"; }
+    function _lopVersion() internal pure override returns (string memory) { return "1"; }
 }
 
 /**

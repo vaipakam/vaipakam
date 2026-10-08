@@ -133,6 +133,18 @@ contract MockLopFill {
         return keccak256(abi.encode(_DOMAIN_TYPEHASH, _NAME_HASH, _VERSION_HASH, block.chainid, address(this)));
     }
 
+    /// @notice ERC-5267: the domain {DOMAIN_SEPARATOR} hashes, field by field -- what the Diamond reads
+    ///         (`LibLopDomain`, #2449). The standalone `LimitOrderProtocol` build's domain; the deployed
+    ///         v4 LOP inside the Aggregation Router v6 declares the router's instead, and the fork cells
+    ///         (`SwapToRepayIntentFillForkTest`) pin that the derivation is the same.
+    function eip712Domain()
+        external
+        view
+        returns (bytes1, string memory, string memory, uint256, address, bytes32, uint256[] memory)
+    {
+        return (0x0f, "1inch Limit Order Protocol", "4", block.chainid, address(this), bytes32(0), new uint256[](0));
+    }
+
     /// @notice `OrderLib.hash`: the EIP-712 hash over the raw eight order words.
     function hashOrder(IOrderMixin.Order calldata order) public view returns (bytes32) {
         bytes32 structHash = keccak256(
