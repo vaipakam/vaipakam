@@ -2300,6 +2300,8 @@
         "SwapToRepayIntentFilled": "返済用スワップが約定",
         "SwapToRepayIntentCancelled": "返済用スワップを取消",
         "SwapToRepayIntentForceCancelled": "返済用スワップを取消",
+        "SwapToRepayIntentLotPulled": "返済用スワップの担保を引き出し",
+        "FallbackCustodyMoved": "担保の保管を更新",
         "PeriodicInterestSettled": "利息決済済み",
         "PeriodicInterestAutoLiquidated": "利息のため自動清算",
         "RepayPartialPeriodAdvanced": "利息期間を進行",
@@ -2313,6 +2315,7 @@
         "VPFIDepositedToVault": "VPFI を vault に入金",
         "VPFIWithdrawnFromVault": "VPFI を vault から出金",
         "VaultVpfiDebited": "vault から VPFI を使用",
+        "RewardEntryForfeitSettled": "報酬が失効",
         "Transfer": "転送",
         "Approval": "承認"
       },

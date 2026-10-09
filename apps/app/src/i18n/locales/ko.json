@@ -2300,6 +2300,8 @@
         "SwapToRepayIntentFilled": "swap-to-repay filled",
         "SwapToRepayIntentCancelled": "swap-to-repay cancelled",
         "SwapToRepayIntentForceCancelled": "swap-to-repay cancelled",
+        "SwapToRepayIntentLotPulled": "swap-to-repay collateral 인출됨",
+        "FallbackCustodyMoved": "collateral 보관 업데이트됨",
         "PeriodicInterestSettled": "interest settled",
         "PeriodicInterestAutoLiquidated": "interest로 auto-liquidated",
         "RepayPartialPeriodAdvanced": "interest period advanced",
@@ -2313,6 +2315,7 @@
         "VPFIDepositedToVault": "VPFI가 vault에 deposit됨",
         "VPFIWithdrawnFromVault": "VPFI가 vault에서 withdrawn됨",
         "VaultVpfiDebited": "vault에서 VPFI 사용됨",
+        "RewardEntryForfeitSettled": "rewards 몰수됨",
         "Transfer": "전송",
         "Approval": "승인"
       },

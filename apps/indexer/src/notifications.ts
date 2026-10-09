@@ -196,6 +196,13 @@ export const NOTIF_DELIBERATELY_NOT_HANDLED: Readonly<Record<string, string>> = 
   LoanStatusChanged:
     'safety-net projection event — fires on every edge alongside the specific terminal event that carries the notification; mapping it would double-notify',
   // ── Companion detail events (their primary event IS mapped) ─────
+  // #1566 slices 2-3 — custody provenance: each fires inside a transaction whose
+  // own event already tells the user what happened (the failed liquidation or
+  // default, a claim, a cure, a match, the intent fill).
+  FallbackCustodyMoved:
+    'custody provenance for vault-held fallback collateral — the liquidation, default, claim, cure or match it rides in carries the notification',
+  SwapToRepayIntentLotPulled:
+    'custody provenance for an intent fill — the same transaction\'s SwapToRepayIntentFilled carries the notification',
   LoanInitiatedDetails: 'companion to LoanInitiated (mapped) — no separate row',
   // ── Internal / companion / transient — no user-facing notification ─
   OfferCreated: 'own action — the creator initiated it; no inbound notification',

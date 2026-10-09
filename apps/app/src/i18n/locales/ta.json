@@ -2300,6 +2300,8 @@
         "SwapToRepayIntentFilled": "இடமாற்றம்-திருப்பிச்செலுத்தல் நிரப்பப்பட்டது",
         "SwapToRepayIntentCancelled": "இடமாற்றம்-திருப்பிச்செலுத்தல் ரத்துசெய்யப்பட்டது",
         "SwapToRepayIntentForceCancelled": "இடமாற்றம்-திருப்பிச்செலுத்தல் ரத்துசெய்யப்பட்டது",
+        "SwapToRepayIntentLotPulled": "இடமாற்றம்-திருப்பிச்செலுத்தலுக்கான பிணையம் எடுக்கப்பட்டது",
+        "FallbackCustodyMoved": "பிணையக் காப்பு புதுப்பிக்கப்பட்டது",
         "PeriodicInterestSettled": "வட்டி தீர்க்கப்பட்டது",
         "PeriodicInterestAutoLiquidated": "வட்டிக்காக தானாகக் கலைக்கப்பட்டது",
         "RepayPartialPeriodAdvanced": "வட்டிக் காலம் முன்னேற்றப்பட்டது",
@@ -2313,6 +2315,7 @@
         "VPFIDepositedToVault": "VPFI பெட்டகத்தில் வைப்பு செய்யப்பட்டது",
         "VPFIWithdrawnFromVault": "VPFI பெட்டகத்திலிருந்து மீளப்பெறப்பட்டது",
         "VaultVpfiDebited": "VPFI பெட்டகத்திலிருந்து செலவழிக்கப்பட்டது",
+        "RewardEntryForfeitSettled": "வெகுமதிகள் இழக்கப்பட்டன",
         "Transfer": "பரிமாற்றம்",
         "Approval": "ஒப்புதல்"
       },

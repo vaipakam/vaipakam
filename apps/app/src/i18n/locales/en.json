@@ -2378,6 +2378,8 @@
         "SwapToRepayIntentFilled": "Swap-to-repay filled",
         "SwapToRepayIntentCancelled": "Swap-to-repay cancelled",
         "SwapToRepayIntentForceCancelled": "Swap-to-repay cancelled",
+        "SwapToRepayIntentLotPulled": "Swap-to-repay collateral taken",
+        "FallbackCustodyMoved": "Collateral custody updated",
         "PeriodicInterestSettled": "Interest settled",
         "PeriodicInterestAutoLiquidated": "Auto-liquidated for interest",
         "RepayPartialPeriodAdvanced": "Interest period advanced",
@@ -2391,6 +2393,7 @@
         "VPFIDepositedToVault": "VPFI deposited to vault",
         "VPFIWithdrawnFromVault": "VPFI withdrawn from vault",
         "VaultVpfiDebited": "VPFI spent from vault",
+        "RewardEntryForfeitSettled": "Rewards forfeited",
         "Transfer": "Transfer",
         "Approval": "Approval"
       },

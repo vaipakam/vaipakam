@@ -2300,6 +2300,8 @@
         "SwapToRepayIntentFilled": "swap-to-repay 已成交",
         "SwapToRepayIntentCancelled": "swap-to-repay 已取消",
         "SwapToRepayIntentForceCancelled": "swap-to-repay 已取消",
+        "SwapToRepayIntentLotPulled": "swap-to-repay 抵押品已取出",
+        "FallbackCustodyMoved": "抵押品托管已更新",
         "PeriodicInterestSettled": "利息已结算",
         "PeriodicInterestAutoLiquidated": "因利息自动清算",
         "RepayPartialPeriodAdvanced": "利息周期已推进",
@@ -2313,6 +2315,7 @@
         "VPFIDepositedToVault": "VPFI 已存入 vault",
         "VPFIWithdrawnFromVault": "VPFI 已从 vault 提出",
         "VaultVpfiDebited": "VPFI 已从 vault 支出",
+        "RewardEntryForfeitSettled": "奖励已失效",
         "Transfer": "转账",
         "Approval": "授权"
       },

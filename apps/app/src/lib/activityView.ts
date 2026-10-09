@@ -116,6 +116,11 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   SwapToRepayIntentFilled: { label: 'Swap-to-repay filled', category: 'loan-repay', priority: 78 },
   SwapToRepayIntentCancelled: { label: 'Swap-to-repay cancelled', category: 'loan-repay', priority: 40 },
   SwapToRepayIntentForceCancelled: { label: 'Swap-to-repay cancelled', category: 'loan-repay', priority: 40 },
+  // #1566 slices 2-3 — custody provenance on the loan's timeline. Low priority:
+  // each fires inside the transaction whose own event represents it (the fill,
+  // the failed liquidation, a claim, a cure, a match).
+  SwapToRepayIntentLotPulled: { label: 'Swap-to-repay collateral taken', category: 'loan-repay', priority: 12 },
+  FallbackCustodyMoved: { label: 'Collateral custody updated', category: 'collateral', priority: 12 },
   // Periodic interest
   PeriodicInterestSettled: { label: 'Interest settled', category: 'loan-repay', priority: 50 },
   PeriodicInterestAutoLiquidated: { label: 'Auto-liquidated for interest', category: 'loan-default', priority: 85 },
@@ -137,6 +142,9 @@ export const ACTIVITY_LABELS: Record<string, ActivityLabel> = {
   VPFIDepositedToVault: { label: 'VPFI deposited to vault', category: 'other', priority: 60 },
   VPFIWithdrawnFromVault: { label: 'VPFI withdrawn from vault', category: 'other', priority: 60 },
   VaultVpfiDebited: { label: 'VPFI spent from vault', category: 'other', priority: 50 },
+  // #1566 — a forfeited reward entry settled (shown on its owner's feed and
+  // its loan's timeline).
+  RewardEntryForfeitSettled: { label: 'Rewards forfeited', category: 'other', priority: 50 },
   // Low-priority book-keeping — never represents a transaction alone.
   Transfer: { label: 'Transfer', category: 'other', priority: 5 },
   Approval: { label: 'Approval', category: 'other', priority: 5 },

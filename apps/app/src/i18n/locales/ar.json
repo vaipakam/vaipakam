@@ -2300,6 +2300,8 @@
         "SwapToRepayIntentFilled": "تم fill swap-to-repay",
         "SwapToRepayIntentCancelled": "تم إلغاء swap-to-repay",
         "SwapToRepayIntentForceCancelled": "تم إلغاء swap-to-repay",
+        "SwapToRepayIntentLotPulled": "تم أخذ collateral لـ swap-to-repay",
+        "FallbackCustodyMoved": "تم تحديث حفظ collateral",
         "PeriodicInterestSettled": "تمت تسوية الفائدة",
         "PeriodicInterestAutoLiquidated": "تمت التصفية تلقائيا بسبب الفائدة",
         "RepayPartialPeriodAdvanced": "تم تقديم فترة الفائدة",
@@ -2313,6 +2315,7 @@
         "VPFIDepositedToVault": "تم إيداع VPFI في vault",
         "VPFIWithdrawnFromVault": "تم سحب VPFI من vault",
         "VaultVpfiDebited": "تم إنفاق VPFI من vault",
+        "RewardEntryForfeitSettled": "تم إسقاط المكافآت",
         "Transfer": "تحويل",
         "Approval": "موافقة"
       },

@@ -6438,6 +6438,26 @@ export function pluckActivityRefs(
         loanId: Number(args.loanId as bigint),
         offerId: null,
       };
+    // #1566 slice 3 — the fill's pre-hook took the committed lot out of the
+    // borrower's vault, inside the fill. Actor = the borrower whose vault it
+    // left; the fill's own `SwapToRepayIntentFilled` represents the transaction.
+    case 'SwapToRepayIntentLotPulled':
+      return {
+        actor: (args.borrower as string)?.toLowerCase() ?? null,
+        loanId: Number(args.loanId as bigint),
+        offerId: null,
+      };
+    // #1566 slice 2 — one row per move of a loan's vault-held fallback
+    // custody (entry, each settlement slice, a retry's pull and restore, a
+    // match leg, the return to the pledge). Actor = the counterparty the move
+    // names; the action that moved it (liquidation, claim, cure, match)
+    // represents the transaction.
+    case 'FallbackCustodyMoved':
+      return {
+        actor: (args.counterparty as string)?.toLowerCase() ?? null,
+        loanId: Number(args.loanId as bigint),
+        offerId: null,
+      };
     case 'LoanDefaulted':
     case 'LoanLiquidated':
     case 'LoanSettlementBreakdown':
@@ -6522,6 +6542,15 @@ export function pluckActivityRefs(
       return {
         actor: (args.user as string)?.toLowerCase() ?? null,
         loanId: null,
+        offerId: null,
+      };
+    // #1566 — one settled chunk of a forfeited reward entry (the loan sweep or
+    // the flagged-owner sweep). Actor = the entry's owner; loan = the loan it
+    // accrued on, so the forfeit shows on that loan's timeline.
+    case 'RewardEntryForfeitSettled':
+      return {
+        actor: (args.user as string)?.toLowerCase() ?? null,
+        loanId: Number(args.loanId as bigint),
         offerId: null,
       };
     case 'Transfer':

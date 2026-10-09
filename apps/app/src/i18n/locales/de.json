@@ -2300,6 +2300,8 @@
         "SwapToRepayIntentFilled": "Swap-zur-Rückzahlung gefüllt",
         "SwapToRepayIntentCancelled": "Swap-zur-Rückzahlung storniert",
         "SwapToRepayIntentForceCancelled": "Swap-zur-Rückzahlung storniert",
+        "SwapToRepayIntentLotPulled": "Sicherheit für Swap-zur-Rückzahlung entnommen",
+        "FallbackCustodyMoved": "Verwahrung der Sicherheit aktualisiert",
         "PeriodicInterestSettled": "Zinsen abgerechnet",
         "PeriodicInterestAutoLiquidated": "Für Zinsen automatisch liquidiert",
         "RepayPartialPeriodAdvanced": "Zinsperiode vorgerückt",
@@ -2313,6 +2315,7 @@
         "VPFIDepositedToVault": "VPFI in Vault eingezahlt",
         "VPFIWithdrawnFromVault": "VPFI aus Vault abgehoben",
         "VaultVpfiDebited": "VPFI aus Vault ausgegeben",
+        "RewardEntryForfeitSettled": "Belohnungen verfallen",
         "Transfer": "Übertragung",
         "Approval": "Genehmigung"
       },
