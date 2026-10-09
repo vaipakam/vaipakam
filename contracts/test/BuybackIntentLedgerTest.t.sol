@@ -7,6 +7,7 @@ import {IntentDispatchFacet} from "../src/facets/IntentDispatchFacet.sol";
 import {IntentConfigFacet} from "../src/facets/IntentConfigFacet.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {LibTreasuryBuyback} from "../src/libraries/LibTreasuryBuyback.sol";
+import {LibFillLock} from "../src/libraries/LibFillLock.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {IERC1271} from "@openzeppelin/contracts/interfaces/IERC1271.sol";
@@ -374,11 +375,11 @@ contract BuybackIntentLedgerTest is SetupTest {
         );
 
         IOrderMixin.Order memory order;
+        // #1566 slice 3 — a post-hook whose pre-hook never ran in this
+        // transaction holds no fill lock, so the dispatcher refuses it
+        // before any library code (and so before the caller check).
         vm.expectRevert(
-            abi.encodeWithSelector(
-                LibTreasuryBuyback.BuybackUnauthorizedCaller.selector,
-                address(this)
-            )
+            abi.encodeWithSelector(LibFillLock.FillLockMismatch.selector, ORDER, bytes32(0))
         );
         _d().postInteraction(order, "", ORDER, address(0), AMOUNT, 0, 0, "");
     }
@@ -388,15 +389,11 @@ contract BuybackIntentLedgerTest is SetupTest {
         uint64 expiresAt = uint64(block.timestamp + 1 hours);
         _t().commitBuybackIntent(ORDER, address(token), AMOUNT, 0, expiresAt);
 
-        IOrderMixin.Order memory order;
-        vm.prank(lop);
-        _d().preInteraction(order, "", ORDER, address(0), 0, 0, 0, "");
-
         // Warp to AT-OR-AFTER expiresAt. Round-2 P2 #1 — the cutoff
-        // is `>=` so the exact boundary is rejected too.
+        // is `>=` so the exact boundary is rejected too. The fill runs in
+        // ONE call (#1566 slice 3: the fill lock spans the two hooks).
         vm.warp(uint256(expiresAt));
 
-        vm.prank(lop);
         vm.expectRevert(
             abi.encodeWithSelector(
                 LibTreasuryBuyback.BuybackPastDeadline.selector,
@@ -404,7 +401,7 @@ contract BuybackIntentLedgerTest is SetupTest {
                 block.timestamp
             )
         );
-        _d().postInteraction(order, "", ORDER, address(0), AMOUNT, 0, 0, "");
+        LibOneTxBuybackFill.fill(lop, address(diamond), ORDER, AMOUNT, address(token), AMOUNT, address(vpfi), 0);
     }
 
     function test_PostInteraction_RevertWhen_PartialOverflow() public {
@@ -415,19 +412,14 @@ contract BuybackIntentLedgerTest is SetupTest {
             ORDER, address(token), AMOUNT, 0, uint64(block.timestamp + 1 hours)
         );
 
-        IOrderMixin.Order memory order;
-        vm.prank(lop);
-        _d().preInteraction(order, "", ORDER, address(0), 0, 0, 0, "");
-
-        // More than the full reservation — overflow.
+        // More than the full reservation — overflow. One call (#1566 slice 3).
         uint256 tooMuch = uint256(AMOUNT) + 1;
-        vm.prank(lop);
         vm.expectRevert(
             abi.encodeWithSelector(
                 LibTreasuryBuyback.BuybackPartialFill.selector, tooMuch, uint256(AMOUNT)
             )
         );
-        _d().postInteraction(order, "", ORDER, address(0), tooMuch, 0, 0, "");
+        LibOneTxBuybackFill.fill(lop, address(diamond), ORDER, tooMuch, address(token), AMOUNT, address(vpfi), 0);
     }
 
     function test_PostInteraction_RevertWhen_PreNotFired() public {
@@ -437,12 +429,13 @@ contract BuybackIntentLedgerTest is SetupTest {
         );
 
         IOrderMixin.Order memory order;
-        // Skip preInteraction — call postInteraction directly.
+        // Skip preInteraction — call postInteraction directly. #1566 slice 3:
+        // with no pre-hook there is no fill lock, so the dispatcher refuses
+        // first; the library's own `BuybackPreNotFired` stays as the second
+        // line behind it.
         vm.prank(lop);
         vm.expectRevert(
-            abi.encodeWithSelector(
-                LibTreasuryBuyback.BuybackPreNotFired.selector, ORDER
-            )
+            abi.encodeWithSelector(LibFillLock.FillLockMismatch.selector, ORDER, bytes32(0))
         );
         _d().postInteraction(order, "", ORDER, address(0), AMOUNT, 0, 0, "");
     }
@@ -530,10 +523,9 @@ contract BuybackIntentLedgerTest is SetupTest {
     function test_PostInteraction_RevertWhen_UnknownKind() public {
         IOrderMixin.Order memory order;
         bytes32 stray = keccak256("never-committed-2");
+        // #1566 slice 3 — a lone post-hook meets the fill lock first.
         vm.expectRevert(
-            abi.encodeWithSelector(
-                IntentDispatchFacet.UnknownOrderKind.selector, stray
-            )
+            abi.encodeWithSelector(LibFillLock.FillLockMismatch.selector, stray, bytes32(0))
         );
         _d().postInteraction(order, "", stray, address(0), 1, 0, 0, "");
     }

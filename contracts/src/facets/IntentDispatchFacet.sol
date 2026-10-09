@@ -5,7 +5,9 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibSwapToRepayIntentSettlement} from
     "../libraries/LibSwapToRepayIntentSettlement.sol";
 import {LibTreasuryBuyback} from "../libraries/LibTreasuryBuyback.sol";
-import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
+import {LibReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
+import {DiamondPausable} from "../libraries/LibPausable.sol";
+import {LibFillLock} from "../libraries/LibFillLock.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC1271} from "@openzeppelin/contracts/interfaces/IERC1271.sol";
 import {IPreInteraction} from
@@ -35,9 +37,25 @@ import {IOrderMixin} from
  * directly; they're now owned exclusively by this dispatcher so the
  * same Fusion callback signature can route to either intent kind
  * without the facets fighting for the selectors.
+ *
+ * #1566 slice 3 -- the fill-state lock ({LibFillLock}). The pre-hook
+ * opens it FIRST, for both order kinds (owner decision O3), before
+ * any dispatch and so before the swap arm pulls its lot out of the
+ * borrower's vault; the post-hook closes it FIRST, then takes the
+ * Diamond's reentrancy guard for the settlement. Between the two the
+ * Diamond refuses every entry but its own self-calls and the
+ * post-hook ({VaipakamDiamond}'s fallback). The pre-hook is
+ * pause-gated (O6): a pause stops fills, and an order stays live
+ * until its deadline. The swap arm's `makingAmount` and
+ * `takingAmount` are now passed through: the pre-hook pulls exactly
+ * the committed lot, the post-hook settles exactly what the taker
+ * delivered.
+ *
+ * Refresh together with `SwapToRepayIntentFacet` (one behaviour
+ * across the commit and the hooks).
  */
 contract IntentDispatchFacet is
-    DiamondReentrancyGuard,
+    DiamondPausable,
     IPreInteraction,
     IPostInteraction,
     IERC1271
@@ -55,19 +73,24 @@ contract IntentDispatchFacet is
     // ─── 1inch hooks — dispatched by orderHashKind ───────────────────
 
     /// @inheritdoc IPreInteraction
+    /// @dev The fill lock opens before anything else, so a re-entry from inside the swap arm's own
+    ///      vault withdraw is already refused (design: "set before the pull"). Every library arm
+    ///      checks that the caller is the order's pinned LOP; a stray caller reverts there, and the
+    ///      revert undoes the lock with it.
     function preInteraction(
         IOrderMixin.Order calldata /* order */,
         bytes calldata /* extension */,
         bytes32 orderHash,
         address /* taker */,
-        uint256 /* makingAmount */,
+        uint256 makingAmount,
         uint256 /* takingAmount */,
         uint256 /* remainingMakingAmount */,
         bytes calldata /* extraData */
-    ) external override {
+    ) external override whenNotPaused {
+        LibFillLock.acquire(orderHash);
         bytes32 kind = LibVaipakam.storageSlot().orderHashKind[orderHash];
         if (kind == LibVaipakam.ORDER_KIND_SWAP_TO_REPAY) {
-            LibSwapToRepayIntentSettlement.preInteractionImpl(orderHash);
+            LibSwapToRepayIntentSettlement.preInteractionImpl(orderHash, makingAmount);
         } else if (kind == LibVaipakam.ORDER_KIND_BUYBACK) {
             // Codex Sub 3.B round-1 P1 #2 — VPFI received needs a
             // pre-fill balance baseline so postInteraction can
@@ -80,20 +103,26 @@ contract IntentDispatchFacet is
     }
 
     /// @inheritdoc IPostInteraction
+    /// @dev Closes the fill lock its own pre-hook opened (any other hash, or no lock, reverts), then
+    ///      holds the Diamond's reentrancy guard for the settlement -- the guard `nonReentrant` took
+    ///      before slice 3, now taken after the close because the Diamond's entry point admits this
+    ///      selector mid-fill.
     function postInteraction(
         IOrderMixin.Order calldata /* order */,
         bytes calldata /* extension */,
         bytes32 orderHash,
         address /* taker */,
         uint256 makingAmount,
-        uint256 /* takingAmount */,
+        uint256 takingAmount,
         uint256 /* remainingMakingAmount */,
         bytes calldata /* extraData */
-    ) external override nonReentrant {
+    ) external override {
+        LibFillLock.release(orderHash);
+        LibReentrancyGuard._enter();
         bytes32 kind = LibVaipakam.storageSlot().orderHashKind[orderHash];
         if (kind == LibVaipakam.ORDER_KIND_SWAP_TO_REPAY) {
             LibSwapToRepayIntentSettlement.postInteractionImpl(
-                orderHash, makingAmount
+                orderHash, makingAmount, takingAmount
             );
         } else if (kind == LibVaipakam.ORDER_KIND_BUYBACK) {
             // Codex Sub 3.B round-1 P1 #1 + P1 #2 + P2 #1 — the
@@ -106,6 +135,7 @@ contract IntentDispatchFacet is
         } else {
             revert UnknownOrderKind(orderHash);
         }
+        LibReentrancyGuard._exit();
     }
 
     /// @inheritdoc IERC1271

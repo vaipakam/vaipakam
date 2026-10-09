@@ -2986,13 +2986,14 @@ library LibVaipakam {
         bytes32 extensionHash;
 
         // ── Vaipakam-side bookkeeping:
-        /// @dev Exact amount the diamond holds in custody from the
-        ///      vault withdraw — the lot; the rest of the loan's collateral
-        ///      stays in the vault, liened (#2322). Equal to `makerAmount` after §5.1
-        ///      step 8 (fee-on-transfer rejection invariant). Used
-        ///      by cancel paths to know how much to return + by the
-        ///      per-token aggregate-allowance decrement on
-        ///      fill / cancel.
+        /// @dev #1566 slice 3: the OLD custody stamp. Before slice 3 the commit
+        ///      pulled the lot into the Diamond and recorded it here; since
+        ///      then the lot stays in the vault until its own fill, nothing
+        ///      writes this field (0 = vault-held), and a non-zero value marks
+        ///      a commit recorded under the old custody, which the pre-hook and
+        ///      every teardown refuse (`IntentCustodyNotVaultHeld`).
+        ///      `getIntentCustody` reports it for the census. Field kept in
+        ///      place: the struct is append-only.
         uint256 custodialCollateral;
         /// @dev Commit-time borrower-NFT holder — for activity-feed
         ///      attribution ONLY (Codex round-2 P2 #6). Cancel
@@ -4327,9 +4328,10 @@ library LibVaipakam {
         mapping(address => bool) cfgIntentAllowedPrincipalTokens;
         mapping(address => bool) cfgIntentAllowedCollateralTokens;
         /// @dev §5.1 step 9 + Codex round-2 P2 #7 — per-token
-        ///      aggregate custodial collateral. Tracks the sum of all
-        ///      live `intentCommits[*].custodialCollateral` for this
-        ///      token so a second concurrent commit can re-approve
+        ///      aggregate approved making amount. Tracks the sum of all
+        ///      live `intentCommits[*].makerAmount` for this token (and,
+        ///      through `LibTreasuryBuyback`, live buyback reservations)
+        ///      so a second concurrent commit can re-approve
         ///      Fusion's LimitOrderProtocol to the new aggregate
         ///      without clobbering the first commit's allowance.
         mapping(address => uint256) intentAggregateAllowance;

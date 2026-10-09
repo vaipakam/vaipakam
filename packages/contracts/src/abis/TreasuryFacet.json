@@ -3903,6 +3903,17 @@
   },
   {
     "type": "error",
+    "name": "LopDomainUnsupported",
+    "inputs": [
+      {
+        "name": "lop",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "MessengerPredatesV3",
     "inputs": []
   },

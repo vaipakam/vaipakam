@@ -31,10 +31,20 @@ import {LibERC721} from "./LibERC721.sol";
  * dispatched from `IntentDispatchFacet` for both order kinds
  * (SWAP_TO_REPAY and BUYBACK).
  *
- * The behaviour is byte-for-byte identical to the original T-090 v1.1
- * GA path — the extraction is mechanical, with no logic changes. Events
- * + custom errors that the bodies emit / revert are re-declared here so
- * library-scope emission keeps the diamond as the on-chain emitter.
+ * The extraction itself was mechanical. Events + custom errors that the
+ * bodies emit / revert are re-declared here so library-scope emission
+ * keeps the diamond as the on-chain emitter.
+ *
+ * #1566 slice 3 -- PULL AT USE. The commit no longer moves the lot: it
+ * stays in `loan.borrower`'s vault, liened with the rest of the
+ * collateral, until its own fill. {preInteractionImpl} takes it out
+ * there, under the fill lock the dispatcher acquired first, and
+ * {postInteractionImpl} settles exactly the committed lot against
+ * exactly the taking amount. So no user collateral rests in the
+ * Diamond between transactions (#2141). A commit stamped with the old
+ * custody (`custodialCollateral != 0`: its lot already in the Diamond)
+ * is refused by name, never paid from the Diamond's balance (owner
+ * decision O1, 2026-10-07: fresh deploy only).
  */
 library LibSwapToRepayIntentSettlement {
     using SafeERC20 for IERC20;
@@ -50,6 +60,20 @@ library LibSwapToRepayIntentSettlement {
         uint256 residualToBorrowerVault
     );
 
+    /// @notice #1566 slice 3 -- the fill's pre-hook took the committed lot out of
+    ///         `borrower`'s vault into the Diamond, inside the fill, under the fill
+    ///         lock. The provenance of the one move the commit no longer makes: the
+    ///         LOP's maker-to-taker transfer carries it on to the taker in the same
+    ///         call, so it never rests in the Diamond.
+    /// @custom:event-category state-change/loan-mutation
+    event SwapToRepayIntentLotPulled(
+        uint256 indexed loanId,
+        bytes32 indexed orderHash,
+        address indexed borrower,
+        address asset,
+        uint256 lot
+    );
+
     // ─── Errors ──────────────────────────────────────────────────────
 
     error IntentNotRegistered(bytes32 orderHash);
@@ -57,36 +81,83 @@ library LibSwapToRepayIntentSettlement {
     error IntentPreInteractionUnauthorized(address caller);
     error IntentPreInteractionUnknownOrder(bytes32 orderHash);
     error IntentDeliveredBelowLiveFloor(uint256 actualDelivered, uint256 liveFloor);
+    /// @notice #1566 slice 3 (O1) -- the commit was recorded under the old custody,
+    ///         its lot already in the Diamond; refused rather than paid from the
+    ///         Diamond's balance. Same selector as the facet's declaration.
+    error IntentCustodyNotVaultHeld(uint256 loanId);
+    /// @notice The LOP's making amount is not the committed lot. A genuine fill
+    ///         always matches (no partial fills; the hash binds the amount); the
+    ///         check pins it instead of trusting it.
+    error IntentFillAmountMismatch(uint256 makingAmount, uint256 lot);
+    /// @notice The principal the fill delivered is not the order's taking amount:
+    ///         only the taker's own transfer may fund the settlement (S1-10).
+    error IntentDeliveredMismatch(uint256 actualDelivered, uint256 takingAmount);
+    /// @notice The pull out of the vault did not raise the Diamond's balance by
+    ///         exactly the lot (fee-on-transfer or rebasing collateral). The fill
+    ///         reverts; the commit stays cancellable. Same selector as the facet's.
+    error IntentCollateralFeeOnTransferUnsupported(uint256 received, uint256 requested);
 
     // ─── preInteraction body ─────────────────────────────────────────
 
-    /// @dev §5.1 preInteraction — snapshot the diamond's principal
-    ///      balance into transient storage keyed by orderHash.
-    ///      `postInteractionImpl` reads this back to compute
-    ///      `actualDelivered` via balance-delta. Auth-pinned to
-    ///      `commit.lopAtCommit` (Codex round-11 P2 #6 — runs on
-    ///      Fusion's normal CALL).
-    function preInteractionImpl(bytes32 orderHash) internal {
+    /// @dev §5.1 preInteraction -- #1566 slice 3, PULL AT USE. Runs inside the
+    ///      fill, after the dispatcher acquired the fill lock and before the
+    ///      LOP's maker-to-taker transfer:
+    ///        1. the commit lookup, and the caller pinned to the commit's LOP
+    ///           (Codex round-11 P2 #6);
+    ///        2. a commit stamped with the old custody is refused by name (O1);
+    ///        3. the LOP's making amount must be the committed lot;
+    ///        4. ONE step (design: "lien decrement, pull, and VPFI restamp are
+    ///           ONE atomic step ... under the pinned sanctions-safe MOVE-OUT
+    ///           exemption"): the lien drops by the lot; the lot moves out of
+    ///           `loan.borrower`'s vault into the Diamond through the move-out
+    ///           path, so a borrower flagged after the commit cannot block the
+    ///           fill that repays their lender; the Diamond's balance must rise
+    ///           by exactly the lot (fee-on-transfer and rebasing collateral are
+    ///           refused here, and the commit stays cancellable); and a VPFI
+    ///           holder's tier is restamped at the reduced balance,
+    ///           broadcast-free (D16) so a third party's fill never spends the
+    ///           CCIP budget -- the mirror-chain tier catches up at the
+    ///           borrower's next broadcasting action;
+    ///        5. the principal baseline for the post-hook's delta, in transient
+    ///           storage keyed by the order hash. A loan's collateral and
+    ///           principal differ (self-collateralized offers are refused at
+    ///           creation), so the pull cannot move this baseline.
+    ///      Any failure reverts the whole fill, so a lot is never half-pulled.
+    function preInteractionImpl(bytes32 orderHash, uint256 makingAmount) internal {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
 
-        // ── Reverse-index lookup ────────────────────────────────────
         uint256 loanId = s.orderHashToLoanId[orderHash];
         if (loanId == 0 || s.intentCommits[loanId].orderHash != orderHash) {
             revert IntentPreInteractionUnknownOrder(orderHash);
         }
-
-        // ── Authorized-caller check against pinned LOP (Codex
-        //    round-11 P2 #6) ───────────────────────────────────────────
-        if (msg.sender != s.intentCommits[loanId].lopAtCommit) {
+        LibVaipakam.SwapToRepayIntentCommit storage commit = s.intentCommits[loanId];
+        if (msg.sender != commit.lopAtCommit) {
             revert IntentPreInteractionUnauthorized(msg.sender);
         }
+        if (commit.custodialCollateral != 0) revert IntentCustodyNotVaultHeld(loanId);
+        uint256 lot = commit.makerAmount;
+        if (makingAmount != lot) revert IntentFillAmountMismatch(makingAmount, lot);
 
-        // ── Snapshot the diamond's principal balance pre-fill into
-        //    transient storage keyed by orderHash. EIP-1153 transient
-        //    storage is the right primitive: per-tx-scoped, free at
-        //    tx-end, safe against same-tx reentry.
-        address principal = s.loans[loanId].principalAsset;
-        uint256 baseline = IERC20(principal).balanceOf(address(this));
+        LibVaipakam.Loan storage loan = s.loans[loanId];
+        address collateral = loan.collateralAsset;
+        uint256 balanceBefore = IERC20(collateral).balanceOf(address(this));
+        LibEncumbrance.decrementCollateralLien(loanId, lot);
+        LibSanctionedLock.vaultWithdrawERC20MoveOut(s, loan.borrower, collateral, address(this), lot);
+        uint256 received = IERC20(collateral).balanceOf(address(this)) - balanceBefore;
+        if (received != lot) revert IntentCollateralFeeOnTransferUnsupported(received, lot);
+        if (collateral == s.vpfiToken) {
+            // Through the Diamond-internal host, not inlined: the tier rollup is
+            // large and this facet hosts every LOP callback.
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    ConsolidationFacet.restampUserVpfiLocalInternal.selector, loan.borrower
+                ),
+                bytes4(0)
+            );
+        }
+        emit SwapToRepayIntentLotPulled(loanId, orderHash, loan.borrower, collateral, lot);
+
+        uint256 baseline = IERC20(loan.principalAsset).balanceOf(address(this));
         assembly ("memory-safe") {
             tstore(orderHash, baseline)
         }
@@ -94,11 +165,14 @@ library LibSwapToRepayIntentSettlement {
 
     // ─── postInteraction body ────────────────────────────────────────
 
-    /// @dev §5.1 postInteraction — atomic settlement waterfall +
-    ///      residual safeTransfer to vault + claim record + commit
-    ///      teardown + aggregate-allowance decrement. `nonReentrant`
-    ///      lives on the caller (IntentDispatchFacet).
-    function postInteractionImpl(bytes32 orderHash, uint256 makingAmount) internal {
+    /// @dev §5.1 postInteraction — atomic settlement waterfall + claim
+    ///      record + commit teardown + aggregate-allowance decrement. The
+    ///      caller (IntentDispatchFacet) released the fill lock and holds the
+    ///      reentrancy guard. #1566 slice 3: the making amount must be the
+    ///      committed lot and the principal delivered must be exactly the
+    ///      taking amount; the whole lot is consumed, so nothing returns to the
+    ///      vault here.
+    function postInteractionImpl(bytes32 orderHash, uint256 makingAmount, uint256 takingAmount) internal {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
 
         // ── Step 1: reverse-index lookup (Codex round-11 P1 #7 —
@@ -112,6 +186,9 @@ library LibSwapToRepayIntentSettlement {
         if (msg.sender != commit.lopAtCommit) {
             revert IntentPostInteractionUnauthorized(msg.sender);
         }
+        if (makingAmount != commit.makerAmount) {
+            revert IntentFillAmountMismatch(makingAmount, commit.makerAmount);
+        }
 
         LibVaipakam.Loan storage loan = s.loans[loanId];
 
@@ -124,6 +201,12 @@ library LibSwapToRepayIntentSettlement {
         }
         uint256 actualDelivered = IERC20(loan.principalAsset).balanceOf(address(this))
             - baseline;
+        // #1566 slice 3 (S1-10) — the settlement is funded by the taker's
+        // transfer and nothing else: principal that reached the Diamond any
+        // other way mid-fill is refused, not paid out as borrower surplus.
+        if (actualDelivered != takingAmount) {
+            revert IntentDeliveredMismatch(actualDelivered, takingAmount);
+        }
 
         // ── Step 4: live floor re-check (Codex round-2 P1 #8 +
         //    round-10 P1 #5 + round-11 P1 #3 — add `lateFee`) ───────
@@ -141,31 +224,20 @@ library LibSwapToRepayIntentSettlement {
             revert IntentDeliveredBelowLiveFloor(actualDelivered, liveFloor);
         }
 
-        // ── Step 5: residual handling — `safeTransfer` to vault THEN
-        //    `recordVaultDeposit` (Codex round-10 P1 #2 + round-11
-        //    P1 #1 — direct recordVaultDeposit doesn't move tokens) ─
-        uint256 consumed = makingAmount;
-        uint256 residual = commit.custodialCollateral - consumed;
-        if (residual > 0) {
-            // #954 (§1.4) — returning the borrower's OWN residual collateral to
-            // their vault must not brick when the borrower was flagged after
-            // commit. Narrow from-side move-out exemption (custody RETURNING to
-            // loan.borrower; emits no locked-share event, matching the v1
-            // partial-fill refund). The residual is re-liened in `_runSettlement`.
-            LibSanctionedLock.beginMoveOut(s, loan.borrower);
-            address borrowerVault = LibFacet.getOrCreateVault(loan.borrower);
-            IERC20(loan.collateralAsset).safeTransfer(borrowerVault, residual);
-            LibSanctionedLock.endMoveOut(s);
-            LibVaipakam.recordVaultDeposit(
-                loan.borrower, loan.collateralAsset, residual
-            );
-        }
+        // ── Step 5 (#1566 slice 3): the whole lot is consumed ───────
+        // The pre-hook pulled exactly the committed lot and the LOP moved
+        // exactly that to the taker (no partial fills: enforced at commit
+        // and by the making-amount check above), so nothing returns to the
+        // vault. The branch that returned `custodialCollateral - consumed`
+        // is gone: it was always zero for a no-partial order. The rest of
+        // the collateral never left the vault.
+        uint256 consumed = commit.makerAmount;
 
         // ── Step 6: settlement waterfall ──────────────────────────
         _runSettlement(s, loan, loanId, actualDelivered, consumed, lateFee);
 
         // ── Step 7: aggregate allowance + live count decrement ──────
-        s.intentAggregateAllowance[loan.collateralAsset] -= commit.custodialCollateral;
+        s.intentAggregateAllowance[loan.collateralAsset] -= commit.makerAmount;
         s.intentLiveCommitCount -= 1;
         IERC20(loan.collateralAsset).forceApprove(commit.lopAtCommit, 0);
         if (s.intentAggregateAllowance[loan.collateralAsset] != 0) {
@@ -193,7 +265,9 @@ library LibSwapToRepayIntentSettlement {
         // a different kind.
         delete s.orderHashKind[orderHash];
 
-        emit SwapToRepayIntentFilled(loanId, orderHash, consumed, actualDelivered, residual);
+        // `residualToBorrowerVault` is always 0 since #1566 slice 3 (kept in
+        // the event for indexer compatibility).
+        emit SwapToRepayIntentFilled(loanId, orderHash, consumed, actualDelivered, 0);
     }
 
     /// @dev Settlement waterfall — mirrors v1
@@ -256,9 +330,10 @@ library LibSwapToRepayIntentSettlement {
         }
 
         // #658 PR-B — the intent fill is the LENDER-side close-out of this loan
-        // (the borrower side was consolidated at COMMIT and its auction lot is in
-        // Diamond custody — #2322: the rest of its collateral stayed in the vault,
-        // liened, and the borrower position has been LOCKED since the commit, so
+        // (the borrower side was consolidated at COMMIT; its auction lot left
+        // the vault only in this fill's pre-hook (#1566 slice 3), the rest of
+        // its collateral stays in the vault, liened, and the borrower position
+        // has been LOCKED since the commit, so
         // the holder the commit consolidated to is still the holder here; it must
         // NOT be re-consolidated). Consolidate
         // the lender side while the loan is still Active (the flip to Repaid is
@@ -348,9 +423,9 @@ library LibSwapToRepayIntentSettlement {
         // #569 Gap B (round-6 P1) — RE-LIEN rather than tombstone. The
         // borrower's collateral claim recorded above is
         // `loan.collateralAmount - consumed`, and those tokens all sit in
-        // loan.borrower's vault: the part the commit never took (#2322 —
-        // the commit pulls only the debt-sized lot, so the rest stayed in
-        // the vault, still liened) plus the fill residual pushed back above.
+        // loan.borrower's vault: the part the fill never took (#2322 — only
+        // the debt-sized lot is sold, and #1566 slice 3 pulls it only in this
+        // fill's pre-hook, so the rest stayed in the vault, still liened).
         // That claim must stay encumbered through the Repaid→claim window
         // (released atomically by `claimAsBorrower`, with the burn backstop
         // as the structural guarantee); a bare release would let a

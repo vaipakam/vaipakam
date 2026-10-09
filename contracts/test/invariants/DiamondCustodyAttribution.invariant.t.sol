@@ -43,16 +43,18 @@ import {TestMutatorFacet} from "../mocks/TestMutatorFacet.sol";
  *            legacyFallback is every tracked fallback loan's
  *            `getFallbackCustody(id).legacyDiamondHeld` in T (S2b: fallback custody is
  *            vault-held, so this is zero on a fresh deploy, and a non-zero value is a pre-slice
- *            row every consumer refuses); legacyIntent is every live commit's lot in T. V1 has NO
+ *            row every consumer refuses); legacyIntent is every commit's `getIntentCustody` in T
+ *            (S3b: the lot stays in the vault until its fill, so this is zero on a fresh deploy,
+ *            and a non-zero value is a pre-slice commit the pre-hook and teardown refuse). V1 has NO
  *            tolerance: the K5 residue S0 allowed (a partial internal match flooring the three
  *            snapshot slices independently, up to two wei per leg resting in the Diamond) is
  *            gone with S2b -- the custody never enters the Diamond, and the borrower slice
  *            absorbs the floor remainder so the snapshot total equals the row.
  *         V2 -- #2141's end state: no user custody rests in the Diamond at all
  *            (`legacyFallback + legacyIntent + LIF custody == 0`), enforced per class through
- *            {V2_ENFORCED}. S2b enforces the fallback and LIF classes; the intent class stays
- *            off until S3b pulls the lot at use, and is red today by construction (see
- *            {test_V2_FallbackClassIsVaultHeld_IntentClassStillRests}, the proof V2 can fail).
+ *            {V2_ENFORCED}. S2b enforced the fallback and LIF classes, S3b the intent class (see
+ *            {test_V2_EveryClassIsVaultHeld_AndALegacyIntentRowTurnsItRed}, the proof V2 can
+ *            fail).
  *         V3 -- every fallback custody row agrees with its snapshot and its lien: for a
  *            FallbackPending loan with an active snapshot the row equals the snapshot total and
  *            the lien covers the row; outside FallbackPending the row is zero; and no row reads
@@ -62,10 +64,9 @@ import {TestMutatorFacet} from "../mocks/TestMutatorFacet.sol";
  *            encumbrance on it.
  *
  *         Brief mutation map: 1 (slice-2 entry reverted to the Diamond-held body) and 3 (no
- *         retry restore) turn V2 red now that its fallback class is enforced, and 2 (slice-3
- *         commit pulling at commit) turns it red once S3b enforces the intent class; 4 (treasury
- *         slice sent to the Diamond) turns V1 red; 5 (a lender-slice lien decrement dropped)
- *         turns V3a red.
+ *         retry restore) turn V2 red; 2 (slice-3 commit pulling at commit) turns V1 red -- the
+ *         Diamond would hold a lot no custody read names; 4 (treasury slice sent to the Diamond)
+ *         turns V1 red; 5 (a lender-slice lien decrement dropped) turns V3a red.
  *
  * @dev    Run: `forge test --match-path test/invariants/DiamondCustodyAttribution.invariant.t.sol`
  *         (the `cifast` profile does not compile `test/invariants`).
@@ -75,11 +76,10 @@ contract DiamondCustodyAttributionInvariant is CustodyInvariantBase {
     uint256 internal constant V2_CLASS_FALLBACK = 1;
     uint256 internal constant V2_CLASS_INTENT = 2;
     uint256 internal constant V2_CLASS_LIF = 4;
-    /// @dev The ONE switch for V2, one bit per class. S2b (#1566 slice 2) enforces the fallback
-    ///      class, now vault-held, and the LIF class (grandfathered-only, zero on a fresh deploy).
-    ///      The intent class stays off until S3b pulls the lot at use: until then its lot rests in
-    ///      the Diamond by design.
-    uint256 internal constant V2_ENFORCED = V2_CLASS_FALLBACK | V2_CLASS_LIF;
+    /// @dev The ONE switch for V2, one bit per class. S2b (#1566 slice 2) enforced the fallback
+    ///      class, now vault-held, and the LIF class (grandfathered-only, zero on a fresh deploy);
+    ///      S3b (slice 3) enforces the intent class, whose lot is now pulled only inside its fill.
+    uint256 internal constant V2_ENFORCED = V2_CLASS_FALLBACK | V2_CLASS_INTENT | V2_CLASS_LIF;
     /// @dev K5 (see the contract notice): no partial-leg dust since S2b, so V1 has no tolerance.
     uint256 internal constant V1_K5_DUST_PER_PARTIAL_LEG = 0;
 
@@ -135,13 +135,14 @@ contract DiamondCustodyAttributionInvariant is CustodyInvariantBase {
     //  Deterministic cells
     // ============================================================================================
 
-    /// @notice S2b's half of V2, and the evidence V2 can fail. A REAL failed HF liquidation (the
-    ///         reverting venue, no mocked withdraw) leaves the fallback custody in the borrower's
-    ///         vault as the loan's custody row: none of it reads as Diamond-held, and the Diamond
-    ///         holds only the protocol ledgers of that asset. A REAL intent commit still leaves
-    ///         the lot in the Diamond (until S3b), so the intent class of V2 is red today, while
-    ///         the enforced classes are clean; V1 attributes the Diamond's balance exactly.
-    function test_V2_FallbackClassIsVaultHeld_IntentClassStillRests() public {
+    /// @notice #2141's end state across both classes, and the evidence V2 can fail. A REAL failed
+    ///         HF liquidation (the reverting venue, no mocked withdraw) leaves the fallback custody
+    ///         in the borrower's vault as the loan's custody row, and a REAL intent commit leaves its
+    ///         lot in the vault: none of either reads as Diamond-held, the Diamond holds only the
+    ///         protocol ledgers, and V1 attributes its balance exactly. A commit stamped with the old
+    ///         custody (raw-written: nothing on this source writes it) turns V2's intent class red --
+    ///         the proof the enforced check can fail.
+    function test_V2_EveryClassIsVaultHeld_AndALegacyIntentRowTurnsItRed() public {
         handler.liquidate(1, true);
         assertEq(handler.fallbackViaLiquidation(), 1, _why());
         uint256[] memory fb = handler.fallbackLoanIds();
@@ -159,20 +160,22 @@ contract DiamondCustodyAttributionInvariant is CustodyInvariantBase {
         assertEq(row, l + tr + b, "all of it is the vault-held custody row");
         assertEq(legacyF, 0, "none of it reads as Diamond-held");
         assertEq(IERC20(fc).balanceOf(address(diamond)), _ledger(fc), "the Diamond holds only protocol ledgers of it");
-        assertEq(_v2Residue(V2_CLASS_FALLBACK), 0, "V2's fallback class is clean");
 
         handler.commitIntent(2);
         assertEq(handler.intentCommits(), 1, _why());
         uint256[] memory it = handler.intentLoanIds();
         address ic = handler.collateralOf(it[0]);
-        uint256 legacyI = _legacyIntent(ic);
-        assertGt(legacyI, 0, "V2 input: the intent lot still rests in the Diamond");
-
-        assertGt(_v2Residue(V2_CLASS_INTENT), 0, "V2's intent class is red until S3b: the proof V2 can fail");
-        assertEq(_v2Residue(V2_ENFORCED), 0, "the enforced classes are clean");
+        uint256 lot = SwapToRepayIntentFacet(address(diamond)).getIntentCommit(it[0]).makerAmount;
+        assertGt(lot, 0, "fixture-live: a live commit with a lot");
+        assertEq(SwapToRepayIntentFacet(address(diamond)).getIntentCustody(it[0]), 0, "the lot is not Diamond-held");
+        assertEq(IERC20(ic).balanceOf(address(diamond)), _ledger(ic), "the Diamond holds only protocol ledgers of it");
+        assertEq(_v2Residue(V2_ENFORCED), 0, "every enforced class is clean");
         _assertV1();
         _assertV3();
         _assertV3a();
+
+        TestMutatorFacet(address(diamond)).setIntentCustodialCollateralRaw(it[0], lot);
+        assertEq(_v2Residue(V2_CLASS_INTENT), lot, "a legacy-stamped commit turns V2's intent class red");
     }
 
     /// @notice Every V0 family is reachable from a fixed sequence of handler calls -- the proof that
@@ -382,17 +385,16 @@ contract DiamondCustodyAttributionInvariant is CustodyInvariantBase {
         }
     }
 
-    /// @dev S0's legacy intent term: every live commit's lot in `t` (`makerAmount`, the order's
-    ///      making amount, equal to the custodial collateral at commit). S3b replaces it with
-    ///      `getIntentCustody(id)`.
+    /// @dev The legacy intent term: every tracked commit's Diamond-held custody in `t`, as the one
+    ///      custody read reports it (`getIntentCustody(id)`, S3b). It replaced S0's live-commit lot
+    ///      (`makerAmount`), which was the right term while the lot rested in the Diamond from
+    ///      commit to fill and would now count a vault-held lot as Diamond-held. Zero for a
+    ///      settled or cancelled commit (its record is deleted).
     function _legacyIntent(address t) internal view returns (uint256 sum) {
         uint256[] memory ids = handler.intentLoanIds();
         for (uint256 i; i < ids.length; ++i) {
-            try SwapToRepayIntentFacet(address(diamond)).getIntentCommit(ids[i]) returns (
-                SwapToRepayIntentFacet.FusionOrderRead memory r
-            ) {
-                if (r.makerAsset == t) sum += r.makerAmount;
-            } catch {}
+            if (handler.collateralOf(ids[i]) != t) continue;
+            sum += SwapToRepayIntentFacet(address(diamond)).getIntentCustody(ids[i]);
         }
     }
 

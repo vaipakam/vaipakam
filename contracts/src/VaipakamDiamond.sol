@@ -6,6 +6,8 @@ import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
  // For ownership
 import {LibDiamond} from "@diamond-3/libraries/LibDiamond.sol";
 import {LibPausable} from "./libraries/LibPausable.sol";
+import {LibFillLock} from "./libraries/LibFillLock.sol";
+import {IPostInteraction} from "@1inch/limit-order-protocol/contracts/interfaces/IPostInteraction.sol";
 
 /**
  * @title VaipakamDiamond
@@ -14,7 +16,9 @@ import {LibPausable} from "./libraries/LibPausable.sol";
  * @dev Acts as the entry point for all calls, delegating to facets based on function selectors.
  *      Supports modular upgrades via diamondCut.
  *      Constructor initializes ownership and adds the DiamondCutFacet.
- *      Fallback handles delegation to facets; reverts if function not found.
+ *      Fallback handles delegation to facets; reverts if function not found. It first enforces the
+ *      fill-state lock (#1566 slice 3, {LibFillLock}): mid-fill, only self-calls and the LOP
+ *      post-hook get through.
  *      Receive allows ETH reception.
  *      No additional storage or logic; all in libraries/facets.
  *      Custom errors via LibDiamond.
@@ -64,6 +68,18 @@ contract VaipakamDiamond {
      *      Reverts if no facet supports the selector.
      */
     fallback() external payable {
+        // #1566 slice 3 -- the fill-state lock ({LibFillLock}). While a 1inch fill of a Vaipakam order
+        // is between its pre-hook and its post-hook, only the Diamond's own self-calls and that
+        // post-hook may enter. Every other entry -- mutators, views, multicall, whatever the selector
+        // -- is refused here, before the selector lookup, so no facet has to remember to check
+        // (owner decision O5 = (i), 2026-10-07). Cost: one TLOAD on every call.
+        bytes32 fillLock = LibFillLock.heldBy();
+        if (
+            fillLock != bytes32(0) && msg.sender != address(this)
+                && msg.sig != IPostInteraction.postInteraction.selector
+        ) {
+            revert LibFillLock.FillInProgress(fillLock);
+        }
         LibDiamond.DiamondStorage storage ds = LibDiamond.diamondStorage();
         address facet = ds.selectorToFacetAndPosition[msg.sig].facetAddress;
         // console.log("msg.sig: ");

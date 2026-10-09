@@ -131,13 +131,15 @@ old code:
   From S2b it therefore refuses any target Diamond that does not already route
   the S2b `disposeFallbackCustody(uint256,address,uint8)`, so it can never be the
   refresh that crosses the custody boundary.
-- **SwapToRepayIntentFacet + IntentDispatchFacet — binding from #1566 slice 3
-  (S3), written down ahead of it.** By the S3 design the lot leaves the
-  borrower's vault inside the fill's pre-hook (IntentDispatchFacet) instead of at
-  commit (SwapToRepayIntentFacet). A new commit with an old hook would let the
-  limit-order fill draw the lot from whatever else the Diamond holds; an old
-  commit with a new hook refuses every fill. Neither facet is in
-  `RedeployFacets`.
+- **SwapToRepayIntentFacet + IntentDispatchFacet — binding since #1566 slice 3
+  (S3b).** The lot leaves the borrower's vault inside the fill's pre-hook
+  (IntentDispatchFacet) instead of at commit (SwapToRepayIntentFacet). A new
+  commit with an old hook would let the limit-order fill draw the lot from
+  whatever else the Diamond holds; an old commit with a new hook refuses every
+  fill. Neither facet is in `RedeployFacets`. The fill lock the pre-hook takes
+  is enforced in `VaipakamDiamond.fallback` (the Diamond contract itself), so
+  slice 3 also needs a new Diamond — another reason it reaches a chain only by
+  fresh deploy.
 
 How these reach a chain is settled (owner, 2026-10-07, decision O1 = A): **every
 chain that runs slices 2–3 gets a fresh deploy.** Nothing is upgraded in place

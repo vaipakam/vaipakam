@@ -23,6 +23,7 @@ import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {LibERC721} from "../src/libraries/LibERC721.sol";
+import {LibOneTxSwapFill} from "./helpers/LibOneTxSwapFill.sol";
 
 /**
  * @title SwapToRepayIntentFacetTest
@@ -361,9 +362,11 @@ contract SwapToRepayIntentFacetTest is SetupTest {
         SwapToRepayIntentFacet(address(diamond)).commitSwapToRepayIntent(LOAN_ID, params);
 
         assertEq(SwapToRepayIntentFacet(address(diamond)).getIntentCommit(LOAN_ID).makerAmount, lot, "the order carries the lot");
-        assertEq(collateralAsset.balanceOf(address(diamond)), lot, "only the lot is in Diamond custody");
-        assertEq(collateralAsset.balanceOf(borrowerVault), LOAN_COLLATERAL - lot, "the rest stays in the vault");
-        assertEq(_lien(), LOAN_COLLATERAL - lot, "and stays pledged");
+        // #1566 slice 3 — the commit moves nothing: the lot leaves the vault only
+        // inside its own fill.
+        assertEq(collateralAsset.balanceOf(address(diamond)), 0, "nothing rests in the Diamond");
+        assertEq(collateralAsset.balanceOf(borrowerVault), LOAN_COLLATERAL, "the whole collateral stays in the vault");
+        assertEq(_lien(), LOAN_COLLATERAL, "and all of it stays pledged");
     }
 
     /// @dev The borrower sets the PRICE with `takerAmount`; the lot does not
@@ -395,17 +398,16 @@ contract SwapToRepayIntentFacetTest is SetupTest {
         uint256 eoaBefore = principalAsset.balanceOf(borrowerEoa);
         uint256 payoff = RepayFacet(address(diamond)).calculateRepaymentAmount(LOAN_ID);
 
-        // Fusion's fill, as the pinned LOP runs it: preInteraction snapshots
-        // the principal baseline, the resolver delivers the taking amount and
-        // takes the lot, postInteraction settles.
-        IOrderMixin.Order memory o;
-        vm.prank(address(fusionLOP));
-        IntentDispatchFacet(address(diamond)).preInteraction(o, "", orderHash, address(0), 0, 0, 0, "");
-        principalAsset.mint(address(diamond), params.takerAmount);
-        vm.prank(address(diamond));
-        collateralAsset.transfer(address(0xF111), lot);
-        vm.prank(address(fusionLOP));
-        IntentDispatchFacet(address(diamond)).postInteraction(o, "", orderHash, address(0), lot, params.takerAmount, 0, "");
+        // #1566 slice 3 — the whole fill in ONE call, as the pinned LOP runs it
+        // (LibOneTxSwapFill): the pre-hook takes the fill lock and pulls the lot
+        // out of the vault, the LOP moves it to the taker and the taker's
+        // principal in, and the post-hook releases the lock and settles. Two
+        // separate top-level calls cannot carry the lock between the hooks.
+        principalAsset.mint(address(fusionLOP), params.takerAmount);
+        LibOneTxSwapFill.fill(
+            address(fusionLOP), address(diamond), orderHash, address(collateralAsset), lot,
+            address(0xF111), address(principalAsset), params.takerAmount
+        );
 
         assertEq(uint256(LoanFacet(address(diamond)).getLoanDetails(LOAN_ID).status), uint256(LibVaipakam.LoanStatus.Repaid), "the fill closes the loan");
         assertEq(principalAsset.balanceOf(borrowerEoa) - eoaBefore, params.takerAmount - payoff, "the ask above the debt is the borrower's surplus");
@@ -467,14 +469,16 @@ contract SwapToRepayIntentFacetTest is SetupTest {
         uint256 lot = SwapToRepayIntentFacet(address(diamond)).getIntentCommit(LOAN_ID).makerAmount;
         _overwriteBorrowerLock(LibERC721.LockReason.PrepayCollateralListing);
 
-        IOrderMixin.Order memory o;
-        vm.prank(address(fusionLOP));
-        IntentDispatchFacet(address(diamond)).preInteraction(o, "", orderHash, address(0), 0, 0, 0, "");
-        principalAsset.mint(address(diamond), params.takerAmount);
-        vm.prank(address(diamond));
-        collateralAsset.transfer(address(0xF111), lot);
-        vm.prank(address(fusionLOP));
-        IntentDispatchFacet(address(diamond)).postInteraction(o, "", orderHash, address(0), lot, params.takerAmount, 0, "");
+        // #1566 slice 3 — the whole fill in ONE call, as the pinned LOP runs it
+        // (LibOneTxSwapFill): the pre-hook takes the fill lock and pulls the lot
+        // out of the vault, the LOP moves it to the taker and the taker's
+        // principal in, and the post-hook releases the lock and settles. Two
+        // separate top-level calls cannot carry the lock between the hooks.
+        principalAsset.mint(address(fusionLOP), params.takerAmount);
+        LibOneTxSwapFill.fill(
+            address(fusionLOP), address(diamond), orderHash, address(collateralAsset), lot,
+            address(0xF111), address(principalAsset), params.takerAmount
+        );
 
         assertEq(uint256(LoanFacet(address(diamond)).getLoanDetails(LOAN_ID).status), uint256(LibVaipakam.LoanStatus.Repaid), "precondition: the fill settled");
         assertEq(uint256(_borrowerLock()), uint256(LibERC721.LockReason.PrepayCollateralListing), "the listing keeps its lock");
@@ -533,8 +537,9 @@ contract SwapToRepayIntentFacetTest is SetupTest {
         assertEq(SwapToRepayIntentFacet(address(diamond)).getIntentCommit(LOAN_ID).makerAmount, 1, "the one-unit lot is committed at its floor");
     }
 
-    /// @dev A cancel returns the lot and restores the lien to the whole
-    ///      collateral — the loan is back exactly as it was before the commit.
+    /// @dev A cancel leaves the whole collateral in the vault and pledged — the
+    ///      loan is exactly as it was before the commit (#1566 slice 3: the
+    ///      commit never moved the lot, so the cancel has nothing to return).
     function test_Cancel_RestoresTheWholeCollateralAndLien() public {
         SwapToRepayIntentFacet.FusionOrderParams memory params = _armHappyCommit();
         vm.prank(borrowerEoa);
@@ -676,6 +681,14 @@ contract MockFusionLOP is MockEip712Lop {
     ///      commit that went back to that getter fails this suite (#2449).
     function DOMAIN_SEPARATOR() public pure override returns (bytes32) {
         revert("MockFusionLOP: no DOMAIN_SEPARATOR(), as deployed");
+    }
+
+    /// @dev #1566 slice 3 — the teardown's already-filled check reads the
+    ///      order's nonce bit. Never filled here.
+    function bitInvalidatorForOrder(
+        address /* maker */, uint256 /* slot */
+    ) external pure returns (uint256) {
+        return 0;
     }
 
     function rawRemainingInvalidatorForOrder(

@@ -947,6 +947,16 @@ contract TestMutatorFacet {
         LibVaipakam.storageSlot().fallbackVaultCustody[loanId] = amount;
     }
 
+    /// @notice #1566 S3b -- overwrite a live swap-to-repay commit's old custody stamp
+    ///         (`intentCommits[loanId].custodialCollateral`). Test-only: a commit made on this
+    ///         source never writes it, so this is the one way to reproduce a commit recorded under
+    ///         the old custody (its lot in the Diamond), which the pre-hook and every teardown must
+    ///         refuse by name (SwapToRepayIntentFillTest I11, the custody suite's V2 proof). Writes
+    ///         the field ONLY -- no tokens, no allowance, no lien.
+    function setIntentCustodialCollateralRaw(uint256 loanId, uint256 amount) external {
+        LibVaipakam.storageSlot().intentCommits[loanId].custodialCollateral = amount;
+    }
+
     function pushRewardEntry(
         address user,
         uint64 loanId,

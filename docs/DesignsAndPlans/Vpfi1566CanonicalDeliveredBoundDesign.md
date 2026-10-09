@@ -1611,6 +1611,48 @@ durable rather than a snapshot of one moment.
   full-amount pull and transaction-wide rollback — none of which is currently
   asserted anywhere for the swap-to-repay branch.
 
+> **S3 LANDED (local build, 2026-10-07): the intent lot is pulled at use.**
+> Recorded on the build-first local stack, ahead of review.
+>
+> - **S3a** landed the fill test this slice named as its prerequisite:
+>   `SwapToRepayIntentFillTest` drives a commit through a whole LOP fill in one
+>   transaction (`MockLopFill`, from S0), with a fork cell (I0f) checking the
+>   mock's order hash and bit invalidator against the deployed LOP v4.
+> - **The commit moves nothing.** No lien decrement, no withdraw, no restamp:
+>   the order hashes `makingAmount = lot`, the aggregate allowance grows by the
+>   lot, and the record stores `makerAmount = lot` with `custodialCollateral =
+>   0`. That field is now the old-custody stamp: nothing on this source writes
+>   it, `getIntentCustody(loanId)` reports it for the census, and a non-zero one
+>   is refused by name (`IntentCustodyNotVaultHeld`) at the pre-hook and every
+>   teardown (O1 = A).
+> - **The pull is the one atomic step this section asks for.**
+>   `preInteractionImpl(orderHash, makingAmount)` checks the making amount
+>   equals the lot, then decrements the lien by the lot, withdraws it from
+>   `loan.borrower`'s vault through `LibSanctionedLock.vaultWithdrawERC20MoveOut`
+>   (the pinned move-out exemption), requires the Diamond's balance to rise by
+>   exactly the lot, restamps a VPFI holder broadcast-free (D16), and emits
+>   `SwapToRepayIntentLotPulled`.
+> - **The fill lock (O5 = (i), O3).** `LibFillLock` keeps the order hash in a
+>   transient slot. `IntentDispatchFacet.preInteraction` acquires it FIRST, for
+>   both order kinds, before any dispatch and so before the pull;
+>   `postInteraction` releases it first (only its own order's lock), then takes
+>   the reentrancy guard for the settlement. `VaipakamDiamond.fallback` refuses
+>   every entry while it is held except the Diamond's own self-calls and the
+>   post-hook selector. The pre-hook is `whenNotPaused` (O6).
+> - **The settlement is exact.** `postInteractionImpl` requires the making
+>   amount to equal the lot and the principal delivered to equal the taking
+>   amount (`IntentDeliveredMismatch`, S1-10); the residual branch is gone
+>   (always zero for a no-partial order) and the fill event reports 0 there.
+> - **The teardown moves nothing**, and its already-filled check reads
+>   `bitInvalidatorForOrder` at the order's nonce instead of the remaining-amount
+>   slot a bit-invalidator order never writes (K10). That closes #658 for every
+>   commit.
+> - **Tests.** Cells I0–I15 in `SwapToRepayIntentFillTest`; the pranked two-call
+>   fills in `SwapToRepayIntentFacetTest` and two buyback cells became one-call
+>   fills (`LibOneTxSwapFill`, the existing `LibOneTxBuybackFill`), because the
+>   lock, like the principal baseline, lives in transient storage; the custody
+>   invariant enforces V2's intent class.
+
 **4. Closure 1's non-user half — the delivered bound. IN THE ARMING GATE.**
 
 Slices 1–3 remove USER value from the shared balance. They do nothing about

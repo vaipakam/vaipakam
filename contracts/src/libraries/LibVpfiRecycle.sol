@@ -685,11 +685,13 @@ library LibVpfiRecycle {
      *              **NOT subtracted.**
      *           6. `keeperRewardBudget` — the same routing function, step 2.
      *              **NOT subtracted.**
-     *           7. `intentCommits[loanId].custodialCollateral` — a live
-     *              swap-to-repay intent on a VPFI-collateral loan pulls its
-     *              debt-sized auction lot into the Diamond (#2322 — formerly
-     *              the whole collateral) and returns it on cancel
-     *              ({SwapToRepayIntentFacet}). **NOT subtracted.**
+     *           7. `intentCommits[loanId].custodialCollateral` — no longer
+     *              resting on a Diamond built from this source: a live
+     *              swap-to-repay intent keeps its lot in the borrower's vault
+     *              until its own fill, which carries it straight on to the
+     *              taker (#1566 slice 3). A Diamond refreshed in place may
+     *              carry a pre-slice commit (it fails closed,
+     *              `IntentCustodyNotVaultHeld`); see the custody census.
      *           8. liquidation `fallbackSnapshot` custody — no longer
      *              resting on a Diamond built from this source: an
      *              exhausted swap try-list returns the collateral to the
@@ -737,7 +739,9 @@ library LibVpfiRecycle {
      *         **7 and 8 are USER COLLATERAL, not protocol ledgers.** A reward
      *         payout drawing on them spends a BORROWER's collateral — a
      *         different severity from over-drawing an operational budget, and
-     *         the reason #1498 is no longer an accounting-tidiness item.
+     *         the reason #1498 is no longer an accounting-tidiness item. Both
+     *         exist only on a Diamond refreshed in place across #1566 slices
+     *         2–3; on one built from this source neither enters this balance.
      *
      *         **This list is not claimed to be complete, and treating it as
      *         complete is the failure mode.** Entry 5 was found in the round
@@ -929,11 +933,12 @@ library LibVpfiRecycle {
         // stale within a round. Read the table.
         //
         // Some of those owners are USER COLLATERAL rather than protocol
-        // ledgers — a live swap-to-repay intent's custody, and liquidation
-        // fallback custody on a Diamond refreshed in place across #1566
-        // slice 2 (a pre-slice row; on a Diamond built from this source
-        // fallback custody is vault-held under the loan's lien and never
-        // enters this balance). A reward payout drawing on those spends a
+        // ledgers — a swap-to-repay intent's custody and liquidation-fallback
+        // custody, each only on a Diamond refreshed in place across #1566
+        // slices 2–3 (a pre-slice row; on a Diamond built from this source
+        // fallback custody is vault-held under the loan's lien and an intent's
+        // lot stays in the vault until its own fill, so neither enters this
+        // balance). A reward payout drawing on those spends a
         // BORROWER's collateral, which is a different severity from
         // over-drawing an operational budget.
         //
