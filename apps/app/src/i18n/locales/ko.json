@@ -2309,6 +2309,8 @@
         "SwapToRepayIntentFilled": "swap-to-repay filled",
         "SwapToRepayIntentCancelled": "swap-to-repay cancelled",
         "SwapToRepayIntentForceCancelled": "swap-to-repay cancelled",
+        "SwapToRepayIntentLotPulled": "swap-to-repay collateral 인출됨",
+        "FallbackCustodyMoved": "collateral 보관 업데이트됨",
         "PeriodicInterestSettled": "interest settled",
         "PeriodicInterestAutoLiquidated": "interest로 auto-liquidated",
         "RepayPartialPeriodAdvanced": "interest period advanced",

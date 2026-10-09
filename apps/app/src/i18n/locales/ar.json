@@ -2309,6 +2309,8 @@
         "SwapToRepayIntentFilled": "تم fill swap-to-repay",
         "SwapToRepayIntentCancelled": "تم إلغاء swap-to-repay",
         "SwapToRepayIntentForceCancelled": "تم إلغاء swap-to-repay",
+        "SwapToRepayIntentLotPulled": "تم أخذ collateral لـ swap-to-repay",
+        "FallbackCustodyMoved": "تم تحديث حفظ collateral",
         "PeriodicInterestSettled": "تمت تسوية الفائدة",
         "PeriodicInterestAutoLiquidated": "تمت التصفية تلقائيا بسبب الفائدة",
         "RepayPartialPeriodAdvanced": "تم تقديم فترة الفائدة",

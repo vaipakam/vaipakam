@@ -2309,6 +2309,8 @@
         "SwapToRepayIntentFilled": "Swap-para-reembolsar llenado",
         "SwapToRepayIntentCancelled": "Swap-para-reembolsar cancelado",
         "SwapToRepayIntentForceCancelled": "Swap-para-reembolsar cancelado",
+        "SwapToRepayIntentLotPulled": "Garantía tomada para swap-para-reembolsar",
+        "FallbackCustodyMoved": "Custodia de la garantía actualizada",
         "PeriodicInterestSettled": "Intereses liquidados",
         "PeriodicInterestAutoLiquidated": "Autoliquidado por intereses",
         "RepayPartialPeriodAdvanced": "Período de intereses avanzado",

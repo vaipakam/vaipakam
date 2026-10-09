@@ -2309,6 +2309,8 @@
         "SwapToRepayIntentFilled": "Swap-zur-Rückzahlung gefüllt",
         "SwapToRepayIntentCancelled": "Swap-zur-Rückzahlung storniert",
         "SwapToRepayIntentForceCancelled": "Swap-zur-Rückzahlung storniert",
+        "SwapToRepayIntentLotPulled": "Sicherheit für Swap-zur-Rückzahlung entnommen",
+        "FallbackCustodyMoved": "Verwahrung der Sicherheit aktualisiert",
         "PeriodicInterestSettled": "Zinsen abgerechnet",
         "PeriodicInterestAutoLiquidated": "Für Zinsen automatisch liquidiert",
         "RepayPartialPeriodAdvanced": "Zinsperiode vorgerückt",
