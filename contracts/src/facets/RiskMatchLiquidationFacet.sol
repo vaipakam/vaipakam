@@ -185,8 +185,9 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
         // v1.1 commit on each leg if HF below liquidation
         // threshold; otherwise revert `IntentPending`. The
         // internal-match liquidator withdraws from every leg's
-        // borrower vault simultaneously, so any live commit on
-        // any of the three legs would orphan its custodial slot.
+        // borrower vault simultaneously, so a live commit on any of
+        // the three legs would leave an order fillable against
+        // collateral the match is taking.
         if (LibVaipakam.storageSlot().intentCommits[loanIdA].orderHash != bytes32(0)) {
             SwapToRepayIntentFacet(address(this)).forceCancelIntentIfHFBelowOrRevert(loanIdA);
         }

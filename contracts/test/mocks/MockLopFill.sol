@@ -37,8 +37,13 @@ interface IWethLike {
  *         Reproduced in order from `OrderMixin._fill` (OrderMixin.sol:334-437): extension validation,
  *         allowed-sender, expiry, epoch check, the partial-fill check, the invalidation (BEFORE the
  *         pre-hook), the maker pre-interaction, the maker-to-taker `transferFrom`, the taker
- *         interaction, the taker-to-maker transfer (including the `msg.value` WETH branch and its
- *         refund send), the maker post-interaction, then `OrderFilled`. The contract-maker signature
+ *         interaction, the taker-to-maker transfer, the maker post-interaction, then `OrderFilled`.
+ *         The native-value paths follow the real contract-maker entry: `fillContractOrder` is NOT
+ *         payable, so the taker-side WETH branch and its refund send (reachable only through
+ *         `fillOrder`, which needs an EOA maker's signature) never run for a Vaipakam order; the one
+ *         native path such an order can meet is the maker-side unwrap a taker asks for
+ *         (`takerTraits.unwrapWeth`), modelled by {fillContractOrderParsedUnwrap}: the lot goes to
+ *         the LOP, is unwrapped, and is paid to the taker's target in native ETH. The contract-maker signature
  *         is checked through ERC-1271 BEFORE `_fill`, as the real `_fillContractOrder` does, so it is
  *         outside the fill window.
  *
@@ -116,6 +121,8 @@ contract MockLopFill {
     mapping(address maker => mapping(uint256 slot => uint256 bits)) private _bitInvalidator;
     mapping(address maker => mapping(bytes32 orderHash => uint256 raw)) private _remainingInvalidator;
     bytes32[] private _steps;
+    /// @dev The taker's `unwrapWeth` trait for the fill in progress (set by the entry, cleared after).
+    bool private _unwrapMaker;
 
     constructor(address weth_) {
         weth = weth_;
@@ -206,8 +213,35 @@ contract MockLopFill {
         address target,
         bytes calldata extension,
         bytes calldata interaction
-    ) external payable returns (uint256 makingAmount, uint256 takingAmount, bytes32 orderHash) {
+    ) external returns (uint256 makingAmount, uint256 takingAmount, bytes32 orderHash) {
+        return _fillContractOrder(order, signature, amount, target, extension, interaction, false);
+    }
+
+    /// @notice {fillContractOrderParsed} with the taker's `unwrapWeth` trait set: a WETH lot is sent to
+    ///         this contract, unwrapped, and paid to `target` in native ETH (OrderMixin's
+    ///         `needUnwrap` maker-to-taker branch, `_WETH.safeWithdrawTo`).
+    function fillContractOrderParsedUnwrap(
+        IOrderMixin.Order calldata order,
+        bytes calldata signature,
+        uint256 amount,
+        address target,
+        bytes calldata extension,
+        bytes calldata interaction
+    ) external returns (uint256 makingAmount, uint256 takingAmount, bytes32 orderHash) {
+        return _fillContractOrder(order, signature, amount, target, extension, interaction, true);
+    }
+
+    function _fillContractOrder(
+        IOrderMixin.Order calldata order,
+        bytes calldata signature,
+        uint256 amount,
+        address target,
+        bytes calldata extension,
+        bytes calldata interaction,
+        bool unwrapWeth
+    ) private returns (uint256 makingAmount, uint256 takingAmount, bytes32 orderHash) {
         delete _steps;
+        _unwrapMaker = unwrapWeth;
         orderHash = hashOrder(order);
         uint256 remainingMakingAmount = _checkRemainingMakingAmount(order, orderHash);
         if (remainingMakingAmount == order.makingAmount) {
@@ -216,6 +250,7 @@ contract MockLopFill {
         if (target == address(0)) target = msg.sender;
         (makingAmount, takingAmount) =
             _fill(order, orderHash, remainingMakingAmount, amount, target, extension, interaction);
+        _unwrapMaker = false;
     }
 
     function _fill(
@@ -247,8 +282,17 @@ contract MockLopFill {
         }
 
         _step(STEP_MAKER_TO_TAKER);
-        if (!_transferFrom(order.makerAsset.get(), order.maker.get(), target, makingAmount)) {
-            revert TransferFromMakerToTakerFailed();
+        {
+            bool needUnwrap = _unwrapMaker && order.makerAsset.get() == weth;
+            address receiver = needUnwrap ? address(this) : target;
+            if (!_transferFrom(order.makerAsset.get(), order.maker.get(), receiver, makingAmount)) {
+                revert TransferFromMakerToTakerFailed();
+            }
+            if (needUnwrap) {
+                IWethLike(weth).withdraw(makingAmount);
+                (bool sent,) = target.call{value: makingAmount}("");
+                if (!sent) revert ETHTransferFailed();
+            }
         }
 
         if (interaction.length > 19) {

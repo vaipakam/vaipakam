@@ -7,6 +7,7 @@ import {IDiamondLoupe} from "@diamond-3/interfaces/IDiamondLoupe.sol";
 import {DeployDiamond} from "../../script/DeployDiamond.s.sol";
 import {RefreshAllFacetsInPlace} from "../../script/RefreshAllFacetsInPlace.s.sol";
 import {DiamondFacetNames} from "./DiamondFacetNames.sol";
+import {SwapToRepayIntentFacet} from "../../src/facets/SwapToRepayIntentFacet.sol";
 
 /**
  * @title  RefreshScriptFacetParityTest
@@ -106,6 +107,11 @@ contract RefreshItemsProbe is RefreshAllFacetsInPlace {
     function selectorBudget() external pure returns (uint256) {
         return SELECTOR_BUDGET;
     }
+
+    /// #1566 slice 3 — the refusal `refresh()` runs before deploying anything.
+    function requireSlice3Diamond(address diamond) external view {
+        _requireSlice3Diamond(diamond);
+    }
 }
 
 contract RefreshScriptFacetParityTest is Test, DiamondFacetNames {
@@ -152,6 +158,35 @@ contract RefreshScriptFacetParityTest is Test, DiamondFacetNames {
     ///         guards is a member being DROPPED or RENAMED, which a loose
     ///         assertion would pass. A deliberate change to the lifecycle's
     ///         membership updates this list and says why in the PR.
+    /// @notice #1566 slice 3 — the in-place refresh refuses a Diamond from before the fill lock (the
+    ///         lock lives in the Diamond contract, which no facet cut replaces). Straddle: a Diamond the
+    ///         deploy script builds today passes the same check.
+    function test_RefreshScript_RefusesADiamondBeforeTheFillLock() public {
+        // forge-lint: disable-next-line(unsafe-cheatcode)
+        vm.setEnv("DEPLOY_SKIP_ARTIFACTS", "true");
+        DeployDiamond deployScript = new DeployDiamond();
+        address deployer = vm.addr(DEPLOYER_KEY);
+        deployScript.runWith(deployer, TREASURY, DEPLOYER_KEY);
+        address diamond = deployScript.diamond();
+        RefreshItemsProbe probe = new RefreshItemsProbe();
+        probe.requireSlice3Diamond(diamond); // straddle: today's Diamond passes
+
+        bytes4[] memory sels = new bytes4[](1);
+        sels[0] = SwapToRepayIntentFacet.getIntentCustody.selector;
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
+        cuts[0] = IDiamondCut.FacetCut({
+            facetAddress: address(0),
+            action: IDiamondCut.FacetCutAction.Remove,
+            functionSelectors: sels
+        });
+        vm.prank(deployer);
+        IDiamondCut(diamond).diamondCut(cuts, address(0), "");
+        assertEq(IDiamondLoupe(diamond).facetAddress(sels[0]), address(0), "fixture-live: the S3b marker is unrouted");
+
+        vm.expectRevert(abi.encodeWithSelector(RefreshAllFacetsInPlace.PredatesSlice3FillLock.selector, diamond));
+        probe.requireSlice3Diamond(diamond);
+    }
+
     function test_AtomicCutGroup_MembershipIsPinned() public {
         string[] memory keys = new RefreshItemsProbe().atomicGroup();
         assertEq(keys.length, 3, "the transport-epoch lifecycle has three participants");

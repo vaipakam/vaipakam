@@ -1485,10 +1485,12 @@ considers it finished.
   claim and stays pledged until then. A cancelled or expired auction
   moves nothing — the lot never left the vault — and the loan is exactly
   as it was before. While a fill is in progress, from the moment the lot
-  leaves the vault until the fill settles, nothing but that fill may act
-  on the protocol: any other call reaching it in that window — from a
-  token's transfer callback, from the resolver's own step, from a refund
-  — is refused. The fill pays the debt from exactly the principal the
+  leaves the vault until the fill's settlement step begins, nothing but
+  that fill may act on the protocol: any other call into the protocol's
+  functions in that window — from a token's transfer callback, from the
+  resolver's own step, from a native-currency payout — is refused, and the
+  settlement itself runs under the protocol's ordinary protection against
+  re-entry. The fill pays the debt from exactly the principal the
   resolver delivered; principal that reached the protocol any other way
   during the fill makes the fill fail rather than counting as payment.
   The stated trade-off is that a resolver cannot settle one auction

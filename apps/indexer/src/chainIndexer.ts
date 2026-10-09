@@ -5040,8 +5040,8 @@ export async function processLoanLogs(
     } else if (log.eventName === 'SwapToRepayIntentCancelled') {
       // T-090 v1.1 Sub 2 — borrower cancel OR permissionless
       // `cancelExpired` poke. Loan stays Active (the cancel only
-      // tears down the v1.1 commit + returns collateral to the
-      // borrower vault). Delete the intent row — and ONLY that: this is
+      // tears down the v1.1 commit; since #1566 slice 3 no collateral
+      // moves, the lot never left the borrower vault). Delete the intent row — and ONLY that: this is
       // not a close, so the loan's prepay listing survives it.
       await _deleteSwapToRepayIntent(env, chainId, Number(a.loanId as bigint));
     } else if (log.eventName === 'SwapToRepayIntentForceCancelled') {

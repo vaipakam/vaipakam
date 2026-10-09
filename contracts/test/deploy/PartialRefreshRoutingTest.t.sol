@@ -12,6 +12,7 @@ import {VaipakamDiamond} from "../../src/VaipakamDiamond.sol";
 import {RiskPreviewFacet} from "../../src/facets/RiskPreviewFacet.sol";
 import {RefinanceFacet} from "../../src/facets/RefinanceFacet.sol";
 import {FallbackCustodyFacet} from "../../src/facets/FallbackCustodyFacet.sol";
+import {SwapToRepayIntentFacet} from "../../src/facets/SwapToRepayIntentFacet.sol";
 
 /**
  * @title  PartialRefreshRoutingTest
@@ -490,6 +491,33 @@ contract PartialRefreshRoutingTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(RedeployFacets.PredatesVaultHeldFallbackCustody.selector, diamond)
         );
+        script.runWith(diamond, DEPLOYER_KEY);
+    }
+
+    /// @notice #1566 slice 3 - the curated refresh also refuses a Diamond from before the fill lock
+    ///         (marked by `getIntentCustody` being unrouted), which it could never bring up to date:
+    ///         the lock lives in the Diamond contract itself.
+    /// @dev    Straddle: the same script against a current Diamond runs to completion
+    ///         ({test_RedeployFacets_IsIdempotent_OnCurrentDiamond}).
+    function test_RedeployFacets_RefusesADiamondBeforeTheFillLock() public {
+        bytes4[] memory sels = new bytes4[](1);
+        sels[0] = SwapToRepayIntentFacet.getIntentCustody.selector;
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
+        cuts[0] = IDiamondCut.FacetCut({
+            facetAddress: address(0),
+            action: IDiamondCut.FacetCutAction.Remove,
+            functionSelectors: sels
+        });
+        vm.prank(deployer);
+        IDiamondCut(diamond).diamondCut(cuts, address(0), "");
+        assertEq(IDiamondLoupe(diamond).facetAddress(sels[0]), address(0), "fixture-live: the S3b marker is unrouted");
+        assertTrue(
+            IDiamondLoupe(diamond).facetAddress(FallbackCustodyFacet.disposeFallbackCustody.selector) != address(0),
+            "fixture-live: the S2b marker stays routed, so the S2b refusal is not what fires"
+        );
+
+        RedeployFacets script = new RedeployFacets();
+        vm.expectRevert(abi.encodeWithSelector(RedeployFacets.PredatesSlice3FillLock.selector, diamond));
         script.runWith(diamond, DEPLOYER_KEY);
     }
 

@@ -24,6 +24,7 @@ import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
 import {RepayPeriodicFacet} from "../src/facets/RepayPeriodicFacet.sol";
 import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
 import {FallbackCustodyFacet} from "../src/facets/FallbackCustodyFacet.sol";
+import {SwapToRepayIntentFacet} from "../src/facets/SwapToRepayIntentFacet.sol";
 import {Deployments} from "./lib/Deployments.sol";
 import {FacetSelectors} from "./lib/FacetSelectors.sol";
 import {RefinanceRecordRollout} from "./lib/RefinanceRecordRollout.sol";
@@ -66,6 +67,9 @@ contract RedeployFacets is Script {
     ///         custody, so this curated refresh refuses it; see
     ///         {_requireVaultHeldFallbackCustody}.
     error PredatesVaultHeldFallbackCustody(address diamond);
+    /// @notice #1566 slice 3 - the target Diamond predates the fill lock; see
+    ///         {_requireSlice3Diamond}.
+    error PredatesSlice3FillLock(address diamond);
 
     function run() external {
         uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
@@ -99,6 +103,8 @@ contract RedeployFacets is Script {
         // custody, before anything is broadcast; see
         // {_requireVaultHeldFallbackCustody}.
         _requireVaultHeldFallbackCustody(diamond);
+        // #1566 slice 3 - and one from before the fill lock; see {_requireSlice3Diamond}.
+        _requireSlice3Diamond(diamond);
 
         vm.startBroadcast(deployerKey);
 
@@ -580,6 +586,19 @@ contract RedeployFacets is Script {
                 FallbackCustodyFacet.disposeFallbackCustody.selector
             ) == address(0)
         ) revert PredatesVaultHeldFallbackCustody(diamond);
+    }
+
+    /// @dev #1566 slice 3 - refuse a Diamond from before the fill lock. The lock is enforced in
+    ///      `VaipakamDiamond`'s own fallback, which no facet cut replaces, so slice 3 reaches a chain
+    ///      by fresh deploy only (owner decision O1 = A); and a commit recorded under the old custody
+    ///      would be refused by name at every way out once the new intent code ran. The marker is the
+    ///      routing of `getIntentCustody`, which slice 3 introduced. Called before the broadcast
+    ///      starts, so a refused run sends nothing.
+    function _requireSlice3Diamond(address diamond) internal view {
+        if (
+            IDiamondLoupe(diamond).facetAddress(SwapToRepayIntentFacet.getIntentCustody.selector)
+                == address(0)
+        ) revert PredatesSlice3FillLock(diamond);
     }
 
     function _replace(address facet, bytes4[] memory selectors)

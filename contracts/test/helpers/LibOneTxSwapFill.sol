@@ -39,7 +39,8 @@ contract SwapFillDriver {
         diamond.preInteraction(order, "", orderHash, taker, lot, takingAmount, lot, "");
         require(makerAsset.transferFrom(address(diamond), taker, lot), "maker to taker failed");
         require(takerAsset.transfer(address(diamond), takingAmount), "taker to maker failed");
-        diamond.postInteraction(order, "", orderHash, taker, lot, takingAmount, 0, "");
+        // remainingMakingAmount = the lot, as the LOP passes it (the remaining amount BEFORE this fill).
+        diamond.postInteraction(order, "", orderHash, taker, lot, takingAmount, lot, "");
     }
 }
 

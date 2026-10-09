@@ -242,15 +242,6 @@ contract SwapToRepayIntentFacet is
     ///      less the borrower-facing slippage cap, does not cover the debt
     ///      floor plus the auction buffer, so no lot can back a repayment.
     error IntentCollateralCannotCoverDebtFloor(uint256 minOut);
-    /// @dev Codex round-6 P1 #4 — `received != committed lot` (#2322: the
-    ///      debt-sized lot, formerly `loan.collateralAmount`)
-    ///      on the vault withdraw means the collateral token is
-    ///      fee-on-transfer / rebasing (defense-in-depth alongside
-    ///      the admin allowlist).
-    error IntentCollateralFeeOnTransferUnsupported(
-        uint256 received,
-        uint256 requested
-    );
     /// @dev §5.5 — cancel paths fired against a loanId without a
     ///      live commit.
     error IntentNoCommit(uint256 loanId);
@@ -372,20 +363,19 @@ contract SwapToRepayIntentFacet is
     // ══════════════════════════════════════════════════════════════
 
     /**
-     * @notice §5.1 — atomically pulls the borrower's collateral into
-     *         the diamond's custody, registers the canonical
+     * @notice §5.1 — sizes the debt-sized lot, registers the canonical
      *         orderHash for ERC-1271 binding, and approves Fusion's
      *         pinned `LimitOrderProtocol` for the aggregate-per-token
-     *         maker amount so a resolver can pull the collateral on
-     *         fill.
+     *         maker amount. Moves no collateral: the lot stays in
+     *         `loan.borrower`'s vault until its own fill's pre-hook
+     *         pulls it (#1566 slice 3).
      * @param  loanId Loan being repaid. Must be Active + ERC20-on-ERC20
      *         + both legs allowlisted + caller is the current
      *         borrower-NFT owner + HF >=
      *         `cfgIntentMinCommitHF`.
      * @param  params Borrower-picked Fusion-order inputs (see
      *         {FusionOrderParams}). The diamond derives maker /
-     *         receiver / assets and finalises `makerAmount` from the
-     *         actual vault withdraw.
+     *         receiver / assets and sets `makerAmount` to the lot.
      * @dev    `nonReentrant` per Codex round-12 P1 #6.
      */
     function commitSwapToRepayIntent(
@@ -739,7 +729,7 @@ contract SwapToRepayIntentFacet is
      *         filled pre-check + same return target as
      *         {cancelSwapToRepayIntent}. Bypasses the §5.6 master
      *         switch IFF a commit exists (so a chain-toggle-off
-     *         can't strand custodial collateral).
+     *         can't leave an order live forever).
      */
     function cancelExpiredIntent(uint256 loanId)
         external
@@ -764,15 +754,15 @@ contract SwapToRepayIntentFacet is
     }
 
     // ──────────────────────────────────────────────────────────────
-    //  Shared cancel teardown (Codex round-11 P1 #1 —
-    //  safeTransfer-before-recordVaultDeposit; round-8 P1 #2 —
-    //  rawRemainingInvalidatorForOrder; round-10 P1 #6 —
-    //  pinned `lopAtCommit` for the Fusion cancel call)
+    //  Shared cancel teardown (round-8 P1 #2 — the already-filled
+    //  check, read from the order's nonce bit since #1566 slice 3;
+    //  round-10 P1 #6 — pinned `lopAtCommit` for the Fusion cancel
+    //  call). Moves no tokens: the lot never left the vault.
     // ──────────────────────────────────────────────────────────────
 
-    /// @notice §5.8 layer 2 — force-cancel a live intent commit to
-    ///         clear custody before a lender-protection action
-    ///         settles. Called by `RiskFacet`'s 4 HF-liquidation
+    /// @notice §5.8 layer 2 — force-cancel a live intent commit before
+    ///         a lender-protection action settles, so the order cannot
+    ///         fill against collateral the action is about to take. Called by `RiskFacet`'s 4 HF-liquidation
     ///         entry points + `RiskMatchLiquidationFacet.triggerInternalMatchLiquidation`
     ///         + `RepayFacet._autoLiquidatePeriodShortfall` +
     ///         `DefaultedFacet.triggerDefault` AFTER they confirm
@@ -783,9 +773,9 @@ contract SwapToRepayIntentFacet is
     ///         calls. The trigger-condition check is the caller's
     ///         responsibility (the diamond's reentrancy guard
     ///         already wraps the outer entry point). Identical
-    ///         teardown to {_executeCancel}: Fusion cancel, return
-    ///         collateral to `loan.borrower` vault, aggregate-
-    ///         allowance + live-count decrement, storage cleanup;
+    ///         teardown to {_executeCancel}: Fusion cancel, aggregate-
+    ///         allowance + live-count decrement, storage cleanup (no
+    ///         collateral moves: it never left the vault);
     ///         the only difference is the event emitted (
     ///         {SwapToRepayIntentForceCancelled} with reason
     ///         discriminator + source facet attribution).
@@ -863,9 +853,8 @@ contract SwapToRepayIntentFacet is
     }
 
     /// @dev Tears down a live commit per §5.5 — invariant guard,
-    ///      Fusion cancel, collateral return to `loan.borrower`'s
-    ///      vault, aggregate-allowance + live-count decrements,
-    ///      storage cleanup, event. Shared body for both cancel
+    ///      Fusion cancel, aggregate-allowance + live-count
+    ///      decrements, storage cleanup, event. Moves no collateral. Shared body for both cancel
     ///      paths; the per-path authority + timing checks live in
     ///      their respective external entry points.
     function _executeCancel(
@@ -1043,7 +1032,8 @@ contract SwapToRepayIntentFacet is
     ///         numbers need; it does not apply the commit's authority, HF,
     ///         deadline or allowlist gates.
     /// @param  loanId         The loan to quote.
-    /// @return lot            Collateral the commit would take into custody.
+    /// @return lot            Collateral the commit would put up for the auction (it stays in the
+    ///                        borrower's vault until the fill takes it).
     /// @return minTakerAmount The least `takerAmount` the commit accepts: the
     ///                        lot's own slippage-capped floor, which covers
     ///                        the debt floor plus the auction buffer and can

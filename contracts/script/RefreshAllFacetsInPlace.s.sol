@@ -252,6 +252,24 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     // swap and disposal hosted once, self-called by Risk / Defaulted / Claim.
     uint256 public constant EXPECTED_FACETS = 94;
 
+    /// @notice #1566 slice 3 - the target Diamond predates the fill lock; see
+    ///         {_requireSlice3Diamond}.
+    error PredatesSlice3FillLock(address diamond);
+
+    /// @dev #1566 slices 2-3 (owner decision O1 = A, 2026-10-07): a chain crosses the custody
+    ///      boundary by FRESH deploy only, and this refresh cannot do it at all -- the fill lock is
+    ///      enforced in `VaipakamDiamond`'s own fallback, which no facet cut replaces, so a refreshed
+    ///      pre-slice-3 Diamond would run the slice-3 pre-hook (which pulls the lot) with no entry-point
+    ///      lock around the LOP's mid-fill calls, and every commit recorded under the old custody would
+    ///      be refused by name at every way out, freezing its loan. The marker is the routing of
+    ///      `getIntentCustody`, which slice 3 (S3b) introduced. Called before any facet is deployed, so
+    ///      a refused run sends nothing.
+    function _requireSlice3Diamond(address diamond) internal view {
+        if (IDiamondLoupe(diamond).facetAddress(SwapToRepayIntentFacet.getIntentCustody.selector) == address(0)) {
+            revert PredatesSlice3FillLock(diamond);
+        }
+    }
+
     function refresh() external {
         uint256 cid = block.chainid;
         require(
@@ -276,6 +294,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             signer == currentOwner,
             "RefreshAllFacetsInPlace: ADMIN_PRIVATE_KEY is not the diamond owner (handover / timelock?)"
         );
+        _requireSlice3Diamond(diamond);
 
         console.log("=== Full-facet in-place refresh ===");
         console.log("Chain id:", cid);

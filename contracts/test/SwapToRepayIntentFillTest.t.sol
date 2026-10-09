@@ -97,11 +97,12 @@ contract CallbackWETH is CallbackERC20 {
 }
 
 /**
- * @title  RefundTaker
- * @notice A taker that pays in ETH through the LOP and, once armed, makes ONE call from the refund the
- *         LOP sends back for an overpayment -- the native-value branch's mid-fill hook.
+ * @title  UnwrapTaker
+ * @notice A taker that asks the LOP to unwrap the WETH lot (`takerTraits.unwrapWeth`) and, once armed,
+ *         makes ONE call from the native ETH the LOP pays it mid-fill -- the one native-value hook a
+ *         contract-maker (Vaipakam) order can meet.
  */
-contract RefundTaker {
+contract UnwrapTaker {
     Vm private constant VM = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
 
     address public target;
@@ -117,9 +118,9 @@ contract RefundTaker {
 
     function fill(MockLopFill lop, IOrderMixin.Order calldata order, uint256 amount, bytes calldata extension)
         external
-        payable
     {
-        lop.fillContractOrderParsed{value: msg.value}(order, "", amount, address(this), extension, "");
+        IERC20(address(uint160(LopAddress.unwrap(order.takerAsset)))).approve(address(lop), type(uint256).max);
+        lop.fillContractOrderParsedUnwrap(order, "", amount, address(this), extension, "");
     }
 
     receive() external payable {
@@ -220,6 +221,9 @@ contract SwapToRepayIntentFillTest is CustodyInvariantBase {
     /// @notice The fill runs the LOP's steps in the LOP's order -- the bit invalidation BEFORE the
     ///         pre-hook, the taker interaction BETWEEN the two transfers -- and a bit-invalidator order
     ///         sets its nonce bit and never writes the remaining-amount slot.
+    /// @dev    This compares the mock with its own step log: it pins the mock against regressing, not
+    ///         against the deployed LOP. Agreement with the deployed LOP is I0f's and I0g's job (the
+    ///         order hash, the domain and the cancel path's bit write, on a mainnet fork).
     function test_I0_mockFidelity_callOrder_invalidateBeforePre_rawRemainingStaysZero() public {
         uint256 loanId = _commitWeth();
         SwapToRepayIntentFacet.FusionOrderRead memory r = _read(loanId);
@@ -425,7 +429,9 @@ contract SwapToRepayIntentFillTest is CustodyInvariantBase {
         assertEq(uint8(_status(loanId)), uint8(LibVaipakam.LoanStatus.Repaid), "the fill settled");
         vm.prank(LoanFacet(address(diamond)).getLoanDetails(sibling).borrower);
         SwapToRepayIntentFacet(address(diamond)).cancelSwapToRepayIntent(sibling);
-        assertEq(SwapToRepayIntentFacet(address(diamond)).getIntentCustody(sibling), 0, "straddle: the sibling cancelled");
+        // Straddle: the sibling's cancel went through -- its commit is gone.
+        vm.expectRevert(abi.encodeWithSelector(SwapToRepayIntentFacet.IntentNoCommit.selector, sibling));
+        SwapToRepayIntentFacet(address(diamond)).getIntentCommit(sibling);
     }
 
     /// @notice I4b. A re-entry from inside the pre-hook's own pull (the collateral token's callback on
@@ -481,27 +487,29 @@ contract SwapToRepayIntentFillTest is CustodyInvariantBase {
         assertEq(uint8(_status(other)), uint8(LibVaipakam.LoanStatus.Active), "the other loan is untouched");
     }
 
-    /// @notice I5c. The native refund the LOP sends a taker who overpays in ETH is refused re-entry.
-    ///         A reverse loan (WETH principal) filled through a LOP that knows WETH, paying one wei
-    ///         too much: the refund reaches the taker mid-fill, and its re-entry is refused.
-    function test_I5c_reentryFromTheEthRefund_isRefused() public {
-        IntentConfigFacet ic = IntentConfigFacet(address(diamond));
+    /// @notice I5c. The native-value hook a Vaipakam order can actually meet: a taker that asks the LOP
+    ///         to unwrap the WETH lot receives it as native ETH mid-fill, and the re-entry from its
+    ///         receive hook is refused. (The taker-side ETH payment and its refund are reachable only
+    ///         through `fillOrder`, which needs an EOA maker's signature; the Diamond is a contract
+    ///         maker, so its orders fill through the non-payable `fillContractOrder`.)
+    function test_I5c_reentryFromTheUnwrappedEthPayout_isRefused() public {
         MockLopFill lopW = new MockLopFill(weth);
-        ic.setFusionLimitOrderProtocol(address(lopW));
-        ic.setIntentAllowedPrincipalToken(weth, true);
-        ic.setIntentAllowedCollateralToken(usdc, true);
+        IntentConfigFacet(address(diamond)).setFusionLimitOrderProtocol(address(lopW));
         (uint256 other, address otherBorrower) = _otherActiveLoan();
-        uint256 loanId = _openKind(++_seed, 2);
-        SwapToRepayIntentFacet.FusionOrderRead memory r = _commitOn(loanId);
-        assertEq(r.takerAsset, weth, "fixture-live: WETH principal");
+        uint256 loanId = _commitWeth();
+        SwapToRepayIntentFacet.FusionOrderRead memory r = _read(loanId);
+        assertEq(r.makerAsset, weth, "fixture-live: a WETH lot");
+        vm.deal(weth, r.makerAmount); // the etched WETH pays its withdrawals in native ETH
 
-        RefundTaker t = new RefundTaker();
+        UnwrapTaker t = new UnwrapTaker();
+        ERC20Mock(usdc).mint(address(t), r.takerAmount);
         t.arm(address(diamond), otherBorrower, abi.encodeCall(RepayFacet.repayLoan, (other)));
-        vm.deal(address(this), r.takerAmount + 1);
-        t.fill{value: r.takerAmount + 1}(lopW, _order(r), r.makerAmount, r.extension);
+        t.fill(lopW, _order(r), r.makerAmount, r.extension);
 
-        assertEq(t.calls(), 1, "fixture-live: the one-wei refund reached the taker");
+        assertEq(t.calls(), 1, "fixture-live: the unwrapped lot reached the taker as native ETH");
+        assertEq(address(t).balance, r.makerAmount, "fixture-live: the whole lot");
         assertEq(t.lastRevertSelector(), LibFillLock.FillInProgress.selector, "refused by the lock");
+        assertEq(uint8(_status(other)), uint8(LibVaipakam.LoanStatus.Active), "the other loan is untouched");
         assertEq(uint8(_status(loanId)), uint8(LibVaipakam.LoanStatus.Repaid), "the fill settled");
     }
 
@@ -513,10 +521,16 @@ contract SwapToRepayIntentFillTest is CustodyInvariantBase {
     ///         one wei on the way (modelled by the callback moving one wei out of the Diamond right
     ///         after the pull) fails the whole fill, and the commit stays cancellable with nothing
     ///         lost.
-    /// @dev    Kills: the pre-hook's delta check dropped.
+    /// @dev    Kills: the pre-hook's delta check dropped. The Diamond holds another balance of the same
+    ///         token (a stand-in reserve), so without the check the fill would NOT fail on its own: the
+    ///         LOP would make up the skimmed wei from that reserve and settle -- the harm the check
+    ///         exists to prevent.
     function test_I6_feeOnThePull_revertsTheFill_commitStaysCancellable() public {
         uint256 loanId = _commitWeth();
         SwapToRepayIntentFacet.FusionOrderRead memory r = _read(loanId);
+        uint256 reserve = 3e18;
+        ERC20Mock(weth).mint(address(diamond), reserve);
+        assertGe(IERC20(weth).balanceOf(address(diamond)), reserve, "fixture-live: another balance to draw on");
         address vault = _vaultOf(loanId);
         uint256 vaultBefore = IERC20(weth).balanceOf(vault);
         uint256 lienBefore = _lien(loanId);
@@ -723,6 +737,11 @@ contract SwapToRepayIntentFillTest is CustodyInvariantBase {
     function test_I13_aNestedVaipakamFill_isRefused() public {
         uint256 inner = _commitWeth();
         SwapToRepayIntentFacet.FusionOrderRead memory ri = _read(inner);
+        assertEq(
+            IntentDispatchFacet(address(diamond)).isValidSignature(lopFill.hashOrder(_order(ri)), ""),
+            IERC1271.isValidSignature.selector,
+            "fixture-live: outside a fill the Diamond signs for the inner order"
+        );
         uint256 outer = _commitWeth();
         SwapToRepayIntentFacet.FusionOrderRead memory ro = _read(outer);
         takerHook.arm(
@@ -743,6 +762,72 @@ contract SwapToRepayIntentFillTest is CustodyInvariantBase {
         );
         _fill(_read(third), abi.encodePacked(address(takerHook)));
         assertEq(takerHook.lastRevertSelector(), LibFillLock.FillInProgress.selector, "the Diamond refuses the signature read mid-fill");
+    }
+
+    // ============================================================================================
+    //  I16 / I17 -- the hooks' caller checks
+    // ============================================================================================
+
+    /// @notice I16. Since slice 3 the pre-hook moves funds, so only the order's own LOP may call it: a
+    ///         stray `preInteraction` outside any fill is refused, and the vault, the lien and the
+    ///         Diamond are untouched. Straddle: the LOP's fill of the same order clears.
+    /// @dev    Kills: the pre-hook's caller check dropped (anyone could pull a lot out of a vault into
+    ///         the Diamond outside a fill, where it would rest unattributed).
+    function test_I16_aStrayPreHook_isRefused_andMovesNothing() public {
+        uint256 loanId = _commitWeth();
+        SwapToRepayIntentFacet.FusionOrderRead memory r = _read(loanId);
+        IOrderMixin.Order memory order = _order(r);
+        bytes32 orderHash = lopFill.hashOrder(order);
+        address vault = _vaultOf(loanId);
+        uint256 vaultBefore = IERC20(weth).balanceOf(vault);
+        uint256 diamondBefore = IERC20(weth).balanceOf(address(diamond));
+        uint256 lienBefore = _lien(loanId);
+        address stranger = makeAddr("stranger");
+
+        vm.prank(stranger);
+        vm.expectRevert(
+            abi.encodeWithSelector(LibSwapToRepayIntentSettlement.IntentPreInteractionUnauthorized.selector, stranger)
+        );
+        IntentDispatchFacet(address(diamond)).preInteraction(
+            order, r.extension, orderHash, stranger, r.makerAmount, r.takerAmount, r.makerAmount, ""
+        );
+
+        assertEq(IERC20(weth).balanceOf(vault), vaultBefore, "the vault is untouched");
+        assertEq(IERC20(weth).balanceOf(address(diamond)), diamondBefore, "the Diamond is untouched");
+        assertEq(_lien(loanId), lienBefore, "the lien is untouched");
+        _fill(r, "");
+        assertEq(uint8(_status(loanId)), uint8(LibVaipakam.LoanStatus.Repaid), "straddle: the LOP's fill clears");
+    }
+
+    /// @notice I17. Mid-fill the Diamond's entry point admits the `postInteraction` selector from any
+    ///         caller (the LOP's own post-hook must get through), so the post-hook's caller check is
+    ///         what refuses a third party calling it with the order's hash. Refused -- which also
+    ///         restores the lock -- and the LOP's own post-hook then settles.
+    /// @dev    Kills: the post-hook's caller check dropped (the stray call would then fail later, on
+    ///         the delivered amount, so the cell pins the exact selector).
+    function test_I17_aStrayPostHookMidFill_isRefused() public {
+        uint256 loanId = _commitWeth();
+        SwapToRepayIntentFacet.FusionOrderRead memory r = _read(loanId);
+        IOrderMixin.Order memory order = _order(r);
+        bytes32 orderHash = lopFill.hashOrder(order);
+        takerHook.arm(
+            address(diamond),
+            address(0),
+            abi.encodeCall(
+                IntentDispatchFacet.postInteraction,
+                (order, r.extension, orderHash, address(takerHook), r.makerAmount, r.takerAmount, r.makerAmount, bytes(""))
+            )
+        );
+
+        _fill(r, abi.encodePacked(address(takerHook)));
+
+        assertEq(takerHook.calls(), 1, "fixture-live: the stray post-hook was attempted mid-fill");
+        assertEq(
+            takerHook.lastRevertSelector(),
+            LibSwapToRepayIntentSettlement.IntentPostInteractionUnauthorized.selector,
+            "refused by the post-hook's caller check"
+        );
+        assertEq(uint8(_status(loanId)), uint8(LibVaipakam.LoanStatus.Repaid), "the LOP's own post-hook settled");
     }
 
     // ============================================================================================

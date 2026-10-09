@@ -10469,8 +10469,8 @@ library LibVaipakam {
     function internalMatchableCollateral(uint256 loanId) internal view returns (uint256) {
         Storage storage s = storageSlot();
         // #2322 — a loan with a live swap-to-repay intent has NO collateral
-        // available to match: part of it is committed to the auction (in
-        // Diamond custody, owed to the order) and the rest is the pledge that
+        // available to match: part of it is committed to the auction (in the
+        // borrower's vault until the fill takes it, owed to the order) and the rest is the pledge that
         // backs the borrower's claim once the auction settles. Answering 0
         // keeps such a loan out of every internal match — the candidate scan,
         // the auto-dispatch and the explicit legs (which force-cancel a live

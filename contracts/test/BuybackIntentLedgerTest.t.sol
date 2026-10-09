@@ -11,7 +11,7 @@ import {LibFillLock} from "../src/libraries/LibFillLock.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {IERC1271} from "@openzeppelin/contracts/interfaces/IERC1271.sol";
-import {LibOneTxBuybackFill} from "./helpers/LibOneTxBuybackFill.sol";
+import {LibOneTxBuybackFill, StrayPostCaller} from "./helpers/LibOneTxBuybackFill.sol";
 import {IOrderMixin} from
     "@1inch/limit-order-protocol/contracts/interfaces/IOrderMixin.sol";
 
@@ -366,6 +366,32 @@ contract BuybackIntentLedgerTest is SetupTest {
         assertEq(_t().getOrderHashKind(ORDER), bytes32(0), "kind cleared on fill");
         // LOP allowance decremented to 0 (no other in-flight commits).
         assertEq(token.allowance(address(diamond), lop), 0, "LOP allowance cleared");
+    }
+
+    /// @dev #1566 slice 3 — MID-fill, the Diamond's entry point admits the post-hook selector from
+    ///      any caller (the LOP's own post-hook must get through), so the buyback arm's caller check
+    ///      is what refuses a third party calling it with the order's hash. Refused — the revert also
+    ///      restores the lock — and the LOP's own post-hook then settles the fill. Outside a fill a
+    ///      stray post-hook meets the lock first ({test_PostInteraction_RevertWhen_UnauthorisedCaller}).
+    function test_PostInteraction_MidFill_RevertWhen_UnauthorisedCaller() public {
+        _seedBaseBudget(AMOUNT);
+        _t().setRewardEmissionsTopUpTarget(20_000e18);
+        _t().commitBuybackIntent(
+            ORDER, address(token), AMOUNT, 0, uint64(block.timestamp + 1 hours)
+        );
+        uint256 delivered = 12_345e18;
+        vpfi.mint(lop, delivered);
+        StrayPostCaller stray = new StrayPostCaller();
+
+        bytes4 strayRevert = LibOneTxBuybackFill.fillWithStrayPost(
+            lop, address(diamond), ORDER, AMOUNT, address(token), AMOUNT, address(vpfi), delivered, address(stray)
+        );
+
+        assertEq(strayRevert, LibTreasuryBuyback.BuybackUnauthorizedCaller.selector, "refused by the caller check");
+        LibVaipakam.BuybackOrderInfo memory info = _t().getBuybackOrder(ORDER);
+        assertEq(
+            uint256(info.status), uint256(LibVaipakam.BUYBACK_ORDER_STATUS_FILLED), "the LOP's own post-hook settled"
+        );
     }
 
     function test_PostInteraction_RevertWhen_UnauthorisedCaller() public {

@@ -31,7 +31,10 @@ library LibLopDomain {
     error LopDomainUnsupported(address lop);
 
     /// @dev The separator `lop` hashes orders under. Reverts {LopDomainUnsupported} when `lop` does not
-    ///      answer `eip712Domain()` or declares any other shape.
+    ///      answer `eip712Domain()` (no code, a revert, or fewer than seven words) or declares any other
+    ///      shape. Return data of seven words or more that does not ABI-decode as the ERC-5267 tuple
+    ///      reverts in the decoder with no data. `lop` is the admin-configured LOP, so its return data
+    ///      is not attacker-sized.
     function separator(address lop) internal view returns (bytes32) {
         (bool ok, bytes memory ret) = lop.staticcall(abi.encodeWithSignature("eip712Domain()"));
         if (!ok || ret.length < 7 * 32) revert LopDomainUnsupported(lop);

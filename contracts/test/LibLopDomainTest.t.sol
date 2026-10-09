@@ -33,6 +33,11 @@ contract ScriptedDomainLop {
     }
 }
 
+/// @dev Answers every call with empty return data.
+contract SilentFallback {
+    fallback() external {}
+}
+
 /// @dev Calls the library from outside, so a revert is observable with expectRevert.
 contract LibLopDomainCaller {
     function separator(address lop) external view returns (bytes32) {
@@ -75,6 +80,12 @@ contract LibLopDomainTest is Test {
     function test_aContractWithoutEip712Domain_isRefused() public {
         vm.expectRevert(abi.encodeWithSelector(LibLopDomain.LopDomainUnsupported.selector, address(caller)));
         caller.separator(address(caller));
+    }
+
+    function test_aContractAnsweringWithNoData_isRefused() public {
+        SilentFallback silent = new SilentFallback();
+        vm.expectRevert(abi.encodeWithSelector(LibLopDomain.LopDomainUnsupported.selector, address(silent)));
+        caller.separator(address(silent));
     }
 
     function test_anAccountWithNoCode_isRefused() public {

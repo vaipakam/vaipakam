@@ -75,8 +75,8 @@ contract IntentDispatchFacet is
     /// @inheritdoc IPreInteraction
     /// @dev The fill lock opens before anything else, so a re-entry from inside the swap arm's own
     ///      vault withdraw is already refused (design: "set before the pull"). Every library arm
-    ///      checks that the caller is the order's pinned LOP; a stray caller reverts there, and the
-    ///      revert undoes the lock with it.
+    ///      checks its caller -- the swap arm against the LOP pinned on the commit, the buyback arm
+    ///      against the configured LOP -- and a stray caller reverts there, undoing the lock with it.
     function preInteraction(
         IOrderMixin.Order calldata /* order */,
         bytes calldata /* extension */,
@@ -103,10 +103,14 @@ contract IntentDispatchFacet is
     }
 
     /// @inheritdoc IPostInteraction
-    /// @dev Closes the fill lock its own pre-hook opened (any other hash, or no lock, reverts), then
-    ///      holds the Diamond's reentrancy guard for the settlement -- the guard `nonReentrant` took
-    ///      before slice 3, now taken after the close because the Diamond's entry point admits this
-    ///      selector mid-fill.
+    /// @dev Releases the fill lock its own pre-hook acquired (any other hash, or no lock, reverts),
+    ///      then holds the Diamond's reentrancy guard for the settlement -- the guard `nonReentrant`
+    ///      took before slice 3, now taken after the release because the Diamond's entry point admits
+    ///      this selector mid-fill. So the lock covers the window from the pull to this hook's start;
+    ///      the settlement itself runs under the guard, which refuses every guarded entry but admits
+    ///      views and unguarded functions (the settlement's own transfers are plain ERC-20 moves).
+    ///      A third party calling this selector mid-fill reaches the arm's caller check and reverts,
+    ///      which restores the lock.
     function postInteraction(
         IOrderMixin.Order calldata /* order */,
         bytes calldata /* extension */,
