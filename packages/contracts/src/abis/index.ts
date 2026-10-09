@@ -48,6 +48,9 @@ import IntentConfigFacetABI from './IntentConfigFacet.json';
 import DefaultedFacetABI from './DefaultedFacet.json';
 import RiskFacetABI from './RiskFacet.json';
 import RiskMatchLiquidationFacetABI from './RiskMatchLiquidationFacet.json';
+// #1566 slice 2 — the liquidation-fallback custody host (vault-held custody row,
+// `FallbackCustodyMoved`); the custody census reads `getFallbackCustody`.
+import FallbackCustodyFacetABI from './FallbackCustodyFacet.json';
 import RiskSplitLiquidationFacetABI from './RiskSplitLiquidationFacet.json';
 import ClaimFacetABI from './ClaimFacet.json';
 import OracleFacetABI from './OracleFacet.json';
@@ -183,6 +186,7 @@ export {
   DefaultedFacetABI,
   RiskFacetABI,
   RiskMatchLiquidationFacetABI,
+  FallbackCustodyFacetABI,
   RiskSplitLiquidationFacetABI,
   ClaimFacetABI,
   OracleFacetABI,
@@ -276,6 +280,106 @@ import DiamondAbiUnion from '../diamondAbi.json';
  *  `DIAMOND_ABI_VIEM` below; ethers consumers pass `DIAMOND_ABI`
  *  directly. */
 export const DIAMOND_ABI = DiamondAbiUnion;
+ *  directly. Once Phase B-full is complete and the last ethers call site
+ *  is gone, collapse this back to a single `Abi`-typed export. */
+export const DIAMOND_ABI = [
+  ...OfferCreateFacetABI,
+  ...SignedOfferFacetABI,
+  ...LenderIntentFacetABI,
+  // #398 — AggregatorAdapterFactoryFacet IS a Diamond facet → spread into the
+  // combined Diamond ABI. AggregatorAdapterImplementation is a STANDALONE
+  // adapter contract (named export above only) — deliberately NOT spread here.
+  ...AggregatorAdapterFactoryFacetABI,
+  // #399 — BackstopFacet IS a Diamond facet → spread. BackstopVaultImplementation
+  // is the STANDALONE treasury vault (named export above only) — NOT spread here.
+  ...BackstopFacetABI,
+  // #594 — ConsolidationFacet IS a Diamond facet -> spread.
+  ...ConsolidationFacetABI,
+  // #671 — RiskAccessFacet IS a Diamond facet -> spread.
+  ...RiskAccessFacetABI,
+  // #1104 — RiskPreviewFacet IS a Diamond facet -> spread.
+  ...RiskPreviewFacetABI,
+  // #1212 — MulticallFacet IS a Diamond facet -> spread.
+  ...MulticallFacetABI,
+  ...OfferAcceptFacetABI,
+  ...OfferPreviewFacetABI,
+  ...OfferCancelFacetABI,
+  ...OfferMatchFacetABI,
+  ...OfferMutateFacetABI,
+  ...OfferParallelSaleFacetABI,
+  ...LoanFacetABI,
+  ...RepayFacetABI,
+  ...RepayPeriodicFacetABI,
+  ...SwapToRepayFacetABI,
+  ...SwapToRepayIntentFacetABI,
+  ...IntentDispatchFacetABI,
+  ...AutoLifecycleFacetABI,
+  ...EncumbranceMutateFacetABI,
+  ...IntentConfigFacetABI,
+  ...DefaultedFacetABI,
+  ...RiskFacetABI,
+  ...RiskMatchLiquidationFacetABI,
+  ...FallbackCustodyFacetABI,
+  ...RiskSplitLiquidationFacetABI,
+  ...ClaimFacetABI,
+  ...OracleFacetABI,
+  ...OracleAdminFacetABI,
+  ...VaultFactoryFacetABI,
+  ...VaipakamNFTFacetABI,
+  ...ProfileFacetABI,
+  ...FeeEntitlementFacetABI,
+  ...AdminFacetABI,
+  ...AddCollateralFacetABI,
+  ...PartialWithdrawalFacetABI,
+  ...PrecloseFacetABI,
+  ...RefinanceFacetABI,
+  ...EarlyWithdrawalFacetABI,
+  ...EarlyWithdrawalDirectFacetABI,
+  ...TreasuryFacetABI,
+  ...PayrollFacetABI,
+  ...DiamondLoupeFacetABI,
+  ...MetricsFacetABI,
+  ...MetricsDashboardFacetABI,
+  ...VPFITokenFacetABI,
+  ...VPFIDiscountFacetABI,
+  ...VPFIDiscountAccumulatorFacetABI,
+  ...MirrorTierReceiverFacetABI,
+  ...ProtocolBroadcastFacetABI,
+  ...InteractionRewardsFacetABI,
+  // #1351 slice 2c — CLAIM entry points split off for EIP-170 headroom.
+  ...RewardClaimFacetABI,
+  ...PerkFacetABI,
+  ...RewardHorizonSweepFacetABI,
+  ...InteractionRewardsLensFacetABI,
+  ...RewardReporterFacetABI,
+  ...RewardAggregatorFacetABI,
+  ...RewardBroadcastFacetABI,
+  ...RewardRemittanceFacetABI,
+  ...RewardRemittanceLensFacetABI,
+  ...RewardCompensationDispatchFacetABI,
+  ...RewardCommitmentFacetABI,
+  ...RewardCustodyFacetABI,
+  ...RewardReconciliationFacetABI,
+  ...RewardIngressFacetABI,
+  ...RewardEpochFacetABI,
+  ...RewardEpochViewFacetABI,
+  ...RewardStagingFacetABI,
+  ...RewardStagingSettleFacetABI,
+  ...RewardStagingDomainFacetABI,
+  ...RewardClosureFacetABI,
+  ...RewardEraFacetABI,
+  ...ServiceCapacityFacetABI,
+  ...OfferMatchIntentFacetABI,
+  ...RepatriationFacetABI,
+  ...ConfigFacetABI,
+  ...NumeraireConfigFacetABI,
+  ...LegalFacetABI,
+  ...PrepayListingFacetABI,
+  ...NFTPrepayListingFacetABI,
+  ...NFTPrepayDutchListingFacetABI,
+  ...NFTPrepayListingAtomicFacetABI,
+  ...NFTPrepayAutoListFacetABI,
+];
 
 /** Viem-typed alias for hooks using `encodeFunctionData` /
  *  `decodeFunctionResult` / `useReadContract`. Same data, narrower
