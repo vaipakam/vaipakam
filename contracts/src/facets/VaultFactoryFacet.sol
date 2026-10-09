@@ -135,11 +135,12 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
 
     /// @notice RL-2 (VpfiRecyclingLoopClosureDesign §6) — emitted whenever
     ///         protocol-tracked VPFI leaves a user's vault through the
-    ///         tracked-balance decrement chokepoint
-    ///         ({vaultWithdrawERC20} → `LibVaipakam.recordVaultWithdraw`,
-    ///         the single decrement site — wallet withdrawals, notification
-    ///         tariff pulls, fee pulls, and future perk spends all route
-    ///         through it). The RL-2 reward-retention ledger consumes this:
+    ///         tracked-balance decrement chokepoint,
+    ///         `LibVaipakam.recordVaultWithdraw`, through its two callers:
+    ///         {vaultWithdrawERC20} (wallet withdrawals, notification tariff
+    ///         pulls, fee pulls, and future perk spends all route through it)
+    ///         and, since #1566 S3e, {recordVaultOutflowERC20} (a
+    ///         swap-to-repay fill's lot, which the 1inch LOP moves itself). The RL-2 reward-retention ledger consumes this:
     ///         debits spend reward-delivered VPFI FIRST, so without this
     ///         event vault VPFI outflows would be invisible off-chain and
     ///         `rewardRetained` would overstate loop closure.
@@ -148,11 +149,13 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
     ///         their existing per-flow events). The ledger never consults
     ///         `recipient` (ANY debit decrements); it is observability
     ///         metadata distinguishing wallet withdrawals from
-    ///         treasury/fee destinations. If a second tracked-balance
-    ///         decrement site is ever added, it MUST emit this event too.
+    ///         treasury/fee destinations. Any further caller of
+    ///         `recordVaultWithdraw` MUST emit this event too.
     /// @param user      Vault owner whose tracked VPFI decreased.
     /// @param amount    VPFI wei debited from the tracked balance.
-    /// @param recipient Where the debited VPFI was sent.
+    /// @param recipient Where the debited VPFI was sent (for a swap-to-repay
+    ///                  fill, the fill's taker; the LOP may deliver to a target
+    ///                  the taker names).
     /// @custom:event-category state-change/vault-mutation
     event VaultVpfiDebited(
         address indexed user,
@@ -535,7 +538,7 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
         uint256 amount
     ) external onlyDiamondInternal {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        address proxy = _creditableVault(s, user);
+        address proxy = _currentVault(s, user);
         IERC20(token).safeTransfer(proxy, amount);
         _recordVaultCredit(s, user, token, proxy, amount);
     }
@@ -601,7 +604,7 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
         uint256 epoch
     ) private {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        address proxy = _creditableVault(s, user);
+        address proxy = _currentVault(s, user);
         (address holder, address vpfi) = LibRewardCustody.boundHolderAndToken(s);
         if (token != vpfi) revert IVaipakamErrors.RewardCustodyPayoutTokenMismatch(vpfi, token);
         LibRewardCustody.debit(s, LibVaipakam.RewardCustodyRow.LiveFresh, fresh, proxy);
@@ -614,9 +617,14 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
         _recordVaultCredit(s, user, token, proxy, amount);
     }
 
-    /// @dev READ-ONLY vault resolution shared by both protocol-payout credits
-    ///      (see {vaultCreditFromDiamondERC20} for why it never mints).
-    function _creditableVault(
+    /// @dev READ-ONLY resolution of an EXISTING vault on a current implementation
+    ///      (`NoVault` / `VaultUpgradeRequired` otherwise), with no sanctions
+    ///      screen. Shared by both protocol-payout credits (see
+    ///      {vaultCreditFromDiamondERC20} for why it never mints) and, since
+    ///      #1566 S3e, the swap fill's {recordVaultOutflowERC20}: a mandatory
+    ///      upgrade holds the fill until anyone runs {upgradeUserVault}, as the
+    ///      vault withdraw it replaced did.
+    function _currentVault(
         LibVaipakam.Storage storage s,
         address user
     ) private view returns (address proxy) {
@@ -718,9 +726,50 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
         if (!success) revert ProxyCallFailed("Withdraw ERC20 failed");
         LibVaipakam.recordVaultWithdraw(user, token, amount);
         // RL-2 — VPFI outflow observability for the reward-retention
-        // ledger. This is the only recordVaultWithdraw caller, so emitting
-        // here covers every tracked VPFI debit (see the event natspec).
+        // ledger. This and {recordVaultOutflowERC20} are the two
+        // recordVaultWithdraw callers and both emit it, so every tracked
+        // VPFI debit is covered (see the event natspec).
         if (token == LibVaipakam.storageSlot().vpfiToken) {
+            emit VaultVpfiDebited(user, amount, recipient);
+        }
+    }
+
+    /**
+     * @notice #1566 S3e — record an outflow a third party performs on the vault's own approval:
+     *         the 1inch LOP taking a swap-to-repay intent's lot from `user`'s vault (the order's
+     *         maker) straight to the taker. The tracked balance, the lien guard and the RL-2 debit
+     *         event of {vaultWithdrawERC20}, without the token move, which the LOP makes right after.
+     * @dev    Diamond-internal: the swap pre-hook self-calls it, under the fill lock, after lowering
+     *         the loan's lien by `amount`, so the guard (the outflow may not dip into what is still
+     *         encumbered) reads the post-decrement lien. The vault is resolved by {_currentVault}:
+     *         an existing vault on a current implementation, with no sanctions screen (the full
+     *         swap-to-repay is a must-complete close-out).
+     *         COUNTER-ONLY: it records an outflow it does not perform, so it is sound only because
+     *         its one caller requires, in the same fill, that the vault's balance dropped by
+     *         exactly `amount` (the post-hook's check); a new caller must carry the same check.
+     * @param user      The vault's owner (`loan.borrower`).
+     * @param token     The ERC-20 the LOP takes.
+     * @param amount    The lot.
+     * @param recipient The fill's taker, named on the RL-2 event (the LOP delivers to the taker
+     *                  or to a target the taker names).
+     */
+    // forge-lint: disable-next-line(mixed-case-function)
+    function recordVaultOutflowERC20(
+        address user,
+        address token,
+        uint256 amount,
+        address recipient
+    ) external onlyDiamondInternal {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        address proxy = _currentVault(s, user);
+        uint256 trackedBalance = s.protocolTrackedVaultBalance[user][token];
+        uint256 rawForGuard = IERC20(token).balanceOf(proxy);
+        if (trackedBalance < rawForGuard) {
+            rawForGuard = trackedBalance;
+        }
+        _assertWithdrawAllowed(user, token, /*tokenId=*/0, amount, rawForGuard);
+        LibVaipakam.recordVaultWithdraw(user, token, amount);
+        if (token == s.vpfiToken) {
             emit VaultVpfiDebited(user, amount, recipient);
         }
     }

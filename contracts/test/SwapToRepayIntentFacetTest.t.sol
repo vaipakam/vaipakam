@@ -399,13 +399,14 @@ contract SwapToRepayIntentFacetTest is SetupTest {
         uint256 payoff = RepayFacet(address(diamond)).calculateRepaymentAmount(LOAN_ID);
 
         // #1566 slice 3 — the whole fill in ONE call, as the pinned LOP runs it
-        // (LibOneTxSwapFill): the pre-hook takes the fill lock and pulls the lot
-        // out of the vault, the LOP moves it to the taker and the taker's
-        // principal in, and the post-hook releases the lock and settles. Two
-        // separate top-level calls cannot carry the lock between the hooks.
+        // (LibOneTxSwapFill): the pre-hook takes the fill lock and records the
+        // lot leaving the vault, the LOP moves it from the vault (the order's
+        // maker, S3e) to the taker and the taker's principal in, and the
+        // post-hook releases the lock and settles. Two separate top-level
+        // calls cannot carry the lock between the hooks.
         principalAsset.mint(address(fusionLOP), params.takerAmount);
         LibOneTxSwapFill.fill(
-            address(fusionLOP), address(diamond), orderHash, address(collateralAsset), lot,
+            address(fusionLOP), address(diamond), borrowerVault, orderHash, address(collateralAsset), lot,
             address(0xF111), address(principalAsset), params.takerAmount
         );
 
@@ -470,13 +471,14 @@ contract SwapToRepayIntentFacetTest is SetupTest {
         _overwriteBorrowerLock(LibERC721.LockReason.PrepayCollateralListing);
 
         // #1566 slice 3 — the whole fill in ONE call, as the pinned LOP runs it
-        // (LibOneTxSwapFill): the pre-hook takes the fill lock and pulls the lot
-        // out of the vault, the LOP moves it to the taker and the taker's
-        // principal in, and the post-hook releases the lock and settles. Two
-        // separate top-level calls cannot carry the lock between the hooks.
+        // (LibOneTxSwapFill): the pre-hook takes the fill lock and records the
+        // lot leaving the vault, the LOP moves it from the vault (the order's
+        // maker, S3e) to the taker and the taker's principal in, and the
+        // post-hook releases the lock and settles. Two separate top-level
+        // calls cannot carry the lock between the hooks.
         principalAsset.mint(address(fusionLOP), params.takerAmount);
         LibOneTxSwapFill.fill(
-            address(fusionLOP), address(diamond), orderHash, address(collateralAsset), lot,
+            address(fusionLOP), address(diamond), borrowerVault, orderHash, address(collateralAsset), lot,
             address(0xF111), address(principalAsset), params.takerAmount
         );
 
@@ -697,7 +699,7 @@ contract MockFusionLOP is MockEip712Lop {
         return 0; // never-filled
     }
 
-    function cancelOrder(uint256 /* makerTraits */, bytes32 /* orderHash */) external pure {
-        // no-op
-    }
+    // #1566 S3e -- no `cancelOrder`: the order's maker is the borrower's vault, so the teardown
+    // withdraws the vault's signature and allowance instead of cancelling at the LOP (which only the
+    // maker could). A teardown that still called it would fail every cancel in this suite.
 }

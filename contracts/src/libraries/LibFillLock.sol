@@ -8,20 +8,23 @@ pragma solidity ^0.8.29;
  *         fallback) enforces it: while it is held, only the Diamond's own self-calls and the
  *         post-hook may enter the Diamond.
  *
- * @dev    Why a lock that spans the two hooks, not `nonReentrant` on each. Slice 3 pulls the intent
- *         lot out of the borrower's vault inside the pre-hook and settles it in the post-hook. Between
- *         the two the LOP runs third-party code: the maker-to-taker transfer (a token hook), the taker
- *         interaction, the taker-to-maker transfer and the native refund. A function-scoped guard is
- *         released when the pre-hook returns, so any of those could enter a Diamond function while the
- *         lot sits in the Diamond and its loan is half-settled. The design says the lock is "set
+ * @dev    Why a lock that spans the two hooks, not `nonReentrant` on each. Slice 3 takes the intent
+ *         lot out of the borrower's vault only inside the fill: the pre-hook lowers its lien and
+ *         records the outflow, the LOP moves it from the vault (the order's maker, since S3e) to the
+ *         taker, and the post-hook settles. Between the two hooks the LOP runs third-party code: the
+ *         maker-to-taker transfer (a token hook), the taker interaction, the taker-to-maker transfer
+ *         and the unwrapped native payout. A function-scoped guard is released when the pre-hook
+ *         returns, so any of those could enter a Diamond function while the loan is half-settled. The design says the lock is "set
  *         before the pull and cleared by postInteraction"; the post-hook "must reenter during the LOP
  *         transfer", which is why it, alone, is admitted.
  *
  *         Transient storage (EIP-1153): the lock lives for one transaction, so a fill that reverts, or
  *         a transaction that ends between the hooks, can never leave it set. The stored value is the
  *         order hash, so a post-hook can close only the lock its own pre-hook opened, and a second
- *         Vaipakam fill nested inside the first is refused (the recorded trade-off: one Fusion batch
- *         cannot settle two Vaipakam orders one inside the other).
+ *         Vaipakam fill nested inside the first is refused. The recorded trade-off: the lock covers
+ *         both order kinds (O3), so a resolver cannot settle one Vaipakam order -- a swap-to-repay or
+ *         a treasury buyback -- inside another's fill. Fills one after another in the same
+ *         transaction are unaffected: each releases the lock before the next opens it.
  */
 library LibFillLock {
     /// @dev `keccak256("vaipakam.transient.fillLock") - 1`: a transient slot, outside every storage

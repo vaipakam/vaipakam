@@ -1566,7 +1566,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getVaultFactorySelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](34);
+        s = new bytes4[](35);
         s[0] = VaultFactoryFacet.initializeVaultImplementation.selector;
         s[1] = VaultFactoryFacet.getOrCreateUserVault.selector;
         s[2] = VaultFactoryFacet.upgradeVaultImplementation.selector;
@@ -1611,6 +1611,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[32] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256,uint256)"));
         // The four-argument credit stays as a compatibility entry (Codex #2276 r14 P2).
         s[33] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256)"));
+        // #1566 S3e — the swap fill's counter-only outflow record (the LOP moves the lot).
+        s[34] = VaultFactoryFacet.recordVaultOutflowERC20.selector;
     }
 
     /// @dev Issue #67 — `OfferFacet` was split into `OfferCreateFacet`
@@ -1836,10 +1838,12 @@ contract DeployDiamond is Script, ArtifactRootBase {
     ///         `LibSwapToRepayIntentSettlement` (the T-090 v1.1 path)
     ///         or `LibTreasuryBuyback` (the Sub 3 buyback path).
     function _getIntentDispatchFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](3);
+        s = new bytes4[](4);
         s[0] = IntentDispatchFacet.preInteraction.selector;
         s[1] = IntentDispatchFacet.postInteraction.selector;
         s[2] = IntentDispatchFacet.isValidSignature.selector;
+        // #1566 S3e — the borrower vault's ERC-1271 validator for a swap order.
+        s[3] = IntentDispatchFacet.isOrderValid.selector;
     }
 
     /// @notice T-092 Phase 1 (#499) — auto-lifecycle consent surface.

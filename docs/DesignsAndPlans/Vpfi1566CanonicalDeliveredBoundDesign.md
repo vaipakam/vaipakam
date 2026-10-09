@@ -1653,6 +1653,87 @@ durable rather than a snapshot of one moment.
 >   lock, like the principal baseline, lives in transient storage; the custody
 >   invariant enforces V2's intent class.
 
+> **S3e — the borrower's vault is the order's maker (owner decision 2026-10-09).**
+> Found by the whole-stack review before Codex: with the Diamond as the 1inch
+> order's maker and the lot pulled only inside the fill, the maker holds none of
+> the lot at rest, and 1inch's orderbook lists such an order as one whose maker
+> has "insufficient approval or balance for the full remaining amount" (its
+> status 2). Resolvers that take only fillable orders (status 1) would skip every
+> Vaipakam auction. Funds were never at risk; discoverability was. Options put
+> to the owner: the vault as maker (chosen), the protocol keeper filling the
+> orders itself, the lot resting in the Diamond as a ratified exception to #2141,
+> or verifying on the first mainnet deploy. The owner also pointed at
+> VpfiRecyclingCompletionPlan for a solution: its answer to #1566 is custody held
+> in a dedicated, Diamond-gated container rather than in the Diamond's own
+> balance (`RewardCustodyHolder`). The borrower's vault is exactly such a
+> container — per user, owned by the Diamond, released only by it — and it
+> already acts as an order's maker: for a Seaport prepay listing the vault is
+> the offerer, answering ERC-1271 by asking the order's registered validator.
+>
+> - **The maker.** The order's maker is `loan.borrower`'s vault; its receiver
+>   stays the Diamond, and the extension still names the Diamond as the pre- and
+>   post-interaction listener. The lot never enters the Diamond: the LOP moves
+>   it from the vault straight to the taker. The orderbook sees the vault
+>   holding the lot and the LOP approved for it, so the order reads as fillable.
+> - **The signature.** The commit registers the order hash on the vault with
+>   the Diamond as its validator (`registerListingOrderHash`, the same registry
+>   the Seaport listings use). The vault's ERC-1271 asks the Diamond
+>   `isOrderValid(hash)` (a new `IntentDispatchFacet` selector), which answers
+>   from the commit registry and only for the vault that owns the commit. The
+>   Diamond no longer signs swap orders itself; its own `isValidSignature` keeps
+>   serving buyback orders, whose maker is still the Diamond. A nested fill is
+>   still refused: the inner order's vault asks the Diamond mid-fill, and the
+>   fill lock refuses the read.
+> - **The allowance.** The commit raises the vault's exact ERC-20 allowance to
+>   the pinned LOP by the lot (`approveERC20`, a new Diamond-only vault
+>   function); a fill consumes it as the LOP's transfer; a teardown lowers it by
+>   the lot. The vault's allowance is the sum of its live commits' lots. The
+>   Diamond-level aggregate allowance is no longer kept for swap lots (the
+>   buyback's own aggregate is unchanged).
+> - **The fill.** The pre-hook acquires the fill lock first (unchanged), checks
+>   the order and the making amount, then does the bookkeeping the LOP's
+>   transfer needs, as one step: the lien drops by the lot, the vault's tracked
+>   balance records the outflow through the one place that records vault
+>   debits (`VaultFactoryFacet.recordVaultOutflowERC20`, a new Diamond-internal
+>   selector, with the withdrawal's lien guard and its `VaultVpfiDebited`
+>   event), a VPFI holder is restamped broadcast-free, and the vault's balance is
+>   snapshotted. The post-hook releases the lock, requires the vault to have
+>   dropped by exactly the lot and the Diamond to have received exactly the
+>   taking amount, settles as before, and revokes the hash on the vault. The
+>   event `SwapToRepayIntentLotPulled` keeps its name and gains the vault and
+>   the taker.
+> - **Exactness moves to the vault.** The check that used to require the
+>   Diamond to receive exactly the lot now requires the vault to give up exactly
+>   the lot, which is what keeps the vault's tracked balance true. A token that
+>   takes more or less than the lot from the vault fails the fill; a token that
+>   charges its fee to the receiver now costs only the resolver who chose to
+>   fill, since the protocol's books are no longer on that side. The intent
+>   token allowlists are still meant to admit exact-transfer tokens only.
+> - **A mandatory vault upgrade still holds the fill.** The outflow record
+>   resolves the vault through the same read-only resolver the protocol-payout
+>   credits use (an existing vault on a current implementation), so a fill
+>   waits for a mandatory upgrade exactly as the S3 vault withdraw did, until
+>   anyone runs `upgradeUserVault`. The commit and the teardown read the vault
+>   directly, as the Seaport listing wiring does: the commit moves nothing, and
+>   the teardown only withdraws the vault's signature and allowance.
+> - **The teardown** revokes the hash on the vault and lowers the allowance;
+>   no LOP cancel is needed (only the maker could send one), because without
+>   the registration the vault's ERC-1271 refuses the order. The already-filled
+>   check reads the vault's nonce bit.
+> - **No screening on any of this.** Every vault address is resolved without
+>   the sanctions screen and every vault call comes from the Diamond: the full
+>   swap-to-repay is a must-complete close-out (a flagged borrower's commit,
+>   fill and teardown all run, as since S3b).
+> - **What does not change:** the commit moves nothing, the fill lock and its
+>   enforcement in the Diamond's entry point, pause, the exact delivered amount,
+>   the old-custody refusal, the settlement.
+> - **Tests.** `SwapToRepayIntentFillTest` gains I18 (the vault signs for its
+>   own live commit only; the Diamond signs no swap order), I19 (the vault's
+>   allowance is the sum of its live lots: a teardown lowers it by its own lot
+>   and the sibling still fills) and I20 (a mandatory upgrade holds the fill
+>   until anyone runs it); I4b is gone with the pull it covered, and I6 now
+>   measures the vault.
+
 **4. Closure 1's non-user half — the delivered bound. IN THE ARMING GATE.**
 
 Slices 1–3 remove USER value from the shared balance. They do nothing about

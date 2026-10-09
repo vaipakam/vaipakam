@@ -56,7 +56,9 @@ contract VaipakamVaultImplementation is
     }
     mapping(address => mapping(uint256 => RentalEntry[])) private _rentalEntries;
 
-    /// @dev T-086 step 7 — Seaport prepay-collateral-listing support.
+    /// @dev T-086 step 7 — Seaport prepay-collateral-listing support,
+    ///      and since #1566 S3e the 1inch swap-to-repay order this vault
+    ///      makes (validator = the Diamond's `isOrderValid`).
     ///      Maps a Seaport `orderHash` to the executor singleton
     ///      address that recorded it. Populated by
     ///      {registerListingOrderHash} (called by the diamond's
@@ -291,6 +293,10 @@ contract VaipakamVaultImplementation is
     ///         binding (cancel / cancelExpired / post-fill).
     event ListingOrderHashRevoked(bytes32 indexed orderHash);
 
+    /// @notice #1566 S3e — this vault's ERC-20 allowance to `spender` was set to `amount` by the
+    ///         Diamond (a swap-to-repay intent's lot, approved to the pinned 1inch LOP).
+    event ERC20ApprovalSet(address indexed token, address indexed spender, uint256 amount);
+
     /// @dev Caller-passed zero `orderHash` to a register / revoke.
     ///      Seaport never produces a zero hash so it's an obvious
     ///      sentinel the vault rejects.
@@ -387,7 +393,8 @@ contract VaipakamVaultImplementation is
      *         `updatePrepayListing` immediately after the diamond
      *         records the listing on the executor itself, so the
      *         vault's mapping and the executor's `orderContext`
-     *         stay in lock-step.
+     *         stay in lock-step; and (#1566 S3e) by the swap-to-repay
+     *         commit, with the Diamond itself as the validator.
      */
     function registerListingOrderHash(bytes32 orderHash, address executor)
         external
@@ -409,7 +416,8 @@ contract VaipakamVaultImplementation is
      * @dev    Diamond-gated. Called by every cancel path
      *         (borrower cancel + permissionless grace-expired)
      *         and by the executor-finalize callback after a
-     *         successful Seaport fill.
+     *         successful Seaport fill; and (#1566 S3e) by every
+     *         swap-to-repay teardown and by its fill's post-hook.
      */
     function revokeListingOrderHash(bytes32 orderHash) external onlyDiamond {
         if (orderHash == bytes32(0)) revert ZeroOrderHash();
@@ -418,8 +426,23 @@ contract VaipakamVaultImplementation is
     }
 
     /**
+     * @notice #1566 S3e — set this vault's ERC-20 allowance to `spender` to exactly `amount`.
+     * @dev    Diamond-gated. A swap-to-repay intent's 1inch order names this vault as its maker
+     *         (registered through {registerListingOrderHash} with the Diamond as validator), so the
+     *         LOP takes the auction lot from here, on this allowance, inside the fill. The Diamond
+     *         raises it by the lot at commit and lowers it by the lot at a teardown; a fill consumes
+     *         it as the LOP's own transfer. Always an exact amount, never an unlimited approval.
+     */
+    function approveERC20(address token, address spender, uint256 amount) external onlyDiamond {
+        IERC20(token).forceApprove(spender, amount);
+        emit ERC20ApprovalSet(token, spender, amount);
+    }
+
+    /**
      * @notice ERC-1271 signature-verification callback used by
-     *         Seaport for orders whose `offerer` is this vault.
+     *         Seaport for orders whose `offerer` is this vault, and
+     *         (#1566 S3e) by the 1inch LOP for the swap-to-repay order
+     *         whose maker is this vault.
      *         Delegates to the executor pinned at register time;
      *         returns the magic value iff that executor still
      *         considers the order valid (recorded, conduit in the

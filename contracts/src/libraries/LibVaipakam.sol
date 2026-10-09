@@ -4328,12 +4328,13 @@ library LibVaipakam {
         mapping(address => bool) cfgIntentAllowedPrincipalTokens;
         mapping(address => bool) cfgIntentAllowedCollateralTokens;
         /// @dev §5.1 step 9 + Codex round-2 P2 #7 — per-token
-        ///      aggregate approved making amount. Tracks the sum of all
-        ///      live `intentCommits[*].makerAmount` for this token (and,
-        ///      through `LibTreasuryBuyback`, live buyback reservations)
-        ///      so a second concurrent commit can re-approve
-        ///      Fusion's LimitOrderProtocol to the new aggregate
-        ///      without clobbering the first commit's allowance.
+        ///      aggregate approved making amount of this Diamond, so a
+        ///      second concurrent order can re-approve Fusion's
+        ///      LimitOrderProtocol to the new aggregate without clobbering
+        ///      the first one's allowance. Since #1566 S3e it tracks live
+        ///      buyback reservations only (through `LibTreasuryBuyback`): a
+        ///      swap-to-repay lot is approved by the borrower's vault, the
+        ///      order's maker, and never enters this figure.
         mapping(address => uint256) intentAggregateAllowance;
         /// @dev §5.1 step 11 + Codex round-10 P1 #6 — live-commit count.
         ///      Incremented on commit; decremented on

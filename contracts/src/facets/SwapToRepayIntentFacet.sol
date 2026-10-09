@@ -21,7 +21,7 @@ import {IERC1271} from "@openzeppelin/contracts/interfaces/IERC1271.sol";
 import {IPreInteraction} from "@1inch/limit-order-protocol/contracts/interfaces/IPreInteraction.sol";
 import {IPostInteraction} from "@1inch/limit-order-protocol/contracts/interfaces/IPostInteraction.sol";
 import {IOrderMixin} from "@1inch/limit-order-protocol/contracts/interfaces/IOrderMixin.sol";
-import {MakerTraits} from "@1inch/limit-order-protocol/contracts/libraries/MakerTraitsLib.sol";
+import {VaipakamVaultImplementation} from "../VaipakamVaultImplementation.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {RiskFacet} from "./RiskFacet.sol";
 import {LibSwapToRepaySizing} from "../libraries/LibSwapToRepaySizing.sol";
@@ -77,10 +77,11 @@ contract SwapToRepayIntentFacet is
     // ──────────────────────────────────────────────────────────────
     //  Borrower-supplied commit inputs (Codex round-5 P1 #1 +
     //  round-7 P1 #4 — full structured-order shape; the diamond
-    //  derives `maker = receiver = address(this)`, sets
-    //  `makerAmount` to the debt-sized lot (#2322; pulled only at the
-    //  fill since #1566 slice 3), and recomputes the canonical 1inch
-    //  LOP v4 orderHash on-chain).
+    //  derives `maker` = the borrower's vault (#1566 S3e) and
+    //  `receiver = address(this)`, sets `makerAmount` to the debt-sized
+    //  lot (#2322; it leaves the vault only in the fill since #1566
+    //  slice 3), and recomputes the canonical 1inch LOP v4 orderHash
+    //  on-chain).
     // ──────────────────────────────────────────────────────────────
 
     /// @notice §6.2 dapp-flow input. The borrower picks the
@@ -127,7 +128,7 @@ contract SwapToRepayIntentFacet is
     ///         resolver-pickup endpoint after the commit lands.
     ///         Returned by {getIntentCommit}.
     struct FusionOrderRead {
-        address maker;          // == address(this)
+        address maker;          // the borrower's vault (#1566 S3e)
         address receiver;       // == address(this)
         address makerAsset;     // loan.collateralAsset
         address takerAsset;     // loan.principalAsset
@@ -364,11 +365,11 @@ contract SwapToRepayIntentFacet is
 
     /**
      * @notice §5.1 — sizes the debt-sized lot, registers the canonical
-     *         orderHash for ERC-1271 binding, and approves Fusion's
-     *         pinned `LimitOrderProtocol` for the aggregate-per-token
-     *         maker amount. Moves no collateral: the lot stays in
-     *         `loan.borrower`'s vault until its own fill's pre-hook
-     *         pulls it (#1566 slice 3).
+     *         orderHash, and has `loan.borrower`'s vault -- the order's
+     *         maker (#1566 S3e) -- sign for it and raise its allowance
+     *         to Fusion's pinned `LimitOrderProtocol` by the lot. Moves
+     *         no collateral: the lot stays in the vault until its own
+     *         fill, where the LOP takes it straight to the taker.
      * @param  loanId Loan being repaid. Must be Active + ERC20-on-ERC20
      *         + both legs allowlisted + caller is the current
      *         borrower-NFT owner + HF >=
@@ -395,7 +396,8 @@ contract SwapToRepayIntentFacet is
 
         // #594 — consolidate a transferred borrower position BEFORE the commit
         // (design D-3 principle 2 — the commit is the state-entering endpoint),
-        // so the lot the fill later pulls comes from the current holder's vault.
+        // so the order's maker -- and the vault the fill later takes the lot
+        // from -- is the current holder's vault.
         // Borrower side, skip-not-block.
         LibConsolidation.consolidateToHolder(
             loanId, false, LibConsolidation.Ctx.Tier2CloseOut
@@ -575,14 +577,17 @@ contract SwapToRepayIntentFacet is
         // it (ERC-5267 `eip712Domain()`; #2449: the deployed v4 LOP has no
         // `DOMAIN_SEPARATOR()` getter).
         bytes32 lopDomainSeparator = LibLopDomain.separator(s.cfgFusionLimitOrderProtocol);
+        // #1566 S3e — the maker is `loan.borrower`'s vault, read from storage
+        // (no sanctions screen: a must-complete close-out).
+        address vault = s.userVaipakamVaults[loan.borrower];
         bytes32 structHash = keccak256(abi.encode(
             _LIMIT_ORDER_TYPEHASH,
             params.salt,
-            uint256(uint160(address(this))),         // maker = diamond
+            uint256(uint160(vault)),                 // maker = the borrower's vault
             uint256(uint160(address(this))),         // receiver = diamond
             uint256(uint160(loan.collateralAsset)),  // makerAsset
             uint256(uint160(loan.principalAsset)),   // takerAsset
-            lot,                                     // makingAmount = the lot the fill's pre-hook pulls
+            lot,                                     // makingAmount = the lot the LOP takes from the vault
             params.takerAmount,                      // takingAmount
             params.makerTraits
         ));
@@ -601,13 +606,19 @@ contract SwapToRepayIntentFacet is
         if (s.orderHashKind[orderHash] != bytes32(0))
             revert IntentOrderHashAlreadyInUse(orderHash);
 
-        // ── §5.1 step 10: aggregate allowance management
-        //    (zero-then-set for USDT-style tokens) ─────────────────────
-        s.intentAggregateAllowance[loan.collateralAsset] += lot;
-        IERC20(loan.collateralAsset).forceApprove(s.cfgFusionLimitOrderProtocol, 0);
-        IERC20(loan.collateralAsset).forceApprove(
+        // ── §5.1 step 10 (#1566 S3e): the vault signs and approves ───
+        // The vault, not this Diamond, is the order's maker: register the
+        // hash on it with this Diamond as the validator (the registry the
+        // Seaport listings use), so its ERC-1271 answers through
+        // `IntentDispatchFacet.isOrderValid`; and raise its exact allowance
+        // to the pinned LOP by the lot (zero-then-set for USDT-style
+        // tokens, inside the vault). The orderbook then sees the lot where
+        // it rests, approved, and reads the order as fillable.
+        VaipakamVaultImplementation(vault).registerListingOrderHash(orderHash, address(this));
+        VaipakamVaultImplementation(vault).approveERC20(
+            loan.collateralAsset,
             s.cfgFusionLimitOrderProtocol,
-            s.intentAggregateAllowance[loan.collateralAsset]
+            IERC20(loan.collateralAsset).allowance(vault, s.cfgFusionLimitOrderProtocol) + lot
         );
 
         // ── §5.1 step 11: record commit + reverse index + extension
@@ -695,9 +706,9 @@ contract SwapToRepayIntentFacet is
      * @notice §5.5 — borrower-NFT-owner cancel path. Callable any
      *         time after `deadline`; refuses an order whose nonce bit
      *         the LOP has already set (Codex round-1 P1 #4 + round-8
-     *         P1 #2), cancels it at the LOP, decrements the aggregate
-     *         allowance + live count, and emits
-     *         {SwapToRepayIntentCancelled}. Moves no tokens: the lot
+     *         P1 #2), has the vault stop signing for it and lower its
+     *         allowance to the LOP by the lot (#1566 S3e), decrements
+     *         the live count, and emits {SwapToRepayIntentCancelled}. Moves no tokens: the lot
      *         never left `loan.borrower`'s vault (#1566 slice 3).
      */
     function cancelSwapToRepayIntent(uint256 loanId)
@@ -773,9 +784,9 @@ contract SwapToRepayIntentFacet is
     ///         calls. The trigger-condition check is the caller's
     ///         responsibility (the diamond's reentrancy guard
     ///         already wraps the outer entry point). Identical
-    ///         teardown to {_executeCancel}: Fusion cancel, aggregate-
-    ///         allowance + live-count decrement, storage cleanup (no
-    ///         collateral moves: it never left the vault);
+    ///         teardown to {_executeCancel}: the vault's signature and
+    ///         allowance withdrawn, live-count decrement, storage cleanup
+    ///         (no collateral moves: it never left the vault);
     ///         the only difference is the event emitted (
     ///         {SwapToRepayIntentForceCancelled} with reason
     ///         discriminator + source facet attribution).
@@ -853,8 +864,8 @@ contract SwapToRepayIntentFacet is
     }
 
     /// @dev Tears down a live commit per §5.5 — invariant guard,
-    ///      Fusion cancel, aggregate-allowance + live-count
-    ///      decrements, storage cleanup, event. Moves no collateral. Shared body for both cancel
+    ///      the vault's signature and allowance withdrawn, live-count
+    ///      decrement, storage cleanup, event. Moves no collateral. Shared body for both cancel
     ///      paths; the per-path authority + timing checks live in
     ///      their respective external entry points.
     function _executeCancel(
@@ -871,10 +882,13 @@ contract SwapToRepayIntentFacet is
     ///      (borrower / permissionless paths) and
     ///      {internalForceCancelIntent} (lender-protection paths).
     ///      Handles: the old-custody refusal (#1566 slice 3, O1), the
-    ///      already-filled nonce-bit check (Codex round-8 P1 #2), Fusion
-    ///      `cancelOrder` (round-12 P1 #4), aggregate-allowance +
-    ///      live-count decrement + Fusion approval re-set, storage
-    ///      cleanup. Moves no tokens: the lot is still in the vault.
+    ///      already-filled nonce-bit check (Codex round-8 P1 #2), the
+    ///      vault's signing registration revoked and its allowance to the
+    ///      LOP lowered by the lot (#1566 S3e: these replace the LOP-side
+    ///      `cancelOrder` of round-12 P1 #4, which only the maker could now
+    ///      send, and the Diamond's aggregate allowance), the live-count
+    ///      decrement, storage cleanup. Moves no tokens: the lot is still in
+    ///      the vault.
     ///      Returns the orderHash so the caller can emit the right event.
     function _teardownCommit(
         LibVaipakam.Storage storage s,
@@ -894,17 +908,20 @@ contract SwapToRepayIntentFacet is
         // takes the nonce and shifts it itself. Buyback orders use the
         // remaining-amount invalidator (they allow several fills), so no
         // buyback order can set this bit.
+        // The maker, whose bit the LOP sets, is the borrower's vault (S3e).
+        address vault = s.userVaipakamVaults[s.loans[loanId].borrower];
         uint256 nonce = (commit.makerTraits >> 120) & ((1 << 40) - 1);
         if (
-            IOrderMixin(commit.lopAtCommit).bitInvalidatorForOrder(address(this), nonce)
+            IOrderMixin(commit.lopAtCommit).bitInvalidatorForOrder(vault, nonce)
                 & (1 << (nonce & 0xff)) != 0
         ) revert IntentAlreadyFilled();
 
-        // ── 2. Cancel Fusion-side ───────────────────────────────────
-        IOrderMixin(commit.lopAtCommit).cancelOrder(
-            MakerTraits.wrap(commit.makerTraits),
-            commit.orderHash
-        );
+        // ── 2. The vault stops signing for the order (#1566 S3e) ────
+        // Without the registration the vault's ERC-1271 refuses the order,
+        // and with the allowance lowered below (step 4) the LOP could not
+        // take the lot either. No LOP-side cancel is needed (only the
+        // maker could send one).
+        VaipakamVaultImplementation(vault).revokeListingOrderHash(commit.orderHash);
 
         // ── 3. Nothing to return (#1566 slice 3) ────────────────────
         // The lot never left `loan.borrower`'s vault: a teardown moves no
@@ -915,17 +932,16 @@ contract SwapToRepayIntentFacet is
         // their vault.
         LibVaipakam.Loan storage loan = s.loans[loanId];
 
-        // ── 4. Aggregate-allowance + live-count decrements ──────────
-        s.intentAggregateAllowance[loan.collateralAsset] -=
-            commit.makerAmount;
-        s.intentLiveCommitCount -= 1;
-        IERC20(loan.collateralAsset).forceApprove(commit.lopAtCommit, 0);
-        if (s.intentAggregateAllowance[loan.collateralAsset] != 0) {
-            IERC20(loan.collateralAsset).forceApprove(
+        // ── 4. The vault's allowance + the live count (#1566 S3e) ───
+        {
+            uint256 current = IERC20(loan.collateralAsset).allowance(vault, commit.lopAtCommit);
+            VaipakamVaultImplementation(vault).approveERC20(
+                loan.collateralAsset,
                 commit.lopAtCommit,
-                s.intentAggregateAllowance[loan.collateralAsset]
+                current > commit.makerAmount ? current - commit.makerAmount : 0
             );
         }
+        s.intentLiveCommitCount -= 1;
 
         // ── 5. Storage cleanup ──────────────────────────────────────
         orderHash = commit.orderHash;
@@ -988,7 +1004,7 @@ contract SwapToRepayIntentFacet is
         LibVaipakam.SwapToRepayIntentCommit storage commit = s.intentCommits[loanId];
         if (commit.orderHash == bytes32(0)) revert IntentNoCommit(loanId);
         LibVaipakam.Loan storage loan = s.loans[loanId];
-        order.maker       = address(this);
+        order.maker       = s.userVaipakamVaults[loan.borrower]; // #1566 S3e: the vault is the maker
         order.receiver    = address(this);
         order.makerAsset  = loan.collateralAsset;
         order.takerAsset  = loan.principalAsset;
@@ -1004,8 +1020,8 @@ contract SwapToRepayIntentFacet is
     ///         Diamond. Always 0 on a Diamond built from this source: the lot
     ///         stays in the borrower's vault until its own fill. Non-zero only
     ///         for a commit recorded under the old custody, which the pre-hook
-    ///         and every teardown refuse (`IntentCustodyNotVaultHeld`). The
-    ///         custody census reads it.
+    ///         and every teardown refuse (`IntentCustodyNotVaultHeld`).
+    ///         Exposed for the custody census to read.
     function getIntentCustody(uint256 loanId) external view returns (uint256 diamondHeld) {
         return LibVaipakam.storageSlot().intentCommits[loanId].custodialCollateral;
     }

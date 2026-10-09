@@ -948,7 +948,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](32);
+        selectors = new bytes4[](33);
         selectors[0] = VaultFactoryFacet
             .initializeVaultImplementation
             .selector;
@@ -991,6 +991,8 @@ contract HelperTest {
         selectors[30] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256,uint256)"));
         // The four-argument credit stays as a compatibility entry (Codex #2276 r14 P2).
         selectors[31] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256)"));
+        // #1566 S3e — the swap fill's counter-only outflow record.
+        selectors[32] = VaultFactoryFacet.recordVaultOutflowERC20.selector;
         return selectors;
     }
 
@@ -1092,10 +1094,12 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](3);
+        selectors = new bytes4[](4);
         selectors[0] = IntentDispatchFacet.preInteraction.selector;
         selectors[1] = IntentDispatchFacet.postInteraction.selector;
         selectors[2] = IntentDispatchFacet.isValidSignature.selector;
+        // #1566 S3e — the borrower vault's ERC-1271 validator for a swap order.
+        selectors[3] = IntentDispatchFacet.isOrderValid.selector;
     }
 
     /// @notice T-092 Phase 1 (#499) — AutoLifecycleFacet selectors.
@@ -3004,7 +3008,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](34);
+        selectors = new bytes4[](35);
         selectors[0] = VaultFactoryFacet.initializeVaultImplementation.selector;
         selectors[1] = VaultFactoryFacet.getOrCreateUserVault.selector;
         selectors[2] = VaultFactoryFacet.upgradeVaultImplementation.selector;
@@ -3044,6 +3048,8 @@ contract HelperTest {
         selectors[32] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256,uint256)"));
         // The four-argument credit stays as a compatibility entry (Codex #2276 r14 P2).
         selectors[33] = bytes4(keccak256("vaultCreditFromRewardCustodyERC20(address,address,uint256,uint256)"));
+        // #1566 S3e — the swap fill's counter-only outflow record.
+        selectors[34] = VaultFactoryFacet.recordVaultOutflowERC20.selector;
         return selectors;
     }
 

@@ -1,6 +1,25 @@
 [
   {
     "type": "function",
+    "name": "isOrderValid",
+    "inputs": [
+      {
+        "name": "orderHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "isValidSignature",
     "inputs": [
       {
@@ -175,7 +194,7 @@
         "internalType": "bytes32"
       },
       {
-        "name": "",
+        "name": "taker",
         "type": "address",
         "internalType": "address"
       },
@@ -372,6 +391,18 @@
         "name": "borrower",
         "type": "address",
         "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "vault",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "taker",
+        "type": "address",
+        "indexed": false,
         "internalType": "address"
       },
       {

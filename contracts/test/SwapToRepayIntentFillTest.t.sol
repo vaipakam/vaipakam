@@ -32,6 +32,7 @@ import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {CallbackERC20} from "./mocks/CallbackERC20.sol";
 import {MockLopFill} from "./mocks/MockLopFill.sol";
 import {LibLopDomain} from "../src/libraries/LibLopDomain.sol";
+import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.sol";
 
 /**
  * @title  TakerReentry
@@ -168,16 +169,19 @@ contract FillThenCall {
  *         cannot.
  *
  * @dev    The cells, against #1566 slice 3's design ("the intent lot is pulled at use and never
- *         rests"): the commit moves nothing (I1); the fill's pre-hook pulls exactly the lot through
- *         the Diamond to the taker (I2, I6, I10); an underfunded taker changes nothing (I3); the
- *         fill lock refuses every re-entry between the two hooks -- from the maker transfer, the
- *         pull itself, the taker interaction, the principal transfer and the native refund (I4,
- *         I4b, I5, I5b, I5c) -- lasts exactly one fill (I12) and refuses a nested Vaipakam fill
- *         (I13); the settlement is funded by exactly the taking amount (I6b); a flagged borrower
- *         blocks neither way out (I7, I8); a VPFI pull restamps the tier (I9); a commit recorded
- *         under the old custody is refused by name (I11); the teardown reads the LOP's nonce bit
- *         (I14); and a pause stops fills (I15). Each cell asserts its fixture is live first, and
- *         the guard cells straddle: the same call outside a fill succeeds.
+ *         rests") and S3e's (the borrower's vault is the order's maker): the commit moves nothing
+ *         and has the vault sign for, and approve, exactly the lot (I1, I18, I19); the fill takes
+ *         exactly the lot from the vault straight to the taker (I2, I6, I10); an underfunded taker
+ *         changes nothing (I3); the fill lock refuses every re-entry between the two hooks -- from
+ *         the maker transfer, the taker interaction, the principal transfer and the unwrapped
+ *         native payout (I4, I5, I5b, I5c) -- lasts exactly one fill (I12) and refuses a nested
+ *         Vaipakam fill (I13); the settlement is funded by exactly the taking amount (I6b); a
+ *         flagged borrower blocks neither way out (I7, I8); a VPFI fill restamps the tier (I9); a
+ *         commit recorded under the old custody is refused by name (I11); the teardown reads the
+ *         vault's nonce bit at the LOP (I14); a pause stops fills (I15), and so does a mandatory
+ *         vault upgrade until anyone runs it (I20); and only the order's own LOP may call either
+ *         hook (I16, I17). Each cell asserts its fixture is live first, and the
+ *         guard cells straddle: the same call outside a fill succeeds.
  *         I0f, the fork cell against the DEPLOYED LOP v4, is {SwapToRepayIntentFillForkTest} below.
  *
  *         The collateral (WETH) and principal (USDC) tokens carry {CallbackERC20}'s transfer hook
@@ -230,12 +234,14 @@ contract SwapToRepayIntentFillTest is CustodyInvariantBase {
         IOrderMixin.Order memory order = _order(r);
         bytes32 orderHash = lopFill.hashOrder(order);
         uint256 nonce = (r.makerTraits >> NONCE_SHIFT) & NONCE_MASK;
+        address vault = _vaultOf(loanId);
+        assertEq(r.maker, vault, "fixture-live: the order's maker is the borrower's vault");
         assertEq(
-            IntentDispatchFacet(address(diamond)).isValidSignature(orderHash, ""),
+            IERC1271(vault).isValidSignature(orderHash, ""),
             IERC1271.isValidSignature.selector,
-            "fixture-live: the Diamond and the mock agree on the order hash"
+            "fixture-live: the vault and the mock agree on the order hash"
         );
-        assertFalse(_bitSet(nonce), "straddle: the nonce bit is clear before the fill");
+        assertFalse(_bitSet(vault, nonce), "straddle: the nonce bit is clear before the fill");
 
         _fund(r.takerAmount);
         vm.prank(taker);
@@ -251,8 +257,8 @@ contract SwapToRepayIntentFillTest is CustodyInvariantBase {
         assertEq(s[3], lopFill.STEP_TAKER_INTERACTION(), "4: then the taker interaction");
         assertEq(s[4], lopFill.STEP_TAKER_TO_MAKER(), "5: then the taker-to-maker transfer");
         assertEq(s[5], lopFill.STEP_POST_INTERACTION(), "6: then the maker post-hook");
-        assertTrue(_bitSet(nonce), "the fill set the nonce bit");
-        assertEq(lopFill.rawRemainingInvalidatorForOrder(address(diamond), orderHash), 0, "raw remaining stays 0");
+        assertTrue(_bitSet(vault, nonce), "the fill set the vault's nonce bit");
+        assertEq(lopFill.rawRemainingInvalidatorForOrder(vault, orderHash), 0, "raw remaining stays 0");
         assertEq(uint8(_status(loanId)), uint8(LibVaipakam.LoanStatus.Repaid), "the fill closed the loan");
     }
 
@@ -281,7 +287,7 @@ contract SwapToRepayIntentFillTest is CustodyInvariantBase {
         lopFill.fillContractOrderParsed(order, "", r.makerAmount, taker, r.extension, "");
 
         assertEq(_read(loanId).makerAmount, r.makerAmount, "the commit is still live");
-        assertFalse(_bitSet(nonce), "the nonce bit is still clear");
+        assertFalse(_bitSet(vault, nonce), "the nonce bit is still clear");
         assertEq(uint8(_status(loanId)), uint8(LibVaipakam.LoanStatus.Active), "the loan is still Active");
         assertEq(IERC20(weth).balanceOf(address(diamond)), diamondBefore, "the Diamond's collateral is unchanged");
         assertEq(IERC20(weth).balanceOf(vault), vaultBefore, "the borrower vault's collateral is unchanged");
@@ -301,8 +307,10 @@ contract SwapToRepayIntentFillTest is CustodyInvariantBase {
 
     /// @notice I1. A commit leaves the lot in the borrower's vault: the Diamond's collateral, the
     ///         vault, the lien and the custody stamp are untouched, and the order's making amount --
-    ///         the one the Diamond hashed and will sign for -- is the previewed lot.
-    /// @dev    Kills: a pull at commit; a hash over a zero making amount (S1-12).
+    ///         the one the Diamond hashed and the vault (the order's maker, S3e) signs for -- is the
+    ///         previewed lot, which is also exactly what the vault approves the LOP for.
+    /// @dev    Kills: a pull at commit; a hash over a zero making amount (S1-12); the vault's
+    ///         allowance raised by other than the lot.
     function test_I1_commit_movesNothing_hashCarriesTheLot() public {
         uint256 loanId = _openWeth(++_seed);
         (uint256 lot,) = SwapToRepayIntentFacet(address(diamond)).previewSwapToRepayIntentLot(loanId);
@@ -321,27 +329,33 @@ contract SwapToRepayIntentFillTest is CustodyInvariantBase {
         assertEq(_lien(loanId), lienBefore, "the lien stays at the whole collateral");
         assertEq(SwapToRepayIntentFacet(address(diamond)).getIntentCustody(loanId), 0, "the custody stamp is 0");
         IOrderMixin.Order memory order = _order(r);
+        assertEq(r.maker, vault, "the order's maker is the borrower's vault");
         assertEq(
-            IntentDispatchFacet(address(diamond)).isValidSignature(lopFill.hashOrder(order), ""),
+            IERC1271(vault).isValidSignature(lopFill.hashOrder(order), ""),
             IERC1271.isValidSignature.selector,
-            "the Diamond signs for the order whose making amount is the lot"
+            "the vault signs for the order whose making amount is the lot"
         );
+        assertEq(IERC20(weth).allowance(vault, address(lopFill)), lot, "and approves the LOP for exactly the lot");
         order.makingAmount = 0;
         assertEq(
-            IntentDispatchFacet(address(diamond)).isValidSignature(lopFill.hashOrder(order), ""),
+            IERC1271(vault).isValidSignature(lopFill.hashOrder(order), ""),
             bytes4(0xffffffff),
             "straddle: not for a zero making amount"
         );
     }
 
-    /// @notice I2. A whole fill takes exactly the lot out of the vault, through the Diamond, to the
-    ///         taker: the Diamond's collateral balance is the same after the fill as before it, the
-    ///         vault is down by the lot, and the lien is the collateral the fill did not take.
-    /// @dev    Kills: a pull of the wrong amount; the pull's provenance event missing.
-    function test_I2_fill_pullsExactlyTheLot_throughTheDiamond_toTheTaker() public {
+    /// @notice I2. A whole fill takes exactly the lot out of the vault straight to the taker (S3e:
+    ///         the vault is the maker): the Diamond's collateral balance is the same after the fill as
+    ///         before it, the vault is down by the lot and so is its tracked balance, its allowance to
+    ///         the LOP is spent, and the lien is the collateral the fill did not take.
+    /// @dev    Kills: a lien or tracked-balance decrement of the wrong amount; the outflow's
+    ///         provenance event missing.
+    function test_I2_fill_takesExactlyTheLot_fromTheVault_toTheTaker() public {
         uint256 loanId = _commitWeth();
         SwapToRepayIntentFacet.FusionOrderRead memory r = _read(loanId);
         address vault = _vaultOf(loanId);
+        address borrower = LoanFacet(address(diamond)).getLoanDetails(loanId).borrower;
+        uint256 trackedBefore = VaultFactoryFacet(address(diamond)).getProtocolTrackedVaultBalance(borrower, weth);
         uint256 collateral = LoanFacet(address(diamond)).getLoanDetails(loanId).collateralAmount;
         uint256 diamondBefore = IERC20(weth).balanceOf(address(diamond));
         uint256 vaultBefore = IERC20(weth).balanceOf(vault);
@@ -350,7 +364,7 @@ contract SwapToRepayIntentFillTest is CustodyInvariantBase {
         _fund(r.takerAmount);
         vm.expectEmit(true, true, true, true, address(diamond));
         emit LibSwapToRepayIntentSettlement.SwapToRepayIntentLotPulled(
-            loanId, lopFill.hashOrder(_order(r)), LoanFacet(address(diamond)).getLoanDetails(loanId).borrower, weth, r.makerAmount
+            loanId, lopFill.hashOrder(_order(r)), borrower, vault, taker, weth, r.makerAmount
         );
         vm.prank(taker);
         lopFill.fillContractOrderParsed(_order(r), "", r.makerAmount, taker, r.extension, "");
@@ -358,6 +372,12 @@ contract SwapToRepayIntentFillTest is CustodyInvariantBase {
         assertEq(IERC20(weth).balanceOf(address(diamond)), diamondBefore, "the Diamond keeps none of it");
         assertEq(IERC20(weth).balanceOf(vault), vaultBefore - r.makerAmount, "the vault is down by the lot");
         assertEq(IERC20(weth).balanceOf(taker), r.makerAmount, "the taker has the lot");
+        assertEq(
+            VaultFactoryFacet(address(diamond)).getProtocolTrackedVaultBalance(borrower, weth),
+            trackedBefore - r.makerAmount,
+            "the vault's tracked balance is down by the lot"
+        );
+        assertEq(IERC20(weth).allowance(vault, address(lopFill)), 0, "the fill spent the vault's allowance");
         assertEq(_lien(loanId), collateral - r.makerAmount, "the lien is what the fill did not take");
         assertEq(uint8(_status(loanId)), uint8(LibVaipakam.LoanStatus.Repaid), "the fill closed the loan");
     }
@@ -376,7 +396,7 @@ contract SwapToRepayIntentFillTest is CustodyInvariantBase {
         uint256 loanId = _commitWeth();
         SwapToRepayIntentFacet.FusionOrderRead memory r = _read(loanId);
         bytes memory repay = abi.encodeCall(RepayFacet.repayLoan, (other));
-        CallbackERC20(weth).arm(address(diamond), taker, address(diamond), otherBorrower, repay);
+        CallbackERC20(weth).arm(_vaultOf(loanId), taker, address(diamond), otherBorrower, repay);
 
         _fill(r, "");
 
@@ -397,7 +417,7 @@ contract SwapToRepayIntentFillTest is CustodyInvariantBase {
         uint256 loanId = _commitWeth();
         SwapToRepayIntentFacet.FusionOrderRead memory r = _read(loanId);
         bytes memory liquidate = abi.encodeCall(RiskFacet.triggerLiquidation, (other, _workingRoute()));
-        CallbackERC20(weth).arm(address(diamond), taker, address(diamond), makeAddr("liquidator"), liquidate);
+        CallbackERC20(weth).arm(_vaultOf(loanId), taker, address(diamond), makeAddr("liquidator"), liquidate);
 
         _fill(r, "");
 
@@ -421,10 +441,11 @@ contract SwapToRepayIntentFillTest is CustodyInvariantBase {
         vm.warp(r.deadline);
         address borrower = LoanFacet(address(diamond)).getLoanDetails(loanId).borrower;
         bytes memory cancel = abi.encodeCall(SwapToRepayIntentFacet.cancelSwapToRepayIntent, (loanId));
-        CallbackERC20(weth).arm(address(diamond), taker, address(diamond), borrower, cancel);
+        CallbackERC20(weth).arm(_vaultOf(loanId), taker, address(diamond), borrower, cancel);
 
         _fill(r, "");
 
+        assertEq(CallbackERC20(weth).callbacks(), 1, "fixture-live: the hook fired inside the maker transfer");
         assertEq(CallbackERC20(weth).lastRevertSelector(), LibFillLock.FillInProgress.selector, "refused by the lock");
         assertEq(uint8(_status(loanId)), uint8(LibVaipakam.LoanStatus.Repaid), "the fill settled");
         vm.prank(LoanFacet(address(diamond)).getLoanDetails(sibling).borrower);
@@ -432,25 +453,6 @@ contract SwapToRepayIntentFillTest is CustodyInvariantBase {
         // Straddle: the sibling's cancel went through -- its commit is gone.
         vm.expectRevert(abi.encodeWithSelector(SwapToRepayIntentFacet.IntentNoCommit.selector, sibling));
         SwapToRepayIntentFacet(address(diamond)).getIntentCommit(sibling);
-    }
-
-    /// @notice I4b. A re-entry from inside the pre-hook's own pull (the collateral token's callback on
-    ///         the vault-to-Diamond transfer) is refused: the lock is taken BEFORE the pull.
-    /// @dev    Kills: the lock acquired after the pull (design: "set before the pull").
-    function test_I4b_reentryFromInsideThePull_isRefused() public {
-        (uint256 other, address otherBorrower) = _otherActiveLoan();
-        uint256 loanId = _commitWeth();
-        SwapToRepayIntentFacet.FusionOrderRead memory r = _read(loanId);
-        CallbackERC20(weth).arm(
-            _vaultOf(loanId), address(diamond), address(diamond), otherBorrower,
-            abi.encodeCall(RepayFacet.repayLoan, (other))
-        );
-
-        _fill(r, "");
-
-        assertEq(CallbackERC20(weth).callbacks(), 1, "fixture-live: the hook fired inside the pull");
-        assertEq(CallbackERC20(weth).lastRevertSelector(), LibFillLock.FillInProgress.selector, "refused by the lock");
-        assertEq(uint8(_status(other)), uint8(LibVaipakam.LoanStatus.Active), "the other loan is untouched");
     }
 
     /// @notice I5. The taker interaction (between the two transfers) is refused. Straddle: after the
@@ -517,32 +519,27 @@ contract SwapToRepayIntentFillTest is CustodyInvariantBase {
     //  I6 -- the exact deltas
     // ============================================================================================
 
-    /// @notice I6. The pull must raise the Diamond's balance by exactly the lot: a token that skims
-    ///         one wei on the way (modelled by the callback moving one wei out of the Diamond right
-    ///         after the pull) fails the whole fill, and the commit stays cancellable with nothing
-    ///         lost.
-    /// @dev    Kills: the pre-hook's delta check dropped. The Diamond holds another balance of the same
-    ///         token (a stand-in reserve), so without the check the fill would NOT fail on its own: the
-    ///         LOP would make up the skimmed wei from that reserve and settle -- the harm the check
-    ///         exists to prevent.
-    function test_I6_feeOnThePull_revertsTheFill_commitStaysCancellable() public {
+    /// @notice I6. The fill must take exactly the lot out of the vault (S3e: the vault is the maker,
+    ///         so the post-hook measures the vault): a token that moves one wei more than asked from
+    ///         the sender (modelled by the callback moving one more wei out of the vault during the
+    ///         LOP's transfer) fails the whole fill, and the commit stays cancellable with nothing lost.
+    /// @dev    Kills: the post-hook's vault-drop check dropped. Without it the fill settles and the
+    ///         vault's tracked balance (debited by exactly the lot) overstates what it holds by the
+    ///         extra wei.
+    function test_I6_aTransferThatTakesMoreThanTheLot_revertsTheFill_commitStaysCancellable() public {
         uint256 loanId = _commitWeth();
         SwapToRepayIntentFacet.FusionOrderRead memory r = _read(loanId);
-        uint256 reserve = 3e18;
-        ERC20Mock(weth).mint(address(diamond), reserve);
-        assertGe(IERC20(weth).balanceOf(address(diamond)), reserve, "fixture-live: another balance to draw on");
         address vault = _vaultOf(loanId);
         uint256 vaultBefore = IERC20(weth).balanceOf(vault);
         uint256 lienBefore = _lien(loanId);
-        CallbackERC20(weth).arm(
-            vault, address(diamond), weth, address(diamond), abi.encodeCall(IERC20.transfer, (makeAddr("skim"), 1))
-        );
+        assertGt(vaultBefore, r.makerAmount, "fixture-live: the vault holds more than the lot");
+        CallbackERC20(weth).arm(vault, taker, weth, vault, abi.encodeCall(IERC20.transfer, (makeAddr("skim"), 1)));
 
         _fund(r.takerAmount);
         vm.prank(taker);
         vm.expectRevert(
             abi.encodeWithSelector(
-                LibSwapToRepayIntentSettlement.IntentCollateralFeeOnTransferUnsupported.selector, r.makerAmount - 1, r.makerAmount
+                LibSwapToRepayIntentSettlement.IntentCollateralFeeOnTransferUnsupported.selector, r.makerAmount + 1, r.makerAmount
             )
         );
         lopFill.fillContractOrderParsed(_order(r), "", r.makerAmount, taker, r.extension, "");
@@ -623,8 +620,9 @@ contract SwapToRepayIntentFillTest is CustodyInvariantBase {
     }
 
     /// @notice I8. A borrower flagged after the commit does not block the fill that repays their
-    ///         lender: the pull runs on the move-out exemption.
-    /// @dev    Kills: a plain withdraw in the pre-hook.
+    ///         lender: the vault's outflow is recorded without a screen (S3e), and the vault signs
+    ///         and the LOP takes the lot without one.
+    /// @dev    Kills: a screened outflow record in the pre-hook.
     function test_I8_fill_succeedsForABorrowerFlaggedAfterTheCommit() public {
         uint256 loanId = _commitWeth();
         SwapToRepayIntentFacet.FusionOrderRead memory r = _read(loanId);
@@ -640,7 +638,7 @@ contract SwapToRepayIntentFillTest is CustodyInvariantBase {
     // ============================================================================================
 
     /// @notice I9. VPFI collateral: after the fill the holder's day stamp is the tracked balance net
-    ///         of what the holder owes others -- the pull restamped it.
+    ///         of what the holder owes others -- the fill restamped it.
     /// @dev    Kills: the pre-hook's VPFI restamp dropped.
     function test_I9_vpfiFill_restampsTheTier() public {
         uint256 loanId = _openKind(++_seed, 1);
@@ -663,10 +661,10 @@ contract SwapToRepayIntentFillTest is CustodyInvariantBase {
 
     /// @notice I10. Collateral the Diamond holds for other reasons (a stand-in for a same-token
     ///         buyback reserve, which needs a Diamond-as-treasury deployment this harness is not) is
-    ///         untouched by a swap fill: the LOP draws exactly the lot the pre-hook pulled.
-    /// @dev    Kills: a skipped or zero pull. The reserve is sized ABOVE the lot, so such a mutant does
-    ///         not merely fail the fill: the LOP draws the whole lot out of the reserve, the fill
-    ///         settles, and the cell fails on the property it states.
+    ///         untouched by a swap fill: the order's maker is the borrower's vault (S3e), and a swap
+    ///         commit grants the LOP no allowance on the Diamond's balance.
+    /// @dev    Kills: a swap commit approving the LOP on the Diamond's own balance. The reserve is
+    ///         sized ABOVE the lot, so the cell would see the LOP's reach into it.
     function test_I10_aSwapFill_neverDrawsOnTheDiamondsOtherBalance() public {
         uint256 loanId = _commitWeth();
         SwapToRepayIntentFacet.FusionOrderRead memory r = _read(loanId);
@@ -675,6 +673,9 @@ contract SwapToRepayIntentFillTest is CustodyInvariantBase {
         uint256 before = IERC20(weth).balanceOf(address(diamond));
         assertGe(before, reserve, "fixture-live: the reserve is there");
         assertGt(reserve, r.makerAmount, "fixture-live: the reserve could cover the whole lot");
+        assertEq(
+            IERC20(weth).allowance(address(diamond), address(lopFill)), 0, "the commit grants the LOP nothing on the Diamond"
+        );
 
         _fill(r, "");
 
@@ -731,16 +732,17 @@ contract SwapToRepayIntentFillTest is CustodyInvariantBase {
     }
 
     /// @notice I13. A Vaipakam fill nested inside another is refused (the recorded trade-off): the
-    ///         LOP's signature check on the inner order cannot reach the Diamond, so the inner fill
-    ///         reverts `BadSignature` and its order stays live. The Diamond's own refusal is shown
-    ///         directly by a second fill whose taker interaction asks for that signature.
+    ///         LOP's signature check on the inner order asks the inner order's vault, whose validator
+    ///         read cannot reach the Diamond mid-fill, so the inner fill reverts `BadSignature` and its
+    ///         order stays live. The Diamond's own refusal is shown directly by a second fill whose
+    ///         taker interaction makes that validator read.
     function test_I13_aNestedVaipakamFill_isRefused() public {
         uint256 inner = _commitWeth();
         SwapToRepayIntentFacet.FusionOrderRead memory ri = _read(inner);
         assertEq(
-            IntentDispatchFacet(address(diamond)).isValidSignature(lopFill.hashOrder(_order(ri)), ""),
+            IERC1271(_vaultOf(inner)).isValidSignature(lopFill.hashOrder(_order(ri)), ""),
             IERC1271.isValidSignature.selector,
-            "fixture-live: outside a fill the Diamond signs for the inner order"
+            "fixture-live: outside a fill the vault signs for the inner order"
         );
         uint256 outer = _commitWeth();
         SwapToRepayIntentFacet.FusionOrderRead memory ro = _read(outer);
@@ -758,21 +760,22 @@ contract SwapToRepayIntentFillTest is CustodyInvariantBase {
         uint256 third = _commitWeth();
         takerHook.arm(
             address(diamond), address(0),
-            abi.encodeCall(IntentDispatchFacet.isValidSignature, (lopFill.hashOrder(_order(ri)), bytes("")))
+            abi.encodeCall(IntentDispatchFacet.isOrderValid, (lopFill.hashOrder(_order(ri))))
         );
         _fill(_read(third), abi.encodePacked(address(takerHook)));
-        assertEq(takerHook.lastRevertSelector(), LibFillLock.FillInProgress.selector, "the Diamond refuses the signature read mid-fill");
+        assertEq(takerHook.lastRevertSelector(), LibFillLock.FillInProgress.selector, "the Diamond refuses the validator read mid-fill");
     }
 
     // ============================================================================================
     //  I16 / I17 -- the hooks' caller checks
     // ============================================================================================
 
-    /// @notice I16. Since slice 3 the pre-hook moves funds, so only the order's own LOP may call it: a
-    ///         stray `preInteraction` outside any fill is refused, and the vault, the lien and the
-    ///         Diamond are untouched. Straddle: the LOP's fill of the same order clears.
-    /// @dev    Kills: the pre-hook's caller check dropped (anyone could pull a lot out of a vault into
-    ///         the Diamond outside a fill, where it would rest unattributed).
+    /// @notice I16. The pre-hook drops the lien and debits the vault's tracked balance by the lot, so
+    ///         only the order's own LOP may call it: a stray `preInteraction` outside any fill is
+    ///         refused, and the vault, its tracked balance, the lien and the Diamond are untouched.
+    ///         Straddle: the LOP's fill of the same order clears.
+    /// @dev    Kills: the pre-hook's caller check dropped (anyone could unlien a lot and debit the
+    ///         vault's books outside a fill, leaving the lot unencumbered in the vault).
     function test_I16_aStrayPreHook_isRefused_andMovesNothing() public {
         uint256 loanId = _commitWeth();
         SwapToRepayIntentFacet.FusionOrderRead memory r = _read(loanId);
@@ -782,6 +785,8 @@ contract SwapToRepayIntentFillTest is CustodyInvariantBase {
         uint256 vaultBefore = IERC20(weth).balanceOf(vault);
         uint256 diamondBefore = IERC20(weth).balanceOf(address(diamond));
         uint256 lienBefore = _lien(loanId);
+        address borrower = LoanFacet(address(diamond)).getLoanDetails(loanId).borrower;
+        uint256 trackedBefore = VaultFactoryFacet(address(diamond)).getProtocolTrackedVaultBalance(borrower, weth);
         address stranger = makeAddr("stranger");
 
         vm.prank(stranger);
@@ -795,6 +800,11 @@ contract SwapToRepayIntentFillTest is CustodyInvariantBase {
         assertEq(IERC20(weth).balanceOf(vault), vaultBefore, "the vault is untouched");
         assertEq(IERC20(weth).balanceOf(address(diamond)), diamondBefore, "the Diamond is untouched");
         assertEq(_lien(loanId), lienBefore, "the lien is untouched");
+        assertEq(
+            VaultFactoryFacet(address(diamond)).getProtocolTrackedVaultBalance(borrower, weth),
+            trackedBefore,
+            "the vault's tracked balance is untouched"
+        );
         _fill(r, "");
         assertEq(uint8(_status(loanId)), uint8(LibVaipakam.LoanStatus.Repaid), "straddle: the LOP's fill clears");
     }
@@ -834,25 +844,34 @@ contract SwapToRepayIntentFillTest is CustodyInvariantBase {
     //  I14 / I15 -- the teardown's bit check, and pause
     // ============================================================================================
 
-    /// @notice I14. While a commit is recorded, a set nonce bit at the LOP (filled, or cancelled
-    ///         there) makes the teardown refuse with `IntentAlreadyFilled`. Straddle: from the same
-    ///         state with the bit clear, the cancel succeeds.
-    /// @dev    Kills: the dead remaining-amount read kept (it is 0 for a bit-invalidator order).
+    /// @notice I14. While a commit is recorded, a set nonce bit at the LOP for the order's maker --
+    ///         the borrower's vault (S3e) -- makes the teardown refuse with `IntentAlreadyFilled`.
+    ///         Straddle: from the same state with the bit clear, the cancel succeeds.
+    /// @dev    Kills: the dead remaining-amount read kept (it is 0 for a bit-invalidator order); the
+    ///         bit read for the Diamond instead of the vault.
     function test_I14_aSetNonceBit_makesTheTeardownRefuse() public {
         uint256 loanId = _commitWeth();
         SwapToRepayIntentFacet.FusionOrderRead memory r = _read(loanId);
         address borrower = LoanFacet(address(diamond)).getLoanDetails(loanId).borrower;
         vm.warp(r.deadline + 1);
         uint256 snap = vm.snapshotState();
+        {
+            // Straddle: the same nonce's bit set under the DIAMOND's key does not refuse -- the
+            // teardown reads the maker's (the vault's) bit only.
+            bytes32 h = lopFill.hashOrder(_order(r)); // before the prank
+            vm.prank(address(diamond));
+            lopFill.cancelOrder(MakerTraits.wrap(r.makerTraits), h);
+        }
         vm.prank(borrower);
         SwapToRepayIntentFacet(address(diamond)).cancelSwapToRepayIntent(loanId);
         vm.revertToState(snap);
 
         bytes32 orderHash = lopFill.hashOrder(_order(r)); // before the prank: a call in the arguments would consume it
-        vm.prank(address(diamond));
+        address vault = _vaultOf(loanId); // likewise
+        vm.prank(vault); // the order's maker: only it can set its own nonce bit
         lopFill.cancelOrder(MakerTraits.wrap(r.makerTraits), orderHash);
-        assertTrue(_bitSet((r.makerTraits >> NONCE_SHIFT) & NONCE_MASK), "fixture-live: the bit is set");
-        assertEq(lopFill.rawRemainingInvalidatorForOrder(address(diamond), orderHash), 0, "and raw remaining is 0");
+        assertTrue(_bitSet(vault, (r.makerTraits >> NONCE_SHIFT) & NONCE_MASK), "fixture-live: the bit is set");
+        assertEq(lopFill.rawRemainingInvalidatorForOrder(vault, orderHash), 0, "and raw remaining is 0");
         vm.prank(borrower);
         vm.expectRevert(SwapToRepayIntentFacet.IntentAlreadyFilled.selector);
         SwapToRepayIntentFacet(address(diamond)).cancelSwapToRepayIntent(loanId);
@@ -873,6 +892,130 @@ contract SwapToRepayIntentFillTest is CustodyInvariantBase {
         vm.prank(taker);
         lopFill.fillContractOrderParsed(_order(r), "", r.makerAmount, taker, r.extension, "");
         assertEq(uint8(_status(loanId)), uint8(LibVaipakam.LoanStatus.Repaid), "straddle: unpaused, it fills");
+    }
+
+    // ============================================================================================
+    //  I18 / I19 -- S3e: the vault signs and approves for its own live commits only
+    // ============================================================================================
+
+    /// @notice I18. The borrower's vault signs for its own live commit only: the Diamond's own
+    ///         ERC-1271 refuses a swap order, the Diamond's validator answers only the maker vault
+    ///         that asks, and once the fill settles the vault no longer signs and its registration
+    ///         of the hash is gone.
+    /// @dev    Kills: the validator's vault binding dropped (any vault would be answered); the swap
+    ///         arm left in the Diamond's own `isValidSignature`; the post-hook's revoke dropped (the
+    ///         registration would outlive the fill).
+    function test_I18_theVaultSigns_forItsOwnLiveCommitOnly() public {
+        uint256 loanId = _commitWeth();
+        SwapToRepayIntentFacet.FusionOrderRead memory r = _read(loanId);
+        bytes32 orderHash = lopFill.hashOrder(_order(r));
+        address vault = _vaultOf(loanId);
+        address otherVault;
+        for (uint256 i; i < 8 && otherVault == address(0); ++i) {
+            address v = _vaultOf(_openWeth(++_seed));
+            if (v != vault) otherVault = v;
+        }
+        assertTrue(otherVault != address(0), "fixture-live: another borrower's vault");
+        assertEq(
+            IERC1271(vault).isValidSignature(orderHash, ""),
+            IERC1271.isValidSignature.selector,
+            "fixture-live: the vault signs for its live commit"
+        );
+
+        assertEq(
+            IntentDispatchFacet(address(diamond)).isValidSignature(orderHash, ""),
+            bytes4(0xffffffff),
+            "the Diamond signs for no swap order itself"
+        );
+        vm.prank(vault);
+        assertTrue(IntentDispatchFacet(address(diamond)).isOrderValid(orderHash), "straddle: answered for the maker vault");
+        vm.prank(otherVault);
+        assertFalse(IntentDispatchFacet(address(diamond)).isOrderValid(orderHash), "not for another vault");
+
+        _fill(r, "");
+
+        assertEq(uint8(_status(loanId)), uint8(LibVaipakam.LoanStatus.Repaid), "fixture-live: the fill settled");
+        assertEq(IERC1271(vault).isValidSignature(orderHash, ""), bytes4(0xffffffff), "the vault no longer signs");
+        assertEq(
+            VaipakamVaultImplementation(vault).getListingExecutor(orderHash), address(0), "its registration is gone"
+        );
+    }
+
+    /// @notice I19. The vault's allowance to the LOP is the sum of its live commits' lots: two commits
+    ///         on one vault approve both, a teardown lowers it by its own lot (the sibling stays
+    ///         fillable), and the sibling's fill spends exactly its own, back to zero.
+    /// @dev    Kills: the commit setting (not raising) the allowance; the teardown zeroing (not
+    ///         lowering) it, which strands the sibling unfillable; the teardown's allowance step
+    ///         dropped; the teardown's revoke dropped (the registration would outlive the auction).
+    function test_I19_theVaultsAllowance_isTheSumOfItsLiveLots() public {
+        uint256 a = _commitWeth();
+        address vault = _vaultOf(a);
+        uint256 b;
+        for (uint256 i; i < 8 && b == 0; ++i) {
+            uint256 id = _openWeth(++_seed);
+            if (_vaultOf(id) == vault) b = id;
+        }
+        assertGt(b, 0, "fixture-live: a second loan on the same vault");
+        SwapToRepayIntentFacet.FusionOrderRead memory ra = _read(a);
+        SwapToRepayIntentFacet.FusionOrderRead memory rb = _commitOn(b);
+        assertGt(ra.makerAmount, 0, "fixture-live: a non-empty first lot");
+        assertGt(rb.makerAmount, 0, "fixture-live: a non-empty second lot");
+        assertEq(rb.deadline, ra.deadline, "fixture-live: one deadline");
+
+        assertEq(IERC20(weth).allowance(vault, address(lopFill)), ra.makerAmount + rb.makerAmount, "both lots approved");
+
+        bytes32 hashA = lopFill.hashOrder(_order(ra));
+        assertEq(
+            VaipakamVaultImplementation(vault).getListingExecutor(hashA), address(diamond), "fixture-live: registered"
+        );
+        vm.warp(ra.deadline); // the inclusive instant: the first is cancellable, the second still fillable
+        vm.prank(LoanFacet(address(diamond)).getLoanDetails(a).borrower);
+        SwapToRepayIntentFacet(address(diamond)).cancelSwapToRepayIntent(a);
+        assertEq(IERC20(weth).allowance(vault, address(lopFill)), rb.makerAmount, "a teardown lowers it by its own lot");
+        assertEq(
+            VaipakamVaultImplementation(vault).getListingExecutor(hashA), address(0), "and revokes its registration"
+        );
+
+        _fill(rb, "");
+        assertEq(uint8(_status(b)), uint8(LibVaipakam.LoanStatus.Repaid), "the sibling still fills");
+        assertEq(IERC20(weth).allowance(vault, address(lopFill)), 0, "and its fill spends exactly its own lot");
+    }
+
+    /// @notice I20. A mandatory vault upgrade imposed during the auction holds the fill: the outflow
+    ///         record refuses an outdated vault (`VaultUpgradeRequired`), as every protocol payout into
+    ///         a vault does, and nothing moves. Anyone may run the upgrade; the same fill then clears.
+    /// @dev    Kills: the outflow record reading the vault raw (a fill through an implementation the
+    ///         admin has marked unsafe). The settlement's payout into the LENDER's vault is held by the
+    ///         same upgrade, so the lender's vault is upgraded first: only the order's maker is then
+    ///         outdated, and the refusal can come from the outflow record alone.
+    function test_I20_aMandatoryVaultUpgrade_holdsTheFill_untilAnyoneUpgrades() public {
+        uint256 loanId = _commitWeth();
+        SwapToRepayIntentFacet.FusionOrderRead memory r = _read(loanId);
+        address borrower = LoanFacet(address(diamond)).getLoanDetails(loanId).borrower;
+        address vault = _vaultOf(loanId);
+        uint256 vaultBefore = IERC20(weth).balanceOf(vault);
+        VaultFactoryFacet vf = VaultFactoryFacet(address(diamond));
+        vf.upgradeVaultImplementation(address(new VaipakamVaultImplementation()));
+        (, uint256 current,,) = vf.getVaultVersionInfo(borrower);
+        vf.setMandatoryVaultUpgrade(current);
+        (,,, bool required) = vf.getVaultVersionInfo(borrower);
+        assertTrue(required, "fixture-live: the borrower's vault is now outdated");
+        address lender = LoanFacet(address(diamond)).getLoanDetails(loanId).lender;
+        vf.upgradeUserVault(lender);
+        (,,, bool lenderRequired) = vf.getVaultVersionInfo(lender);
+        assertFalse(lenderRequired, "fixture-live: only the maker's vault is outdated");
+
+        _fund(r.takerAmount);
+        vm.prank(taker);
+        vm.expectRevert(VaultFactoryFacet.VaultUpgradeRequired.selector);
+        lopFill.fillContractOrderParsed(_order(r), "", r.makerAmount, taker, r.extension, "");
+        assertEq(IERC20(weth).balanceOf(vault), vaultBefore, "nothing left the vault");
+
+        vm.prank(makeAddr("anyone"));
+        vf.upgradeUserVault(borrower);
+        vm.prank(taker);
+        lopFill.fillContractOrderParsed(_order(r), "", r.makerAmount, taker, r.extension, "");
+        assertEq(uint8(_status(loanId)), uint8(LibVaipakam.LoanStatus.Repaid), "straddle: upgraded, it fills");
     }
 
     // ============================================================================================
@@ -993,8 +1136,10 @@ contract SwapToRepayIntentFillTest is CustodyInvariantBase {
         ERC20Mock(usdc).mint(taker, amount);
     }
 
-    function _bitSet(uint256 nonce) internal view returns (bool) {
-        return lopFill.bitInvalidatorForOrder(address(diamond), nonce) & (1 << (nonce & 0xff)) != 0;
+    /// @dev Whether `maker`'s bit-invalidator bit for `nonce` is set at the LOP (S3e: a swap order's
+    ///      maker is the borrower's vault).
+    function _bitSet(address maker, uint256 nonce) internal view returns (bool) {
+        return lopFill.bitInvalidatorForOrder(maker, nonce) & (1 << (nonce & 0xff)) != 0;
     }
 
     function _status(uint256 loanId) internal view returns (LibVaipakam.LoanStatus) {

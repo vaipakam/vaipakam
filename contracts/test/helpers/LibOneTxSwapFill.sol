@@ -9,10 +9,10 @@ import {IntentDispatchFacet} from "../../src/facets/IntentDispatchFacet.sol";
 /**
  * @title  SwapFillDriver
  * @notice Test-only stand-in for the 1inch Limit Order Protocol's settlement of ONE swap-to-repay
- *         fill, inside a single call: the pre-hook (which, since #1566 slice 3, takes the fill lock
- *         and pulls the lot out of the borrower's vault), the maker-to-taker transfer of the lot,
- *         the taker-to-maker transfer of the principal, and the post-hook (which releases the lock
- *         and settles).
+ *         fill, inside a single call: the pre-hook (which takes the fill lock and, since #1566 S3e,
+ *         records the lot leaving the borrower's vault), the maker-to-taker transfer of the lot out
+ *         of that vault (the order's maker), the taker-to-maker transfer of the principal, and the
+ *         post-hook (which releases the lock and settles).
  *
  * @dev    Why one call: the fill lock and the principal baseline live in TRANSIENT storage, which
  *         is right for the real protocol -- the LOP runs both hooks inside one fill -- and newer
@@ -22,12 +22,13 @@ import {IntentDispatchFacet} from "../../src/facets/IntentDispatchFacet.sol";
  *         native branch, use `test/mocks/MockLopFill.sol`.
  *
  *         Runs AT the LOP's address (see {LibOneTxSwapFill}), so the hooks see the caller they gate
- *         on and the lot moves on the Diamond's existing allowance to the LOP. The principal is held
- *         by the LOP and transferred in. It keeps no storage.
+ *         on and the lot moves on the allowance the commit had the vault grant the LOP. The
+ *         principal is held by the LOP and transferred in. It keeps no storage.
  */
 contract SwapFillDriver {
     function fill(
         IntentDispatchFacet diamond,
+        address maker,
         bytes32 orderHash,
         IERC20 makerAsset,
         uint256 lot,
@@ -37,7 +38,7 @@ contract SwapFillDriver {
     ) external {
         IOrderMixin.Order memory order;
         diamond.preInteraction(order, "", orderHash, taker, lot, takingAmount, lot, "");
-        require(makerAsset.transferFrom(address(diamond), taker, lot), "maker to taker failed");
+        require(makerAsset.transferFrom(maker, taker, lot), "maker to taker failed");
         require(takerAsset.transfer(address(diamond), takingAmount), "taker to maker failed");
         // remainingMakingAmount = the lot, as the LOP passes it (the remaining amount BEFORE this fill).
         diamond.postInteraction(order, "", orderHash, taker, lot, takingAmount, lot, "");
@@ -58,6 +59,7 @@ library LibOneTxSwapFill {
     function fill(
         address lop,
         address diamond,
+        address maker,
         bytes32 orderHash,
         address makerAsset,
         uint256 lot,
@@ -68,7 +70,7 @@ library LibOneTxSwapFill {
         bytes memory lopCode = lop.code;
         vm.etch(lop, type(SwapFillDriver).runtimeCode);
         SwapFillDriver(lop).fill(
-            IntentDispatchFacet(diamond), orderHash, IERC20(makerAsset), lot, taker, IERC20(takerAsset), takingAmount
+            IntentDispatchFacet(diamond), maker, orderHash, IERC20(makerAsset), lot, taker, IERC20(takerAsset), takingAmount
         );
         vm.etch(lop, lopCode);
     }

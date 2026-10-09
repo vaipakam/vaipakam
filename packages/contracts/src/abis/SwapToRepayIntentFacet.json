@@ -1873,22 +1873,6 @@
   },
   {
     "type": "error",
-    "name": "IntentCollateralFeeOnTransferUnsupported",
-    "inputs": [
-      {
-        "name": "received",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "requested",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "IntentCustodyNotVaultHeld",
     "inputs": [
       {
@@ -4250,17 +4234,6 @@
     "type": "error",
     "name": "RiskAndTermsConsentRequired",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "SafeERC20FailedOperation",
-    "inputs": [
-      {
-        "name": "token",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
   },
   {
     "type": "error",

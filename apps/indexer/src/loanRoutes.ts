@@ -366,9 +366,11 @@ export async function handleLoanById(
         committed_tx_hash: string;
       }>();
     if (intent) {
-      // `makerAmount` is the auction lot in protocol custody (#2322) —
-      // the collateral the debt needs, not the loan's whole collateral.
-      // Any remainder stays pledged in the borrower's vault.
+      // `makerAmount` is the auction lot (#2322) — the collateral the
+      // debt needs, not the loan's whole collateral. The whole
+      // collateral, the lot included, stays pledged in the borrower's
+      // vault until the fill (#1566 slice 3), and that vault is the
+      // order's maker (S3e).
       payload.swapToRepayIntent = {
         orderHash: intent.order_hash,
         committedBy: intent.committed_by,
