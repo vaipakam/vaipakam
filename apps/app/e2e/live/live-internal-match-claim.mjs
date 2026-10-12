@@ -314,20 +314,37 @@ const { wsViolations } = attachLedger(page, createReadLedger({}), READ_METHODS);
 // JSON-RPC answers that arrive on the page's WebSockets (wagmi prefers a
 // configured WSS transport), counted in the same window as `rpc`'s HTTP
 // answers so a socket-served page is never read as "answered nothing".
+// Correlated like `watchPageRpc`: an answer counts only when it answers a
+// chain READ (a READ_METHODS method — so WalletConnect's relay protocol
+// never counts) sent on the same socket in the CURRENT window.
 let wsAnswers = 0;
+let wsGeneration = 0;
 page.on('websocket', (ws) => {
-  ws.on('framereceived', (f) => {
+  const sent = new Map(); // JSON-RPC id -> generation it was sent in
+  const each = (payload, fn) => {
     try {
-      const msgs = [].concat(JSON.parse(String(f.payload)));
-      wsAnswers += msgs.filter((m) => m && m.id !== undefined && ('result' in m || 'error' in m)).length;
+      for (const m of [].concat(JSON.parse(String(payload)))) if (m) fn(m);
     } catch {
       /* not JSON-RPC */
     }
-  });
+  };
+  ws.on('framesent', (f) =>
+    each(f.payload, (m) => {
+      if (m.id !== undefined && READ_METHODS.has(m.method)) sent.set(m.id, wsGeneration);
+    }),
+  );
+  ws.on('framereceived', (f) =>
+    each(f.payload, (m) => {
+      if (m.id === undefined || !('result' in m || 'error' in m)) return;
+      if (sent.get(m.id) === wsGeneration) wsAnswers++;
+      sent.delete(m.id);
+    }),
+  );
 });
 const resetWindow = () => {
   rpc.reset();
   wsAnswers = 0;
+  wsGeneration++;
 };
 const answered = async () => (await rpc.settled()) + wsAnswers;
 /** Wait for /claims to leave its loading state. Returns 'available',
@@ -447,6 +464,11 @@ try {
         () => false,
       );
     check('the page confirmed the claim ("Claim complete")', confirmed);
+    // The send must have gone through the GATED injected wallet: a profile
+    // still connected through another connector (a persisted WalletConnect
+    // session) would bypass the exact-call gate, and its claim would
+    // otherwise pass every chain check below.
+    check('the claim was sent through the gated wallet, exactly once', claimSends === 1, `gate allowed ${claimSends} send(s)`);
     await shot(`internal-match-claimed-${LOAN_ID}`).catch((e) => console.log(`(screenshot not saved: ${e.message})`));
     // The claim's own event: this loan, this wallet, the recorded proceeds.
     // Direct-RPC reads after the write: an outage here leaves the payout
@@ -532,14 +554,10 @@ try {
     if (settled === 'available') {
       check('the row left /claims after the claim', (await rowFor().count()) === 0);
     } else if ((await answered()) === 0) {
-      // The claim has already landed and its event was judged above, so
-      // this is an incomplete post-write verification, not a precondition:
-      // a FAIL that says so, never BLOCKED.
-      check(
-        'the row left /claims after the claim',
-        false,
-        `the page RPC answered nothing while /claims reloaded; the claim itself was ${claimHash ?? '(no hash)'}`,
-      );
+      // After the write, a page that answered nothing establishes only that
+      // this verification was unavailable — UNDETERMINED, never FAIL (and
+      // never BLOCKED, since the claim was sent).
+      undetermined = `the page RPC answered nothing while /claims reloaded, so the row's removal is unverified; the claim itself was ${claimHash ?? '(no hash)'}`;
     } else {
       check('the row left /claims after the claim', false, `the claims list never settled (${settled})`);
     }

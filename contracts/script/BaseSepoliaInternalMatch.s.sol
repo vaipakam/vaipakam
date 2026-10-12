@@ -90,6 +90,18 @@ import {MockSwapAdapter} from "../test/mocks/MockSwapAdapter.sol";
  *             offer open (cancel it). The loan id a stage prints is that
  *             stage's prediction; read the real one from the receipt's
  *             `LoanInitiated` before the next stage.
+ *           - Inside `open-b`, at p1 (default 4x p0) loan A sits far past
+ *             its liquidation LTV - ~200% at the defaults - for every block
+ *             until the move to p2, with matching OFF, so any keeper can
+ *             liquidate it externally while B's offer, mints, approvals and
+ *             accept land. A liquidated A fails `match`'s input checks; run
+ *             `restore` and start again.
+ *           - Each `_openLoan` lender offer is public from its createOffer
+ *             until the borrower's accept lands (`--slow`: a few blocks).
+ *             Anyone may accept all or part of it, opening a loan with this
+ *             run's lender funds that `restore` cannot unwind; this run's
+ *             accept then reverts. Check the offer's fills before the next
+ *             stage, and cancel any remainder.
  *           - Each stage's input checks (loan state, position-NFT holders,
  *             the kill-switch) are read at that stage's simulation; a
  *             transfer or a change landing before its broadcast is not seen.
