@@ -67,25 +67,29 @@ import {MockSwapAdapter} from "../test/mocks/MockSwapAdapter.sol";
  *                     whole before it sends, so it cannot see what the
  *                     trigger actually closed.
  *           `restore` The one stage that ends a run, after `match` or any
- *                     failure: walks the Diamond's active list and refuses
- *                     while any Active or FallbackPending tLIQ loan has one
- *                     of this run's wallets as a party (no operator loan ids
- *                     are trusted; position-NFT holders count), since moving
- *                     the price back would move its value - matching still
- *                     goes OFF then, and nothing else is sent; otherwise
- *                     matching OFF, the three
- *                     price surfaces back to the `open-a` snapshot exactly,
- *                     then the kill-switch to the DECLARED original state
- *                     (ON only with `IM_ORIGINALLY_ENABLED` or
- *                     `IM_KEEP_ENABLED`). IM_RESTORE_WITH_ACTIVE=true
- *                     overrides the refusal.
+ *                     failure: matching OFF, the three price surfaces back
+ *                     to the `open-a` snapshot exactly, then the kill-switch
+ *                     to the DECLARED original state (ON only with
+ *                     `IM_ORIGINALLY_ENABLED` or `IM_KEEP_ENABLED`). It
+ *                     lists every Active or FallbackPending tLIQ loan this
+ *                     run's wallets are party to (from the chain, never
+ *                     operator ids; position-NFT holders count) and REVERTS
+ *                     - nothing sent, non-zero exit - if one is
+ *                     FallbackPending, or if one is Active and its health
+ *                     factor at the RESTORED price, read in the same
+ *                     simulation, is below 1 or unreadable.
+ *                     IM_RESTORE_WITH_ACTIVE=true overrides. It keeps every
+ *                     wiring check and drops only the venue's
+ *                     routed/enabled checks.
  *           `disable` Matching OFF and nothing else: it needs only
  *                     ADMIN_PRIVATE_KEY and the Diamond address, reads no
- *                     other key or mock artifact, and moves no price. `restore` queues the same
- *                     switch, but inside a body that is simulated whole, so
- *                     a revert anywhere in it (snapshot check, mock write,
- *                     exposure report) sends nothing at all. Run `disable`
- *                     first whenever a `match` was interrupted.
+ *                     other key or mock artifact, and moves no price.
+ *                     `restore` queues the same switch, but inside a body
+ *                     that is simulated whole, so a revert anywhere in it
+ *                     (a refusal, snapshot check, mock write, exposure
+ *                     report) sends nothing at all. Run `disable` first
+ *                     whenever a `match` was interrupted or `restore`
+ *                     refuses.
  *
  *         Every price move is three non-atomic owner-gated transactions (see
  *         {RepriceTestnetMock}) and every tLIQ position on the Diamond sees
@@ -187,10 +191,12 @@ contract BaseSepoliaInternalMatch is RepriceTestnetMock {
         address mUsdc = _resolveTarget("liquidToken2").asset;
         string memory stage = vm.envString("IM_STAGE");
         bytes32 s = keccak256(bytes(stage));
-        // `restore` only writes the recorded feed, pool spot and venue price
-        // back, so it skips the settlement-route preflight: recovery must
-        // still run after the venue has been disabled as an incident step.
-        if (s != keccak256("restore")) _preflight(t, vm.addr(a.deployerKey));
+        // `restore` keeps every wiring check (code, live registry/factory
+        // entries, decimals, mock ownership) and drops only the settlement
+        // route's routed/enabled checks: recovery must still run after the
+        // venue has been disabled as an incident step.
+        if (s == keccak256("restore")) _preflightWiring(t, vm.addr(a.deployerKey));
+        else _preflight(t, vm.addr(a.deployerKey));
         console.log("=== Base Sepolia internal-match scenario (#2427), stage:", stage);
         console.log("Diamond / tLIQ / mUSDC:", t.diamond, t.asset, mUsdc);
         _logMatchConfig(t.diamond);
@@ -298,23 +304,59 @@ contract BaseSepoliaInternalMatch is RepriceTestnetMock {
     ///      once nothing this run's wallets hold still has value riding on
     ///      tLIQ, so it does not trust operator-supplied loan ids (a lost
     ///      receipt would make "0 = never opened" a guess): it walks the
-    ///      Diamond's whole active list (Active AND FallbackPending) and
-    ///      refuses while ANY tLIQ loan there has one of this run's four
-    ///      wallets as lender or borrower, by the loan's record or by the
-    ///      current position-NFT holder (an unreadable holder refuses too —
-    ///      an active loan always has both NFTs) — a B opened at p1 or partly
-    ///      matched, an A left open, a FallbackPending leg whose in-kind
-    ///      claim the restore would revalue, or an unrelated loan of the
-    ///      same wallets, which the restore would move just the same. Each is
-    ///      listed. When it refuses, it still switches matching OFF (always
-    ///      safe, and a failed `match` can leave it ON) and sends nothing
-    ///      else. Close or resolve them first; `IM_RESTORE_WITH_ACTIVE=true`
-    ///      overrides, and each listed loan's state and LTV are printed after
-    ///      the restore.
+    ///      Diamond's whole active list (Active AND FallbackPending) for
+    ///      tLIQ loans that have one of this run's four wallets as lender or
+    ///      borrower, by the loan's record or by the current position-NFT
+    ///      holder (an unreadable holder counts too: an active loan always
+    ///      has both NFTs). Each is listed.
+    ///
+    ///      The decision is made on the state the restore PRODUCES, not on
+    ///      who holds what: the stage restores the prices inside its own
+    ///      simulation and then reads every listed loan. It REVERTS -
+    ///      nothing is sent, and forge exits non-zero - when
+    ///        - a listed loan is FallbackPending (the restore would revalue
+    ///          its unresolved in-kind claim), or
+    ///        - a listed Active loan's health factor at the restored price
+    ///          is below 1 or cannot be read.
+    ///      So an A left Active by a failed `open-b`, which the restore
+    ///      makes healthy again, does not block recovery, while a B opened
+    ///      at p1 that p0 would make liquidatable does. A refusal leaves
+    ///      matching as it was: run `disable` for that, which cannot be
+    ///      stopped by anything this stage reads. `IM_RESTORE_WITH_ACTIVE=
+    ///      true` overrides both refusals; each listed loan's state and LTV
+    ///      are then printed after the restore.
     function _stageRestore(RepriceTarget memory t, Actors memory a) internal {
+        uint256[] memory found = _runLoans(t, a);
+        bool force = vm.envOr("IM_RESTORE_WITH_ACTIVE", false);
+        for (uint256 j; j < found.length && !force; ++j) {
+            require(
+                LoanFacet(t.diamond).getLoanDetails(found[j]).status != LibVaipakam.LoanStatus.FallbackPending,
+                "BaseSepoliaInternalMatch: REFUSED - a listed loan is FallbackPending and the restore would revalue its claim; nothing sent. Run IM_STAGE=disable to switch matching off, resolve it, or set IM_RESTORE_WITH_ACTIVE=true"
+            );
+        }
+        _endRun(t, a, 0, 0);
+        for (uint256 j; j < found.length; ++j) {
+            _logLoan("held", t.diamond, found[j]);
+            if (force) continue;
+            // Read AFTER the restore, still inside the simulation: this is
+            // the health the broadcast will leave the position at.
+            (bool ok, bytes memory ret) =
+                t.diamond.staticcall(abi.encodeCall(RiskFacet.calculateHealthFactor, (found[j])));
+            uint256 hf = ok && ret.length == 32 ? abi.decode(ret, (uint256)) : 0;
+            if (ok) console.log("  health factor at the restored price (1e18):", hf);
+            require(
+                ok && hf >= 1e18,
+                "BaseSepoliaInternalMatch: REFUSED - a listed Active loan would be liquidatable (or unreadable) at the restored price; nothing sent. Run IM_STAGE=disable to switch matching off, close the loan, or set IM_RESTORE_WITH_ACTIVE=true"
+            );
+        }
+    }
+
+    /// @dev Every tLIQ loan on the Diamond's active list that one of this
+    ///      run's wallets is a party to, by record or by position-NFT holder.
+    function _runLoans(RepriceTarget memory t, Actors memory a) internal view returns (uint256[] memory found) {
         address[4] memory mine =
             [vm.addr(a.lenderKey), vm.addr(a.borrowerKey), vm.addr(a.newLenderKey), vm.addr(a.newBorrowerKey)];
-        uint256[] memory found = new uint256[](0);
+        found = new uint256[](0);
         uint256 pageSize = 200;
         for (uint256 offset;; offset += pageSize) {
             uint256[] memory ids = MetricsFacet(t.diamond).getActiveLoansPaginated(offset, pageSize);
@@ -323,10 +365,8 @@ contract BaseSepoliaInternalMatch is RepriceTestnetMock {
                 if (l.principalAsset != t.asset && l.collateralAsset != t.asset) continue;
                 // The position NFTs decide who holds the position now; the
                 // loan's lender/borrower fields are only consolidated on a
-                // later operation, so both are checked.
-                // Every loan on the active list still has both position
-                // NFTs, so a holder that cannot be read is unknown state,
-                // not "nobody": it counts as this run's and refuses.
+                // later operation, so both are checked. A holder that
+                // cannot be read is unknown state, not "nobody".
                 (bool lenderRead, address lenderHolder) = _holderOf(t.diamond, l.lenderTokenId);
                 (bool borrowerRead, address borrowerHolder) = _holderOf(t.diamond, l.borrowerTokenId);
                 bool ours = !lenderRead || !borrowerRead;
@@ -346,19 +386,6 @@ contract BaseSepoliaInternalMatch is RepriceTestnetMock {
             }
             if (ids.length < pageSize) break;
         }
-        if (found.length != 0 && !vm.envOr("IM_RESTORE_WITH_ACTIVE", false)) {
-            // Matching goes OFF whatever else happens: switching it off is
-            // always safe, and a failed `match` can leave it ON with both
-            // legs open, which is exactly when this refusal fires. Nothing
-            // else is sent - not the price, not the declared switch state.
-            _setMatching(t.diamond, a.adminKey, false);
-            console.log(
-                "REFUSED: this run's wallets hold an Active or FallbackPending tLIQ loan (listed above). Matching is switched OFF; the price is NOT restored and stays moved. Close or resolve the loan(s), then run `restore` again, or set IM_RESTORE_WITH_ACTIVE=true."
-            );
-            return;
-        }
-        _endRun(t, a, 0, 0);
-        for (uint256 j; j < found.length; ++j) _logLoan("held", t.diamond, found[j]);
     }
 
     /// @dev The current holder of a position NFT. `read` is false when

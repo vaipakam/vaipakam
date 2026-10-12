@@ -263,6 +263,20 @@ contract RepriceTestnetMock is Script {
     /// @notice Every check that needs no state change. Reverts with the
     ///         first one that fails, naming it.
     function _preflight(RepriceTarget memory t, address sender) internal view {
+        _preflightWiring(t, sender);
+        require(_isRoutedVenue(t), "RepriceTestnetMock: recorded venue is not in the Diamond's live adapter list");
+        require(
+            !IRepriceDiamondViews(t.diamond).isSwapAdapterDisabled(t.venue),
+            "RepriceTestnetMock: recorded venue is registered but disabled on the Diamond"
+        );
+    }
+
+    /// @notice {_preflight} minus the venue's routed/enabled state: that
+    ///         the artifact still describes the chain and the broadcaster
+    ///         owns every mock it writes. A recovery that writes recorded
+    ///         values back runs this, so a venue disabled as an incident
+    ///         step does not stop it.
+    function _preflightWiring(RepriceTarget memory t, address sender) internal view {
         require(t.diamond.code.length != 0, "RepriceTestnetMock: no code at the Diamond");
         require(t.feed.code.length != 0, "RepriceTestnetMock: no code at the recorded feed");
         require(t.pool.code.length != 0, "RepriceTestnetMock: no code at the recorded pool");
@@ -294,11 +308,6 @@ contract RepriceTestnetMock is Script {
         require(MockChainlinkFeed(t.feed).owner() == sender, "RepriceTestnetMock: broadcaster does not own the feed");
         require(MockUniswapV3Pool(t.pool).owner() == sender, "RepriceTestnetMock: broadcaster does not own the pool");
         require(t.venue.code.length != 0, "RepriceTestnetMock: no code at the recorded venue");
-        require(_isRoutedVenue(t), "RepriceTestnetMock: recorded venue is not in the Diamond's live adapter list");
-        require(
-            !IRepriceDiamondViews(t.diamond).isSwapAdapterDisabled(t.venue),
-            "RepriceTestnetMock: recorded venue is registered but disabled on the Diamond"
-        );
         require(MockSwapAdapter(t.venue).owner() == sender, "RepriceTestnetMock: broadcaster does not own the venue");
     }
 
