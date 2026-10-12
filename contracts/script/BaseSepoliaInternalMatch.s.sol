@@ -39,7 +39,7 @@ import {MockSwapAdapter} from "../test/mocks/MockSwapAdapter.sol";
  *         prices. The script does the same with {RepriceTestnetMock}'s
  *         coherent feed + pool + venue move.
  *
- *         The run is FOUR STAGES, one `forge script` invocation each, chosen
+ *         The run is FOUR STAGES (plus `disable`, for recovery), one `forge script` invocation each, chosen
  *         by `IM_STAGE`. `forge script` simulates a whole body and then sends
  *         its transactions later, so any value a body reads — a loan id a
  *         call returns, the kill-switch, the book — is a simulation result
@@ -78,6 +78,12 @@ import {MockSwapAdapter} from "../test/mocks/MockSwapAdapter.sol";
  *                     (ON only with `IM_ORIGINALLY_ENABLED` or
  *                     `IM_KEEP_ENABLED`). IM_RESTORE_WITH_ACTIVE=true
  *                     overrides the refusal.
+ *           `disable` Matching OFF and nothing else - no reads that can
+ *                     revert, no price move. `restore` queues the same
+ *                     switch, but inside a body that is simulated whole, so
+ *                     a revert anywhere in it (snapshot check, mock write,
+ *                     exposure report) sends nothing at all. Run `disable`
+ *                     first whenever a `match` was interrupted.
  *
  *         Every price move is three non-atomic owner-gated transactions (see
  *         {RepriceTestnetMock}) and every tLIQ position on the Diamond sees
@@ -167,6 +173,14 @@ contract BaseSepoliaInternalMatch is RepriceTestnetMock {
         address mUsdc = _resolveTarget("liquidToken2").asset;
         string memory stage = vm.envString("IM_STAGE");
         bytes32 s = keccak256(bytes(stage));
+        // `disable` sends ONE transaction and reads nothing it could revert
+        // on first, so a recovery whose `restore` simulation fails still has
+        // a broadcastable way to switch matching off.
+        if (s == keccak256("disable")) {
+            _setMatching(t.diamond, a.adminKey, false);
+            console.log("=== internal-match scenario (#2427), stage: disable. Matching switched OFF; prices untouched - run `restore` next.");
+            return;
+        }
         // `restore` only writes the recorded feed, pool spot and venue price
         // back, so it skips the settlement-route preflight: recovery must
         // still run after the venue has been disabled as an incident step.
@@ -179,7 +193,7 @@ contract BaseSepoliaInternalMatch is RepriceTestnetMock {
         else if (s == keccak256("open-b")) _stageOpenB(t, a, mUsdc);
         else if (s == keccak256("match")) _stageMatch(t, a, mUsdc);
         else if (s == keccak256("restore")) _stageRestore(t, a);
-        else revert("BaseSepoliaInternalMatch: IM_STAGE must be open-a, open-b, match or restore");
+        else revert("BaseSepoliaInternalMatch: IM_STAGE must be open-a, open-b, match, restore or disable");
     }
 
     function _stageOpenA(RepriceTarget memory t, Actors memory a, address mUsdc) internal {

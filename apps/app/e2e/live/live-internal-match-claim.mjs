@@ -139,6 +139,8 @@ const CLAIMS = readJson('apps/app/src/i18n/locales/en.json')?.copy?.claims ?? {}
 for (const k of ['title', 'checking', 'unavailable']) {
   if (typeof CLAIMS[k] !== 'string') blockedSync(`en.json no longer carries copy.claims.${k}`);
 }
+const CONNECT_FIRST = readJson('apps/app/src/i18n/locales/en.json')?.copy?.wallet?.connectFirst;
+if (typeof CONNECT_FIRST !== 'string') blockedSync('en.json no longer carries copy.wallet.connectFirst');
 const ROW = CLAIMS.row ?? {};
 for (const k of ['matchCleared', 'matchClearedNoCharges', 'matchPaidShort', 'matchPaidFull', 'whyInternalMatchLender']) {
   if (typeof ROW[k] !== 'string') blockedSync(`en.json no longer carries copy.claims.row.${k}`);
@@ -479,16 +481,25 @@ const resetWindow = () => {
 };
 const answered = async () => (await rpc.settled()) + wsAnswers;
 /** Wait for /claims to leave its loading state. Returns 'available',
- *  'unavailable' (the list's own error state) or 'loading' on timeout. */
+ *  'unavailable' (the list's own error state), 'disconnected' (the
+ *  connect-wallet state, which carries no rows either and so must never
+ *  read as an empty list) or 'loading' on timeout. */
 async function claimsListSettled(timeoutMs = 60_000) {
   const deadline = Date.now() + timeoutMs;
+  // The connector reconnects after a reload, so the connect-wallet state
+  // can flash first: it is waited out, and reported only if it is still
+  // what the page shows when the wait ends.
+  let disconnected = false;
   while (Date.now() < deadline) {
     const body = await page.locator('body').innerText();
-    if (body.includes(CLAIMS.unavailable)) return 'unavailable';
-    if (!body.includes(CLAIMS.checking) && body.includes(CLAIMS.title)) return 'available';
+    disconnected = body.includes(CONNECT_FIRST);
+    if (!disconnected) {
+      if (body.includes(CLAIMS.unavailable)) return 'unavailable';
+      if (!body.includes(CLAIMS.checking) && body.includes(CLAIMS.title)) return 'available';
+    }
     await page.waitForTimeout(1_000);
   }
-  return 'loading';
+  return disconnected ? 'disconnected' : 'loading';
 }
 /** Wallet refusals and page writes the guards recorded, bar the
  *  recognised Cloudflare edge beacon. */
@@ -706,7 +717,11 @@ try {
     const reload = await page.goto(`${SITE_URL.replace(/\/$/, '')}/claims`, { waitUntil: 'domcontentloaded', timeout: 60_000 });
     if ((reload?.status() ?? 200) >= 400) throw new Error(`/claims answered HTTP ${reload.status()} after the claim`);
     const settled = await claimsListSettled();
-    if (settled === 'available') {
+    if (settled === 'disconnected') {
+      // The reload lost the wallet: an empty list here says nothing about
+      // this wallet's claims, so the row's absence is not observed.
+      unsettled('rowRemoved', 'gone', `/claims rendered the connect-wallet state after the reload, so this wallet's post-claim list was never observed; the claim itself was ${claimHash() ?? '(no hash)'}`);
+    } else if (settled === 'available') {
       check('rowRemoved', 'gone', 'the row left /claims after the claim', (await rowFor().count()) === 0);
     } else if ((await answered()) === 0) {
       // A page that answered nothing establishes only that this check was
@@ -747,11 +762,12 @@ try {
     } else if (receipt) {
       stopped += `; the claim MINED (${hash}, block ${receipt.blockNumber})`;
     }
-  } else if (!armedOnce && failedCount() === 0 && (await answered()) === 0 && violationsSoFar().length === 0) {
+  } else if (!armedOnce && failedCount() === 0 && pageErrors().length === 0 && (await answered()) === 0 && violationsSoFar().length === 0) {
     // No answer from the page's own RPC while the assertion waited: nothing
     // page-backed was observed, so this is not a verdict on the card —
     // unless a check already failed or a guard already recorded a refused
-    // request, either of which is a finding on a served surface. Once the
+    // request, or the page threw (pageHealth is recorded only after this
+    // catch), each of which is a finding on a served surface. Once the
     // claim was armed it is never BLOCKED: the claim may have gone out, so
     // the drive falls through to the chain reconciliation below.
     await blocked('the page RPC answered nothing while the drive waited', err, done);
