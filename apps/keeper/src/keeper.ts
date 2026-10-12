@@ -745,7 +745,8 @@ export async function maybeAutonomousLiquidate(
 export type PassArmingFlag =
   | 'REWARD_REMIT_ENABLED'
   | 'REWARD_COMMIT_ENABLED'
-  | 'REWARD_SANCTIONS_KEEPER_ENABLED';
+  | 'REWARD_SANCTIONS_KEEPER_ENABLED'
+  | 'REWARD_DELIVERY_PROOF_ENABLED';
 
 /**
  * Describe a rejected flag value WITHOUT echoing it.

@@ -504,6 +504,7 @@ then deploy.
       | `KEEPER_ENABLED` | `isKeeperEnabled()` is false | autonomous liquidation, the matcher, liquidity-confidence submits, auto-lifecycle — and it gates the `REWARD_*` flags below as well |
       | `REWARD_REMIT_ENABLED` | remit + remit-ACK passes skip | reward-budget remittance and delivered-backing acknowledgement |
       | `REWARD_COMMIT_ENABLED` | commitment-report pass skips | mirror→canonical commitment reporting |
+      | `REWARD_DELIVERY_PROOF_ENABLED` | delivery pass skips — epoch days stay unindexed (their value funds nothing a claim can find) and an armed delivery gate holds every funded day | indexing every mirror delivery's epoch days and proving no-epoch day lists (#1944) |
       | `REWARD_SANCTIONS_KEEPER_ENABLED` | sanctions-hold observer skips — a held reward claimant goes unobserved, so its hold (and the custody-activation block it carries) can run past its window | observing held claimants, the owner forfeit sweep and resolving their held staging records (#2450) |
 
       The keeper's ops alert channel, `TG_OPS_BOT_TOKEN` + `TG_OPS_CHAT_ID`
@@ -2169,7 +2170,7 @@ caught at the cheapest stage.
 
    | binding | how it is bound | command |
    |---|---|---|
-   | `KEEPER_ENABLED`, `REWARD_REMIT_ENABLED`, `REWARD_COMMIT_ENABLED`, `REWARD_SANCTIONS_KEEPER_ENABLED`, `TG_OPS_BOT_TOKEN`, `TG_OPS_CHAT_ID` | per-Worker `secret_text` | `wrangler secret put <NAME> --config apps/keeper/wrangler.jsonc` |
+   | `KEEPER_ENABLED`, `REWARD_REMIT_ENABLED`, `REWARD_COMMIT_ENABLED`, `REWARD_SANCTIONS_KEEPER_ENABLED`, `REWARD_DELIVERY_PROOF_ENABLED`, `TG_OPS_BOT_TOKEN`, `TG_OPS_CHAT_ID` | per-Worker `secret_text` | `wrangler secret put <NAME> --config apps/keeper/wrangler.jsonc` |
    | `KEEPER_PRIVATE_KEY` — **missing** | account-level Secrets Store (`secrets_store_secrets` in `wrangler.jsonc`) | `wrangler secrets-store secret create <STORE_ID> --name KEEPER_PRIVATE_KEY --scopes workers --remote` |
    | `KEEPER_PRIVATE_KEY` — **present but malformed** | same store, entry already exists | list to get its id, then `wrangler secrets-store secret update <STORE_ID> --secret-id <ID> --scopes workers --remote` |
 
@@ -2253,7 +2254,7 @@ caught at the cheapest stage.
    | | accepts | rejects |
    |---|---|---|
    | `KEEPER_ENABLED` (`isKeeperEnabled`) | `true` / `1`, **case-insensitive** — `True` and `TRUE` are on | anything else, **and** it returns false whenever `KEEPER_PRIVATE_KEY` is unset, regardless of the flag |
-   | `REWARD_REMIT_ENABLED`, `REWARD_COMMIT_ENABLED`, `REWARD_SANCTIONS_KEEPER_ENABLED` (`passIsArmed`) | exactly `true` or `1`, **case-SENSITIVE** | `True`, `TRUE`, and anything with surrounding whitespace |
+   | `REWARD_REMIT_ENABLED`, `REWARD_COMMIT_ENABLED`, `REWARD_SANCTIONS_KEEPER_ENABLED`, `REWARD_DELIVERY_PROOF_ENABLED` (`passIsArmed`) | exactly `true` or `1`, **case-SENSITIVE** | `True`, `TRUE`, and anything with surrounding whitespace |
 
    So `KEEPER_ENABLED=True` works while `REWARD_REMIT_ENABLED=True` is off —
    **off but reported**, not silently so. That is the whole point of the

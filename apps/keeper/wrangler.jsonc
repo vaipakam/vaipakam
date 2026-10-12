@@ -495,8 +495,10 @@
   //     KEEPER_ROLE).
   //   - REWARD_SANCTIONS_KEEPER_ENABLED — 'true' arms the #2450 sanctions-hold
   //     observer (every reward chain; needs D1 migration 0057 applied first).
-  //     Added after the 2026-07-30 readback above, so that readback says
-  //     nothing about it.
+  //   - REWARD_DELIVERY_PROOF_ENABLED — 'true' arms the #1944 / transport-epoch
+  //     delivery pass (mirrors: index epoch days, prove no-epoch day lists).
+  //     Both added after the 2026-07-30 readback above, so that readback says
+  //     nothing about them.
   //
   //   The ops alert channel those passes report to — TG_OPS_BOT_TOKEN and
   //   TG_OPS_CHAT_ID — is likewise set with `wrangler secret put` (the

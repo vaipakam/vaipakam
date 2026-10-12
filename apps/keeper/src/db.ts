@@ -757,3 +757,79 @@ export async function recordOpsAlertSent(db: D1Database, key: string, nowSec: nu
 export async function clearOpsAlert(db: D1Database, key: string): Promise<void> {
   await db.prepare(`DELETE FROM keeper_ops_alert WHERE alert_key = ?1`).bind(key).run();
 }
+
+// ─── #1944 / transport epochs — the delivery-proof pass's discovery read ─────
+
+/** One budget delivery a mirror recorded, joined to its day-list event. */
+export interface BudgetDeliveryRow {
+  /** The packet's ingress stamp (`IngressPacketRecorded.packetHash`). */
+  packetHash: string;
+  /** Base's remittance id (0 for a manual / legacy delivery). */
+  remitId: string;
+  /** The FLAT day list from `RewardBudgetReceived` (decimal strings), or null
+   *  for a rooted (d6) delivery, whose list is rebuilt from Base. */
+  flatDayIds: string[] | null;
+  /** True for a rooted (d6) delivery (`RewardBudgetRootReceived`). */
+  rooted: boolean;
+  block_at: number;
+}
+
+/** Budget-packet kind (`LibRewardCustody.PACKET_KIND_BUDGET`). */
+const PACKET_KIND_BUDGET = 1;
+
+/**
+ * Budget deliveries recorded on `chainId` since `sinceSec`, newest first, at
+ * most `limit`: each packet joined (same transaction) to the event that carries
+ * its day list — the flat list itself, or the rooted wire's marker. The indexer
+ * decodes every Diamond event into `activity_events`, so no log scan is needed.
+ */
+export async function listRecentBudgetDeliveries(
+  db: D1Database,
+  chainId: number,
+  sinceSec: number,
+  limit = 200,
+): Promise<BudgetDeliveryRow[]> {
+  const rows = await db
+    .prepare(
+      `SELECT json_extract(p.args_json, '$.packetHash') AS packet_hash,
+              json_extract(p.args_json, '$.remitId')    AS remit_id,
+              d.kind                                     AS day_kind,
+              json_extract(d.args_json, '$.dayIds')      AS day_ids,
+              p.block_at                                 AS block_at
+         FROM activity_events p
+         LEFT JOIN activity_events d
+           ON d.chain_id = p.chain_id AND d.tx_hash = p.tx_hash
+          AND d.kind IN ('RewardBudgetReceived', 'RewardBudgetRootReceived')
+        WHERE p.chain_id = ?1
+          AND p.kind = 'IngressPacketRecorded'
+          AND CAST(json_extract(p.args_json, '$.kind') AS INTEGER) = ?2
+          AND p.block_at >= ?3
+        ORDER BY p.block_number DESC, p.log_index DESC
+        LIMIT ?4`,
+    )
+    .bind(chainId, PACKET_KIND_BUDGET, sinceSec, limit)
+    .all<{ packet_hash: string | null; remit_id: string | number | null; day_kind: string | null; day_ids: string | null; block_at: number }>();
+  const out: BudgetDeliveryRow[] = [];
+  for (const r of rows.results ?? []) {
+    if (typeof r.packet_hash !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(r.packet_hash)) continue;
+    if (r.day_kind !== 'RewardBudgetReceived' && r.day_kind !== 'RewardBudgetRootReceived') continue;
+    let flat: string[] | null = null;
+    if (r.day_kind === 'RewardBudgetReceived') {
+      try {
+        const parsed = JSON.parse(r.day_ids ?? '[]');
+        if (!Array.isArray(parsed)) continue;
+        flat = parsed.map((x) => String(x));
+      } catch {
+        continue;
+      }
+    }
+    out.push({
+      packetHash: r.packet_hash,
+      remitId: String(r.remit_id ?? '0'),
+      flatDayIds: flat,
+      rooted: r.day_kind === 'RewardBudgetRootReceived',
+      block_at: r.block_at,
+    });
+  }
+  return out;
+}

@@ -112,6 +112,10 @@ interface BaseEnv {
   /** 'true' arms the sanctions-hold observer (in addition to KEEPER_ENABLED). `secret_text`, like the flags above. */
   REWARD_SANCTIONS_KEEPER_ENABLED?: string;
 
+  // #1944 + the transport epochs — the delivery-proof pass (`deliveryProof.ts`).
+  /** 'true' arms the mirror-side delivery indexing/proof pass (in addition to KEEPER_ENABLED). `secret_text`. */
+  REWARD_DELIVERY_PROOF_ENABLED?: string;
+
   // OPERATOR alerts — the ops bot, never `TG_BOT_TOKEN` (CLAUDE.md, "Two
   // Telegram bots": split by who reads the alert). Plain `wrangler secret
   // put` strings, the same delivery `ops/mesh-watcher` uses, so they need no
@@ -330,6 +334,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     REWARD_COMMIT_ENABLED: raw.REWARD_COMMIT_ENABLED,
     REWARD_COMMIT_LOOKBACK_DAYS: raw.REWARD_COMMIT_LOOKBACK_DAYS,
     REWARD_SANCTIONS_KEEPER_ENABLED: raw.REWARD_SANCTIONS_KEEPER_ENABLED,
+    REWARD_DELIVERY_PROOF_ENABLED: raw.REWARD_DELIVERY_PROOF_ENABLED,
     TG_OPS_BOT_TOKEN: raw.TG_OPS_BOT_TOKEN,
     TG_OPS_CHAT_ID: raw.TG_OPS_CHAT_ID,
     LIQ_CONFIDENCE_MIN_CHECKS: raw.LIQ_CONFIDENCE_MIN_CHECKS,
