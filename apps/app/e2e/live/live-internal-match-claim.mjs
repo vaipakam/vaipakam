@@ -560,7 +560,16 @@ try {
     // The position page states the same line above its claim button.
     const claimButton = page.getByRole('button', { name: /^claim my funds$/i }).first();
     await claimButton.waitFor({ state: 'visible', timeout: 60_000 });
-    const posText = (await page.locator('body').innerText()).replace(/\s+/g, ' ');
+    // The button renders before the payout line loads ("checking the exact
+    // amount…"), so the line is waited for: a read taken with the button
+    // alone failed loan 25's drive although the page went on to state it.
+    let posText = '';
+    const posDeadline = Date.now() + 45_000;
+    while (Date.now() < posDeadline) {
+      posText = (await page.locator('body').innerText()).replace(/\s+/g, ' ');
+      if (posText.includes(cleared) || FALLBACK_LINES.some((l) => posText.includes(l))) break;
+      await page.waitForTimeout(1_000);
+    }
     check('positionLine', 'note', 'position page states the same comparison', posText.includes(EXPECTED_NOTE));
     await shot(`internal-match-position-${LOAN_ID}`);
     if (preClaimFails() > 0) throw new Error('a check failed or a request was refused before the claim; not claiming');
