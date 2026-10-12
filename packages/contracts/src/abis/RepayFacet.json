@@ -1185,22 +1185,6 @@
   },
   {
     "type": "error",
-    "name": "CustodyEraAhead",
-    "inputs": [
-      {
-        "name": "intended",
-        "type": "uint64",
-        "internalType": "uint64"
-      },
-      {
-        "name": "live",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "CustodyEraAlreadyFinalized",
     "inputs": [
       {
