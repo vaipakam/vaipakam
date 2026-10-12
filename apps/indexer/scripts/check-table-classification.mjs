@@ -173,6 +173,10 @@ const CLASSIFICATION = {
     class: 'decision-needed',
     reason: 'keeper remit-ack frontier cursor; derivation unaudited — #1481',
   },
+  keeper_ops_alert: {
+    class: 'decision-needed',
+    reason: 'keeper ops-alert de-duplication (#2450); disposable — an empty table re-sends at most one line per live condition — #1481',
+  },
 };
 
 // Tables written by tooling/infra, not domain state.

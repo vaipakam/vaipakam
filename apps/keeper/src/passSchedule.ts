@@ -1,5 +1,5 @@
 /**
- * The keeper's ten passes, as data (#1896).
+ * The keeper's passes, as data (#1896).
  *
  * ── Why a table ──────────────────────────────────────────────────────
  *
@@ -39,6 +39,7 @@ import { runPreGraceWatcher } from './preGraceWatcher';
 import { runRewardBudgetRemit } from './rewardBudgetRemit';
 import { runCommitmentReport } from './commitmentReport';
 import { runRemitAck } from './remitAck';
+import { runRewardSanctionsHold } from './rewardSanctionsHold';
 
 /** The UTC hour `dailyOracleSnapshot` acts in, and how long it stays
  *  open — mirroring the window that pass already self-checks against.
@@ -170,6 +171,13 @@ export const KEEPER_PASSES: readonly KeeperPass[] = [
     cadenceMinutes: 1,
     why: 'resumes a persisted frontier — the drain rate is the tick rate',
     run: runCommitmentReport,
+  },
+  {
+    name: 'rewardSanctionsHold',
+    cadenceMinutes: 60,
+    offsetMinutes: 13,
+    why: 'observes a held claimant every 6 h inside a 24 h gap; hourly keeps each alert within one cadence (#2450)',
+    run: runRewardSanctionsHold,
   },
 ];
 

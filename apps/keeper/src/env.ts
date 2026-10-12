@@ -108,6 +108,20 @@ interface BaseEnv {
   /** recent-day window re-scanned for un-reported commitments each tick (default 14). */
   REWARD_COMMIT_LOOKBACK_DAYS?: string;
 
+  // #2450 — the #1566 sanctions-hold observer (`rewardSanctionsHold.ts`).
+  /** 'true' arms the sanctions-hold observer (in addition to KEEPER_ENABLED). `secret_text`, like the flags above. */
+  REWARD_SANCTIONS_KEEPER_ENABLED?: string;
+
+  // OPERATOR alerts — the ops bot, never `TG_BOT_TOKEN` (CLAUDE.md, "Two
+  // Telegram bots": split by who reads the alert). Plain `wrangler secret
+  // put` strings, the same delivery `ops/mesh-watcher` uses, so they need no
+  // Secrets Store binding. Unset = alerts go to the Worker log only, and the
+  // pass says so.
+  /** Ops bot token (`wrangler secret put TG_OPS_BOT_TOKEN`). */
+  TG_OPS_BOT_TOKEN?: string;
+  /** The single operator chat the ops bot posts to. */
+  TG_OPS_CHAT_ID?: string;
+
   // Depth-tiered-LTV liquidity-confidence relay knobs
   // (`liquidityConfidence.ts`, §4.4 step 5). Both default
   // conservatively when unset; demotion is always immediate.
@@ -301,7 +315,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
   return {
     // Passed straight through — these need no `.get()` resolution. That is
     // NOT the same as "non-secret", which this label claimed until #2223:
-    // KEEPER_ENABLED and the two REWARD_*_ENABLED flags below are
+    // KEEPER_ENABLED and the REWARD_*_ENABLED flags below are
     // `secret_text` bindings, delivered as strings like any other. See the
     // module comment, which already drew this distinction.
     // `DB` goes through the maintenance seam: the real binding untouched on
@@ -315,6 +329,9 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     REWARD_REMIT_LANE_CAP: raw.REWARD_REMIT_LANE_CAP,
     REWARD_COMMIT_ENABLED: raw.REWARD_COMMIT_ENABLED,
     REWARD_COMMIT_LOOKBACK_DAYS: raw.REWARD_COMMIT_LOOKBACK_DAYS,
+    REWARD_SANCTIONS_KEEPER_ENABLED: raw.REWARD_SANCTIONS_KEEPER_ENABLED,
+    TG_OPS_BOT_TOKEN: raw.TG_OPS_BOT_TOKEN,
+    TG_OPS_CHAT_ID: raw.TG_OPS_CHAT_ID,
     LIQ_CONFIDENCE_MIN_CHECKS: raw.LIQ_CONFIDENCE_MIN_CHECKS,
     LIQ_CONFIDENCE_MIN_WINDOW_DAYS: raw.LIQ_CONFIDENCE_MIN_WINDOW_DAYS,
     LIQ_TIER3_MIN_TVL_USD: raw.LIQ_TIER3_MIN_TVL_USD,

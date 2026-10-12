@@ -657,3 +657,103 @@ export async function markReconciledDayConsumed(
     )
     .run();
 }
+
+// ─── #2450 — the sanctions-hold observer's reads, and ops-alert de-dup ──────
+
+/** One sanctions-evidence event as the indexer recorded it in `activity_events`. */
+export interface SanctionsEvidenceRow {
+  /** The observed wallet, lowercased. */
+  who: string;
+  kind: 'RewardSanctionsEvidenceRecorded' | 'RewardSanctionsEvidenceCleared';
+  block_number: number;
+  log_index: number;
+  /** Block timestamp, unix seconds. */
+  block_at: number;
+}
+
+/** Upper bound on evidence rows read per chain per tick. Evidence is written
+ *  only on an authoritative Flagged read (a chain start) or a Clean read that
+ *  ends a chain, so the count tracks flagged wallets, not traffic; the bound is
+ *  a guard, and the pass logs when it binds. */
+export const SANCTIONS_EVIDENCE_ROW_LIMIT = 5000;
+
+/**
+ * Every sanctions-evidence event the indexer holds for `chainId`, oldest
+ * first. The indexer decodes every Diamond event into `activity_events`, so
+ * the observer reads the chain's own record of who was flagged instead of
+ * scanning logs itself (no keeper pass scans logs).
+ */
+export async function listSanctionsEvidenceEvents(
+  db: D1Database,
+  chainId: number,
+): Promise<SanctionsEvidenceRow[]> {
+  const rows = await db
+    .prepare(
+      `SELECT lower(json_extract(args_json, '$.who')) AS who, kind, block_number, log_index, block_at
+         FROM activity_events
+        WHERE chain_id = ?1
+          AND kind IN ('RewardSanctionsEvidenceRecorded', 'RewardSanctionsEvidenceCleared')
+        ORDER BY block_number, log_index
+        LIMIT ?2`,
+    )
+    .bind(chainId, SANCTIONS_EVIDENCE_ROW_LIMIT)
+    .all<SanctionsEvidenceRow>();
+  return (rows.results ?? []).filter(
+    (r) => typeof r.who === 'string' && /^0x[0-9a-f]{40}$/.test(r.who),
+  );
+}
+
+/** Staging-record keys opened for `user` on `chainId`, newest first. A record
+ *  key is the input to the permissionless resolution page; the record's own
+ *  phase, read on chain, decides whether there is anything to resolve. */
+export async function listStagingRecordKeysForUser(
+  db: D1Database,
+  chainId: number,
+  user: string,
+  limit = 100,
+): Promise<string[]> {
+  const rows = await db
+    .prepare(
+      `SELECT DISTINCT json_extract(args_json, '$.key') AS record_key
+         FROM activity_events
+        WHERE chain_id = ?1
+          AND kind = 'StagingRecordOpened'
+          AND lower(json_extract(args_json, '$.user')) = ?2
+        ORDER BY block_number DESC
+        LIMIT ?3`,
+    )
+    .bind(chainId, user.toLowerCase(), limit)
+    .all<{ record_key: string | null }>();
+  return (rows.results ?? [])
+    .map((r) => r.record_key)
+    .filter((k): k is string => typeof k === 'string' && /^0x[0-9a-fA-F]{64}$/.test(k));
+}
+
+/** The ops-alert record for `key`, or null when none was sent. */
+export async function getOpsAlert(
+  db: D1Database,
+  key: string,
+): Promise<{ firstSeenAt: number; lastSentAt: number } | null> {
+  const row = await db
+    .prepare(`SELECT first_seen_at, last_sent_at FROM keeper_ops_alert WHERE alert_key = ?1`)
+    .bind(key)
+    .first<{ first_seen_at: number; last_sent_at: number }>();
+  return row ? { firstSeenAt: row.first_seen_at, lastSentAt: row.last_sent_at } : null;
+}
+
+/** Record a DELIVERED ops alert (first delivery keeps `first_seen_at`). */
+export async function recordOpsAlertSent(db: D1Database, key: string, nowSec: number): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO keeper_ops_alert (alert_key, first_seen_at, last_sent_at)
+       VALUES (?1, ?2, ?2)
+       ON CONFLICT(alert_key) DO UPDATE SET last_sent_at = excluded.last_sent_at`,
+    )
+    .bind(key, nowSec)
+    .run();
+}
+
+/** Forget `key` once its condition has cleared, so a recurrence alerts at once. */
+export async function clearOpsAlert(db: D1Database, key: string): Promise<void> {
+  await db.prepare(`DELETE FROM keeper_ops_alert WHERE alert_key = ?1`).bind(key).run();
+}

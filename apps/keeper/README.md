@@ -55,11 +55,13 @@ Cloudflare Worker secrets (set via `wrangler secret put`):
 | `KEEPER_ENABLED` | Kill-switch for the **gated** passes; set to `false` to disable them. **It does not cover every on-chain write** — see the note below. |
 | `REWARD_REMIT_ENABLED` | Arms the #776 reward-budget remittance pass (in addition to `KEEPER_ENABLED`). Keep off until the keeper EOA is authorized on-chain via `setRewardRemittanceKeeper` (or is ADMIN). Also arms the #1222 B2-d2 remit-ACK pass (scans Base's delivered-backing reservations, sends the mirror ack for each landed delivery). **Apply D1 migration `0044_keeper_remit_ack.sql` before enabling** (`wrangler d1 migrations apply vaipakam-warm --remote` from `apps/indexer/`). |
 | `REWARD_COMMIT_ENABLED` | Arms the #1222 B2-d1 mirror→Base commitment-report pass (in addition to `KEEPER_ENABLED`). Runs on mirrors only; keep off until the keeper EOA holds on-chain `KEEPER_ROLE` (`submitCommitmentBatch` is role-gated). |
+| `REWARD_SANCTIONS_KEEPER_ENABLED` | Arms the #2450 sanctions-hold observer (in addition to `KEEPER_ENABLED`). It keeps every held reward claimant observed at least every six hours, so a hold confirms or clears within its window instead of restarting, and once a verdict is final it runs the owner forfeit sweep and resolves the claimant's held staging records — which is what lifts the staging encumbrance that blocks custody activation and reward-role changes. Every call it makes is permissionless and moves value only into protocol custody or to the claimant. **Apply D1 migration `0057_keeper_ops_alert.sql` before enabling.** Arm it on every reward chain before reward staging is live there. |
+| `TG_OPS_BOT_TOKEN` / `TG_OPS_CHAT_ID` | The OPS bot and its single operator chat, for operator alerts from the reward passes (the sanctions-hold observer today). Never the user-facing `TG_BOT_TOKEN`: the two bots are split by who reads the alert. Unset = the alert is written to the Worker log only, and every attempt says so. |
 | `ZEROEX_API_KEY` / `ONEINCH_API_KEY` | Liquidation swap aggregator credentials. |
 | `TG_BOT_TOKEN` / `PUSH_CHANNEL_PK` | Alert dispatcher credentials. |
 
-The three arming flags above (`KEEPER_ENABLED`, `REWARD_REMIT_ENABLED`,
-`REWARD_COMMIT_ENABLED`) are `secret_text` bindings, not entries in
+The four arming flags above (`KEEPER_ENABLED`, `REWARD_REMIT_ENABLED`,
+`REWARD_COMMIT_ENABLED`, `REWARD_SANCTIONS_KEEPER_ENABLED`) are `secret_text` bindings, not entries in
 `wrangler.jsonc`'s `vars` block — see that file's `vars` comment for why they
 must not be moved there. Their values cannot be read back from the API or
 dashboard, which is why each gated pass reports at runtime how it resolved

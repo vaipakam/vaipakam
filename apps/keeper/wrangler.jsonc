@@ -438,7 +438,7 @@
 
   // Operator-managed config. TWO CLASSES, and this block used to state
   // only one — it described all of the below as "non-secret config — plain
-  // `vars`", which is wrong for the three arming flags and is the wording
+  // `vars`", which is wrong for the arming flags and is the wording
   // `docs/ops/OffChainRestore.md` names as the incorrect description (§1
   // step 6f for capture, revisited in §7a when re-arming — NOT §6, which is
   // the indexer re-bootstrap).
@@ -485,7 +485,7 @@
   //
   //   - KEEPER_ENABLED   — 'true' arms the autonomous liquidation /
   //                        matcher / liquidity-confidence submit paths,
-  //                        and gates the two flags below as well.
+  //                        and gates the REWARD_* flags below as well.
   //   - REWARD_REMIT_ENABLED — 'true' arms the #776 reward-budget remit pass
   //     (only after the keeper EOA is authorized on-chain) AND the #1222
   //     B2-d2 remit-ACK pass (delivered-backing reservations; needs D1
@@ -493,6 +493,15 @@
   //   - REWARD_COMMIT_ENABLED — 'true' arms the #1222 B2-d1 mirror→Base
   //     commitment-report pass (mirror chains only; keeper EOA needs on-chain
   //     KEEPER_ROLE).
+  //   - REWARD_SANCTIONS_KEEPER_ENABLED — 'true' arms the #2450 sanctions-hold
+  //     observer (every reward chain; needs D1 migration 0057 applied first).
+  //     Added after the 2026-07-30 readback above, so that readback says
+  //     nothing about it.
+  //
+  //   The ops alert channel those passes report to — TG_OPS_BOT_TOKEN and
+  //   TG_OPS_CHAT_ID — is likewise set with `wrangler secret put` (the
+  //   delivery ops/mesh-watcher uses), never a `vars` entry and never the
+  //   user-facing TG_BOT_TOKEN.
   //
   // (b) GENUINE PLAIN VARS. `keep_vars: true` preserves the ones this config
   //     does NOT declare — it suppresses the delete of bindings absent from
