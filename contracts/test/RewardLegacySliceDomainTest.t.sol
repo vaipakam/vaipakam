@@ -276,7 +276,7 @@ contract RewardLegacySliceDomainTest is SetupTest, IVaipakamErrors {
         uint256 paid;
         for (uint256 k; k < 8 && paid == 0; ++k) {
             paid = _claim(); // never reverts: each claim moves the slice one step
-            if (_view().getStagingRecord(key).pendingOverflow) overflowSeen = true;
+            if (RewardStagingDomainFacet(address(diamond)).getStagingRecord(key).pendingOverflow) overflowSeen = true;
         }
         assertTrue(overflowSeen, "fixture-live: the slice's record passed more pending epochs than it tracks");
         assertEq(paid, total, "the claim still settles the whole slice");

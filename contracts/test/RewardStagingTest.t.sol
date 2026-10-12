@@ -1441,7 +1441,7 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         _mut().setLoanActiveLenderEntryId(LOAN, id);
         _wideDay(true);
         InteractionRewardsFacet(address(diamond)).sweepForfeitedInteractionRewards(LOAN);
-        RewardEpochViewFacet.StagingRecordView memory r = _rec();
+        RewardStagingDomainFacet.StagingRecordView memory r = _rec();
         assertEq(r.op, uint8(LibVaipakam.StagingOp.Forfeit), "fixture-live: the forfeit's record");
         assertEq(r.user, alice, "fixture-live: keyed to the forfeited party");
         vm.prank(alice);
@@ -1479,7 +1479,7 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         _wideDayOn(2, 300);
         sweep.sweepExpiredInteractionRewards(ids);
         bytes32 key2 = keccak256(abi.encode(alice, LibVaipakam.RewardSide.Lender, uint256(2)));
-        RewardEpochViewFacet.StagingRecordView memory r = _view().getStagingRecord(key2);
+        RewardStagingDomainFacet.StagingRecordView memory r = _view().getStagingRecord(key2);
         assertEq(r.op, uint8(LibVaipakam.StagingOp.Expiry), "fixture-live: the expiry's record");
         assertEq(r.user, alice, "fixture-live: keyed to the claimant");
         vm.prank(alice);
