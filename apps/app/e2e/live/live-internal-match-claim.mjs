@@ -62,7 +62,9 @@ import {
   requireSigningRole,
   visit,
   watchPageRpc,
+  READ_METHODS,
 } from './driver.mjs';
+import { attachLedger, createReadLedger } from './pageSanctionsReads.mjs';
 import { splitBlocked } from './readOnlyFindings.mjs';
 
 const SITE_URL = requireSiteUrl();
@@ -284,6 +286,11 @@ await ctx.addInitScript(() => {
   }
 });
 const rpc = watchPageRpc(page);
+// The page's own WebSocket RPC: a door neither the wallet gate nor the
+// egress guard covers (driver.mjs serves only HTTP through its shim). A
+// non-read method sent on it is OBSERVED here, not prevented, and counts
+// as a violation exactly like a refused request.
+const { wsViolations } = attachLedger(page, createReadLedger({}), READ_METHODS);
 /** Wait for /claims to leave its loading state. Returns 'available',
  *  'unavailable' (the list's own error state) or 'loading' on timeout. */
 async function claimsListSettled(timeoutMs = 60_000) {
@@ -298,7 +305,10 @@ async function claimsListSettled(timeoutMs = 60_000) {
 }
 /** Wallet refusals and page writes the guards recorded, bar the
  *  recognised Cloudflare edge beacon. */
-const violationsSoFar = () => splitBlocked(blockedRequests ?? [], [new URL(SITE_URL).origin]).violations;
+const violationsSoFar = () => [
+  ...splitBlocked(blockedRequests ?? [], [new URL(SITE_URL).origin]).violations,
+  ...wsViolations,
+];
 /** Pre-claim FAILs — an assertion that failed, or a request the wallet gate
  *  or the egress guard already refused (an early claim attempt, a chain
  *  switch, a page write). The claim is one-shot, so it never runs after one. */
@@ -447,6 +457,10 @@ try {
   }
   check('no page errors', consoleErrors.filter((e) => e.startsWith('PAGEERROR')).length === 0);
 } catch (err) {
+  // Closed synchronously, before anything here awaits: a late or retried
+  // claim request during the screenshot, the reconciliation reads or the
+  // browser teardown must not pass the gate after this verdict is chosen.
+  claimArmed = false;
   await shot(`internal-match-claim-error-${LOAN_ID}`).catch(() => {});
   // A claim the wallet already sent moved (or failed to move) funds whatever
   // the page did next, so its outcome is read from the chain and reported —
@@ -479,7 +493,9 @@ try {
     // page-backed was observed, so this is not a verdict on the card —
     // unless a guard already recorded a refused request, which is a
     // product finding whatever the RPC did afterwards.
-    if ((await rpc.settled()) === 0 && violationsSoFar().length === 0) {
+    // A check that already failed is a finding on a served surface too,
+    // so it also rules BLOCKED out.
+    if (fails === 0 && (await rpc.settled()) === 0 && violationsSoFar().length === 0) {
       await blocked('the page RPC answered nothing while the drive waited', err, done);
     }
     console.log(`FAIL drive — ${err.message}`);

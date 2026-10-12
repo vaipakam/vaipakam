@@ -482,7 +482,7 @@ contract BaseSepoliaInternalMatch is RepriceTestnetMock {
         }
         // Open offers see the moved price as well: an accept now is admitted
         // at it. Listed so a loan born during the excursion can be traced.
-        console.log("Open tLIQ offers (id, side, principal still fillable = amountMax - amountFilled, collateral at max):");
+        console.log("Open tLIQ offers (id, side, principal still fillable = amountMax - amountFilled, collateral still fillable = collateralAmountMax - collateralAmountFilled):");
         for (uint256 offset;; offset += pageSize) {
             uint256[] memory ids = MetricsFacet(t.diamond).getActiveOffersPaginated(offset, pageSize);
             for (uint256 i; i < ids.length; ++i) {
@@ -491,7 +491,7 @@ contract BaseSepoliaInternalMatch is RepriceTestnetMock {
                 console.log(
                     string.concat("   offer ", vm.toString(ids[i]), o.lendingAsset == t.asset ? " lends tLIQ" : " takes tLIQ as collateral"),
                     o.amountMax > o.amountFilled ? o.amountMax - o.amountFilled : 0,
-                    o.collateralAmountMax
+                    o.collateralAmountMax > o.collateralAmountFilled ? o.collateralAmountMax - o.collateralAmountFilled : 0
                 );
             }
             if (ids.length < pageSize) break;
