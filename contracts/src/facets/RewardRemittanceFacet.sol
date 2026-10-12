@@ -1191,6 +1191,9 @@ contract RewardRemittanceFacet is
                 bool ackConflict;
                 if (consumed) {
                     ackConflict = _stampConsumedAck(s, r, remitId, amountReceived);
+                    // #1452 — a consumption first attested by this
+                    // re-presentation (or confirming a forced one) is booked.
+                    _bookRecycledDelivered(s, r, false);
                 }
                 if (quarantined) _stampQuarantineAck(r, remitId);
                 if (r.forcedFinalized && consumed && !ackConflict) {
@@ -1232,12 +1235,11 @@ contract RewardRemittanceFacet is
             // all (it could have been consumed, and a return against
             // consumed lineage is the r4/r5 bypass).
             if (r.dstChainId == sourceChainId) {
-                // #1461 — the delivery executed after its release: the recycled
-                // share the release counted as stranded has arrived, so it
-                // resolves out of the coverage allowance, once.
-                LibVpfiRecycle.resolveReleasedRemitStranded(s, remitId);
                 if (consumed) {
                     bool relConflict = _stampConsumedAck(s, r, remitId, amountReceived);
+                    // #1452 — the mirror credited it after all: relocated
+                    // custody it must hold, so it is booked as delivered.
+                    _bookRecycledDelivered(s, r, false);
                     // #1662 r2 (self-review) — a CLEAN consumption on a
                     // released reservation CLEARS the gate. The release
                     // held it pending the value's fate; a consumed
@@ -1266,6 +1268,10 @@ contract RewardRemittanceFacet is
                     }
                 }
                 if (quarantined) _stampQuarantineAck(r, remitId);
+                // #1461 — AFTER the stamps: the stranded share resolves only on
+                // a TRUSTED consumption (the mirror credited it); anything else
+                // is left to the ceremony / loss record.
+                LibVpfiRecycle.settleReleasedRemitStranded(s, remitId);
             }
             emit RemitAckAfterRelease(remitId, sourceChainId, amountReceived);
             return;
@@ -1546,6 +1552,45 @@ contract RewardRemittanceFacet is
         r.quarantineAcked = true;
     }
 
+    /// @dev #1452 — book a reservation's recycled share in Base's per-destination
+    ///      delivered figures, once, at its first ATTESTED CONSUMPTION: by the
+    ///      delivery's own consumed acknowledgement (`chainRemittedRecycledAcked`,
+    ///      the figure the mesh watcher holds the mirror's relocated custody to),
+    ///      or by the operator's forced finalization (`...ForceFinalized`, apart —
+    ///      evidenced, not delivered). An authentic consumption that later
+    ///      confirms a forced one moves the share across; nothing else books.
+    ///      A CONTRADICTED consumption (quarantine reported first) books too:
+    ///      the mirror reported crediting it, and booking is the stricter
+    ///      direction for this check — the opposite of the stranded settle,
+    ///      which refuses to resolve on it, also the stricter direction there.
+    function _bookRecycledDelivered(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.RemitReservation storage r,
+        bool forced
+    ) private {
+        uint8 booked = r.recycledBooked;
+        if (booked == RECYCLED_BOOKED_ACKED) return;
+        uint32 dst = r.dstChainId;
+        uint256 share = r.recycled;
+        if (forced) {
+            // Only a PENDING reservation is force-finalized, and nothing books
+            // before finalization, so a forced booking is always the first.
+            s.chainRemittedRecycledForceFinalized[dst] += share;
+            r.recycledBooked = RECYCLED_BOOKED_FORCED;
+            return;
+        }
+        if (booked == RECYCLED_BOOKED_FORCED) {
+            uint256 f = s.chainRemittedRecycledForceFinalized[dst];
+            s.chainRemittedRecycledForceFinalized[dst] = f > share ? f - share : 0;
+        }
+        s.chainRemittedRecycledAcked[dst] += share;
+        r.recycledBooked = RECYCLED_BOOKED_ACKED;
+    }
+
+    /// @dev {RemitReservation.recycledBooked} states (0 = not booked).
+    uint8 private constant RECYCLED_BOOKED_FORCED = 1;
+    uint8 private constant RECYCLED_BOOKED_ACKED = 2;
+
     function _finalizeReservation(
         LibVaipakam.Storage storage s,
         LibVaipakam.RemitReservation storage r,
@@ -1568,11 +1613,10 @@ contract RewardRemittanceFacet is
         uint256 pending = s.remitPendingTotal[dst];
         s.remitPendingTotal[dst] = pending > total ? pending - total : 0;
         s.remitAckedTotal[dst] += total;
-        // #1452 — the recycled share this reservation delivered, for the
-        // watcher's relocated-custody cross-check; forced finalizations are
-        // evidenced rather than delivered, so they are counted apart.
-        if (forced) s.chainRemittedRecycledForceFinalized[dst] += r.recycled;
-        else s.chainRemittedRecycledAcked[dst] += r.recycled;
+        // #1452 — only an attested CONSUMPTION books the recycled share: the
+        // mirror relocates custody when it credits a delivery, never for a
+        // quarantined or provisional one.
+        if (consumed) _bookRecycledDelivered(s, r, forced);
         // #1434 P2-w4 (§5.1 R6) — a finalized COMPENSATION reservation
         // clears the chain's one-in-flight gate. The consumption ACK is
         // the ratified clearing evidence; the operator-evidenced forced

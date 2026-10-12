@@ -1615,19 +1615,37 @@ library LibVpfiRecycle {
         return reversed;
     }
 
-    /// @notice #1461 — a released remittance's delivery LANDED after all: the
-    ///         recycled share its release recorded as stranded has reached the
-    ///         destination, so it leaves the coverage allowance — resolved into
-    ///         `recycleReleasedRemitResolvedCumulative`, the figure the allowance
-    ///         nets out. Once: the reservation's record is zeroed.
-    /// @dev    Read only by the destination's authenticated acknowledgement of a
-    ///         RELEASED reservation. What a recovery settlement or terminal-loss
-    ///         record already resolved for this remittance was taken off the
-    ///         record there, so it is not resolved again here.
+    /// @notice #1461 — a released remittance's stranded share was resolved by a
+    ///         TRUSTED late consumption: the mirror credited the delivery, so the
+    ///         share left the coverage allowance.
+    /// @custom:event-category state-change/reward-custody
     event ReleasedRemitStrandedResolved(uint256 indexed remitId, uint256 amount);
 
-    function resolveReleasedRemitStranded(LibVaipakam.Storage storage s, uint256 remitId) internal {
+    /// @notice Whether a released reservation's consumption is TRUSTED: consumed,
+    ///         and never attested quarantined. The one rule both sides read — the
+    ///         recovery ceremony and the terminal-loss record are refused while it
+    ///         holds, and a late acknowledgement resolves the stranded share only
+    ///         while it holds — so the two can never both resolve one remittance.
+    ///         It never lapses once held: a quarantine stamp is refused after a
+    ///         consumption (`RewardRemittanceFacet._stampQuarantineAck`), so a
+    ///         quarantine-then-consumption is untrusted from the start.
+    function releasedConsumptionTrusted(LibVaipakam.RemitReservation storage r) internal view returns (bool) {
+        return r.consumedAcked && !r.quarantineAcked;
+    }
+
+    /// @notice #1461 — settle a RELEASED reservation's stranded share after a late
+    ///         acknowledgement's stamps. Only a TRUSTED consumption resolves: the
+    ///         mirror credited the value, so what is left on the record leaves the
+    ///         coverage allowance (`recycleReleasedRemitResolvedCumulative`), once
+    ///         — the record is zeroed. A quarantined, provisional or contradicted
+    ///         delivery resolves nothing: the value is still Base's to recover or
+    ///         write off, and the ceremony / loss record resolves it then.
+    /// @dev    Called only by the destination's authenticated acknowledgement of a
+    ///         RELEASED reservation. What a ceremony or loss record resolved before
+    ///         the consumption was attested came off the record there.
+    function settleReleasedRemitStranded(LibVaipakam.Storage storage s, uint256 remitId) internal {
         LibVaipakam.RemitReservation storage r = s.remitReservations[remitId];
+        if (!releasedConsumptionTrusted(r)) return;
         uint256 amount = r.strandedRecycled;
         if (amount == 0) return;
         r.strandedRecycled = 0;

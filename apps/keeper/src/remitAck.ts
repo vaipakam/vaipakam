@@ -72,6 +72,9 @@ interface RemitReservationView {
   status: number;
   /** #1461 — the share a release counted as stranded and not yet resolved. */
   strandedRecycled?: bigint;
+  /** #1461 — the acknowledgement stamps; a late ack resolves only while neither is set. */
+  consumedAcked?: boolean;
+  quarantineAcked?: boolean;
   sentAt: bigint;
   ccipMessageId: `0x${string}`;
   total: bigint;
@@ -349,8 +352,22 @@ async function ackLateDeliveries(
 }
 
 /** A released reservation (status 3) that still holds an unresolved stranded
- *  share — the only kind a late acknowledgement changes anything for. */
-export function isLateDeliveryCandidate(v: { status: number | bigint; strandedRecycled?: bigint }): boolean {
-  return Number(v.status) === 3 && (v.strandedRecycled ?? 0n) > 0n;
+ *  share AND carries no acknowledgement stamp yet — the only kind a late
+ *  acknowledgement changes anything for. Once the mirror's classification is
+ *  stamped the ack has done its work: a trusted consumption resolved the share
+ *  in that call, and a quarantine leaves it to the recovery ceremony or the
+ *  terminal-loss record, so re-acking would spend gas every pass for nothing. */
+export function isLateDeliveryCandidate(v: {
+  status: number | bigint;
+  strandedRecycled?: bigint;
+  consumedAcked?: boolean;
+  quarantineAcked?: boolean;
+}): boolean {
+  return (
+    Number(v.status) === 3 &&
+    (v.strandedRecycled ?? 0n) > 0n &&
+    v.consumedAcked !== true &&
+    v.quarantineAcked !== true
+  );
 }
 

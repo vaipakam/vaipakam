@@ -2,7 +2,8 @@
  * #1461 — the ack pass also acknowledges a RELEASED reservation whose delivery
  * executed after all, so Base resolves the share its release counted as
  * stranded. Pinned: which reservations qualify (released AND still holding a
- * stranded share — an acknowledgement changes nothing for any other), and the
+ * stranded share and no acknowledgement stamp yet — an acknowledgement changes
+ * nothing for any other), and the
  * discovery read over the chain's own release events on the real schema.
  */
 import { readFileSync, readdirSync } from 'node:fs';
@@ -24,6 +25,19 @@ describe('isLateDeliveryCandidate', () => {
     expect(isLateDeliveryCandidate({ status: 3 }), 'released, a pre-#1461 view').toBe(false);
     expect(isLateDeliveryCandidate({ status: 1, strandedRecycled: 5n }), 'still pending: the main scan acks it').toBe(false);
     expect(isLateDeliveryCandidate({ status: 2, strandedRecycled: 5n }), 'acked').toBe(false);
+    // Once the mirror's classification is stamped the ack has done its work.
+    expect(
+      isLateDeliveryCandidate({ status: 3, strandedRecycled: 1n, consumedAcked: false, quarantineAcked: false }),
+      'released, stranded, no stamp yet',
+    ).toBe(true);
+    expect(
+      isLateDeliveryCandidate({ status: 3, strandedRecycled: 1n, quarantineAcked: true }),
+      'quarantined: the ceremony or the loss record resolves it, not an ack',
+    ).toBe(false);
+    expect(
+      isLateDeliveryCandidate({ status: 3, strandedRecycled: 1n, consumedAcked: true }),
+      'consumption already stamped',
+    ).toBe(false);
   });
 });
 

@@ -259,6 +259,10 @@ numeraire linkage at all.
 > (the governor §4.2 formula gets its supersession note; the unwired
 > `recycleTariffKPer1e18EthDay` knob is deleted once no caller remains).
 > The divergence table is retained below for the record.
+>
+> **As built (#1956):** the ETH·day knob is deleted — setter, event, error,
+> constants and the config reader; `getRecycleConfig()` returns the margin
+> alone. The storage slot stays, retired (append-only layout).
 
 The launch-era absorption path is the tariff-priced discount entitlement
 — on this everything agrees. What the tariff IS diverged between two

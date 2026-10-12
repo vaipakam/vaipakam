@@ -9195,12 +9195,20 @@ library LibVaipakam {
         bytes32 dayListRoot;
         /// @dev #1461, appended — the recycled share THIS reservation's release
         ///      recorded as stranded in transit (its actual reversal into
-        ///      `recycleReleasedRemitStrandedCumulative`) and not yet resolved. A
-        ///      late acknowledgement from the destination — the delivery executed
-        ///      after all — resolves what remains, once; a recovery settlement or a
-        ///      recorded terminal loss for the remittance decrements it first, so
-        ///      one remittance never resolves twice through them.
+        ///      `recycleReleasedRemitStrandedCumulative`) and not yet resolved.
+        ///      Resolved, once, by whichever settles the value's fate: a TRUSTED
+        ///      late consumption (the mirror credited it), or the recovery
+        ///      ceremony / terminal-loss record (each decrements it by what it
+        ///      resolves). The two sides are exclusive — the ceremony and the loss
+        ///      record are refused while consumption is trusted, and trust never
+        ///      lapses once held (a quarantine stamp is refused after one).
         uint256 strandedRecycled;
+        /// @dev #1452, appended — whether this reservation's recycled share is
+        ///      booked in Base's per-destination delivered figures: 0 not yet,
+        ///      1 under the operator's forced finalization (counted apart), 2
+        ///      under the delivery's own consumed acknowledgement. Booked once,
+        ///      at the first attested consumption; 1 → 2 moves it across.
+        uint8 recycledBooked;
     }
 
     /// @notice #1222 M3 B2-d2 — a mirror's receipt record for one delivered

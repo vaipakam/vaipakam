@@ -54,8 +54,9 @@ export interface BaseChainBooks {
    */
   keeperDraw?: bigint;
   /**
-   * #1452 — the recycled share of every remittance to this chain that Base saw
-   * ACKNOWLEDGED (`getChainRemittedRecycled`), forced finalizations excluded.
+   * #1452 — the recycled share of every remittance to this chain that the chain
+   * acknowledged CREDITING (`getChainRemittedRecycled`), once each; held or
+   * provisional acknowledgements and forced finalizations are excluded.
    * The chain must have relocated at least this as delivered custody.
    * `undefined` means UNKNOWN — the view could not be read — and the
    * `base-ahead-of-chain` relocated leg SKIPS, for the reason the draws give.

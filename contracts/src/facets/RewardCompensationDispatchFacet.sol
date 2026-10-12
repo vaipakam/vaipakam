@@ -1187,7 +1187,10 @@ contract RewardCompensationDispatchFacet is
     function _consumptionTrusted(
         LibVaipakam.RemitReservation storage r
     ) private view returns (bool) {
-        return r.consumedAcked && !r.quarantineAcked;
+        // #1461 — the one trust rule, shared with the late acknowledgement's
+        // stranded-share settle, so the ceremony / loss record and the late
+        // consumption can never both resolve one remittance.
+        return LibVpfiRecycle.releasedConsumptionTrusted(r);
     }
 
     /**

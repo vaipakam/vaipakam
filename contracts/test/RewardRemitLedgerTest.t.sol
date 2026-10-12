@@ -5166,9 +5166,13 @@ contract RewardRemitLedgerTest is SetupTest {
         (, , , , uint256 resolved) = RewardAggregatorFacet(address(diamond)).getRecycleCompositionPosition();
         assertEq(resolved, recycledSent, "the landed delivery resolved it");
         assertEq(rlens.getRemitReservation(1).strandedRecycled, 0, "and the record is spent");
+        (uint256 booked, ) = rlens.getChainRemittedRecycled(CHAIN_ARB);
+        assertEq(booked, recycledSent, "#1452: the late consumption is booked as delivered");
         rewardMessenger.deliverRemitAck(CHAIN_ARB, 1, total);
         (, , , , uint256 again) = RewardAggregatorFacet(address(diamond)).getRecycleCompositionPosition();
         assertEq(again, recycledSent, "a repeated acknowledgement resolves nothing more");
+        (uint256 bookedAgain, ) = rlens.getChainRemittedRecycled(CHAIN_ARB);
+        assertEq(bookedAgain, recycledSent, "#1452: and books nothing more");
     }
 
     /// @dev #1461 — a terminal-loss record for the remittance takes its share off
@@ -5209,5 +5213,83 @@ contract RewardRemitLedgerTest is SetupTest {
         (uint256 acked, uint256 forced) = rlens.getChainRemittedRecycled(CHAIN_ARB);
         assertEq(acked, 0, "no delivery acknowledged");
         assertEq(forced, recycledSent, "the forced share, apart");
+    }
+
+    /// @dev #1452 — the mirror relocates custody only when it CREDITS a delivery:
+    ///      a quarantined or provisional acknowledgement books nothing, the first
+    ///      consumed one books the share, and a repeat books nothing more.
+    function test_OnlyAConsumedAck_BooksTheDeliveredShare_Once() public {
+        (, uint256 recycledSent) = _remitRecycledWithResidual();
+        uint256 total = rlens.getRemitReservation(1).total;
+        rewardMessenger.deliverRemitAckWithClassification(CHAIN_ARB, 1, total, 3);
+        (uint256 a0, uint256 f0) = rlens.getChainRemittedRecycled(CHAIN_ARB);
+        assertEq(rlens.getRemitReservation(1).status, 2, "fixture-live: the provisional ack finalized it");
+        assertEq(a0 + f0, 0, "a provisional acknowledgement books nothing");
+        rewardMessenger.deliverRemitAckWithConsumed(CHAIN_ARB, 1, total, false);
+        (uint256 a1, ) = rlens.getChainRemittedRecycled(CHAIN_ARB);
+        assertEq(a1, 0, "nor does a quarantined one");
+        rewardMessenger.deliverRemitAck(CHAIN_ARB, 1, total);
+        (uint256 a2, ) = rlens.getChainRemittedRecycled(CHAIN_ARB);
+        assertEq(a2, recycledSent, "the consumption books it");
+        rewardMessenger.deliverRemitAck(CHAIN_ARB, 1, total);
+        (uint256 a3, ) = rlens.getChainRemittedRecycled(CHAIN_ARB);
+        assertEq(a3, recycledSent, "once");
+    }
+
+    /// @dev #1452 — a forced finalization later confirmed by the delivery's own
+    ///      consumed acknowledgement IS acknowledged: its share moves over.
+    function test_ForcedThenAcked_MovesTheShareToAcked() public {
+        (, uint256 recycledSent) = _remitRecycledWithResidual();
+        remit.finalizeRemitReservation(1);
+        (, uint256 forcedBefore) = rlens.getChainRemittedRecycled(CHAIN_ARB);
+        assertEq(forcedBefore, recycledSent, "fixture-live: the forced share is booked");
+        rewardMessenger.deliverRemitAck(CHAIN_ARB, 1, rlens.getRemitReservation(1).total);
+        (uint256 acked, uint256 forced) = rlens.getChainRemittedRecycled(CHAIN_ARB);
+        assertEq(forced, 0, "off the forced figure");
+        assertEq(acked, recycledSent, "onto the acknowledged one");
+    }
+
+    function _resolvedStranded() internal view returns (uint256 resolved) {
+        (, , , , resolved) = RewardAggregatorFacet(address(diamond)).getRecycleCompositionPosition();
+    }
+
+    /// @dev #1461 — a QUARANTINED late delivery was not credited on the mirror:
+    ///      it resolves nothing; neither does a consumption reported after it
+    ///      (contradicted, so not trusted); and the recovery ceremony that brings
+    ///      the value home resolves it — once, not on top of an acknowledgement.
+    function test_AQuarantinedLateAck_ResolvesNothing_TheCeremonyResolvesOnce() public {
+        LibVaipakam.RemitReservation memory r = _releasedMixedFixture();
+        uint256 stranded = r.strandedRecycled;
+        assertGt(stranded, 0, "fixture-live: the release stranded a recycled share");
+        uint256 resolved0 = _resolvedStranded();
+        rewardMessenger.deliverRemitAckWithConsumed(CHAIN_ARB, 1, r.total, false);
+        assertTrue(rlens.getRemitReservation(1).quarantineAcked, "fixture-live: the quarantine is stamped");
+        assertEq(_resolvedStranded(), resolved0, "a quarantined delivery resolves nothing");
+        rewardMessenger.deliverRemitAck(CHAIN_ARB, 1, r.total);
+        assertTrue(rlens.getRemitReservation(1).consumedAcked, "fixture-live: the consumption is stamped too");
+        assertEq(_resolvedStranded(), resolved0, "a contradicted consumption resolves nothing");
+        assertEq(rlens.getRemitReservation(1).strandedRecycled, stranded, "the record stands for the ceremony");
+        comp.recordRecoveryCeremony(1, r.fresh, r.recycled);
+        assertEq(_resolvedStranded() - resolved0, r.recycled, "the ceremony resolves its recycled inflow, once");
+    }
+
+    /// @dev #1461 — the exclusivity rests on trust never lapsing: once a late
+    ///      consumption is trusted (and has resolved the share), a later
+    ///      quarantine report is refused and so is the ceremony — nothing can
+    ///      resolve the same remittance a second time. A provisional report
+    ///      changes nothing either.
+    function test_ATrustedConsumption_NeverLapses_SoNothingResolvesTwice() public {
+        LibVaipakam.RemitReservation memory r = _releasedMixedFixture();
+        uint256 stranded = r.strandedRecycled;
+        assertGt(stranded, 0, "fixture-live: the release stranded a recycled share");
+        uint256 resolved0 = _resolvedStranded();
+        rewardMessenger.deliverRemitAck(CHAIN_ARB, 1, r.total);
+        assertEq(_resolvedStranded() - resolved0, stranded, "the trusted consumption resolved it");
+        rewardMessenger.deliverRemitAckWithClassification(CHAIN_ARB, 1, r.total, 3);
+        rewardMessenger.deliverRemitAckWithConsumed(CHAIN_ARB, 1, r.total, false);
+        assertFalse(rlens.getRemitReservation(1).quarantineAcked, "the quarantine report is refused");
+        assertEq(_resolvedStranded() - resolved0, stranded, "still resolved once");
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.StrandedReturnConsumedReceipt.selector, 1));
+        comp.recordRecoveryCeremony(1, 0, r.recycled);
     }
 }

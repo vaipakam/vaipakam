@@ -120,11 +120,13 @@ right side that moved once.
 **The allowance is NET of what resolved (#1662, #1461).** The stranded
 cumulative stays GROSS (composition depends on it); the allowance subtracts
 the resolved cumulative, which a recovery settlement, a recorded terminal
-loss, and — since #1461 — a LATE ACKNOWLEDGEMENT all feed: when a released
-message executes after all, the destination's ack resolves that remittance's
-stranded share, once (the reservation keeps its own record, so two routes
-never resolve the same remittance twice), and the keeper's ack pass sends
-that ack for any release whose delivery has landed. A late delivery nobody
+loss, and — since #1461 — a LATE CREDIT all feed: when a released message
+executes after all and the destination CREDITS it, the destination's ack
+resolves that remittance's stranded share, once (the reservation keeps its own
+record, so two routes never resolve the same remittance twice; a held or
+contradicted delivery resolves nothing and is left to the recovery or loss
+record), and the keeper's ack pass sends that ack for any release whose
+delivery has landed. A late delivery nobody
 acks stays counted until someone does; nothing fund-moving reads the
 allowance — the remit gate and `_recycleFundable` use the raw bucket.
 
@@ -143,7 +145,8 @@ Nothing built from the receiving chain's own counters can see this — the
 counters agree with each other precisely because both moved. It needs a
 record the receiving chain does not author: what Base says it delivered.
 #1452 adds it: Base records, per destination, the recycled share of every
-remittance it saw ACKNOWLEDGED (`getChainRemittedRecycled`; forced
+remittance the destination acknowledged CREDITING, once each
+(`getChainRemittedRecycled`; held or provisional acks book nothing, forced
 finalizations apart), and `base-ahead-of-chain`'s `relocated` leg pages when
 that exceeds the chain's relocated custody. The acknowledgement follows the
 delivery's credit, so Base's figure trails the chain's like every other leg
