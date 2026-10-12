@@ -334,7 +334,7 @@ try {
       // which would otherwise read as a product FAIL. Twice the estimate at
       // the current fee, so a fee tick between here and the send still fits.
       const [balance, gas, gasPrice] = await Promise.all([
-        pub.getBalance({ address: WALLET }),
+        pub.getBalance({ address: WALLET, blockTag: 'pending' }),
         pub.estimateContractGas({ address: DIAMOND, abi: DIAMOND_ABI, functionName: 'claimAsLender', args: [LOAN_ID], account: WALLET }),
         pub.getGasPrice(),
       ]);
@@ -368,10 +368,17 @@ try {
       fromBlock: before,
     });
     const mine = claims.find((l) => l.args.claimant.toLowerCase() === WALLET.toLowerCase());
+    // The asset first: `fmt` labels the amount with the principal's symbol,
+    // which is only true when the event paid the principal asset.
+    const rightAsset = mine !== undefined && mine.args.asset.toLowerCase() === loan.principalAsset.toLowerCase();
     check(
-      'LenderFundsClaimed paid this wallet the recorded proceeds',
-      mine !== undefined && mine.args.amount === rec.lenderProceeds,
-      mine ? `${fmt(mine.args.amount)} in ${mine.transactionHash}` : 'no event for this wallet',
+      'LenderFundsClaimed paid this wallet the recorded proceeds in the principal asset',
+      rightAsset && mine.args.amount === rec.lenderProceeds,
+      !mine
+        ? 'no event for this wallet'
+        : rightAsset
+          ? `${fmt(mine.args.amount)} in ${mine.transactionHash}`
+          : `paid ${mine.args.amount} raw of ${mine.args.asset}, not ${symbol} ${loan.principalAsset}, in ${mine.transactionHash}`,
     );
     // A row's absence counts only on a SETTLED, AVAILABLE list: the loading
     // and unavailable states carry no rows either.
@@ -409,10 +416,25 @@ try {
     }
     console.log(`FAIL drive after the claim was sent — ${err.message}; ${claimHash}: ${outcome}`);
     fails++;
+  } else if (claimSends > 0) {
+    // The gate allowed the send but no hash came back (the broadcast's
+    // response lost, say): the claim may or may not have landed. That is
+    // an indeterminate write, read from the loan's state — never BLOCKED.
+    let state;
+    try {
+      const after = await read('getLoanDetails', [LOAN_ID]);
+      state = `loan ${LOAN_ID} status is now ${after.status} (InternalMatched is ${INTERNAL_MATCHED})`;
+    } catch (rErr) {
+      state = `loan state unreadable from the direct RPC (${rErr.message})`;
+    }
+    console.log(`FAIL drive after the claim send was allowed, with no hash returned — ${err.message}; the claim may have landed: ${state}`);
+    fails++;
   } else {
     // No answer from the page's own RPC while the assertion waited: nothing
-    // page-backed was observed, so this is not a verdict on the card.
-    if ((await rpc.settled()) === 0) {
+    // page-backed was observed, so this is not a verdict on the card —
+    // unless a guard already recorded a refused request, which is a
+    // product finding whatever the RPC did afterwards.
+    if ((await rpc.settled()) === 0 && violationsSoFar().length === 0) {
       await blocked('the page RPC answered nothing while the drive waited', err, done);
     }
     console.log(`FAIL drive — ${err.message}`);

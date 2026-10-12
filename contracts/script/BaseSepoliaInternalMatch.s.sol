@@ -148,7 +148,8 @@ contract BaseSepoliaInternalMatch is RepriceTestnetMock {
         // drifted, a venue price set apart from the feed).
         PriceReading memory before = _read(t);
 
-        (bool wasEnabled,, uint256 incentiveBps) = ConfigFacet(t.diamond).getInternalMatchConfigBundle();
+        (bool wasEnabled, uint256 windowBps, uint256 incentiveBps) =
+            ConfigFacet(t.diamond).getInternalMatchConfigBundle();
         require(
             !wasEnabled || originallyEnabled,
             "BaseSepoliaInternalMatch: internal matching is already ON - if a partial run left it on, switch it off first; set IM_ORIGINALLY_ENABLED=true only if ON is the intended state"
@@ -159,7 +160,13 @@ contract BaseSepoliaInternalMatch is RepriceTestnetMock {
         console.log("mUSDC:              ", mUsdc);
         console.log("internalMatchEnabled before:", wasEnabled);
         console.log("tLIQ price before (e8):", priceBefore);
-        console.log("tLIQ pool spot / venue price (e8) before:", uint256(before.poolSpot), before.venuePrice8);
+        console.log("tLIQ pool spot before (raw sqrtPriceX96):", uint256(before.poolSpot));
+        console.log("tLIQ venue price before (e8):", before.venuePrice8);
+        // While matching is ON, every liquid loan whose LTV sits in
+        // [liq floor, liq floor + window) cannot be liquidated externally
+        // (RiskFacet: InternalMatchOnlyBand) — a deployment-wide effect of
+        // the enable, flagged per loan in each exposure report.
+        console.log("external-liquidation priority window while matching is on (bps above each loan's floor):", windowBps);
         // What each lender gives up to the matcher at settlement, from this
         // deployment's own setting rather than the default.
         console.log("internal-match incentive per leg (bps of principal):", incentiveBps);
@@ -365,6 +372,7 @@ contract BaseSepoliaInternalMatch is RepriceTestnetMock {
     ///      Simulation-time log only; writes nothing.
     function _reportExposure(RepriceTarget memory t, uint256 skipA, uint256 skipB) internal view {
         uint256 pageSize = 200;
+        (, uint256 windowBps,) = ConfigFacet(t.diamond).getInternalMatchConfigBundle();
         console.log("[simulation-time snapshot - positions created after it are not listed]");
         console.log("Other matchable tLIQ loans - Active and FallbackPending (id, status, LTV bps, liq floor bps):");
         for (uint256 offset;; offset += pageSize) {
@@ -383,11 +391,21 @@ contract BaseSepoliaInternalMatch is RepriceTestnetMock {
                 (bool ok, bytes memory ret) =
                     t.diamond.staticcall(abi.encodeWithSelector(RiskFacet.calculateLTV.selector, ids[i]));
                 if (ok && ret.length == 32) {
+                    uint256 ltv = abi.decode(ret, (uint256));
+                    uint256 floorBps = uint256(l.liquidationLtvBpsAtInit);
+                    bool inWindow = floorBps > 0 && ltv >= floorBps && ltv < floorBps + windowBps;
                     console.log(
-                        string.concat("   id ", vm.toString(ids[i]), " ", status, ": LTV bps"),
-                        abi.decode(ret, (uint256)),
+                        string.concat(
+                            "   id ",
+                            vm.toString(ids[i]),
+                            " ",
+                            status,
+                            inWindow ? " [IN PRIORITY WINDOW: no external liquidation while matching is on]" : "",
+                            ": LTV bps"
+                        ),
+                        ltv,
                         "liq floor bps",
-                        uint256(l.liquidationLtvBpsAtInit)
+                        floorBps
                     );
                 } else {
                     console.log(
