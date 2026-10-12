@@ -281,7 +281,8 @@ contract BaseSepoliaInternalMatch is RepriceTestnetMock {
     ///      Diamond's whole active list (Active AND FallbackPending) and
     ///      refuses while ANY tLIQ loan there has one of this run's four
     ///      wallets as lender or borrower, by the loan's record or by the
-    ///      current position-NFT holder — a B opened at p1 or partly
+    ///      current position-NFT holder (an unreadable holder refuses too —
+    ///      an active loan always has both NFTs) — a B opened at p1 or partly
     ///      matched, an A left open, a FallbackPending leg whose in-kind
     ///      claim the restore would revalue, or an unrelated loan of the
     ///      same wallets, which the restore would move just the same. Each is
@@ -303,9 +304,13 @@ contract BaseSepoliaInternalMatch is RepriceTestnetMock {
                 // The position NFTs decide who holds the position now; the
                 // loan's lender/borrower fields are only consolidated on a
                 // later operation, so both are checked.
-                address lenderHolder = _holderOf(t.diamond, l.lenderTokenId);
-                address borrowerHolder = _holderOf(t.diamond, l.borrowerTokenId);
-                bool ours;
+                // Every loan on the active list still has both position
+                // NFTs, so a holder that cannot be read is unknown state,
+                // not "nobody": it counts as this run's and refuses.
+                (bool lenderRead, address lenderHolder) = _holderOf(t.diamond, l.lenderTokenId);
+                (bool borrowerRead, address borrowerHolder) = _holderOf(t.diamond, l.borrowerTokenId);
+                bool ours = !lenderRead || !borrowerRead;
+                if (ours) console.log("  position-NFT holder unreadable on tLIQ loan (id):", ids[i]);
                 for (uint256 k; k < 4; ++k) {
                     if (
                         l.lender == mine[k] || l.borrower == mine[k] || lenderHolder == mine[k]
@@ -336,13 +341,14 @@ contract BaseSepoliaInternalMatch is RepriceTestnetMock {
         for (uint256 j; j < found.length; ++j) _logLoan("held", t.diamond, found[j]);
     }
 
-    /// @dev The current holder of a position NFT, or address(0) when it no
-    ///      longer resolves (burned).
-    function _holderOf(address diamond, uint256 tokenId) internal view returns (address) {
+    /// @dev The current holder of a position NFT. `read` is false when
+    ///      `ownerOf` reverts; the caller decides what an unreadable holder
+    ///      means (on the active list it means refuse).
+    function _holderOf(address diamond, uint256 tokenId) internal view returns (bool read, address holder) {
         try VaipakamNFTFacet(diamond).ownerOf(tokenId) returns (address o) {
-            return o;
+            return (true, o);
         } catch {
-            return address(0);
+            return (false, address(0));
         }
     }
 
