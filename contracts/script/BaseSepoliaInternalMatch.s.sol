@@ -43,9 +43,9 @@ import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IER
  *              and in the next transaction the matcher runs
  *              `triggerInternalMatchLiquidation(A, B, 0)`; both loans close
  *              `InternalMatched` in one step.
- *           5. tLIQ back to the price it had BEFORE the run (read at start,
- *              not assumed to be `IM_P0_E8`); the kill-switch back off unless
- *              `IM_KEEP_ENABLED=true`.
+ *           5. The kill-switch back off (unless `IM_KEEP_ENABLED=true`), then
+ *              tLIQ back to the price it had BEFORE the run (read at start,
+ *              not assumed to be `IM_P0_E8`).
  *
  *         Every price move is three non-atomic owner-gated transactions (see
  *         {RepriceTestnetMock}); between steps 2 and 5 every tLIQ loan on the
@@ -53,12 +53,17 @@ import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IER
  *         pages) with its LTV, or says it is unreadable. Broadcast with
  *         `--slow`.
  *
- *         Two races the script cannot close, stated rather than hidden:
- *         between steps 3 and 4 a keeper may liquidate either loan (step 4
- *         then reverts with tLIQ still moved), and between the enable and
- *         the trigger anyone may match an eligible pair. Recovery for both:
- *         re-run {RepriceTestnetMock} to restore the price and
- *         `setInternalMatchEnabled(false)` from the admin.
+ *         Races the script cannot close, stated rather than hidden:
+ *           - From the step-2 move until the trigger, loan A is over its
+ *             liquidation LTV (at the defaults it sits near 200% at p1), so
+ *             a keeper may liquidate it while B is being opened or at p2;
+ *             from step 3 the same holds for B. Either makes a later step
+ *             revert with tLIQ still moved.
+ *           - Between the enable and the trigger anyone may match an
+ *             eligible pair. Matching is switched back off right after the
+ *             trigger, before the restore, so no reprice runs with it open.
+ *         Recovery for any of them: re-run {RepriceTestnetMock} to restore
+ *         the price, and `setInternalMatchEnabled(false)` from the admin.
  *
  *         The kill-switch is never inferred from its current value. A run
  *         that finds it ON refuses unless `IM_ORIGINALLY_ENABLED=true` says
@@ -125,22 +130,22 @@ contract BaseSepoliaInternalMatch is RepriceTestnetMock {
         console.log("tLIQ price before (e8):", priceBefore);
         console.log("A: principal (tLIQ wei) / collateral (mUSDC wei):", principalA, collateralA);
 
+        // Every price move reports the exposure it creates (see _reprice), so
+        // this one is the only report not tied to a move: the state before it.
         _reportExposure(t, 0, 0);
-        _reprice(t, a.deployerKey, p0);
+        _reprice(t, a.deployerKey, p0, 0, 0);
         uint256 loanA = _openLoan(
             t.diamond, a.lenderKey, a.borrowerKey, t.asset, principalA, mUsdc, collateralA, rateBps
         );
         _logLoan("A", t.diamond, loanA);
 
-        _reprice(t, a.deployerKey, p1);
+        _reprice(t, a.deployerKey, p1, loanA, 0);
         uint256 loanB = _openLoan(
             t.diamond, a.newLenderKey, a.newBorrowerKey, mUsdc, collateralA, t.asset, principalA, rateBps
         );
         _logLoan("B", t.diamond, loanB);
-        _reportExposure(t, loanA, loanB);
 
-        _reprice(t, a.deployerKey, p2);
-        _reportExposure(t, loanA, loanB);
+        _reprice(t, a.deployerKey, p2, loanA, loanB);
         _logLoan("A @p2", t.diamond, loanA);
         _logLoan("B @p2", t.diamond, loanB);
 
@@ -156,12 +161,14 @@ contract BaseSepoliaInternalMatch is RepriceTestnetMock {
         RiskMatchLiquidationFacet(t.diamond).triggerInternalMatchLiquidation(loanA, loanB, 0);
         vm.stopBroadcast();
 
-        _reprice(t, a.deployerKey, priceBefore);
+        // Switched back off BEFORE the restore, so no reprice transaction runs
+        // with the permissionless match path open.
         if (!wasEnabled && !keepEnabled) {
             vm.startBroadcast(a.adminKey);
             ConfigFacet(t.diamond).setInternalMatchEnabled(false);
             vm.stopBroadcast();
         }
+        _reprice(t, a.deployerKey, priceBefore, loanA, loanB);
 
         _logRecord("A", t.diamond, loanA);
         _logRecord("B", t.diamond, loanB);
@@ -196,13 +203,19 @@ contract BaseSepoliaInternalMatch is RepriceTestnetMock {
         return (principal * lendPrice8 * 2 * 10 ** collDec) / (collPrice8 * 10 ** lendDec);
     }
 
-    function _reprice(RepriceTarget memory t, uint256 ownerKey, uint256 price8) internal {
+    /// @dev One coherent tLIQ move, then the exposure it leaves on every
+    ///      loan this run does not own. Reporting here rather than at chosen
+    ///      call sites means no price state the run creates goes unreported.
+    function _reprice(RepriceTarget memory t, uint256 ownerKey, uint256 price8, uint256 skipA, uint256 skipB)
+        internal
+    {
         uint160 spot = _targetSpot(t, price8);
         vm.startBroadcast(ownerKey);
         _applyReprice(t, price8, spot);
         vm.stopBroadcast();
         _verifyReprice(t, price8);
         console.log("tLIQ repriced to (e8):", price8);
+        _reportExposure(t, skipA, skipB);
     }
 
     /// @dev Lender offers `principal` of `lendAsset` against `collateral` of
