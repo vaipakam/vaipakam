@@ -1126,6 +1126,8 @@ contract RewardDayDeliveryGateTest is RewardDayDeliveryGateBase {
         assertTrue(_gp(h).batched, "the retired-era delivery opened its epoch");
         vm.expectRevert(abi.encodeWithSelector(DeliveryProofRouteIsBatch.selector, h));
         _epoch().proveDeliveryDayList(h, _one(1));
+        assertFalse(_gd(1).landed, "straddle: not before the epoch's index lists the day");
+        _epoch().materializeTransportBatchPage(h, _one(1)); // the index, as the keeper's pass builds it
         GateDay memory g = _gd(1);
         assertTrue(g.landed, "its epoch's index lands the day");
         assertGt(g.epochCount, 0, "an epoch lists it");
