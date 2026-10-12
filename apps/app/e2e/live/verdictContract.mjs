@@ -100,6 +100,11 @@ export const THREE_VERDICT_DRIVERS = new Set([
   'live-risk-access.mjs',
   // (live-refinance.mjs is NOT here: it also exits 3 = UNDETERMINED, so it
   // is declared in FOUR_VERDICT_DRIVERS below — #2434 r2.)
+  // Exits 2 when the build differs from the reference deploy, or LOAN_ID is
+  // not an internally matched loan with a stamped record whose lender
+  // position the role holds: a missing precondition, never a card defect.
+  // Also MANUAL-ONLY — see MANUAL_ONLY_DRIVERS below.
+  'live-internal-match-claim.mjs',
   'live-rpc-audit.mjs',
   // Exits 2 when the chain is not in the state its EXPECT mode needs (the
   // operator's flag/clear write on the test list not done, or the Diamond
@@ -174,6 +179,12 @@ export const TWO_VERDICT_DRIVERS = new Map([
  * reading a green batch can see what it did not cover.
  */
 export const MANUAL_ONLY_DRIVERS = new Map([
+  [
+    'live-internal-match-claim.mjs',
+    'needs LOAN_ID naming a real internally matched loan (set up by ' +
+      'contracts/script/BaseSepoliaInternalMatch.s.sol), and with CLAIM=1 it ' +
+      'claims, which ends the card it checks — run it by hand (#2427)',
+  ],
   [
     'live-refinance.mjs',
     'one-shot on-chain refinance: a success closes the loan it drives, and it ' +
