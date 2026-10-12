@@ -4148,9 +4148,10 @@ library LibInteractionRewards {
     }
 
     /// @dev 3b-ii-B — THE single-armed-day settle of an entry at its cursor day: the
-    ///      expiry sweep's tail, and the zero-priced remainder's retirement
-    ///      ({retireZeroPricedRemainder}) — both terminal accountings route through
-    ///      this one body so they cannot drift. The day primitive prices the day
+    ///      expiry sweep's tail. (The zero-priced remainder's retirement no longer
+    ///      routes here: since the #1566 PR 1 review it retires a capped day as a
+    ///      claim does, {_retireCappedDay}, because this body prices with the cap
+    ///      off.) The day primitive prices the day
     ///      with the recycle settlement on, a cap-hit deferral stages the plan it
     ///      found (A2-ii) and prunes, a fresh shortfall defers while the removal
     ///      has not begun, and a settled day persists, folds its draws and is
@@ -4357,12 +4358,13 @@ library LibInteractionRewards {
     ///             nothing moves;
     ///         (ii) a remainder the LOAN-SIDE CAP trims to a zero user split while its
     ///              raw split stands still carries its armed entitlement and the
-    ///              commitment behind it: the day primitive's ordinary terminal
-    ///              accounting runs for it — the expiry sweep's own single-day settle
-    ///              — one day per call; `_persistDay` marks it processed when the
-    ///              cursor passes the window.
-    ///         Anything else — not yet priceable, payable, open, forfeited, a
-    ///         staging reservation binding — is left alone (`retired == false`, no
+    ///              commitment behind it: it is retired one day per call as a claim
+    ///              retires a capped day ({_retireCappedDay}) — the commitments
+    ///              retire, nothing is drawn or credited; `_persistDay` marks it
+    ///              processed when the cursor passes the window.
+    ///         Anything else — not yet priceable, payable, open, forfeited, its
+    ///         expiry begun (the sweep's), a staging reservation binding — is left
+    ///         alone (`retired == false`, no
     ///         revert: a batch must not abort on a sibling). The proof's termination
     ///         test stays "processed, or the claim cursor past the day".
     /// @return retired Whether this call moved the entry (marked processed, or settled a day).
@@ -4376,6 +4378,10 @@ library LibInteractionRewards {
         LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
         if (e.processed || e.user == address(0) || !e.closed) return (false, expired, 0, 0);
         if (e.forfeited || _entryTerminalForfeit(s, e)) return (false, expired, 0, 0);
+        // An entry whose expiry has begun is the expiry sweep's: it settles the
+        // removed entry's days its own way (cap off, recycled), and two settlers
+        // for one day would settle it differently by who came first.
+        if (e.expiryBegun) return (false, expired, 0, 0);
         if (e.startDay >= e.endDay) {
             _retireEmpty(s, id, e);
             return (true, expired, 0, 0);

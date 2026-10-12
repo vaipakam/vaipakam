@@ -1843,9 +1843,6 @@ interface IVaipakamErrors {
     error CustodyPendingSurplusNeedsActiveRole(uint8 role);
     /// @notice Era `era`'s row can fund `room`, less than `amount` (PR C-2).
     error CustodyEraRoomShort(uint64 era, uint256 amount, uint256 room);
-    /// @notice The delivery was dispatched for era `intended`, ahead of this chain's live era `live`: the transport
-    ///         retries it after the local transition (PR C-3).
-    error CustodyEraAhead(uint64 intended, uint64 live);
     /// @notice No parked broadcast under `id` (PR C-4).
     error ParkedBroadcastUnknown(uint256 id);
     /// @notice Parked broadcast `id` is not in the parked state (`status`: 1 tombstoned, 2 applied).

@@ -252,7 +252,11 @@ contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
             LibRewardCustody.stampPacketEra(
                 s, h, LibRewardCustody.custodyEraOfDay(s, LibRewardCustody.earliestListedDay(dayIds))
             );
-            if (splitTyped) LibRewardCustody.attestPacketFromWire(s, h, freshShare, recycledShare);
+            // Attested WHOLE, the rooted wire's rule: recycled as delivered,
+            // fresh the rest of what landed. The receiver floors BOTH shares of
+            // a short d5 delivery, and the whole delivery becomes one epoch typed
+            // by these two caps — a wei under no cap is value no day could draw.
+            if (splitTyped) LibRewardCustody.attestPacketFromWire(s, h, freshLooking, recycledShare);
             s.rewardBudgetFreshUncounted += amount;
             LibRewardCustody.callUnclassifiedIngress(h, amount);
             LibRewardCustody.admitTransportBatch(s, h, dayIds, amount);
@@ -376,6 +380,14 @@ contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         uint64 intendedEra
     );
 
+    /// @notice A d6 delivery was stamped for era `intended`, AHEAD of this chain's
+    ///         live era `live`, and was filed into the live era. A mirror's own
+    ///         reports never put the canonical chain ahead of it, so this means
+    ///         the Diamond that reported was REPLACED (a new one restarts at era
+    ///         0) — worth an operator's look, never a reason to strand value.
+    /// @custom:event-category informational/reward-transport
+    event CustodyEraAheadFiledLive(bytes32 indexed packetHash, uint64 intended, uint64 live);
+
     /**
      * @notice Record a reward budget the {RewardRemittanceReceiver} forwarded
      *         on the d6 (ROOTED) wire — #1566 transport epochs 3d-1.
@@ -451,18 +463,24 @@ contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         LibRewardCustody.stampPacketDayListRoot(s, h, dayListRoot, elementCount, chunkCount, intendedEra);
         // The INTENDED ERA — the destination's own, as it last reported it to
         // the canonical chain (#1566 PR C revision) — against the live one.
-        // Ahead of us: the canonical chain heard of a transition this chain has
-        // not made — revert, and the transport re-delivers after it. Otherwise
-        // the delivery belongs to the era it was sent for, a retired one
-        // included: it is NOT held inert, its epoch is that era's separately
+        // Ahead of us: impossible while this Diamond is the one that reported its
+        // era — the canonical chain only learns an era from this chain's own
+        // reports — so this Diamond REPLACED the reporter and restarted at era 0.
+        // It never reaches the stamped era, so refusing would strand the delivery
+        // in the transport for good: it files into the LIVE era, the only one
+        // this Diamond has, and says so. The wire's word stays on the packet.
+        // Otherwise the delivery belongs to the era it was sent for, a retired
+        // one included: it is NOT held inert, its epoch is that era's separately
         // backed, consumable home, drawn by the obligations of the days it lists
         // as transport legs, so nothing it carries reaches the live baseline.
-        if (intendedEra > s.custodyEraCurrent) revert CustodyEraAhead(intendedEra, s.custodyEraCurrent);
+        if (intendedEra > s.custodyEraCurrent) emit CustodyEraAheadFiledLive(h, intendedEra, s.custodyEraCurrent);
         if (epoch) {
             if (freshShare + recycledShare != amount) {
                 revert TransportSplitNotWhole(h, freshShare, recycledShare, amount);
             }
-            LibRewardCustody.stampPacketEra(s, h, intendedEra);
+            LibRewardCustody.stampPacketEra(
+                s, h, intendedEra > s.custodyEraCurrent ? s.custodyEraCurrent : intendedEra
+            );
             LibRewardCustody.attestPacketFromWire(s, h, freshShare, recycledShare);
             s.rewardBudgetFreshUncounted += amount;
             LibRewardCustody.callUnclassifiedIngress(h, amount);

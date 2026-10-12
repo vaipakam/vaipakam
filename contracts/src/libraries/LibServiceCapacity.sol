@@ -239,7 +239,8 @@ library LibServiceCapacity {
     ///         deposit: an unseen bucket starts with ONE free action (the floor; a
     ///         refused spend reverts, so a first touch could never persist an empty
     ///         start, and the design's zero-deposit operator must complete one
-    ///         action); a bucket on an older curve epoch RESETS to empty (event);
+    ///         action); a bucket on an older curve epoch is re-priced under the
+    ///         CURRENT curve from the retune (`setAt`), clamped to its ceiling (event);
     ///         otherwise it accrues at its own rate
     ///         from its own last touch and is clamped to its own ceiling — so any
     ///         change of capacity (deposit up or down, retune) is settled under the

@@ -1616,6 +1616,41 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _admin().unpause();
     }
 
+    /// #1566 PR 1 re-review (P3-b) — an entry made NOW for a retired era's packet
+    /// booked its fresh into that era's row: a correction would move it as if it
+    /// were live custody, so it is refused by name, naming the packet's era.
+    function test_Reclassify_RefusesAnEntryOnARetiredErasPacket() public {
+        _activatedMirror();
+        _seedDiamond(10e18);
+        bytes32 id = keccak256("legacy-era-packet");
+        _untyped(10e18, 42, id);
+        _evidence(_packetHash(id), 10e18);
+        _rep().setBaseChainId(0); // era 0 retires (Detached)
+        _rep().setBaseChainId(CHAIN_BASE); // a mirror again: era 2 live
+        assertEq(_rlens().getIngressPacket(_packetHash(id)).custodyEra, 0, "fixture-live: the packet is era 0's");
+        _classify(_packetHash(id), 10e18, 0, keccak256("e-era-packet")); // made in the live era
+        _admin().pause();
+        vm.expectRevert(abi.encodeWithSelector(ReconciliationEntryEraRetired.selector, uint256(0), uint64(0)));
+        _recon().reclassifyReconciliationEntry(0, true, 1e18, keccak256("r-era-packet"));
+        _admin().unpause();
+    }
+
+    /// #1566 PR 1 re-review (C-1) — the lifetime cap counts what was DELIVERED, net
+    /// of the in-holder re-credits, as the delivered-position lens does. Straddle by
+    /// one wei.
+    function test_FundRewardPool_CapIsNetOfReCredits() public {
+        _becomeCanonical();
+        activateRewardCustodyForTest(address(vpfi), 0);
+        _mut().setArmedFreshLedgerRaw(CAP - 1e18, CAP - 1e18);
+        _mut().setFreshReCreditedRaw(5e18);
+        vpfi.mint(address(this), 12e18 + 1);
+        vpfi.approve(address(diamond), 12e18 + 1);
+        vm.expectRevert(abi.encodeWithSelector(RewardCustodyFundingExceedsCap.selector, CAP + 1, CAP));
+        _custody().fundRewardPool(6e18 + 1);
+        _custody().fundRewardPool(6e18); // net counted CAP - 6e18, plus 6e18: exactly the cap
+        assertEq(_live(), 6e18, "funded");
+    }
+
     /// Codex #2206 r3 (P1) — the correction toward fresh is the same
     /// privileged door and takes the same evidence: recycled credit lifts to
     /// fresh only up to the packet's authenticated figure, cumulatively with

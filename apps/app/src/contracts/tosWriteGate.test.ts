@@ -33,6 +33,9 @@ describe('isExitWrite', () => {
       'addCollateral',
       // #2389 r1 — returns the borrower's own surplus collateral.
       'partialWithdrawCollateral',
+      // #1219 — an operator's own capacity deposit, live or archived.
+      'withdrawCapacityDeposit',
+      'withdrawArchivedCapacityDeposit',
     ]) {
       expect(isExitWrite(fn, []), fn).toBe(true);
     }
@@ -55,6 +58,8 @@ describe('isExitWrite', () => {
       'offsetWithNewOffer',
       'createLoanSaleOffer',
       'modifyOffer',
+      // #1219 — posting capacity is new business, unlike withdrawing it.
+      'postCapacityDeposit',
     ]) {
       expect(isExitWrite(fn, []), fn).toBe(false);
     }

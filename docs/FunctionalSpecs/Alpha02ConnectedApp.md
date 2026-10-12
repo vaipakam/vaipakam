@@ -2813,7 +2813,8 @@ is the borrower's own money.
   what they are accepting.
 - **Anything that reduces the user's commitments stays available**, whether or
   not they have accepted. That covers repaying and closing positions,
-  claiming settled funds, withdrawing their own assets, cancelling their own
+  claiming settled funds, withdrawing their own assets (vault balances and a
+  service operator's capacity deposit alike), cancelling their own
   standing offers and orders, adding collateral to a position at risk, and —
   in both cases where a third party or an automatic process holds authority —
   withdrawing that authority: a keeper's permission over their positions, and

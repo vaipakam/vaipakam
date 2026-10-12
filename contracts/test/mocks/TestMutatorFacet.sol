@@ -2782,4 +2782,15 @@ contract TestMutatorFacet {
     function uncreditFreshForPacketRaw(bytes32 h, uint256 amount) external returns (uint256) {
         return LibRewardCustody.uncreditFreshForPacket(LibVaipakam.storageSlot(), h, amount);
     }
+
+    /// @dev #1566 PR 1 re-review (B-N1) — mark an entry's expiry begun, as the
+    ///      expiry sweep does at the removal point.
+    function setRewardEntryExpiryBegunRaw(uint256 id, bool begun) external {
+        LibVaipakam.storageSlot().rewardEntries[id].expiryBegun = begun;
+    }
+
+    /// @dev #1566 PR 1 re-review (C-1) — set the in-holder re-credit tally.
+    function setFreshReCreditedRaw(uint256 v) external {
+        LibVaipakam.storageSlot().rewardBudgetFreshReCredited = v;
+    }
 }

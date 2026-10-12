@@ -78,6 +78,18 @@ cost of each wire's ingress plus a reserve for the receiver. Two gas cells
 pin it. The old 300,000 sat below even the older wire's cost, so a delivery
 to an activated mirror could not execute on arrival.
 
+A service operator's capacity-deposit withdrawals, live or from a retired
+rotation epoch, now count as exits for the Terms gate, as the app's own rule
+for returning a user's assets requires. Posting a deposit stays gated.
+
+**Pre-open re-review (2026-10-12).** Three more review passes over the custody-era revision and the fixes above found no fund-losing defect; the smaller findings are fixed here.
+- An administrator's correction of a reconciliation entry is refused when the entry's packet belongs to a retired era, not only when the entry itself was made in one: that packet's value sits in the retired era's holding, which a correction would have moved as if it were live.
+- The lifetime cap on funding the reward pool now counts delivered value net of the in-holder re-credits that era releases and surplus drains make, the same way the delivered-position figure does; a legitimate funding near the cap is no longer refused.
+- A day the loan-side cap trims to nothing is no longer retired once its entry's expiry has begun: from then on the expiry sweep settles it, so one day is never settled two different ways depending on which call came first.
+- A claimant can no longer cancel the staging record of their own expiry before its deadline, as they already could not for a forfeit.
+- The keeper's match pass now reads its pre-match check from its own account. The check's capacity test keys on the caller, and a read with no caller always looked covered, so an exhausted keeper never saw the refusal it was built to see.
+- Comments that still described the removed role freeze and backfill, and a few others the fixes had overtaken, were corrected.
+
 **Offer-match split.** The comments, messages and docs that still named the
 old hosts were corrected, and an unused import was removed.
 

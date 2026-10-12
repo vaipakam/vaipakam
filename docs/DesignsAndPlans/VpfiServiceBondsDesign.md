@@ -3495,6 +3495,15 @@ the two rules meet at a parked adjudication.
   gate does not list it, so a Terms update would freeze operator capital exactly
   as a pause would — with the note still promising the exit is open.
 
+  > **As built (#1956 code audit, 2026-10-12): the Terms half below is built,
+  > the PAUSE half above is not.** The functional spec (§6c) — which outranks
+  > this document — keeps capacity withdrawals under the platform-wide
+  > emergency pause, like every other exit on the platform (repaying,
+  > claiming, withdrawing vault VPFI all stop while the protocol is paused).
+  > A token rotation needs no drain inside the pause: slice 3 archives each
+  > rotation epoch, and its withdrawal works after the rotation. Both
+  > withdrawals are on `EXIT_WRITES`.
+
   So **`withdrawCapacityDeposit`** — the ACTUAL selector; `unbond` is prose
   shorthand existing in no ABI, and `tosWriteGate.ts` compares exact
   function names, so the shorthand in this instruction would leave the

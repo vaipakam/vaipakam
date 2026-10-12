@@ -248,6 +248,14 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
             uint64 plusOne = s.reconciliationEntryEraPlusOne[index];
             uint64 madeIn = plusOne == 0 ? 0 : plusOne - 1;
             if (madeIn != s.custodyEraCurrent) revert ReconciliationEntryEraRetired(index, madeIn);
+            // ... and only while its PACKET belongs to the live era: an entry made
+            // now for a retired era's packet booked its fresh into that era's row,
+            // which a correction would move as if it were live custody.
+            LibVaipakam.ReconciliationEntry storage entry = s.reconciliationLog[index];
+            if (!entry.envelope) {
+                uint64 packetEra = s.ingressPackets[entry.key].custodyEra;
+                if (packetEra != s.custodyEraCurrent) revert ReconciliationEntryEraRetired(index, packetEra);
+            }
         }
         uint64 era = s.reconciliationLog[index].era;
         if (!LibRewardCustody.queueSettled(s, LibRewardCustody.SIDE_FRESH, era)) {

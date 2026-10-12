@@ -887,7 +887,8 @@ r1 — 4×P1 + 1×P2 on one mechanism). I gated pricing on a per-day
   claims on that mirror. My "the gate cannot strand a payable day" claim was
   simply false.
 - **it breaks the destination gas budget.** One cold `SSTORE` per day against
-  the fixed `REWARD_BUDGET_DEST_GAS_LIMIT` of 300,000; the keeper batches by
+  the fixed `REWARD_BUDGET_DEST_GAS_LIMIT` of 300,000 at the time (1,000,000
+  since the #1566 PR 1 re-measure); the keeper batches by
   VPFI value over a 45-day window, so the marker writes alone can exceed the
   callback allowance — the delivery then fails AFTER Base closed the days and
   put the tokens in flight.

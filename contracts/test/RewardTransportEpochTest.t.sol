@@ -324,10 +324,15 @@ contract RewardTransportEpochTest is SetupTest, IVaipakamErrors {
         );
         uint256 used = before - gasleft();
         emit log_named_uint("typed ingress gas", used);
+        // The budget's own derivation rule, not merely "fits": the receiver's
+        // reserve plus a QUARTER's margin, which is what absorbs the transport's
+        // receive overhead and the two 63/64 forwarding hops. A figure that eats
+        // into the margin fails here, before it can fail on-chain: re-derive
+        // REWARD_BUDGET_DEST_GAS_LIMIT (#1566 PR 1 re-review).
         assertLe(
-            used + LibRewardRemitDispatch.REWARD_BUDGET_RECEIVER_RESERVE,
+            (used + LibRewardRemitDispatch.REWARD_BUDGET_RECEIVER_RESERVE) * 5 / 4,
             LibRewardRemitDispatch.REWARD_BUDGET_DEST_GAS_LIMIT,
-            "the typed ingress overruns the destination budget"
+            "the typed ingress has eaten the destination budget's margin: re-derive it"
         );
     }
 

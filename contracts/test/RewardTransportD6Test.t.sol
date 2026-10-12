@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
+import {Vm} from "forge-std/Vm.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {VPFIToken} from "../src/token/VPFIToken.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
@@ -72,6 +73,8 @@ contract RewardTransportD6Test is SetupTest, IVaipakamErrors {
     }
 
     // ─── accessors ───
+    event CustodyEraAheadFiledLive(bytes32 indexed packetHash, uint64 intended, uint64 live);
+
     function _epoch() internal view returns (RewardEpochFacet) { return RewardEpochFacet(address(diamond)); }
     function _ingress() internal view returns (RewardIngressFacet) { return RewardIngressFacet(address(diamond)); }
     function _mut() internal view returns (TestMutatorFacet) { return TestMutatorFacet(address(diamond)); }
@@ -179,10 +182,15 @@ contract RewardTransportD6Test is SetupTest, IVaipakamErrors {
         emit log_named_uint("rooted ingress gas", used);
         LibVaipakam.IngressPacket memory p = _rlens().getIngressPacket(keccak256(abi.encode(uint256(CHAIN_BASE), keccak256("gas-d6"))));
         assertTrue(p.attested, "fixture-live: the full path ran (the epoch attested from the wire)");
+        // The budget's own derivation rule, not merely "fits": the receiver's
+        // reserve plus a QUARTER's margin, which is what absorbs the transport's
+        // receive overhead and the two 63/64 forwarding hops. A figure that eats
+        // into the margin fails here, before it can fail on-chain: re-derive
+        // REWARD_BUDGET_DEST_GAS_LIMIT (#1566 PR 1 re-review).
         assertLe(
-            used + LibRewardRemitDispatch.REWARD_BUDGET_RECEIVER_RESERVE,
+            (used + LibRewardRemitDispatch.REWARD_BUDGET_RECEIVER_RESERVE) * 5 / 4,
             LibRewardRemitDispatch.REWARD_BUDGET_DEST_GAS_LIMIT,
-            "the rooted ingress overruns the destination budget"
+            "the rooted ingress has eaten the destination budget's margin: re-derive it"
         );
     }
 
@@ -208,13 +216,50 @@ contract RewardTransportD6Test is SetupTest, IVaipakamErrors {
         assertEq(_rlens().getIngressPacket(h).unclassified, 0, "nothing left unclassified");
     }
 
-    function test_AD6Delivery_ForAFutureEra_IsRefused() public {
-        uint256[] memory one = _days(1, 1);
-        bytes32[] memory leaves = RemitWire.d6Chunks(one);
-        vm.expectRevert(abi.encodeWithSelector(CustodyEraAhead.selector, uint64(1), uint64(0)));
-        _ingress().onRewardBudgetReceivedD6(
-            address(vpfi), 1e18, RemitWire.d6Root(leaves), 1, 1, CHAIN_BASE, 32, REMITTER, 0, 1e18, keccak256("c3-ahead"), 1
+    /// @dev Security review F1 — a stamp AHEAD of this chain's era means this
+    ///      Diamond replaced the one that reported: the delivery files into the
+    ///      LIVE era (never stranded in the transport) and says so; the wire's
+    ///      word stays on the packet. Straddle: a stamp AT the live era files
+    ///      there with no such event.
+    function test_AD6Delivery_StampedAheadOfThisChain_FilesIntoTheLiveEra() public {
+        _transitionTwice();
+        bytes32 id = keccak256("c3-ahead");
+        bytes32 hAhead = keccak256(abi.encode(uint256(CHAIN_BASE), id));
+        vm.expectEmit(true, false, false, true, address(diamond));
+        emit CustodyEraAheadFiledLive(hAhead, 5, 2);
+        (bytes32 h, ) = _d6(10e18, _days(1, 1), 32, id, 2e18, 5);
+        assertEq(h, hAhead, "fixture: the packet hash");
+        LibVaipakam.IngressPacket memory p = _rlens().getIngressPacket(h);
+        assertEq(p.custodyEra, 2, "filed into the live era");
+        assertEq(p.intendedEra, 5, "the wire's word is kept");
+        (bytes32 packetHash, , , , , ) = _epoch().getTransportBatch(h);
+        assertEq(packetHash, h, "and it opened its epoch, as any delivery does");
+
+        vm.recordLogs();
+        (bytes32 hLive, ) = _d6(10e18, _days(1, 1), 33, keccak256("c3-at"), 2e18, 2);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        for (uint256 i; i < logs.length; ++i) {
+            assertTrue(logs[i].topics[0] != CustodyEraAheadFiledLive.selector, "a stamp at the live era is not ahead");
+        }
+        assertEq(_rlens().getIngressPacket(hLive).custodyEra, 2, "filed into the live era");
+    }
+
+    /// @dev Security review F2 — a SHORT typed d5 delivery listing a retired era's
+    ///      day is attested WHOLE (the rooted wire's rule): the receiver floors
+    ///      both shares, and a wei under no cap would be value no day could draw.
+    function test_AShortTypedD5Delivery_ForARetiredEra_IsAttestedWhole() public {
+        _transitionTwice();
+        bytes32 id = keccak256("c3-d5-short");
+        _ingress().onRewardBudgetReceived(
+            address(vpfi), 10e18, _days(1, 1), CHAIN_BASE, 35, REMITTER, 2e18, 8e18 - 1, id, true
         );
+        bytes32 h = keccak256(abi.encode(uint256(CHAIN_BASE), id));
+        (bytes32 packetHash, , , , , ) = _epoch().getTransportBatch(h);
+        assertEq(packetHash, h, "fixture-live: the retired-day branch opened its epoch");
+        LibVaipakam.IngressPacket memory p = _rlens().getIngressPacket(h);
+        assertTrue(p.attested, "attested from the wire");
+        assertEq(p.recycledAttested, 2e18, "recycled as delivered");
+        assertEq(p.freshAttested, 8e18, "fresh the rest of what landed, not the floored share");
     }
 
     /// @dev #1566 PR C revision — a delivery dispatched for an era this chain has

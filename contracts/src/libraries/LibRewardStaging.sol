@@ -375,18 +375,26 @@ library LibRewardStaging {
     ///      the domain page STOPS on it. Every other refusal reverts as before.
     function _reserve(LibVaipakam.Storage storage s, bytes32 key, LibVaipakam.StagingRecord storage r) private returns (bool) {
         _requirePhase(key, r, LibVaipakam.StagingPhase.Staging);
-        // A record that passed more pending epochs than it tracks can only be
-        // unwound: the terminal refusal, named first (Codex #2308 r2, r6).
-        if (r.pendingOverflow) revert IVaipakamErrors.StagingPendingOverflow(key);
-        // Transport first: nothing is reserved from the live sources while
-        // the day's list still has epochs no preparation has scanned, or has
-        // grown since the last one did (Codex #2308 r1).
-        // Nor while a late link landed behind the record's place, an epoch it
-        // passed over pending has become stageable since (Codex #2308 r2, r4),
-        // or an epoch was RESTORED on the day since the record last read the
-        // restore log (r15). ONE predicate, shared with the static read
-        // ({LibRewardCustody.recordScanSettled}).
-        if (!LibRewardCustody.recordScanSettled(s, r)) {
+        if (r.pendingOverflow) {
+            // A record that passed more pending epochs than it tracks: a
+            // standalone one can only be unwound — the terminal refusal, named
+            // first (Codex #2308 r2, r6) — after which its day is draw-only. A
+            // DOMAIN record cannot be unwound alone, and the domain's unwind
+            // would only reopen it to overflow again (#1566 PR 1 re-review), so
+            // it reserves on what it holds, as a legacy record consumes what it
+            // holds: the pending epochs it passed stay theirs, and the live
+            // sources bear the rest of the day. (A domain record is one carrying
+            // its domain's key; the standalone entry refuses those up front.)
+            if (r.domainKey == bytes32(0)) revert IVaipakamErrors.StagingPendingOverflow(key);
+        } else if (!LibRewardCustody.recordScanSettled(s, r)) {
+            // Transport first: nothing is reserved from the live sources while
+            // the day's list still has epochs no preparation has scanned, or has
+            // grown since the last one did (Codex #2308 r1).
+            // Nor while a late link landed behind the record's place, an epoch it
+            // passed over pending has become stageable since (Codex #2308 r2, r4),
+            // or an epoch was RESTORED on the day since the record last read the
+            // restore log (r15). ONE predicate, shared with the static read
+            // ({LibRewardCustody.recordScanSettled}).
             revert IVaipakamErrors.StagingScanIncomplete(key);
         }
         (LibInteractionRewards.DayCharge memory charge, LibInteractionRewards.DaySlice[] memory slices) = _price(s, r);
@@ -857,9 +865,9 @@ library LibRewardStaging {
     }
 
     /// @notice One page of unwind: past the deadline anyone, before it only
-    ///         the claimant (a voluntary cancellation — never a forfeit's
-    ///         record, which has no claimant: the forfeited party may not stall
-    ///         its own forfeit; #1566 PR 1 review) — or anyone, at once,
+    ///         the claimant (a voluntary cancellation — never a forfeit's or an
+    ///         expiry's record, which settle a removed entitlement: the party may
+    ///         not stall its own forfeit or expiry; #1566 PR 1 review and re-review) — or anyone, at once,
     ///         when the record is STALE ({staleEntry}; Codex #2308 r23), the
     ///         finding announced. Each page returns up
     ///         to `STAGING_PAGE` batches' staged components to their balance
@@ -872,7 +880,10 @@ library LibRewardStaging {
         if (r.domainKey != bytes32(0)) revert IVaipakamErrors.StagingRecordInDomain(key, r.domainKey);
         LibVaipakam.StagingPhase p = r.phase;
         if (p == LibVaipakam.StagingPhase.Staging || p == LibVaipakam.StagingPhase.Reserved) {
-            if ((caller != r.user || r.op == LibVaipakam.StagingOp.Forfeit) && block.timestamp < r.deadline) {
+            if (
+                (caller != r.user || r.op == LibVaipakam.StagingOp.Forfeit || r.op == LibVaipakam.StagingOp.Expiry)
+                    && block.timestamp < r.deadline
+            ) {
                 // A STALE record is anyone's to unwind at once, with no
                 // deadline to wait for (Codex #2308 r23; the design's rule).
                 (bool stale, uint256 entryId) = staleEntry(s, r);

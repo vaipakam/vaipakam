@@ -233,9 +233,10 @@ contract RewardHorizonSweepFacet is
         expiredTotal = _settleSweepTotals(s, paidOut, t, tp);
     }
 
-    /// @dev The sweep's post-loop settle, shared with the retirement (B-6): the pool
-    ///      reservation check, the paid-out and armed-commitment bookkeeping, and
-    ///      the one leg settle under the expired-reward source.
+    /// @dev The sweep's post-loop settle: the pool reservation check, the paid-out
+    ///      and armed-commitment bookkeeping, and the one leg settle under the
+    ///      expired-reward source. (The retirement, B-6, settles its own: it draws
+    ///      and credits nothing.)
     function _settleSweepTotals(
         LibVaipakam.Storage storage s,
         uint256 paidOut,
@@ -330,6 +331,9 @@ contract RewardHorizonSweepFacet is
             (bool retired, LibInteractionRewards.EntrySplit memory ex, uint256 freshCredited, ) =
                 LibInteractionRewards.callRetireZeroPricedRemainderWalk(entryIds[i], headroom, allowance, tp);
             if (retired) ++retiredCount;
+            // A retirement credits nothing (`freshCredited` is zero since the
+            // #1566 PR 1 review), so the headroom and allowance the walk prices
+            // the capped day against stay at their opening values.
             headroom -= freshCredited;
             uint256 liveFresh =
                 freshCredited - (tp.treasuryFresh + tp.userFresh + tp.treasuryEraFresh + tp.userEraFresh - tBefore);

@@ -1406,6 +1406,44 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         assertTrue(_rec().phase != uint8(LibVaipakam.StagingPhase.Staging), "the unwind ran");
     }
 
+    /// @dev #1566 PR 1 re-review (B-N2) — the claimant cannot stall an EXPIRY's record
+    ///      either: it settles a removed entitlement, as a forfeit's does. Past its
+    ///      deadline it is anyone's, the claimant included.
+    function test_TheClaimant_CannotCancelAnExpirysRecord() public {
+        _armedDay(1, NEED);
+        _armedDay(2, NEED);
+        _mut().setGovernorCommitArmedFromDayRaw(1);
+        _loanSideOpen(2);
+        uint256 id = _entry(1, 3);
+        _mut().setArmedFreshLedgerRaw(0, 0);
+        _mut().userClaimFundingNeedRaw(alice);
+        ConfigFacet(address(diamond)).setRewardClaimHorizonDays(180);
+        _liveFresh(1e18);
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = id;
+        RewardHorizonSweepFacet sweep = RewardHorizonSweepFacet(address(diamond));
+        sweep.sweepExpiredInteractionRewards(ids);
+        uint256 swept;
+        for (uint256 k; k < 60 && swept == 0; ++k) {
+            vm.warp(vm.getBlockTimestamp() + 7 days);
+            swept = sweep.sweepExpiredInteractionRewards(ids);
+        }
+        assertTrue(_mut().getRewardEntryExpiryBegunRaw(id), "fixture: expiry begun");
+        _wideDayOn(2, 300);
+        sweep.sweepExpiredInteractionRewards(ids);
+        bytes32 key2 = keccak256(abi.encode(alice, LibVaipakam.RewardSide.Lender, uint256(2)));
+        RewardEpochViewFacet.StagingRecordView memory r = _view().getStagingRecord(key2);
+        assertEq(r.op, uint8(LibVaipakam.StagingOp.Expiry), "fixture-live: the expiry's record");
+        assertEq(r.user, alice, "fixture-live: keyed to the claimant");
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.StagingNotExpired.selector, key2, r.deadline));
+        _settle().unwindStagedDayPage(key2);
+        vm.warp(uint256(r.deadline) + 1);
+        vm.prank(alice);
+        _settle().unwindStagedDayPage(key2);
+        assertTrue(_view().getStagingRecord(key2).phase != uint8(LibVaipakam.StagingPhase.Staging), "the unwind ran");
+    }
+
     /// @dev A2-ii — an expiry's wide day is staged too: once the removal
     ///      point has begun on a day the live sources settled, a later wide
     ///      day stages under the expiry's commitment and resolves as the

@@ -180,6 +180,24 @@ contract RewardZeroPricedRetirementTest is SetupTest, IVaipakamErrors {
         assertEq(n, 0, "nothing left");
     }
 
+    /// @dev #1566 PR 1 re-review (B-N1) — an entry whose expiry has BEGUN is the expiry
+    ///      sweep's: the retirement leaves it alone, so one day is never settled two
+    ///      ways by who came first. Straddle: the same entry, expiry not begun, retires.
+    function test_ARemainderWhoseExpiryBegan_IsTheSweeps() public {
+        for (uint256 d = 1; d <= 3; ++d) _armedDay(d);
+        _mut().setGovernorCommitArmedFromDayRaw(1);
+        _loanSideCap(3, 0);
+        _mut().setArmedFreshLedgerRaw(10e18, 0);
+        uint256 id = _closedEntry(1, 4);
+        _mut().setRewardEntryExpiryBegunRaw(id, true);
+        (uint256 n, ) = _sweeper().retireZeroPricedRemainders(_ids(id));
+        assertEq(n, 0, "the sweep's, not the retirement's");
+        assertFalse(_clo().isEntryTerminatedOn(id, 1), "nothing moved");
+        _mut().setRewardEntryExpiryBegunRaw(id, false);
+        (n, ) = _sweeper().retireZeroPricedRemainders(_ids(id));
+        assertEq(n, 1, "straddle: not begun, it retires");
+    }
+
     /// @dev A closed window NOT yet priceable (its last day is beyond the known
     ///      globals) is not empty: it is left alone. (A retirement keyed on
     ///      "unpriced" alone would retire it — the mutation this cell kills.)

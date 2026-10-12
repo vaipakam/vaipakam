@@ -211,6 +211,41 @@ contract RewardStagingDomainTest is SetupTest, IVaipakamErrors {
         assertEq(_view().getStagingRecord(_key(DAYS)).phase, uint8(LibVaipakam.StagingPhase.None));
     }
 
+    /// @dev #1566 PR 1 re-review (B-N4) — a domain day record whose day list GREW past
+    ///      what it tracks after it was staged: the domain's reserve refuses an
+    ///      unsettled scan, the permissionless preparation (the only way to settle it)
+    ///      then passes more pending epochs than the record tracks — and before, every
+    ///      reserve page reverted `StagingPendingOverflow` for good (a domain record is
+    ///      not unwound alone; the domain's unwind would reopen and overflow again).
+    ///      It now RESERVES ON WHAT IT HOLDS: its passed pending epochs stay theirs,
+    ///      the live sources bear the day, and every day is paid once.
+    function test_AnOverflowingDayRecord_ReservesOnWhatItHolds_TheDomainSettles() public {
+        _longScene(DAYS);
+        _liveFresh(20e18);
+        _claim(); _claim(); // the domain is prepared: a record per day, staged from the claim's plan
+        for (uint256 i; i < 140; ++i) { // then day 1's list grows: untyped, unattested, pending
+            vm.warp(vm.getBlockTimestamp() + 10);
+            bytes32 pid = keccak256(abi.encode("domain-pending", i));
+            _ingress().onRewardBudgetReceived(address(vpfi), 1e12, _one(1), CHAIN_BASE, 900 + i, REMITTER, 0, 0, pid, false);
+            RewardEpochFacet(address(diamond)).materializeTransportBatchPage(
+                keccak256(abi.encode(uint256(CHAIN_BASE), pid)), _one(1)
+            );
+        }
+        // The domain cannot reserve day 1 on an unsettled scan; the permissionless
+        // preparation settles it — and passes more pending epochs than it tracks.
+        for (uint256 k; k < 8 && !_view().getStagingRecord(_key(1)).pendingOverflow; ++k) {
+            _staging().prepareStagedDay(_key(1));
+        }
+        assertTrue(
+            _view().getStagingRecord(_key(1)).pendingOverflow,
+            "fixture-live: day 1's record passed more pending epochs than it tracks"
+        );
+        uint256 before = vpfi.balanceOf(alice);
+        _reserveAll();
+        _resolveAll();
+        assertEq(vpfi.balanceOf(alice) - before, uint256(DAYS) * NEED, "every day paid, once");
+    }
+
     /// @dev A day the live sources cannot bear STOPS the reservation cursor:
     ///      the days before stand reserved, nothing is paid, and more funding
     ///      lets the cursor continue to resolution.

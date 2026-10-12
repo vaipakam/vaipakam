@@ -380,14 +380,10 @@ library LibRewardCustody {
     ///         arrival at the holder ({relocateToHolder}, {fundFromCaller})
     ///         or an in-holder re-attribution ({move}); nothing else may, or
     ///         the rows would describe custody the holder does not hold.
-    /// @dev    Arms the role freeze (design §5d, "role and SOURCE changes
-    ///         freeze here"): once any holder allocation exists, a role
-    ///         transition could orphan it — the retained residual retirement
-    ///         can level counters but cannot re-key a row — so the setters
-    ///         refuse every effective role change until PR C's era registry
-    ///         can carry an allocation across one. Armed here rather than only
-    ///         at activation so the bootstrap writers, which credit rows
-    ///         before activation, are covered by the same rule.
+    /// @dev    No role freeze (#1566 PR C revision): on an activated chain a role
+    ///         change carries the live row into the retiring era
+    ///         ({retireCustodyEraOnRoleChange}). Before activation nothing is
+    ///         carried — see the activation's note on bootstrap ordering.
     function credit(
         LibVaipakam.Storage storage s,
         LibVaipakam.RewardCustodyRow r,
@@ -1024,10 +1020,11 @@ library LibRewardCustody {
     ///         delivered counters are levelled so the new baseline opens with
     ///         no headroom; a `paid > received` deficit is NOT erased, it is
     ///         the new era's opening deficit, covered first by its first credit.
-    /// @dev    Design §5d rows 8–10. Before custody activation the holder has
-    ///         no rows: the counters are levelled as before and the registry is
-    ///         untouched, so the backfill (PR C-5) finds every pre-activation
-    ///         figure in era 0. The carried amount is the live ROW — the
+    /// @dev    Design §5d rows 8–10. Before custody activation nothing is carried:
+    ///         the counters are levelled as before and the registry is untouched,
+    ///         so every pre-activation figure is era 0's (#1566 PR C revision: no
+    ///         backfill). A row a bootstrap writer credited before activation is
+    ///         therefore NOT carried either (see the activation's ordering note). The carried amount is the live ROW — the
     ///         custody — and the headroom counter is levelled to match; the
     ///         two agree on an activated chain (`invariant_LiveRowIsTheBound`),
     ///         and where they would not the custody is the fact.
@@ -1214,6 +1211,17 @@ library LibRewardCustody {
     ///         row (or pending surplus) when that era booked it, else the live
     ///         path ({uncreditFreshInHolder}). Never more than the booked custody
     ///         can give net of staging holds; returns what entered `Unclassified`.
+    /// @dev    Once the era is final the source is pending surplus while the chain
+    ///         is Detached — the routing a credit made NOW takes; where the era's
+    ///         release actually went is not recorded, so after later moves this is
+    ///         the nearest row, never more than it holds. What the era cannot give
+    ///         back may have been DRAWN (paid out for real) or be HELD by a staging
+    ///         record (to be consumed or restored): the fungible row cannot tell the
+    ///         two apart and they need opposite ledger treatment, so the delivered
+    ///         ledger is unwound only by what moved. The caller's uncounted figure
+    ///         still takes the whole demotion, so counted + uncounted can read above
+    ///         what was delivered by that remainder — observability only (no
+    ///         watcher reads the sum), never headroom.
     function uncreditFreshForPacket(LibVaipakam.Storage storage s, bytes32 h, uint256 amount)
         internal
         returns (uint256 moved)
@@ -3585,9 +3593,9 @@ library LibRewardCustody {
     ///         - window closed, a registrant standing (its record alive on that
     ///           nonce, its right unused, within one cadence of the close):
     ///           only the registrant, as priority;
-    ///         - the priority reservation taken and still held: only its
-    ///           holder; ordinary resumes when the hold is gone (a resolution
-    ///           consumes it, an unwind restores it and opens the next window);
+    ///         - the priority reservation taken: that is the holder's referenced
+    ///           share, and the unreferenced remainder is ordinary — anyone's,
+    ///           first staged wins (#1566 PR 1 review);
     ///         - otherwise ordinary.
     function stageableFor(LibVaipakam.Storage storage s, bytes32 batchId, bytes32 nk)
         internal

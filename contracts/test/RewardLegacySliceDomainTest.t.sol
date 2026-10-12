@@ -232,7 +232,16 @@ contract RewardLegacySliceDomainTest is SetupTest, IVaipakamErrors {
                 loanSideRewardCapOpen: type(uint128).max
             })
         );
-        uint256 open = _mut().pushRewardEntry(alice, LOAN + 1, LibVaipakam.RewardSide.Lender, 1e18, 1); // never closed
+        // Two never-closed entries of the still-Active loan, each with the forward
+        // window production stamps at creation (`pushRewardEntry` alone leaves
+        // `endDay` zero, i.e. no window, and no domain could open either way):
+        // one wholly before the armed day 5 (the whole-window path) and one
+        // reaching past it (the split path). Both list day 1, which an epoch
+        // lists, so without the claimability guard each WOULD open a domain.
+        uint256 open = _mut().pushRewardEntry(alice, LOAN + 1, LibVaipakam.RewardSide.Lender, 1e18, 1);
+        _mut().setRewardEntryEndDayRaw(open, 3);
+        uint256 openSplit = _mut().pushRewardEntry(alice, LOAN + 1, LibVaipakam.RewardSide.Lender, 1e18, 1);
+        _mut().setRewardEntryEndDayRaw(openSplit, 7);
         _mut().userClaimFundingNeedRaw(alice);
         _epochOn(1, EPOCH, 7);
         _liveFresh(_legacyTotal() + 1e18);
@@ -240,7 +249,9 @@ contract RewardLegacySliceDomainTest is SetupTest, IVaipakamErrors {
         (uint8 phaseClosed, , , ) = _dom(closed);
         assertEq(phaseClosed, uint8(LibVaipakam.DomainPhase.Staging), "fixture-live: the claim persisted its preparation");
         (uint8 phaseOpen, , , ) = _dom(open);
-        assertEq(phaseOpen, 0, "no domain for the open loan's slice");
+        assertEq(phaseOpen, 0, "no domain for the open loan's whole-window slice");
+        (uint8 phaseOpenSplit, , , ) = _dom(openSplit);
+        assertEq(phaseOpenSplit, 0, "no domain for the open loan's split slice");
     }
 
     /// @dev #1566 PR 1 review (P2-4) — a slice record that passes more pending epochs than it

@@ -844,7 +844,12 @@ contract RewardCustodyFacet is DiamondAccessControl {
      *             is zero);
      *           - the holder's balance is readable and covers the rows.
      *
-     *         Arms the role freeze. An `Unconfigured` deployment that is
+     *         Ordering: activate before any role change once a bootstrap writer
+     *         has credited a row. A role change before activation levels the
+     *         delivered counters but carries nothing (nothing is carried before
+     *         activation), so this ceremony then refuses the bootstrapped row as
+     *         unbacked until it is released ({releaseRewardCustodyRow}, on an
+     *         active role). An `Unconfigured` deployment that is
      *         later configured into a role (a fresh deploy, after
      *         `ConfigureRewardReporter`) runs this same ceremony.
      * @param  pauseEpoch          The pause library's transition count at
@@ -886,12 +891,10 @@ contract RewardCustodyFacet is DiamondAccessControl {
         if (role == LibVaipakam.RewardRole.Unconfigured) {
             revert IVaipakamErrors.RewardCustodyActivationRequiresConfiguredRole(uint8(role));
         }
-        // A DETACHED chain does not activate in this slice (Codex #2186 r1
-        // P1): its value-bearing receive ingresses still accept the
-        // configured receiver without a role check, so a delayed packet
-        // would relocate custody into rows a zero bound can never spend,
-        // while the freeze this arms blocks the re-attachment that could —
-        // the intended-era ingress gates land with slice 4 PR C.
+        // A DETACHED chain does not activate (Codex #2186 r1 P1): its
+        // value-bearing receive ingresses still accept the configured receiver
+        // without a role check, so a delayed packet would relocate custody into
+        // rows a zero bound can never spend.
         if (role == LibVaipakam.RewardRole.Detached) {
             revert IVaipakamErrors.RewardCustodyActivationDetachedNotSupported();
         }
@@ -982,7 +985,13 @@ contract RewardCustodyFacet is DiamondAccessControl {
         if (role != LibVaipakam.RewardRole.Canonical && role != LibVaipakam.RewardRole.Mirror) {
             revert IVaipakamErrors.RewardCustodyFundingRequiresActiveRole(uint8(role));
         }
-        uint256 resulting = s.rewardBudgetArmedFreshReceived + amount;
+        // Counted against the lifetime cap NET of the in-holder re-credits
+        // (#1566 PR 1 re-review): an era release or a surplus drain raises the
+        // received side as headroom for value already counted at its delivery
+        // — the delivered-position lens nets them the same way.
+        uint256 received = s.rewardBudgetArmedFreshReceived;
+        uint256 reCredited = s.rewardBudgetFreshReCredited;
+        uint256 resulting = (received > reCredited ? received - reCredited : 0) + amount;
         if (resulting > LibVaipakam.VPFI_INTERACTION_POOL_CAP) {
             revert IVaipakamErrors.RewardCustodyFundingExceedsCap(resulting, LibVaipakam.VPFI_INTERACTION_POOL_CAP);
         }
@@ -1197,9 +1206,9 @@ contract RewardCustodyFacet is DiamondAccessControl {
         if (amount == 0) revert IVaipakamErrors.InvalidAmount();
         // Only a role that CAN activate in this slice may be bootstrapped
         // (Codex #2186 r2 P1): a credit on an `Unconfigured` or `Detached`
-        // deployment would move funds into the holder and arm the freeze,
-        // while activation refuses the role and no reward path debits the
-        // holder there — an allocation reachable by nothing.
+        // deployment would move funds into the holder while activation
+        // refuses the role and no reward path debits the holder there — an
+        // allocation reachable by nothing.
         LibVaipakam.RewardRole role = LibVaipakam.rewardRole(s);
         if (role != LibVaipakam.RewardRole.Canonical && role != LibVaipakam.RewardRole.Mirror) {
             revert IVaipakamErrors.RewardCustodyBootstrapRequiresActiveRole(uint8(role));

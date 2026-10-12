@@ -7504,15 +7504,10 @@ library LibVaipakam {
         ///      `LibRewardCustody.active` only — that is the design's role
         ///      branch, in one place.
         bool rewardCustodyActivated;
-        /// @dev #1566 slice 4 PR B — the role and source freeze (design §5d):
-        ///      armed by the first holder attribution or by the activation,
-        ///      whichever comes first; while set, `setBaseChainId` and
-        ///      `setIsCanonicalRewardChain` refuse every EFFECTIVE role change,
-        ///      because the retained residual retirement can level the
-        ///      delivered counters but cannot re-key a holder allocation, so a
-        ///      transition would orphan funded custody. Cleared by slice 4
-        ///      PR C's era-registry backfill as its last step, and by nothing
-        ///      else.
+        /// @dev RETIRED (#1566 PR C revision) — the role and source freeze. The
+        ///      era registry carries a holder allocation across a role change, so
+        ///      nothing arms, clears or reads this flag; kept for the append-only
+        ///      layout.
         bool rewardRoleChangesFrozen;
         /// @dev #1566 slice 4 PR B (Codex #2186 r4, r5) — the COMPLETE-cut
         ///      record: the custody protocol version
@@ -8100,11 +8095,10 @@ library LibVaipakam {
     ///         era is free of outstanding reward liability exactly when every
     ///         day of its span is proven closed; nothing is written on the
     ///         entry-creation path, whose host has no byte margin left.
-    ///         `openClassification` counts packets stamped into the era whose
-    ///         classification is not final (written by PR C-3; history by the
-    ///         backfill, PR C-5). Until the backfill declares history assigned
-    ///         (`custodyEraBackfillComplete`) the terminal writers refuse rather
-    ///         than read zeros as "nothing owed". `openingDeficit` is what the
+    ///         `openClassification` is RETIRED (#1566 PR C revision): no count
+    ///         gates an era — a packet classified after its era closed routes its
+    ///         value by its era — so nothing writes it; kept for the layout. The
+    ///         terminal writers wait on the closed days alone. `openingDeficit` is what the
     ///         retiring baseline owed (`paid - received`) when this era opened —
     ///         carried, not erased, so the first credit covers it first (§5c).
     struct CustodyEra {

@@ -420,18 +420,36 @@ function partitionByBucket(offers: readonly OfferLite[]): {
   return { lenders, borrowers };
 }
 
+/**
+ * The `previewMatch` read, made FROM the keeper's own account. The preview's
+ * service-capacity check keys on the caller (`msg.sender`), and an `eth_call`
+ * with no `from` reads as the zero address — whose never-seen bucket always
+ * reads covered — so without the account an exhausted keeper never sees
+ * `CapacityExhausted` and spends a reverting gas estimate per pair instead.
+ */
+export function previewMatchRequest(
+  ctx: Pick<KeeperContext, 'diamond' | 'wallet'>,
+  lenderId: bigint,
+  borrowerId: bigint,
+) {
+  return {
+    address: ctx.diamond,
+    abi: MATCHER_ABI,
+    functionName: 'previewMatch' as const,
+    args: [lenderId, borrowerId] as const,
+    account: ctx.wallet.account,
+  };
+}
+
 async function previewMatch(
   ctx: KeeperContext,
   lenderId: bigint,
   borrowerId: bigint,
 ): Promise<MatchPreview | null> {
   try {
-    const raw = (await ctx.client.readContract({
-      address: ctx.diamond,
-      abi: MATCHER_ABI,
-      functionName: 'previewMatch',
-      args: [lenderId, borrowerId],
-    })) as Record<string, unknown>;
+    const raw = (await ctx.client.readContract(
+      previewMatchRequest(ctx, lenderId, borrowerId) as never,
+    )) as Record<string, unknown>;
     return {
       errorCode: Number(raw['errorCode']),
       matchAmount: BigInt(raw['matchAmount'] as bigint | number),

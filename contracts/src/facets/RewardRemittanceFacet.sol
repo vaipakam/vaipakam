@@ -650,6 +650,13 @@ contract RewardRemittanceFacet is
     ) private view returns (bytes memory payload, bytes32 root) {
         bytes32[] memory leaves = RemitWire.d6Chunks(fundedDays);
         root = RemitWire.d6Root(leaves);
+        // #1566 PR C revision — stamped with the DESTINATION's era as it last
+        // reported it. A remittance funding days of an era the destination has
+        // since retired is stamped the newer era and files there; its days still
+        // draw from its epoch (a draw reads batch membership, never the era), so
+        // only where an unused remainder goes once those days close differs. The
+        // older wire placed a delivery by its days instead: a rooted list's days
+        // are not known at ingress, so the destination cannot.
         payload = RemitWire.encodeD6(
             root,
             fundedDays.length,
