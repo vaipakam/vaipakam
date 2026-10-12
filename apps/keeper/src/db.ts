@@ -833,3 +833,25 @@ export async function listRecentBudgetDeliveries(
   }
   return out;
 }
+
+// ─── #1461 — released remittances whose delivery may still land ─────────────
+
+/** Remit ids the canonical chain RELEASED, newest first, at most `limit`, from
+ *  the indexer's record of `RemitReservationReleased`. The ack pass's frontier
+ *  scan treats a released reservation as terminal, so a delivery that executes
+ *  after its release is found here instead. */
+export async function listReleasedRemitIds(db: D1Database, chainId: number, limit = 50): Promise<number[]> {
+  const rows = await db
+    .prepare(
+      `SELECT DISTINCT CAST(json_extract(args_json, '$.remitId') AS INTEGER) AS remit_id
+         FROM activity_events
+        WHERE chain_id = ?1 AND kind = 'RemitReservationReleased'
+        ORDER BY block_number DESC
+        LIMIT ?2`,
+    )
+    .bind(chainId, limit)
+    .all<{ remit_id: number | null }>();
+  return (rows.results ?? [])
+    .map((r) => r.remit_id)
+    .filter((id): id is number => typeof id === 'number' && Number.isSafeInteger(id) && id > 0);
+}

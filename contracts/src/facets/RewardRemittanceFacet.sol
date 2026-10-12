@@ -1232,6 +1232,10 @@ contract RewardRemittanceFacet is
             // all (it could have been consumed, and a return against
             // consumed lineage is the r4/r5 bypass).
             if (r.dstChainId == sourceChainId) {
+                // #1461 — the delivery executed after its release: the recycled
+                // share the release counted as stranded has arrived, so it
+                // resolves out of the coverage allowance, once.
+                LibVpfiRecycle.resolveReleasedRemitStranded(s, remitId);
                 if (consumed) {
                     bool relConflict = _stampConsumedAck(s, r, remitId, amountReceived);
                     // #1662 r2 (self-review) — a CLEAN consumption on a
@@ -1564,6 +1568,11 @@ contract RewardRemittanceFacet is
         uint256 pending = s.remitPendingTotal[dst];
         s.remitPendingTotal[dst] = pending > total ? pending - total : 0;
         s.remitAckedTotal[dst] += total;
+        // #1452 — the recycled share this reservation delivered, for the
+        // watcher's relocated-custody cross-check; forced finalizations are
+        // evidenced rather than delivered, so they are counted apart.
+        if (forced) s.chainRemittedRecycledForceFinalized[dst] += r.recycled;
+        else s.chainRemittedRecycledAcked[dst] += r.recycled;
         // #1434 P2-w4 (§5.1 R6) — a finalized COMPENSATION reservation
         // clears the chain's one-in-flight gate. The consumption ACK is
         // the ratified clearing evidence; the operator-evidenced forced

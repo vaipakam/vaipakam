@@ -2777,7 +2777,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getConfigSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](90);
+        s = new bytes4[](89);
         // Setters
         s[0] = ConfigFacet.setFeesConfig.selector;
         s[1] = ConfigFacet.setLiquidationConfig.selector;
@@ -2943,7 +2943,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[74] = ConfigFacet.getAssetRiskParams.selector;
         // #1222 (Phase A1a) — VPFI recycling governor knobs.
         s[75] = ConfigFacet.setRecycleMarginBps.selector;
-        s[76] = ConfigFacet.setRecycleTariffKPer1e18EthDay.selector;
+        s[76] = ConfigFacet.getRecycleCreditedCumulative.selector; // #1956: moved here from 89 when the ETH·day setter retired
         s[77] = ConfigFacet.getRecycleConfig.selector;
         // Governor PR-3a (#1217) — recycle-bucket transparency reads.
         s[78] = ConfigFacet.getRecycleBucket.selector;
@@ -2962,7 +2962,6 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[87] = ConfigFacet.setRewardHaircutBps.selector;
         s[88] = ConfigFacet.setUserSideShareCapBps.selector;
         // #1222 (M3 B1) — cross-chain recycled ledger transparency reads.
-        s[89] = ConfigFacet.getRecycleCreditedCumulative.selector;
         // #1222 M3 B3 — `getChainRecycledLedger` /
         // `getChainDailyRecycledCredit` MOVED to RewardAggregatorFacet
         // (ConfigFacet hit the EIP-170 ceiling).
@@ -3507,7 +3506,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](42);
+        s = new bytes4[](43);
         s[0] = RewardRemittanceLensFacet.getDayCompensation.selector;
         s[1] = RewardRemittanceLensFacet.getStrandedRecoveryReserved.selector;
         s[2] = RewardRemittanceLensFacet.getStrandedRecovery.selector;
@@ -3571,6 +3570,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[39] = RewardRemittanceLensFacet.dayAwaitsFreshDelivery.selector;
         s[40] = RewardRemittanceLensFacet.getDayDeliveryState.selector;
         s[41] = RewardRemittanceLensFacet.getPacketDeliveryProof.selector;
+        // #1452 — the acknowledged recycled share per destination.
+        s[42] = RewardRemittanceLensFacet.getChainRemittedRecycled.selector;
     }
 
     function _getMetricsSelectors() internal pure returns (bytes4[] memory s) {

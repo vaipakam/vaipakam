@@ -43,6 +43,7 @@ import {
   getRemitAckAttempts,
   recordRemitAckAttempt,
   markRemitAcked,
+  listReleasedRemitIds,
 } from './db';
 
 // #1660 r9 - quoteRemitAckFee moved to the LENS facet for EIP-170
@@ -69,6 +70,8 @@ const ACK_RETRY_BACKOFF_SEC = 15 * 60;
 interface RemitReservationView {
   dstChainId: number;
   status: number;
+  /** #1461 — the share a release counted as stranded and not yet resolved. */
+  strandedRecycled?: bigint;
   sentAt: bigint;
   ccipMessageId: `0x${string}`;
   total: bigint;
@@ -113,7 +116,16 @@ async function ackFromBaseLedger(env: Env, chain: ChainConfig): Promise<void> {
   if (nonce === 0n) return;
 
   const { frontier, scanCursor } = await getRemitAckScanState(env.DB, baseChainId, diamond);
-  if (BigInt(frontier) > nonce) return;
+  // Mirror clients are built lazily, once per destination chain.
+  const mirrorConfigs = new Map<number, ChainConfig>();
+  for (const c of getChainConfigs(env)) mirrorConfigs.set(c.id, c);
+  const mirrorClients = new Map<number, PublicClient>();
+  if (BigInt(frontier) > nonce) {
+    // Caught up — the steady state. A released reservation may still see its
+    // delivery land late, so that step runs here too (#1461).
+    await ackLateDeliveries(env, publicClient as never, baseChainId, diamond, mirrorConfigs, mirrorClients);
+    return;
+  }
   // Rotating window (Codex #1426 r1): start from the persisted cursor when
   // it is ahead of the frontier — a stuck early Pending pins the frontier,
   // and without the rotation the bounded window would re-read that range
@@ -124,11 +136,6 @@ async function ackFromBaseLedger(env: Env, chain: ChainConfig): Promise<void> {
   const to = from + BigInt(MAX_SCAN_PER_TICK) < nonce + 1n
     ? from + BigInt(MAX_SCAN_PER_TICK)
     : nonce + 1n;
-
-  // Mirror clients are built lazily, once per destination chain.
-  const mirrorConfigs = new Map<number, ChainConfig>();
-  for (const c of getChainConfigs(env)) mirrorConfigs.set(c.id, c);
-  const mirrorClients = new Map<number, PublicClient>();
 
   const pendingIds: number[] = [];
   const reservations = new Map<number, RemitReservationView>();
@@ -195,6 +202,7 @@ async function ackFromBaseLedger(env: Env, chain: ChainConfig): Promise<void> {
     // the loop bound already excludes it.
   }
   await putRemitAckScanState(env.DB, baseChainId, diamond, contiguousTerminal, Number(to));
+  await ackLateDeliveries(env, publicClient as never, baseChainId, diamond, mirrorConfigs, mirrorClients);
   if (pendingIds.length === 0) return;
 
   const attempts = await getRemitAckAttempts(env.DB, baseChainId, diamond, pendingIds);
@@ -281,3 +289,68 @@ async function sendAckFromMirror(
   // re-sends — a dropped tx simply retries after the backoff window.
   return true;
 }
+
+/** Released reservations examined per tick for a late delivery. */
+const MAX_LATE_CANDIDATES = 50;
+
+/**
+ * #1461 — a RELEASED reservation whose delivery executed after all still
+ * counts its recycled share as stranded in transit on Base, overstating the
+ * coverage allowance, until the destination acknowledges it. The mirror's ack
+ * is permissionless and content-free (it echoes the receipt), and Base's late-
+ * ack branch resolves the share once. So: for each recent release that still
+ * holds a stranded share, ack it from the mirror once the receipt shows the
+ * delivery landed — under the same per-reservation backoff as the main scan.
+ */
+async function ackLateDeliveries(
+  env: Env,
+  publicClient: PublicClient,
+  baseChainId: number,
+  diamond: Address,
+  mirrorConfigs: Map<number, ChainConfig>,
+  mirrorClients: Map<number, PublicClient>,
+): Promise<void> {
+  const ids = await listReleasedRemitIds(env.DB, baseChainId, MAX_LATE_CANDIDATES);
+  if (ids.length === 0) return;
+  const res = await batchedRead(
+    publicClient as never,
+    ids.map((id) => ({
+      address: diamond,
+      abi: REMIT_ABI,
+      functionName: 'getRemitReservation' as const,
+      args: [BigInt(id)] as const,
+    })),
+    'remitAck late deliveries',
+  );
+  const attempts = await getRemitAckAttempts(env.DB, baseChainId, diamond, ids);
+  const now = Math.floor(Date.now() / 1000);
+  let sent = 0;
+  for (let i = 0; i < ids.length && sent < MAX_ACKS_PER_TICK; i++) {
+    const r = res[i];
+    if (!r || r.status !== 'success') continue;
+    const v = r.result as RemitReservationView;
+    if (!isLateDeliveryCandidate(v)) continue;
+    const prior = attempts.get(ids[i]);
+    if (prior && now - prior.lastAttemptAt < ACK_RETRY_BACKOFF_SEC) continue;
+    const mirrorCfg = mirrorConfigs.get(Number(v.dstChainId));
+    if (!mirrorCfg) continue;
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      const ok = await sendAckFromMirror(env, mirrorCfg, mirrorClients, ids[i], diamond);
+      if (ok) {
+        // eslint-disable-next-line no-await-in-loop
+        await recordRemitAckAttempt(env.DB, baseChainId, diamond, ids[i], Number(v.dstChainId));
+        sent++;
+      }
+    } catch (err) {
+      console.log(`[keeper] remitAck late remit=${ids[i]} skipped: ${(err as Error).message}`);
+    }
+  }
+}
+
+/** A released reservation (status 3) that still holds an unresolved stranded
+ *  share — the only kind a late acknowledgement changes anything for. */
+export function isLateDeliveryCandidate(v: { status: number | bigint; strandedRecycled?: bigint }): boolean {
+  return Number(v.status) === 3 && (v.strandedRecycled ?? 0n) > 0n;
+}
+

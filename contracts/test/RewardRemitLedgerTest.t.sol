@@ -5146,4 +5146,68 @@ contract RewardRemitLedgerTest is SetupTest {
         assertTrue(rlens.getRemitReservation(2).fundedFromRecovery);
     }
 
+
+    // ─── #1461 — a released remittance that LANDS resolves its stranded share ───
+
+    /// @dev #1461 — a late acknowledgement of a RELEASED reservation resolves the
+    ///      share its release counted as stranded, exactly once.
+    function test_LateAckAfterRelease_ResolvesTheStrandedShare_Once() public {
+        (, uint256 recycledSent) = _remitRecycledWithResidual();
+        vm.warp(block.timestamp + 7 days);
+        comp.releaseRemitReservation(1);
+        (, uint256 stranded, , , uint256 resolvedBefore) =
+            RewardAggregatorFacet(address(diamond)).getRecycleCompositionPosition();
+        assertGt(recycledSent, 0, "fixture-live: a recycled share was sent");
+        assertEq(stranded, recycledSent, "fixture-live: the release stranded the sent share");
+        assertEq(resolvedBefore, 0, "nothing resolved yet");
+        assertEq(rlens.getRemitReservation(1).strandedRecycled, recycledSent, "recorded on the reservation");
+        uint256 total = rlens.getRemitReservation(1).total;
+        rewardMessenger.deliverRemitAck(CHAIN_ARB, 1, total);
+        (, , , , uint256 resolved) = RewardAggregatorFacet(address(diamond)).getRecycleCompositionPosition();
+        assertEq(resolved, recycledSent, "the landed delivery resolved it");
+        assertEq(rlens.getRemitReservation(1).strandedRecycled, 0, "and the record is spent");
+        rewardMessenger.deliverRemitAck(CHAIN_ARB, 1, total);
+        (, , , , uint256 again) = RewardAggregatorFacet(address(diamond)).getRecycleCompositionPosition();
+        assertEq(again, recycledSent, "a repeated acknowledgement resolves nothing more");
+    }
+
+    /// @dev #1461 — a terminal-loss record for the remittance takes its share off
+    ///      the same record first, so a late acknowledgement resolves only the
+    ///      remainder: the two together never exceed the stranded share.
+    function test_TerminalLossThenLateAck_ResolvesOnlyTheRemainder() public {
+        (, uint256 recycledSent) = _remitRecycledWithResidual();
+        vm.warp(block.timestamp + 7 days);
+        comp.releaseRemitReservation(1);
+        uint256 lost = recycledSent / 2;
+        assertGt(lost, 0, "fixture-live: a non-trivial share");
+        comp.recordRecoveryTerminalLoss(1, 0, lost);
+        assertEq(rlens.getRemitReservation(1).strandedRecycled, recycledSent - lost, "the loss came off the record");
+        rewardMessenger.deliverRemitAck(CHAIN_ARB, 1, rlens.getRemitReservation(1).total);
+        (, , , , uint256 resolved) = RewardAggregatorFacet(address(diamond)).getRecycleCompositionPosition();
+        assertEq(resolved, recycledSent, "loss plus late delivery resolve the share once, not more");
+    }
+
+    // ─── #1452 — the acknowledged recycled share, per destination ───
+
+    /// @dev #1452 — an acknowledged remittance records its recycled share for the
+    ///      watcher's relocated-custody cross-check.
+    function test_Ack_RecordsTheRecycledShare() public {
+        (, uint256 recycledSent) = _remitRecycledWithResidual();
+        (uint256 acked0, uint256 forced0) = rlens.getChainRemittedRecycled(CHAIN_ARB);
+        assertEq(acked0 + forced0, 0, "nothing before the acknowledgement");
+        rewardMessenger.deliverRemitAck(CHAIN_ARB, 1, rlens.getRemitReservation(1).total);
+        (uint256 acked, uint256 forced) = rlens.getChainRemittedRecycled(CHAIN_ARB);
+        assertGt(acked, 0, "fixture-live: a recycled share was delivered");
+        assertEq(acked, recycledSent, "the delivered recycled share");
+        assertEq(forced, 0, "nothing forced");
+    }
+
+    /// @dev #1452 — a FORCED finalization is evidenced, not delivered: counted apart.
+    function test_ForcedFinalize_CountsTheRecycledShareApart() public {
+        (, uint256 recycledSent) = _remitRecycledWithResidual();
+        remit.finalizeRemitReservation(1);
+        (uint256 acked, uint256 forced) = rlens.getChainRemittedRecycled(CHAIN_ARB);
+        assertEq(acked, 0, "no delivery acknowledged");
+        assertEq(forced, recycledSent, "the forced share, apart");
+    }
 }

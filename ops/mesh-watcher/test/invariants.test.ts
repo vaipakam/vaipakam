@@ -121,6 +121,9 @@ function mirrorBooks(): BaseChainBooks {
     // whole suite, which is the silent-disable this comment exists to
     // prevent.
     keeperDraw: 0n,
+    // #1452 — a CURRENT deployment reads the view; the baseline mirror has
+    // relocated nothing, so nothing was acknowledged as recycled either.
+    recycledAcked: 0n,
   };
 }
 
@@ -732,6 +735,20 @@ describe('checkHardInvariants — base ahead of the chain', () => {
     expect(codes({ mirrorLocal: { localReleased: 99n * E } })).toEqual([
       'base-ahead-of-chain',
     ]);
+  });
+
+  it('#1452 fires when Base acknowledged more recycled delivery than the chain relocated (straddle)', () => {
+    // The baseline mirror relocated nothing; equal at zero is green.
+    expect(codes({ mirror: { recycledAcked: 0n } }), 'equal: nothing acknowledged, nothing relocated').toEqual([]);
+    expect(
+      codes({ mirror: { recycledAcked: 1n } }),
+      'one wei acknowledged beyond the relocation',
+    ).toEqual(['base-ahead-of-chain']);
+  });
+
+  it('#1452 skips the relocated leg when the acknowledged share is UNKNOWN', () => {
+    // Same mismatch as the firing case above, but UNKNOWN: the leg must skip.
+    expect(codes({ mirror: { recycledAcked: undefined } })).toEqual([]);
   });
 
   it('accepts Base trailing the chain — that is the normal report lag', () => {

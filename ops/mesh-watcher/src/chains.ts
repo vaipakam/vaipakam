@@ -71,6 +71,8 @@ export interface CoverageGap {
     | 'base-books'
     | 'base-books-repat'
     | 'base-books-keeper'
+    // #1452 — the acknowledged recycled share (relocated-custody leg).
+    | 'base-books-relocation'
     | 'own-ledger'
     | 'own-ledger-composition'
     | 'own-ledger-repat'

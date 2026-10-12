@@ -618,7 +618,7 @@ carefully, because this group deliberately does **not** share one
 convention.
 
 **Sentinel conventions differ on purpose.** `setRecycleMarginBps`,
-`setRecycleTariffKPer1e18EthDay`, `setTariffKPerLifYear` and
+`setTariffKPerLifYear` and
 `setRewardHaircutBps` treat a stored `0` as **reset-to-library-default**.
 `setRewardClaimHorizonDays`, `setRecycleSurplusMultiple` and
 `setChainKeeperAllocateBps` treat `0` as **dark — feature off**. `setUserSideShareCapBps` **rejects** `0`
@@ -707,19 +707,17 @@ not `0`. The ceiling exists because the margin is taken off the top of
 what funds user rewards: at 25% a compromised admin degrades the
 programme's payout rate but cannot starve it.
 
-### Absorption tariff coefficients (`recycleTariffKPer1e18EthDay`, `tariffKPerLifYear`)
+### Absorption tariff coefficient (`tariffKPerLifYear`)
 
-Two quantity schedules, never fee-value conversions — the distinction
+A quantity schedule, never a fee-value conversion — the distinction
 matters legally as well as economically (see the rewards copy rules in
 the tokenomics redesign research doc).
 
-- **`recycleTariffKPer1e18EthDay`** — VPFI per ETH of loan volume per
-  day. Default **0.05**, range **[0.001, 1.0]**. **Not wired for
-  Phase-1 absorption**; it is the older ETH·day schedule the LIF·year
-  one superseded. Setting it changes nothing on a Phase-1 deployment.
-- **`tariffKPerLifYear`** — the live coefficient `K` in the Full
-  tariff's `C* = base LIF × term-years × K`. Default **5**, range
-  **[0.1, 50]**.
+- **`tariffKPerLifYear`** — the coefficient `K` in the Full tariff's
+  `C* = base LIF × term-years × K`. Default **5**, range **[0.1, 50]**.
+
+The older ETH·day schedule (`recycleTariffKPer1e18EthDay`) was never wired
+into absorption and has been removed; there is no setter for it any more.
 
 ### Full VPFI tariff kill switch (`feeEntitlementEnabled`)
 

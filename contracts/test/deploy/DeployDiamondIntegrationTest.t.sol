@@ -454,11 +454,14 @@ contract DeployDiamondIntegrationTest is Test, DiamondFacetNames {
             RewardAggregatorFacet(diamond).getGovernorCommitState();
         assertEq(armedFromDay, 0, "governor must be UNARMED (M7 ceremony)");
 
-        (, uint256 tariffK) = ConfigFacet(diamond).getRecycleConfig();
+        // #1956 — the retired ETH-day knob is not routed at all any more (this
+        // line was its dead-knob alarm while it existed unwired). Asked of the
+        // loupe, not by calling it: a routed setter could still revert for want
+        // of a role, which would pass a call-based check vacuously.
         assertEq(
-            tariffK,
-            LibVaipakam.RECYCLE_TARIFF_K_DEFAULT,
-            "retired ETH-day knob must read its default (dead-knob alarm)"
+            DiamondLoupeFacet(diamond).facetAddress(bytes4(keccak256("setRecycleTariffKPer1e18EthDay(uint256)"))),
+            address(0),
+            "the retired ETH-day setter must not be routed"
         );
     }
 }

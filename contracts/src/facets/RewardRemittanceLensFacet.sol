@@ -217,6 +217,19 @@ contract RewardRemittanceLensFacet {
         return LibVaipakam.storageSlot().remitPendingTotal[chainId];
     }
 
+    /// @notice #1452 — the recycled share of every remittance to `chainId` that
+    ///         Base saw ACKNOWLEDGED, and apart from it the share of FORCED
+    ///         finalizations. The destination must have relocated at least
+    ///         `acked` as delivered custody; the mesh watcher checks it.
+    function getChainRemittedRecycled(uint32 chainId)
+        external
+        view
+        returns (uint256 acked, uint256 forceFinalized)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        return (s.chainRemittedRecycledAcked[chainId], s.chainRemittedRecycledForceFinalized[chainId]);
+    }
+
     /// @notice Σ VPFI in ACKED (delivery-finalized) reservations to `chainId`.
     function getRemitAckedTotal(
         uint32 chainId

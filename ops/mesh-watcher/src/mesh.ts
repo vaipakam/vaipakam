@@ -14,6 +14,7 @@ import {
   REWARD_RECONCILIATION_ABI,
   REWARD_AGGREGATOR_ABI,
   REWARD_CUSTODY_ABI,
+  REWARD_REMITTANCE_LENS_ABI,
 } from './abi';
 import {
   isCoverageGap,
@@ -141,6 +142,27 @@ export function keeperDrawUnavailableGap(
   };
 }
 
+/**
+ * #1452 — the gap for an unreadable acknowledged recycled share. The
+ * `base-ahead-of-chain` relocated leg did NOT run for the chain this tick; a
+ * zero substitute would hide exactly the misrouted arrival the leg exists for.
+ */
+export function remittedRecycledUnavailableGap(chainId: number, err: unknown): CoverageGap {
+  const failure = classify(err, 'getChainRemittedRecycled');
+  const missing = isMissingSelector(err);
+  return {
+    chainId,
+    reason: 'view-unavailable',
+    source: 'base-books-relocation',
+    detail:
+      `getChainRemittedRecycled() could not be read for chain ${chainId} — ${describeFailure(failure)}.\n\n` +
+      `The acknowledged recycled share is UNKNOWN this tick, so the relocated-custody leg of base-ahead-of-chain did NOT run for this chain: an arrival credited as absorption instead of relocated custody is NOT being watched in this window.\n\n` +
+      (missing
+        ? `The selector does not exist in this Diamond's CURRENT CUT — a pre-#1452 deployment, or a refresh that dropped the remittance lens. Cut it (back) in to close this gap.`
+        : `The failure was in transport, not the contract — most likely transient; the next tick usually recovers it.`),
+  };
+}
+
 /** Base's books for one chain — three views, read together. */
 async function readBaseBooks(
   canonical: ChainTarget,
@@ -217,9 +239,29 @@ async function readBaseBooks(
     gaps.push(keeperDrawUnavailableGap(chainId, err));
   }
 
+  // #1452 — Base's acknowledged recycled share for this chain, read separately
+  // for the reasons the draws are: a newer selector on another facet, and a
+  // Diamond missed during a refresh must cost only the check that needs it.
+  let recycledAcked: bigint | undefined;
+  try {
+    const pair = await readView<readonly [bigint, bigint]>(
+      canonical.client,
+      canonical.diamond,
+      'getChainRemittedRecycled',
+      [chainId],
+      blockNumber,
+      REWARD_REMITTANCE_LENS_ABI,
+    );
+    recycledAcked = pair[0];
+  } catch (err) {
+    recycledAcked = undefined;
+    gaps.push(remittedRecycledUnavailableGap(chainId, err));
+  }
+
   return {
     chainId,
     keeperDraw,
+    recycledAcked,
     reported: ledger[0],
     consumed: ledger[1],
     avail: ledger[2],

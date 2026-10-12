@@ -54,6 +54,14 @@ export interface BaseChainBooks {
    */
   keeperDraw?: bigint;
   /**
+   * #1452 — the recycled share of every remittance to this chain that Base saw
+   * ACKNOWLEDGED (`getChainRemittedRecycled`), forced finalizations excluded.
+   * The chain must have relocated at least this as delivered custody.
+   * `undefined` means UNKNOWN — the view could not be read — and the
+   * `base-ahead-of-chain` relocated leg SKIPS, for the reason the draws give.
+   */
+  recycledAcked?: bigint;
+  /**
    * #1568 C2 — the chain's repatriation draw pair, from
    * `getChainRepatriationDraw`. `netDraw` is the LIVE availability term
    * (outstanding + settled Mode-A charges, already net of releases —
@@ -747,6 +755,26 @@ export function checkHardInvariants(
         'Base holds a higher retirement cumulative than the chain itself',
         `base retired = ${fmt(b.retired)} > chain retired = ${fmt(local.localRetired)}`,
         [b.retired, local.localRetired],
+      );
+    }
+    // #1452 — what Base saw a delivery acknowledge as recycled must have been
+    // RELOCATED on the chain (custody, never absorption). The acknowledgement
+    // follows the delivery's credit, so Base trails here like every figure
+    // above; leading it means an arrival was credited through the ordinary
+    // absorption path — the chain would then report Base's own top-up as its
+    // absorption, the one exclusion variant no on-chain bound catches.
+    if (b.recycledAcked !== undefined && b.recycledAcked > local.custodyRelocated) {
+      add(
+        'base-ahead-of-chain',
+        'relocated',
+        b.chainId,
+        'Base acknowledged more recycled delivery than the chain relocated',
+        `Base's acknowledged recycled share exceeds the chain's relocated custody\n` +
+          `  base acked     = ${fmt(b.recycledAcked)}\n` +
+          `  chain relocated = ${fmt(local.custodyRelocated)}\n` +
+          `  excess          = ${fmt(b.recycledAcked - local.custodyRelocated)}\n` +
+          `  (an arrival credited as absorption instead of relocated custody would look exactly like this)`,
+        [b.recycledAcked, local.custodyRelocated],
       );
     }
     if (b.released > local.localReleased) {

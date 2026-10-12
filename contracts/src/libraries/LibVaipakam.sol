@@ -765,27 +765,15 @@ library LibVaipakam {
     ///      (one auditable economic knob beats two interacting ones).
     uint256 constant RECYCLE_FORWARD_RESERVE_DAYS = 7;
 
-    /// @dev Tariff `k` for peg-free discount entitlements (design §4.2): VPFI
-    ///      (1e18) charged per 1 ETH (1e18) of loan volume per day, so a
-    ///      loan's tariff = `k × ethVolume18 × durationDays / 1e18`. A pure
-    ///      QUANTITY schedule — never a fee-value conversion (that would
-    ///      re-enter the price-peg surface). Stored `0` ⇒ this default (see
-    ///      {cfgRecycleTariffKPer1e18EthDay}). Initial value; governance tunes
-    ///      it in the same family as the interaction-reward ratio so the loop
-    ///      stays net-absorbing after rewards at the governor margin.
-    uint256 constant RECYCLE_TARIFF_K_DEFAULT = 5e16; // 0.05 VPFI / ETH·day
-    uint256 constant RECYCLE_TARIFF_K_MIN = 1e15; // 0.001 VPFI / ETH·day
-    uint256 constant RECYCLE_TARIFF_K_MAX = 1e18; // 1.0 VPFI / ETH·day
-
     /// @dev #1347 (M2 PR-5a/5b) — the Full-tariff schedule coefficient `K`
     ///      in the LIF·year absorption formula
     ///      `C* = baseLif_list × tYears × K` (formula doc §F4, rev 15). Unit:
     ///      "VPFI-1e18 per 1.0 numeraire-unit (1e18) of list LIF per year".
     ///      Default `5e18` ⇒ 5 VPFI per whole numeraire-unit of list LIF per
     ///      year, so a 20-USDC list LIF on a 30-day loan absorbs ≈8.22 VPFI
-    ///      per Full party. This is the SUCCESSOR to the retired ETH·day
-    ///      `RECYCLE_TARIFF_K_*` family — rev 14+ forbids wiring the ETH·day
-    ///      knob for Phase-1 absorption. Read via {cfgTariffKPerLifYear}.
+    ///      per Full party. This is the SUCCESSOR to the ETH·day tariff knob,
+    ///      which rev 14+ forbade wiring and #1956 removed. Read via
+    ///      {cfgTariffKPerLifYear}.
     uint256 constant TARIFF_K_PER_LIF_YEAR_DEFAULT = 5e18; // 5 VPFI / list-LIF-numeraire / year
     uint256 constant TARIFF_K_PER_LIF_YEAR_MIN = 1e17; // 0.1 VPFI / list-LIF-numeraire / year
     uint256 constant TARIFF_K_PER_LIF_YEAR_MAX = 5e19; // 50 VPFI / list-LIF-numeraire / year
@@ -5551,12 +5539,10 @@ library LibVaipakam {
         ///      `[1, RECYCLE_MARGIN_MAX_BPS]`). Appended at struct end — no
         ///      layout shift for an in-place facet refresh.
         uint16 recycleMarginBps;
-        /// @dev Tariff `k` (VPFI-1e18 per ETH-1e18 of loan volume per day) for
-        ///      peg-free discount entitlements (design §4.2). `0` ⇒
-        ///      {RECYCLE_TARIFF_K_DEFAULT} (see
-        ///      {cfgRecycleTariffKPer1e18EthDay}). Set via
-        ///      {ConfigFacet.setRecycleTariffKPer1e18EthDay} (ADMIN_ROLE,
-        ///      bounded `[RECYCLE_TARIFF_K_MIN, RECYCLE_TARIFF_K_MAX]`).
+        /// @dev RETIRED (#1956) — the ETH·day tariff `k`, never wired into
+        ///      absorption (rev 14+ forbade it; the LIF·year `K` replaced it).
+        ///      Its setter and reader are removed; the slot stays for the
+        ///      append-only layout and nothing reads or writes it.
         uint256 recycleTariffKPer1e18EthDay;
         // ─── VPFI recycling governor PR-3a (#1217/#1222 §5) — bucket ledger ──
         /// @dev Protocol-owned recycle bucket: a LEDGER SLICE of the Diamond's
@@ -8010,6 +7996,17 @@ library LibVaipakam {
         ///      irreversible and must never follow one read. Appended — the
         ///      Storage struct is append-only.
         mapping(address => uint256) rewardSanctionsEvidence;
+        /// @dev #1452 — per destination, the recycled share of every remittance
+        ///      Base saw ACKNOWLEDGED: delivered custody that mirror must have
+        ///      relocated (`recycleCustodyRelocatedCumulative`) at least this much
+        ///      of. An arrival credited through the ordinary absorption path
+        ///      instead would report Base's own top-up as the mirror's absorption
+        ///      and leave this figure ahead of the mirror's — the one exclusion
+        ///      variant no on-chain bound catches, observed by the mesh watcher.
+        mapping(uint32 => uint256) chainRemittedRecycledAcked;
+        /// @dev #1452 — the same share for FORCED finalizations: evidenced by an
+        ///      operator, not acknowledged by a delivery, so kept apart.
+        mapping(uint32 => uint256) chainRemittedRecycledForceFinalized;
     }
 
     /// @notice 3b-ii-A2 (#2305) — one batch a staging record staged from, with
@@ -9196,6 +9193,14 @@ library LibVaipakam {
         ///      carries the same commitment the mirror holds. Zero for every
         ///      reservation dispatched before the rooted wire.
         bytes32 dayListRoot;
+        /// @dev #1461, appended — the recycled share THIS reservation's release
+        ///      recorded as stranded in transit (its actual reversal into
+        ///      `recycleReleasedRemitStrandedCumulative`) and not yet resolved. A
+        ///      late acknowledgement from the destination — the delivery executed
+        ///      after all — resolves what remains, once; a recovery settlement or a
+        ///      recorded terminal loss for the remittance decrements it first, so
+        ///      one remittance never resolves twice through them.
+        uint256 strandedRecycled;
     }
 
     /// @notice #1222 M3 B2-d2 — a mirror's receipt record for one delivered
@@ -9762,18 +9767,11 @@ library LibVaipakam {
         return v == 0 ? uint256(RECYCLE_MARGIN_DEFAULT_BPS) : uint256(v);
     }
 
-    /// @dev Effective tariff `k` (VPFI-1e18 per ETH-1e18 of loan volume per
-    ///      day). `0` ⇒ {RECYCLE_TARIFF_K_DEFAULT}.
-    function cfgRecycleTariffKPer1e18EthDay() internal view returns (uint256) {
-        uint256 v = storageSlot().recycleTariffKPer1e18EthDay;
-        return v == 0 ? RECYCLE_TARIFF_K_DEFAULT : v;
-    }
-
     /// @dev #1347 (M2 PR-5a/5b) — effective Full-tariff coefficient `K`
     ///      (VPFI-1e18 per 1.0 numeraire-unit of list LIF per year). `0` ⇒
-    ///      {TARIFF_K_PER_LIF_YEAR_DEFAULT}. This is the LIF·year successor to
-    ///      {cfgRecycleTariffKPer1e18EthDay}, which is NOT wired for Phase-1
-    ///      absorption (formula doc §F4, rev 14+).
+    ///      {TARIFF_K_PER_LIF_YEAR_DEFAULT}. This is the LIF·year successor to the
+    ///      ETH·day knob, which was never wired and is removed (#1956;
+    ///      formula doc §F4, rev 14+).
     function cfgTariffKPerLifYear() internal view returns (uint256) {
         uint256 v = storageSlot().tariffKPerLifYear;
         return v == 0 ? TARIFF_K_PER_LIF_YEAR_DEFAULT : v;

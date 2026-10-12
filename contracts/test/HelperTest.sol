@@ -1906,7 +1906,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](90);
+        selectors = new bytes4[](89);
         selectors[0] = ConfigFacet.setFeesConfig.selector;
         selectors[1] = ConfigFacet.setLiquidationConfig.selector;
         selectors[2] = ConfigFacet.setRiskConfig.selector;
@@ -2038,7 +2038,7 @@ contract HelperTest {
         selectors[74] = ConfigFacet.getAssetRiskParams.selector;
         // #1222 (Phase A1a) — VPFI recycling governor knobs.
         selectors[75] = ConfigFacet.setRecycleMarginBps.selector;
-        selectors[76] = ConfigFacet.setRecycleTariffKPer1e18EthDay.selector;
+        selectors[76] = ConfigFacet.getRecycleCreditedCumulative.selector; // #1956: moved here from 89 when the ETH·day setter retired
         selectors[77] = ConfigFacet.getRecycleConfig.selector;
         // Governor PR-3a (#1217) — recycle-bucket transparency reads.
         selectors[78] = ConfigFacet.getRecycleBucket.selector;
@@ -2057,7 +2057,6 @@ contract HelperTest {
         selectors[87] = ConfigFacet.setRewardHaircutBps.selector;
         selectors[88] = ConfigFacet.setUserSideShareCapBps.selector;
         // #1222 (M3 B1) — cross-chain recycled ledger transparency reads.
-        selectors[89] = ConfigFacet.getRecycleCreditedCumulative.selector;
         // #1222 M3 B3 — `getChainRecycledLedger` /
         // `getChainDailyRecycledCredit` MOVED to RewardAggregatorFacet
         // (ConfigFacet hit the EIP-170 ceiling), shrinking this list by two.
@@ -2785,7 +2784,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](42);
+        selectors = new bytes4[](43);
         selectors[0] = RewardRemittanceLensFacet.getDayCompensation.selector;
         selectors[1] = RewardRemittanceLensFacet.getStrandedRecoveryReserved.selector;
         selectors[2] = RewardRemittanceLensFacet.getStrandedRecovery.selector;
@@ -2849,6 +2848,7 @@ contract HelperTest {
         selectors[39] = RewardRemittanceLensFacet.dayAwaitsFreshDelivery.selector;
         selectors[40] = RewardRemittanceLensFacet.getDayDeliveryState.selector;
         selectors[41] = RewardRemittanceLensFacet.getPacketDeliveryProof.selector;
+        selectors[42] = RewardRemittanceLensFacet.getChainRemittedRecycled.selector; // #1452
     }
 
     /// #1222 M3 B2-c — mirror→Base per-loan headroom commitment report.

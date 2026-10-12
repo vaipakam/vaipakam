@@ -1569,8 +1569,13 @@ library LibVpfiRecycle {
      *         healthy recovery. See the storage docs for the split that a
      *         recovery path needs instead.
      */
-    function restoreReleasedRemit(uint256 recycledFull, uint256 recycledSent, uint256 remitId) internal {
-        if (recycledFull == 0 && recycledSent == 0) return;
+    /// @return The stranded share recorded for THIS release — the caller keeps
+    ///         it on the reservation so a late delivery can resolve it (#1461).
+    function restoreReleasedRemit(uint256 recycledFull, uint256 recycledSent, uint256 remitId)
+        internal
+        returns (uint256)
+    {
+        if (recycledFull == 0 && recycledSent == 0) return 0;
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         s.outstandingCommitRecycled += recycledFull;
         // Codex #1426 r5 — on an in-place-upgraded Diamond whose
@@ -1607,6 +1612,27 @@ library LibVpfiRecycle {
         uint256 reversed = paid > recycledSent ? recycledSent : paid;
         s.paidOutRecycled = paid - reversed;
         s.recycleReleasedRemitStrandedCumulative += reversed;
+        return reversed;
+    }
+
+    /// @notice #1461 — a released remittance's delivery LANDED after all: the
+    ///         recycled share its release recorded as stranded has reached the
+    ///         destination, so it leaves the coverage allowance — resolved into
+    ///         `recycleReleasedRemitResolvedCumulative`, the figure the allowance
+    ///         nets out. Once: the reservation's record is zeroed.
+    /// @dev    Read only by the destination's authenticated acknowledgement of a
+    ///         RELEASED reservation. What a recovery settlement or terminal-loss
+    ///         record already resolved for this remittance was taken off the
+    ///         record there, so it is not resolved again here.
+    event ReleasedRemitStrandedResolved(uint256 indexed remitId, uint256 amount);
+
+    function resolveReleasedRemitStranded(LibVaipakam.Storage storage s, uint256 remitId) internal {
+        LibVaipakam.RemitReservation storage r = s.remitReservations[remitId];
+        uint256 amount = r.strandedRecycled;
+        if (amount == 0) return;
+        r.strandedRecycled = 0;
+        s.recycleReleasedRemitResolvedCumulative += amount;
+        emit ReleasedRemitStrandedResolved(remitId, amount);
     }
 
     // ─── #1222 M3 B1 — Base's per-chain recycled ledger ─────────────────────

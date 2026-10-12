@@ -29,6 +29,7 @@ import rewardAggregatorAbi from '../../../packages/contracts/src/abis/RewardAggr
 import repatriationAbi from '../../../packages/contracts/src/abis/RepatriationFacet.json';
 import rewardCustodyAbi from '../../../packages/contracts/src/abis/RewardCustodyFacet.json';
 import rewardReconciliationAbi from '../../../packages/contracts/src/abis/RewardReconciliationFacet.json';
+import rewardRemittanceLensAbi from '../../../packages/contracts/src/abis/RewardRemittanceLensFacet.json';
 
 /** The compiled `RewardAggregatorFacet` ABI, as viem consumes it. */
 export const REWARD_AGGREGATOR_ABI = rewardAggregatorAbi as unknown as Abi;
@@ -64,6 +65,12 @@ export const REWARD_CUSTODY_ABI = rewardCustodyAbi as unknown as Abi;
  *  a chain not yet refreshed with the facet reverts this read alone. */
 export const REWARD_RECONCILIATION_ABI = rewardReconciliationAbi as unknown as Abi;
 
+/** #1452 — the remittance lens, for Base's per-destination ACKNOWLEDGED
+ *  recycled share (`getChainRemittedRecycled`). Its own import for the same
+ *  attribution reason as the others: a Diamond refreshed without the lens
+ *  reverts this read alone. */
+export const REWARD_REMITTANCE_LENS_ABI = rewardRemittanceLensAbi as unknown as Abi;
+
 /**
  * Every view this Worker calls, with the output shape its reader assumes.
  * `outputs` lists `name:type` pairs in declaration order — the assertion
@@ -77,7 +84,7 @@ const EXPECTED_VIEWS: ReadonlyArray<{
   readonly inputs: readonly string[];
   readonly outputs: readonly string[];
   /** Which compiled facet ABI carries the view (default: aggregator). */
-  readonly facet?: 'repatriation' | 'custody' | 'reconciliation';
+  readonly facet?: 'repatriation' | 'custody' | 'reconciliation' | 'remittanceLens';
 }> = [
   {
     name: 'getExpectedSourceChainIds',
@@ -152,6 +159,15 @@ const EXPECTED_VIEWS: ReadonlyArray<{
       // there is nothing left.
       'releasedRemitResolved:uint256',
     ],
+  },
+  // #1452 — Base's per-destination acknowledged recycled share (and, apart,
+  // what forced finalizations booked). Checked against the destination's own
+  // relocated custody: Base's copy may trail it, never lead it.
+  {
+    name: 'getChainRemittedRecycled',
+    inputs: ['uint32'],
+    outputs: ['acked:uint256', 'forceFinalized:uint256'],
+    facet: 'remittanceLens',
   },
   // #1569 M4 C3 — the keeper-earmark draw, the THIRD subtrahend of
   // `expectedAvail` and the subject of the `keeper-cap` check. On the
@@ -266,6 +282,7 @@ export function assertAbiShape(
   repatAbi: Abi = REPATRIATION_ABI,
   custodyAbi: Abi = REWARD_CUSTODY_ABI,
   reconciliationAbi: Abi = REWARD_RECONCILIATION_ABI,
+  remittanceLensAbi: Abi = REWARD_REMITTANCE_LENS_ABI,
 ): void {
   const problems: string[] = [];
 
@@ -277,7 +294,9 @@ export function assertAbiShape(
           ? custodyAbi
           : expected.facet === 'reconciliation'
             ? reconciliationAbi
-            : abi;
+            : expected.facet === 'remittanceLens'
+              ? remittanceLensAbi
+              : abi;
     const matches = source.filter(
       (item): item is AbiFunction =>
         item.type === 'function' && item.name === expected.name,
