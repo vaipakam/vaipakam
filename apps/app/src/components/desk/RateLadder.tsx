@@ -43,6 +43,7 @@ import {
   type LadderLevel,
 } from '../../data/desk';
 import { MatchBand } from './MatchBand';
+import type { SignedDepth } from '../../data/signedDepth';
 import { SignedFillConfirm } from './SignedFillConfirm';
 
 const MAX_LEVELS = 12;
@@ -185,6 +186,7 @@ export function RateLadder({
   loading,
   unavailable,
   source,
+  signedDepth,
   decimals,
   symbol,
   chainId,
@@ -195,6 +197,10 @@ export function RateLadder({
   loading: boolean;
   unavailable: boolean;
   source: 'chain' | 'indexer' | null;
+  /** #2386 — what the merged ladder knows about the signed book; the
+   *  page-level note discloses it, and the empty state must not call a
+   *  chain-only empty book an empty market (r1). */
+  signedDepth: SignedDepth;
   decimals: number | undefined;
   symbol: string | undefined;
   chainId: number;
@@ -287,8 +293,16 @@ export function RateLadder({
           {copy.desk.bookIndexedCopy}
         </p>
       ) : null}
+
       {empty ? (
-        <EmptyState icon={BookOpen} title={copy.desk.bookEmpty} />
+        <EmptyState
+          icon={BookOpen}
+          title={
+            signedDepth === 'complete'
+              ? copy.desk.bookEmpty
+              : copy.desk.bookEmptySignedUnknown
+          }
+        />
       ) : (
         <div className="desk-ladder">
           <div className="desk-ladder-head">

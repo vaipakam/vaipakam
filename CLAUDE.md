@@ -131,6 +131,7 @@ true on a settlement path, and it cost real time in #1503.
 | **RefinanceFacet**         | Move a borrower onto better terms — `refinanceLoan`, `refinanceLoanFromAccept`. NOT an in-place edit: the replacement loan is a **separate record** (`s.offerIdToLoanId[borrowerOfferId]` → a new `loanId`) created when the new lender accepted the offer, and the old loan is terminalized **Active → Repaid**. So a completed refinance leaves **two loan records and FOUR position NFTs**: every loan carries both a `lenderTokenId` and a `borrowerTokenId`, and the old pair is *status-updated* to `LoanRepaid` — **not burned** — so `ownerOf` still resolves and the old borrower NFT stays a redeemable receipt on the original position. Load-bearing for indexer state and the terminal-path invariants: an indexer that assumes one NFT per loan, or that a terminal loan's NFTs are gone, is wrong on both counts |
 | **EarlyWithdrawalFacet**   | Lender exit, LISTED route only: `createLoanSaleOffer` (carries a MANDATORY finite expiry) → completion. Completion mirrors the offset route's shape: `completeLoanSale` (external) plus `completeLoanSaleInternal`, the `address(this)`-gated entry `_acceptOffer` invokes automatically after a buyer accepts the linked sale offer. **`sellLoanViaBuyOffer` is NOT here** — #1780 moved it to `EarlyWithdrawalDirectFacet` below, so a grep of this facet for the direct sale comes back empty |
 | **EarlyWithdrawalDirectFacet** | Lender exit, DIRECT route: `sellLoanViaBuyOffer` — instant sale into a standing lender ("buy") offer in one transaction. Split out of `EarlyWithdrawalFacet` in #1780, which had reached 30 bytes under EIP-170 — less than one cross-facet call, so every queued fix to either route was undeployable. Same storage, same Diamond, same call surface for callers; only the runtime bytecode is separate. **The two must be refreshed together** — the redeploy scripts carry both, and refreshing one alone leaves the other on pre-split code. Both are sale hosts that reach `RiskPreviewFacet.saleAdmission` through `LibSaleSolvency`, so a curated refresh script touching either must also route that selector (#1649) |
+| **SwapToRepayFacet** / **SwapToRepayPartialFacet** | Borrower swap-to-repay: collateral swapped into the principal asset and applied to the loan in one transaction. `SwapToRepayFacet` hosts the FULL close-out (`swapToRepayFull`) and its sizing preview (`previewSwapToRepayFull`). `swapToRepayPartial` is **NOT here** — #2416 moved it to `SwapToRepayPartialFacet`, so a grep of the first facet for the partial route comes back empty. Split because `SwapToRepayFacet` had reached 73 bytes under EIP-170, less than any guard costs, so every queued change to either route was undeployable (the #1780 / #1835 condition again). Same storage, same Diamond, same selector and call surface; only the runtime bytecode is separate. **The two must be refreshed together** — `RefreshAllFacetsInPlace` carries both, and refreshing one alone leaves the other route on pre-split code |
 | **PartialWithdrawalFacet** | Release surplus collateral while a loan is open — `calculateMaxWithdrawable`, `partialWithdrawCollateral` |
 | **TreasuryFacet**          | Treasury operations (56 functions — claims, buyback intents, remittance absorption, asset conversion). Custody is **deployment-mode dependent**: `LibFacet.recordTreasuryAccrual` only credits `treasuryBalances` when `s.treasury == address(this)`, so on the documented mainnet topology (`TREASURY_ADDRESS` = an external multisig) fees leave immediately and the claim / conversion paths have nothing at the Diamond to act on. Those paths are for Diamond-as-treasury deployments |
 
@@ -255,6 +256,9 @@ path or a guardrail:
 | `contracts/test/HelperTest.sol` | the test-side Diamond build |
 | `contracts/test/SetupTest.t.sol` | shared test setup |
 | `packages/contracts/src/deployments.ts` | a field on the `Deployment` type — mandatory as soon as `DeployDiamond` writes the new key |
+| `contracts/script/exportFrontendAbis.sh` (`FACETS=(...)`) | the facet's exported ABI JSON. **Every** Diamond facet is exported, internal ones included (#2394) |
+| `packages/contracts/src/abis/index.ts` | the re-export barrel — the export script does **not** touch it |
+| `packages/contracts/scripts/diamond-facets.json` | `facets` — the combined Diamond ABI is built from it. `contracts/test/deploy/ExportedFacetParityTest` fails unless it equals `cutFacetNames()` plus `DiamondCutFacet`, so an omission is a red deploy-sanity check. More in "Frontend ABI sync" **below** |
 
 **Conditional** — required only when the stated condition holds, so *not*
 registering these can be correct:
@@ -263,10 +267,17 @@ registering these can be correct:
 | --- | --- |
 | `contracts/script/RedeployFacets.s.sol` | only if the facet belongs to one of that script's curated refresh families — it is a *curated* partial refresh, not an all-facets one |
 | `contracts/script/lib/FacetSelectors.sol` **+ a matching case in `contracts/test/deploy/RedeploySelectorParityTest.t.sol`** | only when the facet ALREADY HAS a getter in `FacetSelectors` — that is the condition, not "the curated scripts cut it", which is true of far more facets than the library covers (`ReplaceStaleFacets` cuts `ConfigFacet`, `OfferAcceptFacet` and others through `DeployDiamond`'s inherited getters, and those need nothing here). A brand-new facet needs a getter only if you are adding it to a curated script's set. These are ONE step, not a step and its guard: the parity test enumerates each facet BY HAND, so adding a getter without adding its case compiles happily and leaves that selector list entirely unpinned. The same list must also be updated when a covered facet gains, loses or renames an external FUNCTION — see "When you add a function to a facet" below |
-| `contracts/script/exportFrontendAbis.sh` (`FACETS=(...)`) | only if an app actually consumes the facet's ABI. Internal facets are deliberately excluded — `ReceiverFacet` is not in that array and should not be |
-| `packages/contracts/src/abis/index.ts` | only alongside the entry above — the export script does **not** touch this barrel |
 
-The last two are covered in more detail in "Frontend ABI sync" **below**.
+The export registrations used to sit in this conditional table ("only if an
+app actually consumes the facet's ABI", with `ReceiverFacet` recorded as
+deliberately excluded). **That rule is retired (owner decision 2026-10-04,
+#2394)** and the three rows are in the ALWAYS table above: a facet carries
+its events and errors as well as its functions, and leaving an "internal"
+facet out had dropped `RewardSweepWalkFacet`'s reward-expiry events (which
+the indexer, deriving its event ABI from the union, could not decode),
+`ReceiverFacet`'s `UnexpectedNFTReceipt` revert, and the role/ownership
+events from the combined Diamond ABI. Listing an internal function in an ABI
+authorizes nothing. Do not reintroduce an exclusion list.
 
 **Two of these do not fail loudly, so do not rely on a red check:**
 
@@ -357,6 +368,26 @@ retired selector needs an explicit `FacetCutAction.Remove` leg, the way
 `RedeployFacets` handles the retired `uint8` keeper signatures via
 `_legacyProfileRemovedSelectors()`. The library update is necessary and not
 sufficient.
+
+**The all-facets refresh is the exception, and does not need that leg**
+(#2313). `RefreshAllFacetsInPlace` derives what to remove from the loupe: after
+its cuts and migrations it removes every routed selector outside the deploy's
+selector set (`_sweepStaleRoutes`), before the reward-custody cutover stamp
+records the routing. It used to remove retirements from hand-kept lists, one
+block per incident, and Base Sepolia carried eleven unlisted ones — older
+accept entry points and reward ingress hooks — through a complete refresh.
+Two consequences follow:
+- A retired signature needs no Remove block in that script. Add one only when
+  a migration reads the still-routed selector as its completion marker (M1's
+  tariff reset is the case there today).
+- `items[]` being complete is now load-bearing in BOTH directions. A facet
+  missing from it would have its live selectors classified stale and removed,
+  not merely left on old bytecode. `RefreshScriptFacetParityTest`'s
+  selector-set equality is what holds it, so treat a red parity test as a
+  deploy blocker.
+
+The CURATED scripts above cut subsets by design and cannot use the same rule,
+so they keep their explicit legs.
 
 **`RiskPreviewFacet` has a FOURTH copy of its surface**, and it is a shell
 array: `contracts/script/rehearse-partial-refresh.sh` hard-codes
@@ -457,9 +488,10 @@ PR as the contract change.
 
 The frontend imports per-facet ABI JSONs from
 `packages/contracts/src/abis/`. Unlike the keeper-bot, the frontend
-imports the **full** Diamond surface (currently 27 facets — see the
-`FACETS=(...)` list in `contracts/script/exportFrontendAbis.sh`),
-so essentially every facet edit needs a re-export.
+imports the **full** Diamond surface — every facet the Diamond has,
+internal ones included (#2394; see the `FACETS=(...)` list in
+`contracts/script/exportFrontendAbis.sh`), so essentially every facet
+edit needs a re-export.
 
 **When you change ANY facet selector** (rename, add/remove
 parameters, change struct shape, etc.), run:
@@ -495,7 +527,45 @@ person doesn't lose an hour to that.
 to the `FACETS=(...)` array in
 `contracts/script/exportFrontendAbis.sh` AND wire it into the
 re-export barrel `packages/contracts/src/abis/index.ts` (the
-script does NOT touch the barrel).
+script does NOT touch the barrel) AND name it in
+`packages/contracts/scripts/diamond-facets.json` — under `facets` if
+it is cut into the Diamond, `standalone` otherwise. (`proxy` is a third
+class with one member, `VaipakamDiamond` itself — see below.)
+
+**The combined Diamond ABI is a generated file** (UX3-008).
+`DIAMOND_ABI` / `DIAMOND_ABI_VIEM` read `packages/contracts/src/diamondAbi.json`,
+which `exportFrontendAbis.sh` rebuilds after every export from the
+`facets` list, with exact duplicate entries removed. It is no longer a
+spread of every facet in the barrel: each facet repeats the shared errors
+and events, and the spread shipped 2.8 MB to every connected session where
+the union is 0.65 MB. `pnpm --filter @vaipakam/contracts test` fails when
+the union is stale, when an ABI file is in neither list, or when the union
+lost any facet entry — so a facet added to `FACETS` but not to the
+manifest fails CI instead of silently missing from the Diamond ABI. The
+export applies the same check itself: it builds the union from its STAGED
+facets before publishing anything, so a manifest omission stops the export
+with nothing written, and the facets, union and `_source.json` land
+together. The provenance stamp treats the union as output, like the facet
+JSONs. Do not
+hand-edit `diamondAbi.json`; run
+`node packages/contracts/scripts/build-diamond-abi.mjs`.
+
+**The union also carries the Diamond PROXY's own errors and events**
+(#2399). `VaipakamDiamond` is not a facet, but its fallback reverts
+`FunctionDoesNotExist()` for a selector no facet hosts — the revert a stale
+ABI or a partial refresh produces. The manifest lists it under `proxy`, and
+the generator takes only its errors and events (not its constructor,
+`fallback` or `receive`). `ExportedFacetParityTest` pins that entry to the
+compiled contract's name, and the package test fails if any error or event
+it declares is missing from the union.
+
+**Consequence for error detection: viem now DECODES that revert.** The
+decoded message reads `FunctionDoesNotExist()` and does not contain the
+selector `0xa9ad62f8`, so a matcher that looks for the selector in message
+TEXT stops recognising it. Detect it from the error's structure instead —
+the connected app's `isFunctionDoesNotExistRevert` reads the revert data viem
+keeps on `ContractFunctionRevertedError.raw`, decoded or not — and treat any
+text match as a fallback for non-viem errors only.
 
 ## Worker ABI consumption (Stage 3 split)
 
@@ -514,7 +584,9 @@ When you add a new facet that any of the Workers needs to read:
 1. Add the facet to the `FACETS=(...)` array in
    `contracts/script/exportFrontendAbis.sh`.
 2. Wire it into the re-export barrel
-   `packages/contracts/src/abis/index.ts`.
+   `packages/contracts/src/abis/index.ts`, and name it in
+   `packages/contracts/scripts/diamond-facets.json` (see "Frontend ABI
+   sync" above — the combined Diamond ABI is built from that list).
 3. Import it in the Worker that needs it (e.g.
    `apps/indexer/src/diamondAbi.ts` for indexer-side reads).
 
@@ -567,6 +639,28 @@ read and write a subset of the shared tables via the same binding
 `apps/indexer/`. Never `wrangler d1 execute --command "CREATE TABLE..."`
 directly on the deployed db: that diverges the migrations record from
 the live schema and breaks fresh-environment bootstrap.
+
+**Migrations apply BEFORE code ships, ONE applier, and every migration is
+additive** (#2214 / #2409). Only the indexer — the schema's owner — APPLIES
+migrations: its `deploy` (`apps/indexer/scripts/deploy-shared-d1.mjs apply`)
+applies non-interactively, VERIFIES in the database that every migration in
+`apps/indexer/src/requiredMigrations.json` is recorded, then publishes. The
+keeper's and agent's `deploy` (`… verify`) only verify, read-only, waiting a
+bounded time for the indexer to apply, and refuse to publish onto an older
+schema — three appliers raced on one merge and left partial releases. The
+wrapper refuses arguments (dry runs: `pnpm run deploy:dry`, which never
+touches the database). **Migrations land while the old Workers are still
+serving, so each one must be compatible with the deployed code** — additive
+(expand/contract); a dropped/renamed column or a tightened constraint needs a
+coordinated two-step release. Workers Builds also auto-deploys on merge with a
+dashboard command the repo cannot pin, so the indexer carries a schema gate
+(`src/schemaGate.ts`): scheduled work declines, by name, until EVERY migration
+in the build is recorded, and resumes by itself once it is. **A new migration
+must be listed in `requiredMigrations.json`** — `check-schema-gate.mjs` in
+`typecheck` fails otherwise. The gate covers SCHEDULED work only: every HTTP
+handler — reads and the POST writes (signed offers, prepay match-source, the
+chain-event webhook) — must tolerate the previous schema. Keeper and agent
+have no runtime gate yet (#2410).
 
 **`NNNN` must be unique** — enforced by
 `apps/indexer/scripts/check-migration-prefixes.mjs` (wired into
@@ -1039,14 +1133,25 @@ release gate, not optional style guidance.
 
 The retail Vaipakam deploy is permissionless for KYC and country-pair
 trade restrictions, but **does** screen wallets against an on-chain
-sanctions oracle (Chainalysis-style). Don't conflate the three —
+sanctions oracle (an `ISanctionsList`; which source is open, #2443). Don't conflate the three —
 sanctions screening protects the protocol from OFAC-listed addresses;
 KYC and country gating are the industrial-fork knobs that stay dormant.
 
 **Sanctions oracle — REQUIRED on retail post-deploy:**
 
-`ProfileFacet.setSanctionsOracle(<chainalysis-oracle>)` MUST be called
-on the retail deploy once the oracle's address is known on-chain. While
+> **Source open (#2443, owner decision 2026-10-07).** Chainalysis retired its
+> on-chain Sanctions Oracle: last updated 2026-03-18, "no longer supported or
+> maintained", not for production screening. Its contracts still answer, so a
+> Diamond pointed at it screens against a frozen list with nothing on-chain to
+> say so. Do NOT configure it anywhere. `ConfigureSanctionsOracle.s.sol`
+> refuses every mainnet until a supported source is chosen, and testnets screen
+> against the admin's `TestnetSanctionsOverlay` alone (#2439). The requirement
+> below — a sanctions oracle MUST be set before retail routes real value —
+> stands; the source it names is whatever #2443 decides.
+
+`ProfileFacet.setSanctionsOracle(<supported-sanctions-oracle>)` MUST be
+called on the retail deploy once a supported source (#2443) is chosen and
+its address is known on-chain. While
 unset (`address(0)`), `LibVaipakam.isSanctionedAddress(...)` returns
 `false` for every address (intentional fail-open during the deploy
 window). Once set, the Tier-1 entry points
@@ -1090,11 +1195,13 @@ and gate accordingly.
   product is KYC-free and country-pair-free end-state, not
   "permissionless for now."
 - Put detailed sanctions wording in publicly visible copy. ToS keeps
-  ONE defensive bullet under "Prohibited use." The full three-line
-  message ("listed by oracle / new positions blocked / close-outs
-  stay open / contact Chainalysis") is shown ONLY when a flagged
-  wallet connects (in-app `SanctionsBanner`) and in contract revert
-  messages — never on marketing surfaces.
+  ONE defensive bullet under "Prohibited use." The full message
+  ("flagged by the oracle / new positions blocked / close-outs stay
+  open / why it is flagged and whom to contact") is shown ONLY when a
+  flagged wallet connects (in-app `SanctionsBanner`) and in contract
+  revert messages — never on marketing surfaces. The banner's recourse
+  names no provider: it says which list flagged the wallet, or that its
+  declared recovery sender did (#2439).
 
 **Why the OFF gates are still in the code:** the industrial-user
 variant is a separate deploy on a separate fork that re-uses the

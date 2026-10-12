@@ -1033,8 +1033,6 @@
     }
   },
   "banners": {
-    "sanctionsMatchTitle": "{{label}}：制裁筛查匹配。",
-    "sanctionsMatchBody": "链上制裁预言机（Chainalysis）当前列出此地址。任何创建或接受报价的交易将在协议层回滚。如属误判，请联系Chainalysis支持 — Vaipakam不维护自己的制裁名单。",
     "sanctionsLabelWallet": "已连接钱包",
     "sanctionsLabelOfferCreator": "报价创建者",
     "vaultUpgradeBody": "需要升级vault — vault版本为v{{userVersion}}，强制最低版本为v{{mandatoryVersion}}（最新v{{currentVersion}}）。在升级前，Diamond流程将回滚。",

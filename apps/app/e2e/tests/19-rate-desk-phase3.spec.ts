@@ -306,7 +306,7 @@ test('contract-confirmed crossable band: previewMatch Ok renders the band, a thi
   // the book empties (honest empty copy, not a blank) and the band
   // leaves with it.
   await expect(
-    page.getByText(/no open offers for this market yet/i),
+    page.getByText(/no open offers for this pair yet/i),
   ).toBeVisible({ timeout: 30_000 });
   await expect(page.locator('.desk-match-band')).toHaveCount(0);
 });
@@ -345,31 +345,31 @@ test('gasless loop: maker posts a signed order with ONE signature (no transactio
   // travel (~2 days) by construction; the GTT presets resolve from
   // wall time and WOULD lapse against the travelled chain clock.
   await maker.page
-    .getByRole('group', { name: 'Expiry' })
-    .getByRole('button', { name: 'GTC', exact: true })
+    .getByRole('group', { name: 'How long it stays open' })
+    .getByRole('button', { name: 'Until I cancel', exact: true })
     .click();
   await maker.page
-    .getByRole('group', { name: 'Posting' })
-    .getByRole('button', { name: 'Gasless (sign only)', exact: true })
+    .getByRole('group', { name: 'How to post' })
+    .getByRole('button', { name: 'Sign only (free)', exact: true })
     .click();
   // The escrow-reality hint must accompany the mode switch.
   await expect(
-    maker.page.getByText(/Nothing is escrowed when you sign/),
+    maker.page.getByText(/Nothing is set aside when you sign/),
   ).toBeVisible();
   // #1145 round-2 — gasless LENDER posts are single-fill only: a signed
   // lender order can't be sliced (the matcher's constant
   // collateral:principal ratio is unsatisfiable with the lender's
   // single-value collateral), so the ticket auto-switches the default
   // Partial to AON, disables the Partial chip, and says why.
-  const fillGroup = maker.page.getByRole('group', { name: 'Fill mode' });
+  const fillGroup = maker.page.getByRole('group', { name: 'Can it be taken in parts?' });
   await expect(
-    fillGroup.getByRole('button', { name: 'AON', exact: true }),
+    fillGroup.getByRole('button', { name: 'Only all at once', exact: true }),
   ).toHaveClass(/active/);
   await expect(
-    fillGroup.getByRole('button', { name: 'Partial', exact: true }),
+    fillGroup.getByRole('button', { name: 'Yes, in parts', exact: true }),
   ).toBeDisabled();
   await expect(
-    maker.page.getByText(/Gasless lend orders fill only as one whole loan/),
+    maker.page.getByText(/A signed lend offer can only be taken all at once/),
   ).toBeVisible();
 
   // #1682 r1 F1 — the coercion is PARTIAL-ONLY. IOC stays selectable in
@@ -379,37 +379,37 @@ test('gasless loop: maker posts a signed order with ONE signature (no transactio
   // type the user did not choose AND silently retire the GTC-plus-IOC
   // guard. The regression shipped and passed this spec, because the spec
   // only ever exercised the Partial case.
-  await fillGroup.getByRole('button', { name: 'IOC', exact: true }).click();
+  await fillGroup.getByRole('button', { name: 'Short-lived', exact: true }).click();
   await expect(
-    fillGroup.getByRole('button', { name: 'IOC', exact: true }),
+    fillGroup.getByRole('button', { name: 'Short-lived', exact: true }),
   ).toHaveClass(/active/);
   await expect(
-    fillGroup.getByRole('button', { name: 'AON', exact: true }),
+    fillGroup.getByRole('button', { name: 'Only all at once', exact: true }),
   ).not.toHaveClass(/active/);
   // ...and with IOC in force the #125 GTC-plus-IOC guard is live again,
   // which is the half a silent coercion to AON would have hidden: the
   // expiry is GTC here, so posting must be refused with a reason.
   await expect(
-    maker.page.getByText(/IOC orders need an expiry/i),
+    maker.page.getByText(/short-lived offer needs a closing time/i),
   ).toBeVisible();
   // Back to the mode this test posts with.
-  await fillGroup.getByRole('button', { name: 'AON', exact: true }).click();
+  await fillGroup.getByRole('button', { name: 'Only all at once', exact: true }).click();
   await expect(
-    fillGroup.getByRole('button', { name: 'AON', exact: true }),
+    fillGroup.getByRole('button', { name: 'Only all at once', exact: true }),
   ).toHaveClass(/active/);
 
   const post = maker.page.getByRole('button', {
-    name: 'Sign & post to the book',
+    name: 'Sign and post',
   });
   await consentAndWaitEnabled(maker.page, post);
   await post.click();
   await expect(
     maker.page.getByText(
-      /Signed order posted to the book — no gas spent\. It fills when a taker accepts it\./,
+      /Signed offer posted — no network fee spent\. It becomes a loan when someone takes it\./,
     ),
   ).toBeVisible({ timeout: 60_000 });
   // Vault was pre-funded to exactly the commitment — no funds warning.
-  await expect(maker.page.getByText(/vault’s free balance is below/)).toHaveCount(0);
+  await expect(maker.page.getByText(/your vault has less than the/)).toHaveCount(0);
   // THE gasless property: posting sent ZERO transactions (the wallet
   // fixture counts eth_sendTransaction attempts at the provider
   // boundary — one signature, nothing mined, no gas).
@@ -466,14 +466,14 @@ test('gasless loop: maker posts a signed order with ONE signature (no transactio
   // driven — cancelling would kill the fill half of this loop; the
   // cancel path is the live driver's follow-up per COVERAGE.md).
   await expect(
-    maker.page.getByText('Signed orders (this market)'),
+    maker.page.getByText('Your signed offers (this pair and loan length)'),
   ).toBeVisible({ timeout: 30_000 });
   const signedBlockRow = maker.page
     .locator('.item-row')
     .filter({ hasText: '7.77%' });
   await expect(signedBlockRow).toBeVisible();
   await expect(
-    signedBlockRow.getByRole('button', { name: 'Cancel on-chain' }),
+    signedBlockRow.getByRole('button', { name: 'Cancel (network fee)' }),
   ).toBeVisible();
 
   // ---- taker: discover on the ladder, fill via the inline confirm ---
@@ -497,7 +497,7 @@ test('gasless loop: maker posts a signed order with ONE signature (no transactio
   // and "100" holds whatever the mock's decimals are — the seeded
   // base-unit amount used the same runtime `decimals()`.
   await expect(confirm).toContainText(
-    `You lock 100 ${symbol} as collateral and receive the loan principal.`,
+    `You lock 100 ${symbol} as collateral and receive the loan amount.`,
     { timeout: 30_000 },
   );
   const baseline = await newestBorrowerLoanOrZero(borrowerAddr);
@@ -561,7 +561,7 @@ test('gasless loop: maker posts a signed order with ONE signature (no transactio
   // Taker's ladder: the fill's invalidations refetch the signed book;
   // with the only row consumed the market reads honestly empty.
   await expect(
-    taker.page.getByText(/no open offers for this market yet/i),
+    taker.page.getByText(/no open offers for this pair yet/i),
   ).toBeVisible({ timeout: 30_000 });
 
   // ---- History reflects the new participation ----------------------

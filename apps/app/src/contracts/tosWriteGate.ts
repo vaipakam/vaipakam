@@ -101,6 +101,13 @@ export const EXIT_WRITES: ReadonlySet<string> = new Set([
   // rule to cost somebody their collateral — the sharpest version of
   // the trap this whole list exists to avoid.
   'addCollateral',
+  // Taking back collateral the loan no longer needs (UX3-009, #2389 r1
+  // P1). It returns the user's own assets and opens nothing: the
+  // contract refuses any amount that would take the loan past its own
+  // health and loan-to-value limits. Refusing it would hold a borrower's
+  // surplus hostage to paperwork while repaying — also an exit — stays
+  // open, which protects nobody.
+  'partialWithdrawCollateral',
   // Withdrawing a THIRD PARTY's authority over your positions (review
   // round 4 P1). A user who declines new Terms and cannot revoke a
   // keeper is left with somebody else still able to act for them, and

@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
 import {SwapToRepayFacet} from "../src/facets/SwapToRepayFacet.sol";
+import {SwapToRepayPartialFacet} from "../src/facets/SwapToRepayPartialFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
@@ -234,7 +235,7 @@ contract SwapToRepayFacetTest is SetupTest {
         uint256 collateralSwapAmount = 250 ether;
 
         vm.prank(borrowerEoa);
-        SwapToRepayFacet(address(diamond)).swapToRepayPartial(
+        SwapToRepayPartialFacet(address(diamond)).swapToRepayPartial(
             1,
             collateralSwapAmount,
             _adapterTryList(1)
@@ -271,8 +272,8 @@ contract SwapToRepayFacetTest is SetupTest {
         _scaffoldLoan(1, /* allowsPartialRepay */ false, /* useFullTermInterest */ false);
 
         vm.prank(borrowerEoa);
-        vm.expectRevert(SwapToRepayFacet.PartialRepayNotAllowed.selector);
-        SwapToRepayFacet(address(diamond)).swapToRepayPartial(
+        vm.expectRevert(SwapToRepayPartialFacet.PartialRepayNotAllowed.selector);
+        SwapToRepayPartialFacet(address(diamond)).swapToRepayPartial(
             1,
             250 ether,
             _adapterTryList(1)
@@ -425,8 +426,8 @@ contract SwapToRepayFacetTest is SetupTest {
         // would cover the entire principal — the partial path must
         // refuse and direct the borrower to swapToRepayFull instead.
         vm.prank(borrowerEoa);
-        vm.expectRevert(SwapToRepayFacet.PartialWouldRetireFullPrincipal.selector);
-        SwapToRepayFacet(address(diamond)).swapToRepayPartial(
+        vm.expectRevert(SwapToRepayPartialFacet.PartialWouldRetireFullPrincipal.selector);
+        SwapToRepayPartialFacet(address(diamond)).swapToRepayPartial(
             1,
             LOAN_COLLATERAL,
             _adapterTryList(1)
@@ -907,7 +908,7 @@ contract SwapToRepayFacetTest is SetupTest {
         vm.expectRevert(
             abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, lenderEoa)
         );
-        SwapToRepayFacet(address(diamond)).swapToRepayPartial(1, 250 ether, _adapterTryList(1));
+        SwapToRepayPartialFacet(address(diamond)).swapToRepayPartial(1, 250 ether, _adapterTryList(1));
     }
 
     // ── ─────────────────────────────────────────────────────── ──
@@ -1084,7 +1085,7 @@ contract SwapToRepayFacetTest is SetupTest {
         adapter1.setOutputMultiplierBps(10_000);
         uint256 t0 = IERC20(address(principalAsset)).balanceOf(treasury);
         vm.prank(borrowerEoa);
-        SwapToRepayFacet(address(diamond)).swapToRepayPartial(1, swapAmt, _adapterTryList(1));
+        SwapToRepayPartialFacet(address(diamond)).swapToRepayPartial(1, swapAmt, _adapterTryList(1));
         uint256 base = IERC20(address(principalAsset)).balanceOf(treasury) - t0;
         assertGt(base, 0, "reference collected a treasury cut");
 
@@ -1094,7 +1095,7 @@ contract SwapToRepayFacetTest is SetupTest {
         adapter1.setOutputMultiplierBps(10_000);
         uint256 t1 = IERC20(address(principalAsset)).balanceOf(treasury);
         vm.prank(borrowerEoa);
-        SwapToRepayFacet(address(diamond)).swapToRepayPartial(2, swapAmt, _adapterTryList(1));
+        SwapToRepayPartialFacet(address(diamond)).swapToRepayPartial(2, swapAmt, _adapterTryList(1));
         uint256 disc = IERC20(address(principalAsset)).balanceOf(treasury) - t1;
 
         assertEq(disc, base - (base * 1000) / 10_000, "Full lender -> 10% off (partial)");
@@ -1116,7 +1117,7 @@ contract SwapToRepayFacetTest is SetupTest {
         adapter1.setOutputMultiplierBps(10_000);
         uint256 r0 = IERC20(address(principalAsset)).balanceOf(treasury);
         vm.prank(borrowerEoa);
-        SwapToRepayFacet(address(diamond)).swapToRepayPartial(1, swapAmt, _adapterTryList(1));
+        SwapToRepayPartialFacet(address(diamond)).swapToRepayPartial(1, swapAmt, _adapterTryList(1));
         uint256 base = IERC20(address(principalAsset)).balanceOf(treasury) - r0;
         assertGt(base, 0, "reference collected a treasury cut");
 
@@ -1132,7 +1133,7 @@ contract SwapToRepayFacetTest is SetupTest {
         uint256 t0 = IERC20(address(principalAsset)).balanceOf(treasury);
         uint256 newLenderBefore = IERC20(address(principalAsset)).balanceOf(newLender);
         vm.prank(borrowerEoa);
-        SwapToRepayFacet(address(diamond)).swapToRepayPartial(2, swapAmt, _adapterTryList(1));
+        SwapToRepayPartialFacet(address(diamond)).swapToRepayPartial(2, swapAmt, _adapterTryList(1));
 
         // Full stamp (loan-scoped) honored on the transferred position — the
         // treasury cut is discounted — AND the CURRENT holder (not the stale

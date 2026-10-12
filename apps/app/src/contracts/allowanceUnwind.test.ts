@@ -21,7 +21,7 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 import type { PublicClient, WalletClient } from 'viem';
-import { ensureAllowance, restoreAllowance } from './erc20';
+import { ensureAllowance, restoreAllowance, trackApproval } from './erc20';
 
 const TOKEN = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' as const;
 const OWNER = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' as const;
@@ -1188,5 +1188,55 @@ describe('a reset that did not stick is not a competing grant (round 21)', () =>
     expect(tx).toBeNull();
     expect(h.writes).toEqual([0n]);
     expect(h.allowance).toBe(777n);
+  });
+});
+
+/** #2406 r4 — the one tracker every approve-then-late-gate flow uses, so a
+ *  flow stopped after its approval mined gives it back. */
+describe('trackApproval', () => {
+  const clients = (h: ReturnType<typeof harness>) => ({
+    publicClient: h.publicClient,
+    walletClient: h.walletClient,
+    owner: OWNER,
+    spender: SPENDER,
+  });
+
+  it('puts back the prior partial grant after the approval raised it', async () => {
+    const h = harness({ allowance: 500n });
+    const approval = trackApproval();
+    await ensureAllowance({ ...base(h), amount: 1_000n, ...approval.hooks(TOKEN) });
+    expect(h.allowance).toBe(1_000n);
+    expect(await approval.unwind(clients(h))).toBe(true);
+    expect(h.allowance).toBe(500n);
+  });
+
+  it('writes nothing when the allowance already covered the amount', async () => {
+    const h = harness({ allowance: 2_000n });
+    const approval = trackApproval();
+    await ensureAllowance({ ...base(h), amount: 1_000n, ...approval.hooks(TOKEN) });
+    expect(await approval.unwind(clients(h))).toBe(true);
+    expect(h.writes).toEqual([]);
+    expect(h.allowance).toBe(2_000n);
+  });
+
+  it('is a no-op before any approval was attempted, and idempotent after one', async () => {
+    const h = harness({ allowance: 0n });
+    const approval = trackApproval();
+    expect(await approval.unwind(clients(h))).toBe(true);
+    await ensureAllowance({ ...base(h), amount: 1_000n, ...approval.hooks(TOKEN) });
+    expect(await approval.unwind(clients(h))).toBe(true);
+    const after = [...h.writes];
+    expect(await approval.unwind(clients(h))).toBe(true);
+    expect(h.writes).toEqual(after);
+    expect(h.allowance).toBe(0n);
+  });
+
+  it('reports a failed cleanup as false rather than throwing', async () => {
+    // The restore to 0 is rejected in the wallet: the caller must SAY so.
+    const h = harness({ allowance: 0n, rejectApproveOf: (v) => v === 0n });
+    const approval = trackApproval();
+    await ensureAllowance({ ...base(h), amount: 1_000n, ...approval.hooks(TOKEN) });
+    expect(await approval.unwind(clients(h))).toBe(false);
+    expect(h.allowance).toBe(1_000n);
   });
 });

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibRefinanceRequest} from "../libraries/LibRefinanceRequest.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibAutoRefinanceCheck} from "../libraries/LibAutoRefinanceCheck.sol";
@@ -183,6 +184,19 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         uint256 oldLoanId,
         uint256 borrowerOfferId
     ) external onlyDiamondInternal whenNotPaused {
+        // #2407 — on the atomic routes only the loan's RECORDED request may
+        // complete, and only while no offset is open on the loan: the
+        // recorded request is the one the borrower-action guard watches, so a
+        // displaced or never-recorded request (which could otherwise revive
+        // when the position returns to its creator) can never be taken; and a
+        // refinance and an offset each close the loan, so they never both
+        // proceed. A revert here unwinds the whole acceptance, so nothing is
+        // stranded.
+        // The standalone {refinanceLoan} deliberately does not check it: it
+        // only ever completes an offer ALREADY accepted — post-#2407 every
+        // acceptance runs this check — and by then the replacement loan
+        // exists, so refusing would strand both loans (see the payoff body).
+        LibRefinanceRequest.assertTakeable(oldLoanId, borrowerOfferId);
         _authorizeRefinance(
             oldLoanId,
             borrowerOfferId,
@@ -210,6 +224,8 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         uint256 oldLoanId,
         uint256 borrowerOfferId
     ) external onlyDiamondInternal whenNotPaused {
+        // #2407 — see {refinanceLoanFromAccept}.
+        LibRefinanceRequest.assertTakeable(oldLoanId, borrowerOfferId);
         _authorizeRefinance(
             oldLoanId,
             borrowerOfferId,
@@ -827,64 +843,9 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             }
         }
 
-        // Post-refinance LTV + HF gates. Mirrors
-        // `LoanFacet._checkInitialLtvAndHf` exactly so refinance can't
-        // admit a position that would have been rejected at init —
-        // both regimes (depth-tiered ON / OFF) must agree.
-        //
-        // Regime OFF (default / pre-flip): today's gate — `LTV ≤
-        // assetRiskParams.loanInitMaxLtvBps` and `HF ≥ 1.5e18`.
-        //
-        // Regime ON (post-flip per chain): cap LTV at
-        // `min(loanInitMaxLtvBps, effectiveTierMaxInitLtvBps[effectiveTier(
-        // collateral)])` and relax HF floor to `≥ 1e18` (tier cap is
-        // the binding buffer; see LoanFacet for full rationale).
-        bytes memory ltvResult = LibFacet.crossFacetStaticCall(
-            abi.encodeWithSelector(RiskFacet.calculateLTV.selector, newLoanId),
-            LTVCalculationFailed.selector
-        );
-        uint256 newLtv = abi.decode(ltvResult, (uint256));
-        // #394 Lever A (Codex #647 round-4) — compare against the replacement
-        // loan's SNAPSHOTTED admission init-LTV cap (acceptOffer stored it when
-        // it admitted `newLoan`; the snapshot already encodes the tiered
-        // `min(assetCap, tierCap)` vs non-tiered `assetCap` branch), NOT a
-        // freshly-recomputed live asset/tier cap. Re-deriving live would make a
-        // governance / tier-cache tightening between accept and `refinanceLoan`
-        // retroactive, stranding an accepted replacement loan the borrower can't
-        // close into — exactly the race the HF gate below also closes.
-        uint256 cap = LibVaipakam.effectiveLoanInitLtvCapBps(
-            newLoan.initLtvCapBpsAtInit,
-            s.assetRiskParams[oldLoan.collateralAsset].loanInitMaxLtvBps
-        );
-        if (newLtv > cap) {
-            // Preserve the regime-specific error (cosmetic; the cap value is the
-            // load-bearing part and comes from the snapshot either way).
-            if (LibVaipakam.cfgDepthTieredLtvEnabled()) {
-                revert IVaipakamErrors.InitLtvAboveTier(newLtv, cap);
-            }
-            revert LTVExceeded();
-        }
-
-        bytes memory hfResult = LibFacet.crossFacetStaticCall(
-            abi.encodeWithSelector(
-                RiskFacet.calculateHealthFactor.selector,
-                newLoanId
-            ),
-            HealthFactorCalculationFailed.selector
-        );
-        uint256 newHf = abi.decode(hfResult, (uint256));
-        // #394 Lever A (Codex #647 round-2 P2) — `acceptOffer` already created
-        // and ADMITTED `newLoan`, snapshotting the (branch-aware) floor it was
-        // gated at onto `newLoan.minHealthFactorAtInit`. Compare against THAT
-        // snapshot, not the live `minHealthFactor()` knob: re-reading the live
-        // knob here would make a governance retune between accept and
-        // `refinanceLoan` retroactive — a replacement loan accepted at HF ≥ 1.5
-        // could revert if the floor were raised to 1.8 first, stranding the
-        // borrower with an accepted replacement they cannot close into. The
-        // snapshot already encodes the tiered (1e18) vs non-tiered branch.
-        uint256 hfFloor =
-            LibVaipakam.effectiveLoanMinHealthFactor(newLoan.minHealthFactorAtInit);
-        if (newHf < hfFloor) revert HealthFactorTooLow();
+        // Post-refinance LTV + HF gates — the same branches the replacement
+        // loan was admitted under at acceptance (#2380).
+        _requirePostRolloverRisk(newLoanId, newLoan, oldLoan.collateralAsset);
 
         // Update old loan NFTs: mark lender NFT as Loan Repaid
         LibFacet.crossFacetCall(
@@ -1020,5 +981,148 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             ),
             bytes4(0)
         );
+    }
+
+    /**
+     * @dev The post-rollover risk gate, branch for branch the one the
+     *      replacement loan was admitted under at acceptance
+     *      (`LoanFacet`'s initiation gate), so refinance can neither admit a
+     *      position initiation would reject nor reject one it admitted.
+     *
+     *      #2380 — the CONSENTED-ILLIQUID branch. Initiation skips the LTV and
+     *      health-factor checks when either leg is not liquid AND both parties
+     *      gave the illiquid risk-and-terms consent: an illiquid leg is valued
+     *      at zero, so there is no LTV or health factor to compute, and the
+     *      consent is what admits the loan instead. Refinance used to run the
+     *      checks unconditionally and so reverted `IlliquidLoanNoRiskMath` on
+     *      every such replacement, after the payoff had run. The branch reads
+     *      the replacement loan's OWN stamps — the liquidity of each leg and
+     *      `riskAndTermsConsentFromBoth`, which acceptance wrote from exactly
+     *      the values initiation tested — so it re-derives nothing live: a
+     *      liquidity change between acceptance and here cannot strand a
+     *      replacement the borrower was admitted into, the same race the
+     *      snapshotted caps below close for the liquid branch.
+     *
+     *      A replacement that is not fully liquid WITHOUT mutual consent falls
+     *      through to the checks and reverts there, as initiation would have.
+     *      The exiting lender gives no consent: they are paid out in full.
+     */
+    function _requirePostRolloverRisk(
+        uint256 newLoanId,
+        LibVaipakam.Loan storage newLoan,
+        address oldCollateralAsset
+    ) private view {
+        bool bothLiquid = newLoan.principalLiquidity == LibVaipakam.LiquidityStatus.Liquid &&
+            newLoan.collateralLiquidity == LibVaipakam.LiquidityStatus.Liquid;
+        if (!bothLiquid && newLoan.riskAndTermsConsentFromBoth) return;
+
+        // Mirrors
+        // `LoanFacet._checkInitialLtvAndHf` exactly so refinance can't
+        // admit a position that would have been rejected at init —
+        // both regimes (depth-tiered ON / OFF) must agree.
+        //
+        // Regime OFF (default / pre-flip): today's gate — `LTV ≤
+        // assetRiskParams.loanInitMaxLtvBps` and `HF ≥ 1.5e18`.
+        //
+        // Regime ON (post-flip per chain): cap LTV at
+        // `min(loanInitMaxLtvBps, effectiveTierMaxInitLtvBps[effectiveTier(
+        // collateral)])` and relax HF floor to `≥ 1e18` (tier cap is
+        // the binding buffer; see LoanFacet for full rationale).
+        bytes memory ltvResult = LibFacet.crossFacetStaticCall(
+            abi.encodeWithSelector(RiskFacet.calculateLTV.selector, newLoanId),
+            LTVCalculationFailed.selector
+        );
+        uint256 newLtv = abi.decode(ltvResult, (uint256));
+        // #394 Lever A (Codex #647 round-4) — compare against the replacement
+        // loan's SNAPSHOTTED admission init-LTV cap (acceptOffer stored it when
+        // it admitted `newLoan`; the snapshot already encodes the tiered
+        // `min(assetCap, tierCap)` vs non-tiered `assetCap` branch), NOT a
+        // freshly-recomputed live asset/tier cap. Re-deriving live would make a
+        // governance / tier-cache tightening between accept and `refinanceLoan`
+        // retroactive, stranding an accepted replacement loan the borrower can't
+        // close into — exactly the race the HF gate below also closes.
+        uint256 cap = LibVaipakam.effectiveLoanInitLtvCapBps(
+            newLoan.initLtvCapBpsAtInit,
+            LibVaipakam.storageSlot().assetRiskParams[oldCollateralAsset].loanInitMaxLtvBps
+        );
+        if (newLtv > cap) {
+            // Preserve the regime-specific error (cosmetic; the cap value is the
+            // load-bearing part and comes from the snapshot either way).
+            if (LibVaipakam.cfgDepthTieredLtvEnabled()) {
+                revert IVaipakamErrors.InitLtvAboveTier(newLtv, cap);
+            }
+            revert LTVExceeded();
+        }
+
+        bytes memory hfResult = LibFacet.crossFacetStaticCall(
+            abi.encodeWithSelector(
+                RiskFacet.calculateHealthFactor.selector,
+                newLoanId
+            ),
+            HealthFactorCalculationFailed.selector
+        );
+        uint256 newHf = abi.decode(hfResult, (uint256));
+        // #394 Lever A (Codex #647 round-2 P2) — `acceptOffer` already created
+        // and ADMITTED `newLoan`, snapshotting the (branch-aware) floor it was
+        // gated at onto `newLoan.minHealthFactorAtInit`. Compare against THAT
+        // snapshot, not the live `minHealthFactor()` knob: re-reading the live
+        // knob here would make a governance retune between accept and
+        // `refinanceLoan` retroactive — a replacement loan accepted at HF ≥ 1.5
+        // could revert if the floor were raised to 1.8 first, stranding the
+        // borrower with an accepted replacement they cannot close into. The
+        // snapshot already encodes the tiered (1e18) vs non-tiered branch.
+        uint256 hfFloor =
+            LibVaipakam.effectiveLoanMinHealthFactor(newLoan.minHealthFactorAtInit);
+        if (newHf < hfFloor) revert HealthFactorTooLow();
+    }
+
+    // ─── #2407 — the loan → refinance-request index ─────────────────────
+
+    /// @notice The refinance request (a refinance-tagged borrower offer)
+    ///         recorded for `loanId`, and whether it is LIVE — whether it still
+    ///         STANDS: it exists, is not taken, still targets the loan, has not
+    ///         expired, the loan is Active and its creator still holds the
+    ///         borrower position. While `live` is true the borrower actions
+    ///         that would change the loan underneath it revert
+    ///         {IVaipakamErrors.RefinanceRequestOpen}; the moment it stops
+    ///         standing — taken, cancelled, expired, the position handed on, the
+    ///         loan closed — it stops holding the loan back, with no write
+    ///         anywhere. `live` does NOT say a lender could fill it now: the
+    ///         holder's caps, the payoff approval, an overdue period or the
+    ///         market can each refuse acceptance, and the remedy for a request
+    ///         that can no longer fill is to cancel it.
+    ///         {checkRefinanceRequest} reports the acceptance-side reasons it
+    ///         can know.
+    /// @dev    A recorded request that is no longer live is still reported, so
+    ///         a client can tell an expired-but-uncancelled request (whose token
+    ///         approval or pledge the borrower may want back) from no request at
+    ///         all; `offerId` is 0 only when nothing was ever recorded. Only
+    ///         the recorded request can be taken, so a request posted BEFORE
+    ///         the record existed is neither seen here nor takeable: it does not
+    ///         hold the loan back either, and its borrower cancels and re-posts
+    ///         it. (A migration that recorded such requests was tried and
+    ///         withdrawn — every rule it needed to decide which pre-upgrade
+    ///         request to trust opened another way to resurrect or race one.)
+    function getRefinanceRequest(
+        uint256 loanId
+    ) external view returns (uint256 offerId, bool live) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        offerId = s.refinanceRequestOfLoan[loanId];
+        if (offerId == 0) return (0, false);
+        live = LibRefinanceRequest.stands(s, loanId, offerId);
+    }
+
+    /// @notice Revert with the reason `offerId` could not be accepted as
+    ///         `loanId`'s refinance request right now; return if it could.
+    ///         {IVaipakamErrors.RefinanceRequestNotLive} covers the request's
+    ///         own state (gone, taken, retargeted, expired); every other reason
+    ///         is the one acceptance itself would give
+    ///         (`LibAutoRefinanceCheck`'s target, ownership, asset, principal
+    ///         and cap errors, and the offset, intent, overdue-period and
+    ///         carry-over checks). Informational: the guard reads
+    ///         {getRefinanceRequest}'s `live`, not this. Does not check that it
+    ///         is the RECORDED request, nor the payoff funding or the market.
+    function checkRefinanceRequest(uint256 loanId, uint256 offerId) external view {
+        LibRefinanceRequest.assertAcceptable(LibVaipakam.storageSlot(), loanId, offerId);
     }
 }

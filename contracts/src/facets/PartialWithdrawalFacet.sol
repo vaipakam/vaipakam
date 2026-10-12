@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibRefinanceRequest} from "../libraries/LibRefinanceRequest.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
@@ -89,6 +90,8 @@ contract PartialWithdrawalFacet is DiamondReentrancyGuard, DiamondPausable, IVai
         // `loan.collateralAmount` mid-auction; same baseline-drift
         // problem as `addCollateral`. Block while live.
         LibVaipakam.assertNoLiveIntentCommit(loanId);
+        // #2407 — refused while a live refinance request targets the loan.
+        LibRefinanceRequest.assertNone(loanId);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
         // #951 (Codex #959 round-5) — freeze collateral while a lender-sale

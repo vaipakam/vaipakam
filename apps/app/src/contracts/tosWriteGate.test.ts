@@ -31,6 +31,8 @@ describe('isExitWrite', () => {
       'withdrawVPFIFromVault',
       'cancelOffer',
       'addCollateral',
+      // #2389 r1 — returns the borrower's own surplus collateral.
+      'partialWithdrawCollateral',
     ]) {
       expect(isExitWrite(fn, []), fn).toBe(true);
     }

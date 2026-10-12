@@ -71,7 +71,7 @@ test('an empty market renders the honest empty state; a seeded two-sided book re
   // Honesty: a (pair, tenor) with no live offers is an EMPTY ladder
   // with the honest copy — never a fake ladder, never "unavailable".
   await expect(
-    page.getByText(/no open offers for this market yet/i),
+    page.getByText(/no open offers for this pair yet/i),
   ).toBeVisible({ timeout: 30_000 });
 
   // Seed both sides directly on the fork (the ticket test below owns
@@ -134,8 +134,8 @@ test('an empty market renders the honest empty state; a seeded two-sided book re
   // 937−611 = 326 bps.
   const stat = (label: string) =>
     page.locator('.desk-stat').filter({ hasText: label }).locator('.desk-stat-value');
-  await expect(stat('Quoted mid')).toHaveText('7.74%');
-  await expect(stat('Spread')).toHaveText('3.26%');
+  await expect(stat('Middle rate')).toHaveText('7.74%');
+  await expect(stat('Gap between offers')).toHaveText('3.26%');
 });
 
 test('ticket posts a GTC/Partial lend order, amend reprices it in ONE modifyOffer, cancel clears it from book and open orders', async ({
@@ -185,17 +185,21 @@ test('ticket posts a GTC/Partial lend order, amend reprices it in ONE modifyOffe
   );
   await page.locator('#desk-collateral-amount').fill('100');
   await page
-    .getByRole('group', { name: 'Expiry' })
-    .getByRole('button', { name: 'GTC', exact: true })
+    .getByRole('group', { name: 'How long it stays open' })
+    .getByRole('button', { name: 'Until I cancel', exact: true })
     .click();
   await page
-    .getByRole('group', { name: 'Fill mode' })
-    .getByRole('button', { name: 'Partial', exact: true })
+    .getByRole('group', { name: 'Can it be taken in parts?' })
+    .getByRole('button', { name: 'Yes, in parts', exact: true })
     .click();
-  const post = page.getByRole('button', { name: /^post order$/i });
+  const post = page.getByRole('button', { name: /^post offer$/i });
   await consentAndWaitEnabled(page, post);
   await post.click();
-  await expect(page.getByText(/order posted/i)).toBeVisible({ timeout: 90_000 });
+  // Anchored to the ticket's confirmation ("Offer posted — …"): the
+  // first-visit guide also says "an offer posted with a network fee…",
+  // and a loose /offer posted/i matched that before the transaction
+  // landed (#2378 r3 fork-tier failure).
+  await expect(page.getByText(/^Offer posted — /)).toBeVisible({ timeout: 90_000 });
 
   // The offer landed on-chain with the ticket's exact terms.
   const offerId = await newestOfferIdFor(account.address);
@@ -229,7 +233,7 @@ test('ticket posts a GTC/Partial lend order, amend reprices it in ONE modifyOffe
 
   // ---- amend (#193 first UI): pencil → live-seeded form → ONE
   // modifyOffer — same offerId, same position NFT ----
-  await row().getByRole('button', { name: /amend/i }).click();
+  await row().getByRole('button', { name: /^change$/i }).click();
   const rateInput = page.locator(`#amend-${offerId}-rate`);
   // The form must seed from the LIVE getOffer read before editing.
   await expect(rateInput).toHaveValue('8', { timeout: 30_000 });

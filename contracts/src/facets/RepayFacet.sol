@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
+import {LibRefinanceRequest} from "../libraries/LibRefinanceRequest.sol";
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibConsolidation} from "../libraries/LibConsolidation.sol";
@@ -174,7 +175,7 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
     ///         a full-principal "partial" left the loan Active at principal 0 (a
     ///         zombie) with close-out stranded behind a separate {repayLoan}.
     ///         Callers retiring the whole principal must use {repayLoan}. Mirrors
-    ///         `SwapToRepayFacet.PartialWouldRetireFullPrincipal`.
+    ///         `SwapToRepayPartialFacet.PartialWouldRetireFullPrincipal`.
     error PartialWouldRetireFullPrincipal();
     /// @notice Reverted when {repayPartial} is called on a loan whose
     ///         `allowsPartialRepay` flag is false. The flag is
@@ -732,6 +733,8 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         // T-090 v1.1 (#389) §5.8 — partial repay still pulls from
         // `loan.borrower`'s vault; block while a v1.1 commit is live.
         LibVaipakam.assertNoLiveIntentCommit(loanId);
+        // #2407 — refused while a live refinance request targets the loan.
+        LibRefinanceRequest.assertNone(loanId);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
         // #594 — repayPartial is BOTH-SIDE: the ERC-20 partial path pays
@@ -757,7 +760,7 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         // token base units, so applying the floor there would compare days against
         // token units and wrongly revert legitimate rental-day reductions. Scope
         // the floor to ERC-20 loans; the NFT-rental path below has its own
-        // day-based validation. (SwapToRepayFacet needs no such guard — its
+        // day-based validation. (SwapToRepayPartialFacet needs no such guard — its
         // `partialPrincipal` is always a swapped token amount.)
         if (loan.assetType == LibVaipakam.AssetType.ERC20) {
             uint256 minPartial = (loan.principal *

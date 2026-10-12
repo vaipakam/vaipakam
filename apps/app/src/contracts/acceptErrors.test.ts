@@ -11,6 +11,7 @@
 import { describe, expect, it } from 'vitest';
 import i18n from 'i18next';
 import { BaseError, ContractFunctionRevertedError } from 'viem';
+import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import {
   ACCEPT_ERROR_NAMES,
   ACCEPT_OK,
@@ -133,6 +134,20 @@ function undecodableRevert(selector: string) {
   return outer;
 }
 
+/** The same revert DECODED, as viem reports it now that the combined
+ *  Diamond ABI declares the proxy's errors (#2399): `data.errorName` is
+ *  set and `signature` is not. */
+function decodedRevert(data: string) {
+  const inner = new ContractFunctionRevertedError({
+    abi: DIAMOND_ABI_VIEM,
+    data: data as `0x${string}`,
+    functionName: 'previewAccept',
+  });
+  const outer = new BaseError('reverted');
+  outer.walk = () => inner;
+  return outer;
+}
+
 const GATE = {
   diamondAddress: '0x00000000000000000000000000000000000000d1' as const,
   offerId: 1n,
@@ -172,6 +187,27 @@ describe('assertAcceptPreviewClearLive', () => {
         publicClient: client({
           preview: () => {
             throw undecodableRevert(FN_MISSING);
+          },
+          facetAddress: ZERO,
+        }),
+        ...GATE,
+      }),
+    ).resolves.toBeUndefined();
+  });
+
+  it('passes on the DECODED revert too (#2399)', async () => {
+    // The combined Diamond ABI now names `FunctionDoesNotExist()`, so
+    // viem decodes it and leaves `signature` empty. The pass must not
+    // depend on which form arrived.
+    const err = decodedRevert(FN_MISSING);
+    expect(
+      (err.walk(() => true) as ContractFunctionRevertedError).data?.errorName,
+    ).toBe('FunctionDoesNotExist');
+    await expect(
+      assertAcceptPreviewClearLive({
+        publicClient: client({
+          preview: () => {
+            throw err;
           },
           facetAddress: ZERO,
         }),

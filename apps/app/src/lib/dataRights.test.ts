@@ -49,6 +49,7 @@ const KNOWN_KEYS: readonly string[] = [
   'app.mode',
   'app.theme',
   'app.powerSurfaceNoteDismissed',
+  'app.deskHowItWorksSeen',
   'app.notif.lastseen.84532.0xabc',
   'app.alerts.84532.0xabc',
   'app.loanSaleOffer.84532.7',
@@ -286,6 +287,9 @@ describe('storage-prefix coverage', () => {
     'src/app/ThemeContext.tsx': ['app.theme'],
     'src/chain/receiptSync.ts': ['vaipakam-receipt-sync-ping-v1'],
     'src/components/PowerSurfaceNote.tsx': ['app.powerSurfaceNoteDismissed'],
+    // Naive-user redesign — the Rate Desk's "How this page works" guide
+    // remembers it was collapsed, so later visits open it closed.
+    'src/pages/Desk.tsx': ['app.deskHowItWorksSeen'],
     'src/data/alerts.ts': ['app.alerts.'],
     'src/lib/notifSeen.ts': ['app.notif.lastseen.'],
     'src/lib/pendingMarker.ts': [

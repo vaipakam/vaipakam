@@ -205,6 +205,19 @@ The app uses chain reads and indexed reads for different jobs.
   slice.
 - If the indexer is stalled or unavailable, the app should show a degraded
   data-source warning rather than a confident empty list.
+- The index never runs ahead of its own storage layout. A release that
+  changes how indexed data is stored updates that storage BEFORE the new
+  indexing code goes live, and a release that reaches the indexer without
+  that update (an automatic deploy route, a failed update step) pauses its
+  scheduled indexing — naming the missing update in the operator log —
+  rather than writing records the old layout cannot hold. Indexing resumes
+  by itself once the update lands; nothing is lost, because the reading
+  position does not move while paused, and no partial or invented record is
+  written. During the pause the index's data is old but intact: the market
+  and history surfaces that read it show their stale-data notice once the
+  index has not advanced for half an hour — the same notice any ingest stall
+  produces — and the connected wallet's own positions, which are read from
+  the chain, are unaffected.
 - Indexed lifecycle status must not drift from the chain's indefinitely.
   A loan's ending is learned from the event announcing it, and an
   announcement the platform does not see is missed for good — resuming
@@ -1106,6 +1119,12 @@ The app uses chain reads and indexed reads for different jobs.
   than silently narrowing to held positions only; a wallet with more
   participation history than one read returns folds into the page's
   recent-activity-only disclosure.
+- An Activity row states the asset and amount its transaction moved or offered
+  when the activity record carries them as normalized fields — exact, or as a
+  range for an offer that commits one. It never reconstructs an amount the
+  record does not state, never presents an NFT leg as a token amount, and where
+  an amount exists but cannot be stated it says so rather than showing nothing.
+  (Stated in full under the Activity surface below — #2383.)
 - Realtime push refreshes matching indexed views when available. Polling remains
   the fallback.
 - The push signal covers every class of change a holder-keyed view depends on —
@@ -1150,6 +1169,20 @@ The receipt should answer:
 - what the user can lose;
 - what fees apply; and
 - when the position or obligation ends.
+
+### Typed amounts are sent exactly as typed
+
+Every amount a user types into a value-moving form is the amount the
+transaction carries, to the token's smallest unit. A token can only be divided
+as finely as its own decimal places allow, so an amount with more decimal
+places than that cannot be sent as typed. Such an amount is refused, never
+rounded up or down into a nearby figure, and the form says why: it names the
+token and the number of decimal places it accepts. Until the amount is fixed,
+the step or button that would act on it stays unavailable.
+
+This holds for every money input, including amounts the user never sees again
+before signing (such as a fee ceiling), because a rounded figure would mean
+the review states one amount while the contract moves another.
 
 Consent is collected against the terms actually shown. If a material term,
 warning, selected offer, selected listing, or disclosed risk changes after
@@ -1215,12 +1248,78 @@ progress.
 
 ## Offer Book
 
-- Basic mode shows a plain newest-first book.
-- Advanced mode may filter by side, asset, rate, duration, and offer type.
+- Basic mode shows a plain newest-first book, and lets anyone choose which
+  side to show and how to sort it (rate or loan length) — plain choices that need
+  no expertise. Advanced mode adds filtering by raw asset address.
+- Each token-for-token offer states its loan-to-value, with a one-clause
+  definition (the loan's value as a share of the collateral's), worked out from
+  the protocol's live oracle prices with each side valued by its own token's
+  precision. The figure is the ratio at the amounts the card shows, and it is
+  never presented as exact or as a limit across fills: where a fill of another
+  size could carry another ratio — a ranged or part-taken offer of either side,
+  and EVERY borrow request — the card says so. A borrow request is never stated
+  exactly, even one whose collateral ceiling equals its floor: a direct funding
+  locks exactly the amounts shown, but a matched fill locks only what the
+  lender requires, so the resulting ratio can be higher. A request that earlier
+  matched fills have already part-used has no single pair of amounts a further
+  fill would carry, so its card states that the ratio is not given rather than
+  one taken against the original floor.
+  When the
+  protocol treats either side as illiquid the card says the ratio isn't worked
+  out and names both possible causes (no reliable price, or too little trading),
+  since it cannot tell which; when one side's value rounds to nothing at that
+  size it says the ratio can't be worked out at this size; when a price could
+  not be read it says the ratio couldn't be checked right now; while the prices
+  are loading it says so. It never shows a figure it cannot back, and never a 0%
+  that only means "unknown". Rentals, offers with an NFT on either side, offers
+  with no collateral, and loan-position sales state no ratio.
+- Each offer states its collateral as an amount, not only a token name, so a
+  lender can judge an offer before opening it. When the collateral is recorded
+  as illiquid, the row says that on default it is handed over as-is rather than
+  sold. The row never presents collateral as liquid merely because nothing
+  marked it illiquid, and says the illiquid flag is the status recorded when the
+  offer was posted — acceptance checks liquidity again, and the loan follows that
+  result. NFT collateral is named by its token (and quantity, for a multi-unit
+  token); a token amount whose details are loading or could not be read says so,
+  rather than showing only a contract address. A borrow request can commit a
+  collateral RANGE — a floor and a ceiling. Once the market data carries the
+  ceiling and the part earlier fills consumed, the card states the request's
+  own terms and nothing it cannot know: the collateral the request holds now
+  (the whole ceiling for an unfilled request; what is left of it for one that
+  earlier matched fills have part-used) and its floor, and that how much a
+  given fill locks depends on how the request is filled. It does not narrate
+  what each fill path locks, because that depends on the path — a direct
+  funding, a matched fill, a refinance that carries over the old loan's
+  collateral — and on the deployment (whether partial fills are on, which
+  also decides whether unused collateral is refunded at a match or stays
+  committed), none of which the card reads. For a part-used request it states
+  how much earlier fills consumed — a running total, not what is locked
+  today, since a resulting loan may have settled — and when what is left is
+  below the request's floor it states that fact rather than presenting the
+  remainder as available. A part-used request keeps the same terms — what is
+  held, the floor, and the fill-dependence — none drops out after a first
+  fill. For the same reason a borrow request's loan-to-value names its basis
+  (the requested amount against the request's collateral floor, not the larger
+  commitment shown beside it) and is always qualified as the ratio at
+  the amounts shown. Until the ceiling or the part already used has
+  been read — older market data, or a request the index has not re-read yet —
+  the card states only the floor, as "at least" that amount, never an assumed
+  range or an assumed exact figure. A lender offer that can be taken in part (a range, or
+  already partly taken) states its collateral as the requirement for the full
+  offer, since a smaller take needs proportionally less. When the token's details
+  cannot be read, the recorded amount is still shown, in the token's raw base
+  units, with the failure named — and a borrow request's known commitment and
+  floor are stated the same way rather than reduced to "at least" the floor. A loan-position sale row says its collateral is the
+  running loan's, rather than showing the zero its own row carries.
 - A filter with no matches says the filter has no matches; it does not claim the
   whole market is empty.
 - Action labels are role-specific so the user understands whether they are
   borrowing, funding, renting, or buying a position.
+- Another user's offer that cannot be taken from this page (part of it is
+  already taken, or it uses an NFT as the loan or its collateral) says why on its
+  row, rather than showing a bare label with nothing to do. The page's
+  introduction promises the review-before-signing step only for offers that can
+  be taken here.
 - Ended offers are not actionable during indexer lag when the chain already
   shows that they ended.
 - Rows that carry risky, unknown, or unverifiable token legs show visible risk
@@ -1228,8 +1327,49 @@ progress.
 
 ## Rate Desk
 
-Rate Desk is the Advanced-mode market terminal for supported fungible-token
-markets.
+Rate Desk is the market view for supported fungible-token markets. It is open to
+every user, not only to traders: its wording avoids trading jargon, a short
+"how this page works" guide explains it on a first visit, and every choice on the
+offer form explains what the selected option means in visible text rather than
+only in a hover tooltip. A constraint that narrows a choice (a signed lend offer
+being single-fill) is stated beside that explanation, never instead of it. The
+page does not promise an offer can be cancelled "any time" where a deployment
+makes new offers wait a short while before they can be cancelled, nor that an
+offer posted for free by signing only can be changed (it can only be cancelled
+and posted again). The middle rate is described as worked out from the best
+offers on each side, never as a rate anyone has offered; when those offers come
+from a saved copy because the live read failed, the chart's description of it
+says so, since on a phone the chart can be shown without the offers list that
+carries the same warning. The page's introduction does not claim to show every
+offer for the pair, because signed offers can be unavailable or cut short, and
+the first-visit guide does not call the list current: it says the list is
+normally read from the blockchain and can fall back to a saved copy that may lag. A list scoped to the
+selected pair and loan length names both. A free signed offer's "until I cancel"
+choice says it stays open for at most seven days, because its signature
+expires. Projected earnings are stated as conditional on the offer being taken
+and repaid. Wording about automatic matching says it applies while automatic
+matching is switched on, since a deployment can switch it off.
+
+Signed offers come from the offer-book service rather than the blockchain, so
+the page says when it is showing a market without all of them. One note, above
+every view of the market, carries this, because the header's middle rate, the
+offers list and the chart all draw on the same merged offers, and on a phone the
+list or the chart can be on screen alone. While signed offers are still loading,
+or when the service could not provide them, the note says the rates shown come
+only from offers posted on the blockchain and that the best rates and the middle
+rate may be missing signed offers. A deployment that has no offer-book service
+set up says that instead — signed offers are not available there at all — so a
+standing configuration is never presented as a temporary failure. When the
+service may not have returned every signed offer — it says it cut some, or does
+not say whether it did — the note says the rates and amounts shown, even at the
+best rate, and the running totals may leave some out. It makes no claim about
+which signed offers were included: even the best-priced ones the service kept
+can expire before the next refresh while the next-best stays unfetched. A signed
+offer that could not be refreshed is treated as missing, never shown from an
+earlier read, because it may have been taken or cancelled since. Whenever the
+signed offers are anything short of complete, an empty offers list says there
+is nothing to show and that not every signed offer could be checked, never
+that the market has no offers.
 
 It should provide:
 
@@ -1273,6 +1413,133 @@ Thin-market honesty rules apply.
 - Health and risk labels escalate when collateral health is poor.
 - Position rows should offer the next relevant action where one exists. A row
   with a payout waiting says what that payout is and offers to collect it.
+
+### Taking back extra collateral
+
+The platform lets a borrower withdraw collateral from an open loan as long as
+the loan stays healthy (ProjectDetailsREADME, "Allow Borrower to Withdraw Excess
+Collateral"). The app offers this to every borrower, in Basic mode, because it
+is the borrower's own money.
+
+- The surface appears for the current borrower-position holder on an open loan
+  with fungible collateral, using the reconciled loan status (a loan the live read
+  confirms is open again appears even before the position lists catch up). When
+  the live loan status says the loan is no longer
+  open (repaid, defaulted or liquidated elsewhere), the surface goes away, even
+  if the position lists have not caught up. A fact the surface depends on — who
+  holds the borrower position, whether the loan is open — counts only while its
+  latest read succeeded: a read that failed to refresh is treated as unknown, never
+  as its last answer. If the collateral token's details cannot be read, the
+  surface stays and says so, rather than disappearing. It says plainly that taking collateral back makes
+  the loan riskier: with less collateral, a price drop reaches liquidation
+  sooner.
+- Before asking for anything, it states how much can be taken back right now,
+  from the protocol's own live limit, and keeps that figure fresh while the page
+  is open. It says that the limit moves with prices, so an amount right at the
+  limit can still be refused. The limit is never displayed above its true value:
+  a figure shortened for display is rounded down, so typing what the page states
+  is always within the limit.
+- When nothing can be taken back, it says why, as far as the app can tell: the
+  loan needs all of its collateral, or the collateral cannot be priced right
+  now. When the app cannot tell which, it says that instead of choosing one.
+  A limit the app could not read is never shown as zero. A zero is explained only
+  once the live loan status confirms the loan is open, since a closed loan also
+  reads zero; until then the surface says the loan's status could not be
+  confirmed.
+- An amount above the limit is refused on the page, with the limit stated. An
+  amount with more decimal places than the token has is refused and named, never
+  rounded into a different amount; the confirmation states the exact amount that
+  will be sent.
+- When the deployment is paused, the surface says withdrawals are paused instead
+  of offering the form, and the pre-check refuses to open the wallet.
+- When the surface shows an amount but could not read a fact the pre-check
+  depends on — whether the deployment is paused, or whether a sale listing is
+  linked (including on a deployment too old to answer that ahead of time) — it
+  says so beside the amount, rather than presenting the withdrawal as
+  unconditionally available and revealing the obstacle only at submit.
+- The confirmation's button is disabled whenever the wallet cannot send — an
+  unsupported network or no wallet client — or when the reviewed amount is no
+  longer valid (the limit fell below it), rather than accepting a click that
+  does nothing or can only fail.
+- While a review is open or a send is in flight, the amount cannot be edited: the
+  amount on screen is always the amount the wallet is asked to send.
+- While a refinance request stands on the loan, the surface says
+  that taking collateral back would make every lender's acceptance fail and
+  asks the borrower to cancel or wait — the same interlock partial repayment
+  and early close-out apply — and the pre-check refuses. A request is found
+  wherever it was made — on another device or through another tool — because
+  the app reads the protocol's record of the loan's refinance request (#2425):
+  a request that still stands is the one that holds the loan back, and a
+  recorded request that has lapsed but was never cancelled by the current
+  holder is shown as expired, for cleanup (the protocol refuses a new request
+  until it is cancelled). The pre-check repeats that read just before the
+  wallet opens. A request the record does not name — one posted before the
+  protocol kept the record, or one a newer request replaced — can never be
+  accepted and holds nothing back; the app still looks for one among the
+  current holder's own offers and, when it finds it, shows it as a request
+  that can never be accepted and offers to cancel it. Cancelling such a
+  request never removes its payoff approval: the same approval serves every
+  refinance request the wallet posts on that token, and another may stand now
+  or be posted from another device at any moment, which no check made before
+  a separate revoke transaction can rule out. The card says so before and
+  after the cancel and names where to remove the approval by hand. (Cancelling
+  the loan's own request still removes it; a request posted elsewhere in the
+  meantime then shows its short approval on its own card, with the action to
+  re-approve.) When the record proves no request stands but the details of
+  its lapsed request cannot be read, nothing is held back and only a new post
+  is reported as unconfirmed. That look is best effort: when it cannot answer,
+  nothing is held back, because nothing the protocol would refuse depends on
+  it, and the page says it could not check for an older request and names the
+  manual cleanup (Your open offers; the standing token approvals in Settings). On a deployment that
+  predates the record, the search over the holder's own offers decides
+  everything, as described next. When the record cannot be read, the
+  surfaces a request would be stranded by hold back and say so. When the search cannot answer, the
+  surfaces a request would be stranded by — taking collateral back, partial
+  repayment, early close-out, obligation handover and offset — hold back and
+  say why, rather than assume there is none, and say which of two reasons
+  applies: the search failed (it may answer on a later try), or the holder has
+  posted more offers since the loan's own offer was made than one search reads
+  (a retry will not help, so the surface does not suggest one, and says full
+  repayment stays open). Such a search still reads the newest offers, so an
+  open request among them is found and shown as usual — only a search that
+  found no open request in what it read is reported as unable to answer. The bound is the loan's own offer, which can be older
+  than the loan itself, because the chain records no start for a loan that
+  later events do not rewrite. The protocol now records each loan's request
+  and whether it still stands (#2407) — the same rule the search applies: not
+  taken, cancelled or expired, posted by the current holder of the borrower
+  position, on a loan that is still active. Whether a lender could fill it
+  right now is not part of either rule, so a request that can no longer fill
+  holds the loan until the borrower cancels it. The app reads that record first
+  wherever the deployment has it (#2425), so the search's two limits — a read
+  that fails and a holder with too many offers to read — no longer decide
+  whether a request holds the loan back there.
+- An open confirmation does not survive a network switch or a change of
+  connected account: it closes, and the typed amount is cleared, so a review
+  opened on one network or under one wallet can never send on another.
+- A pre-check that fails is reported as a check that could not finish — the
+  wallet never opened and nothing was spent — never as a failed transaction.
+- Before the wallet opens, the app re-checks what would make the protocol
+  refuse: the sanctions screen, that the wallet still holds the borrower
+  position, that the limit still covers the amount, that no sale listing of the
+  lender's position is linked to the loan, and that no swap-to-repay order is
+  pending against it. Each refusal is said in plain words. Where the app cannot
+  undo the obstacle itself (a swap-to-repay order placed with another tool), it
+  says so rather than pointing at a control that does not exist. A swap-to-repay
+  order that reached its deadline without filling still blocks the withdrawal
+  until it is cancelled, and the surface says so rather than implying expiry
+  releases the collateral. When one of these checks cannot be answered, nothing
+  is sent and the surface says it could not check, rather than treating an
+  unread answer as a clear one.
+- Taking back extra collateral stays available to a wallet that has not accepted
+  the current Terms, like repaying and topping up: it returns the borrower's own
+  assets and opens nothing new.
+- The confirmation states what arrives in the wallet, that nothing more is owed,
+  what is put at risk, and that the rest of the collateral stays locked until
+  the loan closes.
+- When the collateral is VPFI, the surface says that taking it out of the vault
+  lowers the balance the fee-discount tier is measured on, so the discount may
+  drop. When the app cannot tell whether the collateral is VPFI, it says that
+  and gives the same caution, rather than treating unknown as "not VPFI".
 
 ### Forced close-out of an overdue loan
 
@@ -1683,10 +1950,41 @@ Thin-market honesty rules apply.
   must not scan every position the wallet has ever held.
 - A lender's claim on a defaulted loan says what the recovery is (a cash amount,
   the collateral itself, or partly held in other assets). A shortfall is shown
-  only against what the loan actually owed when it defaulted; until the app has
-  that figure, it says so rather than computing one. The loan's current
-  principal is never presented as what the holder lent: partial repayments
-  change it, and a holder who bought the position never lent it at all.
+  only against what the loan actually owed when it defaulted, and that figure
+  is the one the protocol recorded at the default (#2374): principal
+  outstanding, interest outstanding, and the late fee. When the protocol holds
+  that record the claim states it, phrased for whoever holds the position now
+  ("the loan still owed", never "you lent"). The recovery is set against the
+  PRINCIPAL only, because no protocol share is taken from principal; a gap
+  there is a substantiated shortfall, while interest and late fees are paid
+  after the protocol's share and are not compared. No comparison is made, only
+  the figure stated, when the recovery may have come in more than one part:
+  proceeds held beside the claim, a claim in another asset, or a default that
+  went through the full-collateral fallback. A claim on a loan still in the
+  fallback states the recorded figure too (entering the fallback is the
+  default), beside its existing note that the claim can still change the
+  payout, and never compares it. When the token's details cannot be read the
+  amounts are not written, but the principal comparison is still stated,
+  since the recovery and the principal are in the same token's own units.
+  With no record — a loan that defaulted before the protocol kept one — the
+  claim says the figure is not available rather than computing one; when the
+  record cannot be read, it says that instead. The loan's current principal is never presented as what the
+  holder lent: partial repayments change it, and a holder who bought the
+  position never lent it at all.
+- A lender's claim on a loan closed by internal matching states what the
+  protocol recorded that matching cleared (#2427): the principal, and, when any
+  had built up, the interest and late fees that are not charged when a loan
+  closes this way. It says what the matches paid toward that principal and
+  compares only those two: the gap is the matcher's fee, and the claim says so
+  in those words. It is phrased about the loan and the matches, never "you
+  lent", since the holder may have bought the position. When the protocol's
+  record is incomplete (part of the loan was matched during the fallback, or
+  the lender had already been paid in part), the claim says no figure can be
+  shown and why. With no record it says the figure is not recorded for this
+  loan; when the record cannot be read it says that, and the loan page reads
+  it again shortly. When the token's details cannot be read the amounts are
+  not written, but whether the matches paid the principal in full is still
+  stated.
 - A stale indexed row must not remain actionable after the chain says it is no
   longer claimable.
 - Once a candidate has been verified on chain, an IDENTICAL candidate (same
@@ -1909,6 +2207,11 @@ Thin-market honesty rules apply.
   unrelated change.
 - If no alert backend is configured, the app states that alerts are unavailable
   and sends nothing.
+- The alerts card states what this browser knows about the link: when no link was
+  made from this browser, it says so, and says that a link made on another device
+  would not show here — rather than implying the wallet is linked nowhere. It
+  does not claim alerts still reach such a link either, since this browser cannot
+  check it; it says the wallet may still be linked elsewhere.
 
 ## Notifications
 
@@ -2714,6 +3017,40 @@ Its intended behaviour, as the test oracle for this surface:
   the history service answers participant-history queries (a tracked
   indexer follow-up), and until then the feed must not present its
   narrower scope as the wallet's complete history.
+- Each activity row states the asset and amount its transaction moved or
+  offered, when that is known: a loan start states the principal, an offer
+  creation or cancellation states the offer's size (as "X–Y" when the offer
+  is a range, since its first figure alone is only the minimum fill), an
+  amendment states the new size, an acceptance or match states the fill, and
+  a claim states what was claimed. An NFT is named by its token, never given
+  an amount. In a transaction that carries several offers or loans, each row
+  states its OWN offer's or loan's value. The value is established by the
+  history service while it reads the chain — from the event itself, its
+  companion events in the same transaction, and the loan or offer record —
+  and the app shows it as given. Where it is not established (an event with
+  no single amount, such as a repayment; a claim whose asset the loan record
+  cannot place unambiguously; history recorded before this was introduced),
+  the row says the amount was not recorded rather than reconstructing one.
+- A row states EVERY value its action moved for its own loan or offer, not
+  only one: a borrower claim that pays residual collateral and a frozen
+  principal surplus in different assets states both. A companion event that
+  restates the same value (an offer's creation and its details, a loan start
+  and the acceptance that made it) is counted once. When the same action moved
+  something the history service does not itemise — a borrower's fee rebate, or
+  a value it could not establish — the row says an amount is not itemised. A
+  lender claim always notes that it also pays out any funds held for the
+  lender from earlier top-ups, which its event does not include in the amount
+  shown. A neighbouring loan or offer in the same batched transaction is never
+  folded into the row.
+- A token amount names its contract beside its symbol, because a symbol is
+  whatever the token reports and two contracts can share one. While the
+  token's details load, the row says the amount is loading; if they cannot be
+  read, it states the figure explicitly as base units of that contract — never
+  as if it were a token amount, and never by silently dropping a known amount.
+- An ERC-1155 states how many copies moved (one copy and a hundred are
+  different positions); when the record does not carry the number, the row
+  says so. An ERC-721 is always a single token and states no count. A
+  collateral top-up states the amount added, in the loan's collateral asset.
 - NFT rentals are never presented as debt: nothing says "repay", the
   NFT stays in the owner's vault, the renter receives temporary use
   rights, and the renter's total up-front payment (fees plus the live
@@ -2877,10 +3214,59 @@ Its intended behaviour, as the test oracle for this surface:
   the standing payoff approval. While a request is live, partial
   repayment and close-early are held off with an explanation —
   either would strand the request — and the full-repayment review
-  warns that the request survives settlement until cancelled. The
-  pending marker is device-local: another device posting a second
-  request for the same loan is possible and each device tracks only
-  its own. Loans on a periodic interest schedule carry a visible
+  warns that the request survives settlement until cancelled. While
+  the search for a request has not answered, the full-repayment review
+  stays available (it is the safety valve) but says that a request
+  could exist, posted from another device, and that repaying would
+  strand it too. Because the page's search runs on a cadence, a review
+  is checked again every time it is confirmed: when what the review
+  showed does not cover what that check found (a request turned up, or
+  the check could not answer, after the review said nothing; or a
+  request is now open after the review said only that the check had not
+  answered), nothing is sent that time and the review now says what
+  repaying would do — the next confirmation repays unless the answer has
+  changed again. A warning from an earlier check is dropped once a later
+  check comes back clear, and never carries across a change of network,
+  account or loan. Repayment is never refused, only disclosed first. Only an acceptable request is live: one that has
+  expired, whose loan is past grace, or whose poster no longer holds
+  the borrower position can never be filled, so it holds nothing back.
+  The request is found on chain from the borrower-position holder's own
+  offers, so a request posted from another device or tool shows here
+  too, with its cancel action, to the wallet that posted it; this device's
+  own record of a request it just posted only speeds that up. A request
+  the search has already found stays named, with its cancel action, when
+  a later search fails — the surfaces it would strand hold back
+  meanwhile — and stops being named only once the chain confirms it is
+  gone. A wallet
+  that posted a request and then transferred the position, or whose loan
+  has settled, is shown that request from any device too — only the
+  poster can cancel it and remove its payoff approval. When that search
+  of the wallet's own offers cannot answer — it failed, or the wallet has
+  posted more offers since the loan's own offer than one search reads —
+  the page says it cannot show such a request (and, for a failure, that
+  a later try may) and names the manual cleanup (cancel it from the
+  wallet's open offers if it is still open — an expired request is not
+  listed there, and the page says so — and, either way, remove the token
+  approval it relied on if nothing else needs it), rather than staying
+  silent. This depends only
+  on that search, not on any other role the wallet holds in the loan. An expired
+  request is still shown so it can be cancelled and its approval removed,
+  and the card outlives the loan's settlement for the same reason. A new
+  request is not posted while the app can see one open, and the form waits until the search has answered, checking again just
+  before posting. The protocol enforces the same limit (#2407): while a
+  request stands against the loan, posting a second is refused, so two
+  devices that both pass the app's check in the same moment cannot both
+  post — the protocol refuses the second, naming the request already
+  open. Only the request the protocol has recorded for the loan can be
+  taken; a second request left over from before that limit can never be
+  taken, and the page shows it so it can be cancelled. An expired request
+  that was never cancelled must be cancelled before a new one is posted —
+  the protocol refuses the new one otherwise, because the expired request
+  may still hold a fresh collateral pledge and the loan's record is how it
+  is found — so the form says so and offers the cancel rather than letting
+  the post fail. A request the search has already found
+  expired stays treated as expired even when the page's fuller check of
+  it cannot finish. Loans on a periodic interest schedule carry a visible
   warning that an overdue period blocks completion until settled.
 - The borrower of an active ERC-20 loan sees, in BOTH interface
   modes, one chooser surface that names every early-repayment path
@@ -2904,22 +3290,38 @@ Its intended behaviour, as the test oracle for this surface:
   refused rather than quietly settling the loan. Because a partial
   changes the outstanding amount, it is held while another arrangement
   is pinned to that amount, and the reason is stated rather than the
-  option vanishing. Two of those holds are answered by the chain and so
-  hold wherever the borrower is signed in: a live offset, and a sale a
-  buyer has already accepted. The third — a standing refinance request
-  — is currently remembered only on the device that posted it, so a
-  borrower acting from a second device is not held back from a partial
-  that would leave that request permanently unacceptable. That
-  limitation is a known divergence from the intent, recorded in
-  `_CodeVsDocsAudit.md`, and is stated here rather than described as a
-  guarantee the product does not yet make.
+  option vanishing. All three holds are answered by the chain and so
+  hold wherever the borrower is signed in: a live offset, a sale a buyer
+  has already accepted, and a standing refinance request (found among
+  the current borrower-position holder's own offers). When the search
+  for a refinance request cannot answer, the partial is held too, with
+  that reason. Each borrower action that would change or settle the
+  loan — a partial, early close-out, an obligation handover, an offset,
+  taking collateral back — repeats the search just before the wallet
+  opens. No check made before signing can rule out a request posted in
+  the moments between that last check and the transaction being mined,
+  so the protocol closes that race itself (#2407): while a request
+  stands against the loan it refuses a partial (paid directly or by swapping
+  collateral), an early close-out, an obligation handover, an offset and
+  taking collateral back, naming the request in its refusal, which the app
+  explains in plain words in every supported language even when the wallet
+  returns only the raw revert. Full
+  repayment, adding collateral and every enforcement action (including a
+  partial liquidation) are never held by it. When one of those last checks — or any other check made after
+  the token approval — stops the action, the approval it granted is put
+  back to what it was before (best effort, and only if nothing else has
+  changed it since), and a failure to put it back is said alongside the
+  reason, never left silent. The same holds when the transaction itself
+  fails.
   The chooser never submits anything itself: in Advanced mode each
   path leads to its own tool with its own review; in Basic mode the
   advanced paths share one explicit, clearly labelled action that
   switches the interface to Advanced in place — the mode change is
   always the user's own choice, never a side effect. Paths that
   cannot currently apply (past the due date, held by a live linked
-  request, or one the position doesn't qualify for — refinancing on a
+  request, held while the search for a refinance request has not
+  answered — which says whether it is still checking, failed, or cannot
+  cover every offer — or one the position doesn't qualify for — refinancing on a
   position acquired on the secondary market stays with the original
   borrower) say so instead of disappearing silently; a
   past-the-due-date unavailability is judged only from chain-anchored
@@ -3061,7 +3463,12 @@ Its intended behaviour, as the test oracle for this surface:
   wallet only makes the acceptance fail; nothing is taken). The
   token approval granted at posting is sized to the largest pull any
   completion could make, and the quoted keep-available figure states
-  that bound. A live offset gets a standing view driven by the
+  that bound. If posting stops after that approval was granted but
+  before the offer was posted — a last check found a refinance request,
+  the due date came too close, or the posting itself failed — the
+  approval is put back to what it was before (best effort, and only if
+  nothing else has changed it since), and a failure to put it back is
+  said alongside the reason posting stopped, never left silent. A live offset gets a standing view driven by the
   chain's own lock record — an offset made on another device still
   shows — with the linked offer's identity when known, warnings when
   the standing approval or wallet balance no longer covers the

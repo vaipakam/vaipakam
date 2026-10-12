@@ -22,6 +22,7 @@ import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.so
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {RepayPeriodicFacet} from "../src/facets/RepayPeriodicFacet.sol";
 import {SwapToRepayFacet} from "../src/facets/SwapToRepayFacet.sol";
+import {SwapToRepayPartialFacet} from "../src/facets/SwapToRepayPartialFacet.sol";
 import {SwapToRepayIntentFacet} from "../src/facets/SwapToRepayIntentFacet.sol";
 import {IntentDispatchFacet} from "../src/facets/IntentDispatchFacet.sol";
 import {AutoLifecycleFacet} from "../src/facets/AutoLifecycleFacet.sol";
@@ -285,6 +286,7 @@ contract SetupTest is Test {
     RepayFacet repayFacet;
     RepayPeriodicFacet repayPeriodicFacet;
     SwapToRepayFacet swapToRepayFacet;
+    SwapToRepayPartialFacet swapToRepayPartialFacet;
     // T-090 v1.1 (#389) — intent-based swap-to-repay sibling facet.
     SwapToRepayIntentFacet swapToRepayIntentFacet;
     IntentDispatchFacet intentDispatchFacet;
@@ -429,6 +431,7 @@ contract SetupTest is Test {
         repayFacet = new RepayFacet();
         repayPeriodicFacet = new RepayPeriodicFacet();
         swapToRepayFacet = new SwapToRepayFacet();
+        swapToRepayPartialFacet = new SwapToRepayPartialFacet();
         swapToRepayIntentFacet = new SwapToRepayIntentFacet();
         intentDispatchFacet = new IntentDispatchFacet();
         autoLifecycleFacet = new AutoLifecycleFacet();
@@ -533,7 +536,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](93);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](94);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -974,6 +977,12 @@ contract SetupTest is Test {
             facetAddress: address(swapToRepayFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getSwapToRepayFacetSelectors()
+        });
+        // #2416 — the partial swap-to-repay route, split off for EIP-170.
+        cuts[93] = IDiamondCut.FacetCut({
+            facetAddress: address(swapToRepayPartialFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getSwapToRepayPartialFacetSelectors()
         });
         // T-090 v1.1 (#389) — intent-based swap-to-repay sibling facet.
         cuts[45] = IDiamondCut.FacetCut({

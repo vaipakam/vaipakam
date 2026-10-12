@@ -46,7 +46,7 @@ test('public routes carry per-route meta; per-user routes are noindex', async ({
   await expect(page.locator('meta[name="robots"]')).toHaveCount(0);
   await expect(page.locator('meta[name="description"]')).toHaveAttribute(
     'content',
-    /your own on-chain vault/,
+    /your own vault on the blockchain/,
   );
 
   await page.goto('/settings', { waitUntil: 'domcontentloaded' });

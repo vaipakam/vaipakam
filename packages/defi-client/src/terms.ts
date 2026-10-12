@@ -203,7 +203,10 @@ function isMissingSelectorError(e: unknown): boolean {
   const msg = String(
     (e as { data?: string; message?: string })?.data ?? (e as Error)?.message ?? '',
   );
-  return /function does not exist|functionnotfound|function selector|not found|missing revert data|0xa9ad62f8/i.test(
+  // `functiondoesnotexist`: viem DECODES the Diamond's own revert now that
+  // the combined ABI carries the proxy's errors (#2399), and the decoded
+  // message names it without the selector.
+  return /function does not exist|functiondoesnotexist|functionnotfound|function selector|not found|missing revert data|0xa9ad62f8/i.test(
     msg,
   );
 }

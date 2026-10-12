@@ -323,6 +323,10 @@ export function AlertsCard() {
             </div>
           ) : (
             <div className="stack" style={{ gap: 12 }}>
+              {/* UX3-013 — say what this browser knows: no link was made
+                  from here. It cannot see a link made on another device,
+                  and says so instead of implying "not linked anywhere". */}
+              <p style={{ margin: 0 }}>{copy.alerts.notLinkedHere}</p>
               <div className="cluster" style={{ alignItems: 'center' }}>
                 <button
                   type="button"

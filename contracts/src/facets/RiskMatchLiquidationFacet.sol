@@ -7,6 +7,7 @@ import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {ConsolidationFacet} from "./ConsolidationFacet.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
+import {LibOwedAtInternalMatch} from "../libraries/LibOwedAtInternalMatch.sol";
 import {InteractionRewardsFacet} from "./InteractionRewardsFacet.sol";
 import {SwapToRepayIntentFacet} from "./SwapToRepayIntentFacet.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
@@ -462,9 +463,9 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
         // is consumed by the NEXT leg, but its OWN lender is paid by its own
         // leg). A.lender ← Leg X (movedX − incentiveX); B.lender ← Leg Y;
         // C.lender ← Leg Z.
-        _settleFallbackOrTransitionPostMatch(la, r.movedZ, r.movedX - r.incentiveX);
-        _settleFallbackOrTransitionPostMatch(lb, r.movedX, r.movedY - r.incentiveY);
-        _settleFallbackOrTransitionPostMatch(lc, r.movedY, r.movedZ - r.incentiveZ);
+        _settleFallbackOrTransitionPostMatch(la, r.movedZ, r.movedX, r.movedX - r.incentiveX);
+        _settleFallbackOrTransitionPostMatch(lb, r.movedX, r.movedY, r.movedY - r.incentiveY);
+        _settleFallbackOrTransitionPostMatch(lc, r.movedY, r.movedZ, r.movedZ - r.incentiveZ);
 
         // #691 / #658 — each leg's collateral was withdrawn for the swap;
         // restamp each holder's VPFI tier/staking (no-op for non-VPFI). Keyed
@@ -667,8 +668,8 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
         // #585 — lender proceeds per leg (asymmetric, as in the 3-way case):
         // la's collateral is consumed by Leg Y (movedY), but A.lender is paid
         // by Leg X (movedX − incentiveX); symmetrically for lb.
-        _settleFallbackOrTransitionPostMatch(la, r.movedY, r.movedX - r.incentiveX);
-        _settleFallbackOrTransitionPostMatch(lb, r.movedX, r.movedY - r.incentiveY);
+        _settleFallbackOrTransitionPostMatch(la, r.movedY, r.movedX, r.movedX - r.incentiveX);
+        _settleFallbackOrTransitionPostMatch(lb, r.movedX, r.movedY, r.movedY - r.incentiveY);
 
         // #691 / #658 — both legs' collateral was withdrawn for the swap;
         // restamp each holder's VPFI tier/staking (no-op for non-VPFI). Keyed
@@ -810,6 +811,8 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
     ///           snapshot-driven path (`_distributeFallbackCollateral`,
     ///           Diamond → vaults) — exactly as a fresh, smaller
     ///           FallbackPending loan would.
+    /// @param principalMoved The principal this step cleared from `loan` (its
+    ///        `principal` has already been decremented by it).
     /// @param lenderProceeds The principal-asset amount (`moved - incentive`)
     ///        this loan's lender was paid into `loan.lender`'s vault by
     ///        `_settleLeg`. On a FULL match it is recorded as a
@@ -821,8 +824,16 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
     function _settleFallbackOrTransitionPostMatch(
         LibVaipakam.Loan storage loan,
         uint256 collateralConsumed,
+        uint256 principalMoved,
         uint256 lenderProceeds
     ) private {
+        // #2427 — add this step's discharged debt and lender proceeds to the
+        // internal-match record while the principal decrement is the only
+        // change made: the status is still the one the step ran in, and
+        // `heldForLender` does not yet carry this step's proceeds.
+        LibOwedAtInternalMatch.onStep(
+            LibVaipakam.storageSlot(), loan, loan.principal + principalMoved, lenderProceeds
+        );
         LibVaipakam.LoanStatus status = loan.status;
 
         // Active branch — same shape as the original B.2 code.
@@ -847,6 +858,9 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
                     ),
                     bytes4(0)
                 );
+                // #2427 — the step closed the loan from `Active`: stamp what
+                // internal matching cleared from it (no-op when incomplete).
+                LibOwedAtInternalMatch.onClose(LibVaipakam.storageSlot(), loan);
                 // #585 (Codex round-3 P1) — an internal match is a
                 // LIQUIDATION-class terminal for the borrower (their
                 // distressed loan was force-cleared), so forfeit the

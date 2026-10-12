@@ -176,54 +176,6 @@
       ],
       "invariant": true
     },
-    "copy.desk.ticket.expiryGtc": {
-      "reason": "GTC — standard order-duration acronym, used untranslated on trading surfaces in every locale.",
-      "source": "GTC",
-      "locales": [
-        "ar",
-        "de",
-        "es",
-        "fr",
-        "hi",
-        "ja",
-        "ko",
-        "ta",
-        "zh"
-      ],
-      "invariant": true
-    },
-    "copy.desk.ticket.fillAon": {
-      "reason": "AON — standard fill-type acronym, used untranslated on trading surfaces in every locale.",
-      "source": "AON",
-      "locales": [
-        "ar",
-        "de",
-        "es",
-        "fr",
-        "hi",
-        "ja",
-        "ko",
-        "ta",
-        "zh"
-      ],
-      "invariant": true
-    },
-    "copy.desk.ticket.fillIoc": {
-      "reason": "IOC — standard fill-type acronym, used untranslated on trading surfaces in every locale.",
-      "source": "IOC",
-      "locales": [
-        "ar",
-        "de",
-        "es",
-        "fr",
-        "hi",
-        "ja",
-        "ko",
-        "ta",
-        "zh"
-      ],
-      "invariant": true
-    },
     "copy.diagnostics.title": {
       "reason": "'Support' is the ordinary German and French noun for this, spelled as the English one. The evidence is the sibling in each bundle: copy.diagnostics.open reads 'Support und Verbindungsprüfung' in German and 'Support et vérification de connexion' in French, so each locale uses the word inside a sentence it did translate — settled vocabulary, not an untouched string. Spanish is deliberately absent: it says 'Soporte', and Hindi stays in the shrinkable baseline because it owes a Devanagari rendering.",
       "source": "Support",
@@ -259,6 +211,14 @@
         "es": ".",
         "fr": "."
       }
+    },
+    "copy.positions.details.withdrawCollateral.max": {
+      "reason": "\"Max\" is the established French and German abbreviation on an amount field's fill-to-limit button, spelled as the English one — the same word these bundles already carry on the VPFI and Rate Desk amount fields (copy.vpfi.max, copy.desk.ticket.max). Every sibling in this section is translated, so the leaf is settled vocabulary, not a skipped string.",
+      "source": "Max",
+      "locales": [
+        "de",
+        "fr"
+      ]
     },
     "copy.protocolConsole.bpsValue": {
       "reason": "Two interpolated values, the percent sign, and \"bps\" — the standard basis-points abbreviation this codebase uses on every fee surface, and a glossary term that stays untranslated. There is no prose here to render in another language, so a value made of the same marks is the correct localization rather than an untouched string. It is NOT invariant: German, Spanish and French insert the space their typography requires before %, and Japanese and Chinese use fullwidth parentheses — real localizations of a string whose only content is punctuation, recorded below so changing one retires the exemption instead of leaving it armed. Arabic, Hindi, Korean and Tamil correctly keep the English marks.",

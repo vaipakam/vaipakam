@@ -453,4 +453,102 @@ contract FallbackCureTest is SetupTest, IVaipakamErrors {
         assertFalse(active, "no snapshot for unknown loan");
         assertFalse(retryAttempted);
     }
+
+    // ─── #2374 — the owed-at-default record across the fallback ──────────
+
+    function _owedAtDefault()
+        internal
+        view
+        returns (uint256 p, uint256 i, uint256 l, uint64 at, bool viaFallback)
+    {
+        return ClaimFacet(address(diamond)).getOwedAtDefault(loanId);
+    }
+
+    /// Entering the fallback IS the default: it records what the loan owed at
+    /// that block, flagged as a fallback.
+    function test_2374_fallbackEntryRecordsWhatTheLoanOwed() public view {
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        uint256 elapsed = block.timestamp - loan.startTime;
+        uint256 interest = (PRINCIPAL * 500 * elapsed) / (365 days * 10000);
+        uint256 daysLate = (block.timestamp - (loan.startTime + DURATION_DAYS * 1 days)) / 1 days;
+        uint256 feeBps = 100 + daysLate * 50;
+        if (feeBps > 500) feeBps = 500;
+        (uint256 p, uint256 i, uint256 l, uint64 at, bool viaFallback) = _owedAtDefault();
+        assertEq(p, PRINCIPAL, "principal at default");
+        assertEq(i, interest, "interest at default");
+        assertEq(l, (PRINCIPAL * feeBps) / 10000, "late fee at default");
+        assertGt(l, 0, "precondition: past maturity");
+        assertEq(at, uint64(block.timestamp), "recorded at the fallback entry");
+        assertTrue(viaFallback, "flagged as a fallback");
+    }
+
+    /// A cure means the loan did not, in the end, default: it reads as no
+    /// record (the loan is Active again, so the record is not reported).
+    function test_2374_anAddCollateralCureReadsAsNoRecord() public {
+        uint256 topUp = 100 ether;
+        ERC20Mock(mockCollateralERC20).mint(borrower, topUp);
+        vm.prank(borrower);
+        AddCollateralFacet(address(diamond)).addCollateral(loanId, topUp);
+        assertEq(uint8(_loanStatus()), uint8(LibVaipakam.LoanStatus.Active));
+        (, , , uint64 at,) = _owedAtDefault();
+        assertEq(at, 0, "not reported once cured");
+    }
+
+    /// So does a full repayment of the fallback.
+    function test_2374_aRepayCureReadsAsNoRecord() public {
+        vm.startPrank(borrower);
+        ERC20Mock(mockERC20).approve(address(diamond), type(uint256).max);
+        RepayFacet(address(diamond)).repayLoan(loanId);
+        vm.stopPrank();
+        assertEq(uint8(_loanStatus()), uint8(LibVaipakam.LoanStatus.Repaid));
+        (, , , uint64 at,) = _owedAtDefault();
+        assertEq(at, 0, "not reported once repaid");
+    }
+
+    /// The later move to Defaulted (the lender's claim) keeps the figure from
+    /// the fallback's entry: by then interest has kept running, and restating
+    /// it at the claim's timestamp would not be what the loan owed at default.
+    function test_2374_claimingTheFallbackKeepsTheEntryFigure() public {
+        (uint256 p0, uint256 i0, uint256 l0, uint64 at0, bool vf0) = _owedAtDefault();
+        vm.warp(block.timestamp + 5 days);
+        vm.prank(lender);
+        ClaimFacet(address(diamond)).claimAsLender(loanId);
+        assertEq(
+            uint8(_loanStatus()),
+            uint8(LibVaipakam.LoanStatus.Defaulted),
+            "precondition: the claim moved the loan to Defaulted"
+        );
+        (uint256 p, uint256 i, uint256 l, uint64 at, bool vf) = _owedAtDefault();
+        assertEq(p, p0);
+        assertEq(i, i0, "interest not restated at the claim");
+        assertEq(l, l0, "late fee not restated at the claim");
+        assertEq(at, at0, "still the entry timestamp");
+        assertEq(vf, vf0);
+    }
+
+    /// The record is reported only while the loan stands defaulted. Driven by
+    /// rewriting the status alone (the stored record is untouched), so it is
+    /// the read's gate — not any clearing write — that hides it: a fallback
+    /// fully closed by an internal match, or a loan that has since settled,
+    /// reads as no record; standing defaulted again, it is reported again.
+    function test_2374_aRecordIsReportedOnlyWhileTheLoanStandsDefaulted() public {
+        (, , , uint64 entryAt,) = _owedAtDefault();
+        assertGt(entryAt, 0, "precondition: recorded at the fallback entry");
+        LibVaipakam.LoanStatus[2] memory hidden =
+            [LibVaipakam.LoanStatus.InternalMatched, LibVaipakam.LoanStatus.Settled];
+        for (uint256 k; k < hidden.length; ++k) {
+            _setStatus(hidden[k]);
+            (, , , uint64 at,) = _owedAtDefault();
+            assertEq(at, 0, "not reported outside a defaulted status");
+        }
+        _setStatus(LibVaipakam.LoanStatus.Defaulted);
+        (, , , uint64 again,) = _owedAtDefault();
+        assertEq(again, entryAt, "reported while standing defaulted");
+    }
+
+    function _setStatus(LibVaipakam.LoanStatus status) internal {
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        loan.status = status;
+        TestMutatorFacet(address(diamond)).setLoan(loanId, loan);
+    }
 }

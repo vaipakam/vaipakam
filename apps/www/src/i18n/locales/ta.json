@@ -1033,8 +1033,6 @@
     }
   },
   "banners": {
-    "sanctionsMatchTitle": "{{label}}: தடைகள் ஸ்கிரீனிங்கில் பொருத்தம்.",
-    "sanctionsMatchBody": "ஆன்-செயின் தடை oracle (Chainalysis) தற்போது இந்த முகவரியைப் பட்டியலிடுகிறது. எந்த ஒரு வாய்ப்பு-உருவாக்கம் அல்லது வாய்ப்பு-ஏற்பு பரிவர்த்தனையும் புரோட்டோகால் அடுக்கில் ரிவர்ட் ஆகும். தவறான பொருத்தம் என்றால், Chainalysis ஆதரவைத் தொடர்பு கொள்ளவும் — Vaipakam தனது சொந்த தடைப் பட்டியலை பராமரிக்காது.",
     "sanctionsLabelWallet": "இணைக்கப்பட்ட வாலட்",
     "sanctionsLabelOfferCreator": "வாய்ப்பு உருவாக்கியவர்",
     "vaultUpgradeBody": "Vault மேம்பாடு தேவை — Vault v{{userVersion}} இல் உள்ளது, கட்டாய குறைந்தபட்சம் v{{mandatoryVersion}} (சமீபத்திய v{{currentVersion}}). மேம்பாடு வரை Diamond செயல்முறைகள் ரிவர்ட் ஆகும்.",

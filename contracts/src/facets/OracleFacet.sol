@@ -18,6 +18,8 @@ import {IApi3ServerV1} from "../interfaces/IApi3ServerV1.sol";
 import {IDIAOracleV2} from "../interfaces/IDIAOracleV2.sol";
 import {IPyth} from "../interfaces/IPyth.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 /**
  * @title OracleFacet
@@ -93,6 +95,23 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
     /// @notice Reverted when the l2 sequencer has been up for less than
     ///         `LibVaipakam.SEQUENCER_GRACE_PERIOD` seconds after a recovery.
     error SequencerGracePeriod();
+    /// @notice Reverted by the pair-level {calculateLTV} when the collateral
+    ///         leg values to zero — the same refusal, by the same name, as
+    ///         the loan-level `RiskFacet.calculateLTV(loanId)`.
+    error ZeroCollateral();
+    /// @notice Reverted by the pair-level {calculateLTV} when the two legs'
+    ///         decimal scales (feed decimals + token decimals) differ by more
+    ///         than it can represent exactly — 73 when the collateral's scale
+    ///         is the larger (`LTV_SCALE · 10**gap` must fit in 256 bits), 77
+    ///         when the borrowed one is (`10**gap` must). Far beyond any real
+    ///         token pair, and refused by name rather than by an overflow.
+    error DecimalScaleUnsupported(uint256 gap);
+    /// @notice Reverted by the pair-level {calculateLTV} when an asset's
+    ///         price resolves to zero — a composed price can floor to zero
+    ///         even when every component feed is positive. A zero price says
+    ///         nothing about value, so it is refused rather than read as a
+    ///         loan-to-value of 0 ("no risk") or as zero collateral.
+    error ZeroPrice(address asset);
 
     // 0.3% v3-style AMM fee tier — the standard ERC20/WETH venue. Resolved
     // live via `factory.getPool(tokenA, tokenB, fee)` so the same code path
@@ -310,11 +329,47 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
 
 
     /**
-     * @notice Calculates the Loan-to-Value (LTV) ratio for a loan in basis points.
-     * @dev LTV = (borrowedValueUsd * 10000) / collateralValueUsd; 0 for
-     *      zero-collateral. Uses {getAssetPrice} for both legs, which
-     *      reverts on missing/stale feeds. Callers (RiskFacet, LoanFacet)
-     *      should only invoke this for liquid loans.
+     * @notice Loan-to-value, in basis points, of borrowing `borrowedAmount`
+     *         of `borrowedAsset` against `collateralAmount` of
+     *         `collateralAsset` — a pair-level PREVIEW of the figure loan
+     *         initiation checks.
+     * @dev    Values each leg in numeraire terms as the loan-level path does
+     *         (`RiskFacet._computeNumeraireValues`, which initiation,
+     *         liquidation, add-collateral and refinance use) — price over the
+     *         feed's decimals AND over the token's own decimals. Dividing by
+     *         the feed's decimals alone (#2403) left each leg in raw token
+     *         units, so a pair whose tokens have different decimals — a
+     *         6-decimal stablecoin against an 18-decimal asset — came out off
+     *         by `10**(decimal difference)`.
+     *
+     *         The ratio is computed in ONE step, never from two separately
+     *         rounded leg values (#2418 r2 — root fix after r1 found a
+     *         sub-unit leg truncating to 0, and r2 the same at the next
+     *         scale down):
+     *
+     *           ltv = ⌊ bAmt·bPrice·LTV_SCALE · 10**(cFeedDec + cTokenDec)
+     *                   ÷ (cAmt·cPrice · 10**(bFeedDec + bTokenDec)) ⌋
+     *
+     *         Only the common power of ten is cancelled, and the single floor
+     *         is the final one, so the result is the exact loan-to-value
+     *         rounded down to whole basis points for ANY sizes — a nonzero
+     *         borrow is never reported as 0 because a leg rounded away.
+     *         This is the economic ratio. The loan-level path values each
+     *         leg separately and truncates both to whole units, so the two
+     *         agree except where a leg sits within one unit of that
+     *         truncation — tracked as #2419.
+     *
+     *         Reverts {ZeroCollateral} on a zero collateral amount, as the
+     *         loan-level path does; returning 0 read as "no risk". Reverts
+     *         {ZeroPrice} when either asset's price resolves to zero (#2418
+     *         r4): a composed price can floor to zero from positive feeds,
+     *         and a zero borrowed price would otherwise return a confident
+     *         0 for a nonzero debt. Reverts on a missing or stale
+     *         feed via {getAssetPrice}. Two stated limits, both far outside
+     *         any real asset: {DecimalScaleUnsupported} when the legs'
+     *         decimal scales differ by more than 73 / 77 (#2418 r3 — see the
+     *         error), and an overflow revert when an amount × price product
+     *         exceeds 256 bits. Meaningful only for liquid (priced) assets.
      */
     // forge-lint: disable-next-line(mixed-case-function)
     function calculateLTV(
@@ -323,15 +378,49 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         address collateralAsset,
         uint256 collateralAmount
     ) external view returns (uint256 ltv) {
-        if (collateralAmount == 0) return 0;
+        if (collateralAmount == 0) revert ZeroCollateral();
 
-        (uint256 borrowedPrice, uint8 borrowedDec) = this.getAssetPrice(borrowedAsset);
-        (uint256 collateralPrice, uint8 collateralDec) = this.getAssetPrice(collateralAsset);
+        (uint256 borrowedPrice, uint8 borrowedFeedDec) = this.getAssetPrice(borrowedAsset);
+        (uint256 collateralPrice, uint8 collateralFeedDec) = this.getAssetPrice(collateralAsset);
 
-        uint256 borrowedValueUsd = (borrowedAmount * borrowedPrice) / (10 ** borrowedDec);
-        uint256 collateralValueUsd = (collateralAmount * collateralPrice) / (10 ** collateralDec);
+        // The two legs' decimal scales, as powers of ten.
+        uint256 borrowedScale = uint256(borrowedFeedDec) + IERC20Metadata(borrowedAsset).decimals();
+        uint256 collateralScale = uint256(collateralFeedDec) + IERC20Metadata(collateralAsset).decimals();
+        if (borrowedPrice == 0) revert ZeroPrice(borrowedAsset);
+        if (collateralPrice == 0) revert ZeroPrice(collateralAsset);
+        uint256 borrowedRaw = borrowedAmount * borrowedPrice;
+        uint256 collateralRaw = collateralAmount * collateralPrice;
 
-        ltv = (borrowedValueUsd * LibVaipakam.LTV_SCALE) / collateralValueUsd;
+        // Cancel only the common power of ten, then floor once.
+        uint256 gap = collateralScale >= borrowedScale
+            ? collateralScale - borrowedScale
+            : borrowedScale - collateralScale;
+        if (collateralScale >= borrowedScale) {
+            if (gap > 73) revert DecimalScaleUnsupported(gap); // LTV_SCALE·10**gap < 2**256
+            ltv = Math.mulDiv(borrowedRaw, LibVaipakam.LTV_SCALE * (10 ** gap), collateralRaw);
+        } else {
+            if (gap > 77) revert DecimalScaleUnsupported(gap); // 10**gap < 2**256
+            // ltv = floor(borrowedRaw · LTV_SCALE / (k · collateralRaw)),
+            // k = 10**gap, with no intermediate allowed to overflow when the
+            // result fits (#2418 r3/r4):
+            //  - k · collateralRaw fits → ONE full-precision division by it;
+            //    mulDiv then reverts only if the true result does not fit.
+            //  - it does not fit → the result is below LTV_SCALE, and the
+            //    LARGER of the two divisors goes inside mulDiv. Since
+            //    k · collateralRaw > 2**256, that divisor exceeds 2**128, so
+            //    the intermediate is below 2**256 · LTV_SCALE / 2**128 and
+            //    fits; the smaller is divided out after.
+            // Every order is exact: floor(floor(N / a) / b) == floor(N / (a · b)).
+            uint256 k = 10 ** gap;
+            (bool fits, uint256 denominator) = Math.tryMul(k, collateralRaw);
+            if (fits) {
+                ltv = Math.mulDiv(borrowedRaw, LibVaipakam.LTV_SCALE, denominator);
+            } else if (collateralRaw >= k) {
+                ltv = Math.mulDiv(borrowedRaw, LibVaipakam.LTV_SCALE, collateralRaw) / k;
+            } else {
+                ltv = Math.mulDiv(borrowedRaw, LibVaipakam.LTV_SCALE, k) / collateralRaw;
+            }
+        }
     }
 
     /**

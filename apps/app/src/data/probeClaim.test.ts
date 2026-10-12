@@ -9,7 +9,7 @@ import {
   ContractFunctionRevertedError,
   type PublicClient,
 } from 'viem';
-import { probeClaim } from './claimables';
+import { isMemoizableProbe, loanClaimRefetchInterval, OWED_RETRY_MS, probeClaim } from './claimables';
 import type { PositionLoan } from './hooks';
 
 const ME = '0x00000000000000000000000000000000000000aa';
@@ -256,5 +256,154 @@ describe('probeClaim — ownership', () => {
       borrowerLoan,
     );
     expect(r.kind).toBe('none');
+  });
+});
+
+describe('probeClaim — what the loan owed at default (#2374)', () => {
+  const lenderLoan = { ...borrowerLoan, role: 'lender', lendingAsset: USDC } as unknown as PositionLoan;
+  const lenderReads = { ownerOf: ME, getClaimable: [USDC, 10n, false, 0n, 0n, 0n, 0n, false] };
+
+  it('carries the recorded figure on a defaulted lender claim', async () => {
+    const r = await probeClaim(
+      client({ ...lenderReads, getOwedAtDefault: [1000n, 30n, 20n, 1_700_000_000n, true] }),
+      DIAMOND,
+      ME,
+      lenderLoan,
+    );
+    expect(r.kind === 'claimable' && r.loan.claim.owedAtDefault).toEqual({
+      kind: 'recorded',
+      principal: 1000n,
+      interest: 30n,
+      lateFee: 20n,
+      viaFallback: true,
+    });
+    expect(isMemoizableProbe(r)).toBe(true);
+  });
+
+  it('reads no record as none, whether unwritten or from a deployment without the view', async () => {
+    for (const read of [[0n, 0n, 0n, 0n, false], () => { throw revert(); }]) {
+      const r = await probeClaim(client({ ...lenderReads, getOwedAtDefault: read }), DIAMOND, ME, lenderLoan);
+      expect(r.kind === 'claimable' && r.loan.claim.owedAtDefault).toEqual({ kind: 'none' });
+    }
+  });
+
+  it('keeps the claim when only that read fails, says so, and does not memoize it', async () => {
+    const r = await probeClaim(
+      client({ ...lenderReads, getOwedAtDefault: () => { throw new Error('fetch failed'); } }),
+      DIAMOND,
+      ME,
+      lenderLoan,
+    );
+    expect(r.kind).toBe('claimable');
+    expect(r.kind === 'claimable' && r.loan.claim.owedAtDefault).toEqual({ kind: 'unreadable' });
+    expect(isMemoizableProbe(r)).toBe(false);
+    // #2426 r3 — the loan page re-reads soon instead of keeping the failure.
+    expect(loanClaimRefetchInterval(r.kind === 'claimable' ? r.loan : null)).toBe(OWED_RETRY_MS);
+  });
+
+  it('does not schedule a loan-page re-read once the figure was read, or with no claim', async () => {
+    const r = await probeClaim(
+      client({ ...lenderReads, getOwedAtDefault: [1000n, 30n, 20n, 1_700_000_000n, false] }),
+      DIAMOND,
+      ME,
+      lenderLoan,
+    );
+    expect(loanClaimRefetchInterval(r.kind === 'claimable' ? r.loan : null)).toBe(false);
+    expect(loanClaimRefetchInterval(null)).toBe(false);
+    expect(loanClaimRefetchInterval(undefined)).toBe(false);
+  });
+
+  it('does not read it outside a defaulted or fallback-pending lender claim', async () => {
+    // The fake client throws on any unexpected read, which would surface as
+    // `unreadable` here rather than `none`.
+    for (const loan of [{ ...lenderLoan, status: 'repaid' }, { ...lenderLoan, status: 'internal_matched' }]) {
+      const r = await probeClaim(client(lenderReads), DIAMOND, ME, loan as PositionLoan);
+      expect(r.kind === 'claimable' && r.loan.claim.owedAtDefault).toEqual({ kind: 'none' });
+    }
+  });
+
+  // #2426 r2 — the fallback's entry IS the default; its record is read too.
+  it('reads it for a fallback-pending lender claim', async () => {
+    const r = await probeClaim(
+      client({ ...lenderReads, getOwedAtDefault: [1000n, 30n, 20n, 1_700_000_000n, true] }),
+      DIAMOND,
+      ME,
+      { ...lenderLoan, status: 'fallback_pending' } as PositionLoan,
+    );
+    expect(r.kind === 'claimable' && r.loan.claim.owedAtDefault).toMatchObject({ kind: 'recorded', viaFallback: true });
+  });
+
+  it('never memoizes an unconfirmed probe', () => {
+    expect(isMemoizableProbe({ kind: 'unconfirmed' })).toBe(false);
+    expect(isMemoizableProbe({ kind: 'none' })).toBe(true);
+  });
+});
+
+describe('probeClaim — what internal matching cleared (#2427)', () => {
+  const matchedLoan = {
+    ...borrowerLoan,
+    role: 'lender',
+    lendingAsset: USDC,
+    status: 'internal_matched',
+  } as unknown as PositionLoan;
+  const lenderReads = { ownerOf: ME, getClaimable: [USDC, 990n, false, 0n, 0n, 0n, 0n, false] };
+
+  it('carries the recorded figure on an internally matched lender claim', async () => {
+    const r = await probeClaim(
+      client({ ...lenderReads, getOwedAtInternalMatch: [1000n, 30n, 20n, 990n, 1_700_000_000n, false] }),
+      DIAMOND,
+      ME,
+      matchedLoan,
+    );
+    expect(r.kind === 'claimable' && r.loan.claim.owedAtInternalMatch).toEqual({
+      kind: 'recorded',
+      principal: 1000n,
+      interest: 30n,
+      lateFee: 20n,
+      lenderProceeds: 990n,
+    });
+    expect(isMemoizableProbe(r)).toBe(true);
+  });
+
+  it('reads an incomplete record as incomplete, never as a figure', async () => {
+    const r = await probeClaim(
+      client({ ...lenderReads, getOwedAtInternalMatch: [0n, 0n, 0n, 0n, 0n, true] }),
+      DIAMOND,
+      ME,
+      matchedLoan,
+    );
+    expect(r.kind === 'claimable' && r.loan.claim.owedAtInternalMatch).toEqual({ kind: 'incomplete' });
+  });
+
+  it('reads no record as none, whether unwritten or from a deployment without the view', async () => {
+    for (const read of [[0n, 0n, 0n, 0n, 0n, false], () => { throw revert(); }]) {
+      const r = await probeClaim(client({ ...lenderReads, getOwedAtInternalMatch: read }), DIAMOND, ME, matchedLoan);
+      expect(r.kind === 'claimable' && r.loan.claim.owedAtInternalMatch).toEqual({ kind: 'none' });
+    }
+  });
+
+  it('keeps the claim when only that read fails, says so, and re-reads it soon', async () => {
+    const r = await probeClaim(
+      client({ ...lenderReads, getOwedAtInternalMatch: () => { throw new Error('fetch failed'); } }),
+      DIAMOND,
+      ME,
+      matchedLoan,
+    );
+    expect(r.kind).toBe('claimable');
+    expect(r.kind === 'claimable' && r.loan.claim.owedAtInternalMatch).toEqual({ kind: 'unreadable' });
+    expect(isMemoizableProbe(r)).toBe(false);
+    expect(loanClaimRefetchInterval(r.kind === 'claimable' ? r.loan : null)).toBe(OWED_RETRY_MS);
+  });
+
+  it('does not read it outside an internally matched lender claim', async () => {
+    // The fake client throws on any unexpected read, which would surface as
+    // `unreadable` here rather than `none`.
+    for (const loan of [
+      { ...matchedLoan, status: 'repaid' },
+      { ...matchedLoan, role: 'borrower' },
+    ]) {
+      const r = await probeClaim(client(lenderReads), DIAMOND, ME, loan as PositionLoan);
+      if (r.kind === 'claimable') expect(r.loan.claim.owedAtInternalMatch).toEqual({ kind: 'none' });
+    }
   });
 });

@@ -30,6 +30,7 @@ import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {RepayPeriodicFacet} from "../src/facets/RepayPeriodicFacet.sol";
 import {SwapToRepayFacet} from "../src/facets/SwapToRepayFacet.sol";
+import {SwapToRepayPartialFacet} from "../src/facets/SwapToRepayPartialFacet.sol";
 import {SwapToRepayIntentFacet} from "../src/facets/SwapToRepayIntentFacet.sol";
 import {IntentDispatchFacet} from "../src/facets/IntentDispatchFacet.sol";
 import {AutoLifecycleFacet} from "../src/facets/AutoLifecycleFacet.sol";
@@ -1024,10 +1025,19 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](3);
+        selectors = new bytes4[](2);
         selectors[0] = SwapToRepayFacet.swapToRepayFull.selector;
-        selectors[1] = SwapToRepayFacet.swapToRepayPartial.selector;
-        selectors[2] = SwapToRepayFacet.previewSwapToRepayFull.selector;
+        selectors[1] = SwapToRepayFacet.previewSwapToRepayFull.selector;
+    }
+
+    /// #2416 — the partial swap-to-repay route (split off SwapToRepayFacet).
+    function getSwapToRepayPartialFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](1);
+        selectors[0] = SwapToRepayPartialFacet.swapToRepayPartial.selector;
     }
 
     /// T-090 v1.1 (#389) — intent-based swap-to-repay facet selectors.
@@ -1432,7 +1442,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](10);
+        selectors = new bytes4[](12);
         selectors[0] = ClaimFacet.claimAsLender.selector;
         selectors[1] = ClaimFacet.claimAsBorrower.selector;
         selectors[2] = ClaimFacet.getClaimableAmount.selector;
@@ -1444,6 +1454,8 @@ contract HelperTest {
         selectors[7] = ClaimFacet.setLenderBackstopOptIn.selector;
         selectors[8] = ClaimFacet.claimAsLenderViaBackstop.selector;
         selectors[9] = ClaimFacet.getBorrowerSurplusClaim.selector;
+        selectors[10] = ClaimFacet.getOwedAtDefault.selector; // #2374
+        selectors[11] = ClaimFacet.getOwedAtInternalMatch.selector; // #2427
         return selectors;
     }
 
@@ -1631,7 +1643,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](3);
+        selectors = new bytes4[](5);
         selectors[0] = RefinanceFacet.refinanceLoan.selector;
         // T-092-H (#549) — atomic accept-and-refinance internal
         // entries; cut so the diamond fallback can route the
@@ -1639,6 +1651,9 @@ contract HelperTest {
         // #2349 — lender-accept and matcher-fill routes are separate.
         selectors[1] = RefinanceFacet.refinanceLoanFromAccept.selector;
         selectors[2] = RefinanceFacet.refinanceLoanFromMatch.selector;
+        // #2407 — the refinance-request record's view.
+        selectors[3] = RefinanceFacet.getRefinanceRequest.selector;
+        selectors[4] = RefinanceFacet.checkRefinanceRequest.selector;
         return selectors;
     }
 

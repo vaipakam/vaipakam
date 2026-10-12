@@ -33,6 +33,7 @@ import {
 } from '../../contracts/usePermit2Signing';
 import { useTxSimulation, type TxSimInput } from '../../contracts/useTxSimulation';
 import { SimulationPreview } from '../SimulationPreview';
+import { AmountPrecisionHint } from '../AmountPrecisionHint';
 import { CollateralPrecheck } from '../CollateralPrecheck';
 import { ConsentLabel } from '../ConsentLabel';
 import {
@@ -410,8 +411,14 @@ export function OrderTicket({
   // this only aligns the canPost gate with what submit enforces).
   // While the fee read is in flight the hook already falls back to
   // the static default.
+  // #2390 — with the legs' decimals, an amount finer than its token is a
+  // named error (shown under the field), never rounded at payload time.
   const formError = validateOfferForm(form, {
     maxDurationDays: fees.maxOfferDurationDays,
+    decimals: {
+      lending: lendingMeta.data?.decimals,
+      collateral: collateralMeta.data?.decimals,
+    },
   });
 
   /** The desk's fill-mode/expiry overrides on the shared payload:
@@ -1138,6 +1145,13 @@ export function OrderTicket({
             clearConsentOnEdit();
           }}
         />
+        {lendingMeta.data ? (
+          <AmountPrecisionHint
+            value={amount}
+            decimals={lendingMeta.data.decimals}
+            symbol={lendingMeta.data.symbol}
+          />
+        ) : null}
       </div>
 
       <div className="field">
@@ -1207,6 +1221,13 @@ export function OrderTicket({
             clearConsentOnEdit();
           }}
         />
+        {collateralMeta.data ? (
+          <AmountPrecisionHint
+            value={collateralAmount}
+            decimals={collateralMeta.data.decimals}
+            symbol={collateralMeta.data.symbol}
+          />
+        ) : null}
       </div>
 
       <div className="field">
@@ -1236,6 +1257,19 @@ export function OrderTicket({
             </button>
           ))}
         </div>
+        {/* Naive-user redesign — what the selected choice means, visible
+            (the chip tooltips alone are invisible on touch screens). */}
+        <p className="field-hint">
+          {expiry === 'gtc'
+            ? // #2378 r4 — a free signed offer cannot stay open indefinitely:
+              // its signature carries a 7-day deadline (see
+              // GASLESS_GTC_DEADLINE_SECONDS), so say that instead of
+              // "until you cancel".
+              postMode === 'gasless'
+              ? text.expiryGtcSignedHint
+              : text.expiryGtcTitle
+            : text.expiryGttTitle}
+        </p>
         {expiry === 'custom' ? (
           <input
             className="input"
@@ -1286,13 +1320,24 @@ export function OrderTicket({
             );
           })}
         </div>
+        {/* What the selected choice means, visible (see the expiry note).
+            #2378 r1 — always shown; a signed lend offer's constraint is
+            stated BESIDE it, not instead of it, so a lender who picks
+            "Short-lived" in sign-only mode still sees what that means. */}
+        <p className="field-hint">
+          {effectiveFillMode === FILL_AON
+            ? text.fillAonHint
+            : effectiveFillMode === FILL_IOC
+              ? text.fillIocHint
+              : text.fillPartialHint}
+        </p>
+        {gaslessLenderSingleFill ? (
+          <p className="field-hint">{text.gaslessLenderAonNote}</p>
+        ) : null}
         {iocNeedsExpiry ? (
           <p className="field-hint" style={{ color: 'var(--danger)' }}>
             {text.iocNeedsExpiry}
           </p>
-        ) : null}
-        {gaslessLenderSingleFill ? (
-          <p className="field-hint">{text.gaslessLenderAonNote}</p>
         ) : null}
       </div>
 
@@ -1325,10 +1370,12 @@ export function OrderTicket({
         {postMode === 'gasless' ? (
           <p className="field-hint">
             {indexerConfigured()
-              ? text.gaslessEscrowNote
+              ? `${text.modeGaslessHint} ${text.gaslessEscrowNote}`
               : text.gaslessNeedsIndexer}
           </p>
-        ) : null}
+        ) : (
+          <p className="field-hint">{text.modeOnchainHint}</p>
+        )}
       </div>
 
       <p className="muted" style={{ fontSize: '0.8rem' }}>

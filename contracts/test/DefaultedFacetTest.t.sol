@@ -31,6 +31,7 @@ import {IZeroExProxy} from "../src/interfaces/IZeroExProxy.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
+import {LibOwedAtDefault} from "../src/libraries/LibOwedAtDefault.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
  // For mock ERC20
@@ -2704,5 +2705,128 @@ contract DefaultedFacetTest is Test {
         vm.expectRevert(bytes("set user fail"));
         DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
         vm.clearMockedCalls();
+    }
+
+    // ─── #2374 — what the loan owed at default is recorded ───────────────
+
+    /// What `loanId` owes right now on the forced-close basis: principal,
+    /// per-second accrued interest net of interest settled, and the late fee.
+    function _owedNow(uint256 loanId)
+        internal
+        view
+        returns (uint256 principal, uint256 interest, uint256 lateFee)
+    {
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        principal = loan.principal;
+        uint256 start = loan.interestAccrualStart != 0 ? loan.interestAccrualStart : loan.startTime;
+        interest = (principal * loan.interestRateBps * (block.timestamp - start))
+            / (365 days * BASIS_POINTS) - loan.interestSettled;
+        uint256 endTime = loan.startTime + loan.durationDays * 1 days;
+        uint256 daysLate = (block.timestamp - endTime) / 1 days;
+        uint256 feeBps = 100 + daysLate * 50;
+        if (feeBps > 500) feeBps = 500;
+        lateFee = (principal * feeBps) / 10000;
+    }
+
+    function _assertOwedRecorded(
+        uint256 loanId,
+        uint256 principal,
+        uint256 interest,
+        uint256 lateFee,
+        bool viaFallback
+    ) internal view {
+        (uint256 p, uint256 i, uint256 l, uint64 at, bool vf) =
+            ClaimFacet(address(diamond)).getOwedAtDefault(loanId);
+        assertEq(p, principal, "principal at default");
+        assertEq(i, interest, "interest at default");
+        assertEq(l, lateFee, "late fee at default");
+        assertEq(at, uint64(block.timestamp), "recorded at the default");
+        assertEq(vf, viaFallback, "fallback flag");
+    }
+
+    /// A time-based default records what the loan owed at that block, on the
+    /// same basis the close settled its debt on.
+    function test_2374_aTimeDefaultRecordsWhatTheLoanOwed() public {
+        uint256 loanId = createAndAcceptOffer(
+            mockERC20, mockCollateralERC20, LibVaipakam.AssetType.ERC20,
+            1000 ether, 2000 ether, 30, 0, 0
+        );
+        vm.warp(block.timestamp + 30 days + LibVaipakam.gracePeriod(30) + 1);
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, mockCollateralERC20),
+            abi.encode(5e7, 8)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector),
+            abi.encode(uint256(0.5e18))
+        );
+        deal(mockERC20, address(diamond), 3000 ether);
+        deal(mockCollateralERC20, address(diamond), 3000 ether);
+        (uint256 p, uint256 i, uint256 l) = _owedNow(loanId);
+        assertGt(i, 0, "precondition: interest accrued");
+        assertGt(l, 0, "precondition: a late fee is due");
+
+        vm.expectEmit(true, true, false, true);
+        emit LibOwedAtDefault.OwedAtDefaultRecorded(loanId, mockERC20, p, i, l, false);
+        vm.prank(lender);
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(loanId).status),
+            uint8(LibVaipakam.LoanStatus.Defaulted)
+        );
+        _assertOwedRecorded(loanId, p, i, l, false);
+    }
+
+    /// An HF liquidation records it too.
+    function test_2374_anHfLiquidationRecordsWhatTheLoanOwed() public {
+        uint256 loanId = createAndAcceptOffer(
+            mockERC20, mockCollateralERC20, LibVaipakam.AssetType.ERC20,
+            1000 ether, 2000 ether, 30, 0, 0
+        );
+        vm.warp(block.timestamp + 10 days);
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, mockCollateralERC20),
+            abi.encode(5e7, 8)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector),
+            abi.encode(uint256(0.5e18))
+        );
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        uint256 interest = (loan.principal * loan.interestRateBps * 10 days) / (365 days * BASIS_POINTS);
+        assertGt(interest, 0, "precondition: interest accrued");
+
+        RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
+
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(loanId).status),
+            uint8(LibVaipakam.LoanStatus.Defaulted)
+        );
+        // Before maturity: no late fee.
+        _assertOwedRecorded(loanId, loan.principal, interest, 0, false);
+    }
+
+    /// An NFT rental's "principal" is a daily fee and its claim is the NFT, so
+    /// nothing is recorded for it.
+    function test_2374_anNftRentalDefaultRecordsNothing() public {
+        uint256 loanId = createAndAcceptOffer(
+            mockNft721, mockERC20, LibVaipakam.AssetType.ERC721,
+            10 ether, 1500 ether, 30, 1, 1
+        );
+        vm.warp(block.timestamp + 30 days + LibVaipakam.gracePeriod(30) + 1);
+        vm.prank(lender);
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(loanId).status),
+            uint8(LibVaipakam.LoanStatus.Defaulted),
+            "precondition: the rental defaulted"
+        );
+        (, , , uint64 at,) = ClaimFacet(address(diamond)).getOwedAtDefault(loanId);
+        assertEq(at, 0, "no record for a rental");
     }
 }

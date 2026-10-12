@@ -531,7 +531,7 @@ async function consentAndWaitEnabled(page, button, timeoutMs = 90_000) {
 
 async function selectTenor(page, days) {
   await page
-    .getByRole('group', { name: 'Term' })
+    .getByRole('group', { name: 'Loan length' })
     .getByRole('button', { name: `${days}d`, exact: true })
     .click();
 }
@@ -673,8 +673,10 @@ try {
   // loaded summary auto-selects the most active market (Desk.tsx's
   // default-market effect), so the trigger showing a real pair label
   // proves the dropdown lists at least one market beyond the
-  // "Custom pair…" escape hatch.
-  const PAIR_PLACEHOLDER = /pick a market to load its book/i;
+  // "Other pair…" escape hatch.
+  // The picker's placeholder (copy.desk.pickPair) — matched so a still-
+  // loading markets summary is never mistaken for an auto-selected pair.
+  const PAIR_PLACEHOLDER = /pick a pair to see its offers/i;
   const pairLabel = async () =>
     (await page.locator('#desk-pair').innerText().catch(() => '')).trim();
   await pollChain(
@@ -720,13 +722,13 @@ try {
   await selectTenor(page, tenor);
   // The book is the CHAIN-read path — it must resolve to a real state
   // (empty copy or ladder rows), never the unavailable copy.
-  const emptyCopy = page.getByText(/no open offers for this market yet/i);
+  const emptyCopy = page.getByText(/no open offers for this pair yet/i);
   const ladder = page.locator('.desk-ladder');
   await Promise.race([
     emptyCopy.waitFor({ timeout: 45_000 }),
     ladder.waitFor({ timeout: 45_000 }),
   ]);
-  if (await page.getByText(/couldn.t load the order book/i).isVisible().catch(() => false)) {
+  if (await page.getByText(/couldn.t load the offers/i).isVisible().catch(() => false)) {
     throw new Error('order book rendered UNAVAILABLE — the chain read path is down');
   }
   const bookState = (await emptyCopy.isVisible().catch(() => false))
@@ -764,14 +766,13 @@ try {
   const chartUnavailable = chartCard.getByText(
     /couldn.t load the rate history right now/i,
   );
-  // `copy.desk.chart.empty` — "No fills yet for this market — the
-  // chart draws only executed rates." (matched on its distinctive
-  // second half so the tape's similar "No fills yet…" copy can't
+  // `copy.desk.chart.empty` — "No loans agreed yet for this pair — the
+  // chart only shows rates people actually agreed." (matched on its distinctive
+  // second half so the tape's similar "No loans agreed yet…" copy can't
   // collide even if scoping ever changes).
-  const chartEmptyMarket = chartCard.getByText(/chart draws only executed rates/i);
-  // `copy.desk.chart.emptyRange` — "No fills in this range — try a
-  // longer range."
-  const chartEmptyRange = chartCard.getByText(/no fills in this range/i);
+  const chartEmptyMarket = chartCard.getByText(/chart only shows rates people actually agreed/i);
+  // `copy.desk.chart.emptyRange` — "No loans agreed in this period…"
+  const chartEmptyRange = chartCard.getByText(/no loans agreed in this period/i);
   // The wrapper div mounts before lightweight-charts initializes, so a
   // "drawn series" claim must see the library's actual OUTPUT — a
   // <canvas> child — not just the container (Codex #1143 round-1 P2:
@@ -801,14 +802,14 @@ try {
         }`
       : (await chartEmptyMarket.isVisible().catch(() => false))
         ? 'honest market-history empty copy ("…chart draws only executed rates.")'
-        : 'honest range-scoped empty copy ("No fills in this range…")';
+        : 'honest range-scoped empty copy ("No loans agreed in this period…")';
   // The interval/range chip groups render in EVERY chart state (they
   // sit outside the tri-state branch). The Apache-2.0 TradingView
   // attribution link, by contrast, shows ONLY when a chart actually
   // draws (UX-037) — asserted state-aware below.
   for (const [groupName, chips] of [
-    ['Interval', ['1h', '4h', '1d']],
-    ['Range', ['7d', '30d', '90d', 'all']],
+    ['Each bar covers', ['1h', '4h', '1d']],
+    ['Period shown', ['7d', '30d', '90d', 'all']],
   ]) {
     for (const chip of chips) {
       const chipBtn = chartCard
@@ -876,12 +877,12 @@ try {
   }
   await page.locator('#desk-collateral-amount').fill(COLLATERAL_TLIQ);
   await page
-    .getByRole('group', { name: 'Expiry' })
-    .getByRole('button', { name: 'GTC', exact: true })
+    .getByRole('group', { name: 'How long it stays open' })
+    .getByRole('button', { name: 'Until I cancel', exact: true })
     .click();
   await page
-    .getByRole('group', { name: 'Fill mode' })
-    .getByRole('button', { name: 'Partial', exact: true })
+    .getByRole('group', { name: 'Can it be taken in parts?' })
+    .getByRole('button', { name: 'Yes, in parts', exact: true })
     .click();
 
   // Block first, index-total second: a create can't mine between the
@@ -895,12 +896,13 @@ try {
   // restored after cancel.
   wethBeforePost = await erc20Read(WETH, 'balanceOf', [lenderAddr]);
 
-  const post = page.getByRole('button', { name: /^post order$/i });
+  const post = page.getByRole('button', { name: /^post offer$/i });
   await consentAndWaitEnabled(page, post);
   postAttempted = true; // a create tx may exist from here on, mined or not
   await post.click();
   // Real testnet tx (possibly approve + create, or Permit2 + create).
-  await page.getByText(/order posted/i).waitFor({ timeout: 120_000 });
+  // Anchored — the first-visit guide also contains "offer posted".
+  await page.getByText(/^Offer posted — /).waitFor({ timeout: 120_000 });
   await snap('rate-desk-03-posted');
   record(
     `3. post lend order (${AMOUNT_WETH} WETH @ ${POST.pct}, ${COLLATERAL_TLIQ} tLIQ, GTC, Partial)`,
@@ -994,7 +996,7 @@ try {
   const blockedNow = await cancelBtn.isDisabled();
   const cooldownTitle = await cancelBtn.getAttribute('title');
   await snap('rate-desk-04-own-order');
-  if (blockedNow && /cancel available in \d+s/i.test(cooldownTitle ?? '')) {
+  if (blockedNow && /you can cancel in \d+s/i.test(cooldownTitle ?? '')) {
     record(
       '5. own order in ladder + Open orders; cancel gated by cooldown',
       'PASS',
@@ -1017,7 +1019,7 @@ try {
   }
 
   // ---- step 6: amend in place (ONE modifyOffer, same offer id) ------
-  await ordersRow().getByRole('button', { name: /amend/i }).click();
+  await ordersRow().getByRole('button', { name: /^change$/i }).click();
   const rateInput = page.locator(`#amend-${offerId}-rate`);
   await pollChain(
     'amend form to seed from the live getOffer read',
@@ -1101,13 +1103,13 @@ try {
   // (Codex round-2 P2 #3.) The market-scoped /loans/recent route is
   // production-healthy post-migration, so the tape must resolve to
   // real fills or the honest empty copy (`copy.desk.tapeEmpty`:
-  // "No fills yet for this market.") — the unavailable copy
-  // (`copy.desk.tapeUnavailable`: "We couldn't load recent fills right
+  // "No loans agreed yet for this pair.") — the unavailable copy
+  // (`copy.desk.tapeUnavailable`: "We couldn't load recent loans right
   // now.") is a FAIL.
-  const tapeCard = page.locator('.card').filter({ hasText: 'Recent fills' }).first();
+  const tapeCard = page.locator('.card').filter({ hasText: 'Recent loans' }).first();
   await tapeCard.waitFor({ timeout: 30_000 });
-  const tapeEmpty = tapeCard.getByText('No fills yet for this market.', { exact: true });
-  const tapeUnavailable = tapeCard.getByText(/couldn.t load recent fills right now/i);
+  const tapeEmpty = tapeCard.getByText('No loans agreed yet for this pair.', { exact: true });
+  const tapeUnavailable = tapeCard.getByText(/couldn.t load recent loans right now/i);
   const tapeRows = tapeCard.locator('.desk-tape-row');
   await pollChain(
     'the tape to resolve out of its loading state',
@@ -1129,7 +1131,7 @@ try {
     'PASS',
     tapeFillCount > 0
       ? `${tapeFillCount} fill row(s) rendered`
-      : 'honest market-scoped empty state ("No fills yet for this market.")',
+      : 'honest market-scoped empty state ("No loans agreed yet for this pair.")',
   );
 
   // ---- step 7b (phase 2, #1130): History tab — ASSERTED healthy ------
@@ -1231,7 +1233,7 @@ try {
   );
   // Restore the Open orders tab for step 8 and re-anchor on this run's
   // offer row before touching its cancel button.
-  await tabsCard.getByRole('button', { name: 'Open orders', exact: true }).click();
+  await tabsCard.getByRole('button', { name: 'Your open offers', exact: true }).click();
   await ordersRow().waitFor({ timeout: 30_000 });
 
   // ---- step 8: wait out the REAL cooldown, then cancel ---------------

@@ -8,6 +8,7 @@ import {LibCloseoutFreeze} from "../libraries/LibCloseoutFreeze.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibTierExclusion} from "../libraries/LibTierExclusion.sol";
+import {LibOwedAtDefault} from "../libraries/LibOwedAtDefault.sol";
 import {LibConsolidation} from "../libraries/LibConsolidation.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 
@@ -218,6 +219,8 @@ contract EncumbranceMutateFacet is DiamondReentrancyGuard {
     ) external onlyDiamondInternal {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
+        // #2374 — what the loan owed at default, at the close's own timestamp.
+        LibOwedAtDefault.onTerminal(s, loanId, expectedFrom, to);
         LibLifecycle.transition(loan, expectedFrom, to);
         LibSanctionedLock.recordFrozenClaimantForLoan(s, loan, true);
         LibSanctionedLock.recordFrozenClaimantForLoan(s, loan, false);
@@ -237,6 +240,7 @@ contract EncumbranceMutateFacet is DiamondReentrancyGuard {
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
+        LibOwedAtDefault.onTerminal(s, loanId, loan.status, to); // #2374
         LibLifecycle.transitionFromAny(loan, to);
         LibSanctionedLock.recordFrozenClaimantForLoan(s, loan, true);
         LibSanctionedLock.recordFrozenClaimantForLoan(s, loan, false);

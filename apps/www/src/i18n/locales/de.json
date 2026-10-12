@@ -1033,8 +1033,6 @@
     }
   },
   "banners": {
-    "sanctionsMatchTitle": "{{label}}: Treffer im Sanktions-Screening.",
-    "sanctionsMatchBody": "Der On-Chain-Sanktions-Oracle (Chainalysis) listet diese Adresse derzeit. Jede Angebotserstellung oder Angebotsannahme wird auf Protokollebene zurückgesetzt. Bei einem Fehltreffer den Chainalysis-Support kontaktieren — Vaipakam unterhält keine eigene Sanktionsliste.",
     "sanctionsLabelWallet": "Verbundenes Wallet",
     "sanctionsLabelOfferCreator": "Angebotsersteller",
     "vaultUpgradeBody": "Vault-Upgrade erforderlich — der Vault ist auf v{{userVersion}}, das Pflichtminimum ist v{{mandatoryVersion}} (neueste v{{currentVersion}}). Diamond-Abläufe werden bis zum Upgrade zurückgesetzt.",

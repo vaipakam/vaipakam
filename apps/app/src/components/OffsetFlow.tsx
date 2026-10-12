@@ -20,13 +20,13 @@
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { usePublicClient, useWalletClient } from 'wagmi';
-import { parseEventLogs, parseUnits } from 'viem';
+import { parseEventLogs } from 'viem';
 import { copy } from '../content/copy';
 import { isPositiveDecimal, captureTxError } from '../lib/errors';
 import { flowDisabled } from '../lib/killSwitch';
 import { useActiveChain } from '../chain/useActiveChain';
 import { DIAMOND_ABI_VIEM, useDiamondWrite, useTermsBlockNonExitWrites } from '../contracts/diamond';
-import { ensureAllowance } from '../contracts/erc20';
+import { ensureAllowance, trackApproval } from '../contracts/erc20';
 import {
   assertAssetNotPausedLive,
   assertErc20BalanceLive,
@@ -45,7 +45,13 @@ import { LOCK_PRECLOSE_OFFSET } from '../data/offsetPending';
 import { LOCK_EARLY_WITHDRAWAL_SALE } from '../data/loanSalePending';
 import type { IndexedLoan } from '../data/indexer';
 import { MAX_INTEREST_BPS, percentToBps } from '../lib/offerSchema';
-import { exactAmountString, formatTokenAmount } from '../lib/format';
+import {
+  exactAmountString,
+  exactUnitsOrNull,
+  formatTokenAmount,
+  isTooPrecise,
+} from '../lib/format';
+import { AmountPrecisionHint } from './AmountPrecisionHint';
 import { ConfirmReceipt } from './ConfirmReceipt';
 import type { TokenMeta } from '../contracts/erc20';
 
@@ -79,6 +85,7 @@ export function OffsetFlow({
   onPosted,
   busy,
   setBusy,
+  preSubmitBlock,
 }: {
   row: IndexedLoan;
   live: LoanLive;
@@ -95,6 +102,12 @@ export function OffsetFlow({
   onPosted: (offerId: string) => void;
   busy: boolean;
   setBusy: (b: boolean) => void;
+  /** #2406 r1 — the page's live borrower-settlement gate (a linked sale
+   *  acceptance, or a refinance request found on chain), run on entry
+   *  and again immediately before the write. An offset settles this loan
+   *  when taken, so it would strand either. Returns a message to show, or
+   *  null to proceed. */
+  preSubmitBlock?: () => Promise<string | null>;
 }) {
   const { address, walletChain, onSupportedChain } = useActiveChain();
   const { data: walletClient } = useWalletClient();
@@ -141,7 +154,7 @@ export function OffsetFlow({
     String(maxDurationDays),
   );
   // exactAmountString, not formatTokenAmount: the display formatter's
-  // thousands separators don't parse back through parseUnits.
+  // thousands separators don’t parse back through parseExactUnits.
   const [collateralInput, setCollateralInput] = useState(() =>
     collateralMeta
       ? exactAmountString(live.collateralAmount, collateralMeta.decimals)
@@ -175,12 +188,11 @@ export function OffsetFlow({
   const collateralWei = (() => {
     if (collateralIsNft) return live.collateralAmount;
     if (!isPositiveDecimal(collateralInput)) return null;
-    try {
-      return parseUnits(collateralInput, collateralMeta.decimals);
-    } catch {
-      return null;
-    }
+    // #2390 — exact: excess precision is refused, never rounded.
+    return exactUnitsOrNull(collateralInput, collateralMeta.decimals);
   })();
+  const collateralTooPrecise =
+    !collateralIsNft && isTooPrecise(collateralInput, collateralMeta.decimals);
   const collateralValid =
     collateralWei !== null && collateralWei >= live.collateralAmount;
 
@@ -240,7 +252,34 @@ export function OffsetFlow({
     }
     setBusy(true);
     setError(null);
+    // #2406 r3/r4 — what this attempt's approval did, so a submit stopped
+    // after it mined (a late gate, or the write failing) puts it back
+    // rather than leaving a principal-plus-completion permission behind
+    // with no offset offer to use or cancel (`trackApproval`).
+    const approval = trackApproval();
+    const unwindApproval = async () => {
+      const ok = await approval.unwind({
+        publicClient,
+        walletClient,
+        owner: address,
+        spender: walletChain.diamondAddress,
+      });
+      if (!ok) {
+        setError((prior) =>
+          prior
+            ? `${prior} ${copy.errors.approvalCleanupFailed}`
+            : copy.errors.approvalCleanupFailed,
+        );
+      }
+    };
     try {
+      if (preSubmitBlock) {
+        const blocked = await preSubmitBlock();
+        if (blocked) {
+          setError(blocked);
+          return;
+        }
+      }
       // offsetWithNewOffer is Tier-1 — live re-screen before anything
       // can mine.
       await assertWalletNotSanctionedLive(
@@ -404,6 +443,7 @@ export function OffsetFlow({
         owner: address,
         spender: walletChain.diamondAddress,
         amount: liveLoan.principal + liveBound,
+        ...approval.hooks(liveLoan.principalAsset),
       });
       // Codex #1539 r1 — `ensureAllowance` can add its OWN approval
       // transaction and wallet-confirm window between the early
@@ -420,7 +460,19 @@ export function OffsetFlow({
         loanEndTimeOf(liveLoan)
       ) {
         setError(copy.offset.onlyBeforeDue);
+        await unwindApproval();
         return;
+      }
+      // LATE re-gate, as the handover flow does: approvals and reads above
+      // can take a while, and a request posted meanwhile must still stop
+      // the write — and give back the approval it no longer needs.
+      if (preSubmitBlock) {
+        const blockedLate = await preSubmitBlock();
+        if (blockedLate) {
+          setError(blockedLate);
+          await unwindApproval();
+          return;
+        }
       }
       const { receipt } = await write('offsetWithNewOffer', [
         BigInt(row.loanId),
@@ -447,6 +499,7 @@ export function OffsetFlow({
       void queryClient.invalidateQueries({ queryKey: ['activeOffers'] });
     } catch (err) {
       setError(captureTxError(err));
+      await unwindApproval();
     } finally {
       setBusy(false);
     }
@@ -517,7 +570,12 @@ export function OffsetFlow({
             disabled={busy}
             aria-label={copy.offset.collateralLabel(collateralMeta!.symbol)}
           />
-          {!collateralValid && collateralInput !== '' ? (
+          <AmountPrecisionHint
+            value={collateralInput}
+            decimals={collateralMeta!.decimals}
+            symbol={collateralMeta!.symbol}
+          />
+          {!collateralValid && collateralInput !== '' && !collateralTooPrecise ? (
             <span className="field-hint" style={{ color: 'var(--danger)' }}>
               {copy.offset.collateralMin(
                 formatTokenAmount(

@@ -71,6 +71,7 @@ import {
   type RpcIdentityVerdict,
 } from '@vaipakam/lib/rpcIdentity';
 import { chunkD1InList } from '@vaipakam/lib/d1Binds';
+import { activityValue, collectBatch, type ActivityValueContext } from './activityValue';
 import {
   blockToNumber,
   resolveSettledHead,
@@ -122,11 +123,13 @@ import {
   MAX_SUBREQUESTS_PER_INVOCATION,
   createBudget,
   createChainClient,
+  meterD1,
   meterEnv,
   reportSpend,
   spent,
   type TickBudget,
 } from './subrequestBudget';
+import { schemaDeclineNotice, schemaGate } from './schemaGate';
 
 /** Resolve a chain's deployBlock from the consolidated deployments
  *  JSON — the indexer's first-run fallback when no cursor exists. */
@@ -677,6 +680,13 @@ export async function verifyRpcChainIdentity(
  *  a new failure kind can't silently read as "caught up" there. */
 export function isRetryableScanSkip(skipped: string | undefined): boolean {
   return skipped === 'rpc-error' || skipped === 'rpc-chain-mismatch';
+}
+
+/** The schema gate (schemaGate.ts) declined the pass. Not retryable within
+ *  an alarm's budget — no retry can apply a missing migration — so the
+ *  ingest DO stops its loop rather than rearming (#2409 r2). */
+export function isSchemaDeclinedSkip(skipped: string | undefined): boolean {
+  return skipped === 'schema-pending' || skipped === 'schema-unknown';
 }
 
 /**
@@ -1796,6 +1806,22 @@ export async function runChainIndexerForChain(
   ),
 ): Promise<ChainIndexerResult> {
   try {
+    // THE SCHEMA GATE, ahead of every D1 write the pass makes (see
+    // schemaGate.ts). Here rather than inside `runChainPass` because it is a
+    // precondition of the whole pass — including the one-time backfills that
+    // pass runs before its first return — and both ingest lanes (the DO alarm
+    // and the legacy inline cron) reach the pass only through this wrapper.
+    // Not retryable: the cursor stays where it is and the next tick asks again.
+    const schema = await schemaGate.check(meterD1(rawEnv.DB, budget));
+    if (schema.state !== 'current') {
+      // eslint-disable-next-line no-console
+      console.warn(schemaDeclineNotice(`chain ${chain.id} pass`, schema));
+      return {
+        ...emptyResult(schema.state === 'pending' ? 'schema-pending' : 'schema-unknown'),
+        chainId: chain.id,
+        invocationSubrequestsSpent: spent(budget),
+      };
+    }
     const result = await runChainPass(rawEnv, chain, reconcileBudget, budget);
     return { ...result, invocationSubrequestsSpent: spent(budget) };
   } finally {
@@ -2048,16 +2074,20 @@ async function runChainPass(
     // #1213 PR 2b (Codex #1300 r1) — the caught-up quiet tick is a
     // valid "notifications complete through lastBlock" point too.
     await stampNotifiedWatermark(env, chainId, lastBlock);
+    // #2382 r6 — a caught-up tick heals too, or a backlog the scanning ticks
+    // did not finish (or a soft-stopped heal) would wait for the next new
+    // block. Pinned to the cursor: every event up to it is processed.
+    const quietHeal = await runHealLanes(client, diamond, chainId, env, budget, lastBlock);
     // (Both one-time backfills already ran above, before this branch.)
     return {
       scannedFrom: scanFrom,
       scannedTo: scanFrom - 1n,
       newOffers: 0,
       statusUpdates: 0,
-      detailRefreshes: 0,
+      detailRefreshes: quietHeal.detailRefreshes,
       newLoans: 0,
       loanStatusUpdates: 0,
-      loanDetailRefreshes: 0,
+      loanDetailRefreshes: quietHeal.loanDetailRefreshes,
       activityEvents: 0,
       // #1213 PR 2 (Codex #1298 r3) — a reminder minted on this quiet
       // tick must still reach the bell promptly: the count maps to the
@@ -2289,24 +2319,6 @@ async function runChainPass(
 
   const activityEvents = await recordActivityEvents(allLogs, env, chainId, blockTimestamps);
 
-  // Per-domain detail refresh, batched per tick.
-  const detailRefreshes = await refreshStubOffers(
-    client,
-    diamond,
-    chainId,
-    env,
-  );
-  // Bootstrap loan position-NFT token IDs (lender_token_id /
-  // borrower_token_id) for any newly-inserted loan rows. One
-  // getLoanDetails call per loan, batched per tick. After bootstrap
-  // the values are immutable for the loan's lifetime; the next tick
-  // skips them via the `lender_token_id = '0'` predicate.
-  const loanDetailRefreshes = await refreshStubLoans(
-    client,
-    diamond,
-    chainId,
-    env,
-  );
 
   // Advance cursor only after every step succeeded — atomic from the
   // cron's perspective. #757 (Codex #764): the advance is MONOTONIC —
@@ -2437,6 +2449,26 @@ async function runChainPass(
   // this is the collection surface). Emitted only for non-trivial
   // scans to keep an idle chain's log quiet; the stub-heal override is
   // a truncation cause independent of the cap, reported separately.
+  // HEAL LANES RUN LAST (#2382 r2). They re-read rows the scan or a migration
+  // left incomplete — placeholder offers, offers whose collateral range or
+  // fills are unread, stub loans — and every row they skip is selected again
+  // next tick. So they go after the cursor write and after every step that
+  // runs once per scan (notifications, reconciliation, the calendar sweep):
+  // whatever they spend can then cost only heal rows, never the scan's
+  // progress or a one-shot step. That placement is what makes them safe, not
+  // a cost estimate — a read's real cost includes the client's retries, and
+  // D1 counts queries separately from subrequests, so any fixed per-row
+  // figure is a guess. A failure, including the platform refusing a request
+  // past the invocation ceiling, is logged and the remaining rows wait.
+  const { detailRefreshes, loanDetailRefreshes } = await runHealLanes(
+    client,
+    diamond,
+    chainId,
+    env,
+    budget,
+    scanTo,
+  );
+
   const hintStats = pushHintStats(allLogs);
   const stubHealForcedTruncation = detailRefreshes > 0 || loanDetailRefreshes > 0;
   // Emit when the scan touched ids OR truncated for ANY reason (Codex
@@ -2549,6 +2581,13 @@ async function processOfferLogs(
   // history rows the user expects to keep, and the UI couldn't
   // disambiguate "Sold via OpenSea" from a borrower-initiated cancel.
   const consumedBySale: { offerId: bigint }[] = [];
+  // #2382 r2 — borrower offers a match consumed part of. Their filled amounts
+  // are NOT read here: one RPC read per match inside the scan made a burst of
+  // matches spend past the invocation allowance before the cursor write.
+  // They are marked unread instead (one statement for the whole batch, below)
+  // and the detail-refresh lane, which runs after the cursor write, re-reads
+  // them; until then the card states the request's floor as "at least".
+  const borrowerFillsStale = new Set<number>();
   // Range-Orders Phase 1 — partial-fill ratchet + terminal close.
   // Both replace the prior cron-driven `OR status = 'active'` refresh
   // sweep with single-field event-driven UPDATEs.
@@ -2579,15 +2618,19 @@ async function processOfferLogs(
         amountMax: bigint;
         interestRateBps: bigint;
         interestRateBpsMax: bigint;
-        // NOTE: the event's post-image also carries collateralAmountMax,
-        // deliberately NOT captured here — the `offers` schema stores
-        // collateral min only (no collateral_amount_max column exists;
-        // the create/refresh paths never wrote one and no read path
-        // consumes one). Persisting it wedged production ingest with
-        // `D1_ERROR: no such column` on every OfferModified (#1149).
-        collateralAmount: bigint; }
+        collateralAmount: bigint;
+        // #2382 — the ceiling of a borrower offer's collateral range, raw
+        // from the post-image (0 = single-value, normalised on write).
+        // Persisted since migration 0054 added the column; #1149 was this
+        // same write landing BEFORE the column existed, which the schema
+        // gate (schemaGate.ts) now prevents for every migration.
+        collateralAmountMax: bigint; }
     | { kind: 'matched';
         lenderOfferId: bigint;
+        // #2382 — the borrower side of the match. Under partial fills its
+        // offer stays open with part of its collateral range consumed, so
+        // its filled amounts are re-read block-pinned like the lender's.
+        borrowerOfferId: bigint;
         // #760 — block of the OfferMatched log, for the block-pinned
         // absolute `amountFilled` read in the apply loop below.
         blockNumber: bigint; };
@@ -2626,6 +2669,7 @@ async function processOfferLogs(
       orderedMatchAndModify.push({
         kind: 'matched',
         lenderOfferId: a.lenderOfferId as bigint,
+        borrowerOfferId: a.borrowerOfferId as bigint,
         // #760 — carried so the matched apply can read the absolute
         // `amountFilled` block-pinned to THIS event (idempotent re-scan).
         blockNumber: log.blockNumber,
@@ -2647,6 +2691,7 @@ async function processOfferLogs(
         interestRateBps: a.interestRateBps as bigint,
         interestRateBpsMax: a.interestRateBpsMax as bigint,
         collateralAmount: a.collateralAmount as bigint,
+        collateralAmountMax: a.collateralAmountMax as bigint,
       });
     }
   }
@@ -2731,6 +2776,10 @@ async function processOfferLogs(
         amountMax?: bigint;
         amountFilled?: bigint;
         interestRateBpsMax?: bigint;
+        // #2382 — the collateral range ceiling (0 = single-value) and the
+        // portion partial matches have consumed.
+        collateralAmountMax?: bigint;
+        collateralAmountFilled?: bigint;
         // #164 — on-chain createdAt (uint64 unix-seconds), stamped at
         // `createOffer` and immutable thereafter. Captured here
         // explicitly instead of derived from `first_seen_at` so the
@@ -2753,17 +2802,18 @@ async function processOfferLogs(
            principal_liquidity, collateral_liquidity,
            amount, amount_max, amount_filled,
            interest_rate_bps, interest_rate_bps_max,
-           collateral_amount, duration_days,
+           collateral_amount, collateral_amount_max, collateral_amount_filled,
+           duration_days,
            token_id, collateral_token_id,
            quantity, collateral_quantity, position_token_id,
            prepay_asset,
            use_full_term_interest, creator_fallback_consent, allows_partial_repay,
            creator_current_owner,
-           is_stub,
+           is_stub, collateral_range_stale,
            created_at, expires_at, fill_mode,
            first_seen_block, first_seen_at, updated_at)
          VALUES
-          (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)`,
+          (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?, ?, ?, ?, ?)`,
       )
         .bind(
           chainId,
@@ -2783,6 +2833,13 @@ async function processOfferLogs(
           Number(od.interestRateBps),
           Number(od.interestRateBpsMax ?? 0n),
           od.collateralAmount.toString(),
+          // #2382 r6 — NOT from this read. It is taken at `latest` on purpose
+          // (#763: no archive dependency on a fail-soft read), so a range it
+          // returned could reflect a later, unscanned — and reorgable — amend
+          // or match. The row is inserted marked `collateral_range_stale` and
+          // the heal lane reads the range at the pass's settled block.
+          null,
+          null,
           Number(od.durationDays),
           od.tokenId.toString(),
           od.collateralTokenId.toString(),
@@ -2905,8 +2962,11 @@ async function processOfferLogs(
   // interleaving is retained because OfferModified still applies its own
   // post-image to amount_max.
   //
-  // Note: borrower-side partial fills are out of Phase 1 scope (the
-  // borrowerOfferId is single-fill), so we apply on `lenderOfferId` only.
+  // #2382 — the BORROWER offer's fills are re-read too. This note used to
+  // say borrower partial fills were out of scope and applied the match to
+  // the lender offer only; `OfferMatchFacet` has since gained borrower-side
+  // partial fills (behind `partialFillEnabled`), under which the borrower
+  // offer stays open with `amountFilled` / `collateralAmountFilled` grown.
   for (const ev of orderedMatchAndModify) {
     if (ev.kind === 'matched') {
       // #760 — write the ABSOLUTE `amount_filled` read block-pinned to this
@@ -2952,22 +3012,19 @@ async function processOfferLogs(
         .bind(absFilled.toString(), now, chainId, Number(ev.lenderOfferId))
         .run();
       if ((r.meta?.changes ?? 0) > 0) statusUpdates++;
+      // #2382 r2 — the borrower offer's fills are re-read by the refresh
+      // lane (see `borrowerFillsStale`), not here.
+      borrowerFillsStale.add(Number(ev.borrowerOfferId));
     } else {
       // OfferModified — full post-image. Status stays 'active'
       // (modifications are only allowed on unaccepted offers;
       // OfferAlreadyAccepted reverts the modify call), so we don't
       // touch the status column.
       //
-      // #1149 — do NOT write `collateral_amount_max`: that column has
-      // never existed on `offers` (0004 created amount_max +
-      // interest_rate_bps_max but collateral min only, and no later
-      // migration added a max). The over-eager post-image write here
-      // failed the whole scan with `D1_ERROR: no such column` on any
-      // OfferModified in the window, and the fail-closed design then
-      // wedged the chain's cursor permanently. Nothing reads a
-      // collateral max from this table; if a ranged-collateral display
-      // ever needs it, add the column via migration FIRST, then extend
-      // the create/refresh writes alongside this one.
+      // #2382 — the collateral ceiling is written too (migration 0054).
+      // #1149 was this write landing before its column existed; the
+      // schema gate now holds the whole pass until the migration a build
+      // needs is applied, so the write ships WITH its column, not ahead.
       const r = await env.DB.prepare(
         `UPDATE offers
          SET amount = ?,
@@ -2975,6 +3032,7 @@ async function processOfferLogs(
              interest_rate_bps = ?,
              interest_rate_bps_max = ?,
              collateral_amount = ?,
+             collateral_amount_max = ?,
              updated_at = ?
          WHERE chain_id = ? AND offer_id = ?`,
       )
@@ -2984,6 +3042,7 @@ async function processOfferLogs(
           Number(ev.interestRateBps),
           Number(ev.interestRateBpsMax),
           ev.collateralAmount.toString(),
+          effectiveCollateralMax(ev.collateralAmount, ev.collateralAmountMax),
           now,
           chainId,
           Number(ev.offerId),
@@ -3038,7 +3097,36 @@ async function processOfferLogs(
     }
   }
 
+  // #2382 r2 — mark the matched borrower offers' fills unread, in one batch.
+  // Last in this function, so it outranks any earlier write in the same scan
+  // (an insert's '0', a modify) — those predate the match. The refresh lane
+  // selects active rows with a NULL here and writes what the chain holds.
+  await markBorrowerFillsUnread(env, chainId, [...borrowerFillsStale]);
+
   return { newOffers, statusUpdates };
+}
+
+/**
+ * #2382 r2 — mark offers' collateral fills unread so the detail-refresh lane
+ * re-reads them (it selects active rows with a NULL here). One `batch()`, so
+ * one subrequest however many matches the scan carried, chunked under D1's
+ * bind cap. Exported for its test against the real migrated schema.
+ */
+export async function markBorrowerFillsUnread(
+  env: Env,
+  chainId: number,
+  offerIds: readonly number[],
+): Promise<void> {
+  if (offerIds.length === 0) return;
+  const chunks = chunkD1InList(offerIds, { before: [chainId] });
+  await env.DB.batch(
+    chunks.map((c) =>
+      env.DB.prepare(
+        `UPDATE offers SET collateral_amount_filled = NULL, collateral_range_stale = 1
+          WHERE chain_id = ? AND offer_id IN (${c.placeholders})`,
+      ).bind(...c.binds),
+    ),
+  );
 }
 
 // ──────────────────────────────────────────────────────────────────
@@ -3288,16 +3376,78 @@ async function processSignedOfferLogs(
 }
 
 /**
- * Refresh `getOfferDetails` for every offer whose row was inserted as
- * a placeholder OR whose status flipped (in case a partial-fill
- * ratcheted `amountFilled`). Bound by DETAILS_REFRESH_BATCH per tick.
+ * The heal lanes, run LAST on every pass — scanning or caught-up (#2382
+ * r2/r6). They re-read rows the scan or a migration left incomplete, and
+ * every row they skip is selected again next tick, so they go after the
+ * cursor write and every once-per-scan step: whatever they spend can cost
+ * only heal rows. A failure — including the platform refusing a request past
+ * the invocation ceiling — is logged and the remaining rows wait.
+ * `atBlock` is the block every read is pinned to: everything up to it has
+ * been processed.
  */
-async function refreshStubOffers(
+async function runHealLanes(
   client: PublicClient,
   diamond: Address,
   chainId: number,
   env: Env,
+  budget: TickBudget,
+  atBlock: bigint,
+): Promise<{ detailRefreshes: number; loanDetailRefreshes: number }> {
+  let detailRefreshes = 0;
+  let loanDetailRefreshes = 0;
+  try {
+    detailRefreshes = await refreshStubOffers(client, diamond, chainId, env, budget, atBlock);
+    // Bootstrap loan position-NFT token IDs (lender_token_id /
+    // borrower_token_id) for any newly-inserted loan rows. One
+    // getLoanDetails call per loan, batched per tick. After bootstrap
+    // the values are immutable for the loan's lifetime; the next tick
+    // skips them via the `lender_token_id = '0'` predicate.
+    loanDetailRefreshes = await refreshStubLoans(client, diamond, chainId, env, budget);
+  } catch (err) {
+    console.warn(`[chainIndexer] heal lanes stopped on chain ${chainId}; remaining rows wait for the next tick`, err);
+  }
+  return { detailRefreshes, loanDetailRefreshes };
+}
+
+/** Subrequests one `refreshOfferDetails` normally spends — the details
+ *  read, the position-NFT `ownerOf` read, the row UPDATE — of which one is
+ *  a D1 query. A NORMAL figure for a soft stop, not a bound: a retried read
+ *  costs more. Correctness comes from where the lanes run (see `runChainPass`). */
+const OFFER_DETAIL_REFRESH_COST = 3;
+/** The same for one `refreshStubLoans` row: the read and the UPDATE. */
+const LOAN_DETAIL_REFRESH_COST = 2;
+
+/** Whether a heal row is worth STARTING: both meters still hold its normal
+ *  cost. A soft stop that avoids walking into the platform ceiling on a long
+ *  backlog; the heal lanes are placed so that overshooting it loses nothing
+ *  but the row. */
+function healRowAffordable(budget: TickBudget, subrequests: number): boolean {
+  return budget.subrequests.remaining >= subrequests && budget.d1Queries.remaining >= 1;
+}
+
+/**
+ * Refresh `getOfferDetails` for every offer whose row was inserted as
+ * a placeholder OR whose status flipped (in case a partial-fill
+ * ratcheted `amountFilled`). Bound by DETAILS_REFRESH_BATCH per tick.
+ *
+ * And by what the invocation has left (#2382 r1/r2). This lane runs LAST in
+ * the pass — after the cursor write — so running out can no longer freeze a
+ * chain; the soft stop just avoids spending a backlog's worth of requests
+ * into the ceiling. A migration that newly qualifies every active offer (0054
+ * did) is that backlog for a while; the rest wait for later ticks, oldest
+ * first.
+ */
+export async function refreshStubOffers(
+  client: PublicClient,
+  diamond: Address,
+  chainId: number,
+  env: Env,
+  budget: TickBudget,
+  /** The block every read is pinned to — the pass's settled `scanTo`
+   *  (#2382 r5). See `refreshOfferDetails`. */
+  atBlock: bigint,
 ): Promise<number> {
+  if (!healRowAffordable(budget, 1)) return 0;
   // Targeted refresh: only rows actually flagged as stub. Every row
   // INSERTed via the inline-success path lands with `is_stub = 0`, and
   // `refreshOfferDetails` flips the flag back to 0 once it writes
@@ -3313,9 +3463,16 @@ async function refreshStubOffers(
   // the refresh set. Genuinely-deleted offers (zero-fill cancels) are handled in
   // `refreshOfferDetails`, which clears `is_stub` on a zero read so the dead row
   // drops out of this queue instead of starving real stubs.
+  // #2382 r6 — the range is re-read on an EXPLICIT marker, set by every path
+  // that can change it (migration 0054's backfill of active rows, an insert,
+  // a match) and cleared only by a completed read. Earlier revisions inferred
+  // "needs a read" from combinations of NULLs and statuses, and each round of
+  // review found a row that inference missed (a pre-0054 offer closed by a
+  // match, a terminal row a match both marked and closed). The marker names
+  // the state instead of guessing it.
   const stale = await env.DB.prepare(
     `SELECT offer_id FROM offers
-     WHERE chain_id = ? AND is_stub = 1
+     WHERE chain_id = ? AND (is_stub = 1 OR collateral_range_stale = 1)
      ORDER BY updated_at ASC
      LIMIT ?`,
   )
@@ -3323,7 +3480,8 @@ async function refreshStubOffers(
     .all<{ offer_id: number }>();
   let refreshed = 0;
   for (const row of stale.results ?? []) {
-    const ok = await refreshOfferDetails(client, diamond, chainId, row.offer_id, env);
+    if (!healRowAffordable(budget, OFFER_DETAIL_REFRESH_COST)) break;
+    const ok = await refreshOfferDetails(client, diamond, chainId, row.offer_id, env, atBlock);
     if (ok) refreshed++;
   }
   return refreshed;
@@ -3343,6 +3501,14 @@ async function refreshOfferDetails(
   chainId: number,
   offerId: number,
   env: Env,
+  /** PINNED to the pass's settled `scanTo` (#2382 r5). An unpinned read
+   *  returns the unsafe tip: a match, amend or transfer the scan has not
+   *  reached yet — and which may be reorged away — would be written here, the
+   *  row would leave the heal queue with both range columns set, and the
+   *  canonical scan would never see the vanished event to correct it. At
+   *  `scanTo` the row reflects exactly the events this pass processed; a
+   *  later event updates it when the scan reaches it. */
+  atBlock: bigint,
 ): Promise<boolean> {
   let detail: Record<string, unknown> | null = null;
   try {
@@ -3351,6 +3517,7 @@ async function refreshOfferDetails(
       abi: DIAMOND_OFFER_DETAILS_ABI,
       functionName: 'getOfferDetails',
       args: [BigInt(offerId)],
+      blockNumber: atBlock,
     })) as Record<string, unknown>;
   } catch (err) {
     console.error(`[chainIndexer] getOfferDetails(${offerId}) failed`, err);
@@ -3371,8 +3538,14 @@ async function refreshOfferDetails(
     (detail.creator as string | undefined)?.toLowerCase() ===
     '0x0000000000000000000000000000000000000000'
   ) {
+    // #2382 r4 — and a fill of 0 where none is recorded: the protocol deletes
+    // an offer's struct only on a ZERO-fill cancel, so 0 is what it consumed,
+    // and recording it keeps the row from being re-selected for an unread fill.
     await env.DB.prepare(
-      `UPDATE offers SET is_stub = 0, updated_at = ?
+      `UPDATE offers SET is_stub = 0,
+              collateral_amount_filled = COALESCE(collateral_amount_filled, '0'),
+              collateral_range_stale = 0,
+              updated_at = ?
        WHERE chain_id = ? AND offer_id = ?`,
     )
       .bind(now, chainId, offerId)
@@ -3405,6 +3578,8 @@ async function refreshOfferDetails(
     amountMax?: bigint;
     amountFilled?: bigint;
     interestRateBpsMax?: bigint;
+    collateralAmountMax?: bigint;
+    collateralAmountFilled?: bigint;
     // See parallel definition above — #164 createdAt + #195 GTT +
     // #125 fill-mode.
     createdAt?: bigint;
@@ -3418,10 +3593,18 @@ async function refreshOfferDetails(
   // and was missed — `creator_current_owner` is stuck at the OfferCreated seed.
   // Now that we know the real `positionTokenId`, read its owner ONCE so the
   // D1-only wallet routes (and the LoanInitiated creator-side seed that copies
-  // this column) see the true holder. Falls back to the creator on a revert
-  // (e.g. an already-burned token) — same as the no-transfer default. One bounded
-  // RPC per stub-heal (cron pass, not the hot read path).
-  let creatorCurrentOwner = o.creator.toLowerCase();
+  // this column) see the true holder. One bounded RPC per heal (cron pass, not
+  // the hot read path).
+  //
+  // A FAILED read changes nothing (#2382 r3). This lane no longer heals only
+  // stubs: migration 0054 sends every active offer through it, including ones
+  // whose holder the Transfer handler already recorded. Writing the creator
+  // whenever `ownerOf` did not answer — a revert, or just a dropped request —
+  // would hand a transferred offer back to its creator and drop it from the
+  // holder's `/offers/by-owner`. So an unanswered read keeps what is stored,
+  // and only a row with NOTHING stored (a stub's empty seed) falls back to
+  // the creator, the old no-transfer default.
+  let observedOwner: string | null = null;
   if (o.positionTokenId > 0n) {
     try {
       const owner = (await client.readContract({
@@ -3429,10 +3612,11 @@ async function refreshOfferDetails(
         abi: ERC721_OWNER_OF_ABI,
         functionName: 'ownerOf',
         args: [o.positionTokenId],
+        blockNumber: atBlock,
       })) as string;
-      if (owner) creatorCurrentOwner = owner.toLowerCase();
+      if (owner) observedOwner = owner.toLowerCase();
     } catch {
-      // burned / nonexistent token — keep the creator default.
+      // unanswered — keep the stored holder (see above).
     }
   }
   await env.DB.prepare(
@@ -3443,12 +3627,14 @@ async function refreshOfferDetails(
        collateral_token_id = ?, quantity = ?, collateral_quantity = ?,
        amount = ?, amount_max = ?, amount_filled = ?,
        interest_rate_bps = ?, interest_rate_bps_max = ?,
-       collateral_amount = ?, duration_days = ?, position_token_id = ?,
+       collateral_amount = ?, collateral_amount_max = ?, collateral_amount_filled = ?,
+       duration_days = ?, position_token_id = ?,
        prepay_asset = ?, use_full_term_interest = ?,
        creator_fallback_consent = ?, allows_partial_repay = ?,
        created_at = ?, expires_at = ?, fill_mode = ?,
-       creator_current_owner = ?,
+       creator_current_owner = COALESCE(?, NULLIF(creator_current_owner, ''), ?),
        is_stub = 0,
+       collateral_range_stale = 0,
        updated_at = ?
      WHERE chain_id = ? AND offer_id = ?`,
   )
@@ -3471,6 +3657,8 @@ async function refreshOfferDetails(
       Number(o.interestRateBps),
       Number(o.interestRateBpsMax ?? 0n),
       o.collateralAmount.toString(),
+      effectiveCollateralMax(o.collateralAmount, o.collateralAmountMax),
+      o.collateralAmountFilled === undefined ? null : o.collateralAmountFilled.toString(),
       Number(o.durationDays),
       o.positionTokenId.toString(),
       o.prepayAsset.toLowerCase(),
@@ -3480,7 +3668,8 @@ async function refreshOfferDetails(
       Number(o.createdAt ?? 0n),
       Number(o.expiresAt ?? 0n),
       Number(o.fillMode ?? 0),
-      creatorCurrentOwner,
+      observedOwner,
+      o.creator.toLowerCase(),
       now,
       chainId,
       offerId,
@@ -3521,8 +3710,11 @@ async function refreshStubLoans(
   diamond: Address,
   chainId: number,
   env: Env,
+  budget: TickBudget,
 ): Promise<number> {
   let healed = 0;
+  // The same soft stop as `refreshStubOffers`, and run last for the same reason.
+  if (!healRowAffordable(budget, 1)) return 0;
   const stale = await env.DB.prepare(
     `SELECT loan_id FROM loans
      WHERE chain_id = ? AND is_stub = 1
@@ -3531,6 +3723,7 @@ async function refreshStubLoans(
     .bind(chainId, LOAN_TOKEN_ID_BATCH)
     .all<{ loan_id: number }>();
   for (const row of stale.results ?? []) {
+    if (!healRowAffordable(budget, LOAN_DETAIL_REFRESH_COST)) break;
     try {
       const detail = (await client.readContract({
         address: diamond,
@@ -5494,6 +5687,11 @@ export async function recordActivityEvents(
     }
   }
 
+  // #2383 — the asset/amount each row moved or offered, fixed here where the
+  // sibling events and the loan/offer records are at hand (see
+  // activityValue.ts for why not in the client).
+  const valueCtx = await loadActivityValueContext(env, chainId, logs);
+
   let inserted = 0;
   for (const log of logs) {
     let args = log.args;
@@ -5507,13 +5705,15 @@ export async function recordActivityEvents(
       }
     }
     const { actor, loanId, offerId } = pluckActivityRefs(log.eventName, args);
+    const v = activityValue(log.eventName, args as Record<string, unknown>, valueCtx);
     const argsJson = serializeArgs(args);
     const blockAt = blockTimestamps.get(log.blockNumber) ?? Math.floor(Date.now() / 1000);
     const result = await env.DB.prepare(
       `INSERT OR IGNORE INTO activity_events
         (chain_id, block_number, log_index, tx_hash, kind,
-         loan_id, offer_id, actor, args_json, block_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         loan_id, offer_id, actor, args_json, block_at,
+         asset, asset_type, amount, amount_max, token_id, quantity)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
       .bind(
         chainId,
@@ -5526,11 +5726,93 @@ export async function recordActivityEvents(
         actor,
         argsJson,
         blockAt,
+        v.asset,
+        v.assetType,
+        v.amount,
+        v.amountMax,
+        v.tokenId,
+        v.quantity,
       )
       .run();
     if ((result.meta?.changes ?? 0) > 0) inserted++;
   }
   return inserted;
+}
+
+/**
+ * #2383 — the sibling maps and the loan/offer records this batch's activity
+ * values need. The records are read AFTER the batch's own offer and loan writes
+ * (runChainPass orders them so), so a loan or offer created in this batch is
+ * found. One `batch()` round trip, chunked under D1's bind cap.
+ */
+async function loadActivityValueContext(
+  env: Env,
+  chainId: number,
+  logs: DecodedLog[],
+): Promise<ActivityValueContext> {
+  const { ctx, loanIds, offerIds } = collectBatch(logs);
+  const loanChunks = chunkD1InList(loanIds, { before: [chainId] });
+  const offerChunks = chunkD1InList(offerIds, { before: [chainId] });
+  if (loanChunks.length + offerChunks.length === 0) return ctx;
+  const statements = [
+    ...loanChunks.map((c) =>
+      env.DB.prepare(
+        `SELECT 'loan' AS k, l.loan_id AS id, l.lending_asset, l.asset_type, l.token_id,
+                l.collateral_asset, l.collateral_asset_type, l.collateral_token_id,
+                o.prepay_asset, o.quantity, o.collateral_quantity
+           FROM loans l
+           LEFT JOIN offers o ON o.chain_id = l.chain_id AND o.offer_id = l.offer_id
+          WHERE l.chain_id = ? AND l.loan_id IN (${c.placeholders})`,
+      ).bind(...c.binds),
+    ),
+    ...offerChunks.map((c) =>
+      env.DB.prepare(
+        `SELECT 'offer' AS k, offer_id AS id, lending_asset, asset_type, token_id, quantity
+           FROM offers WHERE chain_id = ? AND offer_id IN (${c.placeholders})`,
+      ).bind(...c.binds),
+    ),
+  ];
+  type Row = {
+    k: 'loan' | 'offer';
+    id: number;
+    lending_asset: string;
+    asset_type: number;
+    token_id: string;
+    collateral_asset?: string;
+    collateral_asset_type?: number;
+    collateral_token_id?: string;
+    prepay_asset?: string | null;
+    quantity?: string | null;
+    collateral_quantity?: string | null;
+  };
+  const parts = await env.DB.batch<Row>(statements);
+  for (const part of parts) {
+    for (const r of part.results ?? []) {
+      if (r.k === 'loan') {
+        ctx.loans.set(r.id, {
+          lendingAsset: r.lending_asset,
+          assetType: r.asset_type,
+          tokenId: r.token_id,
+          collateralAsset: r.collateral_asset ?? '',
+          collateralAssetType: r.collateral_asset_type ?? 0,
+          collateralTokenId: r.collateral_token_id ?? '0',
+          // An all-zero prepay asset is "none", not the zero-address token.
+          prepayAsset:
+            r.prepay_asset && !/^0x0{40}$/i.test(r.prepay_asset) ? r.prepay_asset.toLowerCase() : null,
+          quantity: r.quantity ?? null,
+          collateralQuantity: r.collateral_quantity ?? null,
+        });
+      } else {
+        ctx.offers.set(r.id, {
+          lendingAsset: r.lending_asset,
+          assetType: r.asset_type,
+          tokenId: r.token_id,
+          quantity: r.quantity ?? null,
+        });
+      }
+    }
+  }
+  return ctx;
 }
 
 /** Map a decoded event to the cross-domain reference columns the
@@ -6114,6 +6396,10 @@ export function pluckActivityRefs(
     case 'LoanLiquidated':
     case 'LoanSettlementBreakdown':
     case 'LoanSettled':
+    // #2374 — what the loan owed at default, on the loan's own timeline.
+    case 'OwedAtDefaultRecorded':
+    // #2427 — what internal matching cleared, on the loan's own timeline.
+    case 'OwedAtInternalMatchRecorded':
       return {
         actor: null,
         loanId: Number(args.loanId as bigint),
@@ -6266,6 +6552,22 @@ function serializeArgs(args: Record<string, unknown>): string {
   return JSON.stringify(args, (_k, v) =>
     typeof v === 'bigint' ? v.toString() : v,
   );
+}
+
+/**
+ * #2382 — a borrower offer's EFFECTIVE collateral ceiling, as stored in
+ * `offers.collateral_amount_max`. The chain stores 0 for a single-value offer
+ * (it means "the floor"), so the row never carries that sentinel. `undefined`
+ * — a detail read that did not decode the field — writes NULL (not yet read),
+ * never the floor: claiming "exactly this much" on a failed decode would state
+ * a figure the indexer does not have.
+ */
+export function effectiveCollateralMax(
+  floor: bigint,
+  max: bigint | undefined,
+): string | null {
+  if (max === undefined) return null;
+  return (max === 0n ? floor : max).toString();
 }
 
 function emptyResult(skipped: string): ChainIndexerResult {

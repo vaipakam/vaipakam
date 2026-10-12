@@ -36,6 +36,8 @@ import RepayPeriodicFacetABI from './RepayPeriodicFacet.json';
 // asset → principal asset and applies the proceeds to a full or partial
 // loan repay in one transaction.
 import SwapToRepayFacetABI from './SwapToRepayFacet.json';
+// #2416 — the partial swap-to-repay route, split off SwapToRepayFacet.
+import SwapToRepayPartialFacetABI from './SwapToRepayPartialFacet.json';
 // T-090 v1.1 (#389) — intent-based swap-to-repay sibling facet.
 import SwapToRepayIntentFacetABI from './SwapToRepayIntentFacet.json';
 // T-087 Sub 3.B — 1inch LOP v4 callback dispatcher.
@@ -125,6 +127,20 @@ import NFTPrepayListingAtomicFacetABI from './NFTPrepayListingAtomicFacet.json';
 // `autoListAtFloorOnGrace` entry point. Sibling facet sharing
 // LibVaipakam storage with the other three prepay-listing facets.
 import NFTPrepayAutoListFacetABI from './NFTPrepayAutoListFacet.json';
+// #2394 — internal facets, exported so the Diamond ABI decodes every event
+// and error the Diamond can emit (owner decision 2026-10-04).
+import DiamondCutFacetABI from './DiamondCutFacet.json';
+import AccessControlFacetABI from './AccessControlFacet.json';
+import OwnershipFacetABI from './OwnershipFacet.json';
+import ReceiverFacetABI from './ReceiverFacet.json';
+import OfferAcceptFeeFacetABI from './OfferAcceptFeeFacet.json';
+import RewardClaimWalkFacetABI from './RewardClaimWalkFacet.json';
+// #2399 — the Diamond PROXY contract. Its errors and events (notably
+// `FunctionDoesNotExist`, the fallback's revert for an unrouted selector) are
+// merged into `DIAMOND_ABI`; its own constructor / fallback / receive are not.
+import VaipakamDiamondABI from './VaipakamDiamond.json';
+import RewardForfeitWalkFacetABI from './RewardForfeitWalkFacet.json';
+import RewardSweepWalkFacetABI from './RewardSweepWalkFacet.json';
 // FlashLoanLiquidationPath.md Phase 3 — standalone reference
 // receiver. Named export only; deliberately NOT spread into
 // DIAMOND_ABI below (it's not part of the diamond's selector set).
@@ -134,6 +150,7 @@ import FlashLoanLiquidatorABI from './FlashLoanLiquidator.json';
 // deliberately NOT spread into DIAMOND_ABI below (not part of the diamond's
 // selector set) — admin tooling / keeper call it as a separate contract.
 import RiskPremiumRateModelABI from './RiskPremiumRateModel.json';
+import TestnetSanctionsOverlayABI from './TestnetSanctionsOverlay.json';
 
 export {
   OfferCreateFacetABI,
@@ -157,6 +174,7 @@ export {
   RepayFacetABI,
   RepayPeriodicFacetABI,
   SwapToRepayFacetABI,
+  SwapToRepayPartialFacetABI,
   SwapToRepayIntentFacetABI,
   IntentDispatchFacetABI,
   AutoLifecycleFacetABI,
@@ -223,116 +241,41 @@ export {
   NFTPrepayDutchListingFacetABI,
   NFTPrepayListingAtomicFacetABI,
   NFTPrepayAutoListFacetABI,
+  DiamondCutFacetABI,
+  AccessControlFacetABI,
+  OwnershipFacetABI,
+  ReceiverFacetABI,
+  OfferAcceptFeeFacetABI,
+  RewardClaimWalkFacetABI,
+  VaipakamDiamondABI,
+  RewardForfeitWalkFacetABI,
+  RewardSweepWalkFacetABI,
   FlashLoanLiquidatorABI,
   RiskPremiumRateModelABI,
+  TestnetSanctionsOverlayABI,
 };
 
 import type { Abi } from 'viem';
+import DiamondAbiUnion from '../diamondAbi.json';
 
 /** Combined ABI — all facet functions routed through the Diamond proxy.
+ *
+ *  UX3-008 — built at export time by `scripts/build-diamond-abi.mjs` from
+ *  the facets listed in `scripts/diamond-facets.json`, plus the errors and
+ *  events of the Diamond proxy contract itself (#2399), with EXACT duplicate
+ *  entries removed. It used to be every facet ABI spread into one array
+ *  here; each facet carries the shared errors and events it can surface, so
+ *  three quarters of that array was repeats, shipped to every connected
+ *  session. Dropping a byte-identical repeat cannot change what the ABI
+ *  encodes or decodes. The per-facet ABIs above stay exported for consumers
+ *  that want one facet's surface.
+ *
  *  Kept as the JSON-inferred shape because the ethers `Interface`/
- *  `Contract` constructors want `JsonFragment[]` (which the JSON imports
- *  match), while viem wants the narrower `Abi`. Viem consumers cast via
+ *  `Contract` constructors want `JsonFragment[]` (which the JSON import
+ *  matches), while viem wants the narrower `Abi`. Viem consumers cast via
  *  `DIAMOND_ABI_VIEM` below; ethers consumers pass `DIAMOND_ABI`
- *  directly. Once Phase B-full is complete and the last ethers call site
- *  is gone, collapse this back to a single `Abi`-typed export. */
-export const DIAMOND_ABI = [
-  ...OfferCreateFacetABI,
-  ...SignedOfferFacetABI,
-  ...LenderIntentFacetABI,
-  // #398 — AggregatorAdapterFactoryFacet IS a Diamond facet → spread into the
-  // combined Diamond ABI. AggregatorAdapterImplementation is a STANDALONE
-  // adapter contract (named export above only) — deliberately NOT spread here.
-  ...AggregatorAdapterFactoryFacetABI,
-  // #399 — BackstopFacet IS a Diamond facet → spread. BackstopVaultImplementation
-  // is the STANDALONE treasury vault (named export above only) — NOT spread here.
-  ...BackstopFacetABI,
-  // #594 — ConsolidationFacet IS a Diamond facet -> spread.
-  ...ConsolidationFacetABI,
-  // #671 — RiskAccessFacet IS a Diamond facet -> spread.
-  ...RiskAccessFacetABI,
-  // #1104 — RiskPreviewFacet IS a Diamond facet -> spread.
-  ...RiskPreviewFacetABI,
-  // #1212 — MulticallFacet IS a Diamond facet -> spread.
-  ...MulticallFacetABI,
-  ...OfferAcceptFacetABI,
-  ...OfferPreviewFacetABI,
-  ...OfferCancelFacetABI,
-  ...OfferMatchFacetABI,
-  ...OfferMutateFacetABI,
-  ...OfferParallelSaleFacetABI,
-  ...LoanFacetABI,
-  ...RepayFacetABI,
-  ...RepayPeriodicFacetABI,
-  ...SwapToRepayFacetABI,
-  ...SwapToRepayIntentFacetABI,
-  ...IntentDispatchFacetABI,
-  ...AutoLifecycleFacetABI,
-  ...EncumbranceMutateFacetABI,
-  ...IntentConfigFacetABI,
-  ...DefaultedFacetABI,
-  ...RiskFacetABI,
-  ...RiskMatchLiquidationFacetABI,
-  ...RiskSplitLiquidationFacetABI,
-  ...ClaimFacetABI,
-  ...OracleFacetABI,
-  ...OracleAdminFacetABI,
-  ...VaultFactoryFacetABI,
-  ...VaipakamNFTFacetABI,
-  ...ProfileFacetABI,
-  ...FeeEntitlementFacetABI,
-  ...AdminFacetABI,
-  ...AddCollateralFacetABI,
-  ...PartialWithdrawalFacetABI,
-  ...PrecloseFacetABI,
-  ...RefinanceFacetABI,
-  ...EarlyWithdrawalFacetABI,
-  ...EarlyWithdrawalDirectFacetABI,
-  ...TreasuryFacetABI,
-  ...PayrollFacetABI,
-  ...DiamondLoupeFacetABI,
-  ...MetricsFacetABI,
-  ...MetricsDashboardFacetABI,
-  ...VPFITokenFacetABI,
-  ...VPFIDiscountFacetABI,
-  ...VPFIDiscountAccumulatorFacetABI,
-  ...MirrorTierReceiverFacetABI,
-  ...ProtocolBroadcastFacetABI,
-  ...InteractionRewardsFacetABI,
-  // #1351 slice 2c — CLAIM entry points split off for EIP-170 headroom.
-  ...RewardClaimFacetABI,
-  ...PerkFacetABI,
-  ...RewardHorizonSweepFacetABI,
-  ...InteractionRewardsLensFacetABI,
-  ...RewardReporterFacetABI,
-  ...RewardAggregatorFacetABI,
-  ...RewardBroadcastFacetABI,
-  ...RewardRemittanceFacetABI,
-  ...RewardRemittanceLensFacetABI,
-  ...RewardCompensationDispatchFacetABI,
-  ...RewardCommitmentFacetABI,
-  ...RewardCustodyFacetABI,
-  ...RewardReconciliationFacetABI,
-  ...RewardIngressFacetABI,
-  ...RewardEpochFacetABI,
-  ...RewardEpochViewFacetABI,
-  ...RewardStagingFacetABI,
-  ...RewardStagingSettleFacetABI,
-  ...RewardStagingDomainFacetABI,
-  ...RewardClosureFacetABI,
-  ...RewardEraFacetABI,
-  ...ServiceCapacityFacetABI,
-  ...OfferMatchIntentFacetABI,
-  ...RepatriationFacetABI,
-  ...ConfigFacetABI,
-  ...NumeraireConfigFacetABI,
-  ...LegalFacetABI,
-  ...PrepayListingFacetABI,
-  ...NFTPrepayListingFacetABI,
-  ...NFTPrepayDutchListingFacetABI,
-  ...NFTPrepayListingAtomicFacetABI,
-  ...NFTPrepayAutoListFacetABI,
-];
+ *  directly. */
+export const DIAMOND_ABI = DiamondAbiUnion;
 
 /** Viem-typed alias for hooks using `encodeFunctionData` /
  *  `decodeFunctionResult` / `useReadContract`. Same data, narrower

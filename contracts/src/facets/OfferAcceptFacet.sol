@@ -2029,7 +2029,12 @@ contract OfferAcceptFacet is
         //
         // Ordered where `_acceptOffer` orders it — after KYC, before the vault
         // floor and the stale comparison. APPENDED; prior values stay stable.
-        SelfTrade
+        SelfTrade,
+        // #2407 — a refinance-tagged offer that cannot be taken now: it is not
+        // its target loan's recorded refinance request, or an offset is open
+        // on that loan. The acceptance would create the replacement and then
+        // revert in the refinance hook. APPENDED; prior values stay stable.
+        RefinanceRequestUntakeable
     }
 
     /// @notice Projection of the loan that would land if the supplied

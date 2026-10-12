@@ -45,8 +45,16 @@ Specifically:
    without a storage migration.
 
 3. **Sanctions screening is REQUIRED.** On a retail deploy
-   `ProfileFacet.setSanctionsOracle(<chainalysis-oracle>)` MUST be
-   called once the oracle's address is known. Tier-1 entry points
+   `ProfileFacet.setSanctionsOracle(<supported-sanctions-oracle>)` MUST
+   be called before the deploy routes real value. *Amended 2026-10-07
+   (#2439 / #2443, owner decision):* this originally named
+   Chainalysis's on-chain oracle. Chainalysis has since retired it
+   (last updated 2026-03-18, "no longer supported or maintained"); it
+   still answers reads, so nothing on-chain shows it is frozen, and it
+   must not be configured anywhere. Which supported source replaces it
+   is open in #2443; testnets screen against the admin's
+   `TestnetSanctionsOverlay` alone. The requirement itself is
+   unchanged. Tier-1 entry points
    (`createOffer`, `acceptOffer`, vault create, VPFI deposit /
    buy / withdraw, `triggerLiquidation`, EarlyWithdrawal, Preclose,
    Refinance, Claim) revert `SanctionedAddress(who)` for flagged
@@ -87,7 +95,7 @@ Specifically:
   StorageGated` helper being a clearly separate function from the
   pure-true retail path, with tests in `CountryPairGatedTest`.
 - Sanctions screening introduces a third-party oracle dependency
-  (Chainalysis or equivalent). If the oracle is misconfigured or
+  (a supported source; which one is open, #2443). If the oracle is misconfigured or
   fails, the protocol fails-open temporarily (returns `false` for
   every address — the intentional pre-`setSanctionsOracle` window).
 - Operators must remember to call `setSanctionsOracle` on retail

@@ -3,7 +3,7 @@
  * Rows come from the indexer; kinds are shown as readable labels with
  * loan/offer links back into the app.
  */
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import { ExternalLink, History, LoaderCircle } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
@@ -19,8 +19,56 @@ import {
 import { EmptyState, UnavailableState } from '../components/EmptyState';
 import { MarketFreshnessNote } from '../components/MarketFreshnessNote';
 import { formatTimeAgo, shortAddress } from '../lib/format';
-import { coalesceByTx, type ActivityRowView } from '../lib/activityView';
+import {
+  coalesceByTx,
+  legText,
+  rowValue,
+  type ActivityRowView,
+  type LegLabels,
+  type LegMeta,
+  type RowValue,
+  type ValueLeg,
+} from '../lib/activityView';
+import { useTokenMeta } from '../contracts/erc20';
 import { signalAware } from '../chain/railHealth';
+
+const LEG_LABELS: LegLabels = {
+  loading: (token) => copy.activity.valueLoading(token),
+  unreadable: (amount, token) => copy.activity.valueUnreadable(amount, token),
+  get quantityUnknown() {
+    return copy.activity.quantityUnknown;
+  },
+};
+
+/** #2383 — one thing the row moved or offered, as the indexer normalized it.
+ *  Token details load only for a fungible amount; while they load, or if they
+ *  cannot be read, the leg says so rather than vanishing. */
+function ValueLegText({ leg }: { leg: ValueLeg }) {
+  const meta = useTokenMeta(leg.kind === 'token' ? leg.asset : undefined);
+  const state: LegMeta = meta.data
+    ? { status: 'ready', decimals: meta.data.decimals, symbol: meta.data.symbol }
+    : meta.isError
+      ? { status: 'unreadable' }
+      : { status: 'loading' };
+  return <>{legText(leg, state, LEG_LABELS)}</>;
+}
+
+/** Every value leg of the row's action, joined — plus a disclosure when the
+ *  action also moved something not itemised (#2383 r1). */
+function RowValueText({ value }: { value: RowValue }) {
+  if (value.legs.length === 0) return <>{copy.activity.valueNotRecorded}</>;
+  return (
+    <>
+      {value.legs.map((leg, i) => (
+        <Fragment key={i}>
+          {i > 0 ? ' + ' : ''}
+          <ValueLegText leg={leg} />
+        </Fragment>
+      ))}
+      {value.unstated ? ` ${copy.activity.valuePlusUnstated}` : ''}
+    </>
+  );
+}
 
 /** UX-008 — one coalesced transaction as a readable row: plain-language
  *  action, a single substance sub-line (loan/offer id · who acted · when
@@ -31,6 +79,8 @@ function ActivityRow({ row, explorer }: { row: ActivityRowView; explorer: string
   // back to the pure module's humanized label for a kind the app
   // doesn't map yet (English — unavoidable for an unknown event).
   const displayLabel = copy.activity.labels[event.kind] ?? label;
+  const value = useMemo(() => rowValue(row), [row]);
+  const hasValue = value.legs.length > 0 || value.unstated;
   const context = [
     event.loanId !== null ? copy.activity.loanRef(event.loanId) : null,
     event.offerId !== null ? copy.activity.offerRef(event.offerId) : null,
@@ -38,6 +88,12 @@ function ActivityRow({ row, explorer }: { row: ActivityRowView; explorer: string
 
   const sub = (
     <span className="row-sub">
+      {hasValue ? (
+        <>
+          <RowValueText value={value} />
+          {' · '}
+        </>
+      ) : null}
       {context.length ? `${context.join(' · ')} · ` : ''}
       {formatTimeAgo(event.blockAt)}
       {hiddenCount > 0 ? copy.activity.plusMore(hiddenCount) : ''}
@@ -49,6 +105,12 @@ function ActivityRow({ row, explorer }: { row: ActivityRowView; explorer: string
       <span className="row-title">{displayLabel}</span>
       <br />
       {sub}
+      {value.mayIncludeHeldForLender ? (
+        <>
+          <br />
+          <span className="row-sub">{copy.activity.heldForLenderNote}</span>
+        </>
+      ) : null}
     </span>
   );
 

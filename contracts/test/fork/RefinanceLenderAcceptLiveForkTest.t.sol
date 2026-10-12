@@ -31,10 +31,11 @@ import {LibAcceptTestSigner} from "../helpers/LibAcceptTestSigner.sol";
  *         Self-contained: it opens its own loan between fresh actors — WETH
  *         lent against the deployment's `liquidToken` faucet asset — rather
  *         than borrowing a live loan, so it does not depend on what happens to
- *         be open on chain. The collateral must be LIQUID: a consented
- *         illiquid-collateral loan cannot be refinanced on the current code
- *         (the post-rollover LTV/HF gate has no illiquid branch; see #2380),
- *         which is a separate question from the switch this test is about.
+ *         be open on chain. The collateral is LIQUID so that the post-rollover
+ *         LTV/HF gate runs in full. The consented-illiquid branch (#2380)
+ *         skips that gate by design, and the switch this test is about is
+ *         independent of it. That branch is covered by
+ *         `T092AutoLifecycleIntegrationTest.test_2380_consentedIlliquidCollateral_refinanceCompletes`.
  *
  *         Nothing here touches the shared testnet. The switch is flipped, and
  *         every party funded, on the FORK only.

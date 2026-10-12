@@ -17,17 +17,18 @@ import {
   useState,
 } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { CircleCheck, LoaderCircle, ShieldPlus, ShieldQuestion } from 'lucide-react';
+import { CircleCheck, LoaderCircle, ShieldMinus, ShieldPlus, ShieldQuestion } from 'lucide-react';
 import { usePublicClient, useWalletClient } from 'wagmi';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   BaseError,
   ContractFunctionRevertedError,
   ContractFunctionZeroDataError,
-  parseUnits,
+  formatUnits,
 } from 'viem';
 import { copy } from '../content/copy';
 import { isPositiveDecimal, captureTxError } from '../lib/errors';
+import { freshData } from '../lib/freshData';
 import { useLoan } from '../data/hooks';
 import { FEE_MODE_FULL, FEE_MODE_HOLD_ONLY, useFeeEntitlement } from '../data/tariff';
 import { VPFI_DECIMALS } from '../data/vpfi';
@@ -50,17 +51,21 @@ import {
 import { useActiveChain } from '../chain/useActiveChain';
 import { useMode } from '../app/ModeContext';
 import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
-import { ensureAllowance, useTokenBalance, useTokenMeta } from '../contracts/erc20';
+import { ensureAllowance, useTokenBalance, useTokenMeta, trackApproval } from '../contracts/erc20';
 import {
   formatBpsAsPercent,
   formatDate,
   formatDurationDays,
   formatTokenAmount,
+  exactUnitsOrNull,
+  formatTokenAmountDown,
+  parseExactUnits,
   fullTermInterest,
   shortAddress,
 } from '../lib/format';
 import { flowDisabled } from '../lib/killSwitch';
 import { loanStateView, loanStateLabel } from '../lib/loanState';
+import { AmountPrecisionHint } from '../components/AmountPrecisionHint';
 import { EmptyState, UnavailableState } from '../components/EmptyState';
 import { type ReceiptData } from '../components/ReviewReceipt';
 import { ConfirmReceipt } from '../components/ConfirmReceipt';
@@ -78,6 +83,14 @@ import {
 import { useForcedCloseReads } from '../data/useForcedClose';
 import { probeClaim, useLoanClaim } from '../data/claimables';
 import { receiptPayout, useClaimPayoutText } from '../data/useClaimPayout';
+import {
+  classifyMaxWithdrawable,
+  swapToRepayOrderState,
+  withdrawPreflightBlock,
+  withdrawCaveats,
+  useMaxWithdrawable,
+  withdrawAmountProblem,
+} from '../data/partialWithdraw';
 import { ObligationTransferFlow } from '../components/ObligationTransferFlow';
 import { OffsetFlow } from '../components/OffsetFlow';
 import { OffsetPendingCard } from '../components/OffsetPendingCard';
@@ -92,7 +105,20 @@ import { loanSaleListingEnabled, LoanSaleFlow } from '../components/LoanSaleFlow
 import { LoanSalePendingCard } from '../components/LoanSalePendingCard';
 import { LoanKeeperCard } from '../components/LoanKeeperCard';
 import { LOCK_EARLY_WITHDRAWAL_SALE, useLoanSalePending } from '../data/loanSalePending';
-import { useRefinancePending } from '../data/refinancePending';
+import {
+  readRefinanceMarker,
+  refinanceDiscoveryKey,
+  useRefinancePending,
+} from '../data/refinancePending';
+import { discoverRefinanceRequest } from '../data/refinanceDiscovery';
+import {
+  liveRefinanceVerdict,
+  postRefinanceVerdict,
+  refinanceInterlock,
+  repayRefinanceDecision,
+  type RefinanceCheck,
+  type RepayNotice,
+} from '../data/refinanceInterlock';
 import { ZERO_ADDRESS } from '../lib/offerSchema';
 import {
   AssetType,
@@ -107,6 +133,7 @@ type Action = 'repay' | 'claim-borrower' | 'claim-lender' | null;
 type ConfirmSurface =
   | 'action'
   | 'collateral'
+  | 'withdraw-collateral'
   | 'partial'
   | 'preclose'
   | 'refinance'
@@ -116,6 +143,41 @@ type ConfirmSurface =
   | 'loan-sale'
   | 'sale-teardown'
   | 'forced-close';
+
+
+/** #2406 r4 — a flow stopped after its approval mined gives the approval
+ *  back (`trackApproval().unwind`); when that cleanup itself fails, the
+ *  failure is APPENDED to the reason the flow stopped — never swallowed,
+ *  never replacing it. */
+async function withCleanup(unwound: Promise<boolean>, message: string): Promise<string> {
+  return (await unwound) ? message : `${message} ${copy.errors.approvalCleanupFailed}`;
+}
+
+/** #2406 r3 — what a surface a refinance request would strand shows in
+ *  place of its action while the page does not KNOW whether one is open
+ *  (`refinanceInterlock`'s check). One component, so every such surface
+ *  says the same true thing: still checking, could not check (may answer
+ *  on retry), or too many offers to check (a retry will not help). */
+function RefinanceCheckNotice({
+  check,
+}: {
+  check: Exclude<RefinanceCheck, 'settled'>;
+}) {
+  if (check === 'checking') {
+    return (
+      <p className="muted" style={{ margin: 0 }}>
+        {copy.earlyRepay.checkingInterlocks}
+      </p>
+    );
+  }
+  return (
+    <div className="banner banner-warn" role="alert">
+      <span className="banner-body">
+        {check === 'capped' ? copy.refinance.cappedBlocks : copy.refinance.uncheckedBlocks}
+      </span>
+    </div>
+  );
+}
 
 export function PositionDetails() {
   const { loanId: loanIdParam } = useParams();
@@ -160,6 +222,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   const [error, setError] = useState<string | null>(null);
   const [doneMessage, setDoneMessage] = useState<string | null>(null);
   const [collateralInput, setCollateralInput] = useState('');
+  const [withdrawInput, setWithdrawInput] = useState('');
   const [partialInput, setPartialInput] = useState('');
   // A successful claim doesn't change the indexer row's status, so
   // without this latch the button would re-enable and invite a
@@ -172,6 +235,16 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // repay button and the close-early card would re-appear and invite
   // a second, reverting submit (LoanNotActive).
   const [closedThisSession, setClosedThisSession] = useState(false);
+  // #2406 r4/r5 — what the LAST confirm-time live check found that the
+  // page's poll had not: 'pending' (an open request) or 'unchecked' (the
+  // check could not answer). It only adds to what the review shows; every
+  // confirm re-checks live and replaces it (`repayRefinanceDecision`), and
+  // it is keyed to the chain, account and loan it was found for, so a
+  // switch drops it rather than carrying a stale warning across.
+  const [repayRefiLatch, setRepayRefiLatch] = useState<{
+    key: string;
+    notice: RepayNotice;
+  } | null>(null);
   // Lender-side sibling of closedThisSession: after a successful
   // position sale the indexer still shows this wallet as lender for
   // a window — the latch lives on the PAGE so an EarlyExitFlow
@@ -296,6 +369,19 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     address !== undefined &&
     nftOwners.data.lenderOwner.toLowerCase() === address.toLowerCase();
 
+  /** #2389 r8 — the borrower-side twin of `isLenderHolder`, for the
+   *  take-back-collateral surface: a failed refetch DISQUALIFIES the
+   *  cached owner set (TanStack keeps it through the error), so a wallet
+   *  that just transferred the borrower position is not shown a
+   *  withdrawal it can no longer make. Scoped to that surface for the
+   *  same reason `isLenderHolder` is scoped to the sale path. */
+  const freshBorrowerOwner = freshData(nftOwners)?.borrowerOwner;
+  const isBorrowerHolder =
+    freshBorrowerOwner !== undefined &&
+    freshBorrowerOwner !== 'burned' &&
+    address !== undefined &&
+    freshBorrowerOwner.toLowerCase() === address.toLowerCase();
+
   const role: 'lender' | 'borrower' | 'viewer' | 'checking' | 'unverified' =
     useMemo(() => {
       const row = loan.data;
@@ -399,6 +485,57 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     Boolean(loan.data && effectivelyActive && !loanIsRental),
   );
 
+  // UX3-009 — the live ceiling for taking collateral back. Only the
+  // current borrower-position holder may withdraw, only from an open
+  // loan, and only fungible collateral has an amount to take.
+  // #2389 r1 — the live status, when it has answered, outranks the
+  // indexed row for the take-back-collateral surface.
+  const liveSaysNotActive =
+    liveStatus.data !== undefined && liveStatus.data.status !== LoanStatus.Active;
+  const maxWithdrawable = useMaxWithdrawable({
+    loanId: loan.data ? String(loan.data.loanId) : undefined,
+    collateralAsset: loan.data?.collateralAsset,
+    enabled:
+      isBorrowerHolder &&
+      effectivelyActive &&
+      !liveSaysNotActive &&
+      !loanIsRental &&
+      !collateralIsNft,
+  });
+  const maxWithdrawState = classifyMaxWithdrawable({
+    data: maxWithdrawable.data,
+    isError: maxWithdrawable.isError,
+    // A failed refetch disqualifies a cached Active (#2389 r8): TanStack
+    // keeps the old data through the error, and the loan may have closed.
+    liveActive: freshData(liveStatus)?.status === LoanStatus.Active,
+  });
+  // #2389 r7 — the take-back review is ACCOUNT-scoped as well as
+  // chain-scoped: a review opened under one wallet must not reappear,
+  // one click from sending, after switching to another account (say the
+  // new holder of the borrower position). Render-phase adjustment, like
+  // the chain reset, so no frame commits carrying the old review.
+  const [withdrawAccount, setWithdrawAccount] = useState(address);
+  if (withdrawAccount !== address) {
+    setWithdrawAccount(address);
+    setWithdrawInput('');
+    setConfirmingSurface((sfc) => (sfc === 'withdraw-collateral' ? null : sfc));
+  }
+  // #2389 r3 — parsed EXACTLY: a rounded parse would let the receipt
+  // state one amount while the contract moves another.
+  const withdrawParsed = useMemo(
+    () =>
+      collateralMeta.data
+        ? parseExactUnits(withdrawInput, collateralMeta.data.decimals)
+        : ('invalid' as const),
+    [withdrawInput, collateralMeta.data],
+  );
+  const withdrawInputWei =
+    typeof withdrawParsed === 'bigint' && withdrawParsed > 0n ? withdrawParsed : null;
+  const withdrawProblem = withdrawAmountProblem({
+    parsed: withdrawParsed,
+    state: maxWithdrawState,
+  });
+
   // Sanctions: addCollateral and both claim paths screen msg.sender on
   // chain — gate them BEFORE the approval/click so a flagged wallet
   // never pays gas for a doomed tx. Repay/close stays open (Tier-2
@@ -415,19 +552,42 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     loanIsRental || !loan.data
       ? undefined
       : (loan.data.lendingAsset as `0x${string}`),
+    // #2391 — the CURRENT borrower-position holder, whose own open offers
+    // are searched on chain. A rental has no refinance path ('burned' =
+    // nothing to search). The hook also scans the CONNECTED wallet when it
+    // is not the holder (#2406 r3), so a request's creator finds it for
+    // cleanup after a transfer or once the loan has settled.
+    loanIsRental ? 'burned' : freshBorrowerOwner,
+    loan.data?.offerId,
   );
-  const refinancePending = refi.offerId !== null;
-  // The partial/preclose interlocks exist to protect an ACCEPTABLE
-  // request from being stranded by a changed principal or a settled
-  // loan. An EXPIRED request can't be accepted by anyone, so it stops
-  // blocking — and neither can one whose loan is strictly past its
-  // grace window (the #1189 admission gate rejects the accept).
-  // While verification is still loading, keep blocking — the
-  // conservative side.
-  const refinanceBlocking =
-    refinancePending &&
-    refi.state?.expired !== true &&
-    refi.state?.pastGrace !== true;
+  /** #2391 / #2406 r3 — the ONE derivation every refinance-touching
+   *  surface reads (`refinanceInterlock`): whether an acceptable request
+   *  blocks (an expired one, one past grace, or one whose creator no longer
+   *  holds the position cannot be filled, so does not; one still verifying
+   *  does — the conservative side), and whether the page knows ('settled')
+   *  or must hold back and say why ('checking' / 'unchecked' / 'capped'). */
+  const refiLock = refinanceInterlock({
+    offerId: refi.offerId,
+    fromOwnScan: refi.fromOwnScan,
+    state: refi.state,
+    holder: loanIsRental ? 'burned' : freshBorrowerOwner,
+    holderScan: refi.holderScan,
+    holderReadFailed: nftOwners.isError,
+  });
+  const refinanceBlocking = refiLock.blocking;
+  const refiCheck: RefinanceCheck = refiLock.check;
+  // #2406 r4/r5 — what the full-repayment review shows about a refinance
+  // request: the page's own verdict, plus whatever the last confirm-time
+  // live check found for THIS chain, account and loan.
+  const repayLatchKey = `${readChain.chainId}:${address?.toLowerCase() ?? ''}:${loanId}`;
+  const repayRefiNotice: RepayNotice =
+    repayRefiLatch?.key === repayLatchKey ? repayRefiLatch.notice : null;
+  const repayShown: RepayNotice =
+    refinanceBlocking || repayRefiNotice === 'pending'
+      ? 'pending'
+      : refiCheck !== 'settled' || repayRefiNotice === 'unchecked'
+        ? 'unchecked'
+        : null;
 
   // Lender-side sibling: a live Option-2 sale listing. Existence is
   // the CHAIN's say-so (positionLock on the lender NFT), so a listing
@@ -588,9 +748,17 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     // explicitly rather than clearing the slot unconditionally —
     // other surfaces own their own reset, and this block has no
     // standing to discard theirs.
+    // #2389 r3 P1 — the take-back-collateral review is chain-scoped for
+    // the same reason: carried across a switch onto the same loan id on
+    // another chain, it is one click from withdrawing collateral there.
+    // Its typed amount goes with it — the destination token can have
+    // different decimals.
     setConfirmingSurface((sfc) =>
-      sfc === 'sale-teardown' || sfc === 'forced-close' ? null : sfc,
+      sfc === 'sale-teardown' || sfc === 'forced-close' || sfc === 'withdraw-collateral'
+        ? null
+        : sfc,
     );
+    setWithdrawInput('');
   }
   // The ref advances in a LAYOUT effect, not a passive one (Codex #1683 r1).
   // I had argued the guard and the state it protects must move together, so
@@ -658,6 +826,76 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       return copy.saleHold.checkFailed;
     }
   }, [saleEligible, publicClient, walletChain, loan.data, loanId, address]);
+
+  /** #2391 / #2406 r1 — the live refinance check every BORROWER action
+   *  that changes or settles the loan runs immediately before sending
+   *  (partial repayment, preclose, obligation handover, offset): a request
+   *  posted on another device since the last poll is found on chain. A
+   *  search that cannot answer blocks too. Deliberately NOT part of the
+   *  sale gate above, which lender-side forced close also uses: a borrower
+   *  must not be able to block a forced close by posting a request.
+   *  What no client check can close is a request posted between this read
+   *  and the transaction mining; that remaining race is stated in the
+   *  functional spec rather than implied away. */
+  const assertNoRefinanceRequestLive = useCallback(async (
+    /** What to say when an open request is found — settling the loan and
+     *  posting a second request strand it in different ways. */
+    blockedMsg: string = copy.refinance.liveBlocksSettlement,
+  ): Promise<string | null> => {
+    if (loanIsRental) return null;
+    if (!publicClient || !walletChain || !loan.data || !address) {
+      return copy.refinance.uncheckedBlocks;
+    }
+    const verdict = liveRefinanceVerdict(
+      await discoverRefinanceRequest({
+        client: publicClient,
+        diamond: walletChain.diamondAddress,
+        loanId: BigInt(loanId),
+        sinceOfferId: BigInt(loan.data.offerId),
+        holder: address,
+      }),
+    );
+    if (verdict === 'open') return blockedMsg;
+    if (verdict === 'capped') return copy.refinance.cappedBlocks;
+    if (verdict === 'unchecked') return copy.refinance.uncheckedBlocks;
+    return null;
+  }, [loanIsRental, publicClient, walletChain, loan.data, address, loanId]);
+  const assertBorrowerSettlementSafe = useCallback(
+    async (): Promise<string | null> =>
+      (await assertSaleSettlementSafe()) ?? (await assertNoRefinanceRequestLive()),
+    [assertSaleSettlementSafe, assertNoRefinanceRequestLive],
+  );
+  /** #2406 r2 — posting a refinance request: the contract allows several
+   *  tagged offers, and accepting one leaves the others unfillable, so a
+   *  request already open (from any device) blocks a second. */
+  const assertRefinancePostSafe = useCallback(
+    async (): Promise<string | null> => {
+      const sale = await assertSaleSettlementSafe();
+      if (sale) return sale;
+      if (loanIsRental) return null;
+      if (!publicClient || !walletChain || !loan.data || !address) {
+        return copy.refinance.uncheckedBlocks;
+      }
+      // #2424 r7 — posting uses its own verdict: an uncancelled expired
+      // request blocks a new one too, because the protocol refuses the post
+      // until it is cancelled.
+      const verdict = postRefinanceVerdict(
+        await discoverRefinanceRequest({
+          client: publicClient,
+          diamond: walletChain.diamondAddress,
+          loanId: BigInt(loanId),
+          sinceOfferId: BigInt(loan.data.offerId),
+          holder: address,
+        }),
+      );
+      if (verdict === 'open') return copy.refinance.alreadyOpen;
+      if (verdict === 'expired') return copy.refinance.expiredBlocksNew;
+      if (verdict === 'capped') return copy.refinance.cappedBlocks;
+      if (verdict === 'unchecked') return copy.refinance.uncheckedBlocks;
+      return null;
+    },
+    [assertSaleSettlementSafe, loanIsRental, publicClient, walletChain, loan.data, address, loanId],
+  );
 
   // Live-offset state (preclose Option 3) — chain-authoritative
   // (PrecloseOffset lock on the borrower NFT), page-owned like the
@@ -802,25 +1040,18 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   const principalBalance = useTokenBalance(
     loanIsRental ? undefined : loan.data?.lendingAsset,
   );
+  // #2390 — parsed EXACTLY: more decimals than the token has is refused
+  // (AmountPrecisionHint names it), never rounded into another amount.
   const collateralInputWei = useMemo(() => {
     if (!collateralMeta.data || !isPositiveDecimal(collateralInput)) return null;
-    try {
-      const wei = parseUnits(collateralInput, collateralMeta.data.decimals);
-      // A positive decimal below the token's precision parses to 0 wei
-      // — the contract rejects zero amounts, so treat it as invalid.
-      return wei > 0n ? wei : null;
-    } catch {
-      return null;
-    }
+    const wei = exactUnitsOrNull(collateralInput, collateralMeta.data.decimals);
+    // The contract rejects zero amounts.
+    return wei !== null && wei > 0n ? wei : null;
   }, [collateralInput, collateralMeta.data]);
   const partialInputWei = useMemo(() => {
     if (!principalMeta.data || !isPositiveDecimal(partialInput)) return null;
-    try {
-      const wei = parseUnits(partialInput, principalMeta.data.decimals);
-      return wei > 0n ? wei : null;
-    } catch {
-      return null;
-    }
+    const wei = exactUnitsOrNull(partialInput, principalMeta.data.decimals);
+    return wei !== null && wei > 0n ? wei : null;
   }, [partialInput, principalMeta.data]);
   // Minute tick so a countdown left on screen stays honest.
   const [nowSec, setNowSec] = useState(() => Math.floor(Date.now() / 1000));
@@ -1763,6 +1994,15 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
 
   async function run(kind: Exclude<Action, null>) {
     if (!address || !walletChain || !walletClient || !publicClient) return;
+    // #2406 r4 — what the repay's approval did, so a late gate that stops
+    // the write after it mined gives it back (`trackApproval`).
+    const approval = trackApproval();
+    const unwindClients = {
+      publicClient,
+      walletClient,
+      owner: address,
+      spender: walletChain.diamondAddress,
+    };
     // Accepted-sale completion window (Codex #1511 r4 P1 + r5 P1): a
     // repay here terminalizes the loan and permanently strands the
     // buyer's recovery completion. Cached fast-path, then a LIVE
@@ -1781,6 +2021,38 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         setPhase(null);
         setError(blocked);
         return;
+      }
+      // #2406 r4/r5 — a request could have been posted from another device
+      // since the page's last poll. EVERY confirm checks live; when what the
+      // review showed does not cover what that check found, stop so the
+      // review can say what repaying does to it — the next confirm repays
+      // unless the answer changed again. Repayment is the safety valve: it
+      // is never refused, only disclosed first (`repayRefinanceDecision`).
+      if (!isRental && loan.data) {
+        const verdict = liveRefinanceVerdict(
+          await discoverRefinanceRequest({
+            client: publicClient,
+            diamond: walletChain.diamondAddress,
+            loanId: BigInt(loanId),
+            sinceOfferId: BigInt(loan.data.offerId),
+            // repayLoan is permissionless, so the request that matters is the
+            // CURRENT holder's, read fresh; unknown holder = cannot rule out.
+            holder:
+              freshBorrowerOwner !== undefined && freshBorrowerOwner !== 'burned'
+                ? (freshBorrowerOwner as `0x${string}`)
+                : address,
+          }),
+        );
+        const decision = repayRefinanceDecision(repayShown, verdict);
+        setRepayRefiLatch({ key: repayLatchKey, notice: decision.notice });
+        if (!decision.proceed) {
+          void queryClient.invalidateQueries({
+            queryKey: refinanceDiscoveryKey(readChain.chainId, loanId),
+          });
+          setPhase(null);
+          setError(copy.refinance.repayRecheck);
+          return;
+        }
       }
     }
     setPhase('pending');
@@ -1909,6 +2181,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             owner: address,
             spender: walletChain.diamondAddress,
             amount: totalDue + pad,
+            ...approval.hooks(row.lendingAsset as `0x${string}`),
           });
         }
         setPhase('submitting');
@@ -1921,7 +2194,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           const blockedLate = await assertSaleSettlementSafe();
           if (blockedLate) {
             setPhase(null);
-            setError(blockedLate);
+            setError(await withCleanup(approval.unwind(unwindClients), blockedLate));
             return;
           }
         }
@@ -1983,7 +2256,8 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       void queryClient.invalidateQueries({ queryKey: ['myLoans'] });
       void queryClient.invalidateQueries({ queryKey: ['claimables'] });
     } catch (err) {
-      setError(captureTxError(err));
+      // A no-op unless the repay's approval mined (claims approve nothing).
+      setError(await withCleanup(approval.unwind(unwindClients), captureTxError(err)));
     } finally {
       setPhase(null);
     }
@@ -1997,10 +2271,12 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     : '…';
   async function runAddCollateral() {
     if (!address || !walletChain || !walletClient || !publicClient || !collateralMeta.data) return;
+    // #2390 — the exact amount the receipt showed; never re-parsed here.
+    const wei = collateralInputWei;
+    if (wei === null) return;
     setPhase('pending');
     setError(null);
     try {
-      const wei = parseUnits(collateralInput, collateralMeta.data.decimals);
       // addCollateral screens msg.sender — re-screen live before the
       // approval (the page gate is a cached read).
       await assertWalletNotSanctionedLive(
@@ -2060,8 +2336,183 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     }
   }
 
+  /** UX3-009 — take back collateral the loan no longer needs. Every
+   *  refusal the contract would make that the app can see beforehand is
+   *  checked live here and said in plain words; the rest (a price move
+   *  that lowers the ceiling between the read and the signature) the
+   *  contract refuses at estimate time, before anything is paid. */
+  async function runWithdrawCollateral() {
+    if (
+      !address ||
+      !walletChain ||
+      !walletClient ||
+      !publicClient ||
+      !collateralMeta.data ||
+      withdrawInputWei === null
+    ) {
+      return;
+    }
+    setPhase('pending');
+    setError(null);
+    const t = copy.positions.details.withdrawCollateral;
+    const wei = withdrawInputWei;
+    // PRE-CHECKS (#2389 r3). Nothing here opens the wallet, so a failure
+    // is said as a failed check — never as a transaction that "didn't go
+    // through". A check's own plain-words message (a moved position, a
+    // sanctions retry) is kept; anything else reads "couldn't check".
+    // A marker this page did not mount with means a request was posted
+    // in another tab after load: block until the page has verified it.
+    const liveRefiMarker = readRefinanceMarker(readChain.chainId, Number(row.loanId));
+    const newerRefinanceMarker = liveRefiMarker !== null && liveRefiMarker !== refi.offerId;
+    let saleState: Awaited<ReturnType<typeof probeSaleHoldLive>> | 'unknown';
+    let swapOrder: Awaited<ReturnType<typeof swapToRepayOrderState>>;
+    let liveMax: bigint;
+    let paused: boolean | 'unknown';
+    let liveRefi: Awaited<ReturnType<typeof discoverRefinanceRequest>>;
+    try {
+      // partialWithdrawCollateral screens msg.sender (Tier-1) and pays
+      // the CURRENT borrower-position holder — re-check both live. The
+      // sanctions read fails CLOSED here: every pre-check follows one
+      // rule, and an unanswered one sends nothing.
+      await assertWalletNotSanctionedLive(
+        publicClient,
+        walletChain.diamondAddress,
+        address,
+        { failClosed: true },
+      );
+      [, saleState, swapOrder, liveMax, paused, liveRefi] = await Promise.all([
+        assertPositionNftHeldLive({
+          publicClient,
+          diamondAddress: walletChain.diamondAddress,
+          tokenId: row.borrowerTokenId,
+          expectedOwner: address,
+        }),
+        // A sale listing (live, ended-but-uncleared, or accepted) keeps
+        // the loan linked and the contract refuses the withdrawal. A
+        // probe that cannot answer stops the flow (#2389 r2) — an
+        // unanswered pre-check sends nothing.
+        probeSaleHoldLive(
+          publicClient,
+          walletChain.diamondAddress,
+          Number(row.loanId),
+          row.lenderTokenId,
+          address,
+        ).catch(() => 'unknown' as const),
+        swapToRepayOrderState({
+          publicClient,
+          diamondAddress: walletChain.diamondAddress,
+          loanId: BigInt(row.loanId),
+        }),
+        publicClient.readContract({
+          address: walletChain.diamondAddress,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'calculateMaxWithdrawable',
+          args: [BigInt(row.loanId)],
+        }) as Promise<bigint>,
+        // The withdrawal is refused while the deployment is paused.
+        (
+          publicClient.readContract({
+            address: walletChain.diamondAddress,
+            abi: DIAMOND_ABI_VIEM,
+            functionName: 'paused',
+          }) as Promise<boolean>
+        ).catch(() => 'unknown' as const),
+        // #2391 — a request made on another device since the page last
+        // polled: discover it live, from the holder's own offers (the
+        // holder is `address`, asserted just above in the same batch).
+        discoverRefinanceRequest({
+          client: publicClient,
+          diamond: walletChain.diamondAddress,
+          loanId: BigInt(row.loanId),
+          sinceOfferId: BigInt(row.offerId),
+          holder: address,
+        }),
+      ]);
+    } catch (err) {
+      setError(
+        captureTxError(err, {
+          message: err instanceof BaseError ? t.checkFailed : (err as Error)?.message || t.checkFailed,
+        }),
+      );
+      setPhase(null);
+      return;
+    }
+    try {
+      // One pure rule for every pre-check (#2389 r2): a blocking answer
+      // names its obstacle, and an unanswered one blocks with "couldn't
+      // check". Tested in partialWithdraw.test.ts.
+      const block = withdrawPreflightBlock({
+        // #2389 r6 — the page's verified state, OR a marker another tab
+        // on this device wrote after the page mounted (re-read live).
+        refinancePending: refinanceBlocking || newerRefinanceMarker,
+        refinanceDiscovery: liveRefinanceVerdict(liveRefi),
+        paused,
+        saleState,
+        swapOrder,
+        liveMax,
+        wei,
+      });
+      if (block !== null) {
+        setError(
+          block === 'refinance-pending'
+            ? t.refinancePending
+            : block === 'refinance-unchecked'
+            ? t.refinanceUnchecked
+            : block === 'refinance-capped'
+            ? copy.refinance.cappedBlocks
+            : block === 'paused'
+            ? t.paused
+            : block === 'pause-unchecked'
+              ? t.pauseUnchecked
+              : block === 'sale-listed'
+            ? t.saleListed
+            : block === 'sale-unchecked'
+              ? t.saleUnchecked
+              : block === 'swap-order'
+                ? t.swapOrderPending
+                : block === 'swap-unchecked'
+                  ? t.swapOrderUnchecked
+                  : block === 'over-max'
+                    ? t.overMax(
+                        `${formatTokenAmountDown(liveMax, collateralMeta.data.decimals)} ${collateralMeta.data.symbol}`,
+                      )
+                    : t.noneUnknown,
+        );
+        if (block === 'over-max' || block === 'none-left') {
+          void queryClient.invalidateQueries({ queryKey: ['maxWithdrawable'] });
+        }
+        return;
+      }
+      setPhase('submitting');
+      await write('partialWithdrawCollateral', [BigInt(row.loanId), wei]);
+      setDoneMessage(copy.positions.details.done.collateralWithdrawn);
+      setWithdrawInput('');
+      setConfirmingSurface(null);
+      void queryClient.invalidateQueries({ queryKey: ['loan'] });
+      void queryClient.invalidateQueries({ queryKey: ['loanRisk'] });
+      void queryClient.invalidateQueries({ queryKey: ['maxWithdrawable'] });
+      void queryClient.invalidateQueries({ queryKey: ['vpfi'] });
+    } catch (err) {
+      setError(captureTxError(err));
+    } finally {
+      setPhase(null);
+    }
+  }
+
   async function runPartialRepay() {
     if (!address || !walletChain || !walletClient || !publicClient || !principalMeta.data) return;
+    // #2406 r4 — what this attempt's approval did, so the late gate (or
+    // a failed write) gives it back rather than leaving it standing.
+    const approval = trackApproval();
+    const unwindClients = {
+      publicClient,
+      walletClient,
+      owner: address,
+      spender: walletChain.diamondAddress,
+    };
+    // #2390 — the exact amount the receipt showed; never re-parsed here.
+    const wei = partialInputWei;
+    if (wei === null) return;
     // Accepted-sale completion window (Codex #1511 r4 P1 + r5 P1):
     // the buyer funded the ACCEPTED principal — a partial now changes
     // it under the in-flight purchase. Cached fast-path + LIVE
@@ -2073,7 +2524,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     // Lock held across the live probe (Codex #1511 r6).
     setPhase('pending');
     {
-      const blocked = await assertSaleSettlementSafe();
+      const blocked = await assertBorrowerSettlementSafe();
       if (blocked) {
         setPhase(null);
         setError(blocked);
@@ -2082,7 +2533,6 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     }
     setError(null);
     try {
-      const wei = parseUnits(partialInput, principalMeta.data.decimals);
       // repayPartial pulls MORE than the typed amount: the accrued
       // interest to now (lender + treasury split) rides along in the
       // same transferFrom set. Approve and balance-check the full pull
@@ -2213,6 +2663,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         owner: address,
         spender: walletChain.diamondAddress,
         amount: required,
+        ...approval.hooks(row.lendingAsset as `0x${string}`),
       });
       setPhase('submitting');
       // LATE re-gate (Codex #1511 r10 P1): the entry gate ran before
@@ -2221,10 +2672,11 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       // the on-chain close-out guard that fully closes the signing
       // race is the #1503 PR-E slice.
       {
-        const blockedLate = await assertSaleSettlementSafe();
+        const blockedLate = await assertBorrowerSettlementSafe();
         if (blockedLate) {
           setPhase(null);
-          setError(blockedLate);
+          // #2406 r4 — the approval above has mined: give it back.
+          setError(await withCleanup(approval.unwind(unwindClients), blockedLate));
           return;
         }
       }
@@ -2239,7 +2691,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       void queryClient.invalidateQueries({ queryKey: ['loanRisk'] });
       void queryClient.invalidateQueries({ queryKey: ['myLoans'] });
     } catch (err) {
-      setError(captureTxError(err));
+      setError(await withCleanup(approval.unwind(unwindClients), captureTxError(err)));
     } finally {
       setPhase(null);
     }
@@ -2247,6 +2699,15 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
 
   async function runPreclose() {
     if (!address || !walletChain || !walletClient || !publicClient || !principalMeta.data) return;
+    // #2406 r4 — what this attempt's approval did, so the late gate (or
+    // a failed write) gives it back rather than leaving it standing.
+    const approval = trackApproval();
+    const unwindClients = {
+      publicClient,
+      walletClient,
+      owner: address,
+      spender: walletChain.diamondAddress,
+    };
     // NOTE deliberately NO guard for a LIVE/expired listing here
     // (Codex #1511 r2): `precloseDirect` carries no
     // `loanToSaleOfferId` check on-chain — the listing's hold is on
@@ -2261,7 +2722,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     // Lock held across the live probe (Codex #1511 r6).
     setPhase('pending');
     {
-      const blocked = await assertSaleSettlementSafe();
+      const blocked = await assertBorrowerSettlementSafe();
       if (blocked) {
         setPhase(null);
         setError(blocked);
@@ -2346,6 +2807,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         owner: address,
         spender: walletChain.diamondAddress,
         amount: due,
+        ...approval.hooks(row.lendingAsset as `0x${string}`),
       });
       setPhase('submitting');
       // LATE re-gate (Codex #1511 r10 P1): the entry gate ran before
@@ -2354,10 +2816,11 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       // the on-chain close-out guard that fully closes the signing
       // race is the #1503 PR-E slice.
       {
-        const blockedLate = await assertSaleSettlementSafe();
+        const blockedLate = await assertBorrowerSettlementSafe();
         if (blockedLate) {
           setPhase(null);
-          setError(blockedLate);
+          // #2406 r4 — the approval above has mined: give it back.
+          setError(await withCleanup(approval.unwind(unwindClients), blockedLate));
           return;
         }
       }
@@ -2370,7 +2833,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       void queryClient.invalidateQueries({ queryKey: ['myLoans'] });
       void queryClient.invalidateQueries({ queryKey: ['claimables'] });
     } catch (err) {
-      setError(captureTxError(err));
+      setError(await withCleanup(approval.unwind(unwindClients), captureTxError(err)));
     } finally {
       setPhase(null);
     }
@@ -2537,6 +3000,22 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
               whenThisEnds: copy.positions.details.receipt.endsClaim,
             }
           : null;
+
+  // #2406 r1/r3 — the pending card is keyed to the request's CREATOR (the
+  // only wallet that can cancel it) once verified; while it loads, to the
+  // viewer's own scan (a request found there is theirs) or the current
+  // borrower-position holder — never to the loan's original borrower, who
+  // may have transferred the position.
+  const refiCardVisible =
+    refi.offerId !== null &&
+    !isRental &&
+    address !== undefined &&
+    (refi.state
+      ? address.toLowerCase() === refi.state.creator.toLowerCase()
+      : refi.fromOwnScan ||
+        (freshBorrowerOwner !== undefined &&
+          freshBorrowerOwner !== 'burned' &&
+          address.toLowerCase() === freshBorrowerOwner.toLowerCase()));
 
   return (
     <div className="stack">
@@ -2922,6 +3401,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                 : false
           }
           refinancePending={refinanceBlocking}
+          refinanceCheck={refiCheck}
           refinanceEligible={Boolean(
             address && address.toLowerCase() === row.borrower.toLowerCase(),
           )}
@@ -2976,6 +3456,11 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
               {copy.positions.details.addCollateral.button}
             </button>
           </div>
+          <AmountPrecisionHint
+            value={collateralInput}
+            decimals={collateral.decimals}
+            symbol={collateral.symbol}
+          />
           {collateralOverBalance ? (
             <p className="field-hint" style={{ color: 'var(--danger)', marginTop: 8 }}>
               {collateralInputWei !== null && collateralBalance.data !== undefined
@@ -3044,6 +3529,215 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         </section>
       ) : null}
 
+      {isBorrowerHolder &&
+      // #2389 r5 — the RECONCILED active state, as the ceiling query
+      // uses: a fallback loan the live read confirms cured to Active
+      // is open again, and the indexer must not withhold the action.
+      effectivelyActive &&
+      // #2389 r1 — the indexed row can lag a repay, default or
+      // liquidation made elsewhere; once the live read says the loan is
+      // no longer Active the card goes, rather than telling the borrower
+      // an open loan needs all its collateral.
+      !liveSaysNotActive &&
+      !closedThisSession &&
+      !isRental &&
+      !collateralIsNft &&
+      hasCollateral &&
+      // #2389 r8 — a token-details failure keeps the card, with that
+      // said, rather than making the borrower's action vanish.
+      (collateral || collateralMeta.isError) ? (
+        // UX3-009 — take back collateral the loan no longer needs. Shown
+        // in Basic mode: it is the borrower's own money, and the spec
+        // offers it to every borrower, not only to advanced users.
+        <section className="card" id="withdraw-collateral-card">
+          <div className="card-title">
+            <ShieldMinus aria-hidden />
+            <h3 style={{ margin: 0 }}>{copy.positions.details.withdrawCollateral.title}</h3>
+          </div>
+          {!collateral ? (
+            <p className="muted" id="withdraw-collateral-state" style={{ margin: 0 }}>
+              {copy.positions.details.withdrawCollateral.metaUnavailable}
+            </p>
+          ) : (
+          <>
+          <p className="muted">
+            {copy.positions.details.withdrawCollateral.blurb(collateral.symbol)}
+          </p>
+          {saleHoldResolving ? (
+            <p className="muted" style={{ margin: 0 }}>
+              {copy.earlyRepay.checkingInterlocks}
+            </p>
+          ) : refiCheck !== 'settled' ? (
+            // #2391 — a request could exist unseen; hold back, and say why.
+            <RefinanceCheckNotice check={refiCheck} />
+          ) : refinanceBlocking ? (
+            // #2389 r5 — the same pending-refinance interlock partial
+            // repayment and preclose apply: the request is frozen at the
+            // current collateral, so a withdrawal strands it.
+            <div className="banner banner-warn" role="alert">
+              <span className="banner-body">
+                {copy.positions.details.withdrawCollateral.refinancePending}
+              </span>
+            </div>
+          ) : saleHold.data === 'live' ||
+            saleHold.data === 'clearable' ||
+            saleHold.data === 'accepted' ? (
+            // The contract refuses a withdrawal while ANY listing is
+            // linked to the loan — live, ended-but-uncleared, or
+            // accepted. The sale-hold card above explains which.
+            <div className="banner banner-warn" role="status">
+              <span className="banner-body">
+                {copy.positions.details.withdrawCollateral.saleListed}
+              </span>
+            </div>
+          ) : maxWithdrawState.kind === 'loading' ? (
+            <p className="muted" id="withdraw-collateral-state" style={{ margin: 0 }}>
+              {copy.positions.details.withdrawCollateral.checking}
+            </p>
+          ) : maxWithdrawState.kind === 'paused' ? (
+            <p className="muted" id="withdraw-collateral-state" style={{ margin: 0 }}>
+              {copy.positions.details.withdrawCollateral.paused}
+            </p>
+          ) : maxWithdrawState.kind === 'unconfirmed' ? (
+            <p className="muted" id="withdraw-collateral-state" style={{ margin: 0 }}>
+              {copy.positions.details.withdrawCollateral.unconfirmed}
+            </p>
+          ) : maxWithdrawState.kind !== 'some' ? (
+            <p className="muted" id="withdraw-collateral-state" style={{ margin: 0 }}>
+              {maxWithdrawState.kind === 'none-needed'
+                ? copy.positions.details.withdrawCollateral.noneNeeded
+                : maxWithdrawState.kind === 'none-unpriced'
+                  ? copy.positions.details.withdrawCollateral.noneUnpriced
+                  : maxWithdrawState.kind === 'none-status-unconfirmed'
+                    ? copy.positions.details.withdrawCollateral.noneStatusUnconfirmed
+                    : copy.positions.details.withdrawCollateral.noneUnknown}
+            </p>
+          ) : (
+            <>
+              <p id="withdraw-collateral-state" style={{ marginTop: 0 }}>
+                {copy.positions.details.withdrawCollateral.available(
+                  `${formatTokenAmountDown(maxWithdrawState.max, collateral.decimals)} ${collateral.symbol}`,
+                )}
+              </p>
+              <p className="field-hint" style={{ marginTop: 0 }}>
+                {copy.positions.details.withdrawCollateral.availableNote}
+              </p>
+              {/* #2389 r4 — what the card cannot vouch for is said here,
+                  not discovered at submit. */}
+              {withdrawCaveats({
+                paused: maxWithdrawable.data?.paused,
+                saleHold: saleHold.data,
+              }).map((c) => (
+                <p key={c} className="field-hint" style={{ marginTop: 0 }}>
+                  {c === 'pause-unknown'
+                    ? copy.positions.details.withdrawCollateral.pauseUnknownNote
+                    : copy.positions.details.withdrawCollateral.saleUnknownNote}
+                </p>
+              ))}
+              <div className="cluster">
+                <input
+                  aria-label={copy.positions.details.withdrawCollateral.amountAria}
+                  className="input"
+                  style={{ flex: 1 }}
+                  inputMode="decimal"
+                  placeholder="0.0"
+                  value={withdrawInput}
+                  // #2389 r5 P1 — frozen while the review is open or a
+                  // send is in flight, so the amount on screen is always
+                  // the amount the wallet is asked to send.
+                  disabled={busy || confirmingSurface === 'withdraw-collateral'}
+                  onChange={(e) => setWithdrawInput(e.target.value.trim())}
+                />
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  disabled={busy || confirmingSurface === 'withdraw-collateral'}
+                  onClick={() =>
+                    setWithdrawInput(formatUnits(maxWithdrawState.max, collateral.decimals))
+                  }
+                >
+                  {copy.positions.details.withdrawCollateral.max}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  disabled={
+                    busy ||
+                    !onSupportedChain ||
+                    !walletClient ||
+                    !publicClient ||
+                    !sanctionsClear ||
+                    withdrawProblem !== null
+                  }
+                  onClick={() => setConfirmingSurface('withdraw-collateral')}
+                >
+                  {copy.positions.details.withdrawCollateral.button}
+                </button>
+              </div>
+              <AmountPrecisionHint
+                value={withdrawInput}
+                decimals={collateral.decimals}
+                symbol={collateral.symbol}
+              />
+              {withdrawProblem === 'over-max' ? (
+                <p className="field-hint" style={{ color: 'var(--danger)', marginTop: 8 }}>
+                  {copy.positions.details.withdrawCollateral.overMax(
+                    `${formatTokenAmountDown(maxWithdrawState.max, collateral.decimals)} ${collateral.symbol}`,
+                  )}
+                </p>
+              ) : null}
+              {maxWithdrawable.data?.isVpfi === true ? (
+                <p className="field-hint" style={{ marginTop: 8 }}>
+                  {copy.positions.details.withdrawCollateral.vpfiNote}
+                </p>
+              ) : maxWithdrawable.data && maxWithdrawable.data.isVpfi === undefined ? (
+                // #2389 r1 — the VPFI check failed; unknown is stated,
+                // never shown as "not VPFI".
+                <p className="field-hint" style={{ marginTop: 8 }}>
+                  {copy.positions.details.withdrawCollateral.vpfiUnknownNote}
+                </p>
+              ) : null}
+              {confirmingSurface === 'withdraw-collateral' && withdrawInputWei !== null ? (
+                <div style={{ marginTop: 16 }}>
+                  <ConfirmReceipt
+                    busy={busy}
+                    confirmLabel={copy.positions.details.withdrawCollateral.confirm}
+                    onBack={() => setConfirmingSurface(null)}
+                    onConfirm={() => void runWithdrawCollateral()}
+                    // #2389 r4 — the same write gate as the form's button:
+                    // a wallet moved to an unsupported network must land
+                    // on a disabled button, not a silent no-op.
+                    disabled={
+                      !onSupportedChain ||
+                      !walletClient ||
+                      !publicClient ||
+                      !walletChain ||
+                      // #2389 r5 — a ceiling that refreshed below the
+                      // reviewed amount disables the confirm, beside the
+                      // over-limit warning it already shows.
+                      withdrawProblem !== null
+                    }
+                    data={{
+                      // The exact amount sent, not the typed text (#2389 r3).
+                      youReceive: copy.positions.details.withdrawCollateral.receive(
+                        `${formatUnits(withdrawInputWei, collateral.decimals)} ${collateral.symbol}`,
+                      ),
+                      youLock: copy.positions.details.withdrawCollateral.lockNothing,
+                      youMayOwe: copy.positions.details.withdrawCollateral.oweNothingMore,
+                      youCanLose: copy.positions.details.withdrawCollateral.lose,
+                      fees: copy.positions.details.receipt.feesNone,
+                      whenThisEnds: copy.positions.details.withdrawCollateral.ends,
+                    }}
+                  />
+                </div>
+              ) : null}
+            </>
+          )}
+          </>
+          )}
+        </section>
+      ) : null}
+
       {isAdvanced &&
       role === 'borrower' &&
       row.status === 'active' &&
@@ -3082,6 +3776,9 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                 {copy.saleHold.completionPaused}
               </span>
             </div>
+          ) : refiCheck !== 'settled' ? (
+            // #2391 — a request could exist unseen; hold back, and say why.
+            <RefinanceCheckNotice check={refiCheck} />
           ) : refinanceBlocking ? (
             // A live refinance request is frozen at the CURRENT
             // principal — a partial would strand it unacceptable
@@ -3126,6 +3823,11 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
               {copy.positions.details.partial.button}
             </button>
           </div>
+          <AmountPrecisionHint
+            value={partialInput}
+            decimals={principal.decimals}
+            symbol={principal.symbol}
+          />
           {partialOverBalance ? (
             <p className="field-hint" style={{ color: 'var(--danger)', marginTop: 8 }}>
               {partialInputWei !== null && principalBalance.data !== undefined
@@ -3255,6 +3957,9 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                 {copy.offset.blockedOtherPaths}
               </span>
             </div>
+          ) : refiCheck !== 'settled' ? (
+            // #2391 — a request could exist unseen; hold back, and say why.
+            <RefinanceCheckNotice check={refiCheck} />
           ) : refinanceBlocking ? (
             // A live refinance request is frozen against THIS loan —
             // settling it early would strand the request forever.
@@ -3320,7 +4025,12 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             already live (the pending surface is the page-owned card
             below, which outlives these gates). Keyed by chain so a
             chain switch re-seeds per-chain state. */}
-        {!refinancePending &&
+        {!refinanceBlocking &&
+        // #2406 r2 — and only once discovery has answered: an unseen
+        // request from another device must not invite a second one. An
+        // EXPIRED request does not hold the form (#2406 r3) — it can never
+        // be filled, and its own card offers the cleanup.
+        refiCheck === 'settled' &&
         !offsetPend.pending &&
         // Accepted-sale completion window (Codex #1511 r4 P1): a
         // carry-over refinance settles this loan and strands the
@@ -3333,7 +4043,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           <div id="refinance-card">
             <RefinanceFlow
               key={readChain.chainId}
-              preSubmitBlock={assertSaleSettlementSafe}
+              preSubmitBlock={assertRefinancePostSafe}
               row={row}
               live={loanLive.data.live}
               chainNow={loanLive.data.chainNow}
@@ -3363,10 +4073,20 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         // the buyer's funded acceptance — paused (and waited on) like
         // the other settlement flows. The chooser rows say why.
         !saleCompletionPending &&
+        !saleHoldResolving &&
+        refiCheck !== 'settled' ? (
+          // #2406 r1 — the handover rewrites the borrower and the offset
+          // settles the loan, so both strand an unseen refinance request:
+          // held back, with the reason, while discovery has not answered.
+          <RefinanceCheckNotice check={refiCheck} />
+        ) : !livePastDue &&
+        !refinanceBlocking &&
+        !offsetPend.pending &&
+        !saleCompletionPending &&
         !saleHoldResolving ? (
           <>
             <ObligationTransferFlow
-              preSubmitBlock={assertSaleSettlementSafe}
+              preSubmitBlock={assertBorrowerSettlementSafe}
               row={row}
               live={loanLive.data.live}
               chainNow={loanLive.data.chainNow}
@@ -3394,6 +4114,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
               // revert.
               <OffsetFlow
                 key={`offset-${readChain.chainId}`}
+                preSubmitBlock={assertBorrowerSettlementSafe}
                 row={row}
                 live={loanLive.data.live}
                 chainNow={loanLive.data.chainNow}
@@ -4328,10 +5049,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         />
       ) : null}
 
-      {refi.offerId &&
-      !isRental &&
-      address &&
-      address.toLowerCase() === row.borrower.toLowerCase() ? (
+      {refiCardVisible && refi.offerId ? (
         <RefinancePendingCard
           loanId={row.loanId}
           offerId={refi.offerId}
@@ -4343,6 +5061,29 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           onCleared={refi.clear}
           onDone={setDoneMessage}
         />
+      ) : refi.ownScanUnresolved !== null && !isRental ? (
+        // #2406 r4/r5 — this wallet's own scan failed or was cut short by
+        // its page cap: a request it posted while holding the borrower
+        // position could exist unseen. Say so, and name the manual cleanup.
+        // Keyed on the scan alone, not on the viewer's other roles.
+        <div className="banner banner-warn" role="status">
+          <span className="banner-body">
+            {refi.ownScanUnresolved === 'capped'
+              ? copy.refinance.ownScanCapped
+              : copy.refinance.ownScanFailed}
+          </span>
+        </div>
+      ) : refi.leftoversUnresolved !== null && !isRental ? (
+        // #2429 r2 — the record answered, but the search for an older request
+        // it does not name did not: nothing is held back, and the page says
+        // it could not check rather than staying silent.
+        <div className="banner banner-info" role="status">
+          <span className="banner-body">
+            {refi.leftoversUnresolved === 'capped'
+              ? copy.refinance.leftoversCapped
+              : copy.refinance.leftoversFailed}
+          </span>
+        </div>
       ) : null}
 
       {/* Per-loan keeper enables — third leg of the keeper trio
@@ -4429,13 +5170,20 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                   <span className="banner-body">{copy.positions.details.nothingWaiting}</span>
                 </div>
               ) : null}
-              {action === 'repay' && refinancePending && !isRental ? (
+              {action === 'repay' &&
+              !isRental &&
+              repayShown !== null ? (
                 // Repay stays open with a pending refinance request
                 // (it's the safety valve — never block it), but the
-                // request's fate must be stated before signing.
+                // request's fate must be stated before signing. #2406 r3 —
+                // so must an UNANSWERED check: a request from another
+                // device could exist, and repaying would strand it too. An
+                // expired request is not live; its own card covers cleanup.
                 <div className="banner banner-warn" role="alert" style={{ marginBottom: 12 }}>
                   <span className="banner-body">
-                    {copy.refinance.repayWarnPending}
+                    {repayShown === 'pending'
+                      ? copy.refinance.repayWarnPending
+                      : copy.refinance.repayWarnUnchecked}
                   </span>
                 </div>
               ) : null}

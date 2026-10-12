@@ -135,24 +135,24 @@ test('a zero-fill market shows the honest empty chart; seeded fills render spars
   // (copy.desk.chart.emptyRange), never a "no fills yet for this
   // market" claim it can't back. No series is drawn either way.
   await expect(
-    chartCard.getByText(/No fills in this range — try a longer range\./),
+    chartCard.getByText(/No loans agreed in this period — try a longer one\./),
   ).toBeVisible({ timeout: 30_000 });
   await expect(chartCard.locator('.desk-chart-canvas')).toHaveCount(0);
   // Switching to range=all makes the empty series the market's WHOLE
   // history — only then is the never-filled copy (copy.desk.chart.empty)
   // claimable.
   await chartCard
-    .getByRole('group', { name: 'Range' })
+    .getByRole('group', { name: 'Period shown' })
     .getByRole('button', { name: 'all', exact: true })
     .click();
   await expect(
     chartCard.getByText(
-      /No fills yet for this market — the chart draws only executed rates\./,
+      /No loans agreed yet for this pair — the chart only shows rates people actually agreed\./,
     ),
   ).toBeVisible({ timeout: 30_000 });
   await expect(chartCard.locator('.desk-chart-canvas')).toHaveCount(0);
   await expect(chartCard.locator('.desk-chart-lastfill')).toHaveText(
-    'no fills yet',
+    'no loans agreed yet',
   );
   // UX-037 — the TradingView attribution (Apache-2.0 NOTICE) shows ONLY
   // when a chart actually draws. On this honest-empty state (no series)
@@ -228,7 +228,7 @@ test('a zero-fill market shows the honest empty chart; seeded fills render spars
   // live tier's surface; the decision math (fillPointsFromTape /
   // tapeCoversSparseFills) is pinned in src/lib/rateChart.test.ts.
   await expect(page.locator('.desk-chart-sparse-note')).toHaveText(
-    /Sparse market — 3 fills in this range, drawn individually\./,
+    /Few loans so far — 3 in this period, each drawn on its own\./,
     { timeout: 30_000 },
   );
   // §5.3 rule 5 — last EXECUTED print in the header
@@ -236,7 +236,7 @@ test('a zero-fill market shows the honest empty chart; seeded fills render spars
   // formats as 9.33%; the age suffix is fork-vs-wall-clock dependent,
   // so only the rate half is pinned.
   await expect(page.locator('.desk-chart-lastfill')).toHaveText(
-    /^last fill: 9\.33% · /,
+    /^last agreed: 9\.33% · /,
   );
   // The series canvas now exists (step-line mode draws INTO it —
   // pixel-level shape is the library's job, not this spec's).
@@ -245,7 +245,7 @@ test('a zero-fill market shows the honest empty chart; seeded fills render spars
   // Own timeout: the hint hangs off the BOOK query (the ladder mid),
   // which lands independently of the candle query that gated above.
   await expect(page.locator('.desk-chart-midhint')).toHaveText(
-    /quoted mid — a resting quote, not an executed rate\./,
+    /midpoint between the best offer to lend and the best request to borrow among the open offers on this page\. It is worked out from those two — not a rate anyone has offered or agreed\./,
     { timeout: 30_000 },
   );
   // UX-037 — now that a chart draws, the attribution IS present.

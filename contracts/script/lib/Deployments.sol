@@ -403,6 +403,14 @@ library Deployments {
     ///         `.rewardCustodyHolder`. Zero on a chain that predates the
     ///         holder and has not yet run `DeployRewardCustodyHolder`.
     function readRewardCustodyHolderOptional() internal view returns (address) { return _tryReadAddr(".rewardCustodyHolder"); }
+    /// @notice #2439 — optional, non-reverting read of `.sanctions.oracle`, the
+    ///         oracle `ConfigureSanctionsOracle` last set on this Diamond. Zero
+    ///         on a chain that has not run it.
+    function readSanctionsOracleOptional() internal view returns (address) { return _tryReadAddr(".sanctions.oracle"); }
+    /// @notice #2439 — optional, non-reverting read of
+    ///         `.sanctionsTestnetOverlay`, the overlay `ConfigureSanctionsOracle`
+    ///         last deployed on this testnet. Zero where none was deployed.
+    function readSanctionsTestnetOverlayOptional() internal view returns (address) { return _tryReadAddr(".sanctionsTestnetOverlay"); }
 
     // Track-C mock infra (Base Sepolia testnet only). Falls back to env on chains
     // where these aren't deployed; readers pre-check for `address(0)` and skip.
@@ -500,6 +508,36 @@ library Deployments {
     ///         `DeployDiamond` (fresh deploys) or `DeployRewardCustodyHolder`
     ///         (live chains); replaced only by the paused ceremony.
     function writeRewardCustodyHolder(address a) internal { _writeAddr(".rewardCustodyHolder", a); }
+    /// @notice #2439 — the sanctions oracle `ConfigureSanctionsOracle` set on
+    ///         this Diamond, recorded as ONE `.sanctions` object:
+    ///         `{oracle, kind}`. `kind` is "testnet-overlay" today; the record
+    ///         is an object so that a later source (#2443) can add fields.
+    ///
+    /// @dev    The object is replaced WHOLE on every write. The typed writers
+    ///         merge into the file and have no way to delete a key, so fields
+    ///         written as separate top-level keys let one from an earlier
+    ///         configuration outlive the configuration that replaced it
+    ///         (Codex #2442 r3). One object, one write: the record describes
+    ///         one configuration or none.
+    ///
+    ///         The JSON is assembled by hand rather than with `serialize*`,
+    ///         whose per-object-key state persists across calls in a run and
+    ///         would carry a field from a previous call into this one — the
+    ///         same stale-field defect by another door.
+    function writeSanctionsRecord(address oracle, string memory kind) internal {
+        if (_dryRunSkips(".sanctions")) return;
+        _ensureFile();
+        // forge-lint: disable-next-line(unsafe-cheatcode)
+        CHEATS.writeJson(
+            string.concat("{\"oracle\":\"", CHEATS.toString(oracle), "\",\"kind\":\"", kind, "\"}"),
+            path(),
+            ".sanctions"
+        );
+    }
+    /// @notice #2439 — the overlay deployed on this testnet, recorded when it
+    ///         is deployed and independently of whether the Diamond has been
+    ///         pointed at it yet.
+    function writeSanctionsTestnetOverlay(address a) internal { _writeAddr(".sanctionsTestnetOverlay", a); }
     function writeWeth(address a)            internal { _writeAddr(".weth",            a); }
     function writeTreasury(address a)        internal { _writeAddr(".treasury",        a); }
     function writeAdmin(address a)           internal { _writeAddr(".admin",           a); }

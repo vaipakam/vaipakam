@@ -28,6 +28,7 @@ import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {RepayPeriodicFacet} from "../src/facets/RepayPeriodicFacet.sol";
 import {SwapToRepayFacet} from "../src/facets/SwapToRepayFacet.sol";
+import {SwapToRepayPartialFacet} from "../src/facets/SwapToRepayPartialFacet.sol";
 import {SwapToRepayIntentFacet} from "../src/facets/SwapToRepayIntentFacet.sol";
 import {IntentDispatchFacet} from "../src/facets/IntentDispatchFacet.sol";
 import {AutoLifecycleFacet} from "../src/facets/AutoLifecycleFacet.sol";
@@ -248,6 +249,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         RepayFacet repayFacet = new RepayFacet();
         RepayPeriodicFacet repayPeriodicFacet = new RepayPeriodicFacet();
         SwapToRepayFacet swapToRepayFacet = new SwapToRepayFacet();
+        // #2416 — the partial swap-to-repay route, split off for EIP-170.
+        SwapToRepayPartialFacet swapToRepayPartialFacet = new SwapToRepayPartialFacet();
         // T-090 v1.1 (#389) — intent-based swap-to-repay sibling facet.
         SwapToRepayIntentFacet swapToRepayIntentFacet = new SwapToRepayIntentFacet();
         // T-087 Sub 3.B — the 1inch LOP v4 callback dispatcher;
@@ -396,7 +399,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](92);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](93);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -583,6 +586,13 @@ contract DeployDiamond is Script, ArtifactRootBase {
         cuts[43] = _buildCut(
             address(swapToRepayFacet),
             _getSwapToRepayFacetSelectors()
+        );
+        // #2416 — the PARTIAL route, split off SwapToRepayFacet at 73 bytes of
+        // EIP-170 headroom. Same storage, same Diamond, same selector; only
+        // the runtime bytecode is separate. Refresh the two together.
+        cuts[92] = _buildCut(
+            address(swapToRepayPartialFacet),
+            _getSwapToRepayPartialFacetSelectors()
         );
         // T-090 v1.1 (#389) — intent-based swap-to-repay sibling.
         // Hosts the commit / cancel / cancelExpired entry points +
@@ -1111,6 +1121,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         Deployments.writeFacet("repayFacet",              address(repayFacet));
         Deployments.writeFacet("repayPeriodicFacet",      address(repayPeriodicFacet));
         Deployments.writeFacet("swapToRepayFacet",        address(swapToRepayFacet));
+        Deployments.writeFacet("swapToRepayPartialFacet", address(swapToRepayPartialFacet));
         Deployments.writeFacet("defaultedFacet",          address(defaultedFacet));
         Deployments.writeFacet("riskFacet",               address(riskFacet));
         Deployments.writeFacet("riskMatchLiquidationFacet", address(riskMatchLiquidationFacet));
@@ -1390,7 +1401,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[20] = ProfileFacet.isLoanKeeperEnabled.selector;
         s[21] = ProfileFacet.isOfferKeeperEnabled.selector;
         // Phase 4.3 sanctions-screen surface. The oracle is set per
-        // chain (Chainalysis-style); when unset the on-chain
+        // chain (any `ISanctionsList`); when unset the on-chain
         // `isSanctionedAddress` returns false and offer-create /
         // offer-accept simply skip the screen.
         s[22] = ProfileFacet.setSanctionsOracle.selector;
@@ -1769,11 +1780,16 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
     /// T-090 — Borrower-initiated swap-to-repay facet selectors.
     function _getSwapToRepayFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](3);
+        s = new bytes4[](2);
         s[0] = SwapToRepayFacet.swapToRepayFull.selector;
-        s[1] = SwapToRepayFacet.swapToRepayPartial.selector;
         // #2317 — read-only sizing preview for the full close-out.
-        s[2] = SwapToRepayFacet.previewSwapToRepayFull.selector;
+        s[1] = SwapToRepayFacet.previewSwapToRepayFull.selector;
+    }
+
+    /// #2416 — the partial swap-to-repay route (split off SwapToRepayFacet).
+    function _getSwapToRepayPartialFacetSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](1);
+        s[0] = SwapToRepayPartialFacet.swapToRepayPartial.selector;
     }
 
     /// T-090 v1.1 (#389) — intent-based swap-to-repay facet selectors.
@@ -2146,7 +2162,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getClaimSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](10);
+        s = new bytes4[](12);
         s[0] = ClaimFacet.claimAsLender.selector;
         s[1] = ClaimFacet.claimAsBorrower.selector;
         s[2] = ClaimFacet.getClaimableAmount.selector;
@@ -2158,6 +2174,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[7] = ClaimFacet.setLenderBackstopOptIn.selector;
         s[8] = ClaimFacet.claimAsLenderViaBackstop.selector;
         s[9] = ClaimFacet.getBorrowerSurplusClaim.selector;
+        s[10] = ClaimFacet.getOwedAtDefault.selector; // #2374
+        s[11] = ClaimFacet.getOwedAtInternalMatch.selector; // #2427
     }
 
     function _getAddCollateralSelectors() internal pure returns (bytes4[] memory s) {
@@ -2384,7 +2402,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getRefinanceSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](3);
+        s = new bytes4[](5);
         s[0] = RefinanceFacet.refinanceLoan.selector;
         // T-092-H (#549) — atomic accept-and-refinance internal entries.
         // Cut here so the diamond fallback routes the cross-facet calls
@@ -2393,6 +2411,9 @@ contract DeployDiamond is Script, ArtifactRootBase {
         // the route is stated rather than inferred from msg.sender.
         s[1] = RefinanceFacet.refinanceLoanFromAccept.selector;
         s[2] = RefinanceFacet.refinanceLoanFromMatch.selector;
+        // #2407 — the loan → refinance-request record's view.
+        s[3] = RefinanceFacet.getRefinanceRequest.selector;
+        s[4] = RefinanceFacet.checkRefinanceRequest.selector;
     }
 
     function _getVpfiTokenSelectors() internal pure returns (bytes4[] memory s) {
@@ -3160,7 +3181,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         returns (bytes4[] memory s)
     {
         // A2-iii retired the dry run, the domain needs and the domain probe
-        // (Remove legs in RefreshAllFacetsInPlace._retiredSelectors).
+        // (a complete in-place refresh removes them with every other route
+        // outside the deploy's selector set, #2313).
         s = new bytes4[](10);
         // 3b-ii-A2 (#2305) — the staging records' reads.
         s[0] = RewardEpochViewFacet.getStagingRecord.selector;

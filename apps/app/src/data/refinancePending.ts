@@ -7,9 +7,13 @@
  * partial-repay interlock through ALL of those windows, or a lender
  * can accept a request the page no longer admits exists.
  *
- * The marker is device-local (localStorage — the indexer has no
- * column for the refinance tag yet) and every render of the pending
- * surface verifies it against the chain in one batch: the offer
+ * #2391 — the request is DISCOVERED ON CHAIN from the current
+ * borrower-position holder's own offers (`refinanceDiscovery.ts`), so one
+ * made on another device or through another tool is found too. The
+ * device-local marker stays as a fast-path hint (it names this device's
+ * request before the next discovery poll). Whichever names the request,
+ * every render of the pending surface verifies it against the chain in
+ * one batch: the offer
  * record (cancel DELETES it → zeroed creator self-heals the marker),
  * the LIVE loan (payoff recomputed from chain, never a cached prop),
  * LIVE fees (the top-up figure must track a governance retune), the
@@ -31,15 +35,51 @@ import {
   refinancePayoffOf,
 } from '../contracts/loanLive';
 import { readGraceSecondsLive } from '../contracts/preflights';
+import {
+  discoverRefinanceRequest,
+  isUntakeable,
+  scanHolderOffers,
+  type RefinanceDiscovery,
+} from './refinanceDiscovery';
+import { ownScanUnresolved, resolveNamedRequest } from './refinanceInterlock';
 import { readLiveProtocolFees } from './fees';
 import { ZERO_ADDRESS } from '../lib/offerSchema';
 import { makePendingMarkerStore } from '../lib/pendingMarker';
 import { useActiveChain } from '../chain/useActiveChain';
+import { isFunctionDoesNotExistRevert } from '../contracts/preflights';
 import { tipAware } from '../chain/railHealth';
+import { idleAware } from '../lib/idle';
+
+/** #2391 — the discovery query's key (a prefix without the holder, for
+ *  invalidation). Deliberately outside the 'refinancePending' root. */
+export function refinanceDiscoveryKey(
+  chainId: number,
+  loanId: number,
+  holder?: string,
+): unknown[] {
+  return holder === undefined
+    ? ['refinanceDiscovery', chainId, loanId]
+    : ['refinanceDiscovery', chainId, loanId, holder];
+}
 
 const marker = makePendingMarkerStore('app.refinanceOffer');
 
+/** Live read of this device's refinance-request marker for a loan
+ *  (#2389 r6). `useRefinancePending` seeds from the marker once, on
+ *  mount, so a request posted from ANOTHER TAB afterwards is invisible
+ *  to its state; a write that changes the loan's collateral re-reads
+ *  the store itself just before the wallet opens. localStorage is shared
+ *  across tabs, so this sees them. A request made on another device or
+ *  through another tool is found by on-chain discovery instead (#2391). */
+export function readRefinanceMarker(chainId: number, loanId: number): string | null {
+  return marker.read(chainId, loanId);
+}
+
 export interface RefinancePendingState {
+  /** #2406 r1 — who posted the request: the only wallet that can cancel
+   *  it, so the pending card (and its funding actions) key to it, not to
+   *  the loan's original borrower. */
+  creator: string;
   /** Loan still Active on-chain (a request on a settled loan is dead
    *  weight — cancel + revoke is the only remaining action). */
   loanActive: boolean;
@@ -55,6 +95,10 @@ export interface RefinancePendingState {
    *  `expired` the request can never complete and only
    *  cancel-to-unwind remains. */
   pastGrace: boolean;
+  /** #2425 — the protocol records a DIFFERENT request for the loan, or
+   *  none: this one can never be taken and holds nothing back, so only
+   *  cancel-to-unwind remains. False on a deployment without the record. */
+  untakeable: boolean;
   /** Chain time says the cancel cooldown has elapsed. */
   cancelUnlocked: boolean;
   /** Standing approval no longer covers the request's approval
@@ -76,60 +120,141 @@ export interface RefinancePendingState {
 export function useRefinancePending(
   loanId: number,
   principalAsset: `0x${string}` | undefined,
+  /** #2391 — the CURRENT borrower-position holder (a fresh read; the
+   *  page's `freshData(nftOwners)`), whose open offers are searched for a
+   *  request. `undefined` while unknown; `'burned'` when the position is
+   *  gone (no request can be settled then). */
+  holder: string | 'burned' | undefined,
+  /** #2391 — the loan's own offer id: every request for the loan is
+   *  newer, which bounds the on-chain search. */
+  loanOfferId: number | undefined,
 ) {
   const { readChain, address } = useActiveChain();
   const readClient = usePublicClient({ chainId: readChain.chainId });
   const queryClient = useQueryClient();
-  const [offerId, setOfferId] = useState<string | null>(() =>
+  const [markerId, setMarkerId] = useState<string | null>(() =>
     marker.read(readChain.chainId, loanId),
   );
 
-  // Re-seed when the (chain, loan) identity changes, as a render-phase
-  // ADJUSTMENT rather than in an effect (#1520) — same reasoning as
-  // offsetPending: React re-runs the render before painting, so the
-  // previous chain's marker is never displayed, where the effect version
-  // committed one frame carrying it. The initializer alone would freeze the
-  // first chain's marker, which is what the effect was there for.
+  // #2391 — on-chain discovery: the holder's offers posted since the loan
+  // began, tagged for this loan. Its own query root, NOT under
+  // 'refinancePending' (#2406 r1): that root is re-fetched on every block,
+  // and discovery is a multi-read scan that only needs a minute's cadence
+  // (a borrower action re-runs it live before sending anyway).
+  // Keyed by the SCANNED wallet ('burned' = nothing to scan) and the mode.
+  // `own` (#2425): the viewer's OWN offers when they are not the holder —
+  // a plain scan, never the loan's record, which can only name the
+  // holder's request — so the two modes answer different questions and
+  // must not share a cache entry.
+  const scan = (target: string | undefined, enabled: boolean, own = false) => ({
+    queryKey: [
+      ...refinanceDiscoveryKey(readChain.chainId, loanId, target?.toLowerCase() ?? 'burned'),
+      own ? 'own' : 'holder',
+    ],
+    enabled: enabled && Boolean(readClient) && loanOfferId !== undefined,
+    refetchInterval: idleAware(60_000),
+    queryFn: async (): Promise<RefinanceDiscovery> => {
+      if (target === undefined || loanOfferId === undefined) return { kind: 'none' };
+      const result = await (own ? scanHolderOffers : discoverRefinanceRequest)({
+        client: readClient!,
+        diamond: readChain.diamondAddress,
+        loanId: BigInt(loanId),
+        sinceOfferId: BigInt(loanOfferId),
+        holder: target as `0x${string}`,
+      });
+      // #2406 r7 — a FAILED scan rejects, so the query keeps its last
+      // answer as `data` (naming a request already found keeps its card)
+      // and reports `isError` (the check reads it as unknown). Returned as
+      // data it would have overwritten that answer. A capped scan is a real
+      // answer and resolves.
+      if (result.kind === 'unknown' && result.reason === 'failed') {
+        throw new Error('refinance discovery failed');
+      }
+      return result;
+    },
+  });
+  const holderAddr = holder === undefined || holder === 'burned' ? undefined : holder;
+  // A burned position has no holder whose request could be filled: nothing
+  // to search (the viewer's own scan below still finds their leftovers).
+  const holderQuery = useQuery(scan(holderAddr, holder !== undefined));
+  // #2406 r3 — the connected viewer's OWN offers, when they are not the
+  // holder: only a request's creator can cancel it, so a wallet that
+  // posted a request and then transferred the position (or whose loan
+  // settled) must still find it, with its payoff approval, from any device.
+  const ownTarget =
+    address &&
+    (holder === 'burned' ||
+      (holderAddr !== undefined && holderAddr.toLowerCase() !== address.toLowerCase()))
+      ? address
+      : undefined;
+  const ownQuery = useQuery(scan(ownTarget, ownTarget !== undefined, true));
+  // A failed refetch is an unknown, not the last answer heard.
+  const holderScan: RefinanceDiscovery | undefined = holderQuery.isError
+    ? { kind: 'unknown', reason: 'failed' }
+    : holderQuery.data;
+  // #2406 r6 — NAMING reads the last scan that ANSWERED (a failed refetch
+  // keeps the previous data): a request already found keeps its card and
+  // its cancel-and-revoke action through a data-source error, as the spec
+  // requires of the pending view. The CHECK still reads that failure as
+  // unknown (`holderScan` above), so the surfaces a request would strand
+  // hold back meanwhile. The own scan only ever names a request for
+  // cleanup; its failure blocks nothing.
+  const { offerId: candidateId, fromOwnScan } = resolveNamedRequest({
+    holderScan: holderQuery.data,
+    ownScan: ownTarget === undefined ? undefined : ownQuery.data,
+    markerId,
+  });
+
   const seedKey = `${readChain.chainId}:${loanId}`;
   const [seededFor, setSeededFor] = useState(seedKey);
   if (seededFor !== seedKey) {
     setSeededFor(seedKey);
-    setOfferId(marker.read(readChain.chainId, loanId));
+    setMarkerId(marker.read(readChain.chainId, loanId));
   }
 
   const remember = useCallback(
     (id: string) => {
       marker.write(readChain.chainId, loanId, id);
-      setOfferId(id);
+      setMarkerId(id);
+      // #2429 r1 — the request just posted is now the loan's record: re-read
+      // discovery at once rather than at the next minute's poll.
+      void queryClient.invalidateQueries({
+        queryKey: refinanceDiscoveryKey(readChain.chainId, loanId),
+      });
     },
-    [readChain.chainId, loanId],
+    [readChain.chainId, loanId, queryClient],
   );
   const clear = useCallback(() => {
     marker.write(readChain.chainId, loanId, null);
-    setOfferId(null);
-  }, [readChain.chainId, loanId]);
+    setMarkerId(null);
+    // A request found by discovery is cleared by the chain, not the marker:
+    // re-scan so a cancelled one stops being named.
+    void queryClient.invalidateQueries({
+      queryKey: refinanceDiscoveryKey(readChain.chainId, loanId),
+    });
+  }, [readChain.chainId, loanId, queryClient]);
 
   const query = useQuery({
     queryKey: [
       'refinancePending',
       readChain.chainId,
       loanId,
-      offerId,
+      candidateId,
       address?.toLowerCase(),
     ],
-    enabled: Boolean(readClient) && offerId !== null && Boolean(principalAsset),
+    enabled: Boolean(readClient) && candidateId !== null && Boolean(principalAsset),
     // RPC read-diet PR A — pending-card accept gate: tip-nudged per
     // block on WS deploys (§4.1.2), so the interval is only the net.
     refetchInterval: tipAware(30_000, Boolean(readChain.wsUrl)),
     queryFn: async (): Promise<RefinancePendingState | 'gone'> => {
       const diamond = readChain.diamondAddress;
-      const [offer, live, fees, latestBlock, allowance, balance] =
+      const [offer, live, fees, latestBlock, allowance, balance, record] =
         await Promise.all([
           readClient!.readContract({
             address: diamond,
             abi: DIAMOND_ABI_VIEM,
             functionName: 'getOfferDetails',
-            args: [BigInt(offerId!)],
+            args: [BigInt(candidateId!)],
           }) as Promise<{
             creator: string;
             accepted: boolean;
@@ -156,6 +281,20 @@ export function useRefinancePending(
                 args: [address],
               }) as Promise<bigint>)
             : Promise.resolve(0n),
+          // #2425 — the loan's recorded request; null on a deployment that
+          // predates the record (nothing is untakeable there).
+          (readClient!.readContract({
+            address: diamond,
+            abi: DIAMOND_ABI_VIEM,
+            functionName: 'getRefinanceRequest',
+            args: [BigInt(loanId)],
+          }) as Promise<readonly [bigint, boolean]>).then(
+            ([id]) => ({ id }),
+            (e: unknown) => {
+              if (isFunctionDoesNotExistRevert(e)) return null;
+              throw e;
+            },
+          ),
         ]);
       // cancelOffer DELETES the record — zeroed creator = gone. Also
       // treat a marker pointing at some other loan's offer as gone.
@@ -209,12 +348,15 @@ export function useRefinancePending(
       // to fund) and only cancel-to-unwind remains.
       const expired =
         offer.expiresAt !== 0n && latestBlock.timestamp >= offer.expiresAt;
+      const untakeable = isUntakeable(record?.id ?? null, candidateId!);
       return {
+        creator: offer.creator,
         loanActive: live.status === LOAN_STATUS_ACTIVE,
         accepted: offer.accepted,
         expiresAt: offer.expiresAt,
         expired,
         pastGrace,
+        untakeable,
         cancelUnlocked:
           latestBlock.timestamp >= offer.createdAt + CANCEL_COOLDOWN_SECONDS,
         // Funding warnings stop past grace too — like expiry, there
@@ -224,12 +366,14 @@ export function useRefinancePending(
           !offer.accepted &&
           !expired &&
           !pastGrace &&
+          !untakeable &&
           allowance < approvalTarget,
         balanceShort:
           fundingKnown &&
           !offer.accepted &&
           !expired &&
           !pastGrace &&
+          !untakeable &&
           balance < topUp,
         payoff,
         topUp,
@@ -250,8 +394,34 @@ export function useRefinancePending(
   }, [query.data, clear]);
 
   return {
-    /** Non-null while a marker exists (state may still be loading). */
-    offerId,
+    /** Non-null while a request is known — from this device's marker or
+     *  from on-chain discovery (state may still be loading). See
+     *  `resolveNamedRequest` for which one is named. Null once the chain
+     *  has VERIFIED the named record gone (cancelled, or another loan's):
+     *  a last-known scan kept through a failed refetch must not keep
+     *  naming a request the chain says no longer exists (#2406 r6). */
+    offerId: query.data === 'gone' ? null : candidateId,
+    /** The named request came from the viewer's own scan (they are not the
+     *  holder): shown for cleanup, never blocking. */
+    fromOwnScan,
+    /** #2406 r4/r5 — the viewer's OWN scan (run when they are not the
+     *  holder) failed or hit its page cap: a request they posted could
+     *  exist unseen, so the page says so and names the manual cleanup
+     *  rather than staying silent. Never blocks — the contract will not
+     *  settle such a request. */
+    /** #2429 r2 — the record answered but the holder's search for an
+     *  older request it does not name did not. Never blocks; the page says
+     *  it could not check, since such a request and its payoff approval may
+     *  exist unseen. */
+    leftoversUnresolved:
+      holderQuery.data?.kind === 'none' ? (holderQuery.data.leftovers ?? null) : null,
+    ownScanUnresolved: ownScanUnresolved(
+      ownTarget === undefined ? undefined : ownQuery.isError ? 'error' : ownQuery.data,
+    ),
+    /** #2391 — the holder's on-chain discovery verdict, which decides
+     *  whether the page KNOWS (`refinanceInterlock`). `undefined` while
+     *  loading. */
+    holderScan,
     /** Live-verified state; undefined while loading or errored. */
     state: query.data === 'gone' ? undefined : query.data,
     remember,

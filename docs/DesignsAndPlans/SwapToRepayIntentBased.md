@@ -1187,7 +1187,8 @@ force-cancel — these are voluntary, no lender-protection urgency):**
   from `loan.borrower`'s vault before transitioning the old loan to
   Repaid.
 - `SwapToRepayFacet.swapToRepayFull(loanId, ...)` and
-  `SwapToRepayFacet.swapToRepayPartial(loanId, ...)` (Codex round-6
+  `SwapToRepayPartialFacet.swapToRepayPartial(loanId, ...)` — on
+  `SwapToRepayFacet` until #2416 split it out — (Codex round-6
   P1 #1) — v1's atomic swap-to-repay sibling surface. Both withdraw
   from `loan.borrower`'s vault and transition the loan. If a
   borrower has same-token collateral remaining elsewhere (or the

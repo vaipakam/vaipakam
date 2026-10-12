@@ -32,6 +32,7 @@ import type { RefinancePendingState } from '../data/refinancePending';
 import { useAutoRefinancePosture } from '../data/protocol';
 import { AutoMatchPostureBanner } from './AutoMatchPostureBanner';
 import { ZERO_ADDRESS } from '../lib/offerSchema';
+import { cancelRevokesApproval } from '../data/refinanceInterlock';
 import { formatDate, formatTokenAmount } from '../lib/format';
 
 export function RefinancePendingCard({
@@ -77,7 +78,11 @@ export function RefinancePendingCard({
   const { posture: autoRefinancePosture } = useAutoRefinancePosture();
   const requestTerminal =
     state !== undefined &&
-    (state.accepted || state.expired || !state.loanActive || state.pastGrace);
+    (state.accepted ||
+      state.expired ||
+      !state.loanActive ||
+      state.pastGrace ||
+      state.untakeable);
 
   const walletReady =
     onSupportedChain && Boolean(walletClient) && Boolean(publicClient);
@@ -101,7 +106,15 @@ export function RefinancePendingCard({
       // arrive context-free after the explanatory UI vanished, and a
       // rejected revoke would surface nowhere.
       let outcome: string;
-      try {
+      if (state && !cancelRevokesApproval(state)) {
+        // #2429 r3 — a leftover's payoff approval is the SAME approval every
+        // refinance request of this wallet on this token draws on, and
+        // another may be standing now or be posted from another device at
+        // any moment; no read before a separate revoke transaction can rule
+        // that out. So cancelling a leftover never revokes: the card says so
+        // up front and names the manual removal.
+        outcome = copy.refinance.cancelledLeftoverApprovalKept;
+      } else try {
         await revokeAllowance({
           publicClient,
           walletClient,
@@ -219,6 +232,11 @@ export function RefinancePendingCard({
             ? copy.refinance.pendingChecking(offerId)
             : state.accepted
               ? copy.refinance.pendingAccepted
+              : state.untakeable
+                ? // #2425 — not the loan's recorded request: the protocol
+                  // will never take it, and it holds nothing back; its cancel
+                  // leaves the shared approval in place (#2429 r3).
+                  copy.refinance.pendingUntakeable
               : state.expired
                 ? copy.refinance.pendingExpired(
                     formatDate(Number(state.expiresAt)),

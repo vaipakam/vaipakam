@@ -1033,8 +1033,6 @@
     }
   },
   "banners": {
-    "sanctionsMatchTitle": "{{label}}: coincidencia en el cribado de sanciones.",
-    "sanctionsMatchBody": "El oráculo on-chain de sanciones (Chainalysis) actualmente lista esta dirección. Cualquier transacción de creación o aceptación de oferta se revertirá en la capa del protocolo. Si se trata de una falsa coincidencia, contactar al soporte de Chainalysis — Vaipakam no mantiene su propia lista de sanciones.",
     "sanctionsLabelWallet": "Cartera conectada",
     "sanctionsLabelOfferCreator": "Creador de la oferta",
     "vaultUpgradeBody": "Actualización de vault requerida — el vault está en v{{userVersion}}, el mínimo obligatorio es v{{mandatoryVersion}} (último v{{currentVersion}}). Los flujos del Diamond se revertirán hasta la actualización.",

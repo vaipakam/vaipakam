@@ -49,7 +49,6 @@ import {
   isAddress,
   keccak256,
   parseAbi,
-  parseUnits,
   stringToBytes,
   decodeEventLog,
   TransactionNotFoundError,
@@ -73,7 +72,7 @@ import {
   isUserRejection,
 } from '../lib/errors';
 import { ADVANCED_USER_GUIDE_STUCK_TOKENS_URL } from '../lib/externalLinks';
-import { exactAmountString, shortAddress } from '../lib/format';
+import { exactAmountString, exactUnitsOrNull, shortAddress } from '../lib/format';
 import { makePendingMarkerStore } from '../lib/pendingMarker';
 
 /** EIP-712 shape — must match VaultFactoryFacet's RECOVERY_TYPEHASH
@@ -1698,12 +1697,9 @@ export function Recover() {
           : /^\d+$/;
       if (!pattern.test(amountInput)) return null;
     }
-    try {
-      const v = parseUnits(amountInput, activeLookup.decimals);
-      return v > 0n ? v : null;
-    } catch {
-      return null;
-    }
+    // #2390 — exact parse as the backstop to the pattern above.
+    const v = exactUnitsOrNull(amountInput, activeLookup.decimals);
+    return v !== null && v > 0n ? v : null;
   }, [amountInput, activeLookup]);
 
   // Drives the too-many-decimals hint (Codex #1547 r2): true when the

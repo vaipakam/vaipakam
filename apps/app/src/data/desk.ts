@@ -30,6 +30,7 @@ import { erc20Abi, type PublicClient } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
 import { idleAware } from '../lib/idle';
+import { freshData } from '../lib/freshData';
 import { signalAware, tipAware } from '../chain/railHealth';
 import { AssetType } from '../lib/types';
 import {
@@ -321,7 +322,7 @@ export function useDeskSignedBook(
   signer?: string,
 ) {
   const { readChain } = useActiveChain();
-  return useQuery({
+  const q = useQuery({
     queryKey: [
       'deskSignedBook',
       readChain.chainId,
@@ -337,7 +338,10 @@ export function useDeskSignedBook(
     refetchInterval: idleAware(REFRESH_MS),
     queryFn: async (): Promise<{
       offers: IndexedSignedOffer[];
-      truncated: boolean;
+      /** `null` when the Worker did not report the flag (an older
+       *  deploy) — not knowing whether depth was cut is not the same as
+       *  knowing it was not (#2386 r1). */
+      truncated: boolean | null;
     } | null> => {
       if (!indexerConfigured()) return null;
       const res = await fetchSignedOffers(
@@ -356,9 +360,18 @@ export function useDeskSignedBook(
       // Codex #1269 r2 — carry the per-side truncation flag so the
       // own-orders view can say when a maker's set was clipped instead
       // of rendering a partial page as "all your orders".
-      return { offers: res.offers, truncated: res.truncated === true };
+      return {
+        offers: res.offers,
+        truncated: typeof res.truncated === 'boolean' ? res.truncated : null,
+      };
     },
   });
+  // #2398 r2 — the freshness rule lives HERE so every consumer gets it:
+  // a cached signed order behind a failed refetch may have been taken or
+  // cancelled, so it is not offered on the ladder or as an own order to
+  // cancel. (Transport failures already resolve to `null`; this covers a
+  // thrown queryFn too, structurally rather than by that convention.)
+  return { ...q, data: freshData(q) };
 }
 
 /** Executed fills for the (pair, tenor) market, newest first. */

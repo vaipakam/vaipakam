@@ -30,7 +30,7 @@ This is narrower than "reads only", which this file used to claim and which is f
 
 ```bash
 pnpm --filter @vaipakam/indexer dev       # local wrangler dev against testnet
-pnpm --filter @vaipakam/indexer run deploy    # wrangler deploy; uses `wrangler login` on the operator's machine
+pnpm --filter @vaipakam/indexer run deploy    # applies D1 migrations, then wrangler deploy; uses `wrangler login` on the operator's machine
 ```
 
 ## How to test
@@ -81,6 +81,25 @@ wrangler d1 migrations apply vaipakam-warm --remote   # the staging d1
 ```
 
 Any schema change — even for a table only keeper or agent writes — lands as a new `apps/indexer/migrations/NNNN_<slug>.sql` file. See [`CLAUDE.md` § "Cloudflare D1 schema discipline"](../../CLAUDE.md) for the convention.
+
+### Migrations before code — the deploy order and the schema gate (#2214)
+
+**One applier.** This Worker owns the schema, and its `pnpm run deploy` (`scripts/deploy-shared-d1.mjs apply`) is the only deploy that APPLIES migrations: it applies them non-interactively (running `deploy` is the consent), then **verifies in the database** that every migration in `src/requiredMigrations.json` is recorded, and only then publishes. A declined, partial or failed apply stops it — judged by the database, not by an exit status; if its own apply fails because a concurrent indexer deploy got there first, the verification finds them in place and it carries on. **The keeper and agent bind the same database**, and their `deploy` scripts run the same wrapper in `verify` mode: read-only, waiting up to ten minutes for the indexer's deploy to apply (the concurrent-Workers-Builds case), then refusing to publish onto an older schema. (An earlier revision had all three apply; three builds from one merge raced on the same migration and the losers aborted mid-release.) The wrapper **takes no arguments and refuses any**: pnpm appends `run` arguments to the end of a script, and deciding which spellings mean "do not publish" (`--dry-run`, `--dry-run=true`, `--version`, …) is open-ended. Dry runs use `pnpm run deploy:dry`, which never touches the database.
+
+**Every migration must be compatible with the code already deployed.** Migrations land while the old Workers are still serving, and a publish can fail after its apply, so a migration must be additive (expand/contract). A dropped or renamed column, or a tightened constraint, needs a coordinated two-step release — ordering alone does not make it safe.
+
+(The deploy used to publish first and migrate second, which left new code running against the old schema for the length of the gap — unboundedly, if the migration step failed. #1149 was that window: every scan failed `no such column` and the cursor held until someone read the logs.)
+
+**This Worker also auto-deploys on every merge to `main` through Cloudflare Workers Builds, and that route's deploy command is dashboard configuration this repository cannot see or pin.** If it runs plain `wrangler deploy`, it publishes without migrating. For that route — and any other that skips the package script — the Worker carries a **schema gate** (`src/schemaGate.ts`):
+
+- `src/requiredMigrations.json` lists EVERY file in `migrations/` (JSON, so nothing in it — a comment, say — can be counted by a checker that the Worker does not see); `scripts/check-schema-gate.mjs` (part of `typecheck`) fails CI unless the list equals the directory exactly. The whole set rather than the newest file, because a migration filling a numbering gap sorts below the newest (#2409 r1).
+- Until all of them are recorded in `d1_migrations`, every cron tick and every chain pass (DO alarm or legacy inline) **declines** with a log line naming the missing migrations and the command that applies them. No scan, no prune, no sweep, no cursor movement.
+- On the first tick after the migration is applied, ingest resumes by itself — no redeploy, no cursor repair. The app's existing freshness surface shows the pause as stale data in the meantime.
+- **The gate covers scheduled work only — not HTTP.** Every HTTP handler, the reads and the POST writes alike (`POST /signed-offers`, the prepay listing match-source, the `/hooks/chain-event` webhook), runs whatever schema the database has. A handler that reads or writes a new column must tolerate the previous schema itself (or ship after its migration).
+
+- **The keeper and agent carry no runtime gate yet** — their package deploys verify the schema first, but a Workers Builds command that bypasses the package script is unguarded. Tracked in #2410.
+
+**Recommended Workers Builds setting (operator, Cloudflare dashboard → each Worker → Settings → Builds):** deploy command `pnpm run deploy` for all three. The indexer's build token needs **D1 Edit** (it applies); the keeper's and agent's need D1 read (they verify). That makes the auto-deploys migrate-then-verify too, and the gate becomes a backstop rather than the mechanism. Until it is set, a merge that adds a migration pauses scheduled ingest until someone runs the apply.
 
 ## Related
 

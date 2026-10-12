@@ -402,31 +402,12 @@
       "hi"
     ]
   },
-  "copy.desk.bookTitle": {
-    "source": "Order book",
-    "locales": [
-      "hi"
-    ]
-  },
   "copy.desk.chart.attribution": {
     "source": "Charts by TradingView",
     "locales": [
       "hi",
       "ja",
       "zh"
-    ]
-  },
-  "copy.desk.chart.intervalLabel": {
-    "source": "Interval",
-    "locales": [
-      "hi"
-    ]
-  },
-  "copy.desk.chart.lastFill": {
-    "source": "last fill: {{rate}} · {{ago}}",
-    "locales": [
-      "hi",
-      "ko"
     ]
   },
   "copy.desk.chart.mobileBook": {
@@ -448,92 +429,14 @@
       "hi"
     ]
   },
-  "copy.desk.chart.quotedMid": {
-    "source": "quoted mid",
-    "locales": [
-      "hi"
-    ]
-  },
-  "copy.desk.chart.rangeLabel": {
-    "source": "Range",
-    "locales": [
-      "hi"
-    ]
-  },
   "copy.desk.chart.retry": {
     "source": "Retry",
     "locales": [
       "hi"
     ]
   },
-  "copy.desk.chart.title": {
-    "source": "Executed rates",
-    "locales": [
-      "hi"
-    ]
-  },
-  "copy.desk.chart.tooltipFills_few": {
-    "source": "{{count}} fills",
-    "locales": [
-      "ar",
-      "hi",
-      "ko"
-    ]
-  },
-  "copy.desk.chart.tooltipFills_many": {
-    "source": "{{count}} fills",
-    "locales": [
-      "ar",
-      "hi",
-      "ko"
-    ]
-  },
-  "copy.desk.chart.tooltipFills_one": {
-    "source": "{{count}} fill",
-    "locales": [
-      "ar",
-      "hi",
-      "ko"
-    ]
-  },
-  "copy.desk.chart.tooltipFills_other": {
-    "source": "{{count}} fills",
-    "locales": [
-      "ar",
-      "hi",
-      "ko"
-    ]
-  },
-  "copy.desk.chart.tooltipFills_two": {
-    "source": "{{count}} fills",
-    "locales": [
-      "ar",
-      "hi",
-      "ko"
-    ]
-  },
-  "copy.desk.chart.tooltipFills_zero": {
-    "source": "{{count}} fills",
-    "locales": [
-      "ar",
-      "hi",
-      "ko"
-    ]
-  },
   "copy.desk.crossed": {
     "source": "crossed",
-    "locales": [
-      "hi"
-    ]
-  },
-  "copy.desk.cumHeading": {
-    "source": "Depth",
-    "locales": [
-      "hi"
-    ]
-  },
-  "copy.desk.customPair": {
-    "source": "Custom pair…",
     "locales": [
       "hi"
     ]
@@ -576,29 +479,8 @@
       "hi"
     ]
   },
-  "copy.desk.ladderMid": {
-    "source": "mid {{rate}}",
-    "locales": [
-      "hi"
-    ]
-  },
   "copy.desk.ladderMidTitle": {
     "source": "{{bps}} bps quoted mid",
-    "locales": [
-      "hi"
-    ]
-  },
-  "copy.desk.ladderSpread": {
-    "source": " · spread {{spread}}",
-    "locales": [
-      "de",
-      "es",
-      "fr",
-      "hi"
-    ]
-  },
-  "copy.desk.lastFill": {
-    "source": "Last fill",
     "locales": [
       "hi"
     ]
@@ -658,12 +540,6 @@
       "ko"
     ]
   },
-  "copy.desk.marketLabel": {
-    "source": "Market",
-    "locales": [
-      "hi"
-    ]
-  },
   "copy.desk.match.executing": {
     "source": "Matching…",
     "locales": [
@@ -676,50 +552,8 @@
       "hi"
     ]
   },
-  "copy.desk.orders.amend": {
-    "source": "Amend",
-    "locales": [
-      "hi"
-    ]
-  },
   "copy.desk.orders.amendCollateral": {
     "source": "Collateral",
-    "locales": [
-      "hi"
-    ]
-  },
-  "copy.desk.orders.amendCollateralMax": {
-    "source": "Collateral max",
-    "locales": [
-      "hi"
-    ]
-  },
-  "copy.desk.orders.amendMaxAmount": {
-    "source": "Max amount",
-    "locales": [
-      "hi"
-    ]
-  },
-  "copy.desk.orders.amendMinAmount": {
-    "source": "Min amount",
-    "locales": [
-      "hi"
-    ]
-  },
-  "copy.desk.orders.amendRate": {
-    "source": "Rate (APR %)",
-    "locales": [
-      "hi"
-    ]
-  },
-  "copy.desk.orders.amendTitle": {
-    "source": "Amend in place — same offer, same position, one transaction.",
-    "locales": [
-      "hi"
-    ]
-  },
-  "copy.desk.orders.amended": {
-    "source": "Order amended.",
     "locales": [
       "hi"
     ]
@@ -748,41 +582,14 @@
       "hi"
     ]
   },
-  "copy.desk.orders.fillSummary": {
-    "source": " · filled {{filled}} ({{pct}}) · {{remaining}} left",
-    "locales": [
-      "hi",
-      "ko"
-    ]
-  },
-  "copy.desk.orders.filledTooltip": {
-    "source": "{{pct}} filled",
-    "locales": [
-      "ar",
-      "hi",
-      "ko"
-    ]
-  },
   "copy.desk.orders.saving": {
     "source": "Amending…",
     "locales": [
       "hi"
     ]
   },
-  "copy.desk.orders.signedCancel": {
-    "source": "Cancel on-chain",
-    "locales": [
-      "hi"
-    ]
-  },
   "copy.desk.orders.signedCancelling": {
     "source": "Cancelling…",
-    "locales": [
-      "hi"
-    ]
-  },
-  "copy.desk.orders.tab": {
-    "source": "Open orders",
     "locales": [
       "hi"
     ]
@@ -807,18 +614,6 @@
   },
   "copy.desk.positions.tab": {
     "source": "Positions",
-    "locales": [
-      "hi"
-    ]
-  },
-  "copy.desk.quotedMid": {
-    "source": "Quoted mid",
-    "locales": [
-      "hi"
-    ]
-  },
-  "copy.desk.rateHeading": {
-    "source": "Rate (APR %)",
     "locales": [
       "hi"
     ]
@@ -848,65 +643,14 @@
       "ja"
     ]
   },
-  "copy.desk.sizeHeading": {
-    "source": "Size",
-    "locales": [
-      "hi"
-    ]
-  },
-  "copy.desk.spread": {
-    "source": "Spread",
-    "locales": [
-      "de",
-      "es",
-      "fr",
-      "hi"
-    ]
-  },
   "copy.desk.tapeRowTitle": {
     "source": "{{bps}} bps · loan #{{loanId}} · {{status}}",
     "locales": [
       "hi"
     ]
   },
-  "copy.desk.tapeTitle": {
-    "source": "Recent fills",
-    "locales": [
-      "hi"
-    ]
-  },
-  "copy.desk.tenorLabel": {
-    "source": "Term",
-    "locales": [
-      "hi"
-    ]
-  },
   "copy.desk.ticket.collateralAmount": {
     "source": "Collateral amount",
-    "locales": [
-      "hi"
-    ]
-  },
-  "copy.desk.ticket.expiryCustom": {
-    "source": "Custom…",
-    "locales": [
-      "hi"
-    ]
-  },
-  "copy.desk.ticket.expiryLabel": {
-    "source": "Expiry",
-    "locales": [
-      "hi"
-    ]
-  },
-  "copy.desk.ticket.fillModeLabel": {
-    "source": "Fill mode",
-    "locales": [
-      "hi"
-    ]
-  },
-  "copy.desk.ticket.fillPartial": {
-    "source": "Partial",
     "locales": [
       "hi"
     ]
@@ -937,29 +681,6 @@
       "hi"
     ]
   },
-  "copy.desk.ticket.modeLabel": {
-    "source": "Posting",
-    "locales": [
-      "hi"
-    ]
-  },
-  "copy.desk.ticket.modeOnchain": {
-    "source": "On-chain",
-    "locales": [
-      "de",
-      "es",
-      "fr",
-      "hi",
-      "ja",
-      "zh"
-    ]
-  },
-  "copy.desk.ticket.posted": {
-    "source": "Order posted",
-    "locales": [
-      "hi"
-    ]
-  },
   "copy.desk.ticket.posting": {
     "source": "Posting…",
     "locales": [
@@ -975,13 +696,6 @@
   "copy.desk.ticket.sideLend": {
     "source": "Lend",
     "locales": [
-      "hi"
-    ]
-  },
-  "copy.desk.ticket.title": {
-    "source": "Order ticket",
-    "locales": [
-      "de",
       "hi"
     ]
   },
@@ -1433,18 +1147,6 @@
       "hi"
     ]
   },
-  "copy.offers.filters.sortDurationLong": {
-    "source": "Duration — longest first",
-    "locales": [
-      "hi"
-    ]
-  },
-  "copy.offers.filters.sortDurationShort": {
-    "source": "Duration — shortest first",
-    "locales": [
-      "hi"
-    ]
-  },
   "copy.offers.filters.sortLabel": {
     "source": "Sort by",
     "locales": [
@@ -1453,18 +1155,6 @@
   },
   "copy.offers.filters.sortNewest": {
     "source": "Newest first",
-    "locales": [
-      "hi"
-    ]
-  },
-  "copy.offers.filters.sortRateHigh": {
-    "source": "Rate — high to low",
-    "locales": [
-      "hi"
-    ]
-  },
-  "copy.offers.filters.sortRateLow": {
-    "source": "Rate — low to high",
     "locales": [
       "hi"
     ]
@@ -1620,24 +1310,6 @@
     "locales": [
       "hi",
       "ko"
-    ]
-  },
-  "copy.powerSurface.dismiss": {
-    "source": "Dismiss",
-    "locales": [
-      "hi"
-    ]
-  },
-  "copy.powerSurface.guidedBorrow": {
-    "source": "Guided Borrow",
-    "locales": [
-      "hi"
-    ]
-  },
-  "copy.powerSurface.guidedLend": {
-    "source": "Guided Lend",
-    "locales": [
-      "hi"
     ]
   },
   "copy.preclose.action": {

@@ -2384,6 +2384,70 @@ library LibVaipakam {
     }
 
     /**
+     * @notice #2374 — what an ERC-20 loan owed, in its principal asset, at the
+     *         moment it defaulted: the moment it left `Active` for `Defaulted`
+     *         or for `FallbackPending` (the fallback's entry IS the default; a
+     *         later move from `FallbackPending` to `Defaulted` keeps this
+     *         figure rather than restating it at the claim's timestamp).
+     * @dev    Principal outstanding, per-second accrued interest net of
+     *         interest already settled, and the late fee — the basis a
+     *         swap-based forced close settles its debt on (a fallback allocates
+     *         collateral on its own basis; for it this is the debt, not that
+     *         allocation). It is the GROSS debt — the protocol's
+     *         share of interest and late fee is taken from it before the lender
+     *         is paid, so it is not the lender's entitlement. It records no
+     *         recovery: what the default paid out is a separate fact.
+     */
+    struct OwedAtDefault {
+        uint256 principal;
+        uint256 interest;
+        uint256 lateFee;
+        /// @dev Block timestamp of the default; 0 = no record.
+        uint64 recordedAt;
+        /// @dev True when the default entered `FallbackPending` (the swap
+        ///      could not run), so the recovery may arrive in several steps.
+        bool viaFallback;
+    }
+
+    /**
+     * @notice #2427 — what internal matching cleared from an ERC-20 loan that
+     *         it closed: the debt every match step discharged, and what the
+     *         lender was paid for it.
+     * @dev    A match can clear a loan in several steps while it stays
+     *         `Active`, so one snapshot at the closing step would miss the
+     *         earlier ones. Each step instead adds the debt it discharged —
+     *         the principal it moved, the accrued interest that is now never
+     *         charged on that principal, and the late fee on it — measured on
+     *         the {OwedAtDefault} basis, before and after the step's principal
+     *         decrement at the step's own timestamp. Repayments between steps
+     *         are not match steps and are not counted.
+     *
+     *         `principal + interest + lateFee` is GROSS debt: had the loan
+     *         been repaid, the protocol's share of interest and late fee would
+     *         have come out of it first. `lenderProceeds` is what the lender
+     *         side was actually paid by the steps: each step's moved principal
+     *         less the matcher incentive. Interest and late fee are never
+     *         charged on this path.
+     */
+    struct OwedAtInternalMatch {
+        uint256 principal;
+        uint256 interest;
+        uint256 lateFee;
+        uint256 lenderProceeds;
+        /// @dev Block timestamp of the step that closed the loan from
+        ///      `Active`; 0 while the loan is still open or when the close did
+        ///      not happen from `Active`.
+        uint64 recordedAt;
+        /// @dev True when the sum cannot be the whole of what matching
+        ///      cleared: a step ran while the loan was `FallbackPending` (it
+        ///      settles on the fallback's own basis, which the loan's
+        ///      {OwedAtDefault} entry figure describes), or the lender already
+        ///      held proceeds when the first recorded step ran (a step before
+        ///      this record existed, or a preclose / offset). Never stamped.
+        bool incomplete;
+    }
+
+    /**
      * @notice Per-day numeraire-quoted price snapshot for an asset.
      * @dev Captured by {OracleFacet.captureDailyPriceSnapshot}
      *      (permissionless, first-caller-per-day-per-asset wins,
@@ -3528,16 +3592,18 @@ library LibVaipakam {
         //     staleness to avoid false stalenesss reverts overnight.
         mapping(address => FeedOverride) feedOverrides;
         // ─── Address-level sanctions oracle (Phase 4.3) ─────────────────
-        // Chainalysis operates a free on-chain sanctions oracle on every
-        // chain it supports; governance sets this slot to the per-chain
-        // oracle address via {ProfileFacet.setSanctionsOracle}. When the
+        // Governance sets this slot to the chain's on-chain sanctions
+        // oracle (any `ISanctionsList`) via {ProfileFacet.setSanctionsOracle}.
+        // Which source mainnets use is open (#2443): Chainalysis retired
+        // its on-chain oracle (last updated 2026-03-18) and it must not be
+        // configured; testnets use the admin's `TestnetSanctionsOverlay`. When the
         // slot is non-zero, {OfferFacet.createOffer} and
         // {OfferFacet.acceptOffer} both refuse calls from (or involving)
         // flagged addresses — the OFAC-aligned "no new business" posture.
         // Ongoing actions (repay, claim) stay unrestricted so existing
         // counterparties aren't stranded. `address(0)` disables the
-        // check entirely, which is the correct state on chains where
-        // Chainalysis does not deploy an oracle.
+        // check entirely (fail-open); a retail deploy must not route real
+        // value while it is zero.
         address sanctionsOracle;
         // ─── Legal: Terms of Service acceptance (Phase 4.1) ──────────────
         // On-chain record of every wallet's acceptance of the current ToS
@@ -7698,6 +7764,25 @@ library LibVaipakam {
         ///      finds, and reserves nothing while an entry is unread, so a
         ///      restored epoch is never skipped for live funding.
         mapping(uint256 => bytes32[]) transportDayRestored;
+        /// @dev #2407 — the refinance request (a refinance-tagged borrower
+        ///      offer) recorded for each loan, by loan id; 0 = none. At most
+        ///      one per loan. Read ONLY through {LibRefinanceRequest.live}: a
+        ///      cancelled, accepted, expired or orphaned request stays in the
+        ///      slot but is not live, so no path that ends a request has to
+        ///      clear it.
+        mapping(uint256 => uint256) refinanceRequestOfLoan;
+        /// @dev #2374 — what each ERC-20 loan owed at its most recent default,
+        ///      by loan id. Written ONLY by {LibOwedAtDefault} and never
+        ///      cleared; `ClaimFacet.getOwedAtDefault` reports it only while
+        ///      the loan stands defaulted. `recordedAt == 0` means none was
+        ///      ever written (never defaulted, a default before this record
+        ///      existed, or a rental).
+        mapping(uint256 => OwedAtDefault) owedAtDefault;
+        /// @dev #2427 — what internal matching cleared from each ERC-20 loan,
+        ///      by loan id. Written ONLY by {LibOwedAtInternalMatch} and never
+        ///      cleared; `ClaimFacet.getOwedAtInternalMatch` reports it only
+        ///      while the loan stands `InternalMatched`, closed from `Active`.
+        mapping(uint256 => OwedAtInternalMatch) owedAtInternalMatch;
         /// @dev A2-ii — the batch-keyed priority window ({TransportBatchWindow}).
         mapping(bytes32 => TransportBatchWindow) transportBatchWindows;
         /// @dev A2-ii — record nonce key => batch => the record found the batch
@@ -10500,16 +10585,20 @@ library LibVaipakam {
         uint256 loanId,
         uint256 endTime
     ) internal view returns (uint256 fee) {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        LibVaipakam.Loan storage loan = s.loans[loanId];
+        return (storageSlot().loans[loanId].principal * lateFeeBps(endTime)) / 10000; // Basis points
+    }
 
+    /// @dev #2427 — the late-fee rate {calculateLateFee} applies, in BPS of
+    ///      principal: 0 within `endTime`, then 1% on the first day past due,
+    ///      +0.5% each subsequent day, capped at 5%. Split out so a caller can
+    ///      price the fee on a principal other than the loan's stored one.
+    function lateFeeBps(uint256 endTime) internal view returns (uint256) {
         if (block.timestamp <= endTime) return 0;
 
         uint256 daysLate = (block.timestamp - endTime) / 1 days;
         uint256 feePercent = 100 + (daysLate * 50); // 1% + 0.5% per day (in basis points)
         if (feePercent > 500) feePercent = 500; // Cap 5%
-
-        return (loan.principal * feePercent) / 10000; // Basis points
+        return feePercent;
     }
 
     /// @dev NFT-rental late fee (#998 S8 / #1004). The shared
@@ -11367,12 +11456,13 @@ library LibVaipakam {
     /// @custom:event-category informational/config
     event SanctionsOracleSet(address indexed previous, address indexed next);
 
-    /// @notice Installs the per-chain Chainalysis sanctions oracle
-    ///         address. Owner-only — timelock-gated after the
+    /// @notice Installs the chain's sanctions oracle address (any
+    ///         `ISanctionsList`). Owner-only — timelock-gated after the
     ///         governance handover. Setting to `address(0)` disables
-    ///         sanctions screening across the chain (correct when
-    ///         Chainalysis has not deployed an oracle there).
-    /// @param oracle The Chainalysis oracle contract address, or zero.
+    ///         sanctions screening across the chain. Never set it to
+    ///         Chainalysis's retired on-chain oracle (#2443): it still
+    ///         answers but no longer updates.
+    /// @param oracle The sanctions oracle contract address, or zero.
     function setSanctionsOracle(address oracle) internal {
         LibDiamond.enforceIsContractOwner();
         Storage storage s = storageSlot();
@@ -11386,14 +11476,14 @@ library LibVaipakam {
     ///         when no oracle is configured (the gate is disabled)
     ///         OR when the oracle call reverts (fail-open on
     ///         infrastructure failure — the alternative would brick
-    ///         every interaction on the chain whenever Chainalysis's
-    ///         oracle has an outage, which would over-react to a
-    ///         vendor availability issue).
+    ///         every interaction on the chain whenever the oracle has
+    ///         an outage, which would over-react to an availability
+    ///         issue).
     ///
     /// ─── Sanctions enforcement policy (Phase 1, retail deploy) ───
     ///
-    /// The retail deploy may have a sanctions oracle configured (e.g.
-    /// Chainalysis on-chain SDN list). When set, the gate splits the
+    /// The retail deploy may have a sanctions oracle configured (which
+    /// source is open, #2443). When set, the gate splits the
     /// callable surface into two tiers:
     ///
     /// **Tier 1 — BLOCK** when `msg.sender` is sanctioned (revert

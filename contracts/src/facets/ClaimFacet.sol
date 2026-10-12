@@ -1797,9 +1797,13 @@ contract ClaimFacet is
     }
 
     /// @dev Distributes principal-asset proceeds from a successful retry
-    ///      swap. Lender first (up to their `lenderPrincipalDue` = principal
-    ///      + accrued + late fees + 3%), then treasury (2%), then borrower
-    ///      surplus. Rewrites the lender and borrower claim records to the
+    ///      swap. Lender first (up to the snapshot's `lenderPrincipalDue`),
+    ///      then treasury (`treasuryPrincipalDue`), then borrower surplus.
+    ///      How those figures are computed is defined in ONE place,
+    ///      `LibFallback.computeFallbackEntitlements` — read it there; it
+    ///      includes no late fee (#2428). A partial internal match after
+    ///      fallback entry scales the snapshot, so the figures are the
+    ///      snapshot's current values. Rewrites the lender and borrower claim records to the
     ///      principal asset so the normal withdrawal flow below works.
     function _distributeRetryProceeds(
         uint256 loanId,
@@ -2104,9 +2108,11 @@ contract ClaimFacet is
     ///         path — the other view return values are zero.
     /// @param loanId Loan to query.
     /// @return lenderCollateral     Collateral units routed to the lender if
-    ///                              the claim-time retry fails (principal +
-    ///                              interest + late fees + 3% bonus, capped
-    ///                              at available collateral).
+    ///                              the claim-time retry fails, capped at the
+    ///                              available collateral. Computed by
+    ///                              `LibFallback.computeFallbackEntitlements`
+    ///                              (no late fee — #2428); a partial internal
+    ///                              match after fallback entry scales it.
     /// @return treasuryCollateral   Collateral units routed to treasury
     ///                              (≈2% of principal, or zero if
     ///                              undercollateralized).
@@ -2145,6 +2151,100 @@ contract ClaimFacet is
             snap.active,
             snap.retryAttempted
         );
+    }
+
+    /// @notice #2374 — what `loanId` owed, in its principal asset, at the
+    ///         moment it defaulted (left `Active` for `Defaulted` or for the
+    ///         full-collateral fallback), as the protocol recorded it then.
+    ///         Reported only while the loan STANDS defaulted — `Defaulted` or
+    ///         `FallbackPending`; in any other status it reads as no record.
+    /// @dev    GROSS debt — principal outstanding, accrued interest net of what
+    ///         was already settled, and the late fee — on the basis a
+    ///         swap-based forced close settles on. A fallback allocates
+    ///         collateral on its own basis (principal plus interest plus a
+    ///         lender bonus and a treasury share, no late fee), so for a
+    ///         fallback this is the debt, not that allocation. The protocol's
+    ///         share of `interest` and `lateFee` is taken before the lender is
+    ///         paid, so this is not the lender's entitlement; no fee is taken
+    ///         from `principal`. No record (`recordedAt == 0`) for a loan not
+    ///         standing defaulted (never defaulted, cured, repaid, closed by an
+    ///         internal match, or settled since), a default before this record
+    ///         existed, or an NFT rental. The {LibOwedAtDefault} event keeps
+    ///         the history.
+    /// @return principal   Principal outstanding at default.
+    /// @return interest    Accrued interest outstanding at default.
+    /// @return lateFee     Late fee owed at default.
+    /// @return recordedAt  Timestamp of the default; 0 when not reported.
+    /// @return viaFallback True when the default entered the fallback, so its
+    ///                     recovery may have arrived in more than one step.
+    function getOwedAtDefault(uint256 loanId)
+        external
+        view
+        returns (
+            uint256 principal,
+            uint256 interest,
+            uint256 lateFee,
+            uint64 recordedAt,
+            bool viaFallback
+        )
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.LoanStatus st = s.loans[loanId].status;
+        // The record is never cleared; it is meaningful only while the loan
+        // still stands defaulted (see {LibOwedAtDefault}).
+        if (st != LibVaipakam.LoanStatus.Defaulted && st != LibVaipakam.LoanStatus.FallbackPending) {
+            return (0, 0, 0, 0, false);
+        }
+        LibVaipakam.OwedAtDefault storage o = s.owedAtDefault[loanId];
+        return (o.principal, o.interest, o.lateFee, o.recordedAt, o.viaFallback);
+    }
+
+    /// @notice #2427 — what internal matching cleared from `loanId`, in its
+    ///         principal asset, when a match step closed it from `Active`, and
+    ///         what the lender side was paid for it, as the protocol recorded
+    ///         them step by step. Reported only while the loan STANDS
+    ///         `InternalMatched`.
+    /// @dev    A match can clear a loan in several steps; each step adds the
+    ///         debt it discharged on the {getOwedAtDefault} basis (principal
+    ///         moved, the accrued interest on it now never charged, and the
+    ///         late fee on it). `principal + interest + lateFee` is GROSS debt.
+    ///         `lenderProceeds` is the moved principal less the matcher
+    ///         incentive; interest and late fee are never charged on this path.
+    ///         `incomplete` with no figures: the loan was matched while in the
+    ///         fallback, or the lender had already been paid in part when the
+    ///         first recorded step ran (a step before this record existed, or a
+    ///         preclose / offset), so no whole figure exists. Neither set
+    ///         (`recordedAt == 0`, `incomplete == false`): no record — the loan
+    ///         is not standing `InternalMatched`, it was closed in one step
+    ///         before this record existed, or it is an NFT rental.
+    /// @return principal      Principal internal matching cleared.
+    /// @return interest       Accrued interest on it, never charged.
+    /// @return lateFee        Late fee on it, never charged.
+    /// @return lenderProceeds What the matches paid the lender side.
+    /// @return recordedAt     Timestamp of the closing step; 0 when not reported.
+    /// @return incomplete     True when a record exists but is not whole.
+    function getOwedAtInternalMatch(uint256 loanId)
+        external
+        view
+        returns (
+            uint256 principal,
+            uint256 interest,
+            uint256 lateFee,
+            uint256 lenderProceeds,
+            uint64 recordedAt,
+            bool incomplete
+        )
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        // The record is never cleared; it is meaningful only while the loan
+        // still stands internally matched (see {LibOwedAtInternalMatch}).
+        if (s.loans[loanId].status != LibVaipakam.LoanStatus.InternalMatched) {
+            return (0, 0, 0, 0, 0, false);
+        }
+        LibVaipakam.OwedAtInternalMatch storage o = s.owedAtInternalMatch[loanId];
+        if (o.incomplete) return (0, 0, 0, 0, 0, true);
+        if (o.recordedAt == 0) return (0, 0, 0, 0, 0, false);
+        return (o.principal, o.interest, o.lateFee, o.lenderProceeds, o.recordedAt, false);
     }
 
     /// @dev #1067 — shared default/liquidation-terminal reward + LIF close used

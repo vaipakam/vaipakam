@@ -326,7 +326,7 @@ function structRhsIsArtifact(rhs) {
  * `File.sol::functionName` → reason. Keep SMALL — every entry is a hole.
  */
 const ALLOWLIST_B = {
-  'SwapToRepayFacet.sol::swapToRepayPartial':
+  'SwapToRepayPartialFacet.sol::swapToRepayPartial':
     'DISCRETIONARY loan-stays-Active partial swap (the analogue of repayPartial): it hard-SCREENS the direct EOA payee at Tier-1 (_assertNotSanctioned) rather than freezing — a flagged party\'s must-complete escape hatch is swapToRepayFull, which freeze-routes. Design §1.3 / §2 Invariant B channel 1 discretionary path.',
   'PrepayListingFacet.sol::_settleLoanFromParallelSale':
     'accepted-offer parallel-sale settlement: the inline ownerOf(lenderTokenId) payout is a PREPAY-SALE vehicle covered by the committed non-reverting syncPrepaySaleOffer + fail-closed-fill backstop (design §2 Invariant B channel 1→2), NOT a bare freeze — a mustFreezeParty-revert inside the atomic fill would roll back its own registry marker (Codex #1136-r5 R5-1).',

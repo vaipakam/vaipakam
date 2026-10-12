@@ -21,7 +21,9 @@ function loadDismissed(): boolean {
   }
 }
 
-export function PowerSurfaceNote() {
+/** `body` is per route (#2378 r2): the Offer Book and the Rate Desk are
+ *  different pages, and one shared sentence described only the desk. */
+export function PowerSurfaceNote({ body }: { body: string }) {
   const { isAdvanced, setMode } = useMode();
   const [dismissed, setDismissed] = useState(loadDismissed);
 
@@ -39,7 +41,7 @@ export function PowerSurfaceNote() {
   return (
     <div className="banner banner-info" role="note">
       <span className="banner-body">
-        {copy.powerSurface.body}{' '}
+        {body}{' '}
         <span className="cluster" style={{ marginTop: 8 }}>
           <Link to="/borrow" className="btn btn-secondary btn-sm">
             {copy.powerSurface.guidedBorrow}

@@ -27,7 +27,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { CircleCheck, LoaderCircle, Search } from 'lucide-react';
 import { usePublicClient, useWalletClient } from 'wagmi';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { encodeFunctionData, parseUnits } from 'viem';
+import { encodeFunctionData } from 'viem';
 import { useActiveChain } from '../chain/useActiveChain';
 import { getSupportedChain } from '../chain/chains';
 import { useMode } from '../app/ModeContext';
@@ -43,6 +43,7 @@ import {
 import { SimulationPreview } from './SimulationPreview';
 import { CollateralPrecheck } from './CollateralPrecheck';
 import { SelectMenu } from './SelectMenu';
+import { AmountPrecisionHint } from './AmountPrecisionHint';
 import { useTxSimulation, type TxSimInput } from '../contracts/useTxSimulation';
 import {
   ensureAllowance,
@@ -76,11 +77,13 @@ import {
 } from '../contracts/loanLive';
 import { saleSettlementNow } from '../data/loanSalePending';
 import {
+  exactUnitsOrNull,
   formatBpsAsPercent,
   formatDate,
   formatDurationDays,
   formatTokenAmount,
   fullTermInterest,
+  isTooPrecise,
 } from '../lib/format';
 import {
   isPlainDecimal,
@@ -638,11 +641,8 @@ export function OfferFlow({ side }: { side: Side }) {
   const activeOffers = useActiveOffers();
   const desiredWei = useMemo(() => {
     if (!lendingMeta.data || !form.amount || Number(form.amount) <= 0) return null;
-    try {
-      return parseUnits(form.amount, lendingMeta.data.decimals);
-    } catch {
-      return null;
-    }
+    // #2390 — exact: excess precision is refused, never rounded.
+    return exactUnitsOrNull(form.amount, lendingMeta.data.decimals);
   }, [form.amount, lendingMeta.data]);
 
   const matchCandidates = useMemo(() => {
@@ -737,7 +737,7 @@ export function OfferFlow({ side }: { side: Side }) {
             : stepLabels.length - 1;
 
   // Strict decimal gating — Number('1e18') > 0 and Number('abc') < 0
-  // checks let inputs through that parseUnits/BigInt later throw on.
+  // checks let inputs through that the exact parse / BigInt later refuse.
   // Rate is additionally capped at 100% APR: the contract rejects
   // anything above MAX_INTEREST_BPS (10,000), and without the client
   // cap the approval tx would mine before createOffer reverts.
@@ -753,11 +753,24 @@ export function OfferFlow({ side }: { side: Side }) {
     (d) => d <= fees.maxOfferDurationDays,
   );
   const durationValid = Number(form.durationDays) <= fees.maxOfferDurationDays;
+  // #2390 — an amount finer than its token can carry is refused (and
+  // named under the field), never rounded into a different figure.
+  const amountTooPrecise =
+    lendingMeta.data !== undefined && isTooPrecise(form.amount, lendingMeta.data.decimals);
+  const collateralTooPrecise =
+    collateralMeta.data !== undefined &&
+    isTooPrecise(form.collateralAmount, collateralMeta.data.decimals);
   const detailsComplete =
     isAddressLike(form.lendingAsset) &&
     isPositiveDecimal(form.amount) &&
+    !amountTooPrecise &&
     durationValid;
-  const formError = validateOfferForm(form);
+  const formError = validateOfferForm(form, {
+    decimals: {
+      lending: lendingMeta.data?.decimals,
+      collateral: collateralMeta.data?.decimals,
+    },
+  });
   // createOffer rejects lendingAsset == collateralAsset
   // (SelfCollateralizedOffer) — catch it before any approval can mine.
   const selfCollateral =
@@ -768,6 +781,7 @@ export function OfferFlow({ side }: { side: Side }) {
     detailsComplete &&
     isAddressLike(form.collateralAsset) &&
     isPositiveDecimal(form.collateralAmount) &&
+    !collateralTooPrecise &&
     !selfCollateral &&
     rateValid;
 
@@ -2228,6 +2242,13 @@ export function OfferFlow({ side }: { side: Side }) {
               onChange={(e) => set({ amount: e.target.value.trim() })}
             />
             <span className="field-hint">{text.amountHint}</span>
+            {lendingMeta.data ? (
+              <AmountPrecisionHint
+                value={form.amount}
+                decimals={lendingMeta.data.decimals}
+                symbol={lendingMeta.data.symbol}
+              />
+            ) : null}
           </div>
           <div className="field">
             <label htmlFor="duration">{copy.offerFlow.durationLabel}</label>
@@ -2403,6 +2424,13 @@ export function OfferFlow({ side }: { side: Side }) {
               value={form.collateralAmount}
               onChange={(e) => set({ collateralAmount: e.target.value.trim() })}
             />
+            {collateralMeta.data ? (
+              <AmountPrecisionHint
+                value={form.collateralAmount}
+                decimals={collateralMeta.data.decimals}
+                symbol={collateralMeta.data.symbol}
+              />
+            ) : null}
           </div>
 
           {isAdvanced ? (

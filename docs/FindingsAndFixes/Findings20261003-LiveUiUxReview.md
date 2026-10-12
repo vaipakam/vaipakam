@@ -40,8 +40,8 @@ anything a signing drive reports must be read against that.
 | Batch | Findings | Status |
 | --- | --- | --- |
 | 1 — trust and accuracy (#2373) | UX3-001, 002, 003, 004, 005, 006, 010, 011, 014 | Fixed in the PR that adds this document. Each funds-facing rule is a pure function with a mutation-checked unit test (`resolveForcedCloseActive`, `tierBandRows`, `defaultRecoveryNote`). The repay spec now also drives the lender's view of a repaid loan. UX3-005 is fixed as "state the unknown": the claim says what the recovery is and that no shortfall is shown. An exact shortfall needs the amount owed at default, which the app does not have; that is tracked in #2374. |
-| 2 — plain language and approachable advanced tools | UX3-007, 012, 013, plus a wording pass over the core journeys | Next PR. |
-| 3 — the missing borrower feature and the bundle | UX3-009, 008 | After batch 2. |
+| 2 — plain language and approachable advanced tools (#2378) | UX3-007, 012, 013, plus a wording pass over the core journeys | Fixed in #2378, with two parts still open: amounts on Activity rows (withdrawn from the app and moved to the indexer as #2383) and the loan-to-value on Offer Book cards (UX3-007's third fact, #2384 — since shipped). What shipped: Rate Desk and Offer Book in plain words, with a first-visit guide; collateral amounts and the illiquid flag on offer cards; Basic-mode filters; the Alerts link status; and a vocabulary pass, all in the 10 translated languages. |
+| 3 — the missing borrower feature and the bundle | UX3-009, 008 | Fixed. UX3-009 in #2389: the loan page's "Take back extra collateral" card, with every refusal the app can see beforehand checked before the wallet opens, and every unknown stated rather than implied. A price move between that check and the transaction landing can still make the protocol refuse a withdrawal at the limit; the card says so. Three gaps it found are tracked separately: refinance requests made on another device are not discoverable yet (#2391), the ladder does not yet disclose missing signed offers (#2386), and other money inputs still round typed amounts instead of refusing extra decimals (#2390). UX3-008 in #2392: the combined contract ABI is built once with exact duplicates removed, 2.81 MB to 645 KB. |
 
 ## Site-wide health baseline
 
@@ -207,6 +207,18 @@ an in-kind transfer on default). None is on the card. There is also no
 sort or filter by asset, rate, term or collateral class. All four fit
 in one secondary line plus a filter row.
 
+**Status — partly fixed in #2378.** The collateral amount (or "at least" its
+floor), the illiquid flag as recorded at posting, NFT collateral by token, and
+Basic-mode show/sort now appear. The loan-to-value is not shown yet; it needs
+per-offer pricing and an honest "can't be priced" state, tracked in #2384.
+
+**Status update — the loan-to-value lands with #2384.** Token-for-token offer
+cards state the loan-to-value from the protocol's live prices (a borrow
+request's as a ceiling), and say when it can't be worked out, couldn't be
+checked, or is still loading. Building it turned up that the contract's
+pair-level LTV view drops token decimals (#2403), so the card does not use it.
+With this, all three facts the finding named are on the card.
+
 ### UX3-008 · The contract-ABI chunk has tripled since July (M)
 
 `contract-abis-*.js` is **2.58 MB** uncompressed. The July second pass
@@ -215,6 +227,16 @@ loads it (disconnected sessions correctly still do not). The likely
 driver is facet growth, which `exportFrontendAbis.sh` exports in full.
 Options: per-route ABI slices, or event-only / function-only subsets
 generated at export time.
+
+**Status — fixed in #2392.** The cause was repetition rather than growth:
+each facet's ABI repeats the shared errors and events, and about three
+quarters of the chunk was exact duplicates. The combined ABI is now built
+once, at export time, with exact duplicates removed (2.81 MB to 645 KB),
+and a package test fails if it goes stale or an exported facet ABI is missing
+from the manifest it is built from. Which facets are exported at all is still
+the hand-kept `FACETS` list in the export script, which leaves internal facets
+out by design; a facet left off that list is not caught by these checks. Per-route
+slicing was not needed.
 
 ### UX3-009 · "Withdraw excess collateral" is specified and live on chain, with no app surface (M/L)
 
@@ -226,6 +248,13 @@ Collateral (Health Factor)" describes it as a borrower feature.
 appreciated has no way to use that from the app. This needs a product
 decision on placement (the position detail page is the natural home),
 then a CI-Anvil spec.
+
+**Status — fixed in #2389.** The loan page carries a Basic-mode "Take back
+extra collateral" section for the borrower-position holder of an Active loan.
+It states the live ceiling, explains every zero, refuses an over-ceiling amount
+on the page, and re-checks every protocol refusal it can see before the wallet
+opens. Covered by `apps/app/e2e/tests/32-withdraw-collateral.spec.ts` (CI-Anvil)
+and `apps/app/src/data/partialWithdraw.test.ts`.
 
 ## P3 — polish
 
@@ -297,7 +326,7 @@ UI-level test at either tier. Ranked by funds risk:
 | 3 | NFT rental: list → rent → daily deduction → close → claim | contract tier only | CI-Anvil |
 | 4 | Health-factor display, low-HF warnings, liquidation outcome | contract tier only; the UI suite has no way to move a price | CI-Anvil, with a price fixture |
 | 5 | Lender early withdrawal: listing form, direct sale, buyer completion | listing seeded by direct write; form untested | CI-Anvil |
-| 6 | Withdraw excess collateral / add collateral | no surface (UX3-009) / contract tier only | product decision, then CI-Anvil |
+| 6 | Withdraw excess collateral / add collateral | `32-withdraw-collateral` (CI-Anvil, batch 3) / contract tier only | add-collateral still needs a CI-Anvil drive |
 | 7 | Sanctions banner and Tier-1 / Tier-2 gating in the UI | contract tier only | CI-Anvil |
 | 8 | Wrong network / chain switch | none | CI-Anvil |
 | 9 | VPFI deposit, withdraw, tier display | accept-path opt-in only | CI-Anvil |

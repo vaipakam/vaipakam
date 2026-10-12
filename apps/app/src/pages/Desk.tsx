@@ -34,6 +34,8 @@ import { useActiveChain } from '../chain/useActiveChain';
 import { MarketFreshnessNote } from '../components/MarketFreshnessNote';
 import { DeskHeader } from '../components/desk/DeskHeader';
 import { RateLadder } from '../components/desk/RateLadder';
+import { signedDepthOf } from '../data/signedDepth';
+import { indexerConfigured } from '../data/indexer';
 import { OrderTicket } from '../components/desk/OrderTicket';
 import { TapePanel } from '../components/desk/TapePanel';
 import { OpenOrdersPanel } from '../components/desk/OpenOrdersPanel';
@@ -130,6 +132,9 @@ export function Desk() {
     // same rate levels. An unavailable/loading signed book merges
     // nothing — the ladder degrades to chain-only rather than blanking;
     // the per-row "Signed" badge carries the indexer-sourced honesty.
+    // #2386 — the hook returns fresh data only (a cached signed order
+    // behind a failed refetch may have been taken or cancelled), and
+    // `signedDepth` then tells the reader signed offers are missing.
     const signedRows = (signedBook.data?.offers ?? [])
       .map((r) => signedRowToDeskRow(r, readChain.chainId, nowSec))
       .filter((r): r is DeskBookRow => r !== null);
@@ -140,6 +145,7 @@ export function Desk() {
       address,
     );
   }, [book.data, signedBook.data, days, address, readChain.chainId, nowSec]);
+  const signedDepth = signedDepthOf(signedBook, indexerConfigured());
 
   const lastFill = tape.data === undefined ? undefined : (tape.data?.[0] ?? null);
 
@@ -154,9 +160,10 @@ export function Desk() {
     <div className="desk-container">
       <h1 className="page-title">{copy.desk.title}</h1>
       <p className="page-lede">{copy.desk.lede}</p>
+      <HowItWorks />
 
       {/* UX-026 — orient Basic-mode visitors landing here by URL. */}
-      <PowerSurfaceNote />
+      <PowerSurfaceNote body={copy.powerSurface.body} />
 
       <MarketFreshnessNote />
 
@@ -175,6 +182,22 @@ export function Desk() {
         ladder={ladder}
         lastFill={lastFill}
       />
+
+      {/* #2386 — one note for the whole market, above every view: the
+          header's middle rate, the offers list and the chart all draw on
+          the merged book, and on a phone either list or chart can be on
+          screen alone. */}
+      {pair !== null && signedDepth !== 'complete' ? (
+        <p className="muted" role="status" data-testid="desk-signed-depth">
+          {signedDepth === 'loading'
+            ? copy.desk.signed.depthLoading
+            : signedDepth === 'unconfigured'
+              ? copy.desk.signed.depthUnconfigured
+              : signedDepth === 'unavailable'
+                ? copy.desk.signed.depthUnavailable
+                : copy.desk.signed.depthPartial}
+        </p>
+      ) : null}
 
       <div
         className={`desk-main${mobileView === 'chart' ? ' desk-mobile-chart' : ''}`}
@@ -197,6 +220,7 @@ export function Desk() {
               decimals={lendingMeta.data?.decimals}
               symbol={lendingMeta.data?.symbol}
               quotedMidBps={ladder?.midBps ?? null}
+              midFromSavedCopy={book.data?.source === 'indexer'}
               // The whole tape, not just the newest fill (#1139): sparse
               // mode draws one marker per tape fill, and the empty-copy
               // split needs to know whether older fills exist at all.
@@ -226,6 +250,7 @@ export function Desk() {
               loading={book.isLoading}
               unavailable={!book.isLoading && book.data === null}
               source={book.data?.source ?? null}
+              signedDepth={signedDepth}
               decimals={lendingMeta.data?.decimals}
               symbol={lendingMeta.data?.symbol}
               chainId={readChain.chainId}
@@ -300,5 +325,49 @@ export function Desk() {
         )}
       </div>
     </div>
+  );
+}
+
+const HOW_IT_WORKS_KEY = 'app.deskHowItWorksSeen';
+
+/** Naive-user redesign — what this page is and how to use it, in four
+ *  steps. Open on a first visit, collapsed on later ones (remembered per
+ *  browser; storage failure just means it opens again). Shown in both
+ *  modes: the desk is usable by anyone, not only by traders. */
+function HowItWorks() {
+  // #2378 r2 — controlled: the page re-renders on a timer, so the
+  // element's state must follow the user's toggle, not the initial read.
+  const [open, setOpen] = useState(() => {
+    try {
+      return localStorage.getItem(HOW_IT_WORKS_KEY) !== '1';
+    } catch {
+      return true;
+    }
+  });
+  const h = copy.desk.howItWorks;
+  return (
+    <details
+      className="card how-it-works"
+      open={open}
+      onToggle={(e) => {
+        const nowOpen = (e.currentTarget as HTMLDetailsElement).open;
+        setOpen(nowOpen);
+        if (!nowOpen) {
+          try {
+            localStorage.setItem(HOW_IT_WORKS_KEY, '1');
+          } catch {
+            /* non-fatal */
+          }
+        }
+      }}
+    >
+      <summary>{h.title}</summary>
+      <ol>
+        <li>{h.step1}</li>
+        <li>{h.step2}</li>
+        <li>{h.step3}</li>
+        <li>{h.step4}</li>
+      </ol>
+    </details>
   );
 }

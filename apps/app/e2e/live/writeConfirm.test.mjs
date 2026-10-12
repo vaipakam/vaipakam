@@ -579,6 +579,9 @@ describe('every confirmWrite call site reads a fresh head', () => {
     // An empty set would satisfy every assertion below by accident.
     const calls = confirmWriteCalls();
     expect(calls.length).toBeGreaterThanOrEqual(2);
+    // live-refinance.mjs left this set in #2422 r11: its post-accept reads
+    // are PINNED to the accept block (and the block before), never to a
+    // fresh head, because each claim is about what that block produced.
     expect([...new Set(calls.map((c) => c.file))].sort()).toEqual([
       'live-rate-desk.mjs',
       'live-signed-book.mjs',

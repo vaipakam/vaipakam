@@ -83,6 +83,12 @@ export interface IndexedOffer {
   interestRateBps: number;
   interestRateBpsMax: number;
   collateralAmount: string;
+  /** #2382 — a borrower offer's effective collateral ceiling, and the part
+   *  earlier matched fills consumed. `null` = the indexer has not read it
+   *  yet; absent = an older indexer build. Both mean UNKNOWN, never "same
+   *  as the floor". */
+  collateralAmountMax?: string | null;
+  collateralAmountFilled?: string | null;
   durationDays: number;
   positionTokenId: string;
   prepayAsset: string;
@@ -501,6 +507,18 @@ export interface IndexedActivityEvent {
   actor: string | null;
   args: Record<string, unknown> | string;
   blockAt: number;
+  /** #2383 — what the row moved or offered, normalized by the indexer.
+   *  `amount` / `amountMax` are base units of an ERC-20 `asset` (a range
+   *  when `amountMax` is set); `tokenId` names an NFT and `quantity` an
+   *  ERC-1155's copies (#2383 r1). null = not
+   *  established; absent = an indexer that predates the fields. Never
+   *  reconstruct either from `args`. */
+  asset?: string | null;
+  assetType?: number | null;
+  amount?: string | null;
+  amountMax?: string | null;
+  tokenId?: string | null;
+  quantity?: string | null;
 }
 
 export interface ActivityPage {
