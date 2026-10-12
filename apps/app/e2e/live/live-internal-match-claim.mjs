@@ -223,8 +223,10 @@ let claimArmed = false;
 /** The claim's hash once the wallet returned it, so a later failure can be
  *  reconciled against the chain instead of reported as unobserved. */
 let claimHash = null;
-/** The most gas the claim may ask for: twice the driver's own estimate,
- *  set when the gate is armed. */
+/** The gas limit band an explicit claim gas may sit in: at least the
+ *  driver's own estimate (less only buys an out-of-gas revert) and at most
+ *  twice it. Both set before the gate is armed. */
+let claimGasFloor = 0n;
 let claimGasCap = 0n;
 const asBig = (v) => {
   try {
@@ -245,11 +247,11 @@ function claimGate(method, params) {
     tx.data.toLowerCase() === CLAIM_CALLDATA.toLowerCase() &&
     // The whole transaction, not only where it goes and what it calls:
     // claimAsLender is nonpayable, so any value only buys a revert; the
-    // sender must be this wallet; and an explicit gas limit may not exceed
-    // the cap the driver set from its own estimate.
+    // sender must be this wallet; and an explicit gas limit must sit
+    // between the driver's own estimate and twice it.
     asBig(tx.value) === 0n &&
     (tx.from === undefined || (typeof tx.from === 'string' && tx.from.toLowerCase() === WALLET.toLowerCase())) &&
-    (tx.gas === undefined || (asBig(tx.gas) > 0n && asBig(tx.gas) <= claimGasCap));
+    (tx.gas === undefined || (claimGasFloor > 0n && asBig(tx.gas) >= claimGasFloor && asBig(tx.gas) <= claimGasCap));
   if (!ok) {
     const why = claimArmed
       ? `${method} is not the one claimAsLender(${LOAN_ID}) send this drive allows`
@@ -361,6 +363,7 @@ try {
         pub.getGasPrice(),
       ]);
       const need = gas * gasPrice * 2n;
+      claimGasFloor = gas;
       claimGasCap = gas * 2n;
       if (balance < need) {
         await blocked(`${ROLE} ${WALLET} holds ${formatUnits(balance, 18)} ETH; the claim needs about ${formatUnits(need, 18)}`, null, done);
@@ -371,6 +374,9 @@ try {
     // The window opens before the click: the click (or its confirm step)
     // starts the app's transaction and receipt reads, and a request already
     // in flight at a reset is not counted in the new window.
+    // Re-checked after the funding reads: the page kept running while they
+    // were awaited, and a refusal recorded meanwhile must stop the claim.
+    if (preClaimFails() > 0) throw new Error('a check failed or a request was refused before the claim; not claiming');
     rpc.reset();
     claimArmed = true;
     await claimButton.click();
