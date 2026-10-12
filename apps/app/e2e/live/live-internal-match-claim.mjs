@@ -423,7 +423,11 @@ const session = await launch(
     ? { role: ROLE, startChainId: CHAIN_ID, pinnedChainId: CHAIN_ID, signingGate: claimGate, readOnlyEgress: true }
     : { role: ROLE, readOnly: true },
 );
-const { ctx, page, done, shot, consoleErrors, blockedRequests } = session;
+const { ctx, page, done, consoleErrors, blockedRequests } = session;
+/** Evidence capture is never evidence about the app: a screenshot that fails
+ *  (a full disk, a closed browser) is logged and the drive goes on, before
+ *  the claim as after it. */
+const shot = (name) => session.shot(name).catch((e) => console.log(`(screenshot ${name} not saved: ${e.message})`));
 // English before the first paint (the shared i18n factory's storage key).
 await ctx.addInitScript(() => {
   try {
@@ -611,7 +615,7 @@ try {
       );
     check('pageConfirmed', 'complete', 'the page confirmed the claim ("Claim complete")', confirmed);
     PLAN.close();
-    await shot(`internal-match-claimed-${LOAN_ID}`).catch((e) => console.log(`(screenshot not saved: ${e.message})`));
+    await shot(`internal-match-claimed-${LOAN_ID}`);
     // The claim's own receipt, by the hash the wallet returned — not a log
     // search, which a claim still pending would make read as "no payout".
     // Direct-RPC reads after the write: an outage here leaves the payout
@@ -718,7 +722,7 @@ try {
   // browser teardown must not pass the gate after this verdict is chosen.
   PLAN?.close();
   stopped = err.message;
-  await shot(`internal-match-claim-error-${LOAN_ID}`).catch(() => {});
+  await shot(`internal-match-claim-error-${LOAN_ID}`);
   if (wrote()) {
     // A claim the gate allowed moved (or failed to move) funds whatever the
     // page did next, so its receipt is read and reported — never folded into
@@ -793,7 +797,15 @@ if (armedOnce && !wrote()) {
     escapeUnknown = `the plan allowed no send, and the direct RPC could not read whether the lender claim landed through another connector (${err.message})`;
   }
 }
-const wroteAny = wrote() || escaped || escapeUnknown !== null;
+// From the claim click on, the run is post-write whatever the plan saw: a
+// send through another connector can still be pending when the read above
+// returns false, so only a send the plan never armed for is "before any
+// write". The plan's own record (`planned`) still states what it saw.
+if (armedOnce && !wrote() && !escaped && escapeUnknown === null) {
+  escapeUnknown =
+    'the driver clicked its claim and the plan allowed no send; the lender claim is not recorded at the latest block, but a send through another connector may still be pending — check the lender wallet by hand';
+}
+const wroteAny = wrote() || armedOnce;
 // Teardown is cleanup, not evidence: a browser that fails to close says
 // nothing about the app or the chain, so it never replaces the verdict.
 try {
@@ -805,7 +817,7 @@ for (const line of MANIFEST.render()) console.log(line);
 const VERDICT = runVerdict({
   rows: MANIFEST.rows(),
   wrote: wroteAny,
-  stopped: stopped ?? escapeUnknown,
+  stopped: [stopped, escapeUnknown].filter(Boolean).join('; ') || null,
   preWriteFailure: !wroteAny && failedCount() > 0,
   gateEscape: escaped,
   outcomeClaims: SUBMIT_CLAIM ? OUTCOME : [],

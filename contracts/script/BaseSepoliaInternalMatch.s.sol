@@ -66,10 +66,11 @@ import {MockSwapAdapter} from "../test/mocks/MockSwapAdapter.sol";
  *                     whole before it sends, so it cannot see what the
  *                     trigger actually closed.
  *           `restore` The one stage that ends a run, after `match` or any
- *                     failure: re-reads IM_LOAN_A / IM_LOAN_B (0 = never
- *                     opened) and refuses while either is Active or
- *                     FallbackPending, since moving the price back would
- *                     move its value; otherwise matching OFF, the three
+ *                     failure: walks the Diamond's active list and refuses
+ *                     while any Active or FallbackPending tLIQ loan has one
+ *                     of this run's wallets as a party (no operator loan ids
+ *                     are trusted), since moving the price back would move
+ *                     its value; otherwise matching OFF, the three
  *                     price surfaces back to the `open-a` snapshot exactly,
  *                     then the kill-switch to the DECLARED original state
  *                     (ON only with `IM_ORIGINALLY_ENABLED` or
@@ -133,7 +134,7 @@ import {MockSwapAdapter} from "../test/mocks/MockSwapAdapter.sol";
  *         Env (keys from contracts/.env): DEPLOYER_PRIVATE_KEY (mock owner,
  *         matcher), ADMIN_PRIVATE_KEY (kill-switch), LENDER_*, BORROWER_*,
  *         NEW_LENDER_*, NEW_BORROWER_*; `IM_STAGE`. Stage inputs: IM_LOAN_A,
- *         IM_LOAN_B, and the snapshot IM_RESTORE_PRICE_E8 /
+ *         IM_LOAN_B (open-b, match), and the snapshot IM_RESTORE_PRICE_E8 /
  *         IM_RESTORE_SPOT_X96 / IM_RESTORE_VENUE_E8 (printed by `open-a`).
  *         Optional: IM_P0_E8 / IM_P1_E8 / IM_P2_E8, IM_PRINCIPAL_A (tLIQ wei),
  *         IM_RATE_BPS, IM_KEEP_ENABLED, IM_ORIGINALLY_ENABLED,
@@ -270,32 +271,49 @@ contract BaseSepoliaInternalMatch is RepriceTestnetMock {
     }
 
     /// @dev The ONE stage that ends a run, after a completed `match` or from
-    ///      any failure: it re-reads every leg this run opened as a separate
-    ///      broadcast, so what it sees is what the earlier stages actually
-    ///      left. Moving the price back is only safe once no leg still has
-    ///      value riding on it, so it refuses while either named leg
-    ///      (`IM_LOAN_A` / `IM_LOAN_B`, 0 for one never opened) is Active —
-    ///      the restored price can leave it liquidatable, e.g. a B opened at
-    ///      p1, or partly matched — or FallbackPending, whose lender holds an
-    ///      in-kind claim the restore would revalue. Repay, match or resolve
-    ///      it first. `IM_RESTORE_WITH_ACTIVE=true` overrides, and each named
-    ///      leg's state and LTV are printed after the restore.
+    ///      any failure. It is its own broadcast, so what it reads is what the
+    ///      earlier stages actually left. Moving the price back is only safe
+    ///      once nothing this run's wallets hold still has value riding on
+    ///      tLIQ, so it does not trust operator-supplied loan ids (a lost
+    ///      receipt would make "0 = never opened" a guess): it walks the
+    ///      Diamond's whole active list (Active AND FallbackPending) and
+    ///      refuses while ANY tLIQ loan there has one of this run's four
+    ///      wallets as lender or borrower — a B opened at p1 or partly
+    ///      matched, an A left open, a FallbackPending leg whose in-kind
+    ///      claim the restore would revalue, or an unrelated loan of the
+    ///      same wallets, which the restore would move just the same. Each is
+    ///      listed. Close or resolve them first; `IM_RESTORE_WITH_ACTIVE=true`
+    ///      overrides, and each listed loan's state and LTV are printed after
+    ///      the restore.
     function _stageRestore(RepriceTarget memory t, Actors memory a) internal {
-        uint256[2] memory legs = [vm.envUint("IM_LOAN_A"), vm.envUint("IM_LOAN_B")];
-        bool override_ = vm.envOr("IM_RESTORE_WITH_ACTIVE", false);
-        for (uint256 i; i < 2; ++i) {
-            if (legs[i] == 0) continue;
-            LibVaipakam.LoanStatus st = LoanFacet(t.diamond).getLoanDetails(legs[i]).status;
-            bool exposed = st == LibVaipakam.LoanStatus.Active || st == LibVaipakam.LoanStatus.FallbackPending;
-            require(
-                !exposed || override_,
-                "BaseSepoliaInternalMatch: a leg is Active or FallbackPending - restoring the price would move its value; close or resolve it first, or set IM_RESTORE_WITH_ACTIVE=true"
-            );
+        address[4] memory mine =
+            [vm.addr(a.lenderKey), vm.addr(a.borrowerKey), vm.addr(a.newLenderKey), vm.addr(a.newBorrowerKey)];
+        uint256[] memory found = new uint256[](0);
+        uint256 pageSize = 200;
+        for (uint256 offset;; offset += pageSize) {
+            uint256[] memory ids = MetricsFacet(t.diamond).getActiveLoansPaginated(offset, pageSize);
+            for (uint256 i; i < ids.length; ++i) {
+                LibVaipakam.Loan memory l = LoanFacet(t.diamond).getLoanDetails(ids[i]);
+                if (l.principalAsset != t.asset && l.collateralAsset != t.asset) continue;
+                bool ours;
+                for (uint256 k; k < 4; ++k) {
+                    if (l.lender == mine[k] || l.borrower == mine[k]) ours = true;
+                }
+                if (!ours) continue;
+                console.log("  this run's wallets hold tLIQ loan (id, status):", ids[i], uint256(l.status));
+                uint256[] memory grown = new uint256[](found.length + 1);
+                for (uint256 j; j < found.length; ++j) grown[j] = found[j];
+                grown[found.length] = ids[i];
+                found = grown;
+            }
+            if (ids.length < pageSize) break;
         }
-        _endRun(t, a, legs[0], legs[1]);
-        for (uint256 i; i < 2; ++i) {
-            if (legs[i] != 0) _logLoan(i == 0 ? "A" : "B", t.diamond, legs[i]);
-        }
+        require(
+            found.length == 0 || vm.envOr("IM_RESTORE_WITH_ACTIVE", false),
+            "BaseSepoliaInternalMatch: this run's wallets hold an Active or FallbackPending tLIQ loan (listed above) - restoring the price would move its value; close or resolve it first, or set IM_RESTORE_WITH_ACTIVE=true"
+        );
+        _endRun(t, a, 0, 0);
+        for (uint256 j; j < found.length; ++j) _logLoan("held", t.diamond, found[j]);
     }
 
     /// @dev Matching OFF, the `open-a` snapshot restored exactly, then the
