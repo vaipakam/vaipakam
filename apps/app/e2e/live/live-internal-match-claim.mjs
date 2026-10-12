@@ -251,7 +251,7 @@ function claimGate(method, params) {
 }
 const session = await launch(
   SUBMIT_CLAIM
-    ? { role: ROLE, startChainId: CHAIN_ID, pinnedChainId: CHAIN_ID, signingGate: claimGate }
+    ? { role: ROLE, startChainId: CHAIN_ID, pinnedChainId: CHAIN_ID, signingGate: claimGate, readOnlyEgress: true }
     : { role: ROLE, readOnly: true },
 );
 const { ctx, page, done, shot, consoleErrors, blockedRequests } = session;
@@ -276,8 +276,13 @@ async function claimsListSettled(timeoutMs = 60_000) {
   }
   return 'loading';
 }
-/** Pre-claim FAILs: the claim is one-shot, so it never runs after one. */
-const preClaimFails = () => fails;
+/** Wallet refusals and page writes the guards recorded, bar the
+ *  recognised Cloudflare edge beacon. */
+const violationsSoFar = () => splitBlocked(blockedRequests ?? [], [new URL(SITE_URL).origin]).violations;
+/** Pre-claim FAILs — an assertion that failed, or a request the wallet gate
+ *  or the egress guard already refused (an early claim attempt, a chain
+ *  switch, a page write). The claim is one-shot, so it never runs after one. */
+const preClaimFails = () => fails + violationsSoFar().length;
 const rowFor = () => page.locator(`a.item-row[href$="/positions/${LOAN_ID}"]`);
 try {
   // The window opens BEFORE the first load, so the response that populated
@@ -319,14 +324,26 @@ try {
     const posText = (await page.locator('body').innerText()).replace(/\s+/g, ' ');
     check('position page states the same comparison', posText.includes(EXPECTED_NOTE));
     await shot(`internal-match-position-${LOAN_ID}`);
-    if (preClaimFails() > 0) throw new Error('the position page did not state the comparison; not claiming');
+    if (preClaimFails() > 0) throw new Error('a check failed or a request was refused before the claim; not claiming');
     // The driver's own RPC, before anything is sent: an outage here is a
     // precondition, not a verdict on the page.
     let before;
     try {
       before = await pub.getBlockNumber();
+      // Funding is a precondition: an unfunded wallet fails inside the send,
+      // which would otherwise read as a product FAIL. Twice the estimate at
+      // the current fee, so a fee tick between here and the send still fits.
+      const [balance, gas, gasPrice] = await Promise.all([
+        pub.getBalance({ address: WALLET }),
+        pub.estimateContractGas({ address: DIAMOND, abi: DIAMOND_ABI, functionName: 'claimAsLender', args: [LOAN_ID], account: WALLET }),
+        pub.getGasPrice(),
+      ]);
+      const need = gas * gasPrice * 2n;
+      if (balance < need) {
+        await blocked(`${ROLE} ${WALLET} holds ${formatUnits(balance, 18)} ETH; the claim needs about ${formatUnits(need, 18)}`, null, done);
+      }
     } catch (err) {
-      await blocked('the direct Base Sepolia RPC failed before the claim was sent', err, done);
+      await blocked('the direct Base Sepolia RPC could not read the block, the balance or the claim gas estimate before the claim was sent', err, done);
     }
     // The window opens before the click: the click (or its confirm step)
     // starts the app's transaction and receipt reads, and a request already
@@ -364,7 +381,14 @@ try {
     if (settled === 'available') {
       check('the row left /claims after the claim', (await rowFor().count()) === 0);
     } else if ((await rpc.settled()) === 0) {
-      await blocked('the page RPC answered nothing while /claims reloaded after the claim', null, done);
+      // The claim has already landed and its event was judged above, so
+      // this is an incomplete post-write verification, not a precondition:
+      // a FAIL that says so, never BLOCKED.
+      check(
+        'the row left /claims after the claim',
+        false,
+        `the page RPC answered nothing while /claims reloaded; the claim itself was ${claimHash ?? '(no hash)'}`,
+      );
     } else {
       check('the row left /claims after the claim', false, `the claims list never settled (${settled})`);
     }
@@ -395,14 +419,12 @@ try {
     fails++;
   }
 }
-// CLAIM session: every wallet request the gate refused — the claim gate's
-// own and the chain pin's (a switch to another chain, a request on the
-// wrong chain), which the wallet boundary records before the gate is asked.
-// Read-only session: every refused wallet write or non-read request, bar the
-// recognised Cloudflare edge beacon.
-const violations = SUBMIT_CLAIM
-  ? (blockedRequests ?? [])
-  : splitBlocked(blockedRequests ?? [], [new URL(SITE_URL).origin]).violations;
+// Every refused request, bar the recognised Cloudflare edge beacon. CLAIM
+// session: the claim gate's refusals, the chain pin's (recorded at the
+// wallet boundary before the gate is asked), and any page write the egress
+// guard stopped. Read-only session: every refused wallet write or non-read
+// request.
+const violations = violationsSoFar();
 const violationCheck = SUBMIT_CLAIM
   ? 'the page asked to sign only the planned claim'
   : 'the page attempted no write in a read-only session';

@@ -18,6 +18,10 @@ import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
 import {RepriceTestnetMock} from "./RepriceTestnetMock.s.sol";
 import {IRepriceDiamondViews} from "./lib/RepriceVenueReport.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import {MockChainlinkFeed} from "./mocks/MockChainlinkRegistry.sol";
+import {MockUniswapV3Pool} from "./mocks/MockUniswapV3.sol";
+import {MockSwapAdapter} from "../test/mocks/MockSwapAdapter.sol";
 
 /**
  * @title BaseSepoliaInternalMatch
@@ -44,10 +48,12 @@ import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IER
  *              transaction the matcher runs
  *              `triggerInternalMatchLiquidation(A, B, 0)`; both loans close
  *              `InternalMatched` in one step.
- *           5. The kill-switch back off, then tLIQ back to the price it had
- *              BEFORE the run (read at start, not assumed to be `IM_P0_E8`),
- *              then the kill-switch back to its original state (ON only when
- *              it started ON, or `IM_KEEP_ENABLED=true`).
+ *           5. The kill-switch back off, then tLIQ's three price surfaces
+ *              (feed, pool spot, venue price) back to the exact values they
+ *              held BEFORE the run — each snapshotted at start, not rebuilt
+ *              from one scalar — then the kill-switch to the declared
+ *              original state (ON only when `IM_ORIGINALLY_ENABLED=true` or
+ *              `IM_KEEP_ENABLED=true`).
  *
  *         Matching is OFF for every price move. A deployment that starts with
  *         it ON has it switched off before the first move, so no reprice
@@ -55,10 +61,18 @@ import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IER
  *         after the last one.
  *
  *         Every price move is three non-atomic owner-gated transactions (see
- *         {RepriceTestnetMock}); between steps 2 and 5 every tLIQ loan on the
- *         Diamond sees the moved price, and the run lists each one (all
- *         pages) with its LTV, or says it is unreadable. Broadcast with
- *         `--slow`.
+ *         {RepriceTestnetMock}); between steps 2 and 5 every tLIQ position on
+ *         the Diamond sees the moved price. At each move the run lists every
+ *         other tLIQ loan (with its LTV, or "unreadable") and every open tLIQ
+ *         offer (with what is still fillable). Broadcast with `--slow`.
+ *
+ *         Those lists are a SIMULATION-TIME snapshot. `forge script` runs the
+ *         whole body before it broadcasts anything, and view calls are not
+ *         re-run between the broadcast transactions, so a loan or offer
+ *         created by someone else after the simulation, or while the moves
+ *         are landing, is affected and is NOT in the lists. They describe
+ *         the book the run was planned against, not a guarantee about the
+ *         book it ran against; read the chain after the run for that.
  *
  *         Races the script cannot close, stated rather than hidden:
  *           - From the step-2 move until the trigger, loan A is over its
@@ -71,8 +85,9 @@ import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IER
  *             back off right after the trigger, before the restore.
  *           - Open tLIQ offers see every moved price too, and anyone may
  *             accept one at it; a loan born that way can be unsafe once the
- *             price is restored. Each move lists every open offer that lends
- *             or takes tLIQ, so such a loan can be traced.
+ *             price is restored. Each move lists the open offers that lend
+ *             or take tLIQ (as of the simulation), so such a loan can be
+ *             traced.
  *         Recovery for any of them: re-run {RepriceTestnetMock} to restore
  *         the price, then set the kill-switch to the deployment's intended
  *         state from the admin (off, unless it is meant to be on).
@@ -128,8 +143,12 @@ contract BaseSepoliaInternalMatch is RepriceTestnetMock {
         // closes both.
         uint256 collateralA = _collateralWorthTwice(t.diamond, t.asset, principalA, p0, mUsdc);
         uint256 priceBefore = _priceE8(t.diamond, t.asset);
+        // All three surfaces a move writes, so the restore puts back what was
+        // there rather than what one scalar implies (a pool spot that had
+        // drifted, a venue price set apart from the feed).
+        PriceReading memory before = _read(t);
 
-        (bool wasEnabled,,) = ConfigFacet(t.diamond).getInternalMatchConfigBundle();
+        (bool wasEnabled,, uint256 incentiveBps) = ConfigFacet(t.diamond).getInternalMatchConfigBundle();
         require(
             !wasEnabled || originallyEnabled,
             "BaseSepoliaInternalMatch: internal matching is already ON - if a partial run left it on, switch it off first; set IM_ORIGINALLY_ENABLED=true only if ON is the intended state"
@@ -140,6 +159,12 @@ contract BaseSepoliaInternalMatch is RepriceTestnetMock {
         console.log("mUSDC:              ", mUsdc);
         console.log("internalMatchEnabled before:", wasEnabled);
         console.log("tLIQ price before (e8):", priceBefore);
+        console.log("tLIQ pool spot / venue price (e8) before:", uint256(before.poolSpot), before.venuePrice8);
+        // What each lender gives up to the matcher at settlement, from this
+        // deployment's own setting rather than the default.
+        console.log("internal-match incentive per leg (bps of principal):", incentiveBps);
+        console.log("  A lender's expected deduction (tLIQ wei):", principalA * incentiveBps / 10_000);
+        console.log("  B lender's expected deduction (mUSDC wei):", collateralA * incentiveBps / 10_000);
         console.log("A: principal (tLIQ wei) / collateral (mUSDC wei):", principalA, collateralA);
 
         // Matching is quiesced for the whole price setup, including on a
@@ -176,8 +201,11 @@ contract BaseSepoliaInternalMatch is RepriceTestnetMock {
         // Off BEFORE the restore, so no reprice runs with the match path
         // open; back to the original state only once the price is restored.
         _setMatching(t.diamond, a.adminKey, false);
-        _reprice(t, a.deployerKey, priceBefore, loanA, loanB);
-        if (wasEnabled || keepEnabled) _setMatching(t.diamond, a.adminKey, true);
+        _restorePrices(t, a.deployerKey, priceBefore, before, loanA, loanB);
+        // The DECLARED original state, not the observed one: a retry after an
+        // interrupted originally-on run observes OFF (this script switched it
+        // off) and must still put it back on.
+        if (originallyEnabled || keepEnabled) _setMatching(t.diamond, a.adminKey, true);
         (bool endEnabled,,) = ConfigFacet(t.diamond).getInternalMatchConfigBundle();
         console.log("internalMatchEnabled after:", endEnabled);
 
@@ -233,6 +261,33 @@ contract BaseSepoliaInternalMatch is RepriceTestnetMock {
         vm.stopBroadcast();
         _verifyReprice(t, price8);
         console.log("tLIQ repriced to (e8):", price8);
+        _reportExposure(t, skipA, skipB);
+    }
+
+    /// @dev Puts the three surfaces back to the snapshot taken at start —
+    ///      feed, pool spot and venue price each to its own recorded value —
+    ///      and requires the Diamond to read exactly that back.
+    function _restorePrices(
+        RepriceTarget memory t,
+        uint256 ownerKey,
+        uint256 price8,
+        PriceReading memory before,
+        uint256 skipA,
+        uint256 skipB
+    ) internal {
+        vm.startBroadcast(ownerKey);
+        MockChainlinkFeed(t.feed).setPrice(SafeCast.toInt256(price8));
+        MockUniswapV3Pool(t.pool).setSqrtPriceX96(before.poolSpot);
+        if (t.venue.code.length != 0) MockSwapAdapter(t.venue).setTokenPrice(t.asset, before.venuePrice8);
+        vm.stopBroadcast();
+        PriceReading memory r = _read(t);
+        require(
+            r.oraclePrice == before.oraclePrice && r.oracleDecimals == before.oracleDecimals,
+            "BaseSepoliaInternalMatch: oracle did not read the pre-run price back"
+        );
+        require(r.poolSpot == before.poolSpot, "BaseSepoliaInternalMatch: pool spot did not return to its pre-run value");
+        require(r.venuePrice8 == before.venuePrice8, "BaseSepoliaInternalMatch: venue price did not return to its pre-run value");
+        console.log("tLIQ restored to its pre-run feed, pool spot and venue price (e8):", price8);
         _reportExposure(t, skipA, skipB);
     }
 
@@ -310,6 +365,7 @@ contract BaseSepoliaInternalMatch is RepriceTestnetMock {
     ///      Simulation-time log only; writes nothing.
     function _reportExposure(RepriceTarget memory t, uint256 skipA, uint256 skipB) internal view {
         uint256 pageSize = 200;
+        console.log("[simulation-time snapshot - positions created after it are not listed]");
         console.log("Other matchable tLIQ loans - Active and FallbackPending (id, status, LTV bps, liq floor bps):");
         for (uint256 offset;; offset += pageSize) {
             uint256[] memory ids = MetricsFacet(t.diamond).getActiveLoansPaginated(offset, pageSize);
@@ -344,7 +400,7 @@ contract BaseSepoliaInternalMatch is RepriceTestnetMock {
         }
         // Open offers see the moved price as well: an accept now is admitted
         // at it. Listed so a loan born during the excursion can be traced.
-        console.log("Open tLIQ offers (id, lending asset is tLIQ?, amount, collateral amount):");
+        console.log("Open tLIQ offers (id, side, principal still fillable = amountMax - amountFilled, collateral at max):");
         for (uint256 offset;; offset += pageSize) {
             uint256[] memory ids = MetricsFacet(t.diamond).getActiveOffersPaginated(offset, pageSize);
             for (uint256 i; i < ids.length; ++i) {
@@ -352,8 +408,8 @@ contract BaseSepoliaInternalMatch is RepriceTestnetMock {
                 if (o.lendingAsset != t.asset && o.collateralAsset != t.asset) continue;
                 console.log(
                     string.concat("   offer ", vm.toString(ids[i]), o.lendingAsset == t.asset ? " lends tLIQ" : " takes tLIQ as collateral"),
-                    o.amount,
-                    o.collateralAmount
+                    o.amountMax > o.amountFilled ? o.amountMax - o.amountFilled : 0,
+                    o.collateralAmountMax
                 );
             }
             if (ids.length < pageSize) break;
