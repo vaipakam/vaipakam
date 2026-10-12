@@ -220,4 +220,34 @@ describe('runVerdict', () => {
     // Without the failed check, the same run is a PASS — the clause is what made it 3.
     expect(runVerdict({ ...base, rows: all() }).exit).toBe(0);
   });
+
+  it("a driver names its own outcome claims; the rule is the same (#2427 r15)", () => {
+    const claimRows = (payout, lifecycle, other = 'verified') => [
+      row('claimRow', 'verified'),
+      row('payout', payout),
+      row('lifecycle', lifecycle),
+      row('rowRemoved', other),
+    ];
+    const own = { ...base, outcomeClaims: ['payout', 'lifecycle'] };
+    expect(runVerdict({ ...own, rows: claimRows('verified', 'verified') }).exit).toBe(0);
+    const contradicted = runVerdict({ ...own, rows: claimRows('failed', 'verified') });
+    expect(contradicted.exit).toBe(1);
+    expect(contradicted.line).toMatch(/contradicts \[payout\]/);
+    // A page check failing after the write is FAILED in its own clause, not a contradiction.
+    const page = runVerdict({ ...own, rows: claimRows('verified', 'verified', 'failed') });
+    expect(page.exit).toBe(3);
+    expect(page.line).toContain('[rowRemoved] FAILED');
+    expect(page.line).toContain('No chain read contradicts the outcome claims (payout, lifecycle)');
+    // The footer points at the evidence THIS driver printed, never at refinance's.
+    const ownEvidence = runVerdict({
+      ...own,
+      rows: claimRows('verified', 'verified', 'failed'),
+      evidence: { failed: 'see the write plan and refusals above', left: 'the claim receipt line above says what landed' },
+    });
+    expect(ownEvidence.line).toContain('see the write plan and refusals above');
+    expect(ownEvidence.line).toMatch(/the claim receipt line above says what landed$/);
+    expect(ownEvidence.line).not.toMatch(/nonce|touched-state/);
+    // An outcome claim the manifest never declared is a driver bug, not a verdict.
+    expect(() => runVerdict({ ...own, rows: [row('claimRow', 'verified')] })).toThrow(/payout, lifecycle are not in the manifest/);
+  });
 });

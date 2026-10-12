@@ -712,6 +712,14 @@ export async function launch({
   // preview target) asking for a signature mid-visit gets a wallet
   // error instead of an auto-approved signature (Codex #1154 P2).
   readOnly = false,
+  // readOnlyEgress: the BROWSER half of readOnly on its own — every
+  // page-initiated mutating HTTP request or write-shaped JSON-RPC POST is
+  // refused and recorded in `blockedRequests`, while the injected wallet
+  // keeps signing (under `signingGate`, typically). For a signing drive
+  // whose one permitted write goes through the wallet: without it, a page
+  // could POST a write straight at an RPC or a first-party endpoint and the
+  // wallet gate would never see it. Implied by readOnly.
+  readOnlyEgress = false,
   // preAuthorized: whether `eth_accounts` reports the account BEFORE
   // the page ever calls `eth_requestAccounts`. Default true mirrors a
   // returning user whose wallet already authorized the site (the
@@ -1054,7 +1062,7 @@ export async function launch({
   }
 
   function readOnlyViolation(req) {
-    if (!readOnly) return null;
+    if (!readOnly && !readOnlyEgress) return null;
     const method = req.method().toUpperCase();
     if (['GET', 'HEAD', 'OPTIONS'].includes(method)) return null;
     const body = req.postData();
