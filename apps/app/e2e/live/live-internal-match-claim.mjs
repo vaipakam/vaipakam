@@ -26,8 +26,13 @@
 // Wallet posture: without CLAIM the injected wallet is read-only, so a page
 // asking for any signature gets a wallet error. With CLAIM=1 it is pinned to
 // Base Sepolia and its signing gate allows exactly one request: an
-// eth_sendTransaction to the Diamond whose calldata is claimAsLender(LOAN_ID).
-// Anything else is refused and named as a FAIL.
+// eth_sendTransaction to the Diamond whose calldata is claimAsLender(LOAN_ID),
+// and only once the driver is clicking the claim button after every earlier
+// check passed. Anything else — that same claim asked for earlier, or a chain
+// switch the pin refuses — is refused and named as a FAIL. Once the claim is
+// sent, any later failure reports the transaction's receipt, never BLOCKED.
+//
+// REFERENCE_SITE_URL must be a workers.dev host (what the deploy printed).
 //
 // The profile is seeded to English before the first paint, because every
 // expected string comes from the en catalogue; the rendered language is then
@@ -65,16 +70,25 @@ const REFERENCE_SITE_URL = process.env.REFERENCE_SITE_URL ?? '';
 if (!REFERENCE_SITE_URL) {
   blockedSync('REFERENCE_SITE_URL is required: the workers.dev URL of the deploy under review.');
 }
-for (const u of [SITE_URL, REFERENCE_SITE_URL]) {
-  let host;
+const hostOf = (u) => {
   try {
-    host = new URL(u).host;
+    return new URL(u).host;
   } catch {
-    blockedSync(`${u} is not a URL — check SITE_URL and REFERENCE_SITE_URL.`);
+    return blockedSync(`${u} is not a URL — check SITE_URL and REFERENCE_SITE_URL.`);
   }
-  if (/alpha02\./i.test(host)) {
+};
+for (const u of [SITE_URL, REFERENCE_SITE_URL]) {
+  if (/alpha02\./i.test(hostOf(u))) {
     blockedSync(`${u} is alpha02 — it serves the frozen vaipakam-alpha02 Worker, not the deploy under review.`);
   }
+}
+// The reference is what the deploy itself published, so it must be a
+// workers.dev host: any other reference (the custom domain, or SITE_URL
+// passed twice) could be the same stale build and agree with itself.
+// SITE_URL may BE that workers.dev URL — then the build under review is the
+// one the deploy printed, and the check below is satisfied by construction.
+if (!/\.workers\.dev$/i.test(hostOf(REFERENCE_SITE_URL))) {
+  blockedSync(`REFERENCE_SITE_URL ${REFERENCE_SITE_URL} is not a workers.dev host — pass the URL the deploy printed.`);
 }
 const LOAN_ID = /^\d+$/.test(process.env.LOAN_ID ?? '') ? BigInt(process.env.LOAN_ID) : null;
 if (LOAN_ID === null) blockedSync('LOAN_ID must be the internally matched loan id.');
@@ -201,25 +215,39 @@ console.log(`expected note: ${EXPECTED_NOTE}`);
 // ── Wallet posture ─────────────────────────────────────────────────────
 const CLAIM_CALLDATA = encodeFunctionData({ abi: DIAMOND_ABI, functionName: 'claimAsLender', args: [LOAN_ID] });
 let claimSends = 0;
-const refusals = [];
+/** Closed until the driver itself is about to click the claim button, after
+ *  every pre-claim assertion passed — so a build that asks for the claim on
+ *  its own (while /claims loads, say) is refused, not signed. */
+let claimArmed = false;
+/** The claim's hash once the wallet returned it, so a later failure can be
+ *  reconciled against the chain instead of reported as unobserved. */
+let claimHash = null;
 function claimGate(method, params) {
   const tx = Array.isArray(params) ? params[0] : undefined;
   const ok =
     method === 'eth_sendTransaction' &&
+    claimArmed &&
     claimSends === 0 &&
     typeof tx?.to === 'string' &&
     tx.to.toLowerCase() === DIAMOND.toLowerCase() &&
     typeof tx?.data === 'string' &&
     tx.data.toLowerCase() === CLAIM_CALLDATA.toLowerCase();
   if (!ok) {
-    const why = `${method} is not the one claimAsLender(${LOAN_ID}) send this drive allows`;
-    refusals.push(why);
+    const why = claimArmed
+      ? `${method} is not the one claimAsLender(${LOAN_ID}) send this drive allows`
+      : `${method} arrived before the driver's claim click — the gate was closed`;
     console.log(`GATE  refused ${why}`);
     return Promise.resolve({ ok: false, why });
   }
   claimSends++;
   console.log(`GATE  allowed claimAsLender(${LOAN_ID})`);
-  return Promise.resolve({ ok: true, onResult: (hash) => console.log(`TX    claim sent: ${hash}`) });
+  return Promise.resolve({
+    ok: true,
+    onResult: (hash) => {
+      claimHash = hash;
+      console.log(`TX    claim sent: ${hash}`);
+    },
+  });
 }
 const session = await launch(
   SUBMIT_CLAIM
@@ -292,7 +320,19 @@ try {
     check('position page states the same comparison', posText.includes(EXPECTED_NOTE));
     await shot(`internal-match-position-${LOAN_ID}`);
     if (preClaimFails() > 0) throw new Error('the position page did not state the comparison; not claiming');
-    const before = await pub.getBlockNumber();
+    // The driver's own RPC, before anything is sent: an outage here is a
+    // precondition, not a verdict on the page.
+    let before;
+    try {
+      before = await pub.getBlockNumber();
+    } catch (err) {
+      await blocked('the direct Base Sepolia RPC failed before the claim was sent', err, done);
+    }
+    // The window opens before the click: the click (or its confirm step)
+    // starts the app's transaction and receipt reads, and a request already
+    // in flight at a reset is not counted in the new window.
+    rpc.reset();
+    claimArmed = true;
     await claimButton.click();
     // A confirm step, where the app shows one before the wallet prompt.
     await page
@@ -300,7 +340,6 @@ try {
       .last()
       .click({ timeout: 10_000 })
       .catch(() => {});
-    rpc.reset();
     await page.getByText(/claim complete/i).first().waitFor({ timeout: 180_000 });
     await shot(`internal-match-claimed-${LOAN_ID}`);
     // The claim's own event: this loan, this wallet, the recorded proceeds.
@@ -333,22 +372,41 @@ try {
   check('no page errors', consoleErrors.filter((e) => e.startsWith('PAGEERROR')).length === 0);
 } catch (err) {
   await shot(`internal-match-claim-error-${LOAN_ID}`).catch(() => {});
-  // No answer from the page's own RPC while the assertion waited: nothing
-  // page-backed was observed, so this is not a verdict on the card.
-  if ((await rpc.settled()) === 0) {
-    await blocked('the page RPC answered nothing while the drive waited', err, done);
+  // A claim the wallet already sent moved (or failed to move) funds whatever
+  // the page did next, so its outcome is read from the chain and reported —
+  // never folded into BLOCKED.
+  if (claimHash) {
+    let outcome;
+    try {
+      const receipt = await pub.waitForTransactionReceipt({ hash: claimHash, timeout: 120_000 });
+      outcome = `receipt ${receipt.status} in block ${receipt.blockNumber}`;
+    } catch (rErr) {
+      outcome = `receipt unreadable from the direct RPC (${rErr.message}) — check ${claimHash} by hand`;
+    }
+    console.log(`FAIL drive after the claim was sent — ${err.message}; ${claimHash}: ${outcome}`);
+    fails++;
+  } else {
+    // No answer from the page's own RPC while the assertion waited: nothing
+    // page-backed was observed, so this is not a verdict on the card.
+    if ((await rpc.settled()) === 0) {
+      await blocked('the page RPC answered nothing while the drive waited', err, done);
+    }
+    console.log(`FAIL drive — ${err.message}`);
+    fails++;
   }
-  console.log(`FAIL drive — ${err.message}`);
-  fails++;
 }
-for (const why of refusals) check('the page asked to sign only the planned claim', false, why);
-// Read-only session: every refused wallet write or non-read request the page
-// attempted is a finding, bar the recognised Cloudflare edge beacon.
-// (A CLAIM session's only refusals are its signing gate's, reported above.)
-const { violations } = SUBMIT_CLAIM
-  ? { violations: [] }
-  : splitBlocked(blockedRequests ?? [], [new URL(SITE_URL).origin]);
-for (const b of violations) check('the page attempted no write in a read-only session', false, `${b.reason} ${b.url ?? ''}`);
+// CLAIM session: every wallet request the gate refused — the claim gate's
+// own and the chain pin's (a switch to another chain, a request on the
+// wrong chain), which the wallet boundary records before the gate is asked.
+// Read-only session: every refused wallet write or non-read request, bar the
+// recognised Cloudflare edge beacon.
+const violations = SUBMIT_CLAIM
+  ? (blockedRequests ?? [])
+  : splitBlocked(blockedRequests ?? [], [new URL(SITE_URL).origin]).violations;
+const violationCheck = SUBMIT_CLAIM
+  ? 'the page asked to sign only the planned claim'
+  : 'the page attempted no write in a read-only session';
+for (const b of violations) check(violationCheck, false, `${b.reason} ${b.url ?? ''}`);
 console.log(fails === 0 ? 'ALL PASS' : `${fails} FAILURES`);
 await done();
 process.exit(fails === 0 ? 0 : 1);

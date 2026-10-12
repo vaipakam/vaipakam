@@ -6,6 +6,7 @@ import {ERC20Mock} from "../test/mocks/ERC20Mock.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
+import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
 import {LibAcceptTestSigner} from "../test/helpers/LibAcceptTestSigner.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
@@ -39,13 +40,19 @@ import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IER
  *              NEW_BORROWER), sized so B's collateral equals A's principal
  *              and B's principal equals A's collateral.
  *           3. tLIQ to `IM_P2_E8` — both legs at/above their liquidation LTV.
- *           4. Only now is internal matching switched on (when it was off),
- *              and in the next transaction the matcher runs
+ *           4. Only now is internal matching switched on, and in the next
+ *              transaction the matcher runs
  *              `triggerInternalMatchLiquidation(A, B, 0)`; both loans close
  *              `InternalMatched` in one step.
- *           5. The kill-switch back off (unless `IM_KEEP_ENABLED=true`), then
- *              tLIQ back to the price it had BEFORE the run (read at start,
- *              not assumed to be `IM_P0_E8`).
+ *           5. The kill-switch back off, then tLIQ back to the price it had
+ *              BEFORE the run (read at start, not assumed to be `IM_P0_E8`),
+ *              then the kill-switch back to its original state (ON only when
+ *              it started ON, or `IM_KEEP_ENABLED=true`).
+ *
+ *         Matching is OFF for every price move. A deployment that starts with
+ *         it ON has it switched off before the first move, so no reprice
+ *         ever runs with the permissionless match path open; it is restored
+ *         after the last one.
  *
  *         Every price move is three non-atomic owner-gated transactions (see
  *         {RepriceTestnetMock}); between steps 2 and 5 every tLIQ loan on the
@@ -60,10 +67,15 @@ import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IER
  *             from step 3 the same holds for B. Either makes a later step
  *             revert with tLIQ still moved.
  *           - Between the enable and the trigger anyone may match an
- *             eligible pair. Matching is switched back off right after the
- *             trigger, before the restore, so no reprice runs with it open.
+ *             eligible pair (one transaction wide). Matching is switched
+ *             back off right after the trigger, before the restore.
+ *           - Open tLIQ offers see every moved price too, and anyone may
+ *             accept one at it; a loan born that way can be unsafe once the
+ *             price is restored. Each move lists every open offer that lends
+ *             or takes tLIQ, so such a loan can be traced.
  *         Recovery for any of them: re-run {RepriceTestnetMock} to restore
- *         the price, and `setInternalMatchEnabled(false)` from the admin.
+ *         the price, then set the kill-switch to the deployment's intended
+ *         state from the admin (off, unless it is meant to be on).
  *
  *         The kill-switch is never inferred from its current value. A run
  *         that finds it ON refuses unless `IM_ORIGINALLY_ENABLED=true` says
@@ -130,6 +142,10 @@ contract BaseSepoliaInternalMatch is RepriceTestnetMock {
         console.log("tLIQ price before (e8):", priceBefore);
         console.log("A: principal (tLIQ wei) / collateral (mUSDC wei):", principalA, collateralA);
 
+        // Matching is quiesced for the whole price setup, including on a
+        // deployment that runs with it ON (restored at the end).
+        if (wasEnabled) _setMatching(t.diamond, a.adminKey, false);
+
         // Every price move reports the exposure it creates (see _reprice), so
         // this one is the only report not tied to a move: the state before it.
         _reportExposure(t, 0, 0);
@@ -152,26 +168,28 @@ contract BaseSepoliaInternalMatch is RepriceTestnetMock {
         // Switched on only now, one transaction before the trigger, so the
         // permissionless match path is open for the shortest window the
         // script can give it.
-        if (!wasEnabled) {
-            vm.startBroadcast(a.adminKey);
-            ConfigFacet(t.diamond).setInternalMatchEnabled(true);
-            vm.stopBroadcast();
-        }
+        _setMatching(t.diamond, a.adminKey, true);
         vm.startBroadcast(a.deployerKey);
         RiskMatchLiquidationFacet(t.diamond).triggerInternalMatchLiquidation(loanA, loanB, 0);
         vm.stopBroadcast();
 
-        // Switched back off BEFORE the restore, so no reprice transaction runs
-        // with the permissionless match path open.
-        if (!wasEnabled && !keepEnabled) {
-            vm.startBroadcast(a.adminKey);
-            ConfigFacet(t.diamond).setInternalMatchEnabled(false);
-            vm.stopBroadcast();
-        }
+        // Off BEFORE the restore, so no reprice runs with the match path
+        // open; back to the original state only once the price is restored.
+        _setMatching(t.diamond, a.adminKey, false);
         _reprice(t, a.deployerKey, priceBefore, loanA, loanB);
+        if (wasEnabled || keepEnabled) _setMatching(t.diamond, a.adminKey, true);
+        (bool endEnabled,,) = ConfigFacet(t.diamond).getInternalMatchConfigBundle();
+        console.log("internalMatchEnabled after:", endEnabled);
 
         _logRecord("A", t.diamond, loanA);
         _logRecord("B", t.diamond, loanB);
+    }
+
+    /// @dev The internal-match kill-switch, from the admin.
+    function _setMatching(address diamond, uint256 adminKey, bool on) internal {
+        vm.startBroadcast(adminKey);
+        ConfigFacet(diamond).setInternalMatchEnabled(on);
+        vm.stopBroadcast();
     }
 
     /// @dev The Diamond's own price for `asset`, in the 8-decimal scale the
@@ -284,9 +302,10 @@ contract BaseSepoliaInternalMatch is RepriceTestnetMock {
         });
     }
 
-    /// @dev Every OTHER matchable (Active or FallbackPending) loan touching tLIQ, with its LTV at the price
-    ///      now in force — what the excursion does to loans this run does not
-    ///      own. Walks every page of the active list. A loan whose LTV cannot
+    /// @dev Every OTHER matchable (Active or FallbackPending) loan touching
+    ///      tLIQ, with its LTV at the price now in force, then every open
+    ///      offer touching tLIQ — what the excursion does to positions this
+    ///      run does not own. Walks every page of the active list. A loan whose LTV cannot
     ///      be read is listed as unreadable, never as a number.
     ///      Simulation-time log only; writes nothing.
     function _reportExposure(RepriceTarget memory t, uint256 skipA, uint256 skipB) internal view {
@@ -320,6 +339,22 @@ contract BaseSepoliaInternalMatch is RepriceTestnetMock {
                         uint256(l.liquidationLtvBpsAtInit)
                     );
                 }
+            }
+            if (ids.length < pageSize) break;
+        }
+        // Open offers see the moved price as well: an accept now is admitted
+        // at it. Listed so a loan born during the excursion can be traced.
+        console.log("Open tLIQ offers (id, lending asset is tLIQ?, amount, collateral amount):");
+        for (uint256 offset;; offset += pageSize) {
+            uint256[] memory ids = MetricsFacet(t.diamond).getActiveOffersPaginated(offset, pageSize);
+            for (uint256 i; i < ids.length; ++i) {
+                LibVaipakam.Offer memory o = OfferCancelFacet(t.diamond).getOffer(ids[i]);
+                if (o.lendingAsset != t.asset && o.collateralAsset != t.asset) continue;
+                console.log(
+                    string.concat("   offer ", vm.toString(ids[i]), o.lendingAsset == t.asset ? " lends tLIQ" : " takes tLIQ as collateral"),
+                    o.amount,
+                    o.collateralAmount
+                );
             }
             if (ids.length < pageSize) break;
         }
