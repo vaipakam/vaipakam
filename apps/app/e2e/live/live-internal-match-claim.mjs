@@ -107,6 +107,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, '../../../..');
 const CHAIN_ID = 84532;
 const INTERNAL_MATCHED = 5;
+const SETTLED = 3;
 
 function readJson(rel) {
   const file = path.join(REPO, rel);
@@ -310,6 +311,25 @@ const rpc = watchPageRpc(page);
 // non-read method sent on it is OBSERVED here, not prevented, and counts
 // as a violation exactly like a refused request.
 const { wsViolations } = attachLedger(page, createReadLedger({}), READ_METHODS);
+// JSON-RPC answers that arrive on the page's WebSockets (wagmi prefers a
+// configured WSS transport), counted in the same window as `rpc`'s HTTP
+// answers so a socket-served page is never read as "answered nothing".
+let wsAnswers = 0;
+page.on('websocket', (ws) => {
+  ws.on('framereceived', (f) => {
+    try {
+      const msgs = [].concat(JSON.parse(String(f.payload)));
+      wsAnswers += msgs.filter((m) => m && m.id !== undefined && ('result' in m || 'error' in m)).length;
+    } catch {
+      /* not JSON-RPC */
+    }
+  });
+});
+const resetWindow = () => {
+  rpc.reset();
+  wsAnswers = 0;
+};
+const answered = async () => (await rpc.settled()) + wsAnswers;
 /** Wait for /claims to leave its loading state. Returns 'available',
  *  'unavailable' (the list's own error state) or 'loading' on timeout. */
 async function claimsListSettled(timeoutMs = 60_000) {
@@ -337,7 +357,7 @@ try {
   // The window opens BEFORE the first load, so the response that populated
   // the claims list counts — a settled list that omits the loan is a FAIL,
   // not an unanswered window.
-  rpc.reset();
+  resetWindow();
   await visit(page, '/claims');
   const lang = await page.evaluate(() => document.documentElement.lang);
   if (!/^en\b/i.test(lang ?? '')) {
@@ -368,7 +388,7 @@ try {
   if (SUBMIT_CLAIM && preClaimFails() > 0) {
     console.log(`SKIP claim — ${preClaimFails()} check(s) failed above; the claim would end the card under test`);
   } else if (SUBMIT_CLAIM) {
-    rpc.reset();
+    resetWindow();
     await rowFor().first().click();
     await page.waitForURL(new RegExp(`/positions/${LOAN_ID}$`), { timeout: 30_000 });
     // The position page states the same line above its claim button.
@@ -406,7 +426,7 @@ try {
     // Re-checked after the funding reads: the page kept running while they
     // were awaited, and a refusal recorded meanwhile must stop the claim.
     if (preClaimFails() > 0) throw new Error('a check failed or a request was refused before the claim; not claiming');
-    rpc.reset();
+    resetWindow();
     claimArmed = true;
     await claimButton.click();
     // A confirm step, where the app shows one before the wallet prompt.
@@ -481,14 +501,37 @@ try {
           ? `the event names ${mine.args.asset}, not ${symbol} ${loan.principalAsset}, in ${mine.transactionHash}`
           : `received ${fmt(received)} (event amount ${fmt(mine.args.amount)}) in ${mine.transactionHash}`,
     );
+    // The lifecycle, not only the list: `claimAsLender` burns the lender NFT
+    // before it transitions the loan, so the row can vanish while the loan
+    // stays open. With nothing left for the borrower the claim must settle
+    // the loan; with an unclaimed borrower residual it stays InternalMatched.
+    // Read at the claim's own block; an unreadable read is UNDETERMINED.
+    if (receipt) {
+      try {
+        const at = { blockNumber: receipt.blockNumber };
+        const [after, [, bAmount, bClaimed]] = await Promise.all([
+          pub.readContract({ address: DIAMOND, abi: DIAMOND_ABI, functionName: 'getLoanDetails', args: [LOAN_ID], ...at }),
+          pub.readContract({ address: DIAMOND, abi: DIAMOND_ABI, functionName: 'getClaimableAmount', args: [LOAN_ID, false], ...at }),
+        ]);
+        const borrowerHasNothing = bAmount === 0n || bClaimed;
+        const want = borrowerHasNothing ? SETTLED : INTERNAL_MATCHED;
+        check(
+          `the loan is ${borrowerHasNothing ? 'Settled' : 'still InternalMatched (borrower residual unclaimed)'} after the claim`,
+          Number(after.status) === want,
+          `status ${after.status} at block ${receipt.blockNumber}; borrower claimable ${bAmount}, claimed ${bClaimed}`,
+        );
+      } catch (rErr) {
+        undetermined = `the direct RPC could not read the loan's lifecycle after the claim (${rErr.message})`;
+      }
+    }
     // A row's absence counts only on a SETTLED, AVAILABLE list: the loading
     // and unavailable states carry no rows either.
-    rpc.reset();
+    resetWindow();
     await visit(page, '/claims');
     const settled = await claimsListSettled();
     if (settled === 'available') {
       check('the row left /claims after the claim', (await rowFor().count()) === 0);
-    } else if ((await rpc.settled()) === 0) {
+    } else if ((await answered()) === 0) {
       // The claim has already landed and its event was judged above, so
       // this is an incomplete post-write verification, not a precondition:
       // a FAIL that says so, never BLOCKED.
@@ -546,7 +589,7 @@ try {
     // product finding whatever the RPC did afterwards.
     // A check that already failed is a finding on a served surface too,
     // so it also rules BLOCKED out.
-    if (fails === 0 && (await rpc.settled()) === 0 && violationsSoFar().length === 0) {
+    if (fails === 0 && (await answered()) === 0 && violationsSoFar().length === 0) {
       await blocked('the page RPC answered nothing while the drive waited', err, done);
     }
     console.log(`FAIL drive — ${err.message}`);

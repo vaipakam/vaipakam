@@ -91,10 +91,13 @@ import {MockSwapAdapter} from "../test/mocks/MockSwapAdapter.sol";
  *             stage's prediction; read the real one from the receipt's
  *             `LoanInitiated` before the next stage.
  *           - Each stage's input checks (loan state, position-NFT holders,
-             the kill-switch) are read at that stage's simulation; a
-             transfer or a change landing before its broadcast is not seen.
-           - Between the enable and the trigger anyone may match an
- *             eligible pair (one transaction wide).
+ *             the kill-switch) are read at that stage's simulation; a
+ *             transfer or a change landing before its broadcast is not seen.
+ *           - Matching is ON across TWO windows, not one: from the enable
+ *             until the trigger lands, and from the trigger until the
+ *             disable lands (`--slow` waits for each receipt in between).
+ *             In either, anyone may match any eligible pair on the Diamond,
+ *             not only A and B - in practice a few blocks each.
  *           - Open tLIQ offers may be accepted at a moved price; a loan born
  *             that way can be unsafe once the price is restored.
  *
@@ -225,7 +228,7 @@ contract BaseSepoliaInternalMatch is RepriceTestnetMock {
         (, , uint256 incentiveBps) = ConfigFacet(t.diamond).getInternalMatchConfigBundle();
         console.log("matcher incentive from lender A (tLIQ wei, at most):", (la.principal * incentiveBps) / 10_000);
         console.log("matcher incentive from lender B (mUSDC raw, at most):", (lb.principal * incentiveBps) / 10_000);
-        // On one transaction before the trigger, off right after it.
+        // On right before the trigger, off right after it - two windows, see the header.
         _setMatching(t.diamond, a.adminKey, true);
         vm.startBroadcast(a.deployerKey);
         RiskMatchLiquidationFacet(t.diamond).triggerInternalMatchLiquidation(loanA, loanB, 0);
