@@ -146,8 +146,9 @@ export const FOUR_VERDICT_DRIVERS = new Map([
     // not an internally matched loan with a stamped record whose lender
     // position the role holds: a missing precondition, never a card defect.
     // Also MANUAL-ONLY — see MANUAL_ONLY_DRIVERS below.
-    'with CLAIM=1, any stop after the claim was sent is UNDETERMINED (exit 3) ' +
-      'unless its receipt shows a revert (FAIL); failed checks stay FAIL (#2427)',
+    'with CLAIM=1, after the claim was sent the shared runVerdict FAILs only ' +
+      'when a chain read contradicts the payout or the lifecycle; anything else ' +
+      'is UNDETERMINED (exit 3) (#2427)',
   ],
 ]);
 
