@@ -33,9 +33,25 @@ library LibRewardRemitDispatch {
 
     using SafeERC20 for IERC20;
 
-    /// @dev Mirrors the facets' remit dest-gas budget — one constant, both
-    ///      dispatch paths.
-    uint256 internal constant REWARD_BUDGET_DEST_GAS_LIMIT = 300_000;
+    /// @notice The gas a reward remittance asks the destination to run its
+    ///         receiver with — the ONE constant the send and its quote both
+    ///         read. DERIVED from the mirror ingress it must carry, never
+    ///         matched to another receiver's (#1566 PR 1 review): the Diamond's
+    ///         ingress as measured by the two cells that pin it — the typed (d5)
+    ///         one in `RewardTransportEpochTest`, the rooted (d6) one every
+    ///         ordinary remittance takes in `RewardTransportD6Test`, each cold
+    ///         and over the widest list — plus {REWARD_BUDGET_RECEIVER_RESERVE}
+    ///         for the receiver's own work, with a quarter's margin, rounded up.
+    ///         Measured 2026-10-12: typed 636,611, rooted 782,675
+    ///         — so (782,675 + 100,000) x 1.25, rounded up to 50,000. The 300,000 it replaced was below even the
+    ///         typed ingress, so automatic execution would have failed on every
+    ///         delivery to an activated mirror.
+    uint256 internal constant REWARD_BUDGET_DEST_GAS_LIMIT = 1_150_000;
+
+    /// @notice What the budget reserves for the receiver's own work around the
+    ///         Diamond's ingress — the router's call, the frame decode, the token
+    ///         validation, the measured transfer into the Diamond and its event.
+    uint256 internal constant REWARD_BUDGET_RECEIVER_RESERVE = 100_000;
 
     /**
      * @dev #1222 M3 B2-d2 (Codex #1426 r6) — NET fresh headroom for a remit

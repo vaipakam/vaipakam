@@ -320,7 +320,7 @@ contract BackstopFacet is
     ///      AFTER opt-in (e.g. fixed-size → ranged), and `backstopEligibleAfter`
     ///      is not cleared on mutation, so the opt-in check alone is not load-
     ///      bearing. Rejects the shapes the later `matchIntent` path rejects:
-    ///        • refinance-tagged (direct-accept-only, #576 — `_executeMatch` rejects);
+    ///        • refinance-tagged (direct-accept-only, #576 — `executeMatch` rejects);
     ///        • non-ERC20-on-ERC20 (the backstop intent + vault are ERC20-on-ERC20;
     ///          `previewMatch` rejects an asset-type mismatch);
     ///        • a genuine principal range (`amountMax != amount`) — the backstop

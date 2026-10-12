@@ -180,10 +180,6 @@ contract RewardRemittanceFacet is
 
     using SafeERC20 for IERC20;
 
-    /// @notice Gas allotted to the mirror {RewardRemittanceReceiver} callback.
-    ///         Matched to the buyback remittance receiver's budget.
-    uint256 internal constant REWARD_BUDGET_DEST_GAS_LIMIT = 300_000;
-
     /// @notice The era a remittance is dispatched in, as the d6 wire carries it
     ///         (#1566 transport epochs 3d-2). No era registry exists before PR C,
     ///         so every dispatch states the PRE-REGISTRY era, zero; PR C replaces
@@ -1686,7 +1682,7 @@ contract RewardRemittanceFacet is
             dstChainId,
             payload,
             tokens,
-            REWARD_BUDGET_DEST_GAS_LIMIT
+            LibRewardRemitDispatch.REWARD_BUDGET_DEST_GAS_LIMIT
         );
     }
 

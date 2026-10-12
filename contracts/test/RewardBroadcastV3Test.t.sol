@@ -1179,7 +1179,8 @@ contract RewardBroadcastV3MirrorTest is RewardBroadcastV3Harness {
 
     /// …and a RETIRED era cannot arm this mirror through that same door.
     ///
-    /// {LegacyBroadcastRetired} deliberately sits BELOW the replay branch, so
+    /// The rotation gate (a fresh legacy apply after a rotation is PARKED)
+    /// deliberately sits BELOW the replay branch, so
     /// an already-applied day keeps replaying idempotently forever after a
     /// rotation. That placement is safe while a replay is a no-op — and the
     /// install above is not one. Without the exclusion, a delayed or

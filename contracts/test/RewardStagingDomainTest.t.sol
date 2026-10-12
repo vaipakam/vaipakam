@@ -7,6 +7,7 @@ import {VPFIToken} from "../src/token/VPFIToken.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {RewardEpochViewFacet} from "../src/facets/RewardEpochViewFacet.sol";
+import {RewardEpochFacet} from "../src/facets/RewardEpochFacet.sol";
 import {RewardIngressFacet} from "../src/facets/RewardIngressFacet.sol";
 import {RewardClaimFacet} from "../src/facets/RewardClaimFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
@@ -15,6 +16,7 @@ import {RewardStagingFacet} from "../src/facets/RewardStagingFacet.sol";
 import {RewardStagingSettleFacet} from "../src/facets/RewardStagingSettleFacet.sol";
 import {RewardStagingDomainFacet} from "../src/facets/RewardStagingDomainFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
+import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
@@ -276,6 +278,34 @@ contract RewardStagingDomainTest is SetupTest, IVaipakamErrors {
         assertEq(_view().getStagingRecord(_key(5)).phase, uint8(LibVaipakam.StagingPhase.None), "every record gone");
     }
 
+    /// @dev #1566 PR 1 review (P2-1) — EVERY lifecycle change is revalidated, not only the first.
+    ///      An ordinary change (another of the claimant's entries closes; nothing in the domain
+    ///      goes stale) passes a full revalidation, re-anchors, and the reservation proceeds; a
+    ///      LATER change that does stale a record must still unwind the domain. Before the fix the
+    ///      finished pass re-anchored on the second change without walking, and the domain went on
+    ///      to Resolving with a stale record.
+    function test_ASecondLifecycleChange_IsRevalidatedToo() public {
+        uint256 id = _longScene(DAYS);
+        _liveFresh(20e18);
+        _claim(); _claim();
+        uint256 other = _mut().pushRewardEntry(alice, LOAN + 1, LibVaipakam.RewardSide.Lender, 1e18, 1);
+        _mut().closeRewardEntryRaw(other, 2); // an ordinary change: nothing in the domain goes stale
+        uint8 phase;
+        for (uint256 k; k < 16 && _view().getStagingRecord(_key(1)).phase != uint8(LibVaipakam.StagingPhase.Reserved); ++k) {
+            _domain().reserveDomainPage(_dk());
+        }
+        (phase, , , , ) = _dom();
+        assertEq(phase, uint8(LibVaipakam.DomainPhase.Reserving), "fixture-live: the first pass finished, reservation began");
+        assertEq(_view().getStagingRecord(_key(1)).phase, uint8(LibVaipakam.StagingPhase.Reserved));
+        _mut().closeRewardEntryRaw(id, 10); // the second change stales the record at day 10
+        for (uint256 k; k < 16 && phase != uint8(LibVaipakam.DomainPhase.Unwinding); ++k) {
+            _domain().reserveDomainPage(_dk());
+            (phase, , , , ) = _dom();
+            assertTrue(phase != uint8(LibVaipakam.DomainPhase.Resolving), "never resolves on a stale record");
+        }
+        assertEq(phase, uint8(LibVaipakam.DomainPhase.Unwinding), "the second change unwinds the domain");
+    }
+
     /// @dev Past the domain's deadline anyone unwinds it across calls; before
     ///      it only the claimant may; a domain record's own unwind entry is
     ///      refused; and once cleared the claimant's next claim opens a fresh
@@ -301,6 +331,146 @@ contract RewardStagingDomainTest is SetupTest, IVaipakamErrors {
         assertEq(_claim(), 0, "the next claim opens a fresh domain");
         (phase, , , live, ) = _dom();
         assertEq(phase, uint8(LibVaipakam.DomainPhase.Staging)); assertEq(live, 30);
+    }
+
+    /// @dev #1566 PR 1 review (P2-6) — a day no epoch lists has nothing to scan, so its record adds
+    ///      no page to the domain's lease; a listed day's record still adds its page. The deadline
+    ///      is the opening, one cadence per chunk, ONE page for the one listed day, and the grace.
+    ///      (Every record used to add at least one cadence: here 40 days for 40 days, and a 300-day
+    ///      live-only extent held the domain's encumbrance for 300.)
+    function test_UnlistedDays_AddNoLease_AListedDayAddsItsPage() public {
+        _longScene(DAYS);
+        _liveFresh(20e18);
+        // An attested epoch lists day 3 alone: that day's record has a page to scan.
+        bytes32 pid = keccak256("domain-lease-epoch");
+        _ingress().onRewardBudgetReceived(address(vpfi), 0.1e18, _one(3), CHAIN_BASE, 77, REMITTER, 0, 0, pid, false);
+        RewardEpochFacet(address(diamond)).materializeTransportBatchPage(keccak256(abi.encode(uint256(CHAIN_BASE), pid)), _one(3));
+        _ingress().onRemitSplitAttested(CHAIN_BASE, REMITTER, 77, 0.1e18, 0);
+        uint256 t0 = block.timestamp;
+        _claim();
+        _claim();
+        (, uint64 prepared, , uint32 live, uint64 deadline) = _dom();
+        assertEq(prepared, DAYS, "fixture-live: the whole extent prepared");
+        assertEq(live, DAYS, "fixture-live: a record per day");
+        assertEq(deadline, t0 + 2 days + 1 days + 3 days, "two chunks, one listed day's page, the grace: nothing per unlisted day");
+    }
+
+    /// @dev #1566 PR 1 review (P3) — a claim's explicit venue binds the DOMAIN: Alice has a vault, so
+    ///      her default is the vault; she claims to her WALLET, and every day of the domain pays the
+    ///      wallet. No day record announces a venue of its own (the payout reads the domain's).
+    function test_AClaimsNamedVenue_BindsTheDomain_AndEveryDayPaysThere() public {
+        _longScene(DAYS);
+        _liveFresh(20e18);
+        address vault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(alice);
+        vm.prank(alice);
+        RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(LibVaipakam.RewardDelivery.Wallet);
+        vm.prank(alice);
+        RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(LibVaipakam.RewardDelivery.Wallet);
+        (, uint64 prepared, , , ) = _dom();
+        assertEq(prepared, DAYS, "fixture-live: the whole extent prepared");
+        assertFalse(_view().getStagingRecord(_key(1)).venueSet, "a domain record binds no venue of its own");
+        uint256 walletBefore = vpfi.balanceOf(alice);
+        uint256 vaultBefore = vpfi.balanceOf(vault);
+        _reserveAll();
+        _resolveAll();
+        assertEq(vpfi.balanceOf(alice) - walletBefore, uint256(DAYS) * NEED, "every day paid to the wallet the claim named");
+        assertEq(vpfi.balanceOf(vault), vaultBefore, "not to the vault the default would have chosen");
+    }
+
+    /// @dev Two entries with a gap between them: [1, 11) and [31, 41) — one 40-day extent whose
+    ///      days 11..30 hold no domain record.
+    function _gapScene() internal {
+        for (uint256 d = 1; d <= DAYS; ++d) _armedDay(d, NEED);
+        _mut().setGovernorCommitArmedFromDayRaw(1);
+        _loanSideOpen(10);
+        uint256 a = _mut().pushRewardEntry(alice, LOAN, LibVaipakam.RewardSide.Lender, 1e18, 1);
+        _mut().closeRewardEntryRaw(a, 11);
+        _mut().setFeeEntitlementRaw(
+            LOAN + 1,
+            LibVaipakam.FeeEntitlement({
+                borrowerMode: LibVaipakam.FeeEntitlementMode.None,
+                lenderMode: LibVaipakam.FeeEntitlementMode.None,
+                openDays: 10,
+                rewardHaircutBpsAtOpen: 0,
+                borrowerTariffPaid: 0,
+                lenderTariffPaid: 0,
+                cStarOpen: 0,
+                loanSideRewardCapOpen: type(uint128).max
+            })
+        );
+        uint256 b = _mut().pushRewardEntry(alice, LOAN + 1, LibVaipakam.RewardSide.Lender, 1e18, 31);
+        _mut().closeRewardEntryRaw(b, 41);
+        _mut().setArmedFreshLedgerRaw(0, 0);
+        _mut().userClaimFundingNeedRaw(alice);
+        _liveFresh(20e18);
+        _claim();
+        _claim();
+        (, uint64 prepared, uint64 last, uint32 live, ) = _dom();
+        assertEq(last, DAYS, "fixture-live: one extent over the gap");
+        assertEq(prepared, DAYS);
+        assertEq(live, 20, "fixture-live: a record per covered day, none on the gap");
+        // A sweep's record of an entry outside the snapshot, on a gap day.
+        _mut().plantForeignStagingRecordRaw(alice, uint8(LibVaipakam.RewardSide.Lender), 20);
+    }
+
+    /// @dev #1566 PR 1 review (P3) — a foreign record on a gap day of the extent is not the domain's:
+    ///      the reservation and the resolution walk past it, the domain pays its own days and clears,
+    ///      and the foreign record is left exactly as it stood.
+    function test_AForeignRecordOnAGapDay_IsWalkedPast_ReserveAndResolve() public {
+        _gapScene();
+        uint256 before = vpfi.balanceOf(alice);
+        _reserveAll();
+        _resolveAll();
+        assertEq(vpfi.balanceOf(alice) - before, 20 * NEED, "the domain's own days, paid once");
+        (uint8 phase, , , , ) = _dom();
+        assertEq(phase, uint8(LibVaipakam.DomainPhase.None), "cleared");
+        assertEq(_view().getStagingRecord(_key(20)).phase, uint8(LibVaipakam.StagingPhase.Staging), "the foreign record untouched");
+    }
+
+    /// @dev …and the claimant's unwind walks past it too.
+    function test_AForeignRecordOnAGapDay_IsWalkedPast_Unwind() public {
+        _gapScene();
+        uint256 n;
+        bool done;
+        while (!done) { vm.prank(alice); done = _domain().unwindDomainPage(_dk()); if (++n > 128) fail(); }
+        (uint8 phase, , , uint32 live, ) = _dom();
+        assertEq(phase, uint8(LibVaipakam.DomainPhase.None), "cleared");
+        assertEq(live, 0);
+        assertEq(_view().getStagingRecord(_key(20)).phase, uint8(LibVaipakam.StagingPhase.Staging), "the foreign record untouched");
+    }
+
+    /// @dev An attested, fully fresh epoch listing day `d` alone.
+    function _attestedEpochOn(uint256 d, uint256 remitId) internal {
+        bytes32 pid = keccak256(abi.encode("domain-epoch", d, remitId));
+        _ingress().onRewardBudgetReceived(address(vpfi), 0.1e18, _one(d), CHAIN_BASE, remitId, REMITTER, 0, 0, pid, false);
+        RewardEpochFacet(address(diamond)).materializeTransportBatchPage(keccak256(abi.encode(uint256(CHAIN_BASE), pid)), _one(d));
+        _ingress().onRemitSplitAttested(CHAIN_BASE, REMITTER, remitId, 0.1e18, 0);
+    }
+
+    function _resolveCursor() internal view returns (uint64 c) {
+        (, , , , , , c, , , , , , ) = _domain().getStagingDomain(alice, LibVaipakam.RewardSide.Lender);
+    }
+
+    /// @dev #1566 PR 1 review (P3) — a resolution call's WORK is bounded: a record that walks batches
+    ///      ends the call (its pages already run up to a page of batches), while batch-less days ride
+    ///      along. Days 2, 3 and 4 each hold an epoch's batch: the first call resolves day 1 (live
+    ///      only) and day 2, and stops; the domain still resolves whole across calls.
+    function test_AResolutionCall_StopsAfterOneBatchBearingRecord() public {
+        _longScene(DAYS);
+        _attestedEpochOn(2, 101);
+        _attestedEpochOn(3, 102);
+        _attestedEpochOn(4, 103);
+        _liveFresh(20e18);
+        _claim();
+        _claim();
+        for (uint256 d = 2; d <= 4; ++d) _staging().prepareStagedDay(_key(d));
+        assertGt(_view().getStagingRecord(_key(2)).batchCount, 0, "fixture-live: day 2 holds a batch");
+        uint256 before = vpfi.balanceOf(alice);
+        _reserveAll();
+        assertFalse(_domain().resolveDomainPage(_dk()));
+        assertEq(_resolveCursor(), 3, "day 1 rode along; day 2's batches were the call's budget");
+        _resolveAll();
+        assertEq(vpfi.balanceOf(alice) - before, uint256(DAYS) * NEED, "every day paid, once");
     }
 
     /// @dev A one-chunk claim is unchanged: it pays its days directly.

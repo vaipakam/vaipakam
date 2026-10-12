@@ -944,7 +944,8 @@ contract RewardCustodyFacet is DiamondAccessControl {
         if (attributed > held) revert IVaipakamErrors.RewardCustodyUnderHeld(held, attributed);
 
         s.rewardCustodyActivated = true;
-        s.rewardRoleChangesFrozen = true;
+        // Frozen until history is assigned — never past a backfill already run.
+        LibRewardCustody.freezeRoleChangesUntilBackfill(s);
         emit RewardCustodyActivated(
             uint8(role),
             received,

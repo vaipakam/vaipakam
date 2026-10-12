@@ -117,15 +117,18 @@ contract ServiceCapacityFacet is DiamondReentrancyGuard, DiamondPausable, Diamon
         return (s.armingFeeRate, s.armingFeeFloor);
     }
 
-    /// @notice The quote for posting `amount` into `operator`'s `role` deposit —
-    ///         the SAME walk the post executes: the fee, the principal newly armed,
-    ///         the capacity the deposit buys afterwards; `dark` when arming is.
+    /// @notice The quote for posting `amount` into `operator`'s `role` deposit
+    ///         (`amount == 0`: arming principal already deposited) — the SAME walk
+    ///         the post executes ({LibServiceCapacity.postWalk}): `refusal` is the
+    ///         post's first refusal (`POST_*`; 0 = the post would go through), then
+    ///         the fee, the principal newly armed, the armed balance after it, and
+    ///         the capacity that balance buys.
     function previewArming(uint8 role, address operator, uint256 amount)
         external
         view
-        returns (uint256 fee, uint256 granted, uint256 ceilingAfter, bool dark)
+        returns (uint8 refusal, uint256 fee, uint256 granted, uint256 eligibleAfter, uint256 ceilingAfter)
     {
-        return LibServiceCapacity.armingQuote(LibVaipakam.storageSlot(), role, operator, amount);
+        return LibServiceCapacity.postWalk(LibVaipakam.storageSlot(), role, operator, amount);
     }
 
     /// @notice Whether rotation `epoch` was retired by a VPFI token rotation.
@@ -160,7 +163,7 @@ contract ServiceCapacityFacet is DiamondReentrancyGuard, DiamondPausable, Diamon
     ///         cost of `units` executed items, or refuse by name. Gated to the
     ///         Diamond; the caller holds the reentrancy guard and the pause.
     function capacitySpendInternal(uint8 role, address actor, uint256 units, bool freeOnly) external {
-        if (msg.sender != address(this)) revert RewardCustodyOnlyDiamondInternal(msg.sender);
+        if (msg.sender != address(this)) revert ServiceCapacityOnlyDiamondInternal(msg.sender);
         LibServiceCapacity.spend(LibVaipakam.storageSlot(), role, actor, units, freeOnly);
     }
 
@@ -168,7 +171,9 @@ contract ServiceCapacityFacet is DiamondReentrancyGuard, DiamondPausable, Diamon
     ///         before the factory wrote the binding; the factory writes it at
     ///         creation for every new adapter.
     function setAdapterOperator(address adapter, address operator) external onlyRole(LibAccessControl.ADMIN_ROLE) {
-        LibVaipakam.storageSlot().adapterOperator[adapter] = operator;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (!s.isAggregatorAdapter[adapter]) revert ServiceCapacityNotAnAdapter(adapter);
+        s.adapterOperator[adapter] = operator;
         emit LibServiceCapacity.AdapterOperatorBound(adapter, operator);
     }
 
@@ -189,7 +194,18 @@ contract ServiceCapacityFacet is DiamondReentrancyGuard, DiamondPausable, Diamon
         view
         returns (uint256 accrued, uint256 rate, uint256 ceiling, bool dark)
     {
-        return LibServiceCapacity.accruedNow(LibVaipakam.storageSlot(), role, actor);
+        return LibServiceCapacity.accruedNow(LibVaipakam.storageSlot(), role, actor, false);
+    }
+
+    /// @notice What `initiator`'s FREE-TIER `role` bucket holds now — the bucket the
+    ///         backstop route and an unbound route charge (rules 3 and 4), kept apart
+    ///         from the bonded one; the rate and ceiling are the free tier's.
+    function previewFreeTierCapacity(uint8 role, address initiator)
+        external
+        view
+        returns (uint256 accrued, uint256 rate, uint256 ceiling, bool dark)
+    {
+        return LibServiceCapacity.accruedNow(LibVaipakam.storageSlot(), role, initiator, true);
     }
 
     /// @notice The operator `adapter`'s fills are charged to (zero = unbound).

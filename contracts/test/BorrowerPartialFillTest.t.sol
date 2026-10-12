@@ -12,6 +12,8 @@ import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
+import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
+import {ServiceCapacityFacet} from "../src/facets/ServiceCapacityFacet.sol";
 
 /**
  * @title BorrowerPartialFillTest
@@ -296,6 +298,35 @@ contract BorrowerPartialFillTest is SetupTest {
     ///         pre-condition assertions from card §3 together — they
     ///         exercise the same code path and splitting them would
     ///         just re-run the same setup twice.
+    /// @dev #1219 review — `matchOffers` charges ONE fill at the matcher's own capacity, LAST (a
+    ///      refused charge reverts the match whole), and `previewMatch` names the refusal as its last
+    ///      check. This suite's matcher is the test contract.
+    function test_matchOffers_ChargesTheMatchersCapacity_AndThePreviewAgrees() public {
+        uint256 bo = _postBorrowerOffer({
+            creator: borrower, amountMin: 1_000, amountMax: 10_000, rateMin: 500, rateMax: 600,
+            collateralMin: 500, collateralMax: 5_000
+        });
+        uint256 lo1 = _postLenderOffer({creator: lender, amount: 5_000, rateMin: 500, rateMax: 600, collateralRequired: 500});
+        uint256 lo2 = _postLenderOffer({creator: lender2, amount: 4_000, rateMin: 500, rateMax: 600, collateralRequired: 500});
+        uint8 role = uint8(LibVaipakam.ServiceCapacityRole.Solver);
+        ServiceCapacityFacet(address(diamond)).setCapacityCurve(role, 1e18, 1e16, 100e18, 1e18);
+        assertEq(
+            uint8(OfferMatchFacet(address(diamond)).previewMatch(lo1, bo).errorCode),
+            uint8(LibOfferMatch.MatchError.Ok),
+            "straddle: the one free action covers the first match"
+        );
+        OfferMatchFacet(address(diamond)).matchOffers(lo1, bo);
+        assertEq(
+            uint8(OfferMatchFacet(address(diamond)).previewMatch(lo2, bo).errorCode),
+            uint8(LibOfferMatch.MatchError.CapacityExhausted),
+            "an exhausted matcher previews the refusal"
+        );
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.ServiceCapacityExhausted.selector, role, address(this), 1e18, 0));
+        OfferMatchFacet(address(diamond)).matchOffers(lo2, bo);
+        vm.warp(block.timestamp + 100);
+        assertGt(OfferMatchFacet(address(diamond)).matchOffers(lo2, bo), 0, "refilled: it matches");
+    }
+
     function test_multiFillDrainsBorrower_dustCloseFires() public {
         // Borrower with a wide lending range so three small lender
         // amounts can sum to it, and a wide collateral range so each

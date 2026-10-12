@@ -2682,6 +2682,19 @@ contract TestMutatorFacet {
         LibVaipakam.storageSlot().stagingEncumberedCount = count;
     }
 
+    /// @dev #1566 PR 1 review test-only — plant a STANDALONE record (no domain)
+    ///      at the (user, side, day) key, as a forfeit or expiry sweep of an
+    ///      entry outside a domain's snapshot opens one on a gap day of its extent.
+    function plantForeignStagingRecordRaw(address user, uint8 side, uint256 day) external {
+        LibVaipakam.StagingRecord storage r =
+            LibVaipakam.storageSlot().stagingRecords[keccak256(abi.encode(user, side, day))];
+        r.phase = LibVaipakam.StagingPhase.Staging;
+        r.user = user;
+        r.side = LibVaipakam.RewardSide(side);
+        r.day = uint64(day);
+        r.op = LibVaipakam.StagingOp.Expiry;
+    }
+
     /// @dev 3b-ii-A2 test-only — VPFI in staged form across every batch: the
     ///      sixth reserved source, read raw so a cell can put the Diamond's
     ///      backing room against it.

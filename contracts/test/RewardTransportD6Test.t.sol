@@ -19,6 +19,7 @@ import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibRewardCustody} from "../src/libraries/LibRewardCustody.sol";
 import {RemitWire} from "../src/crosschain/RemitWire.sol";
+import {LibRewardRemitDispatch} from "../src/libraries/LibRewardRemitDispatch.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
 import {MerkleFixture} from "./mocks/MerkleFixture.sol";
@@ -157,6 +158,32 @@ contract RewardTransportD6Test is SetupTest, IVaipakamErrors {
         bytes32[] memory leaves;
         (h, leaves) = _d6(amount, dayIds, remitId, id, 0, 0);
         for (uint256 c; c < leaves.length; ++c) _prove(h, dayIds, leaves, c);
+    }
+
+    /// @dev #1566 PR 1 review (P2-5) — the ROOTED (d6) ingress, which every ordinary remittance to
+    ///      an activated mirror takes, fits the destination budget the send declares with the
+    ///      receiver's own work reserved — measured COLD (the first ingress of the test: the packet,
+    ///      its epoch, the era count and the shared custody slots all first writes), over the widest
+    ///      list one remittance funds, both legs typed. Under the old 300,000 it could never have
+    ///      executed automatically.
+    function test_TheRootedIngress_FitsTheDestinationBudget() public {
+        uint256[] memory dayIds = _days(LibRewardCustody.TRANSPORT_DAY_FANOUT_CAP, 1);
+        bytes32[] memory leaves = RemitWire.d6Chunks(dayIds);
+        bytes32 root = RemitWire.d6Root(leaves);
+        uint256 before = gasleft();
+        _ingress().onRewardBudgetReceivedD6(
+            address(vpfi), 10e18, root, dayIds.length, leaves.length,
+            CHAIN_BASE, 91, REMITTER, 4e18, 6e18, keccak256("gas-d6"), 0
+        );
+        uint256 used = before - gasleft();
+        emit log_named_uint("rooted ingress gas", used);
+        LibVaipakam.IngressPacket memory p = _rlens().getIngressPacket(keccak256(abi.encode(uint256(CHAIN_BASE), keccak256("gas-d6"))));
+        assertTrue(p.eraCounted, "fixture-live: the full path ran (counted open in the live era)");
+        assertLe(
+            used + LibRewardRemitDispatch.REWARD_BUDGET_RECEIVER_RESERVE,
+            LibRewardRemitDispatch.REWARD_BUDGET_DEST_GAS_LIMIT,
+            "the rooted ingress overruns the destination budget"
+        );
     }
 
     // ─── PR C-3: the intended era against the live one ───

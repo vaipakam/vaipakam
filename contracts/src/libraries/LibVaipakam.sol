@@ -1427,7 +1427,7 @@ library LibVaipakam {
         bool cfgAutoRefinanceEnabled;
         bool cfgAutoExtendEnabled;
         // ── #393 v1 — LenderIntentVault master kill-switch ────────────
-        // Gates the standing-intent fill path (`OfferMatchFacet.matchIntent`).
+        // Gates the standing-intent fill path (`OfferMatchIntentFacet.matchIntent`).
         // Default `false` on a fresh deploy: a user can `setLenderIntent`
         // (register standing terms) but no fill executes until governance
         // flips this on post-bake. Same ship-off / governance-on / break-
@@ -1591,7 +1591,7 @@ library LibVaipakam {
 
     /// @notice #625 WI-2c — register/deregister an intent-originated loan in the
     ///         `activeIntentLoans` roll-discovery set. Called at the SET site
-    ///         (`OfferMatchFacet.matchIntent`, when `intentOrigin` is written) and
+    ///         (`OfferMatchIntentFacet.matchIntent`, when `intentOrigin` is written) and
     ///         both CLEAR sites (`LenderIntentFacet.releaseIntentExposure` — the
     ///         shared claim/withdraw/consolidation terminal hook — and
     ///         `LenderIntentFacet.rollIntentLoan`), so the set tracks EXACTLY the
@@ -7907,6 +7907,19 @@ library LibVaipakam {
         ///      asset after the pointer moves on).
         mapping(uint64 => bool) rotationEpochArchived;
         mapping(uint64 => address) rotationEpochToken;
+        /// @dev #1219 review — (role, initiator) → the FREE-TIER bucket the backstop
+        ///      route (actor rule 3) and an unbound route (rule 4) charge: the outer
+        ///      initiator's permissionless baseline, kept apart from that address's
+        ///      bonded bucket so a free-tier charge never re-clamps credit a deposit
+        ///      bought, and a deposit never lifts a free-tier route.
+        mapping(uint8 => mapping(address => CapacityBucket)) capacityFreeBuckets;
+        /// @notice #1566 PR 1 review — Σ fresh RE-CREDITED in-holder (an era's
+        ///         release, a pending-surplus drain): raised into
+        ///         `rewardBudgetArmedFreshReceived` as headroom, but counted
+        ///         there once already at its delivery. The counted-funding view
+        ///         nets it out so a chain's counted funding still reconciles
+        ///         against what Base sent.
+        uint256 rewardBudgetFreshReCredited;
     }
 
     /// @notice 3b-ii-A2 (#2305) — one batch a staging record staged from, with
@@ -7926,9 +7939,10 @@ library LibVaipakam {
     ///         and the oldest registrant by its record's opening time (a
     ///         running minimum: encounter order never decides) stages the
     ///         batch first once the window closes — ONE priority reservation
-    ///         ever per obligation and batch. Ordinary leases resume once that
-    ///         reservation has resolved or unwound (its unwind opens the next
-    ///         window), or once the right lapses untaken. This is what bounds
+    ///         ever per obligation and batch, burnt whether taken or let lapse.
+    ///         Ordinary staging of the unreferenced remainder resumes once the
+    ///         reservation is taken, or once the right lapses untaken
+    ///         (#1566 PR 1 review: the whole batch is not held for the winner). This is what bounds
     ///         the two-obligation hostage: unwind-and-restage alternation burns
     ///         each controlled obligation once, and the oldest honest waiter
     ///         is served at every burn.
@@ -8001,6 +8015,10 @@ library LibVaipakam {
         uint256 bondAt4x;
         uint256 classCost;
         uint64 epoch;
+        /// @dev #1219 review — when the curve was last SET: a bucket settled under an
+        ///      older epoch accrues under this curve from here (its old credit is
+        ///      forfeited, never its future). Appended; held only as a mapping value.
+        uint64 setAt;
     }
 
     /// @notice #1219 (S-4) — one `(role, actor)` capacity BUCKET: its balance
@@ -8155,6 +8173,10 @@ library LibVaipakam {
         ///      until the settlement (custody active); released to
         ///      `Unclassified` right before the payout takes it.
         uint256 heldAgg;
+        /// @dev #1566 PR 1 review — the lifecycle version the CURRENT revalidation
+        ///      pass reads the extent against: a pass completes only against one
+        ///      version, and anchors to it. Appended; held only as a mapping value.
+        uint256 revalidatingVersion;
     }
 
     /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss: the
@@ -8422,10 +8444,11 @@ library LibVaipakam {
     ///         ADMISSION IS ALWAYS COMPACT (Codex #2232 r2): it writes this
     ///         row and nothing per-day, whatever the list's length. The
     ///         receiver's callback runs inside
-    ///         `LibRewardRemitDispatch.REWARD_BUDGET_DEST_GAS_LIMIT`, which is
-    ///         300,000 — and 32 first-time per-day pushes, two new storage
-    ///         slots each, exceed that on their own before the packet record
-    ///         and the custody relocation are counted. An admission that
+    ///         `LibRewardRemitDispatch.REWARD_BUDGET_DEST_GAS_LIMIT`, a FIXED
+    ///         figure derived from this compact admission — and per-day
+    ///         pushes, two new storage slots each, grow with a list's length
+    ///         without bound (32 of them alone were over the 300,000 the
+    ///         budget stood at then). An admission that
     ///         indexed short lists synchronously would therefore have failed
     ///         to deliver exactly the in-flight old-wire messages this path
     ///         exists to preserve. `indexedDays` climbs afterwards, one
@@ -9496,7 +9519,7 @@ library LibVaipakam {
     ///      shipped in Phase 1 stay forward-compatible.
     uint16 internal constant KEEPER_ACTION_EXTEND = 1 << 5; // 0x20
     /// @dev #393 v1-c — authorize a solver to fill the principal owner's
-    ///      standing lending INTENT (`OfferMatchFacet.matchIntent`) when that
+    ///      standing lending INTENT (`OfferMatchIntentFacet.matchIntent`) when that
     ///      intent is set `requiresKeeperAuth`. PRE-loan / principal-keyed (the
     ///      loan doesn't exist at fill time), so it is checked via
     ///      `LibAuth.requireKeeperForPrincipal`, not the loan-keyed

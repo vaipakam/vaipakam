@@ -293,12 +293,14 @@ contract RewardHorizonSweepFacet is
     ///         entry, if it is closed, not forfeited, and its remaining window prices
     ///         to nothing payable — an empty window, or one the loan-side cap trims to
     ///         a zero user split while its raw split stands — the entry is retired
-    ///         (marked processed, or one day of it settled through the expiry
-    ///         sweep's own terminal accounting; repeat until processed). Anything
-    ///         payable, open, forfeited or not yet priceable is left as it is. Same
-    ///         budgets and the same settle as the expiry sweep.
+    ///         (marked processed, or one day of it retired as a claim retires a capped
+    ///         day; repeat until processed). Anything payable, open, forfeited or not
+    ///         yet priceable is left as it is. A retirement moves no value: the
+    ///         capped-off commitments retire, the pool is not drawn and nothing is
+    ///         credited to the recycle bucket (#1566 PR 1 review: the cap had refused
+    ///         that value, so it is retired, never recycled).
     /// @return retiredCount How many of `entryIds` this call moved.
-    /// @return settledTotal What the settled days routed (fresh and recycled).
+    /// @return settledTotal The commitments the retired days released (fresh and recycled).
     function retireZeroPricedRemainders(uint256[] calldata entryIds)
         external
         nonReentrant
@@ -337,6 +339,12 @@ contract RewardHorizonSweepFacet is
             t.armedFresh += ex.armedFresh;
             unchecked { ++i; }
         }
-        settledTotal = _settleSweepTotals(s, paidOut, t, tp);
+        // Nothing was credited (`t.fresh == 0`): retire the commitments as the
+        // claim retires a capped day, and draw nothing.
+        LibInteractionRewards.consumeArmedFresh(t.armedFresh);
+        LibRewardCustody.callSettleLegs(
+            uint8(LibVpfiRecycle.RecycleSource.ForfeitedReward), 0, 0, t.recycled, 0, 0, 0
+        );
+        settledTotal = t.armedFresh + t.recycled;
     }
 }

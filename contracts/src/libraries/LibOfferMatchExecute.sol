@@ -127,10 +127,10 @@ library LibOfferMatchExecute {
         );
     }
 
-    /// @notice Shared match-execution core for `matchOffers` and the v0.6
-    ///         `matchSignedOffer`. `msg.sender` (the matcher / LIF recipient)
-    ///         is preserved because this is an internal call from both
-    ///         entries — there is no `address(this)` cross-facet hop, so the
+    /// @notice Shared match-execution core for `matchOffers`, the v0.6
+    ///         `matchSignedOffer` and `matchIntent`. `msg.sender` (the matcher /
+    ///         LIF recipient) is preserved because this is an internal call from
+    ///         every entry — there is no `address(this)` cross-facet hop, so the
     ///         `matchOverride.matcher`, the `OfferMatched` `msg.sender`, and
     ///         the LIF split all resolve to the original external caller.
     /// @param lenderOfferId    The lender (lend) offer being matched.
@@ -210,7 +210,7 @@ library LibOfferMatchExecute {
         }
 
         // Pre-flight via the shared core; map structured errors into
-        // typed reverts declared on this facet.
+        // typed reverts declared on this library.
         LibOfferMatch.MatchResult memory mr =
             LibOfferMatch.previewMatch(
                 lenderOfferId, borrowerOfferId, borrowerCollFloor

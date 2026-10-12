@@ -119,6 +119,10 @@ const MATCH_ERR_OK = 0;
  *  short-circuit before submitting `matchOffers`. Numeric value 11 —
  *  the variant is the 12th in the enum (after `LtvAboveTier`). */
 const MATCH_ERR_SELF_TRADE = 11;
+/** `LibOfferMatch.MatchError.CapacityExhausted` (#1219) — this keeper's own fill
+ *  capacity is spent: the same verdict for every pair this tick, so the match
+ *  pass stops until the bucket refills. */
+const MATCH_ERR_CAPACITY_EXHAUSTED = 18;
 
 /** `LibVaipakam.OfferType`. */
 const OFFER_TYPE_LENDER = 0;
@@ -202,6 +206,7 @@ const INTENT_ERR_PASS_TERMINAL = new Set<number>([
   1, // Paused — diamond globally paused
   3, // MatcherDisabled — partialFillEnabled off
   4, // IntentDisabled — lenderIntentEnabled off
+  22, // CapacityExhausted (#1219) — this keeper's fill capacity is spent until it refills
 ]);
 const INTENT_ERR_MATCHER_DISABLED = 3;
 const INTENT_ERR_INTENT_DISABLED = 4;
@@ -1132,14 +1137,15 @@ async function runOfferMatcherTickForChain(ctx: KeeperContext): Promise<void> {
   // tx may still mine.
   const uncertainBorrowers = new Set<string>();
 
+  let capacitySpent = false; // #1219 — set once a preview says this keeper's fill capacity is spent
   for (const [key, lenderList] of lenders) {
-    if (submits >= MAX_SUBMITS_PER_TICK) break;
+    if (submits >= MAX_SUBMITS_PER_TICK || capacitySpent) break;
     if (overBudget()) break;
     const borrowerList = borrowers.get(key);
     if (!borrowerList || borrowerList.length === 0) continue;
 
     for (const L of lenderList) {
-      if (submits >= MAX_SUBMITS_PER_TICK) break;
+      if (submits >= MAX_SUBMITS_PER_TICK || capacitySpent) break;
       if (overBudget()) break;
       for (const B of borrowerList) {
         if (previewCalls >= MAX_PREVIEW_CALLS_PER_TICK) break;
@@ -1163,6 +1169,13 @@ async function runOfferMatcherTickForChain(ctx: KeeperContext): Promise<void> {
 
         previewCalls += 1;
         const p = await previewMatch(ctx, L.id, B.id);
+        if (p && p.errorCode === MATCH_ERR_CAPACITY_EXHAUSTED) {
+          console.log(
+            `[matcher] chain=${ctx.chainId} match pass: this keeper's fill capacity is spent; waiting for it to refill`,
+          );
+          capacitySpent = true;
+          break;
+        }
         if (!p || p.errorCode !== MATCH_ERR_OK) {
           // Defence-in-depth: the client-side self-trade pre-filter
           // above should catch every same-creator pair, but log here

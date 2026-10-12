@@ -46,6 +46,9 @@ contract ServiceCapacityArmingTest is SetupTest {
     event CapacityDepositMigrated(uint8 indexed role, address indexed operator, uint64 indexed epoch, address token, uint256 amount);
     event CapacityCurveSet(uint8 indexed role, uint256 freeTier, uint256 freeRatePerSec, uint256 bondAt4x, uint256 classCost, uint64 epoch);
     event CapacityDepositParked(uint8 indexed role, address indexed operator, uint64 indexed rotationEpoch, uint256 requested, uint256 parkedRequest);
+    event CapacityDepositArmed(
+        uint8 indexed role, address indexed operator, uint64 indexed rotationEpoch, address token, uint256 armed, uint256 balance, uint256 eligibleAfter
+    );
 
     function setUp() public {
         setupHelper();
@@ -85,7 +88,7 @@ contract ServiceCapacityArmingTest is SetupTest {
     }
     /// @dev Post through the quote: the preview prices it, the approval covers principal + fee, the post executes it.
     function _postWith(IERC20 token, uint8 role, uint256 amount) internal returns (uint8 status) {
-        (uint256 fee, , , ) = _f().previewArming(role, op, amount);
+        (, uint256 fee, , , ) = _f().previewArming(role, op, amount);
         LibServiceCapacity.ArmingBind memory b = _bind(role);
         vm.prank(op);
         token.approve(address(diamond), amount + fee); // exact, never unbounded
@@ -119,11 +122,11 @@ contract ServiceCapacityArmingTest is SetupTest {
         vm.prank(op);
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.ServiceCapacityArmingDark.selector, SOLVER));
         _f().postCapacityDeposit(SOLVER, 10e18, b); // a rate, no curve
-        (, , , bool dark) = _f().previewArming(SOLVER, op, 10e18);
-        assertTrue(dark, "the quote says dark too");
+        (uint8 refusal, , , , ) = _f().previewArming(SOLVER, op, 10e18);
+        assertEq(refusal, LibServiceCapacity.POST_ARMING_DARK, "the preview names the same refusal");
         _curve(SOLVER);
-        (, , , dark) = _f().previewArming(SOLVER, op, 10e18);
-        assertFalse(dark);
+        (refusal, , , , ) = _f().previewArming(SOLVER, op, 10e18);
+        assertEq(refusal, LibServiceCapacity.POST_OK);
         assertEq(_post(SOLVER, 10e18), LibServiceCapacity.STATUS_OK, "lit: posts");
         (uint256 rate, uint256 floor) = _f().getArmingFee();
         assertEq(rate, FEE);
@@ -165,14 +168,14 @@ contract ServiceCapacityArmingTest is SetupTest {
 
     /// @dev The fee is 1% of the principal newly armed, paid BESIDE the principal into
     ///      Diamond custody and credited to the recycle bucket; the escrow holds the
-    ///      principal only; the armed balance equals the principal. The event carries
+    ///      principal only; the armed balance is the principal under the knee. The event carries
     ///      the figures the preview quoted — one walk.
     function test_Fee_ChargedOnNewlyArmedPrincipal_LandsInTheBucket_NeverTheEscrow() public {
         _ready();
         address escrow = _escrow();
         uint256 bucketBefore = _bucket();
         uint256 diamondBefore = vpfi.balanceOf(address(diamond));
-        (uint256 fee, uint256 granted, uint256 ceilingAfter, ) = _f().previewArming(SOLVER, op, 50e18);
+        (, uint256 fee, uint256 granted, , uint256 ceilingAfter) = _f().previewArming(SOLVER, op, 50e18);
         assertEq(fee, 0.5e18, "1% of the 50 newly armed");
         assertEq(granted, 50e18);
         assertEq(ceilingAfter, 2.5e18, "half way to the knee buys 2.5x");
@@ -196,13 +199,13 @@ contract ServiceCapacityArmingTest is SetupTest {
     function test_Fee_CapacityNeutralRaise_ChargesNothing() public {
         _ready();
         _post(SOLVER, 80e18); // fee 0.8
-        (uint256 fee, uint256 granted, uint256 ceil, ) = _f().previewArming(SOLVER, op, 40e18);
+        (, uint256 fee, uint256 granted, , uint256 ceil) = _f().previewArming(SOLVER, op, 40e18);
         assertEq(granted, 20e18, "only the 20 below the knee are newly armed");
         assertEq(fee, 0.2e18);
         assertEq(ceil, 4 * FREE);
         _post(SOLVER, 40e18);
         uint256 bucket = _bucket();
-        (fee, granted, ceil, ) = _f().previewArming(SOLVER, op, 50e18);
+        (, fee, granted, , ceil) = _f().previewArming(SOLVER, op, 50e18);
         assertEq(granted, 0, "nothing newly armed above bondAt4x");
         assertEq(fee, 0);
         assertEq(ceil, 4 * FREE);
@@ -259,7 +262,7 @@ contract ServiceCapacityArmingTest is SetupTest {
         uint256 bucket = _bucket();
         vm.prank(op);
         _f().withdrawCapacityDeposit(SOLVER, 50e18);
-        (uint256 fee, uint256 granted, , ) = _f().previewArming(SOLVER, op, 50e18);
+        (, uint256 fee, uint256 granted, , ) = _f().previewArming(SOLVER, op, 50e18);
         assertEq(granted, 50e18, "armed again");
         assertEq(fee, 0.5e18);
         _post(SOLVER, 50e18);
@@ -327,6 +330,8 @@ contract ServiceCapacityArmingTest is SetupTest {
         LibServiceCapacity.ArmingBind memory b = _bind(SOLVER);
         vm.prank(op);
         next.approve(address(diamond), 20e18);
+        (uint8 refusal, , , , ) = _f().previewArming(SOLVER, op, 10e18);
+        assertEq(refusal, LibServiceCapacity.POST_RETIRED_BALANCE, "the preview names the refusal");
         vm.prank(op);
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.ServiceCapacityOldEpochBalanceStands.selector, SOLVER, op, uint64(0)));
         _f().postCapacityDeposit(SOLVER, 10e18, b);
@@ -428,5 +433,89 @@ contract ServiceCapacityArmingTest is SetupTest {
         vm.prank(op);
         (, uint256 paid) = _f().withdrawArchivedCapacityDeposit(SOLVER, 0);
         assertEq(paid, 50e18);
+    }
+
+    // ─── PR 1 pre-open review ───
+
+    function _eligible() internal view returns (uint256) { return _f().getCapacityDeposit(SOLVER, op, 0).eligibleAmount; }
+
+    /// @dev P2 — a knee raised by governance arms nothing by itself: principal deposited above the
+    ///      old knee stays unarmed, and buys nothing, until a zero-principal post arms it and pays.
+    function test_KneeRaise_ArmsNothing_UntilAPaidPostArmsTheExcess() public {
+        _ready();
+        _post(SOLVER, 2 * AT4X);
+        assertEq(_eligible(), AT4X, "armed to the knee, not the whole principal");
+        _f().setCapacityCurve(SOLVER, FREE, RATE, 2 * AT4X, COST); // governance raises the knee
+        (, , uint256 ceilBefore, ) = _f().previewCapacity(SOLVER, op);
+        assertLt(ceilBefore, 4 * FREE, "the raise armed nothing by itself");
+        (uint8 refusal, uint256 fee, uint256 granted, uint256 eligibleAfter, uint256 ceilingAfter) =
+            _f().previewArming(SOLVER, op, 0);
+        assertEq(refusal, LibServiceCapacity.POST_OK, "a zero-principal post would arm the excess");
+        assertEq(granted, AT4X);
+        assertEq(fee, (AT4X * FEE + 1e18 - 1) / 1e18);
+        assertEq(eligibleAfter, 2 * AT4X);
+        assertEq(ceilingAfter, 4 * FREE);
+        LibServiceCapacity.ArmingBind memory b = _bind(SOLVER);
+        vm.prank(op);
+        vpfi.approve(address(diamond), fee);
+        uint256 bucketBefore = _bucket();
+        vm.expectEmit(true, true, true, true, address(diamond));
+        emit CapacityDepositArmed(SOLVER, op, 0, address(vpfi), AT4X, 2 * AT4X, 2 * AT4X);
+        vm.prank(op);
+        assertEq(_f().postCapacityDeposit(SOLVER, 0, b), LibServiceCapacity.STATUS_OK);
+        assertEq(_bucket(), bucketBefore + fee, "and paid for");
+        assertEq(_f().getCapacityDeposit(SOLVER, op, 0).amount, 2 * AT4X, "no principal moved");
+        (, , uint256 ceilAfter, ) = _f().previewCapacity(SOLVER, op);
+        assertEq(ceilAfter, 4 * FREE);
+    }
+
+    /// @dev P2 — a withdrawal never arms what it leaves behind, and the armed balance never
+    ///      exceeds the principal.
+    function test_Withdraw_NeverArmsWhatItLeaves() public {
+        _ready();
+        _post(SOLVER, 2 * AT4X);
+        _f().setCapacityCurve(SOLVER, FREE, RATE, 2 * AT4X, COST);
+        vm.prank(op);
+        _f().withdrawCapacityDeposit(SOLVER, 1);
+        assertEq(_eligible(), AT4X, "a 1-wei withdrawal re-arms nothing");
+        vm.prank(op);
+        _f().withdrawCapacityDeposit(SOLVER, AT4X + 1);
+        assertEq(_eligible(), AT4X - 2, "the armed balance follows the principal down");
+    }
+
+    /// @dev The fee rounds UP: no armed principal is ever free.
+    function test_Fee_RoundsUp() public {
+        _ready();
+        (, uint256 fee, uint256 granted, , ) = _f().previewArming(SOLVER, op, 1);
+        assertEq(granted, 1);
+        assertEq(fee, 1, "1 wei armed at 1% owes 1 wei, not zero");
+    }
+
+    /// @dev The preview names the post's arming refusals: nothing to arm, then OK.
+    function test_Preview_NothingToArm_ThenOk() public {
+        _ready();
+        (uint8 refusal, , , , ) = _f().previewArming(SOLVER, op, 0);
+        assertEq(refusal, LibServiceCapacity.POST_NOTHING_TO_ARM);
+        (refusal, , , , ) = _f().previewArming(SOLVER, op, 10e18);
+        assertEq(refusal, LibServiceCapacity.POST_OK);
+    }
+
+    /// @dev A parked record's archived drain pays the WHOLE record in one call after the clean
+    ///      read — not only the cap a smaller earlier request parked.
+    function test_Rotation_ArchivedDrainOfAParkedRecord_PaysTheWholeRecord() public {
+        _ready();
+        _post(SOLVER, 50e18);
+        MockSanctionsList m = new MockSanctionsList();
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
+        m.setFlagged(op, true);
+        vm.prank(op);
+        _f().withdrawCapacityDeposit(SOLVER, 3e18); // parked, cap 3
+        assertEq(_f().getCapacityDeposit(SOLVER, op, 0).parkedRequest, 3e18, "fixture-live: parked at 3");
+        m.setFlagged(op, false);
+        _rotateTo(new ERC20Mock("VPFI v2", "VPFI2", 18));
+        vm.prank(op);
+        (uint8 status, uint256 paid) = _f().withdrawArchivedCapacityDeposit(SOLVER, 0);
+        assertEq(status, LibServiceCapacity.STATUS_OK);
+        assertEq(paid, 50e18, "the whole record, in one call");
     }
 }

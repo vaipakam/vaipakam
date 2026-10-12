@@ -32,10 +32,10 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 /**
  * @title  LenderIntentMatchTest
- * @notice #393 v1-b — the `OfferMatchFacet.matchIntent` fill path. A solver
+ * @notice #393 v1-b — the `OfferMatchIntentFacet.matchIntent` fill path. A solver
  *         fills a lender's STANDING INTENT against an on-chain borrower
  *         counterparty: the materialized lender slice (creator = lender, terms
- *         from the intent's bounds) routes through the same `_executeMatch` as
+ *         from the intent's bounds) routes through the same `executeMatch` as
  *         `matchOffers`, so the lender stays lender-of-record
  *         (`loan.lender == lender`). Exposure is tracked in the full-intent-
  *         keyed `lenderIntentLivePrincipal` and released at terminal close.
@@ -648,7 +648,7 @@ contract LenderIntentMatchTest is SetupTest {
     // ── sale-vehicle counterparty (#951 v2, D3) — non-matchable via intent too ──
     /// @dev A borrower offer linked as a lender-sale vehicle (`saleOfferToLoanId`)
     ///      is fillable ONLY through direct `acceptOffer`; `matchIntent` reverts
-    ///      `SaleVehicleNotMatchable` (via the shared `_executeMatch` guard).
+    ///      `SaleVehicleNotMatchable` (via the shared `executeMatch` guard).
     ///      `previewIntent` must mirror that with `SaleVehicleTagged` rather than
     ///      report Ok (Codex #959 round-8 P2/P3 preview parity).
     function test_previewIntent_saleVehicleTagged_agrees() public {
@@ -839,7 +839,7 @@ contract LenderIntentMatchTest is SetupTest {
     //
     // For a lender-sale vehicle, live `matchIntent` materializes the slice
     // (gating the lender at 883 against the SLICE assets) and then reverts
-    // `SaleVehicleNotMatchable` in `_executeMatch` BEFORE `assertMatchAllowed`
+    // `SaleVehicleNotMatchable` in `executeMatch` BEFORE `assertMatchAllowed`
     // ever gates the sold-loan pair. So a lender that passes the slice pair but
     // would fail the (riskier) sold-loan pair must still see `SaleVehicleTagged`,
     // not a risk block.
@@ -1009,6 +1009,27 @@ contract LenderIntentMatchTest is SetupTest {
     }
 
     // ── below-min fill ──
+    /// @dev #1219 review — the fill takes its capacity charge LAST and the preview reports it last:
+    ///      an exhausted solver previews `CapacityExhausted` on an otherwise fillable intent and the
+    ///      fill is refused by name; before the first fill the same preview is Ok (straddle).
+    function test_previewIntent_capacityExhausted_agrees() public {
+        _setIntent(MAX_EXPOSURE);
+        _fundIntent(2 * PRINCIPAL);
+        uint256 cp1 = _postBorrower(_newBorrower("b-pv-1"), PRINCIPAL, 2 * PRINCIPAL);
+        uint256 cp2 = _postBorrower(_newBorrower("b-pv-2"), PRINCIPAL, 2 * PRINCIPAL);
+        uint8 role = uint8(LibVaipakam.ServiceCapacityRole.Solver);
+        ServiceCapacityFacet(address(diamond)).setCapacityCurve(role, 1e18, 1e16, 100e18, 1e18);
+        assertTrue(_preview(solver, PRINCIPAL, cp1).ok, "straddle: the one free action covers the first fill");
+        vm.prank(solver);
+        OfferMatchIntentFacet(address(diamond)).matchIntent(lender, mockERC20, mockCollateralERC20, cp1, PRINCIPAL);
+        LibOfferMatch.IntentPreviewResult memory r = _preview(solver, PRINCIPAL, cp2);
+        assertFalse(r.ok, "an exhausted solver previews not-ok");
+        assertEq(uint8(r.intentError), uint8(LibOfferMatch.IntentError.CapacityExhausted));
+        vm.prank(solver);
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.ServiceCapacityExhausted.selector, role, solver, 1e18, 0));
+        OfferMatchIntentFacet(address(diamond)).matchIntent(lender, mockERC20, mockCollateralERC20, cp2, PRINCIPAL);
+    }
+
     function test_previewIntent_belowMinFill_agrees() public {
         _setIntent(MAX_EXPOSURE);
         _fundIntent(PRINCIPAL);

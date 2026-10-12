@@ -94,6 +94,17 @@ staked/tracked-balance stranding anyway — see "Decision" below).
      its principal/collateral are NOT VPFI, so it does not appear in the leg
      scans above; check the rebate ledger separately and let those loans reach
      terminal (settle/forfeit) so the held VPFI is released before rotating.
+   - **The reward custody holder's rows (#1566), retired custody ERA rows
+     included.** The token setter refuses the rotation while any reward custody
+     row — or the era rows' total (`RewardEraFacet.getCustodyEraRowsTotal`) — is
+     non-zero, or while the holder still holds the old token. An era row
+     releases only when its era finalizes: every day of the era's span proven
+     closed by the closure proof, no packet of the era still open for
+     classification, and its parked-broadcast lane empty. A day proves closed
+     once every obligation covering it has terminated, so an obligation that
+     never terminates (funding that never arrives, a pause) holds its era's row,
+     and the rotation, until it does. Check `getCustodyEra(n)` for every era
+     below `getCustodyEraCurrent()` and drive each to finalization first.
    - **Service capacity deposit custody (#1219) is enumerated but NOT
      drained**: capacity deposits take the design's **epoch-level archival
      transition, ATOMIC WITH the step-6 rotation transaction itself**
@@ -133,8 +144,10 @@ staked/tracked-balance stranding anyway — see "Decision" below).
    archived-state assertion runs after step 6, against the rotation
    transaction's own effects). Concretely: `ServiceCapacityFacet.getServiceCapacityEscrow()`
    returns the escrow holder, the live epoch and its total; the holder's
-   old-token balance must equal that total plus every earlier retired
-   epoch's total from `getServiceCapacityEscrowByEpoch(epoch)`. A nonzero balance in any OTHER class fails
+   old-token balance must equal that total plus the total of every earlier
+   retired epoch whose recorded token (`getServiceCapacityEscrowByEpoch(epoch)`
+   returns it) IS the old token — after a rotation A → B → A, the epochs
+   held in B are B's balance and are not summed into A's. A nonzero balance in any OTHER class fails
    this gate exactly as before. Do NOT rely on
    re-walking the named step-2 surfaces alone — the authoritative test is a
    TOTAL: account for the entire old-token VPFI supply the protocol controls.

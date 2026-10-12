@@ -467,21 +467,7 @@ contract RewardReporterFacet is
         if (s.knownGlobalSet[dayId]) {
             // Idempotent re-delivery is fine — CCIP retries can
             // duplicate a packet. Divergent values must never overwrite.
-            // #1008 (S13) — `capThreshold18` is part of the broadcast's
-            // consensus value, so a divergent-threshold replay reverts too
-            // (Codex #1147 r7 K6). PR-3c — the composition halves join the
-            // consensus tuple for the same reason.
-            LibVaipakam.DayPoolStamp storage prior = s.dayPoolStamp[dayId];
-            if (
-                s.knownGlobalLenderInterestNumeraire18[dayId] != globalLenderNumeraire18 ||
-                s.knownGlobalBorrowerInterestNumeraire18[dayId] != globalBorrowerNumeraire18 ||
-                s.dayCapThreshold18[dayId] != capThreshold18 ||
-                (prior.stamped &&
-                    (uint256(prior.scheduleFloor) != scheduleFloorHalf * 2 ||
-                        uint256(prior.recycledBudget) != recycledHalf * 2))
-            ) {
-                revert KnownGlobalAlreadySet();
-            }
+            _requireV1Consensus(s, dayId, globalLenderNumeraire18, globalBorrowerNumeraire18, capThreshold18, scheduleFloorHalf, recycledHalf);
             return;
         }
 
@@ -509,6 +495,34 @@ contract RewardReporterFacet is
             s, dayId, globalLenderNumeraire18, globalBorrowerNumeraire18, capThreshold18, scheduleFloorHalf,
             recycledHalf, armedFromDay
         );
+    }
+
+    /// @dev The kind-2 REPLAY rule — ONE body for the ingress and the parked retry
+    ///      (#1566 PR 1 review): a day already known must carry the SAME
+    ///      consensus or the write is refused. #1008 (S13) — `capThreshold18` is
+    ///      part of the broadcast's consensus value, so a divergent-threshold
+    ///      replay reverts too (Codex #1147 r7 K6). PR-3c — the composition
+    ///      halves join the consensus tuple for the same reason.
+    function _requireV1Consensus(
+        LibVaipakam.Storage storage s,
+        uint256 dayId,
+        uint256 globalLenderNumeraire18,
+        uint256 globalBorrowerNumeraire18,
+        uint256 capThreshold18,
+        uint256 scheduleFloorHalf,
+        uint256 recycledHalf
+    ) private view {
+        LibVaipakam.DayPoolStamp storage prior = s.dayPoolStamp[dayId];
+        if (
+            s.knownGlobalLenderInterestNumeraire18[dayId] != globalLenderNumeraire18 ||
+            s.knownGlobalBorrowerInterestNumeraire18[dayId] != globalBorrowerNumeraire18 ||
+            s.dayCapThreshold18[dayId] != capThreshold18 ||
+            (prior.stamped &&
+                (uint256(prior.scheduleFloor) != scheduleFloorHalf * 2 ||
+                    uint256(prior.recycledBudget) != recycledHalf * 2))
+        ) {
+            revert KnownGlobalAlreadySet();
+        }
     }
 
     /// @dev PR C-4 — the kind-2 apply body, shared by the ingress and the parked retry.
@@ -686,11 +700,19 @@ contract RewardReporterFacet is
                 )
             )
         );
-        if (s.rewardEraRotated || s.knownGlobalSet[dayId]) revert ParkedBroadcastStillUnroutable(id);
-        _applyLegacyBroadcastV1(
-            s, dayId, globalLenderNumeraire18, globalBorrowerNumeraire18, capThreshold18, scheduleFloorHalf,
-            recycledHalf, armedFromDay
-        );
+        if (s.knownGlobalSet[dayId]) {
+            // The day landed by another route since this copy was parked
+            // (#1566 PR 1 review): one carrying the SAME consensus is moot and
+            // retires as applied — as the kind-5 retry's replay always did —
+            // while a divergent one is refused and stays parked.
+            _requireV1Consensus(s, dayId, globalLenderNumeraire18, globalBorrowerNumeraire18, capThreshold18, scheduleFloorHalf, recycledHalf);
+        } else {
+            if (s.rewardEraRotated) revert ParkedBroadcastStillUnroutable(id);
+            _applyLegacyBroadcastV1(
+                s, dayId, globalLenderNumeraire18, globalBorrowerNumeraire18, capThreshold18, scheduleFloorHalf,
+                recycledHalf, armedFromDay
+            );
+        }
         LibRewardCustody.parkedBroadcastApplied(s, id);
     }
 
@@ -786,8 +808,8 @@ contract RewardReporterFacet is
             // main-path install below.
             //
             // RETIRED ERAS ARE EXCLUDED, and that is not the same test the
-            // fresh path makes. {LegacyBroadcastRetired} sits BELOW this
-            // branch on purpose, so an applied day keeps replaying
+            // fresh path makes. The rotation gate (a fresh legacy apply after
+            // a rotation is PARKED, PR C-4) sits BELOW this branch on purpose, so an applied day keeps replaying
             // idempotently after a rotation — but idempotent replay is a
             // no-op, and this install is not. Without the clause, a kind-5
             // packet from a retired era could still choose this mirror's
@@ -816,7 +838,9 @@ contract RewardReporterFacet is
         }
 
         // #1632 r2 — after an era ROTATION, the identity-less kind-5 wire
-        // refuses FRESH applies (see {LegacyBroadcastRetired}). Placed
+        // refuses FRESH applies (Codex #1632 r2: legacy packets carry no
+        // deployment identity, so a retired era's delayed delivery is
+        // indistinguishable from a legitimate one). Placed
         // AFTER the replay branch above, so already-applied days replay
         // idempotently forever. The V3 caller passes `legacyWire = false`:
         // it reaches this core only having authenticated its era against
@@ -1519,8 +1543,9 @@ contract RewardReporterFacet is
     ///      every effective change of the four-state role, not only of the
     ///      mirror predicate: Canonical→Detached and Detached→Canonical change
     ///      the bound as much as a mirror transition does. A first
-    ///      configuration (Unconfigured → anything) retires nothing: there is
-    ///      no era to close. The live-fresh custody is carried into the
+    ///      configuration (Unconfigured → anything) opens and retires no era —
+    ///      there is none to close — but it still LEVELS the delivered residual
+    ///      (#1566 PR 1 review), as every role change before PR C did. The live-fresh custody is carried into the
     ///      retiring era's row rather than left behind a levelled counter, so
     ///      what the old era delivered stays consumable by the obligations it
     ///      accrued (PR C-2) and reaches live headroom only through the era's
@@ -1530,7 +1555,11 @@ contract RewardReporterFacet is
         LibVaipakam.RewardRole before
     ) private {
         LibVaipakam.RewardRole current = LibVaipakam.rewardRole(s);
-        if (before == current || before == LibVaipakam.RewardRole.Unconfigured) return;
+        if (before == current) return;
+        if (before == LibVaipakam.RewardRole.Unconfigured) {
+            LibRewardCustody.levelDeliveredResidual(s);
+            return;
+        }
         (uint256 today, ) = LibInteractionRewards.currentDayOrZero();
         LibRewardCustody.retireCustodyEraOnRoleChange(s, SafeCast.toUint64(today));
     }

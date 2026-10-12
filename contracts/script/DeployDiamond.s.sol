@@ -659,7 +659,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         );
         // #393 v1 — LenderIntentVault standing-terms surface. A lender
         // registers set-and-forget bounds; a permissioned solver fills
-        // concrete offers within them via OfferMatchFacet.matchIntent.
+        // concrete offers within them via OfferMatchIntentFacet.matchIntent.
         cuts[54] = _buildCut(
             address(lenderIntentFacet),
             _getLenderIntentFacetSelectors()
@@ -3243,7 +3243,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
 
     /// #1219 (S-4) — service capacity deposits (slice 1).
     function _getServiceCapacitySelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](21);
+        s = new bytes4[](22);
         s[0] = ServiceCapacityFacet.bindServiceCapacityEscrow.selector;
         s[1] = ServiceCapacityFacet.setServiceCapacityEnabled.selector;
         s[2] = ServiceCapacityFacet.postCapacityDeposit.selector;
@@ -3267,6 +3267,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[18] = ServiceCapacityFacet.previewArming.selector;
         s[19] = ServiceCapacityFacet.isRotationEpochArchived.selector;
         s[20] = ServiceCapacityFacet.getServiceCapacityEscrowByEpoch.selector;
+        // #1219 review — the free-tier bucket the backstop and unbound routes charge.
+        s[21] = ServiceCapacityFacet.previewFreeTierCapacity.selector;
     }
 
     /// #1219 (S-4) — the standing-intent fill, split out of OfferMatchFacet (EIP-170 host split).

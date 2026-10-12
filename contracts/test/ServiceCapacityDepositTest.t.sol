@@ -35,7 +35,9 @@ contract ServiceCapacityDepositTest is SetupTest {
         uint8 indexed role, address indexed operator, uint64 indexed rotationEpoch, address token, uint256 amount, uint256 postBalance, uint256 eligibleAfter
     );
     event CapacityDepositParked(uint8 indexed role, address indexed operator, uint64 indexed rotationEpoch, uint256 requested, uint256 parkedRequest);
-    event CapacityDepositParkReleased(uint8 indexed role, address indexed operator, uint64 indexed rotationEpoch, uint256 paid, uint256 postBalance);
+    event CapacityDepositParkReleased(
+        uint8 indexed role, address indexed operator, uint64 indexed rotationEpoch, address token, uint256 paid, uint256 postBalance, uint256 eligibleAfter
+    );
     event ServiceCapacitySanctionsRefused(uint8 indexed role, address indexed operator, address indexed party, uint8 status);
     event ServiceCapacitySanctionsMarkerHealed(address indexed party);
     event ServiceCapacityEnabledSet(bool enabled);
@@ -101,6 +103,7 @@ contract ServiceCapacityDepositTest is SetupTest {
         _f().bindServiceCapacityEscrow();
         assertFalse(_f().isServiceCapacityEnabled(), "dark by default");
         _approve(10e18);
+        assertEq(_refusal(10e18), LibServiceCapacity.POST_CHANNEL_DARK, "the preview names the refusal");
         vm.prank(op);
         vm.expectRevert(IVaipakamErrors.ServiceCapacityDisabled.selector);
         _f().postCapacityDeposit(SOLVER, 10e18, _bind());
@@ -142,6 +145,7 @@ contract ServiceCapacityDepositTest is SetupTest {
     function test_Post_RefusedWhileTheEscrowIsUnbound() public {
         _f().setServiceCapacityEnabled(true);
         _approve(1e18);
+        assertEq(_refusal(1e18), LibServiceCapacity.POST_NOT_BOUND, "the preview names the refusal");
         vm.prank(op);
         vm.expectRevert(IVaipakamErrors.ServiceCapacityEscrowNotBound.selector);
         _f().postCapacityDeposit(SOLVER, 1e18, _bind());
@@ -217,8 +221,8 @@ contract ServiceCapacityDepositTest is SetupTest {
     function test_Refusals_ByName() public {
         _ready();
         vm.prank(op);
-        vm.expectRevert(IVaipakamErrors.InvalidAmount.selector);
-        _f().postCapacityDeposit(SOLVER, 0, _bind());
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.ServiceCapacityNothingToArm.selector, SOLVER, op));
+        _f().postCapacityDeposit(SOLVER, 0, _bind()); // a zero-principal post must arm something
         vm.prank(op);
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.ServiceCapacityRoleUnknown.selector, uint8(7)));
         _f().postCapacityDeposit(7, 1e18, _bind());
@@ -254,6 +258,7 @@ contract ServiceCapacityDepositTest is SetupTest {
         MockSanctionsList m = _oracle();
         m.setFlagged(op, true);
         _approve(10e18);
+        assertEq(_refusal(10e18), LibServiceCapacity.POST_SANCTIONED, "the preview names the refusal");
         vm.expectEmit(true, true, true, true, address(diamond));
         emit ServiceCapacitySanctionsRefused(SOLVER, op, op, LibServiceCapacity.STATUS_REFUSED_SANCTIONED);
         vm.prank(op);
@@ -292,7 +297,7 @@ contract ServiceCapacityDepositTest is SetupTest {
         vm.expectEmit(true, false, false, true, address(diamond));
         emit ServiceCapacitySanctionsMarkerHealed(op);
         vm.expectEmit(true, true, true, true, address(diamond));
-        emit CapacityDepositParkReleased(SOLVER, op, 0, 10e18, 0);
+        emit CapacityDepositParkReleased(SOLVER, op, 0, address(vpfi), 10e18, 0, 0);
         (status, paid) = _withdraw(SOLVER, 1e18);
         assertEq(status, LibServiceCapacity.STATUS_OK);
         assertEq(paid, 10e18, "the parked cap is released, no more and no less");
@@ -310,6 +315,7 @@ contract ServiceCapacityDepositTest is SetupTest {
         MockSanctionsList m = _oracle();
         m.setRevertOnRead(true);
         _approve(1e18);
+        assertEq(_refusal(1e18), LibServiceCapacity.POST_SANCTIONS_UNAVAILABLE, "the preview names the deferral");
         vm.prank(op);
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.ServiceCapacitySanctionsUnavailable.selector, op));
         _f().postCapacityDeposit(SOLVER, 1e18, _bind());
@@ -345,5 +351,29 @@ contract ServiceCapacityDepositTest is SetupTest {
         assertEq(_post(SOLVER, 1e18), LibServiceCapacity.STATUS_OK);
         (, uint256 paid) = _withdraw(SOLVER, 1e18);
         assertEq(paid, 1e18);
+    }
+
+    // ─── PR 1 pre-open review ───
+
+    function _refusal(uint256 amount) internal view returns (uint8 r) { (r, , , , ) = _f().previewArming(SOLVER, op, amount); }
+
+    /// @dev A post on a parked record whose operator now reads clean releases the park, and the
+    ///      stale cap goes with it: a later first flag parks only what is then requested.
+    function test_Sanctions_PostOnAParkedRecord_ReleasesThePark() public {
+        _ready();
+        _post(SOLVER, 10e18);
+        MockSanctionsList m = _oracle();
+        m.setFlagged(op, true);
+        _withdraw(SOLVER, 4e18); // parked: cap 4
+        assertEq(_dep(SOLVER).parkedRequest, 4e18, "fixture-live: parked at 4");
+        m.setFlagged(op, false);
+        _post(SOLVER, 5e18); // clean: the park is released and the raise lands
+        LibVaipakam.ServiceCapacityDeposit memory d = _dep(SOLVER);
+        assertEq(uint8(d.state), uint8(LibVaipakam.ServiceDepositState.Active));
+        assertEq(d.parkedRequest, 0, "the stale cap went with the park");
+        assertEq(d.amount, 15e18);
+        m.setFlagged(op, true);
+        _withdraw(SOLVER, 2e18); // a new first flag parks only the new request
+        assertEq(_dep(SOLVER).parkedRequest, 2e18);
     }
 }

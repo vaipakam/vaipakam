@@ -249,11 +249,14 @@ contract RewardCustodyEraTest is SetupTest, IVaipakamErrors {
         assertEq(_era().getCustodyEraCurrent(), 2);
         (uint256 receivedBefore, uint256 paidBefore) = _ledger();
         assertEq(receivedBefore, paidBefore, "no deficit on the new baseline");
+        (uint256 countedBefore, ) = _rlens().getDeliveredFreshPosition();
         _era().drainPendingSurplus(7e18);
         assertEq(_row(LibVaipakam.RewardCustodyRow.PendingSurplus), 0);
         assertEq(_live(), 7e18, "no deficit: the whole drain is headroom");
         (uint256 received, ) = _ledger();
         assertEq(received - receivedBefore, 7e18, "received rises with the credit");
+        (uint256 countedAfter, ) = _rlens().getDeliveredFreshPosition();
+        assertEq(countedAfter, countedBefore, "a re-credit is no delivery: the funding Base is reconciled against stands");
         vm.expectRevert(abi.encodeWithSelector(RewardCustodyRowShort.selector, uint8(LibVaipakam.RewardCustodyRow.PendingSurplus), 1, 0));
         _era().drainPendingSurplus(1);
     }
@@ -316,16 +319,47 @@ contract RewardCustodyEraTest is SetupTest, IVaipakamErrors {
         assertEq(_era().getCustodyEra(1).daysClosed, 0, "the empty era between gained nothing");
     }
 
-    /// @dev The known-era guard follows the registry.
-    function test_KnownEra_FollowsTheRegistry() public {
+    /// @dev #1566 PR 1 review (P3) — the day→era lookup is a binary search, so a registry deeper
+    ///      than the old 64-step scan cap still resolves: an old day's closure counts into era 0.
+    function test_ADeepRegistry_StillResolvesAnOldDaysEra() public {
+        activateRewardCustodyForTest(address(vpfi), 1e18);
+        MockRewardMessenger messenger = new MockRewardMessenger(address(diamond));
+        _rep().setRewardMessenger(address(messenger));
+        for (uint256 i; i < 35; ++i) {
+            _detach();
+            _reattach();
+        }
+        assertEq(_era().getCustodyEraCurrent(), 70, "fixture-live: deeper than the old scan cap");
+        _rep().closeDay(1);
+        (, , bool closed) = _clo().startDayClosure(1);
+        assertTrue(closed, "no obligation on day 1: closes at start");
+        assertEq(_era().getCustodyEra(0).daysClosed, 1, "the old day counts into era 0");
+        assertEq(_era().getCustodyEra(70).daysClosed, 0);
+    }
+
+    /// @dev #1566 PR 1 review (P3) — the pending-surplus drain is dark until the backfill, as the
+    ///      era release is: refused by name before any row is read.
+    function test_TheSurplusDrain_IsDarkUntilTheBackfill() public {
+        activateRewardCustodyForTest(address(vpfi), 0);
+        assertFalse(_era().isCustodyEraBackfillComplete(), "fixture-live: no backfill");
+        vm.expectRevert(CustodyEraBackfillPending.selector);
+        _era().drainPendingSurplus(1);
+    }
+
+    /// @dev #1566 PR 1 review (P2-1) — the known-era guard stays at the pre-backfill era while the
+    ///      reconciliation queues are keyed by it alone: a registry era opened by a role change is
+    ///      real, but it has no queue, and answering it would pair an empty queue with the global rows.
+    function test_KnownEra_StaysThePreBackfillEra_UntilTheQueuesAreEraKeyed() public {
         activateRewardCustodyForTest(address(vpfi), 1e18);
         RewardReconciliationFacet recon = RewardReconciliationFacet(address(diamond));
+        recon.getFreshQueueState(0);
         vm.expectRevert(abi.encodeWithSelector(ReconciliationUnknownEra.selector, uint64(1)));
         recon.getFreshQueueState(1);
         _detach();
-        recon.getFreshQueueState(1); // known now
-        vm.expectRevert(abi.encodeWithSelector(ReconciliationUnknownEra.selector, uint64(2)));
-        recon.getFreshQueueState(2);
+        assertEq(_era().getCustodyEra(1).openedAt, block.timestamp, "fixture-live: the registry opened era 1");
+        vm.expectRevert(abi.encodeWithSelector(ReconciliationUnknownEra.selector, uint64(1)));
+        recon.getFreshQueueState(1); // a registry era, with no queue of its own
+        recon.getFreshQueueState(0);
     }
 
     /// @dev Before activation the holder has no rows: the counters are levelled as
@@ -371,6 +405,7 @@ contract RewardCustodyEraTest is SetupTest, IVaipakamErrors {
     ///      needs no raw unfreeze.
     function test_TheBackfill_AssignsHistory_AndLiftsTheFreeze() public {
         activateRewardCustodyForTest(address(vpfi), 1e18);
+        assertTrue(_mut().getRewardRoleChangesFrozenRaw(), "straddle: activation before the backfill freezes");
         bytes32 h = _historyPacket(2e18, 41, keccak256("bf-1"));
         assertEq(_era().getCustodyEra(0).openClassification, 0, "fixture: not counted");
         assertFalse(_rlens().getIngressPacket(h).eraCounted);
@@ -408,6 +443,22 @@ contract RewardCustodyEraTest is SetupTest, IVaipakamErrors {
         fundRewardPoolForTest(address(vpfi), 1e18);
         assertFalse(_mut().getRewardRoleChangesFrozenRaw(), "a credit no longer re-arms the freeze");
         _rep().setBaseChainId(0); // no raw unfreeze needed any more
+        assertEq(_era().getCustodyEraCurrent(), 1, "the role change ran the carry-forward");
+    }
+
+    /// @dev #1566 PR 1 review (P2-3) — the freeze means "history not yet assigned": a chain
+    ///      whose backfill ran BEFORE it activated custody is not frozen by the activation, and
+    ///      its role still changes (before the fix it was frozen for good — nothing else lifts it).
+    function test_AnActivationAfterTheBackfill_DoesNotFreezeRoleChanges() public {
+        AdminFacet(address(diamond)).pause();
+        uint64 epoch = _pauseEpoch();
+        _era().startCustodyEraBackfill(epoch);
+        _era().completeCustodyEraBackfill(epoch, 0);
+        AdminFacet(address(diamond)).unpause();
+        activateRewardCustodyForTest(address(vpfi), 1e18);
+        assertTrue(_custody().rewardCustodyActivated(), "fixture-live: activated");
+        assertFalse(_mut().getRewardRoleChangesFrozenRaw(), "activation after the backfill leaves role changes open");
+        _rep().setBaseChainId(0); // no raw unfreeze needed
         assertEq(_era().getCustodyEraCurrent(), 1, "the role change ran the carry-forward");
     }
 
@@ -507,6 +558,27 @@ contract RewardCustodyEraTest is SetupTest, IVaipakamErrors {
         _era().tombstoneParkedBroadcast(id, bytes32("again"));
         vm.expectRevert(abi.encodeWithSelector(ParkedBroadcastUnknown.selector, id + 1));
         _era().tombstoneParkedBroadcast(id + 1, bytes32("none"));
+    }
+
+    /// @dev #1566 PR 1 review (P3) — a retryable kind-2 entry whose day has since landed by another
+    ///      route retires as APPLIED when the copy carries the same consensus (the kind-5 retry's
+    ///      replay always did), and is refused, staying parked, when it diverges.
+    function test_AParkedV1Entry_WhoseDayLandedIdentically_RetiresAsApplied() public {
+        _rotateDeployment(); // before activation: no era opens, so the entry is era 0's and retryable
+        activateRewardCustodyForTest(address(vpfi), 1e18);
+        uint256 id = _parkKind2(3);
+        assertFalse(_era().getParkedBroadcast(id).quarantineOnly, "fixture-live: a retryable entry");
+        _mut().setDayCapThreshold18(3, type(uint256).max);
+        _mut().setKnownGlobalDailyInterest(3, 11e18, 5e18, true); // landed DIVERGENT
+        vm.expectRevert(KnownGlobalAlreadySet.selector);
+        _rep().retryParkedBroadcastV1(id, 3, 10e18, 5e18, type(uint256).max, 1e18, 0, 0);
+        assertEq(_era().getParkedBroadcast(id).status, 0, "a divergent copy stays parked");
+        _mut().setKnownGlobalDailyInterest(3, 10e18, 5e18, true); // landed IDENTICAL
+        uint64 era = _era().getParkedBroadcast(id).custodyEraAtReceipt;
+        uint256 openBefore = _era().getCustodyEraParkedOpen(era);
+        _rep().retryParkedBroadcastV1(id, 3, 10e18, 5e18, type(uint256).max, 1e18, 0, 0);
+        assertEq(_era().getParkedBroadcast(id).status, 2, "a moot copy retires as applied");
+        assertEq(_era().getCustodyEraParkedOpen(era), openBefore - 1, "and leaves its era's open count");
     }
 
     /// @dev An era is not terminal while a broadcast parked in it stands; the
@@ -612,5 +684,23 @@ contract RewardCustodyEraTest is SetupTest, IVaipakamErrors {
         (, uint256 paid) = _ledger();
         assertEq(paid, paidBefore, "no live bound charge for era-funded absorption");
         assertEq(_live(), 0, "the live row only passed it through");
+    }
+}
+
+/// @title  RewardCustodyFirstRoleTest
+/// @notice #1566 PR 1 review (P2-2) — a FIRST configuration (Unconfigured → Mirror) opens no era
+///         but still LEVELS the delivered residual: deliveries received while unconfigured raised
+///         `received` and nothing charged `paid` in that role, so the first role must not inherit
+///         the gap as headroom. Its own contract, because the era suite's setUp configures the role.
+contract RewardCustodyFirstRoleTest is SetupTest {
+    function test_AFirstConfiguration_LevelsTheResidual_OpensNoEra() public {
+        setupHelper();
+        TestMutatorFacet(address(diamond)).setArmedFreshLedgerRaw(3e18, 1e18);
+        vm.chainId(42161);
+        RewardReporterFacet(address(diamond)).setBaseChainId(8453); // Unconfigured -> Mirror
+        (uint256 received, uint256 paid) = RewardCustodyFacet(address(diamond)).armedFreshLedger();
+        assertEq(received, 3e18, "fixture-live: the unconfigured chain received");
+        assertEq(paid, 3e18, "the first role inherits no delivered headroom");
+        assertEq(RewardEraFacet(address(diamond)).getCustodyEraCurrent(), 0, "no era opened");
     }
 }

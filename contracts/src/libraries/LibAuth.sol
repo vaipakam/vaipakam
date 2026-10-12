@@ -120,7 +120,7 @@ library LibAuth {
 
     /// @notice #393 v1-c — PRE-loan keeper authorization, keyed by the PRINCIPAL
     ///         (the party being acted for) instead of a loan's NFT holder. Used
-    ///         by `OfferMatchFacet.matchIntent` to gate a solver filling a
+    ///         by `OfferMatchIntentFacet.matchIntent` to gate a solver filling a
     ///         lender's `requiresKeeperAuth` standing intent: the loan doesn't
     ///         exist yet, so the loan-keyed `requireKeeperFor` can't apply.
     /// @dev    Same model as `requireKeeperFor` minus the per-loan toggle: allow

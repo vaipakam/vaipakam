@@ -7656,6 +7656,26 @@ ERA the packet was dispatched in** (review r3). The compact admission for
 the OLD wires is 3b's (above), so 3d changes no admission a live packet
 depends on; it is what lets the dispatch cap move. After 3b.
 
+> **LANDED — 3d-1 / 3d-2 (in #1566 PR 1).** As planned: the rooted wire
+> carries a root over fixed-size chunks of the day list, the authenticated
+> extent (capped at 256 chunks) and the split; chunks are indexed
+> permissionlessly, each proven against the root, once (a bitmap), each of
+> its fixed length; the flat-hash page and the rooted route refuse each
+> other's batches; every ordinary remittance moved onto the rooted wire
+> (3d-2), its send and its quote sharing one builder. Two things differ
+> from the plan, both named by the PR 1 pre-open review:
+> - **The era word is the PRE-REGISTRY constant, zero.** The plan has PR C
+>   replace it with the live era; PR C did not, and eras are numbered per
+>   chain, so a mirror whose role changed would quarantine every rooted
+>   remittance. How a sender addresses the DESTINATION's era is an open
+>   owner decision (the review's P1), together with routing classification
+>   to the packet's era (below).
+> - **The destination gas budget is derived, not matched.** The 300,000 the
+>   send declared (matched to the buyback receiver) was below even the typed
+>   ingress; the budget is now the measured ingress of both wires, cold and
+>   over the widest list, plus a reserve for the receiver's own work, and two
+>   gas cells pin it.
+
 - **The intended era is why 3d is a PR C dependency, not a loose end**
   (review r3). PR C's receive ingresses are specified to validate a
   packet's intended era against the live one and route a mismatch to
@@ -7690,6 +7710,47 @@ ceremonies.
 
 **Slice 4 PR C — the era-bound carry-forward (role transitions), after
 closure 2's cutover PR.**
+
+> **LANDED — C-1 … C-5 (in #1566 PR 1), with these departures from the plan
+> below.**
+> - **The registry** keeps, per era: the holder row, the days proven closed,
+>   the open-classification count, the opening deficit, the boundary day,
+>   the opening time, the staged holds on the row, and the terminal flag.
+>   A role change carries the LIVE ROW — the custody — into the retiring
+>   era's row and levels the delivered counters; a deficit is carried as the
+>   new era's opening deficit, covered first by its first credit.
+> - **No liability counter.** An era is terminal when every day of its span
+>   is proven closed by the per-day closure proof (3b-ii-B, counted into the
+>   era of the day), no packet of it is open for classification, its
+>   parked-broadcast lane is empty and nothing staged holds its row. Its row
+>   then releases to the live baseline under the deficit split, or into
+>   pending surplus while Detached (drained once a role is active).
+> - **No entry backfill.** The backfill assigns history PACKETS to the era
+>   live at their arrival; days are counted by the closure proof as they
+>   close. So **3b-ii-B must never deploy without C-1**: a day proven closed
+>   before C-1's counter exists is never counted, and the stamp cannot be
+>   re-proven, so its era could never finalize. Both ship in PR 1 — a deploy
+>   invariant, not a coincidence of the cut.
+> - **Classification is not yet era-routed.** A classification credits the
+>   live era whatever era its packet was counted in, and the reconciliation
+>   queues stay keyed by era 0 — so the known-era guard stays at era 0 until
+>   they are era-keyed (#1566 PR 1 review). Routing classification and
+>   corrections to the packet's era is open together with the sender's
+>   era addressing (3d's note above) — one owner decision.
+> - **A rooted remainder needs the operator.** A d6 packet stays counted
+>   open until its remainder is fully drawn, or released (the operator's
+>   acknowledgment, by design) and classified; an era's finalization waits
+>   on that pass for every remainder it holds.
+> - **Changed by the PR 1 review.** A day proves closed once the fold has
+>   reached it — the chain's own day close is not a condition, since the
+>   canonical chain may finalize a day the chain never closed itself and a
+>   detached mirror cannot close one, and such a day would have held its
+>   era, and every token rotation the era's row blocks, for ever (the
+>   rotation runbook now names the era rows). The day→era and time→era
+>   lookups are binary searches, so a deep registry never stalls a claim.
+>   An era release or a surplus drain is tallied as a RE-CREDIT, so the
+>   counted-funding view still reconciles against what Base sent. The
+>   surplus drain is dark until the backfill; the cutover version is 4.
 
 - An era registry: the current era id; per era, a holder row, an outstanding
   LIABILITY counter and an OPEN-CLASSIFICATION counter (§5c: two counters, two

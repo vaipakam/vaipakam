@@ -32,7 +32,9 @@ import {LibServiceCapacity} from "../libraries/LibServiceCapacity.sol";
  *         both facets — one source, two hosts; it is an INTERNAL call, so
  *         `msg.sender` (the solver / LIF recipient) is preserved exactly as
  *         before. Same storage, same Diamond, same selector: callers change
- *         nothing. Pre-live: no live chain routes the old host.
+ *         nothing. The testnets route `matchIntent` to the old host until their
+ *         refresh replaces it onto this facet (`RefreshAllFacetsInPlace` cuts it
+ *         as a Replace); no mainnet exists yet.
  */
 contract OfferMatchIntentFacet is DiamondReentrancyGuard, DiamondPausable {
     // ─── #393 v1-b — LenderIntentVault fill path ─────────────────────────
@@ -91,7 +93,7 @@ contract OfferMatchIntentFacet is DiamondReentrancyGuard, DiamondPausable {
     ///         rate floor `[minRateBps, MAX_INTEREST_BPS]`, the counterparty's
     ///         term (≤ `maxDurationDays`), and the collateral the intent's
     ///         `maxInitLtvBps` requires — with `creator = lender`, then routes it
-    ///         through the same audited `_executeMatch` as `matchOffers`. The
+    ///         through the same audited `executeMatch` as `matchOffers`. The
     ///         lender stays lender-of-record (`loan.lender == lender`), so every
     ///         downstream claim/VPFI/KYC/sanctions site is unchanged.
     /// @param lender              The standing-intent owner (= loan lender).
@@ -110,11 +112,6 @@ contract OfferMatchIntentFacet is DiamondReentrancyGuard, DiamondPausable {
         LibVaipakam._assertNotSanctioned(msg.sender); // solver = LIF recipient
         LibVaipakam._assertNotSanctioned(lender);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        // #1219 — one fill, charged to the actor the route names (direct solver,
-        // the adapter's bound operator, or the backstop's outer initiator's free
-        // tier). A keeper-authorized fill is ONE executed item: the keeper-auth
-        // check below stays an authorization, not a second charge.
-        LibServiceCapacity.chargeIntentFill(s);
         // Master gates: the matcher machinery (partialFillEnabled) + the
         // intent-path kill-switch. Both default off on a fresh deploy.
         if (!s.protocolCfg.partialFillEnabled) revert LibOfferMatchExecute.FunctionDisabled(3);
@@ -221,6 +218,13 @@ contract OfferMatchIntentFacet is DiamondReentrancyGuard, DiamondPausable {
         // `msg.sender` (the solver) is preserved as the matcher because this is
         // an INTERNAL call.
         loanId = LibOfferMatchExecute.executeMatch(sliceOfferId, counterpartyOfferId, 0);
+        // #1219 — one fill, charged to the actor the route names (direct solver,
+        // the adapter's bound operator, or the outer initiator's free tier — see
+        // `LibServiceCapacity.routeActor`), LAST, so a refused charge reverts the
+        // fill whole and `previewIntent` reports it as its last check. A
+        // keeper-authorized fill is ONE executed item: the keeper-auth check above
+        // stays an authorization, not a second charge.
+        LibServiceCapacity.chargeIntentFill(s);
 
         // Record exposure + the originating intent key (so the terminal-close
         // release survives a lender-position sale that mutates `loan.lender`).

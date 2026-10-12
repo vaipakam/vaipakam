@@ -467,7 +467,7 @@ library LibEncumbrance {
 
     /// @notice Release `amount` of `owner`'s un-lent intent capital for the
     ///         `(lend, coll)` pair from the lien back to FREE balance. Two
-    ///         callers: (1) `OfferMatchFacet.matchIntent` releases each fill
+    ///         callers: (1) `OfferMatchIntentFacet.matchIntent` releases each fill
     ///         slice so the existing materialize path (which asserts free
     ///         balance) can consume it; (2)
     ///         `LenderIntentFacet.withdrawLenderIntentCapital` releases the

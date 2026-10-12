@@ -256,7 +256,7 @@ abstract contract DiamondFacetNames {
             // #393 v1 — LenderIntentVault standing-terms surface. A lender
             // registers set-and-forget lending bounds for an ERC-20 pair; a
             // permissioned solver fills concrete offers within them via
-            // OfferMatchFacet.matchIntent. See `LenderIntentFacet.sol` natspec.
+            // OfferMatchIntentFacet.matchIntent. See `LenderIntentFacet.sol` natspec.
             "LenderIntentFacet",
             // #398 v1.5 — provisions + version-manages the per-aggregator
             // ERC-4626 lender adapters (HybridIntentLayer L3).

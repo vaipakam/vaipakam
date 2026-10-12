@@ -52,6 +52,17 @@ library LibServiceCapacity {
     /// @notice The withdrawal was PARKED by a first authoritative sanctions flag; nothing paid.
     uint8 internal constant STATUS_PARKED = 2;
 
+    /// @notice Why a post would be refused — the post's own checks, in its order,
+    ///         as {postWalk} returns them to the preview (the post reverts by name).
+    uint8 internal constant POST_OK = 0;
+    uint8 internal constant POST_CHANNEL_DARK = 1;         // ServiceCapacityDisabled
+    uint8 internal constant POST_NOT_BOUND = 2;            // VPFITokenNotSet / ServiceCapacityEscrowNotBound
+    uint8 internal constant POST_ARMING_DARK = 3;          // ServiceCapacityArmingDark
+    uint8 internal constant POST_NOTHING_TO_ARM = 4;       // ServiceCapacityNothingToArm
+    uint8 internal constant POST_RETIRED_BALANCE = 5;      // ServiceCapacityOldEpochBalanceStands
+    uint8 internal constant POST_SANCTIONED = 6;           // a refusal status, or SanctionedAddress
+    uint8 internal constant POST_SANCTIONS_UNAVAILABLE = 7; // ServiceCapacitySanctionsUnavailable
+
     /// @custom:event-category informational/config
     event ServiceCapacityEnabledSet(bool enabled);
     /// @custom:event-category informational/config
@@ -79,7 +90,12 @@ library LibServiceCapacity {
     /// @notice A parked withdrawal was released by an authoritative clean read: `paid` left the escrow; the record now holds `postBalance`.
     /// @custom:event-category state-change/service-capacity
     event CapacityDepositParkReleased(
-        uint8 indexed role, address indexed operator, uint64 indexed rotationEpoch, uint256 paid, uint256 postBalance
+        uint8 indexed role, address indexed operator, uint64 indexed rotationEpoch, address token, uint256 paid, uint256 postBalance, uint256 eligibleAfter
+    );
+    /// @notice Principal already deposited was ARMED without new principal (a zero-principal post): `armed` more is now eligible, `eligibleAfter` in all, of the `balance` the record holds.
+    /// @custom:event-category state-change/service-capacity
+    event CapacityDepositArmed(
+        uint8 indexed role, address indexed operator, uint64 indexed rotationEpoch, address token, uint256 armed, uint256 balance, uint256 eligibleAfter
     );
     /// @notice A deposit mutation was refused by a first authoritative sanctions flag on `party`; the marker was persisted; no value moved.
     /// @custom:event-category state-change/service-capacity
@@ -93,7 +109,10 @@ library LibServiceCapacity {
     /// @notice `actor` spent `cost` of `role` capacity for one executed item; the bucket now holds `balanceAfter` (units x 1e18).
     /// @custom:event-category state-change/service-capacity
     event CapacitySpent(uint8 indexed role, address indexed actor, uint256 cost, uint256 balanceAfter);
-    /// @notice `actor`'s `role` bucket was RESET to empty because its curve was retuned (epoch `fromEpoch` -> `toEpoch`).
+    /// @notice `initiator` spent `cost` of its FREE-TIER `role` bucket (the backstop route, or an unbound route) for one executed item; that bucket now holds `balanceAfter`.
+    /// @custom:event-category state-change/service-capacity
+    event CapacityFreeTierSpent(uint8 indexed role, address indexed initiator, uint256 cost, uint256 balanceAfter);
+    /// @notice `actor`'s `role` bucket forfeited the credit it earned under curve epoch `fromEpoch` (the curve was retuned to `toEpoch`); it accrues under the new curve from the moment that curve was set.
     /// @custom:event-category state-change/service-capacity
     event CapacityBucketReset(uint8 indexed role, address indexed actor, uint64 fromEpoch, uint64 toEpoch);
     /// @notice `adapter`'s fills are charged to `operator` (actor rule 2).
@@ -130,8 +149,10 @@ library LibServiceCapacity {
     /// @notice Set `role`'s curve (ADMIN). Floors: every figure positive and
     ///         `freeTier >= classCost`, so a zero-deposit operator can always
     ///         complete one action — the permissionless baseline the whole design
-    ///         preserves. Bumps the curve epoch: every bucket settled under the old
-    ///         curve resets at its next touch (the conservative branch). Dark ⟺
+    ///         preserves; `freeTier` small enough that the 4x ceiling fits a bucket.
+    ///         Bumps the curve epoch and records when it was set: every bucket
+    ///         settled under the old curve forfeits that credit at its next touch
+    ///         and accrues under this curve from the moment it was set. Dark ⟺
     ///         `freeTier == 0`: unset, or cleared by a token rotation (slice 3); the
     ///         epoch counter survives the clearing so a re-set curve still retires
     ///         every bucket of the old regime.
@@ -139,7 +160,10 @@ library LibServiceCapacity {
         internal
     {
         requireRole(role);
-        if (freeTier == 0 || freeRatePerSec == 0 || bondAt4x == 0 || classCost == 0 || freeTier < classCost) {
+        if (
+            freeTier == 0 || freeRatePerSec == 0 || bondAt4x == 0 || classCost == 0 || freeTier < classCost
+                || freeTier > type(uint128).max / 4
+        ) {
             revert IVaipakamErrors.ServiceCapacityCurveInvalid(role);
         }
         LibVaipakam.CapacityCurve storage c = s.capacityCurves[role];
@@ -148,6 +172,7 @@ library LibServiceCapacity {
         c.bondAt4x = bondAt4x;
         c.classCost = classCost;
         c.epoch += 1;
+        c.setAt = uint64(block.timestamp);
         emit CapacityCurveSet(role, freeTier, freeRatePerSec, bondAt4x, classCost, c.epoch);
     }
 
@@ -167,22 +192,47 @@ library LibServiceCapacity {
         ceiling = (c.freeTier * num) / c.bondAt4x;
     }
 
-    /// @notice What `actor`'s `role` bucket holds NOW: settled from its own last
-    ///         touch at its own rate, clamped to its own ceiling; zero if the
-    ///         bucket is unseen or belongs to a retired curve epoch. Pure view.
-    function accruedNow(LibVaipakam.Storage storage s, uint8 role, address actor)
+    /// @notice What `actor`'s `role` bucket holds NOW — the bonded bucket, or with
+    ///         `freeOnly` the actor's free-tier bucket (rules 3 and 4): one free
+    ///         action if unseen; otherwise settled at its own rate, clamped to its
+    ///         own ceiling, from its own last touch — or, for a bucket of a retired
+    ///         curve epoch, from the moment the live curve was set (the same rule
+    ///         {settle} applies, through {_settledBalance}). Pure view.
+    function accruedNow(LibVaipakam.Storage storage s, uint8 role, address actor, bool freeOnly)
         internal
         view
         returns (uint256 accrued, uint256 rate, uint256 ceiling, bool dark)
     {
         LibVaipakam.CapacityCurve storage c = s.capacityCurves[role];
         if (c.freeTier == 0) return (0, 0, 0, true);
-        (rate, ceiling) = curveAt(c, eligibleOf(s, role, actor));
-        LibVaipakam.CapacityBucket storage b = s.capacityBuckets[role][actor];
+        (rate, ceiling) = curveAt(c, freeOnly ? 0 : eligibleOf(s, role, actor));
+        LibVaipakam.CapacityBucket storage b = _bucket(s, role, actor, freeOnly);
         if (!b.seen) return (c.classCost, rate, ceiling, false);
-        if (b.curveEpoch != c.epoch) return (0, rate, ceiling, false);
-        uint256 raw = uint256(b.balance) + rate * (block.timestamp - b.lastTouch);
-        accrued = raw < ceiling ? raw : ceiling;
+        accrued = _settledBalance(b, c, rate, ceiling);
+    }
+
+    /// @dev The bucket a charge reads: the bonded `(role, actor)` bucket, or the
+    ///      free-tier one for the backstop and unbound routes.
+    function _bucket(LibVaipakam.Storage storage s, uint8 role, address actor, bool freeOnly)
+        private
+        view
+        returns (LibVaipakam.CapacityBucket storage)
+    {
+        return freeOnly ? s.capacityFreeBuckets[role][actor] : s.capacityBuckets[role][actor];
+    }
+
+    /// @dev A SEEN bucket's balance now: on the live curve epoch, its stored balance
+    ///      plus what it earned since its last touch; on a retired epoch, only what
+    ///      it earned under the live curve since that curve was set (the old credit
+    ///      is forfeited — never the bucket's future, which a refused spend would
+    ///      otherwise roll back on every attempt). Clamped to `ceiling`.
+    function _settledBalance(
+        LibVaipakam.CapacityBucket storage b, LibVaipakam.CapacityCurve storage c, uint256 rate, uint256 ceiling
+    ) private view returns (uint256) {
+        uint256 raw = b.curveEpoch == c.epoch
+            ? uint256(b.balance) + rate * (block.timestamp - b.lastTouch)
+            : rate * (block.timestamp - c.setAt);
+        return raw < ceiling ? raw : ceiling;
     }
 
     /// @notice Settle `actor`'s `role` bucket to now under the CURRENT curve and
@@ -199,7 +249,7 @@ library LibServiceCapacity {
         internal
         returns (LibVaipakam.CapacityBucket storage b, uint256 ceiling)
     {
-        b = s.capacityBuckets[role][actor];
+        b = _bucket(s, role, actor, freeOnly);
         uint256 rate;
         (rate, ceiling) = curveAt(c, freeOnly ? 0 : eligibleOf(s, role, actor));
         if (!b.seen) {
@@ -208,12 +258,13 @@ library LibServiceCapacity {
             // (slice 3) — so the ceiling here is the free tier, floored at one action.
             b.seen = true;
             b.balance = uint128(c.classCost);
-        } else if (b.curveEpoch != c.epoch) {
-            emit CapacityBucketReset(role, actor, b.curveEpoch, c.epoch);
-            b.balance = 0;
         } else {
-            uint256 raw = uint256(b.balance) + rate * (block.timestamp - b.lastTouch);
-            b.balance = uint128(raw < ceiling ? raw : ceiling);
+            // #1219 review P1: a retired-epoch bucket accrues from the live curve's
+            // set time (`_settledBalance`) rather than restarting empty HERE — an empty
+            // restart at the touch was rolled back by the refused spend it caused, so a
+            // seen actor stayed locked out after any retune.
+            if (b.curveEpoch != c.epoch) emit CapacityBucketReset(role, actor, b.curveEpoch, c.epoch);
+            b.balance = uint128(_settledBalance(b, c, rate, ceiling));
         }
         b.lastTouch = uint64(block.timestamp);
         b.curveEpoch = c.epoch;
@@ -234,7 +285,8 @@ library LibServiceCapacity {
         uint256 have = b.balance;
         if (have < cost) revert IVaipakamErrors.ServiceCapacityExhausted(role, actor, cost, have);
         b.balance = uint128(have - cost);
-        emit CapacitySpent(role, actor, cost, have - cost);
+        if (freeOnly) emit CapacityFreeTierSpent(role, actor, cost, have - cost);
+        else emit CapacitySpent(role, actor, cost, have - cost);
     }
 
     /// @notice Settle `actor`'s bucket under its current deposit — called by the
@@ -293,28 +345,59 @@ library LibServiceCapacity {
         }
     }
 
-    /// @notice The solver-route charge for `matchIntent`, resolving the ACTOR by
-    ///         route (the design's four rules): (1) a direct solver pays at its own
-    ///         capacity; (2) a registered adapter's fill is charged to the operator
-    ///         bound to it at creation — an adapter with no binding pays at its OWN
-    ///         free tier (never a bypass; the admin binds legacy adapters before a
-    ///         curve is set); (3) the backstop vault's fill is charged to the OUTER
-    ///         initiator's FREE tier, deposit ignored, so no user can exhaust a
-    ///         shared quota and rotation buys only the permissionless baseline.
+    /// @notice The ACTOR a fill or action by `caller` is charged to, by route — the
+    ///         design's four rules, resolved in ONE place for the charge and the
+    ///         preview: (1) a direct caller pays at its own capacity; (2) a registered
+    ///         adapter is charged to the operator bound to it at creation, never the
+    ///         adapter contract; (3) the backstop vault's fill is charged to the OUTER
+    ///         initiator's FREE tier, deposit ignored, so no user can exhaust a shared
+    ///         quota and rotation buys only the permissionless baseline; (4) a route
+    ///         with no binding — an unbound adapter, or a backstop fill with no
+    ///         recorded initiator — falls to the outer initiator's free tier, never to
+    ///         an intermediate contract. The outer initiator of a route the Diamond
+    ///         cannot see past is the transaction's originator: free-tier metering
+    ///         only, never authorization.
+    /// @param  backstopInitiator The initiator `backstopFill` recorded (zero in a preview).
+    function routeActor(LibVaipakam.Storage storage s, address caller, address backstopInitiator)
+        internal
+        view
+        returns (address actor, bool freeOnly)
+    {
+        if (caller == s.backstopVault) {
+            return (backstopInitiator == address(0) ? tx.origin : backstopInitiator, true);
+        }
+        if (s.isAggregatorAdapter[caller]) {
+            address op = s.adapterOperator[caller];
+            return op == address(0) ? (tx.origin, true) : (op, false);
+        }
+        return (caller, false);
+    }
+
+    /// @notice The solver-route charge for `matchIntent`: one fill, to the actor
+    ///         {routeActor} names for the caller.
     function chargeIntentFill(LibVaipakam.Storage storage s) internal {
+        address initiator = msg.sender == s.backstopVault ? takeBackstopInitiator() : address(0);
+        (address actor, bool freeOnly) = routeActor(s, msg.sender, initiator);
+        charge(uint8(LibVaipakam.ServiceCapacityRole.Solver), actor, freeOnly);
+    }
+
+    /// @notice The keeper-route charge for an aggregator ADAPTER acting on its own
+    ///         intent (rule 2; rule 4 when unbound): one action to its bound operator.
+    function chargeAdapterAction(LibVaipakam.Storage storage s) internal {
+        (address actor, bool freeOnly) = routeActor(s, msg.sender, address(0));
+        charge(uint8(LibVaipakam.ServiceCapacityRole.Keeper), actor, freeOnly);
+    }
+
+    /// @notice Whether a fill by `caller` would clear its capacity charge now — the
+    ///         previews' last check, through the same route rule and accrual as the
+    ///         charge. True while the solver limiter is dark.
+    function fillCovered(LibVaipakam.Storage storage s, address caller) internal view returns (bool) {
         uint8 solver = uint8(LibVaipakam.ServiceCapacityRole.Solver);
-        if (msg.sender == s.backstopVault) {
-            address initiator = takeBackstopInitiator();
-            charge(solver, initiator == address(0) ? msg.sender : initiator, true);
-            return;
-        }
-        if (s.isAggregatorAdapter[msg.sender]) {
-            address op = s.adapterOperator[msg.sender];
-            if (op == address(0)) charge(solver, msg.sender, true);
-            else charge(solver, op, false);
-            return;
-        }
-        charge(solver, msg.sender, false);
+        LibVaipakam.CapacityCurve storage c = s.capacityCurves[solver];
+        if (c.freeTier == 0) return true;
+        (address actor, bool freeOnly) = routeActor(s, caller, address(0));
+        (uint256 accrued,,,) = accruedNow(s, solver, actor, freeOnly);
+        return accrued >= c.classCost;
     }
 
     // ─── slice 3 — the arming fee ───
@@ -345,38 +428,77 @@ library LibServiceCapacity {
     }
 
     /// @notice The arming quote for posting `amount` into `operator`'s `role`
-    ///         deposit — the ONE walk the post executes and the preview shows, so
-    ///         a quote can never price what the post refuses. The principal newly
-    ///         ARMED is the part that lands below `bondAt4x` (the curve is flat
-    ///         beyond it, so principal above it buys nothing and owes nothing — a
-    ///         capacity-neutral raise is accepted and charged nothing, and principal
-    ///         armed again after a withdrawal pays again); `fee = granted × rate /
-    ///         1e18`; `ceilingAfter` is the capacity the deposit buys afterwards.
-    ///         `dark` (no positive rate, or the role's curve unset) ⇒ zeros.
+    ///         deposit. The ARMED (eligible) balance is the principal under the
+    ///         knee `bondAt4x` as it stood when the principal was armed, and only it
+    ///         buys capacity (#1219 review P2: a knee raised later arms nothing by
+    ///         itself — principal deposited above the old knee stays unarmed until a
+    ///         post arms it and pays for it). A post arms up to the live knee:
+    ///         `eligibleAfter = max(eligibleBefore, min(principalAfter, bondAt4x))`;
+    ///         `granted` is what that newly arms; `fee = ceil(granted × rate / 1e18)`
+    ///         (rounded up, so no armed principal is ever free); `ceilingAfter` is
+    ///         the capacity the armed balance buys. A zero-principal post therefore
+    ///         arms already-deposited excess. `dark` (no positive rate, or the role's
+    ///         curve unset) ⇒ zeros.
     function armingQuote(LibVaipakam.Storage storage s, uint8 role, address operator, uint256 amount)
         internal
         view
-        returns (uint256 fee, uint256 granted, uint256 ceilingAfter, bool dark)
+        returns (uint256 fee, uint256 granted, uint256 eligibleAfter, uint256 ceilingAfter, bool dark)
     {
         LibVaipakam.CapacityCurve storage c = s.capacityCurves[role];
-        if (s.armingFeeRate == 0 || c.freeTier == 0) return (0, 0, 0, true);
-        uint256 before = eligibleOf(s, role, operator);
-        uint256 after_ = before + amount;
-        uint256 armedBefore = before < c.bondAt4x ? before : c.bondAt4x;
-        uint256 armedAfter = after_ < c.bondAt4x ? after_ : c.bondAt4x;
-        granted = armedAfter - armedBefore;
-        fee = (granted * s.armingFeeRate) / 1e18;
-        (, ceilingAfter) = curveAt(c, after_);
+        if (s.armingFeeRate == 0 || c.freeTier == 0) return (0, 0, 0, 0, true);
+        LibVaipakam.ServiceCapacityDeposit storage d = s.serviceDeposits[role][operator][s.vpfiRotationEpoch];
+        uint256 before = d.eligibleAmount;
+        uint256 principalAfter = d.amount + amount;
+        uint256 kneeArmed = principalAfter < c.bondAt4x ? principalAfter : c.bondAt4x;
+        eligibleAfter = kneeArmed > before ? kneeArmed : before;
+        granted = eligibleAfter - before;
+        fee = granted == 0 ? 0 : (granted * s.armingFeeRate + 1e18 - 1) / 1e18;
+        (, ceilingAfter) = curveAt(c, eligibleAfter);
     }
 
-    /// @dev The quote, then the bind: dark refuses by name; each bound term that
-    ///      moved refuses by name, naming the term, what was bound and what stands.
+    /// @notice The post's own checks, in the post's order, without moving anything
+    ///         — the ONE walk {post} executes (reverting by name) and the preview
+    ///         returns (as a code), so a preview never quotes a post that would be
+    ///         refused. The sanctions read is the post's three-way read; the post
+    ///         alone persists a first flag.
+    function postWalk(LibVaipakam.Storage storage s, uint8 role, address operator, uint256 amount)
+        internal
+        view
+        returns (uint8 refusal, uint256 fee, uint256 granted, uint256 eligibleAfter, uint256 ceilingAfter)
+    {
+        requireRole(role);
+        if (!s.serviceCapacityEnabled) return (POST_CHANNEL_DARK, 0, 0, 0, 0);
+        if (s.vpfiToken == address(0) || s.serviceCapacityEscrow == address(0)) return (POST_NOT_BOUND, 0, 0, 0, 0);
+        bool dark;
+        (fee, granted, eligibleAfter, ceilingAfter, dark) = armingQuote(s, role, operator, amount);
+        if (dark) return (POST_ARMING_DARK, 0, 0, 0, 0);
+        if (amount == 0 && granted == 0) return (POST_NOTHING_TO_ARM, fee, granted, eligibleAfter, ceilingAfter);
+        uint64 live = s.vpfiRotationEpoch;
+        for (uint64 e = 0; e < live; e++) {
+            if (s.serviceDeposits[role][operator][e].amount != 0) {
+                return (POST_RETIRED_BALANCE, fee, granted, eligibleAfter, ceilingAfter);
+            }
+        }
+        if (s.sanctionsOracle != address(0)) {
+            LibVaipakam.SanctionsRead st = LibVaipakam.sanctionsStatus(operator);
+            if (st == LibVaipakam.SanctionsRead.Flagged) return (POST_SANCTIONED, fee, granted, eligibleAfter, ceilingAfter);
+            if (st == LibVaipakam.SanctionsRead.Unavailable) {
+                return (POST_SANCTIONS_UNAVAILABLE, fee, granted, eligibleAfter, ceilingAfter);
+            }
+        }
+        refusal = POST_OK;
+    }
+
+    /// @dev The quote, then the bind: dark refuses by name; nothing to arm refuses by
+    ///      name; each bound term that moved refuses by name, naming the term, what
+    ///      was bound and what stands.
     function _quoteAndBind(
         LibVaipakam.Storage storage s, uint8 role, address operator, uint256 amount, uint64 epoch, ArmingBind calldata bind
-    ) private view returns (uint256 fee, uint256 granted, uint256 ceilingAfter) {
+    ) private view returns (uint256 fee, uint256 granted, uint256 eligibleAfter, uint256 ceilingAfter) {
         bool dark;
-        (fee, granted, ceilingAfter, dark) = armingQuote(s, role, operator, amount);
+        (fee, granted, eligibleAfter, ceilingAfter, dark) = armingQuote(s, role, operator, amount);
         if (dark) revert IVaipakamErrors.ServiceCapacityArmingDark(role);
+        if (amount == 0 && granted == 0) revert IVaipakamErrors.ServiceCapacityNothingToArm(role, operator);
         if (fee > bind.maxFee) revert IVaipakamErrors.ServiceCapacityTermsMoved(0, bind.maxFee, fee);
         if (ceilingAfter < bind.minCapacityAfter) {
             revert IVaipakamErrors.ServiceCapacityTermsMoved(1, bind.minCapacityAfter, ceilingAfter);
@@ -496,12 +618,17 @@ library LibServiceCapacity {
     }
 
     /// @notice Post `amount` of the live VPFI into `operator`'s deposit for
-    ///         `role` (a raise when the record already holds principal), paying
-    ///         the arming fee the quote names BESIDE it. Refused while the channel
-    ///         is dark, while arming is dark (no positive fee rate, or no curve for
-    ///         the role), while a bound term moved, and while the operator still
-    ///         holds principal in a retired epoch. The eligible balance equals the
-    ///         principal: the fee is never taken out of it.
+    ///         `role` (a raise when the record already holds principal; with
+    ///         `amount == 0`, the arming of principal already deposited), paying the
+    ///         arming fee the quote names BESIDE it — never out of the principal.
+    ///         The checks are {postWalk}'s, in its order: refused while the channel
+    ///         is dark, while the escrow or token is unbound, while arming is dark
+    ///         (no positive fee rate, or no curve for the role), when nothing would
+    ///         be armed by a zero-principal post, while a bound term moved, and while
+    ///         the operator still holds principal in a retired epoch. The armed
+    ///         balance is the principal under the knee as of its arming
+    ///         ({armingQuote}). A post on a parked record whose operator now reads
+    ///         clean releases the park (nothing paid; the record is live again).
     /// @return status {STATUS_OK}, or {STATUS_REFUSED_SANCTIONED} with no value moved.
     function post(LibVaipakam.Storage storage s, uint8 role, address operator, uint256 amount, ArmingBind calldata bind)
         internal
@@ -509,10 +636,10 @@ library LibServiceCapacity {
     {
         requireRole(role);
         if (!s.serviceCapacityEnabled) revert IVaipakamErrors.ServiceCapacityDisabled();
-        if (amount == 0) revert IVaipakamErrors.InvalidAmount();
         (address escrow, address token) = escrowAndToken(s);
         uint64 epoch = s.vpfiRotationEpoch;
-        (uint256 fee, uint256 granted, uint256 ceilingAfter) = _quoteAndBind(s, role, operator, amount, epoch, bind);
+        (uint256 fee, uint256 granted, uint256 eligibleAfter, uint256 ceilingAfter) =
+            _quoteAndBind(s, role, operator, amount, epoch, bind);
         _requireNoRetiredBalance(s, role, operator, epoch);
         if (!screen(s, role, operator, operator)) return STATUS_REFUSED_SANCTIONED;
         LibVaipakam.ServiceCapacityDeposit storage d = s.serviceDeposits[role][operator][epoch];
@@ -521,13 +648,20 @@ library LibServiceCapacity {
             d.token = token;
             d.rotationEpoch = epoch;
         }
+        // The screen just read the operator clean: a parked record is live again, and
+        // its stale park cap goes with the park (#1219 review), so a later first flag
+        // parks only what is then requested.
+        bool releasedPark = d.state == LibVaipakam.ServiceDepositState.SanctionsParked;
         d.state = LibVaipakam.ServiceDepositState.Active;
+        d.parkedRequest = 0;
         settleOnDepositChange(s, role, operator); // elapsed credit under the OLD capacity, before the raise
-        _pull(token, operator, escrow, amount);
+        if (amount != 0) _pull(token, operator, escrow, amount);
         d.amount += amount;
-        d.eligibleAmount = d.amount;
+        d.eligibleAmount = eligibleAfter;
         s.serviceDepositEscrowByEpoch[epoch] += amount;
-        if (raise) emit CapacityDepositRaised(role, operator, epoch, token, amount, d.amount, d.eligibleAmount);
+        if (releasedPark) emit CapacityDepositParkReleased(role, operator, epoch, token, 0, d.amount - amount, d.eligibleAmount);
+        if (amount == 0) emit CapacityDepositArmed(role, operator, epoch, token, granted, d.amount, d.eligibleAmount);
+        else if (raise) emit CapacityDepositRaised(role, operator, epoch, token, amount, d.amount, d.eligibleAmount);
         else emit CapacityDepositPosted(role, operator, epoch, token, amount, d.amount, d.eligibleAmount);
         _chargeArmingFee(role, operator, epoch, token, fee, granted, ceilingAfter);
         return STATUS_OK;
@@ -580,9 +714,12 @@ library LibServiceCapacity {
         if (live) settleOnDepositChange(s, role, operator); // elapsed credit under the OLD capacity; the decrease clamps at the next touch
         bool released;
         if (d.state == LibVaipakam.ServiceDepositState.SanctionsParked) {
-            // The clean read releases the PARKED cap, never more; a further
-            // amount is a new request on the released record.
-            paid = d.parkedRequest < d.amount ? d.parkedRequest : d.amount;
+            // The clean read releases the park and serves the request in hand with
+            // it: the larger of the parked cap and this request, capped to the
+            // principal (#1219 review: a retired epoch's drain asks for the whole
+            // record and is paid it in one call; a retried request is not paid twice).
+            uint256 want = d.parkedRequest > amount ? d.parkedRequest : amount;
+            paid = want < d.amount ? want : d.amount;
             d.parkedRequest = 0;
             d.state = LibVaipakam.ServiceDepositState.Active;
             released = true;
@@ -591,10 +728,12 @@ library LibServiceCapacity {
             paid = amount;
         }
         d.amount -= paid;
-        d.eligibleAmount = d.amount;
+        // The armed balance never exceeds the principal, and a withdrawal never arms
+        // what it leaves behind (#1219 review P2): re-arming pays again.
+        if (d.eligibleAmount > d.amount) d.eligibleAmount = d.amount;
         s.serviceDepositEscrowByEpoch[d.rotationEpoch] -= paid;
         _release(escrow, d.token, operator, paid);
-        if (released) emit CapacityDepositParkReleased(role, operator, d.rotationEpoch, paid, d.amount);
+        if (released) emit CapacityDepositParkReleased(role, operator, d.rotationEpoch, d.token, paid, d.amount, d.eligibleAmount);
         else emit CapacityDepositWithdrawn(role, operator, d.rotationEpoch, d.token, paid, d.amount, d.eligibleAmount);
         return (STATUS_OK, paid);
     }

@@ -1385,6 +1385,27 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         assertEq(InteractionRewardsFacet(address(diamond)).sweepForfeitedInteractionRewards(LOAN), 0, "nothing left to sweep: the day is settled");
     }
 
+    /// @dev #1566 PR 1 review (P3) — the forfeited party cannot cancel the forfeit sweep's record
+    ///      before its deadline: the voluntary cancellation is a claimant's, and a forfeit has none.
+    ///      Past the deadline anyone may, the party included, as before.
+    function test_TheForfeitedParty_CannotCancelTheForfeitsRecord() public {
+        uint256 id = _scene();
+        _mut().setRewardEntryForfeitedRaw(id);
+        _mut().setLoanActiveLenderEntryId(LOAN, id);
+        _wideDay(true);
+        InteractionRewardsFacet(address(diamond)).sweepForfeitedInteractionRewards(LOAN);
+        RewardEpochViewFacet.StagingRecordView memory r = _rec();
+        assertEq(r.op, uint8(LibVaipakam.StagingOp.Forfeit), "fixture-live: the forfeit's record");
+        assertEq(r.user, alice, "fixture-live: keyed to the forfeited party");
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.StagingNotExpired.selector, _key(), r.deadline));
+        _settle().unwindStagedDayPage(_key());
+        vm.warp(uint256(r.deadline) + 1);
+        vm.prank(alice);
+        _settle().unwindStagedDayPage(_key()); // past the deadline: anyone, the party included
+        assertTrue(_rec().phase != uint8(LibVaipakam.StagingPhase.Staging), "the unwind ran");
+    }
+
     /// @dev A2-ii — an expiry's wide day is staged too: once the removal
     ///      point has begun on a day the live sources settled, a later wide
     ///      day stages under the expiry's commitment and resolves as the
@@ -1437,6 +1458,42 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         }
         assertTrue(announced, "the entry's expiry is announced on its last day, from the record's payout");
         assertEq(sweep.sweepExpiredInteractionRewards(ids), 0, "nothing left to sweep");
+    }
+
+    /// @dev #1566 PR 1 review (P2-5) — a staged EXPIRY keeps the sweep's rule: before its entry's
+    ///      removal has begun, a fresh shortfall under the 69M cap is NOT covered (the reservation
+    ///      refuses) rather than reserved and written off at resolution. Straddle: with the pool's
+    ///      headroom back the same record reserves.
+    function test_AStagedExpiry_DefersAFreshShortfall_BeforeRemoval() public {
+        _armedDay(1, NEED);
+        _mut().setGovernorCommitArmedFromDayRaw(1);
+        _loanSideOpen(1);
+        uint256 id = _entry(1, 2);
+        _mut().setArmedFreshLedgerRaw(0, 0);
+        _mut().userClaimFundingNeedRaw(alice);
+        ConfigFacet(address(diamond)).setRewardClaimHorizonDays(180);
+        _liveFresh(1e18);
+        _wideDayOn(1, 300); // day 1 is wide: the sweep stages it rather than settling it
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = id;
+        RewardHorizonSweepFacet sweep = RewardHorizonSweepFacet(address(diamond));
+        bytes32 key1 = keccak256(abi.encode(alice, LibVaipakam.RewardSide.Lender, uint256(1)));
+        sweep.sweepExpiredInteractionRewards(ids); // stamps
+        for (uint256 k; k < 60 && _view().getStagingRecord(key1).phase == uint8(LibVaipakam.StagingPhase.None); ++k) {
+            vm.warp(vm.getBlockTimestamp() + 7 days);
+            sweep.sweepExpiredInteractionRewards(ids);
+        }
+        assertEq(_view().getStagingRecord(key1).op, uint8(LibVaipakam.StagingOp.Expiry), "fixture-live: an expiry record");
+        assertFalse(_mut().getRewardEntryExpiryBegunRaw(id), "fixture-live: removal not begun");
+        _staging().prepareStagedDay(key1);
+        _staging().prepareStagedDay(key1);
+        _mut().setInteractionPoolPaidOut(LibVaipakam.VPFI_INTERACTION_POOL_CAP - 1); // the 69M headroom nearly gone: the day's fresh is short
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.StagingNotCovered.selector, key1));
+        _staging().reserveStagedDay(key1);
+        _mut().setInteractionPoolPaidOut(0);
+        // The owner is never stranded by the deferral: an uncovered record unwinds (owner any time, anyone past the deadline).
+        _staging().reserveStagedDay(key1); // straddle: covered again, it reserves
+        assertEq(_view().getStagingRecord(key1).phase, uint8(LibVaipakam.StagingPhase.Reserved));
     }
 
     /// @dev A2-ii — a sweep on a day a CLAIM's record holds defers on the
@@ -1701,7 +1758,8 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         _staging().prepareStagedDay(bobKey);
         assertTrue(_view().isTransportBatchPriorityUsed(hs[0], bobKey), "the one reservation, burnt");
         (, , bool held, bool open) = _window(hs[0]);
-        assertTrue(held, "and held"); assertFalse(open, "ordinary staging waits while the holder holds");
+        assertTrue(held, "and held");
+        assertTrue(open, "#1566 PR 1 review: once taken, the unreferenced remainder is anyone's");
         (uint256 sf, , uint256 refs) = _staged(hs[0]);
         assertEq(sf, TINY, "the whole batch, staged by the registrant"); assertEq(refs, 1);
         _assertConserved(hs);
@@ -1768,6 +1826,33 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         vm.warp(uint256(closesAt2));
         (, , , open) = _window(hs[0]);
         assertTrue(open, "no registrant: ordinary staging resumes for everyone");
+    }
+
+    /// @dev #1566 PR 1 review (P3) — a priority right that LAPSES untaken is burnt when the next
+    ///      window opens, as a taken one is: the registrant cannot hold the next window's priority by
+    ///      registering and never staging.
+    function test_ALapsedPriorityRight_IsBurntAtTheNextWindow() public {
+        (bytes32[] memory hs, ) = _stagedAndScanned();
+        (, bytes32 bobKey) = _rival("staging-bob", 78, 900);
+        _staging().prepareStagedDay(bobKey);
+        vm.startPrank(alice);
+        while (!_settle().unwindStagedDayPage(_key())) {}
+        vm.stopPrank();
+        _settle().registerForBatchWindow(bobKey, hs[0]);
+        (uint64 closesAt, bytes32 oldest, , ) = _window(hs[0]);
+        assertEq(oldest, bobKey, "fixture-live: bob holds the right");
+        vm.warp(uint256(closesAt) + 1 days + 1); // the right lapses untaken
+        assertFalse(_view().isTransportBatchPriorityUsed(hs[0], bobKey), "a lapse alone burns nothing yet");
+        // Alice re-stages the released batches ordinarily and cancels again: a new window opens.
+        assertEq(_claim(), 0);
+        (uint256 sf0, , uint256 refs0) = _staged(hs[0]);
+        assertGt(sf0 + refs0, 0, "fixture-live: alice re-staged the batch");
+        vm.startPrank(alice);
+        while (!_settle().unwindStagedDayPage(_key())) {}
+        vm.stopPrank();
+        assertTrue(_view().isTransportBatchPriorityUsed(hs[0], bobKey), "the lapsed right, burnt at the next window");
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.StagingPriorityUsed.selector, bobKey, hs[0]));
+        _settle().registerForBatchWindow(bobKey, hs[0]);
     }
 
     /// @dev A2-ii — the releaser may not re-take what it released, and is not

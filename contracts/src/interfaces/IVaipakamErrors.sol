@@ -972,15 +972,6 @@ interface IVaipakamErrors {
     error BroadcastEraUnauthenticated(
         uint256 dayId, address expected, address packetEra
     );
-    /// @notice A LEGACY broadcast (kind-5 / kind-2) attempted a FRESH
-    ///         apply after this mirror rotated Base eras (Codex #1632 r2:
-    ///         legacy packets carry no deployment identity, so a retired
-    ///         era's delayed or manually re-executed delivery is
-    ///         indistinguishable from a legitimate one — after a rotation
-    ///         the only legitimate sender speaks V3, and the legacy wires
-    ///         retire permanently). Replays of already-applied days stay
-    ///         idempotent.
-    error LegacyBroadcastRetired(uint256 dayId);
     /// @notice A re-delivered V3 broadcast disagreed with the day's already-
     ///         installed frozen clock facts (finalizedAt / schedule version /
     ///         inline parameters / zeroed marker).
@@ -1788,8 +1779,6 @@ interface IVaipakamErrors {
     // ── 3b-ii-B: the per-day closure proof ──
     /// @notice The day has not elapsed on this chain's clock: no closure can be proven for it.
     error ClosureDayNotElapsed(uint256 dayId);
-    /// @notice The chain has not closed the day itself yet (no local report): its side totals are not final.
-    error ClosureDayNotLocallyClosed(uint256 dayId);
     /// @notice The interest fold has not reached the day on at least one side (#2277): catch it up first.
     error ClosureFrontierShort(uint256 dayId, uint256 lenderFrontier, uint256 borrowerFrontier);
     /// @notice The day is already proven closed.
@@ -1855,8 +1844,6 @@ interface IVaipakamErrors {
     /// @notice Era `era` is not terminal: `daysClosed` of its `span` days are proven closed, and `openClassification`
     ///         packets stamped into it are not finally classified.
     error CustodyEraNotTerminal(uint64 era, uint256 daysClosed, uint256 span, uint256 openClassification);
-    /// @notice The era registry is too deep to resolve `dayId`'s era within the scan cap.
-    error CustodyEraScanExceeded(uint256 dayId);
     /// @notice Era `era` was already finalized.
     error CustodyEraAlreadyFinalized(uint64 era);
     /// @notice The pending-surplus drain needs an ACTIVE role (Canonical or Mirror); the chain's role is `role`.
@@ -1892,6 +1879,12 @@ interface IVaipakamErrors {
     // ── #1219 (S-4) — service capacity deposits ──
     /// @notice The service capacity deposit channel is dark: posting is refused (withdrawals stand).
     error ServiceCapacityDisabled();
+    /// @notice `adapter` is not a registered aggregator adapter: only an adapter's fills are bound to an operator.
+    error ServiceCapacityNotAnAdapter(address adapter);
+    /// @notice The capacity spend is reachable only by the Diamond's own self-call; `caller` is not the Diamond.
+    error ServiceCapacityOnlyDiamondInternal(address caller);
+    /// @notice A zero-principal post must arm something: nothing deposited is above the armed balance and under the knee.
+    error ServiceCapacityNothingToArm(uint8 role, address operator);
     /// @notice `role` is not a capacity role.
     error ServiceCapacityRoleUnknown(uint8 role);
     /// @notice The deposit escrow holder is not bound yet.

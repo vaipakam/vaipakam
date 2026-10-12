@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibRiskAccess} from "../libraries/LibRiskAccess.sol";
 import {LibOfferMatch} from "../libraries/LibOfferMatch.sol";
+import {LibServiceCapacity} from "../libraries/LibServiceCapacity.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibSaleListing} from "../libraries/LibSaleListing.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
@@ -189,7 +190,7 @@ contract RiskPreviewFacet {
     ///         party's live tier / standing consent doesn't cover the resulting
     ///         loan's pair; no-op when the gate is off. Standing consent only —
     ///         a keeper match authors no #662 acknowledgement to substitute.
-    /// @dev    Cross-facet entrypoint consumed by `OfferMatchFacet._executeMatch`
+    /// @dev    Cross-facet entrypoint consumed by `LibOfferMatchExecute.executeMatch`
     ///         (which is near the EIP-170 ceiling, so the classifier lives here).
     ///         The gated parties + pair come from {_resolveMatchActors}: a normal
     ///         match gates BOTH creators against the borrower offer's pair; a
@@ -250,7 +251,7 @@ contract RiskPreviewFacet {
     /// @dev    The intent-level guards + the shared match-admission core run in
     ///         {LibOfferMatch.previewIntent}; this wrapper layers the #671
     ///         risk-access gate on top (it owns the actor resolver), exactly as
-    ///         `OfferMatchFacet._executeMatch` calls {assertMatchAllowed} after
+    ///         `LibOfferMatchExecute.executeMatch` calls {assertMatchAllowed} after
     ///         `previewMatch`. The binding guarantee that this preview agrees
     ///         with the live fill is the `previewIntent` Ok ⟺ `matchIntent`
     ///         succeeds agreement test (`LenderIntentPreview.t.sol`).
@@ -279,7 +280,7 @@ contract RiskPreviewFacet {
         );
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
 
-        // Live order in `_executeMatch` (Codex #1115 r2): the intent-level guards
+        // Live order in `executeMatch` (Codex #1115 r2): the intent-level guards
         // and the slice's duration-cap + per-asset pause run BEFORE
         // `_createOfferSetup`'s SLICE-CREATOR (lender) risk gate
         // (`assertActorMayTransact`, gate-on only); the collateral floor, the
@@ -321,7 +322,7 @@ contract RiskPreviewFacet {
             // well-formed counterparty the two coincide, but a malformed / stale
             // one (asset-type mismatch => a post-gate `matchError`) has a
             // different, possibly riskier borrower pair (Codex #1115 r3); and for
-            // a sale vehicle `_executeMatch` reverts `SaleVehicleNotMatchable`
+            // a sale vehicle `executeMatch` reverts `SaleVehicleNotMatchable`
             // before `assertMatchAllowed` ever gates the sold-loan pair, so the
             // sold-loan pair must not gate the pre-match lender either (Codex
             // #1115 r4). Hence: always the slice pair here.
@@ -401,6 +402,14 @@ contract RiskPreviewFacet {
         ) {
             res.intentError = LibOfferMatch.IntentError.AcceptGateBlocked;
             res.ok = false;
+            return res;
+        }
+        // #1219 review — the fill's capacity charge is its LAST step (after the
+        // match), so it is this preview's last check, for the actor the fill's route
+        // names for `solver` (`LibServiceCapacity.routeActor`).
+        if (res.ok && !LibServiceCapacity.fillCovered(s, solver)) {
+            res.intentError = LibOfferMatch.IntentError.CapacityExhausted;
+            res.ok = false;
         }
     }
 
@@ -446,7 +455,7 @@ contract RiskPreviewFacet {
     ///      {assertMatchAllowed} and the non-reverting {previewMatchRiskBlock}.
     ///      `actorA` is always gated; `actorB` is gated only when non-zero.
     ///
-    ///      NORMAL match: `_executeMatch` calls `acceptOfferInternal(borrowerOfferId)`,
+    ///      NORMAL match: `executeMatch` calls `acceptOfferInternal(borrowerOfferId)`,
     ///      so the resulting loan copies its `tokenId` / `collateralTokenId` /
     ///      `prepayAsset` from the BORROWER offer (the match-time asset check pins
     ///      only the asset contracts + types, not those ids). Both creators are

@@ -49,6 +49,41 @@ contract AggregatorAdapterTest is SetupTest {
     uint32 internal constant MAX_DUR = 30;
     uint256 internal constant MIN_FILL = 1 ether;
     event CapacitySpent(uint8 indexed role, address indexed actor, uint256 cost, uint256 balanceAfter);
+    event CapacityFreeTierSpent(uint8 indexed role, address indexed initiator, uint256 cost, uint256 balanceAfter);
+
+    /// @dev #1219 review (rule 4) — an UNBOUND adapter's fill falls to the outer initiator's
+    ///      FREE tier (the transaction's originator), never to the adapter contract.
+    function test_unboundAdapterFill_ChargesTheOriginatorsFreeTier() public {
+        _deposit(20 ether);
+        uint256 cp1 = _postBorrower(5 ether);
+        uint8 role = uint8(LibVaipakam.ServiceCapacityRole.Solver);
+        vm.startPrank(owner);
+        ServiceCapacityFacet(address(diamond)).setAdapterOperator(address(adapter), address(0)); // as before the factory bound it
+        ServiceCapacityFacet(address(diamond)).setCapacityCurve(role, 1e18, 1e16, 100e18, 1e18);
+        vm.stopPrank();
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit CapacityFreeTierSpent(role, keeper, 1e18, 0);
+        vm.prank(keeper, keeper); // the keeper originates the transaction
+        assertGt(adapter.matchLoan(cp1, 5 ether), 0);
+        assertFalse(ServiceCapacityFacet(address(diamond)).getCapacityBucket(role, address(adapter)).seen, "never the adapter contract");
+    }
+
+    /// @dev #1219 review (rule 2) — the adapter rolling its OWN intent is a keeper action charged to
+    ///      its bound operator; before the fix the owner-acting adapter was never charged.
+    function test_adapterRoll_ChargesTheBoundOperator() public {
+        _deposit(DEPOSIT);
+        uint256 loanId = _match(500 ether);
+        address borrower_ = LoanFacet(address(diamond)).getLoanDetails(loanId).borrower;
+        vm.prank(borrower_);
+        RepayFacet(address(diamond)).repayLoan(loanId);
+        uint8 role = uint8(LibVaipakam.ServiceCapacityRole.Keeper);
+        vm.prank(owner);
+        ServiceCapacityFacet(address(diamond)).setCapacityCurve(role, 1e18, 1e16, 100e18, 1e18);
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit CapacitySpent(role, keeper, 1e18, 0);
+        vm.prank(keeper);
+        adapter.rollLoan(loanId);
+    }
 
     /// @dev #1219 (S-4) — an adapter's fill is charged to the operator BOUND to it at
     ///      creation (the keeper the factory was given; actor rule 2), never to the

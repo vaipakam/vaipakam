@@ -4,7 +4,6 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibOfferMatch} from "../libraries/LibOfferMatch.sol";
-import {LibRiskMath} from "../libraries/LibRiskMath.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
@@ -79,7 +78,13 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         view
         returns (LibOfferMatch.MatchResult memory result)
     {
-        return LibOfferMatch.previewMatch(lenderOfferId, borrowerOfferId);
+        result = LibOfferMatch.previewMatch(lenderOfferId, borrowerOfferId);
+        // #1219 review — the match's capacity charge is its last step, so it is
+        // this preview's last check: the caller is the matcher `matchOffers` charges.
+        if (
+            result.errorCode == LibOfferMatch.MatchError.Ok
+                && !LibServiceCapacity.fillCovered(LibVaipakam.storageSlot(), msg.sender)
+        ) result.errorCode = LibOfferMatch.MatchError.CapacityExhausted;
     }
 
     /// @notice Range Orders Phase 1 — match a lender offer against a
@@ -117,7 +122,6 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         // offer creators were already sanctions-checked at offer-
         // create time, so this single check covers the matcher.
         LibVaipakam._assertNotSanctioned(msg.sender);
-        LibServiceCapacity.chargeSolver(msg.sender); // #1219 — one fill at the matcher's capacity
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (!s.protocolCfg.partialFillEnabled) {
             // Master kill-switch: matching infra dormant until governance
@@ -127,7 +131,10 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
 
         // No borrower collateral floor: two on-chain offers each accepted
         // their own single-value / ranged collateral semantics at create time.
-        return LibOfferMatchExecute.executeMatch(lenderOfferId, borrowerOfferId, 0);
+        loanId = LibOfferMatchExecute.executeMatch(lenderOfferId, borrowerOfferId, 0);
+        // #1219 — one fill at the matcher's capacity, charged LAST (a refused charge
+        // reverts the match whole) so {previewMatch} reports it as its last check.
+        LibServiceCapacity.chargeSolver(msg.sender);
     }
 
     // ─── #396 v0.6 — keeper-matcher for signed offers ────────────────────
@@ -168,7 +175,7 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
     ///         on-chain offer) and decrements the OFF-chain `signedOfferFilled`
     ///         ledger; successive calls partial-fill the off-chain offer. The
     ///         match's collateral/HF safety is enforced by
-    ///         `LibOfferMatch.previewMatch` inside `_executeMatch`.
+    ///         `LibOfferMatch.previewMatch` inside `executeMatch`.
     /// @param o                   The signed offer terms.
     /// @param sig                 The signer's EIP-712 signature (EOA / 1271).
     /// @param counterpartyOfferId The on-chain offer on the OTHER side.
@@ -181,7 +188,6 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         uint256 fillAmount
     ) external nonReentrant whenNotPaused returns (uint256 loanId) {
         LibVaipakam._assertNotSanctioned(msg.sender); // matcher = LIF recipient
-        LibServiceCapacity.chargeSolver(msg.sender); // #1219 — one fill at the matcher's capacity
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (!s.protocolCfg.partialFillEnabled) {
             revert LibOfferMatchExecute.FunctionDisabled(3);
@@ -199,16 +205,16 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         s.signedOfferFilled[orderHash] = filledBefore + fillAmount;
 
         uint256 sliceOfferId = _materializeSlice(o, filledBefore, fillAmount);
-        // Route the slice into the correct side-slot. _executeMatch processes
+        // Route the slice into the correct side-slot. executeMatch processes
         // the BORROWER offer via acceptOfferInternal and injects the LENDER as
         // the counterparty, so the slice goes in whichever slot matches its
         // own offerType. `msg.sender` (the keeper) is preserved as the matcher
-        // because _executeMatch is an INTERNAL call.
+        // because executeMatch is an INTERNAL call.
         bool signedIsLender =
             LibVaipakam.OfferType(o.offerType) == LibVaipakam.OfferType.Lender;
         // Signed-BORROWER slice: pin the loan collateral to the signer's
         // interpolated floor for this fill (the slice's own `collateralAmount`,
-        // == its `collateralAmountMax`). See `_executeMatch`'s borrowerCollFloor
+        // == its `collateralAmountMax`). See `executeMatch`'s borrowerCollFloor
         // doc + the #616 P1 rationale. Signed-LENDER: 0 (the on-chain borrower
         // counterparty governs its own collateral).
         loanId = signedIsLender
@@ -218,6 +224,9 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
                 sliceOfferId,
                 s.offers[sliceOfferId].collateralAmount
             );
+        // #1219 — one fill at the matcher's capacity, charged after the match (a
+        // refused charge reverts the fill whole).
+        LibServiceCapacity.chargeSolver(msg.sender);
 
         // Transient-slice cleanup for the LENDER direction. The lender slice is
         // the match ACCEPTOR, so LoanFacet mints a FRESH loan lender-position

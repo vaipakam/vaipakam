@@ -267,8 +267,8 @@ contract RewardTransportEpochTest is SetupTest, IVaipakamErrors {
     /// because that is the claim — constant cost — and it is the claim a test
     /// can hold the code to. Asserting a total against the budget instead
     /// would be asserting something this PR neither causes nor can fix; see
-    /// `test_Ingress_BaselineAlreadyExceedsTheTransportBudget` below, which
-    /// records that separately and honestly.
+    /// `test_TheTypedIngress_FitsTheDestinationBudget` below, which pins the
+    /// ingress against the budget separately.
     function test_Admission_CostDoesNotScaleWithTheDayList() public {
         // A WARM-UP delivery first. The ledger's shared slots — the received
         // totals, the uncounted counter, the holder's row — are cold on the
@@ -311,33 +311,23 @@ contract RewardTransportEpochTest is SetupTest, IVaipakamErrors {
         );
     }
 
-    /// Recorded rather than asserted-away: the ingress ALREADY costs more than
-    /// the transport's declared destination budget, with no transport epoch
-    /// involved at all.
-    ///
-    /// Found while measuring the admission above. A typed delivery — which
-    /// opens no epoch and runs only the code that predates this PR — measured
-    /// about 400k against a declared 300k. That is a pre-existing gap between
-    /// `REWARD_BUDGET_DEST_GAS_LIMIT` and what the mirror ingress actually
-    /// costs, and it is not this PR's to close; the epoch's own contribution
-    /// is bounded by the test above.
-    ///
-    /// This test FAILS THE DAY THE GAP CLOSES, which is the point: whoever
-    /// fixes the budget should be told there is a test here describing the old
-    /// state, rather than finding a stale comment.
-    function test_Ingress_BaselineAlreadyExceedsTheTransportBudget() public {
-        uint256[] memory one = _days(1);
+    /// @dev #1566 PR 1 review (P2-5) — the TYPED (d5) ingress fits the destination budget the send
+    ///      declares, with the receiver's own work reserved. It did not while the budget was 300,000
+    ///      (about 400k measured — this cell recorded that gap until the budget was derived from the
+    ///      ingress). Measured COLD — the first ingress of the test, the worst case for the shared
+    ///      slots — over the widest list the wire carries, both legs typed.
+    function test_TheTypedIngress_FitsTheDestinationBudget() public {
+        uint256[] memory full = _days(LibRewardCustody.TRANSPORT_DAY_FANOUT_CAP);
         uint256 before = gasleft();
         _ingress().onRewardBudgetReceived(
-            address(vpfi), 10e18, one, CHAIN_BASE, 79, REMITTER, 10e18, 0, keccak256("gas-typed"), true
+            address(vpfi), 10e18, full, CHAIN_BASE, 79, REMITTER, 4e18, 6e18, keccak256("gas-typed"), true
         );
-        uint256 typedUsed = before - gasleft();
-        emit log_named_uint("typed ingress gas (no epoch)", typedUsed);
-        emit log_named_uint("declared destination budget ", LibRewardRemitDispatch.REWARD_BUDGET_DEST_GAS_LIMIT);
-        assertGt(
-            typedUsed,
+        uint256 used = before - gasleft();
+        emit log_named_uint("typed ingress gas", used);
+        assertLe(
+            used + LibRewardRemitDispatch.REWARD_BUDGET_RECEIVER_RESERVE,
             LibRewardRemitDispatch.REWARD_BUDGET_DEST_GAS_LIMIT,
-            "if this now fits, the pre-existing budget gap was closed - delete this test and say so"
+            "the typed ingress overruns the destination budget"
         );
     }
 

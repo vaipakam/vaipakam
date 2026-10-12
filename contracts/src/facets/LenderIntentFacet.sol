@@ -26,7 +26,7 @@ import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet
  *         registers a set-and-forget lending INTENT for an ERC-20 asset-pair
  *         (bounds: max exposure, min APR, max init-LTV, max term, min slice);
  *         a permissioned solver later materializes concrete offers within those
- *         bounds via `OfferMatchFacet.matchIntent` (v1-b), consuming the
+ *         bounds via `OfferMatchIntentFacet.matchIntent` (v1-b), consuming the
  *         lender's EXISTING per-user vault balance. The lender-of-record stays
  *         the depositing user (`loan.lender` = the intent owner), so the vault
  *         is never the on-chain lender and every downstream claim / VPFI / KYC /
@@ -440,7 +440,7 @@ contract LenderIntentFacet is
     }
 
     /// @notice Master kill-switch for the standing-intent fill path
-    ///         (`OfferMatchFacet.matchIntent`). Default `false`: lenders can
+    ///         (`OfferMatchIntentFacet.matchIntent`). Default `false`: lenders can
     ///         register intents but no fill executes until governance flips
     ///         this on post-bake. Same ship-off / governance-on / break-glass-
     ///         off pattern as `partialFillEnabled` / `internalMatchEnabled`.
@@ -592,6 +592,10 @@ contract LenderIntentFacet is
         if (LibAuth.requireKeeperForPrincipal(
             LibVaipakam.KEEPER_ACTION_AUTO_ROLL, io.owner
         )) LibServiceCapacity.chargeKeeper(); // #1219 — one keeper action
+        // #1219 review — an aggregator ADAPTER rolling its own intent acts as the
+        // owner, so no keeper is named above; its keeper's action is charged to the
+        // operator bound to the adapter (rule 2; rule 4 when unbound).
+        else if (s.isAggregatorAdapter[msg.sender]) LibServiceCapacity.chargeAdapterAction(s);
 
         // The lender claim (principal + interest) must be present, unconsumed,
         // and the intent's plain ERC-20 lending asset.

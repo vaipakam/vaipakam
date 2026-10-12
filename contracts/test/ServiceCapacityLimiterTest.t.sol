@@ -28,6 +28,7 @@ contract ServiceCapacityLimiterTest is SetupTest {
     uint256 internal constant COST = 1e18;
 
     event CapacitySpent(uint8 indexed role, address indexed actor, uint256 cost, uint256 balanceAfter);
+    event CapacityFreeTierSpent(uint8 indexed role, address indexed initiator, uint256 cost, uint256 balanceAfter);
     event CapacityBucketReset(uint8 indexed role, address indexed actor, uint64 fromEpoch, uint64 toEpoch);
     event CapacityCurveSet(uint8 indexed role, uint256 freeTier, uint256 freeRatePerSec, uint256 bondAt4x, uint256 classCost, uint64 epoch);
 
@@ -61,7 +62,7 @@ contract ServiceCapacityLimiterTest is SetupTest {
     /// @dev Slice 3 — through the quote: the preview prices the arming fee, the approval covers
     ///      principal + fee, the live terms are read BEFORE the prank (a view would consume it).
     function _deposit(address who, uint256 amount) internal {
-        (uint256 fee, , , ) = _f().previewArming(SOLVER, who, amount);
+        (, uint256 fee, , , ) = _f().previewArming(SOLVER, who, amount);
         (, uint64 epoch, ) = _f().getServiceCapacityEscrow();
         LibServiceCapacity.ArmingBind memory b = LibServiceCapacity.ArmingBind({
             maxFee: type(uint256).max, minCapacityAfter: 0, expectedRotationEpoch: epoch, expectedCurveEpoch: _f().getCapacityCurve(SOLVER).epoch
@@ -207,6 +208,63 @@ contract ServiceCapacityLimiterTest is SetupTest {
         vm.warp(block.timestamp + 25); // 25 s: a quarter action at the free rate, one at 4x
         _expectExhausted(op, 25e16);
         _spendFree(op);
-        _spend(op); // the same second, deposit-aware: admitted
+        _spend(op); // the same second, the BONDED bucket (its own, never the free tier's): admitted
+    }
+
+    // ─── PR 1 pre-open review ───
+
+    /// @dev P1 — a retune never locks a SEEN actor out. The refused spend at the retune instant
+    ///      rolls back, and the bucket re-earns under the new curve from the moment it was set:
+    ///      a second short of one action's refill it is still refused (straddle), at it the spend
+    ///      goes through.
+    function test_Retune_ASeenActorReearns_NeverLockedOut() public {
+        _curve();
+        _spend(op); // seen, empty
+        vm.warp(block.timestamp + 1_000);
+        _curve(); // epoch 2, set now
+        _expectExhausted(op, 0);
+        _spend(op);
+        vm.warp(block.timestamp + 99);
+        assertEq(_accrued(op), 99 * RATE, "re-earning under the new curve since it was set");
+        _expectExhausted(op, 99 * RATE);
+        _spend(op);
+        vm.warp(block.timestamp + 1);
+        assertEq(_accrued(op), COST, "one action's refill after the retune");
+        _spend(op); // admitted: never locked out
+        assertEq(_accrued(op), 0);
+    }
+
+    /// @dev Rule 3 — the backstop/unbound FREE-TIER bucket is its own: a bonded operator's stored
+    ///      credit above the free tier survives a free-tier charge, which is never clamped onto it.
+    function test_FreeTier_IsItsOwnBucket_NeverReclampsTheBonded() public {
+        _curve();
+        _deposit(op, AT4X); // bonded: 4x rate and ceiling
+        vm.warp(block.timestamp + 10_000);
+        assertEq(_accrued(op), 4 * FREE, "fixture-live: the bonded bucket holds its 4x ceiling");
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit CapacityFreeTierSpent(SOLVER, op, COST, 0);
+        _spendFree(op); // the free tier's one action, first touch
+        assertEq(_accrued(op), 4 * FREE, "the bonded credit is untouched");
+        (uint256 free, , uint256 freeCeil, ) = _f().previewFreeTierCapacity(SOLVER, op);
+        assertEq(free, 0, "the free-tier bucket spent its one action");
+        assertEq(freeCeil, FREE, "at the free tier, deposit ignored");
+    }
+
+    /// @dev The curve's free tier must leave the 4x ceiling inside a bucket's balance.
+    function test_SetCurve_RefusesAFreeTierTheBucketCannotHold() public {
+        uint256 bound = uint256(type(uint128).max) / 4;
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.ServiceCapacityCurveInvalid.selector, SOLVER));
+        _f().setCapacityCurve(SOLVER, bound + 1, RATE, AT4X, COST);
+        _f().setCapacityCurve(SOLVER, bound, RATE, AT4X, COST); // straddle: the bound itself is accepted
+    }
+
+    /// @dev Only a registered adapter is bound to an operator; the spend is the Diamond's own
+    ///      self-call, refused by its own name otherwise.
+    function test_AdapterBinding_AndTheSpendGate_RefuseByName() public {
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.ServiceCapacityNotAnAdapter.selector, address(0xBEEF)));
+        _f().setAdapterOperator(address(0xBEEF), op);
+        _curve();
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.ServiceCapacityOnlyDiamondInternal.selector, address(this)));
+        _f().capacitySpendInternal(SOLVER, op, 1, false);
     }
 }

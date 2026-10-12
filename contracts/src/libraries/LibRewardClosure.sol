@@ -16,12 +16,17 @@ import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 ///         `dayObligationsClosed[day]`. Zero cost on any settlement path; paid once
 ///         per day, ever, by whoever wants a batch listing it closed.
 ///
-///         Two conditions, because the stamp is irreversible (Codex #2274 r1/r2):
-///         admissible only after the chain's OWN day close (the side totals the
-///         completeness test compares against are final only once the day is
-///         folded and reported) AND only once both interest frontiers have reached
-///         the day (#2277 — the close stamp alone was not that guarantee; an EMPTY
-///         walk would otherwise pass conservation against two zero totals).
+///         Admissible only once both interest frontiers have reached the day,
+///         because the stamp is irreversible (Codex #2274 r1/r2, #2277): the side
+///         totals the completeness test compares against are final from then
+///         (registration and close writes land at today + 1 or later), and an
+///         EMPTY walk can no longer pass conservation against two unfolded zeros.
+///         The chain's OWN day close was this guarantee's first proxy and is not a
+///         condition (#1566 PR 1 review): the canonical chain may finalize a day
+///         the chain never closed itself — after which no close can land — and a
+///         detached mirror cannot close one, so requiring it would lock the day,
+///         the custody era it belongs to, and every token rotation that era's row
+///         blocks.
 ///
 ///         A walk is the STARTER's, keyed (day, starter, nonce), never a shared
 ///         per-day cursor: a caller who omits a covering id advances only their own
@@ -43,12 +48,11 @@ library LibRewardClosure {
         return keccak256(abi.encode("closure-walk", day, starter, nonce));
     }
 
-    /// @dev The two conditions above plus "elapsed" and "not yet closed"; reverts by name.
+    /// @dev The fold condition above plus "elapsed" and "not yet closed"; reverts by name.
     function requireAdmissible(LibVaipakam.Storage storage s, uint256 day) internal view {
         (uint256 today, bool active) = LibInteractionRewards.currentDayOrZero();
         if (!active || day >= today) revert IVaipakamErrors.ClosureDayNotElapsed(day);
         if (s.dayObligationsClosed[day]) revert IVaipakamErrors.ClosureDayAlreadyClosed(day);
-        if (s.chainReportSentAt[day] == 0) revert IVaipakamErrors.ClosureDayNotLocallyClosed(day);
         if (s.lenderFrontierDay < day || s.borrowerFrontierDay < day) {
             revert IVaipakamErrors.ClosureFrontierShort(day, s.lenderFrontierDay, s.borrowerFrontierDay);
         }

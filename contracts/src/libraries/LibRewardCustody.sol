@@ -106,6 +106,14 @@ library LibRewardCustody {
     ///         live-fresh row for the payout or absorption that follows, charged to no delivered bound.
     /// @custom:event-category state-change/reward-custody
     event CustodyEraDrawn(uint64 indexed era, uint256 indexed dayId, uint256 amount);
+    /// @notice `amount` of era `era`'s room was HELD for a standing staging reservation; `stagedFresh` is the
+    ///         era's total held after (#1566 PR 1 review — a hold is a movement of what the row may fund).
+    /// @custom:event-category state-change/reward-custody
+    event CustodyEraHeld(uint64 indexed era, uint256 amount, uint256 stagedFresh);
+    /// @notice A staging reservation's hold of `amount` on era `era` was released — consumed by its resolve or
+    ///         restored by its unwind; `stagedFresh` is the era's total held after.
+    /// @custom:event-category state-change/reward-custody
+    event CustodyEraHoldReleased(uint64 indexed era, uint256 amount, uint256 stagedFresh);
     /// @notice PR C-3 — packet `packetHash` holds unclassified value and is counted OPEN in era `era`.
     /// @custom:event-category state-change/reward-custody
     event IngressPacketEraCounted(bytes32 indexed packetHash, uint64 indexed era);
@@ -211,7 +219,11 @@ library LibRewardCustody {
     ///      (the staged record's pages), a vault-only delivery entry on the
     ///      custody facet, and the `Resolving` row in the attributed total —
     ///      an activation must see a custody cut that carries all three.
-    uint32 internal constant CUTOVER_VERSION = 3;
+    /// @dev 4 since slice 4 PR C (#1566 PR 1 review): {RewardEraFacet} adds
+    ///      holder-moving seams — the era draw a day's pricing makes, the era
+    ///      release and the pending-surplus drain — so a cut without that facet
+    ///      must not certify.
+    uint32 internal constant CUTOVER_VERSION = 4;
 
     /// @notice A complete facet cut recorded the custody protocol version and
     ///         the routing it installed.
@@ -389,10 +401,7 @@ library LibRewardCustody {
     ) internal {
         if (amount == 0) return;
         s.rewardCustodyRows[r] += amount;
-        // The freeze means "value attributed, history not yet assigned": once
-        // the backfill has run (PR C-5) the carry-forward makes a transition
-        // safe and a credit no longer re-arms it.
-        if (!s.custodyEraBackfillComplete && !s.rewardRoleChangesFrozen) s.rewardRoleChangesFrozen = true;
+        freezeRoleChangesUntilBackfill(s);
         emit RewardCustodyRowCredited(uint8(r), amount, origin);
     }
 
@@ -1002,6 +1011,11 @@ library LibRewardCustody {
         (toLive, toRestitution) = freshSplit(s, amount);
         uint256 received = s.rewardBudgetArmedFreshReceived;
         s.rewardBudgetArmedFreshReceived = received + amount;
+        // An in-holder re-credit (an era release, a surplus drain) raises the
+        // headroom basis but is no DELIVERY — its value was counted when it
+        // arrived — so it is tallied apart, and the counted-funding view nets
+        // it out (#1566 PR 1 review).
+        if (origin == 1) s.rewardBudgetFreshReCredited += amount;
         credit(s, LibVaipakam.RewardCustodyRow.LiveFresh, toLive, origin);
         credit(s, LibVaipakam.RewardCustodyRow.Restitution, toRestitution, origin);
         emit RewardCustodyFreshCredited(amount, toLive, toRestitution, received + amount);
@@ -1027,10 +1041,7 @@ library LibRewardCustody {
     ///         (`stagingEncumberedCount == 0`), so no reserved headroom straddles
     ///         the change.
     function retireCustodyEraOnRoleChange(LibVaipakam.Storage storage s, uint64 boundaryDay) internal {
-        uint256 received = s.rewardBudgetArmedFreshReceived;
-        uint256 paid = s.rewardBudgetArmedFreshPaid;
-        uint256 deficit = paid > received ? paid - received : 0;
-        if (paid < received) s.rewardBudgetArmedFreshPaid = received;
+        uint256 deficit = levelDeliveredResidual(s);
         if (!active(s)) return;
         uint64 era = s.custodyEraCurrent;
         uint256 carried = s.rewardCustodyRows[LibVaipakam.RewardCustodyRow.LiveFresh];
@@ -1049,6 +1060,31 @@ library LibRewardCustody {
         opened.openedAt = uint64(block.timestamp);
         opened.openingDeficit = deficit;
         emit CustodyEraOpened(next, boundaryDay);
+    }
+
+    /// @notice The freeze means "value attributed, history not yet assigned": it
+    ///         is armed by a holder credit and by custody activation, and only
+    ///         while the backfill (PR C-5) has not run — once history is assigned
+    ///         the carry-forward makes a transition safe, so neither re-arms it.
+    ///         One rule for both arming sites (#1566 PR 1 review: activation
+    ///         froze unconditionally, so a chain backfilled before it activated
+    ///         could never change role again).
+    function freezeRoleChangesUntilBackfill(LibVaipakam.Storage storage s) internal {
+        if (!s.custodyEraBackfillComplete && !s.rewardRoleChangesFrozen) s.rewardRoleChangesFrozen = true;
+    }
+
+    /// @notice Level the delivered ledger on a role change: `paid` rises to
+    ///         `received`, so an old delivered residual never becomes reusable
+    ///         headroom in the new role. Returns the DEFICIT (`paid` over
+    ///         `received`) the new era opens with. Every effective change runs it,
+    ///         a first configuration included (#1566 PR 1 review: typed deliveries
+    ///         received while Unconfigured raise `received`, nothing charges `paid`
+    ///         in that role, and a first role must not inherit that as headroom).
+    function levelDeliveredResidual(LibVaipakam.Storage storage s) internal returns (uint256 deficit) {
+        uint256 received = s.rewardBudgetArmedFreshReceived;
+        uint256 paid = s.rewardBudgetArmedFreshPaid;
+        deficit = paid > received ? paid - received : 0;
+        if (paid < received) s.rewardBudgetArmedFreshPaid = received;
     }
 
     /// @notice Writer 2 of 3 — release a RETIRED era's holder row once the era
@@ -1072,7 +1108,11 @@ library LibRewardCustody {
         LibVaipakam.CustodyEra storage e = s.custodyEras[era];
         if (e.terminal) revert IVaipakamErrors.CustodyEraAlreadyFinalized(era);
         uint256 span = custodyEraSpan(s, era);
-        if (e.daysClosed < span || e.openClassification != 0) {
+        // A staged hold on the row is unreachable here today — a staged record
+        // blocks closing its day — but releasing a held row would brick that
+        // record's payout, so the condition is stated, not inferred
+        // (#1566 PR 1 review).
+        if (e.daysClosed < span || e.openClassification != 0 || e.stagedFresh != 0) {
             revert IVaipakamErrors.CustodyEraNotTerminal(era, e.daysClosed, span, e.openClassification);
         }
         // PR C-4 — a parked era-less broadcast received in this era is neither a
@@ -1104,19 +1144,19 @@ library LibRewardCustody {
         return uint256(s.custodyEras[era + 1].boundaryDay) - uint256(s.custodyEras[era].boundaryDay);
     }
 
-    /// @dev The deepest the day→era scan walks; role changes are rare, so the
-    ///      registry stays short, and a pathological one must not stall a claim.
-    uint256 internal constant CUSTODY_ERA_SCAN_CAP = 64;
-
     /// @notice The era `dayId` was live in: the newest era whose boundary day is
     ///         at or before it; era 0 holds every earlier day.
+    /// @dev A BINARY search (#1566 PR 1 review): an era's boundary day is the
+    ///      day of the role change that opened it, so boundaries never fall as
+    ///      the registry grows, and the newest era at or before `dayId` is found
+    ///      in log-many reads however deep the registry — no scan cap, and no
+    ///      revert that would stall an old day's claim or closure.
     function custodyEraOfDay(LibVaipakam.Storage storage s, uint256 dayId) internal view returns (uint64 era) {
-        era = s.custodyEraCurrent;
-        uint256 steps;
-        while (era != 0) {
-            if (s.custodyEras[era].boundaryDay <= dayId) return era;
-            if (++steps > CUSTODY_ERA_SCAN_CAP) revert IVaipakamErrors.CustodyEraScanExceeded(dayId);
-            unchecked { --era; }
+        uint64 hi = s.custodyEraCurrent;
+        while (era < hi) {
+            uint64 mid = era + (hi - era + 1) / 2;
+            if (s.custodyEras[mid].boundaryDay <= dayId) era = mid;
+            else hi = mid - 1;
         }
     }
 
@@ -1125,6 +1165,10 @@ library LibRewardCustody {
     ///         holds the role check; the split is the same body as every other
     ///         fresh credit.
     function drainPendingSurplus(LibVaipakam.Storage storage s, uint256 amount) internal {
+        // Dark until the backfill, as the era release is (#1566 PR 1 review):
+        // stated here rather than left to the release being the row's only
+        // writer today.
+        if (!s.custodyEraBackfillComplete) revert IVaipakamErrors.CustodyEraBackfillPending();
         if (amount == 0) revert IVaipakamErrors.InvalidAmount();
         uint256 have = _debitRow(s, LibVaipakam.RewardCustodyRow.PendingSurplus, amount);
         _recordOutflow(s, LibVaipakam.RewardCustodyRow.PendingSurplus, have, amount, false, true);
@@ -1168,12 +1212,16 @@ library LibRewardCustody {
         if (amount == 0) return;
         uint256 room = custodyEraRoom(s, era);
         if (amount > room) revert IVaipakamErrors.CustodyEraRoomShort(era, amount, room);
-        s.custodyEras[era].stagedFresh += amount;
+        uint256 held = s.custodyEras[era].stagedFresh + amount;
+        s.custodyEras[era].stagedFresh = held;
+        emit CustodyEraHeld(era, amount, held);
     }
 
     function releaseCustodyEraHold(LibVaipakam.Storage storage s, uint64 era, uint256 amount) internal {
         if (amount == 0) return;
-        s.custodyEras[era].stagedFresh -= amount;
+        uint256 held = s.custodyEras[era].stagedFresh - amount;
+        s.custodyEras[era].stagedFresh = held;
+        emit CustodyEraHoldReleased(era, amount, held);
     }
 
     // ── Slice 4 PR C-3 — the open-classification count and the intended era ──
@@ -1265,13 +1313,13 @@ library LibRewardCustody {
     // ── Slice 4 PR C-5 — the history backfill ──
 
     /// @notice The era live at time `ts`: the newest era opened at or before it (era 0 for every earlier time).
+    /// @dev The same binary search as {custodyEraOfDay}: openings only grow.
     function custodyEraAtTime(LibVaipakam.Storage storage s, uint64 ts) internal view returns (uint64 era) {
-        era = s.custodyEraCurrent;
-        uint256 steps;
-        while (era != 0) {
-            if (s.custodyEras[era].openedAt <= ts) return era;
-            if (++steps > CUSTODY_ERA_SCAN_CAP) revert IVaipakamErrors.CustodyEraScanExceeded(ts);
-            unchecked { --era; }
+        uint64 hi = s.custodyEraCurrent;
+        while (era < hi) {
+            uint64 mid = era + (hi - era + 1) / 2;
+            if (s.custodyEras[mid].openedAt <= ts) era = mid;
+            else hi = mid - 1;
         }
     }
 
@@ -1492,9 +1540,13 @@ library LibRewardCustody {
     ///         body. A caller-supplied era that does not exist refuses here
     ///         rather than reading an empty era-keyed queue beside the
     ///         global custody figures as if it were one (Codex #2206 r9).
-    function requireKnownEra(uint64 era) internal view {
-        // Slice 4 PR C-1 — the registry answers: every era up to the live one exists.
-        if (era > LibVaipakam.storageSlot().custodyEraCurrent) revert IVaipakamErrors.ReconciliationUnknownEra(era);
+    function requireKnownEra(uint64 era) internal pure {
+        // The reconciliation QUEUES are keyed by the pre-backfill era alone —
+        // every entry is pushed under it — so a later registry era, real as it
+        // is, has no queue to read: answering it would pair an always-empty
+        // era-keyed queue with the global rows (#1566 PR 1 review). The guard
+        // follows the registry once the queues are era-keyed.
+        if (era != PRE_BACKFILL_ERA) revert IVaipakamErrors.ReconciliationUnknownEra(era);
     }
     uint8 internal constant PACKET_KIND_STRANDED_RETURN = 3;
     uint8 internal constant PACKET_KIND_CEREMONY_INFLOW = 4;
@@ -1980,10 +2032,11 @@ library LibRewardCustody {
     ///         The admission is COMPACT for every delivery, whatever its
     ///         list's length (Codex #2232 r2): it writes this batch's row and
     ///         nothing per-day. The receiver's callback runs inside
-    ///         `LibRewardRemitDispatch.REWARD_BUDGET_DEST_GAS_LIMIT` — 300,000
-    ///         — and 32 first-time per-day pushes cost two new storage slots
-    ///         each, which exceeds that budget on its own before the packet
-    ///         record and the custody relocation are counted. Indexing short
+    ///         `LibRewardRemitDispatch.REWARD_BUDGET_DEST_GAS_LIMIT` — a FIXED
+    ///         figure, derived from this compact admission — and a list's
+    ///         first-time per-day pushes cost two new storage slots each,
+    ///         growing with its length without bound (32 of them alone were
+    ///         over the 300,000 the budget stood at then). Indexing short
     ///         lists here would therefore have failed to deliver precisely the
     ///         in-flight old-wire messages this path exists to preserve.
     ///
@@ -3309,7 +3362,12 @@ library LibRewardCustody {
         uint256 members = len > passed ? len - passed : 0;
         uint256 lateNow = s.transportDayLateCount[r.day];
         members += lateNow > r.lateWorkBase ? lateNow - r.lateWorkBase : 0;
-        uint256 pages = scanPagesOf(members);
+        // A day no epoch lists has nothing to scan (#1566 PR 1 review): its
+        // record opened scan-complete and needs no preparation call, so it
+        // adds no page — the at-least-one floor is for a record that must
+        // be called. The list only grows, so an empty one was never scanned;
+        // an epoch listing the day later is forced work, counted below.
+        uint256 pages = len == 0 ? 0 : scanPagesOf(members);
         // …plus every page FORCED on the record (Codex #2308 r5, r10, r15,
         // r17, r22): the ones already taken, cumulatively; the restart a
         // generation move will cost, by its chain's pages; and the call that
@@ -3412,6 +3470,23 @@ library LibRewardCustody {
 
     function stagingKey(address user, LibVaipakam.RewardSide side, uint256 day) internal pure returns (bytes32) {
         return keccak256(abi.encode(user, side, day));
+    }
+
+    /// @notice A LEGACY-SLICE day record's key (A2-ii (c); #1566 PR 1 review): one
+    ///         per SLICE and day, derived from the slice's domain key — never the
+    ///         shared (user, side, day) key, under which two slices of one claimant
+    ///         and side shared one record and the second consumed the first's
+    ///         coverage (leaving the excess in `Unclassified` with no batch behind it).
+    function legacyRecordKey(bytes32 legacyDomain, uint256 day) internal pure returns (bytes32) {
+        return keccak256(abi.encode(legacyDomain, day));
+    }
+
+    /// @notice The key a record lives under, from its own fields — the ONE
+    ///         derivation every site that re-keys a record uses.
+    function recordKeyOf(LibVaipakam.StagingRecord storage r) internal view returns (bytes32) {
+        return r.op == LibVaipakam.StagingOp.LegacySlice
+            ? legacyRecordKey(r.domainKey, r.day)
+            : stagingKey(r.user, r.side, r.day);
     }
 
     function stagingCommitment(uint256[] memory entryIds, LibVaipakam.StagingOp op) internal pure returns (bytes32) {
@@ -3519,13 +3594,14 @@ library LibRewardCustody {
         uint64 closesAt = w.closesAt;
         if (closesAt == 0) return (true, false);
         if (block.timestamp < closesAt) return (false, false);
-        bytes32 winner = w.winnerNonceKey;
-        if (winner == bytes32(0)) {
+        if (w.winnerNonceKey == bytes32(0)) {
             bytes32 oldest = w.oldestNonceKey;
             if (oldest != bytes32(0) && _priorityRightStands(s, w, batchId)) return (nk == oldest, nk == oldest);
-        } else if (s.stagingBatchIndexPlusOne[winner][batchId] != 0) {
-            return (nk == winner, false);
         }
+        // Once the priority reservation is TAKEN it is the winner's referenced
+        // share, and the unreferenced remainder is anyone's — the contention
+        // rule, first staged wins (#1566 PR 1 review): holding the whole batch
+        // for the winner's lease let a tiny take freeze the rest of it.
         return (true, false);
     }
 
@@ -3553,6 +3629,18 @@ library LibRewardCustody {
     ///         settlement itself, and its surplus return is not a release.
     function openBatchWindow(LibVaipakam.Storage storage s, bytes32 batchId, bytes32 key) internal {
         LibVaipakam.TransportBatchWindow storage w = s.transportBatchWindows[batchId];
+        // A priority right the window being replaced let LAPSE untaken is burnt
+        // as a taken one is (#1566 PR 1 review): one priority chance per
+        // obligation and batch, so registering and never staging cannot hold
+        // the next window's priority — the hostage bound counts each
+        // controlled obligation once whichever way its chance ended.
+        bytes32 lapsed = w.oldestKey;
+        if (
+            lapsed != bytes32(0) && w.winnerNonceKey == bytes32(0)
+                && block.timestamp >= uint256(w.closesAt) + STAGING_RETRY_CADENCE
+        ) {
+            s.transportBatchPriorityUsed[batchId][lapsed] = true;
+        }
         w.closesAt = uint64(block.timestamp) + STAGING_GRACE;
         w.releasedBy = key;
         w.oldestKey = bytes32(0);
@@ -3769,7 +3857,7 @@ library LibRewardCustody {
             out[n++] = r.skippedIds[i];
             unchecked { ++i; }
         }
-        bytes32 nk = recordNonceKey(stagingKey(r.user, r.side, r.day), r.nonce);
+        bytes32 nk = recordNonceKey(recordKeyOf(r), r.nonce);
         for (uint256 i = from; i < to; ) {
             bytes32 id = log[i];
             // A restoration the record cannot stage yet for its window stays
@@ -3915,7 +4003,7 @@ library LibRewardCustody {
         LibVaipakam.StagingOp op,
         bytes32 domainKey
     ) internal returns (bytes32 key, uint256 staged) {
-        key = stagingKey(user, side, day);
+        key = op == LibVaipakam.StagingOp.LegacySlice ? legacyRecordKey(domainKey, day) : stagingKey(user, side, day);
         LibVaipakam.StagingRecord storage r = s.stagingRecords[key];
         bytes32 commitment = stagingCommitment(entryIds, op);
         bool opened;
@@ -4028,8 +4116,8 @@ library LibRewardCustody {
                 if (ok) {
                     if (priority) {
                         // The window's ONE priority reservation, taken: burnt
-                        // for this obligation on this batch for good, and held
-                        // against every other stager until this record lets go.
+                        // for this obligation on this batch for good; what it
+                        // took is its reference, and the remainder is open.
                         s.transportBatchPriorityUsed[id][key] = true;
                         s.transportBatchWindows[id].winnerNonceKey = recordNonceKey(key, r.nonce);
                         emit TransportBatchPriorityStaged(id, key);
@@ -4201,7 +4289,7 @@ library LibRewardCustody {
 
     function anySkippedNowStageable(LibVaipakam.Storage storage s, LibVaipakam.StagingRecord storage r) internal view returns (bool) {
         uint256 n = r.skippedIds.length;
-        bytes32 nk = recordNonceKey(stagingKey(r.user, r.side, r.day), r.nonce);
+        bytes32 nk = recordNonceKey(recordKeyOf(r), r.nonce);
         for (uint256 i; i < n; ) {
             (bool ok, ) = stageableFor(s, r.skippedIds[i], nk);
             if (ok) return true;

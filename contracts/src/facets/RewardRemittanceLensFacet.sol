@@ -359,7 +359,9 @@ contract RewardRemittanceLensFacet {
      *         it may legitimately pay. Base's own bound is
      *         {LibInteractionRewards.poolRemaining}.
      * @return counted   Σ authenticated fresh component of every
-     *                   composition-known delivery, whatever days it funds
+     *                   composition-known delivery, whatever days it funds —
+     *                   never an in-holder re-credit (an era release, a
+     *                   surplus drain), whose value was counted at delivery
      *                   (#1566 closure 2 retired the armed-attributable
      *                   test; the paid side is vintage-blind, so the
      *                   received side is too).
@@ -383,7 +385,13 @@ contract RewardRemittanceLensFacet {
         returns (uint256 counted, uint256 uncounted)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        counted = s.rewardBudgetArmedFreshReceived;
+        // Net of the in-holder re-credits (#1566 PR 1 review): an era release
+        // or a surplus drain raises the received side as headroom, but its
+        // value was counted at its delivery. Saturating: a demotion may have
+        // cut the received side below the tally.
+        uint256 received = s.rewardBudgetArmedFreshReceived;
+        uint256 reCredited = s.rewardBudgetFreshReCredited;
+        counted = received > reCredited ? received - reCredited : 0;
         uncounted = s.rewardBudgetFreshUncounted;
     }
 

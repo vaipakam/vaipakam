@@ -16,6 +16,7 @@ import {RewardStagingDomainFacet} from "../src/facets/RewardStagingDomainFacet.s
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
+import {LibRewardCustody} from "../src/libraries/LibRewardCustody.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 
@@ -180,6 +181,99 @@ contract RewardLegacySliceDomainTest is SetupTest, IVaipakamErrors {
         vm.prank(alice);
         (bool ok, ) = address(diamond).call(abi.encodeWithSelector(RewardClaimFacet.claimInteractionRewards.selector));
         assertFalse(ok, "settled once: nothing left to claim");
+    }
+
+    /// @dev #1566 PR 1 review (P2-2) — two slices of ONE claimant and side over the same listed
+    ///      day each keep their own day record: the second opens its own rather than preparing,
+    ///      and later consuming, the first slice's coverage. (Under the shared (user, side, day)
+    ///      key the second slice opened none and consumed the first's.)
+    function test_TwoSlicesOfOneClaimant_EachKeepTheirOwnRecord() public {
+        uint256 a = _legacyScene();
+        _mut().setFeeEntitlementRaw(
+            LOAN + 1,
+            LibVaipakam.FeeEntitlement({
+                borrowerMode: LibVaipakam.FeeEntitlementMode.None,
+                lenderMode: LibVaipakam.FeeEntitlementMode.None,
+                openDays: 2,
+                rewardHaircutBpsAtOpen: 0,
+                borrowerTariffPaid: 0,
+                lenderTariffPaid: 0,
+                cStarOpen: 0,
+                loanSideRewardCapOpen: type(uint128).max
+            })
+        );
+        uint256 b = _mut().pushRewardEntry(alice, LOAN + 1, LibVaipakam.RewardSide.Lender, 1e18, 1);
+        _mut().closeRewardEntryRaw(b, 3);
+        _mut().userClaimFundingNeedRaw(alice);
+        _epochOn(1, EPOCH, 7);
+        _liveFresh(_legacyTotal() + 1e18);
+        assertEq(_claim(), 0, "the first claim prepares the slices and defers");
+        (, , uint32 liveA, ) = _dom(a);
+        (, , uint32 liveB, ) = _dom(b);
+        assertEq(liveA, 1, "the first slice's own record");
+        assertEq(liveB, 1, "the second slice's own record, never the first's");
+    }
+
+    /// @dev #1566 PR 1 review (P2-3) — the slice of a loan still OPEN opens no domain: a claim does
+    ///      not stage its epochs, so no earmark sits in the staged total for the life of the loan
+    ///      (blocking custody activation). Before the fix the claim opened and prepared it.
+    function test_AnOpenLoansSlice_OpensNoDomain() public {
+        uint256 closed = _legacyScene(); // a CLOSED entry over the listed day: its slice prepares, so the claim succeeds
+        _mut().setFeeEntitlementRaw(
+            LOAN + 1,
+            LibVaipakam.FeeEntitlement({
+                borrowerMode: LibVaipakam.FeeEntitlementMode.None,
+                lenderMode: LibVaipakam.FeeEntitlementMode.None,
+                openDays: 2,
+                rewardHaircutBpsAtOpen: 0,
+                borrowerTariffPaid: 0,
+                lenderTariffPaid: 0,
+                cStarOpen: 0,
+                loanSideRewardCapOpen: type(uint128).max
+            })
+        );
+        uint256 open = _mut().pushRewardEntry(alice, LOAN + 1, LibVaipakam.RewardSide.Lender, 1e18, 1); // never closed
+        _mut().userClaimFundingNeedRaw(alice);
+        _epochOn(1, EPOCH, 7);
+        _liveFresh(_legacyTotal() + 1e18);
+        assertEq(_claim(), 0, "the claim succeeds: the closed slice prepares and defers");
+        (uint8 phaseClosed, , , ) = _dom(closed);
+        assertEq(phaseClosed, uint8(LibVaipakam.DomainPhase.Staging), "fixture-live: the claim persisted its preparation");
+        (uint8 phaseOpen, , , ) = _dom(open);
+        assertEq(phaseOpen, 0, "no domain for the open loan's slice");
+    }
+
+    /// @dev #1566 PR 1 review (P2-4) — a slice record that passes more pending epochs than it
+    ///      tracks stops staging and CONSUMES what it already holds: the claim still settles the
+    ///      slice (the epoch it staged pays its fresh leg, the live sources the rest). Before, the
+    ///      next preparation reverted `StagingPendingOverflow` inside every claim of the owner, for
+    ///      good — a legacy record is never unwound.
+    function test_AnOverflowingSliceRecord_ConsumesWhatItHolds_TheClaimStillSettles() public {
+        uint256 id = _legacyScene();
+        uint256 total = _legacyTotal();
+        bytes32 h = _epochOn(1, EPOCH, 7); // typed: the record stages it on its first page
+        for (uint256 i; i < 140; ++i) { // untyped: pending, more than one tracked page of them
+            vm.warp(vm.getBlockTimestamp() + 10);
+            bytes32 pid = keccak256(abi.encode("legacy-pending", i));
+            _ingress().onRewardBudgetReceived(address(vpfi), 1e12, _one(1), CHAIN_BASE, 500 + i, REMITTER, 0, 0, pid, false);
+            _epoch().materializeTransportBatchPage(keccak256(abi.encode(uint256(CHAIN_BASE), pid)), _one(1));
+        }
+        _liveFresh(total + 1e18);
+        bytes32 key = LibRewardCustody.legacyRecordKey(LibRewardCustody.legacyDomainKey(id), 1);
+        uint256 before = vpfi.balanceOf(alice);
+        bool overflowSeen;
+        uint256 paid;
+        for (uint256 k; k < 8 && paid == 0; ++k) {
+            paid = _claim(); // never reverts: each claim moves the slice one step
+            if (_view().getStagingRecord(key).pendingOverflow) overflowSeen = true;
+        }
+        assertTrue(overflowSeen, "fixture-live: the slice's record passed more pending epochs than it tracks");
+        assertEq(paid, total, "the claim still settles the whole slice");
+        assertEq(vpfi.balanceOf(alice) - before, total, "delivered whole");
+        (uint256 lf, ) = _legs(h);
+        assertEq(lf, EPOCH, "the epoch the record held paid its fresh leg");
+        (uint8 phase, , , ) = _dom(id);
+        assertEq(phase, 0, "the domain is gone");
     }
 
     /// @dev Anyone may drive the slice home ahead of the settlement; the claim

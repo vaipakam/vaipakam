@@ -2030,6 +2030,12 @@ library LibInteractionRewards {
             ctx.pruned = true;
             return true;
         }
+        // A venue the claimant named on THIS claim binds the DOMAIN — its days
+        // deliver through it — exactly as `setDomainVenue` would, the claimant
+        // and the Staging phase being the same authority (#1566 PR 1 review).
+        if (ctx.deliverTo != LibVaipakam.RewardDelivery.Default) {
+            LibRewardStaging.bindDomainVenue(dk, dom, ctx.deliverTo);
+        }
         _prepareDomainDays(s, dk, dom, user, side, ctx);
         return true;
     }
@@ -2113,9 +2119,11 @@ library LibInteractionRewards {
                     // its allocation, stamped with the domain. Nothing is
                     // persisted or drawn — the reservation and resolution are
                     // the domain's.
+                    // No venue of the record's own: the payout reads the
+                    // DOMAIN's, which the claim's venue bound above.
                     LibRewardCustody.callStageDayFromPlan(
-                        user, side, d, set, charge.planIds, charge.planFresh, charge.planRecycled, ctx.deliverTo,
-                        LibVaipakam.StagingOp.Claim, dk
+                        user, side, d, set, charge.planIds, charge.planFresh, charge.planRecycled,
+                        LibVaipakam.RewardDelivery.Default, LibVaipakam.StagingOp.Claim, dk
                     );
                     ctx.pruned = true;
                 }
@@ -4393,9 +4401,67 @@ library LibInteractionRewards {
         if (st.forfeit || st.deferred) return (false, expired, 0, 0);
         // Payable to its owner, or not a cap-trimmed remainder: the claimant's, not ours.
         if (toUser.total != 0 || st.rawSplit.total == 0) return (false, expired, 0, 0);
+        // #1566 PR 1 review (P1) — the cap-trimmed day retires as a CLAIM retires a
+        // capped day, never through the expiry settlement: that settlement prices
+        // with the cap OFF (an expiry recycles like a forfeit), so it drew the pool
+        // for the capped-off share and credited it to the bucket — value the cap
+        // had refused ("retired, not paid"; "no bucket credit"). Nothing is credited
+        // here: `freshCredited` and `armedDelivered` stay zero, `expired` carries
+        // only the commitments to retire, and no expiry begins.
         uint64 before = s.rewardEntryClaimNextDay[id];
-        (expired, freshCredited, armedDelivered) = _settleExpiredDay(s, id, e, freshHeadroom, deliveredAllowance, tp);
+        expired = _retireCappedDay(s, id, e, freshHeadroom, deliveredAllowance, tp);
         retired = e.processed || s.rewardEntryClaimNextDay[id] != before;
+    }
+
+    /// @notice B-6 — one day of an entry the loan-side cap trims to a zero user split
+    ///         was RETIRED the way a claim retires a capped day: `armedFresh` of fresh
+    ///         commitment and `recycled` of recycled commitment released; nothing
+    ///         paid, nothing credited to the recycle bucket, the pool not drawn.
+    /// @custom:event-category state-change/reward-entry
+    event RewardEntryCapRetired(uint256 indexed entryId, uint256 indexed dayId, uint256 armedFresh, uint256 recycled);
+
+    /// @dev One cursor day of a cap-trimmed entry, priced with the CLAIM's pricing
+    ///      (`_dayContext()`, `recycleSettlement` off: the loan-side cap applies), so
+    ///      the day's value lands in `cappedOff` and the user split is zero. Returns the
+    ///      commitments to retire (the three-term armed sum, and the capped-off
+    ///      recycled); the caller retires them and credits nothing. A day the shared
+    ///      set rule refuses, one a staging record holds, one not yet priceable, or one
+    ///      that prices to anything payable is left as it is — never a revert, so a
+    ///      batch never aborts on one entry.
+    function _retireCappedDay(
+        LibVaipakam.Storage storage s,
+        uint256 id,
+        LibVaipakam.RewardEntry storage e,
+        uint256 freshHeadroom,
+        uint256 deliveredAllowance,
+        TransportLegs memory tp
+    ) private returns (EntrySplit memory retire) {
+        uint256 d = _shareOfPoolCursorDay(s, id, e);
+        if (d >= e.endDay || s.dayCapMode[d] != LibVaipakam.CapMode.ShareOfPool) return retire;
+        uint256[] memory set = new uint256[](1);
+        set[0] = id;
+        {
+            (bool valid, ) = entrySetDefect(s, e.user, d, set, true, bytes32(0));
+            if (!valid) return retire;
+        }
+        (DayCharge memory charge, DaySlice[] memory slices) = processUserSideDay(
+            e.user,
+            d,
+            set,
+            PoolBudget({
+                fresh: freshHeadroom,
+                recycled: LibVpfiRecycle.bucketAvailable(s),
+                deliveredFresh: deliveredAllowance
+            }),
+            _dayContext()
+        );
+        if (!charge.advanced || charge.toUser.total != 0 || charge.toTreasury.total != 0) return retire;
+        _persistDay(s, e.user, e.side, d, set, slices);
+        _drawAndFold(d, charge, tp);
+        retire.armedFresh = charge.toUser.armedFresh + charge.toTreasury.armedFresh + charge.cappedOff.armedFresh;
+        retire.recycled = charge.cappedOff.recycled;
+        retire.total = retire.armedFresh + retire.recycled;
+        emit RewardEntryCapRetired(id, d, retire.armedFresh, retire.recycled);
     }
 
     /// @notice A zero-priced remainder's EMPTY window was retired (B-6): nothing paid, nothing owed.
@@ -5333,6 +5399,11 @@ library LibInteractionRewards {
 
         // The legacy slice consumes its staged epoch coverage FIRST (A2-ii (c)).
         bool ready;
+        // #1566 PR 1 review — only a CLAIMABLE entry's slice stages its epochs: an
+        // open loan's slice would otherwise hold its earmark in the staged total for
+        // the life of the loan (blocking custody activation and lowering everyone's
+        // backing room), and an unclaimable entry is not priced below anyway.
+        if (!_entryClaimable(s, e)) return (toUser, toTreasury, 0, stepped);
         (ready, epochFresh, stepped) = LibRewardCustody.callLegacySliceEpochs(id);
         if (!ready) return (toUser, toTreasury, 0, stepped);
         EntryPriceState memory st;
@@ -5416,6 +5487,11 @@ library LibInteractionRewards {
         // not ready — the slice's listed days are still being prepared or
         // consumed, one step run just now — means the entry defers whole.
         bool ready;
+        // #1566 PR 1 review — only a CLAIMABLE entry's slice stages its epochs: an
+        // open loan's slice would otherwise hold its earmark in the staged total for
+        // the life of the loan (blocking custody activation and lowering everyone's
+        // backing room), and an unclaimable entry is not priced below anyway.
+        if (!_entryClaimable(s, e)) return (toUser, toTreasury, 0, stepped);
         (ready, epochFresh, stepped) = LibRewardCustody.callLegacySliceEpochs(id);
         if (!ready) return (toUser, toTreasury, 0, stepped);
         LoanSideCapCharge memory c;

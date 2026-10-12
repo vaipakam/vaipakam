@@ -49,7 +49,7 @@ contract BackstopVaultTest is SetupTest {
     uint256 internal constant MIN_FILL = 1 ether;
 
     uint64 internal base; // a sane base timestamp for the deadline math
-    event CapacitySpent(uint8 indexed role, address indexed actor, uint256 cost, uint256 balanceAfter);
+    event CapacityFreeTierSpent(uint8 indexed role, address indexed initiator, uint256 cost, uint256 balanceAfter);
 
     /// @dev #1219 (S-4) — the backstop route charges the OUTER initiator's FREE tier,
     ///      never the shared vault (actor rule 3): the refusal names the poker, and the
@@ -67,7 +67,7 @@ contract BackstopVaultTest is SetupTest {
         ServiceCapacityFacet(address(diamond)).setCapacityCurve(role, 1e18, 1e16, 100e18, 1e18);
         address poker = makeAddr("poker-cap");
         vm.expectEmit(true, true, false, true, address(diamond));
-        emit CapacitySpent(role, poker, 1e18, 0); // the POKER's one free action, not the vault's
+        emit CapacityFreeTierSpent(role, poker, 1e18, 0); // the POKER's one free action, from the free-tier bucket
         vm.prank(poker);
         uint256 loanId = BackstopFacet(address(diamond)).backstopFill(offerId1);
         assertGt(loanId, 0, "filled by the backstop on the poker's free action");
@@ -75,6 +75,10 @@ contract BackstopVaultTest is SetupTest {
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.ServiceCapacityExhausted.selector, role, poker, 1e18, 0));
         BackstopFacet(address(diamond)).backstopFill(offerId2);
         assertFalse(ServiceCapacityFacet(address(diamond)).getCapacityBucket(role, vault).seen, "the vault is never charged");
+        assertFalse(
+            ServiceCapacityFacet(address(diamond)).getCapacityBucket(role, poker).seen,
+            "#1219 review: the free-tier route never touches the poker's bonded bucket"
+        );
     }
 
     function setUp() public {

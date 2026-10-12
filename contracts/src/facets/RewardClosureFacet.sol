@@ -25,9 +25,9 @@ contract RewardClosureFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
     event DayObligationsClosed(uint256 indexed day, address indexed starter, uint64 nonce);
 
     /// @notice Open a closure walk for `day` under the caller's next nonce. Admissible
-    ///         only for an elapsed day this chain has closed and both interest
-    ///         frontiers have reached (#2277), and not yet proven closed. A day with
-    ///         no obligation on either side closes here.
+    ///         only for an elapsed day both interest frontiers have reached (#2277),
+    ///         and not yet proven closed — the chain's own day close is not required
+    ///         (#1566 PR 1 review). A day with no obligation on either side closes here.
     /// @return key       The walk's key.
     /// @return nonce     The caller's nonce for it.
     /// @return dayClosed Whether the day closed at once (nothing to visit).

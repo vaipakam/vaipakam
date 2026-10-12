@@ -16,8 +16,8 @@ import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 /// @notice 3b-ii-B — a past day is proven CLOSED once every obligation covering it
 ///         has terminated: a starter-keyed, resumable walk in the accumulation's
 ///         shape (ascending ids, the cover check, completeness by conservation
-///         against the folded side totals), admissible only after the chain's own
-///         day close with the fold at the day. An omission poisons only its
+///         against the folded side totals), admissible once the fold has reached the
+///         day — the chain's own day close is not required. An omission poisons only its
 ///         author's walk; the day is stamped by the first walk to complete.
 contract RewardClosureProofTest is SetupTest, IVaipakamErrors {
     MockRewardMessenger internal messenger;
@@ -64,7 +64,7 @@ contract RewardClosureProofTest is SetupTest, IVaipakamErrors {
         _mut().setInterestFoldDeltaRaw(end, -int256(perDay), 0);
     }
 
-    /// @dev The chain closes `d` itself (folding through it): the proof's first condition.
+    /// @dev The chain closes `d` itself, which folds through it.
     function _closeLocally(uint256 d) internal {
         vm.warp(launch + (d + 1) * 1 days + 1);
         _rep().closeDay(d);
@@ -113,17 +113,37 @@ contract RewardClosureProofTest is SetupTest, IVaipakamErrors {
         assertTrue(_clo().proveDayClosurePage(D, nonce, 0, _ids(id1, id2)));
     }
 
-    /// @dev Admissibility: an elapsed day the chain has closed itself; nothing before.
-    function test_Admissibility_ElapsedAndLocallyClosed() public {
+    /// @dev Admissibility: an elapsed day the fold has reached — nothing before; the chain's own
+    ///      day close is not a condition (#1566 PR 1 review).
+    function test_Admissibility_ElapsedAndFolded() public {
         _lenderEntry(alice, 1e18, 1, 5);
         vm.warp(launch + (D + 1) * 1 days + 1);
         vm.expectRevert(abi.encodeWithSelector(ClosureDayNotElapsed.selector, D + 1));
         _clo().startDayClosure(D + 1); // today
-        vm.expectRevert(abi.encodeWithSelector(ClosureDayNotLocallyClosed.selector, D));
-        _clo().startDayClosure(D); // elapsed, but the chain has not closed it
-        _rep().closeDay(D);
+        vm.expectRevert(abi.encodeWithSelector(ClosureFrontierShort.selector, D, uint256(0), uint256(0)));
+        _clo().startDayClosure(D); // elapsed, but the fold has not reached it
+        _rep().advanceInterestFrontiers(D); // the fold, permissionless; no local close
+        assertEq(_rep().getChainReportSentAt(D), 0, "fixture-live: the chain never closed the day itself");
         (, , bool closed) = _clo().startDayClosure(D);
         assertFalse(closed);
+    }
+
+    /// @dev #1566 PR 1 review (P2-4) — a day the canonical chain FINALIZED before closing it itself
+    ///      can never be closed locally (`ReportAfterFinalization`), for ever; the proof needs only
+    ///      the fold at the day, so the day still proves closed — and the custody era it belongs to,
+    ///      and the token rotation that era's row blocks, are not locked behind it.
+    function test_ADayFinalizedBeforeItsLocalClose_StillProvesClosed() public {
+        uint256 id1 = _lenderEntry(alice, 1e18, 1, 5);
+        _mut().setRewardEntryProcessedRaw(id1, true);
+        vm.warp(launch + (D + 1) * 1 days + 1);
+        _agg().forceFinalizeDay(D);
+        vm.expectRevert(ReportAfterFinalization.selector);
+        _rep().closeDay(D); // the local close can never land now
+        _rep().advanceInterestFrontiers(D);
+        (, uint64 nonce, bool closed) = _clo().startDayClosure(D);
+        assertFalse(closed, "fixture-live: the lender side has an entry to visit");
+        assertTrue(_clo().proveDayClosurePage(D, nonce, 0, _ids(id1)), "proven closed by the fold alone");
+        assertTrue(_clo().isDayObligationsClosed(D));
     }
 
     /// @dev An omitted id advances only its author's cursor past it: that walk can

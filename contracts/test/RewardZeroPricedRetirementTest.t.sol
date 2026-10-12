@@ -11,6 +11,9 @@ import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
 import {RewardHorizonSweepFacet} from "../src/facets/RewardHorizonSweepFacet.sol";
 import {RewardClosureFacet} from "../src/facets/RewardClosureFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
+import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
+import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
+import {RewardCustodyFacet} from "../src/facets/RewardCustodyFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
@@ -34,6 +37,7 @@ contract RewardZeroPricedRetirementTest is SetupTest, IVaipakamErrors {
     uint256 internal launch;
 
     event RewardEntryRetiredEmpty(uint256 indexed entryId);
+    event RewardEntryCapRetired(uint256 indexed entryId, uint256 indexed dayId, uint256 armedFresh, uint256 recycled);
 
     function setUp() public {
         setupHelper();
@@ -145,17 +149,26 @@ contract RewardZeroPricedRetirementTest is SetupTest, IVaipakamErrors {
         for (uint256 d = 1; d <= 3; ++d) _armedDay(d);
         _mut().setGovernorCommitArmedFromDayRaw(1);
         _loanSideCap(3, 0);
-        // The retirement runs on the sweep's budgets: a delivered-backing
-        // shortfall DEFERS the day exactly as it defers an expiry, so the
-        // ledger must have room for the day's figure even though the user's
-        // share of it is nothing.
         _mut().setArmedFreshLedgerRaw(10e18, 0);
         uint256 id = _closedEntry(1, 4);
         assertFalse(_clo().isEntryTerminatedOn(id, 1), "fixture: open for the proof");
         // Nothing payable: the expiry sweep's clock never starts for it.
         assertEq(_sweeper().sweepExpiredInteractionRewards(_ids(id)), 0);
+        // #1566 PR 1 review (P1) — the retirement MOVES NOTHING: the cap refused this
+        // value, so it is retired as a claim retires a capped day — the pool is not
+        // drawn, nothing is credited to the recycle bucket, the delivered ledger is
+        // not charged. (Through the expiry settlement it drew all three.)
+        uint256 poolBefore = InteractionRewardsLensFacet(address(diamond)).getInteractionPoolPaidOut();
+        uint256 bucketBefore = ConfigFacet(address(diamond)).getRecycleBucket();
+        (, uint256 ledgerPaidBefore) = RewardCustodyFacet(address(diamond)).armedFreshLedger();
+        vm.expectEmit(true, true, false, false, address(diamond));
+        emit RewardEntryCapRetired(id, 1, 0, 0);
         (uint256 n, ) = _sweeper().retireZeroPricedRemainders(_ids(id));
-        assertEq(n, 1, "day 1 settled");
+        assertEq(n, 1, "day 1 retired");
+        assertEq(InteractionRewardsLensFacet(address(diamond)).getInteractionPoolPaidOut(), poolBefore, "the pool is not drawn");
+        assertEq(ConfigFacet(address(diamond)).getRecycleBucket(), bucketBefore, "nothing credited to the bucket");
+        (, uint256 ledgerPaidAfter) = RewardCustodyFacet(address(diamond)).armedFreshLedger();
+        assertEq(ledgerPaidAfter, ledgerPaidBefore, "the delivered ledger is not charged");
         assertTrue(_clo().isEntryTerminatedOn(id, 1), "the cursor passed day 1");
         assertFalse(_clo().isEntryTerminatedOn(id, 2));
         (n, ) = _sweeper().retireZeroPricedRemainders(_ids(id));
