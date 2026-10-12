@@ -222,6 +222,16 @@ let claimArmed = false;
 /** The claim's hash once the wallet returned it, so a later failure can be
  *  reconciled against the chain instead of reported as unobserved. */
 let claimHash = null;
+/** The most gas the claim may ask for: twice the driver's own estimate,
+ *  set when the gate is armed. */
+let claimGasCap = 0n;
+const asBig = (v) => {
+  try {
+    return v === undefined || v === null ? 0n : BigInt(v);
+  } catch {
+    return -1n; // unparseable — refused below
+  }
+};
 function claimGate(method, params) {
   const tx = Array.isArray(params) ? params[0] : undefined;
   const ok =
@@ -231,7 +241,14 @@ function claimGate(method, params) {
     typeof tx?.to === 'string' &&
     tx.to.toLowerCase() === DIAMOND.toLowerCase() &&
     typeof tx?.data === 'string' &&
-    tx.data.toLowerCase() === CLAIM_CALLDATA.toLowerCase();
+    tx.data.toLowerCase() === CLAIM_CALLDATA.toLowerCase() &&
+    // The whole transaction, not only where it goes and what it calls:
+    // claimAsLender is nonpayable, so any value only buys a revert; the
+    // sender must be this wallet; and an explicit gas limit may not exceed
+    // the cap the driver set from its own estimate.
+    asBig(tx.value) === 0n &&
+    (tx.from === undefined || (typeof tx.from === 'string' && tx.from.toLowerCase() === WALLET.toLowerCase())) &&
+    (tx.gas === undefined || (asBig(tx.gas) > 0n && asBig(tx.gas) <= claimGasCap));
   if (!ok) {
     const why = claimArmed
       ? `${method} is not the one claimAsLender(${LOAN_ID}) send this drive allows`
@@ -296,6 +313,10 @@ try {
   }
   await ensureConnected(page);
   await rowFor().first().waitFor({ state: 'visible', timeout: 60_000 });
+  // One loan, one card: a duplicate would misstate the wallet's claimable
+  // funds, and every check below reads a single row.
+  const rowCount = await rowFor().count();
+  check('the loan has exactly one claim row', rowCount === 1, `${rowCount} rows`);
   // The note renders once the principal token's details load.
   const deadline = Date.now() + 30_000;
   let text = '';
@@ -339,6 +360,7 @@ try {
         pub.getGasPrice(),
       ]);
       const need = gas * gasPrice * 2n;
+      claimGasCap = gas * 2n;
       if (balance < need) {
         await blocked(`${ROLE} ${WALLET} holds ${formatUnits(balance, 18)} ETH; the claim needs about ${formatUnits(need, 18)}`, null, done);
       }
