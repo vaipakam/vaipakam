@@ -144,14 +144,19 @@ describe('read-only check on the page\'s WebSockets', () => {
     return wsViolations;
   }
 
-  it('refuses Ethereum node methods off the read list, and only those', () => {
-    expect(isRefusedSocketMethod('eth_sendRawTransaction', READS)).toBe(true);
-    expect(isRefusedSocketMethod('eth_sendUserOperation', READS)).toBe(true);
-    expect(isRefusedSocketMethod('personal_sign', READS)).toBe(true);
-    expect(isRefusedSocketMethod('wallet_sendCalls', READS)).toBe(true);
-    expect(isRefusedSocketMethod('eth_call', READS)).toBe(false);
-    expect(isRefusedSocketMethod('irn_publish', READS)).toBe(false);
-    expect(isRefusedSocketMethod(undefined, READS)).toBe(false);
+  it('refuses every method off the read list, except the WalletConnect relay protocol on its host', () => {
+    const NODE = 'wss://rpc.example/ws';
+    const RELAY = 'wss://relay.walletconnect.org/?projectId=x';
+    expect(isRefusedSocketMethod(NODE, 'eth_sendRawTransaction', READS)).toBe(true);
+    expect(isRefusedSocketMethod(NODE, 'anvil_setBalance', READS)).toBe(true);
+    expect(isRefusedSocketMethod(NODE, 'evm_mine', READS)).toBe(true);
+    expect(isRefusedSocketMethod(NODE, 'irn_publish', READS)).toBe(true); // relay method, not the relay host
+    expect(isRefusedSocketMethod(RELAY, 'eth_sendRawTransaction', READS)).toBe(true); // relay host, not the relay method
+    expect(isRefusedSocketMethod(NODE, 'eth_call', READS)).toBe(false);
+    expect(isRefusedSocketMethod(RELAY, 'irn_publish', READS)).toBe(false);
+    expect(isRefusedSocketMethod('wss://relay.walletconnect.com', 'irn_subscribe', READS)).toBe(false);
+    expect(isRefusedSocketMethod('wss://relay.walletconnect.org.evil.example', 'irn_publish', READS)).toBe(true);
+    expect(isRefusedSocketMethod(NODE, undefined, READS)).toBe(false);
   });
 
   it('does not count WalletConnect relay traffic (the #2439 live-run false FAIL)', () => {
