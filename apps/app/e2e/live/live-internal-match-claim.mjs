@@ -50,7 +50,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { encodeFunctionData, formatUnits, parseAbi } from 'viem';
+import { encodeFunctionData, formatUnits, parseAbi, parseEventLogs } from 'viem';
 import {
   addressOf,
   blocked,
@@ -169,6 +169,7 @@ console.log(`build: ${siteBundle} on both hosts`);
 const { pub } = clientsFor(CHAIN_ID);
 const read = (functionName, args = []) => pub.readContract({ address: DIAMOND, abi: DIAMOND_ABI, functionName, args });
 const ERC20 = parseAbi(['function symbol() view returns (string)', 'function decimals() view returns (uint8)']);
+const ERC20_TRANSFER = parseAbi(['event Transfer(address indexed from, address indexed to, uint256 value)']);
 let loan;
 let rec;
 let symbol;
@@ -390,17 +391,33 @@ try {
       fromBlock: before,
     });
     const mine = claims.find((l) => l.args.claimant.toLowerCase() === WALLET.toLowerCase());
-    // The asset first: `fmt` labels the amount with the principal's symbol,
-    // which is only true when the event paid the principal asset.
+    // What the wallet actually RECEIVED, not the event's amount: the event
+    // carries only the final claim, while a multi-step match pays its earlier
+    // steps' proceeds out of `heldForLender` in the same transaction. So sum
+    // every principal-asset Transfer to this wallet in the claim transaction
+    // and compare that with the record. The event's asset is checked too,
+    // since `fmt` labels amounts with the principal's symbol.
     const rightAsset = mine !== undefined && mine.args.asset.toLowerCase() === loan.principalAsset.toLowerCase();
+    let received = null;
+    if (mine) {
+      const receipt = await pub.getTransactionReceipt({ hash: mine.transactionHash });
+      const transfers = parseEventLogs({
+        abi: ERC20_TRANSFER,
+        eventName: 'Transfer',
+        logs: receipt.logs.filter((l) => l.address.toLowerCase() === loan.principalAsset.toLowerCase()),
+      });
+      received = transfers
+        .filter((t) => t.args.to.toLowerCase() === WALLET.toLowerCase())
+        .reduce((sum, t) => sum + t.args.value, 0n);
+    }
     check(
-      'LenderFundsClaimed paid this wallet the recorded proceeds in the principal asset',
-      rightAsset && mine.args.amount === rec.lenderProceeds,
+      'the claim paid this wallet the recorded proceeds in the principal asset',
+      rightAsset && received === rec.lenderProceeds,
       !mine
-        ? 'no event for this wallet'
-        : rightAsset
-          ? `${fmt(mine.args.amount)} in ${mine.transactionHash}`
-          : `paid ${mine.args.amount} raw of ${mine.args.asset}, not ${symbol} ${loan.principalAsset}, in ${mine.transactionHash}`,
+        ? 'no LenderFundsClaimed for this wallet'
+        : !rightAsset
+          ? `the event names ${mine.args.asset}, not ${symbol} ${loan.principalAsset}, in ${mine.transactionHash}`
+          : `received ${fmt(received)} (event amount ${fmt(mine.args.amount)}) in ${mine.transactionHash}`,
     );
     // A row's absence counts only on a SETTLED, AVAILABLE list: the loading
     // and unavailable states carry no rows either.
