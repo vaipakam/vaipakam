@@ -191,14 +191,48 @@ export function createReadLedger(reads, now = () => Date.now()) {
   return { entries, onRequest, onResponse, judge };
 }
 
+/**
+ * WalletConnect's relay: a JSON-RPC protocol of its own (`irn_subscribe`,
+ * `irn_publish`, …) on WalletConnect's relay hosts. The app opens it on
+ * every page load and it carries no chain call, so judging it against the
+ * chain read list failed the #2439 live run on traffic the guard is not
+ * about. This is the ONE exemption, and it needs both the relay host and
+ * the relay namespace; every other method on every other socket is judged
+ * against the single read allowlist, as every other door is — a node
+ * socket's unlisted method is refused whatever its namespace (`anvil_`,
+ * `evm_`, a vendor extension).
+ */
+const WALLETCONNECT_RELAY_HOST = /^relay\.walletconnect\.(org|com)$/;
+const WALLETCONNECT_RELAY_METHOD = /^irn_/;
+
+function isWalletConnectRelay(socketUrl, method) {
+  let host;
+  try {
+    host = new URL(socketUrl).hostname;
+  } catch {
+    return false;
+  }
+  return WALLETCONNECT_RELAY_HOST.test(host) && WALLETCONNECT_RELAY_METHOD.test(method);
+}
+
+/** Whether a JSON-RPC `method` sent on the socket at `socketUrl` is one
+ *  the read-only drive must refuse: anything off `readMethods`, except
+ *  WalletConnect's own relay protocol on its relay host. */
+export function isRefusedSocketMethod(socketUrl, method, readMethods) {
+  if (typeof method !== 'string') return false;
+  if (readMethods.has(method)) return false;
+  return !isWalletConnectRelay(socketUrl, method);
+}
+
 /** Feed `ledger` from everything the page sends: HTTP POSTs and
  *  WebSocket frames.
  *
  *  The WebSocket is also the one door `launch`'s read-only guard does not
  *  cover (it gates the injected wallet and HTTP routes). Every JSON-RPC
- *  method the page SENDS on a socket is checked against `readMethods`, and
- *  one outside it is recorded in the returned `wsViolations` — observed,
- *  not prevented, so the drive must fail on any entry. */
+ *  method the page SENDS on a socket is checked against `readMethods`
+ *  (`isRefusedSocketMethod`, whose one exemption is WalletConnect's relay),
+ *  and one outside it is recorded in the returned `wsViolations` —
+ *  observed, not prevented, so the drive must fail on any entry. */
 export function attachLedger(page, ledger, readMethods) {
   const wsViolations = [];
   page.on('request', (req) => {
@@ -224,7 +258,7 @@ export function attachLedger(page, ledger, readMethods) {
     ws.on('framesent', (f) => {
       try {
         for (const m of asList(JSON.parse(String(f.payload)))) {
-          if (m && typeof m.method === 'string' && !readMethods.has(m.method)) {
+          if (m && isRefusedSocketMethod(ws.url(), m.method, readMethods)) {
             wsViolations.push({ reason: `websocket rpc ${m.method} (not a permitted read)`, url: ws.url() });
           }
         }
