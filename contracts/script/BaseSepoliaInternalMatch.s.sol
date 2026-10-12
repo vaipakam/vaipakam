@@ -655,8 +655,14 @@ contract BaseSepoliaInternalMatch is RepriceTestnetMock {
         console.log(string.concat("Loan ", tag, " id:"), loanId);
         console.log("  status / principal:", uint256(l.status), l.principal);
         console.log("  collateral / liqLtvBpsAtInit:", l.collateralAmount, uint256(l.liquidationLtvBpsAtInit));
-        if (l.status == LibVaipakam.LoanStatus.Active) {
-            console.log("  current LTV bps:", RiskFacet(diamond).calculateLTV(loanId));
+        // FallbackPending too: an overridden restore revalues its in-kind
+        // claim, so its LTV is printed or declared unreadable, never skipped.
+        if (l.status == LibVaipakam.LoanStatus.Active || l.status == LibVaipakam.LoanStatus.FallbackPending) {
+            try RiskFacet(diamond).calculateLTV(loanId) returns (uint256 ltv) {
+                console.log("  current LTV bps:", ltv);
+            } catch {
+                console.log("  current LTV bps: UNREADABLE (calculateLTV reverted)");
+            }
         }
     }
 

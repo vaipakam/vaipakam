@@ -747,11 +747,13 @@ try {
     } else if (receipt) {
       stopped += `; the claim MINED (${hash}, block ${receipt.blockNumber})`;
     }
-  } else if (failedCount() === 0 && (await answered()) === 0 && violationsSoFar().length === 0) {
+  } else if (!armedOnce && failedCount() === 0 && (await answered()) === 0 && violationsSoFar().length === 0) {
     // No answer from the page's own RPC while the assertion waited: nothing
     // page-backed was observed, so this is not a verdict on the card —
     // unless a check already failed or a guard already recorded a refused
-    // request, either of which is a finding on a served surface.
+    // request, either of which is a finding on a served surface. Once the
+    // claim was armed it is never BLOCKED: the claim may have gone out, so
+    // the drive falls through to the chain reconciliation below.
     await blocked('the page RPC answered nothing while the drive waited', err, done);
   }
   console.log(`STOP  ${stopped}`);
