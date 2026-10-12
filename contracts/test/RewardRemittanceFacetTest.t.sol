@@ -175,6 +175,28 @@ contract RewardRemittanceFacetTest is SetupTest {
         assertGt(total, 0, "non-zero remittable total");
     }
 
+    /// @dev #1566 PR C revision — a rooted remittance carries the custody era the
+    ///      DESTINATION last reported (its B4 day report), never the canonical
+    ///      chain's own or a constant; an older report never lowers it.
+    function test_ARemittance_CarriesTheDestinationsReportedEra() public {
+        rewardMessenger.deliverChainReport(CHAIN_BASE, 1, 10e18, 5e18);
+        rewardMessenger.deliverChainReportB4(CHAIN_ARB, 1, 20e18, 10e18, 3);
+        rewardMessenger.deliverChainReport(CHAIN_OP, 1, 30e18, 15e18);
+        RewardAggregatorFacet(address(diamond)).finalizeDay(1);
+        RewardAggregatorFacet agg = RewardAggregatorFacet(address(diamond));
+        assertEq(agg.getChainCustodyEraReported(CHAIN_ARB), 3, "the destination's reported era is recorded");
+        assertEq(agg.getChainCustodyEraReported(CHAIN_OP), 0, "a pre-B4 report records none");
+        remit.remitRewardBudget{value: 1 ether}(CHAIN_ARB, _days(1), CAP);
+        bytes memory wire = ccip.sentPayload(ccip.sentCount() - 1);
+        (, , , , , , , , uint256 intendedEra) = abi.decode(
+            wire, (uint256, bytes32, uint256, uint256, uint256, uint256, address, uint256, uint256)
+        );
+        assertEq(intendedEra, 3, "stamped with the destination's era");
+        rewardMessenger.deliverChainReport(CHAIN_BASE, 2, 10e18, 5e18);
+        rewardMessenger.deliverChainReportB4(CHAIN_ARB, 2, 20e18, 10e18, 2); // an older era, delivered late
+        assertEq(agg.getChainCustodyEraReported(CHAIN_ARB), 3, "an older report never lowers it");
+    }
+
     function test_QuoteRemittanceFee_ZeroWhenNothingRemittable() public {
         _finalizeDay1();
         // Remit day 1, then re-quote it — nothing left to send → (0, 0).

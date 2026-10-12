@@ -7831,7 +7831,7 @@ library LibVaipakam {
         mapping(bytes32 => uint256[]) transportBatchDays;
         /// @dev Slice 4 PR C-1 (#1566) — the custody era registry. Era 0 is
         ///      the pre-registry era every existing figure keys
-        ///      (`LibRewardCustody.PRE_BACKFILL_ERA`); a role change on an
+        ///      (`LibRewardCustody.RECONCILIATION_QUEUE_ERA`); a role change on an
         ///      activated custody retires the live era and opens the next.
         ///      NOT the reporter's `rewardEra*` / `dayClockEra` family, which
         ///      tracks the canonical DEPLOYMENT a day's clock came from.
@@ -7840,8 +7840,8 @@ library LibVaipakam {
         /// @dev Σ `custodyEras[*].holderRow` — kept as a counter so the
         ///      attributed total stays one read, never a scan over eras.
         uint256 custodyEraRowsTotal;
-        /// @dev Set by the backfill (PR C-5) once history is assigned to
-        ///      eras; the terminal writers are dark until then.
+        /// @dev RETIRED (#1566 PR C revision — no backfill: history is era 0).
+        ///      Kept for the append-only layout; nothing reads or writes it.
         bool custodyEraBackfillComplete;
         /// @dev PR C-2 — Σ fresh absorbed into the recycle bucket that a RETIRED
         ///      era's row funded (counted apart from live-funded absorption).
@@ -7851,13 +7851,10 @@ library LibVaipakam {
         mapping(uint256 => ParkedBroadcast) parkedBroadcasts;
         uint256 parkedBroadcastCount;
         mapping(uint64 => uint256) custodyEraParkedOpen;
-        /// @dev PR C-5 — every packet recorded from this slice on, by hash, so
-        ///      packets are enumerable; the ones before are the backfill's
-        ///      operator-supplied list.
+        /// @dev RETIRED with the backfill (#1566 PR C revision): the packet list
+        ///      and the backfill's record. Kept for the append-only layout;
+        ///      nothing reads or writes them.
         bytes32[] ingressPacketHashes;
-        /// @dev PR C-5 — the history backfill's record: started, how many packet
-        ///      hashes the operator supplied and how many were counted open, and
-        ///      the count the operator attested complete at completion.
         bool custodyEraBackfillStarted;
         uint256 custodyEraBackfillPacketsSupplied;
         uint256 custodyEraBackfillPacketsCounted;
@@ -7920,6 +7917,16 @@ library LibVaipakam {
         ///         nets it out so a chain's counted funding still reconciles
         ///         against what Base sent.
         uint256 rewardBudgetFreshReCredited;
+        /// @notice #1566 PR C revision — the HIGHEST custody era each source
+        ///         chain has reported (B4 day report), keyed by chain id. The
+        ///         canonical chain stamps every rooted remittance to that chain
+        ///         with it. Eras only grow on a chain; reports may arrive out of
+        ///         order, so the record only rises.
+        mapping(uint32 => uint64) chainCustodyEraReported;
+        /// @notice #1566 PR C revision — the custody era each reconciliation entry
+        ///         was made in, plus one (zero: made before the stamp, era 0). A
+        ///         correction is admitted only in that era.
+        mapping(uint256 => uint64) reconciliationEntryEraPlusOne;
     }
 
     /// @notice 3b-ii-A2 (#2305) — one batch a staging record staged from, with
@@ -8417,10 +8424,11 @@ library LibVaipakam {
         ///      backfill for history), `classificationFinal` once nothing is left
         ///      unclassified under it — the era's open-classification count rises
         ///      and falls with those two marks, each at most once per opening.
-        ///      `eraQuarantined`: the wire's intended era was already retired
-        ///      here (or the wire carried none after a transition) — held
-        ///      unclassified under the packet, no epoch, no ledger credit, no
-        ///      attestation; classified by evidence through reconciliation.
+        ///      #1566 PR C revision: `custodyEra` is stamped at arrival for every
+        ///      packet (the era it belongs to, which every exit routes by);
+        ///      `eraCounted`, `classificationFinal` and `eraQuarantined` are
+        ///      RETIRED — no count gates an era, and no delivery is held inert.
+        ///      Kept for the layout; nothing writes them.
         uint64 custodyEra;
         bool eraCounted;
         bool classificationFinal;

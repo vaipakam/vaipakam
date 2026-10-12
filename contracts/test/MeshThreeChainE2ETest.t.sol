@@ -1515,8 +1515,9 @@ contract MeshThreeChainE2ETest is Test {
         _allChainsCloseDay(4);
 
         assertEq(bus.reportCount(), 2, "both mirrors queued a report");
-        assertEq(bus.reportAt(0).arity, 8, "ARB sent the eight-word shape");
-        assertEq(bus.reportAt(1).arity, 8, "OP sent the eight-word shape");
+        assertEq(bus.reportAt(0).arity, 9, "ARB sent the B4 shape (#1566 PR C revision)");
+        assertEq(bus.reportAt(1).arity, 9, "OP sent the B4 shape");
+        assertEq(bus.reportAt(0).custodyEra, 0, "carrying its live custody era");
         assertEq(bus.reportAt(0).srcChainId, ARB, "source identified by sender");
         assertEq(bus.reportAt(1).srcChainId, OP, "source identified by sender");
     }

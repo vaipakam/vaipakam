@@ -88,7 +88,7 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
  *     transport epochs (they need slice 4 PR C's era balances to be
  *     consumable; a PR of their own before PR C — and they carry the
  *     authenticated fresh figure's writer), the era registry itself (every
- *     entry keys era 0 until PR C's backfill), and the owner-only
+ *     entry keys era 0; the queues are not yet era-keyed), and the owner-only
  *     dispositions the design names (an imported-gap shortfall; an
  *     undrainable lane) — this facet ships the executable forms and refuses
  *     to pick.
@@ -192,10 +192,16 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
         // INFLOWS of their rows; the row primitive records nothing for them,
         // and the entry's records join the queues at the tail.
         LibRewardCustody.takeFromUnclassified(s, packetHash, freshShare, recycledShare);
-        (uint256 toLive, uint256 toRestitution) =
-            LibRewardCustody.creditFreshFromRow(s, LibVaipakam.RewardCustodyRow.Unclassified, freshShare);
+        // #1566 PR C revision — into the PACKET'S era: the live baseline for a
+        // live-era packet, that era's row for a retired one (or, once that era
+        // is final, as its release went).
+        (uint256 toLive, uint256 toRestitution) = LibRewardCustody.callEraCreditFreshFromRow(
+            LibVaipakam.RewardCustodyRow.Unclassified, freshShare, p.custodyEra
+        );
         LibVpfiRecycle.creditCustodyFromUnclassified(p.remitId, recycledShare);
-        uint256 index = _pushEntry(s, packetHash, false, freshShare, recycledShare, toRestitution);
+        uint256 index = _pushEntry(
+            s, packetHash, false, freshShare, recycledShare, toRestitution, freshShare - toLive - toRestitution
+        );
         emit LegacyPacketClassified(packetHash, entryId, index, freshShare, recycledShare, toLive, toRestitution);
     }
 
@@ -234,6 +240,15 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
         LibVaipakam.Storage storage s = _open(entryId);
         if (index >= s.reconciliationLog.length) revert ReconciliationEntryUnknown(index);
         if (amount == 0) revert InvalidAmount();
+        {
+            // #1566 PR C revision — correctable only in the era it was made in:
+            // after a role change its value lives in the retired era's row, and
+            // a correction would move the wrong era's custody. Entries from
+            // before the stamp read era 0.
+            uint64 plusOne = s.reconciliationEntryEraPlusOne[index];
+            uint64 madeIn = plusOne == 0 ? 0 : plusOne - 1;
+            if (madeIn != s.custodyEraCurrent) revert ReconciliationEntryEraRetired(index, madeIn);
+        }
         uint64 era = s.reconciliationLog[index].era;
         if (!LibRewardCustody.queueSettled(s, LibRewardCustody.SIDE_FRESH, era)) {
             revert ReconciliationQueueBehind(LibRewardCustody.SIDE_FRESH);
@@ -300,7 +315,7 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
         LibRewardCustody.pullFromCaller(s, msg.sender, replaceFresh + replaceRecycled);
         (, uint256 absorbed) = LibRewardCustody.creditFreshIngress(s, replaceFresh);
         LibVpfiRecycle.creditCustodyFundedInHolder(refId, replaceRecycled);
-        uint256 index = _pushEntry(s, snapshotId, true, replaceFresh, relocateRecycled + replaceRecycled, absorbed);
+        uint256 index = _pushEntry(s, snapshotId, true, replaceFresh, relocateRecycled + replaceRecycled, absorbed, 0);
         env.importedAt = uint64(block.timestamp);
         env.rawUncounted = raw;
         env.holderUncounted = holderUncounted;
@@ -326,7 +341,7 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
     function advanceReconciliationQueue(uint8 side, uint256 steps) external {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (side == LibRewardCustody.SIDE_FRESH) {
-            LibRewardCustody.advanceFresh(s, LibRewardCustody.PRE_BACKFILL_ERA, steps);
+            LibRewardCustody.advanceFresh(s, LibRewardCustody.RECONCILIATION_QUEUE_ERA, steps);
         } else if (side == LibRewardCustody.SIDE_RECYCLED) {
             LibRewardCustody.advanceRecycled(s, steps, 0);
         } else {
@@ -354,7 +369,7 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
     ///         outflow's take of the fresh queue (bounded walk).
     function reconciliationTakeFresh(uint256 have, uint256 amount, bool paid) external {
         _requireDiamondInternal();
-        LibRewardCustody.takeFresh(LibVaipakam.storageSlot(), LibRewardCustody.PRE_BACKFILL_ERA, have, amount, paid);
+        LibRewardCustody.takeFresh(LibVaipakam.storageSlot(), LibRewardCustody.RECONCILIATION_QUEUE_ERA, have, amount, paid);
     }
 
     /// @notice Diamond-internal: {LibRewardCustody.releaseAbsorbed} — a
@@ -601,8 +616,8 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
     ///         still hold unwritten (a counter, never a scan), the live row;
     ///         the absorbed records'
     ///         frontier, unreleased and released figures, the restitution
-    ///         row. Only a known era is answered — the pre-backfill era
-    ///         until the transport epochs land — an unknown one refusing
+    ///         row. Only a known era is answered — era 0, the one the queues
+    ///         are keyed under, until they are era-keyed — an unknown one refusing
     ///         rather than pairing an empty era-keyed queue with the global
     ///         custody figures (Codex #2206 r9). Invariants: `paid ≤ spent`,
     ///         `unspent ≤ liveRow`, `unreleased ≤ restitutionRow`, every
@@ -865,16 +880,20 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
 
     /// @dev Append a log entry and its records: its live fresh credit, its
     ///      absorbed part, its recycled credit — the newest entry, so no
-    ///      frontier moves.
+    ///      frontier moves. `booked` is the part of `fresh` a retired era's
+    ///      books took (#1566 PR C revision): recorded in the entry, never in the
+    ///      live queue, since the live row does not hold it. The entry is stamped
+    ///      with the era it was made in — the only era it may be corrected in.
     function _pushEntry(
         LibVaipakam.Storage storage s,
         bytes32 key,
         bool envelope,
         uint256 fresh,
         uint256 recycled,
-        uint256 absorbed
+        uint256 absorbed,
+        uint256 booked
     ) private returns (uint256 index) {
-        uint64 era = LibRewardCustody.PRE_BACKFILL_ERA;
+        uint64 era = LibRewardCustody.RECONCILIATION_QUEUE_ERA;
         index = s.reconciliationLog.length;
         s.reconciliationLog.push(
             LibVaipakam.ReconciliationEntry({
@@ -886,7 +905,8 @@ contract RewardReconciliationFacet is DiamondAccessControl, DiamondReentrancyGua
                 recycledCredit: recycled
             })
         );
-        uint256 live = fresh - absorbed;
+        s.reconciliationEntryEraPlusOne[index] = s.custodyEraCurrent + 1;
+        uint256 live = fresh - absorbed - booked;
         if (live != 0) {
             s.freshRecords[index].amount = uint128(live);
             s.freshUnspentByEra[era] += live;

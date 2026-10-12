@@ -1,48 +1,6 @@
 [
   {
     "type": "function",
-    "name": "backfillCustodyEraPacketsPage",
-    "inputs": [
-      {
-        "name": "pauseEpoch",
-        "type": "uint64",
-        "internalType": "uint64"
-      },
-      {
-        "name": "hashes",
-        "type": "bytes32[]",
-        "internalType": "bytes32[]"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "counted",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "completeCustodyEraBackfill",
-    "inputs": [
-      {
-        "name": "pauseEpoch",
-        "type": "uint64",
-        "internalType": "uint64"
-      },
-      {
-        "name": "attestedPacketCount",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "drainPendingSurplus",
     "inputs": [
       {
@@ -56,15 +14,36 @@
   },
   {
     "type": "function",
-    "name": "eraCountOpen",
+    "name": "eraCreditFreshFromRow",
     "inputs": [
       {
-        "name": "h",
-        "type": "bytes32",
-        "internalType": "bytes32"
+        "name": "from",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "era",
+        "type": "uint64",
+        "internalType": "uint64"
       }
     ],
-    "outputs": [],
+    "outputs": [
+      {
+        "name": "toLive",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "toRestitution",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
     "stateMutability": "nonpayable"
   },
   {
@@ -92,15 +71,44 @@
   },
   {
     "type": "function",
-    "name": "eraNoteClassificationExit",
+    "name": "eraRelocateFreshIngress",
+    "inputs": [
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "era",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "eraUncreditFresh",
     "inputs": [
       {
         "name": "h",
         "type": "bytes32",
         "internalType": "bytes32"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
-    "outputs": [],
+    "outputs": [
+      {
+        "name": "moved",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
     "stateMutability": "nonpayable"
   },
   {
@@ -214,39 +222,6 @@
   },
   {
     "type": "function",
-    "name": "getCustodyEraBackfill",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "started",
-        "type": "bool",
-        "internalType": "bool"
-      },
-      {
-        "name": "complete",
-        "type": "bool",
-        "internalType": "bool"
-      },
-      {
-        "name": "supplied",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "counted",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "attested",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "getCustodyEraCurrent",
     "inputs": [],
     "outputs": [
@@ -284,35 +259,6 @@
     "outputs": [
       {
         "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getIngressPacketHashes",
-    "inputs": [
-      {
-        "name": "from",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "limit",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "page",
-        "type": "bytes32[]",
-        "internalType": "bytes32[]"
-      },
-      {
-        "name": "total",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -377,32 +323,6 @@
   },
   {
     "type": "function",
-    "name": "isCustodyEraBackfillComplete",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "startCustodyEraBackfill",
-    "inputs": [
-      {
-        "name": "pauseEpoch",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "tombstoneParkedBroadcast",
     "inputs": [
       {
@@ -421,56 +341,6 @@
   },
   {
     "type": "event",
-    "name": "CustodyEraBackfillCompleted",
-    "inputs": [
-      {
-        "name": "attested",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "supplied",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "counted",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "CustodyEraBackfillPacketsPaged",
-    "inputs": [
-      {
-        "name": "supplied",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "counted",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "CustodyEraBackfillStarted",
-    "inputs": [],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "CustodyEraClosed",
     "inputs": [
       {
@@ -478,6 +348,25 @@
         "type": "uint64",
         "indexed": true,
         "internalType": "uint64"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "CustodyEraCredited",
+    "inputs": [
+      {
+        "name": "era",
+        "type": "uint64",
+        "indexed": true,
+        "internalType": "uint64"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -534,6 +423,25 @@
   },
   {
     "type": "event",
+    "name": "CustodyEraUncredited",
+    "inputs": [
+      {
+        "name": "era",
+        "type": "uint64",
+        "indexed": true,
+        "internalType": "uint64"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "CustodyPendingSurplusDrained",
     "inputs": [
       {
@@ -553,44 +461,6 @@
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "IngressPacketClassificationFinal",
-    "inputs": [
-      {
-        "name": "packetHash",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "era",
-        "type": "uint64",
-        "indexed": true,
-        "internalType": "uint64"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "IngressPacketEraCounted",
-    "inputs": [
-      {
-        "name": "packetHash",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "era",
-        "type": "uint64",
-        "indexed": true,
-        "internalType": "uint64"
       }
     ],
     "anonymous": false
@@ -1068,17 +938,6 @@
   {
     "type": "error",
     "name": "ClosureDayNotElapsed",
-    "inputs": [
-      {
-        "name": "dayId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ClosureDayNotLocallyClosed",
     "inputs": [
       {
         "name": "dayId",
@@ -1620,53 +1479,6 @@
   },
   {
     "type": "error",
-    "name": "CustodyEraBackfillAlreadyComplete",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "CustodyEraBackfillAlreadyStarted",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "CustodyEraBackfillNotStarted",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "CustodyEraBackfillPacketUnknown",
-    "inputs": [
-      {
-        "name": "packetHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "CustodyEraBackfillPending",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "CustodyEraBackfillStalePauseEpoch",
-    "inputs": [
-      {
-        "name": "stated",
-        "type": "uint64",
-        "internalType": "uint64"
-      },
-      {
-        "name": "live",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "CustodyEraLive",
     "inputs": [
       {
@@ -1696,23 +1508,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "openClassification",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "CustodyEraParkedOpen",
-    "inputs": [
-      {
-        "name": "era",
-        "type": "uint64",
-        "internalType": "uint64"
-      },
-      {
-        "name": "count",
+        "name": "stagedFresh",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -1734,17 +1530,6 @@
       },
       {
         "name": "room",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "CustodyEraScanExceeded",
-    "inputs": [
-      {
-        "name": "dayId",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -1873,11 +1658,6 @@
         "internalType": "uint32"
       }
     ]
-  },
-  {
-    "type": "error",
-    "name": "ExpectedManualPause",
-    "inputs": []
   },
   {
     "type": "error",
@@ -2342,17 +2122,6 @@
         "name": "lapseWindowSeconds",
         "type": "uint64",
         "internalType": "uint64"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "LegacyBroadcastRetired",
-    "inputs": [
-      {
-        "name": "dayId",
-        "type": "uint256",
-        "internalType": "uint256"
       }
     ]
   },
@@ -2869,6 +2638,22 @@
         "name": "recordedSrcChainId",
         "type": "uint32",
         "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ReconciliationEntryEraRetired",
+    "inputs": [
+      {
+        "name": "index",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "era",
+        "type": "uint64",
+        "internalType": "uint64"
       }
     ]
   },
@@ -4195,24 +3980,19 @@
   },
   {
     "type": "error",
-    "name": "RewardRoleChangeFrozen",
-    "inputs": [
-      {
-        "name": "current",
-        "type": "uint8",
-        "internalType": "uint8"
-      },
-      {
-        "name": "requested",
-        "type": "uint8",
-        "internalType": "uint8"
-      }
-    ]
+    "name": "RiskAndTermsConsentRequired",
+    "inputs": []
   },
   {
     "type": "error",
-    "name": "RiskAndTermsConsentRequired",
-    "inputs": []
+    "name": "SafeERC20FailedOperation",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
   },
   {
     "type": "error",
@@ -4421,6 +4201,33 @@
   },
   {
     "type": "error",
+    "name": "ServiceCapacityNotAnAdapter",
+    "inputs": [
+      {
+        "name": "adapter",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ServiceCapacityNothingToArm",
+    "inputs": [
+      {
+        "name": "role",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "operator",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "ServiceCapacityOldEpochBalanceStands",
     "inputs": [
       {
@@ -4437,6 +4244,17 @@
         "name": "epoch",
         "type": "uint64",
         "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ServiceCapacityOnlyDiamondInternal",
+    "inputs": [
+      {
+        "name": "caller",
+        "type": "address",
+        "internalType": "address"
       }
     ]
   },

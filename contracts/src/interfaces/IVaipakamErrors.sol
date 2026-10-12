@@ -537,6 +537,9 @@ interface IVaipakamErrors {
     ///         other era refuses rather than pairing an empty era-specific
     ///         queue with the global custody figures (Codex #2206 r9).
     error ReconciliationUnknownEra(uint64 era);
+    /// @notice #1566 PR C revision — reconciliation entry `index` was made in era `era`, which a role change
+    ///         has since retired: its value lives in that era's row, so it is no longer correctable.
+    error ReconciliationEntryEraRetired(uint256 index, uint64 era);
     // ─── #1566 transport epochs PR 3a — the day list, the attested split ────
     /// @notice No packet is recorded under this stamp.
     error IngressPacketUnknown(bytes32 packetHash);
@@ -821,14 +824,6 @@ interface IVaipakamErrors {
     /// @notice #1566 slice 4 PR B — an overage release exceeds the recorded
     ///         overage position.
     error RewardCustodyOverageExceedsRecorded(uint256 requested, uint256 recorded);
-    /// @notice #1566 slice 4 PR B — an EFFECTIVE reward-role change was
-    ///         refused: holder allocations exist (or custody is activated)
-    ///         and the era registry that could carry them across a
-    ///         transition lands with slice 4 PR C, whose backfill clears the
-    ///         freeze.
-    /// @param current   The resolved {LibVaipakam.RewardRole} ordinal now.
-    /// @param requested The role the write would have resolved to.
-    error RewardRoleChangeFrozen(uint8 current, uint8 requested);
     /// @notice #1566 slice 4 PR B — a mirror's authenticated base chain was
     ///         being rebound directly to a different one. Design §5c: a
     ///         source change passes through `Detached` (the old residual
@@ -1837,13 +1832,11 @@ interface IVaipakamErrors {
     error LoanSideReservedShortfall(uint256 loanId, uint8 side, uint256 needed, uint256 available);
     /// @notice Era `era` is not in the custody era registry: above the live era (slice 4 PR C-1).
     error CustodyEraUnknown(uint64 era);
-    /// @notice History has not been assigned to eras yet (the backfill, PR C-5): the terminal writers stay dark until it is.
-    error CustodyEraBackfillPending();
     /// @notice Era `era` is the live era: it cannot be finalized while open.
     error CustodyEraLive(uint64 era);
-    /// @notice Era `era` is not terminal: `daysClosed` of its `span` days are proven closed, and `openClassification`
-    ///         packets stamped into it are not finally classified.
-    error CustodyEraNotTerminal(uint64 era, uint256 daysClosed, uint256 span, uint256 openClassification);
+    /// @notice Era `era` is not final: `daysClosed` of its `span` days are proven closed, and staging records still
+    ///         hold `stagedFresh` of its row.
+    error CustodyEraNotTerminal(uint64 era, uint256 daysClosed, uint256 span, uint256 stagedFresh);
     /// @notice Era `era` was already finalized.
     error CustodyEraAlreadyFinalized(uint64 era);
     /// @notice The pending-surplus drain needs an ACTIVE role (Canonical or Mirror); the chain's role is `role`.
@@ -1863,18 +1856,6 @@ interface IVaipakamErrors {
     error ParkedBroadcastStillUnroutable(uint256 id);
     /// @notice Parked broadcast `id` was first received after the next era opened: it exits by tombstone only.
     error ParkedBroadcastQuarantineOnly(uint256 id);
-    /// @notice Era `era` still carries `count` parked broadcasts: it is not terminal.
-    error CustodyEraParkedOpen(uint64 era, uint256 count);
-    /// @notice The history backfill has not been started (PR C-5).
-    error CustodyEraBackfillNotStarted();
-    /// @notice The history backfill was already started.
-    error CustodyEraBackfillAlreadyStarted();
-    /// @notice The history backfill was already completed.
-    error CustodyEraBackfillAlreadyComplete();
-    /// @notice The stated pause epoch `stated` is not the live one `live`: the backfill call is stale.
-    error CustodyEraBackfillStalePauseEpoch(uint64 stated, uint64 live);
-    /// @notice No packet is recorded under `packetHash`.
-    error CustodyEraBackfillPacketUnknown(bytes32 packetHash);
 
     // ── #1219 (S-4) — service capacity deposits ──
     /// @notice The service capacity deposit channel is dark: posting is refused (withdrawals stand).

@@ -833,7 +833,8 @@ contract RewardBroadcastV3MirrorTest is RewardBroadcastV3Harness {
     /// retired wire's fresh apply is PARKED, not reverted: recorded in the
     /// parked lane, counted against the live era, no day state installed,
     /// a retry refused by name while the gate holds — so a legitimate late
-    /// packet is judged by the backfill instead of being lost in a revert.
+    /// packet stays on record, for a retry or the operator's tombstone,
+    /// instead of being lost in a revert.
     /// Replays of already-applied days stay idempotent, and a disarm/re-arm
     /// cycle of the SAME era is not a rotation.
     function testRotationRetiresLegacyWire() public {

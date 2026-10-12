@@ -52,6 +52,22 @@ interface IRewardAggregatorIngressB3 {
     ) external;
 }
 
+/// @dev #1566 PR C revision — the B4 Base-side ingress: the B3 figures plus the
+///      reporting chain's live custody era.
+interface IRewardAggregatorIngressB4 {
+    function onChainReportReceived(
+        uint32 sourceChainId,
+        uint256 dayId,
+        uint256 lenderNumeraire18,
+        uint256 borrowerNumeraire18,
+        uint256 recycledCumulative18,
+        uint256 recycledForDay18,
+        uint256 commitRetiredCumulative18,
+        uint256 commitReleasedCumulative18,
+        uint64 custodyEra
+    ) external;
+}
+
 /// @notice #1222 M3 B1 (Codex #1413 r4) — the Diamond fallback's
 ///         unknown-selector error, matched to recognize a not-yet-cut Base
 ///         diamond when the widened ingress call fails.
@@ -175,7 +191,9 @@ interface IRepatriationInstructionIngress {
 ///      not install the implementation that speaks the new kind — the send
 ///      selector would be missing on the proxy and inbound attestations
 ///      would bounce as an unknown kind (Codex #2224 r1).
-uint256 constant REWARD_MESSENGER_WIRE_GENERATION = 5;
+///      Generation 6 (#1566 PR C revision) = generation 5 plus the B4 day
+///      REPORT, mirror → Base, carrying the reporting chain's custody era.
+uint256 constant REWARD_MESSENGER_WIRE_GENERATION = 6;
 
 contract VaipakamRewardMessenger is
     Initializable,
@@ -308,6 +326,11 @@ contract VaipakamRewardMessenger is
     ///         `closeDay` reports revert on delivery and the day finalizes
     ///         with that chain zeroed.
     uint256 internal constant REPORT_PAYLOAD_SIZE_B3 = 8 * 32;
+    /// @notice #1566 PR C revision — the B4 report: the B3 words plus the
+    ///         reporting chain's live custody era (NINE words). Receiver
+    ///         first, as for B3: Base's messenger accepts the nine-word shape
+    ///         before any mirror sends it.
+    uint256 internal constant REPORT_PAYLOAD_SIZE_B4 = 9 * 32;
     /// @notice Broadcast payload size. #1008 (S13) added the canonical §4 cap
     ///         threshold (5th word); governor PR-3c (#1217 §6/§8) adds the
     ///         day-pool COMPOSITION — `scheduleFloorHalf` + `recycledHalf`
@@ -783,6 +806,59 @@ contract VaipakamRewardMessenger is
         );
     }
 
+    /// @notice #1566 PR C revision — the B4 report: the eight B3 words plus this
+    ///         chain's LIVE custody era, so the canonical chain stamps the
+    ///         rooted remittances it sends here with the era they land in.
+    function sendChainReport(
+        uint256 dayId,
+        uint256 lenderNumeraire18,
+        uint256 borrowerNumeraire18,
+        uint256 recycledCumulative18,
+        uint256 recycledForDay18,
+        uint256 commitRetiredCumulative18,
+        uint256 commitReleasedCumulative18,
+        uint64 custodyEra,
+        address payable refundAddress
+    ) external payable onlyDiamond whenNotPaused nonReentrant {
+        if (messenger == address(0)) revert MessengerNotSet();
+        if (baseChainId == 0) revert BaseChainNotConfigured();
+        bytes memory payload = _reportPayloadB4(
+            dayId, lenderNumeraire18, borrowerNumeraire18, recycledCumulative18, recycledForDay18,
+            commitRetiredCumulative18, commitReleasedCumulative18, custodyEra
+        );
+        bytes32 messageId =
+            _dispatch(baseChainId, payload, msg.value, refundAddress);
+
+        emit ReportSent(
+            messageId, dayId, lenderNumeraire18, borrowerNumeraire18
+        );
+    }
+
+    /// @dev The B4 payload — ONE builder for the send and its quote, so the
+    ///      quote prices exactly the bytes the send emits.
+    function _reportPayloadB4(
+        uint256 dayId,
+        uint256 lenderNumeraire18,
+        uint256 borrowerNumeraire18,
+        uint256 recycledCumulative18,
+        uint256 recycledForDay18,
+        uint256 commitRetiredCumulative18,
+        uint256 commitReleasedCumulative18,
+        uint64 custodyEra
+    ) private pure returns (bytes memory) {
+        return abi.encode(
+            MSG_TYPE_REPORT,
+            dayId,
+            lenderNumeraire18,
+            borrowerNumeraire18,
+            recycledCumulative18,
+            recycledForDay18,
+            commitRetiredCumulative18,
+            commitReleasedCumulative18,
+            uint256(custodyEra)
+        );
+    }
+
     /// @notice #1222 M3 B1 sender overload (the six-word shape), kept so a
     ///         mirror's diamond and messenger proxies need not upgrade
     ///         atomically through the B3 window: a B1-generation diamond
@@ -1253,6 +1329,30 @@ contract VaipakamRewardMessenger is
         );
         nativeFee = ICrossChainMessenger(messenger).quoteMessageFee(
             baseChainId, payload, _noTokens(), destGasLimit
+        );
+    }
+
+    /// @notice #1566 PR C revision — quote the B4 report the matching
+    ///         {sendChainReport} overload dispatches (its own payload builder).
+    function quoteSendChainReport(
+        uint256 dayId,
+        uint256 lenderNumeraire18,
+        uint256 borrowerNumeraire18,
+        uint256 recycledCumulative18,
+        uint256 recycledForDay18,
+        uint256 commitRetiredCumulative18,
+        uint256 commitReleasedCumulative18,
+        uint64 custodyEra
+    ) external view returns (uint256 nativeFee) {
+        if (baseChainId == 0) revert BaseChainNotConfigured();
+        nativeFee = ICrossChainMessenger(messenger).quoteMessageFee(
+            baseChainId,
+            _reportPayloadB4(
+                dayId, lenderNumeraire18, borrowerNumeraire18, recycledCumulative18, recycledForDay18,
+                commitRetiredCumulative18, commitReleasedCumulative18, custodyEra
+            ),
+            _noTokens(),
+            destGasLimit
         );
     }
 
@@ -1782,7 +1882,9 @@ contract VaipakamRewardMessenger is
         // 6 (REPORT, #1222 B1), 4 (legacy REPORT / REPAT_INSTRUCTION
         // #1568 C2 — disambiguated by the kind tag below; REMIT_ACK moved
         // to 5 words with the #1656 r8 consumed flag),
-        // 8 (REPORT #1222 B3 / legacy BROADCAST / TierUpdated), 2
+        // 8 (REPORT #1222 B3 / legacy BROADCAST / TierUpdated), 9 (REPORT
+        // B4 — the B3 words plus the reporting chain's custody era, #1566
+        // PR C revision), 2
         // (VersionBumped), 15 (BROADCAST_V2, #1222 B2-b), 3 (REPAT_CANCEL,
         // #1568 C2), 23 (BROADCAST_V3, #1434 P2-w1's 21 + the two #1636 r2
         // day-pool words), 5 (COMP_QUOTE, #1434 P2-w3 — grew from the
@@ -1792,6 +1894,7 @@ contract VaipakamRewardMessenger is
         uint256 len = payload.length;
         if (
             len != REPORT_PAYLOAD_SIZE
+            && len != REPORT_PAYLOAD_SIZE_B4
             && len != REPORT_PAYLOAD_SIZE_LEGACY
             && len != BROADCAST_PAYLOAD_SIZE
             && len != TIER_UPDATED_PAYLOAD_SIZE
@@ -1812,11 +1915,12 @@ contract VaipakamRewardMessenger is
 
         if (msgType == MSG_TYPE_REPORT) {
             if (
-                len != REPORT_PAYLOAD_SIZE_B3
+                len != REPORT_PAYLOAD_SIZE_B4
+                && len != REPORT_PAYLOAD_SIZE_B3
                 && len != REPORT_PAYLOAD_SIZE
                 && len != REPORT_PAYLOAD_SIZE_LEGACY
             ) {
-                revert PayloadSizeMismatch(len, REPORT_PAYLOAD_SIZE_B3);
+                revert PayloadSizeMismatch(len, REPORT_PAYLOAD_SIZE_B4);
             }
             if (!isCanonical) revert ReportOnMirror();
             // The aggregator tags each report with a uint32 origin chain.
@@ -2113,10 +2217,23 @@ contract VaipakamRewardMessenger is
             return;
         }
 
-        uint256[7] memory w = _decodeReportWords(payload, len);
+        uint256[8] memory w = _decodeReportWords(payload, len);
         emit ReportReceived(sourceChainId, w[0], w[1], w[2]);
 
-        if (len == REPORT_PAYLOAD_SIZE_B3) {
+        // #1566 PR C revision — a B4 report carries the reporting chain's
+        // custody era; a Diamond not yet cut with the B4 ingress takes the B3
+        // figures and learns the era from a later report.
+        if (len == REPORT_PAYLOAD_SIZE_B4) {
+            try IRewardAggregatorIngressB4(diamond).onChainReportReceived(
+                sourceChainId, w[0], w[1], w[2], w[3], w[4], w[5], w[6], SafeCast.toUint64(w[7])
+            ) {
+                return;
+            } catch (bytes memory reason) {
+                _requireMissingSelector(reason);
+            }
+        }
+
+        if (len == REPORT_PAYLOAD_SIZE_B3 || len == REPORT_PAYLOAD_SIZE_B4) {
             try IRewardAggregatorIngressB3(diamond).onChainReportReceived(
                 sourceChainId, w[0], w[1], w[2], w[3], w[4], w[5], w[6]
             ) {
@@ -2150,8 +2267,13 @@ contract VaipakamRewardMessenger is
     function _decodeReportWords(
         bytes calldata payload,
         uint256 len
-    ) private pure returns (uint256[7] memory w) {
-        if (len == REPORT_PAYLOAD_SIZE_B3) {
+    ) private pure returns (uint256[8] memory w) {
+        if (len == REPORT_PAYLOAD_SIZE_B4) {
+            (, w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7]) = abi.decode(
+                payload,
+                (uint8, uint256, uint256, uint256, uint256, uint256, uint256, uint256, uint256)
+            );
+        } else if (len == REPORT_PAYLOAD_SIZE_B3) {
             (, w[0], w[1], w[2], w[3], w[4], w[5], w[6]) = abi.decode(
                 payload,
                 (

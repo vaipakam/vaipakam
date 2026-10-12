@@ -178,7 +178,7 @@ contract RewardTransportD6Test is SetupTest, IVaipakamErrors {
         uint256 used = before - gasleft();
         emit log_named_uint("rooted ingress gas", used);
         LibVaipakam.IngressPacket memory p = _rlens().getIngressPacket(keccak256(abi.encode(uint256(CHAIN_BASE), keccak256("gas-d6"))));
-        assertTrue(p.eraCounted, "fixture-live: the full path ran (counted open in the live era)");
+        assertTrue(p.attested, "fixture-live: the full path ran (the epoch attested from the wire)");
         assertLe(
             used + LibRewardRemitDispatch.REWARD_BUDGET_RECEIVER_RESERVE,
             LibRewardRemitDispatch.REWARD_BUDGET_DEST_GAS_LIMIT,
@@ -192,29 +192,20 @@ contract RewardTransportD6Test is SetupTest, IVaipakamErrors {
     /// @dev Retire the live era and come back (two transitions): the chain is a
     ///      mirror again with era 2 live.
     function _transitionTwice() internal {
-        _mut().setRewardRoleChangesFrozenRaw(false);
         RewardReporterFacet(address(diamond)).setBaseChainId(0);
-        _mut().setRewardRoleChangesFrozenRaw(false);
         RewardReporterFacet(address(diamond)).setBaseChainId(CHAIN_BASE);
         assertEq(_eraF().getCustodyEraCurrent(), 2, "fixture: era 2 live");
     }
 
-    /// @dev A delivery for the live era is counted OPEN in it the moment its value
-    ///      is attributed unclassified, and FINAL — the count back down — when a
-    ///      draw leaves nothing unclassified under it.
-    function test_AD6Delivery_ForTheLiveEra_IsCountedOpen_AndFinalWhenDrawnOut() public {
+    /// @dev #1566 PR C revision — a delivery for the live era belongs to it: stamped
+    ///      with it at arrival, and drawn whole by the obligation it funds.
+    function test_AD6Delivery_ForTheLiveEra_IsStampedWithIt() public {
         _scene(NEED);
         bytes32 h = _d6Whole(NEED, _days(1, 1), 31, keccak256("c3-live"));
         LibVaipakam.IngressPacket memory p = _rlens().getIngressPacket(h);
-        assertTrue(p.eraCounted, "counted");
-        assertEq(p.custodyEra, 0, "into the live era");
-        assertFalse(p.classificationFinal);
-        assertEq(_eraF().getCustodyEra(0).openClassification, 1, "one open");
+        assertEq(p.custodyEra, 0, "the live era's");
         assertEq(_claim(), NEED, "the claim draws the whole delivery");
-        p = _rlens().getIngressPacket(h);
-        assertEq(p.unclassified, 0, "nothing left unclassified");
-        assertTrue(p.classificationFinal, "final");
-        assertEq(_eraF().getCustodyEra(0).openClassification, 0, "and the count fell");
+        assertEq(_rlens().getIngressPacket(h).unclassified, 0, "nothing left unclassified");
     }
 
     function test_AD6Delivery_ForAFutureEra_IsRefused() public {
@@ -226,34 +217,36 @@ contract RewardTransportD6Test is SetupTest, IVaipakamErrors {
         );
     }
 
-    /// @dev A delivery dispatched for an era this chain has retired is held whole
-    ///      and unclassified under its packet: no epoch, no attestation, no ledger
-    ///      credit — and counted open in the live era until evidence classifies it.
-    function test_AD6Delivery_ForARetiredEra_IsQuarantined() public {
+    /// @dev #1566 PR C revision — a delivery dispatched for an era this chain has
+    ///      retired belongs to THAT era and is not held inert: it opens its epoch,
+    ///      attested from the wire's split — the era's separately backed, consumable
+    ///      home its listed days draw from — and nothing reaches the live baseline.
+    function test_AD6Delivery_ForARetiredEra_OpensItsEpoch_InThatEra() public {
         _transitionTwice();
         uint256 liveBefore = _row(LibVaipakam.RewardCustodyRow.LiveFresh);
         uint256 unclBefore = _row(LibVaipakam.RewardCustodyRow.Unclassified);
         (bytes32 h, ) = _d6(10e18, _days(3, 1), 33, keccak256("c3-behind"), 2e18, 1);
-        (bytes32 packetHash, , , , , ) = _epoch().getTransportBatch(h);
-        assertEq(packetHash, bytes32(0), "no epoch");
+        (bytes32 packetHash, uint256 balance, , , , ) = _epoch().getTransportBatch(h);
+        assertEq(packetHash, h, "its epoch is open");
+        assertEq(balance, 10e18, "holding the whole delivery");
         LibVaipakam.IngressPacket memory p = _rlens().getIngressPacket(h);
-        assertTrue(p.eraQuarantined, "quarantined");
-        assertFalse(p.attested, "not attested");
-        assertEq(p.unclassified, 10e18, "held whole under the packet");
+        assertTrue(p.attested, "attested from the wire");
+        assertEq(p.freshAttested, 8e18);
+        assertEq(p.recycledAttested, 2e18);
         assertEq(p.freshShare + p.recycledShare, 0, "nothing credited to a shared ledger");
-        assertEq(p.intendedEra, 1, "the wire's era is stamped");
-        assertTrue(p.eraCounted);
-        assertEq(p.custodyEra, 2, "counted open in the live era");
+        assertEq(p.intendedEra, 1, "the wire's era is kept");
+        assertEq(p.custodyEra, 1, "and the packet belongs to it");
         assertEq(_row(LibVaipakam.RewardCustodyRow.LiveFresh), liveBefore, "live-fresh untouched");
-        assertEq(_row(LibVaipakam.RewardCustodyRow.Unclassified) - unclBefore, 10e18, "in the unclassified row");
+        assertEq(_row(LibVaipakam.RewardCustodyRow.Unclassified) - unclBefore, 10e18, "under the epoch, unclassified");
         assertGt(_rlens().getReceivedRemit(REMITTER, 33).receivedAt, 0, "the receipt is written");
     }
 
     /// @dev An era-less list-bearing delivery carries no era, so it is placed by
-    ///      the days it lists. One listing a day BEFORE the live era's boundary
-    ///      may belong to the retired era: quarantined, with no credited shares
-    ///      and no epoch.
-    function test_AListBearingDelivery_ListingARetiredDay_IsQuarantined() public {
+    ///      the days it lists (#1566 PR C revision). One listing a day BEFORE the
+    ///      live era's boundary belongs to the era of its earliest listed day: the
+    ///      WHOLE delivery opens its epoch, typed from the wire's own split, and
+    ///      nothing reaches the live ledgers.
+    function test_AListBearingDelivery_ListingARetiredDay_OpensItsEpoch_InThatDaysEra() public {
         _transitionTwice();
         assertGt(_eraF().getCustodyEra(2).boundaryDay, 1, "fixture: day 1 predates the live era");
         uint256 liveBefore = _row(LibVaipakam.RewardCustodyRow.LiveFresh);
@@ -261,13 +254,15 @@ contract RewardTransportD6Test is SetupTest, IVaipakamErrors {
         _ingress().onRewardBudgetReceived(address(vpfi), 4e18, one, CHAIN_BASE, 34, REMITTER, 0, 4e18, keccak256("c3-d5"), true);
         bytes32 h = keccak256(abi.encode(uint256(CHAIN_BASE), keccak256("c3-d5")));
         LibVaipakam.IngressPacket memory p = _rlens().getIngressPacket(h);
-        assertTrue(p.eraQuarantined, "quarantined");
+        assertEq(p.custodyEra, 0, "the era of its earliest listed day");
         assertEq(p.freshShare, 0, "recorded as credited to nothing");
-        assertEq(p.unclassified, 4e18, "held whole");
+        assertTrue(p.attested, "typed from the wire's own split");
+        assertEq(p.freshAttested, 4e18);
+        assertEq(p.unclassified, 4e18, "the whole delivery, under its epoch");
         assertEq(_row(LibVaipakam.RewardCustodyRow.LiveFresh), liveBefore, "the typed wire's live credit did not happen");
-        (bytes32 packetHash, , , , , ) = _epoch().getTransportBatch(h);
-        assertEq(packetHash, bytes32(0), "no epoch");
-        assertEq(_eraF().getCustodyEra(2).openClassification, 1, "counted open in the live era");
+        (bytes32 packetHash, uint256 balance, , , , ) = _epoch().getTransportBatch(h);
+        assertEq(packetHash, h, "its epoch is open");
+        assertEq(balance, 4e18);
     }
 
     /// @dev The same wire listing only days from the live era's boundary on belongs
@@ -282,7 +277,7 @@ contract RewardTransportD6Test is SetupTest, IVaipakamErrors {
         );
         LibVaipakam.IngressPacket memory p =
             _rlens().getIngressPacket(keccak256(abi.encode(uint256(CHAIN_BASE), keccak256("c3-d5-live"))));
-        assertFalse(p.eraQuarantined, "placed in the live era by its days");
+        assertEq(p.custodyEra, 2, "placed in the live era by its days");
         assertEq(p.freshShare, 4e18, "the typed split is recorded");
         assertEq(p.unclassified, 0, "nothing held");
         assertEq(_row(LibVaipakam.RewardCustodyRow.LiveFresh) - liveBefore, 4e18, "credited to the live row as before");
@@ -291,9 +286,8 @@ contract RewardTransportD6Test is SetupTest, IVaipakamErrors {
             address(vpfi), 1e18, none, CHAIN_BASE, 36, REMITTER, 0, 1e18, keccak256("c3-d5-undated"), true
         );
         p = _rlens().getIngressPacket(keccak256(abi.encode(uint256(CHAIN_BASE), keccak256("c3-d5-undated"))));
-        assertFalse(p.eraQuarantined, "undated value funds the live era");
+        assertEq(p.custodyEra, 2, "undated value funds the live era");
         assertEq(_row(LibVaipakam.RewardCustodyRow.LiveFresh) - liveBefore, 5e18, "credited as before");
-        assertEq(_eraF().getCustodyEra(2).openClassification, 0, "nothing counted open");
     }
 
     // ─── cells ───

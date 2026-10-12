@@ -944,8 +944,6 @@ contract RewardCustodyFacet is DiamondAccessControl {
         if (attributed > held) revert IVaipakamErrors.RewardCustodyUnderHeld(held, attributed);
 
         s.rewardCustodyActivated = true;
-        // Frozen until history is assigned — never past a backfill already run.
-        LibRewardCustody.freezeRoleChangesUntilBackfill(s);
         emit RewardCustodyActivated(
             uint8(role),
             received,
@@ -1458,13 +1456,6 @@ contract RewardCustodyFacet is DiamondAccessControl {
         return LibVaipakam.storageSlot().rewardCustodyActivated;
     }
 
-    /// @notice #1566 slice 4 PR B — whether effective reward-role changes are
-    ///         refused (holder allocations exist or custody is activated;
-    ///         cleared by slice 4 PR C's backfill).
-    function rewardRoleChangesFrozen() external view returns (bool) {
-        return LibVaipakam.storageSlot().rewardRoleChangesFrozen;
-    }
-
     /**
      * @notice Record the COMPLETE facet cut (Codex #2186 r4, r5): this
      *         tree's custody protocol version and the hash of the ROUTING —
@@ -1585,7 +1576,6 @@ contract RewardCustodyFacet is DiamondAccessControl {
         view
         returns (
             bool activated,
-            bool roleChangesFrozen,
             uint256 liveFresh,
             uint256 recycled,
             uint256 recovery,
@@ -1599,7 +1589,6 @@ contract RewardCustodyFacet is DiamondAccessControl {
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         activated = s.rewardCustodyActivated;
-        roleChangesFrozen = s.rewardRoleChangesFrozen;
         liveFresh = s.rewardCustodyRows[LibVaipakam.RewardCustodyRow.LiveFresh];
         recycled = s.rewardCustodyRows[LibVaipakam.RewardCustodyRow.Recycled];
         recovery = s.rewardCustodyRows[LibVaipakam.RewardCustodyRow.Recovery];

@@ -3019,7 +3019,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
     }
 
     function _getRewardAggregatorSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](32);
+        s = new bytes4[](34);
         // The lapse-schedule setter + day-clock reads live on
         // RewardCommitmentFacet for EIP-170 reasons. #1569 then split the
         // broadcast cluster out entirely (this facet had reached 32 bytes of
@@ -3096,6 +3096,10 @@ contract DeployDiamond is Script, ArtifactRootBase {
             RewardAggregatorFacet.getChainKeeperAllocateBps.selector;
         s[31] =
             RewardAggregatorFacet.getChainKeeperDraw.selector;
+        // #1566 PR C revision — the B4 report ingress (pinned by signature: it
+        // overloads `onChainReportReceived`) and the reported-era read.
+        s[32] = bytes4(keccak256("onChainReportReceived(uint32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint64)"));
+        s[33] = RewardAggregatorFacet.getChainCustodyEraReported.selector;
 
     }
 
@@ -3216,29 +3220,23 @@ contract DeployDiamond is Script, ArtifactRootBase {
     /// @dev 3b-ii-A2 (#2305) — the staging record's settlement half.
     /// @dev slice 4 PR C-1 (#1566) — the custody era registry.
     function _getRewardEraSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](18);
+        s = new bytes4[](13);
         s[0] = RewardEraFacet.getCustodyEraCurrent.selector;
         s[1] = RewardEraFacet.getCustodyEra.selector;
         s[2] = RewardEraFacet.getCustodyEraRowsTotal.selector;
-        s[3] = RewardEraFacet.isCustodyEraBackfillComplete.selector;
-        s[4] = RewardEraFacet.finalizeCustodyEra.selector;
-        s[5] = RewardEraFacet.drainPendingSurplus.selector;
+        s[3] = RewardEraFacet.finalizeCustodyEra.selector;
+        s[4] = RewardEraFacet.drainPendingSurplus.selector;
         // PR C-2 — the era term of a day's fresh.
-        s[6] = RewardEraFacet.getCustodyEraAllocationForDay.selector;
-        s[7] = RewardEraFacet.eraDrawForDay.selector;
-        // PR C-3 — the open-classification count.
-        s[8] = RewardEraFacet.eraCountOpen.selector;
-        s[9] = RewardEraFacet.eraNoteClassificationExit.selector;
+        s[5] = RewardEraFacet.getCustodyEraAllocationForDay.selector;
+        s[6] = RewardEraFacet.eraDrawForDay.selector;
+        // #1566 PR C revision — the era routing of a packet's fresh.
+        s[7] = RewardEraFacet.eraCreditFreshFromRow.selector;
+        s[8] = RewardEraFacet.eraRelocateFreshIngress.selector;
+        s[9] = RewardEraFacet.eraUncreditFresh.selector;
         // PR C-4 — the parked-message lane.
         s[10] = RewardEraFacet.getParkedBroadcast.selector;
         s[11] = RewardEraFacet.getCustodyEraParkedOpen.selector;
         s[12] = RewardEraFacet.tombstoneParkedBroadcast.selector;
-        // PR C-5 — the history backfill.
-        s[13] = RewardEraFacet.startCustodyEraBackfill.selector;
-        s[14] = RewardEraFacet.backfillCustodyEraPacketsPage.selector;
-        s[15] = RewardEraFacet.completeCustodyEraBackfill.selector;
-        s[16] = RewardEraFacet.getCustodyEraBackfill.selector;
-        s[17] = RewardEraFacet.getIngressPacketHashes.selector;
     }
 
     /// #1219 (S-4) — service capacity deposits (slice 1).
@@ -3403,7 +3401,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](42);
+        s = new bytes4[](41);
         s[0] = RewardCustodyFacet.bindRewardCustodyHolder.selector;
         s[1] = RewardCustodyFacet.replaceRewardCustodyHolder.selector;
         s[2] = RewardCustodyFacet.rebaseArmedFreshPaid.selector;
@@ -3427,7 +3425,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[19] = RewardCustodyFacet.relocateRewardCustodyRow.selector;
         s[20] = RewardCustodyFacet.releaseRewardCustodyOverage.selector;
         s[21] = RewardCustodyFacet.rewardCustodyActivated.selector;
-        s[22] = RewardCustodyFacet.rewardRoleChangesFrozen.selector;
+        s[22] = RewardCustodyFacet.custodyDeliverClaim.selector; // 3b-ii-A (the freeze getter retired with the freeze)
         s[23] = RewardCustodyFacet.rewardCustodyLedger.selector;
         // #1566 slice 4 PR B — the Diamond-internal custody entry points.
         s[24] = RewardCustodyFacet.custodyRelocateToRow.selector;
@@ -3452,7 +3450,6 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[38] = RewardCustodyFacet.custodyUnclassifiedIngress.selector;
         s[39] = RewardCustodyFacet.custodyUnclassifiedReturn.selector;
         s[40] = RewardCustodyFacet.custodyReleaseUnclassifiedForReturn.selector;
-        s[41] = RewardCustodyFacet.custodyDeliverClaim.selector; // 3b-ii-A
     }
 
     /// #1566 closure 2 cutover PR 2 — the legacy reconciliation epoch.

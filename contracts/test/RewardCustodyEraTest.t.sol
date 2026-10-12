@@ -32,8 +32,8 @@ import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 ///         live-fresh row moves into the era's holder row, the baseline is
 ///         levelled, a deficit is carried as the opening deficit) and opens the
 ///         next; the era rows stay attributed; the two writers that move value
-///         out of a retired era are dark until the backfill and then release
-///         under the deficit split — to the live baseline on an active role,
+///         out of a retired era release it once the era is final — no manual
+///         step — under the deficit split — to the live baseline on an active role,
 ///         into PENDING SURPLUS while Detached, drained once reattached.
 contract RewardCustodyEraTest is SetupTest, IVaipakamErrors {
     VPFIToken internal vpfi;
@@ -90,15 +90,13 @@ contract RewardCustodyEraTest is SetupTest, IVaipakamErrors {
         RewardRemittanceFacet(address(diamond)).setRewardRemittanceReceiver(address(this));
     }
 
-    /// @dev Every custody credit re-arms the freeze (by design until PR C-5), so a
-    ///      transition in a test lifts it raw first.
+    /// @dev A role change needs no lift: with the carry-forward in place nothing
+    ///      freezes it (#1566 PR C revision).
     function _detach() internal {
-        _mut().setRewardRoleChangesFrozenRaw(false);
         _rep().setBaseChainId(0);
     }
 
     function _reattach() internal {
-        _mut().setRewardRoleChangesFrozenRaw(false);
         _rep().setBaseChainId(CHAIN_BASE);
     }
 
@@ -169,9 +167,8 @@ contract RewardCustodyEraTest is SetupTest, IVaipakamErrors {
         uint256 heldBefore = _held();
         assertEq(_era().getCustodyEraCurrent(), 0, "the pre-registry era is live");
 
-        // The expectation binds to the NEXT call: lift the freeze first, then
-        // expect the two era events of the role change itself.
-        _mut().setRewardRoleChangesFrozenRaw(false);
+        // The expectation binds to the NEXT call: the two era events of the
+        // role change itself.
         vm.expectEmit(true, false, false, true, address(diamond));
         emit CustodyEraRetired(0, 7e18, 0, _today());
         vm.expectEmit(true, false, false, true, address(diamond));
@@ -213,16 +210,19 @@ contract RewardCustodyEraTest is SetupTest, IVaipakamErrors {
         assertEq(_live(), 4e18, "only the excess is headroom");
     }
 
-    /// @dev Writer 2 is dark until the backfill; then a retired, obligation-free
-    ///      era releases its row — into PENDING SURPLUS while Detached — and the
-    ///      drain (writer 3) credits the live baseline under the split once
-    ///      reattached.
-    function test_Finalize_IsDarkUntilTheBackfill_ThenReleasesUnderTheSplit() public {
+    /// @dev #1566 PR C revision — writer 2 waits on the closure proof ALONE: before
+    ///      every day of the span is proven closed it refuses by name; then the
+    ///      retired era releases its row — into PENDING SURPLUS while Detached —
+    ///      and the drain (writer 3) credits the live baseline under the split
+    ///      once reattached. No backfill, no manual step.
+    function test_Finalize_OnTheClosureProofAlone_ThenReleasesUnderTheSplit() public {
         activateRewardCustodyForTest(address(vpfi), 7e18);
         _detach();
-        vm.expectRevert(CustodyEraBackfillPending.selector);
-        _era().finalizeCustodyEra(0);
-        _mut().setCustodyEraBackfillCompleteRaw(true);
+        uint256 span = _span0();
+        if (span != 0) {
+            vm.expectRevert(abi.encodeWithSelector(CustodyEraNotTerminal.selector, uint64(0), uint256(0), span, uint256(0)));
+            _era().finalizeCustodyEra(0);
+        }
         _closeEra0Days();
         vm.expectRevert(abi.encodeWithSelector(CustodyEraLive.selector, uint64(1)));
         _era().finalizeCustodyEra(1);
@@ -261,23 +261,21 @@ contract RewardCustodyEraTest is SetupTest, IVaipakamErrors {
         _era().drainPendingSurplus(1);
     }
 
-    /// @dev An era with obligations standing (the counters PR C-3/C-5 will write)
-    ///      is not terminal, by name.
-    function test_Finalize_RefusesWhileObligationsStand() public {
+    /// @dev An era with a day of its span not yet proven closed is not final, by
+    ///      name; once every day is, it is final — whatever its packets still hold
+    ///      unclassified (#1566 PR C revision: a closed era owes nothing, and a
+    ///      packet's later exit routes by the era rule).
+    function test_Finalize_WaitsOnTheClosedDaysOnly() public {
         activateRewardCustodyForTest(address(vpfi), 1e18);
         _detach();
-        _mut().setCustodyEraBackfillCompleteRaw(true);
         uint256 span = _span0();
         assertGt(span, 0, "fixture: era 0 spans the days before the change");
         _mut().setCustodyEraCountersRaw(0, span - 1, 0); // one day short of proven closed
         vm.expectRevert(abi.encodeWithSelector(CustodyEraNotTerminal.selector, uint64(0), span - 1, span, uint256(0)));
         _era().finalizeCustodyEra(0);
-        _mut().setCustodyEraCountersRaw(0, span, 2); // every day closed, packets still open
-        vm.expectRevert(abi.encodeWithSelector(CustodyEraNotTerminal.selector, uint64(0), span, span, uint256(2)));
-        _era().finalizeCustodyEra(0);
-        _mut().setCustodyEraCountersRaw(0, span, 0);
+        _mut().setCustodyEraCountersRaw(0, span, 2); // every day closed; the retired count says two packets open
         (uint256 released, ) = _era().finalizeCustodyEra(0);
-        assertEq(released, 1e18, "every day proven closed and nothing open: terminal");
+        assertEq(released, 1e18, "every day proven closed: final, open packets or not");
     }
 
     /// @dev A finalized era on an ACTIVE role credits the live baseline under the
@@ -287,7 +285,6 @@ contract RewardCustodyEraTest is SetupTest, IVaipakamErrors {
         _detach();
         _reattach();
         _mut().setArmedFreshLedgerRaw(0, 2e18); // a 2 deficit on the new baseline
-        _mut().setCustodyEraBackfillCompleteRaw(true);
         _closeEra0Days();
         (uint256 released, bool toPending) = _era().finalizeCustodyEra(0);
         assertEq(released, 5e18);
@@ -337,19 +334,10 @@ contract RewardCustodyEraTest is SetupTest, IVaipakamErrors {
         assertEq(_era().getCustodyEra(70).daysClosed, 0);
     }
 
-    /// @dev #1566 PR 1 review (P3) — the pending-surplus drain is dark until the backfill, as the
-    ///      era release is: refused by name before any row is read.
-    function test_TheSurplusDrain_IsDarkUntilTheBackfill() public {
-        activateRewardCustodyForTest(address(vpfi), 0);
-        assertFalse(_era().isCustodyEraBackfillComplete(), "fixture-live: no backfill");
-        vm.expectRevert(CustodyEraBackfillPending.selector);
-        _era().drainPendingSurplus(1);
-    }
-
-    /// @dev #1566 PR 1 review (P2-1) — the known-era guard stays at the pre-backfill era while the
+    /// @dev #1566 PR 1 review (P2-1) — the known-era guard stays at era 0 while the
     ///      reconciliation queues are keyed by it alone: a registry era opened by a role change is
     ///      real, but it has no queue, and answering it would pair an empty queue with the global rows.
-    function test_KnownEra_StaysThePreBackfillEra_UntilTheQueuesAreEraKeyed() public {
+    function test_KnownEra_StaysEraZero_UntilTheQueuesAreEraKeyed() public {
         activateRewardCustodyForTest(address(vpfi), 1e18);
         RewardReconciliationFacet recon = RewardReconciliationFacet(address(diamond));
         recon.getFreshQueueState(0);
@@ -363,8 +351,8 @@ contract RewardCustodyEraTest is SetupTest, IVaipakamErrors {
     }
 
     /// @dev Before activation the holder has no rows: the counters are levelled as
-    ///      before and the registry is untouched, so the backfill finds every
-    ///      pre-activation figure in era 0.
+    ///      before and the registry is untouched, so every pre-activation figure
+    ///      is era 0's.
     function test_PreActivation_RoleChange_LevelsTheCountersAndTouchesNoRegistry() public {
         _mut().setArmedFreshLedgerRaw(3e18, 1e18);
         _rep().setBaseChainId(0);
@@ -375,136 +363,119 @@ contract RewardCustodyEraTest is SetupTest, IVaipakamErrors {
         assertEq(_era().getCustodyEraRowsTotal(), 0);
     }
 
-    // ─── PR C-5: the history backfill ───
+    // ─── #1566 PR C revision — no manual era step; stamping; the B4 report; era routing ───
     address internal constant REMITTER_BF = address(0xBA5E);
 
-    function _pauseEpoch() internal view returns (uint64 epoch) {
-        (, , , epoch) = LibPausable.decodePausableSlot(vm.load(address(diamond), LibPausable.PAUSABLE_STORAGE_POSITION));
+    /// @dev An untyped delivery: its value lands unclassified under its packet.
+    function _untypedDelivery(uint256 amount, uint256 remitId, bytes32 id) internal returns (bytes32 h) {
+        h = _untypedDeliveryOn(amount, remitId, id, 1);
     }
 
-    /// @dev An untyped delivery (its value lands unclassified under the packet), then
-    ///      its era count forgotten raw: the state of a packet recorded before the count.
-    function _historyPacket(uint256 amount, uint256 remitId, bytes32 id) internal returns (bytes32 h) {
+    /// @dev An untyped delivery listing one day, `day` — which places it: a day
+    ///      before the live era's boundary belongs to a retired era.
+    function _untypedDeliveryOn(uint256 amount, uint256 remitId, bytes32 id, uint256 day)
+        internal
+        returns (bytes32 h)
+    {
         uint256[] memory one = new uint256[](1);
-        one[0] = 1;
+        one[0] = day;
         RewardRemittanceFacet(address(diamond)).setRewardRemittanceReceiver(address(this));
-        // The receiver has already moved the delivery's tokens into the Diamond
-        // when it calls the ingress; on an active custody the ingress moves them
-        // on into the holder, so the Diamond must hold them first.
         vpfi.mint(address(this), amount);
         vpfi.transfer(address(diamond), amount);
         RewardIngressFacet(address(diamond)).onRewardBudgetReceived(
             address(vpfi), amount, one, CHAIN_BASE, remitId, REMITTER_BF, 0, 0, id, false
         );
         h = keccak256(abi.encode(uint256(CHAIN_BASE), id));
-        _mut().uncountPacketEraRaw(h);
     }
 
-    /// @dev The whole backfill: history packets assigned by receipt time, completion
-    ///      lifts the freeze, a credit no longer re-arms it, and a role change then
-    ///      needs no raw unfreeze.
-    function test_TheBackfill_AssignsHistory_AndLiftsTheFreeze() public {
-        activateRewardCustodyForTest(address(vpfi), 1e18);
-        assertTrue(_mut().getRewardRoleChangesFrozenRaw(), "straddle: activation before the backfill freezes");
-        bytes32 h = _historyPacket(2e18, 41, keccak256("bf-1"));
-        assertEq(_era().getCustodyEra(0).openClassification, 0, "fixture: not counted");
-        assertFalse(_rlens().getIngressPacket(h).eraCounted);
-        AdminFacet(address(diamond)).pause();
-        uint64 epoch = _pauseEpoch();
-        bytes32[] memory hs = new bytes32[](1);
-        hs[0] = h;
-        vm.expectRevert(CustodyEraBackfillNotStarted.selector);
-        _era().backfillCustodyEraPacketsPage(epoch, hs);
-        _era().startCustodyEraBackfill(epoch);
-        vm.expectRevert(CustodyEraBackfillAlreadyStarted.selector);
-        _era().startCustodyEraBackfill(epoch);
-        assertEq(_era().backfillCustodyEraPacketsPage(epoch, hs), 1, "one packet counted open");
-        LibVaipakam.IngressPacket memory p = _rlens().getIngressPacket(h);
-        assertTrue(p.eraCounted);
-        assertEq(p.custodyEra, 0, "placed in the era live at its receipt");
-        assertEq(_era().getCustodyEra(0).openClassification, 1);
-        assertEq(_era().backfillCustodyEraPacketsPage(epoch, hs), 0, "a counted packet is left alone");
-        bytes32[] memory unknown = new bytes32[](1);
-        unknown[0] = keccak256("nope");
-        vm.expectRevert(abi.encodeWithSelector(CustodyEraBackfillPacketUnknown.selector, keccak256("nope")));
-        _era().backfillCustodyEraPacketsPage(epoch, unknown);
-        vm.expectRevert(abi.encodeWithSelector(CustodyEraBackfillStalePauseEpoch.selector, epoch + 1, epoch));
-        _era().completeCustodyEraBackfill(epoch + 1, 1);
-        _era().completeCustodyEraBackfill(epoch, 1);
-        (bool started, bool complete, uint256 supplied, uint256 counted, uint256 attested) = _era().getCustodyEraBackfill();
-        assertTrue(started && complete);
-        assertEq(supplied, 2, "two pages supplied one hash each");
-        assertEq(counted, 1);
-        assertEq(attested, 1);
-        assertFalse(_mut().getRewardRoleChangesFrozenRaw(), "the freeze is lifted");
-        vm.expectRevert(CustodyEraBackfillAlreadyComplete.selector);
-        _era().completeCustodyEraBackfill(epoch, 1);
-        AdminFacet(address(diamond)).unpause();
-        fundRewardPoolForTest(address(vpfi), 1e18);
-        assertFalse(_mut().getRewardRoleChangesFrozenRaw(), "a credit no longer re-arms the freeze");
-        _rep().setBaseChainId(0); // no raw unfreeze needed any more
-        assertEq(_era().getCustodyEraCurrent(), 1, "the role change ran the carry-forward");
+    /// @dev Custody activation freezes nothing: a role change right after it
+    ///      carries the live row into era 0 and opens era 1.
+    function test_AnActivation_FreezesNoRoleChange() public {
+        activateRewardCustodyForTest(address(vpfi), 3e18);
+        _rep().setBaseChainId(0);
+        assertEq(_era().getCustodyEraCurrent(), 1, "the change went through");
+        assertEq(_era().getCustodyEra(0).holderRow, 3e18, "and carried the live row");
     }
 
-    /// @dev #1566 PR 1 review (P2-3) — the freeze means "history not yet assigned": a chain
-    ///      whose backfill ran BEFORE it activated custody is not frozen by the activation, and
-    ///      its role still changes (before the fix it was frozen for good — nothing else lifts it).
-    function test_AnActivationAfterTheBackfill_DoesNotFreezeRoleChanges() public {
-        AdminFacet(address(diamond)).pause();
-        uint64 epoch = _pauseEpoch();
-        _era().startCustodyEraBackfill(epoch);
-        _era().completeCustodyEraBackfill(epoch, 0);
-        AdminFacet(address(diamond)).unpause();
-        activateRewardCustodyForTest(address(vpfi), 1e18);
-        assertTrue(_custody().rewardCustodyActivated(), "fixture-live: activated");
-        assertFalse(_mut().getRewardRoleChangesFrozenRaw(), "activation after the backfill leaves role changes open");
-        _rep().setBaseChainId(0); // no raw unfreeze needed
-        assertEq(_era().getCustodyEraCurrent(), 1, "the role change ran the carry-forward");
+    /// @dev Every packet is stamped with the era live at its arrival.
+    function test_APacket_IsStampedWithTheLiveEra() public {
+        activateRewardCustodyForTest(address(vpfi), 0);
+        bytes32 h0 = _untypedDelivery(1e18, 41, keccak256("st-0"));
+        assertEq(_rlens().getIngressPacket(h0).custodyEra, 0);
+        _detach();
+        _reattach();
+        // A day of the live era (its boundary is today): a delivery listing an
+        // earlier day is placed by that day instead (the D6 suite pins that).
+        bytes32 h2 = _untypedDeliveryOn(1e18, 42, keccak256("st-2"), _today());
+        assertEq(_rlens().getIngressPacket(h2).custodyEra, 2, "the live era at its arrival");
+        assertEq(_rlens().getIngressPacket(h0).custodyEra, 0, "an earlier packet keeps its own");
     }
 
-    /// @dev A history packet is placed by its RECEIPT TIME, not by the live era at
-    ///      backfill: one received before a transition belongs to the retired era.
-    function test_TheBackfill_PlacesAPacketByItsReceiptTime() public {
-        activateRewardCustodyForTest(address(vpfi), 1e18);
-        bytes32 early = _historyPacket(2e18, 42, keccak256("bf-early"));
-        vm.warp(block.timestamp + 1 hours);
-        _detach(); // era 1 opens now
-        vm.warp(block.timestamp + 1 hours);
-        bytes32 late = _historyPacket(3e18, 43, keccak256("bf-late"));
-        AdminFacet(address(diamond)).pause();
-        uint64 epoch = _pauseEpoch();
-        _era().startCustodyEraBackfill(epoch);
-        bytes32[] memory hs = new bytes32[](2);
-        hs[0] = early;
-        hs[1] = late;
-        assertEq(_era().backfillCustodyEraPacketsPage(epoch, hs), 2);
-        assertEq(_rlens().getIngressPacket(early).custodyEra, 0, "received in era 0");
-        assertEq(_rlens().getIngressPacket(late).custodyEra, 1, "received in era 1");
-        assertEq(_era().getCustodyEra(0).openClassification, 1);
-        assertEq(_era().getCustodyEra(1).openClassification, 1);
+    /// @dev The mirror's day report carries its live custody era (B4), and a
+    ///      messenger without the B4 send downgrades the report to B3.
+    function test_TheDayReport_CarriesTheLiveEra_AndDowngrades() public {
+        activateRewardCustodyForTest(address(vpfi), 0);
+        MockRewardMessenger messenger = new MockRewardMessenger(address(diamond));
+        _rep().setRewardMessenger(address(messenger));
+        _detach();
+        _reattach();
+        _rep().closeDay(1);
+        assertEq(messenger.lastSendArity(), 9, "the B4 shape");
+        assertEq(messenger.lastSendCustodyEra(), 2, "carrying the live era");
+        messenger.setB4Unsupported(true);
+        _rep().closeDay(2);
+        assertEq(messenger.lastSendArity(), 8, "downgraded to B3 on a messenger without B4");
     }
 
-    /// @dev The backfill is an operator act under the manual pause.
-    function test_TheBackfill_RequiresThePauseAndTheAdmin() public {
-        activateRewardCustodyForTest(address(vpfi), 1e18);
-        vm.expectRevert();
-        _era().startCustodyEraBackfill(0); // not paused
-        AdminFacet(address(diamond)).pause();
-        uint64 epoch = _pauseEpoch();
-        vm.prank(makeAddr("stranger"));
-        vm.expectRevert();
-        _era().startCustodyEraBackfill(epoch);
+    /// @dev The era rule for a packet's fresh: a retired, unfinalized era BOOKS it
+    ///      to its row — counted as delivered and levelled at once, so the live
+    ///      baseline gains no headroom — and a demotion takes it back from there.
+    function test_AFreshCreditForARetiredEra_IsBookedToItsRow_AndADemotionTakesItBack() public {
+        activateRewardCustodyForTest(address(vpfi), 0);
+        bytes32 h = _untypedDelivery(5e18, 43, keccak256("route-0")); // era 0's packet
+        _detach();
+        _reattach(); // era 2 live; eras 0 and 1 retired, neither final
+        (uint256 receivedBefore, uint256 paidBefore) = _ledger();
+        uint256 liveBefore = _live();
+        uint256 attributedBefore = _attributed();
+        (uint256 toLive, uint256 toRestitution) =
+            _mut().creditFreshToEraFromRowRaw(uint8(LibVaipakam.RewardCustodyRow.Unclassified), 4e18, 0);
+        assertEq(toLive + toRestitution, 0, "nothing reached the live baseline");
+        assertEq(_live(), liveBefore);
+        assertEq(_era().getCustodyEra(0).holderRow, 4e18, "booked to era 0's row");
+        (uint256 received, uint256 paid) = _ledger();
+        assertEq(received - receivedBefore, 4e18, "counted as delivered");
+        assertEq(paid - paidBefore, 4e18, "and levelled at once");
+        assertEq(_attributed(), attributedBefore, "an in-holder move");
+        assertEq(_mut().uncreditFreshForPacketRaw(h, 3e18), 3e18, "the demotion takes back from the era's row");
+        assertEq(_era().getCustodyEra(0).holderRow, 1e18);
+        (received, paid) = _ledger();
+        assertEq(received - receivedBefore, 1e18, "both sides unwound by what it took");
+        assertEq(paid - paidBefore, 1e18);
+        // Straddle: the LIVE era's packet credit reaches the live baseline under the split.
+        (toLive, toRestitution) =
+            _mut().creditFreshToEraFromRowRaw(uint8(LibVaipakam.RewardCustodyRow.Unclassified), 1e18, 2);
+        assertEq(toLive + toRestitution, 1e18, "the live era: the live baseline");
     }
 
-    /// @dev Packets recorded from now on are enumerable.
-    function test_PacketsRecordedNow_AreListed() public {
-        activateRewardCustodyForTest(address(vpfi), 1e18);
-        (bytes32[] memory page0, uint256 total0) = _era().getIngressPacketHashes(0, 10);
-        bytes32 h = _historyPacket(1e18, 44, keccak256("bf-list"));
-        (bytes32[] memory page, uint256 total) = _era().getIngressPacketHashes(0, 10);
-        assertEq(total, total0 + 1, "one more packet listed");
-        assertEq(page[page.length - 1], h, "the newest is last");
-        assertEq(page0.length, total0);
+    /// @dev A FINAL era's late value goes where its release went: the live baseline
+    ///      while a role is active, pending surplus while Detached.
+    function test_AFreshCreditForAFinalEra_GoesWhereItsReleaseWent() public {
+        activateRewardCustodyForTest(address(vpfi), 0);
+        _untypedDelivery(5e18, 44, keccak256("route-f"));
+        _detach(); // era 1 live, Detached
+        _closeEra0Days();
+        _era().finalizeCustodyEra(0);
+        uint256 pendingBefore = _row(LibVaipakam.RewardCustodyRow.PendingSurplus);
+        _mut().creditFreshToEraFromRowRaw(uint8(LibVaipakam.RewardCustodyRow.Unclassified), 2e18, 0);
+        assertEq(_row(LibVaipakam.RewardCustodyRow.PendingSurplus) - pendingBefore, 2e18, "Detached: pending surplus");
+        assertEq(_era().getCustodyEra(0).holderRow, 0, "never back into a final era's row");
+        _reattach();
+        uint256 liveBefore = _live();
+        (uint256 toLive, uint256 toRestitution) =
+            _mut().creditFreshToEraFromRowRaw(uint8(LibVaipakam.RewardCustodyRow.Unclassified), 1e18, 0);
+        assertEq(toLive + toRestitution, 1e18, "active: the live baseline under the split");
+        assertEq(_live() - liveBefore, toLive);
     }
 
     // ─── PR C-4: the parked-message lane ───
@@ -581,18 +552,16 @@ contract RewardCustodyEraTest is SetupTest, IVaipakamErrors {
         assertEq(_era().getCustodyEraParkedOpen(era), openBefore - 1, "and leaves its era's open count");
     }
 
-    /// @dev An era is not terminal while a broadcast parked in it stands; the
-    ///      tombstone drains the lane and the era finalizes.
-    function test_Finalize_RefusesWhileAParkedBroadcastStands() public {
+    /// @dev #1566 PR C revision — an era's finality does not wait on a broadcast
+    ///      parked in it (a parked copy of a closed day's broadcast installs nothing
+    ///      that prices an obligation), nor on its tombstone.
+    function test_Finalize_DoesNotWaitOnAParkedBroadcast() public {
         activateRewardCustodyForTest(address(vpfi), 1e18);
         _rotateDeployment();
         uint64 era = _era().getCustodyEraCurrent();
-        uint256 id = _parkKind2(4);
+        _parkKind2(4);
         _detach(); // the era with the parked entry is retired
-        _mut().setCustodyEraBackfillCompleteRaw(true);
-        vm.expectRevert(abi.encodeWithSelector(CustodyEraParkedOpen.selector, era, uint256(1)));
-        _era().finalizeCustodyEra(era);
-        _era().tombstoneParkedBroadcast(id, bytes32("drained"));
+        assertEq(_era().getCustodyEraParkedOpen(era), 1, "fixture-live: the entry stands parked");
         (uint256 released, ) = _era().finalizeCustodyEra(era);
         assertEq(released, 0, "that era carried no custody; it finalizes clean");
         assertTrue(_era().getCustodyEra(era).terminal);

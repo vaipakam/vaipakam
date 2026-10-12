@@ -60,17 +60,13 @@ while a mirror is detached. Such a day would have kept its era unfinalizable
 for good, and through the era's row blocked every VPFI token rotation. The
 rotation runbook now names the era rows.
 
-Two activation-order fixes:
-- Completing the history backfill before custody activation no longer
-  freezes role changes for good.
-- An unconfigured chain becoming a mirror levels its delivered counters
-  again.
+An unconfigured chain becoming a mirror levels its delivered counters
+again.
 
-The day-to-era and time-to-era lookups are now binary searches, so a deep
-era registry can never stall a claim or a closure. Holding or releasing an
+The day-to-era lookup is now a binary search, so a deep era registry can
+never stall a claim or a closure. Holding or releasing an
 era's room now emits an event. An era cannot finalize while a staging record
-still holds part of its row. The pending-surplus drain stays dark until the
-backfill completes. The custody cutover version is now 4. An era release or
+still holds part of its row. The custody cutover version is now 4. An era release or
 a surplus drain counts as a re-credit, not a delivery, so the
 counted-funding view still reconciles against what Base sent. The
 reconciliation queue views answer only the era their queues are kept under.
@@ -85,9 +81,11 @@ to an activated mirror could not execute on arrival.
 **Offer-match split.** The comments, messages and docs that still named the
 old hosts were corrected, and an unused import was removed.
 
-**Still open, for the owner.** Two items wait on an owner decision:
-- How a sender addresses the destination's era: rooted remittances still
-  carry era zero, so a mirror's role change would quarantine them. Routing
-  classification and corrections to a packet's era goes with that decision.
-- Whether to turn the backfill's attested packet count into an on-chain
-  proof.
+**The custody eras, revised (owner decisions, 2026-10-12).** Each mirror's
+day report now carries the custody era it is live in, and the canonical
+chain stamps every remittance with the era the destination last reported,
+so a delivery always names the era it will land in. A mirror that cannot
+yet send the new report falls back to the previous one, and the canonical
+chain accepts both. What the destination then does with a delivery's era,
+and why no era step is manual any more, are in the slice 4 PR C-3 and PR C-5
+entries.

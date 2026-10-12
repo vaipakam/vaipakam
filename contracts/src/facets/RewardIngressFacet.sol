@@ -223,21 +223,22 @@ contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         // PR C-3 — an era-less wire landing after this chain's role changed is
         // placed by the days it lists, since the era of a day is defined
         // (custodyEraOfDay): every day at or after the live era's boundary is
-        // the live era's, taken as before; any day before it is a retired era's,
-        // and the delivery is QUARANTINED like a retired-era rooted one —
-        // recorded with no credited shares (nothing reaches a shared ledger),
-        // held unclassified under the packet, no epoch. A list of no days names
-        // no retired obligation and funds the live era. The design's
-        // drain-and-freeze precondition makes the quarantine the delayed case.
-        bool legacyQuarantine = LibRewardCustody.active(s) && s.custodyEraCurrent != 0
+        // the live era's, taken as before; a list naming any earlier day belongs
+        // to a retired era — the era of its EARLIEST listed day — and reaches no
+        // live ledger (#1566 PR C revision): the WHOLE delivery opens its epoch,
+        // the consumable home its listed days draw from, typed from the wire's
+        // own split when it carries one, else awaiting the canonical chain's
+        // split attestation like any untyped delivery. A list of no days names
+        // no retired obligation and funds the live era.
+        bool retiredDays = LibRewardCustody.active(s) && s.custodyEraCurrent != 0
             && !LibRewardCustody.listedDaysAreLive(s, dayIds);
         bytes32 h = LibRewardCustody.callRecordIngressPacket(
             sourceChainId,
             transportMessageId,
             LibRewardCustody.PACKET_KIND_BUDGET,
             amount,
-            legacyQuarantine ? 0 : freshShare,
-            legacyQuarantine ? 0 : recycledShare,
+            retiredDays ? 0 : freshShare,
+            retiredDays ? 0 : recycledShare,
             remitter,
             remitId
         );
@@ -247,10 +248,14 @@ contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         // event, so a packet landing before that ledger exists is still
         // admissible on the strength of the chain's own record.
         LibRewardCustody.stampPacketDayList(s, h, dayIds);
-        if (legacyQuarantine) {
+        if (retiredDays) {
+            LibRewardCustody.stampPacketEra(
+                s, h, LibRewardCustody.custodyEraOfDay(s, LibRewardCustody.earliestListedDay(dayIds))
+            );
+            if (splitTyped) LibRewardCustody.attestPacketFromWire(s, h, freshShare, recycledShare);
             s.rewardBudgetFreshUncounted += amount;
             LibRewardCustody.callUnclassifiedIngress(h, amount);
-            LibRewardCustody.markEraQuarantined(s, h, 0);
+            LibRewardCustody.admitTransportBatch(s, h, dayIds, amount);
             emit RewardBudgetReceived(sourceChainId, token, amount, dayIds, remitId, recycledShare, freshShare);
             return;
         }
@@ -444,22 +449,20 @@ contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
             remitId
         );
         LibRewardCustody.stampPacketDayListRoot(s, h, dayListRoot, elementCount, chunkCount, intendedEra);
-        // PR C-3 — the INTENDED ERA against the live one (design: retry or
-        // quarantine). Ahead of us: the sender has transitioned and we have not
-        // — revert, and the transport re-delivers after the local transition.
-        // Behind us: dispatched for an era already retired here — held whole,
-        // unclassified, under the packet (no epoch, no ledger credit, no
-        // attestation) until evidence classifies it through reconciliation.
+        // The INTENDED ERA — the destination's own, as it last reported it to
+        // the canonical chain (#1566 PR C revision) — against the live one.
+        // Ahead of us: the canonical chain heard of a transition this chain has
+        // not made — revert, and the transport re-delivers after it. Otherwise
+        // the delivery belongs to the era it was sent for, a retired one
+        // included: it is NOT held inert, its epoch is that era's separately
+        // backed, consumable home, drawn by the obligations of the days it lists
+        // as transport legs, so nothing it carries reaches the live baseline.
         if (intendedEra > s.custodyEraCurrent) revert CustodyEraAhead(intendedEra, s.custodyEraCurrent);
-        bool quarantine = epoch && intendedEra < s.custodyEraCurrent;
-        if (quarantine) {
-            s.rewardBudgetFreshUncounted += amount;
-            LibRewardCustody.callUnclassifiedIngress(h, amount);
-            LibRewardCustody.markEraQuarantined(s, h, intendedEra);
-        } else if (epoch) {
+        if (epoch) {
             if (freshShare + recycledShare != amount) {
                 revert TransportSplitNotWhole(h, freshShare, recycledShare, amount);
             }
+            LibRewardCustody.stampPacketEra(s, h, intendedEra);
             LibRewardCustody.attestPacketFromWire(s, h, freshShare, recycledShare);
             s.rewardBudgetFreshUncounted += amount;
             LibRewardCustody.callUnclassifiedIngress(h, amount);
@@ -624,6 +627,8 @@ contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
             remitter,
             remitId
         );
+        // #1566 PR C revision — a compensation belongs to the era of its day.
+        LibRewardCustody.stampPacketEra(s, h, LibRewardCustody.custodyEraOfDay(s, dayId));
         {
             // #1566 transport epochs PR 3a — a compensation names ONE day; its
             // commitment is recorded exactly as a budget delivery's list is,
@@ -837,8 +842,14 @@ contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         // inverses by construction rather than by a matching day test.
         // #1566 slice 4 PR B — see {onRewardBudgetReceived}: relocated into
         // the holder under the deficit split on an activated deployment.
-        if (LibRewardCustody.active(s)) LibRewardCustody.callRelocateFreshIngress(amount);
-        else s.rewardBudgetArmedFreshReceived += amount;
+        // #1566 PR C revision — into the era of the day it compensates: the live
+        // baseline for a live day, the retired era's row (or, once that era is
+        // final, as its release would have gone) for a retired one.
+        if (LibRewardCustody.active(s)) {
+            LibRewardCustody.callEraRelocateFreshIngress(amount, LibRewardCustody.custodyEraOfDay(s, dayId));
+        } else {
+            s.rewardBudgetArmedFreshReceived += amount;
+        }
         dc.armedFreshCounted += SafeCast.toUint128(amount);
         emit CompensationCredited(
             dayId, lenderShare18, borrowerShare18, provisional, era

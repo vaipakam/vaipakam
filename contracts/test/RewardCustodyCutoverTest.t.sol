@@ -15,6 +15,7 @@ import {RewardCustodyFacet} from "../src/facets/RewardCustodyFacet.sol";
 import {RewardStagingDomainFacet} from "../src/facets/RewardStagingDomainFacet.sol";
 import {RewardReconciliationFacet} from "../src/facets/RewardReconciliationFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
+import {RewardEraFacet} from "../src/facets/RewardEraFacet.sol";
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
 import {RewardIngressFacet} from "../src/facets/RewardIngressFacet.sol";
 import {RewardEpochFacet} from "../src/facets/RewardEpochFacet.sol";
@@ -327,7 +328,7 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _custody().rebaseArmedFreshPaid(0, epoch);
         _custody().activateRewardCustody(epoch, false);
         assertTrue(_custody().rewardCustodyActivated(), "activated");
-        assertTrue(_custody().rewardRoleChangesFrozen(), "the freeze armed");
+        assertFalse(_mut().getRewardRoleChangesFrozenRaw(), "#1566 PR C revision: activation freezes nothing");
 
         vm.expectRevert(RewardCustodyAlreadyActivated.selector);
         _custody().activateRewardCustody(epoch, false);
@@ -514,7 +515,6 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         );
         _custody().fundRewardCustodyRow(LibVaipakam.RewardCustodyRow.Recycled, 1e18);
         assertEq(_held(), 0, "nothing moved into the holder");
-        assertFalse(_custody().rewardRoleChangesFrozen(), "and nothing armed the freeze");
 
         _mut().setRewardRoleRaw(0, false, true); // Detached
         vm.expectRevert(
@@ -635,7 +635,6 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         vm.expectRevert(RewardCustodyBootstrapRequiresRebase.selector);
         _custody().releaseRewardCustodyRow(LibVaipakam.RewardCustodyRow.Recycled, 1);
         assertEq(_held(), 0, "nothing moved into the holder");
-        assertFalse(_custody().rewardRoleChangesFrozen(), "and nothing armed the freeze");
 
         _custody().rebaseArmedFreshPaid(4e18, _epoch());
         _custody().fundRewardCustodyRow(LibVaipakam.RewardCustodyRow.LiveFresh, 6e18);
@@ -772,7 +771,6 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         (uint256 paid, uint256 remaining) = _rlens().getDeliveredFreshBound();
         assertEq(paid, 0, "uncharged");
         assertEq(remaining, type(uint256).max, "unbounded");
-        assertFalse(_custody().rewardRoleChangesFrozen(), "no allocation, no freeze");
     }
 
     /// `fundRewardPool` requires the activation and an ACTIVE role, and is
@@ -1598,6 +1596,24 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         e = _entry(0);
         assertEq(e.freshCredit, 10e18);
         assertEq(e.recycledCredit, 0);
+    }
+
+    /// #1566 PR C revision — an entry is correctable only in the era it was made
+    /// in: after a role change its value lives in the retired era's row, so a
+    /// correction is refused by name rather than moving the wrong era's custody.
+    function test_Reclassify_RefusesAnEntryOfARetiredEra() public {
+        _activatedMirror();
+        _seedDiamond(10e18);
+        bytes32 id = keccak256("legacy-era");
+        _untyped(10e18, 41, id);
+        _evidence(_packetHash(id), 10e18);
+        _classify(_packetHash(id), 10e18, 0, keccak256("e-era"));
+        _reclassify(0, true, 1e18, keccak256("r-era-live")); // straddle: in its own era it corrects
+        _rep().setBaseChainId(0); // a role change retires era 0
+        _admin().pause();
+        vm.expectRevert(abi.encodeWithSelector(ReconciliationEntryEraRetired.selector, uint256(0), uint64(0)));
+        _recon().reclassifyReconciliationEntry(0, true, 1e18, keccak256("r-era-retired"));
+        _admin().unpause();
     }
 
     /// Codex #2206 r3 (P1) — the correction toward fresh is the same
@@ -2997,45 +3013,23 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
 
     // ─── 7. the freeze ───────────────────────────────────────────────────────
 
-    /// Effective role changes are refused while frozen, in every direction the
-    /// setters can take, and a direct source rebinding is refused always.
-    function test_RoleSetters_RefuseEffectiveChangesWhileFrozen_AndDirectRebinds() public {
+    /// #1566 PR C revision — with the carry-forward in place nothing freezes a
+    /// role change: after activation an effective change goes through and
+    /// carries the live row into the retiring era; a write resolving the SAME
+    /// role is no change; a direct source rebinding stays refused (pinned below).
+    function test_RoleSetters_ChangeAfterActivation_CarryingTheLiveRow() public {
         _becomeCanonical();
-        // Before any allocation the setters still work (a fresh deploy is
-        // configured this way).
-        assertFalse(_custody().rewardRoleChangesFrozen(), "not frozen yet");
         activateRewardCustodyForTest(address(vpfi), 0);
-        assertTrue(_custody().rewardRoleChangesFrozen(), "frozen");
-
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                RewardRoleChangeFrozen.selector,
-                uint8(LibVaipakam.RewardRole.Canonical),
-                uint8(LibVaipakam.RewardRole.Mirror)
-            )
-        );
-        _rep().setIsCanonicalRewardChain(false);
-        // A write that resolves the SAME role is not a change.
-        _rep().setIsCanonicalRewardChain(true);
-        _rep().setBaseChainId(CHAIN_BASE);
-
         // A canonical chain's base chain id is not a funding source, so its
         // rewrite is neither a rebinding nor (while still canonical) a role
-        // change. The mirror rule is pinned below.
+        // change.
         _rep().setBaseChainId(CHAIN_OP);
         _rep().setBaseChainId(CHAIN_BASE);
-
-        // Detaching a canonical chain (base to zero first) is an effective
-        // change only at the second write — the first keeps it Canonical.
-        _rep().setBaseChainId(0);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                RewardRoleChangeFrozen.selector,
-                uint8(LibVaipakam.RewardRole.Canonical),
-                uint8(LibVaipakam.RewardRole.Detached)
-            )
-        );
-        _rep().setIsCanonicalRewardChain(false);
+        assertEq(RewardEraFacet(address(diamond)).getCustodyEraCurrent(), 0, "no change yet");
+        _rep().setIsCanonicalRewardChain(false); // Canonical -> Mirror: an effective change
+        assertEq(RewardEraFacet(address(diamond)).getCustodyEraCurrent(), 1, "it went through and opened era 1");
+        _rep().setIsCanonicalRewardChain(false); // the same role: no change
+        assertEq(RewardEraFacet(address(diamond)).getCustodyEraCurrent(), 1);
     }
 
     /// A mirror's authenticated source — base chain and funding identity —
@@ -3215,14 +3209,12 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
 
     function test_Ledger_ReportsActivationAndEveryRow() public {
         _becomeCanonical();
-        (bool activated0, bool frozen0, , , , , , , , , ) = _custody().rewardCustodyLedger();
+        (bool activated0, , , , , , , , , ) = _custody().rewardCustodyLedger();
         assertFalse(activated0, "inactive");
-        assertFalse(frozen0, "unfrozen");
         activateRewardCustodyForTest(address(vpfi), 5e18);
         _mut().creditRecycleRaw(LibVpfiRecycle.RecycleSource.ForfeitedReward, 0, 2e18);
-        (bool activated, bool frozen, uint256 live, uint256 recycled, , , , , , , ) = _custody().rewardCustodyLedger();
+        (bool activated, uint256 live, uint256 recycled, , , , , , , ) = _custody().rewardCustodyLedger();
         assertTrue(activated, "active");
-        assertTrue(frozen, "frozen");
         assertEq(live, 3e18, "live");
         assertEq(recycled, 2e18, "recycled");
         (, , bool known, uint256 held, uint256 attributed) = _custody().rewardCustodySnapshot();

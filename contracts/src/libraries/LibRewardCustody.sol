@@ -110,21 +110,26 @@ library LibRewardCustody {
     ///         era's total held after (#1566 PR 1 review — a hold is a movement of what the row may fund).
     /// @custom:event-category state-change/reward-custody
     event CustodyEraHeld(uint64 indexed era, uint256 amount, uint256 stagedFresh);
+    /// @notice #1566 PR C revision — `amount` of a packet's fresh was booked to retired era `era`'s row (a
+    ///         classification or a compensation of that era), counted as delivered and levelled at once.
+    /// @custom:event-category state-change/reward-custody
+    event CustodyEraCredited(uint64 indexed era, uint256 amount);
+    /// @notice #1566 PR C revision — a demotion took `amount` back out of retired era `era`'s row into
+    ///         `Unclassified` (the credit it reverses was booked there).
+    /// @custom:event-category state-change/reward-custody
+    event CustodyEraUncredited(uint64 indexed era, uint256 amount);
     /// @notice A staging reservation's hold of `amount` on era `era` was released — consumed by its resolve or
     ///         restored by its unwind; `stagedFresh` is the era's total held after.
     /// @custom:event-category state-change/reward-custody
     event CustodyEraHoldReleased(uint64 indexed era, uint256 amount, uint256 stagedFresh);
-    /// @notice PR C-3 — packet `packetHash` holds unclassified value and is counted OPEN in era `era`.
-    /// @custom:event-category state-change/reward-custody
-    event IngressPacketEraCounted(bytes32 indexed packetHash, uint64 indexed era);
-    /// @notice PR C-3 — nothing is left unclassified under packet `packetHash`: its classification is FINAL and era
-    ///         `era`'s open count fell by one.
-    /// @custom:event-category state-change/reward-custody
-    event IngressPacketClassificationFinal(bytes32 indexed packetHash, uint64 indexed era);
     /// @notice PR C-3 — a delivery for era `intended`, already retired here (live `live`; `intended` is zero for an
     ///         era-less wire), was held unclassified under its packet: no epoch, no ledger credit, no attestation.
     /// @custom:event-category state-change/reward-custody
-    event IngressPacketEraQuarantined(bytes32 indexed packetHash, uint64 intended, uint64 live);
+    /// @notice #1566 PR C revision — packet `packetHash` belongs to era `era`, named by
+    ///         its ingress (a rooted delivery's dispatch era, an older-wire delivery's
+    ///         earliest listed day's era, a compensation's day's era).
+    /// @custom:event-category state-change/reward-custody
+    event IngressPacketEraStamped(bytes32 indexed packetHash, uint64 indexed era);
     /// @notice PR C-4 — an era-less broadcast the rotation gate refused was PARKED under `id`, counted against era `era`.
     /// @custom:event-category state-change/reward-custody
     event BroadcastParked(uint256 indexed id, uint8 kind, uint256 indexed dayId, uint64 indexed era, bool quarantineOnly);
@@ -134,16 +139,6 @@ library LibRewardCustody {
     /// @notice PR C-4 — parked broadcast `id` passed the gate on retry and was applied.
     /// @custom:event-category state-change/reward-custody
     event ParkedBroadcastApplied(uint256 indexed id);
-    /// @notice PR C-5 — the history backfill started.
-    /// @custom:event-category state-change/reward-custody
-    event CustodyEraBackfillStarted();
-    /// @notice PR C-5 — one page of history packets was assigned: `supplied` hashes, `counted` of them open.
-    /// @custom:event-category state-change/reward-custody
-    event CustodyEraBackfillPacketsPaged(uint256 supplied, uint256 counted);
-    /// @notice PR C-5 — history is assigned: the operator attested `attested` packets against `supplied` supplied
-    ///         (`counted` open); the role freeze is lifted.
-    /// @custom:event-category state-change/reward-custody
-    event CustodyEraBackfillCompleted(uint256 attested, uint256 supplied, uint256 counted);
 
     /// @notice Fresh funding was credited to the delivered ledger's received
     ///         side, and its custody attributed under the §5c deficit split.
@@ -401,7 +396,6 @@ library LibRewardCustody {
     ) internal {
         if (amount == 0) return;
         s.rewardCustodyRows[r] += amount;
-        freezeRoleChangesUntilBackfill(s);
         emit RewardCustodyRowCredited(uint8(r), amount, origin);
     }
 
@@ -535,7 +529,7 @@ library LibRewardCustody {
         bool toLive
     ) private {
         if (r == LibVaipakam.RewardCustodyRow.LiveFresh) {
-            if (s.freshUnspentByEra[PRE_BACKFILL_ERA] == 0) return;
+            if (s.freshUnspentByEra[RECONCILIATION_QUEUE_ERA] == 0) return;
             _custody(abi.encodeWithSignature("reconciliationTakeFresh(uint256,uint256,bool)", have, amount, paid));
         } else if (r == LibVaipakam.RewardCustodyRow.Restitution) {
             if (s.absorbedUnreleased == 0) return;
@@ -598,7 +592,7 @@ library LibRewardCustody {
         if (take == 0) return;
         s.absorbedUnreleased = unreleased - take;
         s.absorbedReleasedTotal += take;
-        uint64 era = PRE_BACKFILL_ERA;
+        uint64 era = RECONCILIATION_QUEUE_ERA;
         if (toLive) {
             s.freshUnspentByEra[era] += take;
         } else {
@@ -1062,17 +1056,6 @@ library LibRewardCustody {
         emit CustodyEraOpened(next, boundaryDay);
     }
 
-    /// @notice The freeze means "value attributed, history not yet assigned": it
-    ///         is armed by a holder credit and by custody activation, and only
-    ///         while the backfill (PR C-5) has not run — once history is assigned
-    ///         the carry-forward makes a transition safe, so neither re-arms it.
-    ///         One rule for both arming sites (#1566 PR 1 review: activation
-    ///         froze unconditionally, so a chain backfilled before it activated
-    ///         could never change role again).
-    function freezeRoleChangesUntilBackfill(LibVaipakam.Storage storage s) internal {
-        if (!s.custodyEraBackfillComplete && !s.rewardRoleChangesFrozen) s.rewardRoleChangesFrozen = true;
-    }
-
     /// @notice Level the delivered ledger on a role change: `paid` rises to
     ///         `received`, so an old delivered residual never becomes reusable
     ///         headroom in the new role. Returns the DEFICIT (`paid` over
@@ -1088,20 +1071,21 @@ library LibRewardCustody {
     }
 
     /// @notice Writer 2 of 3 — release a RETIRED era's holder row once the era
-    ///         is terminal: both counters zero. On an active role the amount is
-    ///         credited to the live baseline under the deficit split; while
-    ///         Detached it goes to PENDING SURPLUS (never RECOVERY: a recovery
-    ///         dispatch must not be able to draw a surplus), drained later by
-    ///         writer 3 once an active era exists.
-    /// @dev    DARK until the backfill (PR C-5) sets `custodyEraBackfillComplete`:
-    ///         until history is assigned, two zero counters mean "not yet
-    ///         counted", not "nothing owed". The parked-broadcast lane's
-    ///         emptiness (PR C-4) joins the terminal condition when it exists.
+    ///         is final. On an active role the amount is credited to the live
+    ///         baseline under the deficit split; while Detached it goes to
+    ///         PENDING SURPLUS (never RECOVERY: a recovery dispatch must not be
+    ///         able to draw a surplus), drained later by writer 3 once an active
+    ///         era exists.
+    /// @dev    FINAL means every day of the era's span proven closed by the
+    ///         per-day closure proof — which anyone may run — and nothing staged
+    ///         holding its row (#1566 PR C revision: no manual step). A closed era
+    ///         owes nothing; value a packet of it still holds exits later by the
+    ///         era routing rule ({creditFreshToEraFromRow}), and a parked copy of a
+    ///         closed day's broadcast installs nothing that prices an obligation.
     function finalizeCustodyEra(LibVaipakam.Storage storage s, uint64 era, LibVaipakam.RewardRole role)
         internal
         returns (uint256 amount, bool toPending)
     {
-        if (!s.custodyEraBackfillComplete) revert IVaipakamErrors.CustodyEraBackfillPending();
         uint64 current = s.custodyEraCurrent;
         if (era > current) revert IVaipakamErrors.CustodyEraUnknown(era);
         if (era == current) revert IVaipakamErrors.CustodyEraLive(era);
@@ -1112,14 +1096,8 @@ library LibRewardCustody {
         // blocks closing its day — but releasing a held row would brick that
         // record's payout, so the condition is stated, not inferred
         // (#1566 PR 1 review).
-        if (e.daysClosed < span || e.openClassification != 0 || e.stagedFresh != 0) {
-            revert IVaipakamErrors.CustodyEraNotTerminal(era, e.daysClosed, span, e.openClassification);
-        }
-        // PR C-4 — a parked era-less broadcast received in this era is neither a
-        // liability nor a packet, and a retry after release could install day
-        // state into a finalized era: the lane must be drained or tombstoned.
-        if (s.custodyEraParkedOpen[era] != 0) {
-            revert IVaipakamErrors.CustodyEraParkedOpen(era, s.custodyEraParkedOpen[era]);
+        if (e.daysClosed < span || e.stagedFresh != 0) {
+            revert IVaipakamErrors.CustodyEraNotTerminal(era, e.daysClosed, span, e.stagedFresh);
         }
         e.terminal = true;
         amount = e.holderRow;
@@ -1165,16 +1143,132 @@ library LibRewardCustody {
     ///         holds the role check; the split is the same body as every other
     ///         fresh credit.
     function drainPendingSurplus(LibVaipakam.Storage storage s, uint256 amount) internal {
-        // Dark until the backfill, as the era release is (#1566 PR 1 review):
-        // stated here rather than left to the release being the row's only
-        // writer today.
-        if (!s.custodyEraBackfillComplete) revert IVaipakamErrors.CustodyEraBackfillPending();
         if (amount == 0) revert IVaipakamErrors.InvalidAmount();
         uint256 have = _debitRow(s, LibVaipakam.RewardCustodyRow.PendingSurplus, amount);
         _recordOutflow(s, LibVaipakam.RewardCustodyRow.PendingSurplus, have, amount, false, true);
         emit RewardCustodyRowDebited(uint8(LibVaipakam.RewardCustodyRow.PendingSurplus), amount, address(0));
         (uint256 toLive, uint256 toRestitution) = creditFreshSplit(s, amount, 1);
         emit CustodyPendingSurplusDrained(amount, toLive, toRestitution);
+    }
+
+    // ── #1566 PR C revision — routing a packet's fresh by its era ──
+
+    /// @dev Whether era `era` books a credit of fresh on its OWN books: a retired
+    ///      era not yet final (its row), or a final one while the chain is
+    ///      Detached (pending surplus, as the era's own release went). False: the
+    ///      live baseline takes it under the deficit split — the live era, or a
+    ///      final era while a role is active.
+    function _eraBooksFresh(LibVaipakam.Storage storage s, uint64 era) private view returns (bool) {
+        if (era >= s.custodyEraCurrent) return false;
+        if (!s.custodyEras[era].terminal) return true;
+        return LibVaipakam.rewardRole(s) == LibVaipakam.RewardRole.Detached;
+    }
+
+    /// @dev Book `amount` of fresh the holder already holds, uncredited, to retired
+    ///      era `era`: counted as delivered and levelled at once — the live
+    ///      baseline gains no headroom from value sent for an era it no longer
+    ///      is — into the era's row while it is not final, else pending surplus.
+    function _bookRetiredFresh(LibVaipakam.Storage storage s, uint64 era, uint256 amount) private {
+        s.rewardBudgetArmedFreshReceived += amount;
+        s.rewardBudgetArmedFreshPaid += amount;
+        LibVaipakam.CustodyEra storage e = s.custodyEras[era];
+        if (!e.terminal) {
+            e.holderRow += amount;
+            s.custodyEraRowsTotal += amount;
+            emit CustodyEraCredited(era, amount);
+        } else {
+            credit(s, LibVaipakam.RewardCustodyRow.PendingSurplus, amount, 1);
+        }
+    }
+
+    /// @notice Credit `amount` of a packet's FRESH, now in row `from`, to the era
+    ///         the packet belongs to — the ONE routing rule for an exit that
+    ///         credits fresh outside a draw. The live baseline's part returns as
+    ///         `(toLive, toRestitution)`; both are zero when the era booked it.
+    function creditFreshToEraFromRow(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.RewardCustodyRow from,
+        uint256 amount,
+        uint64 era
+    ) internal returns (uint256 toLive, uint256 toRestitution) {
+        if (!_eraBooksFresh(s, era)) return creditFreshFromRow(s, from, amount);
+        if (amount == 0) return (0, 0);
+        _debitRow(s, from, amount);
+        emit RewardCustodyRowDebited(uint8(from), amount, address(0));
+        _bookRetiredFresh(s, era, amount);
+    }
+
+    /// @notice A fresh INFLOW for era `era` (a compensation): relocated (measured)
+    ///         into the holder and credited by the same rule.
+    function relocateFreshIngressToEra(LibVaipakam.Storage storage s, uint256 amount, uint64 era) internal {
+        if (!_eraBooksFresh(s, era)) {
+            relocateFreshIngress(s, amount);
+            return;
+        }
+        if (amount == 0) return;
+        relocateToHolderUncredited(s, amount);
+        _bookRetiredFresh(s, era, amount);
+    }
+
+    /// @notice A demotion takes back from where its credit went: packet `h`'s era
+    ///         row (or pending surplus) when that era booked it, else the live
+    ///         path ({uncreditFreshInHolder}). Never more than the booked custody
+    ///         can give net of staging holds; returns what entered `Unclassified`.
+    function uncreditFreshForPacket(LibVaipakam.Storage storage s, bytes32 h, uint256 amount)
+        internal
+        returns (uint256 moved)
+    {
+        uint64 era = h == bytes32(0) ? s.custodyEraCurrent : s.ingressPackets[h].custodyEra;
+        if (!_eraBooksFresh(s, era)) return uncreditFreshInHolder(s, amount);
+        if (amount == 0) return 0;
+        LibVaipakam.CustodyEra storage e = s.custodyEras[era];
+        if (!e.terminal) {
+            uint256 room = custodyEraRoom(s, era);
+            moved = amount < room ? amount : room;
+            if (moved == 0) return 0;
+            e.holderRow -= moved;
+            s.custodyEraRowsTotal -= moved;
+            emit CustodyEraUncredited(era, moved);
+            credit(s, LibVaipakam.RewardCustodyRow.Unclassified, moved, 1);
+        } else {
+            uint256 pending = s.rewardCustodyRows[LibVaipakam.RewardCustodyRow.PendingSurplus];
+            moved = amount < pending ? amount : pending;
+            if (moved == 0) return 0;
+            move(s, LibVaipakam.RewardCustodyRow.PendingSurplus, LibVaipakam.RewardCustodyRow.Unclassified, moved);
+        }
+        // The booking counted the credit as delivered and levelled it; the
+        // demotion unwinds both sides by what it took.
+        uint256 received = s.rewardBudgetArmedFreshReceived;
+        s.rewardBudgetArmedFreshReceived = received > moved ? received - moved : 0;
+        uint256 paid = s.rewardBudgetArmedFreshPaid;
+        s.rewardBudgetArmedFreshPaid = paid > moved ? paid - moved : 0;
+    }
+
+    /// @dev {creditFreshToEraFromRow} on {RewardEraFacet} (Diamond-internal self-call).
+    function callEraCreditFreshFromRow(LibVaipakam.RewardCustodyRow from, uint256 amount, uint64 era)
+        internal
+        returns (uint256 toLive, uint256 toRestitution)
+    {
+        (toLive, toRestitution) = abi.decode(
+            _custodyReturning(
+                abi.encodeWithSignature("eraCreditFreshFromRow(uint8,uint256,uint64)", uint8(from), amount, era)
+            ),
+            (uint256, uint256)
+        );
+    }
+
+    /// @dev {relocateFreshIngressToEra} on {RewardEraFacet} (Diamond-internal self-call).
+    function callEraRelocateFreshIngress(uint256 amount, uint64 era) internal {
+        if (amount == 0) return;
+        _custody(abi.encodeWithSignature("eraRelocateFreshIngress(uint256,uint64)", amount, era));
+    }
+
+    /// @dev {uncreditFreshForPacket} on {RewardEraFacet} (Diamond-internal self-call).
+    function callEraUncreditFresh(bytes32 h, uint256 amount) internal returns (uint256 moved) {
+        if (amount == 0) return 0;
+        moved = abi.decode(
+            _custodyReturning(abi.encodeWithSignature("eraUncreditFresh(bytes32,uint256)", h, amount)), (uint256)
+        );
     }
 
     // ── Slice 4 PR C-2 — the era term of a day's fresh ──
@@ -1224,50 +1318,29 @@ library LibRewardCustody {
         emit CustodyEraHoldReleased(era, amount, held);
     }
 
-    // ── Slice 4 PR C-3 — the open-classification count and the intended era ──
+    // ── Slice 4 PR C-3 — the era a packet belongs to ──
 
-    /// @notice Count packet `h` OPEN in the live era: unclassified value now
-    ///         stands under it. Idempotent while it stays open; a packet whose
-    ///         classification was final and receives unclassified value again
-    ///         re-opens in the era it was first counted into.
-    /// @dev    Hosted on {RewardEraFacet} and reached by {callEraCountOpen}, so the
-    ///         custody facet's unclassified ingress gains one call, not a body.
-    function countEraOpen(LibVaipakam.Storage storage s, bytes32 h) internal {
+    /// @notice Stamp packet `h` with the era it belongs to, when its ingress
+    ///         names one other than the live era (#1566 PR C revision): a rooted
+    ///         delivery's dispatch era, an older-wire delivery's earliest listed
+    ///         day's era, a compensation's day's era. Every exit that credits the
+    ///         packet's fresh outside a draw routes by it ({LibRewardCustody}
+    ///         era routing, hosted on {RewardEraFacet}).
+    function stampPacketEra(LibVaipakam.Storage storage s, bytes32 h, uint64 era) internal {
         LibVaipakam.IngressPacket storage p = s.ingressPackets[h];
-        if (p.arrivedAt == 0) return;
-        if (p.eraCounted && !p.classificationFinal) return;
-        if (!p.eraCounted) {
-            p.custodyEra = s.custodyEraCurrent;
-            p.eraCounted = true;
+        if (p.custodyEra == era) return;
+        p.custodyEra = era;
+        emit IngressPacketEraStamped(h, era);
+    }
+
+    /// @notice The earliest day a list names (the list is bounded by the fan-out cap).
+    function earliestListedDay(uint256[] calldata dayIds) internal pure returns (uint256 d) {
+        uint256 n = dayIds.length;
+        d = type(uint256).max;
+        for (uint256 i; i < n; ) {
+            if (dayIds[i] < d) d = dayIds[i];
+            unchecked { ++i; }
         }
-        p.classificationFinal = false;
-        ++s.custodyEras[p.custodyEra].openClassification;
-        emit IngressPacketEraCounted(h, p.custodyEra);
-    }
-
-    /// @notice Note a classification EXIT of packet `h`: when nothing is left
-    ///         unclassified under it, its classification is final and its era's
-    ///         open count falls by one — exactly once per opening.
-    /// @dev    The four exits that move value out of `unclassified` call this
-    ///         (the draw, the classification, the repatriation return, the
-    ///         quarantine release); a packet never counted (history before the
-    ///         backfill) is left to the backfill.
-    function noteClassificationExit(LibVaipakam.Storage storage s, bytes32 h) internal {
-        LibVaipakam.IngressPacket storage p = s.ingressPackets[h];
-        if (p.unclassified != 0 || p.classificationFinal || !p.eraCounted) return;
-        p.classificationFinal = true;
-        LibVaipakam.CustodyEra storage e = s.custodyEras[p.custodyEra];
-        if (e.openClassification != 0) --e.openClassification;
-        emit IngressPacketClassificationFinal(h, p.custodyEra);
-    }
-
-    /// @notice Mark packet `h` era-quarantined: dispatched for a retired era (or
-    ///         on an era-less wire after a transition), held unclassified under
-    ///         the packet until evidence classifies it.
-    function markEraQuarantined(LibVaipakam.Storage storage s, bytes32 h, uint64 intended) internal {
-        LibVaipakam.IngressPacket storage p = s.ingressPackets[h];
-        p.eraQuarantined = true;
-        emit IngressPacketEraQuarantined(h, intended, s.custodyEraCurrent);
     }
 
     // ── Slice 4 PR C-4 — the parked-message lane ──
@@ -1308,74 +1381,6 @@ library LibRewardCustody {
         pb.status = 2;
         --s.custodyEraParkedOpen[pb.custodyEraAtReceipt];
         emit ParkedBroadcastApplied(id);
-    }
-
-    // ── Slice 4 PR C-5 — the history backfill ──
-
-    /// @notice The era live at time `ts`: the newest era opened at or before it (era 0 for every earlier time).
-    /// @dev The same binary search as {custodyEraOfDay}: openings only grow.
-    function custodyEraAtTime(LibVaipakam.Storage storage s, uint64 ts) internal view returns (uint64 era) {
-        uint64 hi = s.custodyEraCurrent;
-        while (era < hi) {
-            uint64 mid = era + (hi - era + 1) / 2;
-            if (s.custodyEras[mid].openedAt <= ts) era = mid;
-            else hi = mid - 1;
-        }
-    }
-
-    function startCustodyEraBackfill(LibVaipakam.Storage storage s) internal {
-        if (s.custodyEraBackfillComplete) revert IVaipakamErrors.CustodyEraBackfillAlreadyComplete();
-        if (s.custodyEraBackfillStarted) revert IVaipakamErrors.CustodyEraBackfillAlreadyStarted();
-        s.custodyEraBackfillStarted = true;
-        emit CustodyEraBackfillStarted();
-    }
-
-    /// @notice Assign one page of history packets: each is placed in the era live
-    ///         at its receipt; one with unclassified value standing is counted
-    ///         open there, one with none is marked counted and final. A packet
-    ///         already counted (recorded since PR C-3) is left alone.
-    function backfillCustodyEraPacketsPage(LibVaipakam.Storage storage s, bytes32[] calldata hashes)
-        internal
-        returns (uint256 counted)
-    {
-        if (!s.custodyEraBackfillStarted) revert IVaipakamErrors.CustodyEraBackfillNotStarted();
-        if (s.custodyEraBackfillComplete) revert IVaipakamErrors.CustodyEraBackfillAlreadyComplete();
-        uint256 n = hashes.length;
-        for (uint256 i; i < n; ) {
-            bytes32 h = hashes[i];
-            LibVaipakam.IngressPacket storage p = s.ingressPackets[h];
-            if (p.arrivedAt == 0) revert IVaipakamErrors.CustodyEraBackfillPacketUnknown(h);
-            if (!p.eraCounted) {
-                uint64 era = custodyEraAtTime(s, p.arrivedAt);
-                p.custodyEra = era;
-                p.eraCounted = true;
-                if (p.unclassified != 0) {
-                    p.classificationFinal = false;
-                    ++s.custodyEras[era].openClassification;
-                    unchecked { ++counted; }
-                    emit IngressPacketEraCounted(h, era);
-                } else {
-                    p.classificationFinal = true;
-                }
-            }
-            unchecked { ++i; }
-        }
-        s.custodyEraBackfillPacketsSupplied += n;
-        s.custodyEraBackfillPacketsCounted += counted;
-        emit CustodyEraBackfillPacketsPaged(n, counted);
-    }
-
-    /// @notice Declare history assigned and lift the role freeze. The operator
-    ///         attests the number of history packets (from the recorded ingress
-    ///         events); it is recorded beside the number supplied — an
-    ///         acknowledgment, like the park's, not an on-chain proof.
-    function completeCustodyEraBackfill(LibVaipakam.Storage storage s, uint256 attested) internal {
-        if (!s.custodyEraBackfillStarted) revert IVaipakamErrors.CustodyEraBackfillNotStarted();
-        if (s.custodyEraBackfillComplete) revert IVaipakamErrors.CustodyEraBackfillAlreadyComplete();
-        s.custodyEraBackfillPacketsAttested = attested;
-        s.custodyEraBackfillComplete = true;
-        s.rewardRoleChangesFrozen = false;
-        emit CustodyEraBackfillCompleted(attested, s.custodyEraBackfillPacketsSupplied, s.custodyEraBackfillPacketsCounted);
     }
 
     /// @notice The operator's recorded disposition of a parked entry the gate refuses.
@@ -1531,22 +1536,22 @@ library LibRewardCustody {
 
     uint8 internal constant PACKET_KIND_BUDGET = 1;
     uint8 internal constant PACKET_KIND_COMPENSATION = 2;
-    /// @dev The one era every reconciliation entry keys until slice 4 PR C's
-    ///      registry assigns real ids; the row hook records into it.
-    uint64 internal constant PRE_BACKFILL_ERA = 0;
+    /// @dev The era every reconciliation queue is keyed under: era 0, the
+    ///      pre-registry era. The queues stay keyed by it until they are
+    ///      era-keyed; the row hook records into it.
+    uint64 internal constant RECONCILIATION_QUEUE_ERA = 0;
 
-    /// @notice The one predicate for "this era exists" — the pre-backfill
-    ///         era alone until the transport epochs' registry replaces this
-    ///         body. A caller-supplied era that does not exist refuses here
+    /// @notice The one predicate for "this era exists" — the queue era alone
+    ///         while the reconciliation queues are keyed by it. A caller-supplied era that does not exist refuses here
     ///         rather than reading an empty era-keyed queue beside the
     ///         global custody figures as if it were one (Codex #2206 r9).
     function requireKnownEra(uint64 era) internal pure {
-        // The reconciliation QUEUES are keyed by the pre-backfill era alone —
+        // The reconciliation QUEUES are keyed by the queue era alone —
         // every entry is pushed under it — so a later registry era, real as it
         // is, has no queue to read: answering it would pair an always-empty
         // era-keyed queue with the global rows (#1566 PR 1 review). The guard
         // follows the registry once the queues are era-keyed.
-        if (era != PRE_BACKFILL_ERA) revert IVaipakamErrors.ReconciliationUnknownEra(era);
+        if (era != RECONCILIATION_QUEUE_ERA) revert IVaipakamErrors.ReconciliationUnknownEra(era);
     }
     uint8 internal constant PACKET_KIND_STRANDED_RETURN = 3;
     uint8 internal constant PACKET_KIND_CEREMONY_INFLOW = 4;
@@ -4564,7 +4569,6 @@ library LibRewardCustody {
         // the batch's conservation identity does.
         p.drawn += amount;
         _stepDownUncounted(s, p.kind, amount);
-        callEraNoteClassificationExit(batchId); // PR C-3
     }
 
     /// @notice Advance `dayId`'s consumption cursor past every exhausted epoch
@@ -4837,16 +4841,6 @@ library LibRewardCustody {
         _custody(abi.encodeWithSignature("eraDrawForDay(uint64,uint256,uint256)", era, dayId, amount));
     }
 
-    /// @dev PR C-3 — count packet `h` open in the live era ({RewardEraFacet.eraCountOpen}).
-    function callEraCountOpen(bytes32 h) internal {
-        _custody(abi.encodeWithSignature("eraCountOpen(bytes32)", h));
-    }
-
-    /// @dev PR C-3 — note a classification exit of packet `h` ({RewardEraFacet.eraNoteClassificationExit}).
-    function callEraNoteClassificationExit(bytes32 h) internal {
-        _custody(abi.encodeWithSignature("eraNoteClassificationExit(bytes32)", h));
-    }
-
     /// @dev {RewardCustodyFacet.custodyDeliverClaim}: the claim's three legs to
     ///      the claimant's vault when asked and creditable, else to their
     ///      wallet. Returns whether the vault took it.
@@ -5036,6 +5030,11 @@ library LibRewardCustody {
         p.actualReceived = actualReceived;
         p.freshShare = freshShare;
         p.recycledShare = recycledShare;
+        // #1566 PR C revision — every packet belongs to an era from its arrival:
+        // the live one unless its ingress names another ({stampPacketEra}). A
+        // packet recorded before the registry existed reads era 0, which is
+        // exactly its era — no era opens before the registry does.
+        p.custodyEra = s.custodyEraCurrent;
         // The receipt a delivery creates on a MIRROR (kinds 1 and 2) —
         // `(srcChainId, receivedAt, amount, remitter)`, bound to the stamp —
         // is written here with the record, so the ingress facet at EIP-170
@@ -5061,7 +5060,6 @@ library LibRewardCustody {
             rec.remitter = remitter;
             rec.packetHash = h;
         }
-        s.ingressPacketHashes.push(h); // PR C-5: packets are enumerable from here on
         emit IngressPacketRecorded(h, sourceChainId, kind, actualReceived, remitter, remitId);
     }
 
@@ -5075,7 +5073,6 @@ library LibRewardCustody {
         LibVaipakam.IngressPacket storage p = s.ingressPackets[h];
         p.unclassified += amount;
         p.protectedCumulative += amount;
-        callEraCountOpen(h); // PR C-3: unclassified value stands under the packet
         emit RewardCustodyUnclassifiedCredited(h, p.kind, amount);
     }
 
@@ -5096,7 +5093,8 @@ library LibRewardCustody {
             relocateToHolder(s, LibVaipakam.RewardCustodyRow.Unclassified, relocate);
             got = relocate;
         }
-        if (uncredit != 0) got += uncreditFreshInHolder(s, uncredit);
+        // From where the credit went (#1566 PR C revision): the packet's era.
+        if (uncredit != 0) got += callEraUncreditFresh(h, uncredit);
         if (got == 0) return 0;
         LibVaipakam.StrandedRecovery storage sr = s.strandedRecoveries[receiptKey];
         sr.held += got;
@@ -5111,7 +5109,6 @@ library LibRewardCustody {
             LibVaipakam.IngressPacket storage p = s.ingressPackets[h];
             p.unclassified += got;
             p.protectedCumulative += got;
-            callEraCountOpen(h); // PR C-3
         }
         emit RewardCustodyUnclassifiedCredited(h, PACKET_KIND_COMPENSATION, got);
     }
@@ -5127,7 +5124,6 @@ library LibRewardCustody {
         LibVaipakam.IngressPacket storage p = s.ingressPackets[h];
         p.unclassified += amount;
         p.protectedCumulative += amount;
-        callEraCountOpen(h); // PR C-3: unclassified value stands under the packet
         emit RewardCustodyUnclassifiedCredited(h, p.kind, amount);
     }
 
@@ -5185,7 +5181,6 @@ library LibRewardCustody {
             // repatriation exhausts the packet's classifiable remainder in
             // the same act, recorded as a NON-classification exit.
             p.disposed += amount;
-            callEraNoteClassificationExit(h); // PR C-3
         }
         releaseFromRow(s, LibVaipakam.RewardCustodyRow.Unclassified, to, amount);
         emit RewardCustodyUnclassifiedReleased(h, to, amount);
@@ -5229,7 +5224,6 @@ library LibRewardCustody {
         p.classifiedFresh += freshShare;
         p.classifiedRecycled += recycledShare;
         _stepDownUncounted(s, p.kind, total);
-        callEraNoteClassificationExit(h); // PR C-3
     }
 
     /// @dev The holder-side aggregates that fall when untyped value leaves a

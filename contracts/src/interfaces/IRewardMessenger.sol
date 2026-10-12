@@ -242,6 +242,24 @@ interface IRewardMessenger {
     ) external payable;
 
     /**
+     * @notice #1566 PR C revision — the B4 report: the eight B3 words plus the
+     *         reporting chain's LIVE custody era, so the canonical chain stamps
+     *         the rooted remittances it sends here with the era they will land
+     *         in — the destination's, never its own.
+     */
+    function sendChainReport(
+        uint256 dayId,
+        uint256 lenderNumeraire18,
+        uint256 borrowerNumeraire18,
+        uint256 recycledCumulative18,
+        uint256 recycledForDay18,
+        uint256 commitRetiredCumulative18,
+        uint256 commitReleasedCumulative18,
+        uint64 custodyEra,
+        address payable refundAddress
+    ) external payable;
+
+    /**
      * @notice Broadcast the finalized global lender+borrower Numeraire18
      *         denominator for `dayId` to every mirror chain.
      * @dev Callable only by the Diamond. The messenger iterates its
@@ -295,6 +313,20 @@ interface IRewardMessenger {
         uint256 recycledForDay18,
         uint256 commitRetiredCumulative18,
         uint256 commitReleasedCumulative18
+    ) external view returns (uint256 nativeFee);
+
+    /// @notice #1566 PR C revision — quote the B4 report shape (the B3 words
+    ///         plus the custody era). Keepers pricing `closeDay` must quote the
+    ///         shape their diamond will actually dispatch.
+    function quoteSendChainReport(
+        uint256 dayId,
+        uint256 lenderNumeraire18,
+        uint256 borrowerNumeraire18,
+        uint256 recycledCumulative18,
+        uint256 recycledForDay18,
+        uint256 commitRetiredCumulative18,
+        uint256 commitReleasedCumulative18,
+        uint64 custodyEra
     ) external view returns (uint256 nativeFee);
 
     /// @notice Quote the native CCIP fee SUM for a Base→mirrors broadcast.

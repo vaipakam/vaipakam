@@ -277,6 +277,47 @@ contract RewardAggregatorFacet is
         );
     }
 
+    /// @notice #1566 PR C revision — the B4 ingress: the B3 figures plus the
+    ///         reporting chain's live custody era, recorded (highest wins) before
+    ///         the report itself is ingested, so a rooted remittance to that
+    ///         chain is stamped with the era it will land in.
+    /// @custom:event-category state-change/reward-custody
+    event ChainCustodyEraReported(uint32 indexed chainId, uint64 era);
+
+    function onChainReportReceived(
+        uint32 sourceChainId,
+        uint256 dayId,
+        uint256 lenderNumeraire18,
+        uint256 borrowerNumeraire18,
+        uint256 recycledCumulative18,
+        uint256 recycledForDay18,
+        uint256 commitRetiredCumulative18,
+        uint256 commitReleasedCumulative18,
+        uint64 custodyEra
+    ) external onlyRewardMessenger onlyCanonical {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (custodyEra > s.chainCustodyEraReported[sourceChainId]) {
+            s.chainCustodyEraReported[sourceChainId] = custodyEra;
+            emit ChainCustodyEraReported(sourceChainId, custodyEra);
+        }
+        _ingestChainReport(
+            sourceChainId,
+            dayId,
+            lenderNumeraire18,
+            borrowerNumeraire18,
+            recycledCumulative18,
+            recycledForDay18,
+            commitRetiredCumulative18,
+            commitReleasedCumulative18
+        );
+    }
+
+    /// @notice The highest custody era `chainId` has reported — the era the
+    ///         canonical chain stamps its rooted remittances to that chain with.
+    function getChainCustodyEraReported(uint32 chainId) external view returns (uint64) {
+        return LibVaipakam.storageSlot().chainCustodyEraReported[chainId];
+    }
+
     /// @notice LEGACY ingress overload (pre-#1222 four-argument shape),
     ///         kept so Base's diamond cut and its messenger's proxy upgrade
     ///         need not land in one atomic batch (Codex #1413 r2): an

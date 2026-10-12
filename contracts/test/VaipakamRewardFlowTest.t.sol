@@ -89,6 +89,33 @@ contract MockRewardDiamond {
         ++reportCount;
     }
 
+    /// #1566 PR C revision — the B4 ingress: the B3 figures plus the reporting
+    /// chain's custody era.
+    uint64 public lastReportCustodyEra;
+    uint256 public lastReportCommitRetired;
+
+    function onChainReportReceived(
+        uint32 src,
+        uint256 day,
+        uint256 l,
+        uint256 b,
+        uint256 recycledCum,
+        uint256 recycledForDay,
+        uint256 commitRetired,
+        uint256,
+        uint64 custodyEra
+    ) external {
+        lastReportChain = src;
+        lastReportDay = day;
+        lastReportLender = l;
+        lastReportBorrower = b;
+        lastReportRecycledCum = recycledCum;
+        lastReportRecycledForDay = recycledForDay;
+        lastReportCommitRetired = commitRetired;
+        lastReportCustodyEra = custodyEra;
+        ++reportCount;
+    }
+
     function onRewardBroadcastReceived(
         uint256 day,
         uint256 l,
@@ -409,6 +436,41 @@ contract VaipakamRewardFlowTest is Test {
         assertEq(diamondBase.lastReportRecycledForDay(), 7 ether, "recycled for-day");
     }
 
+    /// #1566 PR C revision — the B4 report carries the mirror's custody era to
+    /// Base's B4 ingress, every B3 figure with it; a Base diamond without the B4
+    /// ingress takes the report down the ladder rather than failing it.
+    function test_Report_B4_CarriesTheCustodyEra_AndDowngrades() public {
+        vm.prank(address(diamondMirror));
+        rewardMirror.sendChainReport{value: fee}(
+            42, 1_000 ether, 500 ether, 77 ether, 7 ether, 3 ether, 1 ether, uint64(5), payable(address(diamondMirror))
+        );
+        router.deliver(0, SEL_MIRROR);
+        assertEq(diamondBase.reportCount(), 1, "Base got the report");
+        assertEq(diamondBase.lastReportCustodyEra(), 5, "and the mirror's era with it");
+        assertEq(diamondBase.lastReportCommitRetired(), 3 ether, "every B3 figure travels too");
+        assertEq(diamondBase.lastReportRecycledCum(), 77 ether);
+        assertEq(
+            rewardMirror.quoteSendChainReport(42, 1_000 ether, 500 ether, 77 ether, 7 ether, 3 ether, 1 ether, uint64(5)),
+            fee,
+            "the B4 quote prices the B4 send"
+        );
+
+        MockLegacyOnlyRewardDiamond legacyDiamond = new MockLegacyOnlyRewardDiamond();
+        vm.prank(owner);
+        rewardBase.setDiamond(address(legacyDiamond));
+        vm.prank(address(messengerBase));
+        rewardBase.onCrossChainMessage(
+            MIRROR,
+            address(rewardMirror),
+            abi.encode(
+                REPORT, uint256(43), uint256(1 ether), uint256(1 ether), uint256(0), uint256(0), uint256(0), uint256(0), uint256(5)
+            ),
+            _empty()
+        , bytes32(0));
+        assertEq(legacyDiamond.reportCount(), 1, "a B4 report downgraded, not lost");
+        assertEq(legacyDiamond.lastReportDay(), 43);
+    }
+
     /// #1222 M3 B1 — Base keeps ACCEPTING the legacy four-word report shape
     /// (a delayed CCIP delivery or a not-yet-upgraded mirror): recycled
     /// fields decode as zero, everything else lands unchanged.
@@ -584,11 +646,13 @@ contract VaipakamRewardFlowTest is Test {
             REPORT, uint256(42), uint256(1 ether), uint256(1 ether), uint256(1 ether)
         );
         vm.prank(address(messengerBase));
+        // The per-kind refusal names the widest report shape, B4 (#1566 PR C
+        // revision).
         vm.expectRevert(
             abi.encodeWithSelector(
                 VaipakamRewardMessenger.PayloadSizeMismatch.selector,
                 uint256(5 * 32),
-                uint256(8 * 32)
+                uint256(9 * 32)
             )
         );
         rewardBase.onCrossChainMessage(

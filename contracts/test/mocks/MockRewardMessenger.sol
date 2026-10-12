@@ -221,6 +221,61 @@ contract MockRewardMessenger is IRewardMessenger {
         sendCount += 1;
     }
 
+    /// @dev #1566 PR C revision — the B4 send. `b4Unsupported` makes it the
+    ///      empty revert of an unknown selector, so a test can drive the
+    ///      reporter's downgrade to B3.
+    bool public b4Unsupported;
+    uint64 public lastSendCustodyEra;
+
+    function setB4Unsupported(bool v) external {
+        b4Unsupported = v;
+    }
+
+    function sendChainReport(
+        uint256 dayId,
+        uint256 lenderNumeraire18,
+        uint256 borrowerNumeraire18,
+        uint256 recycledCumulative18,
+        uint256 recycledForDay18,
+        uint256 commitRetiredCumulative18,
+        uint256 commitReleasedCumulative18,
+        uint64 custodyEra,
+        address payable refundAddress
+    ) external payable override {
+        require(msg.sender == diamond, "MockMessenger: only diamond");
+        if (b4Unsupported) {
+            assembly ("memory-safe") {
+                revert(0, 0)
+            }
+        }
+        if (revertOnSend) revert("MockMessenger: send revert");
+        lastSendDay = dayId;
+        lastSendLenderNumeraire18 = lenderNumeraire18;
+        lastSendBorrowerNumeraire18 = borrowerNumeraire18;
+        lastSendRecycledCumulative18 = recycledCumulative18;
+        lastSendRecycledForDay18 = recycledForDay18;
+        lastSendCommitRetiredCumulative18 = commitRetiredCumulative18;
+        lastSendCommitReleasedCumulative18 = commitReleasedCumulative18;
+        lastSendCustodyEra = custodyEra;
+        lastSendArity = 9;
+        lastSendRefund = refundAddress;
+        lastSendValue = msg.value;
+        sendCount += 1;
+    }
+
+    function quoteSendChainReport(
+        uint256,
+        uint256,
+        uint256,
+        uint256,
+        uint256,
+        uint256,
+        uint256,
+        uint64
+    ) external view override returns (uint256) {
+        return quoteNative;
+    }
+
     function broadcastGlobal(
         uint256 dayId,
         uint256 globalLenderNumeraire18,
@@ -850,6 +905,20 @@ contract MockRewardMessenger is IRewardMessenger {
             recycledForDay18,
             commitRetiredCumulative18,
             commitReleasedCumulative18
+        );
+    }
+
+    /// @notice #1566 PR C revision — deliver a B4 report: the B3 words plus the
+    ///         reporting chain's live custody era.
+    function deliverChainReportB4(
+        uint32 sourceChainId,
+        uint256 dayId,
+        uint256 lenderNumeraire18,
+        uint256 borrowerNumeraire18,
+        uint64 custodyEra
+    ) external {
+        RewardAggregatorFacet(diamond).onChainReportReceived(
+            sourceChainId, dayId, lenderNumeraire18, borrowerNumeraire18, 0, 0, 0, 0, custodyEra
         );
     }
 

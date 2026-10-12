@@ -681,11 +681,6 @@
         "internalType": "bool"
       },
       {
-        "name": "roleChangesFrozen",
-        "type": "bool",
-        "internalType": "bool"
-      },
-      {
         "name": "liveFresh",
         "type": "uint256",
         "internalType": "uint256"
@@ -800,19 +795,6 @@
         "name": "attributed",
         "type": "uint256",
         "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "rewardRoleChangesFrozen",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
       }
     ],
     "stateMutability": "view"

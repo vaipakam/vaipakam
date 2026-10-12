@@ -40,6 +40,25 @@
   },
   {
     "type": "function",
+    "name": "getChainCustodyEraReported",
+    "inputs": [
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getChainDailyRecycledCredit",
     "inputs": [
       {
@@ -652,6 +671,59 @@
         "name": "recycledForDay18",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "commitRetiredCumulative18",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "commitReleasedCumulative18",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "custodyEra",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "onChainReportReceived",
+    "inputs": [
+      {
+        "name": "sourceChainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "dayId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "lenderNumeraire18",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "borrowerNumeraire18",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "recycledCumulative18",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "recycledForDay18",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [],
@@ -870,6 +942,25 @@
         "type": "bool",
         "indexed": false,
         "internalType": "bool"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ChainCustodyEraReported",
+    "inputs": [
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "era",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
       }
     ],
     "anonymous": false
@@ -1643,17 +1734,6 @@
   },
   {
     "type": "error",
-    "name": "ClosureDayNotLocallyClosed",
-    "inputs": [
-      {
-        "name": "dayId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "ClosureEntriesNotAscending",
     "inputs": [
       {
@@ -2185,53 +2265,6 @@
   },
   {
     "type": "error",
-    "name": "CustodyEraBackfillAlreadyComplete",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "CustodyEraBackfillAlreadyStarted",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "CustodyEraBackfillNotStarted",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "CustodyEraBackfillPacketUnknown",
-    "inputs": [
-      {
-        "name": "packetHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "CustodyEraBackfillPending",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "CustodyEraBackfillStalePauseEpoch",
-    "inputs": [
-      {
-        "name": "stated",
-        "type": "uint64",
-        "internalType": "uint64"
-      },
-      {
-        "name": "live",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "CustodyEraLive",
     "inputs": [
       {
@@ -2261,23 +2294,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "openClassification",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "CustodyEraParkedOpen",
-    "inputs": [
-      {
-        "name": "era",
-        "type": "uint64",
-        "internalType": "uint64"
-      },
-      {
-        "name": "count",
+        "name": "stagedFresh",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -2299,17 +2316,6 @@
       },
       {
         "name": "room",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "CustodyEraScanExceeded",
-    "inputs": [
-      {
-        "name": "dayId",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -2966,17 +2972,6 @@
   },
   {
     "type": "error",
-    "name": "LegacyBroadcastRetired",
-    "inputs": [
-      {
-        "name": "dayId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "LegacyDayNotStampable",
     "inputs": [
       {
@@ -3488,6 +3483,22 @@
         "name": "recordedSrcChainId",
         "type": "uint32",
         "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ReconciliationEntryEraRetired",
+    "inputs": [
+      {
+        "name": "index",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "era",
+        "type": "uint64",
+        "internalType": "uint64"
       }
     ]
   },
@@ -4814,22 +4825,6 @@
   },
   {
     "type": "error",
-    "name": "RewardRoleChangeFrozen",
-    "inputs": [
-      {
-        "name": "current",
-        "type": "uint8",
-        "internalType": "uint8"
-      },
-      {
-        "name": "requested",
-        "type": "uint8",
-        "internalType": "uint8"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "RiskAndTermsConsentRequired",
     "inputs": []
   },
@@ -5040,6 +5035,33 @@
   },
   {
     "type": "error",
+    "name": "ServiceCapacityNotAnAdapter",
+    "inputs": [
+      {
+        "name": "adapter",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ServiceCapacityNothingToArm",
+    "inputs": [
+      {
+        "name": "role",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "operator",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "ServiceCapacityOldEpochBalanceStands",
     "inputs": [
       {
@@ -5056,6 +5078,17 @@
         "name": "epoch",
         "type": "uint64",
         "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ServiceCapacityOnlyDiamondInternal",
+    "inputs": [
+      {
+        "name": "caller",
+        "type": "address",
+        "internalType": "address"
       }
     ]
   },

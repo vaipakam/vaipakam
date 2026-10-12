@@ -42,11 +42,13 @@ library LibRewardRemitDispatch {
     ///         ordinary remittance takes in `RewardTransportD6Test`, each cold
     ///         and over the widest list — plus {REWARD_BUDGET_RECEIVER_RESERVE}
     ///         for the receiver's own work, with a quarter's margin, rounded up.
-    ///         Measured 2026-10-12: typed 636,611, rooted 782,675
-    ///         — so (782,675 + 100,000) x 1.25, rounded up to 50,000. The 300,000 it replaced was below even the
+    ///         Measured 2026-10-12, after the custody-era rework took the era
+    ///         counting writes out of the ingress: typed 590,909, rooted 685,689
+    ///         — so (685,689 + 100,000) x 1.25, rounded up to 50,000. Re-derive
+    ///         it whenever either cell's figure moves. The 300,000 it replaced was below even the
     ///         typed ingress, so automatic execution would have failed on every
     ///         delivery to an activated mirror.
-    uint256 internal constant REWARD_BUDGET_DEST_GAS_LIMIT = 1_150_000;
+    uint256 internal constant REWARD_BUDGET_DEST_GAS_LIMIT = 1_000_000;
 
     /// @notice What the budget reserves for the receiver's own work around the
     ///         Diamond's ingress — the router's call, the frame decode, the token

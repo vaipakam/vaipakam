@@ -808,7 +808,7 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         assertEq(r.heldEpoch, 64 * TINY, "the page's epoch legs are held");
         assertEq(_row(LibVaipakam.RewardCustodyRow.Resolving), 64 * TINY, "in the resolving row");
         assertEq(_mut().attributedTotalRaw(), _rowsSum(), "and attributed, never sweepable");
-        (, , , , , , , , , , uint256 resolvingRow) = _custody().rewardCustodyLedger();
+        (, , , , , , , , , uint256 resolvingRow) = _custody().rewardCustodyLedger();
         assertEq(resolvingRow, 64 * TINY, "and named in the ledger");
         assertEq(unclassifiedBefore - _row(LibVaipakam.RewardCustodyRow.Unclassified), 64 * TINY, "out of the packets' row");
         (uint256 lf0, ) = _legs(hs[0]);
@@ -2038,21 +2038,16 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         RewardReporterFacet(address(diamond)).setIsCanonicalRewardChain(true);
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.RewardRoleChangeBlockedByStagedRecords.selector, uint256(1)));
         RewardReporterFacet(address(diamond)).setBaseChainId(0);
-        // Settled, the reservation is no longer what refuses: this scene has
-        // custody activated, so the standing role FREEZE takes over — a
-        // different gate, named differently, and the discrimination between
-        // them is the point.
+        // Settled, the reservation is no longer there to refuse — and nothing
+        // else does (#1566 PR C revision: no role freeze; the carry-forward
+        // makes the change safe), so the same write now goes through.
         _settle().resolveStagedDayPage(_key());
         assertTrue(_settle().resolveStagedDayPage(_key()));
         assertEq(_mut().stagingEncumberedCountRaw(), 0);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IVaipakamErrors.RewardRoleChangeFrozen.selector,
-                uint8(LibVaipakam.RewardRole.Mirror),
-                uint8(LibVaipakam.RewardRole.Detached)
-            )
-        );
         RewardReporterFacet(address(diamond)).setBaseChainId(0);
+        assertEq(
+            RewardReporterFacet(address(diamond)).getRewardRole(), uint8(LibVaipakam.RewardRole.Detached), "the change went through"
+        );
     }
 
     function test_EverySourceRoom_IsNetOfItsReservation() public {

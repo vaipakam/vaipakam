@@ -180,13 +180,6 @@ contract RewardRemittanceFacet is
 
     using SafeERC20 for IERC20;
 
-    /// @notice The era a remittance is dispatched in, as the d6 wire carries it
-    ///         (#1566 transport epochs 3d-2). No era registry exists before PR C,
-    ///         so every dispatch states the PRE-REGISTRY era, zero; PR C replaces
-    ///         this constant with the live era read. The receive side stores the
-    ///         word today and PR C's receive rules validate it.
-    uint64 internal constant REMIT_INTENDED_ERA_PRE_REGISTRY = 0;
-
     /// @notice #1222 M3 B2-d2 (Codex #1426 r5) — minimum reservation age
     ///         before {releaseRemitReservation} may run (plan §M3's bounded
     ///         reconciliation TIMEOUT, enforced on-chain): a merely-delayed
@@ -555,7 +548,7 @@ contract RewardRemittanceFacet is
         bytes memory payload;
         {
             bytes32 root;
-            (payload, root) = _remitPayload(dl.fundedDays, st.totalAll, remitId, st.recycled);
+            (payload, root) = _remitPayload(s, dstChainId, dl.fundedDays, st.totalAll, remitId, st.recycled);
             s.remitReservations[remitId].dayListRoot = root;
         }
         messageId = _sendRemitPayload(
@@ -639,12 +632,17 @@ contract RewardRemittanceFacet is
     ///         ({RemitWire.d6Chunks}, {RemitWire.d6Root}) and travel with the
     ///         extent, the typed split and the era. The funded list is bounded
     ///         by {LibRewardCustody.requireRemittableFanout} before this runs,
-    ///         so the hashing is at most a handful of leaves. `view` only for
-    ///         `address(this)`, the remitter identity the receipt is keyed by.
+    ///         so the hashing is at most a handful of leaves.
+    ///         The era word is the custody era the DESTINATION last reported
+    ///         (its B4 day report; #1566 PR C revision) — eras are numbered per
+    ///         chain, so the receiver compares like with like: a delivery the
+    ///         destination has since moved past lands in the era it was sent for.
     /// @return payload The wire bytes.
     /// @return root    The day-list root the payload commits to; the send keeps
     ///                 it on the reservation.
     function _remitPayload(
+        LibVaipakam.Storage storage s,
+        uint32 dstChainId,
         uint256[] memory fundedDays,
         uint256 total,
         uint256 remitId,
@@ -660,7 +658,7 @@ contract RewardRemittanceFacet is
             remitId,
             address(this),
             recycledShare,
-            REMIT_INTENDED_ERA_PRE_REGISTRY
+            s.chainCustodyEraReported[dstChainId]
         );
     }
 
@@ -1677,7 +1675,8 @@ contract RewardRemittanceFacet is
         // `total − totalFresh` IS the recycled share: every funded day
         // contributes `slice = p.fresh + p.recycled` to `total` and `p.fresh`
         // to `totalFresh`.
-        (bytes memory payload, ) = _remitPayload(fundedDays, total, s.remitReservationNonce + 1, total - totalFresh);
+        (bytes memory payload, ) =
+            _remitPayload(s, dstChainId, fundedDays, total, s.remitReservationNonce + 1, total - totalFresh);
         fee = ICrossChainMessenger(messenger).quoteMessageFee(
             dstChainId,
             payload,

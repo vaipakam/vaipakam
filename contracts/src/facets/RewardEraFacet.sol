@@ -5,29 +5,31 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibRewardCustody} from "../libraries/LibRewardCustody.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
-import {LibPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 
 /**
- * @title  RewardEraFacet — slice 4 PR C-1 (#1566): the custody era registry's
- *         reads and its two attribution writers.
+ * @title  RewardEraFacet — slice 4 PR C (#1566): the custody era registry's
+ *         reads, its two attribution writers and the era routing of a
+ *         packet's fresh.
  * @author Vaipakam Developer Team
  * @notice A chain's reward role lives in ERAS: a role change retires the live
  *         era, carrying the live-fresh custody into the retiring era's row,
- *         and opens the next. This facet reads the registry and hosts the two
- *         writers that move value OUT of a retired era — the terminal release
- *         (into the live baseline under the deficit split, or into PENDING
- *         SURPLUS while Detached) and the pending-surplus drain (once an active
- *         era exists). Both are deterministic bookkeeping over custody the
- *         holder already holds, so both are permissionless; both are DARK until
- *         the backfill (PR C-5) has assigned history to eras.
- * @dev    Its own facet because the two facets that would host it are out of
- *         EIP-170 headroom ({RewardCustodyFacet} ~1.1 KB, {RewardReconciliationFacet}
- *         ~0.8 KB). The carry-forward itself is library code inlined into
- *         {RewardReporterFacet}, which owns the role setters.
+ *         and opens the next. This facet reads the registry; hosts the two
+ *         writers that move value OUT of a retired era — the release once the
+ *         era is final (into the live baseline under the deficit split, or
+ *         into PENDING SURPLUS while Detached) and the pending-surplus drain
+ *         (once an active era exists); and hosts the ONE rule that routes a
+ *         packet's fresh to the era the packet belongs to.
+ *         Nothing here waits on a manual step (#1566 PR C revision): an era is
+ *         final on the per-day closure proof alone — which anyone may run —
+ *         with nothing staged on its row.
+ * @dev    Its own facet because the facets that would host it are out of
+ *         EIP-170 headroom; the routing is reached from them by Diamond-
+ *         internal self-call. The carry-forward itself is library code inlined
+ *         into {RewardReporterFacet}, which owns the role setters.
  *
  *         NOT `whenNotPaused`, matching {RewardEpochFacet}: nothing here pays
- *         anybody, and the migration pause must not stall an era's close-out.
+ *         anybody, and a pause must not stall an era's close-out.
  */
 contract RewardEraFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaipakamErrors {
     /// @notice The live era's id.
@@ -45,17 +47,12 @@ contract RewardEraFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaipak
         return LibVaipakam.storageSlot().custodyEraRowsTotal;
     }
 
-    /// @notice Whether the backfill (PR C-5) has assigned history to eras; the writers below are dark until it has.
-    function isCustodyEraBackfillComplete() external view returns (bool) {
-        return LibVaipakam.storageSlot().custodyEraBackfillComplete;
-    }
-
-    /// @notice Writer 2 of 3 — finalize a RETIRED era whose counters read zero
-    ///         and release its holder row: to the live baseline under the §5c
-    ///         deficit split on an active role, into PENDING SURPLUS while
-    ///         Detached. Refuses by name: the live era, an unknown era, one
-    ///         already finalized, one still carrying obligations, and every
-    ///         era until the backfill has run.
+    /// @notice Writer 2 of 3 — finalize a RETIRED era and release its holder row:
+    ///         to the live baseline under the §5c deficit split on an active
+    ///         role, into PENDING SURPLUS while Detached. Permissionless. Refuses
+    ///         by name: the live era, an unknown era, one already finalized, and
+    ///         one with a day of its span not yet proven closed or a staging hold
+    ///         on its row.
     /// @return released          What left the era's row.
     /// @return toPendingSurplus  Whether it went to PENDING SURPLUS (Detached) rather than the live baseline.
     function finalizeCustodyEra(uint64 era) external nonReentrant returns (uint256 released, bool toPendingSurplus) {
@@ -89,18 +86,32 @@ contract RewardEraFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaipak
         LibRewardCustody.drawCustodyEraForDay(LibVaipakam.storageSlot(), era, dayId, amount);
     }
 
-    /// @notice PR C-3 — count packet `h` open in the live era (Diamond-internal: the
-    ///         unclassified ingress). The rule is {LibRewardCustody.countEraOpen}.
-    function eraCountOpen(bytes32 h) external {
+    /// @notice #1566 PR C revision — credit a packet's fresh, now in row `from`, to
+    ///         the packet's era (Diamond-internal: the classification). The rule
+    ///         is {LibRewardCustody.creditFreshToEraFromRow}.
+    function eraCreditFreshFromRow(uint8 from, uint256 amount, uint64 era)
+        external
+        returns (uint256 toLive, uint256 toRestitution)
+    {
         if (msg.sender != address(this)) revert RewardCustodyOnlyDiamondInternal(msg.sender);
-        LibRewardCustody.countEraOpen(LibVaipakam.storageSlot(), h);
+        return LibRewardCustody.creditFreshToEraFromRow(
+            LibVaipakam.storageSlot(), LibVaipakam.RewardCustodyRow(from), amount, era
+        );
     }
 
-    /// @notice PR C-3 — note a classification exit of packet `h` (Diamond-internal:
-    ///         the four exits). The rule is {LibRewardCustody.noteClassificationExit}.
-    function eraNoteClassificationExit(bytes32 h) external {
+    /// @notice #1566 PR C revision — a fresh inflow for era `era` (Diamond-internal:
+    ///         the compensation credit). The rule is {LibRewardCustody.relocateFreshIngressToEra}.
+    function eraRelocateFreshIngress(uint256 amount, uint64 era) external {
         if (msg.sender != address(this)) revert RewardCustodyOnlyDiamondInternal(msg.sender);
-        LibRewardCustody.noteClassificationExit(LibVaipakam.storageSlot(), h);
+        LibRewardCustody.relocateFreshIngressToEra(LibVaipakam.storageSlot(), amount, era);
+    }
+
+    /// @notice #1566 PR C revision — a demotion of packet `h`'s credit, taken back
+    ///         from where it went (Diamond-internal: the compensation demotion).
+    ///         The rule is {LibRewardCustody.uncreditFreshForPacket}.
+    function eraUncreditFresh(bytes32 h, uint256 amount) external returns (uint256 moved) {
+        if (msg.sender != address(this)) revert RewardCustodyOnlyDiamondInternal(msg.sender);
+        return LibRewardCustody.uncreditFreshForPacket(LibVaipakam.storageSlot(), h, amount);
     }
 
     /// @notice PR C-4 — one parked legacy broadcast's record.
@@ -108,83 +119,17 @@ contract RewardEraFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaipak
         return LibVaipakam.storageSlot().parkedBroadcasts[id];
     }
 
-    /// @notice PR C-4 — how many parked broadcasts era `era` still carries open (its terminal condition reads it).
+    /// @notice PR C-4 — how many parked broadcasts era `era` still carries open.
+    ///         Informational: an era's finality does not wait on them.
     function getCustodyEraParkedOpen(uint64 era) external view returns (uint256) {
         return LibVaipakam.storageSlot().custodyEraParkedOpen[era];
     }
 
     /// @notice PR C-4 — the operator's recorded disposition of a parked broadcast
     ///         the gate refuses: it leaves its era's open count with `reason`.
-    ///         An operator decision by design (§5c): the platform choosing to stop
-    ///         waiting on a message it cannot route.
+    ///         Optional: nothing waits on it — a parked copy of a closed day's
+    ///         broadcast installs nothing that prices an obligation.
     function tombstoneParkedBroadcast(uint256 id, bytes32 reason) external onlyRole(LibAccessControl.ADMIN_ROLE) {
         LibRewardCustody.tombstoneParkedBroadcast(LibVaipakam.storageSlot(), id, reason);
-    }
-
-    // ── PR C-5 — the history backfill (ADMIN, under the manual pause, pause-epoch-checked) ──
-
-    /// @dev The stated pause epoch must be the live one, so a call prepared against
-    ///      one pause cannot land under a later one (the rebase's rule).
-    function _requireBackfillPause(uint64 pauseEpoch) private view {
-        LibPausable.requireManuallyPaused();
-        uint64 live = LibPausable.pauseTransitions();
-        if (pauseEpoch != live) revert CustodyEraBackfillStalePauseEpoch(pauseEpoch, live);
-    }
-
-    /// @notice Start the history backfill.
-    function startCustodyEraBackfill(uint64 pauseEpoch) external onlyRole(LibAccessControl.ADMIN_ROLE) {
-        _requireBackfillPause(pauseEpoch);
-        LibRewardCustody.startCustodyEraBackfill(LibVaipakam.storageSlot());
-    }
-
-    /// @notice Assign one page of history packets (hashes from the recorded ingress events).
-    function backfillCustodyEraPacketsPage(uint64 pauseEpoch, bytes32[] calldata hashes)
-        external
-        onlyRole(LibAccessControl.ADMIN_ROLE)
-        returns (uint256 counted)
-    {
-        _requireBackfillPause(pauseEpoch);
-        return LibRewardCustody.backfillCustodyEraPacketsPage(LibVaipakam.storageSlot(), hashes);
-    }
-
-    /// @notice Declare history assigned and lift the role freeze; `attestedPacketCount` is the operator's count of
-    ///         history packets, recorded beside the number supplied.
-    function completeCustodyEraBackfill(uint64 pauseEpoch, uint256 attestedPacketCount)
-        external
-        onlyRole(LibAccessControl.ADMIN_ROLE)
-    {
-        _requireBackfillPause(pauseEpoch);
-        LibRewardCustody.completeCustodyEraBackfill(LibVaipakam.storageSlot(), attestedPacketCount);
-    }
-
-    /// @notice The backfill's record.
-    function getCustodyEraBackfill()
-        external
-        view
-        returns (bool started, bool complete, uint256 supplied, uint256 counted, uint256 attested)
-    {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        return (
-            s.custodyEraBackfillStarted,
-            s.custodyEraBackfillComplete,
-            s.custodyEraBackfillPacketsSupplied,
-            s.custodyEraBackfillPacketsCounted,
-            s.custodyEraBackfillPacketsAttested
-        );
-    }
-
-    /// @notice Packets recorded since this slice, by hash — a page of the list.
-    function getIngressPacketHashes(uint256 from, uint256 limit)
-        external
-        view
-        returns (bytes32[] memory page, uint256 total)
-    {
-        bytes32[] storage all = LibVaipakam.storageSlot().ingressPacketHashes;
-        total = all.length;
-        if (from >= total) return (new bytes32[](0), total);
-        uint256 n = total - from;
-        if (n > limit) n = limit;
-        page = new bytes32[](n);
-        for (uint256 i; i < n; ++i) page[i] = all[from + i];
     }
 }

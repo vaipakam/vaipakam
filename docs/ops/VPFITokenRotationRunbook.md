@@ -99,8 +99,8 @@ staked/tracked-balance stranding anyway — see "Decision" below).
      row — or the era rows' total (`RewardEraFacet.getCustodyEraRowsTotal`) — is
      non-zero, or while the holder still holds the old token. An era row
      releases only when its era finalizes: every day of the era's span proven
-     closed by the closure proof, no packet of the era still open for
-     classification, and its parked-broadcast lane empty. A day proves closed
+     closed by the closure proof — which anyone may run — and nothing staged
+     holding the row; no manual step. A day proves closed
      once every obligation covering it has terminated, so an obligation that
      never terminates (funding that never arrives, a pause) holds its era's row,
      and the rotation, until it does. Check `getCustodyEra(n)` for every era

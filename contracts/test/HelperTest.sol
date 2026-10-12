@@ -554,9 +554,9 @@ contract HelperTest {
         selectors[n++] = TestMutatorFacet.setRewardEntryProcessedRaw.selector; // 3b-ii-B
         selectors[n++] = TestMutatorFacet.setLegacyDomainOpenRaw.selector; // 3b-ii-B
         selectors[n++] = TestMutatorFacet.clearTransportBatchDaysRaw.selector; // 3c-1
-        selectors[n++] = TestMutatorFacet.setCustodyEraBackfillCompleteRaw.selector; // PR C-1
+        selectors[n++] = TestMutatorFacet.creditFreshToEraFromRowRaw.selector; // PR C-1
         selectors[n++] = TestMutatorFacet.setCustodyEraCountersRaw.selector; // PR C-1
-        selectors[n++] = TestMutatorFacet.uncountPacketEraRaw.selector; // PR C-5
+        selectors[n++] = TestMutatorFacet.uncreditFreshForPacketRaw.selector; // PR C-5
         // #951 v2 (Codex #959 bind-to-live) — setSaleListingCollateralRaw removed
         // with the snapshot mapping; the accept binds `>=` live collateral.
         // #687-B: the former tail entries ([83]-[87]: setBackstopAbsorbCashRaw,
@@ -2296,7 +2296,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](32);
+        selectors = new bytes4[](34);
         // #1434 P2-w1 — the V3 broadcast heal (single-destination). The
         // lapse-schedule setter + day-clock reads live on
         // RewardCommitmentFacet (EIP-170 headroom).
@@ -2374,6 +2374,8 @@ contract HelperTest {
             RewardAggregatorFacet.getChainKeeperAllocateBps.selector;
         selectors[31] =
             RewardAggregatorFacet.getChainKeeperDraw.selector;
+        selectors[32] = bytes4(keccak256("onChainReportReceived(uint32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint64)")); // #1566 PR C revision — the B4 report
+        selectors[33] = RewardAggregatorFacet.getChainCustodyEraReported.selector;
         return selectors;
     }
 
@@ -2453,7 +2455,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](42);
+        selectors = new bytes4[](41);
         selectors[0] = RewardCustodyFacet.bindRewardCustodyHolder.selector;
         selectors[1] = RewardCustodyFacet.replaceRewardCustodyHolder.selector;
         selectors[2] = RewardCustodyFacet.rebaseArmedFreshPaid.selector;
@@ -2477,7 +2479,7 @@ contract HelperTest {
         selectors[19] = RewardCustodyFacet.relocateRewardCustodyRow.selector;
         selectors[20] = RewardCustodyFacet.releaseRewardCustodyOverage.selector;
         selectors[21] = RewardCustodyFacet.rewardCustodyActivated.selector;
-        selectors[22] = RewardCustodyFacet.rewardRoleChangesFrozen.selector;
+        selectors[22] = RewardCustodyFacet.custodyDeliverClaim.selector; // 3b-ii-A (the freeze getter retired)
         selectors[23] = RewardCustodyFacet.rewardCustodyLedger.selector;
         // #1566 slice 4 PR B — the Diamond-internal custody entry points.
         selectors[24] = RewardCustodyFacet.custodyRelocateToRow.selector;
@@ -2502,7 +2504,6 @@ contract HelperTest {
         selectors[38] = RewardCustodyFacet.custodyUnclassifiedIngress.selector;
         selectors[39] = RewardCustodyFacet.custodyUnclassifiedReturn.selector;
         selectors[40] = RewardCustodyFacet.custodyReleaseUnclassifiedForReturn.selector;
-        selectors[41] = RewardCustodyFacet.custodyDeliverClaim.selector; // 3b-ii-A
     }
 
     /// #1566 closure 2 cutover PR 2 — the legacy reconciliation epoch
@@ -2627,29 +2628,23 @@ contract HelperTest {
     /// `DeployDiamond._getRewardStagingSettleSelectors`.
     /// slice 4 PR C-1 (#1566) — the custody era registry. Mirrors `DeployDiamond._getRewardEraSelectors`.
     function getRewardEraFacetSelectors() public pure returns (bytes4[] memory selectors) {
-        selectors = new bytes4[](18);
+        selectors = new bytes4[](13);
         selectors[0] = RewardEraFacet.getCustodyEraCurrent.selector;
         selectors[1] = RewardEraFacet.getCustodyEra.selector;
         selectors[2] = RewardEraFacet.getCustodyEraRowsTotal.selector;
-        selectors[3] = RewardEraFacet.isCustodyEraBackfillComplete.selector;
-        selectors[4] = RewardEraFacet.finalizeCustodyEra.selector;
-        selectors[5] = RewardEraFacet.drainPendingSurplus.selector;
+        selectors[3] = RewardEraFacet.finalizeCustodyEra.selector;
+        selectors[4] = RewardEraFacet.drainPendingSurplus.selector;
         // PR C-2 — the era term of a day's fresh.
-        selectors[6] = RewardEraFacet.getCustodyEraAllocationForDay.selector;
-        selectors[7] = RewardEraFacet.eraDrawForDay.selector;
-        // PR C-3 — the open-classification count.
-        selectors[8] = RewardEraFacet.eraCountOpen.selector;
-        selectors[9] = RewardEraFacet.eraNoteClassificationExit.selector;
+        selectors[5] = RewardEraFacet.getCustodyEraAllocationForDay.selector;
+        selectors[6] = RewardEraFacet.eraDrawForDay.selector;
+        // #1566 PR C revision — the era routing of a packet's fresh.
+        selectors[7] = RewardEraFacet.eraCreditFreshFromRow.selector;
+        selectors[8] = RewardEraFacet.eraRelocateFreshIngress.selector;
+        selectors[9] = RewardEraFacet.eraUncreditFresh.selector;
         // PR C-4 — the parked-message lane.
         selectors[10] = RewardEraFacet.getParkedBroadcast.selector;
         selectors[11] = RewardEraFacet.getCustodyEraParkedOpen.selector;
         selectors[12] = RewardEraFacet.tombstoneParkedBroadcast.selector;
-        // PR C-5 — the history backfill.
-        selectors[13] = RewardEraFacet.startCustodyEraBackfill.selector;
-        selectors[14] = RewardEraFacet.backfillCustodyEraPacketsPage.selector;
-        selectors[15] = RewardEraFacet.completeCustodyEraBackfill.selector;
-        selectors[16] = RewardEraFacet.getCustodyEraBackfill.selector;
-        selectors[17] = RewardEraFacet.getIngressPacketHashes.selector;
     }
 
     /// #1219 (S-4) — service capacity deposits. Mirrors `DeployDiamond._getServiceCapacitySelectors`.

@@ -577,17 +577,6 @@
   },
   {
     "type": "error",
-    "name": "CustodyEraScanExceeded",
-    "inputs": [
-      {
-        "name": "dayId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "DayCapModeUnsetPostCutover",
     "inputs": [
       {

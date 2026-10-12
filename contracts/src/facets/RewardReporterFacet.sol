@@ -114,6 +114,8 @@ contract RewardReporterFacet is
         uint256 recycledForDay18;
         uint256 commitRetiredCumulative18;
         uint256 commitReleasedCumulative18;
+        /// @dev #1566 PR C revision — this chain's live custody era (B4).
+        uint64 custodyEra;
     }
 
     /// @notice The interest fold was advanced through `through` (or as far as one
@@ -247,7 +249,8 @@ contract RewardReporterFacet is
             recycledCumulative18: LibVpfiRecycle.creditedCumulative(s),
             recycledForDay18: s.recycledCreditedByDay[dayId],
             commitRetiredCumulative18: s.recycleCommitRetiredCumulative,
-            commitReleasedCumulative18: s.recycleCommitReleasedCumulative
+            commitReleasedCumulative18: s.recycleCommitReleasedCumulative,
+            custodyEra: s.custodyEraCurrent
         });
 
         s.chainReportSentAt[dayId] = uint64(block.timestamp);
@@ -340,6 +343,32 @@ contract RewardReporterFacet is
     }
 
     function _dispatchChainReport(
+        address messenger,
+        uint256 dayId,
+        ReportFigures memory f
+    ) private {
+        // #1566 PR C revision — the B4 report carries this chain's live custody
+        // era, so the canonical chain stamps every rooted remittance it sends
+        // here with the era it will land in. Tried first; a messenger without
+        // it (the empty revert of an unknown selector) downgrades a generation.
+        try IRewardMessenger(messenger).sendChainReport{value: msg.value}(
+            dayId,
+            f.lender,
+            f.borrower,
+            f.recycledCumulative18,
+            f.recycledForDay18,
+            f.commitRetiredCumulative18,
+            f.commitReleasedCumulative18,
+            f.custodyEra,
+            payable(msg.sender)
+        ) {} catch (bytes memory b4Reason) {
+            _bubbleUnlessMissingSelector(b4Reason);
+            _dispatchChainReportB3(messenger, dayId, f);
+        }
+    }
+
+    /// @dev The B3 → B1 → legacy ladder, for a messenger without the B4 send.
+    function _dispatchChainReportB3(
         address messenger,
         uint256 dayId,
         ReportFigures memory f
@@ -1497,15 +1526,12 @@ contract RewardReporterFacet is
         );
     }
 
-    /// @dev #1566 slice 4 PR B — the role freeze (design §5d, "role and
-    ///      SOURCE changes freeze here"): from the first holder attribution
-    ///      or the activation until slice 4 PR C's backfill clears
-    ///      `rewardRoleChangesFrozen`, every EFFECTIVE role change is refused
-    ///      with the two roles named. Why: between the two PRs the residual
-    ///      retirement below can only level `paid` to `received`; it cannot
-    ///      re-key a holder allocation, so a transition would orphan funded
-    ///      custody or re-expose a stale residual after reattachment. One
-    ///      helper on the RESOLVED role, so a third role input inherits it.
+    /// @dev The posture gate on an EFFECTIVE role change, on the RESOLVED role so
+    ///      a third role input inherits it. Slice 4 PR B froze every change until
+    ///      PR C (a transition would have orphaned funded custody); with PR C's
+    ///      carry-forward in place a change carries the custody into the retiring
+    ///      era, so the freeze is gone (#1566 PR C revision) — nothing waits on
+    ///      a manual step. The staging gate below stands.
     function _requireRoleChangeAllowed(
         LibVaipakam.Storage storage s,
         LibVaipakam.RewardRole next
@@ -1521,8 +1547,6 @@ contract RewardReporterFacet is
         if (s.stagingEncumberedCount != 0) {
             revert IVaipakamErrors.RewardRoleChangeBlockedByStagedRecords(s.stagingEncumberedCount);
         }
-        if (!s.rewardRoleChangesFrozen) return;
-        revert IVaipakamErrors.RewardRoleChangeFrozen(uint8(current), uint8(next));
     }
 
     /// @dev Retire the delivered-fresh residual (`received - paid`) whenever

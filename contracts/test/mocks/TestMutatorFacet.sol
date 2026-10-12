@@ -2757,8 +2757,15 @@ contract TestMutatorFacet {
 
     /// @dev slice 4 PR C-1 test-only — declare the backfill done so the dark
     ///      era writers can be exercised before PR C-5 exists.
-    function setCustodyEraBackfillCompleteRaw(bool done) external {
-        LibVaipakam.storageSlot().custodyEraBackfillComplete = done;
+    /// @dev #1566 PR C revision test-only — the era routing rule for a packet's
+    ///      fresh, driven directly ({LibRewardCustody.creditFreshToEraFromRow}).
+    function creditFreshToEraFromRowRaw(uint8 from, uint256 amount, uint64 era)
+        external
+        returns (uint256 toLive, uint256 toRestitution)
+    {
+        return LibRewardCustody.creditFreshToEraFromRow(
+            LibVaipakam.storageSlot(), LibVaipakam.RewardCustodyRow(from), amount, era
+        );
     }
 
     /// @dev slice 4 PR C-1 test-only — stand an era's two terminal counters (the
@@ -2770,14 +2777,9 @@ contract TestMutatorFacet {
         e.openClassification = openClassification;
     }
 
-    /// @dev slice 4 PR C-5 test-only — forget a packet's era count, the state of
-    ///      a packet recorded before the count existed (the backfill's input).
-    function uncountPacketEraRaw(bytes32 h) external {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        LibVaipakam.IngressPacket storage p = s.ingressPackets[h];
-        if (p.eraCounted && !p.classificationFinal) --s.custodyEras[p.custodyEra].openClassification;
-        p.eraCounted = false;
-        p.classificationFinal = false;
-        p.custodyEra = 0;
+    /// @dev #1566 PR C revision test-only — a demotion of packet `h`'s credit,
+    ///      driven directly ({LibRewardCustody.uncreditFreshForPacket}).
+    function uncreditFreshForPacketRaw(bytes32 h, uint256 amount) external returns (uint256) {
+        return LibRewardCustody.uncreditFreshForPacket(LibVaipakam.storageSlot(), h, amount);
     }
 }
