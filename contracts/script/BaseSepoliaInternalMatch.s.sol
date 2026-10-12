@@ -15,6 +15,8 @@ import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
 import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
 import {RepriceTestnetMock} from "./RepriceTestnetMock.s.sol";
+import {IRepriceDiamondViews} from "./lib/RepriceVenueReport.sol";
+import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 
 /**
  * @title BaseSepoliaInternalMatch
@@ -30,24 +32,45 @@ import {RepriceTestnetMock} from "./RepriceTestnetMock.s.sol";
  *         market gets there because the loans were opened at different
  *         prices. The script does the same with {RepriceTestnetMock}'s
  *         coherent feed + pool + venue move:
- *           1. tLIQ at `IM_P0_E8` — open A (lender LENDER, borrower BORROWER).
+ *           1. tLIQ at `IM_P0_E8` — open A (lender LENDER, borrower BORROWER),
+ *              its mUSDC collateral sized at 2x the principal's value from
+ *              the Diamond's own mUSDC price and both tokens' decimals.
  *           2. tLIQ to `IM_P1_E8` — open B (lender NEW_LENDER, borrower
  *              NEW_BORROWER), sized so B's collateral equals A's principal
  *              and B's principal equals A's collateral.
  *           3. tLIQ to `IM_P2_E8` — both legs at/above their liquidation LTV.
- *           4. The matcher runs `triggerInternalMatchLiquidation(A, B, 0)`;
- *              both loans close `InternalMatched` in one step.
- *           5. tLIQ back to `IM_P0_E8`; the kill-switch back to what it was
- *              unless `IM_KEEP_ENABLED=true`.
+ *           4. Only now is internal matching switched on (when it was off),
+ *              and in the next transaction the matcher runs
+ *              `triggerInternalMatchLiquidation(A, B, 0)`; both loans close
+ *              `InternalMatched` in one step.
+ *           5. tLIQ back to the price it had BEFORE the run (read at start,
+ *              not assumed to be `IM_P0_E8`); the kill-switch back off unless
+ *              `IM_KEEP_ENABLED=true`.
  *
  *         Every price move is three non-atomic owner-gated transactions (see
  *         {RepriceTestnetMock}); between steps 2 and 5 every tLIQ loan on the
- *         Diamond sees the moved price. Broadcast with `--slow`.
+ *         Diamond sees the moved price, and the run lists each one (all
+ *         pages) with its LTV, or says it is unreadable. Broadcast with
+ *         `--slow`.
+ *
+ *         Two races the script cannot close, stated rather than hidden:
+ *         between steps 3 and 4 a keeper may liquidate either loan (step 4
+ *         then reverts with tLIQ still moved), and between the enable and
+ *         the trigger anyone may match an eligible pair. Recovery for both:
+ *         re-run {RepriceTestnetMock} to restore the price and
+ *         `setInternalMatchEnabled(false)` from the admin.
+ *
+ *         The kill-switch is never inferred from its current value. A run
+ *         that finds it ON refuses unless `IM_ORIGINALLY_ENABLED=true` says
+ *         that is the deployment's intended state — otherwise a run after a
+ *         partial one would mistake that run's leftover for the original
+ *         configuration and leave matching on.
  *
  *         Env (keys from contracts/.env): DEPLOYER_PRIVATE_KEY (mock owner,
  *         matcher), ADMIN_PRIVATE_KEY (kill-switch), LENDER_*, BORROWER_*,
  *         NEW_LENDER_*, NEW_BORROWER_*. Optional: IM_P0_E8 / IM_P1_E8 /
- *         IM_P2_E8, IM_PRINCIPAL_A (tLIQ wei), IM_RATE_BPS, IM_KEEP_ENABLED.
+ *         IM_P2_E8, IM_PRINCIPAL_A (tLIQ wei), IM_RATE_BPS, IM_KEEP_ENABLED,
+ *         IM_ORIGINALLY_ENABLED.
  */
 contract BaseSepoliaInternalMatch is RepriceTestnetMock {
     struct Actors {
@@ -76,6 +99,7 @@ contract BaseSepoliaInternalMatch is RepriceTestnetMock {
         uint256 principalA = vm.envOr("IM_PRINCIPAL_A", uint256(1e18)); // 1 tLIQ
         uint256 rateBps = vm.envOr("IM_RATE_BPS", uint256(1_000)); // 10% APR
         bool keepEnabled = vm.envOr("IM_KEEP_ENABLED", false);
+        bool originallyEnabled = vm.envOr("IM_ORIGINALLY_ENABLED", false);
 
         RepriceTarget memory t = _resolveTarget("liquidToken");
         address mUsdc = _resolveTarget("liquidToken2").asset;
@@ -85,20 +109,21 @@ contract BaseSepoliaInternalMatch is RepriceTestnetMock {
         // it: principal = A's collateral, collateral = A's principal, so at
         // p2 = sqrt(p0 * p1) both legs sit at the same LTV and one step
         // closes both.
-        uint256 collateralA = (principalA * p0) / (1e18 * 1e8) * 2 * 1e18;
+        uint256 collateralA = _collateralWorthTwice(t.diamond, t.asset, principalA, p0, mUsdc);
+        uint256 priceBefore = _priceE8(t.diamond, t.asset);
 
         (bool wasEnabled,,) = ConfigFacet(t.diamond).getInternalMatchConfigBundle();
+        require(
+            !wasEnabled || originallyEnabled,
+            "BaseSepoliaInternalMatch: internal matching is already ON - if a partial run left it on, switch it off first; set IM_ORIGINALLY_ENABLED=true only if ON is the intended state"
+        );
         console.log("=== Base Sepolia internal-match scenario (#2427) ===");
         console.log("Diamond:            ", t.diamond);
         console.log("tLIQ:               ", t.asset);
         console.log("mUSDC:              ", mUsdc);
         console.log("internalMatchEnabled before:", wasEnabled);
-
-        if (!wasEnabled) {
-            vm.startBroadcast(a.adminKey);
-            ConfigFacet(t.diamond).setInternalMatchEnabled(true);
-            vm.stopBroadcast();
-        }
+        console.log("tLIQ price before (e8):", priceBefore);
+        console.log("A: principal (tLIQ wei) / collateral (mUSDC wei):", principalA, collateralA);
 
         _reportExposure(t, 0, 0);
         _reprice(t, a.deployerKey, p0);
@@ -119,11 +144,19 @@ contract BaseSepoliaInternalMatch is RepriceTestnetMock {
         _logLoan("A @p2", t.diamond, loanA);
         _logLoan("B @p2", t.diamond, loanB);
 
+        // Switched on only now, one transaction before the trigger, so the
+        // permissionless match path is open for the shortest window the
+        // script can give it.
+        if (!wasEnabled) {
+            vm.startBroadcast(a.adminKey);
+            ConfigFacet(t.diamond).setInternalMatchEnabled(true);
+            vm.stopBroadcast();
+        }
         vm.startBroadcast(a.deployerKey);
         RiskMatchLiquidationFacet(t.diamond).triggerInternalMatchLiquidation(loanA, loanB, 0);
         vm.stopBroadcast();
 
-        _reprice(t, a.deployerKey, p0);
+        _reprice(t, a.deployerKey, priceBefore);
         if (!wasEnabled && !keepEnabled) {
             vm.startBroadcast(a.adminKey);
             ConfigFacet(t.diamond).setInternalMatchEnabled(false);
@@ -132,6 +165,35 @@ contract BaseSepoliaInternalMatch is RepriceTestnetMock {
 
         _logRecord("A", t.diamond, loanA);
         _logRecord("B", t.diamond, loanB);
+    }
+
+    /// @dev The Diamond's own price for `asset`, in the 8-decimal scale the
+    ///      reprice writes. Refuses a price that does not convert exactly,
+    ///      rather than restoring an approximation of it.
+    function _priceE8(address diamond, address asset) internal view returns (uint256) {
+        (uint256 price, uint8 dec) = IRepriceDiamondViews(diamond).getAssetPrice(asset);
+        require(price != 0, "BaseSepoliaInternalMatch: the oracle reads no price");
+        if (dec >= 8) {
+            require(price % 10 ** (dec - 8) == 0, "BaseSepoliaInternalMatch: price does not convert exactly to e8");
+            return price / 10 ** (dec - 8);
+        }
+        return price * 10 ** (8 - dec);
+    }
+
+    /// @dev Raw `collAsset` worth twice `principal` of `lendAsset` at
+    ///      `lendPrice8`, using the Diamond's live price for `collAsset` and
+    ///      both tokens' own decimals.
+    function _collateralWorthTwice(
+        address diamond,
+        address lendAsset,
+        uint256 principal,
+        uint256 lendPrice8,
+        address collAsset
+    ) internal view returns (uint256) {
+        uint256 collPrice8 = _priceE8(diamond, collAsset);
+        uint256 lendDec = IERC20Metadata(lendAsset).decimals();
+        uint256 collDec = IERC20Metadata(collAsset).decimals();
+        return (principal * lendPrice8 * 2 * 10 ** collDec) / (collPrice8 * 10 ** lendDec);
     }
 
     function _reprice(RepriceTarget memory t, uint256 ownerKey, uint256 price8) internal {
@@ -211,18 +273,28 @@ contract BaseSepoliaInternalMatch is RepriceTestnetMock {
 
     /// @dev Every OTHER Active loan touching tLIQ, with its LTV at the price
     ///      now in force — what the excursion does to loans this run does not
-    ///      own. Simulation-time log only; writes nothing.
+    ///      own. Walks every page of the active list. A loan whose LTV cannot
+    ///      be read is listed as unreadable, never as a number.
+    ///      Simulation-time log only; writes nothing.
     function _reportExposure(RepriceTarget memory t, uint256 skipA, uint256 skipB) internal view {
-        uint256[] memory ids = MetricsFacet(t.diamond).getActiveLoansPaginated(0, 500);
+        uint256 pageSize = 200;
         console.log("Other Active tLIQ loans (id, LTV bps, liq floor bps):");
-        for (uint256 i; i < ids.length; ++i) {
-            if (ids[i] == skipA || ids[i] == skipB) continue;
-            LibVaipakam.Loan memory l = LoanFacet(t.diamond).getLoanDetails(ids[i]);
-            if (l.principalAsset != t.asset && l.collateralAsset != t.asset) continue;
-            if (l.status != LibVaipakam.LoanStatus.Active) continue;
-            (bool ok, bytes memory ret) =
-                t.diamond.staticcall(abi.encodeWithSelector(RiskFacet.calculateLTV.selector, ids[i]));
-            console.log("  ", ids[i], ok ? abi.decode(ret, (uint256)) : type(uint256).max, uint256(l.liquidationLtvBpsAtInit));
+        for (uint256 offset;; offset += pageSize) {
+            uint256[] memory ids = MetricsFacet(t.diamond).getActiveLoansPaginated(offset, pageSize);
+            for (uint256 i; i < ids.length; ++i) {
+                if (ids[i] == skipA || ids[i] == skipB) continue;
+                LibVaipakam.Loan memory l = LoanFacet(t.diamond).getLoanDetails(ids[i]);
+                if (l.principalAsset != t.asset && l.collateralAsset != t.asset) continue;
+                if (l.status != LibVaipakam.LoanStatus.Active) continue;
+                (bool ok, bytes memory ret) =
+                    t.diamond.staticcall(abi.encodeWithSelector(RiskFacet.calculateLTV.selector, ids[i]));
+                if (ok && ret.length == 32) {
+                    console.log("  ", ids[i], abi.decode(ret, (uint256)), uint256(l.liquidationLtvBpsAtInit));
+                } else {
+                    console.log("   id %s: LTV unreadable (calculateLTV reverted); liq floor bps %s", ids[i], uint256(l.liquidationLtvBpsAtInit));
+                }
+            }
+            if (ids.length < pageSize) break;
         }
     }
 

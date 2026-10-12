@@ -17,9 +17,24 @@
 //   2. Chain: LOAN_ID is InternalMatched, its record is stamped, and the
 //      ROLE wallet holds its lender position.
 //   3. /claims: the loan's row carries exactly the expected note.
-//   4. CLAIM=1 only: open the position, require the same line there, claim
-//      as lender through the app, and require a claim event for the loan
-//      and the row to leave /claims.
+//   4. CLAIM=1 only, and only when every check above passed: open the
+//      position, require the same line there, claim as lender through the
+//      app, and require a claim event for the loan and the row to leave
+//      /claims. The claim is one-shot (it ends the card under test), so any
+//      earlier FAIL stops the drive before it.
+//
+// Wallet posture: without CLAIM the injected wallet is read-only, so a page
+// asking for any signature gets a wallet error. With CLAIM=1 it is pinned to
+// Base Sepolia and its signing gate allows exactly one request: an
+// eth_sendTransaction to the Diamond whose calldata is claimAsLender(LOAN_ID).
+// Anything else is refused and named as a FAIL.
+//
+// The profile is seeded to English before the first paint, because every
+// expected string comes from the en catalogue; the rendered language is then
+// asserted, so a profile the seed could not reach is BLOCKED, not a FAIL.
+//
+// A page whose own RPC answered nothing while an assertion waited is BLOCKED:
+// there was no page-backed observation to judge.
 //
 //   SITE_URL=https://app.vaipakam.com \
 //   REFERENCE_SITE_URL=https://<worker>.workers.dev \
@@ -30,7 +45,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { formatUnits, parseAbi } from 'viem';
+import { encodeFunctionData, formatUnits, parseAbi } from 'viem';
 import {
   addressOf,
   blocked,
@@ -41,6 +56,7 @@ import {
   requireSiteUrl,
   requireSigningRole,
   visit,
+  watchPageRpc,
 } from './driver.mjs';
 
 const SITE_URL = requireSiteUrl();
@@ -171,11 +187,55 @@ const EXPECTED_NOTE =
 console.log(`expected note: ${EXPECTED_NOTE}`);
 
 // ── 3. The claim row ───────────────────────────────────────────────────
-const { page, done, shot, consoleErrors } = await launch({ role: ROLE });
+// ── Wallet posture ─────────────────────────────────────────────────────
+const CLAIM_CALLDATA = encodeFunctionData({ abi: DIAMOND_ABI, functionName: 'claimAsLender', args: [LOAN_ID] });
+let claimSends = 0;
+const refusals = [];
+function claimGate(method, params) {
+  const tx = Array.isArray(params) ? params[0] : undefined;
+  const ok =
+    method === 'eth_sendTransaction' &&
+    claimSends === 0 &&
+    typeof tx?.to === 'string' &&
+    tx.to.toLowerCase() === DIAMOND.toLowerCase() &&
+    typeof tx?.data === 'string' &&
+    tx.data.toLowerCase() === CLAIM_CALLDATA.toLowerCase();
+  if (!ok) {
+    const why = `${method} is not the one claimAsLender(${LOAN_ID}) send this drive allows`;
+    refusals.push(why);
+    console.log(`GATE  refused ${why}`);
+    return Promise.resolve({ ok: false, why });
+  }
+  claimSends++;
+  console.log(`GATE  allowed claimAsLender(${LOAN_ID})`);
+  return Promise.resolve({ ok: true, onResult: (hash) => console.log(`TX    claim sent: ${hash}`) });
+}
+const session = await launch(
+  SUBMIT_CLAIM
+    ? { role: ROLE, startChainId: CHAIN_ID, pinnedChainId: CHAIN_ID, signingGate: claimGate }
+    : { role: ROLE, readOnly: true },
+);
+const { ctx, page, done, shot, consoleErrors } = session;
+// English before the first paint (the shared i18n factory's storage key).
+await ctx.addInitScript(() => {
+  try {
+    localStorage.setItem('vaipakam:language', 'en');
+  } catch {
+    /* storage blocked — the language assertion below says so */
+  }
+});
+const rpc = watchPageRpc(page);
+/** Pre-claim FAILs: the claim is one-shot, so it never runs after one. */
+const preClaimFails = () => fails;
 const rowFor = () => page.locator(`a.item-row[href$="/positions/${LOAN_ID}"]`);
 try {
   await visit(page, '/claims');
+  const lang = await page.evaluate(() => document.documentElement.lang);
+  if (!/^en\b/i.test(lang ?? '')) {
+    await blocked(`the page renders in "${lang}", not English — the expected lines come from the en catalogue`, null, done);
+  }
   await ensureConnected(page);
+  rpc.reset();
   await rowFor().first().waitFor({ state: 'visible', timeout: 60_000 });
   // The note renders once the principal token's details load.
   const deadline = Date.now() + 30_000;
@@ -193,7 +253,10 @@ try {
   await shot(`internal-match-claim-row-${LOAN_ID}`);
 
   // ── 4. The claim itself (opt-in) ─────────────────────────────────────
-  if (SUBMIT_CLAIM) {
+  if (SUBMIT_CLAIM && preClaimFails() > 0) {
+    console.log(`SKIP claim — ${preClaimFails()} check(s) failed above; the claim would end the card under test`);
+  } else if (SUBMIT_CLAIM) {
+    rpc.reset();
     await rowFor().first().click();
     await page.waitForURL(new RegExp(`/positions/${LOAN_ID}$`), { timeout: 30_000 });
     // The position page states the same line above its claim button.
@@ -202,6 +265,7 @@ try {
     const posText = (await page.locator('body').innerText()).replace(/\s+/g, ' ');
     check('position page states the same comparison', posText.includes(EXPECTED_NOTE));
     await shot(`internal-match-position-${LOAN_ID}`);
+    if (preClaimFails() > 0) throw new Error('the position page did not state the comparison; not claiming');
     const before = await pub.getBlockNumber();
     await claimButton.click();
     // A confirm step, where the app shows one before the wallet prompt.
@@ -210,6 +274,7 @@ try {
       .last()
       .click({ timeout: 10_000 })
       .catch(() => {});
+    rpc.reset();
     await page.getByText(/claim complete/i).first().waitFor({ timeout: 180_000 });
     await shot(`internal-match-claimed-${LOAN_ID}`);
     // The claim's own event: this loan, this wallet, the recorded proceeds.
@@ -233,9 +298,15 @@ try {
   check('no page errors', consoleErrors.filter((e) => e.startsWith('PAGEERROR')).length === 0);
 } catch (err) {
   await shot(`internal-match-claim-error-${LOAN_ID}`).catch(() => {});
+  // No answer from the page's own RPC while the assertion waited: nothing
+  // page-backed was observed, so this is not a verdict on the card.
+  if ((await rpc.settled()) === 0) {
+    await blocked('the page RPC answered nothing while the drive waited', err, done);
+  }
   console.log(`FAIL drive — ${err.message}`);
   fails++;
 }
+for (const why of refusals) check('the page asked to sign only the planned claim', false, why);
 console.log(fails === 0 ? 'ALL PASS' : `${fails} FAILURES`);
 await done();
 process.exit(fails === 0 ? 0 : 1);
