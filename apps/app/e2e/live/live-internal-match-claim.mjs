@@ -466,10 +466,13 @@ const violationsSoFar = () => [
   ...splitBlocked(blockedRequests ?? [], [new URL(SITE_URL).origin]).violations,
   ...wsViolations,
 ];
-/** Pre-claim FAILs — a check that failed, or a request the wallet gate or
- *  the egress guard already refused (an early claim attempt, a chain switch,
- *  a page write). The claim is one-shot, so it never runs after one. */
-const preClaimFails = () => failedCount() + violationsSoFar().length;
+/** Pre-claim FAILs — a check that failed, a request the wallet gate or the
+ *  egress guard already refused (an early claim attempt, a chain switch, a
+ *  page write), or an uncaught page exception (a page that threw is not one
+ *  to sign from, however much of its DOM survived). The claim is one-shot,
+ *  so it never runs after one. */
+const pageErrors = () => consoleErrors.filter((e) => e.startsWith('PAGEERROR'));
+const preClaimFails = () => failedCount() + violationsSoFar().length + pageErrors().length;
 const rowFor = () => page.locator(`a.item-row[href$="/positions/${LOAN_ID}"]`);
 /** Why the drive stopped, when an exception ended it. */
 let stopped = null;
@@ -652,8 +655,12 @@ try {
     }
     // A row's absence counts only on a SETTLED, AVAILABLE list: the loading
     // and unavailable states carry no rows either.
+    // Not `visit()`: its precondition wrapper exits BLOCKED on a failed
+    // navigation, and after the send that would bypass the reconciliation
+    // in the catch below. A throw here reaches it and is UNDETERMINED.
     resetWindow();
-    await visit(page, '/claims');
+    const reload = await page.goto(`${SITE_URL.replace(/\/$/, '')}/claims`, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+    if ((reload?.status() ?? 200) >= 400) throw new Error(`/claims answered HTTP ${reload.status()} after the claim`);
     const settled = await claimsListSettled();
     if (settled === 'available') {
       check('rowRemoved', 'gone', 'the row left /claims after the claim', (await rowFor().count()) === 0);
@@ -705,7 +712,7 @@ try {
   }
   console.log(`STOP  ${stopped}`);
 }
-check('pageHealth', 'noPageErrors', 'no page errors', consoleErrors.filter((e) => e.startsWith('PAGEERROR')).length === 0);
+check('pageHealth', 'noPageErrors', 'no page errors', pageErrors().length === 0, pageErrors().join(' | ').slice(0, 300));
 // Every refused request, bar the recognised Cloudflare edge beacon. CLAIM
 // session: the plan's refusals, the chain pin's (recorded at the wallet
 // boundary before the gate is asked), and any page write the egress guard
@@ -724,7 +731,13 @@ if (armedOnce) {
   // send through any other connector never reaches the plan at all).
   check('writeDiscipline', 'planned', 'the claim was sent through the gated wallet, exactly once', wrote(), `plan step ${claimStep()?.status}`);
 }
-await done();
+// Teardown is cleanup, not evidence: a browser that fails to close says
+// nothing about the app or the chain, so it never replaces the verdict.
+try {
+  await done();
+} catch (err) {
+  console.log(`(teardown failed: ${err.message} — the verdict below stands)`);
+}
 for (const line of MANIFEST.render()) console.log(line);
 const VERDICT = runVerdict({
   rows: MANIFEST.rows(),
