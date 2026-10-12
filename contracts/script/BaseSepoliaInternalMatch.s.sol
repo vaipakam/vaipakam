@@ -68,6 +68,10 @@ import {MockSwapAdapter} from "../test/mocks/MockSwapAdapter.sol";
  *                     or `IM_KEEP_ENABLED`).
  *           `restore` Recovery from any failed stage: matching OFF, the
  *                     snapshot restored, the switch to its declared state.
+ *                     Takes IM_LOAN_A / IM_LOAN_B (0 = never opened) and
+ *                     refuses while either is Active, since the restored
+ *                     price can leave a leg liquidatable; repay or match it
+ *                     first, or override with IM_RESTORE_WITH_ACTIVE=true.
  *
  *         Every price move is three non-atomic owner-gated transactions (see
  *         {RepriceTestnetMock}) and every tLIQ position on the Diamond sees
@@ -124,7 +128,8 @@ import {MockSwapAdapter} from "../test/mocks/MockSwapAdapter.sol";
  *         IM_LOAN_B, and the snapshot IM_RESTORE_PRICE_E8 /
  *         IM_RESTORE_SPOT_X96 / IM_RESTORE_VENUE_E8 (printed by `open-a`).
  *         Optional: IM_P0_E8 / IM_P1_E8 / IM_P2_E8, IM_PRINCIPAL_A (tLIQ wei),
- *         IM_RATE_BPS, IM_KEEP_ENABLED, IM_ORIGINALLY_ENABLED.
+ *         IM_RATE_BPS, IM_KEEP_ENABLED, IM_ORIGINALLY_ENABLED,
+ *         IM_RESTORE_WITH_ACTIVE.
  */
 contract BaseSepoliaInternalMatch is RepriceTestnetMock {
     struct Actors {
@@ -162,7 +167,7 @@ contract BaseSepoliaInternalMatch is RepriceTestnetMock {
         if (s == keccak256("open-a")) _stageOpenA(t, a, mUsdc);
         else if (s == keccak256("open-b")) _stageOpenB(t, a, mUsdc);
         else if (s == keccak256("match")) _stageMatch(t, a, mUsdc);
-        else if (s == keccak256("restore")) _endRun(t, a, 0, 0);
+        else if (s == keccak256("restore")) _stageRestore(t, a);
         else revert("BaseSepoliaInternalMatch: IM_STAGE must be open-a, open-b, match or restore");
     }
 
@@ -248,6 +253,32 @@ contract BaseSepoliaInternalMatch is RepriceTestnetMock {
         _endRun(t, a, loanA, loanB);
         _logRecord("A", t.diamond, loanA);
         _logRecord("B", t.diamond, loanB);
+    }
+
+    /// @dev Recovery. Restoring the price is only safe once no leg this run
+    ///      opened is still Active: a B opened at p1 and left there by a
+    ///      failed p2 move sits near 200% LTV at the restored price, and an A
+    ///      can be just as exposed. So the operator names every leg the run's
+    ///      receipts show (`IM_LOAN_A` / `IM_LOAN_B`, 0 for one never
+    ///      opened) and the stage refuses while any is Active — repay or
+    ///      match it first. `IM_RESTORE_WITH_ACTIVE=true` overrides, and the
+    ///      stage then prints each Active leg's LTV after the restore, since
+    ///      the operator has accepted that it may be liquidatable.
+    function _stageRestore(RepriceTarget memory t, Actors memory a) internal {
+        uint256[2] memory legs = [vm.envUint("IM_LOAN_A"), vm.envUint("IM_LOAN_B")];
+        bool override_ = vm.envOr("IM_RESTORE_WITH_ACTIVE", false);
+        for (uint256 i; i < 2; ++i) {
+            if (legs[i] == 0) continue;
+            bool active = LoanFacet(t.diamond).getLoanDetails(legs[i]).status == LibVaipakam.LoanStatus.Active;
+            require(
+                !active || override_,
+                "BaseSepoliaInternalMatch: a leg is still Active - restoring the price may leave it liquidatable; repay or match it first, or set IM_RESTORE_WITH_ACTIVE=true"
+            );
+        }
+        _endRun(t, a, 0, 0);
+        for (uint256 i; i < 2; ++i) {
+            if (legs[i] != 0) _logLoan(i == 0 ? "A" : "B", t.diamond, legs[i]);
+        }
     }
 
     /// @dev Matching OFF, the `open-a` snapshot restored exactly, then the
@@ -531,6 +562,12 @@ contract BaseSepoliaInternalMatch is RepriceTestnetMock {
             for (uint256 i; i < ids.length; ++i) {
                 LibVaipakam.Offer memory o = OfferCancelFacet(t.diamond).getOffer(ids[i]);
                 if (o.lendingAsset != t.asset && o.collateralAsset != t.asset) continue;
+                // The active-offer index keeps an expired, uncancelled offer,
+                // but no accept can fill it — listed apart, never as fillable.
+                if (o.expiresAt != 0 && block.timestamp >= o.expiresAt) {
+                    console.log(string.concat("   offer ", vm.toString(ids[i]), " expired at"), uint256(o.expiresAt), "- not fillable (cancel to release it)");
+                    continue;
+                }
                 console.log(
                     string.concat("   offer ", vm.toString(ids[i]), o.lendingAsset == t.asset ? " lends tLIQ" : " takes tLIQ as collateral"),
                     o.amountMax > o.amountFilled ? o.amountMax - o.amountFilled : 0,

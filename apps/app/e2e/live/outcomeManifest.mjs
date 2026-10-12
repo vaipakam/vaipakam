@@ -236,12 +236,21 @@ export function createManifest({ verifiable, notVerified = [] }) {
  *
  * @param {{ rows: Array<{ id: string, status: string }>, wrote: boolean,
  *           stopped: string|null, preWriteFailure: boolean, gateEscape: boolean,
- *           outcomeClaims?: readonly string[] }} a
+ *           outcomeClaims?: readonly string[],
+ *           evidence?: { failed: string, left: string } }} a
  * @returns {{ exit: 0|1|3, line: string }}
  */
+/** Where an UNDETERMINED reader finds the reconciliation, in the words of
+ *  the driver that printed it — the refinance drive's by default. A driver
+ *  that prints different evidence passes its own (#2427 r16): the line must
+ *  never point at evidence the run did not produce. */
+export const REFINANCE_EVIDENCE = Object.freeze({
+  failed: 'see the nonce reconciliation and refusals above',
+  left: 'the touched-state ledger above says what this run left standing',
+});
 export const OUTCOME_CLAIMS = Object.freeze(['requestIdentity', 'oldLoanClosed', 'replacementOpened', 'collateralLienCarried']);
 
-export function runVerdict({ rows, wrote, stopped, preWriteFailure, gateEscape, outcomeClaims = OUTCOME_CLAIMS }) {
+export function runVerdict({ rows, wrote, stopped, preWriteFailure, gateEscape, outcomeClaims = OUTCOME_CLAIMS, evidence = REFINANCE_EVIDENCE }) {
   const missing = outcomeClaims.filter((id) => !rows.some((r) => r.id === id));
   if (missing.length) throw new Error(`runVerdict: outcome claim(s) ${missing.join(', ')} are not in the manifest`);
   if (!wrote) {
@@ -287,13 +296,13 @@ export function runVerdict({ rows, wrote, stopped, preWriteFailure, gateEscape, 
       [
         stopped ? `the drive stopped after a write: ${stopped}` : null,
         failedOther.length
-          ? `a check outside the outcome claims FAILED: ${failedOther.join(', ')} — see the nonce reconciliation and refusals above`
+          ? `a check outside the outcome claims FAILED: ${failedOther.join(', ')} — ${evidence.failed}`
           : null,
         open.length ? `not established: ${open.join(', ')}` : null,
       ]
         .filter(Boolean)
         .join('; ') +
       `. No chain read contradicts the outcome claims (${outcomeClaims.join(', ')}); ` +
-      'the touched-state ledger above says what this run left standing',
+      evidence.left,
   };
 }

@@ -77,6 +77,7 @@ import {
   watchPageRpc,
   READ_METHODS,
 } from './driver.mjs';
+import { is, optional } from './expectedPayload.mjs';
 import { createManifest, runVerdict } from './outcomeManifest.mjs';
 import { attachLedger, createReadLedger } from './pageSanctionsReads.mjs';
 import { splitBlocked } from './readOnlyFindings.mjs';
@@ -165,6 +166,11 @@ const FALLBACK_LINES = ['matchIncomplete', 'matchNotRecorded', 'matchUnreadable'
 // write discipline is. Before the send, any failed check is a FAIL.
 const OUTCOME = ['payout', 'lifecycle'];
 const CLAIM_ONLY = [
+  {
+    id: 'claimable',
+    claim: 'the exact claim can execute for this wallet before anything is sent',
+    checks: { estimate: 'eth_estimateGas for claimAsLender(loanId) from this wallet on the direct RPC — a revert is an observed FAIL, a transport error BLOCKED' },
+  },
   {
     id: 'positionLine',
     claim: 'the position page states the same line above its claim button',
@@ -338,9 +344,21 @@ console.log(`expected note: ${EXPECTED_NOTE}`);
  *  eth_sendTransaction compared field by field (expectedTx), so the target,
  *  the decoded call, the sender and the value are all pinned and any field
  *  the request carries that the plan does not name is refused. The gas
- *  limit is inert by the repo's rule (refinanceExpected.mjs): the injected
- *  wallet forwards it, and a limit can make the call fail — a reverted
- *  receipt, which contradicts `payout` — never make it do something else. */
+ *  limit is the one field narrowed beyond expectedTx: the injected wallet
+ *  forwards it, and a limit under the driver's own estimate only buys an
+ *  out-of-gas revert that spends the funded wallet's ETH, so one is refused.
+ *  (No upper bound: an unused limit is not charged.) */
+let claimGasFloor = 0n;
+const asBig = (v) => {
+  try {
+    return BigInt(v);
+  } catch {
+    return -1n; // absent is handled by `optional`; anything unparseable fails the bound
+  }
+};
+/** A viem error that carries the node's own execution revert. */
+const isExecutionRevert = (err) =>
+  Boolean(err?.walk?.((e) => e?.name === 'ContractFunctionRevertedError' || e?.name === 'ExecutionRevertedError'));
 const PLAN = SUBMIT_CLAIM
   ? createWritePlan([
       {
@@ -348,12 +366,20 @@ const PLAN = SUBMIT_CLAIM
         role: ROLE,
         kind: 'tx',
         purpose: `claimAsLender(${LOAN_ID})`,
-        expected: expectedTx({
-          from: WALLET,
-          to: DIAMOND,
-          call: { functionName: 'claimAsLender', args: { loanId: LOAN_ID } },
-          chainId: CHAIN_ID,
-        }),
+        // Judged at match time: until the driver has its own estimate the
+        // step cannot be judged, which refuses the request.
+        expected: () =>
+          claimGasFloor === 0n
+            ? null
+            : {
+                ...expectedTx({
+                  from: WALLET,
+                  to: DIAMOND,
+                  call: { functionName: 'claimAsLender', args: { loanId: LOAN_ID } },
+                  chainId: CHAIN_ID,
+                }),
+                gas: optional(is(`≥ the driver's own estimate (${claimGasFloor})`, (v) => asBig(v) >= claimGasFloor)),
+              },
       },
     ])
   : null;
@@ -529,16 +555,30 @@ try {
       // Funding is a precondition: an unfunded wallet fails inside the send,
       // which would otherwise read as a product FAIL. Twice the estimate at
       // the current fee, so a fee tick between here and the send still fits.
-      const [balance, gas, gasPrice] = await Promise.all([
+      const [balance, gasPrice] = await Promise.all([
         pub.getBalance({ address: WALLET, blockTag: 'pending' }),
-        pub.estimateContractGas({ address: DIAMOND, abi: DIAMOND_ABI, functionName: 'claimAsLender', args: [LOAN_ID], account: WALLET }),
         pub.getGasPrice(),
       ]);
+      let gas;
+      try {
+        gas = await pub.estimateContractGas({ address: DIAMOND, abi: DIAMOND_ABI, functionName: 'claimAsLender', args: [LOAN_ID], account: WALLET });
+      } catch (err) {
+        // The node ANSWERED that this exact claim cannot execute (a paused
+        // Diamond, a broken claim path): an observation, not an outage.
+        if (isExecutionRevert(err)) {
+          check('claimable', 'estimate', 'the claim can execute for this wallet', false, `eth_estimateGas reverted: ${err.shortMessage ?? err.message}`);
+          throw new Error('the claim estimate reverted; not claiming');
+        }
+        throw err;
+      }
+      check('claimable', 'estimate', 'the claim can execute for this wallet', true, `estimate ${gas} gas`);
+      claimGasFloor = gas;
       const need = gas * gasPrice * 2n;
       if (balance < need) {
         await blocked(`${ROLE} ${WALLET} holds ${formatUnits(balance, 18)} ETH; the claim needs about ${formatUnits(need, 18)}`, null, done);
       }
     } catch (err) {
+      if (failedCount() > 0) throw err;
       await blocked('the direct Base Sepolia RPC could not read the balance or the claim gas estimate before the claim was sent', err, done);
     }
     // Re-checked after the funding reads: the page kept running while they
@@ -750,6 +790,13 @@ const VERDICT = runVerdict({
   // shows as `planned` failing.
   gateEscape: false,
   outcomeClaims: SUBMIT_CLAIM ? OUTCOME : [],
+  // Point the reader at the evidence THIS drive printed: the gate lines, the
+  // claim's TX line and the STOP line's receipt reading. It keeps no nonce
+  // reconciliation or touched-state ledger.
+  evidence: {
+    failed: 'see the GATE refusals and the manifest above',
+    left: "the TX and STOP lines above give the claim's hash and what its receipt showed; check the lender wallet by hand if neither does",
+  },
 });
 console.log(VERDICT.line);
 process.exit(VERDICT.exit);

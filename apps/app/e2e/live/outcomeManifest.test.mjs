@@ -238,6 +238,15 @@ describe('runVerdict', () => {
     expect(page.exit).toBe(3);
     expect(page.line).toContain('[rowRemoved] FAILED');
     expect(page.line).toContain('No chain read contradicts the outcome claims (payout, lifecycle)');
+    // The footer points at the evidence THIS driver printed, never at refinance's.
+    const ownEvidence = runVerdict({
+      ...own,
+      rows: claimRows('verified', 'verified', 'failed'),
+      evidence: { failed: 'see the write plan and refusals above', left: 'the claim receipt line above says what landed' },
+    });
+    expect(ownEvidence.line).toContain('see the write plan and refusals above');
+    expect(ownEvidence.line).toMatch(/the claim receipt line above says what landed$/);
+    expect(ownEvidence.line).not.toMatch(/nonce|touched-state/);
     // An outcome claim the manifest never declared is a driver bug, not a verdict.
     expect(() => runVerdict({ ...own, rows: [row('claimRow', 'verified')] })).toThrow(/payout, lifecycle are not in the manifest/);
   });
