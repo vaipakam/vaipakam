@@ -343,9 +343,12 @@
         "hf_warn": "A loan’s health dipped below 1.5 — open it to see where it stands.",
         "hf_alert": "A loan’s health dipped below 1.2 — open it to see where it stands.",
         "hf_critical": "A loan’s health dipped below 1.05, close to the 1.0 liquidation line — open it to act.",
+        "reward_final_notice": "One of your interaction rewards has entered its final notice period — claim it in the Claim Center before it returns to the rewards programme.",
+        "reward_expired": "An unclaimed interaction reward of yours reached the end of its claim window and returned to the rewards programme.",
         "generic": "There’s an update on your loan."
       },
       "loanRef": "Loan #{{loanId}} · tap to view",
+      "rewardRef": "Reward #{{entryId}} · tap to open the Claim Center",
       "unreadBadgeTitle_zero": "{{count}} unread notifications",
       "unreadBadgeTitle_one": "1 unread notification",
       "unreadBadgeTitle_two": "{{count}} unread notifications",
@@ -2401,7 +2404,9 @@
       "empty": "No rewards yet. Rewards appear after lending or borrowing activity.",
       "waiting": "Your rewards are being finalized — a reward day closes across all chains before it can be claimed. Check back soon.",
       "claim": "Claim rewards",
-      "readyToClaim": "{{amount}} VPFI ready to claim."
+      "readyToClaim": "{{amount}} VPFI ready to claim.",
+      "expiryCountdown": "Claim before {{date}}: a reward left unclaimed for its full claim window returns to the rewards programme. The date can only move later — time when your reward can’t be claimed doesn’t count.",
+      "expiryFinalNotice": "Final notice: claim before {{date}}, or this reward returns to the rewards programme. Time when your reward can’t be claimed doesn’t count toward the date."
     },
     "sanctions": {
       "title": "This wallet is flagged by Vaipakam’s sanctions screen.",

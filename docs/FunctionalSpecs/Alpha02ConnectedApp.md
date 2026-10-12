@@ -1896,6 +1896,14 @@ is the borrower's own money.
 
 ## Claims
 
+- Once the reward claim window is in force, the interaction-rewards card states
+  the soonest date by which an unclaimed reward must be claimed before it
+  returns to the rewards programme. The date is the earliest the platform could
+  act — it assumes the reward stays claimable from now on — so it can only move
+  later, and the card says so; inside the final notice period the card switches
+  to a final-notice warning. The card shows no date while the claim window is
+  off, and when it cannot read every reward's date it shows none rather than one
+  that might be later than the real one.
 - Claims are chain-authoritative.
 - Indexed data may provide candidates, but live ownership and claimability
   decide whether a claim is actionable.
@@ -2266,6 +2274,17 @@ is the borrower's own money.
   produced while that monitoring is running, and they may reach the inbox
   less immediately than the optional external alert channels a user has
   linked.
+- Once the reward claim window is in force, the inbox also carries its free
+  pre-expiry notice. When one of the wallet's interaction rewards enters its
+  final notice period — it has stayed claimable for the whole claim window and
+  will return to the rewards programme if it is still unclaimed when the notice
+  period ends — the wallet is told, and told again if a change to the claim
+  window restarts that notice. When an unclaimed reward does reach that point
+  and returns to the programme, the wallet is told that too. These entries name
+  the reward, not a loan, and open the Claim Center. They reach the reward's
+  owner through this free inbox and never only through a paid channel, because
+  a paid channel would skip exactly the dormant claimants the notice exists
+  for.
 - Whether a notification is read is tracked on the user's own device, per
   wallet. Opening the inbox marks the shown updates as read; that state is not
   stored on any server, so no one else can clear another wallet's unread

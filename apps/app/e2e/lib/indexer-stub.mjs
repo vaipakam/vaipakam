@@ -1254,6 +1254,21 @@ async function handler(req, res) {
               blockNumber: 100,
               logIndex: 0,
             },
+            // RL-3 (#1956) — the free pre-expiry notice: addressed to a
+            // reward entry's OWNER, so it names a reward entry (in `data`),
+            // never a loan. Oldest in the feed so the rows above keep their
+            // order.
+            {
+              id: 5,
+              kind: 'reward_final_notice',
+              loanId: null,
+              offerId: null,
+              eventKind: 'RewardEntryExpiryArmed',
+              data: { entryId: '9', finalNoticeFrom: 1_700_000_000 },
+              createdAt: 1_700_000_050,
+              blockNumber: 50,
+              logIndex: 0,
+            },
           ];
       return json(200, { chainId: CHAIN_ID, address: addr, notifications, nextBefore: null });
     }

@@ -780,11 +780,21 @@ const copySource = {
       hf_alert: 'A loan’s health dipped below 1.2 — open it to see where it stands.',
       hf_critical:
         'A loan’s health dipped below 1.05, close to the 1.0 liquidation line — open it to act.',
+      // RL-3 claim horizon (#1956) — the free pre-expiry notice, addressed to
+      // the reward's owner. A usage reward that stays unclaimed for the full
+      // claim window returns to the rewards programme; the last call names the
+      // place to act, and the outcome line says plainly what happened.
+      reward_final_notice:
+        'One of your interaction rewards has entered its final notice period — claim it in the Claim Center before it returns to the rewards programme.',
+      reward_expired:
+        'An unclaimed interaction reward of yours reached the end of its claim window and returned to the rewards programme.',
       // Fallback for any future kind the client doesn't know yet.
       generic: 'There’s an update on your loan.',
     } as Record<string, string>,
     // Secondary line — shown only for a loan-linked (tappable) row.
     loanRef: tmpl(`Loan #{{loanId}} · tap to view`, ['loanId']),
+    // Secondary line for a reward-entry row (RL-3) — it opens the Claim Center.
+    rewardRef: tmpl(`Reward #{{entryId}} · tap to open the Claim Center`, ['entryId']),
     unreadBadgeTitle: tmpl('{{count}} unread notifications', ['count'], {
       one: '1 unread notification',
     }),
@@ -4996,6 +5006,17 @@ const copySource = {
       'Your rewards are being finalized — a reward day closes across all chains before it can be claimed. Check back soon.',
     claim: 'Claim rewards',
     readyToClaim: tmpl('{{amount}} VPFI ready to claim.', ['amount']),
+    // RL-3 claim horizon (#1956) — the Claim Center countdown. The date is the
+    // contract's EARLIEST estimate (it assumes the reward stays claimable), so
+    // the real date can only move later; the copy says which way it can move.
+    expiryCountdown: tmpl(
+      'Claim before {{date}}: a reward left unclaimed for its full claim window returns to the rewards programme. The date can only move later — time when your reward can’t be claimed doesn’t count.',
+      ['date'],
+    ),
+    expiryFinalNotice: tmpl(
+      'Final notice: claim before {{date}}, or this reward returns to the rewards programme. Time when your reward can’t be claimed doesn’t count toward the date.',
+      ['date'],
+    ),
   },
 
   sanctions: {

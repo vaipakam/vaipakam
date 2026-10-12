@@ -61,6 +61,12 @@ export const NOTIF_KINDS = [
   'hf_warn',
   'hf_alert',
   'hf_critical',
+  // RL-3 claim horizon (#1956 — the ratified pre-expiry safeguard) — addressed
+  // to the reward ENTRY'S OWNER, named in the event, not to a loan party: an
+  // interaction reward entered its final-notice window, and the removal point
+  // at which an unclaimed one returned to the programme.
+  'reward_final_notice',
+  'reward_expired',
 ] as const;
 export type NotifKind = (typeof NOTIF_KINDS)[number];
 
@@ -138,6 +144,22 @@ export const EVENT_NOTIF_MAP: Readonly<Record<string, NotifMapping>> = {
   // terminal-status gate suppresses the row for those partial legs so a
   // still-open loan can't get a false "closed" row (Codex #1292 r7).
   InternalMatchExecuted: { kind: 'internal_matched', recipients: 'both' },
+};
+
+/**
+ * RL-3 (#1956) — events whose recipient is the reward entry's OWNER, named in
+ * the event's `user` argument. They name no loan, so they bypass the
+ * loan-party lookup entirely. The claim horizon's ratified safeguard is a
+ * FREE pre-expiry notice (this inbox, never only a paid channel, because paid
+ * push skips exactly the dormant claimants the sweep would affect):
+ * `RewardEntryExpiryArmed` is the contract's last-call signal — the entry
+ * accrued its full horizon and now has the notice period left — and
+ * `RewardEntryExpiryBegun` is the removal point, after which the owner can no
+ * longer claim that entry.
+ */
+export const EVENT_OWNER_NOTIF_MAP: Readonly<Record<string, NotifKind>> = {
+  RewardEntryExpiryArmed: 'reward_final_notice',
+  RewardEntryExpiryBegun: 'reward_expired',
 };
 
 /**
@@ -360,6 +382,8 @@ export interface NotifRow {
   logIndex: number;
   createdAt: number;
   dedupKey: string;
+  /** Optional render params (JSON) — the `data_json` column. */
+  dataJson?: string | null;
 }
 
 /**
@@ -452,18 +476,21 @@ export async function materializeNotifications(
   blockTimestamps: Map<bigint, number>,
   nowSec: number,
 ): Promise<number> {
-  const worthy = logs.filter((l) => l.eventName in EVENT_NOTIF_MAP);
-  if (worthy.length === 0) return 0;
+  // Owner-addressed rows (RL-3) need no lookup, so they are planned first and
+  // never depend on the loan path below — a failed party lookup must not cost
+  // a reward owner their pre-expiry notice.
+  const rows = planOwnerNotifications(chainId, logs, blockTimestamps, nowSec);
 
+  const worthy = logs.filter((l) => l.eventName in EVENT_NOTIF_MAP);
   const loanIds = [
     ...new Set(worthy.flatMap((l) => loanIdsOf(l.eventName, l.args))),
   ];
-  if (loanIds.length === 0) return 0;
-
-  const partiesByLoan = await loadLoanParties(db, chainId, loanIds);
-  if (partiesByLoan === null) return 0;
-
-  const rows = planNotifications(chainId, worthy, partiesByLoan, blockTimestamps, nowSec);
+  if (loanIds.length > 0) {
+    const partiesByLoan = await loadLoanParties(db, chainId, loanIds);
+    if (partiesByLoan !== null) {
+      rows.push(...planNotifications(chainId, worthy, partiesByLoan, blockTimestamps, nowSec));
+    }
+  }
   if (rows.length === 0) return 0;
 
   try {
@@ -472,6 +499,55 @@ export async function materializeNotifications(
     console.error('[notifications] insert failed', err);
     return 0;
   }
+}
+
+/**
+ * Pure planner for the OWNER-addressed rows (RL-3, exported for the unit
+ * test): one row per source event, to the lowercased `user` the event names.
+ * The dedup key carries the event position, not just the entry, because a
+ * horizon reconfiguration re-earns a fresh notice and re-arms the entry — that
+ * second last-call must notify again rather than be swallowed as a duplicate.
+ * `data_json` carries the entry id (and, for the last call, when its notice
+ * period began) so the client can say which reward it means.
+ */
+export function planOwnerNotifications(
+  chainId: number,
+  logs: NotifSourceLog[],
+  blockTimestamps: Map<bigint, number>,
+  nowSec: number,
+): NotifRow[] {
+  const rows: NotifRow[] = [];
+  const seen = new Set<string>();
+  for (const log of logs) {
+    const kind = EVENT_OWNER_NOTIF_MAP[log.eventName];
+    if (!kind) continue;
+    const user = log.args.user;
+    if (typeof user !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(user) || user.toLowerCase() === ZERO_ADDR) {
+      continue;
+    }
+    const recipient = user.toLowerCase();
+    const entryId = String(log.args.entryId ?? '');
+    if (!/^[0-9]+$/.test(entryId)) continue;
+    const blockNumber = Number(log.blockNumber);
+    const dedupKey = `${chainId}:${recipient}:${kind}:entry:${entryId}:${blockNumber}:${log.logIndex}`;
+    if (seen.has(dedupKey)) continue;
+    seen.add(dedupKey);
+    const data: Record<string, string | number> = { entryId };
+    if (log.args.finalNoticeFrom !== undefined) data.finalNoticeFrom = Number(log.args.finalNoticeFrom);
+    rows.push({
+      chainId,
+      recipient,
+      kind,
+      loanId: null,
+      eventKind: log.eventName,
+      blockNumber,
+      logIndex: log.logIndex,
+      createdAt: blockTimestamps.get(log.blockNumber) ?? nowSec,
+      dedupKey,
+      dataJson: JSON.stringify(data),
+    });
+  }
+  return rows;
 }
 
 /**
@@ -822,15 +898,15 @@ export async function insertNotificationRows(
   const stmt = db.prepare(
     `INSERT OR IGNORE INTO notifications
        (chain_id, recipient, kind, loan_id, event_kind,
-        block_number, log_index, created_at, dedup_key)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        block_number, log_index, created_at, dedup_key, data_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
-  // Chunk the batch: each row binds 9 params and D1 caps a Worker
+  // Chunk the batch: each row binds 10 params and D1 caps a Worker
   // invocation at ~5000 bindings, so a busy catch-up scan with hundreds
   // of recipient rows would blow the limit, throw, and (fail-open) skip
-  // that scan's rows forever. 500 rows × 9 = 4500 binds stays under
-  // (Codex #1292 r4).
-  const INSERT_CHUNK = 500;
+  // that scan's rows forever. 450 rows × 10 = 4500 binds stays under
+  // (Codex #1292 r4; the tenth bind is RL-3's `data_json`).
+  const INSERT_CHUNK = 450;
   for (let i = 0; i < rows.length; i += INSERT_CHUNK) {
     const batch = rows.slice(i, i + INSERT_CHUNK).map((r) =>
       stmt.bind(
@@ -843,6 +919,7 @@ export async function insertNotificationRows(
         r.logIndex,
         r.createdAt,
         r.dedupKey,
+        r.dataJson ?? null,
       ),
     );
     const results = await db.batch(batch);

@@ -13,13 +13,15 @@ import { copy } from '../content/copy';
 import { useMyClaimables, type ClaimableLoan } from '../data/claimables';
 import { useClaimPayoutText } from '../data/useClaimPayout';
 import { useInteractionRewards } from '../data/rewards';
+import { inFinalNotice, useRewardExpiryCountdown } from '../data/rewardExpiry';
+import { useNowSec } from '../hooks/useNowSec';
 import { assertWalletNotSanctionedLive, useSanctionsCheck } from '../data/sanctions';
 import { useActiveChain } from '../chain/useActiveChain';
 import { useDiamondWrite } from '../contracts/diamond';
 import { EmptyState, UnavailableState } from '../components/EmptyState';
 import { ClaimAllCard } from '../components/ClaimAllCard';
 import { AssetType } from '../lib/types';
-import { formatTokenAmount } from '../lib/format';
+import { formatDate, formatTokenAmount } from '../lib/format';
 import { captureTxError } from '../lib/errors';
 import { WindowedRowList } from '../lib/visibleWindow';
 
@@ -27,6 +29,10 @@ import { WindowedRowList } from '../lib/visibleWindow';
  *  so the source of funds is never confused (Journey C1). */
 function RewardsCard() {
   const rewards = useInteractionRewards();
+  // RL-3 (#1956) — the soonest estimated return of an unclaimed reward; dark
+  // (nothing renders) until governance sets the claim horizon.
+  const expiry = useRewardExpiryCountdown();
+  const nowSec = useNowSec();
   const { address, walletChain, onSupportedChain } = useActiveChain();
   const publicClient = usePublicClient({ chainId: walletChain?.chainId });
   // claimInteractionRewards has NO on-chain sanctions screen (unlike the
@@ -129,6 +135,24 @@ function RewardsCard() {
           {copy.rewards.empty}
         </p>
       )}
+      {expiry.data?.soonest ? (
+        inFinalNotice(expiry.data.soonest.expiresAt, nowSec) ? (
+          <div
+            className="banner banner-warn"
+            role="status"
+            style={{ marginTop: 12 }}
+            data-testid="reward-expiry-countdown"
+          >
+            <span className="banner-body">
+              {copy.rewards.expiryFinalNotice(formatDate(expiry.data.soonest.expiresAt))}
+            </span>
+          </div>
+        ) : (
+          <p className="muted" style={{ margin: '12px 0 0' }} data-testid="reward-expiry-countdown">
+            {copy.rewards.expiryCountdown(formatDate(expiry.data.soonest.expiresAt))}
+          </p>
+        )
+      ) : null}
     </section>
   );
 }

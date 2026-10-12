@@ -23,8 +23,10 @@ import {
   CalendarClock,
   CheckCircle2,
   Coins,
+  Gift,
   Handshake,
   Hourglass,
+  Recycle,
   Repeat,
   ShieldAlert,
   Siren,
@@ -65,7 +67,20 @@ const KIND_ICON: Record<string, LucideIcon> = {
   hf_warn: TrendingDown,
   hf_alert: ShieldAlert,
   hf_critical: Siren,
+  // RL-3 (#1956) — the reward-entry rows, addressed to the reward's owner.
+  reward_final_notice: Gift,
+  reward_expired: Recycle,
 };
+
+/** RL-3 — a reward-entry row names no loan; it opens the Claim Center, where
+ *  the entry's countdown and its claim live. */
+const REWARD_KINDS = new Set(['reward_final_notice', 'reward_expired']);
+
+/** The reward entry a reward-entry row is about, from its data bag. */
+function rewardEntryOf(row: IndexedNotification): string | null {
+  const id = row.data?.entryId;
+  return typeof id === 'string' && /^[0-9]+$/.test(id) ? id : null;
+}
 
 /** The newest chain-order cursor among loaded rows (feed is newest-first,
  *  but scan defensively for the first row that actually carries a key).
@@ -265,7 +280,14 @@ function NotificationRow({
   // Only a loan-linked row is tappable, so only IT gets the "tap to view"
   // secondary line; a static (no-loanId) row shows no sub rather than a
   // misleading tap prompt with nothing to open (Codex #1295 r2).
-  const sub = row.loanId != null ? copy.notifications.loanRef(row.loanId) : null;
+  const isReward = REWARD_KINDS.has(row.kind);
+  const entryId = isReward ? rewardEntryOf(row) : null;
+  const sub =
+    row.loanId != null
+      ? copy.notifications.loanRef(row.loanId)
+      : isReward && entryId !== null
+        ? copy.notifications.rewardRef(entryId)
+        : null;
   // #2101 — a row the indexer DERIVED by checking its records against the
   // chain, not one it built from an announcement. The headline stays the
   // outcome, which is right; this says how it was learned and admits the
@@ -296,6 +318,18 @@ function NotificationRow({
   // A row with a loan id deep-links to its position (which re-verifies on
   // chain); a row without one (a future cron row) is a non-interactive
   // line rather than a dead link.
+  if (isReward) {
+    return (
+      <Link
+        to="/claims"
+        className={`notif-row ${unread ? 'notif-row-unread' : ''}`}
+        onClick={onNavigate}
+        data-testid="notif-row"
+      >
+        {body}
+      </Link>
+    );
+  }
   if (row.loanId != null) {
     return (
       <Link

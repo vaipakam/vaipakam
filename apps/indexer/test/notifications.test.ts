@@ -8,8 +8,10 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   planNotifications,
+  planOwnerNotifications,
   materializeNotifications,
   EVENT_NOTIF_MAP,
+  EVENT_OWNER_NOTIF_MAP,
   type NotifSourceLog,
 } from '../src/notifications';
 import { createSqliteD1, type SqliteD1 } from './helpers/sqliteD1';
@@ -405,3 +407,96 @@ describe('materializeNotifications (over the migrated schema)', () => {
     expect(countRows(h)).toBe(0);
   });
 });
+
+// ─── RL-3 (#1956) — the free pre-expiry notice, addressed to the entry owner ───
+
+const OWNER = '0x00000000000000000000000000000000000000Dd';
+const rewardLog = (
+  eventName: string,
+  entryId: bigint,
+  user: string = OWNER,
+  blockNumber = 200n,
+  logIndex = 0,
+  extra: Record<string, unknown> = {},
+): NotifSourceLog => ({ eventName, args: { entryId, user, ...extra }, blockNumber, logIndex });
+
+describe('planOwnerNotifications (RL-3)', () => {
+  it('maps the last-call and the removal point to the OWNER the event names, with the entry in data', () => {
+    const rows = planOwnerNotifications(
+      84532,
+      [
+        rewardLog('RewardEntryExpiryArmed', 9n, OWNER, 200n, 0, { finalNoticeFrom: 1_800_000_000n }),
+        rewardLog('RewardEntryExpiryBegun', 9n, OWNER, 201n, 3),
+        rewardLog('RewardEntryHorizonStamped', 9n), // the schedule signal: no inbox row
+      ],
+      new Map([[200n, 1_700_000_000]]),
+      42,
+    );
+    expect(rows.map((r) => r.kind)).toEqual(['reward_final_notice', 'reward_expired']);
+    expect(rows.every((r) => r.recipient === OWNER.toLowerCase() && r.loanId === null)).toBe(true);
+    expect(JSON.parse(rows[0].dataJson!)).toEqual({ entryId: '9', finalNoticeFrom: 1_800_000_000 });
+    expect(JSON.parse(rows[1].dataJson!)).toEqual({ entryId: '9' });
+    expect(rows[0].createdAt, 'block time when known').toBe(1_700_000_000);
+    expect(rows[1].createdAt, 'now otherwise').toBe(42);
+  });
+
+  it('a re-armed entry (horizon reconfiguration) notifies AGAIN — the key carries the event, not just the entry', () => {
+    const rows = planOwnerNotifications(
+      84532,
+      [rewardLog('RewardEntryExpiryArmed', 9n, OWNER, 200n, 0), rewardLog('RewardEntryExpiryArmed', 9n, OWNER, 900n, 1)],
+      new Map(),
+      0,
+    );
+    expect(rows).toHaveLength(2);
+    expect(new Set(rows.map((r) => r.dedupKey)).size).toBe(2);
+  });
+
+  it('writes nothing for a missing or zero owner, or a malformed entry id', () => {
+    expect(
+      planOwnerNotifications(
+        84532,
+        [
+          rewardLog('RewardEntryExpiryArmed', 9n, ZERO),
+          { eventName: 'RewardEntryExpiryArmed', args: { entryId: 9n }, blockNumber: 1n, logIndex: 0 },
+          { eventName: 'RewardEntryExpiryArmed', args: { entryId: 'x', user: OWNER }, blockNumber: 1n, logIndex: 0 },
+        ],
+        new Map(),
+        0,
+      ),
+    ).toEqual([]);
+  });
+
+  it('owner and loan maps never overlap (a reward event is not a loan event)', () => {
+    for (const k of Object.keys(EVENT_OWNER_NOTIF_MAP)) expect(k in EVENT_NOTIF_MAP).toBe(false);
+  });
+});
+
+describe('materializeNotifications — RL-3 owner rows (over the migrated schema)', () => {
+  it('writes the owner row with its data, idempotently, with no loan anywhere in the scan', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    const logs = [rewardLog('RewardEntryExpiryArmed', 9n, OWNER, 200n, 0, { finalNoticeFrom: 1_800_000_000n })];
+    await materializeNotifications(h.d1 as never, 84532, logs, new Map(), 999);
+    await materializeNotifications(h.d1 as never, 84532, logs, new Map(), 999);
+    const rows = h.db
+      .prepare('SELECT recipient, kind, loan_id, data_json FROM notifications')
+      .all() as Array<{ recipient: string; kind: string; loan_id: number | null; data_json: string }>;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ recipient: OWNER.toLowerCase(), kind: 'reward_final_notice', loan_id: null });
+    expect(JSON.parse(rows[0].data_json)).toEqual({ entryId: '9', finalNoticeFrom: 1_800_000_000 });
+  });
+
+  it('a failed loan-party lookup in the same scan does not cost the owner their notice', async () => {
+    const h = createSqliteD1(ALL_MIGRATIONS);
+    h.db.exec('DROP TABLE loans'); // the party lookup now throws → null → loan rows skipped
+    await materializeNotifications(
+      h.d1 as never,
+      84532,
+      [log('LoanInitiated', 7), rewardLog('RewardEntryExpiryBegun', 9n)],
+      new Map(),
+      999,
+    );
+    const kinds = (h.db.prepare('SELECT kind FROM notifications').all() as Array<{ kind: string }>).map((r) => r.kind);
+    expect(kinds).toEqual(['reward_expired']);
+  });
+});
+
