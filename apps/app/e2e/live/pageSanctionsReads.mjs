@@ -191,14 +191,33 @@ export function createReadLedger(reads, now = () => Date.now()) {
   return { entries, onRequest, onResponse, judge };
 }
 
+/**
+ * The JSON-RPC namespaces of an Ethereum node — the only protocol over
+ * which a page can submit a chain write (`eth_sendRawTransaction`,
+ * `eth_sendUserOperation`, …) or reach node state. Other JSON-RPC
+ * protocols share the envelope but not the namespace: WalletConnect's
+ * relay (`irn_subscribe`, `irn_publish`) opens a socket on every page load
+ * and carries no chain call, so judging it against the chain read list
+ * failed the #2439 live run on traffic the guard is not about.
+ */
+const ETHEREUM_RPC_NAMESPACE = /^(eth|net|web3|personal|wallet|debug|trace|txpool|engine|admin|miner)_/;
+
+/** Whether `method` is an Ethereum node method the read-only drive must
+ *  refuse: in an Ethereum namespace and not on `readMethods`. */
+export function isRefusedSocketMethod(method, readMethods) {
+  return typeof method === 'string' && ETHEREUM_RPC_NAMESPACE.test(method) && !readMethods.has(method);
+}
+
 /** Feed `ledger` from everything the page sends: HTTP POSTs and
  *  WebSocket frames.
  *
  *  The WebSocket is also the one door `launch`'s read-only guard does not
- *  cover (it gates the injected wallet and HTTP routes). Every JSON-RPC
- *  method the page SENDS on a socket is checked against `readMethods`, and
- *  one outside it is recorded in the returned `wsViolations` — observed,
- *  not prevented, so the drive must fail on any entry. */
+ *  cover (it gates the injected wallet and HTTP routes). Every Ethereum
+ *  node method the page SENDS on a socket is checked against
+ *  `readMethods` (`isRefusedSocketMethod`), and one outside it is recorded
+ *  in the returned `wsViolations` — observed, not prevented, so the drive
+ *  must fail on any entry. Other protocols' methods are not chain calls
+ *  and are not judged. */
 export function attachLedger(page, ledger, readMethods) {
   const wsViolations = [];
   page.on('request', (req) => {
@@ -224,7 +243,7 @@ export function attachLedger(page, ledger, readMethods) {
     ws.on('framesent', (f) => {
       try {
         for (const m of asList(JSON.parse(String(f.payload)))) {
-          if (m && typeof m.method === 'string' && !readMethods.has(m.method)) {
+          if (m && isRefusedSocketMethod(m.method, readMethods)) {
             wsViolations.push({ reason: `websocket rpc ${m.method} (not a permitted read)`, url: ws.url() });
           }
         }

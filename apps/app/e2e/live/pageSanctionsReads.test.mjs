@@ -1,7 +1,7 @@
 // Unit tests for the page-read ledger the sanctions-banner drive judges by.
 import { describe, expect, it } from 'vitest';
 import { encodeAbiParameters, encodeFunctionData, encodeFunctionResult, multicall3Abi } from 'viem';
-import { createReadLedger, watchedRead } from './pageSanctionsReads.mjs';
+import { attachLedger, createReadLedger, isRefusedSocketMethod, watchedRead } from './pageSanctionsReads.mjs';
 
 const DIAMOND = '0xd89fd7F787e4415460b23891E97570a4881fb995';
 const OTHER = '0x2E4033Ae1200CC14D33E09021C4098d12b54341c';
@@ -126,5 +126,52 @@ describe('page sanctions read ledger', () => {
     const body = aggregate(7, [[DIAMOND, flagRead.calldata]], IMPOSTOR);
     expect(l.onRequest(JSON.stringify(body))).toBeNull();
     expect(l.judge('flag', 0, true)).toEqual({ state: 'none' });
+  });
+});
+
+describe('read-only check on the page\'s WebSockets', () => {
+  const READS = new Set(['eth_call', 'eth_chainId', 'eth_blockNumber']);
+
+  /** A fake page that opens one socket and sends `frames` on it. */
+  function pageSending(url, frames) {
+    const handlers = {};
+    const page = { on: (ev, fn) => (handlers[ev] = fn) };
+    const l = createReadLedger({});
+    const { wsViolations } = attachLedger(page, l, READS);
+    const wsHandlers = {};
+    handlers.websocket({ url: () => url, on: (ev, fn) => (wsHandlers[ev] = fn) });
+    for (const f of frames) wsHandlers.framesent({ payload: JSON.stringify(f) });
+    return wsViolations;
+  }
+
+  it('refuses Ethereum node methods off the read list, and only those', () => {
+    expect(isRefusedSocketMethod('eth_sendRawTransaction', READS)).toBe(true);
+    expect(isRefusedSocketMethod('eth_sendUserOperation', READS)).toBe(true);
+    expect(isRefusedSocketMethod('personal_sign', READS)).toBe(true);
+    expect(isRefusedSocketMethod('wallet_sendCalls', READS)).toBe(true);
+    expect(isRefusedSocketMethod('eth_call', READS)).toBe(false);
+    expect(isRefusedSocketMethod('irn_publish', READS)).toBe(false);
+    expect(isRefusedSocketMethod(undefined, READS)).toBe(false);
+  });
+
+  it('does not count WalletConnect relay traffic (the #2439 live-run false FAIL)', () => {
+    const v = pageSending('wss://relay.walletconnect.org/?projectId=x', [
+      { id: 1, jsonrpc: '2.0', method: 'irn_subscribe', params: { topic: 't' } },
+      { id: 2, jsonrpc: '2.0', method: 'irn_publish', params: { topic: 't', message: 'm' } },
+    ]);
+    expect(v).toEqual([]);
+  });
+
+  it('records a chain write sent on a socket, alone or in a batch', () => {
+    const v = pageSending('wss://rpc.example/ws', [
+      { id: 1, jsonrpc: '2.0', method: 'eth_call', params: [] },
+      [
+        { id: 2, jsonrpc: '2.0', method: 'eth_chainId' },
+        { id: 3, jsonrpc: '2.0', method: 'eth_sendRawTransaction', params: ['0x00'] },
+      ],
+    ]);
+    expect(v).toEqual([
+      { reason: 'websocket rpc eth_sendRawTransaction (not a permitted read)', url: 'wss://rpc.example/ws' },
+    ]);
   });
 });
