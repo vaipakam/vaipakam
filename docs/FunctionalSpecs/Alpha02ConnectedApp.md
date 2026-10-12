@@ -2081,8 +2081,20 @@ is the borrower's own money.
   taking its pro-rata share of the maker's ceiling (never rounding a non-zero
   ceiling to nothing). A signed Full opt-in without a ceiling is refused
   before any value moves, on every fill path. Nobody can opt a counterparty
-  in. (The ticket's maker-side control is a separate card; the shape and the
-  on-chain honouring are in place.)
+  in.
+- **A signed-order maker chooses on the order ticket, before signing.** The
+  control appears in the ticket's sign-only (gasless) mode, and only while the
+  feature is enabled. It quotes the tariff on the order's full size, so the
+  suggested ceiling covers any fill, and it says plainly that the choice is
+  signed into the order — changing it means cancelling and posting again — and
+  that each fill is charged its own tariff, never more than that fill's share
+  of the ceiling. A ceiling the live quote already exceeds is called out with
+  both figures but does not stop the maker posting: what counts is the quote
+  when a fill actually happens, and it may fall back. An opt-in that cannot
+  complete at all (the feature off, the loan's tariff unquotable, or its
+  principal illiquid) is never signed. Changing the opt-in, its ceiling or its
+  downgrade choice clears the maker's confirmation, like any other change to
+  the order's terms; the control's own re-checks of availability do not.
 - **A party's Full authorization is honoured whichever venue fills their
   offer.** A standing offer armed with Full is charged the tariff when it is
   filled by a keeper matching it against a counterparty offer, exactly as it

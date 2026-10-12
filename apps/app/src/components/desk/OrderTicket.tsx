@@ -36,6 +36,7 @@ import { SimulationPreview } from '../SimulationPreview';
 import { AmountPrecisionHint } from '../AmountPrecisionHint';
 import { CollateralPrecheck } from '../CollateralPrecheck';
 import { ConsentLabel } from '../ConsentLabel';
+import { FullTariffOptIn, FULL_TARIFF_OFF, type FullTariffChoice } from '../FullTariffOptIn';
 import {
   ensureAllowance,
   useTokenBalance,
@@ -193,6 +194,12 @@ export function OrderTicket({
   // #1131 slice D — 'onchain' MUST stay the default: the existing Post
   // order flow (and spec 17's asserts) run it unchanged.
   const [postMode, setPostMode] = useState<PostMode>('onchain');
+  // #1949 — the maker's Full tariff opt-in for a GASLESS order. A signed
+  // artifact cannot be armed after it is posted (the on-chain path arms
+  // through the open-orders panel instead), so the choice is made here and
+  // signed with the order. Ignored on the on-chain path.
+  const [makerFull, setMakerFull] = useState<FullTariffChoice>(FULL_TARIFF_OFF);
+  const makerFullRef = useRef<FullTariffChoice>(FULL_TARIFF_OFF);
   const [consent, setConsent] = useState(false);
   // UX-016 — surface a "terms changed, re-confirm" note whenever an
   // edit auto-clears a consent the user had already given (the ticket
@@ -208,6 +215,25 @@ export function OrderTicket({
     if (consentRef.current) setConsentClearedNote(true);
     setConsent(false);
   }, []);
+  // A change to a SIGNED field of the maker's opt-in (the opt-in itself, the
+  // ceiling, the downgrade permission) changes the artifact the user consented
+  // to, so it clears consent like any other edit. The control's own re-syncs
+  // of `blocked` are not signed and must not wipe consent on a quote refresh.
+  const onMakerFullChange = useCallback(
+    (v: FullTariffChoice) => {
+      const prev = makerFullRef.current;
+      if (
+        prev.full !== v.full ||
+        prev.maxCStar !== v.maxCStar ||
+        prev.allowDowngrade !== v.allowDowngrade
+      ) {
+        clearConsentOnEdit();
+      }
+      makerFullRef.current = v;
+      setMakerFull(v);
+    },
+    [clearConsentOnEdit],
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [postedHash, setPostedHash] = useState<string | null>(null);
@@ -947,7 +973,17 @@ export function OrderTicket({
           ? payload.expiresAt
           : (await liveChainTimestamp(publicClient)) +
             BigInt(GASLESS_GTC_DEADLINE_SECONDS);
-      const order = wireFromCreatePayload(payload, address, nonce, deadline);
+      // #1949 — the maker's Full opt-in rides the signed artifact; absent
+      // (unticked) signs the order with Full off, exactly as before.
+      const makerFullIntent =
+        makerFull.full && !makerFull.blocked && makerFull.maxCStar > 0n
+          ? {
+              full: true,
+              maxCStar: makerFull.maxCStar,
+              allowDowngrade: makerFull.allowDowngrade,
+            }
+          : undefined;
+      const order = wireFromCreatePayload(payload, address, nonce, deadline, makerFullIntent);
       const signature = await signedOffer.sign(order);
       const res = await postSignedOffer(
         walletChain.chainId,
@@ -964,6 +1000,8 @@ export function OrderTicket({
       setConsent(false);
       setConsentClearedNote(false);
       setAmount('');
+      makerFullRef.current = FULL_TARIFF_OFF;
+      setMakerFull(FULL_TARIFF_OFF);
       void queryClient.invalidateQueries({ queryKey: ['deskSignedBook'] });
       // A signed post can CREATE a market — /offers/markets unions
       // active signed rows (Codex #1145 r4) — so the pair/tenor chips
@@ -998,6 +1036,13 @@ export function OrderTicket({
     if (!decimalsReady || !fees.ready) return text.blockLoading;
     if (securityBlocked.length > 0) return null; // security banner above
     if (postMode === 'gasless' && !gaslessReady) return text.blockGaslessService;
+    // #1949 — a maker's Full opt-in that cannot complete at a fill is never
+    // signed; the user unticks it or waits. A ceiling below today's quote is
+    // NOT a block for a resting order (the control warns instead).
+    if (postMode === 'gasless' && makerFull.full) {
+      if (makerFull.blocked) return copy.tariff.fullUnavailableNow;
+      if (makerFull.maxCStar <= 0n) return copy.tariff.maxCStarRequired;
+    }
     if (!consent) return text.blockConsent;
     return null;
   })();
@@ -1007,6 +1052,19 @@ export function OrderTicket({
   // plus the side's protocol fee (lender yield-fee net rate; borrower
   // one-time LIF on principal). Derived from the same payload the write
   // sends, so the numbers can't drift from the order.
+  // #1949 — the principal the maker's tariff is quoted on: the order's FULL
+  // size (the largest fill it permits), so the suggested ceiling covers any
+  // partial fill — the basis the on-chain creator's arming form uses too.
+  const makerFullPrincipal = useMemo((): bigint | undefined => {
+    if (postMode !== 'gasless' || !fieldsComplete || !decimalsReady) return undefined;
+    const payload = buildPayload(false, nowSec);
+    if (!payload) return undefined;
+    return payload.amountMax > payload.amount ? payload.amountMax : payload.amount;
+    // Not keyed on `nowSec`: the size does not move with the clock, and the
+    // quote below would otherwise re-run every second.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [postMode, fieldsComplete, decimalsReady, side, form, fillMode, expiry, customExpiry, lendingMeta.data, collateralMeta.data]);
+
   const feePreview = useMemo((): { commit: string; fee: string } | null => {
     if (!fieldsComplete || !decimalsReady || !fees.ready) return null;
     const payload = buildPayload(false, nowSec);
@@ -1410,6 +1468,18 @@ export function OrderTicket({
           <p>{feePreview.commit}</p>
           <p>{feePreview.fee}</p>
         </div>
+      ) : null}
+
+      {/* #1949 — the maker's Full tariff opt-in, signed into a gasless order. */}
+      {postMode === 'gasless' && pair && fieldsComplete ? (
+        <FullTariffOptIn
+          role="maker"
+          lendingAsset={pair.lendingAsset as `0x${string}`}
+          principal={makerFullPrincipal}
+          durationDays={days}
+          value={makerFull}
+          onChange={onMakerFullChange}
+        />
       ) : null}
 
       <label

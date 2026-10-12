@@ -4281,6 +4281,14 @@ const copySource = {
       ['quote', 'ceiling'],
     ),
     raiseCeiling: tmpl('Raise my ceiling to {{ceiling}} VPFI', ['ceiling']),
+    // #1949 — the MAKER of a signed order authorizes the tariff for fills
+    // that happen later, priced at each fill.
+    makerCeilingBelowQuote: tmpl(
+      'The live tariff quote for this order’s full size is {{quote}} VPFI — above the {{ceiling}} VPFI ceiling you are about to sign. A fill priced above your ceiling can’t charge the Full tariff, so it would be rejected, or filled without Full if you allowed that below. Smaller partial fills may still price under it. You can post this either way: what counts is the quote when a fill actually happens, and it may fall back.',
+      ['quote', 'ceiling'],
+    ),
+    makerSignedNote:
+      'This choice is signed into your order, so it can’t be changed after you post it — cancel and post again to change it. Each fill is charged its own tariff when it happens, never more than that fill’s share of your ceiling.',
     armedCeilingBelowQuote: tmpl(
       'The live tariff quote for the largest fill still possible on this offer is {{quote}} VPFI — above the {{ceiling}} VPFI ceiling you are about to authorize. A fill priced above your ceiling can’t charge the Full tariff, so it would be rejected, or opened without Full if you allowed that below. Smaller partial fills may still price under it. You can save this either way: what counts is the quote when a fill actually happens, and it may fall back.',
       ['quote', 'ceiling'],

@@ -480,10 +480,13 @@ async function capturePin() {
 /** orderHash → { orderHash, signer, order, signature, createdAt }. */
 const signedOffers = new Map();
 
-/** The 28-field SignedOffer typed-data description — struct order
+/** The 31-field SignedOffer typed-data description — struct order
  *  EXACTLY as `LibSignedOffer.SignedOffer` declares it. Keep in sync
  *  with apps/indexer/src/signedOfferEip712.ts (whose unit test pins
- *  the derived typehash against the contract's canonical type string). */
+ *  the derived typehash against the contract's canonical type string).
+ *  #1949 added the maker's three Full-tariff fields; a stub left on the
+ *  28-field type recovers the wrong signer for EVERY order the app now
+ *  signs and answers `bad-signature` to all of them. */
 const SIGNED_OFFER_TYPES = {
   SignedOffer: [
     { name: 'offerType', type: 'uint8' },
@@ -511,6 +514,10 @@ const SIGNED_OFFER_TYPES = {
     { name: 'periodicInterestCadence', type: 'uint8' },
     { name: 'refinanceTargetLoanId', type: 'uint256' },
     { name: 'useFullTermInterest', type: 'bool' },
+    // #1949 — the maker's Full tariff opt-in rides the signed artifact.
+    { name: 'creatorFull', type: 'bool' },
+    { name: 'creatorMaxCStar', type: 'uint256' },
+    { name: 'creatorAllowFullDowngrade', type: 'bool' },
     { name: 'signer', type: 'address' },
     { name: 'nonce', type: 'uint256' },
     { name: 'deadline', type: 'uint256' },
@@ -548,6 +555,9 @@ function signedTypedMessage(o) {
     periodicInterestCadence: Number(o.periodicInterestCadence),
     refinanceTargetLoanId: BigInt(o.refinanceTargetLoanId),
     useFullTermInterest: Boolean(o.useFullTermInterest),
+    creatorFull: Boolean(o.creatorFull),
+    creatorMaxCStar: BigInt(o.creatorMaxCStar ?? 0),
+    creatorAllowFullDowngrade: Boolean(o.creatorAllowFullDowngrade),
     signer: o.signer,
     nonce: BigInt(o.nonce),
     deadline: BigInt(o.deadline),
