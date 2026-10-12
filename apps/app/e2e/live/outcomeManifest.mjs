@@ -228,19 +228,38 @@ export function createManifest({ verifiable, notVerified = [] }) {
  *     the line's "no contradiction" sentence names only the outcome claims.
  *     The touched-state ledger and the replacement state are printed with it.
  *
+ * The rule is shared; the outcome claims are each driver's own (#2427
+ * r15). A driver passes `outcomeClaims` — the ids of ITS claims that rest on
+ * a chain read after the write — and the refinance drive's list is the
+ * default. Every id passed must be a row of the manifest (it throws
+ * otherwise), so an outcome claim cannot be named and then never declared.
+ *
  * @param {{ rows: Array<{ id: string, status: string }>, wrote: boolean,
- *           stopped: string|null, preWriteFailure: boolean, gateEscape: boolean }} a
+ *           stopped: string|null, preWriteFailure: boolean, gateEscape: boolean,
+ *           outcomeClaims?: readonly string[],
+ *           evidence?: { failed: string, left: string, escape: string } }} a
  * @returns {{ exit: 0|1|3, line: string }}
  */
+/** Where an UNDETERMINED reader finds the reconciliation, in the words of
+ *  the driver that printed it — the refinance drive's by default. A driver
+ *  that prints different evidence passes its own (#2427 r16): the line must
+ *  never point at evidence the run did not produce. */
+export const REFINANCE_EVIDENCE = Object.freeze({
+  failed: 'see the nonce reconciliation and refusals above',
+  left: 'the touched-state ledger above says what this run left standing',
+  escape: 'the nonces show a transaction the write gate never allowed',
+});
 export const OUTCOME_CLAIMS = Object.freeze(['requestIdentity', 'oldLoanClosed', 'replacementOpened', 'collateralLienCarried']);
 
-export function runVerdict({ rows, wrote, stopped, preWriteFailure, gateEscape }) {
+export function runVerdict({ rows, wrote, stopped, preWriteFailure, gateEscape, outcomeClaims = OUTCOME_CLAIMS, evidence = REFINANCE_EVIDENCE }) {
+  const missing = outcomeClaims.filter((id) => !rows.some((r) => r.id === id));
+  if (missing.length) throw new Error(`runVerdict: outcome claim(s) ${missing.join(', ')} are not in the manifest`);
   if (!wrote) {
     if (preWriteFailure || stopped || rows.some((r) => r.status === 'failed')) {
       return { exit: 1, line: `OUTCOME: FAIL — before any write: ${stopped ?? 'a check failed (see above)'}` };
     }
   }
-  const contradicted = rows.filter((r) => OUTCOME_CLAIMS.includes(r.id) && r.status === 'failed').map((r) => `[${r.id}]`);
+  const contradicted = rows.filter((r) => outcomeClaims.includes(r.id) && r.status === 'failed').map((r) => `[${r.id}]`);
   if (contradicted.length || gateEscape) {
     return {
       exit: 1,
@@ -248,7 +267,7 @@ export function runVerdict({ rows, wrote, stopped, preWriteFailure, gateEscape }
         'OUTCOME: FAIL — ' +
         [
           contradicted.length ? `a chain read contradicts ${contradicted.join(', ')}` : null,
-          gateEscape ? 'the nonces show a transaction the write gate never allowed' : null,
+          gateEscape ? evidence.escape : null,
         ]
           .filter(Boolean)
           .join('; '),
@@ -278,13 +297,13 @@ export function runVerdict({ rows, wrote, stopped, preWriteFailure, gateEscape }
       [
         stopped ? `the drive stopped after a write: ${stopped}` : null,
         failedOther.length
-          ? `a check outside the outcome claims FAILED: ${failedOther.join(', ')} — see the nonce reconciliation and refusals above`
+          ? `a check outside the outcome claims FAILED: ${failedOther.join(', ')} — ${evidence.failed}`
           : null,
         open.length ? `not established: ${open.join(', ')}` : null,
       ]
         .filter(Boolean)
         .join('; ') +
-      `. No chain read contradicts the outcome claims (${OUTCOME_CLAIMS.join(', ')}); ` +
-      'the touched-state ledger above says what this run left standing',
+      `. No chain read contradicts the outcome claims (${outcomeClaims.join(', ')}); ` +
+      evidence.left,
   };
 }
