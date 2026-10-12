@@ -229,6 +229,9 @@ let claimHash = null;
  *  driver's own estimate (less only buys an out-of-gas revert) and at most
  *  twice it. Both set before the gate is armed. */
 let claimGasFloor = 0n;
+/** Set when the claim MINED but the driver's own RPC could not read back
+ *  what it needs to judge it: the run is UNDETERMINED (exit 3), not FAIL. */
+let undetermined = null;
 let claimGasCap = 0n;
 const asBig = (v) => {
   try {
@@ -243,6 +246,12 @@ function claimGate(method, params) {
     method === 'eth_sendTransaction' &&
     claimArmed &&
     claimSends === 0 &&
+    // The ledger is read AT the authorization boundary, not only before
+    // arming: a refused request or a failed check recorded between the
+    // arm and this send (a confirm step can sit here for seconds) still
+    // stops the one-shot claim. Evaluated only once armed, which is after
+    // the ledger exists.
+    preClaimFails() === 0 &&
     typeof tx?.to === 'string' &&
     tx.to.toLowerCase() === DIAMOND.toLowerCase() &&
     typeof tx?.data === 'string' &&
@@ -255,7 +264,9 @@ function claimGate(method, params) {
     (tx.from === undefined || (typeof tx.from === 'string' && tx.from.toLowerCase() === WALLET.toLowerCase())) &&
     (tx.gas === undefined || (claimGasFloor > 0n && asBig(tx.gas) >= claimGasFloor && asBig(tx.gas) <= claimGasCap));
   if (!ok) {
-    const why = claimArmed
+    const why = claimArmed && preClaimFails() > 0
+      ? `${method} arrived after a check failed or a request was refused — the claim is withheld`
+      : claimArmed
       ? `${method} is not the one claimAsLender(${LOAN_ID}) send this drive allows`
       : `${method} arrived before the driver's claim click — the gate was closed`;
     console.log(`GATE  refused ${why}`);
@@ -399,14 +410,21 @@ try {
     await page.getByText(/claim complete/i).first().waitFor({ timeout: 180_000 });
     await shot(`internal-match-claimed-${LOAN_ID}`);
     // The claim's own event: this loan, this wallet, the recorded proceeds.
-    const claims = await pub.getContractEvents({
-      address: DIAMOND,
-      abi: DIAMOND_ABI,
-      eventName: 'LenderFundsClaimed',
-      args: { loanId: LOAN_ID },
-      fromBlock: before,
-    });
-    const mine = claims.find((l) => l.args.claimant.toLowerCase() === WALLET.toLowerCase());
+    // Direct-RPC reads after the write: an outage here leaves the payout
+    // unjudged, which is UNDETERMINED, never a product FAIL.
+    let claims = null;
+    try {
+      claims = await pub.getContractEvents({
+        address: DIAMOND,
+        abi: DIAMOND_ABI,
+        eventName: 'LenderFundsClaimed',
+        args: { loanId: LOAN_ID },
+        fromBlock: before,
+      });
+    } catch (rErr) {
+      undetermined = `the direct RPC could not read LenderFundsClaimed after the claim (${rErr.message}); check ${claimHash ?? 'the claim'} by hand`;
+    }
+    const mine = claims?.find((l) => l.args.claimant.toLowerCase() === WALLET.toLowerCase());
     // What the wallet actually RECEIVED, not the event's amount: the event
     // carries only the final claim, while a multi-step match pays its earlier
     // steps' proceeds out of `heldForLender` in the same transaction. So sum
@@ -415,8 +433,15 @@ try {
     // since `fmt` labels amounts with the principal's symbol.
     const rightAsset = mine !== undefined && mine.args.asset.toLowerCase() === loan.principalAsset.toLowerCase();
     let received = null;
+    let receipt = null;
     if (mine) {
-      const receipt = await pub.getTransactionReceipt({ hash: mine.transactionHash });
+      try {
+        receipt = await pub.getTransactionReceipt({ hash: mine.transactionHash });
+      } catch (rErr) {
+        undetermined = `the direct RPC could not read the claim receipt ${mine.transactionHash} (${rErr.message})`;
+      }
+    }
+    if (receipt) {
       const transfers = parseEventLogs({
         abi: ERC20_TRANSFER,
         eventName: 'Transfer',
@@ -426,7 +451,9 @@ try {
         .filter((t) => t.args.to.toLowerCase() === WALLET.toLowerCase())
         .reduce((sum, t) => sum + t.args.value, 0n);
     }
-    check(
+    // Judged only on what was read: an unread event list or receipt is the
+    // UNDETERMINED recorded above, not a missing payout.
+    if (claims !== null && (!mine || receipt)) check(
       'the claim paid this wallet the recorded proceeds in the principal asset',
       rightAsset && received === rec.lenderProceeds,
       !mine
@@ -466,15 +493,19 @@ try {
   // the page did next, so its outcome is read from the chain and reported —
   // never folded into BLOCKED.
   if (claimHash) {
-    let outcome;
+    // A reverted receipt, or a mined claim the page then failed on, is a
+    // FAIL; a receipt the direct RPC cannot read is UNDETERMINED — the run
+    // wrote and could not establish the outcome either way.
+    let receipt = null;
     try {
-      const receipt = await pub.waitForTransactionReceipt({ hash: claimHash, timeout: 120_000 });
-      outcome = `receipt ${receipt.status} in block ${receipt.blockNumber}`;
+      receipt = await pub.waitForTransactionReceipt({ hash: claimHash, timeout: 120_000 });
     } catch (rErr) {
-      outcome = `receipt unreadable from the direct RPC (${rErr.message}) — check ${claimHash} by hand`;
+      undetermined = `the drive stopped after the claim was sent (${err.message}) and the direct RPC could not read receipt ${claimHash} (${rErr.message}) — check it by hand`;
     }
-    console.log(`FAIL drive after the claim was sent — ${err.message}; ${claimHash}: ${outcome}`);
-    fails++;
+    if (receipt) {
+      console.log(`FAIL drive after the claim was sent — ${err.message}; ${claimHash}: receipt ${receipt.status} in block ${receipt.blockNumber}`);
+      fails++;
+    }
   } else if (claimSends > 0) {
     // The gate allowed the send but no hash came back (the broadcast's
     // response lost, say): the claim may or may not have landed. That is
@@ -512,6 +543,14 @@ const violationCheck = SUBMIT_CLAIM
   ? 'the page asked to sign only the planned claim'
   : 'the page attempted no write in a read-only session';
 for (const b of violations) check(violationCheck, false, `${b.reason} ${b.url ?? ''}`);
-console.log(fails === 0 ? 'ALL PASS' : `${fails} FAILURES`);
 await done();
-process.exit(fails === 0 ? 0 : 1);
+if (fails > 0) {
+  console.log(`${fails} FAILURES`);
+  process.exit(1);
+}
+if (undetermined) {
+  console.log(`UNDETERMINED — ${undetermined}`);
+  process.exit(3);
+}
+console.log('ALL PASS');
+process.exit(0);

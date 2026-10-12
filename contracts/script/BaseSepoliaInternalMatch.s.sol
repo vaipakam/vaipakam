@@ -15,6 +15,7 @@ import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
 import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
+import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {RepriceTestnetMock} from "./RepriceTestnetMock.s.sol";
 import {IRepriceDiamondViews} from "./lib/RepriceVenueReport.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
@@ -89,7 +90,10 @@ import {MockSwapAdapter} from "../test/mocks/MockSwapAdapter.sol";
  *             offer open (cancel it). The loan id a stage prints is that
  *             stage's prediction; read the real one from the receipt's
  *             `LoanInitiated` before the next stage.
- *           - Between the enable and the trigger anyone may match an
+ *           - Each stage's input checks (loan state, position-NFT holders,
+             the kill-switch) are read at that stage's simulation; a
+             transfer or a change landing before its broadcast is not seen.
+           - Between the enable and the trigger anyone may match an
  *             eligible pair (one transaction wide).
  *           - Open tLIQ offers may be accepted at a moved price; a loan born
  *             that way can be unsafe once the price is restored.
@@ -130,10 +134,12 @@ contract BaseSepoliaInternalMatch is RepriceTestnetMock {
         });
         RepriceTarget memory t = _resolveTarget("liquidToken");
         address mUsdc = _resolveTarget("liquidToken2").asset;
-        _preflight(t, vm.addr(a.deployerKey));
-
         string memory stage = vm.envString("IM_STAGE");
         bytes32 s = keccak256(bytes(stage));
+        // `restore` only writes the recorded feed, pool spot and venue price
+        // back, so it skips the settlement-route preflight: recovery must
+        // still run after the venue has been disabled as an incident step.
+        if (s != keccak256("restore")) _preflight(t, vm.addr(a.deployerKey));
         console.log("=== Base Sepolia internal-match scenario (#2427), stage:", stage);
         console.log("Diamond / tLIQ / mUSDC:", t.diamond, t.asset, mUsdc);
         _logMatchConfig(t.diamond);
@@ -194,6 +200,12 @@ contract BaseSepoliaInternalMatch is RepriceTestnetMock {
         _reprice(t, a.deployerKey, vm.envOr("IM_P2_E8", uint256(4_000e8)), loanA, loanB);
         _logLoan("A @p2", t.diamond, loanA);
         _logLoan("B @p2", t.diamond, loanB);
+        // Enforced, not only logged: a p2 that leaves either leg under its
+        // floor would strand every tLIQ position at p2 for a `match` that
+        // then reverts. Failing here aborts the stage in simulation, so
+        // nothing of it is broadcast.
+        _requireAtFloor(t.diamond, loanA);
+        _requireAtFloor(t.diamond, loanB);
     }
 
     function _stageMatch(RepriceTarget memory t, Actors memory a, address mUsdc) internal {
@@ -261,6 +273,22 @@ contract BaseSepoliaInternalMatch is RepriceTestnetMock {
             l.principalAsset == principalAsset && l.collateralAsset == collateralAsset,
             "BaseSepoliaInternalMatch: input loan's assets are not this run's"
         );
+        // The position NFTs decide who the economic parties are; the loan's
+        // lender/borrower fields are only consolidated on a later operation,
+        // so a transferred NFT would otherwise pass the check above.
+        require(
+            VaipakamNFTFacet(diamond).ownerOf(l.lenderTokenId) == vm.addr(lenderKey)
+                && VaipakamNFTFacet(diamond).ownerOf(l.borrowerTokenId) == vm.addr(borrowerKey),
+            "BaseSepoliaInternalMatch: an input loan's position NFT is held by another wallet"
+        );
+    }
+
+    /// @dev The trigger's own eligibility rule (RiskMatchLiquidationFacet:
+    ///      current LTV at or above the loan's recorded liquidation floor).
+    function _requireAtFloor(address diamond, uint256 loanId) internal view {
+        uint256 ltv = RiskFacet(diamond).calculateLTV(loanId);
+        uint256 floor = uint256(LoanFacet(diamond).getLoanDetails(loanId).liquidationLtvBpsAtInit);
+        require(ltv >= floor, "BaseSepoliaInternalMatch: at p2 a leg is below its liquidation floor - pick another IM_P2_E8");
     }
 
     function _requireMatchingOff(address diamond) internal view {
