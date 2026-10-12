@@ -771,6 +771,29 @@ if (armedOnce) {
   // send through any other connector never reaches the plan at all).
   check('writeDiscipline', 'planned', 'the claim was sent through the gated wallet, exactly once', wrote(), `plan step ${claimStep()?.status}`);
 }
+// A claim that bypassed the plan. The injected wallet's key never leaves the
+// gated handler, but a profile still connected through another connector (a
+// persisted WalletConnect session holding the same account) can send the
+// claim without the plan ever seeing it. So once the driver has clicked its
+// claim and the plan shows no send, the chain is asked whether the lender
+// claim is recorded anyway: if it is, a write landed outside the gate — the
+// shared verdict's gate escape, a FAIL. Unreadable is a write that may have
+// happened: UNDETERMINED, never "before any write". Read at the latest block,
+// so a claim still pending there is not seen.
+let escaped = false;
+let escapeUnknown = null;
+if (armedOnce && !wrote()) {
+  try {
+    const [, , lenderClaimed] = await read('getClaimableAmount', [LOAN_ID, true]);
+    escaped = lenderClaimed === true;
+    if (escaped) {
+      console.log(`ESCAPE the lender claim for loan ${LOAN_ID} is recorded on chain, but the write plan never allowed a send`);
+    }
+  } catch (err) {
+    escapeUnknown = `the plan allowed no send, and the direct RPC could not read whether the lender claim landed through another connector (${err.message})`;
+  }
+}
+const wroteAny = wrote() || escaped || escapeUnknown !== null;
 // Teardown is cleanup, not evidence: a browser that fails to close says
 // nothing about the app or the chain, so it never replaces the verdict.
 try {
@@ -781,14 +804,10 @@ try {
 for (const line of MANIFEST.render()) console.log(line);
 const VERDICT = runVerdict({
   rows: MANIFEST.rows(),
-  wrote: wrote(),
-  stopped,
-  preWriteFailure: !wrote() && failedCount() > 0,
-  // The key never leaves the gated handler in driver.mjs and this drive
-  // sends nothing itself, so no transaction can reach the chain unjudged by
-  // the plan; a send through another connector is not this wallet's and
-  // shows as `planned` failing.
-  gateEscape: false,
+  wrote: wroteAny,
+  stopped: stopped ?? escapeUnknown,
+  preWriteFailure: !wroteAny && failedCount() > 0,
+  gateEscape: escaped,
   outcomeClaims: SUBMIT_CLAIM ? OUTCOME : [],
   // Point the reader at the evidence THIS drive printed: the gate lines, the
   // claim's TX line and the STOP line's receipt reading. It keeps no nonce
@@ -796,6 +815,7 @@ const VERDICT = runVerdict({
   evidence: {
     failed: 'see the GATE refusals and the manifest above',
     left: "the TX and STOP lines above give the claim's hash and what its receipt showed; check the lender wallet by hand if neither does",
+    escape: 'the chain records the lender claim, but the write plan never allowed a send — it went through another connector (see the ESCAPE line above)',
   },
 });
 console.log(VERDICT.line);

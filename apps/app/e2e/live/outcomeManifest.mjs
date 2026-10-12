@@ -237,7 +237,7 @@ export function createManifest({ verifiable, notVerified = [] }) {
  * @param {{ rows: Array<{ id: string, status: string }>, wrote: boolean,
  *           stopped: string|null, preWriteFailure: boolean, gateEscape: boolean,
  *           outcomeClaims?: readonly string[],
- *           evidence?: { failed: string, left: string } }} a
+ *           evidence?: { failed: string, left: string, escape: string } }} a
  * @returns {{ exit: 0|1|3, line: string }}
  */
 /** Where an UNDETERMINED reader finds the reconciliation, in the words of
@@ -247,6 +247,7 @@ export function createManifest({ verifiable, notVerified = [] }) {
 export const REFINANCE_EVIDENCE = Object.freeze({
   failed: 'see the nonce reconciliation and refusals above',
   left: 'the touched-state ledger above says what this run left standing',
+  escape: 'the nonces show a transaction the write gate never allowed',
 });
 export const OUTCOME_CLAIMS = Object.freeze(['requestIdentity', 'oldLoanClosed', 'replacementOpened', 'collateralLienCarried']);
 
@@ -266,7 +267,7 @@ export function runVerdict({ rows, wrote, stopped, preWriteFailure, gateEscape, 
         'OUTCOME: FAIL — ' +
         [
           contradicted.length ? `a chain read contradicts ${contradicted.join(', ')}` : null,
-          gateEscape ? 'the nonces show a transaction the write gate never allowed' : null,
+          gateEscape ? evidence.escape : null,
         ]
           .filter(Boolean)
           .join('; '),

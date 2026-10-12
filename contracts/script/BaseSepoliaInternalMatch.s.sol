@@ -62,16 +62,19 @@ import {MockSwapAdapter} from "../test/mocks/MockSwapAdapter.sol";
  *                     Ends at p2 with matching still OFF.
  *           `match`   Verify `IM_LOAN_A` and `IM_LOAN_B` live. Matching ON,
  *                     `triggerInternalMatchLiquidation(A, B, 0)`, matching
- *                     OFF, the three price surfaces back to the `open-a`
- *                     snapshot exactly, then the kill-switch to the DECLARED
- *                     original state (ON only with `IM_ORIGINALLY_ENABLED`
- *                     or `IM_KEEP_ENABLED`).
- *           `restore` Recovery from any failed stage: matching OFF, the
- *                     snapshot restored, the switch to its declared state.
- *                     Takes IM_LOAN_A / IM_LOAN_B (0 = never opened) and
- *                     refuses while either is Active, since the restored
- *                     price can leave a leg liquidatable; repay or match it
- *                     first, or override with IM_RESTORE_WITH_ACTIVE=true.
+ *                     OFF. The price stays at p2: this stage is simulated
+ *                     whole before it sends, so it cannot see what the
+ *                     trigger actually closed.
+ *           `restore` The one stage that ends a run, after `match` or any
+ *                     failure: re-reads IM_LOAN_A / IM_LOAN_B (0 = never
+ *                     opened) and refuses while either is Active or
+ *                     FallbackPending, since moving the price back would
+ *                     move its value; otherwise matching OFF, the three
+ *                     price surfaces back to the `open-a` snapshot exactly,
+ *                     then the kill-switch to the DECLARED original state
+ *                     (ON only with `IM_ORIGINALLY_ENABLED` or
+ *                     `IM_KEEP_ENABLED`). IM_RESTORE_WITH_ACTIVE=true
+ *                     overrides the refusal.
  *
  *         Every price move is three non-atomic owner-gated transactions (see
  *         {RepriceTestnetMock}) and every tLIQ position on the Diamond sees
@@ -116,6 +119,11 @@ import {MockSwapAdapter} from "../test/mocks/MockSwapAdapter.sol";
  *             not only A and B - in practice a few blocks each.
  *           - Open tLIQ offers may be accepted at a moved price; a loan born
  *             that way can be unsafe once the price is restored.
+ *           - The exposure lists cover on-chain offers only. A signed
+ *             (off-chain) tLIQ offer is written on chain only inside the
+ *             transaction that fills it, so one may open a loan at a moved
+ *             price without ever being listed; this script cannot see the
+ *             signed-offer book and its exposure there is unknown.
  *
  *         The kill-switch is never inferred from its current value. `open-a`
  *         refuses to start with it ON unless `IM_ORIGINALLY_ENABLED=true`
@@ -250,32 +258,41 @@ contract BaseSepoliaInternalMatch is RepriceTestnetMock {
         vm.startBroadcast(a.deployerKey);
         RiskMatchLiquidationFacet(t.diamond).triggerInternalMatchLiquidation(loanA, loanB, 0);
         vm.stopBroadcast();
-        _endRun(t, a, loanA, loanB);
+        // Matching goes OFF at once; the price does NOT go back here. This
+        // whole stage is simulated before anything is sent, so it cannot see
+        // what the trigger actually closed (a partial repay landing first
+        // leaves B partly matched and still Active). `restore` is the one
+        // stage that puts the price back, after re-reading both legs.
+        _setMatching(t.diamond, a.adminKey, false);
         _logRecord("A", t.diamond, loanA);
         _logRecord("B", t.diamond, loanB);
+        console.log("Next: confirm both legs closed from the receipts, then run `restore` with the same IM_LOAN_A / IM_LOAN_B.");
     }
 
-    /// @dev Recovery. Restoring the price is only safe once no leg this run
-    ///      opened is still Active: a B opened at p1 and left there by a
-    ///      failed p2 move sits near 200% LTV at the restored price, and an A
-    ///      can be just as exposed. So the operator names every leg the run's
-    ///      receipts show (`IM_LOAN_A` / `IM_LOAN_B`, 0 for one never
-    ///      opened) and the stage refuses while any is Active — repay or
-    ///      match it first. `IM_RESTORE_WITH_ACTIVE=true` overrides, and the
-    ///      stage then prints each Active leg's LTV after the restore, since
-    ///      the operator has accepted that it may be liquidatable.
+    /// @dev The ONE stage that ends a run, after a completed `match` or from
+    ///      any failure: it re-reads every leg this run opened as a separate
+    ///      broadcast, so what it sees is what the earlier stages actually
+    ///      left. Moving the price back is only safe once no leg still has
+    ///      value riding on it, so it refuses while either named leg
+    ///      (`IM_LOAN_A` / `IM_LOAN_B`, 0 for one never opened) is Active —
+    ///      the restored price can leave it liquidatable, e.g. a B opened at
+    ///      p1, or partly matched — or FallbackPending, whose lender holds an
+    ///      in-kind claim the restore would revalue. Repay, match or resolve
+    ///      it first. `IM_RESTORE_WITH_ACTIVE=true` overrides, and each named
+    ///      leg's state and LTV are printed after the restore.
     function _stageRestore(RepriceTarget memory t, Actors memory a) internal {
         uint256[2] memory legs = [vm.envUint("IM_LOAN_A"), vm.envUint("IM_LOAN_B")];
         bool override_ = vm.envOr("IM_RESTORE_WITH_ACTIVE", false);
         for (uint256 i; i < 2; ++i) {
             if (legs[i] == 0) continue;
-            bool active = LoanFacet(t.diamond).getLoanDetails(legs[i]).status == LibVaipakam.LoanStatus.Active;
+            LibVaipakam.LoanStatus st = LoanFacet(t.diamond).getLoanDetails(legs[i]).status;
+            bool exposed = st == LibVaipakam.LoanStatus.Active || st == LibVaipakam.LoanStatus.FallbackPending;
             require(
-                !active || override_,
-                "BaseSepoliaInternalMatch: a leg is still Active - restoring the price may leave it liquidatable; repay or match it first, or set IM_RESTORE_WITH_ACTIVE=true"
+                !exposed || override_,
+                "BaseSepoliaInternalMatch: a leg is Active or FallbackPending - restoring the price would move its value; close or resolve it first, or set IM_RESTORE_WITH_ACTIVE=true"
             );
         }
-        _endRun(t, a, 0, 0);
+        _endRun(t, a, legs[0], legs[1]);
         for (uint256 i; i < 2; ++i) {
             if (legs[i] != 0) _logLoan(i == 0 ? "A" : "B", t.diamond, legs[i]);
         }
@@ -556,7 +573,8 @@ contract BaseSepoliaInternalMatch is RepriceTestnetMock {
         }
         // Open offers see the moved price as well: an accept now is admitted
         // at it. Listed so a loan born during the excursion can be traced.
-        console.log("Open tLIQ offers (id, side, principal still fillable = amountMax - amountFilled, collateral still fillable = collateralAmountMax - collateralAmountFilled):");
+        console.log("Open on-chain tLIQ offers (id, side, principal still fillable = amountMax - amountFilled, collateral still fillable = collateralAmountMax - collateralAmountFilled):");
+        console.log("   (signed off-chain offers are NOT listed - they reach the chain only inside the fill; their exposure is unknown)");
         for (uint256 offset;; offset += pageSize) {
             uint256[] memory ids = MetricsFacet(t.diamond).getActiveOffersPaginated(offset, pageSize);
             for (uint256 i; i < ids.length; ++i) {
