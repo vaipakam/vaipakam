@@ -17,6 +17,7 @@ import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet
 import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {RepriceTestnetMock} from "./RepriceTestnetMock.s.sol";
+import {Deployments} from "./lib/Deployments.sol";
 import {IRepriceDiamondViews} from "./lib/RepriceVenueReport.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
@@ -78,8 +79,9 @@ import {MockSwapAdapter} from "../test/mocks/MockSwapAdapter.sol";
  *                     (ON only with `IM_ORIGINALLY_ENABLED` or
  *                     `IM_KEEP_ENABLED`). IM_RESTORE_WITH_ACTIVE=true
  *                     overrides the refusal.
- *           `disable` Matching OFF and nothing else - no reads that can
- *                     revert, no price move. `restore` queues the same
+ *           `disable` Matching OFF and nothing else: it needs only
+ *                     ADMIN_PRIVATE_KEY and the Diamond address, reads no
+ *                     other key or mock artifact, and moves no price. `restore` queues the same
  *                     switch, but inside a body that is simulated whole, so
  *                     a revert anywhere in it (snapshot check, mock write,
  *                     exposure report) sends nothing at all. Run `disable`
@@ -161,6 +163,18 @@ contract BaseSepoliaInternalMatch is RepriceTestnetMock {
     function run() external override {
         require(block.chainid == 84532 || block.chainid == 31337, "BaseSepoliaInternalMatch: Base Sepolia only");
 
+        // `disable` is selected before ANY other setup and loads only what
+        // its one transaction needs - the admin key and the Diamond address.
+        // No user key, no mock artifact, no venue check (a venue disabled as
+        // an incident step must not stop it): a recovery whose `restore`
+        // simulation reverts still has a broadcastable way to switch
+        // matching off.
+        if (keccak256(bytes(vm.envString("IM_STAGE"))) == keccak256("disable")) {
+            _setMatching(Deployments.readDiamond(), vm.envUint("ADMIN_PRIVATE_KEY"), false);
+            console.log("=== internal-match scenario (#2427), stage: disable. Matching switched OFF; prices untouched - run `restore` next.");
+            return;
+        }
+
         Actors memory a = Actors({
             deployerKey: vm.envUint("DEPLOYER_PRIVATE_KEY"),
             adminKey: vm.envUint("ADMIN_PRIVATE_KEY"),
@@ -173,14 +187,6 @@ contract BaseSepoliaInternalMatch is RepriceTestnetMock {
         address mUsdc = _resolveTarget("liquidToken2").asset;
         string memory stage = vm.envString("IM_STAGE");
         bytes32 s = keccak256(bytes(stage));
-        // `disable` sends ONE transaction and reads nothing it could revert
-        // on first, so a recovery whose `restore` simulation fails still has
-        // a broadcastable way to switch matching off.
-        if (s == keccak256("disable")) {
-            _setMatching(t.diamond, a.adminKey, false);
-            console.log("=== internal-match scenario (#2427), stage: disable. Matching switched OFF; prices untouched - run `restore` next.");
-            return;
-        }
         // `restore` only writes the recorded feed, pool spot and venue price
         // back, so it skips the settlement-route preflight: recovery must
         // still run after the venue has been disabled as an incident step.
