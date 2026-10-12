@@ -30,7 +30,9 @@
 // and only once the driver is clicking the claim button after every earlier
 // check passed. Anything else — that same claim asked for earlier, or a chain
 // switch the pin refuses — is refused and named as a FAIL. Once the claim is
-// sent, any later failure reports the transaction's receipt, never BLOCKED.
+// sent, an exception is never a product verdict: a reverted receipt is a
+// FAIL, and any other stop is UNDETERMINED (the drive wrote and could not
+// finish its checks). Failed checks are FAILs either way.
 //
 // REFERENCE_SITE_URL must be a workers.dev host (what the deploy printed).
 //
@@ -46,7 +48,9 @@
 //   TESTNET_WALLETS_FILE=… LOAN_ID=26 [ROLE=lender] [CLAIM=1] \
 //     node live-internal-match-claim.mjs
 //
-// Exit codes follow the batch contract: 0 PASS, 1 FAIL, 2 BLOCKED.
+// Exit codes follow the batch contract: 0 PASS, 1 FAIL, 2 BLOCKED, and —
+// declared in verdictContract.mjs's FOUR_VERDICT_DRIVERS — 3 UNDETERMINED,
+// only with CLAIM=1 after the claim was sent.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -149,7 +153,11 @@ function formatTokenAmount(raw, decimals, maxFraction = 4) {
 
 // ── 1. Build check ─────────────────────────────────────────────────────
 async function bundleOf(url) {
-  const res = await fetch(new URL('/', url), { redirect: 'follow' });
+  // Not followed: a reference host that redirects to SITE_URL would make
+  // both checks read the same shell, which is the stale-build
+  // self-comparison this check exists to rule out.
+  const res = await fetch(new URL('/', url), { redirect: 'manual' });
+  if (res.status !== 200) throw new Error(`${url} answered ${res.status}${res.headers.get('location') ? ` → ${res.headers.get('location')}` : ''}, not the shell itself`);
   const html = await res.text();
   const m = html.match(/\/assets\/index-[A-Za-z0-9_-]+\.js/);
   return m?.[0] ?? null;
@@ -407,8 +415,19 @@ try {
       .last()
       .click({ timeout: 10_000 })
       .catch(() => {});
-    await page.getByText(/claim complete/i).first().waitFor({ timeout: 180_000 });
-    await shot(`internal-match-claimed-${LOAN_ID}`);
+    // From here on the claim may have been written, so an EXCEPTION is
+    // never a product verdict: what the page shows is judged by check(),
+    // and evidence capture can fail without saying anything about the app.
+    const confirmed = await page
+      .getByText(/claim complete/i)
+      .first()
+      .waitFor({ timeout: 180_000 })
+      .then(
+        () => true,
+        () => false,
+      );
+    check('the page confirmed the claim ("Claim complete")', confirmed);
+    await shot(`internal-match-claimed-${LOAN_ID}`).catch((e) => console.log(`(screenshot not saved: ${e.message})`));
     // The claim's own event: this loan, this wallet, the recorded proceeds.
     // Direct-RPC reads after the write: an outage here leaves the payout
     // unjudged, which is UNDETERMINED, never a product FAIL.
@@ -492,33 +511,34 @@ try {
   // A claim the wallet already sent moved (or failed to move) funds whatever
   // the page did next, so its outcome is read from the chain and reported —
   // never folded into BLOCKED.
-  if (claimHash) {
-    // A reverted receipt, or a mined claim the page then failed on, is a
-    // FAIL; a receipt the direct RPC cannot read is UNDETERMINED — the run
-    // wrote and could not establish the outcome either way.
+  // ONE rule after the send (the root fix for rounds 10-12, which each
+  // found another post-write exception reported as a product FAIL): an
+  // exception after the claim was allowed is UNDETERMINED, because the drive
+  // wrote and then stopped before its checks finished. The single
+  // exception-path FAIL is a receipt that positively shows the claim
+  // reverted. Product findings come only from check() — any recorded before
+  // the stop still make the run FAIL.
+  if (claimSends > 0) {
     let receipt = null;
-    try {
-      receipt = await pub.waitForTransactionReceipt({ hash: claimHash, timeout: 120_000 });
-    } catch (rErr) {
-      undetermined = `the drive stopped after the claim was sent (${err.message}) and the direct RPC could not read receipt ${claimHash} (${rErr.message}) — check it by hand`;
+    let unread = '';
+    if (claimHash) {
+      try {
+        receipt = await pub.waitForTransactionReceipt({ hash: claimHash, timeout: 120_000 });
+      } catch (rErr) {
+        unread = ` and the direct RPC could not read receipt ${claimHash} (${rErr.message}) — check it by hand`;
+      }
+    } else {
+      // No hash came back: an accepted send can still be pending, so no
+      // status read settles it either way.
+      unread = ' and the wallet returned no hash — the claim may still land; check the lender wallet by hand';
     }
-    if (receipt) {
-      console.log(`FAIL drive after the claim was sent — ${err.message}; ${claimHash}: receipt ${receipt.status} in block ${receipt.blockNumber}`);
+    if (receipt?.status === 'reverted') {
+      console.log(`FAIL the claim reverted — ${claimHash} in block ${receipt.blockNumber}`);
       fails++;
+    } else {
+      const mined = receipt ? `; the claim MINED (${claimHash}, block ${receipt.blockNumber})` : '';
+      undetermined = `the drive stopped after the claim was sent (${err.message})${mined}${unread}`;
     }
-  } else if (claimSends > 0) {
-    // The gate allowed the send but no hash came back (the broadcast's
-    // response lost, say): the claim may or may not have landed. That is
-    // an indeterminate write, read from the loan's state — never BLOCKED.
-    let state;
-    try {
-      const after = await read('getLoanDetails', [LOAN_ID]);
-      state = `loan ${LOAN_ID} status is now ${after.status} (InternalMatched is ${INTERNAL_MATCHED})`;
-    } catch (rErr) {
-      state = `loan state unreadable from the direct RPC (${rErr.message})`;
-    }
-    console.log(`FAIL drive after the claim send was allowed, with no hash returned — ${err.message}; the claim may have landed: ${state}`);
-    fails++;
   } else {
     // No answer from the page's own RPC while the assertion waited: nothing
     // page-backed was observed, so this is not a verdict on the card —

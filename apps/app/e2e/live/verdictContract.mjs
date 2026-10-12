@@ -146,9 +146,8 @@ export const FOUR_VERDICT_DRIVERS = new Map([
     // not an internally matched loan with a stamped record whose lender
     // position the role holds: a missing precondition, never a card defect.
     // Also MANUAL-ONLY — see MANUAL_ONLY_DRIVERS below.
-    'with CLAIM=1, a claim that mined but whose payout or receipt the direct ' +
-      'RPC could not read back is UNDETERMINED (exit 3); a reverted receipt or a ' +
-      'page/chain contradiction stays FAIL (#2427)',
+    'with CLAIM=1, any stop after the claim was sent is UNDETERMINED (exit 3) ' +
+      'unless its receipt shows a revert (FAIL); failed checks stay FAIL (#2427)',
   ],
 ]);
 
