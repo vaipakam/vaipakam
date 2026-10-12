@@ -58,6 +58,7 @@ import {
   visit,
   watchPageRpc,
 } from './driver.mjs';
+import { splitBlocked } from './readOnlyFindings.mjs';
 
 const SITE_URL = requireSiteUrl();
 const REFERENCE_SITE_URL = process.env.REFERENCE_SITE_URL ?? '';
@@ -65,7 +66,13 @@ if (!REFERENCE_SITE_URL) {
   blockedSync('REFERENCE_SITE_URL is required: the workers.dev URL of the deploy under review.');
 }
 for (const u of [SITE_URL, REFERENCE_SITE_URL]) {
-  if (/alpha02\./i.test(new URL(u).host)) {
+  let host;
+  try {
+    host = new URL(u).host;
+  } catch {
+    blockedSync(`${u} is not a URL — check SITE_URL and REFERENCE_SITE_URL.`);
+  }
+  if (/alpha02\./i.test(host)) {
     blockedSync(`${u} is alpha02 — it serves the frozen vaipakam-alpha02 Worker, not the deploy under review.`);
   }
 }
@@ -94,7 +101,11 @@ if (typeof DIAMOND !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(DIAMOND)) {
   blockedSync(`deployments bundle ${CHAIN_ID}.diamond is not an address: ${JSON.stringify(DIAMOND)}`);
 }
 const DIAMOND_ABI = readJson('packages/contracts/src/diamondAbi.json');
-const ROW = readJson('apps/app/src/i18n/locales/en.json')?.copy?.claims?.row ?? {};
+const CLAIMS = readJson('apps/app/src/i18n/locales/en.json')?.copy?.claims ?? {};
+for (const k of ['title', 'checking', 'unavailable']) {
+  if (typeof CLAIMS[k] !== 'string') blockedSync(`en.json no longer carries copy.claims.${k}`);
+}
+const ROW = CLAIMS.row ?? {};
 for (const k of ['matchCleared', 'matchClearedNoCharges', 'matchPaidShort', 'matchPaidFull', 'whyInternalMatchLender']) {
   if (typeof ROW[k] !== 'string') blockedSync(`en.json no longer carries copy.claims.row.${k}`);
 }
@@ -215,7 +226,7 @@ const session = await launch(
     ? { role: ROLE, startChainId: CHAIN_ID, pinnedChainId: CHAIN_ID, signingGate: claimGate }
     : { role: ROLE, readOnly: true },
 );
-const { ctx, page, done, shot, consoleErrors } = session;
+const { ctx, page, done, shot, consoleErrors, blockedRequests } = session;
 // English before the first paint (the shared i18n factory's storage key).
 await ctx.addInitScript(() => {
   try {
@@ -225,17 +236,32 @@ await ctx.addInitScript(() => {
   }
 });
 const rpc = watchPageRpc(page);
+/** Wait for /claims to leave its loading state. Returns 'available',
+ *  'unavailable' (the list's own error state) or 'loading' on timeout. */
+async function claimsListSettled(timeoutMs = 60_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const body = await page.locator('body').innerText();
+    if (body.includes(CLAIMS.unavailable)) return 'unavailable';
+    if (!body.includes(CLAIMS.checking) && body.includes(CLAIMS.title)) return 'available';
+    await page.waitForTimeout(1_000);
+  }
+  return 'loading';
+}
 /** Pre-claim FAILs: the claim is one-shot, so it never runs after one. */
 const preClaimFails = () => fails;
 const rowFor = () => page.locator(`a.item-row[href$="/positions/${LOAN_ID}"]`);
 try {
+  // The window opens BEFORE the first load, so the response that populated
+  // the claims list counts — a settled list that omits the loan is a FAIL,
+  // not an unanswered window.
+  rpc.reset();
   await visit(page, '/claims');
   const lang = await page.evaluate(() => document.documentElement.lang);
   if (!/^en\b/i.test(lang ?? '')) {
     await blocked(`the page renders in "${lang}", not English — the expected lines come from the en catalogue`, null, done);
   }
   await ensureConnected(page);
-  rpc.reset();
   await rowFor().first().waitFor({ state: 'visible', timeout: 60_000 });
   // The note renders once the principal token's details load.
   const deadline = Date.now() + 30_000;
@@ -291,9 +317,18 @@ try {
       mine !== undefined && mine.args.amount === rec.lenderProceeds,
       mine ? `${fmt(mine.args.amount)} in ${mine.transactionHash}` : 'no event for this wallet',
     );
+    // A row's absence counts only on a SETTLED, AVAILABLE list: the loading
+    // and unavailable states carry no rows either.
+    rpc.reset();
     await visit(page, '/claims');
-    await page.waitForTimeout(8_000);
-    check('the row left /claims after the claim', (await rowFor().count()) === 0);
+    const settled = await claimsListSettled();
+    if (settled === 'available') {
+      check('the row left /claims after the claim', (await rowFor().count()) === 0);
+    } else if ((await rpc.settled()) === 0) {
+      await blocked('the page RPC answered nothing while /claims reloaded after the claim', null, done);
+    } else {
+      check('the row left /claims after the claim', false, `the claims list never settled (${settled})`);
+    }
   }
   check('no page errors', consoleErrors.filter((e) => e.startsWith('PAGEERROR')).length === 0);
 } catch (err) {
@@ -307,6 +342,13 @@ try {
   fails++;
 }
 for (const why of refusals) check('the page asked to sign only the planned claim', false, why);
+// Read-only session: every refused wallet write or non-read request the page
+// attempted is a finding, bar the recognised Cloudflare edge beacon.
+// (A CLAIM session's only refusals are its signing gate's, reported above.)
+const { violations } = SUBMIT_CLAIM
+  ? { violations: [] }
+  : splitBlocked(blockedRequests ?? [], [new URL(SITE_URL).origin]);
+for (const b of violations) check('the page attempted no write in a read-only session', false, `${b.reason} ${b.url ?? ''}`);
 console.log(fails === 0 ? 'ALL PASS' : `${fails} FAILURES`);
 await done();
 process.exit(fails === 0 ? 0 : 1);

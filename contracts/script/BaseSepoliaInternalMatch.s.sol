@@ -271,27 +271,41 @@ contract BaseSepoliaInternalMatch is RepriceTestnetMock {
         });
     }
 
-    /// @dev Every OTHER Active loan touching tLIQ, with its LTV at the price
+    /// @dev Every OTHER matchable (Active or FallbackPending) loan touching tLIQ, with its LTV at the price
     ///      now in force — what the excursion does to loans this run does not
     ///      own. Walks every page of the active list. A loan whose LTV cannot
     ///      be read is listed as unreadable, never as a number.
     ///      Simulation-time log only; writes nothing.
     function _reportExposure(RepriceTarget memory t, uint256 skipA, uint256 skipB) internal view {
         uint256 pageSize = 200;
-        console.log("Other Active tLIQ loans (id, LTV bps, liq floor bps):");
+        console.log("Other matchable tLIQ loans - Active and FallbackPending (id, status, LTV bps, liq floor bps):");
         for (uint256 offset;; offset += pageSize) {
             uint256[] memory ids = MetricsFacet(t.diamond).getActiveLoansPaginated(offset, pageSize);
             for (uint256 i; i < ids.length; ++i) {
                 if (ids[i] == skipA || ids[i] == skipB) continue;
                 LibVaipakam.Loan memory l = LoanFacet(t.diamond).getLoanDetails(ids[i]);
                 if (l.principalAsset != t.asset && l.collateralAsset != t.asset) continue;
-                if (l.status != LibVaipakam.LoanStatus.Active) continue;
+                // The active list carries Active AND FallbackPending loans,
+                // and internal matching can settle both (a FallbackPending
+                // leg skips the LTV-floor gate), so both are exposure.
+                string memory status;
+                if (l.status == LibVaipakam.LoanStatus.Active) status = "Active";
+                else if (l.status == LibVaipakam.LoanStatus.FallbackPending) status = "FallbackPending";
+                else continue;
                 (bool ok, bytes memory ret) =
                     t.diamond.staticcall(abi.encodeWithSelector(RiskFacet.calculateLTV.selector, ids[i]));
                 if (ok && ret.length == 32) {
-                    console.log("  ", ids[i], abi.decode(ret, (uint256)), uint256(l.liquidationLtvBpsAtInit));
+                    console.log(
+                        string.concat("   id ", vm.toString(ids[i]), " ", status, ": LTV bps"),
+                        abi.decode(ret, (uint256)),
+                        "liq floor bps",
+                        uint256(l.liquidationLtvBpsAtInit)
+                    );
                 } else {
-                    console.log("   id %s: LTV unreadable (calculateLTV reverted); liq floor bps %s", ids[i], uint256(l.liquidationLtvBpsAtInit));
+                    console.log(
+                        string.concat("   id ", vm.toString(ids[i]), " ", status, ": LTV unreadable (calculateLTV reverted); liq floor bps"),
+                        uint256(l.liquidationLtvBpsAtInit)
+                    );
                 }
             }
             if (ids.length < pageSize) break;
