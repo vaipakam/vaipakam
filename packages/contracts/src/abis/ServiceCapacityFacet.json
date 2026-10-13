@@ -14,7 +14,7 @@
   },
   {
     "type": "function",
-    "name": "capacitySpendInternal",
+    "name": "capacityChargeInternal",
     "inputs": [
       {
         "name": "role",
@@ -22,19 +22,9 @@
         "internalType": "uint8"
       },
       {
-        "name": "actor",
+        "name": "caller",
         "type": "address",
         "internalType": "address"
-      },
-      {
-        "name": "units",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "freeOnly",
-        "type": "bool",
-        "internalType": "bool"
       }
     ],
     "outputs": [],
@@ -4817,6 +4807,22 @@
         "name": "role",
         "type": "uint8",
         "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ServiceCapacityArmingFeeAboveCap",
+    "inputs": [
+      {
+        "name": "value",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "cap",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ]
   },

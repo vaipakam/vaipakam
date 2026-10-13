@@ -3231,7 +3231,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[6] = RewardEraFacet.eraDrawForDay.selector;
         // #1566 PR C revision — the era routing of a packet's fresh.
         s[7] = RewardEraFacet.eraCreditFreshFromRow.selector;
-        s[8] = RewardEraFacet.eraRelocateFreshIngress.selector;
+        s[8] = RewardEraFacet.eraRelocatePacketFresh.selector;
         s[9] = RewardEraFacet.eraUncreditFresh.selector;
         // PR C-4 — the parked-message lane.
         s[10] = RewardEraFacet.getParkedBroadcast.selector;
@@ -3251,7 +3251,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[6] = ServiceCapacityFacet.getServiceCapacityEscrow.selector;
         // slice 2 — the limiter.
         s[7] = ServiceCapacityFacet.setCapacityCurve.selector;
-        s[8] = ServiceCapacityFacet.capacitySpendInternal.selector;
+        s[8] = ServiceCapacityFacet.capacityChargeInternal.selector;
         s[9] = ServiceCapacityFacet.setAdapterOperator.selector;
         s[10] = ServiceCapacityFacet.getCapacityCurve.selector;
         s[11] = ServiceCapacityFacet.getCapacityBucket.selector;

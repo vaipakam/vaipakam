@@ -432,6 +432,16 @@
             "name": "eraQuarantined",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "creditBookedEra",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "creditBooking",
+            "type": "uint8",
+            "internalType": "uint8"
           }
         ]
       }

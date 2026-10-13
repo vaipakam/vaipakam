@@ -1035,7 +1035,7 @@ contract AnvilNewPositiveFlows is Script {
 
         // Preview the match before submitting — real bot's flow.
         LibOfferMatch.MatchResult memory preview =
-            OfferMatchFacet(diamond).previewMatch(lenderOfferId, borrowerOffer1, vm.addr(newBorrowerKey));
+            OfferMatchFacet(diamond).previewMatch(lenderOfferId, borrowerOffer1, vm.addr(newBorrowerKey), vm.addr(newBorrowerKey));
         console.log("previewMatch errorCode:", uint8(preview.errorCode));
         require(
             uint8(preview.errorCode) == 0, // MatchError.Ok

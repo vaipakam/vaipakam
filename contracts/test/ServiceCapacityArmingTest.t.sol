@@ -75,15 +75,23 @@ contract ServiceCapacityArmingTest is SetupTest {
     }
     function _curve(uint8 role) internal { _f().setCapacityCurve(role, FREE, RATE, AT4X, COST); }
 
-    /// @dev #2459 r2 — the arming fee is computed in full precision: an extreme (but
-    ///      accepted) rate prices the fee exactly, rounded up, instead of overflowing the
-    ///      product (a panic in every post and preview once rate x granted passed 2^256).
-    function test_ArmingQuote_AnExtremeRate_NeverOverflows() public {
+    /// @dev #2459 r4 — the arming fee is a BOUNDED knob: a rate or a floor above
+    ///      the ceiling (the whole newly-armed principal) is refused by name, so no
+    ///      accepted rate can make a quote or a post unrepresentable; at the ceiling,
+    ///      on the largest knee a curve accepts, the fee is exactly the grant.
+    function test_ArmingFee_IsBoundedByTheWholeArmedPrincipal() public {
         _ready();
-        _f().setArmingFeeRate(2 ** 200);
-        (, uint256 fee, uint256 granted, , ) = _f().previewArming(SOLVER, op, 1e18);
-        assertEq(granted, 1e18, "fixture-live: the post arms its whole principal");
-        assertEq(fee, 2 ** 200, "fee = granted x rate / 1e18, exactly");
+        uint256 cap = LibServiceCapacity.MAX_ARMING_FEE_RATE;
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.ServiceCapacityArmingFeeAboveCap.selector, cap + 1, cap));
+        _f().setArmingFeeRate(cap + 1);
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.ServiceCapacityArmingFeeAboveCap.selector, cap + 1, cap));
+        _f().setArmingFeeFloor(cap + 1);
+        _f().setArmingFeeRate(cap); // straddle: the ceiling itself is accepted
+        _f().setCapacityCurve(SOLVER, FREE, RATE, type(uint128).max, COST); // the largest knee
+        uint256 most = type(uint128).max;
+        (, uint256 fee, uint256 granted, , ) = _f().previewArming(SOLVER, op, most);
+        assertEq(granted, most, "fixture-live: the post arms the whole knee");
+        assertEq(fee, granted, "at the ceiling the fee is the whole grant, and representable");
     }
     function _ready() internal {
         _arm();
@@ -320,7 +328,7 @@ contract ServiceCapacityArmingTest is SetupTest {
         (, , , bool dark) = _f().previewCapacity(SOLVER, op);
         assertTrue(dark, "the limiter is dark until re-set");
         vm.prank(address(diamond));
-        _f().capacitySpendInternal(SOLVER, op, 1, false); // dark: a no-op, no revert
+        _f().capacityChargeInternal(SOLVER, op); // dark: a no-op, no revert
         LibServiceCapacity.ArmingBind memory b = _bind(SOLVER);
         vm.prank(op);
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.ServiceCapacityArmingDark.selector, SOLVER));

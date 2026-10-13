@@ -224,7 +224,7 @@ contract OfferMatchIntentFacet is DiamondReentrancyGuard, DiamondPausable {
         // fill whole and `previewIntent` reports it as its last check. A
         // keeper-authorized fill is ONE executed item: the keeper-auth check above
         // stays an authorization, not a second charge.
-        LibServiceCapacity.chargeIntentFill(s);
+        LibServiceCapacity.chargeSolver();
 
         // Record exposure + the originating intent key (so the terminal-close
         // release survives a lender-position sale that mutates `loan.lender`).

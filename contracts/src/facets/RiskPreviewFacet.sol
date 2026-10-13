@@ -258,12 +258,21 @@ contract RiskPreviewFacet {
     /// @param  solver  Prospective filler — `requiresKeeperAuth` is checked
     ///         against THIS address, not this view's `msg.sender`, so a keeper
     ///         can preview on behalf of the account that would submit.
+    /// @param  initiator  The route's OUTER initiator (#2459 r4) — the account the
+    ///         fill's capacity charge falls to when `solver` cannot be charged
+    ///         itself: the caller of `backstopFill` when `solver` is the backstop
+    ///         vault, else the transaction's originator (an aggregator adapter with
+    ///         no bound operator). Named, never read from the view's transaction —
+    ///         the real fill charges the initiator `backstopFill` records, which an
+    ///         `eth_call`'s originator need not be. For a solver that sends its own
+    ///         transaction, the solver.
     /// @param  lender  Intent owner (slice creator).
     /// @param  lendingAsset / collateralAsset  Intent key.
     /// @param  counterpartyOfferId  The stored borrower offer to fill against.
     /// @param  fillAmount  Principal the solver intends to lend this fill.
     function previewIntent(
         address solver,
+        address initiator,
         address lender,
         address lendingAsset,
         address collateralAsset,
@@ -406,8 +415,8 @@ contract RiskPreviewFacet {
         }
         // #1219 review — the fill's capacity charge is its LAST step (after the
         // match), so it is this preview's last check, for the actor the fill's route
-        // names for `solver` (`LibServiceCapacity.routeActor`).
-        if (res.ok && !LibServiceCapacity.fillCovered(s, solver)) {
+        // names for `solver` and `initiator` (`LibServiceCapacity.routeActor`).
+        if (res.ok && !LibServiceCapacity.fillCovered(s, solver, initiator)) {
             res.intentError = LibOfferMatch.IntentError.CapacityExhausted;
             res.ok = false;
         }

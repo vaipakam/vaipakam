@@ -158,13 +158,20 @@ contract ServiceCapacityFacet is DiamondReentrancyGuard, DiamondPausable, Diamon
         LibServiceCapacity.setCurve(LibVaipakam.storageSlot(), role, freeTier, freeRatePerSec, bondAt4x, classCost);
     }
 
-    /// @notice The spend every charged route reaches by Diamond self-call
-    ///         ({LibServiceCapacity.charge}): settle the actor's bucket and take the
-    ///         cost of `units` executed items, or refuse by name. Gated to the
-    ///         Diamond; the caller holds the reentrancy guard and the pause.
-    function capacitySpendInternal(uint8 role, address actor, uint256 units, bool freeOnly) external {
+    /// @notice The charge every gated route reaches by Diamond self-call
+    ///         ({LibServiceCapacity.chargeKeeper} / {LibServiceCapacity.chargeSolver}):
+    ///         name the ACTOR by route for `caller` — the account that called the
+    ///         gated entry — and its outer initiator, then settle that actor's bucket
+    ///         and take one executed item's cost, or refuse by name. Gated to the
+    ///         Diamond; the caller holds the reentrancy guard and the pause. The ONE
+    ///         place the route rule runs for a charge (#2459 r4) — the previews run
+    ///         the same {LibServiceCapacity.routeActor} with the initiator named.
+    function capacityChargeInternal(uint8 role, address caller) external {
         if (msg.sender != address(this)) revert ServiceCapacityOnlyDiamondInternal(msg.sender);
-        LibServiceCapacity.spend(LibVaipakam.storageSlot(), role, actor, units, freeOnly);
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        (address actor, bool freeOnly) =
+            LibServiceCapacity.routeActor(s, caller, LibServiceCapacity.chargedOuter(s, caller));
+        LibServiceCapacity.spend(s, role, actor, 1, freeOnly);
     }
 
     /// @notice Bind `adapter`'s fills to `operator` (ADMIN) — for adapters created

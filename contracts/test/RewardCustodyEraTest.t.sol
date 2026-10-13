@@ -447,11 +447,17 @@ contract RewardCustodyEraTest is SetupTest, IVaipakamErrors {
         assertEq(received - receivedBefore, 4e18, "counted as delivered");
         assertEq(paid - paidBefore, 4e18, "and levelled at once");
         assertEq(_attributed(), attributedBefore, "an in-holder move");
+        // A demotion follows the DEMOTABLE credit's recorded booking (#2459 r4) —
+        // the packet's compensation-shaped credit, booked to the same retired row —
+        // and takes it back from there; the classification above records none.
+        _bookPacket(h, 4e18);
+        assertEq(_era().getCustodyEra(0).holderRow, 8e18, "fixture-live: the packet's credit is in the row too");
+        (receivedBefore, paidBefore) = _ledger();
         assertEq(_mut().uncreditFreshForPacketRaw(h, 3e18), 3e18, "the demotion takes back from the era's row");
-        assertEq(_era().getCustodyEra(0).holderRow, 1e18);
+        assertEq(_era().getCustodyEra(0).holderRow, 5e18);
         (received, paid) = _ledger();
-        assertEq(received - receivedBefore, 1e18, "both sides unwound by what it took");
-        assertEq(paid - paidBefore, 1e18);
+        assertEq(receivedBefore - received, 3e18, "both sides unwound by what it took");
+        assertEq(paidBefore - paid, 3e18);
         // Straddle: the LIVE era's packet credit reaches the live baseline under the split.
         (toLive, toRestitution) =
             _mut().creditFreshToEraFromRowRaw(uint8(LibVaipakam.RewardCustodyRow.Unclassified), 1e18, 2);
@@ -476,6 +482,160 @@ contract RewardCustodyEraTest is SetupTest, IVaipakamErrors {
             _mut().creditFreshToEraFromRowRaw(uint8(LibVaipakam.RewardCustodyRow.Unclassified), 1e18, 0);
         assertEq(toLive + toRestitution, 1e18, "active: the live baseline under the split");
         assertEq(_live() - liveBefore, toLive);
+    }
+
+    // ─── #2459 r4 — a demotion follows the credit's recorded booking ───
+
+    event IngressPacketCreditBooked(bytes32 indexed packetHash, uint8 booking, uint64 indexed era, uint256 amount);
+
+    function _pending() internal view returns (uint256) { return _row(LibVaipakam.RewardCustodyRow.PendingSurplus); }
+
+    /// @dev Book `amount` of packet `h`'s fresh as the compensation credit does: the
+    ///      tokens at the Diamond, then the credit with its booking recorded.
+    function _bookPacket(bytes32 h, uint256 amount) internal {
+        vpfi.mint(address(diamond), amount);
+        _mut().relocatePacketFreshRaw(h, amount);
+    }
+
+    /// @dev Unrelated live custody: a live-era delivery classified into the live baseline.
+    function _seedLive(uint256 amount, uint256 remitId, bytes32 id) internal {
+        _untypedDelivery(amount, remitId, id);
+        _mut().creditFreshToEraFromRowRaw(
+            uint8(LibVaipakam.RewardCustodyRow.Unclassified), amount, _era().getCustodyEraCurrent()
+        );
+    }
+
+    /// @dev Codex #2459 r4, the scenario as found, through the real ingress: a
+    ///      PROVISIONAL compensation for a retired era's day is booked to that era's
+    ///      row; the era is finalized while Detached (its row → pending surplus); the
+    ///      chain reattaches; the delayed broadcast demotes the credit. The demotion
+    ///      follows the recorded booking and release into pending surplus, and the
+    ///      unrelated live custody is untouched — derived from the role it found
+    ///      (active), the demotion took the live rows instead.
+    function test_ADemotion_AfterADetachedFinalizationAndAReattach_TakesFromPendingSurplus() public {
+        activateRewardCustodyForTest(address(vpfi), 0);
+        _detach();
+        _reattach(); // era 2 live; day 3 is era 0's, retired and not final
+        bytes32 id = keccak256("comp-r4");
+        bytes32 h = keccak256(abi.encode(uint256(CHAIN_BASE), id));
+        vpfi.mint(address(diamond), 5e18);
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit IngressPacketCreditBooked(h, 1, 0, 5e18);
+        RewardIngressFacet(address(diamond)).onCompensationBudgetReceived(
+            address(vpfi), 5e18, 3, CHAIN_BASE, 31, REMITTER_BF, 2.5e18, 2.5e18, uint64(block.timestamp), 1,
+            uint64(7 days), uint64(24 hours), id
+        );
+        assertEq(_era().getCustodyEra(0).holderRow, 5e18, "booked to era 0's row, provisionally");
+        _detach();
+        _closeEra0Days();
+        _era().finalizeCustodyEra(0);
+        LibVaipakam.CustodyEra memory e0 = _era().getCustodyEra(0);
+        assertTrue(e0.releasedToPending, "the release is recorded: to pending surplus");
+        assertEq(e0.released, 5e18, "with what it carried");
+        assertEq(_pending(), 5e18, "fixture-live: the credit sits in pending surplus");
+        _reattach(); // an active role again
+        _seedLive(3e18, 32, keccak256("unrelated-live"));
+        uint256 liveBefore = _live();
+        assertEq(liveBefore, 3e18, "fixture-live: unrelated live custody to take wrongly");
+        uint256 unclassifiedBefore = _row(LibVaipakam.RewardCustodyRow.Unclassified);
+        vm.prank(address(diamond)); // the broadcast hook is Diamond-internal
+        RewardIngressFacet(address(diamond)).onCompensationDayBroadcastArrived(3, address(0xDD), false); // demote
+        assertEq(_pending(), 0, "taken from pending surplus, where the credit is");
+        assertEq(_live(), liveBefore, "the unrelated live custody is untouched");
+        assertEq(_row(LibVaipakam.RewardCustodyRow.Unclassified) - unclassifiedBefore, 5e18, "the whole credit returned");
+        assertEq(_era().getCustodyEra(0).releaseDemoted, 5e18, "the release is charged with what was followed out");
+    }
+
+    /// @dev Pending surplus is drained, by anyone, into the live baseline — so what
+    ///      pending no longer holds of a credit is followed there: pending first, then
+    ///      the live baseline the drain credited. (The role-derived route took the live
+    ///      rows alone and left the credit's own pending part behind.)
+    function test_ADemotion_FollowsADrainedPendingSurplus_IntoTheLiveBaseline() public {
+        activateRewardCustodyForTest(address(vpfi), 0);
+        bytes32 h = _untypedDelivery(1e18, 41, keccak256("b-0")); // era 0's packet
+        _detach(); // era 1 live, Detached; era 0 retired
+        _bookPacket(h, 4e18); // to era 0's row
+        _closeEra0Days();
+        _era().finalizeCustodyEra(0); // Detached: into pending surplus
+        _reattach();
+        _era().drainPendingSurplus(3e18); // 3 of the 4 move on into the live baseline
+        assertEq(_pending(), 1e18);
+        assertEq(_live(), 3e18, "fixture-live: the drain credited the live baseline");
+        assertEq(_mut().uncreditFreshForPacketRaw(h, 4e18), 4e18, "the whole credit is still at the address");
+        assertEq(_pending(), 0, "pending surplus first");
+        assertEq(_live(), 0, "then the live baseline the drain credited");
+    }
+
+    /// @dev A demotion through a release never takes more than the release CARRIED:
+    ///      what was drawn from the era's row before it paid the era's obligations and
+    ///      is no longer at the address — while pending surplus holds another packet's
+    ///      value that the demotion must not take (straddle: that packet's own
+    ///      demotion takes it whole). (The role-derived route took 4 from pending.)
+    function test_ADemotion_ThroughARelease_NeverTakesMoreThanTheReleaseCarried() public {
+        activateRewardCustodyForTest(address(vpfi), 0);
+        bytes32 h = _untypedDelivery(1e18, 51, keccak256("c-0"));
+        bytes32 h2 = _untypedDelivery(1e18, 52, keccak256("c-1"));
+        _detach(); // era 0 retired; Detached
+        _bookPacket(h, 4e18); // era 0's row: 4
+        vm.prank(address(diamond));
+        _era().eraDrawForDay(0, 2, 3e18); // 3 of it DRAWN for a day of the era
+        _closeEra0Days();
+        _era().finalizeCustodyEra(0);
+        assertEq(_era().getCustodyEra(0).released, 1e18, "the release carried what the draw left");
+        _bookPacket(h2, 5e18); // another packet's late credit for the final era, Detached: pending surplus
+        assertEq(_pending(), 6e18, "fixture-live: pending holds more than the release carried");
+        assertEq(_mut().uncreditFreshForPacketRaw(h, 4e18), 1e18, "only what the release carried");
+        assertEq(_pending(), 5e18, "the other packet's surplus is untouched");
+        assertEq(_era().getCustodyEra(0).releaseDemoted, 1e18, "the release is charged");
+        assertEq(_mut().uncreditFreshForPacketRaw(h, 1e18), 0, "and never followed out twice");
+        assertEq(_mut().uncreditFreshForPacketRaw(h2, 5e18), 5e18, "a pending booking takes its own");
+    }
+
+    /// @dev A FINAL era's credit on an active role is booked to the LIVE era's books;
+    ///      when that era retires, its live row — the credit — is carried into its
+    ///      row, and the demotion follows it there. (The role-derived route read the
+    ///      packet's final era while Detached and took pending surplus instead.)
+    function test_ADemotion_FollowsALiveBooking_IntoTheRowItsEraRetiredInto() public {
+        activateRewardCustodyForTest(address(vpfi), 0);
+        bytes32 h = _untypedDelivery(1e18, 61, keccak256("d-0")); // era 0's packet
+        bytes32 h3 = _untypedDelivery(1e18, 62, keccak256("d-1")); // another of era 0's
+        _detach();
+        _closeEra0Days();
+        _era().finalizeCustodyEra(0); // era 0 final, Detached
+        _reattach(); // era 2 live, active
+        vpfi.mint(address(diamond), 4e18);
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit IngressPacketCreditBooked(h, 1, 2, 4e18);
+        _mut().relocatePacketFreshRaw(h, 4e18); // booked to the LIVE era's books: era 2
+        assertEq(_live(), 4e18);
+        _detach(); // era 2 retires, carrying its live row into its own
+        assertEq(_era().getCustodyEra(2).holderRow, 4e18, "fixture-live: the credit was carried");
+        _bookPacket(h3, 2e18); // pending surplus the role-derived route would take
+        assertEq(_pending(), 2e18);
+        assertEq(_mut().uncreditFreshForPacketRaw(h, 4e18), 4e18);
+        assertEq(_era().getCustodyEra(2).holderRow, 0, "taken back from the row its era retired into");
+        assertEq(_pending(), 2e18, "pending surplus untouched");
+    }
+
+    /// @dev An ACTIVE finalization records the era its release went into, and a
+    ///      demotion follows it there — into that era's row once it retires in turn.
+    function test_ADemotion_FollowsAnActiveRelease_IntoTheEraItWentInto() public {
+        activateRewardCustodyForTest(address(vpfi), 0);
+        bytes32 h = _untypedDelivery(1e18, 71, keccak256("e-0"));
+        bytes32 h3 = _untypedDelivery(1e18, 72, keccak256("e-1"));
+        _detach();
+        _reattach(); // era 2 live, active; era 0 retired
+        _bookPacket(h, 4e18); // era 0's row
+        _closeEra0Days();
+        _era().finalizeCustodyEra(0); // active: into era 2's live baseline
+        LibVaipakam.CustodyEra memory e0 = _era().getCustodyEra(0);
+        assertFalse(e0.releasedToPending);
+        assertEq(e0.releasedInto, 2, "recorded: into the live era at the release");
+        _detach(); // era 2 retires, carrying the release into its row
+        _bookPacket(h3, 2e18); // pending surplus the role-derived route would take
+        assertEq(_mut().uncreditFreshForPacketRaw(h, 4e18), 4e18);
+        assertEq(_era().getCustodyEra(2).holderRow, 0, "followed into era 2's row");
+        assertEq(_pending(), 2e18, "pending surplus untouched");
     }
 
     // ─── PR C-4: the parked-message lane ───

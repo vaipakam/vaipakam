@@ -563,8 +563,9 @@ contract LenderIntentMatchTest is SetupTest {
         view
         returns (LibOfferMatch.IntentPreviewResult memory)
     {
+        // The solver sends its own transaction, so it is also the route's initiator.
         return RiskPreviewFacet(address(diamond)).previewIntent(
-            solver_, lender, mockERC20, mockCollateralERC20, boId, fill
+            solver_, solver_, lender, mockERC20, mockCollateralERC20, boId, fill
         );
     }
 

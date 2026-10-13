@@ -14,6 +14,7 @@ import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {ServiceCapacityFacet} from "../src/facets/ServiceCapacityFacet.sol";
+import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 
 /**
  * @title BorrowerPartialFillTest
@@ -56,6 +57,8 @@ import {ServiceCapacityFacet} from "../src/facets/ServiceCapacityFacet.sol";
  *         price of 1e8 (= $1).
  */
 contract BorrowerPartialFillTest is SetupTest {
+    event CapacitySpent(uint8 indexed role, address indexed actor, uint256 cost, uint256 balanceAfter);
+    event CapacityFreeTierSpent(uint8 indexed role, address indexed initiator, uint256 cost, uint256 balanceAfter);
     // ── Test users — one borrower posting the range, three lenders so
     //    multi-fill scenarios drain a single borrower offer across
     //    independent matches. The base `lender` / `borrower` from
@@ -311,18 +314,18 @@ contract BorrowerPartialFillTest is SetupTest {
         uint8 role = uint8(LibVaipakam.ServiceCapacityRole.Solver);
         ServiceCapacityFacet(address(diamond)).setCapacityCurve(role, 1e18, 1e16, 100e18, 1e18);
         assertEq(
-            uint8(OfferMatchFacet(address(diamond)).previewMatch(lo1, bo, address(this)).errorCode),
+            uint8(OfferMatchFacet(address(diamond)).previewMatch(lo1, bo, address(this), address(this)).errorCode),
             uint8(LibOfferMatch.MatchError.Ok),
             "straddle: the one free action covers the first match"
         );
         OfferMatchFacet(address(diamond)).matchOffers(lo1, bo);
         assertEq(
-            uint8(OfferMatchFacet(address(diamond)).previewMatch(lo2, bo, address(this)).errorCode),
+            uint8(OfferMatchFacet(address(diamond)).previewMatch(lo2, bo, address(this), address(this)).errorCode),
             uint8(LibOfferMatch.MatchError.CapacityExhausted),
             "an exhausted matcher previews the refusal"
         );
         assertEq(
-            uint8(OfferMatchFacet(address(diamond)).previewMatch(lo2, bo, makeAddr("fresh-matcher")).errorCode),
+            uint8(OfferMatchFacet(address(diamond)).previewMatch(lo2, bo, makeAddr("fresh-matcher"), makeAddr("fresh-matcher")).errorCode),
             uint8(LibOfferMatch.MatchError.Ok),
             "#2459 r2: the preview reads the NAMED matcher's bucket, not its caller's"
         );
@@ -330,6 +333,49 @@ contract BorrowerPartialFillTest is SetupTest {
         OfferMatchFacet(address(diamond)).matchOffers(lo2, bo);
         vm.warp(block.timestamp + 100);
         assertGt(OfferMatchFacet(address(diamond)).matchOffers(lo2, bo), 0, "refilled: it matches");
+    }
+
+    /// @dev #2459 r4 — `matchOffers` charges through the SAME route rule its preview
+    ///      reads: an aggregator adapter's match is charged to the operator bound to it
+    ///      (rule 2), never the adapter contract — it charged its caller directly before,
+    ///      while the preview routed — and an UNBOUND adapter's match to the
+    ///      transaction's originator at the free tier (rule 4), the preview's named initiator.
+    function test_matchOffers_ByAnAdapter_ChargesTheRoute_AndThePreviewAgrees() public {
+        uint256 bo = _postBorrowerOffer({
+            creator: borrower, amountMin: 1_000, amountMax: 10_000, rateMin: 500, rateMax: 600,
+            collateralMin: 500, collateralMax: 5_000
+        });
+        uint256 lo1 = _postLenderOffer({creator: lender, amount: 5_000, rateMin: 500, rateMax: 600, collateralRequired: 500});
+        uint256 lo2 = _postLenderOffer({creator: lender2, amount: 4_000, rateMin: 500, rateMax: 600, collateralRequired: 500});
+        uint8 role = uint8(LibVaipakam.ServiceCapacityRole.Solver);
+        ServiceCapacityFacet(address(diamond)).setCapacityCurve(role, 1e18, 1e16, 100e18, 1e18);
+        address adapter = makeAddr("adapter-matcher");
+        address operator = makeAddr("adapter-operator");
+        TestMutatorFacet(address(diamond)).setAggregatorAdapterRaw(adapter, operator);
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit CapacitySpent(role, operator, 1e18, 0); // the bound operator's one free action
+        vm.prank(adapter);
+        OfferMatchFacet(address(diamond)).matchOffers(lo1, bo);
+        assertFalse(
+            ServiceCapacityFacet(address(diamond)).getCapacityBucket(role, adapter).seen, "the adapter is never charged"
+        );
+        assertEq(
+            uint8(OfferMatchFacet(address(diamond)).previewMatch(lo2, bo, adapter, makeAddr("any-origin")).errorCode),
+            uint8(LibOfferMatch.MatchError.CapacityExhausted),
+            "the preview reads the bound operator's bucket too"
+        );
+        // Unbound: the originator's free tier, which the preview names.
+        TestMutatorFacet(address(diamond)).setAggregatorAdapterRaw(adapter, address(0));
+        address origin = makeAddr("match-origin");
+        assertEq(
+            uint8(OfferMatchFacet(address(diamond)).previewMatch(lo2, bo, adapter, origin).errorCode),
+            uint8(LibOfferMatch.MatchError.Ok),
+            "straddle: a fresh originator's free action covers it"
+        );
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit CapacityFreeTierSpent(role, origin, 1e18, 0);
+        vm.prank(adapter, origin);
+        OfferMatchFacet(address(diamond)).matchOffers(lo2, bo);
     }
 
     function test_multiFillDrainsBorrower_dustCloseFires() public {
@@ -584,7 +630,7 @@ contract BorrowerPartialFillTest is SetupTest {
 
         // previewMatch surfaces the structured error.
         LibOfferMatch.MatchResult memory r =
-            OfferMatchFacet(address(diamond)).previewMatch(lenderOfferId, borrowerOfferId, address(this));
+            OfferMatchFacet(address(diamond)).previewMatch(lenderOfferId, borrowerOfferId, address(this), address(this));
         assertEq(
             uint8(r.errorCode),
             uint8(LibOfferMatch.MatchError.AmountNoOverlap),
@@ -626,7 +672,7 @@ contract BorrowerPartialFillTest is SetupTest {
         });
 
         LibOfferMatch.MatchResult memory r =
-            OfferMatchFacet(address(diamond)).previewMatch(lenderOfferId, borrowerOfferId, address(this));
+            OfferMatchFacet(address(diamond)).previewMatch(lenderOfferId, borrowerOfferId, address(this), address(this));
         assertEq(
             uint8(r.errorCode),
             uint8(LibOfferMatch.MatchError.RateNoOverlap),

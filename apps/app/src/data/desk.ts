@@ -804,9 +804,11 @@ export async function readMatchPreviewLive(
   publicClient: PublicClient,
   diamondAddress: `0x${string}`,
   pair: { lenderOfferId: number; borrowerOfferId: number },
-  /** The account that would call `matchOffers` — the preview checks ITS
-   *  service capacity (#2459 r2: named, never the read's sender; the zero
-   *  address when no wallet is connected). */
+  /** The account that would call `matchOffers` — the preview checks the
+   *  service capacity its route charges (#2459 r2: named, never the read's
+   *  sender; the zero address when no wallet is connected). The connected
+   *  wallet sends that transaction itself, so it is also the route's outer
+   *  initiator, the preview's fourth argument (#2459 r4). */
   matcher: `0x${string}`,
 ): Promise<MatchPreview | null> {
   try {
@@ -814,7 +816,7 @@ export async function readMatchPreviewLive(
       address: diamondAddress,
       abi: DIAMOND_ABI_VIEM,
       functionName: 'previewMatch',
-      args: [BigInt(pair.lenderOfferId), BigInt(pair.borrowerOfferId), matcher],
+      args: [BigInt(pair.lenderOfferId), BigInt(pair.borrowerOfferId), matcher, matcher],
     })) as {
       errorCode: number;
       matchAmount: bigint;

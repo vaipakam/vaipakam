@@ -1961,7 +1961,7 @@ contract EarlyWithdrawalFacetTest is Test {
         // The charge landed on the KEEPER: its bucket is spent, so the next keeper action is refused.
         vm.prank(address(diamond));
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.ServiceCapacityExhausted.selector, role, keeper, 1e18, 0));
-        ServiceCapacityFacet(address(diamond)).capacitySpendInternal(role, keeper, 1, false);
+        ServiceCapacityFacet(address(diamond)).capacityChargeInternal(role, keeper);
     }
 
     function test_ownerActing_IsNeverCapacityGated() public {
@@ -3185,7 +3185,7 @@ contract EarlyWithdrawalFacetTest is Test {
     function testPreviewMatchFlagsSaleVehicle() public {
         uint256 saleOfferId = _listSaleOffer();
         LibOfferMatch.MatchResult memory r =
-            OfferMatchFacet(address(diamond)).previewMatch(buyOfferId, saleOfferId, address(this));
+            OfferMatchFacet(address(diamond)).previewMatch(buyOfferId, saleOfferId, address(this), address(this));
         assertEq(
             uint8(r.errorCode),
             uint8(LibOfferMatch.MatchError.SaleVehicleTagged),

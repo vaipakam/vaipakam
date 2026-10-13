@@ -120,6 +120,11 @@
         "internalType": "address"
       },
       {
+        "name": "initiator",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
         "name": "lender",
         "type": "address",
         "internalType": "address"

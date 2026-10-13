@@ -302,6 +302,16 @@ library FacetSelectors {
         return bytes4(keccak256("freezeOrPayActiveLenderResident(uint256,address,uint256)"));
     }
 
+    /// @notice #2459 r4 — the RETIRED six-argument `previewIntent` selector, for
+    ///         the Remove leg of a curated refresh against a Diamond that still
+    ///         routes it. The preview gained the route's outer initiator, so its
+    ///         selector changed; left routed, the old entry would stay live on the
+    ///         old build beside the new one.
+    /// @dev    Computed from the signature: the overload no longer exists in source.
+    function retiredPreviewIntentSelector() internal pure returns (bytes4) {
+        return bytes4(keccak256("previewIntent(address,address,address,address,uint256,uint256)"));
+    }
+
     /// @notice Full external selector surface of {OfferPreviewFacet} (1).
     ///
     /// @dev    #1649. Paired with {riskPreview} for the same reason, one step

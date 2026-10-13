@@ -67,7 +67,7 @@ contract MatchOffersScaffoldTest is SetupTest {
         // on the borrower offer too — either way, NOT a `selector not
         // found` revert). The point is reachability, not semantics.
         LibOfferMatch.MatchResult memory r =
-            OfferMatchFacet(address(diamond)).previewMatch(0, 0, address(this));
+            OfferMatchFacet(address(diamond)).previewMatch(0, 0, address(this), address(this));
         // Any structured `MatchError` is fine — we're proving the
         // selector resolves, not asserting the exact code.
         assertTrue(

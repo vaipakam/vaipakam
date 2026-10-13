@@ -19,7 +19,7 @@ import {LibServiceCapacity} from "../libraries/LibServiceCapacity.sol";
  * @author Vaipakam Developer Team
  * @notice Range Orders Phase 1 — bot-driven offer matching surface.
  *         Hosts the two entry points the keeper-bot consumes:
- *           - `previewMatch(L, B, matcher)` — pure preview that runs the
+ *           - `previewMatch(L, B, matcher, initiator)` — pure preview that runs the
  *             validity matrix + computes the midpoint match terms
  *             so bots filter candidate pairs without paying for
  *             reverting txs.
@@ -73,23 +73,26 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
     ///         struct also carries the concrete (matchAmount,
     ///         matchRateBps, reqCollateral, lenderRemainingPostMatch)
     ///         values so the bot can estimate gain pre-submission.
-    /// @param  matcher The account that would call `matchOffers` — the one its
-    ///         service-capacity charge falls on. Named, never read from
-    ///         `msg.sender` (#2459 r2): an off-chain `eth_call` carries no sender
-    ///         unless set, and the zero address's never-seen bucket always reads
-    ///         covered, so a sender-keyed preview told an exhausted keeper (and the
-    ///         app's matcher) that a doomed match would succeed.
-    function previewMatch(uint256 lenderOfferId, uint256 borrowerOfferId, address matcher)
+    /// @param  matcher The account that would call `matchOffers`. Named, never
+    ///         read from `msg.sender` (#2459 r2): an off-chain `eth_call` carries no
+    ///         sender unless set, and the zero address's never-seen bucket always
+    ///         reads covered, so a sender-keyed preview told an exhausted keeper
+    ///         (and the app's matcher) that a doomed match would succeed.
+    /// @param  initiator The transaction's originator — the account the charge
+    ///         falls to when `matcher` is an aggregator adapter with no bound
+    ///         operator (#2459 r4: the route's other input, named for the same
+    ///         reason). For a matcher that sends its own transaction, the matcher.
+    function previewMatch(uint256 lenderOfferId, uint256 borrowerOfferId, address matcher, address initiator)
         external
         view
         returns (LibOfferMatch.MatchResult memory result)
     {
         result = LibOfferMatch.previewMatch(lenderOfferId, borrowerOfferId);
         // #1219 review — the match's capacity charge is its last step, so it is
-        // this preview's last check, for the matcher `matchOffers` would charge.
+        // this preview's last check, for the actor `matchOffers` would charge.
         if (
             result.errorCode == LibOfferMatch.MatchError.Ok
-                && !LibServiceCapacity.fillCovered(LibVaipakam.storageSlot(), matcher)
+                && !LibServiceCapacity.fillCovered(LibVaipakam.storageSlot(), matcher, initiator)
         ) result.errorCode = LibOfferMatch.MatchError.CapacityExhausted;
     }
 
@@ -138,9 +141,11 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         // No borrower collateral floor: two on-chain offers each accepted
         // their own single-value / ranged collateral semantics at create time.
         loanId = LibOfferMatchExecute.executeMatch(lenderOfferId, borrowerOfferId, 0);
-        // #1219 — one fill at the matcher's capacity, charged LAST (a refused charge
-        // reverts the match whole) so {previewMatch} reports it as its last check.
-        LibServiceCapacity.chargeSolver(msg.sender);
+        // #1219 — one fill, charged LAST (a refused charge reverts the match whole)
+        // to the actor the route names for the matcher (`LibServiceCapacity.routeActor`
+        // — the same rule {previewMatch} checks, #2459 r4), so the preview reports it
+        // as its last check.
+        LibServiceCapacity.chargeSolver();
     }
 
     // ─── #396 v0.6 — keeper-matcher for signed offers ────────────────────
@@ -230,9 +235,9 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
                 sliceOfferId,
                 s.offers[sliceOfferId].collateralAmount
             );
-        // #1219 — one fill at the matcher's capacity, charged after the match (a
-        // refused charge reverts the fill whole).
-        LibServiceCapacity.chargeSolver(msg.sender);
+        // #1219 — one fill, charged after the match (a refused charge reverts the
+        // fill whole) to the actor the route names for the matcher.
+        LibServiceCapacity.chargeSolver();
 
         // Transient-slice cleanup for the LENDER direction. The lender slice is
         // the match ACCEPTOR, so LoanFacet mints a FRESH loan lender-position

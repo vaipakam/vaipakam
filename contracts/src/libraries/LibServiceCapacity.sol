@@ -69,6 +69,14 @@ library LibServiceCapacity {
     ///         of an action, so no armed principal sits in a dead zone.
     uint256 internal constant CURVE_RESOLUTION = 1e6;
 
+    /// @notice The arming fee knob's CEILING (#2459 r4): 1e18, the whole newly-armed
+    ///         principal. The design makes the fee a BOUNDED governance knob with a
+    ///         positive floor; a fee above the principal it arms is no setting the
+    ///         product needs, and under this ceiling every fee is representable for
+    ///         any grant a curve allows (`granted` ≤ `bondAt4x` ≤ 2^128), so no
+    ///         accepted rate can make a post or its preview revert.
+    uint256 internal constant MAX_ARMING_FEE_RATE = 1e18;
+
     /// @custom:event-category informational/config
     event ServiceCapacityEnabledSet(bool enabled);
     /// @custom:event-category informational/config
@@ -321,29 +329,48 @@ library LibServiceCapacity {
         settle(s, role, actor, c, false);
     }
 
+    /// @dev The keeper-route gate: one action for the keeper that acted (never the
+    ///      owner acting alone), charged to the actor {routeActor} names for it — an
+    ///      aggregator adapter's to the operator bound to it, never the adapter.
+    function chargeKeeper() internal {
+        _chargeRoute(uint8(LibVaipakam.ServiceCapacityRole.Keeper));
+    }
+
+    /// @dev The solver-route gate for EVERY fill — `matchOffers` and `matchIntent`
+    ///      alike: one fill, to the actor {routeActor} names for the caller (#2459
+    ///      r4: `matchOffers` charged its caller directly, so an adapter's match was
+    ///      charged to the adapter contract and its preview, which routed, disagreed).
+    function chargeSolver() internal {
+        _chargeRoute(uint8(LibVaipakam.ServiceCapacityRole.Solver));
+    }
+
     /// @notice The compact gate every charged route calls: ONE self-call into the
-    ///         capacity facet, so the bucket arithmetic is compiled into that facet
-    ///         alone and a gated facet pays only this encoding. Reverts bubble
-    ///         typed, so `ServiceCapacityExhausted` reaches the caller by name.
-    ///         DARK (no curve for the role) means no charge AND no self-call: a
-    ///         fresh deployment pays nothing per fill or action, and a Diamond that
-    ///         has not routed the capacity facet is not broken by the gate.
-    function charge(uint8 role, address actor, bool freeOnly) internal {
+    ///         capacity facet carrying the role and the gated entry's caller, so the
+    ///         route rule AND the bucket arithmetic are compiled into that facet
+    ///         alone ({ServiceCapacityFacet.capacityChargeInternal}) and a gated
+    ///         facet pays only this encoding — no gated path can charge an actor the
+    ///         route did not name (#2459 r4). Reverts bubble typed, so
+    ///         `ServiceCapacityExhausted` reaches the caller by name. DARK (no curve
+    ///         for the role) means no charge AND no self-call: a fresh deployment
+    ///         pays nothing per fill or action, and a Diamond that has not routed the
+    ///         capacity facet is not broken by the gate.
+    function _chargeRoute(uint8 role) private {
         if (LibVaipakam.storageSlot().capacityCurves[role].freeTier == 0) return;
         LibFacet.crossFacetCall(
-            abi.encodeWithSignature("capacitySpendInternal(uint8,address,uint256,bool)", role, actor, uint256(1), freeOnly),
+            abi.encodeWithSignature("capacityChargeInternal(uint8,address)", role, msg.sender),
             IVaipakamErrors.ServiceCapacityCallFailed.selector
         );
     }
 
-    /// @dev The keeper-route gate: the keeper that acted (never the owner acting alone) pays one action.
-    function chargeKeeper() internal {
-        charge(uint8(LibVaipakam.ServiceCapacityRole.Keeper), msg.sender, false);
-    }
-
-    /// @dev The solver-route gate for a direct solver: one fill at the solver's own capacity.
-    function chargeSolver(address actor) internal {
-        charge(uint8(LibVaipakam.ServiceCapacityRole.Solver), actor, false);
+    /// @dev The OUTER initiator of the current transaction's route for `caller`
+    ///      (the account that called the gated entry): the initiator `backstopFill`
+    ///      recorded — consumed here — when `caller` is the backstop vault, else the
+    ///      transaction's originator, the account a route the Diamond cannot see past
+    ///      is metered to (free tier only, never authorization). The transient slot
+    ///      is the Diamond's, so the capacity facet reads it inside the self-call.
+    function chargedOuter(LibVaipakam.Storage storage s, address caller) internal returns (address outer) {
+        if (caller == s.backstopVault) outer = takeBackstopInitiator();
+        if (outer == address(0)) outer = tx.origin;
     }
 
     bytes32 internal constant BACKSTOP_INITIATOR_TSLOT = keccak256("vaipakam.service-capacity.backstop-initiator");
@@ -376,48 +403,35 @@ library LibServiceCapacity {
     ///         quota and rotation buys only the permissionless baseline; (4) a route
     ///         with no binding — an unbound adapter, or a backstop fill with no
     ///         recorded initiator — falls to the outer initiator's free tier, never to
-    ///         an intermediate contract. The outer initiator of a route the Diamond
-    ///         cannot see past is the transaction's originator: free-tier metering
-    ///         only, never authorization.
-    /// @param  backstopInitiator The initiator `backstopFill` recorded (zero in a preview).
-    function routeActor(LibVaipakam.Storage storage s, address caller, address backstopInitiator)
+    ///         an intermediate contract. Free-tier metering only, never authorization.
+    /// @param  outer The OUTER initiator, NAMED by whoever applies the rule and never
+    ///         read inside it (#2459 r4): the caller of `backstopFill` when `caller`
+    ///         is the backstop vault, else the transaction's originator. A charge
+    ///         names its transaction's ({chargedOuter}); a preview names the
+    ///         prospective one — a view has no transaction to read, and an
+    ///         `eth_call`'s originator is whatever its sender set, often zero.
+    function routeActor(LibVaipakam.Storage storage s, address caller, address outer)
         internal
         view
         returns (address actor, bool freeOnly)
     {
-        if (caller == s.backstopVault) {
-            return (backstopInitiator == address(0) ? tx.origin : backstopInitiator, true);
-        }
+        if (caller == s.backstopVault) return (outer, true);
         if (s.isAggregatorAdapter[caller]) {
             address op = s.adapterOperator[caller];
-            return op == address(0) ? (tx.origin, true) : (op, false);
+            return op == address(0) ? (outer, true) : (op, false);
         }
         return (caller, false);
     }
 
-    /// @notice The solver-route charge for `matchIntent`: one fill, to the actor
-    ///         {routeActor} names for the caller.
-    function chargeIntentFill(LibVaipakam.Storage storage s) internal {
-        address initiator = msg.sender == s.backstopVault ? takeBackstopInitiator() : address(0);
-        (address actor, bool freeOnly) = routeActor(s, msg.sender, initiator);
-        charge(uint8(LibVaipakam.ServiceCapacityRole.Solver), actor, freeOnly);
-    }
-
-    /// @notice The keeper-route charge for an aggregator ADAPTER acting on its own
-    ///         intent (rule 2; rule 4 when unbound): one action to its bound operator.
-    function chargeAdapterAction(LibVaipakam.Storage storage s) internal {
-        (address actor, bool freeOnly) = routeActor(s, msg.sender, address(0));
-        charge(uint8(LibVaipakam.ServiceCapacityRole.Keeper), actor, freeOnly);
-    }
-
-    /// @notice Whether a fill by `caller` would clear its capacity charge now — the
-    ///         previews' last check, through the same route rule and accrual as the
-    ///         charge. True while the solver limiter is dark.
-    function fillCovered(LibVaipakam.Storage storage s, address caller) internal view returns (bool) {
+    /// @notice Whether a fill by `caller`, initiated by `outer`, would clear its
+    ///         capacity charge now — the previews' last check, through the same
+    ///         route rule and accrual as the charge. True while the solver limiter
+    ///         is dark.
+    function fillCovered(LibVaipakam.Storage storage s, address caller, address outer) internal view returns (bool) {
         uint8 solver = uint8(LibVaipakam.ServiceCapacityRole.Solver);
         LibVaipakam.CapacityCurve storage c = s.capacityCurves[solver];
         if (c.freeTier == 0) return true;
-        (address actor, bool freeOnly) = routeActor(s, caller, address(0));
+        (address actor, bool freeOnly) = routeActor(s, caller, outer);
         (uint256 accrued,,,) = accruedNow(s, solver, actor, freeOnly);
         return accrued >= c.classCost;
     }
@@ -425,11 +439,13 @@ library LibServiceCapacity {
     // ─── slice 3 — the arming fee ───
 
     /// @notice Set the arming fee rate (ADMIN; governance later): 1e18 = the whole
-    ///         newly-armed principal. Zero keeps arming DARK (posting refused); a
+    ///         newly-armed principal, which is also the knob's ceiling
+    ///         ({MAX_ARMING_FEE_RATE}). Zero keeps arming DARK (posting refused); a
     ///         positive rate must sit at or above a positive floor — the floor is
     ///         the code's guarantee that the fee is never configured away to a
     ///         token once lit.
     function setArmingFeeRate(LibVaipakam.Storage storage s, uint256 rate) internal {
+        if (rate > MAX_ARMING_FEE_RATE) revert IVaipakamErrors.ServiceCapacityArmingFeeAboveCap(rate, MAX_ARMING_FEE_RATE);
         if (rate != 0 && (s.armingFeeFloor == 0 || rate < s.armingFeeFloor)) {
             revert IVaipakamErrors.ServiceCapacityArmingFeeBelowFloor(rate, s.armingFeeFloor);
         }
@@ -439,9 +455,11 @@ library LibServiceCapacity {
 
     /// @notice Raise the arming fee floor (ADMIN; raise-only, never back to zero).
     ///         A live rate under the new floor is refused rather than silently
-    ///         re-priced: lift the rate first.
+    ///         re-priced: lift the rate first. Never above the ceiling — a floor
+    ///         there would leave no rate the setter accepts.
     function setArmingFeeFloor(LibVaipakam.Storage storage s, uint256 floor) internal {
         if (floor <= s.armingFeeFloor) revert IVaipakamErrors.ServiceCapacityArmingFloorNotRaised(s.armingFeeFloor, floor);
+        if (floor > MAX_ARMING_FEE_RATE) revert IVaipakamErrors.ServiceCapacityArmingFeeAboveCap(floor, MAX_ARMING_FEE_RATE);
         if (s.armingFeeRate != 0 && s.armingFeeRate < floor) {
             revert IVaipakamErrors.ServiceCapacityArmingFeeBelowFloor(s.armingFeeRate, floor);
         }
@@ -474,8 +492,9 @@ library LibServiceCapacity {
         uint256 kneeArmed = principalAfter < c.bondAt4x ? principalAfter : c.bondAt4x;
         eligibleAfter = kneeArmed > before ? kneeArmed : before;
         granted = eligibleAfter - before;
-        // Full precision (#2459 r2): the rate has no upper bound, so the product
-        // must not be able to overflow; rounded up as before.
+        // Rounded up, so no armed principal is ever free. The setters bound the
+        // rate by {MAX_ARMING_FEE_RATE} (#2459 r4) and `setCurve` the knee by
+        // 2^128, so the fee is at most the grant and the product cannot overflow.
         fee = granted == 0 ? 0 : Math.mulDiv(granted, s.armingFeeRate, 1e18, Math.Rounding.Ceil);
         (, ceilingAfter) = curveAt(c, eligibleAfter);
     }

@@ -21,6 +21,8 @@ import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {LibSwap} from "../src/libraries/LibSwap.sol";
+import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
+import {LibOfferMatch} from "../src/libraries/LibOfferMatch.sol";
 
 /**
  * @title  BackstopVaultTest
@@ -79,6 +81,39 @@ contract BackstopVaultTest is SetupTest {
             ServiceCapacityFacet(address(diamond)).getCapacityBucket(role, poker).seen,
             "#1219 review: the free-tier route never touches the poker's bonded bucket"
         );
+    }
+
+    /// @dev #2459 r4 — a backstop fill's preview names the initiator the fill charges:
+    ///      the vault's fill is charged to the caller of `backstopFill`, which a view's
+    ///      own transaction need not be (and a sender-less `eth_call` never is). An
+    ///      exhausted poker previews `CapacityExhausted` and the fill then reverts for
+    ///      capacity; the SAME preview naming a fresh initiator reads clean (straddle) —
+    ///      the named initiator decides, not the view's originator.
+    function test_backstopPreview_NamesTheInitiatorTheFillCharges() public {
+        (uint256 offerId1, address borrower) = _postBorrowerOffer(base + 7 days);
+        uint256 offerId2 = _postOfferAs(borrower, base + 7 days);
+        vm.prank(borrower);
+        BackstopFacet(address(diamond)).setOfferBackstopEligible(offerId1, base + 2 days);
+        vm.prank(borrower);
+        BackstopFacet(address(diamond)).setOfferBackstopEligible(offerId2, base + 2 days);
+        vm.warp(base + 3 days);
+        uint8 role = uint8(LibVaipakam.ServiceCapacityRole.Solver);
+        vm.prank(owner);
+        ServiceCapacityFacet(address(diamond)).setCapacityCurve(role, 1e18, 1e16, 100e18, 1e18);
+        address poker = makeAddr("poker-preview");
+        vm.prank(poker);
+        BackstopFacet(address(diamond)).backstopFill(offerId1); // the poker's one free action
+        LibOfferMatch.IntentPreviewResult memory r = RiskPreviewFacet(address(diamond)).previewIntent(
+            vault, poker, vault, mockERC20, mockCollateralERC20, offerId2, PRINCIPAL
+        );
+        assertEq(uint8(r.intentError), uint8(LibOfferMatch.IntentError.CapacityExhausted), "the exhausted poker is named");
+        r = RiskPreviewFacet(address(diamond)).previewIntent(
+            vault, makeAddr("fresh-initiator"), vault, mockERC20, mockCollateralERC20, offerId2, PRINCIPAL
+        );
+        assertTrue(r.ok, "a fresh initiator's free action covers the same fill");
+        vm.prank(poker);
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.ServiceCapacityExhausted.selector, role, poker, 1e18, 0));
+        BackstopFacet(address(diamond)).backstopFill(offerId2); // the preview's verdict, executed
     }
 
     function setUp() public {

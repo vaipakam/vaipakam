@@ -101,9 +101,10 @@ async function fundBorrowerMusdc(decimals: number): Promise<void> {
   await confirm(hash, 'mint (rate-desk seeding)');
 }
 
-/** `OfferMatchFacet.previewMatch(L, B, matcher)` — the contract's own
- *  verdict the band must obey (§5.2), for the wallet the page is connected
- *  as: the app's own preview names that wallet as the matcher (#2459). */
+/** `OfferMatchFacet.previewMatch(L, B, matcher, initiator)` — the contract's
+ *  own verdict the band must obey (§5.2), for the wallet the page is
+ *  connected as: the app's own preview names that wallet as the matcher and,
+ *  since it sends the match itself, the route's initiator (#2459 r2, r4). */
 async function previewMatch(
   lenderOfferId: bigint,
   borrowerOfferId: bigint,
@@ -113,7 +114,7 @@ async function previewMatch(
     address: DIAMOND,
     abi: DIAMOND_ABI_VIEM,
     functionName: 'previewMatch',
-    args: [lenderOfferId, borrowerOfferId, matcher],
+    args: [lenderOfferId, borrowerOfferId, matcher, matcher],
   })) as { errorCode: number; matchAmount: bigint; matchRateBps: bigint };
 }
 

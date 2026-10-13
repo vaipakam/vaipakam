@@ -703,6 +703,7 @@ contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
             }
             _creditCompensation(
                 s,
+                h,
                 dayId,
                 remitId,
                 lenderShare18,
@@ -764,6 +765,7 @@ contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         }
         _creditCompensation(
             s,
+            h,
             dayId,
             remitId,
             lenderShare18,
@@ -789,10 +791,12 @@ contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
     }
 
     /// @dev Credit the per-side pools (+ the armed-fresh counter when the
-    ///      day is armed-attributable), recording what was counted so a
-    ///      later demotion can move exactly that.
+    ///      day is armed-attributable), recording what was counted — and, on
+    ///      the crediting packet `h`, where it was booked — so a later
+    ///      demotion can move exactly that, from where it now is.
     function _creditCompensation(
         LibVaipakam.Storage storage s,
+        bytes32 h,
         uint256 dayId,
         uint256 remitId,
         uint256 lenderShare18,
@@ -860,11 +864,14 @@ contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         // inverses by construction rather than by a matching day test.
         // #1566 slice 4 PR B — see {onRewardBudgetReceived}: relocated into
         // the holder under the deficit split on an activated deployment.
-        // #1566 PR C revision — into the era of the day it compensates: the live
+        // #1566 PR C revision — into the era of the day it compensates (the
+        // packet's stamp, the one figure its demotion reads too): the live
         // baseline for a live day, the retired era's row (or, once that era is
-        // final, as its release would have gone) for a retired one.
+        // final, pending surplus while Detached, else the live baseline) for a
+        // retired one — with WHERE it went recorded on packet `h`, so a demotion
+        // follows the value rather than the role it finds (#2459 r4).
         if (LibRewardCustody.active(s)) {
-            LibRewardCustody.callEraRelocateFreshIngress(amount, LibRewardCustody.custodyEraOfDay(s, dayId));
+            LibRewardCustody.callEraRelocatePacketFresh(h, amount);
         } else {
             s.rewardBudgetArmedFreshReceived += amount;
         }

@@ -2783,6 +2783,21 @@ contract TestMutatorFacet {
         return LibRewardCustody.uncreditFreshForPacket(LibVaipakam.storageSlot(), h, amount);
     }
 
+    /// @dev #2459 r4 test-only — register `adapter` as an aggregator adapter bound to
+    ///      `operator` (zero: unbound), as the factory's registration writes it.
+    function setAggregatorAdapterRaw(address adapter, address operator) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.isAggregatorAdapter[adapter] = true;
+        s.adapterOperator[adapter] = operator;
+    }
+
+    /// @dev #2459 r4 test-only — packet `h`'s fresh inflow, credited to its era with
+    ///      its booking recorded (the compensation credit's rule; the tokens must
+    ///      already sit at the Diamond).
+    function relocatePacketFreshRaw(bytes32 h, uint256 amount) external {
+        LibRewardCustody.relocatePacketFresh(LibVaipakam.storageSlot(), h, amount);
+    }
+
     /// @dev #1566 PR 1 re-review (B-N1) — mark an entry's expiry begun, as the
     ///      expiry sweep does at the removal point.
     function setRewardEntryExpiryBegunRaw(uint256 id, bool begun) external {

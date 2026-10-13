@@ -422,21 +422,52 @@ function partitionByBucket(offers: readonly OfferLite[]): {
 
 /**
  * The `previewMatch` read for THIS keeper: the preview checks the service
- * capacity of the matcher it is NAMED (#2459 r2 made it an explicit argument),
- * so the keeper names itself — the account `matchOffers` would charge. Before,
- * the preview keyed on `msg.sender`, and an `eth_call` with no `from` read as
- * the zero address, whose never-seen bucket always reads covered.
+ * capacity the route charges for the matcher and initiator it is NAMED (#2459
+ * r2 made the matcher an explicit argument, r4 the initiator), so the keeper
+ * names itself for both — it calls `matchOffers` from its own transaction.
+ * Before, the preview keyed on `msg.sender`, and an `eth_call` with no `from`
+ * read as the zero address, whose never-seen bucket always reads covered.
  */
 export function previewMatchRequest(
   ctx: Pick<KeeperContext, 'diamond' | 'wallet'>,
   lenderId: bigint,
   borrowerId: bigint,
 ) {
+  const self = ctx.wallet.account?.address ?? zeroAddress;
   return {
     address: ctx.diamond,
     abi: MATCHER_ABI,
     functionName: 'previewMatch' as const,
-    args: [lenderId, borrowerId, ctx.wallet.account?.address ?? zeroAddress] as const,
+    args: [lenderId, borrowerId, self, self] as const,
+  };
+}
+
+/**
+ * The `previewIntent` read for a fill THIS keeper submits: `solver` is the
+ * keeper, and — since it sends its own transaction — also the route's outer
+ * initiator (#2459 r4: the preview names it rather than reading the view's
+ * transaction, whose originator an `eth_call` leaves unset).
+ */
+export function previewIntentRequest(
+  diamond: Address,
+  solver: Address,
+  intent: { owner: Address; lendingAsset: Address; collateralAsset: Address },
+  borrowerId: bigint,
+  fillAmount: bigint,
+) {
+  return {
+    address: diamond,
+    abi: MATCHER_ABI,
+    functionName: 'previewIntent' as const,
+    args: [
+      solver,
+      solver,
+      intent.owner,
+      intent.lendingAsset,
+      intent.collateralAsset,
+      borrowerId,
+      fillAmount,
+    ] as const,
   };
 }
 
@@ -609,19 +640,9 @@ async function previewIntent(
   fillAmount: bigint,
 ): Promise<IntentPreview | null> {
   try {
-    const raw = (await ctx.client.readContract({
-      address: ctx.diamond,
-      abi: MATCHER_ABI,
-      functionName: 'previewIntent',
-      args: [
-        solver,
-        intent.owner,
-        intent.lendingAsset,
-        intent.collateralAsset,
-        borrowerId,
-        fillAmount,
-      ],
-    })) as Record<string, unknown>;
+    const raw = (await ctx.client.readContract(
+      previewIntentRequest(ctx.diamond, solver, intent, borrowerId, fillAmount) as never,
+    )) as Record<string, unknown>;
     return {
       ok: Boolean(raw['ok']),
       intentError: Number(raw['intentError']),

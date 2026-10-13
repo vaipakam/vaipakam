@@ -219,7 +219,7 @@ contract OfferFillModeTest is SetupTest {
         uint256 lenderId = _create(_lenderParams(LibVaipakam.FillMode.Aon, 1000 ether, 1000 ether, 0));
         uint256 borrowerId = _createBorrower(LibVaipakam.FillMode.Partial, 1000 ether, 1000 ether);
         LibOfferMatch.MatchResult memory r =
-            OfferMatchFacet(address(diamond)).previewMatch(lenderId, borrowerId, address(this));
+            OfferMatchFacet(address(diamond)).previewMatch(lenderId, borrowerId, address(this), address(this));
         // AON on lender + partial on borrower both targeting 1000:
         // overlap exists at exactly 1000, so the match is legal. The
         // AON check sees matchAmount == L.amount = 1000 → passes.
@@ -234,7 +234,7 @@ contract OfferFillModeTest is SetupTest {
         uint256 lenderId = _create(_lenderParams(LibVaipakam.FillMode.Aon, 1000 ether, 1000 ether, 0));
         uint256 borrowerId = _createBorrower(LibVaipakam.FillMode.Aon, 1000 ether, 1000 ether);
         LibOfferMatch.MatchResult memory r =
-            OfferMatchFacet(address(diamond)).previewMatch(lenderId, borrowerId, address(this));
+            OfferMatchFacet(address(diamond)).previewMatch(lenderId, borrowerId, address(this), address(this));
         assertEq(uint256(r.errorCode), uint256(LibOfferMatch.MatchError.Ok), "both-AON ok");
         assertEq(r.matchAmount, 1000 ether, "full single-shot");
     }
@@ -247,7 +247,7 @@ contract OfferFillModeTest is SetupTest {
         uint256 lenderId = _create(_lenderParams(LibVaipakam.FillMode.Aon, 1000 ether, 1000 ether, 0));
         uint256 borrowerId = _createBorrower(LibVaipakam.FillMode.Partial, 2000 ether, 2000 ether);
         LibOfferMatch.MatchResult memory r =
-            OfferMatchFacet(address(diamond)).previewMatch(lenderId, borrowerId, address(this));
+            OfferMatchFacet(address(diamond)).previewMatch(lenderId, borrowerId, address(this), address(this));
         assertEq(
             uint256(r.errorCode),
             uint256(LibOfferMatch.MatchError.AmountNoOverlap),

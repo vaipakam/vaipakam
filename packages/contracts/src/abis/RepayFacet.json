@@ -3902,6 +3902,22 @@
   },
   {
     "type": "error",
+    "name": "ServiceCapacityArmingFeeAboveCap",
+    "inputs": [
+      {
+        "name": "value",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "cap",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "ServiceCapacityArmingFeeBelowFloor",
     "inputs": [
       {

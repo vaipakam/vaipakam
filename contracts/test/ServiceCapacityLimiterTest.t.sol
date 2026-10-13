@@ -6,6 +6,7 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 import {VPFIToken} from "../src/token/VPFIToken.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {ServiceCapacityFacet} from "../src/facets/ServiceCapacityFacet.sol";
+import {BackstopFacet} from "../src/facets/BackstopFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibServiceCapacity} from "../src/libraries/LibServiceCapacity.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
@@ -32,6 +33,8 @@ contract ServiceCapacityLimiterTest is SetupTest {
     event CapacityBucketReset(uint8 indexed role, address indexed actor, uint64 fromEpoch, uint64 toEpoch);
     event CapacityCurveSet(uint8 indexed role, uint256 freeTier, uint256 freeRatePerSec, uint256 bondAt4x, uint256 classCost, uint64 epoch);
 
+    address internal backstopVault;
+
     function setUp() public {
         setupHelper();
         VPFIToken impl = new VPFIToken();
@@ -49,13 +52,27 @@ contract ServiceCapacityLimiterTest is SetupTest {
         _f().setServiceCapacityEnabled(true);
         _f().setArmingFeeFloor(1e15); // slice 3: posting needs a lit arming channel
         _f().setArmingFeeRate(1e16); // 1% of newly armed principal
+        // The backstop vault, whose fill the free-tier route charges to its initiator (#2459 r4).
+        vm.startPrank(owner);
+        BackstopFacet(address(diamond)).initializeBackstopVaultImplementation();
+        backstopVault = BackstopFacet(address(diamond)).provisionBackstopVault();
+        vm.stopPrank();
         vm.warp(1_000_000);
     }
 
     function _f() internal view returns (ServiceCapacityFacet) { return ServiceCapacityFacet(address(diamond)); }
     function _curve() internal { _f().setCapacityCurve(SOLVER, FREE, RATE, AT4X, COST); }
-    function _spend(address actor) internal { vm.prank(address(diamond)); _f().capacitySpendInternal(SOLVER, actor, 1, false); }
-    function _spendFree(address actor) internal { vm.prank(address(diamond)); _f().capacitySpendInternal(SOLVER, actor, 1, true); }
+    /// @dev A DIRECT caller's charge: the route names the caller itself (rule 1).
+    function _spend(address actor) internal { vm.prank(address(diamond)); _f().capacityChargeInternal(SOLVER, actor); }
+    /// @dev A FREE-TIER charge, through the real route (#2459 r4): the backstop vault's
+    ///      fill with no recorded initiator, so the route names the transaction's
+    ///      originator — `actor` — at the free tier (rules 3 and 4).
+    ///      The vault is read BEFORE the prank: a call in the arguments would consume it.
+    function _spendFree(address actor) internal {
+        address vault = backstopVault;
+        vm.prank(address(diamond), actor);
+        _f().capacityChargeInternal(SOLVER, vault);
+    }
     function _expectExhausted(address actor, uint256 have) internal {
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.ServiceCapacityExhausted.selector, SOLVER, actor, COST, have));
     }
@@ -129,7 +146,7 @@ contract ServiceCapacityLimiterTest is SetupTest {
         _f().setCapacityCurve(SOLVER, FREE, RATE, AT4X, COST);
         vm.prank(op);
         vm.expectRevert();
-        _f().capacitySpendInternal(SOLVER, op, 1, false); // Diamond-gated
+        _f().capacityChargeInternal(SOLVER, op); // Diamond-gated
     }
 
     /// @dev An unseen bucket starts with exactly ONE free action: the first spend
@@ -295,6 +312,6 @@ contract ServiceCapacityLimiterTest is SetupTest {
         _f().setAdapterOperator(address(0xBEEF), op);
         _curve();
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.ServiceCapacityOnlyDiamondInternal.selector, address(this)));
-        _f().capacitySpendInternal(SOLVER, op, 1, false);
+        _f().capacityChargeInternal(SOLVER, op);
     }
 }

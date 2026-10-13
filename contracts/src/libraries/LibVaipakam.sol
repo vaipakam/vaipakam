@@ -8121,6 +8121,20 @@ library LibVaipakam {
         ///      records' era legs): the era's room nets it; a resolve consumes it
         ///      and an unwind restores it.
         uint256 stagedFresh;
+        /// @dev #2459 r4, appended — the RELEASE as it happened, written once by
+        ///      the finalization: where the row went (PENDING SURPLUS on a
+        ///      Detached finalization, else the live baseline of era
+        ///      `releasedInto`, the live era at the release), what it carried
+        ///      (`released`), and how much of that demotions have since followed
+        ///      back out (`releaseDemoted`). A demotion of a credit this era booked
+        ///      follows this record — never the role of the moment — and never
+        ///      takes more through the release than `released - releaseDemoted`:
+        ///      what the release did not carry was drawn before it, and is no
+        ///      longer at the address to give back.
+        bool releasedToPending;
+        uint64 releasedInto;
+        uint256 released;
+        uint256 releaseDemoted;
     }
 
     /// @notice Slice 4 PR C-4 (#1566) — one PARKED legacy broadcast: an era-less
@@ -8435,6 +8449,17 @@ library LibVaipakam {
         bool eraCounted;
         bool classificationFinal;
         bool eraQuarantined;
+        /// @dev #2459 r4, appended — where the packet's DEMOTABLE credit (a
+        ///      compensation's counted credit, the one credit a demotion
+        ///      reverses) was BOOKED, recorded by that credit so its demotion
+        ///      follows the value instead of re-deriving a route from the
+        ///      chain's role at demotion time, which can have changed either way
+        ///      since. `creditBooking`: 0 none recorded; 1 era `creditBookedEra`'s
+        ///      books — its live baseline while it was the live era, its row once
+        ///      retired; 2 pending surplus. The era moves that follow are on the
+        ///      era's own record ({CustodyEra.releasedToPending} / `releasedInto`).
+        uint64 creditBookedEra;
+        uint8 creditBooking;
     }
 
     /// @notice #1566 transport epochs PR 3b — the TRANSPORT EPOCH of one

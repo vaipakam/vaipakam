@@ -71,17 +71,17 @@
   },
   {
     "type": "function",
-    "name": "eraRelocateFreshIngress",
+    "name": "eraRelocatePacketFresh",
     "inputs": [
+      {
+        "name": "h",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
       {
         "name": "amount",
         "type": "uint256",
         "internalType": "uint256"
-      },
-      {
-        "name": "era",
-        "type": "uint64",
-        "internalType": "uint64"
       }
     ],
     "outputs": [],
@@ -188,6 +188,26 @@
           },
           {
             "name": "stagedFresh",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "releasedToPending",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "releasedInto",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "released",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "releaseDemoted",
             "type": "uint256",
             "internalType": "uint256"
           }
@@ -341,6 +361,37 @@
   },
   {
     "type": "event",
+    "name": "CustodyCreditDemoted",
+    "inputs": [
+      {
+        "name": "packetHash",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "at",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      },
+      {
+        "name": "era",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      },
+      {
+        "name": "moved",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "CustodyEraClosed",
     "inputs": [
       {
@@ -417,6 +468,12 @@
         "type": "bool",
         "indexed": false,
         "internalType": "bool"
+      },
+      {
+        "name": "into",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
       }
     ],
     "anonymous": false
@@ -458,6 +515,37 @@
       },
       {
         "name": "toRestitution",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "IngressPacketCreditBooked",
+    "inputs": [
+      {
+        "name": "packetHash",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "booking",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      },
+      {
+        "name": "era",
+        "type": "uint64",
+        "indexed": true,
+        "internalType": "uint64"
+      },
+      {
+        "name": "amount",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -4038,6 +4126,22 @@
         "name": "role",
         "type": "uint8",
         "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ServiceCapacityArmingFeeAboveCap",
+    "inputs": [
+      {
+        "name": "value",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "cap",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ]
   },

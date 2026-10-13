@@ -111,7 +111,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](257); // PR 1 re-review +2 raw (expiry begun, re-credit tally); A2-iii +3 raw (attested caps, ledger reservation, day needs); 3b-ii-A2 r22 +loanSideRewardPaidRaw; #2342 +setLegacyFrozenVpfiRaw; 3b-ii-A2 +13 raw reads +5 raw writes; #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1, then -1 with the pre-list scene (Codex #2296 items 2 and 4); r26 +1 flexible caps; 3b-ii-A2 r21 +1 ledger reservation
+        selectors = new bytes4[](259); // #2459 r4 +relocatePacketFreshRaw +setAggregatorAdapterRaw; PR 1 re-review +2 raw (expiry begun, re-credit tally); A2-iii +3 raw (attested caps, ledger reservation, day needs); 3b-ii-A2 r22 +loanSideRewardPaidRaw; #2342 +setLegacyFrozenVpfiRaw; 3b-ii-A2 +13 raw reads +5 raw writes; #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1, then -1 with the pre-list scene (Codex #2296 items 2 and 4); r26 +1 flexible caps; 3b-ii-A2 r21 +1 ledger reservation
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -557,6 +557,8 @@ contract HelperTest {
         selectors[n++] = TestMutatorFacet.creditFreshToEraFromRowRaw.selector; // PR C-1
         selectors[n++] = TestMutatorFacet.setCustodyEraCountersRaw.selector; // PR C-1
         selectors[n++] = TestMutatorFacet.uncreditFreshForPacketRaw.selector; // PR C-5
+        selectors[n++] = TestMutatorFacet.relocatePacketFreshRaw.selector; // #2459 r4
+        selectors[n++] = TestMutatorFacet.setAggregatorAdapterRaw.selector; // #2459 r4
         selectors[n++] = TestMutatorFacet.setRewardEntryExpiryBegunRaw.selector; // PR 1 re-review B-N1
         selectors[n++] = TestMutatorFacet.setFreshReCreditedRaw.selector; // PR 1 re-review C-1
         // #951 v2 (Codex #959 bind-to-live) — setSaleListingCollateralRaw removed
@@ -2641,7 +2643,7 @@ contract HelperTest {
         selectors[6] = RewardEraFacet.eraDrawForDay.selector;
         // #1566 PR C revision — the era routing of a packet's fresh.
         selectors[7] = RewardEraFacet.eraCreditFreshFromRow.selector;
-        selectors[8] = RewardEraFacet.eraRelocateFreshIngress.selector;
+        selectors[8] = RewardEraFacet.eraRelocatePacketFresh.selector;
         selectors[9] = RewardEraFacet.eraUncreditFresh.selector;
         // PR C-4 — the parked-message lane.
         selectors[10] = RewardEraFacet.getParkedBroadcast.selector;
@@ -2660,7 +2662,7 @@ contract HelperTest {
         selectors[5] = ServiceCapacityFacet.getCapacityDeposit.selector;
         selectors[6] = ServiceCapacityFacet.getServiceCapacityEscrow.selector;
         selectors[7] = ServiceCapacityFacet.setCapacityCurve.selector;
-        selectors[8] = ServiceCapacityFacet.capacitySpendInternal.selector;
+        selectors[8] = ServiceCapacityFacet.capacityChargeInternal.selector;
         selectors[9] = ServiceCapacityFacet.setAdapterOperator.selector;
         selectors[10] = ServiceCapacityFacet.getCapacityCurve.selector;
         selectors[11] = ServiceCapacityFacet.getCapacityBucket.selector;

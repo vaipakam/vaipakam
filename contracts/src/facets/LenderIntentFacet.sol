@@ -595,7 +595,7 @@ contract LenderIntentFacet is
         // #1219 review — an aggregator ADAPTER rolling its own intent acts as the
         // owner, so no keeper is named above; its keeper's action is charged to the
         // operator bound to the adapter (rule 2; rule 4 when unbound).
-        else if (s.isAggregatorAdapter[msg.sender]) LibServiceCapacity.chargeAdapterAction(s);
+        else if (s.isAggregatorAdapter[msg.sender]) LibServiceCapacity.chargeKeeper();
 
         // The lender claim (principal + interest) must be present, unconsumed,
         // and the intent's plain ERC-20 lending asset.

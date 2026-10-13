@@ -99,16 +99,19 @@ contract RewardEraFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaipak
         );
     }
 
-    /// @notice #1566 PR C revision — a fresh inflow for era `era` (Diamond-internal:
-    ///         the compensation credit). The rule is {LibRewardCustody.relocateFreshIngressToEra}.
-    function eraRelocateFreshIngress(uint256 amount, uint64 era) external {
+    /// @notice #1566 PR C revision — packet `h`'s fresh inflow, credited to the
+    ///         packet's era with its booking recorded on the packet (#2459 r4;
+    ///         Diamond-internal: the compensation credit). The rule is
+    ///         {LibRewardCustody.relocatePacketFresh}.
+    function eraRelocatePacketFresh(bytes32 h, uint256 amount) external {
         if (msg.sender != address(this)) revert RewardCustodyOnlyDiamondInternal(msg.sender);
-        LibRewardCustody.relocateFreshIngressToEra(LibVaipakam.storageSlot(), amount, era);
+        LibRewardCustody.relocatePacketFresh(LibVaipakam.storageSlot(), h, amount);
     }
 
     /// @notice #1566 PR C revision — a demotion of packet `h`'s credit, taken back
-    ///         from where it went (Diamond-internal: the compensation demotion).
-    ///         The rule is {LibRewardCustody.uncreditFreshForPacket}.
+    ///         from where its value is, by following the credit's recorded booking
+    ///         and the era moves recorded since (#2459 r4; Diamond-internal: the
+    ///         compensation demotion). The rule is {LibRewardCustody.uncreditFreshForPacket}.
     function eraUncreditFresh(bytes32 h, uint256 amount) external returns (uint256 moved) {
         if (msg.sender != address(this)) revert RewardCustodyOnlyDiamondInternal(msg.sender);
         return LibRewardCustody.uncreditFreshForPacket(LibVaipakam.storageSlot(), h, amount);
