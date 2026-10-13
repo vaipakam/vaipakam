@@ -978,6 +978,7 @@ export function ForcedCloseCard({
       roster: read.roster,
       sale,
       agentOrigin: agentQuoteOrigin(),
+      txOrigin: address,
     });
     if (route.kind === 'no-quote') {
       // One decision for the sentence (`noQuoteReason`), so it claims only
@@ -1097,44 +1098,52 @@ export function ForcedCloseCard({
           account: address,
         });
       }
-      // The sale interlock AGAIN, as the last read before the wallet is
-      // asked. Everything above awaits the network — the quote round-trips,
-      // the preview, the simulation — and neither of the last two looks at
-      // sale linkage, so a sale accepted anywhere in that stretch would be
-      // stranded exactly as the first check describes. Placing it last
-      // leaves only the wallet prompt and inclusion uncovered, which no
-      // read from the app can close: `triggerDefault` itself does not
-      // check for an accepted sale (#2078 tracks the contract-side guard).
-      const lateSaleBlock = await preSubmitBlock();
+      // THE FINAL GATE: the last reads before the wallet is asked, run
+      // together so neither can come after the other (round 10). Two facts
+      // the chain will not check for us:
+      //
+      //  - An accepted sale of this lender position. `triggerDefault` does
+      //    not inspect sale linkage (#2078), so closing out after a buyer
+      //    accepted strands the buyer's principal. Everything above awaits
+      //    the network — quotes, preview, simulation — and none of it looks
+      //    at sale linkage.
+      //  - The collateral the quotes were made for. `triggerDefault` sells
+      //    the loan's LIVE collateral, but an aggregator's calldata is for
+      //    the quoted amount; after a top-up the adapter can sell only the
+      //    old amount, hand the rest back and still report a sale, leaving
+      //    the remainder in neither party's claim (#2472).
+      //
+      // Read in one `Promise.all` and judged only once both are in, so no
+      // network await sits between either read and the write. What stays
+      // uncovered is the wallet prompt and inclusion, which no read from
+      // the app can close.
+      const [lateSaleBlock, liveCollateral] = await Promise.all([
+        preSubmitBlock(),
+        quotedAmount !== null && publicClient && routeDiamond
+          ? (
+              publicClient.readContract({
+                address: routeDiamond,
+                abi: DIAMOND_ABI_VIEM,
+                functionName: 'getLoanDetails',
+                args: [BigInt(loanId)],
+              }) as Promise<{ collateralAmount: bigint }>
+            ).then(
+              (loan) => loan.collateralAmount,
+              () => 'unread' as const,
+            )
+          : Promise.resolve(null),
+      ]);
       if (lateSaleBlock) {
         setError(lateSaleBlock);
         return;
       }
-      // And the collateral the quotes were made for, read at the same
-      // point. `triggerDefault` sells the loan's LIVE collateral, but an
-      // aggregator's calldata is for the amount it was quoted; if the
-      // borrower has added collateral since, the adapter can sell only the
-      // old amount, hand the rest back, and still report a sale — leaving
-      // that remainder in neither party's claim. The contract does not
-      // refuse that yet (#2472), so the app refuses to send stale prices.
-      if (quotedAmount !== null && publicClient && routeDiamond) {
-        let live: bigint;
-        try {
-          const loan = (await publicClient.readContract({
-            address: routeDiamond,
-            abi: DIAMOND_ABI_VIEM,
-            functionName: 'getLoanDetails',
-            args: [BigInt(loanId)],
-          })) as { collateralAmount: bigint };
-          live = loan.collateralAmount;
-        } catch {
-          setError(copy.forcedClose.routeRosterFailed);
-          return;
-        }
-        if (live !== quotedAmount) {
-          setError(copy.forcedClose.routeCollateralChanged);
-          return;
-        }
+      if (liveCollateral === 'unread') {
+        setError(copy.forcedClose.routeRosterFailed);
+        return;
+      }
+      if (liveCollateral !== null && liveCollateral !== quotedAmount) {
+        setError(copy.forcedClose.routeCollateralChanged);
+        return;
       }
       // STAMP ON THE HASH, NOT ON THE RECEIPT (round 47 P1).
       //

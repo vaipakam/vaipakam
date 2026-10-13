@@ -17,6 +17,8 @@
  *     buyToken:   string;   // ERC-20 principal asset
  *     sellAmount: string;   // Decimal string (no "0x", no scientific)
  *     taker:      string;   // The swap ADAPTER that will call the swap target
+ *     txOrigin?:  string;   // The EOA that will submit the transaction. 0x
+ *                           // asks for it when the taker is a contract.
  *     slippageBps?: number; // Default 600 (6% — matches on-chain ceiling)
  *   }
  *
@@ -46,6 +48,7 @@ interface QuoteRequest {
   buyToken: string;
   sellAmount: string;
   taker: string;
+  txOrigin?: string;
   slippageBps?: number;
 }
 
@@ -71,6 +74,8 @@ export async function handle0xQuote(
   url.searchParams.set('buyToken', body.buyToken);
   url.searchParams.set('sellAmount', body.sellAmount);
   url.searchParams.set('taker', body.taker);
+  // The taker is the adapter CONTRACT; 0x wants the submitting EOA too.
+  if (body.txOrigin) url.searchParams.set('txOrigin', body.txOrigin);
   // 0x expresses slippage as a decimal string ("0.06" = 6%).
   const slippageBps = body.slippageBps ?? 600;
   url.searchParams.set('slippageBps', String(slippageBps));
@@ -177,6 +182,9 @@ async function parseBody(req: Request): Promise<QuoteRequest | null> {
   if (typeof o.buyToken !== 'string' || !HEX_ADDR.test(o.buyToken)) return null;
   if (typeof o.sellAmount !== 'string' || !DECIMAL.test(o.sellAmount)) return null;
   if (typeof o.taker !== 'string' || !HEX_ADDR.test(o.taker)) return null;
+  if (o.txOrigin !== undefined && (typeof o.txOrigin !== 'string' || !HEX_ADDR.test(o.txOrigin))) {
+    return null;
+  }
   if (
     o.slippageBps !== undefined &&
     (typeof o.slippageBps !== 'number' ||
@@ -192,6 +200,7 @@ async function parseBody(req: Request): Promise<QuoteRequest | null> {
     buyToken: o.buyToken,
     sellAmount: o.sellAmount,
     taker: o.taker,
+    txOrigin: typeof o.txOrigin === 'string' ? o.txOrigin : undefined,
     slippageBps: typeof o.slippageBps === 'number' ? o.slippageBps : undefined,
   };
 }

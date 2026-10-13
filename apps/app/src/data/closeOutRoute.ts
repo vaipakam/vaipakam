@@ -274,8 +274,11 @@ async function agentQuote(
       const err = ((await res.json().catch(() => null)) as { error?: unknown } | null)?.error;
       if (typeof err === 'string' && err.endsWith('-not-configured')) return 'unconfigured';
     }
-    // A 4xx other than a rate limit is the aggregator answering — no route
-    // for this pair or size. A 429 or 5xx is no answer at all.
+    // A rejected credential is the deployment's configuration, not the
+    // market: it stays wrong until an operator replaces the key.
+    if (res.status === 401 || res.status === 403) return 'unconfigured';
+    // Any other 4xx except a rate limit is the aggregator answering — no
+    // route for this pair or size. A 429 or 5xx is no answer at all.
     return res.status >= 400 && res.status < 500 && res.status !== 429 ? 'declined' : 'unanswered';
   } catch {
     return 'unanswered';
@@ -301,6 +304,9 @@ export async function buildCloseOutRoute(deps: {
   roster: AdapterRoster;
   sale: CloseOutSale;
   agentOrigin: string | null;
+  /** The wallet that will submit the close-out. The aggregators' taker is
+   *  the adapter contract; 0x asks for the submitting EOA as well. */
+  txOrigin?: Address;
   fetchImpl?: typeof fetch;
 }): Promise<CloseOutRoute> {
   const { client, chainId, diamond, roster, sale, agentOrigin } = deps;
@@ -326,6 +332,7 @@ export async function buildCloseOutRoute(deps: {
           buyToken: sale.buyToken,
           sellAmount: sale.sellAmount.toString(),
           taker: slot.address,
+          ...(deps.txOrigin ? { txOrigin: deps.txOrigin } : {}),
         });
         if (typeof answer === 'string') return none(answer);
         const q =

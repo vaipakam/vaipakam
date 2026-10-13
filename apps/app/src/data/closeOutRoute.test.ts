@@ -494,6 +494,33 @@ describe('buildCloseOutRoute — route checks', () => {
     }
   });
 
+  it('reads a rejected proxy credential as unconfigured, not as a decline', async () => {
+    for (const status of [401, 403]) {
+      const impl = (async () => new Response('{}', { status })) as unknown as typeof fetch;
+      expect(await run(noChain, { zeroex: S(0) }, impl)).toMatchObject({
+        outcomes: [{ kind: 'zeroex', outcome: 'unconfigured' }],
+      });
+    }
+  });
+
+  it('names the submitting wallet as txOrigin on every aggregator request', async () => {
+    const { impl, seen } = fakeFetch({});
+    await buildCloseOutRoute({
+      client: noChain,
+      chainId: 8453,
+      diamond: A(0xd),
+      roster: { zeroex: S(0), oneinch: S(1) },
+      sale,
+      agentOrigin: 'https://agent.example',
+      txOrigin: A(0xe0a),
+      fetchImpl: impl,
+    });
+    expect(seen.map((r) => (r.body as { txOrigin?: Address }).txOrigin)).toEqual([
+      A(0xe0a),
+      A(0xe0a),
+    ]);
+  });
+
   it('marks a UniV3 quoter that never answered as unanswered, not as no pool', async () => {
     const client = {
       readContract: noChain.readContract,
