@@ -101,6 +101,9 @@ export async function probeSaleHoldLive(
   loanId: number,
   lenderTokenId: string,
   account: `0x${string}` | undefined,
+  /** Read every fact at this block instead of the latest, so a caller can
+   *  judge this beside other reads from the same block. */
+  blockNumber?: bigint,
 ): Promise<SaleListingHoldState> {
   // LOCK FIRST. The lender position NFT carries the EarlyWithdrawalSale
   // lock for the WHOLE listing lifecycle — stamped at creation, released
@@ -124,6 +127,7 @@ export async function probeSaleHoldLive(
           abi: DIAMOND_ABI_VIEM,
           functionName: 'positionLock',
           args: [BigInt(lenderTokenId)],
+          blockNumber,
         }),
       ) === LOCK_EARLY_WITHDRAWAL_SALE;
     if (!saleLocked) return 'none';
@@ -139,6 +143,7 @@ export async function probeSaleHoldLive(
       functionName: 'teardownStaleSaleListing',
       args: [BigInt(loanId)],
       account,
+      blockNumber,
     });
     return classifyTeardownProbe({ ok: true });
   } catch (err) {

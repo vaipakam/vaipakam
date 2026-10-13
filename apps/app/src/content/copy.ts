@@ -2639,6 +2639,18 @@ const copySource = {
     // only the part from the opposing position goes elsewhere.
     matcherIncentiveNotPaid:
       'One part works differently for your wallet. The protocol normally pays whoever submits this transaction a small matcher incentive, straight to the submitting wallet — but it is not paid to a wallet the sanctions oracle has flagged, and yours is flagged. The close-out itself still runs. The part of that incentive which would have been taken from this position stays in what you claim; the part that would have come from the opposing position goes to that position’s lender instead.',
+    // #2463 round 11 — the same incentive, on the rows where a match is
+    // only a possibility (`matchMayAppear`). `triggerDefault` dispatches
+    // the match before any other branch and pays the matcher straight to
+    // the submitting wallet, so a row whose claim note says nothing moves
+    // to the wallet by itself states this exception beside it. One
+    // sentence per eligibility case, for the reasons above.
+    matchRaceIncentiveYours:
+      'If it is settled against an opposing position instead, there is one more difference: the protocol pays whoever submits this transaction a small matcher incentive, sent straight to the submitting wallet. It comes out of the settled amount rather than on top of it, so in that case submitting this yourself does move that part to you immediately, and what you claim later is smaller by the same amount.',
+    matchRaceIncentiveNotPaid:
+      'If it is settled against an opposing position instead, the protocol normally pays whoever submits this transaction a small matcher incentive, straight to the submitting wallet, but not to a wallet the sanctions oracle has flagged, and yours is flagged. The part that would have been taken from this position then stays in what you claim; the part that would have come from the opposing position goes to that position’s lender instead.',
+    matchRaceIncentiveUnknown:
+      'If it is settled against an opposing position instead, the protocol pays whoever submits this transaction a small matcher incentive, straight to the submitting wallet, unless the sanctions oracle has flagged that wallet. The check on yours has not come back, so we cannot yet tell you which of those applies.',
     matcherIncentiveUnknown:
       'One part is not settled yet. The protocol pays whoever submits this transaction a small matcher incentive, straight to the submitting wallet, unless the sanctions oracle has flagged that wallet — and the check on yours has not come back. Until it does, we cannot tell you which of those applies to you.',
     // Round 40 P2 — the shared note names a collateral valuation, and

@@ -76,6 +76,7 @@ import {
   type RoutePosture,
   previewCloseOut,
   readCloseOutRoster,
+  transactionOrigin,
 } from '../data/closeOutRoute';
 
 /** How long a close-out may go unaccounted for before the card SAYS SO.
@@ -203,7 +204,7 @@ export function ForcedCloseCard({
    *  all, so a close-out that would strand an accepted sale's manual
    *  completion simulates and executes perfectly (round 32 P1). This is
    *  a product-level interlock, and it has to be asked as one. */
-  preSubmitBlock: () => Promise<string | null>;
+  preSubmitBlock: (atBlock?: bigint) => Promise<string | null>;
 }) {
   const { write, ready } = useDiamondWrite();
   const { walletChain, address } = useActiveChain();
@@ -978,7 +979,7 @@ export function ForcedCloseCard({
       roster: read.roster,
       sale,
       agentOrigin: agentQuoteOrigin(),
-      txOrigin: address,
+      txOrigin: address ? await transactionOrigin(publicClient, address) : null,
     });
     if (route.kind === 'no-quote') {
       // One decision for the sentence (`noQuoteReason`), so it claims only
@@ -1098,9 +1099,12 @@ export function ForcedCloseCard({
           account: address,
         });
       }
-      // THE FINAL GATE: the last reads before the wallet is asked, run
-      // together so neither can come after the other (round 10). Two facts
-      // the chain will not check for us:
+      // THE FINAL GATE: the last reads before the wallet is asked, both
+      // PINNED TO ONE BLOCK (round 11), so they describe a single state of
+      // the chain. Started together was not enough: either read could come
+      // back first, and a sale accepted or collateral added in the gap
+      // would then pass as a pair no block ever held. Two facts the chain
+      // will not check for us:
       //
       //  - An accepted sale of this lender position. `triggerDefault` does
       //    not inspect sale linkage (#2078), so closing out after a buyer
@@ -1113,12 +1117,22 @@ export function ForcedCloseCard({
       //    old amount, hand the rest back and still report a sale, leaving
       //    the remainder in neither party's claim (#2472).
       //
-      // Read in one `Promise.all` and judged only once both are in, so no
-      // network await sits between either read and the write. What stays
-      // uncovered is the wallet prompt and inclusion, which no read from
-      // the app can close.
+      // Judged only once both are in, so no network await sits between
+      // either read and the write. What stays uncovered is the blocks
+      // between this one and inclusion, and the wallet prompt: no read from
+      // the app can close those, and the on-chain guards that would are
+      // #2078 and #2472.
+      let gateBlock: bigint | undefined;
+      if (publicClient) {
+        try {
+          gateBlock = await publicClient.getBlockNumber({ cacheTime: 0 });
+        } catch {
+          setError(copy.saleHold.checkFailed);
+          return;
+        }
+      }
       const [lateSaleBlock, liveCollateral] = await Promise.all([
-        preSubmitBlock(),
+        preSubmitBlock(gateBlock),
         quotedAmount !== null && publicClient && routeDiamond
           ? (
               publicClient.readContract({
@@ -1126,6 +1140,7 @@ export function ForcedCloseCard({
                 abi: DIAMOND_ABI_VIEM,
                 functionName: 'getLoanDetails',
                 args: [BigInt(loanId)],
+                blockNumber: gateBlock,
               }) as Promise<{ collateralAmount: bigint }>
             ).then(
               (loan) => loan.collateralAmount,
@@ -1537,6 +1552,20 @@ export function ForcedCloseCard({
       ? copy.forcedClose.matcherIncentiveNotPaid
       : copy.forcedClose.matcherIncentiveYours;
 
+  /** The matcher incentive again, for a row where a match is only a
+   *  possibility (`matchRace`): the claim note there says nothing moves to
+   *  the wallet by itself, which a match makes untrue for the submitter.
+   *  Withheld exactly where the row's own incentive is, for the same
+   *  reason: no button, so no submitter to describe. */
+  const matchRaceIncentiveNote =
+    !view.matchRace || (readiness === 'ready-needs-route' && routeAvailability !== 'available')
+      ? null
+      : !sanctions.ready
+        ? copy.forcedClose.matchRaceIncentiveUnknown
+        : sanctions.flagged
+          ? copy.forcedClose.matchRaceIncentiveNotPaid
+          : copy.forcedClose.matchRaceIncentiveYours;
+
   /** The same three cases for the caller incentive a successful sale
    *  pays (#2463). `triggerDefault` pays it to `msg.sender` out of the
    *  proceeds and withholds it from a flagged caller, leaving it in the
@@ -1786,6 +1815,11 @@ export function ForcedCloseCard({
           {incentive !== null ? (
             <p className="field-hint" data-testid="forced-close-incentive">
               {incentive === 'matcher' ? matcherIncentiveNote : saleIncentiveNote}
+            </p>
+          ) : null}
+          {matchRaceIncentiveNote !== null ? (
+            <p className="field-hint" data-testid="forced-close-match-race-incentive">
+              {matchRaceIncentiveNote}
             </p>
           ) : null}
         </>

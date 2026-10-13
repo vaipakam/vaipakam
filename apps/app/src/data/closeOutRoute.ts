@@ -79,6 +79,11 @@ export interface CloseOutSale {
  *  - `no-proxy` — an aggregator this deployment has no quote proxy for, so
  *    it was not asked.
  *  - `unconfigured` — the quote proxy answered that it has no key for it.
+ *  - `no-origin` — 0x, not asked because the account that will originate
+ *    the transaction is unknown: the connected account is a contract
+ *    wallet (a Safe), whose transaction an owner or relayer sends. 0x
+ *    binds some of its liquidity to the originating EOA, so a quote made
+ *    for the wrong origin is one the close-out may not be able to use.
  *  - `other-pools` — a UniV3 adapter whose router belongs to a different
  *    V3 factory from the quoter this app knows, so this app cannot price it.
  */
@@ -88,6 +93,7 @@ export type SlotOutcome =
   | 'unanswered'
   | 'no-proxy'
   | 'unconfigured'
+  | 'no-origin'
   | 'other-pools';
 
 export type CloseOutRoute =
@@ -128,11 +134,39 @@ export function noQuoteReason(
   const has = (o: SlotOutcome) => route.outcomes.some((x) => x.outcome === o);
   if (has('unanswered')) return 'unanswered';
   const configGap = has('no-proxy') || has('unconfigured');
-  const leftOut = configGap || has('other-pools');
+  const unaskable = has('other-pools') || has('no-origin');
+  const leftOut = configGap || unaskable;
   if (!has('declined')) {
-    return configGap && !has('other-pools') ? 'unconfigured' : 'unreachable';
+    return configGap && !unaskable ? 'unconfigured' : 'unreachable';
   }
   return leftOut ? 'partly-reached' : 'declined';
+}
+
+/** The EIP-7702 delegation designator: an EOA that delegated its code
+ *  still originates its own transactions. */
+const DELEGATED_EOA_PREFIX = '0xef0100';
+
+/**
+ * The account that will originate the close-out transaction, as far as the
+ * app can know it: the connected account when that account is an EOA
+ * (including one with an EIP-7702 delegation), `null` otherwise.
+ *
+ * A contract wallet (the Safe connector) is not the origin of its own
+ * transactions: an owner or a relayer sends them, and the app cannot tell
+ * which. A failed code read is not known either, so it is `null` too.
+ */
+export async function transactionOrigin(
+  client: Pick<PublicClient, 'getCode'>,
+  account: Address,
+): Promise<Address | null> {
+  let code;
+  try {
+    code = await client.getCode({ address: account });
+  } catch {
+    return null;
+  }
+  if (code === undefined || code === '0x') return account;
+  return code.toLowerCase().startsWith(DELEGATED_EOA_PREFIX) ? account : null;
 }
 
 /** The agent's origin for quotes, or `null` when the deployment has none. */
@@ -304,9 +338,11 @@ export async function buildCloseOutRoute(deps: {
   roster: AdapterRoster;
   sale: CloseOutSale;
   agentOrigin: string | null;
-  /** The wallet that will submit the close-out. The aggregators' taker is
-   *  the adapter contract; 0x asks for the submitting EOA as well. */
-  txOrigin?: Address;
+  /** The account that will originate the close-out transaction. The
+   *  aggregators' taker is the adapter contract; 0x asks for the
+   *  originating EOA as well. `null` when it is not known (a contract
+   *  wallet), and then 0x is not asked: see `no-origin`. */
+  txOrigin: Address | null;
   fetchImpl?: typeof fetch;
 }): Promise<CloseOutRoute> {
   const { client, chainId, diamond, roster, sale, agentOrigin } = deps;
@@ -326,6 +362,7 @@ export async function buildCloseOutRoute(deps: {
     switch (kind) {
       case 'zeroex':
       case 'oneinch': {
+        if (kind === 'zeroex' && deps.txOrigin === null) return none('no-origin');
         const answer = await agentQuote(fetchImpl, agentOrigin!, kind, {
           chainId,
           sellToken: sale.sellToken,

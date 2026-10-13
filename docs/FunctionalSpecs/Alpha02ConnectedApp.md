@@ -1604,7 +1604,22 @@ is the borrower's own money.
   the incentive is reduced by the sale's realised slippage and can be nothing,
   and is never paid to a wallet the sanctions oracle has flagged. The surface
   says which of those applies to the viewer, or that it does not yet know, and
-  names no amount.
+  names no amount. Because a settlement against an opposing position may be
+  reached instead, and that route pays its submitter a matcher incentive
+  straight to the submitting wallet, the surface also states that payment as
+  conditional on the match, for the viewer's own wallet, wherever it says a
+  match may appear and the viewer can submit.
+- An aggregator that binds its liquidity to the account originating the
+  transaction is asked only when the app knows that account. Where the
+  connected account is a contract wallet, whose transactions an owner or a
+  relayer sends, that aggregator is not asked, and a confirmation that then
+  finds no price says some exchanges could not be asked from here.
+- The last checks before the wallet is asked (that no buyer has accepted a
+  sale of the position, and that the collateral is still the amount the
+  prices were collected for) are read at one block, so they describe one
+  state of the chain. They cannot cover the time between that block and the
+  transaction running; the app says what it checked, not that the race is
+  closed.
 - Where the protocol's own exchange list has no enabled entry on that network
   (or none is registered), no caller can close the position by sale until
   governance enables one; the app says that, rather than suggesting an

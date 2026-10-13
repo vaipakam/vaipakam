@@ -7,6 +7,7 @@ import {
 } from 'viem';
 import {
   buildCloseOutRoute,
+  transactionOrigin,
   noQuoteReason,
   previewCloseOut,
   quotableVenues,
@@ -78,6 +79,7 @@ describe('buildCloseOutRoute', () => {
       roster: { zeroex: S(3), oneinch: S(1) },
       sale,
       agentOrigin: 'https://agent.example',
+      txOrigin: A(0xe0a),
       fetchImpl: impl,
     });
     expect(route.kind).toBe('route');
@@ -93,6 +95,7 @@ describe('buildCloseOutRoute', () => {
       buyToken: A(2),
       sellAmount: (10n ** 18n).toString(),
       taker: A(0x103),
+      txOrigin: A(0xe0a),
     });
     expect(seen[1].body).toMatchObject({ taker: A(0x101) });
   });
@@ -115,6 +118,7 @@ describe('buildCloseOutRoute', () => {
       roster: { zeroex: [...S(0), ...S(1)] },
       sale,
       agentOrigin: 'https://agent.example',
+      txOrigin: A(0xe0a),
       fetchImpl: impl,
     });
     expect(seen.map((r) => (r.body as { taker: Address }).taker)).toEqual([A(0x100), A(0x101)]);
@@ -132,6 +136,7 @@ describe('buildCloseOutRoute', () => {
       roster: { zeroex: S(0), oneinch: S(1) },
       sale,
       agentOrigin: 'https://agent.example',
+      txOrigin: A(0xe0a),
       fetchImpl: impl,
     });
     expect(route.kind === 'route' && route.venues).toEqual(['oneinch']);
@@ -174,6 +179,7 @@ describe('buildCloseOutRoute', () => {
       roster: { testnetMock: S(0) },
       sale,
       agentOrigin: null,
+      txOrigin: A(0xe0a),
     });
 
   it('quotes the testnet mock from its own state and ranks it like any venue', async () => {
@@ -187,6 +193,7 @@ describe('buildCloseOutRoute', () => {
       roster: { testnetMock: S(0), zeroex: S(1) },
       sale,
       agentOrigin: 'https://agent.example',
+      txOrigin: A(0xe0a),
       fetchImpl: impl,
     });
     expect(route).toEqual({
@@ -212,6 +219,7 @@ describe('buildCloseOutRoute', () => {
       roster: { zeroex: S(0), univ3: S(2) },
       sale,
       agentOrigin: 'https://agent.example',
+      txOrigin: A(0xe0a),
       fetchImpl: impl,
     });
     expect(route).toEqual({
@@ -238,6 +246,7 @@ describe('buildCloseOutRoute', () => {
       roster: { zeroex: S(0) },
       sale,
       agentOrigin: 'https://agent.example',
+      txOrigin: A(0xe0a),
       fetchImpl: impl,
     });
     expect(route.kind).toBe('no-quote');
@@ -255,6 +264,7 @@ describe('buildCloseOutRoute', () => {
       roster: { zeroex: S(0) },
       sale,
       agentOrigin: 'https://agent.example',
+      txOrigin: A(0xe0a),
       fetchImpl: impl,
     });
     expect(route).toEqual({
@@ -302,6 +312,7 @@ describe('buildCloseOutRoute — UniV3', () => {
       roster: { univ3: S(2) },
       sale,
       agentOrigin: null,
+      txOrigin: A(0xe0a),
     });
     expect(route.kind === 'route' && route.calls).toEqual([
       { adapterIdx: 2n, data: encodeAbiParameters([{ type: 'uint24' }], [3000]) },
@@ -440,6 +451,14 @@ describe('noQuoteReason', () => {
   it('says unreachable when nothing declined and a venue cannot be priced here', () => {
     expect(noQuoteReason(nq(['univ3', 'other-pools']), false)).toBe('unreachable');
   });
+  it('says unreachable, not unconfigured, when 0x was skipped for an unknown origin', () => {
+    expect(noQuoteReason(nq(['zeroex', 'no-origin'], ['oneinch', 'unconfigured']), false)).toBe(
+      'unreachable',
+    );
+    expect(noQuoteReason(nq(['zeroex', 'no-origin'], ['univ3', 'declined']), false)).toBe(
+      'partly-reached',
+    );
+  });
   it('says partly-reached when venues declined and others were left out', () => {
     expect(noQuoteReason(nq(['univ3', 'declined'], ['oneinch', 'no-proxy']), false)).toBe(
       'partly-reached',
@@ -461,6 +480,7 @@ describe('buildCloseOutRoute — route checks', () => {
       roster,
       sale,
       agentOrigin: impl ? 'https://agent.example' : null,
+      txOrigin: A(0xe0a),
       fetchImpl: impl,
     });
   const quoteOk = fakeFetch({
@@ -521,6 +541,27 @@ describe('buildCloseOutRoute — route checks', () => {
     ]);
   });
 
+  it('does not ask 0x when the originating account is unknown, and still asks 1inch', async () => {
+    const { impl, seen } = fakeFetch({});
+    const route = await buildCloseOutRoute({
+      client: noChain,
+      chainId: 8453,
+      diamond: A(0xd),
+      roster: { zeroex: S(0), oneinch: S(1) },
+      sale,
+      agentOrigin: 'https://agent.example',
+      txOrigin: null,
+      fetchImpl: impl,
+    });
+    expect(seen).toHaveLength(1);
+    expect(route).toMatchObject({
+      outcomes: [
+        { kind: 'zeroex', outcome: 'no-origin' },
+        { kind: 'oneinch', outcome: 'declined' },
+      ],
+    });
+  });
+
   it('marks a UniV3 quoter that never answered as unanswered, not as no pool', async () => {
     const client = {
       readContract: noChain.readContract,
@@ -561,5 +602,25 @@ describe('buildCloseOutRoute — route checks', () => {
         { kind: 'oneinch', outcome: 'no-proxy' },
       ],
     });
+  });
+});
+
+describe('transactionOrigin', () => {
+  const at = (code: unknown) =>
+    ({
+      getCode: async () => {
+        if (code instanceof Error) throw code;
+        return code;
+      },
+    }) as unknown as Parameters<typeof transactionOrigin>[0];
+  const me = A(0xe0a);
+  it('is the account itself for an EOA, with or without a 7702 delegation', async () => {
+    expect(await transactionOrigin(at(undefined), me)).toBe(me);
+    expect(await transactionOrigin(at('0x'), me)).toBe(me);
+    expect(await transactionOrigin(at('0xef0100' + '11'.repeat(20)), me)).toBe(me);
+  });
+  it('is unknown for a contract wallet or a failed read', async () => {
+    expect(await transactionOrigin(at('0x6080604052'), me)).toBeNull();
+    expect(await transactionOrigin(at(new Error('rpc')), me)).toBeNull();
   });
 });
