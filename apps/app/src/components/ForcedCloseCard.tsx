@@ -1256,7 +1256,14 @@ export function ForcedCloseCard({
     routeAvailability === 'available'
       ? copy.forcedClose.readyNeedsRoute
       : routeAvailability === 'none'
-        ? copy.forcedClose.readyNeedsRouteNoVenue
+        ? // An aggregator venue the app would ask but for a missing quote
+          // proxy is this deployment's configuration, not the protocol's
+          // venue list, and is said as such.
+          agentQuoteOrigin() === null &&
+          (rosterQuery.data?.roster.zeroex !== undefined ||
+            rosterQuery.data?.roster.oneinch !== undefined)
+          ? copy.forcedClose.readyNeedsRouteNotConfigured
+          : copy.forcedClose.readyNeedsRouteNoVenue
         : rosterQuery.isError || rosterQuery.data?.incomplete
           ? copy.forcedClose.readyNeedsRouteUnreadable
           : copy.forcedClose.readyNeedsRouteChecking;

@@ -2427,6 +2427,10 @@ const copySource = {
       'The grace period has passed and this loan can be closed out — but its collateral has to be sold on an exchange to do it, and none of the exchanges the protocol uses on this network is one this app can ask for a price. No automated service currently submits it either, so closing this position needs an operator. Contact support rather than waiting for it to happen on its own.',
     readyNeedsRouteChecking:
       'The grace period has passed and this loan can be closed out. Its collateral has to be sold on an exchange to do it, and the app is still checking which exchanges it can ask for a price on this network.',
+    // The protocol lists an aggregator here, but this deployment of the
+    // app has no quote proxy configured to ask it through.
+    readyNeedsRouteNotConfigured:
+      'The grace period has passed and this loan can be closed out. Its collateral has to be sold on an exchange to do it, and the exchanges the protocol uses on this network are asked for prices through a service this deployment of the app is not set up with, so it cannot offer the sale from here. No automated service currently submits it either, so closing this position needs an operator. Contact support rather than waiting for it to happen on its own.',
     readyNeedsRouteUnreadable:
       'The grace period has passed and this loan can be closed out. Its collateral has to be sold on an exchange to do it, but the app could not read which exchanges the protocol uses on this network, so it cannot offer the sale from here right now. Reloading the page tries again.',
     // Shown while the confirm is waiting on the price requests.
