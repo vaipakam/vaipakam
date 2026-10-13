@@ -2450,6 +2450,14 @@ const copySource = {
       'The protocol has no exchange enabled on this network, so this sale cannot be routed by anyone until governance enables one. Nothing was sent and nothing was spent.',
     routeNoAskableVenue:
       'None of the exchanges the protocol uses on this network is one this app can ask for a price, so nothing was sent and nothing was spent. Closing this position needs an operator for now. Contact support rather than waiting for it to happen on its own.',
+    // #2463 round 8 — a quote came back but the app could not read whether
+    // the protocol would accept its route: a failed check, not a refusal.
+    routeUnverified:
+      'An exchange gave a price, but the app could not check that the protocol would accept that route, so nothing was sent and nothing was spent. Try again in a moment.',
+    // The exchanges asked declined, and others the protocol lists were not
+    // asked because this deployment has no quote service for them.
+    routeNoQuotePartlyConfigured:
+      'None of the exchanges this app asked gave a usable price for this sale just now, so nothing was sent and nothing was spent. Some of the exchanges the protocol uses on this network were not asked, because this deployment of the app is not set up to ask them. Trying again later may help, and if it keeps happening, contact support.',
     routeRosterFailed:
       'We could not read this loan or the exchanges the protocol uses on this network, so nothing was sent and nothing was spent. Try again in a moment.',
     // The agent answered for every aggregator asked that this deployment

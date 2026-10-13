@@ -67,7 +67,52 @@ export type CloseOutRoute =
    *  `unconfigured` names the aggregators the agent answered for with
    *  "no API key here": a standing posture of this deployment, not a
    *  passing lack of prices, so the card says which it was. */
-  | { kind: 'no-quote'; asked: SwapVenueKind[]; unconfigured: SwapVenueKind[] };
+  | {
+      kind: 'no-quote';
+      asked: SwapVenueKind[];
+      unconfigured: SwapVenueKind[];
+      /** True when a venue did quote but the app could not READ whether
+       *  the protocol would accept that route (its adapter's swap-target
+       *  allowlist). That is a failed check, not a market refusal. */
+      unverified: boolean;
+      /** Aggregators the roster lists that were not asked because this
+       *  deployment has no quote proxy. Each is a protocol-enabled route
+       *  the app left out, not one that declined. */
+      skippedNoProxy: SwapVenueKind[];
+    };
+
+/**
+ * Why a confirm found nothing to send — the ONE place the no-quote message
+ * is decided, so each sentence claims only what was actually checked
+ * (#2463 round 8; rounds 2–7 each found a message that overstated it).
+ *
+ *  - `unread` — some adapter could not be identified, so it was never asked.
+ *  - `unverified` — a quote existed but its route could not be checked.
+ *  - `unconfigured` — every aggregator asked or listed needs the quote
+ *    proxy this deployment lacks, and nothing else was asked.
+ *  - `partly-unconfigured` — the venues asked declined, and aggregators the
+ *    protocol lists were left out for want of the proxy.
+ *  - `declined` — every venue this app could ask was asked and declined.
+ */
+export type NoQuoteReason =
+  | 'unread'
+  | 'unverified'
+  | 'unconfigured'
+  | 'partly-unconfigured'
+  | 'declined';
+
+export function noQuoteReason(
+  route: Extract<CloseOutRoute, { kind: 'no-quote' }>,
+  rosterIncomplete: boolean,
+): NoQuoteReason {
+  if (rosterIncomplete) return 'unread';
+  if (route.unverified) return 'unverified';
+  const declined = route.asked.filter((v) => !route.unconfigured.includes(v));
+  const leftOut = route.unconfigured.length + route.skippedNoProxy.length;
+  if (declined.length === 0 && leftOut > 0) return 'unconfigured';
+  if (leftOut > 0) return 'partly-unconfigured';
+  return 'declined';
+}
 
 /** The agent's origin for quotes, or `null` when the deployment has none. */
 export function agentQuoteOrigin(): string | null {
@@ -235,6 +280,7 @@ export async function buildCloseOutRoute(deps: {
   const fetchImpl = deps.fetchImpl ?? fetch;
   const venues = quotableVenues(roster, chainId, agentOrigin !== null);
   const unconfigured = new Set<SwapVenueKind>();
+  let unverified = false;
 
   // Every enabled instance of a venue is asked, in the Diamond's order:
   // two adapters of one kind (an adapter replacement in progress) each
@@ -265,12 +311,19 @@ export async function buildCloseOutRoute(deps: {
         // (`AggregatorAdapterBase.swapTargetAllowed`). A quote naming any
         // other target — a router the aggregator has rotated to — is an
         // attempt the adapter is certain to refuse.
-        const allowed = await client.readContract({
-          address: slot.address,
-          abi: SWAP_TARGET_ALLOWED_ABI,
-          functionName: 'swapTargetAllowed',
-          args: [q.swapTarget],
-        });
+        let allowed;
+        try {
+          allowed = await client.readContract({
+            address: slot.address,
+            abi: SWAP_TARGET_ALLOWED_ABI,
+            functionName: 'swapTargetAllowed',
+            args: [q.swapTarget],
+          });
+        } catch {
+          // A failed read is not a refusal: the route may well be allowed.
+          unverified = true;
+          return null;
+        }
         if (!allowed) return null;
         return {
           kind,
@@ -301,7 +354,17 @@ export async function buildCloseOutRoute(deps: {
     .flat()
     .filter((c): c is RouteCandidate => c !== null);
   if (candidates.length === 0) {
-    return { kind: 'no-quote', asked: venues, unconfigured: [...unconfigured] };
+    const skippedNoProxy =
+      agentOrigin === null
+        ? (['zeroex', 'oneinch'] as const).filter((k) => roster[k] !== undefined)
+        : [];
+    return {
+      kind: 'no-quote',
+      asked: venues,
+      unconfigured: [...unconfigured],
+      unverified,
+      skippedNoProxy: [...skippedNoProxy],
+    };
   }
   const ranked = rankRoutes(candidates);
   return { kind: 'route', calls: ranked.map((c) => c.call), venues: ranked.map((c) => c.kind) };

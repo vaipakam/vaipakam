@@ -71,6 +71,7 @@ import {
 import {
   agentQuoteOrigin,
   buildCloseOutRoute,
+  noQuoteReason,
   routePosture,
   type RoutePosture,
   previewCloseOut,
@@ -888,6 +889,10 @@ export function ForcedCloseCard({
     queryFn: () =>
       readCloseOutRoster(publicClient!, routeDiamond!, testnetMockAdapter),
     staleTime: 60_000,
+    // Re-read while the card is open: governance can enable or register a
+    // venue at any time, and a refusal must not outlive the condition
+    // behind it. The confirm reads the list afresh regardless.
+    refetchInterval: 60_000,
   });
   // One derived posture (`data/closeOutRoute.routePosture`) drives the
   // button, the body and the confirm-time refusals alike. An unread roster
@@ -975,19 +980,20 @@ export function ForcedCloseCard({
       agentOrigin: agentQuoteOrigin(),
     });
     if (route.kind === 'no-quote') {
-      // An adapter the app could not identify was never asked, so "none of
-      // the exchanges this app asked gave a price" would read as the whole
-      // answer when it is not.
-      if (read.incomplete) return { message: copy.forcedClose.routeRosterFailed };
-      // Every venue asked was an aggregator this deployment has no key
-      // for: a standing configuration, so "try again later" would be
-      // untrue.
-      const allUnconfigured =
-        route.asked.length > 0 && route.asked.every((v) => route.unconfigured.includes(v));
+      // One decision for the sentence (`noQuoteReason`), so it claims only
+      // what this confirm actually checked.
+      const reason = noQuoteReason(route, read.incomplete);
       return {
-        message: allUnconfigured
-          ? copy.forcedClose.routeNotConfigured
-          : copy.forcedClose.routeNoQuote,
+        message:
+          reason === 'unread'
+            ? copy.forcedClose.routeRosterFailed
+            : reason === 'unverified'
+              ? copy.forcedClose.routeUnverified
+              : reason === 'unconfigured'
+                ? copy.forcedClose.routeNotConfigured
+                : reason === 'partly-unconfigured'
+                  ? copy.forcedClose.routeNoQuotePartlyConfigured
+                  : copy.forcedClose.routeNoQuote,
       };
     }
     return { calls: route.calls };

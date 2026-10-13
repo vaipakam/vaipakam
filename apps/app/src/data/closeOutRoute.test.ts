@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { decodeAbiParameters, encodeAbiParameters, type Address } from 'viem';
 import {
   buildCloseOutRoute,
+  noQuoteReason,
   previewCloseOut,
   quotableVenues,
   readCloseOutRoster,
@@ -203,7 +204,7 @@ describe('buildCloseOutRoute', () => {
       agentOrigin: 'https://agent.example',
       fetchImpl: impl,
     });
-    expect(route).toEqual({ kind: 'no-quote', asked: ['zeroex', 'univ3'], unconfigured: [] });
+    expect(route).toMatchObject({ kind: 'no-quote', asked: ['zeroex', 'univ3'], unconfigured: [] });
   });
 
   it('drops a quote whose swap target the adapter does not allow', async () => {
@@ -240,7 +241,7 @@ describe('buildCloseOutRoute', () => {
       agentOrigin: 'https://agent.example',
       fetchImpl: impl,
     });
-    expect(route).toEqual({ kind: 'no-quote', asked: ['zeroex'], unconfigured: ['zeroex'] });
+    expect(route).toMatchObject({ kind: 'no-quote', asked: ['zeroex'], unconfigured: ['zeroex'] });
   });
 });
 
@@ -391,5 +392,71 @@ describe('routePosture', () => {
     expect(await posture([{ name: 'UniswapV3', disabled: false }], true, 84532)).toBe(
       'unsupported',
     );
+  });
+});
+
+describe('noQuoteReason', () => {
+  const nq = (o: Partial<Parameters<typeof noQuoteReason>[0]> = {}) => ({
+    kind: 'no-quote' as const,
+    asked: [],
+    unconfigured: [],
+    unverified: false,
+    skippedNoProxy: [],
+    ...o,
+  });
+  it('says unread before anything else', () => {
+    expect(noQuoteReason(nq({ unverified: true }), true)).toBe('unread');
+  });
+  it('says unverified when a route could not be checked', () => {
+    expect(noQuoteReason(nq({ asked: ['zeroex'], unverified: true }), false)).toBe('unverified');
+  });
+  it('says unconfigured when nothing asked could answer for want of the proxy', () => {
+    expect(noQuoteReason(nq({ asked: ['zeroex'], unconfigured: ['zeroex'] }), false)).toBe(
+      'unconfigured',
+    );
+  });
+  it('says partly-unconfigured when venues declined and aggregators were left out', () => {
+    expect(noQuoteReason(nq({ asked: ['univ3'], skippedNoProxy: ['oneinch'] }), false)).toBe(
+      'partly-unconfigured',
+    );
+  });
+  it('says declined only when every askable venue was asked and declined', () => {
+    expect(noQuoteReason(nq({ asked: ['univ3', 'zeroex'] }), false)).toBe('declined');
+  });
+});
+
+describe('buildCloseOutRoute — route checks', () => {
+  it('marks a quote whose allowlist read failed as unverified, not declined', async () => {
+    const { impl } = fakeFetch({
+      '/quote/0x': { transaction: { to: A(0xa), data: '0x01' }, buyAmount: '100' },
+    });
+    const client = {
+      readContract: async () => {
+        throw new Error('rpc down');
+      },
+      call: noChain.call,
+    } as unknown as RouteClient;
+    const route = await buildCloseOutRoute({
+      client,
+      chainId: 8453,
+      diamond: A(0xd),
+      roster: { zeroex: S(0) },
+      sale,
+      agentOrigin: 'https://agent.example',
+      fetchImpl: impl,
+    });
+    expect(route).toMatchObject({ kind: 'no-quote', unverified: true });
+  });
+
+  it('names the aggregators left out for want of a quote proxy', async () => {
+    const route = await buildCloseOutRoute({
+      client: noChain,
+      chainId: 8453,
+      diamond: A(0xd),
+      roster: { univ3: S(2), oneinch: S(1) },
+      sale,
+      agentOrigin: null,
+    });
+    expect(route).toMatchObject({ kind: 'no-quote', asked: ['univ3'], skippedNoProxy: ['oneinch'] });
   });
 });
