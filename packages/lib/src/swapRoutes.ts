@@ -87,8 +87,13 @@ export interface RosterSlot {
   address: Address;
 }
 
-/** Venue kind → its slot in the Diamond's adapter list. */
-export type AdapterRoster = Partial<Record<SwapVenueKind, RosterSlot>>;
+/** Venue kind → every enabled slot of that kind in the Diamond's adapter
+ *  list, in the Diamond's order. More than one is normal during an adapter
+ *  replacement: `addSwapAdapter` refuses only a duplicate ADDRESS, and an
+ *  aggregator's quote and swap-target allowlist are per adapter, so the
+ *  newer instance can accept a route the older one refuses. A kind that is
+ *  present always has at least one slot. */
+export type AdapterRoster = Partial<Record<SwapVenueKind, readonly RosterSlot[]>>;
 
 /**
  * Work out which index each venue sits at.
@@ -96,8 +101,8 @@ export type AdapterRoster = Partial<Record<SwapVenueKind, RosterSlot>>;
  * An entry is used only when its disabled flag was READ and is false: a
  * failed read is not evidence that the venue is enabled, and putting a
  * disabled venue on the list only spends an attempt the contract skips.
- * When two enabled adapters share a kind, the earlier one wins — the
- * Diamond's order is governance's priority order.
+ * Every enabled adapter of a kind is kept, in the Diamond's order, which
+ * is governance's priority order.
  *
  * `testnetMockAdapter` is the chain deployment's declared
  * `testnetMocks.mockSwapAdapter`, or `undefined` on any chain without
@@ -108,7 +113,7 @@ export function resolveAdapterRoster(
   entries: readonly SwapAdapterEntry[],
   opts: { testnetMockAdapter?: Address } = {},
 ): AdapterRoster {
-  const roster: AdapterRoster = {};
+  const roster: Partial<Record<SwapVenueKind, RosterSlot[]>> = {};
   const mock = opts.testnetMockAdapter?.toLowerCase();
   entries.forEach((entry, idx) => {
     if (entry.disabled !== false) return;
@@ -118,8 +123,8 @@ export function resolveAdapterRoster(
         : entry.name === undefined
           ? undefined
           : ADAPTER_NAME_KIND[entry.name];
-    if (kind === undefined || roster[kind] !== undefined) return;
-    roster[kind] = { idx, address: entry.address };
+    if (kind === undefined) return;
+    (roster[kind] ??= []).push({ idx, address: entry.address });
   });
   return roster;
 }

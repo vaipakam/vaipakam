@@ -975,6 +975,10 @@ export function ForcedCloseCard({
       agentOrigin: agentQuoteOrigin(),
     });
     if (route.kind === 'no-quote') {
+      // An adapter the app could not identify was never asked, so "none of
+      // the exchanges this app asked gave a price" would read as the whole
+      // answer when it is not.
+      if (read.incomplete) return { message: copy.forcedClose.routeRosterFailed };
       // Every venue asked was an aggregator this deployment has no key
       // for: a standing configuration, so "try again later" would be
       // untrue.
@@ -1033,14 +1037,6 @@ export function ForcedCloseCard({
           return;
         }
         adapterCalls = found.calls;
-        // Again, because finding the route is not instant: up to an 8-second
-        // quote round-trip per venue, and a sale accepted in that gap would
-        // be stranded by this close exactly as the first check describes.
-        const lateSaleBlock = await preSubmitBlock();
-        if (lateSaleBlock) {
-          setError(lateSaleBlock);
-          return;
-        }
       }
       // A LIVE re-check, immediately before sending (round 28 P2). The
       // readiness above is a 30-second poll that the open confirmation
@@ -1089,6 +1085,19 @@ export function ForcedCloseCard({
           args: [BigInt(loanId), adapterCalls],
           account: address,
         });
+      }
+      // The sale interlock AGAIN, as the last read before the wallet is
+      // asked. Everything above awaits the network — the quote round-trips,
+      // the preview, the simulation — and neither of the last two looks at
+      // sale linkage, so a sale accepted anywhere in that stretch would be
+      // stranded exactly as the first check describes. Placing it last
+      // leaves only the wallet prompt and inclusion uncovered, which no
+      // read from the app can close: `triggerDefault` itself does not
+      // check for an accepted sale (#2078 tracks the contract-side guard).
+      const lateSaleBlock = await preSubmitBlock();
+      if (lateSaleBlock) {
+        setError(lateSaleBlock);
+        return;
       }
       // STAMP ON THE HASH, NOT ON THE RECEIPT (round 47 P1).
       //
@@ -1325,7 +1334,7 @@ export function ForcedCloseCard({
       matchRace: true,
       actionBlock: true,
       outcomeNote: copy.forcedClose.outcomeNoteSale,
-      claimNote: copy.forcedClose.claimNote,
+      claimNote: copy.forcedClose.claimNoteSale,
       receipt: 'sale',
       incentive: 'sale',
     },

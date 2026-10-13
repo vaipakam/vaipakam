@@ -234,11 +234,14 @@ export async function buildCloseOutRoute(deps: {
   const { client, chainId, diamond, roster, sale, agentOrigin } = deps;
   const fetchImpl = deps.fetchImpl ?? fetch;
   const venues = quotableVenues(roster, chainId, agentOrigin !== null);
-  const unconfigured: SwapVenueKind[] = [];
+  const unconfigured = new Set<SwapVenueKind>();
 
-  const attempts = venues.map(async (kind): Promise<RouteCandidate | RouteCandidate[] | null> => {
-    const slot = roster[kind];
-    if (slot === undefined) return null;
+  // Every enabled instance of a venue is asked, in the Diamond's order:
+  // two adapters of one kind (an adapter replacement in progress) each
+  // have their own taker and allowlist, so one refusing says nothing
+  // about the other.
+  const slots = venues.flatMap((kind) => (roster[kind] ?? []).map((slot) => ({ kind, slot })));
+  const attempts = slots.map(async ({ kind, slot }): Promise<RouteCandidate | RouteCandidate[] | null> => {
     const adapterIdx = BigInt(slot.idx);
     switch (kind) {
       case 'zeroex':
@@ -251,7 +254,7 @@ export async function buildCloseOutRoute(deps: {
           taker: slot.address,
         });
         if (answer === 'unconfigured') {
-          unconfigured.push(kind);
+          unconfigured.add(kind);
           return null;
         }
         if (answer === null) return null;
@@ -297,7 +300,9 @@ export async function buildCloseOutRoute(deps: {
   const candidates = (await Promise.all(attempts.map((p) => p.catch(() => null))))
     .flat()
     .filter((c): c is RouteCandidate => c !== null);
-  if (candidates.length === 0) return { kind: 'no-quote', asked: venues, unconfigured };
+  if (candidates.length === 0) {
+    return { kind: 'no-quote', asked: venues, unconfigured: [...unconfigured] };
+  }
   const ranked = rankRoutes(candidates);
   return { kind: 'route', calls: ranked.map((c) => c.call), venues: ranked.map((c) => c.kind) };
 }

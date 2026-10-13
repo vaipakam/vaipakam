@@ -12,7 +12,7 @@ import {
 
 const A = (n: number) => `0x${n.toString(16).padStart(40, '0')}` as Address;
 const sale = { sellToken: A(1), buyToken: A(2), sellAmount: 10n ** 18n };
-const S = (idx: number) => ({ idx, address: A(0x100 + idx) });
+const S = (idx: number) => [{ idx, address: A(0x100 + idx) }];
 type RouteClient = Parameters<typeof buildCloseOutRoute>[0]['client'];
 const noChain = {
   // Every aggregator target is on its adapter's allowlist unless a test
@@ -84,6 +84,30 @@ describe('buildCloseOutRoute', () => {
       taker: A(0x103),
     });
     expect(seen[1].body).toMatchObject({ taker: A(0x101) });
+  });
+
+  it('asks every enabled instance of a venue, each as its own taker', async () => {
+    const { impl, seen } = fakeFetch({
+      '/quote/0x': { transaction: { to: A(0xa), data: '0x01' }, buyAmount: '100' },
+    });
+    // The older adapter no longer allows the aggregator's current target;
+    // its replacement does.
+    const client = {
+      readContract: async (args: { functionName: string; address: Address }) =>
+        args.functionName === 'swapTargetAllowed' ? args.address === A(0x101) : undefined,
+      call: noChain.call,
+    } as unknown as RouteClient;
+    const route = await buildCloseOutRoute({
+      client,
+      chainId: 8453,
+      diamond: A(0xd),
+      roster: { zeroex: [...S(0), ...S(1)] },
+      sale,
+      agentOrigin: 'https://agent.example',
+      fetchImpl: impl,
+    });
+    expect(seen.map((r) => (r.body as { taker: Address }).taker)).toEqual([A(0x100), A(0x101)]);
+    expect(route.kind === 'route' && route.calls.map((c) => c.adapterIdx)).toEqual([1n]);
   });
 
   it('drops a venue that declines and keeps the rest', async () => {

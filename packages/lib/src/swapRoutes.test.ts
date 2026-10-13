@@ -25,9 +25,9 @@ describe('resolveAdapterRoster', () => {
         { address: A(3), name: 'UniswapV3', disabled: false },
       ]),
     ).toEqual({
-      oneinch: { idx: 0, address: A(1) },
-      zeroex: { idx: 1, address: A(2) },
-      univ3: { idx: 2, address: A(3) },
+      oneinch: [{ idx: 0, address: A(1) }],
+      zeroex: [{ idx: 1, address: A(2) }],
+      univ3: [{ idx: 2, address: A(3) }],
     });
   });
 
@@ -38,16 +38,21 @@ describe('resolveAdapterRoster', () => {
         { address: A(2), name: 'OneInch', disabled: undefined },
         { address: A(3), name: 'UniswapV3', disabled: false },
       ]),
-    ).toEqual({ univ3: { idx: 2, address: A(3) } });
+    ).toEqual({ univ3: [{ idx: 2, address: A(3) }] });
   });
 
-  it('keeps the earlier of two enabled adapters of one kind', () => {
+  it('keeps every enabled adapter of one kind, in the Diamond order', () => {
     expect(
       resolveAdapterRoster([
         { address: A(1), name: 'ZeroEx', disabled: false },
         { address: A(2), name: 'ZeroEx', disabled: false },
       ]),
-    ).toEqual({ zeroex: { idx: 0, address: A(1) } });
+    ).toEqual({
+      zeroex: [
+        { idx: 0, address: A(1) },
+        { idx: 1, address: A(2) },
+      ],
+    });
   });
 
   it('recognises the testnet mock by its declared address only', () => {
@@ -57,7 +62,7 @@ describe('resolveAdapterRoster', () => {
     ];
     expect(resolveAdapterRoster(entries)).toEqual({});
     expect(resolveAdapterRoster(entries, { testnetMockAdapter: A(7) })).toEqual({
-      testnetMock: { idx: 1, address: A(7) },
+      testnetMock: [{ idx: 1, address: A(7) }],
     });
   });
 

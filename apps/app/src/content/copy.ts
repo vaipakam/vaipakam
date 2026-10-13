@@ -2586,6 +2586,13 @@ const copySource = {
     notExclusive:
       'Anyone can close out an overdue loan, not just you. If someone else does it first, this position will show as closed, or — if only part of it settled — as smaller than it was. Whatever the close-out recovers goes to whoever holds the lender position for this loan at that moment — so if you have transferred or sold it, it is theirs, not yours.',
     claimNote: 'Closing out does not move funds to your wallet by itself. What you are owed becomes claimable once the loan has fully closed. If the protocol settles only part of it, that part is held for you until the rest closes later.',
+    // #2463 round 7 — the sale route has a second ending the generic note
+    // misdescribes: a fallback-pending loan is claimable WHILE pending
+    // (`ClaimFacet.claimAsLender` accepts FallbackPending and ends the
+    // loan as part of the claim), so "once the loan has fully closed"
+    // would tell the lender to wait while the borrower can still cure.
+    claimNoteSale:
+      'Closing out does not move funds to your wallet by itself. If the sale goes through, what you are owed becomes claimable once the loan has fully closed, and if the protocol settles only part of it, that part is held for you until the rest closes later. If the close-out ends in the fallback instead, you do not need to wait for anything else: you can claim from the Claims page straight away, and claiming is what ends the loan. Until you claim, the borrower can still repay or add collateral.',
     // Round 40 P2 — true of every route EXCEPT the internal match.
     // `DefaultedFacet` passes `msg.sender` as the matcher, and
     // `_settleLeg` sends the per-leg incentive straight to that address
