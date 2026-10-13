@@ -3062,6 +3062,12 @@ const copySource = {
       youRent: tmpl('You rent {{nft}}', ['nft']),
       youBorrowed: tmpl('You borrowed {{principal}}', ['principal']),
       youLent: tmpl('You lent {{principal}}', ['principal']),
+      // #2453 — the headline names the amount the loan was INITIATED with,
+      // never the live outstanding principal. When this row does not carry
+      // that amount (read straight from the chain), it says so.
+      youBorrowedAmountUnknown: 'You borrowed on this loan — the amount you borrowed isn’t available right now',
+      youLentAmountUnknown: 'You lent on this loan — the amount you lent isn’t available right now',
+      loanBetweenAmountUnknown: 'A loan between two other wallets — the amount lent isn’t available right now',
       paidNow: tmpl('~{{amount}} {{symbol}}, paid now.', ['amount', 'symbol']),
       exactAmountNote:
         'The exact amount is read live when you confirm; the approval carries small headroom that is never spent.',
@@ -3070,6 +3076,10 @@ const copySource = {
         ['symbol'],
       ),
       principalPlusInterest: tmpl('{{principal}} plus the earned interest.', ['principal']),
+      // #2453 — the lender receipt of an internally matched loan when the
+      // exact payout is not in hand: no figure, since matching pays the
+      // recorded proceeds rather than principal plus interest.
+      receiveInternalMatchProceeds: 'The proceeds internal matching recorded for this loan’s lender.',
       loanAssetFallback: 'the loan asset',
       recoveredSummary: tmpl(
         'What this loan recovered: sale proceeds in {{asset}}, or the {{collateral}} collateral itself, depending on how the default settled.',
@@ -3114,6 +3124,11 @@ const copySource = {
       titleLoan: 'Loan',
       titleRental: 'Rental',
       noCollateral: 'No collateral',
+      // #2454 — the "Locked" row once a loan holds no collateral any more.
+      // Never substituted into lockedCollateralBorrower.
+      nothingLockedClosed: 'Nothing is locked now — this loan has closed.',
+      nothingLockedInternalMatch:
+        'Nothing is locked now — internal matching paid the borrower’s collateral to the lender of the loan it was matched against. Any surplus goes back to the borrower through their claim.',
       owedRentalPrepaid: 'Nothing to repay — rental fees were prepaid (late fees only if closed past the due date).',
       healthChecking: 'Checking this loan’s health…',
       healthReadFailed: 'We couldn’t read this loan’s health right now — retrying. Liquidation protection still applies on-chain.',
@@ -3311,6 +3326,11 @@ const copySource = {
       'One of this page\u2019s data sources is temporarily unavailable. Your current positions are shown from the remaining source and recently changed items may take a moment to appear.',
     roleBorrower: 'You borrowed',
     roleLender: 'You lent',
+    // #2453 — follows roleBorrower / roleLender when the row does not carry
+    // the amount the loan was initiated with.
+    amountUnknownAfterRole: 'an amount that isn’t available right now',
+    // #2453 — a history row's amount, when it is not carried.
+    amountUnknown: 'Amount not available',
     // UX-030 — "grace period" glossed inline, with the concrete window
     // length when the live read has it.
     whatIfNothingBorrower: tmpl(
@@ -3383,6 +3403,8 @@ const copySource = {
       `Nothing — {{principal}} plus interest was repaid in full.`,
       ['principal'],
     ),
+    // #2453 — the same, when the row does not carry the initiated amount.
+    owedRepaidAmountUnknown: 'Nothing — this loan was repaid in full.',
     owedDefaulted:
       'Nothing to repay anymore — this loan ended in default and the collateral covers it.',
     owedDefaultedNoCollateral:

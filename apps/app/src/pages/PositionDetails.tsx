@@ -83,6 +83,7 @@ import {
 import { useForcedCloseReads } from '../data/useForcedClose';
 import { probeClaim, useLoanClaim } from '../data/claimables';
 import { receiptPayout, useClaimPayoutText } from '../data/useClaimPayout';
+import { initiatedPrincipal, lockedCollateralLine } from '../lib/positionAmounts';
 import {
   classifyMaxWithdrawable,
   swapToRepayOrderState,
@@ -2266,6 +2267,16 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   const principalStr = principal
     ? `${formatTokenAmount(row.principal, principal.decimals)} ${principal.symbol}`
     : '…';
+  // #2453 — the headline's amount is what the loan was INITIATED with;
+  // `principalStr` is the live outstanding amount (zero after a full
+  // internal match) and stays for what is owed.
+  const initPrincipal = initiatedPrincipal(row);
+  const lentStr =
+    initPrincipal === null
+      ? null
+      : principal
+        ? `${formatTokenAmount(initPrincipal, principal.decimals)} ${principal.symbol}`
+        : '…';
   const interestStr = principal
     ? `${formatTokenAmount(interest, principal.decimals)} ${principal.symbol}`
     : '…';
@@ -2979,7 +2990,12 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
               youReceive: receiptPayout(claimReceiveUnknown, lenderClaimText) ??
                 (isRental
                 ? copy.positions.details.receipt.rentalFeesAndNft
-                : properClose
+                : row.status === 'internal_matched'
+                  ? // #2453 — matching pays the recorded proceeds, not
+                    // principal plus interest, and the live principal is
+                    // zero by now: name no figure here.
+                    copy.positions.details.receiveInternalMatchProceeds
+                  : properClose
                   ? copy.positions.details.principalPlusInterest(principalStr)
                   : // Liquid-collateral defaults settle by SWAP — the
                     // lender's claim pays proceeds in the loan asset,
@@ -3032,10 +3048,16 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                   ? copy.positions.details.nftRentedOut(nftStr)
                   : copy.positions.details.nftRentalBetween(nftStr)
               : role === 'borrower'
-                ? copy.positions.details.youBorrowed(principalStr)
+                ? lentStr === null
+                  ? copy.positions.details.youBorrowedAmountUnknown
+                  : copy.positions.details.youBorrowed(lentStr)
                 : role === 'lender'
-                  ? copy.positions.details.youLent(principalStr)
-                  : copy.positions.details.loanBetween(principalStr)}
+                  ? lentStr === null
+                    ? copy.positions.details.youLentAmountUnknown
+                    : copy.positions.details.youLent(lentStr)
+                  : lentStr === null
+                    ? copy.positions.details.loanBetweenAmountUnknown
+                    : copy.positions.details.loanBetween(lentStr)}
           </p>
         </div>
         <span className={`badge badge-${view.badge}`}>{loanStateLabel(view, copy.loanState)}</span>
@@ -3095,7 +3117,12 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             <dd>
               {isRental
                 ? copy.positions.details.nftStaysVault(nftStr, hasCollateral ? copy.positions.details.vaultCollateralSuffix(collateralStr) : '')
-                : copy.positions.details.lockedCollateralBorrower(collateralStr)}
+                : lockedCollateralLine({
+                    hasCollateral,
+                    status: row.status,
+                    collateral: collateralStr,
+                    labels: copy.positions.details,
+                  })}
             </dd>
           </div>
           <div className="receipt-row">
@@ -3105,7 +3132,12 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                 ? copy.positions.details.owedRentalPrepaid
                 : loanOver
                   ? row.status === 'repaid'
-                    ? copy.positions.owedRepaid(principalStr)
+                    ? // #2453 — repaid in full means the whole INITIATED
+                      // principal; the live one is only what was left
+                      // before the last payment.
+                      lentStr === null
+                      ? copy.positions.owedRepaidAmountUnknown
+                      : copy.positions.owedRepaid(lentStr)
                     : row.status === 'defaulted' || row.status === 'liquidated'
                       ? hasCollateral
                         ? copy.positions.owedDefaulted

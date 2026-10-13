@@ -82,6 +82,12 @@ interface LoanRow {
   lender: string;
   borrower: string;
   principal: string;
+  // 0032 — the principal the loan was INITIATED with, stamped once at
+  // every LoanInitiated insert path and never touched by a mutation
+  // handler (partial repay, swap-to-repay, internal match all rewrite
+  // `principal`). NULL only for a row a pre-0032 worker wrote and the
+  // backfill could not reach.
+  init_principal: string | null;
   collateral_amount: string;
   asset_type: number;
   collateral_asset_type: number;
@@ -118,6 +124,10 @@ function loanToJson(row: LoanRow): Record<string, unknown> {
     lender: row.lender,
     borrower: row.borrower,
     principal: row.principal,
+    // #2453 — what was lent/borrowed, as opposed to `principal`, which is
+    // what is still outstanding (zero once internal matching cleared it).
+    // null = not recorded for this row; the app says so rather than guess.
+    initPrincipal: row.init_principal ?? null,
     collateralAmount: row.collateral_amount,
     assetType: row.asset_type,
     collateralAssetType: row.collateral_asset_type,

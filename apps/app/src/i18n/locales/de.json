@@ -1389,7 +1389,13 @@
           "approving": "Freigabe in Ihrer Wallet…",
           "submitting": "Wird gesendet…",
           "waiting": "Warten auf die Wallet…"
-        }
+        },
+        "youBorrowedAmountUnknown": "Sie haben bei diesem Kredit geliehen — der geliehene Betrag ist gerade nicht verfügbar",
+        "youLentAmountUnknown": "Sie haben bei diesem Kredit verliehen — der verliehene Betrag ist gerade nicht verfügbar",
+        "loanBetweenAmountUnknown": "Ein Kredit zwischen zwei anderen Wallets — der verliehene Betrag ist gerade nicht verfügbar",
+        "nothingLockedClosed": "Derzeit ist nichts gesperrt — dieser Kredit ist abgeschlossen.",
+        "nothingLockedInternalMatch": "Derzeit ist nichts gesperrt — das interne Matching hat die Sicherheit des Kreditnehmers an den Kreditgeber des Kredits ausgezahlt, mit dem dieser Kredit gematcht wurde. Ein etwaiger Überschuss geht über seinen Claim an den Kreditnehmer zurück.",
+        "receiveInternalMatchProceeds": "Die Erlöse, die das interne Matching für den Kreditgeber dieses Kredits erfasst hat."
       },
       "loading": "Ihre Positionen werden geladen…",
       "openOffers": "Offene Angebote",
@@ -1452,7 +1458,10 @@
       "whatNextInternalMatchViewer": "Dieser Kredit wurde durch internes Matching geschlossen — verbleibende Ansprüche gehören den Positionsinhabern.",
       "whatNextClosed": "Dieser Kredit ist vollständig abgewickelt — es gibt nichts mehr zu tun.",
       "whatNextRentalEnded": "Diese Vermietung ist beendet. Verdiente Gebühren oder ein erstattungsfähiger Puffer können unten von den Positionsinhabern beansprucht werden — sonst kann sich nichts mehr ändern.",
-      "settledAhead": "Diese Position ist auf der Blockchain bereits geschlossen — der Status hier ist live. Ihre Listen brauchen eventuell einen Moment, um nachzuziehen."
+      "settledAhead": "Diese Position ist auf der Blockchain bereits geschlossen — der Status hier ist live. Ihre Listen brauchen eventuell einen Moment, um nachzuziehen.",
+      "amountUnknownAfterRole": "einen Betrag, der gerade nicht verfügbar ist",
+      "amountUnknown": "Betrag nicht verfügbar",
+      "owedRepaidAmountUnknown": "Nichts — dieser Kredit wurde vollständig zurückgezahlt."
     },
     "powerSurface": {
       "body": "Diese Seite zeigt die offenen Angebote für ein Paar nebeneinander und lässt Sie Ihren eigenen Zins festlegen. Lieber Schritt für Schritt? Die Seiten Leihen und Verleihen erledigen dasselbe mit Erklärungen.",

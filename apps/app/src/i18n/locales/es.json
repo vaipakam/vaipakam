@@ -1389,7 +1389,13 @@
           "approving": "Aprobando en tu billetera…",
           "submitting": "Enviando…",
           "waiting": "Esperando la billetera…"
-        }
+        },
+        "youBorrowedAmountUnknown": "Pediste prestado en este préstamo — el importe que pediste no está disponible ahora mismo",
+        "youLentAmountUnknown": "Prestaste en este préstamo — el importe que prestaste no está disponible ahora mismo",
+        "loanBetweenAmountUnknown": "Un préstamo entre otras dos wallets — el importe prestado no está disponible ahora mismo",
+        "nothingLockedClosed": "Ahora no hay nada bloqueado — este préstamo se ha cerrado.",
+        "nothingLockedInternalMatch": "Ahora no hay nada bloqueado — el emparejamiento interno pagó el colateral del prestatario al prestamista del préstamo con el que se emparejó. Cualquier excedente vuelve al prestatario mediante su reclamación.",
+        "receiveInternalMatchProceeds": "Los fondos que el emparejamiento interno registró para el prestamista de este préstamo."
       },
       "loading": "Cargando tus posiciones…",
       "openOffers": "Ofertas abiertas",
@@ -1452,7 +1458,10 @@
       "whatNextInternalMatchViewer": "Este préstamo se cerró por emparejamiento interno — cualquier reclamo residual pertenece a los titulares de posición.",
       "whatNextClosed": "Este préstamo está completamente liquidado — no queda nada por hacer.",
       "whatNextRentalEnded": "Este alquiler terminó. Cualquier tarifa ganada o colchón reembolsable puede reclamarse abajo por los titulares de posición — nada más puede cambiarlo.",
-      "settledAhead": "Esta posición ya se cerró en la blockchain — el estado que ves aquí está en vivo. Tus listas pueden tardar un momento en actualizarse."
+      "settledAhead": "Esta posición ya se cerró en la blockchain — el estado que ves aquí está en vivo. Tus listas pueden tardar un momento en actualizarse.",
+      "amountUnknownAfterRole": "un importe que no está disponible ahora mismo",
+      "amountUnknown": "Importe no disponible",
+      "owedRepaidAmountUnknown": "Nada — este préstamo se reembolsó por completo."
     },
     "powerSurface": {
       "body": "Esta página muestra las ofertas abiertas de un par una junto a otra y te deja fijar tu propia tasa. ¿Prefieres ir paso a paso? Las páginas Pedir prestado y Prestar hacen lo mismo con explicaciones.",

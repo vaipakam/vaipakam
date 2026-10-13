@@ -19,6 +19,7 @@ import { useTokenMeta } from '../../contracts/erc20';
 import { EmptyState, UnavailableState } from '../EmptyState';
 import { loanStateView, loanStateLabel } from '../../lib/loanState';
 import type { IndexedParticipantLoan } from '../../data/indexer';
+import { initiatedPrincipal } from '../../lib/positionAmounts';
 import {
   formatBpsAsPercent,
   formatDate,
@@ -32,6 +33,7 @@ const text = copy.desk.history;
 function HistoryRow({ loan }: { loan: IndexedParticipantLoan }) {
   const lendingMeta = useTokenMeta(loan.lendingAsset);
   const collateralMeta = useTokenMeta(loan.collateralAsset);
+  const initPrincipal = initiatedPrincipal(loan);
   const state = loanStateView(loan);
   const pairLabel = `${lendingMeta.data?.symbol ?? shortAddress(loan.lendingAsset)} / ${
     collateralMeta.data?.symbol ?? shortAddress(loan.collateralAsset)
@@ -50,9 +52,12 @@ function HistoryRow({ loan }: { loan: IndexedParticipantLoan }) {
         </span>
         <br />
         <span className="row-sub">
-          {lendingMeta.data
-            ? `${formatTokenAmount(loan.principal, lendingMeta.data.decimals)} ${lendingMeta.data.symbol}`
-            : '…'}{' '}
+          {/* #2453 — the amount the loan was initiated with, not what is left. */}
+          {initPrincipal === null
+            ? copy.positions.amountUnknown
+            : lendingMeta.data
+              ? `${formatTokenAmount(initPrincipal, lendingMeta.data.decimals)} ${lendingMeta.data.symbol}`
+              : '…'}{' '}
           · {text.started} {formatDate(loan.startAt)}
         </span>
       </span>

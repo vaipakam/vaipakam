@@ -1,0 +1,9 @@
+## Positions — what was lent, and what is locked now (#2453, #2454)
+
+An internally matched loan's page said "You lent 0" and "No collateral collateral (borrower's)". Both came from reading live figures as if they were the loan's history. Internal matching reduces a loan's principal and pays away the borrower's collateral as it settles the loan, so once a match closes it both are zero. The page took the zero principal as the amount lent, and dropped "No collateral" into a sentence that already ends in "collateral".
+
+The indexer has always kept a separate, never-rewritten record of the principal each loan was initiated with. It now serves that figure next to the live one. The loan page headline, the Positions list, and the desk's Positions and History panels use it for "You lent" / "You borrowed". This also corrects partly repaid loans, which used to show only what was still outstanding as the amount lent. A loan repaid in full now states the whole initiated principal as repaid. Where a row does not carry the initiated amount (a loan read straight from the chain before the indexer has seen it), the page says the amount isn't available rather than showing a figure. What is still owed keeps using the live outstanding principal.
+
+The "Locked" row now states what is held now. An internally matched loan with nothing left says the match paid the borrower's collateral to the lender of the loan it was matched against, with any surplus returned through the borrower's claim. Any other closed loan says nothing is locked any more. "No collateral" is kept for an open loan that holds none. On an internally matched loan, the lender's receipt no longer falls back to "principal plus interest", which matching does not pay. All new wording is translated in the nine translated languages.
+
+Closes #2453. Closes #2454.

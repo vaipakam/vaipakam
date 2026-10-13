@@ -1389,7 +1389,13 @@
           "approving": "आपके wallet में approval…",
           "submitting": "Submit हो रहा है…",
           "waiting": "वॉलेट का इंतजार…"
-        }
+        },
+        "youBorrowedAmountUnknown": "आपने इस loan पर borrow किया — borrow किया गया amount अभी उपलब्ध नहीं है",
+        "youLentAmountUnknown": "आपने इस loan पर lend किया — lend किया गया amount अभी उपलब्ध नहीं है",
+        "loanBetweenAmountUnknown": "दो दूसरे wallets के बीच एक loan — lend किया गया amount अभी उपलब्ध नहीं है",
+        "nothingLockedClosed": "अभी कुछ भी locked नहीं है — यह loan बंद हो चुका है।",
+        "nothingLockedInternalMatch": "अभी कुछ भी locked नहीं है — internal matching ने borrower का collateral उस loan के lender को दे दिया जिससे यह match हुआ था। कोई भी बचा हुआ हिस्सा borrower के claim से borrower को वापस मिलता है।",
+        "receiveInternalMatchProceeds": "Internal matching ने इस loan के lender के लिए जो proceeds record किए।"
       },
       "loading": "आपकी positions लोड हो रही हैं…",
       "openOffers": "Open offers",
@@ -1452,7 +1458,10 @@
       "whatNextInternalMatchViewer": "यह loan internal matching से closed हुआ — residual claims position holders के हैं।",
       "whatNextClosed": "यह loan fully settled है — करने को कुछ नहीं बचा।",
       "whatNextRentalEnded": "यह rental ended है। Earned fees या refundable buffer position holders नीचे claim कर सकते हैं — और कुछ change नहीं हो सकता।",
-      "settledAhead": "यह पोजिशन ब्लॉकचेन पर पहले ही बंद हो चुकी है — यहाँ की स्थिति लाइव है। आपकी सूचियों को अपडेट होने में थोड़ा समय लग सकता है।"
+      "settledAhead": "यह पोजिशन ब्लॉकचेन पर पहले ही बंद हो चुकी है — यहाँ की स्थिति लाइव है। आपकी सूचियों को अपडेट होने में थोड़ा समय लग सकता है।",
+      "amountUnknownAfterRole": "एक amount जो अभी उपलब्ध नहीं है",
+      "amountUnknown": "Amount उपलब्ध नहीं",
+      "owedRepaidAmountUnknown": "कुछ नहीं — यह loan पूरी तरह repay हो चुका है।"
     },
     "powerSurface": {
       "body": "यह पेज एक जोड़ी के खुले offers साथ-साथ दिखाता है और आपको अपनी दर तय करने देता है। कदम-दर-कदम चलना पसंद है? Borrow और Lend पेज यही काम समझाते हुए करते हैं।",

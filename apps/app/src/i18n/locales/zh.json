@@ -1389,7 +1389,13 @@
           "approving": "正在钱包中批准…",
           "submitting": "正在提交…",
           "waiting": "等待钱包…"
-        }
+        },
+        "youBorrowedAmountUnknown": "你在这笔贷款中借入 — 借入金额目前无法显示",
+        "youLentAmountUnknown": "你在这笔贷款中借出 — 借出金额目前无法显示",
+        "loanBetweenAmountUnknown": "另外两个钱包之间的一笔贷款 — 借出金额目前无法显示",
+        "nothingLockedClosed": "目前没有锁定任何资产 — 这笔贷款已结束。",
+        "nothingLockedInternalMatch": "目前没有锁定任何资产 — 内部撮合已将借款人的抵押品支付给与之撮合的那笔贷款的出借人。任何剩余部分会通过借款人的领取退还给借款人。",
+        "receiveInternalMatchProceeds": "内部撮合为这笔贷款的出借人记录的所得款项。"
       },
       "loading": "正在加载您的持仓…",
       "openOffers": "开放 offers",
@@ -1452,7 +1458,10 @@
       "whatNextInternalMatchViewer": "此贷款通过内部匹配关闭 — 任何 residual 领取权属于持仓持有者。",
       "whatNextClosed": "此贷款已完全结算 — 没有剩余操作。",
       "whatNextRentalEnded": "此租赁已结束。任何赚取费用或可退还缓冲金可由持仓持有者在下方领取 — 不会再发生其他变化。",
-      "settledAhead": "此持仓已在区块链上结清——这里显示的是实时状态。你的列表可能需要一点时间才能同步更新。"
+      "settledAhead": "此持仓已在区块链上结清——这里显示的是实时状态。你的列表可能需要一点时间才能同步更新。",
+      "amountUnknownAfterRole": "一笔目前无法显示的金额",
+      "amountUnknown": "金额暂不可用",
+      "owedRepaidAmountUnknown": "无 — 这笔贷款已全额还清。"
     },
     "powerSurface": {
       "body": "本页并排显示一个交易对的开放报价，并让你设定自己的利率。想一步步操作？“借款”和“出借”页面会带着说明完成同样的事。",

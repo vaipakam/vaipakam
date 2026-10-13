@@ -57,6 +57,9 @@ export function mapLoanStructToRow(
     lender,
     borrower,
     principal: String(d.principal),
+    // The live struct keeps only the outstanding principal; what the loan was
+    // initiated with is not in it, so this row says it does not know (#2453).
+    initPrincipal: null,
     collateralAmount: String(d.collateralAmount),
     assetType: Number(d.assetType),
     collateralAssetType: Number(d.collateralAssetType),

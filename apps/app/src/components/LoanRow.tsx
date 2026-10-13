@@ -7,6 +7,7 @@ import { loanStateView, loanStateLabel } from '../lib/loanState';
 import { useTokenMeta } from '../contracts/erc20';
 import { AssetType } from '../lib/types';
 import type { PositionLoan } from '../data/hooks';
+import { initiatedPrincipal } from '../lib/positionAmounts';
 import type { ClaimableLoan } from '../data/claimables';
 import { useClaimPayoutText } from '../data/useClaimPayout';
 import { healthView, useLoanRisk } from '../data/risk';
@@ -44,10 +45,15 @@ export function LoanRow({
   // #1166 r1). Worse-than-ok time badges keep their own urgency.
   const healthUnknown = watchHealth && risk.data === undefined;
 
+  // #2453 — what was lent or borrowed, not the live outstanding principal.
+  const initPrincipal = initiatedPrincipal(loan);
   const symbol = principalMeta.data?.symbol ?? '';
-  const amount = principalMeta.data
-    ? formatTokenAmount(loan.principal, principalMeta.data.decimals)
-    : '…';
+  const amount =
+    initPrincipal === null
+      ? null
+      : principalMeta.data
+        ? formatTokenAmount(initPrincipal, principalMeta.data.decimals)
+        : '…';
 
   return (
     <Link to={`/positions/${loan.loanId}`} className="item-row">
@@ -55,7 +61,9 @@ export function LoanRow({
         <span className="row-title">
           {isRental
             ? `${loan.role === 'borrower' ? copy.loanRow.youRent : copy.loanRow.youRentOut} NFT ${shortAddress(loan.lendingAsset)} #${loan.tokenId}`
-            : `${loan.role === 'borrower' ? copy.positions.roleBorrower : copy.positions.roleLender} ${amount} ${symbol}`}
+            : `${loan.role === 'borrower' ? copy.positions.roleBorrower : copy.positions.roleLender} ${
+                amount === null ? copy.positions.amountUnknownAfterRole : `${amount} ${symbol}`
+              }`}
         </span>
         <br />
         <span className="row-sub">

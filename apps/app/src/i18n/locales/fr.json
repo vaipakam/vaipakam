@@ -1389,7 +1389,13 @@
           "approving": "Approbation dans votre wallet…",
           "submitting": "Envoi…",
           "waiting": "En attente du wallet…"
-        }
+        },
+        "youBorrowedAmountUnknown": "Vous avez emprunté sur ce prêt — le montant emprunté est indisponible pour le moment",
+        "youLentAmountUnknown": "Vous avez prêté sur ce prêt — le montant prêté est indisponible pour le moment",
+        "loanBetweenAmountUnknown": "Un prêt entre deux autres wallets — le montant prêté est indisponible pour le moment",
+        "nothingLockedClosed": "Plus rien n’est bloqué — ce prêt est clôturé.",
+        "nothingLockedInternalMatch": "Plus rien n’est bloqué — l’appariement interne a versé le collatéral de l’emprunteur au prêteur du prêt avec lequel il a été apparié. Tout excédent revient à l’emprunteur via sa réclamation.",
+        "receiveInternalMatchProceeds": "Le produit que l’appariement interne a enregistré pour le prêteur de ce prêt."
       },
       "loading": "Chargement de vos positions…",
       "openOffers": "Offres ouvertes",
@@ -1452,7 +1458,10 @@
       "whatNextInternalMatchViewer": "Ce prêt a été clôturé par matching interne — les retraits résiduels appartiennent aux détenteurs de position.",
       "whatNextClosed": "Ce prêt est entièrement réglé — il ne reste rien à faire.",
       "whatNextRentalEnded": "Cette location est terminée. Les frais gagnés ou le tampon remboursable peuvent être retirés ci-dessous par les détenteurs de position — rien d'autre ne peut changer.",
-      "settledAhead": "Cette position est déjà clôturée sur la blockchain — l’état affiché ici est à jour. Vos listes peuvent mettre un moment à suivre."
+      "settledAhead": "Cette position est déjà clôturée sur la blockchain — l’état affiché ici est à jour. Vos listes peuvent mettre un moment à suivre.",
+      "amountUnknownAfterRole": "un montant indisponible pour le moment",
+      "amountUnknown": "Montant indisponible",
+      "owedRepaidAmountUnknown": "Rien — ce prêt a été intégralement remboursé."
     },
     "powerSurface": {
       "body": "Cette page affiche côte à côte les offres ouvertes d’une paire et vous laisse fixer votre propre taux. Vous préférez être guidé ? Les pages Emprunter et Prêter font la même chose étape par étape.",

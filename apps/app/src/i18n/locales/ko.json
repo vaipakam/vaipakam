@@ -1389,7 +1389,13 @@
           "approving": "지갑에서 승인 중…",
           "submitting": "제출 중…",
           "waiting": "지갑 대기 중…"
-        }
+        },
+        "youBorrowedAmountUnknown": "이 대출에서 차입했습니다 — 차입한 금액은 지금 표시할 수 없습니다",
+        "youLentAmountUnknown": "이 대출에서 대여했습니다 — 대여한 금액은 지금 표시할 수 없습니다",
+        "loanBetweenAmountUnknown": "다른 두 지갑 사이의 대출 — 대여된 금액은 지금 표시할 수 없습니다",
+        "nothingLockedClosed": "지금은 잠긴 것이 없습니다 — 이 대출은 종료되었습니다.",
+        "nothingLockedInternalMatch": "지금은 잠긴 것이 없습니다 — 내부 매칭이 차입자의 담보를 매칭된 상대 대출의 대여자에게 지급했습니다. 남는 금액이 있으면 차입자의 청구를 통해 차입자에게 돌아갑니다.",
+        "receiveInternalMatchProceeds": "내부 매칭이 이 대출의 대여자를 위해 기록한 수령액."
       },
       "loading": "포지션 불러오는 중…",
       "openOffers": "열린 제안",
@@ -1452,7 +1458,10 @@
       "whatNextInternalMatchViewer": "이 대출은 내부 매칭으로 종료되었습니다 — 남은 청구는 포지션 보유자에게 속합니다.",
       "whatNextClosed": "이 대출은 완전히 정산되었습니다 — 더 이상 할 일이 없습니다.",
       "whatNextRentalEnded": "이 임대는 종료되었습니다. 벌어들인 수수료나 환불 가능한 버퍼는 아래에서 포지션 보유자가 청구할 수 있습니다 — 그 외에는 아무것도 바꿀 수 없습니다.",
-      "settledAhead": "이 포지션은 블록체인에서 이미 종료되었습니다 — 여기 표시된 상태가 실시간입니다. 목록에 반영되기까지 잠시 걸릴 수 있습니다."
+      "settledAhead": "이 포지션은 블록체인에서 이미 종료되었습니다 — 여기 표시된 상태가 실시간입니다. 목록에 반영되기까지 잠시 걸릴 수 있습니다.",
+      "amountUnknownAfterRole": "지금은 표시할 수 없는 금액",
+      "amountUnknown": "금액을 표시할 수 없음",
+      "owedRepaidAmountUnknown": "없음 — 이 대출은 전액 상환되었습니다."
     },
     "powerSurface": {
       "body": "이 페이지는 한 쌍의 열린 제안을 나란히 보여 주고 직접 이율을 정할 수 있게 합니다. 단계별로 안내받고 싶다면 빌리기·빌려주기 페이지에서 같은 일을 설명과 함께 할 수 있습니다.",

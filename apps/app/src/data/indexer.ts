@@ -262,7 +262,15 @@ export interface IndexedLoan {
   status: IndexedLoanStatus;
   lender: string;
   borrower: string;
+  /** LIVE outstanding principal — reduced by partial repayment, partial
+   *  swap-to-repay and internal matching (zero after a full match). */
   principal: string;
+  /** #2453 — the principal the loan was initiated with, stamped once by the
+   *  indexer and never rewritten. `null` when the row does not carry it (a
+   *  live-chain row, or a worker that predates the field — optional for the
+   *  same reason). Read through `initiatedPrincipal`, never `principal`, for
+   *  what was lent or borrowed. */
+  initPrincipal?: string | null;
   collateralAmount: string;
   assetType: number;
   collateralAssetType: number;

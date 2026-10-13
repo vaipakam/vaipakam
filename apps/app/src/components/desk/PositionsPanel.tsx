@@ -21,6 +21,7 @@ import { useTokenMeta } from '../../contracts/erc20';
 import { EmptyState, UnavailableState } from '../EmptyState';
 import { WindowedRowList } from '../../lib/visibleWindow';
 import { AssetType } from '../../lib/types';
+import { initiatedPrincipal } from '../../lib/positionAmounts';
 import {
   daysRemaining,
   formatBpsAsPercent,
@@ -58,6 +59,7 @@ function HealthBadge({ loan }: { loan: PositionLoan }) {
 
 function PositionRow({ loan }: { loan: PositionLoan }) {
   const meta = useTokenMeta(loan.lendingAsset);
+  const initPrincipal = initiatedPrincipal(loan);
   const remaining = daysRemaining(loan.startTime, loan.durationDays);
   return (
     <div className="item-row">
@@ -66,8 +68,11 @@ function PositionRow({ loan }: { loan: PositionLoan }) {
           {loan.role === 'borrower'
             ? copy.positions.roleBorrower
             : copy.positions.roleLender}{' '}
-          {meta.data ? formatTokenAmount(loan.principal, meta.data.decimals) : '…'}{' '}
-          {meta.data?.symbol ?? ''} ·{' '}
+          {/* #2453 — what was lent or borrowed, not the live outstanding principal. */}
+          {initPrincipal === null
+            ? copy.positions.amountUnknownAfterRole
+            : `${meta.data ? formatTokenAmount(initPrincipal, meta.data.decimals) : '…'} ${meta.data?.symbol ?? ''}`}{' '}
+          ·{' '}
           <span title={`${loan.interestRateBps} bps`}>
             {formatBpsAsPercent(loan.interestRateBps)}
           </span>

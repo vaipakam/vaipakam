@@ -158,3 +158,27 @@ describe('GET /loans/by-participant — fields=ids (#1023, Codex #1287 r1)', () 
     expect(res.body).toEqual({ error: 'bad-fields' });
   });
 });
+
+describe('GET /loans/by-participant — initPrincipal (#2453)', () => {
+  it('serves the immutable initiation principal beside the live one, and null when it was never recorded', async () => {
+    const h = makeHarness();
+    h.seedLoan(1);
+    h.seedLoan(2);
+    h.seedParticipation(1, 101);
+    h.seedParticipation(2, 102);
+    // Loan 1 was internally matched: the live principal is zero, the
+    // initiation snapshot still holds what was lent.
+    h.db.prepare(`UPDATE loans SET principal = '0', init_principal = '100' WHERE loan_id = 1`).run();
+    h.db.prepare(`UPDATE loans SET init_principal = NULL WHERE loan_id = 2`).run();
+
+    const res = await h.call();
+    expect(res.status).toBe(200);
+    const byId = new Map(
+      (res.body.loans as unknown as Array<{ loanId: number; principal: string; initPrincipal: string | null }>).map(
+        (l) => [l.loanId, l],
+      ),
+    );
+    expect(byId.get(1)).toMatchObject({ principal: '0', initPrincipal: '100' });
+    expect(byId.get(2)).toMatchObject({ principal: '100', initPrincipal: null });
+  });
+});
