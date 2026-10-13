@@ -168,7 +168,10 @@ describe('GET /loans/by-participant — initPrincipal (#2453)', () => {
     h.seedParticipation(2, 102);
     // Loan 1 was internally matched: the live principal is zero, the
     // initiation snapshot still holds what was lent.
-    h.db.prepare(`UPDATE loans SET principal = '0', init_principal = '100' WHERE loan_id = 1`).run();
+    // Backed by its LoanInitiated (0056 provenance flag cleared).
+    h.db
+      .prepare(`UPDATE loans SET principal = '0', init_principal = '100', init_principal_unbacked = 0 WHERE loan_id = 1`)
+      .run();
     h.db.prepare(`UPDATE loans SET init_principal = NULL WHERE loan_id = 2`).run();
 
     const res = await h.call();

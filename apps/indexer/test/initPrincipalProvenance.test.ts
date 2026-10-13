@@ -8,6 +8,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { Env } from '../src/env';
+import { reverifyInitPrincipal } from '../src/chainIndexer';
 import { handleLoansByHistoricalParticipant } from '../src/loanRoutes';
 import { createSqliteD1 } from './helpers/sqliteD1';
 
@@ -76,21 +77,41 @@ describe('0056 — init_principal flagged when the LoanInitiated ledger does not
     expect(h.unbacked(3)).toBe(1);
   });
 
-  it('leaves NULL unflagged and matches only this chain and this loan', () => {
+  it('matches only this chain and this loan', () => {
     const h = harness();
-    h.loan(4, '5', null);
     h.loan(6, '9', '9');
     h.initiated(7, '9'); // another loan's event with the same amount
     h.db.exec(MIGRATION);
-    expect(h.unbacked(4)).toBe(0);
     expect(h.unbacked(6)).toBe(1);
   });
 
-  it('a row written after the migration defaults to unflagged', () => {
+  it('a row written after the migration by a path that does not vouch for it starts withheld', () => {
+    // The previous Worker keeps serving between 0056's apply and the new
+    // Worker's publish; its INSERT names no provenance column.
     const h = harness();
     h.db.exec(MIGRATION);
     h.loan(8, '50', '50');
-    expect(h.unbacked(8)).toBe(0);
+    expect(h.unbacked(8)).toBe(1);
+  });
+
+  it('the per-tick re-verification backs a row once its ledger row confirms it, and never a reduced value', async () => {
+    const h = harness();
+    h.db.exec(MIGRATION);
+    h.loan(9, '1000', '1000'); // written in the deploy gap, value correct
+    h.loan(10, '400', '400'); // written in the gap from a chain-head read after a partial repay
+    h.initiated(10, '1000'); // the event says 1000
+    const env = { DB: h.d1 } as unknown as Env;
+
+    // Ledger row for loan 9 not there yet: nothing to confirm.
+    expect(await reverifyInitPrincipal(env, 84532)).toBe(0);
+    expect([h.unbacked(9), h.unbacked(10)]).toEqual([1, 1]);
+
+    h.initiated(9, '1000');
+    expect(await reverifyInitPrincipal(env, 84532)).toBe(1);
+    expect([h.unbacked(9), h.unbacked(10)]).toEqual([0, 1]);
+
+    // Another chain is untouched by this chain's pass.
+    expect(await reverifyInitPrincipal(env, 97)).toBe(0);
   });
 
   it('the loan routes withhold a flagged value and serve a backed one', async () => {
