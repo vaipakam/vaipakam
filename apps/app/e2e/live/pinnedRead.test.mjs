@@ -15,10 +15,12 @@ const badParams = () => new InvalidParamsRpcError(reply(-32602, 'invalid params'
 const noSleep = async () => {};
 
 function flaky(failures, value = 'ok') {
+  const pending = [...failures];
   let calls = 0;
   const read = async () => {
     calls++;
-    if (calls <= failures.length) throw failures[calls - 1]();
+    const fail = pending.shift();
+    if (fail) throw fail();
     return value;
   };
   return { read, calls: () => calls };
