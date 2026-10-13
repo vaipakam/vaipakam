@@ -2454,6 +2454,10 @@ const copySource = {
     // the protocol would accept its route: a failed check, not a refusal.
     routeUnverified:
       'The app did not get an answer it could rely on from every exchange it asked, or could not check that the protocol would accept a route it was given, so nothing was sent and nothing was spent. Try again in a moment.',
+    // #2463 round 14 — no reliable answer, AND some listed exchange was never
+    // asked; the second fact is a standing limit a retry does not change.
+    routeUnverifiedPartlyConfigured:
+      'The app did not get an answer it could rely on from every exchange it asked, or could not check that the protocol would accept a route it was given, so nothing was sent and nothing was spent. Some of the exchanges the protocol uses on this network were also not asked, because this app cannot ask them from here. Trying again in a moment may help; if it keeps happening, contact support.',
     // The exchanges asked declined, and others the protocol lists were not
     // asked because this deployment has no quote service for them.
     routeNoQuotePartlyConfigured:
@@ -2728,7 +2732,7 @@ const copySource = {
     // what a sale route delivers only when the sale fails.
     saleReceipt: {
       youReceive:
-        'Your share of what the collateral sells for, in the asset you lent — up to what you are owed, with anything above that going back to the borrower. If the sale cannot go through, collateral instead, through the protocol’s fallback. If the protocol settles this position against an opposing one first, the amount you lent, in the asset you lent it in. Which of these happens is decided while the transaction runs, and either way you claim it afterwards. No figure is known in advance.',
+        'Your share of what the collateral sells for, in the asset you lent — up to what you are owed, with anything above that going back to the borrower. If the sale cannot go through, collateral instead, through the protocol’s fallback. If the protocol settles this position against an opposing one first, the amount you lent, in the asset you lent it in. If, before the transaction runs, the protocol comes to treat the collateral as illiquid or its value collapses past the protocol’s threshold, the collateral itself, handed over directly, or, where the loan’s terms do not allow that, nothing at all and the attempt costs only the network fee. Which of these happens is decided while the transaction runs, and either way you claim it afterwards. No figure is known in advance.',
       youLock: 'Nothing.',
       youMayOwe: 'Nothing beyond the network fee.',
       youCanLose:
@@ -2737,7 +2741,7 @@ const copySource = {
       // and a settlement against an opposing position have none.
       fees: 'The network fee. If the sale goes through, the protocol’s share of the proceeds and the incentive paid to whoever submits it come out of those proceeds. If the close-out ends another way, there is no sale and none of those sale charges apply.',
       whenThisEnds:
-        'Usually straight away — a sale, or a full settlement against an opposing position, ends the loan. If the protocol can only settle part of it, the loan stays open and you can close it again later. If the sale cannot go through, the loan moves into the protocol’s fallback: you can claim the collateral, and until you do the borrower can still repay or add collateral.',
+        'Usually straight away — a sale, or a full settlement against an opposing position, ends the loan. If the protocol can only settle part of it, the loan stays open and you can close it again later. If the sale cannot go through, the loan moves into the protocol’s fallback: you can claim the collateral, and until you do the borrower can still repay or add collateral. If the collateral is handed over directly instead, because the protocol came to treat it as illiquid or its value collapsed past the protocol’s threshold before the transaction ran, the loan ends straight away and the borrower can no longer repay it.',
     },
     // Round 39 P2 — the shared receipt above describes collateral-sale
     // economics, and a rental default has none of them. `DefaultedFacet`

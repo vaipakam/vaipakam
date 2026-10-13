@@ -80,11 +80,7 @@ export interface CloseOutSale {
  *  - `no-proxy` — an aggregator this deployment has no quote proxy for, so
  *    it was not asked.
  *  - `unconfigured` — the quote proxy answered that it has no key for it.
- *  - `no-origin` — 0x, not asked because the account that will originate
- *    the transaction is unknown: the connected account is a contract
- *    wallet (a Safe), whose transaction an owner or relayer sends. 0x
- *    binds some of its liquidity to the originating EOA, so a quote made
- *    for the wrong origin is one the close-out may not be able to use.
+ *  - `origin-bound` — 0x, which this app does not ask: see `classifySlots`.
  *  - `other-pools` — a UniV3 adapter whose router belongs to a different
  *    V3 factory from the quoter this app knows, so this app cannot price it.
  *  - `unpriceable` — a venue this app has no way to price on this chain at
@@ -96,7 +92,7 @@ export type SlotOutcome =
   | 'unanswered'
   | 'no-proxy'
   | 'unconfigured'
-  | 'no-origin'
+  | 'origin-bound'
   | 'other-pools'
   | 'unpriceable';
 
@@ -114,6 +110,8 @@ export type CloseOutRoute =
  *
  *  - `unread` — some adapter could not be identified, so it was never asked.
  *  - `unanswered` — at least one venue gave no answer the app could judge.
+ *  - `unanswered-partly-reached` — the same, and some venue the protocol
+ *    lists was also left out, which a retry alone will not change.
  *  - `unconfigured` — nothing declined, and everything left out was left
  *    out for want of the quote proxy or its key.
  *  - `unreachable` — nothing declined, and something left out cannot be
@@ -125,6 +123,7 @@ export type CloseOutRoute =
 export type NoQuoteReason =
   | 'unread'
   | 'unanswered'
+  | 'unanswered-partly-reached'
   | 'unconfigured'
   | 'unreachable'
   | 'partly-reached'
@@ -136,41 +135,14 @@ export function noQuoteReason(
 ): NoQuoteReason {
   if (rosterIncomplete) return 'unread';
   const has = (o: SlotOutcome) => route.outcomes.some((x) => x.outcome === o);
-  if (has('unanswered')) return 'unanswered';
   const configGap = has('no-proxy') || has('unconfigured');
-  const unaskable = has('other-pools') || has('no-origin') || has('unpriceable');
+  const unaskable = has('other-pools') || has('origin-bound') || has('unpriceable');
   const leftOut = configGap || unaskable;
+  if (has('unanswered')) return leftOut ? 'unanswered-partly-reached' : 'unanswered';
   if (!has('declined')) {
     return configGap && !unaskable ? 'unconfigured' : 'unreachable';
   }
   return leftOut ? 'partly-reached' : 'declined';
-}
-
-/** The EIP-7702 delegation designator: an EOA that delegated its code
- *  still originates its own transactions. */
-const DELEGATED_EOA_PREFIX = '0xef0100';
-
-/**
- * The account that will originate the close-out transaction, as far as the
- * app can know it: the connected account when that account is an EOA
- * (including one with an EIP-7702 delegation), `null` otherwise.
- *
- * A contract wallet (the Safe connector) is not the origin of its own
- * transactions: an owner or a relayer sends them, and the app cannot tell
- * which. A failed code read is not known either, so it is `null` too.
- */
-export async function transactionOrigin(
-  client: Pick<PublicClient, 'getCode'>,
-  account: Address,
-): Promise<Address | null> {
-  let code;
-  try {
-    code = await client.getCode({ address: account });
-  } catch {
-    return null;
-  }
-  if (code === undefined || code === '0x') return account;
-  return code.toLowerCase().startsWith(DELEGATED_EOA_PREFIX) ? account : null;
 }
 
 /** The agent's origin for quotes, or `null` when the deployment has none. */
@@ -193,7 +165,14 @@ export function agentQuoteOrigin(): string | null {
  *
  *  - `askable` — the confirm will ask it for a price.
  *  - `no-proxy` — an aggregator, and this deployment has no quote proxy.
- *  - `no-origin` — 0x, and the transaction's origin is not known.
+ *  - `origin-bound` — 0x. Its quotes can bind liquidity to the account
+ *    that ORIGINATES the transaction, and this app cannot know that
+ *    account for every wallet it supports: a Safe's transaction is sent by
+ *    an owner or a relayer, a smart account's by a bundler, and an
+ *    undeployed smart account has no code to tell it from an EOA. Rounds
+ *    10 to 14 each found another wallet shape a per-wallet check got
+ *    wrong, so 0x is not asked at all rather than asked on a guess (#2463
+ *    round 14, root fix). 1inch and Uniswap V3 bind to no origin.
  *  - `other-pools` — a UniV3 adapter whose router is on another factory.
  *  - `unpriceable` — no way to price this kind on this chain.
  *  - `unread` — a fact this depends on could not be read.
@@ -201,7 +180,7 @@ export function agentQuoteOrigin(): string | null {
 export type SlotAskability =
   | 'askable'
   | 'no-proxy'
-  | 'no-origin'
+  | 'origin-bound'
   | 'other-pools'
   | 'unpriceable'
   | 'unread';
@@ -226,15 +205,12 @@ export async function classifySlots(deps: {
   chainId: number;
   roster: AdapterRoster;
   agentConfigured: boolean;
-  /** `transactionOrigin`'s answer: the originating account, or `null`. */
-  txOrigin: Address | null;
 }): Promise<ClassifiedSlot[]> {
-  const { client, chainId, roster, agentConfigured, txOrigin } = deps;
+  const { client, chainId, roster, agentConfigured } = deps;
   const judge = async (kind: SwapVenueKind, slot: RosterSlot): Promise<SlotAskability> => {
     switch (kind) {
       case 'zeroex':
-        if (!agentConfigured) return 'no-proxy';
-        return txOrigin === null ? 'no-origin' : 'askable';
+        return 'origin-bound';
       case 'oneinch':
         return agentConfigured ? 'askable' : 'no-proxy';
       case 'univ3': {
@@ -289,9 +265,8 @@ export interface CloseOutRoster {
  * - `proxy-unconfigured` — an aggregator the app would ask is enabled,
  *   but this deployment has no quote proxy to ask it through.
  * - `unsupported` — enabled venues exist, none this app can ask from
- *   here (of a kind it cannot price, or 0x for a wallet whose transaction
- *   origin is unknown); another caller with its own route can still
- *   close it.
+ *   here (of a kind it cannot price, or 0x, which it does not ask);
+ *   another caller with its own route can still close it.
  */
 export type RoutePosture =
   | 'available'
@@ -331,39 +306,29 @@ export async function readCloseOutRoster(
 export interface RouteStanding {
   read: CloseOutRoster;
   slots: ClassifiedSlot[];
-  /** `transactionOrigin`'s answer, carried so the confirm quotes 0x for the
-   *  same origin the slots were judged with. */
-  txOrigin: Address | null;
   posture: RoutePosture;
 }
 
 /**
- * Read the roster, the submitting wallet's transaction origin and every
- * slot's askability, and derive the posture from them. The card's poll and
+ * Read the roster and every slot's askability, and derive the posture from them. The card's poll and
  * the confirm both call this, so the card cannot offer what the confirm
  * would then refuse for a reason knowable in advance.
  */
 export async function readRouteStanding(deps: {
-  client: Pick<PublicClient, 'readContract' | 'getCode'>;
+  client: Pick<PublicClient, 'readContract'>;
   diamond: Address;
   chainId: number;
   testnetMockAdapter: Address | undefined;
   agentConfigured: boolean;
-  /** The connected account, or undefined when none is connected. */
-  account: Address | undefined;
 }): Promise<RouteStanding> {
-  const [read, txOrigin] = await Promise.all([
-    readCloseOutRoster(deps.client, deps.diamond, deps.testnetMockAdapter),
-    deps.account ? transactionOrigin(deps.client, deps.account) : Promise.resolve(null),
-  ]);
+  const read = await readCloseOutRoster(deps.client, deps.diamond, deps.testnetMockAdapter);
   const slots = await classifySlots({
     client: deps.client,
     chainId: deps.chainId,
     roster: read.roster,
     agentConfigured: deps.agentConfigured,
-    txOrigin,
   });
-  return { read, slots, txOrigin, posture: routePosture(read, slots) };
+  return { read, slots, posture: routePosture(read, slots) };
 }
 
 const QUOTE_TIMEOUT_MS = 8_000;
@@ -416,7 +381,12 @@ async function agentQuote(
     });
     if (res.ok) {
       const parsed = await res.json().catch(() => undefined);
-      return parsed === undefined ? 'unanswered' : { body: parsed };
+      // The proxy re-serialises an upstream body it could not parse as
+      // `{ error, status }` and keeps the upstream's 200, so an envelope with
+      // an `error` field is a response nobody could read, not a decline.
+      const envelope =
+        parsed !== null && typeof parsed === 'object' && 'error' in (parsed as object);
+      return parsed === undefined || envelope ? 'unanswered' : { body: parsed };
     }
     // `quoteProxy.ts` answers 503 `<venue>-not-configured` when its key is
     // absent.
@@ -456,11 +426,6 @@ export async function buildCloseOutRoute(deps: {
   slots: readonly ClassifiedSlot[];
   sale: CloseOutSale;
   agentOrigin: string | null;
-  /** The account that will originate the close-out transaction. The
-   *  aggregators' taker is the adapter contract; 0x asks for the
-   *  originating EOA as well. `null` when it is not known (a contract
-   *  wallet), and then 0x is not asked: see `no-origin`. */
-  txOrigin: Address | null;
   fetchImpl?: typeof fetch;
 }): Promise<CloseOutRoute> {
   const { client, chainId, diamond, sale, agentOrigin } = deps;
@@ -507,7 +472,6 @@ export async function buildCloseOutRoute(deps: {
           sellAmount: sale.sellAmount.toString(),
           taker: slot.address,
           slippageBps,
-          ...(deps.txOrigin ? { txOrigin: deps.txOrigin } : {}),
         });
         if (typeof answer === 'string') return none(answer);
         const q =

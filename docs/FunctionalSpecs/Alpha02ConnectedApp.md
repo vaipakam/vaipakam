@@ -1617,17 +1617,27 @@ is the borrower's own money.
   be read, no aggregator is asked.
 - The card's own judgement of whether a route can be offered is the same
   per-exchange judgement the confirmation uses, made from the same reads: an
-  exchange the viewer's wallet cannot use (0x for a contract wallet), or one
+  exchange the app does not ask at all (0x, below), or one
   the app cannot price on that network (a Uniswap V3 adapter trading another
   set of pools than the app's quoter), does not count as one the app can
   ask, and a
   refresh of the exchange list that failed leaves the card saying the list
   could not be read, not repeating the last answer.
-- An aggregator that binds its liquidity to the account originating the
-  transaction is asked only when the app knows that account. Where the
-  connected account is a contract wallet, whose transactions an owner or a
-  relayer sends, that aggregator is not asked, and a confirmation that then
-  finds no price says some exchanges could not be asked from here.
+- An aggregator that may bind its liquidity to the account originating the
+  transaction (0x) is never asked by the app. The account that originates the
+  transaction cannot be known for every wallet the app supports (a Safe, a
+  smart account sent through a relayer, one not yet deployed), so asking on a
+  guess could return a price the protocol then cannot use. A confirmation that
+  then finds no price says some exchanges could not be asked from here, and,
+  when another exchange also gave no reliable answer, that a retry may help
+  but the unasked exchanges stay unasked.
+- An answer from the quote service that carries an error, even with a success
+  status, counts as no answer from that exchange rather than as a refusal.
+- The sale disclosure also states the in-kind outcome: if, before the
+  transaction runs, the protocol comes to treat the collateral as illiquid or
+  its value collapses past the protocol's threshold, the collateral is handed
+  over directly and the loan ends at once, or, where the loan's terms do not
+  allow that, nothing happens beyond the network fee.
 - The last checks before the wallet is asked (that no buyer has accepted a
   sale of the position, and that the collateral is still the amount the
   prices were collected for) are read at one block, so they describe one

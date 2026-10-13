@@ -7,7 +7,6 @@ import {
 } from 'viem';
 import {
   buildCloseOutRoute,
-  transactionOrigin,
   noQuoteReason,
   previewCloseOut,
   classifySlots,
@@ -65,7 +64,6 @@ async function build(
     chainId: deps.chainId,
     roster,
     agentConfigured: deps.agentOrigin !== null,
-    txOrigin: deps.txOrigin,
   });
   return buildCloseOutRoute({ ...rest, slots });
 }
@@ -73,27 +71,26 @@ async function build(
 describe('classifySlots', () => {
   const judge = (
     roster: Parameters<typeof classifySlots>[0]['roster'],
-    opts: { chainId?: number; agent?: boolean; origin?: Address | null; client?: RouteClient } = {},
+    opts: { chainId?: number; agent?: boolean; client?: RouteClient } = {},
   ) =>
     classifySlots({
       client: opts.client ?? noChain,
       chainId: opts.chainId ?? 8453,
       roster,
       agentConfigured: opts.agent ?? true,
-      txOrigin: opts.origin === undefined ? A(0xe0a) : opts.origin,
     }).then((xs) => xs.map((x) => `${x.kind}:${x.askability}`));
 
   it('asks the aggregators only through a configured agent', async () => {
     const roster = { zeroex: S(0), oneinch: S(1) };
-    expect(await judge(roster)).toEqual(['zeroex:askable', 'oneinch:askable']);
-    expect(await judge(roster, { agent: false })).toEqual(['zeroex:no-proxy', 'oneinch:no-proxy']);
+    expect(await judge(roster)).toEqual(['zeroex:origin-bound', 'oneinch:askable']);
+    expect(await judge(roster, { agent: false })).toEqual([
+      'zeroex:origin-bound',
+      'oneinch:no-proxy',
+    ]);
   });
 
-  it('asks 0x only when the transaction origin is known', async () => {
-    expect(await judge({ zeroex: S(0), oneinch: S(1) }, { origin: null })).toEqual([
-      'zeroex:no-origin',
-      'oneinch:askable',
-    ]);
+  it('never asks 0x, whose quotes can bind to the transaction origin', async () => {
+    expect(await judge({ zeroex: S(0) })).toEqual(['zeroex:origin-bound']);
   });
 
   it('asks Uniswap V3 only where the chain has a quoter on the same factory', async () => {
@@ -127,43 +124,41 @@ describe('classifySlots', () => {
 });
 
 describe('buildCloseOutRoute', () => {
-  it('ranks aggregator quotes and packs each for its own adapter index', async () => {
+  it('ranks quotes, packs each for its own adapter index, and never asks 0x', async () => {
     const { impl, seen } = fakeFetch({
-      '/quote/0x': { transaction: { to: A(0xa), data: '0x01' }, buyAmount: '100' },
+      '/quote/0x': { transaction: { to: A(0xa), data: '0x01' }, buyAmount: '900' },
       '/quote/1inch': { tx: { to: A(0xb), data: '0x02' }, dstAmount: '200' },
     });
     const route = await build({
-      client: noChain,
-      chainId: 8453,
+      client: mockChain({ bps: 9_000n }) as any,
+      chainId: 84532,
       diamond: A(0xd),
-      roster: { zeroex: S(3), oneinch: S(1) },
+      roster: { zeroex: S(3), oneinch: S(1), testnetMock: S(0) },
       sale,
       agentOrigin: 'https://agent.example',
-      txOrigin: A(0xe0a),
       fetchImpl: impl,
     });
     expect(route.kind).toBe('route');
     if (route.kind !== 'route') return;
-    expect(route.venues).toEqual(['oneinch', 'zeroex']);
-    expect(route.calls.map((c) => c.adapterIdx)).toEqual([1n, 3n]);
+    expect(route.venues).toEqual(['testnetMock', 'oneinch']);
+    expect(route.calls.map((c) => c.adapterIdx)).toEqual([0n, 1n]);
     expect(
-      decodeAbiParameters([{ type: 'address' }, { type: 'bytes' }], route.calls[0].data),
+      decodeAbiParameters([{ type: 'address' }, { type: 'bytes' }], route.calls[1].data),
     ).toEqual([A(0xb), '0x02']);
+    expect(seen).toHaveLength(1);
     expect(seen[0].body).toEqual({
-      chainId: 8453,
+      chainId: 84532,
       sellToken: A(1),
       buyToken: A(2),
       sellAmount: (10n ** 18n).toString(),
-      taker: A(0x103),
+      taker: A(0x101),
       slippageBps: 600,
-      txOrigin: A(0xe0a),
     });
-    expect(seen[1].body).toMatchObject({ taker: A(0x101) });
   });
 
   it('asks every enabled instance of a venue, each as its own taker', async () => {
     const { impl, seen } = fakeFetch({
-      '/quote/0x': { transaction: { to: A(0xa), data: '0x01' }, buyAmount: '100' },
+      '/quote/1inch': { tx: { to: A(0xa), data: '0x01' }, dstAmount: '100' },
     });
     // The older adapter no longer allows the aggregator's current target;
     // its replacement does.
@@ -178,10 +173,9 @@ describe('buildCloseOutRoute', () => {
       client,
       chainId: 8453,
       diamond: A(0xd),
-      roster: { zeroex: [...S(0), ...S(1)] },
+      roster: { oneinch: [...S(0), ...S(1)] },
       sale,
       agentOrigin: 'https://agent.example',
-      txOrigin: A(0xe0a),
       fetchImpl: impl,
     });
     expect(seen.map((r) => (r.body as { taker: Address }).taker)).toEqual([A(0x100), A(0x101)]);
@@ -199,7 +193,6 @@ describe('buildCloseOutRoute', () => {
       roster: { zeroex: S(0), oneinch: S(1) },
       sale,
       agentOrigin: 'https://agent.example',
-      txOrigin: A(0xe0a),
       fetchImpl: impl,
     });
     expect(route.kind === 'route' && route.venues).toEqual(['oneinch']);
@@ -244,26 +237,24 @@ describe('buildCloseOutRoute', () => {
       roster: { testnetMock: S(0) },
       sale,
       agentOrigin: null,
-      txOrigin: A(0xe0a),
     });
 
   it('quotes the testnet mock from its own state and ranks it like any venue', async () => {
     const { impl } = fakeFetch({
-      '/quote/0x': { transaction: { to: A(0xa), data: '0x01' }, buyAmount: '1' },
+      '/quote/1inch': { tx: { to: A(0xa), data: '0x01' }, dstAmount: '1' },
     });
     const route = await build({
       client: mockChain({ bps: 9_000n }) as any,
       chainId: 84532,
       diamond: A(0xd),
-      roster: { testnetMock: S(0), zeroex: S(1) },
+      roster: { testnetMock: S(0), oneinch: S(1) },
       sale,
       agentOrigin: 'https://agent.example',
-      txOrigin: A(0xe0a),
       fetchImpl: impl,
     });
     expect(route).toEqual({
       kind: 'route',
-      venues: ['testnetMock', 'zeroex'],
+      venues: ['testnetMock', 'oneinch'],
       calls: [{ adapterIdx: 0n, data: '0x' }, expect.objectContaining({ adapterIdx: 1n })],
     });
   });
@@ -281,16 +272,15 @@ describe('buildCloseOutRoute', () => {
       client: noChain,
       chainId: 8453,
       diamond: A(0xd),
-      roster: { zeroex: S(0), univ3: S(2) },
+      roster: { oneinch: S(0), univ3: S(2) },
       sale,
       agentOrigin: 'https://agent.example',
-      txOrigin: A(0xe0a),
       fetchImpl: impl,
     });
     expect(route).toEqual({
       kind: 'no-quote',
       outcomes: [
-        { kind: 'zeroex', outcome: 'declined' },
+        { kind: 'oneinch', outcome: 'declined' },
         { kind: 'univ3', outcome: 'declined' },
       ],
     });
@@ -298,7 +288,7 @@ describe('buildCloseOutRoute', () => {
 
   it('drops a quote whose swap target the adapter does not allow', async () => {
     const { impl } = fakeFetch({
-      '/quote/0x': { transaction: { to: A(0xa), data: '0x01' }, buyAmount: '100' },
+      '/quote/1inch': { tx: { to: A(0xa), data: '0x01' }, dstAmount: '100' },
     });
     const route = await build({
       client: {
@@ -308,10 +298,9 @@ describe('buildCloseOutRoute', () => {
       } as any,
       chainId: 8453,
       diamond: A(0xd),
-      roster: { zeroex: S(0) },
+      roster: { oneinch: S(0) },
       sale,
       agentOrigin: 'https://agent.example',
-      txOrigin: A(0xe0a),
       fetchImpl: impl,
     });
     expect(route.kind).toBe('no-quote');
@@ -319,22 +308,21 @@ describe('buildCloseOutRoute', () => {
 
   it('names the aggregators the agent has no key for', async () => {
     const impl = (async () =>
-      new Response(JSON.stringify({ error: 'zeroex-not-configured' }), {
+      new Response(JSON.stringify({ error: 'oneinch-not-configured' }), {
         status: 503,
       })) as unknown as typeof fetch;
     const route = await build({
       client: noChain,
       chainId: 8453,
       diamond: A(0xd),
-      roster: { zeroex: S(0) },
+      roster: { oneinch: S(0) },
       sale,
       agentOrigin: 'https://agent.example',
-      txOrigin: A(0xe0a),
       fetchImpl: impl,
     });
     expect(route).toEqual({
       kind: 'no-quote',
-      outcomes: [{ kind: 'zeroex', outcome: 'unconfigured' }],
+      outcomes: [{ kind: 'oneinch', outcome: 'unconfigured' }],
     });
   });
 });
@@ -377,7 +365,6 @@ describe('buildCloseOutRoute — UniV3', () => {
       roster: { univ3: S(2) },
       sale,
       agentOrigin: null,
-      txOrigin: A(0xe0a),
     });
     expect(route.kind === 'route' && route.calls).toEqual([
       { adapterIdx: 2n, data: encodeAbiParameters([{ type: 'uint24' }], [3000]) },
@@ -463,7 +450,6 @@ describe('routePosture', () => {
     entries: { name?: string; disabled?: boolean }[],
     agent = true,
     chainId = 8453,
-    origin: Address | null = A(0xe0a),
   ) => {
     const client = chainOf(entries);
     const read = await readCloseOutRoster(client, A(9), undefined);
@@ -472,7 +458,6 @@ describe('routePosture', () => {
       chainId,
       roster: read.roster,
       agentConfigured: agent,
-      txOrigin: origin,
     });
     return routePosture(read, slots);
   };
@@ -498,12 +483,11 @@ describe('routePosture', () => {
       'proxy-unconfigured',
     );
   });
-  it('does not count 0x as askable for a wallet whose origin is unknown', async () => {
+  it('does not count 0x as askable, with or without a proxy', async () => {
     const zeroexOnly = [{ name: 'ZeroEx', disabled: false }];
-    expect(await posture(zeroexOnly, true, 8453, null)).toBe('unsupported');
-    expect(await posture([...zeroexOnly, { name: 'OneInch', disabled: false }], true, 8453, null)).toBe(
-      'available',
-    );
+    expect(await posture(zeroexOnly)).toBe('unsupported');
+    expect(await posture(zeroexOnly, false)).toBe('unsupported');
+    expect(await posture([...zeroexOnly, { name: 'OneInch', disabled: false }])).toBe('available');
   });
   it('is unsupported when enabled venues exist that this app cannot ask', async () => {
     expect(await posture([{ name: 'BalancerV2', disabled: false }])).toBe('unsupported');
@@ -523,6 +507,14 @@ describe('noQuoteReason', () => {
   it('says unread before anything else', () => {
     expect(noQuoteReason(nq(['zeroex', 'unanswered']), true)).toBe('unread');
   });
+  it('keeps a left-out venue in the answer when another gave no answer', () => {
+    expect(noQuoteReason(nq(['univ3', 'unanswered'], ['oneinch', 'unconfigured']), false)).toBe(
+      'unanswered-partly-reached',
+    );
+    expect(noQuoteReason(nq(['univ3', 'unanswered'], ['zeroex', 'origin-bound']), false)).toBe(
+      'unanswered-partly-reached',
+    );
+  });
   it('says unanswered when any venue gave no answer it could judge', () => {
     expect(noQuoteReason(nq(['univ3', 'declined'], ['zeroex', 'unanswered']), false)).toBe(
       'unanswered',
@@ -536,11 +528,11 @@ describe('noQuoteReason', () => {
   it('says unreachable when nothing declined and a venue cannot be priced here', () => {
     expect(noQuoteReason(nq(['univ3', 'other-pools']), false)).toBe('unreachable');
   });
-  it('says unreachable, not unconfigured, when 0x was skipped for an unknown origin', () => {
-    expect(noQuoteReason(nq(['zeroex', 'no-origin'], ['oneinch', 'unconfigured']), false)).toBe(
+  it('says unreachable, not unconfigured, when 0x was left out', () => {
+    expect(noQuoteReason(nq(['zeroex', 'origin-bound'], ['oneinch', 'unconfigured']), false)).toBe(
       'unreachable',
     );
-    expect(noQuoteReason(nq(['zeroex', 'no-origin'], ['univ3', 'declined']), false)).toBe(
+    expect(noQuoteReason(nq(['zeroex', 'origin-bound'], ['univ3', 'declined']), false)).toBe(
       'partly-reached',
     );
   });
@@ -565,11 +557,10 @@ describe('buildCloseOutRoute — route checks', () => {
       roster,
       sale,
       agentOrigin: impl ? 'https://agent.example' : null,
-      txOrigin: A(0xe0a),
       fetchImpl: impl,
     });
   const quoteOk = fakeFetch({
-    '/quote/0x': { transaction: { to: A(0xa), data: '0x01' }, buyAmount: '100' },
+    '/quote/1inch': { tx: { to: A(0xa), data: '0x01' }, dstAmount: '100' },
   }).impl;
 
   it('marks a quote whose allowlist read failed as unanswered, not declined', async () => {
@@ -579,9 +570,9 @@ describe('buildCloseOutRoute — route checks', () => {
       },
       call: noChain.call,
     } as unknown as RouteClient;
-    expect(await run(client, { zeroex: S(0) }, quoteOk)).toEqual({
+    expect(await run(client, { oneinch: S(0) }, quoteOk)).toEqual({
       kind: 'no-quote',
-      outcomes: [{ kind: 'zeroex', outcome: 'unanswered' }],
+      outcomes: [{ kind: 'oneinch', outcome: 'unanswered' }],
     });
   });
 
@@ -591,10 +582,15 @@ describe('buildCloseOutRoute — route checks', () => {
       () => Promise.resolve(new Response('{}', { status: 429 })),
       () => Promise.resolve(new Response('{}', { status: 502 })),
       () => Promise.resolve(new Response('not json', { status: 200 })),
+      // The proxy's own envelope for an upstream body it could not parse.
+      () =>
+        Promise.resolve(
+          new Response(JSON.stringify({ error: 'upstream-non-json', status: 200 }), { status: 200 }),
+        ),
     ]) {
       const impl = (async () => res()) as unknown as typeof fetch;
-      expect(await run(noChain, { zeroex: S(0) }, impl)).toMatchObject({
-        outcomes: [{ kind: 'zeroex', outcome: 'unanswered' }],
+      expect(await run(noChain, { oneinch: S(0) }, impl)).toMatchObject({
+        outcomes: [{ kind: 'oneinch', outcome: 'unanswered' }],
       });
     }
   });
@@ -602,28 +598,10 @@ describe('buildCloseOutRoute — route checks', () => {
   it('reads a rejected proxy credential as unconfigured, not as a decline', async () => {
     for (const status of [401, 403]) {
       const impl = (async () => new Response('{}', { status })) as unknown as typeof fetch;
-      expect(await run(noChain, { zeroex: S(0) }, impl)).toMatchObject({
-        outcomes: [{ kind: 'zeroex', outcome: 'unconfigured' }],
+      expect(await run(noChain, { oneinch: S(0) }, impl)).toMatchObject({
+        outcomes: [{ kind: 'oneinch', outcome: 'unconfigured' }],
       });
     }
-  });
-
-  it('names the submitting wallet as txOrigin on every aggregator request', async () => {
-    const { impl, seen } = fakeFetch({});
-    await build({
-      client: noChain,
-      chainId: 8453,
-      diamond: A(0xd),
-      roster: { zeroex: S(0), oneinch: S(1) },
-      sale,
-      agentOrigin: 'https://agent.example',
-      txOrigin: A(0xe0a),
-      fetchImpl: impl,
-    });
-    expect(seen.map((r) => (r.body as { txOrigin?: Address }).txOrigin)).toEqual([
-      A(0xe0a),
-      A(0xe0a),
-    ]);
   });
 
   it('quotes the aggregators with the protocol slippage ceiling, and asks none when it is unread', async () => {
@@ -647,7 +625,6 @@ describe('buildCloseOutRoute — route checks', () => {
         roster: { oneinch: S(1) },
         sale,
         agentOrigin: 'https://agent.example',
-        txOrigin: A(0xe0a),
         fetchImpl: impl,
       });
       return { route, seen };
@@ -659,7 +636,7 @@ describe('buildCloseOutRoute — route checks', () => {
     expect(unread.route).toMatchObject({ outcomes: [{ kind: 'oneinch', outcome: 'unanswered' }] });
   });
 
-  it('does not ask 0x when the originating account is unknown, and still asks 1inch', async () => {
+  it('does not ask 0x, and still asks 1inch', async () => {
     const { impl, seen } = fakeFetch({});
     const route = await build({
       client: noChain,
@@ -668,14 +645,13 @@ describe('buildCloseOutRoute — route checks', () => {
       roster: { zeroex: S(0), oneinch: S(1) },
       sale,
       agentOrigin: 'https://agent.example',
-      txOrigin: null,
       fetchImpl: impl,
     });
     expect(seen).toHaveLength(1);
     expect(route).toMatchObject({
       outcomes: [
         { kind: 'oneinch', outcome: 'declined' },
-        { kind: 'zeroex', outcome: 'no-origin' },
+        { kind: 'zeroex', outcome: 'origin-bound' },
       ],
     });
   });
@@ -720,25 +696,5 @@ describe('buildCloseOutRoute — route checks', () => {
         { kind: 'oneinch', outcome: 'no-proxy' },
       ],
     });
-  });
-});
-
-describe('transactionOrigin', () => {
-  const at = (code: unknown) =>
-    ({
-      getCode: async () => {
-        if (code instanceof Error) throw code;
-        return code;
-      },
-    }) as unknown as Parameters<typeof transactionOrigin>[0];
-  const me = A(0xe0a);
-  it('is the account itself for an EOA, with or without a 7702 delegation', async () => {
-    expect(await transactionOrigin(at(undefined), me)).toBe(me);
-    expect(await transactionOrigin(at('0x'), me)).toBe(me);
-    expect(await transactionOrigin(at('0xef0100' + '11'.repeat(20)), me)).toBe(me);
-  });
-  it('is unknown for a contract wallet or a failed read', async () => {
-    expect(await transactionOrigin(at('0x6080604052'), me)).toBeNull();
-    expect(await transactionOrigin(at(new Error('rpc')), me)).toBeNull();
   });
 });

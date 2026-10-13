@@ -880,7 +880,7 @@ export function ForcedCloseCard({
   const testnetMockAdapter = getDeployment(routeChainId)?.testnetMocks
     ?.mockSwapAdapter as Address | undefined;
   const rosterQuery = useQuery({
-    queryKey: ['forcedClose', 'routeStanding', routeChainId, routeDiamond, address],
+    queryKey: ['forcedClose', 'routeStanding', routeChainId, routeDiamond],
     enabled:
       readiness === 'ready-needs-route' &&
       publicClient !== undefined &&
@@ -893,7 +893,6 @@ export function ForcedCloseCard({
         chainId: routeChainId!,
         testnetMockAdapter,
         agentConfigured: agentQuoteOrigin() !== null,
-        account: address,
       }),
     staleTime: 60_000,
     // Re-read while the card is open: governance can enable or register a
@@ -960,7 +959,6 @@ export function ForcedCloseCard({
           chainId: routeChainId,
           testnetMockAdapter,
           agentConfigured: agentQuoteOrigin() !== null,
-          account: address,
         }),
       ]);
       standing = fresh;
@@ -994,7 +992,6 @@ export function ForcedCloseCard({
       slots: standing.slots,
       sale,
       agentOrigin: agentQuoteOrigin(),
-      txOrigin: standing.txOrigin,
     });
     if (route.kind === 'no-quote') {
       // One decision for the sentence (`noQuoteReason`), so it claims only
@@ -1006,6 +1003,8 @@ export function ForcedCloseCard({
             ? copy.forcedClose.routeRosterFailed
             : reason === 'unanswered'
               ? copy.forcedClose.routeUnverified
+              : reason === 'unanswered-partly-reached'
+                ? copy.forcedClose.routeUnverifiedPartlyConfigured
               : reason === 'unconfigured'
                 ? copy.forcedClose.routeNotConfigured
                 : reason === 'unreachable'
