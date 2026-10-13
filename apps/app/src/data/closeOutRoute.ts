@@ -257,11 +257,18 @@ export async function buildCloseOutRoute(deps: {
  * What this close-out would do if it were sent now, read from the chain
  * rather than from the quotes.
  *
- *  - `'sale'` — the simulated close-out ran and no adapter-failure event
- *    came out of it: some route met the protocol's minimum.
+ *  - `'sale'` — the simulated close-out ran and emitted
+ *    `LibSwap.SwapAdapterSucceeded` for this loan: a route met the
+ *    protocol's minimum. Affirmative evidence, not the absence of a
+ *    failure.
  *  - `'fallback'` — it ran and emitted `LibSwap.SwapAllAdaptersFailed` for
  *    this loan. Every route was refused, and the close-out would succeed
  *    into the full-collateral fallback instead of a sale.
+ *  - `'other'` — it ran and emitted neither. The loan no longer takes the
+ *    sale branch at all: its collateral was re-classified illiquid, its LTV
+ *    crossed the collapse threshold, or an opposing position matched it,
+ *    while the route was being built. The card's sale copy no longer
+ *    describes what this transaction would do.
  *  - `'unknown'` — the node could not run the preview (`eth_simulateV1`
  *    unsupported, or the call reverted, which the ordinary simulation
  *    that follows reports in its own words).
@@ -274,7 +281,7 @@ export async function buildCloseOutRoute(deps: {
  * Only the logs tell the two endings apart, and `eth_simulateV1` is the
  * read that returns logs.
  */
-export type CloseOutPreview = 'sale' | 'fallback' | 'unknown';
+export type CloseOutPreview = 'sale' | 'fallback' | 'other' | 'unknown';
 
 const TRIGGER_DEFAULT_ABI = [
   {
@@ -295,6 +302,12 @@ const TRIGGER_DEFAULT_ABI = [
     outputs: [],
   },
 ] as const;
+
+/** `LibSwap.SwapAdapterSucceeded(uint256 indexed loanId, uint256 indexed
+ *  adapterIdx, address adapter, uint256 outputAmount)`. */
+export const SWAP_ADAPTER_SUCCEEDED_TOPIC = toEventSelector(
+  'SwapAdapterSucceeded(uint256,uint256,address,uint256)',
+);
 
 /** `LibSwap.SwapAllAdaptersFailed(uint256 indexed loanId)`. */
 export const SWAP_ALL_ADAPTERS_FAILED_TOPIC = toEventSelector(
@@ -330,11 +343,14 @@ export async function previewCloseOut(deps: {
   const result = results[0];
   if (!result || result.status !== 'success') return 'unknown';
   const loanTopic = `0x${loanId.toString(16).padStart(64, '0')}` as Hex;
-  const failed = (result.logs ?? []).some(
-    (log) =>
-      log.address.toLowerCase() === diamond.toLowerCase() &&
-      log.topics[0] === SWAP_ALL_ADAPTERS_FAILED_TOPIC &&
-      log.topics[1]?.toLowerCase() === loanTopic,
-  );
-  return failed ? 'fallback' : 'sale';
+  const emitted = (topic: Hex) =>
+    (result.logs ?? []).some(
+      (log) =>
+        log.address.toLowerCase() === diamond.toLowerCase() &&
+        log.topics[0] === topic &&
+        log.topics[1]?.toLowerCase() === loanTopic,
+    );
+  if (emitted(SWAP_ADAPTER_SUCCEEDED_TOPIC)) return 'sale';
+  if (emitted(SWAP_ALL_ADAPTERS_FAILED_TOPIC)) return 'fallback';
+  return 'other';
 }

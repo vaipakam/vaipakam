@@ -4,6 +4,7 @@ import {
   buildCloseOutRoute,
   previewCloseOut,
   quotableVenues,
+  SWAP_ADAPTER_SUCCEEDED_TOPIC,
   SWAP_ALL_ADAPTERS_FAILED_TOPIC,
 } from './closeOutRoute';
 
@@ -288,18 +289,25 @@ describe('previewCloseOut', () => {
     ).toBe('fallback');
   });
 
-  it('reads a sale when no such event came out, even if another loan failed', async () => {
+  it('reads a sale only from an adapter-succeeded event for this loan', async () => {
     const other = `0x${(22).toString(16).padStart(64, '0')}`;
     expect(
       await run(async () => ({
         results: [
           {
             status: 'success',
-            logs: [{ address: diamond, topics: [SWAP_ALL_ADAPTERS_FAILED_TOPIC, other] }],
+            logs: [
+              { address: diamond, topics: [SWAP_ALL_ADAPTERS_FAILED_TOPIC, other] },
+              { address: diamond, topics: [SWAP_ADAPTER_SUCCEEDED_TOPIC, loanTopic, loanTopic] },
+            ],
           },
         ],
       })),
     ).toBe('sale');
+  });
+
+  it('reads neither event as a different ending, not as a sale', async () => {
+    expect(await run(async () => ({ results: [{ status: 'success', logs: [] }] }))).toBe('other');
   });
 
   it('says unknown when the node cannot preview or the call reverts', async () => {

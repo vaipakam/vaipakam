@@ -2445,6 +2445,11 @@ const copySource = {
     // Says only what the preview observed — every route failed — not why:
     // a price under the minimum, expired calldata and a router outage all
     // emit the same event.
+    // The preview ran and took neither sale branch: the loan's routing
+    // changed (illiquid, collapsed LTV, an opposing match) while the route
+    // was being built, so the sale copy on this card no longer applies.
+    routeEndingChanged:
+      'The loan changed while the route was being found: checked against the chain just now, this close-out would no longer end in a sale, so the description on this card no longer matches what it would do. Nothing was sent and nothing was spent. Reload the page to see how the loan can be closed now.',
     routeWouldFallBack:
       'Checked against the chain just now, every exchange route for this sale failed, so sending it would close the loan into the protocol\'s fallback rather than a sale. Nothing was sent and nothing was spent. The app cannot tell from this check why the routes failed. Routes are built afresh each time, so trying again later may succeed; if it keeps happening, contact support.',
     // Round 31 P2 — a liquid, non-collapsed position the protocol can
@@ -2628,12 +2633,15 @@ const copySource = {
     // they are divided, and withholds it from a flagged caller (the
     // withheld part stays in what is divided). Paid only when the sale
     // succeeds. Three full sentences, like the matcher ones above.
+    // Round 4 P2 — the incentive is dynamic: it shrinks as the sale's
+    // realised slippage grows and is zero at the maximum, so none of the
+    // three variants may promise a payment.
     saleIncentiveYours:
-      'One part is different: if the sale goes through, the protocol pays whoever submits this transaction a small incentive out of the sale proceeds, sent straight to the submitting wallet before the rest is divided. Submitting this yourself means that part comes to you immediately; it is not added on top of what the sale raised.',
+      'One part is different: if the sale goes through, the protocol may pay whoever submits this transaction an incentive out of the sale proceeds, sent straight to the submitting wallet before the rest is divided. Its size depends on how close the sale comes to the protocol’s price, and it can be nothing. Submitting this yourself means any such part comes to you immediately; it is not added on top of what the sale raised.',
     saleIncentiveNotPaid:
-      'One part works differently for your wallet. If the sale goes through, the protocol normally pays whoever submits this transaction a small incentive out of the sale proceeds — but it is not paid to a wallet the sanctions oracle has flagged, and yours is flagged. The close-out itself still runs, and that part stays in the proceeds that are divided between you and the borrower.',
+      'One part works differently for your wallet. If the sale goes through, the protocol may pay whoever submits this transaction an incentive out of the sale proceeds, sized by how close the sale comes to the protocol’s price and possibly nothing — but it is never paid to a wallet the sanctions oracle has flagged, and yours is flagged. The close-out itself still runs, and any such part stays in the proceeds that are divided between you and the borrower.',
     saleIncentiveUnknown:
-      'One part is not settled yet. If the sale goes through, the protocol pays whoever submits this transaction a small incentive out of the sale proceeds, unless the sanctions oracle has flagged that wallet — and the check on yours has not come back. Until it does, we cannot tell you which of those applies to you.',
+      'One part is not settled yet. If the sale goes through, the protocol may pay whoever submits this transaction an incentive out of the sale proceeds, sized by how close the sale comes to the protocol’s price and possibly nothing, and never to a wallet the sanctions oracle has flagged — and the check on yours has not come back. Until it does, we cannot tell you whether it could apply to you.',
     // The six receipt rows. `youReceive` is the one worth reading
     // twice: every other receipt in the app puts a figure here, and
     // this one cannot, because the contract has not chosen between its

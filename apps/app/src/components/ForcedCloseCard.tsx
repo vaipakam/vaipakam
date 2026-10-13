@@ -1064,6 +1064,10 @@ export function ForcedCloseCard({
           setError(copy.forcedClose.routeWouldFallBack);
           return;
         }
+        if (preview === 'other') {
+          setError(copy.forcedClose.routeEndingChanged);
+          return;
+        }
       }
       if (publicClient && address) {
         await publicClient.simulateContract({
