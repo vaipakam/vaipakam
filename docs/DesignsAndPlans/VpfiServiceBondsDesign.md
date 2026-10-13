@@ -3502,7 +3502,7 @@ the two rules meet at a parked adjudication.
   > claiming, withdrawing vault VPFI all stop while the protocol is paused).
   > A token rotation needs no drain inside the pause: slice 3 archives each
   > rotation epoch, and its withdrawal works after the rotation. Both
-  > withdrawals are on `EXIT_WRITES`.
+  > withdrawals are on `EXIT_WRITES`. Confirmed by the owner, 2026-10-13.
 
   So **`withdrawCapacityDeposit`** — the ACTUAL selector; `unbond` is prose
   shorthand existing in no ABI, and `tosWriteGate.ts` compares exact

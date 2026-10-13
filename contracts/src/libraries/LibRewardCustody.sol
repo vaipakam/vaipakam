@@ -3622,6 +3622,10 @@ library LibRewardCustody {
     ///      obligation unused on this batch, its record alive on the registered
     ///      nonce and still staging, and the close not a cadence old (an
     ///      untaken right LAPSES, so a vanished registrant never holds a batch).
+    ///      A lapsed right is burnt when the next window opens ({openBatchWindow});
+    ///      a sibling hold unwound inside the cadence leaves it standing until
+    ///      then — a carry-over bounded by one cadence, kept by owner decision
+    ///      (2026-10-13) over a write on every unwind.
     function _priorityRightStands(
         LibVaipakam.Storage storage s,
         LibVaipakam.TransportBatchWindow storage w,
