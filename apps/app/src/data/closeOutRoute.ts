@@ -43,6 +43,7 @@ import {
   quoteTestnetMock,
   quoteUniV3Tiers,
   rankRoutes,
+  univ3AdapterMatchesQuoter,
   readSwapAdapterEntries,
   resolveAdapterRoster,
   TESTNET_MOCK_DATA,
@@ -61,44 +62,62 @@ export interface CloseOutSale {
   sellAmount: bigint;
 }
 
+/**
+ * What became of one adapter slot when the confirm asked it — one value
+ * per slot, so the sentence the card shows is derived from what actually
+ * happened to every venue rather than from flags each path remembered to
+ * set (#2463 round 9; rounds 2–8 each found a path that folded "could not
+ * tell" into "no price").
+ *
+ *  - `quoted` — produced at least one candidate.
+ *  - `declined` — the venue ANSWERED and had nothing usable: no route, no
+ *    pool at any tier, a target its adapter does not allow, a mock that
+ *    would not pay.
+ *  - `unanswered` — the app never got an answer it could judge: a timeout,
+ *    transport failure, rate limit or 5xx, a malformed body, or a failed
+ *    read of something the route depends on.
+ *  - `no-proxy` — an aggregator this deployment has no quote proxy for, so
+ *    it was not asked.
+ *  - `unconfigured` — the quote proxy answered that it has no key for it.
+ *  - `other-pools` — a UniV3 adapter whose router belongs to a different
+ *    V3 factory from the quoter this app knows, so this app cannot price it.
+ */
+export type SlotOutcome =
+  | 'quoted'
+  | 'declined'
+  | 'unanswered'
+  | 'no-proxy'
+  | 'unconfigured'
+  | 'other-pools';
+
 export type CloseOutRoute =
   | { kind: 'route'; calls: AdapterCall[]; venues: SwapVenueKind[] }
-  /** Every venue this app could ask declined to quote. Nothing to send.
-   *  `unconfigured` names the aggregators the agent answered for with
-   *  "no API key here": a standing posture of this deployment, not a
-   *  passing lack of prices, so the card says which it was. */
+  /** Nothing to send. `outcomes` says, per adapter slot, why. */
   | {
       kind: 'no-quote';
-      asked: SwapVenueKind[];
-      unconfigured: SwapVenueKind[];
-      /** True when a venue did quote but the app could not READ whether
-       *  the protocol would accept that route (its adapter's swap-target
-       *  allowlist). That is a failed check, not a market refusal. */
-      unverified: boolean;
-      /** Aggregators the roster lists that were not asked because this
-       *  deployment has no quote proxy. Each is a protocol-enabled route
-       *  the app left out, not one that declined. */
-      skippedNoProxy: SwapVenueKind[];
+      outcomes: { kind: SwapVenueKind; outcome: SlotOutcome }[];
     };
 
 /**
  * Why a confirm found nothing to send — the ONE place the no-quote message
- * is decided, so each sentence claims only what was actually checked
- * (#2463 round 8; rounds 2–7 each found a message that overstated it).
+ * is decided, so each sentence claims only what was actually checked.
  *
  *  - `unread` — some adapter could not be identified, so it was never asked.
- *  - `unverified` — a quote existed but its route could not be checked.
- *  - `unconfigured` — every aggregator asked or listed needs the quote
- *    proxy this deployment lacks, and nothing else was asked.
- *  - `partly-unconfigured` — the venues asked declined, and aggregators the
- *    protocol lists were left out for want of the proxy.
- *  - `declined` — every venue this app could ask was asked and declined.
+ *  - `unanswered` — at least one venue gave no answer the app could judge.
+ *  - `unconfigured` — nothing declined, and everything left out was left
+ *    out for want of the quote proxy or its key.
+ *  - `unreachable` — nothing declined, and something left out cannot be
+ *    asked from this app at all.
+ *  - `partly-reached` — the venues asked declined, but others the protocol
+ *    lists were left out.
+ *  - `declined` — every venue was asked and every one declined.
  */
 export type NoQuoteReason =
   | 'unread'
-  | 'unverified'
+  | 'unanswered'
   | 'unconfigured'
-  | 'partly-unconfigured'
+  | 'unreachable'
+  | 'partly-reached'
   | 'declined';
 
 export function noQuoteReason(
@@ -106,12 +125,14 @@ export function noQuoteReason(
   rosterIncomplete: boolean,
 ): NoQuoteReason {
   if (rosterIncomplete) return 'unread';
-  if (route.unverified) return 'unverified';
-  const declined = route.asked.filter((v) => !route.unconfigured.includes(v));
-  const leftOut = route.unconfigured.length + route.skippedNoProxy.length;
-  if (declined.length === 0 && leftOut > 0) return 'unconfigured';
-  if (leftOut > 0) return 'partly-unconfigured';
-  return 'declined';
+  const has = (o: SlotOutcome) => route.outcomes.some((x) => x.outcome === o);
+  if (has('unanswered')) return 'unanswered';
+  const configGap = has('no-proxy') || has('unconfigured');
+  const leftOut = configGap || has('other-pools');
+  if (!has('declined')) {
+    return configGap && !has('other-pools') ? 'unconfigured' : 'unreachable';
+  }
+  return leftOut ? 'partly-reached' : 'declined';
 }
 
 /** The agent's origin for quotes, or `null` when the deployment has none. */
@@ -224,8 +245,9 @@ const SWAP_TARGET_ALLOWED_ABI = [
 ] as const;
 
 /** The agent's answer: the aggregator's body, "this deployment has no key
- *  for that aggregator", or nothing usable. */
-type AgentAnswer = { body: unknown } | 'unconfigured' | null;
+ *  for that aggregator", the aggregator answering with no route, or no
+ *  answer the app can judge. */
+type AgentAnswer = { body: unknown } | 'unconfigured' | 'declined' | 'unanswered';
 
 async function agentQuote(
   fetchImpl: typeof fetch,
@@ -242,16 +264,21 @@ async function agentQuote(
       body: JSON.stringify(body),
       signal: ctrl.signal,
     });
-    if (res.ok) return { body: await res.json() };
+    if (res.ok) {
+      const parsed = await res.json().catch(() => undefined);
+      return parsed === undefined ? 'unanswered' : { body: parsed };
+    }
     // `quoteProxy.ts` answers 503 `<venue>-not-configured` when its key is
-    // absent. Anything else non-OK is a passing failure.
+    // absent.
     if (res.status === 503) {
       const err = ((await res.json().catch(() => null)) as { error?: unknown } | null)?.error;
       if (typeof err === 'string' && err.endsWith('-not-configured')) return 'unconfigured';
     }
-    return null;
+    // A 4xx other than a rate limit is the aggregator answering — no route
+    // for this pair or size. A 429 or 5xx is no answer at all.
+    return res.status >= 400 && res.status < 500 && res.status !== 429 ? 'declined' : 'unanswered';
   } catch {
-    return null;
+    return 'unanswered';
   } finally {
     clearTimeout(timer);
   }
@@ -279,15 +306,16 @@ export async function buildCloseOutRoute(deps: {
   const { client, chainId, diamond, roster, sale, agentOrigin } = deps;
   const fetchImpl = deps.fetchImpl ?? fetch;
   const venues = quotableVenues(roster, chainId, agentOrigin !== null);
-  const unconfigured = new Set<SwapVenueKind>();
-  let unverified = false;
 
   // Every enabled instance of a venue is asked, in the Diamond's order:
   // two adapters of one kind (an adapter replacement in progress) each
   // have their own taker and allowlist, so one refusing says nothing
   // about the other.
   const slots = venues.flatMap((kind) => (roster[kind] ?? []).map((slot) => ({ kind, slot })));
-  const attempts = slots.map(async ({ kind, slot }): Promise<RouteCandidate | RouteCandidate[] | null> => {
+  type Attempt = { outcome: SlotOutcome; candidates: RouteCandidate[] };
+  const none = (outcome: SlotOutcome): Attempt => ({ outcome, candidates: [] });
+
+  const attempt = async ({ kind, slot }: (typeof slots)[number]): Promise<Attempt> => {
     const adapterIdx = BigInt(slot.idx);
     switch (kind) {
       case 'zeroex':
@@ -299,14 +327,12 @@ export async function buildCloseOutRoute(deps: {
           sellAmount: sale.sellAmount.toString(),
           taker: slot.address,
         });
-        if (answer === 'unconfigured') {
-          unconfigured.add(kind);
-          return null;
-        }
-        if (answer === null) return null;
+        if (typeof answer === 'string') return none(answer);
         const q =
           kind === 'zeroex' ? parseZeroExQuote(answer.body) : parseOneInchQuote(answer.body);
-        if (!q) return null;
+        // A well-formed answer with no usable route in it is a decline
+        // (0x answers 200 with no liquidity, for one).
+        if (!q) return none('declined');
         // The adapter calls only swap targets governance has allowed on it
         // (`AggregatorAdapterBase.swapTargetAllowed`). A quote naming any
         // other target — a router the aggregator has rotated to — is an
@@ -320,50 +346,70 @@ export async function buildCloseOutRoute(deps: {
             args: [q.swapTarget],
           });
         } catch {
-          // A failed read is not a refusal: the route may well be allowed.
-          unverified = true;
-          return null;
+          return none('unanswered');
         }
-        if (!allowed) return null;
+        if (!allowed) return none('declined');
         return {
-          kind,
-          expectedOutput: q.expectedOutput,
-          call: { adapterIdx, data: packAggregatorData(q.swapTarget, q.swapCalldata) },
+          outcome: 'quoted',
+          candidates: [
+            {
+              kind,
+              expectedOutput: q.expectedOutput,
+              call: { adapterIdx, data: packAggregatorData(q.swapTarget, q.swapCalldata) },
+            },
+          ],
         };
       }
-      case 'univ3':
+      case 'univ3': {
+        // The adapter's router is governance's choice; price it only where
+        // it trades the same pools as the quoter this app knows.
+        const match = await univ3AdapterMatchesQuoter(client, slot.address, chainId);
+        if (match === 'unanswered') return none('unanswered');
+        if (match === 'mismatch') return none('other-pools');
         // One candidate per quoting pool: the same adapter index may appear
         // more than once, and a second tier is a real back-up if the best
         // pool moves below the minimum before the transaction runs.
-        return (await quoteUniV3Tiers(client, chainId, sale)).map((q) => ({
-          kind,
-          expectedOutput: q.expectedOutput,
-          call: { adapterIdx, data: packUniV3Data(q.fee) },
-        }));
+        const { tiers, unanswered } = await quoteUniV3Tiers(client, chainId, sale);
+        if (tiers.length === 0) return none(unanswered ? 'unanswered' : 'declined');
+        return {
+          outcome: 'quoted',
+          candidates: tiers.map((q) => ({
+            kind,
+            expectedOutput: q.expectedOutput,
+            call: { adapterIdx, data: packUniV3Data(q.fee) },
+          })),
+        };
+      }
       case 'testnetMock': {
         const out = await quoteTestnetMock(client, slot.address, diamond, sale);
-        if (out === null) return null;
-        return { kind, expectedOutput: out, call: { adapterIdx, data: TESTNET_MOCK_DATA } };
+        if (out === 'unanswered') return none('unanswered');
+        if (out === null) return none('declined');
+        return {
+          outcome: 'quoted',
+          candidates: [{ kind, expectedOutput: out, call: { adapterIdx, data: TESTNET_MOCK_DATA } }],
+        };
       }
       default:
-        return null;
+        return none('declined');
     }
-  });
+  };
 
-  const candidates = (await Promise.all(attempts.map((p) => p.catch(() => null))))
-    .flat()
-    .filter((c): c is RouteCandidate => c !== null);
+  const results = await Promise.all(
+    slots.map((s) => attempt(s).catch((): Attempt => none('unanswered'))),
+  );
+  const candidates = results.flatMap((r) => r.candidates);
   if (candidates.length === 0) {
-    const skippedNoProxy =
+    // Aggregators the roster lists that were never asked for want of a
+    // quote proxy are outcomes too: protocol-enabled routes left out.
+    const noProxy: { kind: SwapVenueKind; outcome: SlotOutcome }[] =
       agentOrigin === null
-        ? (['zeroex', 'oneinch'] as const).filter((k) => roster[k] !== undefined)
+        ? (['zeroex', 'oneinch'] as const).flatMap((k) =>
+            (roster[k] ?? []).map(() => ({ kind: k, outcome: 'no-proxy' as const })),
+          )
         : [];
     return {
       kind: 'no-quote',
-      asked: venues,
-      unconfigured: [...unconfigured],
-      unverified,
-      skippedNoProxy: [...skippedNoProxy],
+      outcomes: [...slots.map((sl, i) => ({ kind: sl.kind, outcome: results[i].outcome })), ...noProxy],
     };
   }
   const ranked = rankRoutes(candidates);
@@ -459,9 +505,14 @@ export async function previewCloseOut(deps: {
   }
   const result = results[0];
   if (!result || result.status !== 'success') return 'unknown';
+  // `logs` is optional in the response: a node that ran the call without
+  // reporting events has not shown which ending it reached, which is not
+  // the same as having shown that it reached neither.
+  const logs = result.logs;
+  if (logs === undefined) return 'unknown';
   const loanTopic = `0x${loanId.toString(16).padStart(64, '0')}` as Hex;
   const emitted = (topic: Hex) =>
-    (result.logs ?? []).some(
+    logs.some(
       (log) =>
         log.address.toLowerCase() === diamond.toLowerCase() &&
         log.topics[0] === topic &&

@@ -2453,11 +2453,15 @@ const copySource = {
     // #2463 round 8 — a quote came back but the app could not read whether
     // the protocol would accept its route: a failed check, not a refusal.
     routeUnverified:
-      'An exchange gave a price, but the app could not check that the protocol would accept that route, so nothing was sent and nothing was spent. Try again in a moment.',
+      'The app did not get an answer it could rely on from every exchange it asked, or could not check that the protocol would accept a route it was given, so nothing was sent and nothing was spent. Try again in a moment.',
     // The exchanges asked declined, and others the protocol lists were not
     // asked because this deployment has no quote service for them.
     routeNoQuotePartlyConfigured:
-      'None of the exchanges this app asked gave a usable price for this sale just now, so nothing was sent and nothing was spent. Some of the exchanges the protocol uses on this network were not asked, because this deployment of the app is not set up to ask them. Trying again later may help, and if it keeps happening, contact support.',
+      'None of the exchanges this app asked gave a usable price for this sale just now, so nothing was sent and nothing was spent. Some of the exchanges the protocol uses on this network were not asked, because this app cannot ask them from here. Trying again later may help, and if it keeps happening, contact support.',
+    // #2463 round 9 — the borrower added collateral after the prices were
+    // collected, so the quoted calldata no longer covers the whole sale.
+    routeCollateralChanged:
+      'The loan’s collateral changed while the prices were being collected, so they no longer match what would be sold. Nothing was sent and nothing was spent. Confirm again to collect new prices.',
     routeRosterFailed:
       'We could not read this loan or the exchanges the protocol uses on this network, so nothing was sent and nothing was spent. Try again in a moment.',
     // The agent answered for every aggregator asked that this deployment

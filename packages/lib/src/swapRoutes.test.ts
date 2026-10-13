@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { decodeAbiParameters, encodeFunctionResult, type Address, type Hex } from 'viem';
+import {
+  RawContractError,
+  decodeAbiParameters,
+  encodeFunctionResult,
+  type Address,
+  type Hex,
+} from 'viem';
 import {
   packAggregatorData,
   packUniV3Data,
@@ -163,7 +169,7 @@ describe('quoteUniV3', () => {
     const client = {
       call: async () => {
         call += 1;
-        if (call === 1) throw new Error('no pool');
+        if (call === 1) throw new RawContractError({ data: '0x' });
         return { data: answer(call === 2 ? 7n : 9n) };
       },
     };
@@ -175,15 +181,30 @@ describe('quoteUniV3', () => {
     const client = {
       call: async () => {
         call += 1;
-        if (call === 1) throw new Error('no pool');
+        if (call === 1) throw new RawContractError({ data: '0x' });
         return { data: answer(BigInt(call)) };
       },
     };
-    expect(await quoteUniV3Tiers(client, 8453, sale)).toEqual([
-      { fee: 500, expectedOutput: 2n },
-      { fee: 3000, expectedOutput: 3n },
-      { fee: 10000, expectedOutput: 4n },
-    ]);
+    expect(await quoteUniV3Tiers(client, 8453, sale)).toEqual({
+      tiers: [
+        { fee: 500, expectedOutput: 2n },
+        { fee: 3000, expectedOutput: 3n },
+        { fee: 10000, expectedOutput: 4n },
+      ],
+      unanswered: false,
+    });
+  });
+
+  it('tells a tier that never answered apart from one with no pool', async () => {
+    let call = 0;
+    const client = {
+      call: async () => {
+        call += 1;
+        if (call === 1) throw new RawContractError({ data: '0x' });
+        throw new Error('timeout');
+      },
+    };
+    expect(await quoteUniV3Tiers(client, 8453, sale)).toEqual({ tiers: [], unanswered: true });
   });
 
   it('returns null on a chain with no V3 venue', async () => {
@@ -214,12 +235,12 @@ describe('quoteTestnetMock', () => {
     expect(await quoteTestnetMock(flat, A(9), A(0xd), sale)).toBe(19n * 10n ** 17n);
   });
 
-  it('returns null when it could not pay, or a read failed', async () => {
+  it('returns null when it could not pay, and unanswered when a read failed', async () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     expect(await quoteTestnetMock(client({}, 1n) as any, A(9), A(0xd), sale)).toBeNull();
     const broken = { readContract: async () => { throw new Error('rpc'); } };
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    expect(await quoteTestnetMock(broken as any, A(9), A(0xd), sale)).toBeNull();
+    expect(await quoteTestnetMock(broken as any, A(9), A(0xd), sale)).toBe('unanswered');
   });
 });
 

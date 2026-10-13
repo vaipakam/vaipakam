@@ -35,6 +35,7 @@
  * Framework-agnostic: viem only, no browser or Worker globals.
  */
 import {
+  type BaseError,
   encodeAbiParameters,
   encodeFunctionData,
   decodeFunctionResult,
@@ -320,14 +321,33 @@ const QUOTER_V2_ABI = [
 /** Every fee tier the chain's V3 quoter prices for this sale, in tier
  *  order; empty when the chain has no venue or no tier quotes. QuoterV2 is
  *  non-view (it reverts internally to return), hence `call`. */
+/** True for an error that is the CHAIN refusing a call (a revert), as
+ *  opposed to the call never being answered (a timeout, a transport
+ *  failure, a rate limit). A quoter reverting means "no pool at this
+ *  tier"; a call that never returned means nothing either way. */
+export function isRevertError(err: unknown): boolean {
+  // By viem's declared error NAME rather than `instanceof`: the workspace
+  // carries two copies of viem (this package's and the app's), and a class
+  // check against the other copy is silently false. The literals, not
+  // `Class.name`, because a minified build renames classes.
+  const revertNames = ['ExecutionRevertedError', 'RawContractError'];
+  const walk = (err as Partial<Pick<BaseError, 'walk'>> | null)?.walk;
+  if (typeof walk !== 'function') return false;
+  return walk.call(err, (e) => revertNames.includes((e as Error).name)) !== null;
+}
+
+/** Every UniV3 tier that quotes, plus whether any tier went UNANSWERED
+ *  (as opposed to reverting for want of a pool) — so a caller never reads
+ *  "no answer" as "no pool". */
 export async function quoteUniV3Tiers(
   client: Pick<PublicClient, 'call'>,
   chainId: number,
   sale: { sellToken: Address; buyToken: Address; sellAmount: bigint },
-): Promise<{ fee: number; expectedOutput: bigint }[]> {
+): Promise<{ tiers: { fee: number; expectedOutput: bigint }[]; unanswered: boolean }> {
   const venue = UNIV3_VENUES[chainId];
-  if (!venue) return [];
+  if (!venue) return { tiers: [], unanswered: false };
   const quoted: { fee: number; expectedOutput: bigint }[] = [];
+  let unanswered = false;
   for (const fee of venue.feeTiers) {
     try {
       const data = encodeFunctionData({
@@ -351,11 +371,46 @@ export async function quoteUniV3Tiers(
         data: result.data,
       });
       if (amountOut > 0n) quoted.push({ fee, expectedOutput: amountOut });
-    } catch {
-      continue;
+    } catch (err) {
+      if (!isRevertError(err)) unanswered = true;
     }
   }
-  return quoted;
+  return { tiers: quoted, unanswered };
+}
+
+const FACTORY_ABI = [
+  { type: 'function', name: 'factory', stateMutability: 'view', inputs: [], outputs: [{ type: 'address' }] },
+] as const;
+const ROUTER_ABI = [
+  { type: 'function', name: 'ROUTER', stateMutability: 'view', inputs: [], outputs: [{ type: 'address' }] },
+] as const;
+
+/**
+ * Whether a registered `UniV3Adapter` swaps through pools this chain's
+ * quoter can price. The adapter's router is immutable and governance
+ * picks it, so it can belong to a different V3 factory from the quoter in
+ * {@link UNIV3_VENUES}; quoting that adapter here would price pools it
+ * never trades. Compared by FACTORY, which both contracts expose.
+ *
+ * `'unanswered'` when any of the three reads failed — not evidence either way.
+ */
+export async function univ3AdapterMatchesQuoter(
+  client: Pick<PublicClient, 'readContract'>,
+  adapter: Address,
+  chainId: number,
+): Promise<'match' | 'mismatch' | 'unanswered'> {
+  const venue = UNIV3_VENUES[chainId];
+  if (!venue) return 'mismatch';
+  try {
+    const router = await client.readContract({ address: adapter, abi: ROUTER_ABI, functionName: 'ROUTER' });
+    const [routerFactory, quoterFactory] = await Promise.all([
+      client.readContract({ address: router, abi: FACTORY_ABI, functionName: 'factory' }),
+      client.readContract({ address: venue.quoter, abi: FACTORY_ABI, functionName: 'factory' }),
+    ]);
+    return routerFactory.toLowerCase() === quoterFactory.toLowerCase() ? 'match' : 'mismatch';
+  } catch {
+    return 'unanswered';
+  }
 }
 
 /** The best-quoting tier alone, or `null` when none quotes. For a builder
@@ -369,7 +424,7 @@ export async function quoteUniV3(
   sale: { sellToken: Address; buyToken: Address; sellAmount: bigint },
 ): Promise<{ fee: number; expectedOutput: bigint } | null> {
   let best: { fee: number; expectedOutput: bigint } | null = null;
-  for (const q of await quoteUniV3Tiers(client, chainId, sale)) {
+  for (const q of (await quoteUniV3Tiers(client, chainId, sale)).tiers) {
     if (!best || q.expectedOutput > best.expectedOutput) best = q;
   }
   return best;
@@ -420,7 +475,7 @@ export async function quoteTestnetMock(
   mock: Address,
   caller: Address,
   sale: { sellToken: Address; buyToken: Address; sellAmount: bigint },
-): Promise<bigint | null> {
+): Promise<bigint | null | 'unanswered'> {
   try {
     const at = { address: mock, abi: TESTNET_MOCK_ABI } as const;
     const [shouldRevert, restrictedTo, bps, pIn, pOut, balance] = await Promise.all([
@@ -446,7 +501,8 @@ export async function quoteTestnetMock(
     if (out === 0n || out > balance) return null;
     return out;
   } catch {
-    return null;
+    // A failed read says nothing about whether the mock would pay.
+    return 'unanswered';
   }
 }
 

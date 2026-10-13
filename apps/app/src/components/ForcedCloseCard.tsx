@@ -926,7 +926,7 @@ export function ForcedCloseCard({
    *  quoted now. Returns the calls, or the sentence to show instead —
    *  never an empty list, which the contract would refuse. */
   async function findCloseOutRoute(): Promise<
-    { calls: readonly AdapterCall[] } | { message: string }
+    { calls: readonly AdapterCall[]; quotedAmount: bigint } | { message: string }
   > {
     if (!publicClient || routeDiamond === undefined || routeChainId === undefined) {
       return { message: copy.forcedClose.routeRosterFailed };
@@ -987,16 +987,18 @@ export function ForcedCloseCard({
         message:
           reason === 'unread'
             ? copy.forcedClose.routeRosterFailed
-            : reason === 'unverified'
+            : reason === 'unanswered'
               ? copy.forcedClose.routeUnverified
               : reason === 'unconfigured'
                 ? copy.forcedClose.routeNotConfigured
-                : reason === 'partly-unconfigured'
-                  ? copy.forcedClose.routeNoQuotePartlyConfigured
-                  : copy.forcedClose.routeNoQuote,
+                : reason === 'unreachable'
+                  ? copy.forcedClose.routeNoAskableVenue
+                  : reason === 'partly-reached'
+                    ? copy.forcedClose.routeNoQuotePartlyConfigured
+                    : copy.forcedClose.routeNoQuote,
       };
     }
-    return { calls: route.calls };
+    return { calls: route.calls, quotedAmount: sale.sellAmount };
   }
 
   async function closeOut() {
@@ -1030,6 +1032,8 @@ export function ForcedCloseCard({
       // The sale route, where one is needed (#2463). Every other
       // submittable state sends the empty list, for the reasons above.
       let adapterCalls: readonly AdapterCall[] = [];
+      /** The collateral amount the route was quoted for, on a sale. */
+      let quotedAmount: bigint | null = null;
       if (readiness === 'ready-needs-route') {
         setFindingRoute(true);
         let found;
@@ -1043,6 +1047,7 @@ export function ForcedCloseCard({
           return;
         }
         adapterCalls = found.calls;
+        quotedAmount = found.quotedAmount;
       }
       // A LIVE re-check, immediately before sending (round 28 P2). The
       // readiness above is a 30-second poll that the open confirmation
@@ -1104,6 +1109,32 @@ export function ForcedCloseCard({
       if (lateSaleBlock) {
         setError(lateSaleBlock);
         return;
+      }
+      // And the collateral the quotes were made for, read at the same
+      // point. `triggerDefault` sells the loan's LIVE collateral, but an
+      // aggregator's calldata is for the amount it was quoted; if the
+      // borrower has added collateral since, the adapter can sell only the
+      // old amount, hand the rest back, and still report a sale — leaving
+      // that remainder in neither party's claim. The contract does not
+      // refuse that yet (#2472), so the app refuses to send stale prices.
+      if (quotedAmount !== null && publicClient && routeDiamond) {
+        let live: bigint;
+        try {
+          const loan = (await publicClient.readContract({
+            address: routeDiamond,
+            abi: DIAMOND_ABI_VIEM,
+            functionName: 'getLoanDetails',
+            args: [BigInt(loanId)],
+          })) as { collateralAmount: bigint };
+          live = loan.collateralAmount;
+        } catch {
+          setError(copy.forcedClose.routeRosterFailed);
+          return;
+        }
+        if (live !== quotedAmount) {
+          setError(copy.forcedClose.routeCollateralChanged);
+          return;
+        }
       }
       // STAMP ON THE HASH, NOT ON THE RECEIPT (round 47 P1).
       //
