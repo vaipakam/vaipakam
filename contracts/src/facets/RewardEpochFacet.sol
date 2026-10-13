@@ -17,41 +17,23 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
  *         paged indexing, and the parking and acknowledgment that release a
  *         batch so what remains of its packet becomes classifiable.
  *
- *         WHAT THIS CUT ACTUALLY OFFERS, stated here because the rest of this
- *         file describes the release in the present tense and a reader meets
- *         this header first (#2258, owner decision 2026-09-20; Codex #2232
- *         r10). It is stated as a COMPLEMENT — the refused set named
- *         exhaustively, everything else live — rather than by listing what
- *         works, because a list of what works omits an entry silently and a
- *         complement cannot (Codex #2232 r11, which is what an earlier
- *         "only the paged indexing is live" did to {admitLegacyTransportBatch}):
+ *         WHAT THIS FACET OFFERS — every entry is live. Indexing
+ *         ({admitLegacyTransportBatch}, {materializeTransportBatchPage}) and
+ *         parking ({parkTransportBatchRemainder}) are permissionless; parking is
+ *         gated on STATE — every listed day proven closed by the per-day closure
+ *         proof (3b-ii-B) and no staging reference standing. The acknowledgment
+ *         that RELEASES a parked batch ({acknowledgeTransportBatchRemainder}) is
+ *         an operator disposition, ADMIN. (3b-i shipped the two release entries
+ *         shut to every caller until the closure proof existed; 3b-ii-B opened
+ *         them, #2258.)
  *
- *           * REFUSED, to every caller, the administrator included — EXACTLY
- *             TWO entries: {parkTransportBatchRemainder} and
- *             {acknowledgeTransportBatchRemainder}, which revert
- *             `TransportReleaseNotYetAvailable`. So no batch on this
- *             deployment is ever `released`.
- *           * LIVE — everything else on this facet. That is
- *             {admitLegacyTransportBatch}, {materializeTransportBatchPage}
- *             and every read surface. The two write entries there are not
- *             optional housekeeping: a delivery from the 3a-to-3b rollout
- *             window is admitted ONLY by {admitLegacyTransportBatch} (until
- *             it is, its packet is refused with `TransportBatchNotAdmitted`),
- *             and every admitted batch — oversize or not — has its membership
- *             written ONLY by {materializeTransportBatchPage}.
- *
- *         Read every "the release does X" below as 3b-ii's shape, which the
- *         library already implements and which this facet's bodies do not yet
- *         reach.
- *
- *         THE CONSEQUENCE IS NOT CONFINED TO THIS FACET, and is a funds fact
- *         rather than a surface one: {LibRewardCustody.takeFromReleasedRemainder}
- *         refuses a packet whose batch is not released BEFORE it looks at the
- *         fresh-versus-recycled split, so for as long as this door is shut a
- *         packet holding an epoch is WHOLLY unclassifiable — not "classifiable
- *         recycled only". Its value stays in the membership-bound holding,
- *         visible in the ledger, spendable by nobody. A packet holding no
- *         epoch is untouched by all of this.
+ *         THE FUNDS FACT: {LibRewardCustody.takeFromReleasedRemainder} refuses
+ *         a packet whose batch is not released BEFORE it looks at the
+ *         fresh-versus-recycled split, so a packet holding an epoch is
+ *         unclassifiable until its batch is parked AND acknowledged; until then
+ *         its value stays in the membership-bound holding, visible in the
+ *         ledger, spendable only by the obligations of the days it lists. A
+ *         packet holding no epoch is untouched by all of this.
  * @dev    #1566 transport epochs PR 3b (design §5c).
  *
  *         WHY ITS OWN FACET. Admission happens at ingress and lives with the
@@ -175,9 +157,8 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
     }
 
     /// @notice PARK what a batch's obligations left, under the batch's own key.
-    ///         NOT OFFERED IN THIS CUT — this entry refuses every caller (see
-    ///         the body, and the header's "what this cut actually offers").
-    ///         Everything the dev note below describes is 3b-ii's shape.
+    ///         Permissionless, gated on state: every listed day proven closed and
+    ///         no staging reference standing (3b-ii-B).
     /// @dev    The first half of the release, and not the whole of it: the
     ///         remainder becomes classifiable only once
     ///         {acknowledgeTransportBatchRemainder} records the acknowledgment

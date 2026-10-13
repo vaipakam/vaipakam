@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { BaseError, ContractFunctionRevertedError } from 'viem';
-import { previewClaimByExecution } from './rewards';
+import { ClaimPreviewUnavailable, previewClaimByExecution } from './rewards';
 
 /**
  * A2-iii — the app reads the exact claimable figure BY EXECUTION: the
@@ -36,9 +36,19 @@ describe('previewClaimByExecution', () => {
     await expect(previewClaimByExecution(c, DIAMOND, USER)).resolves.toBe(123n);
   });
 
-  it("any other revert is the claim's own refusal: nothing claimable now", async () => {
-    const c = client(revertWith('NoInteractionRewardsToClaim'));
-    await expect(previewClaimByExecution(c, DIAMOND, USER)).resolves.toBe(0n);
+  it('a revert that means nothing is owed reads as zero', async () => {
+    await expect(
+      previewClaimByExecution(client(revertWith('NoInteractionRewardsToClaim')), DIAMOND, USER),
+    ).resolves.toBe(0n);
+    await expect(
+      previewClaimByExecution(client(revertWith('InteractionEmissionsNotStarted')), DIAMOND, USER),
+    ).resolves.toBe(0n);
+  });
+
+  it('an operational refusal (the pause) is surfaced, never read as nothing owed (#2459 r1)', async () => {
+    await expect(
+      previewClaimByExecution(client(revertWith('EnforcedPause')), DIAMOND, USER),
+    ).rejects.toBeInstanceOf(ClaimPreviewUnavailable);
   });
 
   it('a non-revert return is reported, never turned into a figure', async () => {

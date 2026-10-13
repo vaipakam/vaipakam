@@ -101,3 +101,11 @@ yet send the new report falls back to the previous one, and the canonical
 chain accepts both. What the destination then does with a delivery's era,
 and why no era step is manual any more, are in the slice 4 PR C-3 and PR C-5
 entries.
+
+**Codex review, round 1 (#2459).**
+- **Capacity-deposit screening (P1).** A chain that has ever configured a sanctions oracle now treats switching it off as an outage: deposits and withdrawals defer until an oracle is installed again. Before, switching it off silently turned screening off, which could have released principal that had to stay frozen. A chain that never configured an oracle runs the deposit surface open, as before. One rule now serves every deposit mutation and the post's preview.
+- **Capacity curves.** The per-action cost and the free refill rate need a resolution of at least a million units. Rounding then never costs more than a millionth of an action, and no armed deposit buys nothing until a threshold.
+- **Park-release event.** The event is now announced as the release found the record, before a raise, so its two balances agree.
+- **Late B4 reports.** A day report that reaches the canonical chain after its day finalized still updates that chain's custody era. Its figures are dropped and named by an event, instead of the whole message failing for good.
+- **Claim Center rewards.** A paused or held claim now shows as unavailable, never as "nothing owed".
+- **Clean-up.** The transport-epoch release entries were documented as still shut, though this PR opens them. The text is corrected, and the interim error they used to raise is removed.

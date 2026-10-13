@@ -983,6 +983,12 @@ instead of concluding the docs were merely behind.
 
 ### 3. The release of a transport epoch — spec states a machine check the code leaves to the operator
 
+> **RESOLVED by 3b-ii-B (#2459).** The per-day closure proof is the machine
+> check: parking requires every listed day proven closed, so the release entries
+> are open (parking permissionless, the acknowledgment ADMIN) and the interim
+> `TransportReleaseNotYetAvailable` refusal is removed. The record below is kept
+> as decided at the time.
+
 > **DECIDED — owner, 2026-09-20 (recorded on #2258): Reading B, with the
 > conservative remedy.** The release entries stay in the surface but refuse
 > every caller in 3b-i (`TransportReleaseNotYetAvailable`), so no epoch-backed

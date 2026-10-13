@@ -284,6 +284,12 @@ contract RewardAggregatorFacet is
     /// @custom:event-category state-change/reward-custody
     event ChainCustodyEraReported(uint32 indexed chainId, uint64 era);
 
+    /// @notice #2459 r1 — a B4 day report reached the canonical chain after
+    ///         `dayId` had FINALIZED: its figures were NOT applied (the day closed
+    ///         without them), and its custody era `custodyEra` was observed.
+    /// @custom:event-category informational/reward-transport
+    event ChainReportArrivedAfterFinalization(uint32 indexed sourceChainId, uint256 indexed dayId, uint64 custodyEra);
+
     function onChainReportReceived(
         uint32 sourceChainId,
         uint256 dayId,
@@ -296,9 +302,23 @@ contract RewardAggregatorFacet is
         uint64 custodyEra
     ) external onlyRewardMessenger onlyCanonical {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        // Only an expected chain's report speaks for its era — checked here, ahead
+        // of the write, because the late path below returns before the ingest's
+        // own check runs.
+        if (!_isExpectedChainId(s, sourceChainId)) revert SourceChainIdNotExpected();
         if (custodyEra > s.chainCustodyEraReported[sourceChainId]) {
             s.chainCustodyEraReported[sourceChainId] = custodyEra;
             emit ChainCustodyEraReported(sourceChainId, custodyEra);
+        }
+        // #2459 r1 — the era observation stands on its own. A report reaching
+        // Base after its day FINALIZED cannot add its figures (the day closed
+        // without them); reverting would take the observation back with it and
+        // leave a message no retry could ever deliver, so remittances would keep
+        // the destination's retired era until a later day's report landed. The
+        // late figures are dropped, named by the event; the era stands.
+        if (s.dailyGlobalFinalized[dayId]) {
+            emit ChainReportArrivedAfterFinalization(sourceChainId, dayId, custodyEra);
+            return;
         }
         _ingestChainReport(
             sourceChainId,

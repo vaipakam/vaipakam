@@ -7922,6 +7922,14 @@ library LibVaipakam {
         ///         was made in, plus one (zero: made before the stamp, era 0). A
         ///         correction is admitted only in that era.
         mapping(uint256 => uint64) reconciliationEntryEraPlusOne;
+        /// @notice #2459 r1 — set the first time a NONZERO sanctions oracle is
+        ///         installed, never cleared. The service-capacity deposit surface
+        ///         reads a disabled oracle on a chain that once screened as an
+        ///         OUTAGE (design: "disabled-after-configured defers every
+        ///         mutation"): with screening once live, "no persisted flag" no
+        ///         longer proves an operator clean, so an off switch must not
+        ///         reopen principal release. A never-configured chain runs open.
+        bool sanctionsOracleEverSet;
     }
 
     /// @notice 3b-ii-A2 (#2305) — one batch a staging record staged from, with
@@ -11493,6 +11501,7 @@ library LibVaipakam {
         Storage storage s = storageSlot();
         address prev = s.sanctionsOracle;
         s.sanctionsOracle = oracle;
+        if (oracle != address(0)) s.sanctionsOracleEverSet = true; // the latch never clears (#2459 r1)
         emit SanctionsOracleSet(prev, oracle);
     }
 

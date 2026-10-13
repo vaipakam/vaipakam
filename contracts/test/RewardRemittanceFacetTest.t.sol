@@ -96,6 +96,8 @@ contract RewardRemittanceFacetTest is SetupTest {
     // ─── helpers ──────────────────────────────────────────────────────────
 
     /// @dev Finalize day `d` with BASE/ARB/OP lender+borrower numerators.
+    event ChainReportArrivedAfterFinalization(uint32 indexed sourceChainId, uint256 indexed dayId, uint64 custodyEra);
+
     function _finalizeDay1() internal {
         rewardMessenger.deliverChainReport(CHAIN_BASE, 1, 10e18, 5e18);
         rewardMessenger.deliverChainReport(CHAIN_ARB, 1, 20e18, 10e18);
@@ -173,6 +175,27 @@ contract RewardRemittanceFacetTest is SetupTest {
         assertEq(total, expectedTotal, "total matches quoteRewardBudget");
         assertEq(fee, ccip.fee(), "fee routed through the messenger");
         assertGt(total, 0, "non-zero remittable total");
+    }
+
+    /// @dev #2459 r1 — a B4 report that reaches the canonical chain after its day
+    ///      FINALIZED still carries the reporting chain's live era: the era is
+    ///      recorded, the day's figures are not applied, and nothing reverts (a
+    ///      revert would roll the observation back and leave a message no retry
+    ///      could deliver). Straddle: an unexpected chain's late report still refuses.
+    function test_ALateB4Report_RecordsItsEra_NotItsFigures() public {
+        rewardMessenger.deliverChainReport(CHAIN_BASE, 1, 10e18, 5e18);
+        rewardMessenger.deliverChainReport(CHAIN_OP, 1, 30e18, 15e18);
+        RewardAggregatorFacet agg = RewardAggregatorFacet(address(diamond));
+        agg.forceFinalizeDay(1);
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit ChainReportArrivedAfterFinalization(CHAIN_ARB, 1, 4);
+        rewardMessenger.deliverChainReportB4(CHAIN_ARB, 1, 20e18, 10e18, 4);
+        assertEq(agg.getChainCustodyEraReported(CHAIN_ARB), 4, "the era is observed");
+        assertFalse(agg.isChainReported(1, CHAIN_ARB), "the late figures are not applied");
+        (uint256 lender, ) = agg.getChainReport(1, CHAIN_ARB);
+        assertEq(lender, 0, "nothing stored for the closed day");
+        vm.expectRevert(IVaipakamErrors.SourceChainIdNotExpected.selector);
+        rewardMessenger.deliverChainReportB4(77777, 1, 1, 1, 9);
     }
 
     /// @dev #1566 PR C revision — a rooted remittance carries the custody era the

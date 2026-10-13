@@ -306,6 +306,30 @@ contract ServiceCapacityDepositTest is SetupTest {
         assertEq(vpfi.balanceOf(op), 1_000e18 - 0.1e18, "whole again, less the fee paid for the arming");
     }
 
+    /// @dev #2459 r1 — a clean POST on a parked record releases the park and announces
+    ///      it as the release found the record, BEFORE the raise: its balance and armed
+    ///      balance are the pre-post pair, consistent with each other; the raise's own
+    ///      event then carries the new pair. (The release reported the pre-post
+    ///      balance beside the post-raise armed balance — an impossible pair.)
+    function test_ACleanPostOnAParkedRecord_AnnouncesTheReleaseBeforeTheRaise() public {
+        _ready();
+        _post(SOLVER, 10e18);
+        MockSanctionsList m = _oracle();
+        m.setFlagged(op, true);
+        _withdraw(SOLVER, 12e18); // parks
+        assertEq(uint8(_dep(SOLVER).state), uint8(LibVaipakam.ServiceDepositState.SanctionsParked), "fixture-live: parked");
+        m.setFlagged(op, false); // delisted
+        _approve(1e18); // first: its own Approval event is not the post's
+        vm.expectEmit(true, false, false, true, address(diamond));
+        emit ServiceCapacitySanctionsMarkerHealed(op);
+        vm.expectEmit(true, true, true, true, address(diamond));
+        emit CapacityDepositParkReleased(SOLVER, op, 0, address(vpfi), 0, 10e18, 10e18);
+        vm.expectEmit(true, true, true, true, address(diamond));
+        emit CapacityDepositRaised(SOLVER, op, 0, address(vpfi), 1e18, 11e18, 11e18);
+        vm.prank(op);
+        assertEq(_f().postCapacityDeposit(SOLVER, 1e18, _bind()), LibServiceCapacity.STATUS_OK);
+    }
+
     /// @dev An oracle OUTAGE defers every deposit mutation, for a never-flagged
     ///      operator too, and persists nothing: the deferral is latency, not a lock —
     ///      the same calls succeed on the first clean read after recovery.
@@ -326,6 +350,29 @@ contract ServiceCapacityDepositTest is SetupTest {
         assertEq(_post(SOLVER, 1e18), LibServiceCapacity.STATUS_OK, "recovered: posts");
         (, uint256 paid) = _withdraw(SOLVER, 2e18);
         assertEq(paid, 2e18, "recovered: pays");
+    }
+
+    /// @dev #2459 r1 — once an oracle has been configured, switching it OFF is read
+    ///      as an outage: every deposit mutation defers (the preview names it),
+    ///      because "no persisted flag" proves nothing after screening was live.
+    ///      Reinstalling an oracle lets them through. Straddle: the same calls on
+    ///      a chain that has NEVER configured one run open (the cells above).
+    function test_Sanctions_DisabledAfterConfigured_DefersLikeAnOutage() public {
+        _ready();
+        _oracle();
+        _post(SOLVER, 10e18);
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(0)); // governance switches screening off
+        _approve(1e18);
+        assertEq(_refusal(1e18), LibServiceCapacity.POST_SANCTIONS_UNAVAILABLE, "the preview names the deferral");
+        vm.prank(op);
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.ServiceCapacitySanctionsUnavailable.selector, op));
+        _f().postCapacityDeposit(SOLVER, 1e18, _bind());
+        vm.prank(op);
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.ServiceCapacitySanctionsUnavailable.selector, op));
+        _f().withdrawCapacityDeposit(SOLVER, 1e18);
+        _oracle(); // an oracle again
+        (, uint256 paid) = _withdraw(SOLVER, 2e18);
+        assertEq(paid, 2e18, "reinstalled: pays");
     }
 
     /// @dev A stale persisted marker is healed by the next authoritative clean read

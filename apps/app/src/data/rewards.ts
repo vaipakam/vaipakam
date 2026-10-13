@@ -30,11 +30,34 @@ export interface RewardsSnapshot {
  * always reverts with `InteractionRewardsSimulation(paid, fromDay, toDay)`,
  * so an `eth_call` (viem's `simulateContract`) carries the figure in its
  * revert data and nothing it did survives. A different revert is what the
- * claim itself would revert with — nothing to claim, a staging reservation,
- * the pause — and reads here as nothing claimable now. The lens's
+ * claim itself would revert with. Only the reverts that MEAN nothing is owed
+ * read as zero ({NOTHING_OWED_REVERTS}); every other one — the pause, a
+ * staging hold, a sanctions refusal — throws {ClaimPreviewUnavailable}, so
+ * the card says "unavailable" instead of telling a user whose rewards are
+ * merely held that there is nothing (#2459 r1). The lens's
  * `previewInteractionRewards` view still exists for on-chain readers, as a
  * conservative lower bound; the app reads the exact figure.
  */
+/** The claim's reverts that mean nothing is claimable — and only those. */
+export const NOTHING_OWED_REVERTS: ReadonlySet<string> = new Set([
+  'NoInteractionRewardsToClaim',
+  'InteractionEmissionsNotStarted',
+]);
+
+/**
+ * The claim would revert for an OPERATIONAL reason (paused, held, refused),
+ * not because nothing is owed. Deliberately not a viem error: the snapshot
+ * hook maps viem reverts to its quiet empty state, and this must not be.
+ */
+export class ClaimPreviewUnavailable extends Error {
+  readonly errorName: string;
+  constructor(errorName: string) {
+    super(`claim preview unavailable: ${errorName}`);
+    this.name = 'ClaimPreviewUnavailable';
+    this.errorName = errorName;
+  }
+}
+
 export async function previewClaimByExecution(
   client: Pick<PublicClient, 'simulateContract'>,
   diamond: Address,
@@ -58,7 +81,9 @@ export async function previewClaimByExecution(
         const [paid] = (revert.data.args ?? [0n]) as readonly [bigint, bigint, bigint];
         return paid;
       }
-      return 0n;
+      const name = revert.data?.errorName ?? 'unknown';
+      if (NOTHING_OWED_REVERTS.has(name)) return 0n;
+      throw new ClaimPreviewUnavailable(name);
     }
     const zero =
       err instanceof BaseError &&

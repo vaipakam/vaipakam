@@ -82,6 +82,18 @@ contract ServiceCapacityLimiterTest is SetupTest {
         assertFalse(_f().getCapacityBucket(SOLVER, op).seen, "nothing recorded");
     }
 
+    /// @dev #2459 r1 — the resolution floor: a per-action cost or a free refill rate
+    ///      under a million units would let whole-unit rounding swallow a meaningful
+    ///      share of an action (armed principal buying nothing until a threshold).
+    ///      Straddle by one unit on each figure; the floor itself is accepted.
+    function test_SetCurve_ResolutionFloor() public {
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.ServiceCapacityCurveInvalid.selector, SOLVER));
+        _f().setCapacityCurve(SOLVER, 1e6, RATE, AT4X, 1e6 - 1); // cost one unit under the floor
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.ServiceCapacityCurveInvalid.selector, SOLVER));
+        _f().setCapacityCurve(SOLVER, FREE, 1e6 - 1, AT4X, COST); // refill one unit under the floor
+        _f().setCapacityCurve(SOLVER, 1e6, 1e6, AT4X, 1e6); // the floor itself is accepted
+    }
+
     /// @dev The curve's floors: every figure positive, the free tier at least one action; admin only; the epoch increments.
     function test_SetCurve_Floors_AndEpoch() public {
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.ServiceCapacityCurveInvalid.selector, SOLVER));

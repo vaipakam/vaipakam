@@ -63,6 +63,11 @@ library LibServiceCapacity {
     uint8 internal constant POST_SANCTIONED = 6;           // a refusal status, or SanctionedAddress
     uint8 internal constant POST_SANCTIONS_UNAVAILABLE = 7; // ServiceCapacitySanctionsUnavailable
 
+    /// @notice The least units a curve's per-action cost and free refill rate may
+    ///         carry (#2459 r1): rounding then never costs more than a millionth
+    ///         of an action, so no armed principal sits in a dead zone.
+    uint256 internal constant CURVE_RESOLUTION = 1e6;
+
     /// @custom:event-category informational/config
     event ServiceCapacityEnabledSet(bool enabled);
     /// @custom:event-category informational/config
@@ -160,9 +165,17 @@ library LibServiceCapacity {
         internal
     {
         requireRole(role);
+        // A RESOLUTION floor on the two unit figures (#2459 r1): capacity is
+        // computed on whole units from the TOTAL armed principal, so rounding
+        // loses less than one unit of ceiling and one unit per second of rate.
+        // At a million units per action (and per second of the free refill) that
+        // is under a millionth of an action — a curve coarse enough for rounding
+        // to swallow a meaningful share of an action (e.g. one unit per action)
+        // would make armed principal buy nothing until a threshold, the minimum
+        // the curve exists not to have, while the arming fee was still charged.
         if (
-            freeTier == 0 || freeRatePerSec == 0 || bondAt4x == 0 || classCost == 0 || freeTier < classCost
-                || freeTier > type(uint128).max / 4
+            freeTier == 0 || freeRatePerSec < CURVE_RESOLUTION || bondAt4x == 0 || classCost < CURVE_RESOLUTION
+                || freeTier < classCost || freeTier > type(uint128).max / 4
         ) {
             revert IVaipakamErrors.ServiceCapacityCurveInvalid(role);
         }
@@ -183,8 +196,9 @@ library LibServiceCapacity {
 
     /// @dev The curve at `bond`: rate and ceiling grow LINEARLY from 1× at zero to
     ///      4× at `bondAt4x` and are flat beyond it — continuous, no threshold, no
-    ///      minimum (rounding DOWN never creates one: a zero bond is exactly the
-    ///      free tier). `rate = free × (bondAt4x + 3 × min(bond, bondAt4x)) / bondAt4x`.
+    ///      minimum: rounding DOWN creates none, a zero bond being exactly the free
+    ///      tier, because {setCurve} requires {CURVE_RESOLUTION} on the unit
+    ///      figures, so what rounding loses is under a millionth of an action. `rate = free × (bondAt4x + 3 × min(bond, bondAt4x)) / bondAt4x`.
     function curveAt(LibVaipakam.CapacityCurve storage c, uint256 bond) internal view returns (uint256 rate, uint256 ceiling) {
         uint256 b = bond < c.bondAt4x ? bond : c.bondAt4x;
         uint256 num = c.bondAt4x + 3 * b;
@@ -480,8 +494,8 @@ library LibServiceCapacity {
                 return (POST_RETIRED_BALANCE, fee, granted, eligibleAfter, ceilingAfter);
             }
         }
-        if (s.sanctionsOracle != address(0)) {
-            LibVaipakam.SanctionsRead st = LibVaipakam.sanctionsStatus(operator);
+        {
+            LibVaipakam.SanctionsRead st = _screenRead(s, operator);
             if (st == LibVaipakam.SanctionsRead.Flagged) return (POST_SANCTIONED, fee, granted, eligibleAfter, ceilingAfter);
             if (st == LibVaipakam.SanctionsRead.Unavailable) {
                 return (POST_SANCTIONS_UNAVAILABLE, fee, granted, eligibleAfter, ceilingAfter);
@@ -597,13 +611,28 @@ library LibServiceCapacity {
         if (escrow == address(0)) revert IVaipakamErrors.ServiceCapacityEscrowNotBound();
     }
 
+    /// @dev The deposit surface's ONE sanctions read (#2459 r1; design
+    ///      "disabled-after-configured"). A chain that has NEVER configured an
+    ///      oracle screens nothing — `Clean`, the deploy-window rule of the whole
+    ///      Tier-1 surface. Once any oracle has been installed, a disabled one
+    ///      reads `Unavailable`, exactly an outage: a flagged account can erase its
+    ///      first-observation flag by reverting the outer frame, so "no persisted
+    ///      flag" proves nothing after screening was live, and an off switch must
+    ///      not reopen principal release. Every deposit mutation and the post's
+    ///      preview read through here, so no path can skip the latch. Reinstalling
+    ///      an oracle — a vendor's, or governance's own attested snapshot — is
+    ///      what lets mutations through again.
+    function _screenRead(LibVaipakam.Storage storage s, address who) private view returns (LibVaipakam.SanctionsRead) {
+        if (s.sanctionsOracle == address(0) && !s.sanctionsOracleEverSet) return LibVaipakam.SanctionsRead.Clean;
+        return LibVaipakam.sanctionsStatus(who);
+    }
+
     /// @notice The registry-aware tri-state screen for a deposit MUTATION on
     ///         `party`. Returns true when the mutation may proceed. See the
     ///         library's SANCTIONS note for the four outcomes; the caller turns
     ///         a false into a returned status, never a revert.
     function screen(LibVaipakam.Storage storage s, uint8 role, address operator, address party) internal returns (bool ok) {
-        if (s.sanctionsOracle == address(0)) return true; // the deploy-window rule of the whole Tier-1 surface
-        LibVaipakam.SanctionsRead st = LibVaipakam.sanctionsStatus(party);
+        LibVaipakam.SanctionsRead st = _screenRead(s, party); // never-configured: Clean; disabled after configured: an outage
         if (st == LibVaipakam.SanctionsRead.Flagged) {
             if (s.sanctionsConfirmedFlagged[party]) revert LibVaipakam.SanctionedAddress(party);
             s.sanctionsConfirmedFlagged[party] = true;
@@ -655,12 +684,15 @@ library LibServiceCapacity {
         bool releasedPark = d.state == LibVaipakam.ServiceDepositState.SanctionsParked;
         d.state = LibVaipakam.ServiceDepositState.Active;
         d.parkedRequest = 0;
+        // Announced as the release found the record, BEFORE the raise (#2459 r1):
+        // its balance and armed balance are the pre-post pair, consistent with
+        // each other; the Posted/Raised/Armed event below carries the new pair.
+        if (releasedPark) emit CapacityDepositParkReleased(role, operator, epoch, token, 0, d.amount, d.eligibleAmount);
         settleOnDepositChange(s, role, operator); // elapsed credit under the OLD capacity, before the raise
         if (amount != 0) _pull(token, operator, escrow, amount);
         d.amount += amount;
         d.eligibleAmount = eligibleAfter;
         s.serviceDepositEscrowByEpoch[epoch] += amount;
-        if (releasedPark) emit CapacityDepositParkReleased(role, operator, epoch, token, 0, d.amount - amount, d.eligibleAmount);
         if (amount == 0) emit CapacityDepositArmed(role, operator, epoch, token, granted, d.amount, d.eligibleAmount);
         else if (raise) emit CapacityDepositRaised(role, operator, epoch, token, amount, d.amount, d.eligibleAmount);
         else emit CapacityDepositPosted(role, operator, epoch, token, amount, d.amount, d.eligibleAmount);
@@ -693,8 +725,8 @@ library LibServiceCapacity {
             d.migrated = true;
             emit CapacityDepositMigrated(role, operator, epoch, d.token, d.amount);
         }
-        if (s.sanctionsOracle != address(0)) {
-            LibVaipakam.SanctionsRead st = LibVaipakam.sanctionsStatus(operator);
+        {
+            LibVaipakam.SanctionsRead st = _screenRead(s, operator);
             if (st == LibVaipakam.SanctionsRead.Flagged) {
                 if (s.sanctionsConfirmedFlagged[operator]) revert LibVaipakam.SanctionedAddress(operator);
                 // The committed first-flag transition: persist the marker and park
