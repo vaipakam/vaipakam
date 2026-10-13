@@ -52,6 +52,28 @@ interface QuoteRequest {
 const HEX_ADDR = /^0x[0-9a-fA-F]{40}$/;
 const DECIMAL = /^[1-9][0-9]{0,77}$/;
 
+/**
+ * #2463 round 15 — per-venue readiness, so the app can say before the
+ * lender acts whether an aggregator can be asked at all. A venue is ready
+ * when this Worker holds its key. The allow-list is disclosed by the
+ * response itself: an origin outside `FRONTEND_ORIGIN` gets a CORS header
+ * naming another origin, the browser refuses to read the body, and the app
+ * reports readiness as unread rather than guessing.
+ */
+export function handleQuoteReadiness(env: Env, corsOrigin: string): Response {
+  return new Response(
+    JSON.stringify({ oneinch: Boolean(env.ONEINCH_API_KEY), zeroex: Boolean(env.ZEROEX_API_KEY) }),
+    {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': corsOrigin,
+        'Cache-Control': 'no-store',
+      },
+    },
+  );
+}
+
 export async function handle0xQuote(
   req: Request,
   env: Env,

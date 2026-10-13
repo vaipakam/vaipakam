@@ -2435,11 +2435,15 @@ const copySource = {
     // The protocol lists an aggregator here, but this deployment of the
     // app has no quote proxy configured to ask it through.
     readyNeedsRouteNotConfigured:
-      'The grace period has passed and this loan can be closed out. Its collateral has to be sold on an exchange to do it, and the exchanges the protocol uses on this network are asked for prices through a service this deployment of the app is not set up with, so it cannot offer the sale from here. No automated service currently submits it either, so closing this position needs an operator. Contact support rather than waiting for it to happen on its own.',
+      'The grace period has passed and this loan can be closed out. Its collateral has to be sold on an exchange to do it, and the exchanges the protocol uses on this network are asked for prices through a service that, for this deployment of the app, is missing or not set up to ask them, so it cannot offer the sale from here. No automated service currently submits it either, so closing this position needs an operator. Contact support rather than waiting for it to happen on its own.',
     readyNeedsRouteUnreadable:
       'The grace period has passed and this loan can be closed out. Its collateral has to be sold on an exchange to do it, but the app could not read which exchanges the protocol uses on this network, so it cannot offer the sale from here right now. Reloading the page tries again.',
     // Shown while the confirm is waiting on the price requests.
     findingRoute: 'Asking exchanges for a price…',
+    // #2463 round 15 — a route is being sent, but some exchange the app
+    // asked never answered, so a back-up it might have offered is unknown.
+    routeMissingAnswers:
+      'Not every exchange the app asked answered in time, so the route being sent carries fewer back-ups than it might have. If the prices it does carry fail when the transaction runs, the close-out goes to the protocol’s fallback instead of a sale. You can still reject it in your wallet.',
     // Both refusals happen BEFORE the wallet is asked, which is why each
     // can say nothing was spent.
     routeNoQuote:

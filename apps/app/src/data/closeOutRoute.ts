@@ -97,7 +97,15 @@ export type SlotOutcome =
   | 'unpriceable';
 
 export type CloseOutRoute =
-  | { kind: 'route'; calls: AdapterCall[]; venues: SwapVenueKind[] }
+  /** Something to send. `outcomes` covers every slot, as for `no-quote`:
+   *  a venue that did not answer is a back-up this route does not have,
+   *  and the confirm says so (#2463 round 15). */
+  | {
+      kind: 'route';
+      calls: AdapterCall[];
+      venues: SwapVenueKind[];
+      outcomes: { kind: SwapVenueKind; outcome: SlotOutcome }[];
+    }
   /** Nothing to send. `outcomes` says, per adapter slot, why. */
   | {
       kind: 'no-quote';
@@ -145,11 +153,50 @@ export function noQuoteReason(
   return leftOut ? 'partly-reached' : 'declined';
 }
 
+/**
+ * Whether a route about to be sent was built without hearing from some
+ * venue the app did ask — so a back-up that venue might have offered is
+ * unknown, not absent. Venues left out for a standing reason are not this:
+ * the card already says what the app cannot ask.
+ */
+export function routeMissingAnswers(route: Extract<CloseOutRoute, { kind: 'route' }>): boolean {
+  return route.outcomes.some((o) => o.outcome === 'unanswered');
+}
+
 /** The agent's origin for quotes, or `null` when the deployment has none. */
 export function agentQuoteOrigin(): string | null {
   const url = import.meta.env.VITE_AGENT_ORIGIN as string | undefined;
   if (!url) return null;
   return url.replace(/\/$/, '');
+}
+
+/**
+ * What the agent's quote proxy says it can ask (#2463 round 15). A proxy
+ * URL alone does not mean an aggregator can be asked: the Worker can lack
+ * the key, or refuse this app's origin. `'absent'` — the deployment has no
+ * proxy; `'unread'` — the readiness answer could not be read (which is
+ * also how an origin outside the proxy's allow-list shows up: the browser
+ * refuses the response); otherwise, per aggregator, whether its key is held.
+ */
+export type QuoteProxyReadiness = 'absent' | 'unread' | { oneinch: boolean };
+
+export async function readQuoteProxyReadiness(
+  agentOrigin: string | null,
+  fetchImpl: typeof fetch = fetch,
+): Promise<QuoteProxyReadiness> {
+  if (agentOrigin === null) return 'absent';
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), QUOTE_TIMEOUT_MS);
+  try {
+    const res = await fetchImpl(`${agentOrigin}/quote/readiness`, { signal: ctrl.signal });
+    if (!res.ok) return 'unread';
+    const body = (await res.json().catch(() => null)) as { oneinch?: unknown } | null;
+    return typeof body?.oneinch === 'boolean' ? { oneinch: body.oneinch } : 'unread';
+  } catch {
+    return 'unread';
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**
@@ -165,6 +212,8 @@ export function agentQuoteOrigin(): string | null {
  *
  *  - `askable` — the confirm will ask it for a price.
  *  - `no-proxy` — an aggregator, and this deployment has no quote proxy.
+ *  - `unconfigured` — an aggregator the quote proxy says it holds no key
+ *    for (round 15: a proxy URL alone used to count as askable).
  *  - `origin-bound` — 0x. Its quotes can bind liquidity to the account
  *    that ORIGINATES the transaction, and this app cannot know that
  *    account for every wallet it supports: a Safe's transaction is sent by
@@ -180,6 +229,7 @@ export function agentQuoteOrigin(): string | null {
 export type SlotAskability =
   | 'askable'
   | 'no-proxy'
+  | 'unconfigured'
   | 'origin-bound'
   | 'other-pools'
   | 'unpriceable'
@@ -204,15 +254,17 @@ export async function classifySlots(deps: {
   client: Pick<PublicClient, 'readContract'>;
   chainId: number;
   roster: AdapterRoster;
-  agentConfigured: boolean;
+  quoteProxy: QuoteProxyReadiness;
 }): Promise<ClassifiedSlot[]> {
-  const { client, chainId, roster, agentConfigured } = deps;
+  const { client, chainId, roster, quoteProxy } = deps;
   const judge = async (kind: SwapVenueKind, slot: RosterSlot): Promise<SlotAskability> => {
     switch (kind) {
       case 'zeroex':
         return 'origin-bound';
       case 'oneinch':
-        return agentConfigured ? 'askable' : 'no-proxy';
+        if (quoteProxy === 'absent') return 'no-proxy';
+        if (quoteProxy === 'unread') return 'unread';
+        return quoteProxy.oneinch ? 'askable' : 'unconfigured';
       case 'univ3': {
         if (UNIV3_VENUES[chainId] === undefined) return 'unpriceable';
         // The adapter's router is governance's choice; price it only where
@@ -263,7 +315,8 @@ export interface CloseOutRoster {
  * - `no-enabled-venue` — the list was read in full and no adapter is
  *   enabled (or none is registered). Nobody can close the loan by sale.
  * - `proxy-unconfigured` — an aggregator the app would ask is enabled,
- *   but this deployment has no quote proxy to ask it through.
+ *   but this deployment has no quote proxy to ask it through, or the
+ *   proxy holds no key for it.
  * - `unsupported` — enabled venues exist, none this app can ask from
  *   here (of a kind it cannot price, or 0x, which it does not ask);
  *   another caller with its own route can still close it.
@@ -280,7 +333,7 @@ export function routePosture(read: CloseOutRoster, slots: readonly ClassifiedSlo
   if (has('askable')) return 'available';
   if (read.incomplete || has('unread')) return 'unread';
   if (read.enabledCount === 0) return 'no-enabled-venue';
-  if (has('no-proxy')) return 'proxy-unconfigured';
+  if (has('no-proxy') || has('unconfigured')) return 'proxy-unconfigured';
   return 'unsupported';
 }
 
@@ -319,14 +372,21 @@ export async function readRouteStanding(deps: {
   diamond: Address;
   chainId: number;
   testnetMockAdapter: Address | undefined;
-  agentConfigured: boolean;
+  agentOrigin: string | null;
+  fetchImpl?: typeof fetch;
 }): Promise<RouteStanding> {
   const read = await readCloseOutRoster(deps.client, deps.diamond, deps.testnetMockAdapter);
+  // The proxy is asked what it can quote only when an aggregator it would
+  // quote is on the list; otherwise its answer decides nothing.
+  const quoteProxy: QuoteProxyReadiness =
+    (read.roster.oneinch?.length ?? 0) > 0
+      ? await readQuoteProxyReadiness(deps.agentOrigin, deps.fetchImpl)
+      : 'absent';
   const slots = await classifySlots({
     client: deps.client,
     chainId: deps.chainId,
     roster: read.roster,
-    agentConfigured: deps.agentConfigured,
+    quoteProxy,
   });
   return { read, slots, posture: routePosture(read, slots) };
 }
@@ -540,25 +600,26 @@ export async function buildCloseOutRoute(deps: {
     slots.map((s) => attempt(s).catch((): Attempt => none('unanswered'))),
   );
   const candidates = results.flatMap((r) => r.candidates);
-  if (candidates.length === 0) {
-    // Slots that were never asked are outcomes too: protocol-enabled routes
-    // left out, each for the reason `classifySlots` gave.
-    const notAsked = deps.slots
+  // Every slot's outcome, asked or not, on BOTH results: slots never asked
+  // are protocol-enabled routes left out, each for the reason
+  // `classifySlots` gave.
+  const outcomes = [
+    ...slots.map((sl, i) => ({ kind: sl.kind, outcome: results[i].outcome })),
+    ...deps.slots
       .filter((s) => s.askability !== 'askable')
       .map((s) => ({
         kind: s.kind,
         outcome: (s.askability === 'unread' ? 'unanswered' : s.askability) as SlotOutcome,
-      }));
-    return {
-      kind: 'no-quote',
-      outcomes: [
-        ...slots.map((sl, i) => ({ kind: sl.kind, outcome: results[i].outcome })),
-        ...notAsked,
-      ],
-    };
-  }
+      })),
+  ];
+  if (candidates.length === 0) return { kind: 'no-quote', outcomes };
   const ranked = rankRoutes(candidates);
-  return { kind: 'route', calls: ranked.map((c) => c.call), venues: ranked.map((c) => c.kind) };
+  return {
+    kind: 'route',
+    calls: ranked.map((c) => c.call),
+    venues: ranked.map((c) => c.kind),
+    outcomes,
+  };
 }
 
 /**

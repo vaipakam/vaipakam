@@ -12,6 +12,10 @@ import {
   classifySlots,
   readCloseOutRoster,
   routePosture,
+  readQuoteProxyReadiness,
+  readRouteStanding,
+  routeMissingAnswers,
+  type QuoteProxyReadiness,
   SWAP_ADAPTER_SUCCEEDED_TOPIC,
   SWAP_ALL_ADAPTERS_FAILED_TOPIC,
 } from './closeOutRoute';
@@ -63,7 +67,7 @@ async function build(
     client: deps.client,
     chainId: deps.chainId,
     roster,
-    agentConfigured: deps.agentOrigin !== null,
+    quoteProxy: deps.agentOrigin !== null ? { oneinch: true } : 'absent',
   });
   return buildCloseOutRoute({ ...rest, slots });
 }
@@ -71,22 +75,29 @@ async function build(
 describe('classifySlots', () => {
   const judge = (
     roster: Parameters<typeof classifySlots>[0]['roster'],
-    opts: { chainId?: number; agent?: boolean; client?: RouteClient } = {},
+    opts: { chainId?: number; agent?: QuoteProxyReadiness; client?: RouteClient } = {},
   ) =>
     classifySlots({
       client: opts.client ?? noChain,
       chainId: opts.chainId ?? 8453,
       roster,
-      agentConfigured: opts.agent ?? true,
+      quoteProxy: opts.agent ?? { oneinch: true },
     }).then((xs) => xs.map((x) => `${x.kind}:${x.askability}`));
 
   it('asks the aggregators only through a configured agent', async () => {
     const roster = { zeroex: S(0), oneinch: S(1) };
     expect(await judge(roster)).toEqual(['zeroex:origin-bound', 'oneinch:askable']);
-    expect(await judge(roster, { agent: false })).toEqual([
+    expect(await judge(roster, { agent: 'absent' })).toEqual([
       'zeroex:origin-bound',
       'oneinch:no-proxy',
     ]);
+  });
+
+  it('does not ask 1inch when the proxy holds no key for it, or its readiness is unread', async () => {
+    expect(await judge({ oneinch: S(1) }, { agent: { oneinch: false } })).toEqual([
+      'oneinch:unconfigured',
+    ]);
+    expect(await judge({ oneinch: S(1) }, { agent: 'unread' })).toEqual(['oneinch:unread']);
   });
 
   it('never asks 0x, whose quotes can bind to the transaction origin', async () => {
@@ -198,6 +209,37 @@ describe('buildCloseOutRoute', () => {
     expect(route.kind === 'route' && route.venues).toEqual(['oneinch']);
   });
 
+  it('keeps every outcome on a route, so a venue that never answered is disclosed', async () => {
+    let n = 0;
+    const impl = (async () =>
+      n++ === 0
+        ? new Response(JSON.stringify({ tx: { to: A(0xa), data: '0x01' }, dstAmount: '100' }), {
+            status: 200,
+          })
+        : new Response('{}', { status: 502 })) as unknown as typeof fetch;
+    const route = await build({
+      client: noChain,
+      chainId: 8453,
+      diamond: A(0xd),
+      roster: { zeroex: S(2), oneinch: [...S(0), ...S(1)] },
+      sale,
+      agentOrigin: 'https://agent.example',
+      fetchImpl: impl,
+    });
+    expect(route.kind).toBe('route');
+    if (route.kind !== 'route') return;
+    expect(route.outcomes).toEqual([
+      { kind: 'oneinch', outcome: 'quoted' },
+      { kind: 'oneinch', outcome: 'unanswered' },
+      { kind: 'zeroex', outcome: 'origin-bound' },
+    ]);
+    expect(routeMissingAnswers(route)).toBe(true);
+    // A venue left out for a standing reason is not a missing answer.
+    expect(
+      routeMissingAnswers({ ...route, outcomes: [route.outcomes[0], route.outcomes[2]] }),
+    ).toBe(false);
+  });
+
   function mockChain(state: {
     shouldRevert?: boolean;
     restrictedTo?: Address;
@@ -256,6 +298,10 @@ describe('buildCloseOutRoute', () => {
       kind: 'route',
       venues: ['testnetMock', 'oneinch'],
       calls: [{ adapterIdx: 0n, data: '0x' }, expect.objectContaining({ adapterIdx: 1n })],
+      outcomes: [
+        { kind: 'oneinch', outcome: 'quoted' },
+        { kind: 'testnetMock', outcome: 'quoted' },
+      ],
     });
   });
 
@@ -448,7 +494,7 @@ describe('routePosture', () => {
   }
   const posture = async (
     entries: { name?: string; disabled?: boolean }[],
-    agent = true,
+    agent: QuoteProxyReadiness = { oneinch: true },
     chainId = 8453,
   ) => {
     const client = chainOf(entries);
@@ -457,7 +503,7 @@ describe('routePosture', () => {
       client: client as unknown as RouteClient,
       chainId,
       roster: read.roster,
-      agentConfigured: agent,
+      quoteProxy: agent,
     });
     return routePosture(read, slots);
   };
@@ -479,20 +525,25 @@ describe('routePosture', () => {
     expect(await posture([{ name: undefined, disabled: false }])).toBe('unread');
   });
   it('is proxy-unconfigured when only an aggregator is enabled and no proxy is set', async () => {
-    expect(await posture([{ name: 'OneInch', disabled: false }], false)).toBe(
+    expect(await posture([{ name: 'OneInch', disabled: false }], 'absent')).toBe(
       'proxy-unconfigured',
     );
+  });
+  it('is proxy-unconfigured when the proxy holds no key, and unread when it could not say', async () => {
+    const oneinchOnly = [{ name: 'OneInch', disabled: false }];
+    expect(await posture(oneinchOnly, { oneinch: false })).toBe('proxy-unconfigured');
+    expect(await posture(oneinchOnly, 'unread')).toBe('unread');
   });
   it('does not count 0x as askable, with or without a proxy', async () => {
     const zeroexOnly = [{ name: 'ZeroEx', disabled: false }];
     expect(await posture(zeroexOnly)).toBe('unsupported');
-    expect(await posture(zeroexOnly, false)).toBe('unsupported');
+    expect(await posture(zeroexOnly, 'absent')).toBe('unsupported');
     expect(await posture([...zeroexOnly, { name: 'OneInch', disabled: false }])).toBe('available');
   });
   it('is unsupported when enabled venues exist that this app cannot ask', async () => {
     expect(await posture([{ name: 'BalancerV2', disabled: false }])).toBe('unsupported');
     // UniV3 with no quoter on this chain.
-    expect(await posture([{ name: 'UniswapV3', disabled: false }], true, 84532)).toBe(
+    expect(await posture([{ name: 'UniswapV3', disabled: false }], undefined, 84532)).toBe(
       'unsupported',
     );
   });
@@ -696,5 +747,68 @@ describe('buildCloseOutRoute — route checks', () => {
         { kind: 'oneinch', outcome: 'no-proxy' },
       ],
     });
+  });
+});
+
+describe('readQuoteProxyReadiness', () => {
+  const answer = (res: () => Promise<Response>) => (async () => res()) as unknown as typeof fetch;
+  it('is absent without a proxy, and never asks', async () => {
+    expect(await readQuoteProxyReadiness(null, answer(() => Promise.reject(new Error('x'))))).toBe(
+      'absent',
+    );
+  });
+  it('reads the per-venue answer', async () => {
+    const ok = (b: unknown) => answer(() => Promise.resolve(new Response(JSON.stringify(b))));
+    expect(await readQuoteProxyReadiness('https://a', ok({ oneinch: true, zeroex: false }))).toEqual(
+      { oneinch: true },
+    );
+    expect(await readQuoteProxyReadiness('https://a', ok({ oneinch: false }))).toEqual({
+      oneinch: false,
+    });
+  });
+  it('is unread on a failure, an error status or a malformed body', async () => {
+    for (const res of [
+      // A CORS refusal (an origin outside the allow-list) reaches fetch as a throw.
+      () => Promise.reject(new TypeError('Failed to fetch')),
+      () => Promise.resolve(new Response('{}', { status: 404 })),
+      () => Promise.resolve(new Response('not json')),
+      () => Promise.resolve(new Response(JSON.stringify({ oneinch: 'yes' }))),
+    ]) {
+      expect(await readQuoteProxyReadiness('https://a', answer(res))).toBe('unread');
+    }
+  });
+  it('is asked by the standing only when 1inch is on the list', async () => {
+    let asked = 0;
+    const impl = (async () => {
+      asked++;
+      return new Response(JSON.stringify({ oneinch: false }));
+    }) as unknown as typeof fetch;
+    const roster = (names: string[]) =>
+      ({
+        readContract: async (args: { functionName: string; address: Address; args?: [Address] }) => {
+          if (args.functionName === 'getSwapAdapters') return names.map((_, i) => A(0x100 + i));
+          const i = Number(BigInt((args.args?.[0] ?? args.address) as string) - 0x100n);
+          return args.functionName === 'adapterName' ? names[i] : false;
+        },
+      }) as unknown as Parameters<typeof readRouteStanding>[0]['client'];
+    const one = await readRouteStanding({
+      client: roster(['OneInch']),
+      diamond: A(9),
+      chainId: 8453,
+      testnetMockAdapter: undefined,
+      agentOrigin: 'https://a',
+      fetchImpl: impl,
+    });
+    expect(asked).toBe(1);
+    expect(one.posture).toBe('proxy-unconfigured');
+    await readRouteStanding({
+      client: roster(['ZeroEx']),
+      diamond: A(9),
+      chainId: 8453,
+      testnetMockAdapter: undefined,
+      agentOrigin: 'https://a',
+      fetchImpl: impl,
+    });
+    expect(asked).toBe(1);
   });
 });

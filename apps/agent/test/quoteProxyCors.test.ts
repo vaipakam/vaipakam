@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { handle0xQuote, handle1inchQuote } from '../src/quoteProxy';
+import { handle0xQuote, handle1inchQuote, handleQuoteReadiness } from '../src/quoteProxy';
 import type { Env } from '../src/env';
 
 // The proxies echo the origin the index resolved for THIS request, not the
@@ -20,5 +20,14 @@ describe('quote proxy CORS', () => {
       expect(res.status).toBe(400);
       expect(res.headers.get('Access-Control-Allow-Origin')).toBe('https://b.example');
     }
+  });
+});
+
+describe('quote readiness', () => {
+  it('reports each venue by whether its key is held, with the resolved origin', async () => {
+    const res = handleQuoteReadiness({ ...env, ONEINCH_API_KEY: 'k' } as unknown as Env, 'https://b.example');
+    expect(res.status).toBe(200);
+    expect(res.headers.get('Access-Control-Allow-Origin')).toBe('https://b.example');
+    expect(await res.json()).toEqual({ oneinch: true, zeroex: false });
   });
 });

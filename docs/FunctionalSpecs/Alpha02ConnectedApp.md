@@ -1631,6 +1631,16 @@ is the borrower's own money.
   then finds no price says some exchanges could not be asked from here, and,
   when another exchange also gave no reliable answer, that a retry may help
   but the unasked exchanges stay unasked.
+- Whether an aggregator can be asked is judged from what the quote service
+  says it can quote, not from the service merely being configured: an
+  aggregator the service holds no key for is not counted as available, and
+  the card says an operator is needed rather than offering a sale every
+  confirmation would refuse. When the service's answer cannot be read, the
+  card says the exchanges could not be read.
+- A route that is sent although some exchange the app asked never answered
+  says so before the wallet is asked: it carries fewer back-ups than it
+  might, and if its prices fail when it runs the close-out goes to the
+  fallback. The lender can still reject it in the wallet.
 - An answer from the quote service that carries an error, even with a success
   status, counts as no answer from that exchange rather than as a refusal.
 - The sale disclosure also states the in-kind outcome: if, before the

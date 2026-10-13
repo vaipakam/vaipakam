@@ -75,6 +75,7 @@ import {
   type RoutePosture,
   previewCloseOut,
   readRouteStanding,
+  routeMissingAnswers,
 } from '../data/closeOutRoute';
 
 /** How long a close-out may go unaccounted for before the card SAYS SO.
@@ -892,7 +893,7 @@ export function ForcedCloseCard({
         diamond: routeDiamond!,
         chainId: routeChainId!,
         testnetMockAdapter,
-        agentConfigured: agentQuoteOrigin() !== null,
+        agentOrigin: agentQuoteOrigin(),
       }),
     staleTime: 60_000,
     // Re-read while the card is open: governance can enable or register a
@@ -918,6 +919,10 @@ export function ForcedCloseCard({
   /** Set while the confirm is asking exchanges for prices — the one
    *  stretch of a close-out where nothing is on screen otherwise. */
   const [findingRoute, setFindingRoute] = useState(false);
+  /** Set while a route built without some venue's answer is on its way to
+   *  the wallet (#2463 round 15): its back-ups are fewer than they might
+   *  be, and the lender can still reject it there. */
+  const [routeShort, setRouteShort] = useState(false);
 
   if (!shouldRenderForcedClose(readiness)) return null;
 
@@ -934,7 +939,8 @@ export function ForcedCloseCard({
    *  quoted now. Returns the calls, or the sentence to show instead —
    *  never an empty list, which the contract would refuse. */
   async function findCloseOutRoute(): Promise<
-    { calls: readonly AdapterCall[]; quotedAmount: bigint } | { message: string }
+    | { calls: readonly AdapterCall[]; quotedAmount: bigint; missingAnswers: boolean }
+    | { message: string }
   > {
     if (!publicClient || routeDiamond === undefined || routeChainId === undefined) {
       return { message: copy.forcedClose.routeRosterFailed };
@@ -958,7 +964,7 @@ export function ForcedCloseCard({
           diamond: routeDiamond,
           chainId: routeChainId,
           testnetMockAdapter,
-          agentConfigured: agentQuoteOrigin() !== null,
+          agentOrigin: agentQuoteOrigin(),
         }),
       ]);
       standing = fresh;
@@ -1014,7 +1020,11 @@ export function ForcedCloseCard({
                     : copy.forcedClose.routeNoQuote,
       };
     }
-    return { calls: route.calls, quotedAmount: sale.sellAmount };
+    return {
+      calls: route.calls,
+      quotedAmount: sale.sellAmount,
+      missingAnswers: routeMissingAnswers(route),
+    };
   }
 
   async function closeOut() {
@@ -1064,6 +1074,7 @@ export function ForcedCloseCard({
         }
         adapterCalls = found.calls;
         quotedAmount = found.quotedAmount;
+        setRouteShort(found.missingAnswers);
       }
       // A LIVE re-check, immediately before sending (round 28 P2). The
       // readiness above is a 30-second poll that the open confirmation
@@ -1265,6 +1276,7 @@ export function ForcedCloseCard({
       setError(captureTxError(err));
     } finally {
       setBusy(false);
+      setRouteShort(false);
     }
   }
 
@@ -1868,6 +1880,11 @@ export function ForcedCloseCard({
           {findingRoute ? (
             <p className="field-hint" role="status" data-testid="forced-close-finding-route">
               {copy.forcedClose.findingRoute}
+            </p>
+          ) : null}
+          {routeShort ? (
+            <p className="field-hint" role="status" data-testid="forced-close-route-short">
+              {copy.forcedClose.routeMissingAnswers}
             </p>
           ) : null}
           {error ? (
