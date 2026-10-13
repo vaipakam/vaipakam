@@ -1258,17 +1258,26 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     liveStatus.data === undefined ? undefined : Number(liveStatus.data.status),
   );
   const statusIsReconciled = reconciledStatus !== loan.data.status;
-  // A reconciled row takes the live amounts with the live status (#2461 r1):
-  // one snapshot, never the chain's status beside the indexer's amounts.
-  const row =
-    statusIsReconciled && liveStatus.data
+  // #2461 r1/r2 — while the live read runs (the indexed row is still open)
+  // the page's principal and collateral come from it, with or without a
+  // status change: partial repayment, a top-up or withdrawal, a partial
+  // swap-to-repay and a partial match all move them before the indexer
+  // catches up, and a reconciled status must never sit beside the indexer's
+  // pre-transition amounts. Gated on the query being ENABLED, not on cached
+  // data: once the indexed row is terminal the query stops, and its last
+  // cached result is the pre-transition snapshot.
+  const liveAmounts =
+    liveStatusEnabled && liveStatus.data
       ? {
-          ...loan.data,
-          status: reconciledStatus,
           principal: liveStatus.data.principal.toString(),
           collateralAmount: liveStatus.data.collateralAmount.toString(),
         }
-      : loan.data;
+      : null;
+  const row = {
+    ...loan.data,
+    ...(statusIsReconciled ? { status: reconciledStatus } : {}),
+    ...(liveAmounts ?? {}),
+  };
   const view = loanStateView(row);
   const isRental = row.assetType !== AssetType.ERC20;
   // Judged on the RECONCILED status (live override folded in): a loan
@@ -2269,6 +2278,9 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       setConfirmingSurface(null);
       void queryClient.invalidateQueries({ queryKey: ['loan'] });
       void queryClient.invalidateQueries({ queryKey: ['loanLive'] });
+      // #2461 r2 — the page's amounts come from this read while the loan
+      // is open; refresh it with the rest after our own write.
+      void queryClient.invalidateQueries({ queryKey: ['loanLiveStatus'] });
       void queryClient.invalidateQueries({ queryKey: ['myLoans'] });
       void queryClient.invalidateQueries({ queryKey: ['claimables'] });
     } catch (err) {
@@ -2714,6 +2726,9 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       // The close-early quote (loanLive.calcDue) changes with every
       // partial — without this it keeps quoting the pre-partial figure.
       void queryClient.invalidateQueries({ queryKey: ['loanLive'] });
+      // #2461 r2 — the page's amounts come from this read while the loan
+      // is open; refresh it with the rest after our own write.
+      void queryClient.invalidateQueries({ queryKey: ['loanLiveStatus'] });
       void queryClient.invalidateQueries({ queryKey: ['loanRisk'] });
       void queryClient.invalidateQueries({ queryKey: ['myLoans'] });
     } catch (err) {
@@ -2856,6 +2871,9 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       setConfirmingSurface(null);
       void queryClient.invalidateQueries({ queryKey: ['loan'] });
       void queryClient.invalidateQueries({ queryKey: ['loanLive'] });
+      // #2461 r2 — the page's amounts come from this read while the loan
+      // is open; refresh it with the rest after our own write.
+      void queryClient.invalidateQueries({ queryKey: ['loanLiveStatus'] });
       void queryClient.invalidateQueries({ queryKey: ['myLoans'] });
       void queryClient.invalidateQueries({ queryKey: ['claimables'] });
     } catch (err) {

@@ -88,6 +88,10 @@ interface LoanRow {
   // `principal`). NULL only for a row a pre-0032 worker wrote and the
   // backfill could not reach.
   init_principal: string | null;
+  // 0056 — 1 when `init_principal` is a 0032 fallback copy the
+  // `LoanInitiated` ledger does not back. The candles still read the value
+  // (a frozen best figure); the app is never told it as history.
+  init_principal_unbacked: number;
   collateral_amount: string;
   asset_type: number;
   collateral_asset_type: number;
@@ -126,8 +130,9 @@ function loanToJson(row: LoanRow): Record<string, unknown> {
     principal: row.principal,
     // #2453 — what was lent/borrowed, as opposed to `principal`, which is
     // what is still outstanding (zero once internal matching cleared it).
-    // null = not recorded for this row; the app says so rather than guess.
-    initPrincipal: row.init_principal ?? null,
+    // null = not recorded for this row, or recorded but not backed by the
+    // chain's initiation event (0056); the app says so rather than guess.
+    initPrincipal: row.init_principal_unbacked === 1 ? null : (row.init_principal ?? null),
     collateralAmount: row.collateral_amount,
     assetType: row.asset_type,
     collateralAssetType: row.collateral_asset_type,
