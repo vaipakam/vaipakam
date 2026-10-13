@@ -1236,8 +1236,6 @@
         "collateralBackPlain": "{{collateral}} 抵押品返还。",
         "owedPrincipalPlusInterest": "{{principal}} + 这笔贷款的利息。对于全期限计息的贷款（协议默认），即使提前还款，也要支付整个期限的利息；按天计息的贷款只收取已累积的部分。确认时会实时读取确切金额；授权额度留有少量余量，这部分余量永远不会被花掉。",
         "youRent": "你租用了 {{nft}}",
-        "youBorrowed": "你借入了 {{principal}}",
-        "youLent": "你借出了 {{principal}}",
         "paidNow": "~{{amount}} {{symbol}}，现在支付。",
         "exactAmountNote": "确认时会实时读取精确金额；授权带有小额余量，但永远不会被花掉。",
         "toppingUp": "补充你的 {{symbol}} 抵押品会让贷款更安全，并让清算更远。",
@@ -1389,7 +1387,15 @@
           "approving": "正在钱包中批准…",
           "submitting": "正在提交…",
           "waiting": "等待钱包…"
-        }
+        },
+        "loanBetweenAmountUnknown": "另外两个钱包之间的一笔贷款 — 借出金额目前无法显示",
+        "receiveInternalMatchProceeds": "内部撮合为这笔贷款的出借人记录的所得款项。",
+        "positionBorrowed": "你的借款头寸 · 这笔贷款开始时借入 {{principal}}",
+        "positionLent": "你的出借头寸 · 这笔贷款开始时借出 {{principal}}",
+        "positionBorrowedAmountUnknown": "你的借款头寸 · 这笔贷款开始时的借入金额目前无法显示",
+        "positionLentAmountUnknown": "你的出借头寸 · 这笔贷款开始时的借出金额目前无法显示",
+        "collateralSettledClosed": "这笔贷款已结束 — 其抵押品通过领取结算，不再为这笔贷款锁定。",
+        "collateralSettledInternalMatch": "内部撮合已将借款人的抵押品支付给与之撮合的那笔贷款的出借人。任何剩余部分会通过借款人的领取退还给借款人。"
       },
       "loading": "正在加载您的持仓…",
       "openOffers": "开放 offers",
@@ -1417,8 +1423,6 @@
       "emptyBody": "借入或出借即可开始。",
       "unavailable": "当前无法加载您的持仓。资金不受影响 — 请稍后重试。",
       "sourcesDegraded": "此页面的一个数据源暂时不可用。您的当前持仓会从剩余数据源显示，最近变化的项目可能需要一点时间才会出现。",
-      "roleBorrower": "您借入了",
-      "roleLender": "您出借了",
       "whatIfNothingBorrower": "如果你不操作，贷款超过到期日和 {{grace}}宽限期（贷方可拿走抵押品前的短暂额外还款窗口），贷方可以收到你的 {{collateral}} 抵押品。",
       "whatIfNothingLender": "如果借款人未在到期日加 {{grace}}宽限期（短暂额外还款窗口）内还款，你可以领取其抵押品。",
       "whatIfNothingViewer": "如果借款人未在到期日加 {{grace}}宽限期（短暂额外还款窗口）内还款，贷方可以领取抵押品。",
@@ -1452,7 +1456,13 @@
       "whatNextInternalMatchViewer": "此贷款通过内部匹配关闭 — 任何 residual 领取权属于持仓持有者。",
       "whatNextClosed": "此贷款已完全结算 — 没有剩余操作。",
       "whatNextRentalEnded": "此租赁已结束。任何赚取费用或可退还缓冲金可由持仓持有者在下方领取 — 不会再发生其他变化。",
-      "settledAhead": "此持仓已在区块链上结清——这里显示的是实时状态。你的列表可能需要一点时间才能同步更新。"
+      "settledAhead": "此持仓已在区块链上结清——这里显示的是实时状态。你的列表可能需要一点时间才能同步更新。",
+      "amountUnknown": "金额暂不可用",
+      "owedRepaidAmountUnknown": "无 — 这笔贷款已全额还清。",
+      "rowBorrowed": "借款头寸 · 起始借入 {{amount}}",
+      "rowLent": "出借头寸 · 起始借出 {{amount}}",
+      "rowBorrowedAmountUnknown": "借款头寸 · 起始借入金额暂不可用",
+      "rowLentAmountUnknown": "出借头寸 · 起始借出金额暂不可用"
     },
     "powerSurface": {
       "body": "本页并排显示一个交易对的开放报价，并让你设定自己的利率。想一步步操作？“借款”和“出借”页面会带着说明完成同样的事。",

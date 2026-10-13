@@ -53,5 +53,6 @@
   "0052_quarantine_first_seen_index.sql",
   "0053_quarantine_observation_token.sql",
   "0054_offers_collateral_range.sql",
-  "0055_activity_value.sql"
+  "0055_activity_value.sql",
+  "0056_init_principal_unbacked.sql"
 ]

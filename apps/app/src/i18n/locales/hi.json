@@ -1236,8 +1236,6 @@
         "collateralBackPlain": "{{collateral}} collateral वापस।",
         "owedPrincipalPlusInterest": "{{principal}} + इस लोन का ब्याज। पूरी अवधि वाले लोन (प्रोटोकॉल का डिफ़ॉल्ट) पर जल्दी चुकाने पर भी पूरी अवधि का ब्याज लगता है; दिन-ब-दिन वाले लोन पर सिर्फ़ उतना लगता है जितना जुड़ चुका है। पुष्टि करते समय सटीक रकम लाइव पढ़ी जाती है; मंज़ूरी में थोड़ी अतिरिक्त गुंजाइश रहती है जो कभी ख़र्च नहीं होती।",
         "youRent": "आप {{nft}} rent करते हैं",
-        "youBorrowed": "आपने {{principal}} borrow किया",
-        "youLent": "आपने {{principal}} lend किया",
         "paidNow": "~{{amount}} {{symbol}}, अभी paid।",
         "exactAmountNote": "Confirm करते समय exact amount live read होता है; approval में छोटा headroom है जो कभी spent नहीं होता।",
         "toppingUp": "आपका {{symbol}} collateral top up करना loan को safer बनाता है और liquidation दूर करता है।",
@@ -1389,7 +1387,15 @@
           "approving": "आपके wallet में approval…",
           "submitting": "Submit हो रहा है…",
           "waiting": "वॉलेट का इंतजार…"
-        }
+        },
+        "loanBetweenAmountUnknown": "दो दूसरे wallets के बीच एक loan — lend किया गया amount अभी उपलब्ध नहीं है",
+        "receiveInternalMatchProceeds": "Internal matching ने इस loan के lender के लिए जो proceeds record किए।",
+        "positionBorrowed": "आपकी borrowing position · इस loan की शुरुआत में {{principal}} borrow किया गया",
+        "positionLent": "आपकी lending position · इस loan की शुरुआत में {{principal}} lend किया गया",
+        "positionBorrowedAmountUnknown": "आपकी borrowing position · इस loan की शुरुआत में borrow किया गया amount अभी उपलब्ध नहीं है",
+        "positionLentAmountUnknown": "आपकी lending position · इस loan की शुरुआत में lend किया गया amount अभी उपलब्ध नहीं है",
+        "collateralSettledClosed": "यह loan बंद हो चुका है — इसका collateral claims के ज़रिए settle होता है, loan के लिए locked नहीं रहता।",
+        "collateralSettledInternalMatch": "Internal matching ने borrower का collateral उस loan के lender को दे दिया जिससे यह match हुआ था। कोई भी बचा हुआ हिस्सा borrower के claim से borrower को वापस मिलता है।"
       },
       "loading": "आपकी positions लोड हो रही हैं…",
       "openOffers": "Open offers",
@@ -1417,8 +1423,6 @@
       "emptyBody": "शुरू करने के लिए borrow या lend करें।",
       "unavailable": "अभी आपकी positions load नहीं कर सके। Funds unaffected हैं — थोड़ी देर में try करें।",
       "sourcesDegraded": "इस page का एक data source temporarily unavailable है। आपकी current positions remaining source से shown हैं और recently changed items दिखने में थोड़ा time लग सकता है।",
-      "roleBorrower": "आपने borrow किया",
-      "roleLender": "आपने lend किया",
       "whatIfNothingBorrower": "यदि आप कुछ नहीं करते और loan due date और {{grace}}grace period (lender collateral ले सके उससे पहले repay करने की छोटी extra window) पार कर जाता है, lender आपका {{collateral}} collateral receive कर सकता है।",
       "whatIfNothingLender": "यदि borrower due date plus {{grace}}grace period (छोटी extra repayment window) तक repay नहीं करता, आप उनका collateral claim कर सकते हैं।",
       "whatIfNothingViewer": "यदि borrower due date plus {{grace}}grace period (छोटी extra repayment window) तक repay नहीं करता, lender collateral claim कर सकता है।",
@@ -1452,7 +1456,13 @@
       "whatNextInternalMatchViewer": "यह loan internal matching से closed हुआ — residual claims position holders के हैं।",
       "whatNextClosed": "यह loan fully settled है — करने को कुछ नहीं बचा।",
       "whatNextRentalEnded": "यह rental ended है। Earned fees या refundable buffer position holders नीचे claim कर सकते हैं — और कुछ change नहीं हो सकता।",
-      "settledAhead": "यह पोजिशन ब्लॉकचेन पर पहले ही बंद हो चुकी है — यहाँ की स्थिति लाइव है। आपकी सूचियों को अपडेट होने में थोड़ा समय लग सकता है।"
+      "settledAhead": "यह पोजिशन ब्लॉकचेन पर पहले ही बंद हो चुकी है — यहाँ की स्थिति लाइव है। आपकी सूचियों को अपडेट होने में थोड़ा समय लग सकता है।",
+      "amountUnknown": "Amount उपलब्ध नहीं",
+      "owedRepaidAmountUnknown": "कुछ नहीं — यह loan पूरी तरह repay हो चुका है।",
+      "rowBorrowed": "Borrowing position · शुरुआत में {{amount}} borrow किया गया",
+      "rowLent": "Lending position · शुरुआत में {{amount}} lend किया गया",
+      "rowBorrowedAmountUnknown": "Borrowing position · शुरुआत में borrow किया गया amount उपलब्ध नहीं है",
+      "rowLentAmountUnknown": "Lending position · शुरुआत में lend किया गया amount उपलब्ध नहीं है"
     },
     "powerSurface": {
       "body": "यह पेज एक जोड़ी के खुले offers साथ-साथ दिखाता है और आपको अपनी दर तय करने देता है। कदम-दर-कदम चलना पसंद है? Borrow और Lend पेज यही काम समझाते हुए करते हैं।",

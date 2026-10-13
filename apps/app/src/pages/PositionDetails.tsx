@@ -83,6 +83,7 @@ import {
 import { useForcedCloseReads } from '../data/useForcedClose';
 import { probeClaim, useLoanClaim } from '../data/claimables';
 import { receiptPayout, useClaimPayoutText } from '../data/useClaimPayout';
+import { initiatedPrincipal, lockedCollateralLine } from '../lib/positionAmounts';
 import {
   classifyMaxWithdrawable,
   swapToRepayOrderState,
@@ -463,6 +464,13 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         // and only after taking it did the rows turn to "failed". The
         // switch was an invitation to discover a dead end.
         sellerWindowReadable: live.lenderForfeitFrom !== undefined,
+        // #2461 r1 (P2) — the two amounts a terminal transition moves,
+        // from the same struct: when this read reconciles the status ahead
+        // of the indexed row, the row's principal and collateral are just
+        // as stale, and pairing them with the live status would state the
+        // pre-match collateral as still locked.
+        principal: live.principal,
+        collateralAmount: live.collateralAmount,
       };
     },
   });
@@ -1250,9 +1258,30 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     liveStatus.data === undefined ? undefined : Number(liveStatus.data.status),
   );
   const statusIsReconciled = reconciledStatus !== loan.data.status;
-  const row = statusIsReconciled
-    ? { ...loan.data, status: reconciledStatus }
-    : loan.data;
+  // #2461 r1/r2 — while the live read runs (the indexed row is still open)
+  // the page's principal and collateral come from it, with or without a
+  // status change: partial repayment, a top-up or withdrawal, a partial
+  // swap-to-repay and a partial match all move them before the indexer
+  // catches up, and a reconciled status must never sit beside the indexer's
+  // pre-transition amounts. Gated on the query being ENABLED, not on cached
+  // data: once the indexed row is terminal the query stops, and its last
+  // cached result is the pre-transition snapshot.
+  const liveAmounts =
+    // #2461 r3 — a failed refetch keeps the last good `data`; folding that
+    // in would pin amounts older than the indexed row, so an errored read
+    // falls back to the indexed figures (the same guard the other
+    // consumers of this query apply).
+    liveStatusEnabled && liveStatus.data && !liveStatus.isError
+      ? {
+          principal: liveStatus.data.principal.toString(),
+          collateralAmount: liveStatus.data.collateralAmount.toString(),
+        }
+      : null;
+  const row = {
+    ...loan.data,
+    ...(statusIsReconciled ? { status: reconciledStatus } : {}),
+    ...(liveAmounts ?? {}),
+  };
   const view = loanStateView(row);
   const isRental = row.assetType !== AssetType.ERC20;
   // Judged on the RECONCILED status (live override folded in): a loan
@@ -2253,6 +2282,9 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       setConfirmingSurface(null);
       void queryClient.invalidateQueries({ queryKey: ['loan'] });
       void queryClient.invalidateQueries({ queryKey: ['loanLive'] });
+      // #2461 r2 — the page's amounts come from this read while the loan
+      // is open; refresh it with the rest after our own write.
+      void queryClient.invalidateQueries({ queryKey: ['loanLiveStatus'] });
       void queryClient.invalidateQueries({ queryKey: ['myLoans'] });
       void queryClient.invalidateQueries({ queryKey: ['claimables'] });
     } catch (err) {
@@ -2266,6 +2298,16 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   const principalStr = principal
     ? `${formatTokenAmount(row.principal, principal.decimals)} ${principal.symbol}`
     : '…';
+  // #2453 — the headline's amount is what the loan was INITIATED with;
+  // `principalStr` is the live outstanding amount (zero after a full
+  // internal match) and stays for what is owed.
+  const initPrincipal = initiatedPrincipal(row);
+  const lentStr =
+    initPrincipal === null
+      ? null
+      : principal
+        ? `${formatTokenAmount(initPrincipal, principal.decimals)} ${principal.symbol}`
+        : '…';
   const interestStr = principal
     ? `${formatTokenAmount(interest, principal.decimals)} ${principal.symbol}`
     : '…';
@@ -2688,6 +2730,9 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       // The close-early quote (loanLive.calcDue) changes with every
       // partial — without this it keeps quoting the pre-partial figure.
       void queryClient.invalidateQueries({ queryKey: ['loanLive'] });
+      // #2461 r2 — the page's amounts come from this read while the loan
+      // is open; refresh it with the rest after our own write.
+      void queryClient.invalidateQueries({ queryKey: ['loanLiveStatus'] });
       void queryClient.invalidateQueries({ queryKey: ['loanRisk'] });
       void queryClient.invalidateQueries({ queryKey: ['myLoans'] });
     } catch (err) {
@@ -2830,6 +2875,9 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       setConfirmingSurface(null);
       void queryClient.invalidateQueries({ queryKey: ['loan'] });
       void queryClient.invalidateQueries({ queryKey: ['loanLive'] });
+      // #2461 r2 — the page's amounts come from this read while the loan
+      // is open; refresh it with the rest after our own write.
+      void queryClient.invalidateQueries({ queryKey: ['loanLiveStatus'] });
       void queryClient.invalidateQueries({ queryKey: ['myLoans'] });
       void queryClient.invalidateQueries({ queryKey: ['claimables'] });
     } catch (err) {
@@ -2979,7 +3027,12 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
               youReceive: receiptPayout(claimReceiveUnknown, lenderClaimText) ??
                 (isRental
                 ? copy.positions.details.receipt.rentalFeesAndNft
-                : properClose
+                : row.status === 'internal_matched'
+                  ? // #2453 — matching pays the recorded proceeds, not
+                    // principal plus interest, and the live principal is
+                    // zero by now: name no figure here.
+                    copy.positions.details.receiveInternalMatchProceeds
+                  : properClose
                   ? copy.positions.details.principalPlusInterest(principalStr)
                   : // Liquid-collateral defaults settle by SWAP — the
                     // lender's claim pays proceeds in the loan asset,
@@ -3032,10 +3085,16 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                   ? copy.positions.details.nftRentedOut(nftStr)
                   : copy.positions.details.nftRentalBetween(nftStr)
               : role === 'borrower'
-                ? copy.positions.details.youBorrowed(principalStr)
+                ? lentStr === null
+                  ? copy.positions.details.positionBorrowedAmountUnknown
+                  : copy.positions.details.positionBorrowed(lentStr)
                 : role === 'lender'
-                  ? copy.positions.details.youLent(principalStr)
-                  : copy.positions.details.loanBetween(principalStr)}
+                  ? lentStr === null
+                    ? copy.positions.details.positionLentAmountUnknown
+                    : copy.positions.details.positionLent(lentStr)
+                  : lentStr === null
+                    ? copy.positions.details.loanBetweenAmountUnknown
+                    : copy.positions.details.loanBetween(lentStr)}
           </p>
         </div>
         <span className={`badge badge-${view.badge}`}>{loanStateLabel(view, copy.loanState)}</span>
@@ -3095,7 +3154,12 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             <dd>
               {isRental
                 ? copy.positions.details.nftStaysVault(nftStr, hasCollateral ? copy.positions.details.vaultCollateralSuffix(collateralStr) : '')
-                : copy.positions.details.lockedCollateralBorrower(collateralStr)}
+                : lockedCollateralLine({
+                    hasCollateral,
+                    status: row.status,
+                    collateral: collateralStr,
+                    labels: copy.positions.details,
+                  })}
             </dd>
           </div>
           <div className="receipt-row">
@@ -3105,7 +3169,12 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                 ? copy.positions.details.owedRentalPrepaid
                 : loanOver
                   ? row.status === 'repaid'
-                    ? copy.positions.owedRepaid(principalStr)
+                    ? // #2453 — repaid in full means the whole INITIATED
+                      // principal; the live one is only what was left
+                      // before the last payment.
+                      lentStr === null
+                      ? copy.positions.owedRepaidAmountUnknown
+                      : copy.positions.owedRepaid(lentStr)
                     : row.status === 'defaulted' || row.status === 'liquidated'
                       ? hasCollateral
                         ? copy.positions.owedDefaulted

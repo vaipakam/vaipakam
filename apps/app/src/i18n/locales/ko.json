@@ -1236,8 +1236,6 @@
         "collateralBackPlain": "{{collateral}} collateral 반환.",
         "owedPrincipalPlusInterest": "{{principal}} + 이 대출의 이자. 전체 기간 대출(프로토콜 기본값)은 일찍 갚더라도 전체 기간의 이자가 붙고, 하루 단위 대출은 지금까지 쌓인 만큼만 붙습니다. 정확한 금액은 확인할 때 실시간으로 읽습니다. 승인에는 작은 여유분이 포함되지만 실제로 쓰이지는 않습니다.",
         "youRent": "{{nft}}를 rent 중입니다",
-        "youBorrowed": "{{principal}}를 borrow했습니다",
-        "youLent": "{{principal}}를 lend했습니다",
         "paidNow": "~{{amount}} {{symbol}}, 지금 지급됩니다.",
         "exactAmountNote": "confirm할 때 exact amount를 live로 읽습니다. approval에는 작은 headroom이 있지만 절대 spent되지 않습니다.",
         "toppingUp": "{{symbol}} collateral을 top up하면 loan이 더 안전해지고 liquidation이 멀어집니다.",
@@ -1389,7 +1387,15 @@
           "approving": "지갑에서 승인 중…",
           "submitting": "제출 중…",
           "waiting": "지갑 대기 중…"
-        }
+        },
+        "loanBetweenAmountUnknown": "다른 두 지갑 사이의 대출 — 대여된 금액은 지금 표시할 수 없습니다",
+        "receiveInternalMatchProceeds": "내부 매칭이 이 대출의 대여자를 위해 기록한 수령액.",
+        "positionBorrowed": "내 차입 포지션 · 이 대출 시작 시 {{principal}} 차입",
+        "positionLent": "내 대여 포지션 · 이 대출 시작 시 {{principal}} 대여",
+        "positionBorrowedAmountUnknown": "내 차입 포지션 · 이 대출 시작 시 차입한 금액은 지금 표시할 수 없습니다",
+        "positionLentAmountUnknown": "내 대여 포지션 · 이 대출 시작 시 대여한 금액은 지금 표시할 수 없습니다",
+        "collateralSettledClosed": "이 대출은 종료되었습니다 — 담보는 청구를 통해 정산되며 대출을 위해 잠겨 있지 않습니다.",
+        "collateralSettledInternalMatch": "내부 매칭이 차입자의 담보를 매칭된 상대 대출의 대여자에게 지급했습니다. 남는 금액이 있으면 차입자의 청구를 통해 차입자에게 돌아갑니다."
       },
       "loading": "포지션 불러오는 중…",
       "openOffers": "열린 제안",
@@ -1417,8 +1423,6 @@
       "emptyBody": "차입하거나 대출하여 시작하세요.",
       "unavailable": "지금 회원님의 포지션을 불러올 수 없습니다. 회원님의 자금은 영향을 받지 않습니다 — 잠시 후 다시 시도해 주세요.",
       "sourcesDegraded": "이 페이지의 데이터 소스 중 하나가 일시적으로 사용할 수 없습니다. 현재 포지션은 나머지 소스에서 표시되며, 최근 변경된 항목은 나타나는 데 잠시 걸릴 수 있습니다.",
-      "roleBorrower": "회원님이 차입함",
-      "roleLender": "회원님이 대출함",
       "whatIfNothingBorrower": "아무것도 하지 않고 loan이 due date와 {{grace}}grace period(lender가 collateral을 가져가기 전 짧은 추가 repay window)를 지나면, lender가 {{collateral}} collateral을 받을 수 있습니다.",
       "whatIfNothingLender": "borrower가 due date plus {{grace}}grace period(짧은 추가 repayment window)까지 repay하지 않으면 collateral을 claim할 수 있습니다.",
       "whatIfNothingViewer": "borrower가 due date plus {{grace}}grace period(짧은 추가 repayment window)까지 repay하지 않으면 lender가 collateral을 claim할 수 있습니다.",
@@ -1452,7 +1456,13 @@
       "whatNextInternalMatchViewer": "이 대출은 내부 매칭으로 종료되었습니다 — 남은 청구는 포지션 보유자에게 속합니다.",
       "whatNextClosed": "이 대출은 완전히 정산되었습니다 — 더 이상 할 일이 없습니다.",
       "whatNextRentalEnded": "이 임대는 종료되었습니다. 벌어들인 수수료나 환불 가능한 버퍼는 아래에서 포지션 보유자가 청구할 수 있습니다 — 그 외에는 아무것도 바꿀 수 없습니다.",
-      "settledAhead": "이 포지션은 블록체인에서 이미 종료되었습니다 — 여기 표시된 상태가 실시간입니다. 목록에 반영되기까지 잠시 걸릴 수 있습니다."
+      "settledAhead": "이 포지션은 블록체인에서 이미 종료되었습니다 — 여기 표시된 상태가 실시간입니다. 목록에 반영되기까지 잠시 걸릴 수 있습니다.",
+      "amountUnknown": "금액을 표시할 수 없음",
+      "owedRepaidAmountUnknown": "없음 — 이 대출은 전액 상환되었습니다.",
+      "rowBorrowed": "차입 포지션 · 시작 시 {{amount}} 차입",
+      "rowLent": "대여 포지션 · 시작 시 {{amount}} 대여",
+      "rowBorrowedAmountUnknown": "차입 포지션 · 시작 시 차입한 금액을 표시할 수 없음",
+      "rowLentAmountUnknown": "대여 포지션 · 시작 시 대여한 금액을 표시할 수 없음"
     },
     "powerSurface": {
       "body": "이 페이지는 한 쌍의 열린 제안을 나란히 보여 주고 직접 이율을 정할 수 있게 합니다. 단계별로 안내받고 싶다면 빌리기·빌려주기 페이지에서 같은 일을 설명과 함께 할 수 있습니다.",

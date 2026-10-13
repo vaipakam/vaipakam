@@ -1236,8 +1236,6 @@
         "collateralBackPlain": "{{collateral}} de garantie rendue.",
         "owedPrincipalPlusInterest": "{{principal}} + les intérêts de ce prêt. Pour les prêts à durée complète (le réglage par défaut du protocole), les intérêts de toute la durée s’appliquent même en cas de remboursement anticipé ; les prêts au jour le jour ne facturent que ce qui s’est accumulé. Le montant exact est lu en direct lorsque vous confirmez ; l’approbation comporte une petite marge qui n’est jamais dépensée.",
         "youRent": "Vous louez {{nft}}",
-        "youBorrowed": "Vous avez emprunté {{principal}}",
-        "youLent": "Vous avez prêté {{principal}}",
         "paidNow": "~{{amount}} {{symbol}}, payé maintenant.",
         "exactAmountNote": "Le montant exact est lu en direct à la confirmation ; l’approbation comporte une petite marge qui n’est jamais dépensée.",
         "toppingUp": "Compléter votre garantie {{symbol}} rend le prêt plus sûr et éloigne la liquidation.",
@@ -1389,7 +1387,15 @@
           "approving": "Approbation dans votre wallet…",
           "submitting": "Envoi…",
           "waiting": "En attente du wallet…"
-        }
+        },
+        "loanBetweenAmountUnknown": "Un prêt entre deux autres wallets — le montant prêté est indisponible pour le moment",
+        "receiveInternalMatchProceeds": "Le produit que l’appariement interne a enregistré pour le prêteur de ce prêt.",
+        "positionBorrowed": "Votre position d’emprunteur · {{principal}} empruntés au démarrage de ce prêt",
+        "positionLent": "Votre position de prêteur · {{principal}} prêtés au démarrage de ce prêt",
+        "positionBorrowedAmountUnknown": "Votre position d’emprunteur · le montant emprunté au démarrage de ce prêt est indisponible pour le moment",
+        "positionLentAmountUnknown": "Votre position de prêteur · le montant prêté au démarrage de ce prêt est indisponible pour le moment",
+        "collateralSettledClosed": "Ce prêt est clôturé — son collatéral est réglé via les réclamations, il n’est plus bloqué pour le prêt.",
+        "collateralSettledInternalMatch": "L’appariement interne a versé le collatéral de l’emprunteur au prêteur du prêt avec lequel il a été apparié. Tout excédent revient à l’emprunteur via sa réclamation."
       },
       "loading": "Chargement de vos positions…",
       "openOffers": "Offres ouvertes",
@@ -1417,8 +1423,6 @@
       "emptyBody": "Empruntez ou prêtez pour commencer.",
       "unavailable": "Impossible de charger vos positions pour le moment. Vos fonds ne sont pas affectés — réessayez dans un instant.",
       "sourcesDegraded": "Une des sources de données de cette page est temporairement indisponible. Vos positions actuelles sont affichées depuis la source restante et les éléments récemment modifiés peuvent mettre un moment à apparaître.",
-      "roleBorrower": "Vous avez emprunté",
-      "roleLender": "Vous avez prêté",
       "whatIfNothingBorrower": "Si vous ne faites rien et que le prêt dépasse son échéance puis le délai de grâce {{grace}} (une courte fenêtre supplémentaire pour rembourser avant que le prêteur puisse prendre la garantie), le prêteur peut recevoir votre garantie {{collateral}}.",
       "whatIfNothingLender": "Si l’emprunteur ne rembourse pas à l’échéance plus le délai de grâce {{grace}} (une courte fenêtre de remboursement supplémentaire), vous pouvez réclamer sa garantie.",
       "whatIfNothingViewer": "Si l’emprunteur ne rembourse pas à l’échéance plus le délai de grâce {{grace}} (une courte fenêtre de remboursement supplémentaire), le prêteur peut réclamer la garantie.",
@@ -1452,7 +1456,13 @@
       "whatNextInternalMatchViewer": "Ce prêt a été clôturé par matching interne — les retraits résiduels appartiennent aux détenteurs de position.",
       "whatNextClosed": "Ce prêt est entièrement réglé — il ne reste rien à faire.",
       "whatNextRentalEnded": "Cette location est terminée. Les frais gagnés ou le tampon remboursable peuvent être retirés ci-dessous par les détenteurs de position — rien d'autre ne peut changer.",
-      "settledAhead": "Cette position est déjà clôturée sur la blockchain — l’état affiché ici est à jour. Vos listes peuvent mettre un moment à suivre."
+      "settledAhead": "Cette position est déjà clôturée sur la blockchain — l’état affiché ici est à jour. Vos listes peuvent mettre un moment à suivre.",
+      "amountUnknown": "Montant indisponible",
+      "owedRepaidAmountUnknown": "Rien — ce prêt a été intégralement remboursé.",
+      "rowBorrowed": "Position d’emprunteur · {{amount}} empruntés au départ",
+      "rowLent": "Position de prêteur · {{amount}} prêtés au départ",
+      "rowBorrowedAmountUnknown": "Position d’emprunteur · le montant emprunté au départ est indisponible",
+      "rowLentAmountUnknown": "Position de prêteur · le montant prêté au départ est indisponible"
     },
     "powerSurface": {
       "body": "Cette page affiche côte à côte les offres ouvertes d’une paire et vous laisse fixer votre propre taux. Vous préférez être guidé ? Les pages Emprunter et Prêter font la même chose étape par étape.",

@@ -3403,6 +3403,10 @@ async function runHealLanes(
     // the values are immutable for the loan's lifetime; the next tick
     // skips them via the `lender_token_id = '0'` predicate.
     loanDetailRefreshes = await refreshStubLoans(client, diamond, chainId, env, budget);
+    // #2461 r4 — provenance of `init_principal` is DERIVED from the
+    // LoanInitiated ledger, not trusted from whoever wrote the row: clear
+    // the flag wherever the ledger now confirms the value. D1 only, no RPC.
+    await reverifyInitPrincipal(env, chainId);
   } catch (err) {
     console.warn(`[chainIndexer] heal lanes stopped on chain ${chainId}; remaining rows wait for the next tick`, err);
   }
@@ -3705,6 +3709,44 @@ const LOAN_TOKEN_ID_BATCH = 50;
  * stub only happens if that event was somehow absent in the scan
  * window — vanishingly rare belt-and-suspenders coverage.
  */
+/**
+ * #2461 r4 — clear `init_principal_unbacked` on every row of `chainId` whose
+ * `init_principal` the append-only `LoanInitiated` ledger now confirms.
+ *
+ * Why derived and re-run rather than stamped once: migration 0056 defaults
+ * the flag to 1 (unbacked) so that a row written by ANY code path that does
+ * not vouch for its value — including the previous Worker, which keeps
+ * serving between 0056's apply and this Worker's publish — starts out
+ * withheld from readers. The insert paths in this file stamp 0 because they
+ * take the value from the event itself; everything else converges here as
+ * soon as its ledger row exists (a loan row can land a moment before its
+ * ledger row). The update can only ever CLEAR the flag, and only to a value
+ * the chain's own initiation event carries, so a reduced principal written
+ * from a chain-head read never becomes "backed". Bounded by the partial
+ * index on flagged rows, so a tick with nothing flagged costs one index
+ * probe.
+ */
+export async function reverifyInitPrincipal(env: Env, chainId: number): Promise<number> {
+  const res = await env.DB.prepare(
+    `UPDATE loans
+        SET init_principal_unbacked = 0
+      WHERE chain_id = ?
+        AND init_principal_unbacked = 1
+        AND init_principal IS NOT NULL
+        AND EXISTS (
+          SELECT 1
+            FROM activity_events ae
+           WHERE ae.chain_id = loans.chain_id
+             AND ae.loan_id  = loans.loan_id
+             AND ae.kind = 'LoanInitiated'
+             AND json_extract(ae.args_json, '$.principal') = loans.init_principal
+        )`,
+  )
+    .bind(chainId)
+    .run();
+  return res.meta?.changes ?? 0;
+}
+
 async function refreshStubLoans(
   client: PublicClient,
   diamond: Address,
@@ -4013,8 +4055,8 @@ export async function processLoanLogs(
              lender_current_owner, borrower_current_owner,
              is_stub,
              init_principal, init_rate_bps, init_duration_days,
-             start_block, start_at, updated_at)
-           VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             start_block, start_at, updated_at, init_principal_unbacked)
+           VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
         )
           .bind(
             chainId,
@@ -4155,8 +4197,8 @@ export async function processLoanLogs(
              lender_current_owner, borrower_current_owner,
              is_stub,
              init_principal, init_rate_bps, init_duration_days,
-             start_block, start_at, updated_at)
-           VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)`,
+             start_block, start_at, updated_at, init_principal_unbacked)
+           VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, 0)`,
         )
           .bind(
             chainId,
@@ -4184,12 +4226,16 @@ export async function processLoanLogs(
             // mirror note above), acceptor side from the read-back party.
             lenderOwner,
             borrowerOwner,
-            // Immutable initiation-term snapshot — the read-back runs in
-            // the LoanInitiated scan window, so the loan's current terms
-            // ARE its initiation terms here (no mutation event can
-            // precede this insert; same-window mutations dispatch AFTER
-            // this handler in scan order).
-            loanDetail.principal.toString(),
+            // Immutable initiation-term snapshot. The principal comes from
+            // the bare LoanInitiated itself, as on every other insert path
+            // (#2461 r3): this read-back is UNPINNED (chain head), so when
+            // the indexer is catching up a partial repayment or a match may
+            // already have reduced `loanDetail.principal`, and stamping that
+            // would serve the remainder as what the loan started with. The
+            // rate and duration below still come from the read-back — the
+            // event does not carry them — with the same catch-up caveat the
+            // stub heal states for an extension.
+            principal,
             Number(loanDetail.interestRateBps),
             Number(loanDetail.durationDays),
             Number(log.blockNumber),
@@ -4223,8 +4269,8 @@ export async function processLoanLogs(
            duration_days, token_id, collateral_token_id,
            lender_current_owner, borrower_current_owner,
            is_stub, init_principal,
-           start_block, start_at, updated_at)
-         VALUES (?, ?, ?, 'active', ?, ?, ?, ?, 0, 0, '0x', '0x', 0, '0', '0', ?, ?, 1, ?, ?, ?, ?)`,
+           start_block, start_at, updated_at, init_principal_unbacked)
+         VALUES (?, ?, ?, 'active', ?, ?, ?, ?, 0, 0, '0x', '0x', 0, '0', '0', ?, ?, 1, ?, ?, ?, ?, 0)`,
       )
         .bind(
           chainId,

@@ -3060,8 +3060,21 @@ const copySource = {
         ['principal'],
       ),
       youRent: tmpl('You rent {{nft}}', ['nft']),
-      youBorrowed: tmpl('You borrowed {{principal}}', ['principal']),
-      youLent: tmpl('You lent {{principal}}', ['principal']),
+      // #2453 — the headline names the amount the loan was INITIATED with,
+      // never the live outstanding principal, and describes the POSITION
+      // rather than crediting the reader with it: whoever holds a position
+      // now may have bought it, and a buyer never lent or borrowed anything
+      // (the same rule as the claim lines, Alpha02ConnectedApp.md). When the
+      // row does not carry the initiated amount, it says so.
+      positionBorrowed: tmpl('Your borrowing position · {{principal}} borrowed when this loan started', [
+        'principal',
+      ]),
+      positionLent: tmpl('Your lending position · {{principal}} lent when this loan started', ['principal']),
+      positionBorrowedAmountUnknown:
+        'Your borrowing position · the amount borrowed when this loan started isn’t available right now',
+      positionLentAmountUnknown:
+        'Your lending position · the amount lent when this loan started isn’t available right now',
+      loanBetweenAmountUnknown: 'A loan between two other wallets — the amount lent isn’t available right now',
       paidNow: tmpl('~{{amount}} {{symbol}}, paid now.', ['amount', 'symbol']),
       exactAmountNote:
         'The exact amount is read live when you confirm; the approval carries small headroom that is never spent.',
@@ -3070,6 +3083,10 @@ const copySource = {
         ['symbol'],
       ),
       principalPlusInterest: tmpl('{{principal}} plus the earned interest.', ['principal']),
+      // #2453 — the lender receipt of an internally matched loan when the
+      // exact payout is not in hand: no figure, since matching pays the
+      // recorded proceeds rather than principal plus interest.
+      receiveInternalMatchProceeds: 'The proceeds internal matching recorded for this loan’s lender.',
       loanAssetFallback: 'the loan asset',
       recoveredSummary: tmpl(
         'What this loan recovered: sale proceeds in {{asset}}, or the {{collateral}} collateral itself, depending on how the default settled.',
@@ -3114,6 +3131,12 @@ const copySource = {
       titleLoan: 'Loan',
       titleRental: 'Rental',
       noCollateral: 'No collateral',
+      // #2454 / #2461 r3 — the "Locked" row of a CLOSED loan. It names no
+      // amount as held: once a loan closes, the loan record's collateral
+      // figure is not custody (a claim withdraws it without clearing it).
+      collateralSettledClosed: 'This loan has closed — its collateral is settled through the claims, not locked for the loan.',
+      collateralSettledInternalMatch:
+        'Internal matching paid the borrower’s collateral to the lender of the loan it was matched against. Any surplus goes back to the borrower through their claim.',
       owedRentalPrepaid: 'Nothing to repay — rental fees were prepaid (late fees only if closed past the due date).',
       healthChecking: 'Checking this loan’s health…',
       healthReadFailed: 'We couldn’t read this loan’s health right now — retrying. Liquidation protection still applies on-chain.',
@@ -3309,8 +3332,15 @@ const copySource = {
       'We couldn’t load your positions right now. Your funds are unaffected — please try again in a moment.',
     sourcesDegraded:
       'One of this page\u2019s data sources is temporarily unavailable. Your current positions are shown from the remaining source and recently changed items may take a moment to appear.',
-    roleBorrower: 'You borrowed',
-    roleLender: 'You lent',
+    // #2453 — a position row's title: the position, and what the loan
+    // started with — never "You lent", which a holder who bought the
+    // position never did.
+    rowBorrowed: tmpl('Borrowing position · {{amount}} borrowed at the start', ['amount']),
+    rowLent: tmpl('Lending position · {{amount}} lent at the start', ['amount']),
+    rowBorrowedAmountUnknown: 'Borrowing position · the amount borrowed at the start isn’t available',
+    rowLentAmountUnknown: 'Lending position · the amount lent at the start isn’t available',
+    // #2453 — a history row's amount, when it is not carried.
+    amountUnknown: 'Amount not available',
     // UX-030 — "grace period" glossed inline, with the concrete window
     // length when the live read has it.
     whatIfNothingBorrower: tmpl(
@@ -3383,6 +3413,8 @@ const copySource = {
       `Nothing — {{principal}} plus interest was repaid in full.`,
       ['principal'],
     ),
+    // #2453 — the same, when the row does not carry the initiated amount.
+    owedRepaidAmountUnknown: 'Nothing — this loan was repaid in full.',
     owedDefaulted:
       'Nothing to repay anymore — this loan ended in default and the collateral covers it.',
     owedDefaultedNoCollateral:
