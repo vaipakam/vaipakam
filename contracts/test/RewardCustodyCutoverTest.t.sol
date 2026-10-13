@@ -244,6 +244,11 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         );
     }
 
+    /// @dev A PROVISIONAL compensation of 5 for day 3 (live clock, no broadcast yet), receipt 12.
+    function _deliverProvisional(bytes32 id) internal {
+        _deliverCompensation(5e18, 12, uint64(block.timestamp), id);
+    }
+
     function _packetHash(bytes32 id) internal pure returns (bytes32) {
         return keccak256(abi.encode(uint256(CHAIN_BASE), id));
     }
@@ -1117,26 +1122,31 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         assertEq(_rlens().getReceivedRemit(REMITTER, 11).packetHash, _packetHash(id));
     }
 
-    /// A demotion re-attributes the credit's remainder IN-HOLDER — live
-    /// first, then restitution — into the row, where the record and the
-    /// reservation now describe it; nothing is released to the Diamond.
-    function test_Demotion_MovesTheCreditInHolder_IntoUnclassified() public {
+    /// #2459 r5 — a provisional credit's value is HELD APART in its own row
+    /// (not the live row, not counted); a demotion moves exactly that hold
+    /// IN-HOLDER into `Unclassified`, where the record and the reservation now
+    /// describe it; nothing is released to the Diamond, no ledger figure moves.
+    function test_Demotion_MovesTheHeldCreditInHolder_IntoUnclassified() public {
         _becomeMirror();
         activateRewardCustodyForTest(address(vpfi), 0);
         _seedDiamond(10e18);
         bytes32 id = keccak256("comp-p");
-        _deliverCompensation(5e18, 12, uint64(block.timestamp), id); // live clock: provisional credit
-        assertEq(_live(), 5e18, "credited live, provisionally");
+        _deliverProvisional(id);
+        assertEq(_row(LibVaipakam.RewardCustodyRow.Provisional), 5e18, "held apart in its own row");
+        assertEq(_live(), 0, "never live backing");
+        (uint256 receivedHeld, ) = _ledger();
+        assertEq(receivedHeld, 0, "and never counted");
         uint256 diamondBefore = vpfi.balanceOf(address(diamond));
+        uint256 heldBefore = _held();
 
         vm.prank(address(diamond)); // the broadcast hook is Diamond-internal
         _ingress().onCompensationDayBroadcastArrived(3, address(0xDD), false); // another era: demote
-        assertEq(_live(), 0, "the credit left the live row");
+        assertEq(_row(LibVaipakam.RewardCustodyRow.Provisional), 0, "the hold left its row");
         assertEq(_unclassified(), 5e18, "and is re-attributed in the holder");
-        assertEq(_held(), 5e18, "the holder's balance did not move");
+        assertEq(_held(), heldBefore, "the holder's balance did not move");
         assertEq(vpfi.balanceOf(address(diamond)), diamondBefore, "nothing was released to the Diamond");
         (uint256 received, ) = _ledger();
-        assertEq(received, 0, "the received side unwound");
+        assertEq(received, 0, "no ledger figure moved");
         LibVaipakam.StrandedRecovery memory sr = _rlens().getStrandedRecovery(REMITTER, 12);
         assertEq(sr.amount, 5e18);
         assertEq(sr.held, 5e18, "the record knows the holder backs it");
@@ -1144,6 +1154,49 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         assertEq(uncountedHeld, 5e18);
         assertEq(reservedHeld, 5e18);
         assertEq(_rlens().getIngressPacket(_packetHash(id)).unclassified, 5e18, "the packet's record follows");
+    }
+
+    /// #2459 r5 — a hold made BEFORE custody activation rests at the Diamond
+    /// (no row existed then); demoted after the activation it is relocated
+    /// (measured) into `Unclassified`, as a quarantine landing is — never left
+    /// behind as an untracked residue.
+    function test_AHoldMadeBeforeActivation_IsRelocatedWhenItIsDemoted() public {
+        _becomeMirror();
+        _seedDiamond(10e18);
+        _deliverProvisional(keccak256("comp-pre"));
+        assertEq(_rlens().getProvisionalFreshHeld(), 5e18, "held, at the Diamond");
+        activateRewardCustodyForTest(address(vpfi), 0);
+        assertEq(_row(LibVaipakam.RewardCustodyRow.Provisional), 0, "no row held it before the activation");
+        uint256 diamondBefore = vpfi.balanceOf(address(diamond));
+        vm.prank(address(diamond)); // the broadcast hook is Diamond-internal
+        _ingress().onCompensationDayBroadcastArrived(3, address(0xDD), false); // demote
+        assertEq(_unclassified(), 5e18, "relocated into the row at the demotion");
+        assertEq(diamondBefore - vpfi.balanceOf(address(diamond)), 5e18, "measured, out of the Diamond");
+        assertEq(_rlens().getStrandedRecovery(REMITTER, 12).held, 5e18, "the record knows the holder backs it");
+        assertEq(_rlens().getProvisionalFreshHeld(), 0, "no longer held");
+    }
+
+    /// #2459 r5 — confirmation COUNTS the held credit and credits it to the
+    /// day's era under the deficit split, from its own row: the restitution
+    /// leg closes a standing deficit first, only the excess becomes live.
+    function test_Confirmation_CountsTheHeldCredit_UnderTheDeficitSplit() public {
+        _becomeMirror();
+        _admin().pause();
+        _custody().bindRewardCustodyHolder();
+        uint64 epoch = _epoch();
+        _custody().rebaseArmedFreshPaid(2e18, epoch); // a deficit of 2
+        _custody().activateRewardCustody(epoch, false);
+        _admin().unpause();
+        _seedDiamond(10e18);
+        _deliverProvisional(keccak256("comp-c"));
+        assertEq(_row(LibVaipakam.RewardCustodyRow.Restitution), 0, "fixture-live: nothing split while held");
+        vm.prank(address(diamond));
+        _ingress().onCompensationDayBroadcastArrived(3, REMITTER, true); // matching era, zeroed: confirm
+        assertEq(_row(LibVaipakam.RewardCustodyRow.Provisional), 0, "the hold left its row");
+        assertEq(_row(LibVaipakam.RewardCustodyRow.Restitution), 2e18, "the deficit closed first");
+        assertEq(_live(), 3e18, "only the excess is live backing");
+        (uint256 received, ) = _ledger();
+        assertEq(received, 5e18, "counted once, at confirmation");
     }
 
     /// MIGRATION MODE (design §5c): under the manual pause the receive
@@ -3093,13 +3146,13 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
 
     // ─── 8. restitution: the unwind and the two dispositions ─────────────────
 
-    /// A demotion gives back the WHOLE credit still in the holder — the live
-    /// portion first, then the restitution portion (Codex #2186 r1 P1) —
-    /// and since closure 2's cutover PR 1 it does so IN-HOLDER: the
-    /// remainder is re-attributed into `Unclassified`, where the stranded
-    /// record and the reservation now describe it; nothing is released to
-    /// the Diamond, and only what was already paid out stays out.
-    function test_UncreditFresh_MovesLiveThenRestitution_IntoUnclassified() public {
+    /// #2459 r5 — the in-holder release a demotion makes comes from the
+    /// `Provisional` row alone: the Diamond-internal quarantine entry moves
+    /// exactly the hold it is given and refuses, by the row named, more than
+    /// the row holds — live and restitution custody are never its source.
+    /// (Retires the live-then-restitution unwind, Codex #2186 r1 P1, which a
+    /// counted provisional credit needed.)
+    function test_AHeldRelease_ComesFromTheProvisionalRowAlone() public {
         _becomeMirror();
         _admin().pause();
         _custody().bindRewardCustodyHolder();
@@ -3108,23 +3161,16 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _custody().activateRewardCustody(epoch, false);
         _admin().unpause();
         fundRewardPoolForTest(address(vpfi), 10e18); // restitution 6, live 4
-        uint256 diamondBefore = vpfi.balanceOf(address(diamond));
-        uint256 holderBefore = _held();
         bytes32 key = keccak256(abi.encode(REMITTER, uint256(99)));
-
         vm.prank(address(diamond)); // the Diamond-internal entry, as the demotion reaches it
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.RewardCustodyRowShort.selector, uint8(LibVaipakam.RewardCustodyRow.Provisional), 9e18, 0
+            )
+        );
         _custody().custodyUnclassifiedQuarantine(bytes32(0), key, 0, 9e18);
-        assertEq(_live(), 0, "live gave back all 4");
-        assertEq(_row(LibVaipakam.RewardCustodyRow.Restitution), 1e18, "restitution gave back 5 of 6");
-        assertEq(_unclassified(), 9e18, "the whole unwound credit is re-attributed into Unclassified");
-        assertEq(vpfi.balanceOf(address(diamond)), diamondBefore, "nothing was released to the Diamond");
-        assertEq(_held(), holderBefore, "the holder's balance did not move");
-        assertEq(_rlens().getStrandedRecovery(REMITTER, 99).held, 9e18, "the record knows the holder backs it");
-        (uint256 uncountedHeld, , uint256 reservedHeld) = _rlens().getUnclassifiedPosition();
-        assertEq(uncountedHeld, 9e18);
-        assertEq(reservedHeld, 9e18);
-        (uint256 received, ) = _ledger();
-        assertEq(received, 1e18, "received unwound");
+        assertEq(_live(), 4e18, "live custody is never a demotion's source");
+        assertEq(_row(LibVaipakam.RewardCustodyRow.Restitution), 6e18, "nor restitution");
     }
 
     /// The corrective disposition: `amount` of paid never happened, so the

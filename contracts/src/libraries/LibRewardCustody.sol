@@ -94,7 +94,7 @@ library LibRewardCustody {
     event CustodyEraOpened(uint64 indexed era, uint64 boundaryDay);
     /// @notice Slice 4 PR C-1 — `amount` left era `era`'s holder row at finalization: into the live/restitution rows
     ///         of era `into` (the live era at the release) under the deficit split, or into PENDING SURPLUS
-    ///         (`toPending`, `into` zero) while the chain is Detached. The route is recorded on the era (#2459 r4).
+    ///         (`toPending`, `into` zero) while the chain is Detached (#2459 r4).
     /// @custom:event-category state-change/reward-custody
     event CustodyEraReleased(uint64 indexed era, uint256 amount, bool toPending, uint64 into);
     /// @notice Slice 4 PR C-1 — era `era` is terminal: its counters read zero and its row was released.
@@ -115,10 +115,6 @@ library LibRewardCustody {
     ///         classification or a compensation of that era), counted as delivered and levelled at once.
     /// @custom:event-category state-change/reward-custody
     event CustodyEraCredited(uint64 indexed era, uint256 amount);
-    /// @notice #1566 PR C revision — a demotion took `amount` back out of retired era `era`'s row into
-    ///         `Unclassified` (the credit it reverses was booked there).
-    /// @custom:event-category state-change/reward-custody
-    event CustodyEraUncredited(uint64 indexed era, uint256 amount);
     /// @notice A staging reservation's hold of `amount` on era `era` was released — consumed by its resolve or
     ///         restored by its unwind; `stagedFresh` is the era's total held after.
     /// @custom:event-category state-change/reward-custody
@@ -128,17 +124,6 @@ library LibRewardCustody {
     ///         earliest listed day's era, a compensation's day's era).
     /// @custom:event-category state-change/reward-custody
     event IngressPacketEraStamped(bytes32 indexed packetHash, uint64 indexed era);
-    /// @notice #2459 r4 — packet `packetHash`'s DEMOTABLE credit of `amount` was booked: to era `era`'s books
-    ///         (`booking` 1 — its live baseline while it is the live era, its row once retired), or to PENDING
-    ///         SURPLUS (`booking` 2; `era` the packet's finalized era). Recorded on the packet, so its demotion
-    ///         follows this booking and the era moves recorded since, never the role of the moment.
-    /// @custom:event-category state-change/reward-custody
-    event IngressPacketCreditBooked(bytes32 indexed packetHash, uint8 booking, uint64 indexed era, uint256 amount);
-    /// @notice #2459 r4 — a demotion of packet `packetHash`'s credit followed its booking to `at` — 1 era
-    ///         `era`'s row, 2 pending surplus (then the live baseline its drain credits), 3 the live baseline — and
-    ///         moved `moved` into `Unclassified`; the row-level events of each step are emitted beside it.
-    /// @custom:event-category state-change/reward-custody
-    event CustodyCreditDemoted(bytes32 indexed packetHash, uint8 at, uint64 era, uint256 moved);
     /// @notice PR C-4 — an era-less broadcast the rotation gate refused was PARKED under `id`, counted against era `era`.
     /// @custom:event-category state-change/reward-custody
     event BroadcastParked(uint256 indexed id, uint8 kind, uint256 indexed dayId, uint64 indexed era, bool quarantineOnly);
@@ -331,9 +316,10 @@ library LibRewardCustody {
     function attributedTotal(
         LibVaipakam.Storage storage s
     ) internal view returns (uint256 total) {
-        // Through the last row, `Resolving` included (3b-ii-A2, #2305): a hold
-        // between resolution pages is attributed, never sweepable.
-        uint256 last = uint256(LibVaipakam.RewardCustodyRow.Resolving);
+        // Through the last row: `Resolving` (3b-ii-A2, #2305) — a hold between
+        // resolution pages — and `Provisional` (#2459 r5) — a provisional
+        // compensation held apart — are attributed, never sweepable.
+        uint256 last = uint256(LibVaipakam.RewardCustodyRow.Provisional);
         for (uint256 i = 0; i <= last; ++i) {
             total += s.rewardCustodyRows[LibVaipakam.RewardCustodyRow(i)];
         }
@@ -440,8 +426,9 @@ library LibRewardCustody {
         uint256 have = _debitRow(s, from, amount);
         // An in-holder move out of the live row is a payout of the fresh
         // ledger's (the absorption of forfeited reward value charges `paid`)
-        // — except the demotion's re-attribution into `Unclassified`, the
-        // one path that unwinds `received` instead: spent, never paid. Out
+        // — except a re-attribution into `Unclassified`: spent, never paid
+        // (no path makes one out of the live row since a demotion releases a
+        // provisional hold instead, #2459 r5; the rule stays general). Out
         // of restitution INTO the live row it is the paid-correction: the
         // released records re-enter the queue backed by that very inflow.
         _recordOutflow(
@@ -512,8 +499,8 @@ library LibRewardCustody {
     ///      an entry's spent-ness and what of it the other side may inherit
     ///      are read from its own record, never inferred. The live row's
     ///      outflows spend the fresh queue (paid where the fresh ledger
-    ///      charges them; the demotion's unwind into `Unclassified` is spent,
-    ///      never paid). The restitution row's outflows RELEASE the absorbed
+    ///      charges them; a re-attribution into `Unclassified` is spent, never
+    ///      paid — no demotion makes one since #2459 r5). The restitution row's outflows RELEASE the absorbed
     ///      records, each released part re-entering the entry's own fresh
     ///      record — free when the paid-correction moved the custody to
     ///      live, spent (and paid) when the deficit was paid with it, spent
@@ -1107,15 +1094,10 @@ library LibRewardCustody {
         }
         e.terminal = true;
         amount = e.holderRow;
-        // The release is RECORDED as it happens (#2459 r4) — its route and what it
-        // carried — because a credit this era booked can still be demoted after it,
-        // and the demotion must follow where the value went, not re-derive a route
-        // from the role it finds then.
+        // The route is named in the event (#2459 r4): pending surplus while
+        // Detached, else the live baseline of the live era.
         toPending = role == LibVaipakam.RewardRole.Detached;
         uint64 into = toPending ? 0 : current;
-        e.releasedToPending = toPending;
-        e.releasedInto = into;
-        e.released = amount;
         if (amount != 0) {
             e.holderRow = 0;
             s.custodyEraRowsTotal -= amount;
@@ -1209,165 +1191,38 @@ library LibRewardCustody {
         _bookRetiredFresh(s, era, amount);
     }
 
-    /// @dev {IngressPacket.creditBooking}: none recorded / era `creditBookedEra`'s books / pending surplus.
-    uint8 internal constant CREDIT_BOOKED_NONE = 0;
-    uint8 internal constant CREDIT_BOOKED_ERA = 1;
-    uint8 internal constant CREDIT_BOOKED_PENDING = 2;
-    /// @dev Where a demotion found a credit's value ({CustodyCreditDemoted.at}).
-    uint8 internal constant DEMOTED_FROM_ERA_ROW = 1;
-    uint8 internal constant DEMOTED_FROM_PENDING = 2;
-    uint8 internal constant DEMOTED_FROM_LIVE = 3;
-
-    /// @notice A fresh INFLOW for packet `h` (a compensation): relocated (measured)
-    ///         into the holder, credited to the packet's era by the routing rule —
-    ///         and its BOOKING recorded on the packet (#2459 r4), so the demotion
-    ///         that may reverse it follows the value from where it actually went.
-    /// @dev    The era is the packet's own stamp ({stampPacketEra}) — the one
-    ///         source the demotion reads too. Booked to: a retired, not-final era's
-    ///         row; pending surplus for a final era while Detached; else the live
-    ///         baseline, which is the live era's books.
-    function relocatePacketFresh(LibVaipakam.Storage storage s, bytes32 h, uint256 amount) internal {
-        if (amount == 0) return;
-        LibVaipakam.IngressPacket storage p = s.ingressPackets[h];
-        uint64 era = p.custodyEra;
-        uint8 booking = CREDIT_BOOKED_ERA;
-        if (_eraBooksFresh(s, era)) {
-            relocateToHolderUncredited(s, amount);
-            if (s.custodyEras[era].terminal) booking = CREDIT_BOOKED_PENDING;
-            _bookRetiredFresh(s, era, amount);
-        } else {
+    /// @notice A fresh INFLOW for era `era` (a compensation): relocated (measured)
+    ///         into the holder and credited by the same rule.
+    function relocateFreshIngressToEra(LibVaipakam.Storage storage s, uint256 amount, uint64 era) internal {
+        if (!_eraBooksFresh(s, era)) {
             relocateFreshIngress(s, amount);
-            era = s.custodyEraCurrent;
+            return;
         }
-        p.creditBookedEra = era;
-        p.creditBooking = booking;
-        emit IngressPacketCreditBooked(h, booking, era, amount);
+        if (amount == 0) return;
+        relocateToHolderUncredited(s, amount);
+        _bookRetiredFresh(s, era, amount);
     }
 
-    /// @notice A demotion takes packet `h`'s credit back from where its value IS,
-    ///         found by following the credit's recorded booking through the era
-    ///         moves recorded since — never re-derived from the chain's role at
-    ///         demotion time (#2459 r4: a Detached finalization followed by a
-    ///         reattach sent the demotion to the live rows while the credit sat in
-    ///         pending surplus). Returns what entered `Unclassified`.
-    /// @dev    The moves a credit's value can make, each recorded where it happens:
-    ///         a live era's books are carried into its row when it retires; a
-    ///         retired era's row is released when the era is final, to pending
-    ///         surplus or the live baseline of a later era ({CustodyEra.releasedTo
-    ///         Pending} / `releasedInto`); pending surplus is drained, by anyone,
-    ///         into the live baseline. So the value is in exactly one of: a
-    ///         retired, not-final era's row; pending surplus, or the live baseline
-    ///         its drain credits; or the live baseline. Each source gives at most
-    ///         what it holds, and a source past a release at most what the release
-    ///         carried net of earlier demotions through it — what was drawn before
-    ///         the release paid real obligations and is no longer at the address
-    ///         to give back (the spec: a demotion "gives back the whole of its
-    ///         credit still at the address"). Within one row the value is pooled
-    ///         with the row's other credits, so the cut there is by amount, not by
-    ///         unit. Unchanged per source: a row or pending surplus held levelled
-    ///         value, so the delivered ledger unwinds both sides by what moved; the
-    ///         live path cuts the received side, floor-aware ({uncreditFreshInHolder}).
-    ///         The caller's uncounted figure still takes the whole demotion, so
-    ///         counted + uncounted can read above what was delivered by any part
-    ///         not given back — observability only, never headroom.
-    function uncreditFreshForPacket(LibVaipakam.Storage storage s, bytes32 h, uint256 amount)
-        internal
-        returns (uint256 moved)
-    {
-        if (amount == 0) return 0;
-        uint8 booking = h == bytes32(0) ? CREDIT_BOOKED_NONE : s.ingressPackets[h].creditBooking;
-        uint64 era = s.ingressPackets[h].creditBookedEra;
-        uint8 at = DEMOTED_FROM_LIVE;
-        uint256 allowed = amount;
-        if (booking == CREDIT_BOOKED_PENDING) at = DEMOTED_FROM_PENDING;
-        else if (booking == CREDIT_BOOKED_ERA) (at, era, allowed) = _followEraBooks(s, era, amount);
-        if (at == DEMOTED_FROM_ERA_ROW) {
-            moved = _uncreditEraRow(s, era, allowed);
-        } else if (at == DEMOTED_FROM_PENDING) {
-            moved = _uncreditLevelled(s, LibVaipakam.RewardCustodyRow.PendingSurplus, allowed);
-            // What pending surplus no longer holds was drained into the live
-            // baseline — the only exit pending surplus has besides a demotion.
-            if (allowed > moved) moved += uncreditFreshInHolder(s, allowed - moved);
-        } else {
-            moved = uncreditFreshInHolder(s, allowed);
-        }
-        if (booking == CREDIT_BOOKED_ERA) _chargeFollowedReleases(s, s.ingressPackets[h].creditBookedEra, moved);
-        emit CustodyCreditDemoted(h, at, at == DEMOTED_FROM_ERA_ROW ? era : 0, moved);
-    }
+    // ── #2459 r5 — a provisional compensation is HELD APART until it settles ──
+    //
+    // A provisional credit's value is not yet known to belong to this
+    // deployment: the day's broadcast may still demote it. So it is never put
+    // to work — relocated (measured) into its own `Provisional` row, counted
+    // by neither side of the funding ledger, backing nothing — and nothing
+    // that moves custody (a role change's carry, an era release, a surplus
+    // drain, a staging reservation) can reach it. Confirmation counts it and
+    // credits it to the day's era by the routing rule, exactly as an arrival
+    // at that moment; demotion moves it, untouched, into `Unclassified`. Both
+    // are exact by construction: there is nothing to chase. (Counting it at
+    // arrival, as closure 2 did, made a demotion follow the value through
+    // pooled moves no per-credit record can trace — #2459 r4 and r5, and the
+    // staging-reservation floor of Codex #2308 r21.)
 
-    /// @dev Follow a credit booked to era `era`'s books through the recorded era
-    ///      moves: the era (or a later one its release went into) still live → the
-    ///      live baseline; retired and not final → its row; final → its release,
-    ///      to pending surplus or into a later era's books. `allowed` is `amount`
-    ///      net of every passed release's unfollowed part. Bounded: a release goes
-    ///      into the live era at its moment, strictly later than the era released.
-    function _followEraBooks(LibVaipakam.Storage storage s, uint64 era, uint256 amount)
-        private
-        view
-        returns (uint8 at, uint64 atEra, uint256 allowed)
-    {
-        allowed = amount;
-        uint64 current = s.custodyEraCurrent;
-        while (era < current) {
-            LibVaipakam.CustodyEra storage e = s.custodyEras[era];
-            if (!e.terminal) return (DEMOTED_FROM_ERA_ROW, era, allowed);
-            uint256 open = e.released - e.releaseDemoted;
-            if (open < allowed) allowed = open;
-            if (e.releasedToPending) return (DEMOTED_FROM_PENDING, 0, allowed);
-            era = e.releasedInto;
-        }
-        return (DEMOTED_FROM_LIVE, era, allowed);
-    }
-
-    /// @dev Charge `moved` to every release {_followEraBooks} passed from era
-    ///      `era`, so a release is never followed back out for more than it carried.
-    function _chargeFollowedReleases(LibVaipakam.Storage storage s, uint64 era, uint256 moved) private {
-        if (moved == 0) return;
-        uint64 current = s.custodyEraCurrent;
-        while (era < current) {
-            LibVaipakam.CustodyEra storage e = s.custodyEras[era];
-            if (!e.terminal) return;
-            e.releaseDemoted += moved;
-            if (e.releasedToPending) return;
-            era = e.releasedInto;
-        }
-    }
-
-    /// @dev A demotion's take from retired era `era`'s row: never more than its
-    ///      room (a staging hold is not taken from under its record); the rest was
-    ///      drawn for the era's obligations, or is held and will be consumed or
-    ///      restored — the fungible row cannot tell which, and they need opposite
-    ///      ledger treatment, so only what moved is unwound.
-    function _uncreditEraRow(LibVaipakam.Storage storage s, uint64 era, uint256 amount) private returns (uint256 moved) {
-        uint256 room = custodyEraRoom(s, era);
-        moved = amount < room ? amount : room;
-        if (moved == 0) return 0;
-        s.custodyEras[era].holderRow -= moved;
-        s.custodyEraRowsTotal -= moved;
-        emit CustodyEraUncredited(era, moved);
-        credit(s, LibVaipakam.RewardCustodyRow.Unclassified, moved, 1);
-        _unwindLevelled(s, moved);
-    }
-
-    /// @dev A demotion's take from row `from` (pending surplus), which holds levelled value.
-    function _uncreditLevelled(LibVaipakam.Storage storage s, LibVaipakam.RewardCustodyRow from, uint256 amount)
-        private
-        returns (uint256 moved)
-    {
-        uint256 have = s.rewardCustodyRows[from];
-        moved = amount < have ? amount : have;
-        if (moved == 0) return 0;
-        move(s, from, LibVaipakam.RewardCustodyRow.Unclassified, moved);
-        _unwindLevelled(s, moved);
-    }
-
-    /// @dev The booking of levelled value counted it as delivered and levelled it
-    ///      (or a retirement levelled it); its demotion unwinds both sides by what moved.
-    function _unwindLevelled(LibVaipakam.Storage storage s, uint256 moved) private {
-        uint256 received = s.rewardBudgetArmedFreshReceived;
-        s.rewardBudgetArmedFreshReceived = received > moved ? received - moved : 0;
-        uint256 paid = s.rewardBudgetArmedFreshPaid;
-        s.rewardBudgetArmedFreshPaid = paid > moved ? paid - moved : 0;
+    /// @notice Hold `amount` of a provisional compensation's value apart:
+    ///         relocated (measured) from the Diamond into the `Provisional` row.
+    function holdProvisional(LibVaipakam.Storage storage s, uint256 amount) internal {
+        if (amount == 0) return;
+        relocateToHolder(s, LibVaipakam.RewardCustodyRow.Provisional, amount);
     }
 
     /// @dev {creditFreshToEraFromRow} on {RewardEraFacet} (Diamond-internal self-call).
@@ -1383,18 +1238,16 @@ library LibRewardCustody {
         );
     }
 
-    /// @dev {relocatePacketFresh} on {RewardEraFacet} (Diamond-internal self-call).
-    function callEraRelocatePacketFresh(bytes32 h, uint256 amount) internal {
+    /// @dev {relocateFreshIngressToEra} on {RewardEraFacet} (Diamond-internal self-call).
+    function callEraRelocateFreshIngress(uint256 amount, uint64 era) internal {
         if (amount == 0) return;
-        _custody(abi.encodeWithSignature("eraRelocatePacketFresh(bytes32,uint256)", h, amount));
+        _custody(abi.encodeWithSignature("eraRelocateFreshIngress(uint256,uint64)", amount, era));
     }
 
-    /// @dev {uncreditFreshForPacket} on {RewardEraFacet} (Diamond-internal self-call).
-    function callEraUncreditFresh(bytes32 h, uint256 amount) internal returns (uint256 moved) {
-        if (amount == 0) return 0;
-        moved = abi.decode(
-            _custodyReturning(abi.encodeWithSignature("eraUncreditFresh(bytes32,uint256)", h, amount)), (uint256)
-        );
+    /// @dev {holdProvisional} on {RewardEraFacet} (Diamond-internal self-call).
+    function callEraHoldProvisional(uint256 amount) internal {
+        if (amount == 0) return;
+        _custody(abi.encodeWithSignature("eraHoldProvisional(uint256)", amount));
     }
 
     // ── Slice 4 PR C-2 — the era term of a day's fresh ──
@@ -1551,33 +1404,11 @@ library LibRewardCustody {
         toLive = amount - toRestitution;
     }
 
-    /**
-     * @notice Reverse a fresh credit (a provisional compensation being
-     *         demoted): the received side unwinds by `amount`, saturating
-     *         as it always has, and the holder RE-ATTRIBUTES what it still
-     *         holds of that credit — from the live-fresh row first, then
-     *         from the restitution row — into the `Unclassified` row, in
-     *         place, at most `amount`, less only where part of it was
-     *         already paid out.
-     * @dev    Both rows give back, because the demotion re-attributes the
-     *         WHOLE credited amount to the stranded-recovery reservation
-     *         (Codex #2186 r1 P1); the deficit the restitution portion
-     *         covered re-opens with the received unwind, exactly as it would
-     *         have without the split. Whatever was already paid out cannot
-     *         come back; the reservation is short by that much, as before.
-     *         After the unwind the live row again equals `received − paid`.
-     *         #1566 closure 2 cutover PR 1: the tokens MOVE IN-HOLDER
-     *         (design §5c, "classification is an IN-HOLDER reattribution")
-     *         and the R4 return then draws them from the row — an earlier
-     *         revision released them to the Diamond's balance, where the
-     *         quarantine reservation was still Diamond-side.
-     * @return moved What the holder re-attributed into `Unclassified`.
-     */
     /// @notice The live fresh row less what staging records have reserved of
     ///         it (3b-ii-A2, #2305) — THE figure every mover of the row reads:
-    ///         the claim gate's room ({LibVpfiRecycle.freshBackingRoom}), the
-    ///         compensation demotion and the fresh-to-recycled correction
-    ///         (Codex #2308 r5). Fresh is reserved by count, never held out of
+    ///         the claim gate's room ({LibVpfiRecycle.freshBackingRoom}) and the
+    ///         fresh-to-recycled correction (Codex #2308 r5). (A compensation
+    ///         demotion no longer reads it: it never touches live fresh, #2459 r5.) Fresh is reserved by count, never held out of
     ///         the row, so the row alone overstates what may leave it.
     function liveFreshUnreserved(LibVaipakam.Storage storage s) internal view returns (uint256) {
         uint256 row = s.rewardCustodyRows[LibVaipakam.RewardCustodyRow.LiveFresh];
@@ -1585,7 +1416,7 @@ library LibRewardCustody {
         return row > reserved ? row - reserved : 0;
     }
 
-    /// @notice What a demotion or a correction may still UNCREDIT from the
+    /// @notice What a correction may still UNCREDIT from the
     ///         delivered fresh ledger without leaving a standing reservation
     ///         unable to charge it (3b-ii-A2, #2305; Codex #2308 r5). While a
     ///         staging reservation stands, the ledger may not fall below
@@ -1605,54 +1436,13 @@ library LibRewardCustody {
         return received > floor ? received - floor : 0;
     }
 
-    /// @notice Lower the delivered ledger's RECEIVED side for a demoted
-    ///         credit, never below what is paid plus what staging records
-    ///         have reserved: the ONE write by which a demotion lowers it, on
-    ///         every custody posture (Codex #2308 r5, r21). A resolving record
-    ///         is irrevocable and its last page charges the ledger by exactly
-    ///         its reservation, so the reservation is unavailable to the cut;
-    ///         the part of `amount` above the floor is cut, the rest is not.
-    ///         With no reservation standing this is the original saturating
-    ///         cut ({deliveredFreshUncreditable} keeps the deficit model).
-    /// @return cut What the received side fell by.
-    function uncreditDeliveredFresh(LibVaipakam.Storage storage s, uint256 amount) internal returns (uint256 cut) {
-        cut = deliveredFreshUncreditable(s);
-        if (cut > amount) cut = amount;
-        s.rewardBudgetArmedFreshReceived -= cut;
-    }
-
-    function uncreditFreshInHolder(
-        LibVaipakam.Storage storage s,
-        uint256 amount
-    ) internal returns (uint256 moved) {
-        if (amount == 0) return 0;
-        // What staging records have RESERVED of the live fresh — on the row
-        // and on the delivered ledger — is unavailable to this demotion
-        // (3b-ii-A2, #2305; Codex #2308 r5): a resolving record is irrevocable,
-        // and its last page charges the ledger and debits the row by exactly
-        // the reserved figures. Each bound reads the one figure its source
-        // keeps; the ledger's keeps the deficit model where no reservation
-        // stands ({deliveredFreshUncreditable}).
-        uncreditDeliveredFresh(s, amount);
-        uint256 fromLive = liveFreshUnreserved(s);
-        if (fromLive > amount) fromLive = amount;
-        move(s, LibVaipakam.RewardCustodyRow.LiveFresh, LibVaipakam.RewardCustodyRow.Unclassified, fromLive);
-        uint256 rest = amount - fromLive;
-        uint256 restitution = s.rewardCustodyRows[LibVaipakam.RewardCustodyRow.Restitution];
-        uint256 fromRestitution = rest < restitution ? rest : restitution;
-        move(
-            s, LibVaipakam.RewardCustodyRow.Restitution, LibVaipakam.RewardCustodyRow.Unclassified, fromRestitution
-        );
-        moved = fromLive + fromRestitution;
-    }
-
     // ─── The UNCLASSIFIED ingress attribution (#1566 closure 2 cutover PR 1) ──
     //
     // Design §5c: "An untyped arrival is PROTECTED AT INGRESS — actualReceived
     // routes into an UNCLASSIFIED holder attribution the moment it lands."
     // On an ACTIVATED deployment the three untyped arrivals PR B left
     // Diamond-side — the uncounted remainder of a delivery, a quarantined
-    // compensation (and a demotion's unwind), and a stranded return for a
+    // compensation (and a demotion's released provisional hold), and a stranded return for a
     // receipt that predates recovery attribution — are relocated (measured)
     // into the `Unclassified` row as they land, and every value-bearing
     // packet is recorded under its INGRESS STAMP so the cutover's second PR
@@ -5203,24 +4993,26 @@ library LibRewardCustody {
 
     /// @notice A quarantined compensation into the row — `relocate` for a
     ///         quarantine landing (tokens at the Diamond, relocated
-    ///         measured), `uncredit` for a demotion (the credit's remainder
-    ///         re-attributed in-holder) — with the stranded record and the
-    ///         reservation told how much of them the holder now backs.
+    ///         measured), `fromProvisional` for a demotion (the provisional
+    ///         credit's held value, moved in-holder out of the `Provisional`
+    ///         row it never left, #2459 r5) — with the stranded record and
+    ///         the reservation told how much of them the holder now backs.
     /// @return got What entered the row.
     function unclassifiedQuarantine(
         LibVaipakam.Storage storage s,
         bytes32 h,
         bytes32 receiptKey,
         uint256 relocate,
-        uint256 uncredit
+        uint256 fromProvisional
     ) internal returns (uint256 got) {
         if (relocate != 0) {
             relocateToHolder(s, LibVaipakam.RewardCustodyRow.Unclassified, relocate);
             got = relocate;
         }
-        // From where the credit's value is: its booking recorded on the packet,
-        // followed through the era moves recorded since (#2459 r4).
-        if (uncredit != 0) got += callEraUncreditFresh(h, uncredit);
+        if (fromProvisional != 0) {
+            move(s, LibVaipakam.RewardCustodyRow.Provisional, LibVaipakam.RewardCustodyRow.Unclassified, fromProvisional);
+            got += fromProvisional;
+        }
         if (got == 0) return 0;
         LibVaipakam.StrandedRecovery storage sr = s.strandedRecoveries[receiptKey];
         sr.held += got;

@@ -4813,6 +4813,25 @@ What the first PR ships, mapped to the rules above:
   and records it as what a demotion later removes; confirmation promotes
   nothing. The two fixtures the section asks for exist: provisional-confirm
   and provisional-demote, each proven against the credit it starts from.
+
+  > **REVISED 2026-10-13 (#2459 r5) — a provisional credit is HELD APART,
+  > not counted at ingress.** Counting it at arrival put a value whose
+  > ownership was still unknown to work: with custody eras, a role change
+  > carries it into an era's row, a finalization releases it to pending
+  > surplus or the live baseline (split under the deficit rule), a drain
+  > moves it on, and a staging reservation can take its headroom — so a
+  > demotion had to chase it through pooled moves no per-credit record can
+  > trace (Codex #2308 r21; #2459 r4, and r5 twice). Now the provisional
+  > credit's value goes into a `Provisional` custody row of its own (at the
+  > Diamond before activation), counted by neither side of the ledger;
+  > confirmation counts it ONCE, by exactly the held figure — the
+  > fresh-only, once-only promotion this table's first column described —
+  > and credits it to the day's era as an arrival at that moment; demotion
+  > moves it untouched into `Unclassified` and records it uncounted. The
+  > two fixtures still stand, each against the state it starts from:
+  > confirm counts what was held; demote unwinds nothing because nothing
+  > was counted. The funding identity gains a third term: delivered =
+  > counted + uncounted + held.
 - **The two administrative writers are retained unchanged** — the
   role-transition retirement and `seedArmedFreshPaid`. Their natspec now
   describes the vintage-blind noun.

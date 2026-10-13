@@ -1341,14 +1341,15 @@ contract RewardCustodyFacet is DiamondAccessControl {
     }
 
     /// @notice Diamond-internal: {LibRewardCustody.unclassifiedQuarantine}
-    ///         — a quarantine landing (`relocate`) or a demotion's in-holder
-    ///         unwind (`uncredit`); this replaced the Diamond-releasing
-    ///         `custodyUncreditFresh` (retired selector).
-    function custodyUnclassifiedQuarantine(bytes32 h, bytes32 receiptKey, uint256 relocate, uint256 uncredit)
+    ///         — a quarantine landing (`relocate`) or a demotion's release of
+    ///         a provisional hold, in-holder (`fromProvisional`, #2459 r5);
+    ///         this replaced the Diamond-releasing `custodyUncreditFresh`
+    ///         (retired selector).
+    function custodyUnclassifiedQuarantine(bytes32 h, bytes32 receiptKey, uint256 relocate, uint256 fromProvisional)
         external
     {
         _requireDiamondInternal();
-        LibRewardCustody.unclassifiedQuarantine(LibVaipakam.storageSlot(), h, receiptKey, relocate, uncredit);
+        LibRewardCustody.unclassifiedQuarantine(LibVaipakam.storageSlot(), h, receiptKey, relocate, fromProvisional);
     }
 
     /// @notice Diamond-internal: {LibRewardCustody.unclassifiedReturn}.
@@ -1552,8 +1553,8 @@ contract RewardCustodyFacet is DiamondAccessControl {
         paidOutRecycled = s.paidOutRecycled;
         keeperBudget = s.recycleKeeperBudget;
         // #1566 closure 2 cutover PR 1 — the DIAMOND-SIDE reservation: the
-        // part the holder backs (a quarantine that landed, or a demotion
-        // that unwound, after the activation) is netted out, so
+        // part the holder backs (a quarantine that landed, or a demotion's
+        // released provisional hold, after the activation) is netted out, so
         // `vpfiBalance >= strandedRecoveryReserved` stays the exact relation
         // the watcher alarms on, with no shape change. Saturating, as the
         // backing position's own subtraction is.

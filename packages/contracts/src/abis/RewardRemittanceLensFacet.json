@@ -206,6 +206,16 @@
             "name": "remitId",
             "type": "uint256",
             "internalType": "uint256"
+          },
+          {
+            "name": "provisionalHeld",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "provisionalHeldInCustody",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       }
@@ -432,16 +442,6 @@
             "name": "eraQuarantined",
             "type": "bool",
             "internalType": "bool"
-          },
-          {
-            "name": "creditBookedEra",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "creditBooking",
-            "type": "uint8",
-            "internalType": "uint8"
           }
         ]
       }
@@ -471,6 +471,19 @@
       },
       {
         "name": "nextStartId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getProvisionalFreshHeld",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
         "type": "uint256",
         "internalType": "uint256"
       }

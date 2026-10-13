@@ -99,22 +99,20 @@ contract RewardEraFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaipak
         );
     }
 
-    /// @notice #1566 PR C revision — packet `h`'s fresh inflow, credited to the
-    ///         packet's era with its booking recorded on the packet (#2459 r4;
-    ///         Diamond-internal: the compensation credit). The rule is
-    ///         {LibRewardCustody.relocatePacketFresh}.
-    function eraRelocatePacketFresh(bytes32 h, uint256 amount) external {
+    /// @notice #1566 PR C revision — a fresh inflow for era `era` (Diamond-internal:
+    ///         the compensation credit). The rule is {LibRewardCustody.relocateFreshIngressToEra}.
+    function eraRelocateFreshIngress(uint256 amount, uint64 era) external {
         if (msg.sender != address(this)) revert RewardCustodyOnlyDiamondInternal(msg.sender);
-        LibRewardCustody.relocatePacketFresh(LibVaipakam.storageSlot(), h, amount);
+        LibRewardCustody.relocateFreshIngressToEra(LibVaipakam.storageSlot(), amount, era);
     }
 
-    /// @notice #1566 PR C revision — a demotion of packet `h`'s credit, taken back
-    ///         from where its value is, by following the credit's recorded booking
-    ///         and the era moves recorded since (#2459 r4; Diamond-internal: the
-    ///         compensation demotion). The rule is {LibRewardCustody.uncreditFreshForPacket}.
-    function eraUncreditFresh(bytes32 h, uint256 amount) external returns (uint256 moved) {
+    /// @notice #2459 r5 — hold a provisional compensation's value apart, in the
+    ///         `Provisional` row, until the day's broadcast settles it
+    ///         (Diamond-internal: the provisional credit). The rule is
+    ///         {LibRewardCustody.holdProvisional}.
+    function eraHoldProvisional(uint256 amount) external {
         if (msg.sender != address(this)) revert RewardCustodyOnlyDiamondInternal(msg.sender);
-        return LibRewardCustody.uncreditFreshForPacket(LibVaipakam.storageSlot(), h, amount);
+        LibRewardCustody.holdProvisional(LibVaipakam.storageSlot(), amount);
     }
 
     /// @notice PR C-4 — one parked legacy broadcast's record.

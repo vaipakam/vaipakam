@@ -514,7 +514,8 @@ contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
     ///         pools (payable at w3's repricing). `provisional` marks the
     ///         overtake case — the day's V3 broadcast had not landed, so
     ///         the payload's authenticated remitter stands as the assumed
-    ///         era until the broadcast confirms or demotes it.
+    ///         era until the broadcast confirms or demotes it, and the
+    ///         credit's value is HELD APART meanwhile, uncounted (#2459 r5).
     /// @custom:event-category informational/reward-compensation
     event CompensationCredited(
         uint256 indexed dayId,
@@ -547,13 +548,16 @@ contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
     );
 
     /// @notice A provisional compensation was CONFIRMED in place by the
-    ///         day's V3 broadcast (matching era, day genuinely zeroed).
+    ///         day's V3 broadcast (matching era, day genuinely zeroed): its
+    ///         held value is counted now and credited to the day's era.
     /// @custom:event-category informational/reward-compensation
     event CompensationConfirmed(uint256 indexed dayId, address era);
 
     /// @notice A provisional compensation was DEMOTED to the
     ///         stranded-recovery reservation by the day's V3 broadcast
-    ///         (era mismatch, or the day turned out not to be zeroed).
+    ///         (era mismatch, or the day turned out not to be zeroed): its
+    ///         held value, never counted, became uncounted and moved untouched
+    ///         to where the return draws it.
     /// @custom:event-category informational/reward-compensation
     event CompensationDemoted(
         uint256 indexed dayId, uint256 amount, uint8 reason
@@ -703,7 +707,6 @@ contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
             }
             _creditCompensation(
                 s,
-                h,
                 dayId,
                 remitId,
                 lenderShare18,
@@ -765,7 +768,6 @@ contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         }
         _creditCompensation(
             s,
-            h,
             dayId,
             remitId,
             lenderShare18,
@@ -790,13 +792,11 @@ contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
             && block.timestamp > uint256(finalizedAt) + lapseWindowSeconds;
     }
 
-    /// @dev Credit the per-side pools (+ the armed-fresh counter when the
-    ///      day is armed-attributable), recording what was counted — and, on
-    ///      the crediting packet `h`, where it was booked — so a later
-    ///      demotion can move exactly that, from where it now is.
+    /// @dev Credit the per-side pools and COUNT the arrival's fresh value —
+    ///      or, for a PROVISIONAL credit, hold that value apart uncounted until
+    ///      the day's broadcast settles it (#2459 r5).
     function _creditCompensation(
         LibVaipakam.Storage storage s,
-        bytes32 h,
         uint256 dayId,
         uint256 remitId,
         uint256 lenderShare18,
@@ -858,27 +858,52 @@ contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
 
         // #1566 closure 2 — a compensation frame carries no recycled share
         // (Base dispatches fresh budget for a zeroed day), so `amount` IS its
-        // authenticated fresh component, and it is credited whatever the
-        // day's vintage. `armedFreshCounted` records exactly what this credit
-        // added, which is exactly what a later demotion removes: the two are
-        // inverses by construction rather than by a matching day test.
-        // #1566 slice 4 PR B — see {onRewardBudgetReceived}: relocated into
-        // the holder under the deficit split on an activated deployment.
-        // #1566 PR C revision — into the era of the day it compensates (the
-        // packet's stamp, the one figure its demotion reads too): the live
-        // baseline for a live day, the retired era's row (or, once that era is
-        // final, pending surplus while Detached, else the live baseline) for a
-        // retired one — with WHERE it went recorded on packet `h`, so a demotion
-        // follows the value rather than the role it finds (#2459 r4).
-        if (LibRewardCustody.active(s)) {
-            LibRewardCustody.callEraRelocatePacketFresh(h, amount);
+        // authenticated fresh component, counted whatever the day's vintage.
+        // #2459 r5 — a PROVISIONAL credit is not counted yet: its value is HELD
+        // APART ({LibRewardCustody.holdProvisional}) — counted by neither side of
+        // the ledger, backing nothing, carried by no era move — until the day's
+        // broadcast confirms it (counted then, by exactly this figure) or demotes
+        // it (moved, untouched, to the return reservation). One provisional
+        // credit per day: a second arrival quarantines (case (b) above).
+        if (provisional) {
+            dc.provisionalHeld = SafeCast.toUint128(amount);
+            s.rewardBudgetFreshProvisional += amount;
+            if (LibRewardCustody.active(s)) {
+                LibRewardCustody.callEraHoldProvisional(amount);
+                dc.provisionalHeldInCustody = true;
+            }
+        } else {
+            _countCompensation(s, dc, dayId, amount, false);
+        }
+        emit CompensationCredited(
+            dayId, lenderShare18, borrowerShare18, provisional, era
+        );
+    }
+
+    /// @dev COUNT `amount` of a compensation's fresh value: credited to the era
+    ///      of the day it compensates by the routing rule (#1566 PR C revision:
+    ///      the live baseline for a live day; a retired era's row, or once that
+    ///      era is final pending surplus while Detached, else the live
+    ///      baseline) — from the `Provisional` row when a held credit is
+    ///      confirmed in custody, relocated (measured) from the Diamond on an
+    ///      activated deployment otherwise, the received side alone before
+    ///      activation — with `armedFreshCounted` recording what was counted.
+    function _countCompensation(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.DayCompensation storage dc,
+        uint256 dayId,
+        uint256 amount,
+        bool heldInCustody
+    ) private {
+        uint64 era = LibRewardCustody.custodyEraOfDay(s, dayId);
+        if (heldInCustody) {
+            LibRewardCustody.callEraCreditFreshFromRow(LibVaipakam.RewardCustodyRow.Provisional, amount, era);
+        } else if (LibRewardCustody.active(s)) {
+            LibRewardCustody.callEraRelocateFreshIngress(amount, era);
         } else {
             s.rewardBudgetArmedFreshReceived += amount;
         }
         dc.armedFreshCounted += SafeCast.toUint128(amount);
-        emit CompensationCredited(
-            dayId, lenderShare18, borrowerShare18, provisional, era
-        );
     }
 
     /// @dev #1434 P2-w4 (§2.5) — does this credit cut the remaining
@@ -994,15 +1019,16 @@ contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
             s.receivedRemits[
                 LibRewardCustody.remitReceiptKey(dc.provisionalEra, dc.remitId)
             ].classification = 0;
-            // #1566 closure 2 — confirmation PROMOTES NOTHING. The #1634 r3
-            // reclassification that stood here moved a credit from
-            // `uncounted` into `received` when the day turned out to be
-            // armed; under the vintage-blind rule the provisional credit was
-            // counted in full at ingress, so there is nothing left to
-            // promote, and a promotion that re-added it would manufacture
-            // headroom no delivery backs. Confirmation clears the
-            // provisional flag and its receipt; demotion alone reverses the
-            // original credit, by exactly `armedFreshCounted`.
+            // #2459 r5 — confirmation COUNTS the held value, once, by exactly
+            // the figure held (fresh only: the frame carries no recycled
+            // share), and credits it to the day's era by the routing rule as
+            // an arrival now — the era's state at confirmation governs where.
+            uint256 toCount = dc.provisionalHeld;
+            bool inCustody = dc.provisionalHeldInCustody;
+            dc.provisionalHeld = 0;
+            dc.provisionalHeldInCustody = false;
+            s.rewardBudgetFreshProvisional -= toCount;
+            _countCompensation(s, dc, dayId, toCount, inCustody);
             emit CompensationConfirmed(dayId, baseDeployment);
             return;
         }
@@ -1012,32 +1038,27 @@ contract RewardIngressFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         // the design promises the demotion moves the arrival, not the sum.
         uint8 reason = dc.provisionalEra == baseDeployment ? 1 : 2;
         uint256 pools = dc.creditedAmount;
-        uint256 counted = dc.armedFreshCounted;
         s.strandedRecoveryReserved += pools;
-        // Move the counted portion back to uncounted so the
-        // counted + uncounted reconciliation identity holds.
-        if (counted != 0) {
-            // #1566 slice 4 PR B — on an activated deployment the credit is
-            // reversed through the custody seam: the received side unwinds
-            // (saturating, as before) and what the live-fresh and
-            // restitution rows still hold of it is re-attributed IN-HOLDER
-            // into `Unclassified`, where the R4 return draws it (closure 2
-            // cutover PR 1; an earlier revision released it to this balance).
-            if (LibRewardCustody.active(s)) {
-                // #1566 closure 2 cutover PR 1 — the credit's remainder is
-                // re-attributed IN-HOLDER (live first, then restitution)
-                // into `Unclassified`, where the R4 return draws it; an
-                // earlier revision released it to the Diamond's balance.
+        // #2459 r5 — the held value was never counted and never moved, so the
+        // demotion unwinds nothing: it becomes UNCOUNTED, and the value goes,
+        // untouched, where the R4 return draws it — in-holder from the
+        // `Provisional` row into `Unclassified`; a hold made before custody
+        // activation is relocated (measured) from the Diamond into the row,
+        // as a quarantine landing is; before activation it stays at the
+        // Diamond, as a pre-activation quarantine does.
+        uint256 held = dc.provisionalHeld;
+        if (held != 0) {
+            s.rewardBudgetFreshProvisional -= held;
+            s.rewardBudgetFreshUncounted += held;
+            if (dc.provisionalHeldInCustody || LibRewardCustody.active(s)) {
                 bytes32 rKey = LibRewardCustody.remitReceiptKey(dc.provisionalEra, dc.remitId);
-                LibRewardCustody.callUnclassifiedQuarantine(s.receivedRemits[rKey].packetHash, rKey, 0, counted);
-            } else {
-                // The same ledger cut the activated path makes, through the
-                // one floor-aware write (Codex #2308 r21): a staging record's
-                // reservation of the delivered ledger is not demoted out from
-                // under its irrevocable resolution.
-                LibRewardCustody.uncreditDeliveredFresh(s, counted);
+                LibRewardCustody.callUnclassifiedQuarantine(
+                    s.receivedRemits[rKey].packetHash,
+                    rKey,
+                    dc.provisionalHeldInCustody ? 0 : held,
+                    dc.provisionalHeldInCustody ? held : 0
+                );
             }
-            s.rewardBudgetFreshUncounted += counted;
         }
         LibVaipakam.StrandedRecovery storage sr = s.strandedRecoveries[
             LibRewardCustody.remitReceiptKey(dc.provisionalEra, dc.remitId)

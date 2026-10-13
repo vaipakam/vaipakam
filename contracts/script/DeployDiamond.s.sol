@@ -3231,8 +3231,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
         s[6] = RewardEraFacet.eraDrawForDay.selector;
         // #1566 PR C revision — the era routing of a packet's fresh.
         s[7] = RewardEraFacet.eraCreditFreshFromRow.selector;
-        s[8] = RewardEraFacet.eraRelocatePacketFresh.selector;
-        s[9] = RewardEraFacet.eraUncreditFresh.selector;
+        s[8] = RewardEraFacet.eraRelocateFreshIngress.selector;
+        s[9] = RewardEraFacet.eraHoldProvisional.selector;
         // PR C-4 — the parked-message lane.
         s[10] = RewardEraFacet.getParkedBroadcast.selector;
         s[11] = RewardEraFacet.getCustodyEraParkedOpen.selector;
@@ -3487,7 +3487,7 @@ contract DeployDiamond is Script, ArtifactRootBase {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](38);
+        s = new bytes4[](39);
         s[0] = RewardRemittanceLensFacet.getDayCompensation.selector;
         s[1] = RewardRemittanceLensFacet.getStrandedRecoveryReserved.selector;
         s[2] = RewardRemittanceLensFacet.getStrandedRecovery.selector;
@@ -3544,6 +3544,8 @@ contract DeployDiamond is Script, ArtifactRootBase {
             RewardRemittanceLensFacet.recoveryAttributionArmedAt.selector;
         // #1566 transport epochs PR 3a — the split attestation fee quote.
         s[37] = RewardRemittanceLensFacet.quoteSplitAttestationFee.selector;
+        // #2459 r5 — the provisional compensation value held apart.
+        s[38] = RewardRemittanceLensFacet.getProvisionalFreshHeld.selector;
     }
 
     function _getMetricsSelectors() internal pure returns (bytes4[] memory s) {

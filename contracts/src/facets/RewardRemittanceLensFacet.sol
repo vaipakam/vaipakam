@@ -387,12 +387,24 @@ contract RewardRemittanceLensFacet {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         // Net of the in-holder re-credits (#1566 PR 1 review): an era release
         // or a surplus drain raises the received side as headroom, but its
-        // value was counted at its delivery. Saturating: a demotion may have
-        // cut the received side below the tally.
+        // value was counted at its delivery. Saturating: a reconciliation
+        // correction may lower the received side below the tally (a demotion
+        // no longer does — it releases a provisional hold, never counted,
+        // #2459 r5).
         uint256 received = s.rewardBudgetArmedFreshReceived;
         uint256 reCredited = s.rewardBudgetFreshReCredited;
         counted = received > reCredited ? received - reCredited : 0;
         uncounted = s.rewardBudgetFreshUncounted;
+    }
+
+    /// @notice #2459 r5 — the provisional compensation value HELD APART: counted
+    ///         by neither figure of {getDeliveredFreshPosition} until the day's
+    ///         broadcast confirms (counted) or demotes (uncounted) it, so what the
+    ///         canonical chain sent reconciles as counted + uncounted + this. In
+    ///         custody it is the `Provisional` row; a hold made before custody
+    ///         activation rests at the Diamond.
+    function getProvisionalFreshHeld() external view returns (uint256) {
+        return LibVaipakam.storageSlot().rewardBudgetFreshProvisional;
     }
 
     /// @notice #1434 P2-w5 (§4.2) — the Base recovery position: lifetime

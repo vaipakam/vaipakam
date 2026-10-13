@@ -1657,24 +1657,20 @@ contract CompensationClassificationTest is RewardBroadcastV3Harness {
         assertEq(dc.lenderPool18, 3e18, "pools credited pending the era");
     }
 
-    /// #1566 closure 2 — the PROVISIONAL-CONFIRM fixture the design asks for:
-    /// a compensation credit counts its authenticated fresh amount at INGRESS,
-    /// whatever the day's vintage (the chain is unarmed here), and confirmation
-    /// promotes NOTHING — it clears the provisional flag and leaves the ledger
-    /// exactly where the credit put it. Before closure 2 the credit landed in
-    /// `uncounted` (day unarmed) and the #1634 r3 reclassification moved it
-    /// into `received` at confirmation; that promotion is gone because there
-    /// is nothing left to promote.
+    /// #1566 closure 2 — the PROVISIONAL-CONFIRM fixture the design asks for,
+    /// as #2459 r5 revised it: a provisional credit is HELD APART — counted by
+    /// neither figure, reported as held — and confirmation counts it ONCE, by
+    /// exactly the held figure (the frame's fresh amount, whatever the day's
+    /// vintage: the chain is unarmed here).
     function testProvisionalConfirmedInPlace() public {
         _configureCompMirror();
         _deliverComp(3, REMITTER, 3e18, 2e18);
-        assertEq(
-            _rlens().getDayCompensation(3).armedFreshCounted,
-            5e18,
-            "counted in full at credit - vintage-blind"
-        );
+        LibVaipakam.DayCompensation memory dc0 = _rlens().getDayCompensation(3);
+        assertEq(dc0.armedFreshCounted, 0, "not counted while provisional");
+        assertEq(dc0.provisionalHeld, 5e18, "held apart");
+        assertEq(_rlens().getProvisionalFreshHeld(), 5e18, "and reported as held");
         (uint256 counted0, uint256 uncounted0) = _rlens().getDeliveredFreshPosition();
-        assertEq(counted0, 5e18, "ledger credited at ingress");
+        assertEq(counted0, 0, "the ledger is untouched at ingress");
         assertEq(uncounted0, 0, "nothing parked");
 
         RewardBroadcastV3 memory b = _v3Packet(CHAIN_ARB);
@@ -1686,10 +1682,12 @@ contract CompensationClassificationTest is RewardBroadcastV3Harness {
         assertFalse(dc.provisional, "confirmed in place");
         assertEq(dc.lenderPool18, 3e18, "pools untouched");
         assertEq(_rlens().getStrandedRecoveryReserved(), 0, "no quarantine");
-        assertEq(dc.armedFreshCounted, 5e18, "confirmation changes nothing");
+        assertEq(dc.armedFreshCounted, 5e18, "counted at confirmation, by exactly the held figure");
+        assertEq(dc.provisionalHeld, 0, "nothing held any more");
+        assertEq(_rlens().getProvisionalFreshHeld(), 0);
         (uint256 counted1, uint256 uncounted1) = _rlens().getDeliveredFreshPosition();
-        assertEq(counted1, counted0, "confirmation promotes nothing");
-        assertEq(uncounted1, uncounted0, "and demotes nothing");
+        assertEq(counted1, 5e18, "confirmation counts it, once");
+        assertEq(uncounted1, uncounted0, "and parks nothing");
     }
 
     /// #1656 r11 — a provisional credit stamps NO remediation clocks: the
@@ -1752,25 +1750,25 @@ contract CompensationClassificationTest is RewardBroadcastV3Harness {
         assertEq(_rlens().getStrandedRecoveryReserved(), 5e18, "sum moved");
     }
 
-    /// #1566 closure 2 — the PROVISIONAL-DEMOTE fixture the design asks for:
-    /// the demotion branch ALONE reverses exactly the original provisional
-    /// credit — `received` falls by what the credit added, and that amount
-    /// moves to `uncounted` beside the recovery reservation. Proven against
-    /// the credit it starts from, not by composing confirm-then-demote, which
-    /// the production state machine cannot do.
+    /// #1566 closure 2 — the PROVISIONAL-DEMOTE fixture the design asks for,
+    /// as #2459 r5 revised it: the held value was never counted, so the
+    /// demotion unwinds nothing — it moves the held figure to `uncounted`
+    /// beside the recovery reservation, whole.
     function testProvisionalDemoted_EraMismatch() public {
         _configureCompMirror();
         _deliverComp(3, address(0xDD), 3e18, 2e18); // stale-era sender
         (uint256 counted0, uint256 uncounted0) = _rlens().getDeliveredFreshPosition();
-        assertEq(counted0, 5e18, "credited in full at ingress");
+        assertEq(counted0, 0, "held apart at ingress, not counted");
+        assertEq(_rlens().getProvisionalFreshHeld(), 5e18, "fixture-live: held");
 
         RewardBroadcastV3 memory b = _v3Packet(CHAIN_ARB);
         b.zeroedForDest = true;
         messenger.deliverBroadcastV3(b); // confirmed era = ERA_BASE
 
         (uint256 counted1, uint256 uncounted1) = _rlens().getDeliveredFreshPosition();
-        assertEq(counted1, 0, "demotion removed exactly what the credit added");
-        assertEq(uncounted1, uncounted0 + 5e18, "...and parked it as uncounted");
+        assertEq(counted1, counted0, "the demotion unwinds nothing: nothing was counted");
+        assertEq(uncounted1, uncounted0 + 5e18, "...and parks the held value as uncounted");
+        assertEq(_rlens().getProvisionalFreshHeld(), 0, "no longer held");
         LibVaipakam.DayCompensation memory dc = _rlens().getDayCompensation(3);
         assertFalse(dc.compensated, "provisional state deleted");
         LibVaipakam.StrandedRecovery memory sr =
@@ -1780,24 +1778,21 @@ contract CompensationClassificationTest is RewardBroadcastV3Harness {
         assertEq(_rlens().getStrandedRecoveryReserved(), 5e18, "sum moved");
     }
 
-    /// Codex #2308 r21 — on an INACTIVE-custody deployment a demotion cuts the
-    /// delivered ledger through the same floor-aware write the activated path
-    /// uses: what a staging record has RESERVED of the ledger is not demoted
-    /// out from under its irrevocable resolution. Credit 5, reserve 2, demote:
-    /// the received side keeps the 2, and the full credit still parks as
-    /// uncounted beside the recovery reservation.
-    function testProvisionalDemoted_KeepsAStagingReservationOfTheLedger() public {
+    /// #2459 r5 — a demotion never touches the delivered ledger, so a staging
+    /// reservation of it is never at risk: the provisional value was never in
+    /// the ledger to reserve. (Codex #2308 r21 made the old unwind floor-aware
+    /// for exactly this; holding the value apart removes the case.)
+    function testProvisionalDemoted_NeverTouchesTheDeliveredLedger() public {
         _configureCompMirror();
         _deliverComp(3, address(0xDD), 3e18, 2e18); // stale-era sender
+        _mut().setRewardBudgetArmedFreshReservedRaw(2e18); // a staging reservation standing
         (uint256 counted0, uint256 uncounted0) = _rlens().getDeliveredFreshPosition();
-        assertEq(counted0, 5e18, "fixture: credited in full at ingress");
-        _mut().setRewardBudgetArmedFreshReservedRaw(2e18);
         RewardBroadcastV3 memory b = _v3Packet(CHAIN_ARB);
         b.zeroedForDest = true;
         messenger.deliverBroadcastV3(b); // demote
         (uint256 counted1, uint256 uncounted1) = _rlens().getDeliveredFreshPosition();
-        assertEq(counted1, 2e18, "the reserved part of the ledger survives the demotion");
-        assertEq(uncounted1, uncounted0 + 5e18, "and the whole credit parks as uncounted");
+        assertEq(counted1, counted0, "no counted figure moved");
+        assertEq(uncounted1, uncounted0 + 5e18, "the whole held value parks as uncounted");
     }
 
     function testProvisionalDemoted_NotZeroed() public {

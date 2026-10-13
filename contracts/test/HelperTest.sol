@@ -111,7 +111,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](259); // #2459 r4 +relocatePacketFreshRaw +setAggregatorAdapterRaw; PR 1 re-review +2 raw (expiry begun, re-credit tally); A2-iii +3 raw (attested caps, ledger reservation, day needs); 3b-ii-A2 r22 +loanSideRewardPaidRaw; #2342 +setLegacyFrozenVpfiRaw; 3b-ii-A2 +13 raw reads +5 raw writes; #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1, then -1 with the pre-list scene (Codex #2296 items 2 and 4); r26 +1 flexible caps; 3b-ii-A2 r21 +1 ledger reservation
+        selectors = new bytes4[](256); // #2459 r5 -uncreditFreshInHolderRaw -uncreditFreshForPacketRaw (the demotion no longer unwinds custody); #2459 r4 +setAggregatorAdapterRaw; PR 1 re-review +2 raw (expiry begun, re-credit tally); A2-iii +3 raw (attested caps, ledger reservation, day needs); 3b-ii-A2 r22 +loanSideRewardPaidRaw; #2342 +setLegacyFrozenVpfiRaw; 3b-ii-A2 +13 raw reads +5 raw writes; #1566 closure 2 — +creditInflowRawWithBefore (was 200); slice 4 PR B +5; cutover PR 2 +5; transport epochs 3b-i r3 +3; #2258 raw release +3; 3b-ii-A +1, then -1 with the pre-list scene (Codex #2296 items 2 and 4); r26 +1 flexible caps; 3b-ii-A2 r21 +1 ledger reservation
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -537,7 +537,6 @@ contract HelperTest {
         selectors[n++] = TestMutatorFacet.poolAvailableRaw.selector;
         selectors[n++] = TestMutatorFacet.entryExecutableNowRaw.selector;
         selectors[n++] = TestMutatorFacet.setRecycleBucketReservedRaw.selector;
-        selectors[n++] = TestMutatorFacet.uncreditFreshInHolderRaw.selector;
         selectors[n++] = TestMutatorFacet.stagingEncumberedCountRaw.selector;
         selectors[n++] = TestMutatorFacet.setStagingEncumberedCountRaw.selector;
         selectors[n++] = TestMutatorFacet.plantForeignStagingRecordRaw.selector; // #1566 PR 1 review
@@ -556,8 +555,6 @@ contract HelperTest {
         selectors[n++] = TestMutatorFacet.clearTransportBatchDaysRaw.selector; // 3c-1
         selectors[n++] = TestMutatorFacet.creditFreshToEraFromRowRaw.selector; // PR C-1
         selectors[n++] = TestMutatorFacet.setCustodyEraCountersRaw.selector; // PR C-1
-        selectors[n++] = TestMutatorFacet.uncreditFreshForPacketRaw.selector; // PR C-5
-        selectors[n++] = TestMutatorFacet.relocatePacketFreshRaw.selector; // #2459 r4
         selectors[n++] = TestMutatorFacet.setAggregatorAdapterRaw.selector; // #2459 r4
         selectors[n++] = TestMutatorFacet.setRewardEntryExpiryBegunRaw.selector; // PR 1 re-review B-N1
         selectors[n++] = TestMutatorFacet.setFreshReCreditedRaw.selector; // PR 1 re-review C-1
@@ -2643,8 +2640,8 @@ contract HelperTest {
         selectors[6] = RewardEraFacet.eraDrawForDay.selector;
         // #1566 PR C revision — the era routing of a packet's fresh.
         selectors[7] = RewardEraFacet.eraCreditFreshFromRow.selector;
-        selectors[8] = RewardEraFacet.eraRelocatePacketFresh.selector;
-        selectors[9] = RewardEraFacet.eraUncreditFresh.selector;
+        selectors[8] = RewardEraFacet.eraRelocateFreshIngress.selector;
+        selectors[9] = RewardEraFacet.eraHoldProvisional.selector;
         // PR C-4 — the parked-message lane.
         selectors[10] = RewardEraFacet.getParkedBroadcast.selector;
         selectors[11] = RewardEraFacet.getCustodyEraParkedOpen.selector;
@@ -2768,7 +2765,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](38);
+        selectors = new bytes4[](39);
         selectors[0] = RewardRemittanceLensFacet.getDayCompensation.selector;
         selectors[1] = RewardRemittanceLensFacet.getStrandedRecoveryReserved.selector;
         selectors[2] = RewardRemittanceLensFacet.getStrandedRecovery.selector;
@@ -2825,6 +2822,8 @@ contract HelperTest {
             RewardRemittanceLensFacet.recoveryAttributionArmedAt.selector;
         // #1566 transport epochs PR 3a — the split attestation fee quote.
         selectors[37] = RewardRemittanceLensFacet.quoteSplitAttestationFee.selector;
+        // #2459 r5 — the provisional compensation value held apart.
+        selectors[38] = RewardRemittanceLensFacet.getProvisionalFreshHeld.selector;
     }
 
     /// #1222 M3 B2-c — mirror→Base per-loan headroom commitment report.

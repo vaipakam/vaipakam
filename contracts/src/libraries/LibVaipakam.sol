@@ -951,7 +951,13 @@ library LibVaipakam {
         Intent,
         Unclassified,
         Restitution,
-        Resolving
+        Resolving,
+        /// @dev #2459 r5 — a PROVISIONAL compensation's value, HELD APART until
+        ///      the day's broadcast settles it: counted as neither delivered nor
+        ///      uncounted, backing nothing, carried by no era move. Confirmation
+        ///      counts it and credits it to the day's era like any arrival;
+        ///      demotion moves it, untouched, into `Unclassified`.
+        Provisional
     }
 
     /**
@@ -7930,6 +7936,13 @@ library LibVaipakam {
         ///         longer proves an operator clean, so an off switch must not
         ///         reopen principal release. A never-configured chain runs open.
         bool sanctionsOracleEverSet;
+        /// @notice #2459 r5 — provisional compensation value HELD APART: counted as
+        ///         neither delivered (`rewardBudgetArmedFreshReceived`) nor uncounted
+        ///         (`rewardBudgetFreshUncounted`) until the day's broadcast confirms or
+        ///         demotes it, so delivered = counted + uncounted + this, always. In
+        ///         custody it is the `Provisional` row; a hold made before custody
+        ///         activation rests at the Diamond and is counted here alone.
+        uint256 rewardBudgetFreshProvisional;
     }
 
     /// @notice 3b-ii-A2 (#2305) — one batch a staging record staged from, with
@@ -8121,20 +8134,6 @@ library LibVaipakam {
         ///      records' era legs): the era's room nets it; a resolve consumes it
         ///      and an unwind restores it.
         uint256 stagedFresh;
-        /// @dev #2459 r4, appended — the RELEASE as it happened, written once by
-        ///      the finalization: where the row went (PENDING SURPLUS on a
-        ///      Detached finalization, else the live baseline of era
-        ///      `releasedInto`, the live era at the release), what it carried
-        ///      (`released`), and how much of that demotions have since followed
-        ///      back out (`releaseDemoted`). A demotion of a credit this era booked
-        ///      follows this record — never the role of the moment — and never
-        ///      takes more through the release than `released - releaseDemoted`:
-        ///      what the release did not carry was drawn before it, and is no
-        ///      longer at the address to give back.
-        bool releasedToPending;
-        uint64 releasedInto;
-        uint256 released;
-        uint256 releaseDemoted;
     }
 
     /// @notice Slice 4 PR C-4 (#1566) — one PARKED legacy broadcast: an era-less
@@ -8267,7 +8266,7 @@ library LibVaipakam {
         uint8 reason;
         /// @dev #1566 closure 2 cutover PR 1 — how much of `amount` is HELD
         ///      in the custody holder's `Unclassified` row (a quarantine
-        ///      landed or a demotion unwound on an ACTIVATED deployment).
+        ///      landed or a demotion released its hold on an ACTIVATED deployment).
         ///      The R4 return draws `held` from the row and the rest from
         ///      the Diamond's balance (a quarantine that predates the
         ///      activation). Appended: a mapped struct grows at its end.
@@ -8449,17 +8448,6 @@ library LibVaipakam {
         bool eraCounted;
         bool classificationFinal;
         bool eraQuarantined;
-        /// @dev #2459 r4, appended — where the packet's DEMOTABLE credit (a
-        ///      compensation's counted credit, the one credit a demotion
-        ///      reverses) was BOOKED, recorded by that credit so its demotion
-        ///      follows the value instead of re-deriving a route from the
-        ///      chain's role at demotion time, which can have changed either way
-        ///      since. `creditBooking`: 0 none recorded; 1 era `creditBookedEra`'s
-        ///      books — its live baseline while it was the live era, its row once
-        ///      retired; 2 pending surplus. The era moves that follow are on the
-        ///      era's own record ({CustodyEra.releasedToPending} / `releasedInto`).
-        uint64 creditBookedEra;
-        uint8 creditBooking;
     }
 
     /// @notice #1566 transport epochs PR 3b — the TRANSPORT EPOCH of one
@@ -8845,13 +8833,17 @@ library LibVaipakam {
     ///         authenticated remitter as the assumed era — the V3 arrival
     ///         later CONFIRMS it in place (matching deployment) or DEMOTES
     ///         the whole credit to the stranded-recovery reservation
-    ///         (mismatch: the confirmed era's state governs).
+    ///         (mismatch: the confirmed era's state governs). Until then its
+    ///         value is HELD APART (#2459 r5, `provisionalHeld`): counted by
+    ///         neither side of the funding ledger and backing nothing, so no
+    ///         era move ever carries it and a demotion takes back exactly it.
     struct DayCompensation {
         uint128 lenderPool18;
         uint128 borrowerPool18;
         // What this day's credits added to `rewardBudgetArmedFreshReceived`
-        // — stored, not recomputed, so a demotion moves EXACTLY what was
-        // counted even if the arming day changed in between.
+        // — stored, not recomputed. A provisional credit adds nothing until
+        // its confirmation counts it (#2459 r5), so a demotion has nothing
+        // counted to unwind.
         uint128 armedFreshCounted;
         // The ACTUAL credited delivery total (#1634 r3): the per-side pools
         // each floor when a fee-on-transfer delivery scales, so their sum
@@ -8865,6 +8857,12 @@ library LibVaipakam {
         // payload's authenticated remitter) it reconstructs the receipt
         // key a demotion records the quarantine under.
         uint256 remitId;
+        // #2459 r5, appended — the provisional credit's value HELD APART until
+        // the broadcast settles it, and where: the custody `Provisional` row
+        // (`provisionalHeldInCustody`) or, for a hold made before custody
+        // activation, the Diamond. Zero once confirmed (counted) or demoted.
+        uint128 provisionalHeld;
+        bool provisionalHeldInCustody;
     }
 
     /// @notice #1434 P2-w1 — one day's frozen lapse clock (design §1.1's

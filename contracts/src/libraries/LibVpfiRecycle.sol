@@ -887,7 +887,7 @@ library LibVpfiRecycle {
         // bucket, and this balance minus its OWN earmarks.
         if (LibRewardCustody.active(s)) {
             // #1566 closure 2 cutover PR 1 — a quarantine that landed (or a
-            // demotion that unwound) AFTER the activation is custody of the
+            // demotion's released provisional hold) AFTER the activation is custody of the
             // holder's `Unclassified` row; only the reservation's remainder
             // — quarantines that predate the activation — still rests in
             // this balance. Saturating: the reservation floors at zero on

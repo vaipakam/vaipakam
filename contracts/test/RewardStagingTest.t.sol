@@ -1109,26 +1109,10 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         assertEq(_rec().skippedCount, 0, "forgotten once offered");
     }
 
-    function test_ADemotion_LeavesTheReservedLiveFresh_InTheRowAndOnTheLedger() public {
-        _stagedAndScanned();
-        _liveFresh(1e18);
-        _staging().reserveStagedDay(_key());
-        uint256 reserved = _rec().reservedLiveUserFresh;
-        assertEq(reserved, NEED - WIDE * TINY);
-        uint256 row = _row(LibVaipakam.RewardCustodyRow.LiveFresh);
-        assertGt(row, reserved, "live: the row holds more than the reservation");
-        // A compensation demotion asks to uncredit more than the row holds:
-        // it takes everything but the reservation, on the row and on the
-        // delivered ledger alike, and the record still pays its last page.
-        uint256 moved = _mut().uncreditFreshInHolderRaw(2e18);
-        assertEq(moved, row - reserved, "the reserved live fresh is not the demotion's to take");
-        assertEq(_row(LibVaipakam.RewardCustodyRow.LiveFresh), reserved, "it stays in the row");
-        uint256 aliceBefore = vpfi.balanceOf(alice);
-        _settle().resolveStagedDayPage(_key());
-        assertTrue(_settle().resolveStagedDayPage(_key()), "and the last page pays");
-        assertEq(vpfi.balanceOf(alice) - aliceBefore, NEED);
-        assertEq(_row(LibVaipakam.RewardCustodyRow.LiveFresh), 0);
-    }
+    // #2459 r5 — `test_ADemotion_LeavesTheReservedLiveFresh_InTheRowAndOnTheLedger`
+    // is retired with the path it guarded: a compensation demotion no longer
+    // unwinds live custody at all (its provisional value was held apart and is
+    // released from its own row), so no demotion can reach a reservation.
 
     function test_TheLens_ReportsWhatIsReserved_AndWhatIsAvailable() public {
         _stagedAndScanned();
