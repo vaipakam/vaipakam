@@ -2690,11 +2690,11 @@
         "youLock": "Nada.",
         "youMayOwe": "Nada más allá de la comisión de red.",
         "youCanLose": "Si la venta obtiene menos de lo que se te debe, asumes la diferencia. Cuando esta transacción sí termina el préstamo, lo termina de forma definitiva: el prestatario ya no puede devolverlo con intereses. Cuando solo liquida una parte, o la venta no puede realizarse, el préstamo sigue abierto y el prestatario aún puede pagar o añadir garantía.",
-        "fees": "La comisión de red, más la parte del protocolo sobre el producto de la venta y el incentivo pagado a quien envía la transacción.",
-        "whenThisEnds": "Normalmente de inmediato: esta transacción suele terminar el préstamo. Si el protocolo solo puede liquidar una parte, o la venta de la garantía no puede realizarse, el préstamo sigue abierto y podrás cerrarlo de nuevo más adelante."
+        "fees": "La comisión de red. Si la venta se realiza, la parte del protocolo de lo obtenido y el incentivo para quien la envía salen de ese importe. Si el cierre termina de otra forma, no hay venta y no se aplica ninguno de esos cargos de venta.",
+        "whenThisEnds": "Normalmente de inmediato: una venta, o una liquidación completa contra una posición opuesta, termina el préstamo. Si el protocolo solo puede liquidar una parte, el préstamo sigue abierto y puedes cerrarlo de nuevo más tarde. Si la venta no puede realizarse, el préstamo pasa al mecanismo de respaldo del protocolo: puedes reclamar la garantía y, hasta que lo hagas, el prestatario aún puede pagar o añadir garantía."
       },
       "routeNotConfigured": "Esta aplicación no está configurada para pedir precio a los exchanges en esta red, así que no puede enrutar la venta y no se envió ni se gastó nada. Por ahora, cerrar esta posición requiere un operador. Contacta con soporte en lugar de esperar a que ocurra por sí solo.",
-      "routeWouldFallBack": "Los precios llegaron, pero comprobados contra el estado actual de la cadena, ninguno de los exchanges alcanzaría el mínimo del protocolo para esta venta. Enviarlo cerraría el préstamo en el mecanismo de respaldo en lugar de en una venta, así que no se envió ni se gastó nada. Los precios se piden de nuevo cada vez, así que vale la pena intentarlo más tarde."
+      "routeWouldFallBack": "Comprobado contra la cadena hace un momento, todas las rutas de exchange para esta venta fallaron, así que enviarlo cerraría el préstamo en el mecanismo de respaldo del protocolo en lugar de en una venta. No se envió ni se gastó nada. Esta comprobación no indica por qué fallaron las rutas. Las rutas se construyen de nuevo cada vez, así que intentarlo más tarde puede funcionar; si sigue ocurriendo, contacta con soporte."
     }
   },
   "contractError": {

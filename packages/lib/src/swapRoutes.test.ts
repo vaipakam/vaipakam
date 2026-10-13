@@ -7,6 +7,7 @@ import {
   parseZeroExQuote,
   quoteTestnetMock,
   quoteUniV3,
+  quoteUniV3Tiers,
   rankRoutes,
   readSwapAdapterEntries,
   resolveAdapterRoster,
@@ -162,6 +163,22 @@ describe('quoteUniV3', () => {
       },
     };
     expect(await quoteUniV3(client, 8453, sale)).toEqual({ fee: 3000, expectedOutput: 9n });
+  });
+
+  it('lists every quoting tier, in tier order, for a try-list', async () => {
+    let call = 0;
+    const client = {
+      call: async () => {
+        call += 1;
+        if (call === 1) throw new Error('no pool');
+        return { data: answer(BigInt(call)) };
+      },
+    };
+    expect(await quoteUniV3Tiers(client, 8453, sale)).toEqual([
+      { fee: 500, expectedOutput: 2n },
+      { fee: 3000, expectedOutput: 3n },
+      { fee: 10000, expectedOutput: 4n },
+    ]);
   });
 
   it('returns null on a chain with no V3 venue', async () => {

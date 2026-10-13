@@ -312,17 +312,17 @@ const QUOTER_V2_ABI = [
   },
 ] as const;
 
-/** The best fee tier the chain's V3 quoter reports for this sale, or
- *  `null` when the chain has no venue or no tier quotes. QuoterV2 is
+/** Every fee tier the chain's V3 quoter prices for this sale, in tier
+ *  order; empty when the chain has no venue or no tier quotes. QuoterV2 is
  *  non-view (it reverts internally to return), hence `call`. */
-export async function quoteUniV3(
+export async function quoteUniV3Tiers(
   client: Pick<PublicClient, 'call'>,
   chainId: number,
   sale: { sellToken: Address; buyToken: Address; sellAmount: bigint },
-): Promise<{ fee: number; expectedOutput: bigint } | null> {
+): Promise<{ fee: number; expectedOutput: bigint }[]> {
   const venue = UNIV3_VENUES[chainId];
-  if (!venue) return null;
-  let best: { fee: number; expectedOutput: bigint } | null = null;
+  if (!venue) return [];
+  const quoted: { fee: number; expectedOutput: bigint }[] = [];
   for (const fee of venue.feeTiers) {
     try {
       const data = encodeFunctionData({
@@ -345,12 +345,27 @@ export async function quoteUniV3(
         functionName: 'quoteExactInputSingle',
         data: result.data,
       });
-      if (amountOut > 0n && (!best || amountOut > best.expectedOutput)) {
-        best = { fee, expectedOutput: amountOut };
-      }
+      if (amountOut > 0n) quoted.push({ fee, expectedOutput: amountOut });
     } catch {
       continue;
     }
+  }
+  return quoted;
+}
+
+/** The best-quoting tier alone, or `null` when none quotes. For a builder
+ *  that sends one UniV3 call; a try-list should prefer
+ *  {@link quoteUniV3Tiers} and send every quoting tier, since `LibSwap`
+ *  accepts the same adapter index more than once and a second pool is a
+ *  real back-up when the first moves below the minimum. */
+export async function quoteUniV3(
+  client: Pick<PublicClient, 'call'>,
+  chainId: number,
+  sale: { sellToken: Address; buyToken: Address; sellAmount: bigint },
+): Promise<{ fee: number; expectedOutput: bigint } | null> {
+  let best: { fee: number; expectedOutput: bigint } | null = null;
+  for (const q of await quoteUniV3Tiers(client, chainId, sale)) {
+    if (!best || q.expectedOutput > best.expectedOutput) best = q;
   }
   return best;
 }

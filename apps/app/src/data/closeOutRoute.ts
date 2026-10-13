@@ -41,7 +41,7 @@ import {
   parseOneInchQuote,
   parseZeroExQuote,
   quoteTestnetMock,
-  quoteUniV3,
+  quoteUniV3Tiers,
   rankRoutes,
   readSwapAdapterEntries,
   resolveAdapterRoster,
@@ -187,7 +187,7 @@ export async function buildCloseOutRoute(deps: {
   const venues = quotableVenues(roster, chainId, agentOrigin !== null);
   const unconfigured: SwapVenueKind[] = [];
 
-  const attempts = venues.map(async (kind): Promise<RouteCandidate | null> => {
+  const attempts = venues.map(async (kind): Promise<RouteCandidate | RouteCandidate[] | null> => {
     const slot = roster[kind];
     if (slot === undefined) return null;
     const adapterIdx = BigInt(slot.idx);
@@ -226,15 +226,15 @@ export async function buildCloseOutRoute(deps: {
           call: { adapterIdx, data: packAggregatorData(q.swapTarget, q.swapCalldata) },
         };
       }
-      case 'univ3': {
-        const q = await quoteUniV3(client, chainId, sale);
-        if (!q) return null;
-        return {
+      case 'univ3':
+        // One candidate per quoting pool: the same adapter index may appear
+        // more than once, and a second tier is a real back-up if the best
+        // pool moves below the minimum before the transaction runs.
+        return (await quoteUniV3Tiers(client, chainId, sale)).map((q) => ({
           kind,
           expectedOutput: q.expectedOutput,
           call: { adapterIdx, data: packUniV3Data(q.fee) },
-        };
-      }
+        }));
       case 'testnetMock': {
         const out = await quoteTestnetMock(client, slot.address, diamond, sale);
         if (out === null) return null;
@@ -245,9 +245,9 @@ export async function buildCloseOutRoute(deps: {
     }
   });
 
-  const candidates = (await Promise.all(attempts.map((p) => p.catch(() => null)))).filter(
-    (c): c is RouteCandidate => c !== null,
-  );
+  const candidates = (await Promise.all(attempts.map((p) => p.catch(() => null))))
+    .flat()
+    .filter((c): c is RouteCandidate => c !== null);
   if (candidates.length === 0) return { kind: 'no-quote', asked: venues, unconfigured };
   const ranked = rankRoutes(candidates);
   return { kind: 'route', calls: ranked.map((c) => c.call), venues: ranked.map((c) => c.kind) };

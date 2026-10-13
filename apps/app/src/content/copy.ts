@@ -2442,11 +2442,11 @@ const copySource = {
     // prices, so it does not say "try again later".
     routeNotConfigured:
       'This app is not set up to ask the exchanges for a price on this network, so it cannot route the sale and nothing was sent or spent. Closing this position needs an operator for now. Contact support rather than waiting for it to happen on its own.',
-    // The preview ran the close-out against the chain as it is now and
-    // every exchange route was refused, so it would end in the fallback
-    // rather than the sale the card describes.
+    // Says only what the preview observed — every route failed — not why:
+    // a price under the minimum, expired calldata and a router outage all
+    // emit the same event.
     routeWouldFallBack:
-      'The prices came back, but checked against the chain just now none of the exchanges would meet the protocol\'s minimum for this sale. Sending it would close the loan into the fallback rather than a sale, so nothing was sent and nothing was spent. Prices are asked for again each time, so it is worth trying again later.',
+      'Checked against the chain just now, every exchange route for this sale failed, so sending it would close the loan into the protocol\'s fallback rather than a sale. Nothing was sent and nothing was spent. The app cannot tell from this check why the routes failed. Routes are built afresh each time, so trying again later may succeed; if it keeps happening, contact support.',
     // Round 31 P2 — a liquid, non-collapsed position the protocol can
     // settle against an opposing one. `triggerDefault` dispatches that
     // match BEFORE the swap branch, so the app CAN close this today;
@@ -2679,9 +2679,11 @@ const copySource = {
       youMayOwe: 'Nothing beyond the network fee.',
       youCanLose:
         'If the sale raises less than you are owed, you absorb the shortfall. Where this transaction does end the loan, it ends it for good — the borrower can no longer repay it with interest. Where it only settles part, or the sale cannot go through, the loan stays open and the borrower may still repay or add collateral.',
-      fees: 'The network fee, plus the protocol’s share of the sale proceeds and the incentive paid to whoever submits it.',
+      // Round 3 P2 — the sale charges apply only to a sale. The fallback
+      // and a settlement against an opposing position have none.
+      fees: 'The network fee. If the sale goes through, the protocol’s share of the proceeds and the incentive paid to whoever submits it come out of those proceeds. If the close-out ends another way, there is no sale and none of those sale charges apply.',
       whenThisEnds:
-        'Usually straight away — this transaction normally ends the loan. If the protocol can only settle part of it, or the sale of the collateral cannot go through, the loan stays open and you can close it again later.',
+        'Usually straight away — a sale, or a full settlement against an opposing position, ends the loan. If the protocol can only settle part of it, the loan stays open and you can close it again later. If the sale cannot go through, the loan moves into the protocol’s fallback: you can claim the collateral, and until you do the borrower can still repay or add collateral.',
     },
     // Round 39 P2 — the shared receipt above describes collateral-sale
     // economics, and a rental default has none of them. `DefaultedFacet`

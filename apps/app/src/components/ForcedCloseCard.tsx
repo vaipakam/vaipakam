@@ -925,6 +925,7 @@ export function ForcedCloseCard({
       return { message: copy.forcedClose.routeRosterFailed };
     }
     let roster;
+    let rosterIncomplete;
     let sale;
     try {
       const [loan, freshRoster] = await Promise.all([
@@ -941,6 +942,7 @@ export function ForcedCloseCard({
         readCloseOutRoster(publicClient, routeDiamond, testnetMockAdapter),
       ]);
       roster = freshRoster.roster;
+      rosterIncomplete = freshRoster.incomplete;
       sale = {
         sellToken: loan.collateralAsset,
         buyToken: loan.principalAsset,
@@ -958,6 +960,9 @@ export function ForcedCloseCard({
       agentOrigin: agentQuoteOrigin(),
     });
     if (route.kind === 'no-quote') {
+      // A venue the app could not identify was never asked, so "no
+      // exchange gave a price" would claim more than was checked.
+      if (rosterIncomplete) return { message: copy.forcedClose.routeRosterFailed };
       // Every venue asked was an aggregator this deployment has no key
       // for: a standing configuration, so "try again later" would be
       // untrue.

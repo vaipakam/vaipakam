@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decodeAbiParameters, type Address } from 'viem';
+import { decodeAbiParameters, encodeAbiParameters, type Address } from 'viem';
 import {
   buildCloseOutRoute,
   previewCloseOut,
@@ -214,6 +214,52 @@ describe('buildCloseOutRoute', () => {
       fetchImpl: impl,
     });
     expect(route).toEqual({ kind: 'no-quote', asked: ['zeroex'], unconfigured: ['zeroex'] });
+  });
+});
+
+describe('buildCloseOutRoute — UniV3', () => {
+  it('sends every quoting pool, ranked with the other venues', async () => {
+    const { encodeFunctionResult } = await import('viem');
+    const out = (n: bigint) =>
+      encodeFunctionResult({
+        abi: [
+          {
+            type: 'function',
+            name: 'q',
+            stateMutability: 'view',
+            inputs: [],
+            outputs: [
+              { type: 'uint256' },
+              { type: 'uint160' },
+              { type: 'uint32' },
+              { type: 'uint256' },
+            ],
+          },
+        ],
+        functionName: 'q',
+        result: [n, 0n, 0, 0n],
+      });
+    const amounts = [0n, 5n, 9n, 0n];
+    let i = 0;
+    const route = await buildCloseOutRoute({
+      client: {
+        readContract: noChain.readContract,
+        call: async () => {
+          const n = amounts[i++];
+          if (n === 0n) throw new Error('no pool');
+          return { data: out(n) };
+        },
+      } as unknown as RouteClient,
+      chainId: 8453,
+      diamond: A(0xd),
+      roster: { univ3: S(2) },
+      sale,
+      agentOrigin: null,
+    });
+    expect(route.kind === 'route' && route.calls).toEqual([
+      { adapterIdx: 2n, data: encodeAbiParameters([{ type: 'uint24' }], [3000]) },
+      { adapterIdx: 2n, data: encodeAbiParameters([{ type: 'uint24' }], [500]) },
+    ]);
   });
 });
 
