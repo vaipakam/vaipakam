@@ -1,37 +1,32 @@
 [
   {
     "type": "function",
-    "name": "getDryRunShareOfPoolDays",
+    "name": "getRewardEntryArmedNeed",
     "inputs": [
       {
-        "name": "user",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "deliveredCap",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "freshBudget",
+        "name": "entryId",
         "type": "uint256",
         "internalType": "uint256"
       }
     ],
     "outputs": [
       {
-        "name": "userTotal",
+        "name": "armed",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "armedTotal",
+        "name": "userLegs",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "liveArmed",
+        "name": "treasuryLegs",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "legacyFresh",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -46,81 +41,14 @@
         "internalType": "bool"
       },
       {
-        "name": "deferred",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getObligationDomainListsAnEpoch",
-    "inputs": [
-      {
-        "name": "user",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getObligationDomainNeeds",
-    "inputs": [
-      {
-        "name": "user",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "needFresh",
+        "name": "liveArmed",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "needRecycled",
+        "name": "userPaid",
         "type": "uint256",
         "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getStagingCooldown",
-    "inputs": [
-      {
-        "name": "user",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "side",
-        "type": "uint8",
-        "internalType": "enum LibVaipakam.RewardSide"
-      },
-      {
-        "name": "day",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "until",
-        "type": "uint64",
-        "internalType": "uint64"
       }
     ],
     "stateMutability": "view"
@@ -507,6 +435,147 @@
     "stateMutability": "view"
   },
   {
+    "type": "function",
+    "name": "getTransportBatchWindow",
+    "inputs": [
+      {
+        "name": "batchId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "closesAt",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "releasedBy",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "oldestKey",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "oldestOpenedAt",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "priorityHeld",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "ordinaryOpen",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getUserArmedFreshNeed",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "armed",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getUserArmedFreshNeedWithLegs",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "armed",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "userLegs",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "treasuryLegs",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "legacyFresh",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "bucketRecycled",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "capHit",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "liveArmed",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "userPaid",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "isTransportBatchPriorityUsed",
+    "inputs": [
+      {
+        "name": "batchId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "key",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
     "type": "error",
     "name": "DayCapModeUnsetPostCutover",
     "inputs": [
@@ -516,6 +585,11 @@
         "internalType": "uint256"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "RecycleBackingTokenUnset",
+    "inputs": []
   },
   {
     "type": "error",

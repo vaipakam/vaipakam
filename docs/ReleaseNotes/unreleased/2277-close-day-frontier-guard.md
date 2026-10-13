@@ -1,0 +1,9 @@
+## Thread — a chain never reports a day its interest fold has not reached (#2277)
+
+**Problem.** A chain's day-close report reads that day's per-side interest totals from a fold that advances a bounded number of days per call, and the close stamped the day and dispatched the report after a single bounded advance without checking that the fold had arrived. After a deployment or reporter gap wider than that reach, a permissionless close of a far-past day shipped a zero or partial report to the canonical chain — once, since the stamp made the day one-shot — and nothing could move the fold to the day afterwards or resend. Found by review of the transport-epoch close-out design, whose per-day closure proof reads those same totals and is sound only if a reported day's totals are final.
+
+**What changed.** The close now refuses, by name, a day either side's fold has not reached, leaving nothing behind; so a day is never stamped reported with totals the fold has not produced. A permissionless, resumable catch-up advances the fold through any elapsed day in bounded steps — anyone may run it until both sides reach the day, after which the close reports the folded figures as before. The catch-up carries the same bound the close does, strictly elapsed days: a fold run ahead of the clock would silently drop the start and end of every loan registered afterwards. Within one reach nothing changes — the close still folds and reports in one call. The two frontiers are readable.
+
+**A day already reported short before this rule** cannot be re-reported from the mirror: the canonical chain accepts one report per chain and day. No live chain has such a day (none has existed long enough for a gap of that width); should one arise on a test network, the remedy is the fresh deploy those networks already use. Closes #2277.
+
+**Spec:** TokenomicsTechSpec, "Failure modes and safety" (a reporting gap wider than the fold's reach).

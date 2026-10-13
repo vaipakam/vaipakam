@@ -844,7 +844,12 @@ contract RewardCustodyFacet is DiamondAccessControl {
      *             is zero);
      *           - the holder's balance is readable and covers the rows.
      *
-     *         Arms the role freeze. An `Unconfigured` deployment that is
+     *         Ordering: activate before any role change once a bootstrap writer
+     *         has credited a row. A role change before activation levels the
+     *         delivered counters but carries nothing (nothing is carried before
+     *         activation), so this ceremony then refuses the bootstrapped row as
+     *         unbacked until it is released ({releaseRewardCustodyRow}, on an
+     *         active role). An `Unconfigured` deployment that is
      *         later configured into a role (a fresh deploy, after
      *         `ConfigureRewardReporter`) runs this same ceremony.
      * @param  pauseEpoch          The pause library's transition count at
@@ -886,12 +891,10 @@ contract RewardCustodyFacet is DiamondAccessControl {
         if (role == LibVaipakam.RewardRole.Unconfigured) {
             revert IVaipakamErrors.RewardCustodyActivationRequiresConfiguredRole(uint8(role));
         }
-        // A DETACHED chain does not activate in this slice (Codex #2186 r1
-        // P1): its value-bearing receive ingresses still accept the
-        // configured receiver without a role check, so a delayed packet
-        // would relocate custody into rows a zero bound can never spend,
-        // while the freeze this arms blocks the re-attachment that could —
-        // the intended-era ingress gates land with slice 4 PR C.
+        // A DETACHED chain does not activate (Codex #2186 r1 P1): its
+        // value-bearing receive ingresses still accept the configured receiver
+        // without a role check, so a delayed packet would relocate custody into
+        // rows a zero bound can never spend.
         if (role == LibVaipakam.RewardRole.Detached) {
             revert IVaipakamErrors.RewardCustodyActivationDetachedNotSupported();
         }
@@ -944,7 +947,6 @@ contract RewardCustodyFacet is DiamondAccessControl {
         if (attributed > held) revert IVaipakamErrors.RewardCustodyUnderHeld(held, attributed);
 
         s.rewardCustodyActivated = true;
-        s.rewardRoleChangesFrozen = true;
         emit RewardCustodyActivated(
             uint8(role),
             received,
@@ -983,7 +985,13 @@ contract RewardCustodyFacet is DiamondAccessControl {
         if (role != LibVaipakam.RewardRole.Canonical && role != LibVaipakam.RewardRole.Mirror) {
             revert IVaipakamErrors.RewardCustodyFundingRequiresActiveRole(uint8(role));
         }
-        uint256 resulting = s.rewardBudgetArmedFreshReceived + amount;
+        // Counted against the lifetime cap NET of the in-holder re-credits
+        // (#1566 PR 1 re-review): an era release or a surplus drain raises the
+        // received side as headroom for value already counted at its delivery
+        // — the delivered-position lens nets them the same way.
+        uint256 received = s.rewardBudgetArmedFreshReceived;
+        uint256 reCredited = s.rewardBudgetFreshReCredited;
+        uint256 resulting = (received > reCredited ? received - reCredited : 0) + amount;
         if (resulting > LibVaipakam.VPFI_INTERACTION_POOL_CAP) {
             revert IVaipakamErrors.RewardCustodyFundingExceedsCap(resulting, LibVaipakam.VPFI_INTERACTION_POOL_CAP);
         }
@@ -1198,9 +1206,9 @@ contract RewardCustodyFacet is DiamondAccessControl {
         if (amount == 0) revert IVaipakamErrors.InvalidAmount();
         // Only a role that CAN activate in this slice may be bootstrapped
         // (Codex #2186 r2 P1): a credit on an `Unconfigured` or `Detached`
-        // deployment would move funds into the holder and arm the freeze,
-        // while activation refuses the role and no reward path debits the
-        // holder there — an allocation reachable by nothing.
+        // deployment would move funds into the holder while activation
+        // refuses the role and no reward path debits the holder there — an
+        // allocation reachable by nothing.
         LibVaipakam.RewardRole role = LibVaipakam.rewardRole(s);
         if (role != LibVaipakam.RewardRole.Canonical && role != LibVaipakam.RewardRole.Mirror) {
             revert IVaipakamErrors.RewardCustodyBootstrapRequiresActiveRole(uint8(role));
@@ -1333,14 +1341,15 @@ contract RewardCustodyFacet is DiamondAccessControl {
     }
 
     /// @notice Diamond-internal: {LibRewardCustody.unclassifiedQuarantine}
-    ///         — a quarantine landing (`relocate`) or a demotion's in-holder
-    ///         unwind (`uncredit`); this replaced the Diamond-releasing
-    ///         `custodyUncreditFresh` (retired selector).
-    function custodyUnclassifiedQuarantine(bytes32 h, bytes32 receiptKey, uint256 relocate, uint256 uncredit)
+    ///         — a quarantine landing (`relocate`) or a demotion's release of
+    ///         a provisional hold, in-holder (`fromProvisional`, #2459 r5);
+    ///         this replaced the Diamond-releasing `custodyUncreditFresh`
+    ///         (retired selector).
+    function custodyUnclassifiedQuarantine(bytes32 h, bytes32 receiptKey, uint256 relocate, uint256 fromProvisional)
         external
     {
         _requireDiamondInternal();
-        LibRewardCustody.unclassifiedQuarantine(LibVaipakam.storageSlot(), h, receiptKey, relocate, uncredit);
+        LibRewardCustody.unclassifiedQuarantine(LibVaipakam.storageSlot(), h, receiptKey, relocate, fromProvisional);
     }
 
     /// @notice Diamond-internal: {LibRewardCustody.unclassifiedReturn}.
@@ -1457,13 +1466,6 @@ contract RewardCustodyFacet is DiamondAccessControl {
         return LibVaipakam.storageSlot().rewardCustodyActivated;
     }
 
-    /// @notice #1566 slice 4 PR B — whether effective reward-role changes are
-    ///         refused (holder allocations exist or custody is activated;
-    ///         cleared by slice 4 PR C's backfill).
-    function rewardRoleChangesFrozen() external view returns (bool) {
-        return LibVaipakam.storageSlot().rewardRoleChangesFrozen;
-    }
-
     /**
      * @notice Record the COMPLETE facet cut (Codex #2186 r4, r5): this
      *         tree's custody protocol version and the hash of the ROUTING —
@@ -1551,8 +1553,8 @@ contract RewardCustodyFacet is DiamondAccessControl {
         paidOutRecycled = s.paidOutRecycled;
         keeperBudget = s.recycleKeeperBudget;
         // #1566 closure 2 cutover PR 1 — the DIAMOND-SIDE reservation: the
-        // part the holder backs (a quarantine that landed, or a demotion
-        // that unwound, after the activation) is netted out, so
+        // part the holder backs (a quarantine that landed, or a demotion's
+        // released provisional hold, after the activation) is netted out, so
         // `vpfiBalance >= strandedRecoveryReserved` stays the exact relation
         // the watcher alarms on, with no shape change. Saturating, as the
         // backing position's own subtraction is.
@@ -1584,7 +1586,6 @@ contract RewardCustodyFacet is DiamondAccessControl {
         view
         returns (
             bool activated,
-            bool roleChangesFrozen,
             uint256 liveFresh,
             uint256 recycled,
             uint256 recovery,
@@ -1598,7 +1599,6 @@ contract RewardCustodyFacet is DiamondAccessControl {
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         activated = s.rewardCustodyActivated;
-        roleChangesFrozen = s.rewardRoleChangesFrozen;
         liveFresh = s.rewardCustodyRows[LibVaipakam.RewardCustodyRow.LiveFresh];
         recycled = s.rewardCustodyRows[LibVaipakam.RewardCustodyRow.Recycled];
         recovery = s.rewardCustodyRows[LibVaipakam.RewardCustodyRow.Recovery];

@@ -8,6 +8,7 @@ import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibAutoRefinanceCheck} from "../libraries/LibAutoRefinanceCheck.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
+import {LibServiceCapacity} from "../libraries/LibServiceCapacity.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
@@ -262,11 +263,14 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
     ///          on tagged offers. The atomic routes only ever arrive with a
     ///          tagged offer (their callers chain on the tag), so this binds
     ///          them too as a backstop.
+    ///      #1219 (S-4) -- not `view`: when a delegated keeper is the actor, the
+    ///      authority check is where that identity is established, so the
+    ///      keeper's one-action capacity charge lives here with it.
     function _authorizeRefinance(
         uint256 oldLoanId,
         uint256 borrowerOfferId,
         RefinanceRoute route
-    ) private view {
+    ) private {
         // T-090 v1.1 (#389) §5.8 — refinance withdraws old
         // collateral from `loan.borrower`'s vault before flipping
         // the old loan to Repaid; block while a v1.1 commit is live.
@@ -279,11 +283,11 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         // Phase 6: borrower-entitled strategic flow. Authority binds to the
         // current borrower-NFT owner OR a keeper with the Refinance action
         // bit.
-        LibAuth.requireKeeperFor(
+        if (LibAuth.requireKeeperFor(
             LibVaipakam.KEEPER_ACTION_REFINANCE,
             oldLoan,
             /* lenderSide */ false
-        );
+        )) LibServiceCapacity.chargeKeeper(); // #1219 — one keeper action
         if (oldLoan.status != LibVaipakam.LoanStatus.Active)
             revert LoanNotActive();
         // T-092 Phase 2a (#505) — resolve the current borrower-NFT

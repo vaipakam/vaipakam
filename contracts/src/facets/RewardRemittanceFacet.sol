@@ -180,10 +180,6 @@ contract RewardRemittanceFacet is
 
     using SafeERC20 for IERC20;
 
-    /// @notice Gas allotted to the mirror {RewardRemittanceReceiver} callback.
-    ///         Matched to the buyback remittance receiver's budget.
-    uint256 internal constant REWARD_BUDGET_DEST_GAS_LIMIT = 300_000;
-
     /// @notice #1222 M3 B2-d2 (Codex #1426 r5) — minimum reservation age
     ///         before {releaseRemitReservation} may run (plan §M3's bounded
     ///         reconciliation TIMEOUT, enforced on-chain): a merely-delayed
@@ -542,16 +538,25 @@ contract RewardRemittanceFacet is
             return bytes32(0);
         }
 
+        // 3d-2 — the ROOTED wire: the payload is built ONCE here, by the same
+        // builder the fee quote uses, and the day-list root it commits to is
+        // kept on the reservation — the canonical record of what was sent
+        // carries the commitment the mirror indexes against. B2-d5's
+        // `recycledShare` still rides it: the mirror cannot re-derive it
+        // (`p.recycled` is computed after Base's Σcommitments clamp, which is
+        // Base-global state), so it drives the arrival's typed caps.
+        bytes memory payload;
+        {
+            bytes32 root;
+            (payload, root) = _remitPayload(s, dstChainId, dl.fundedDays, st.totalAll, remitId, st.recycled);
+            s.remitReservations[remitId].dayListRoot = root;
+        }
         messageId = _sendRemitPayload(
             s,
             vpfi,
             messenger,
             dstChainId,
-            dl.fundedDays,
-            // B2-d5 — `recycledShare` is this batch's RECYCLED component. The
-            // mirror cannot re-derive it (`p.recycled` is computed after
-            // Base's Σcommitments clamp, which is Base-global state), so it
-            // rides the payload and drives the arrival custody credit.
+            payload,
             RemitDispatch({
                 total: st.totalAll,
                 remitId: remitId,
@@ -585,35 +590,21 @@ contract RewardRemittanceFacet is
         address vpfi,
         address messenger,
         uint32 dstChainId,
-        uint256[] memory fundedDays,
+        bytes memory payload,
         RemitDispatch memory d
     ) private returns (bytes32 messageId) {
         uint256 total = d.total;
 
-        // r4 — the payload carries THIS deployment's identity (immutable
-        // message data): receipts key by (remitter, remitId) and the ack
-        // echoes it, so a rotated deployment's same-numbered remit can
-        // never be confused with this one.
+        // The payload arrives BUILT — by {_remitPayload}, the one builder the
+        // fee quote also calls (3d-2). It carries THIS deployment's identity
+        // (r4: receipts key by (remitter, remitId), so a rotated deployment's
+        // same-numbered remit can never be confused with this one) and LEADS
+        // with a keccak-derived wire tag (B2-d5's rule, kept by every later
+        // shape): a not-yet-upgraded mirror reads the tag as an array offset,
+        // its decoder's bounds check fails and the delivery REVERTS — never a
+        // silent mis-decode — and CCIP re-executes it once that mirror is
+        // upgraded. See {RemitWire}.
         //
-        // B2-d5 appends `recycledShare` — the RECYCLED component of `total` —
-        // and LEADS with {RemitWire.REMIT_WIRE_TAG_D5} rather than extending
-        // the head-offset ladder to 0xA0. That is a rollout-safety choice, not
-        // a cosmetic one: 0xA0 is a valid in-bounds array offset, so a
-        // not-yet-upgraded mirror would decode the new payload as the LEGACY
-        // 2-tuple and silently drop `remitId`/`remitter`/`recycledShare`,
-        // stranding this reservation Pending with no custody credit — during
-        // exactly the window where Base is refreshed before the mirrors. The
-        // keccak-derived tag is far larger than any payload length, so an old
-        // decoder's bounds check fails and the delivery REVERTS instead;
-        // CCIP re-executes it once that mirror is upgraded. See {RemitWire}.
-        bytes memory payload = abi.encode(
-            RemitWire.REMIT_WIRE_TAG_D5,
-            fundedDays,
-            total,
-            d.remitId,
-            address(this),
-            d.recycledShare
-        );
         // #1566 slice 4 PR B — the ordinary remittance names LIVE custody:
         // its fresh share is bounded and charged against the delivered
         // ledger and leaves the live-fresh row, its recycled share leaves
@@ -630,6 +621,51 @@ contract RewardRemittanceFacet is
                 fresh: total - d.recycledShare,
                 recycled: d.recycledShare
             })
+        );
+    }
+
+    /// @notice The ONE builder of an ordinary remittance's payload — the send
+    ///         and its fee quote both call it, so the quote prices exactly the
+    ///         bytes the send emits (one walk for a send and all its quotes).
+    /// @dev    3d-2 — the d6 (ROOTED) wire: the funded days are committed to by
+    ///         a Merkle root over fixed-size indexed chunks
+    ///         ({RemitWire.d6Chunks}, {RemitWire.d6Root}) and travel with the
+    ///         extent, the typed split and the era. The funded list is bounded
+    ///         by {LibRewardCustody.requireRemittableFanout} before this runs,
+    ///         so the hashing is at most a handful of leaves.
+    ///         The era word is the custody era the DESTINATION last reported
+    ///         (its B4 day report; #1566 PR C revision) — eras are numbered per
+    ///         chain, so the receiver compares like with like: a delivery the
+    ///         destination has since moved past lands in the era it was sent for.
+    /// @return payload The wire bytes.
+    /// @return root    The day-list root the payload commits to; the send keeps
+    ///                 it on the reservation.
+    function _remitPayload(
+        LibVaipakam.Storage storage s,
+        uint32 dstChainId,
+        uint256[] memory fundedDays,
+        uint256 total,
+        uint256 remitId,
+        uint256 recycledShare
+    ) private view returns (bytes memory payload, bytes32 root) {
+        bytes32[] memory leaves = RemitWire.d6Chunks(fundedDays);
+        root = RemitWire.d6Root(leaves);
+        // #1566 PR C revision — stamped with the DESTINATION's era as it last
+        // reported it. A remittance funding days of an era the destination has
+        // since retired is stamped the newer era and files there; its days still
+        // draw from its epoch (a draw reads batch membership, never the era), so
+        // only where an unused remainder goes once those days close differs. The
+        // older wire placed a delivery by its days instead: a rooted list's days
+        // are not known at ingress, so the destination cannot.
+        payload = RemitWire.encodeD6(
+            root,
+            fundedDays.length,
+            leaves.length,
+            total,
+            remitId,
+            address(this),
+            recycledShare,
+            s.chainCustodyEraReported[dstChainId]
         );
     }
 
@@ -1639,26 +1675,20 @@ contract RewardRemittanceFacet is
         ICrossChainMessenger.TokenAmount[] memory tokens =
             new ICrossChainMessenger.TokenAmount[](1);
         tokens[0] = ICrossChainMessenger.TokenAmount({token: vpfi, amount: total});
+        // B2-d2 — price exactly the bytes the send builds; the fee depends on
+        // payload length, so the placeholder id (the next nonce the send would
+        // draw) keeps the quote exact. 3d-2 — the SAME builder as the send
+        // ({_remitPayload}), so `quote == send` holds by construction.
+        // `total − totalFresh` IS the recycled share: every funded day
+        // contributes `slice = p.fresh + p.recycled` to `total` and `p.fresh`
+        // to `totalFresh`.
+        (bytes memory payload, ) =
+            _remitPayload(s, dstChainId, fundedDays, total, s.remitReservationNonce + 1, total - totalFresh);
         fee = ICrossChainMessenger(messenger).quoteMessageFee(
             dstChainId,
-            // B2-d2 — price the WIDENED tuple the send builds; the fee
-            // depends on payload length, so the placeholder id (the next
-            // nonce the send would draw) keeps the quote exact. B2-d5 adds
-            // the wire tag and the recycled share, matching
-            // {_sendRemitPayload} exactly so `quote == send` still holds.
-            // `total − totalFresh` IS that share: every funded day contributes
-            // `slice = p.fresh + p.recycled` to `total` and `p.fresh` to
-            // `totalFresh`.
-            abi.encode(
-                RemitWire.REMIT_WIRE_TAG_D5,
-                fundedDays,
-                total,
-                s.remitReservationNonce + 1,
-                address(this),
-                total - totalFresh
-            ),
+            payload,
             tokens,
-            REWARD_BUDGET_DEST_GAS_LIMIT
+            LibRewardRemitDispatch.REWARD_BUDGET_DEST_GAS_LIMIT
         );
     }
 

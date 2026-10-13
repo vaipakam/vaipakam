@@ -1,0 +1,25 @@
+import { describe, expect, it } from 'vitest';
+import { readMatchPreviewLive } from './desk';
+
+/**
+ * #2459 r2 / r4 — the desk's match preview names the CONNECTED matcher: the
+ * contract checks the capacity its route charges for the matcher and outer
+ * initiator it is given, so the read passes the wallet that would call
+ * `matchOffers` for both (it sends that transaction itself), never relying on
+ * the call's sender.
+ */
+describe('readMatchPreviewLive', () => {
+  it('passes the matcher as the preview\'s matcher AND initiator', async () => {
+    let seen: readonly unknown[] = [];
+    const client = {
+      readContract: async (req: { args: readonly unknown[] }) => {
+        seen = req.args;
+        return { errorCode: 0, matchAmount: 1n, matchRateBps: 500n, reqCollateral: 2n, lenderRemainingPostMatch: 0n };
+      },
+    } as never;
+    const matcher = '0x00000000000000000000000000000000000000aa' as const;
+    const r = await readMatchPreviewLive(client, '0x00000000000000000000000000000000000000d1', { lenderOfferId: 7, borrowerOfferId: 9 }, matcher);
+    expect(r?.errorCode).toBe(0);
+    expect(seen).toEqual([7n, 9n, matcher, matcher]);
+  });
+});

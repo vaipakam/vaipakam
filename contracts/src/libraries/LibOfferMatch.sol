@@ -59,7 +59,10 @@ library LibOfferMatch {
         RefinanceTagged,          // #576/#595 — a refinance-tagged offer that is NOT an admissible AON carry-over match: a lender-tagged offer, or a borrower carry-over offer whose target fails the exhaustive admission mirror (`LibAutoRefinanceCheck.matchAdmissible` — stale target, transferred NFT, gated caps/kill-switch, live intent, diverged retag key, etc.). `matchOffers` reverts `RefinanceTaggedOfferNotMatchable`. Lets bots skip the pair at preview time.
         RefinanceCarryOverCollateralShortfall, // #595 — an admitted carry-over match where the lender's pro-rated collateral requirement exceeds the carried (pinned) amount; carry-over pledges no fresh collateral to top it up.
         SaleVehicleTagged,        // #951 (Codex #959) — the borrower offer is a lender-sale vehicle (linked via `saleOfferToLoanId`). It is fillable ONLY through `acceptOffer` (which auto-completes the linked sale); `matchOffers` reverts `SaleVehicleNotMatchable`. Lets bots skip the pair at preview time.
-        OffsetVehicleTagged       // #1001 (S3, Codex #1070 r4) — the LENDER offer is a linked Preclose Option-3 offset vehicle (`offsetOfferToLoanId`). It settles ONLY through `acceptOffer` → `completeOffsetInternal`; `matchOffers` reverts `OffsetVehicleNotMatchable`. Appended LAST to keep every prior ordinal ABI-stable. Lets bots skip the pair at preview time.
+        OffsetVehicleTagged, // #1001 (S3, Codex #1070 r4) — the LENDER offer is a linked Preclose Option-3 offset vehicle (`offsetOfferToLoanId`). It settles ONLY through `acceptOffer` → `completeOffsetInternal`; `matchOffers` reverts `OffsetVehicleNotMatchable`. Appended LAST to keep every prior ordinal ABI-stable. Lets bots skip the pair at preview time.
+        // #1219 review — the filler's capacity cannot cover this fill. Checked LAST,
+        // exactly where `matchOffers` / `matchSignedOffer` now take the charge.
+        CapacityExhausted
     }
 
     /// @notice Structured return from `previewMatch`. Bots check
@@ -77,7 +80,7 @@ library LibOfferMatch {
     }
 
     /// @notice #625 WI-2b — intent-fill preview failure codes. Each mirrors,
-    ///         1:1 and IN THE SAME ORDER, a revert `OfferMatchFacet.matchIntent`
+    ///         1:1 and IN THE SAME ORDER, a revert `OfferMatchIntentFacet.matchIntent`
     ///         raises BEFORE the shared match core runs, so an off-chain solver
     ///         learns the exact reason a fill would fail without spending gas on
     ///         a reverting tx. `Ok` means every intent-level guard passed and
@@ -116,10 +119,14 @@ library LibOfferMatch {
         AcceptGateBlocked,       // borrower sanctioned / asset paused / borrower consent missing
         // #951 v2 (Codex #959 bind-to-live, round-8 P2/P3 preview parity) — the
         // counterparty (borrower) offer is a lender-sale vehicle (linked via
-        // `saleOfferToLoanId`). `_executeMatch` reverts `SaleVehicleNotMatchable`
+        // `saleOfferToLoanId`). `executeMatch` reverts `SaleVehicleNotMatchable`
         // on it, so `matchIntent` reverts too; previewIntent must mirror that
         // rather than falsely report Ok. APPENDED — prior ordinals stay stable.
-        SaleVehicleTagged
+        SaleVehicleTagged,
+        // #1219 review — the solver's capacity cannot cover this fill (the route's
+        // actor, as the fill resolves it). Checked LAST, where `matchIntent` now
+        // takes the charge. APPENDED — prior ordinals stay stable.
+        CapacityExhausted
     }
 
     /// @notice Structured outcome of `RiskPreviewFacet.previewIntent`. `ok` is
@@ -297,7 +304,7 @@ library LibOfferMatch {
         // or a bot would see an `Ok` verdict for a pair that always reverts on
         // submit. Checked on the stored id (unavailable in `_previewMatchCore`,
         // which sees only offer VALUES); the #625 intent path never targets a
-        // sale vehicle and is already `_executeMatch`-guarded.
+        // sale vehicle and is already `executeMatch`-guarded.
         if (s.saleOfferToLoanId[borrowerOfferId] != 0) {
             r.errorCode = MatchError.SaleVehicleTagged;
             return r;
@@ -698,7 +705,7 @@ library LibOfferMatch {
     }
 
     /// @notice #625 WI-2b — non-mutating preview of a `matchIntent` fill. Runs
-    ///         the SAME intent-level guards `OfferMatchFacet.matchIntent`
+    ///         the SAME intent-level guards `OfferMatchIntentFacet.matchIntent`
     ///         enforces, IN THE SAME ORDER, then synthesizes the single-fill
     ///         lender slice in memory and runs it through the shared
     ///         {_previewMatchCore} against the stored borrower offer. Returns
@@ -806,7 +813,7 @@ library LibOfferMatch {
             return _intentFail(res, IntentError.SliceDurationAboveCap);
         }
         // (b) Per-asset pause (OfferCreateFacet:767 — `requireAssetNotPaused`
-        //     on BOTH legs, before `_executeMatch`). Either paused leg fails the
+        //     on BOTH legs, before `executeMatch`). Either paused leg fails the
         //     materialize here, ahead of the match core / risk gate.
         if (s.assetPaused[lendingAsset] || s.assetPaused[collateralAsset]) {
             return _intentFail(res, IntentError.SlicePausedAsset);
@@ -867,11 +874,11 @@ library LibOfferMatch {
         }
 
         // #951 v2 (Codex #959 bind-to-live, round-8 P2/P3) — mirror
-        // `_executeMatch`'s sale-vehicle rejection: a borrower offer linked via
+        // `executeMatch`'s sale-vehicle rejection: a borrower offer linked via
         // `saleOfferToLoanId` is a lender-position sale, fillable ONLY through
-        // direct `acceptOffer`. `matchIntent` → `_executeMatch` reverts
+        // direct `acceptOffer`. `matchIntent` → `executeMatch` reverts
         // `SaleVehicleNotMatchable` on it, so preview must fail here rather than
-        // return Ok. Ordered to match the live path: `_executeMatch`'s check runs
+        // return Ok. Ordered to match the live path: `executeMatch`'s check runs
         // after the intent body + slice-materialize guards, before the match core.
         if (s.saleOfferToLoanId[counterpartyOfferId] != 0) {
             return _intentFail(res, IntentError.SaleVehicleTagged);

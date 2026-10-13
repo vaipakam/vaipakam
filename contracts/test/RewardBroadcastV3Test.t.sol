@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {SetupTest} from "./SetupTest.t.sol";
 
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
+import {RewardEraFacet} from "../src/facets/RewardEraFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
 import {RewardBroadcastFacet} from "../src/facets/RewardBroadcastFacet.sol";
@@ -66,6 +67,16 @@ abstract contract RewardBroadcastV3Harness is SetupTest, IVaipakamErrors {
     }
 
     // ─── Harness (the CrossChainRewardPlumbingTest shapes) ──────────────────
+
+    function _era() internal view returns (RewardEraFacet) {
+        return RewardEraFacet(address(diamond));
+    }
+
+    /// @dev PR C-4 — the id of the most recently parked broadcast (ids are dense from 1).
+    function _lastParkedId() internal view returns (uint256 id) {
+        id = 1;
+        while (_era().getParkedBroadcast(id + 1).receivedAt != 0) ++id;
+    }
 
     function _rep() internal view returns (RewardReporterFacet) {
         return RewardReporterFacet(address(diamond));
@@ -818,9 +829,14 @@ contract RewardBroadcastV3MirrorTest is RewardBroadcastV3Harness {
     /// Codex #1632 r2 P1 — a true era ROTATION permanently retires the
     /// identity-less legacy wires' FRESH applies (a retired era's delayed
     /// or re-executed kind-5/kind-2 is indistinguishable from a
-    /// legitimate one; the new era only speaks V3). Replays of
-    /// already-applied days stay idempotent, and a disarm/re-arm cycle of
-    /// the SAME era is not a rotation.
+    /// legitimate one; the new era only speaks V3). Since PR C-4 (#1566) a
+    /// retired wire's fresh apply is PARKED, not reverted: recorded in the
+    /// parked lane, counted against the live era, no day state installed,
+    /// a retry refused by name while the gate holds — so a legitimate late
+    /// packet stays on record, for a retry or the operator's tombstone,
+    /// instead of being lost in a revert.
+    /// Replays of already-applied days stay idempotent, and a disarm/re-arm
+    /// cycle of the SAME era is not a rotation.
     function testRotationRetiresLegacyWire() public {
         _configureMirror(CHAIN_ARB);
         messenger.deliverBroadcastV2(_v2Packet(CHAIN_ARB)); // day 3 applied
@@ -832,21 +848,30 @@ contract RewardBroadcastV3MirrorTest is RewardBroadcastV3Harness {
         day4.dayId = 4;
         messenger.deliverBroadcastV2(day4);
 
-        // A DIFFERENT nonzero era: rotation — legacy fresh applies retire.
+        // A DIFFERENT nonzero era: rotation — legacy fresh applies are PARKED.
         _rotateEra(address(0xE2));
+        uint64 live = _era().getCustodyEraCurrent();
+        uint256 openBefore = _era().getCustodyEraParkedOpen(live);
         RewardBroadcastV2 memory day5 = _v2Packet(CHAIN_ARB);
         day5.dayId = 5;
-        vm.expectRevert(
-            abi.encodeWithSelector(LegacyBroadcastRetired.selector, 5)
-        );
-        messenger.deliverBroadcastV2(day5);
+        messenger.deliverBroadcastV2(day5); // parked, not reverted
+        LibVaipakam.ParkedBroadcast memory p5 = _era().getParkedBroadcast(_lastParkedId());
+        assertEq(p5.kind, 5, "the kind-5 wire is parked");
+        assertEq(p5.dayId, 5);
+        assertEq(p5.status, 0, "parked, not applied");
+        assertEq(p5.custodyEraAtReceipt, live, "counted against the live era");
+        (, , bool set5) = _rep().getKnownGlobalInterestNumeraire18(5);
+        assertFalse(set5, "no day state installed for day 5");
 
-        // Kind-2 fresh writes retire too (a retired era's pair would wedge
-        // the day against the new era's V3).
-        vm.expectRevert(
-            abi.encodeWithSelector(LegacyBroadcastRetired.selector, 6)
-        );
+        // Kind-2 fresh writes park too (a retired era's pair would wedge the
+        // day against the new era's V3).
         messenger.deliverBroadcast(6, 1e18, 1e18, type(uint256).max);
+        LibVaipakam.ParkedBroadcast memory p6 = _era().getParkedBroadcast(_lastParkedId());
+        assertEq(p6.kind, 2, "the kind-2 wire is parked");
+        assertEq(p6.dayId, 6);
+        (, , bool set6) = _rep().getKnownGlobalInterestNumeraire18(6);
+        assertFalse(set6, "no day state installed for day 6");
+        assertEq(_era().getCustodyEraParkedOpen(live) - openBefore, 2, "both parked against the live era");
 
         // Replays of the pre-rotation days stay idempotent.
         messenger.deliverBroadcastV2(_v2Packet(CHAIN_ARB));
@@ -1155,7 +1180,8 @@ contract RewardBroadcastV3MirrorTest is RewardBroadcastV3Harness {
 
     /// …and a RETIRED era cannot arm this mirror through that same door.
     ///
-    /// {LegacyBroadcastRetired} deliberately sits BELOW the replay branch, so
+    /// The rotation gate (a fresh legacy apply after a rotation is PARKED)
+    /// deliberately sits BELOW the replay branch, so
     /// an already-applied day keeps replaying idempotently forever after a
     /// rotation. That placement is safe while a replay is a no-op — and the
     /// install above is not one. Without the exclusion, a delayed or
@@ -1631,24 +1657,20 @@ contract CompensationClassificationTest is RewardBroadcastV3Harness {
         assertEq(dc.lenderPool18, 3e18, "pools credited pending the era");
     }
 
-    /// #1566 closure 2 — the PROVISIONAL-CONFIRM fixture the design asks for:
-    /// a compensation credit counts its authenticated fresh amount at INGRESS,
-    /// whatever the day's vintage (the chain is unarmed here), and confirmation
-    /// promotes NOTHING — it clears the provisional flag and leaves the ledger
-    /// exactly where the credit put it. Before closure 2 the credit landed in
-    /// `uncounted` (day unarmed) and the #1634 r3 reclassification moved it
-    /// into `received` at confirmation; that promotion is gone because there
-    /// is nothing left to promote.
+    /// #1566 closure 2 — the PROVISIONAL-CONFIRM fixture the design asks for,
+    /// as #2459 r5 revised it: a provisional credit is HELD APART — counted by
+    /// neither figure, reported as held — and confirmation counts it ONCE, by
+    /// exactly the held figure (the frame's fresh amount, whatever the day's
+    /// vintage: the chain is unarmed here).
     function testProvisionalConfirmedInPlace() public {
         _configureCompMirror();
         _deliverComp(3, REMITTER, 3e18, 2e18);
-        assertEq(
-            _rlens().getDayCompensation(3).armedFreshCounted,
-            5e18,
-            "counted in full at credit - vintage-blind"
-        );
+        LibVaipakam.DayCompensation memory dc0 = _rlens().getDayCompensation(3);
+        assertEq(dc0.armedFreshCounted, 0, "not counted while provisional");
+        assertEq(dc0.provisionalHeld, 5e18, "held apart");
+        assertEq(_rlens().getProvisionalFreshHeld(), 5e18, "and reported as held");
         (uint256 counted0, uint256 uncounted0) = _rlens().getDeliveredFreshPosition();
-        assertEq(counted0, 5e18, "ledger credited at ingress");
+        assertEq(counted0, 0, "the ledger is untouched at ingress");
         assertEq(uncounted0, 0, "nothing parked");
 
         RewardBroadcastV3 memory b = _v3Packet(CHAIN_ARB);
@@ -1660,10 +1682,12 @@ contract CompensationClassificationTest is RewardBroadcastV3Harness {
         assertFalse(dc.provisional, "confirmed in place");
         assertEq(dc.lenderPool18, 3e18, "pools untouched");
         assertEq(_rlens().getStrandedRecoveryReserved(), 0, "no quarantine");
-        assertEq(dc.armedFreshCounted, 5e18, "confirmation changes nothing");
+        assertEq(dc.armedFreshCounted, 5e18, "counted at confirmation, by exactly the held figure");
+        assertEq(dc.provisionalHeld, 0, "nothing held any more");
+        assertEq(_rlens().getProvisionalFreshHeld(), 0);
         (uint256 counted1, uint256 uncounted1) = _rlens().getDeliveredFreshPosition();
-        assertEq(counted1, counted0, "confirmation promotes nothing");
-        assertEq(uncounted1, uncounted0, "and demotes nothing");
+        assertEq(counted1, 5e18, "confirmation counts it, once");
+        assertEq(uncounted1, uncounted0, "and parks nothing");
     }
 
     /// #1656 r11 — a provisional credit stamps NO remediation clocks: the
@@ -1726,25 +1750,25 @@ contract CompensationClassificationTest is RewardBroadcastV3Harness {
         assertEq(_rlens().getStrandedRecoveryReserved(), 5e18, "sum moved");
     }
 
-    /// #1566 closure 2 — the PROVISIONAL-DEMOTE fixture the design asks for:
-    /// the demotion branch ALONE reverses exactly the original provisional
-    /// credit — `received` falls by what the credit added, and that amount
-    /// moves to `uncounted` beside the recovery reservation. Proven against
-    /// the credit it starts from, not by composing confirm-then-demote, which
-    /// the production state machine cannot do.
+    /// #1566 closure 2 — the PROVISIONAL-DEMOTE fixture the design asks for,
+    /// as #2459 r5 revised it: the held value was never counted, so the
+    /// demotion unwinds nothing — it moves the held figure to `uncounted`
+    /// beside the recovery reservation, whole.
     function testProvisionalDemoted_EraMismatch() public {
         _configureCompMirror();
         _deliverComp(3, address(0xDD), 3e18, 2e18); // stale-era sender
         (uint256 counted0, uint256 uncounted0) = _rlens().getDeliveredFreshPosition();
-        assertEq(counted0, 5e18, "credited in full at ingress");
+        assertEq(counted0, 0, "held apart at ingress, not counted");
+        assertEq(_rlens().getProvisionalFreshHeld(), 5e18, "fixture-live: held");
 
         RewardBroadcastV3 memory b = _v3Packet(CHAIN_ARB);
         b.zeroedForDest = true;
         messenger.deliverBroadcastV3(b); // confirmed era = ERA_BASE
 
         (uint256 counted1, uint256 uncounted1) = _rlens().getDeliveredFreshPosition();
-        assertEq(counted1, 0, "demotion removed exactly what the credit added");
-        assertEq(uncounted1, uncounted0 + 5e18, "...and parked it as uncounted");
+        assertEq(counted1, counted0, "the demotion unwinds nothing: nothing was counted");
+        assertEq(uncounted1, uncounted0 + 5e18, "...and parks the held value as uncounted");
+        assertEq(_rlens().getProvisionalFreshHeld(), 0, "no longer held");
         LibVaipakam.DayCompensation memory dc = _rlens().getDayCompensation(3);
         assertFalse(dc.compensated, "provisional state deleted");
         LibVaipakam.StrandedRecovery memory sr =
@@ -1754,24 +1778,21 @@ contract CompensationClassificationTest is RewardBroadcastV3Harness {
         assertEq(_rlens().getStrandedRecoveryReserved(), 5e18, "sum moved");
     }
 
-    /// Codex #2308 r21 — on an INACTIVE-custody deployment a demotion cuts the
-    /// delivered ledger through the same floor-aware write the activated path
-    /// uses: what a staging record has RESERVED of the ledger is not demoted
-    /// out from under its irrevocable resolution. Credit 5, reserve 2, demote:
-    /// the received side keeps the 2, and the full credit still parks as
-    /// uncounted beside the recovery reservation.
-    function testProvisionalDemoted_KeepsAStagingReservationOfTheLedger() public {
+    /// #2459 r5 — a demotion never touches the delivered ledger, so a staging
+    /// reservation of it is never at risk: the provisional value was never in
+    /// the ledger to reserve. (Codex #2308 r21 made the old unwind floor-aware
+    /// for exactly this; holding the value apart removes the case.)
+    function testProvisionalDemoted_NeverTouchesTheDeliveredLedger() public {
         _configureCompMirror();
         _deliverComp(3, address(0xDD), 3e18, 2e18); // stale-era sender
+        _mut().setRewardBudgetArmedFreshReservedRaw(2e18); // a staging reservation standing
         (uint256 counted0, uint256 uncounted0) = _rlens().getDeliveredFreshPosition();
-        assertEq(counted0, 5e18, "fixture: credited in full at ingress");
-        _mut().setRewardBudgetArmedFreshReservedRaw(2e18);
         RewardBroadcastV3 memory b = _v3Packet(CHAIN_ARB);
         b.zeroedForDest = true;
         messenger.deliverBroadcastV3(b); // demote
         (uint256 counted1, uint256 uncounted1) = _rlens().getDeliveredFreshPosition();
-        assertEq(counted1, 2e18, "the reserved part of the ledger survives the demotion");
-        assertEq(uncounted1, uncounted0 + 5e18, "and the whole credit parks as uncounted");
+        assertEq(counted1, counted0, "no counted figure moved");
+        assertEq(uncounted1, uncounted0 + 5e18, "the whole held value parks as uncounted");
     }
 
     function testProvisionalDemoted_NotZeroed() public {

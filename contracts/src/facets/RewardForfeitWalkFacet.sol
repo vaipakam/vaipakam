@@ -52,6 +52,31 @@ contract RewardForfeitWalkFacet is IVaipakamErrors {
         legs = tp;
     }
 
+    /// @notice 3b-ii-B (B-6) — the zero-priced remainder's retirement, hosted here
+    ///         (this facet already carries the day primitive; the sweep walk's has
+    ///         no room). Reached by Diamond self-call from
+    ///         {RewardHorizonSweepFacet.retireZeroPricedRemainders}; gated.
+    function epochRetireZeroPricedRemainder(
+        uint256 id,
+        uint256 freshHeadroom,
+        uint256 deliveredAllowance,
+        LibInteractionRewards.TransportLegs memory tp
+    )
+        external
+        returns (
+            bool retired,
+            LibInteractionRewards.EntrySplit memory expired,
+            uint256 freshCredited,
+            uint256 armedDelivered,
+            LibInteractionRewards.TransportLegs memory legs
+        )
+    {
+        _requireDiamondInternal();
+        (retired, expired, freshCredited, armedDelivered) =
+            LibInteractionRewards.retireZeroPricedRemainder(id, freshHeadroom, deliveredAllowance, tp);
+        legs = tp;
+    }
+
     function _requireDiamondInternal() private view {
         if (msg.sender != address(this)) revert RewardCustodyOnlyDiamondInternal(msg.sender);
     }

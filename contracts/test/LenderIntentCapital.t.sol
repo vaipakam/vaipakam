@@ -5,6 +5,7 @@ import {SetupTest} from "./SetupTest.t.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
+import {OfferMatchIntentFacet} from "../src/facets/OfferMatchIntentFacet.sol";
 import {LenderIntentFacet} from "../src/facets/LenderIntentFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
@@ -105,7 +106,7 @@ contract LenderIntentCapitalTest is SetupTest {
         lastBorrower = b;
         uint256 cp = _postBorrower(b);
         vm.prank(solver);
-        loanId = OfferMatchFacet(address(diamond)).matchIntent(
+        loanId = OfferMatchIntentFacet(address(diamond)).matchIntent(
             lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
         );
         vm.prank(b);
@@ -379,7 +380,7 @@ contract LenderIntentCapitalTest is SetupTest {
                 PRINCIPAL, PRINCIPAL / 2
             )
         );
-        OfferMatchFacet(address(diamond)).matchIntent(
+        OfferMatchIntentFacet(address(diamond)).matchIntent(
             lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
         );
     }
@@ -397,9 +398,9 @@ contract LenderIntentCapitalTest is SetupTest {
         VPFITokenFacet(address(diamond)).setVPFIToken(mockERC20);
         vm.prank(solver);
         vm.expectRevert(
-            OfferMatchFacet.LenderIntentVpfiLendingUnsupported.selector
+            OfferMatchIntentFacet.LenderIntentVpfiLendingUnsupported.selector
         );
-        OfferMatchFacet(address(diamond)).matchIntent(
+        OfferMatchIntentFacet(address(diamond)).matchIntent(
             lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
         );
     }
@@ -414,7 +415,7 @@ contract LenderIntentCapitalTest is SetupTest {
         address b = _newBorrower("b1");
         uint256 cp = _postBorrower(b);
         vm.prank(solver);
-        uint256 loanId = OfferMatchFacet(address(diamond)).matchIntent(
+        uint256 loanId = OfferMatchIntentFacet(address(diamond)).matchIntent(
             lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
         );
         // The fill consumed the whole capital lien.
@@ -479,7 +480,7 @@ contract LenderIntentCapitalTest is SetupTest {
         address b2 = _newBorrower("reB");
         uint256 cp2 = _postBorrower(b2);
         vm.prank(solver);
-        uint256 loan2 = OfferMatchFacet(address(diamond)).matchIntent(
+        uint256 loan2 = OfferMatchIntentFacet(address(diamond)).matchIntent(
             lender, mockERC20, mockCollateralERC20, cp2, PRINCIPAL
         );
         assertGt(loan2, 0, "re-matched from rolled capital");
@@ -545,7 +546,7 @@ contract LenderIntentCapitalTest is SetupTest {
         address b = _newBorrower("activeB");
         uint256 cp = _postBorrower(b);
         vm.prank(solver);
-        uint256 loanId = OfferMatchFacet(address(diamond)).matchIntent(
+        uint256 loanId = OfferMatchIntentFacet(address(diamond)).matchIntent(
             lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
         );
         vm.prank(lender);
@@ -700,7 +701,7 @@ contract LenderIntentCapitalTest is SetupTest {
         address b = _newBorrower("byOwnerLP");
         uint256 cp = _postBorrower(b);
         vm.prank(solver);
-        OfferMatchFacet(address(diamond)).matchIntent(
+        OfferMatchIntentFacet(address(diamond)).matchIntent(
             lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
         );
         (LibMetricsTypes.OwnerLenderIntentSummary[] memory rows, uint256 total) =

@@ -88,6 +88,12 @@ export const EXIT_WRITES: ReadonlySet<string> = new Set([
   'claimAsLender',
   'claimInteractionRewards',
   'withdrawVPFIFromVault',
+  // An operator's own service capacity deposit (#1219), live or in a retired
+  // rotation epoch. It is their principal coming home, exactly like a vault
+  // withdrawal; refusing it over unsigned Terms would freeze operator capital
+  // that no position holds. Posting a deposit is new business and stays gated.
+  'withdrawCapacityDeposit',
+  'withdrawArchivedCapacityDeposit',
   // Batched claims. Permitted only when every inner call is itself an
   // exit — see `isExitWrite`.
   'multicall',

@@ -125,7 +125,14 @@ library LibVpfiRecycle {
         /// @dev #1566 transport epochs PR 3b-ii-A — release-only class: the
         ///      recycled leg of a USER claim an epoch paid, whose commitment
         ///      retires without a bucket debit (the bucket never paid it).
-        TransportPaidClaim
+        TransportPaidClaim,
+        /// @dev #1219 (S-4) slice 3 — the service capacity ARMING FEE: VPFI an
+        ///      operator pays the platform for the capacity a deposit newly arms,
+        ///      pulled into Diamond custody by the post (never into the deposit
+        ///      escrow). GENUINE absorption, fresh from the payer and never
+        ///      Ā-counted before — so it belongs in the day-bucketed feed and the
+        ///      reported cumulative, like the notification tariff.
+        ServiceCapacityArmingFee
     }
 
     /// @notice Emitted once per recycle-bucket credit — the on-chain feed
@@ -227,6 +234,14 @@ library LibVpfiRecycle {
         _credit(RecycleSource.SpendGatedPerk, refId, amount, CreditOrigin.Diamond);
     }
 
+    /// @notice See {creditNotificationFee} — the service capacity ARMING FEE
+    ///         (#1219 S-4 slice 3), pulled from the operator into Diamond custody
+    ///         by the deposit post. `refId` is `(role << 160) | operator`.
+    function creditServiceCapacityArmingFee(uint256 refId, uint256 amount, uint256 balanceBefore) internal {
+        _requireInflowDelta(RecycleSource.ServiceCapacityArmingFee, amount, balanceBefore);
+        _credit(RecycleSource.ServiceCapacityArmingFee, refId, amount, CreditOrigin.Diamond);
+    }
+
     /**
      * @notice #1566 closure 2 — the reward-absorption operation: FRESH reward
      *         value that terminates into the bucket (a forfeit's fresh share,
@@ -279,6 +294,22 @@ library LibVpfiRecycle {
         _credit(source, refId, amount, CreditOrigin.Unclassified);
     }
 
+    /// @notice PR C-2 — fresh absorbed into the bucket that a RETIRED era's row funded.
+    /// @custom:event-category state-change/reward-custody
+    event VpfiRecycledEraFunded(uint8 source, uint256 refId, uint256 amount);
+
+    /// @notice PR C-2 — absorb ERA-FUNDED fresh into the bucket: custody a retired
+    ///         era's row funded for this obligation, moved into the live row by the
+    ///         day's era draw. Not charged to the delivered bound — the era already
+    ///         delivered it — and counted apart from live-funded absorption, so the
+    ///         bucket's composition names it.
+    function absorbEraFunded(RecycleSource source, uint256 refId, uint256 amount) internal {
+        if (amount == 0) return;
+        LibVaipakam.storageSlot().recycleEraFundedCumulative += amount;
+        emit VpfiRecycledEraFunded(uint8(source), refId, amount);
+        _credit(source, refId, amount, CreditOrigin.EraFunded);
+    }
+
     /// @notice 3b-ii-A2 (#2305) — {absorbTransportFunded} for epoch legs a
     ///         staging record's batch pages already hold in `Resolving`: the
     ///         same in-holder absorption, from the hold instead of from
@@ -324,7 +355,11 @@ library LibVpfiRecycle {
         /// @dev 3b-ii-A2 (#2305) — an epoch's value a staging record's batch
         ///      pages already moved into the `Resolving` hold, absorbed from
         ///      there on the record's last page.
-        Resolving
+        Resolving,
+        /// @dev PR C-2 — fresh a RETIRED era's row funded, moved into the live
+        ///      row by the day's era draw: the same row move as `LiveFresh`,
+        ///      counted apart and charged to no delivered bound.
+        EraFunded
     }
 
     /// @dev The delta check every non-reward inflow operation performs: the
@@ -382,7 +417,7 @@ library LibVpfiRecycle {
                 // generic primitive, so the second origin costs no facet a
                 // second encode (this function is inlined into fourteen).
                 LibRewardCustody.callMove(
-                    origin == CreditOrigin.LiveFresh
+                    origin == CreditOrigin.LiveFresh || origin == CreditOrigin.EraFunded
                         ? LibVaipakam.RewardCustodyRow.LiveFresh
                         : origin == CreditOrigin.Resolving
                             ? LibVaipakam.RewardCustodyRow.Resolving
@@ -852,7 +887,7 @@ library LibVpfiRecycle {
         // bucket, and this balance minus its OWN earmarks.
         if (LibRewardCustody.active(s)) {
             // #1566 closure 2 cutover PR 1 — a quarantine that landed (or a
-            // demotion that unwound) AFTER the activation is custody of the
+            // demotion's released provisional hold) AFTER the activation is custody of the
             // holder's `Unclassified` row; only the reservation's remainder
             // — quarantines that predate the activation — still rests in
             // this balance. Saturating: the reservation floors at zero on
@@ -1645,12 +1680,7 @@ library LibVpfiRecycle {
         uint256 cumulative,
         uint256 forDayReported
     ) internal {
-        // AVAILABILITY — monotonic self-healing ratchet.
-        uint256 reported = s.chainReportedRecycled[sourceChainId];
-        if (cumulative > reported) {
-            reported = cumulative;
-            s.chainReportedRecycled[sourceChainId] = cumulative;
-        }
+        uint256 reported = recordChainRecycledCumulative(s, sourceChainId, cumulative);
 
         // DAY ATTRIBUTION — once per (day, chain).
         if (s.chainRecycledDayAccepted[dayId][sourceChainId]) return;
@@ -1678,6 +1708,21 @@ library LibVpfiRecycle {
         emit ChainRecycledReported(
             sourceChainId, dayId, cumulative, forDayReported, accepted
         );
+    }
+
+    /// @notice AVAILABILITY — a chain's reported recycled cumulative, a
+    ///         monotonic self-healing ratchet: chain-wide, never a day's figure,
+    ///         so a report that arrives after its day finalized still applies
+    ///         it (#2459 r6). Returns the cumulative on record.
+    function recordChainRecycledCumulative(LibVaipakam.Storage storage s, uint32 sourceChainId, uint256 cumulative)
+        internal
+        returns (uint256 reported)
+    {
+        reported = s.chainReportedRecycled[sourceChainId];
+        if (cumulative > reported) {
+            reported = cumulative;
+            s.chainReportedRecycled[sourceChainId] = cumulative;
+        }
     }
 
     // ─── #1222 M3 B3 — commitment retirement + availability ────────────────

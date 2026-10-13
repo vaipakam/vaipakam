@@ -277,6 +277,87 @@ contract RewardAggregatorFacet is
         );
     }
 
+    /// @notice #1566 PR C revision — the B4 ingress: the B3 figures plus the
+    ///         reporting chain's live custody era, recorded (highest wins) before
+    ///         the report itself is ingested, so a rooted remittance to that
+    ///         chain is stamped with the era it will land in.
+    /// @custom:event-category state-change/reward-custody
+    event ChainCustodyEraReported(uint32 indexed chainId, uint64 era);
+
+    /// @notice #2459 r1 — a B4 day report reached the canonical chain after
+    ///         `dayId` had FINALIZED: its DAY's figures were NOT applied (the day
+    ///         closed without them); its custody era `custodyEra` was observed and
+    ///         its chain-wide cumulative ratchets applied (#2459 r6).
+    /// @custom:event-category informational/reward-transport
+    event ChainReportArrivedAfterFinalization(uint32 indexed sourceChainId, uint256 indexed dayId, uint64 custodyEra);
+
+    function onChainReportReceived(
+        uint32 sourceChainId,
+        uint256 dayId,
+        uint256 lenderNumeraire18,
+        uint256 borrowerNumeraire18,
+        uint256 recycledCumulative18,
+        uint256 recycledForDay18,
+        uint256 commitRetiredCumulative18,
+        uint256 commitReleasedCumulative18,
+        uint64 custodyEra
+    ) external onlyRewardMessenger onlyCanonical {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        // Only an expected chain's report speaks for its era — checked here, ahead
+        // of the write, because the late path below returns before the ingest's
+        // own check runs.
+        if (!_isExpectedChainId(s, sourceChainId)) revert SourceChainIdNotExpected();
+        if (custodyEra > s.chainCustodyEraReported[sourceChainId]) {
+            s.chainCustodyEraReported[sourceChainId] = custodyEra;
+            emit ChainCustodyEraReported(sourceChainId, custodyEra);
+        }
+        // #2459 r1 — the era observation stands on its own. A report reaching
+        // Base after its day FINALIZED cannot add its DAY's figures (the day
+        // closed without them); reverting would take the observation back with
+        // it and leave a message no retry could ever deliver, so remittances
+        // would keep the destination's retired era until a later day's report
+        // landed. The day's figures (interest, the recycled day attribution)
+        // are dropped, named by the event; the era stands.
+        // #2459 r6 — and so do the report's CHAIN-WIDE cumulatives: the recycled
+        // availability and the commitment retirement/release ratchets describe
+        // the chain, not the day, are monotonic and clamped where they are
+        // folded, and are applied through the same two writers the on-time
+        // ingest uses. Dropping them left retired commitments outstanding (and
+        // released availability withheld) until a later report — never, if the
+        // chain detached.
+        if (s.dailyGlobalFinalized[dayId]) {
+            LibVpfiRecycle.recordChainRecycledCumulative(s, sourceChainId, recycledCumulative18);
+            // The availability figure's one event, as the on-time ingest emits
+            // it — the cumulative with NO day credit accepted — so a reader of
+            // the cumulative (the indexer's recycle series) sees every advance
+            // (#2459 r7); the retirement writer emits its own.
+            emit LibVpfiRecycle.ChainRecycledReported(
+                sourceChainId, dayId, recycledCumulative18, recycledForDay18, 0
+            );
+            LibVpfiRecycle.recordChainCommitRetirement(
+                s, sourceChainId, commitRetiredCumulative18, commitReleasedCumulative18
+            );
+            emit ChainReportArrivedAfterFinalization(sourceChainId, dayId, custodyEra);
+            return;
+        }
+        _ingestChainReport(
+            sourceChainId,
+            dayId,
+            lenderNumeraire18,
+            borrowerNumeraire18,
+            recycledCumulative18,
+            recycledForDay18,
+            commitRetiredCumulative18,
+            commitReleasedCumulative18
+        );
+    }
+
+    /// @notice The highest custody era `chainId` has reported — the era the
+    ///         canonical chain stamps its rooted remittances to that chain with.
+    function getChainCustodyEraReported(uint32 chainId) external view returns (uint64) {
+        return LibVaipakam.storageSlot().chainCustodyEraReported[chainId];
+    }
+
     /// @notice LEGACY ingress overload (pre-#1222 four-argument shape),
     ///         kept so Base's diamond cut and its messenger's proxy upgrade
     ///         need not land in one atomic batch (Codex #1413 r2): an

@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {Test} from "forge-std/Test.sol";
 import {FacetSelectors} from "../../script/lib/FacetSelectors.sol";
 import {EncumbranceMutateFacet} from "../../src/facets/EncumbranceMutateFacet.sol";
+import {RiskPreviewFacet} from "../../src/facets/RiskPreviewFacet.sol";
 
 /**
  * @title  RedeploySelectorParityTest
@@ -103,6 +104,21 @@ contract RedeploySelectorParityTest is Test {
         assertTrue(
             retired != EncumbranceMutateFacet.freezeOrPayActiveLenderResident.selector,
             "retired and current resident-payout selectors must differ"
+        );
+    }
+
+    /// @dev #2459 r4 — `previewIntent` gained the route's outer initiator, so the
+    ///      six-argument selector the curated refreshes Remove must be GONE from
+    ///      the facet's compiled surface and differ from the live one.
+    function test_RetiredPreviewIntentSelector_IsGone() public view {
+        bytes4 retired = FacetSelectors.retiredPreviewIntentSelector();
+        bytes4[] memory live = FacetSelectors.riskPreview();
+        for (uint256 i = 0; i < live.length; i++) {
+            assertTrue(live[i] != retired, "the 6-arg previewIntent must not be in the live surface");
+        }
+        assertTrue(
+            retired != RiskPreviewFacet.previewIntent.selector,
+            "retired and current previewIntent selectors must differ"
         );
     }
 

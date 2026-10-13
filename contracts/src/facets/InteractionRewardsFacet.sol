@@ -167,14 +167,17 @@ contract InteractionRewardsFacet is
         // leg it drew is treasury's — the user legs are folded in so a set
         // that ever carried them would be absorbed rather than dropped. The
         // three operations are hosted on the epoch facet
-        // ({epochSettleClaimLegs}): this facet sits within 100 bytes of
+        // ({epochSettleLegs}): this facet sits within 100 bytes of
         // EIP-170 with them inlined.
         uint256 epochFresh = tp.treasuryFresh + tp.userFresh;
-        LibRewardCustody.callSettleClaimLegs(
-            freshCredited > epochFresh ? freshCredited - epochFresh : 0,
+        uint256 eraFresh = tp.treasuryEraFresh + tp.userEraFresh; // PR C-2: era-funded, absorbed by the hosted settle with no bound charge
+        LibRewardCustody.callSettleLegs(
+            uint8(LibVpfiRecycle.RecycleSource.ForfeitedReward),
+            freshCredited > epochFresh + eraFresh ? freshCredited - epochFresh - eraFresh : 0,
             epochFresh + tp.treasuryRecycled + tp.userRecycled,
             recycledReleased,
             0,
+            eraFresh, // PR C-2 - the era-funded legs: absorbed by the host, no bound charge
             loanId
         );
     }

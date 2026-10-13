@@ -1332,7 +1332,9 @@ try {
     const borrowerTop = bidsNow.find(
       (r) => Number(r.interestRateBpsMax) === bestBidBps,
     );
-    const preview = await diamondRead('previewMatch', [lenderTop.id, borrowerTop.id]);
+    // The connected wallet is the matcher the app's band names (#2459).
+    // The matcher and the route's initiator: the wallet that would send the match (#2459 r2, r4).
+    const preview = await diamondRead('previewMatch', [lenderTop.id, borrowerTop.id, lenderAddr, lenderAddr]);
     if (Number(preview.errorCode) !== 0) {
       throw new Error(
         `a .desk-match-band rendered but previewMatch(${lenderTop.id}, ` +

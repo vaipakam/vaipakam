@@ -99,6 +99,11 @@ import RewardEpochFacetABI from './RewardEpochFacet.json';
 import RewardEpochViewFacetABI from './RewardEpochViewFacet.json';
 import RewardStagingFacetABI from './RewardStagingFacet.json';
 import RewardStagingSettleFacetABI from './RewardStagingSettleFacet.json';
+import RewardStagingDomainFacetABI from './RewardStagingDomainFacet.json';
+import RewardClosureFacetABI from './RewardClosureFacet.json';
+import RewardEraFacetABI from './RewardEraFacet.json';
+import ServiceCapacityFacetABI from './ServiceCapacityFacet.json';
+import OfferMatchIntentFacetABI from './OfferMatchIntentFacet.json';
 import RepatriationFacetABI from './RepatriationFacet.json';
 import ConfigFacetABI from './ConfigFacet.json';
 import NumeraireConfigFacetABI from './NumeraireConfigFacet.json';
@@ -222,6 +227,11 @@ export {
   RewardEpochViewFacetABI,
   RewardStagingFacetABI,
   RewardStagingSettleFacetABI,
+  RewardStagingDomainFacetABI,
+  RewardClosureFacetABI,
+  RewardEraFacetABI,
+  ServiceCapacityFacetABI,
+  OfferMatchIntentFacetABI,
   RepatriationFacetABI,
   ConfigFacetABI,
   NumeraireConfigFacetABI,

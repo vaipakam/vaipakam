@@ -694,8 +694,11 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
 
     /**
      * @notice Installs the sanctions oracle address (any
-     *         `ISanctionsList`) for this chain. Pass `address(0)` to
-     *         disable screening entirely. Never pass Chainalysis's
+     *         `ISanctionsList`) for this chain. Passing `address(0)` disables
+     *         the Tier-1 screen (fail-open) — but on a chain that has EVER
+     *         configured an oracle it FREEZES the service-capacity deposit
+     *         surface: every deposit post and withdrawal defers, as in an
+     *         outage, until an oracle is installed again (#2459). Never pass Chainalysis's
      *         retired on-chain oracle (#2443): it still answers but no
      *         longer updates; testnets use `TestnetSanctionsOverlay`.
      * @dev Owner-only (enforced inside `LibVaipakam.setSanctionsOracle`),
@@ -708,7 +711,8 @@ contract ProfileFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors 
     }
 
     /// @notice Returns the currently-configured sanctions oracle address.
-    ///         Zero means screening is disabled on this chain.
+    ///         Zero means the Tier-1 screen is off on this chain; if an oracle
+    ///         was ever configured, the capacity-deposit surface is frozen.
     function getSanctionsOracle() external view returns (address) {
         return LibVaipakam.storageSlot().sanctionsOracle;
     }

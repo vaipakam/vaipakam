@@ -89,6 +89,11 @@
     "RewardClaimWalkFacet",
     "RewardForfeitWalkFacet",
     "RewardSweepWalkFacet",
+    "RewardStagingDomainFacet",
+    "RewardClosureFacet",
+    "RewardEraFacet",
+    "ServiceCapacityFacet",
+    "OfferMatchIntentFacet",
     "DiamondCutFacet"
   ],
   "proxy": [

@@ -12,8 +12,10 @@ import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {RewardClaimFacet} from "../src/facets/RewardClaimFacet.sol";
 import {RewardCustodyFacet} from "../src/facets/RewardCustodyFacet.sol";
+import {RewardStagingDomainFacet} from "../src/facets/RewardStagingDomainFacet.sol";
 import {RewardReconciliationFacet} from "../src/facets/RewardReconciliationFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
+import {RewardEraFacet} from "../src/facets/RewardEraFacet.sol";
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
 import {RewardIngressFacet} from "../src/facets/RewardIngressFacet.sol";
 import {RewardEpochFacet} from "../src/facets/RewardEpochFacet.sol";
@@ -174,6 +176,29 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _remit().setRewardRemittanceReceiver(address(this));
     }
 
+    /// @dev Claim alice's reward, driving her entry's LEGACY SLICE home first.
+    ///      An entry funded by an UNTYPED delivery is listed by the transport
+    ///      batch that delivery admits, so its claim opens the legacy-slice
+    ///      domain (A2-ii (c)) and defers while the domain is driven, one page
+    ///      per call; the facet's permissionless step drives it, and the next
+    ///      claim pays. Returns everything the claims paid.
+    function _claimDriven() internal returns (uint256 paid) {
+        vm.prank(alice);
+        (paid, , ) = _claim().claimInteractionRewards();
+        if (paid != 0) return paid;
+        uint256[] memory ids = _lens().getUserRewardEntryIds(alice);
+        uint256 id = ids[ids.length - 1];
+        for (uint256 i; i < 16; ++i) {
+            try RewardStagingDomainFacet(address(diamond)).stepLegacySlice(id) returns (bool consumed) {
+                if (consumed) break;
+            } catch {
+                break;
+            }
+        }
+        vm.prank(alice);
+        (paid, , ) = _claim().claimInteractionRewards();
+    }
+
     function _seedDiamond(uint256 amount) internal {
         vpfi.mint(address(this), amount);
         vpfi.transfer(address(diamond), amount);
@@ -217,6 +242,11 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
             address(vpfi), amount, 3, CHAIN_BASE, remitId, REMITTER, amount / 2, amount / 2, finalizedAt, 1,
             uint64(7 days), uint64(24 hours), id
         );
+    }
+
+    /// @dev A PROVISIONAL compensation of 5 for day 3 (live clock, no broadcast yet), receipt 12.
+    function _deliverProvisional(bytes32 id) internal {
+        _deliverCompensation(5e18, 12, uint64(block.timestamp), id);
     }
 
     function _packetHash(bytes32 id) internal pure returns (bytes32) {
@@ -303,7 +333,7 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _custody().rebaseArmedFreshPaid(0, epoch);
         _custody().activateRewardCustody(epoch, false);
         assertTrue(_custody().rewardCustodyActivated(), "activated");
-        assertTrue(_custody().rewardRoleChangesFrozen(), "the freeze armed");
+        assertFalse(_mut().getRewardRoleChangesFrozenRaw(), "#1566 PR C revision: activation freezes nothing");
 
         vm.expectRevert(RewardCustodyAlreadyActivated.selector);
         _custody().activateRewardCustody(epoch, false);
@@ -490,7 +520,6 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         );
         _custody().fundRewardCustodyRow(LibVaipakam.RewardCustodyRow.Recycled, 1e18);
         assertEq(_held(), 0, "nothing moved into the holder");
-        assertFalse(_custody().rewardRoleChangesFrozen(), "and nothing armed the freeze");
 
         _mut().setRewardRoleRaw(0, false, true); // Detached
         vm.expectRevert(
@@ -611,7 +640,6 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         vm.expectRevert(RewardCustodyBootstrapRequiresRebase.selector);
         _custody().releaseRewardCustodyRow(LibVaipakam.RewardCustodyRow.Recycled, 1);
         assertEq(_held(), 0, "nothing moved into the holder");
-        assertFalse(_custody().rewardRoleChangesFrozen(), "and nothing armed the freeze");
 
         _custody().rebaseArmedFreshPaid(4e18, _epoch());
         _custody().fundRewardCustodyRow(LibVaipakam.RewardCustodyRow.LiveFresh, 6e18);
@@ -748,7 +776,6 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         (uint256 paid, uint256 remaining) = _rlens().getDeliveredFreshBound();
         assertEq(paid, 0, "uncharged");
         assertEq(remaining, type(uint256).max, "unbounded");
-        assertFalse(_custody().rewardRoleChangesFrozen(), "no allocation, no freeze");
     }
 
     /// `fundRewardPool` requires the activation and an ACTIVE role, and is
@@ -1095,26 +1122,31 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         assertEq(_rlens().getReceivedRemit(REMITTER, 11).packetHash, _packetHash(id));
     }
 
-    /// A demotion re-attributes the credit's remainder IN-HOLDER — live
-    /// first, then restitution — into the row, where the record and the
-    /// reservation now describe it; nothing is released to the Diamond.
-    function test_Demotion_MovesTheCreditInHolder_IntoUnclassified() public {
+    /// #2459 r5 — a provisional credit's value is HELD APART in its own row
+    /// (not the live row, not counted); a demotion moves exactly that hold
+    /// IN-HOLDER into `Unclassified`, where the record and the reservation now
+    /// describe it; nothing is released to the Diamond, no ledger figure moves.
+    function test_Demotion_MovesTheHeldCreditInHolder_IntoUnclassified() public {
         _becomeMirror();
         activateRewardCustodyForTest(address(vpfi), 0);
         _seedDiamond(10e18);
         bytes32 id = keccak256("comp-p");
-        _deliverCompensation(5e18, 12, uint64(block.timestamp), id); // live clock: provisional credit
-        assertEq(_live(), 5e18, "credited live, provisionally");
+        _deliverProvisional(id);
+        assertEq(_row(LibVaipakam.RewardCustodyRow.Provisional), 5e18, "held apart in its own row");
+        assertEq(_live(), 0, "never live backing");
+        (uint256 receivedHeld, ) = _ledger();
+        assertEq(receivedHeld, 0, "and never counted");
         uint256 diamondBefore = vpfi.balanceOf(address(diamond));
+        uint256 heldBefore = _held();
 
         vm.prank(address(diamond)); // the broadcast hook is Diamond-internal
         _ingress().onCompensationDayBroadcastArrived(3, address(0xDD), false); // another era: demote
-        assertEq(_live(), 0, "the credit left the live row");
+        assertEq(_row(LibVaipakam.RewardCustodyRow.Provisional), 0, "the hold left its row");
         assertEq(_unclassified(), 5e18, "and is re-attributed in the holder");
-        assertEq(_held(), 5e18, "the holder's balance did not move");
+        assertEq(_held(), heldBefore, "the holder's balance did not move");
         assertEq(vpfi.balanceOf(address(diamond)), diamondBefore, "nothing was released to the Diamond");
         (uint256 received, ) = _ledger();
-        assertEq(received, 0, "the received side unwound");
+        assertEq(received, 0, "no ledger figure moved");
         LibVaipakam.StrandedRecovery memory sr = _rlens().getStrandedRecovery(REMITTER, 12);
         assertEq(sr.amount, 5e18);
         assertEq(sr.held, 5e18, "the record knows the holder backs it");
@@ -1122,6 +1154,49 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         assertEq(uncountedHeld, 5e18);
         assertEq(reservedHeld, 5e18);
         assertEq(_rlens().getIngressPacket(_packetHash(id)).unclassified, 5e18, "the packet's record follows");
+    }
+
+    /// #2459 r5 — a hold made BEFORE custody activation rests at the Diamond
+    /// (no row existed then); demoted after the activation it is relocated
+    /// (measured) into `Unclassified`, as a quarantine landing is — never left
+    /// behind as an untracked residue.
+    function test_AHoldMadeBeforeActivation_IsRelocatedWhenItIsDemoted() public {
+        _becomeMirror();
+        _seedDiamond(10e18);
+        _deliverProvisional(keccak256("comp-pre"));
+        assertEq(_rlens().getProvisionalFreshHeld(), 5e18, "held, at the Diamond");
+        activateRewardCustodyForTest(address(vpfi), 0);
+        assertEq(_row(LibVaipakam.RewardCustodyRow.Provisional), 0, "no row held it before the activation");
+        uint256 diamondBefore = vpfi.balanceOf(address(diamond));
+        vm.prank(address(diamond)); // the broadcast hook is Diamond-internal
+        _ingress().onCompensationDayBroadcastArrived(3, address(0xDD), false); // demote
+        assertEq(_unclassified(), 5e18, "relocated into the row at the demotion");
+        assertEq(diamondBefore - vpfi.balanceOf(address(diamond)), 5e18, "measured, out of the Diamond");
+        assertEq(_rlens().getStrandedRecovery(REMITTER, 12).held, 5e18, "the record knows the holder backs it");
+        assertEq(_rlens().getProvisionalFreshHeld(), 0, "no longer held");
+    }
+
+    /// #2459 r5 — confirmation COUNTS the held credit and credits it to the
+    /// day's era under the deficit split, from its own row: the restitution
+    /// leg closes a standing deficit first, only the excess becomes live.
+    function test_Confirmation_CountsTheHeldCredit_UnderTheDeficitSplit() public {
+        _becomeMirror();
+        _admin().pause();
+        _custody().bindRewardCustodyHolder();
+        uint64 epoch = _epoch();
+        _custody().rebaseArmedFreshPaid(2e18, epoch); // a deficit of 2
+        _custody().activateRewardCustody(epoch, false);
+        _admin().unpause();
+        _seedDiamond(10e18);
+        _deliverProvisional(keccak256("comp-c"));
+        assertEq(_row(LibVaipakam.RewardCustodyRow.Restitution), 0, "fixture-live: nothing split while held");
+        vm.prank(address(diamond));
+        _ingress().onCompensationDayBroadcastArrived(3, REMITTER, true); // matching era, zeroed: confirm
+        assertEq(_row(LibVaipakam.RewardCustodyRow.Provisional), 0, "the hold left its row");
+        assertEq(_row(LibVaipakam.RewardCustodyRow.Restitution), 2e18, "the deficit closed first");
+        assertEq(_live(), 3e18, "only the excess is live backing");
+        (uint256 received, ) = _ledger();
+        assertEq(received, 5e18, "counted once, at confirmation");
     }
 
     /// MIGRATION MODE (design §5c): under the manual pause the receive
@@ -1576,6 +1651,59 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         assertEq(e.recycledCredit, 0);
     }
 
+    /// #1566 PR C revision — an entry is correctable only in the era it was made
+    /// in: after a role change its value lives in the retired era's row, so a
+    /// correction is refused by name rather than moving the wrong era's custody.
+    function test_Reclassify_RefusesAnEntryOfARetiredEra() public {
+        _activatedMirror();
+        _seedDiamond(10e18);
+        bytes32 id = keccak256("legacy-era");
+        _untyped(10e18, 41, id);
+        _evidence(_packetHash(id), 10e18);
+        _classify(_packetHash(id), 10e18, 0, keccak256("e-era"));
+        _reclassify(0, true, 1e18, keccak256("r-era-live")); // straddle: in its own era it corrects
+        _rep().setBaseChainId(0); // a role change retires era 0
+        _admin().pause();
+        vm.expectRevert(abi.encodeWithSelector(ReconciliationEntryEraRetired.selector, uint256(0), uint64(0)));
+        _recon().reclassifyReconciliationEntry(0, true, 1e18, keccak256("r-era-retired"));
+        _admin().unpause();
+    }
+
+    /// #1566 PR 1 re-review (P3-b) — an entry made NOW for a retired era's packet
+    /// booked its fresh into that era's row: a correction would move it as if it
+    /// were live custody, so it is refused by name, naming the packet's era.
+    function test_Reclassify_RefusesAnEntryOnARetiredErasPacket() public {
+        _activatedMirror();
+        _seedDiamond(10e18);
+        bytes32 id = keccak256("legacy-era-packet");
+        _untyped(10e18, 42, id);
+        _evidence(_packetHash(id), 10e18);
+        _rep().setBaseChainId(0); // era 0 retires (Detached)
+        _rep().setBaseChainId(CHAIN_BASE); // a mirror again: era 2 live
+        assertEq(_rlens().getIngressPacket(_packetHash(id)).custodyEra, 0, "fixture-live: the packet is era 0's");
+        _classify(_packetHash(id), 10e18, 0, keccak256("e-era-packet")); // made in the live era
+        _admin().pause();
+        vm.expectRevert(abi.encodeWithSelector(ReconciliationEntryEraRetired.selector, uint256(0), uint64(0)));
+        _recon().reclassifyReconciliationEntry(0, true, 1e18, keccak256("r-era-packet"));
+        _admin().unpause();
+    }
+
+    /// #1566 PR 1 re-review (C-1) — the lifetime cap counts what was DELIVERED, net
+    /// of the in-holder re-credits, as the delivered-position lens does. Straddle by
+    /// one wei.
+    function test_FundRewardPool_CapIsNetOfReCredits() public {
+        _becomeCanonical();
+        activateRewardCustodyForTest(address(vpfi), 0);
+        _mut().setArmedFreshLedgerRaw(CAP - 1e18, CAP - 1e18);
+        _mut().setFreshReCreditedRaw(5e18);
+        vpfi.mint(address(this), 12e18 + 1);
+        vpfi.approve(address(diamond), 12e18 + 1);
+        vm.expectRevert(abi.encodeWithSelector(RewardCustodyFundingExceedsCap.selector, CAP + 1, CAP));
+        _custody().fundRewardPool(6e18 + 1);
+        _custody().fundRewardPool(6e18); // net counted CAP - 6e18, plus 6e18: exactly the cap
+        assertEq(_live(), 6e18, "funded");
+    }
+
     /// Codex #2206 r3 (P1) — the correction toward fresh is the same
     /// privileged door and takes the same evidence: recycled credit lifts to
     /// fresh only up to the packet's authenticated figure, cumulatively with
@@ -1671,8 +1799,7 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _untyped(fresh, 43, id);
         _evidence(_packetHash(id), fresh);
         _classify(_packetHash(id), fresh, 0, keccak256("e-partial"));
-        vm.prank(alice);
-        (uint256 claimed, , ) = _claim().claimInteractionRewards();
+        uint256 claimed = _claimDriven(); // the untyped delivery listed a batch: the slice is driven home first
         uint256 unspent = fresh - claimed;
         (uint256 received0, uint256 paid0) = _ledger();
         _reclassify(0, true, 2e18, keccak256("r-2")); // within the unspent part
@@ -1953,8 +2080,7 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         // A fresh outflow, covered by delivered fresh backing, before any
         // fresh classification exists.
         _deliverStamped(expected + 1e18, expected + 1e18, 0, 53, keccak256("D")); // counted: live backing
-        vm.prank(alice);
-        (uint256 claimed, , ) = _claim().claimInteractionRewards();
+        uint256 claimed = _claimDriven(); // the untyped delivery listed a batch: the slice is driven home first
         assertGt(claimed, 0);
         _untyped(10e18, 54, keccak256("F"));
         _evidence(_packetHash(keccak256("F")), 10e18);
@@ -2294,8 +2420,7 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _untyped(expected, 70, keccak256("legacy-later"));
         _evidence(h, expected);
         _classify(h, expected, 0, keccak256("e-later"));
-        vm.prank(alice);
-        (uint256 claimed, , ) = _claim().claimInteractionRewards();
+        uint256 claimed = _claimDriven(); // the untyped delivery listed a batch: the slice is driven home first
         assertGt(claimed, 0, "paid out");
         uint256 dust = expected - claimed; // the claim rounds a few wei below the quote
         assertEq(_live(), dust);
@@ -2976,45 +3101,23 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
 
     // ─── 7. the freeze ───────────────────────────────────────────────────────
 
-    /// Effective role changes are refused while frozen, in every direction the
-    /// setters can take, and a direct source rebinding is refused always.
-    function test_RoleSetters_RefuseEffectiveChangesWhileFrozen_AndDirectRebinds() public {
+    /// #1566 PR C revision — with the carry-forward in place nothing freezes a
+    /// role change: after activation an effective change goes through and
+    /// carries the live row into the retiring era; a write resolving the SAME
+    /// role is no change; a direct source rebinding stays refused (pinned below).
+    function test_RoleSetters_ChangeAfterActivation_CarryingTheLiveRow() public {
         _becomeCanonical();
-        // Before any allocation the setters still work (a fresh deploy is
-        // configured this way).
-        assertFalse(_custody().rewardRoleChangesFrozen(), "not frozen yet");
         activateRewardCustodyForTest(address(vpfi), 0);
-        assertTrue(_custody().rewardRoleChangesFrozen(), "frozen");
-
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                RewardRoleChangeFrozen.selector,
-                uint8(LibVaipakam.RewardRole.Canonical),
-                uint8(LibVaipakam.RewardRole.Mirror)
-            )
-        );
-        _rep().setIsCanonicalRewardChain(false);
-        // A write that resolves the SAME role is not a change.
-        _rep().setIsCanonicalRewardChain(true);
-        _rep().setBaseChainId(CHAIN_BASE);
-
         // A canonical chain's base chain id is not a funding source, so its
         // rewrite is neither a rebinding nor (while still canonical) a role
-        // change. The mirror rule is pinned below.
+        // change.
         _rep().setBaseChainId(CHAIN_OP);
         _rep().setBaseChainId(CHAIN_BASE);
-
-        // Detaching a canonical chain (base to zero first) is an effective
-        // change only at the second write — the first keeps it Canonical.
-        _rep().setBaseChainId(0);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                RewardRoleChangeFrozen.selector,
-                uint8(LibVaipakam.RewardRole.Canonical),
-                uint8(LibVaipakam.RewardRole.Detached)
-            )
-        );
-        _rep().setIsCanonicalRewardChain(false);
+        assertEq(RewardEraFacet(address(diamond)).getCustodyEraCurrent(), 0, "no change yet");
+        _rep().setIsCanonicalRewardChain(false); // Canonical -> Mirror: an effective change
+        assertEq(RewardEraFacet(address(diamond)).getCustodyEraCurrent(), 1, "it went through and opened era 1");
+        _rep().setIsCanonicalRewardChain(false); // the same role: no change
+        assertEq(RewardEraFacet(address(diamond)).getCustodyEraCurrent(), 1);
     }
 
     /// A mirror's authenticated source — base chain and funding identity —
@@ -3043,13 +3146,13 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
 
     // ─── 8. restitution: the unwind and the two dispositions ─────────────────
 
-    /// A demotion gives back the WHOLE credit still in the holder — the live
-    /// portion first, then the restitution portion (Codex #2186 r1 P1) —
-    /// and since closure 2's cutover PR 1 it does so IN-HOLDER: the
-    /// remainder is re-attributed into `Unclassified`, where the stranded
-    /// record and the reservation now describe it; nothing is released to
-    /// the Diamond, and only what was already paid out stays out.
-    function test_UncreditFresh_MovesLiveThenRestitution_IntoUnclassified() public {
+    /// #2459 r5 — the in-holder release a demotion makes comes from the
+    /// `Provisional` row alone: the Diamond-internal quarantine entry moves
+    /// exactly the hold it is given and refuses, by the row named, more than
+    /// the row holds — live and restitution custody are never its source.
+    /// (Retires the live-then-restitution unwind, Codex #2186 r1 P1, which a
+    /// counted provisional credit needed.)
+    function test_AHeldRelease_ComesFromTheProvisionalRowAlone() public {
         _becomeMirror();
         _admin().pause();
         _custody().bindRewardCustodyHolder();
@@ -3058,23 +3161,16 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
         _custody().activateRewardCustody(epoch, false);
         _admin().unpause();
         fundRewardPoolForTest(address(vpfi), 10e18); // restitution 6, live 4
-        uint256 diamondBefore = vpfi.balanceOf(address(diamond));
-        uint256 holderBefore = _held();
         bytes32 key = keccak256(abi.encode(REMITTER, uint256(99)));
-
         vm.prank(address(diamond)); // the Diamond-internal entry, as the demotion reaches it
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.RewardCustodyRowShort.selector, uint8(LibVaipakam.RewardCustodyRow.Provisional), 9e18, 0
+            )
+        );
         _custody().custodyUnclassifiedQuarantine(bytes32(0), key, 0, 9e18);
-        assertEq(_live(), 0, "live gave back all 4");
-        assertEq(_row(LibVaipakam.RewardCustodyRow.Restitution), 1e18, "restitution gave back 5 of 6");
-        assertEq(_unclassified(), 9e18, "the whole unwound credit is re-attributed into Unclassified");
-        assertEq(vpfi.balanceOf(address(diamond)), diamondBefore, "nothing was released to the Diamond");
-        assertEq(_held(), holderBefore, "the holder's balance did not move");
-        assertEq(_rlens().getStrandedRecovery(REMITTER, 99).held, 9e18, "the record knows the holder backs it");
-        (uint256 uncountedHeld, , uint256 reservedHeld) = _rlens().getUnclassifiedPosition();
-        assertEq(uncountedHeld, 9e18);
-        assertEq(reservedHeld, 9e18);
-        (uint256 received, ) = _ledger();
-        assertEq(received, 1e18, "received unwound");
+        assertEq(_live(), 4e18, "live custody is never a demotion's source");
+        assertEq(_row(LibVaipakam.RewardCustodyRow.Restitution), 6e18, "nor restitution");
     }
 
     /// The corrective disposition: `amount` of paid never happened, so the
@@ -3133,6 +3229,25 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
     }
 
     // ─── 9. the token rotation guard ─────────────────────────────────────────
+
+    /// #2459 r6 — a provisional compensation is held in the token it arrived
+    /// in and its record names no asset, so a rotation waits for its day's
+    /// broadcast to settle it — even before custody activation, where the hold
+    /// rests at the Diamond and no custody row describes it (straddle: once the
+    /// broadcast settles the hold, the rotation goes through).
+    function test_SetVPFIToken_WaitsForAProvisionalHoldToSettle() public {
+        _becomeMirror();
+        _seedDiamond(10e18);
+        _deliverProvisional(keccak256("comp-rot"));
+        address newToken = address(new VPFIToken());
+        vm.expectRevert(abi.encodeWithSelector(RewardTokenRotationBlockedByProvisional.selector, 5e18));
+        VPFITokenFacet(address(diamond)).setVPFIToken(newToken);
+        vm.prank(address(diamond)); // the broadcast hook is Diamond-internal
+        _ingress().onCompensationDayBroadcastArrived(3, address(0xDD), false); // settled: demoted
+        assertEq(_rlens().getProvisionalFreshHeld(), 0, "fixture-live: nothing held");
+        VPFITokenFacet(address(diamond)).setVPFIToken(newToken);
+        assertEq(VPFITokenFacet(address(diamond)).getVPFIToken(), newToken, "rotated once settled");
+    }
 
     /// The VPFI token cannot be rotated while any row is funded or the holder
     /// still holds the old token; once both are drained it can.
@@ -3194,14 +3309,12 @@ contract RewardCustodyCutoverTest is SetupTest, IVaipakamErrors {
 
     function test_Ledger_ReportsActivationAndEveryRow() public {
         _becomeCanonical();
-        (bool activated0, bool frozen0, , , , , , , , , ) = _custody().rewardCustodyLedger();
+        (bool activated0, , , , , , , , , ) = _custody().rewardCustodyLedger();
         assertFalse(activated0, "inactive");
-        assertFalse(frozen0, "unfrozen");
         activateRewardCustodyForTest(address(vpfi), 5e18);
         _mut().creditRecycleRaw(LibVpfiRecycle.RecycleSource.ForfeitedReward, 0, 2e18);
-        (bool activated, bool frozen, uint256 live, uint256 recycled, , , , , , , ) = _custody().rewardCustodyLedger();
+        (bool activated, uint256 live, uint256 recycled, , , , , , , ) = _custody().rewardCustodyLedger();
         assertTrue(activated, "active");
-        assertTrue(frozen, "frozen");
         assertEq(live, 3e18, "live");
         assertEq(recycled, 2e18, "recycled");
         (, , bool known, uint256 held, uint256 attributed) = _custody().rewardCustodySnapshot();

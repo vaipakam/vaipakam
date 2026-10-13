@@ -15,7 +15,7 @@ import {OracleFacet} from "../src/facets/OracleFacet.sol";
 /**
  * @title RiskAccessMatchGateTest
  * @notice #671 phase-2 / PR-2b — the KEEPER-MATCH risk re-assertion in
- *         `OfferMatchFacet._executeMatch`, delegated to
+ *         `LibOfferMatchExecute.executeMatch`, delegated to
  *         `RiskAccessFacet.assertMatchAllowed` (cross-facet).
  *
  *         The acceptor-side gate in `LoanFacet._maybeRunInitialRiskGates` is
@@ -52,7 +52,7 @@ contract RiskAccessMatchGateTest is SetupTest {
         setupHelper();
 
         // Range Orders / partial-fill master switches ON so `matchOffers`
-        // reaches `_executeMatch` (otherwise it reverts on the kill-switch).
+        // reaches `executeMatch` (otherwise it reverts on the kill-switch).
         vm.startPrank(owner);
         ConfigFacet(address(diamond)).setRangeAmountEnabled(true);
         ConfigFacet(address(diamond)).setRangeRateEnabled(true);

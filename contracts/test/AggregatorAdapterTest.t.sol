@@ -15,6 +15,7 @@ import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.sol";
 import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 import {AggregatorAdapterFactoryFacet} from "../src/facets/AggregatorAdapterFactoryFacet.sol";
+import {ServiceCapacityFacet} from "../src/facets/ServiceCapacityFacet.sol";
 import {AggregatorAdapterImplementation} from "../src/AggregatorAdapterImplementation.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
@@ -47,6 +48,64 @@ contract AggregatorAdapterTest is SetupTest {
     uint16 internal constant MAX_LTV = 5000; // 50% ⇒ reqColl = 2x
     uint32 internal constant MAX_DUR = 30;
     uint256 internal constant MIN_FILL = 1 ether;
+    event CapacitySpent(uint8 indexed role, address indexed actor, uint256 cost, uint256 balanceAfter);
+    event CapacityFreeTierSpent(uint8 indexed role, address indexed initiator, uint256 cost, uint256 balanceAfter);
+
+    /// @dev #1219 review (rule 4) — an UNBOUND adapter's fill falls to the outer initiator's
+    ///      FREE tier (the transaction's originator), never to the adapter contract.
+    function test_unboundAdapterFill_ChargesTheOriginatorsFreeTier() public {
+        _deposit(20 ether);
+        uint256 cp1 = _postBorrower(5 ether);
+        uint8 role = uint8(LibVaipakam.ServiceCapacityRole.Solver);
+        vm.startPrank(owner);
+        ServiceCapacityFacet(address(diamond)).setAdapterOperator(address(adapter), address(0)); // as before the factory bound it
+        ServiceCapacityFacet(address(diamond)).setCapacityCurve(role, 1e18, 1e16, 100e18, 1e18);
+        vm.stopPrank();
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit CapacityFreeTierSpent(role, keeper, 1e18, 0);
+        vm.prank(keeper, keeper); // the keeper originates the transaction
+        assertGt(adapter.matchLoan(cp1, 5 ether), 0);
+        assertFalse(ServiceCapacityFacet(address(diamond)).getCapacityBucket(role, address(adapter)).seen, "never the adapter contract");
+    }
+
+    /// @dev #1219 review (rule 2) — the adapter rolling its OWN intent is a keeper action charged to
+    ///      its bound operator; before the fix the owner-acting adapter was never charged.
+    function test_adapterRoll_ChargesTheBoundOperator() public {
+        _deposit(DEPOSIT);
+        uint256 loanId = _match(500 ether);
+        address borrower_ = LoanFacet(address(diamond)).getLoanDetails(loanId).borrower;
+        vm.prank(borrower_);
+        RepayFacet(address(diamond)).repayLoan(loanId);
+        uint8 role = uint8(LibVaipakam.ServiceCapacityRole.Keeper);
+        vm.prank(owner);
+        ServiceCapacityFacet(address(diamond)).setCapacityCurve(role, 1e18, 1e16, 100e18, 1e18);
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit CapacitySpent(role, keeper, 1e18, 0);
+        vm.prank(keeper);
+        adapter.rollLoan(loanId);
+    }
+
+    /// @dev #1219 (S-4) — an adapter's fill is charged to the operator BOUND to it at
+    ///      creation (the keeper the factory was given; actor rule 2), never to the
+    ///      adapter contract: the refusal and the spend both name the keeper.
+    function test_adapterFill_ChargesTheBoundOperator() public {
+        assertEq(ServiceCapacityFacet(address(diamond)).getAdapterOperator(address(adapter)), keeper, "bound at creation");
+        _deposit(20 ether);
+        uint256 cp1 = _postBorrower(5 ether);
+        uint256 cp2 = _postBorrowerAs(makeAddr("adapterBorrower"), 5 ether); // the same registered borrower
+        uint8 role = uint8(LibVaipakam.ServiceCapacityRole.Solver);
+        vm.prank(owner);
+        ServiceCapacityFacet(address(diamond)).setCapacityCurve(role, 1e18, 1e16, 100e18, 1e18);
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit CapacitySpent(role, keeper, 1e18, 0); // the bound operator's one free action, not the adapter's
+        vm.prank(keeper);
+        uint256 loanId = adapter.matchLoan(cp1, 5 ether);
+        assertGt(loanId, 0);
+        vm.prank(keeper);
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.ServiceCapacityExhausted.selector, role, keeper, 1e18, 0));
+        adapter.matchLoan(cp2, 5 ether);
+        assertFalse(ServiceCapacityFacet(address(diamond)).getCapacityBucket(role, address(adapter)).seen, "the adapter contract is never charged");
+    }
 
     function setUp() public {
         setupHelper();
@@ -106,7 +165,11 @@ contract AggregatorAdapterTest is SetupTest {
     }
 
     function _postBorrower(uint256 principal) internal returns (uint256 offerId) {
-        address b = _newBorrower("adapterBorrower");
+        return _postBorrowerAs(_newBorrower("adapterBorrower"), principal);
+    }
+
+    /// @dev The same offer from an ALREADY-REGISTERED borrower — a second offer in one cell.
+    function _postBorrowerAs(address b, uint256 principal) internal returns (uint256 offerId) {
         vm.prank(b);
         offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({

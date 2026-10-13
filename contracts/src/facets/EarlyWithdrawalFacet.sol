@@ -8,6 +8,7 @@ import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
+import {LibServiceCapacity} from "../libraries/LibServiceCapacity.sol";
 import {LibCompliance} from "../libraries/LibCompliance.sol";
 import {LibRiskAccess} from "../libraries/LibRiskAccess.sol";
 import {LibSaleSolvency} from "../libraries/LibSaleSolvency.sol";
@@ -249,11 +250,11 @@ contract EarlyWithdrawalFacet is
         // Phase 6: lender-entitled strategic flow. Authority binds to the
         // current lender-NFT owner OR a keeper with the
         // InitEarlyWithdraw action bit.
-        LibAuth.requireKeeperFor(
+        if (LibAuth.requireKeeperFor(
             LibVaipakam.KEEPER_ACTION_INIT_EARLY_WITHDRAW,
             loan,
             /* lenderSide */ true
-        );
+        )) LibServiceCapacity.chargeKeeper(); // #1219 — one keeper action
         // #819 Tier-1 sanctions on the LENDER-position holder. `requireKeeperFor`
         // authorises against the lender NFT owner, but a keeper caller leaves
         // that holder unscreened — and the eventual sale proceeds settle to the
@@ -642,11 +643,11 @@ contract EarlyWithdrawalFacet is
         // Phase 6: role-scoped keeper authority. Lender-entitled action, so
         // resolve against the lender NFT holder and require the
         // CompleteLoanSale bit on the holder's approved-keeper bitmask.
-        LibAuth.requireKeeperFor(
+        if (LibAuth.requireKeeperFor(
             LibVaipakam.KEEPER_ACTION_COMPLETE_LOAN_SALE,
             loan,
             /* lenderSide */ true
-        );
+        )) LibServiceCapacity.chargeKeeper(); // #1219 — one keeper action
 
         // #951 (redesign D2) — `createLoanSaleOffer` consolidated the lender
         // position to its current holder at listing (D1), re-anchoring both

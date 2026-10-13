@@ -337,6 +337,15 @@ interface IVaipakamErrors {
     ///         so the reservation count alone did not see it. Resolve or unwind
     ///         the records first; both are permissionless.
     error RewardCustodyActivationBlockedByStagedEarmark(uint256 staged);
+    /// @notice NOT a failure: the result of
+    ///         {RewardClaimFacet.simulateClaimInteractionRewards}, which runs
+    ///         the real claim for a user and then ALWAYS reverts with the
+    ///         figures it would have paid, so nothing it did survives and no
+    ///         transaction can claim on another's behalf through it (A2-iii,
+    ///         preview by execution). Decode it from an `eth_call`'s revert
+    ///         data; a different revert is what the claim itself would have
+    ///         reverted with.
+    error InteractionRewardsSimulation(uint256 paid, uint256 fromDay, uint256 toDay);
     /// @notice 3b-ii-A2 (Codex #2308 r13) — a reward-ROLE change cannot
     ///         straddle a staging reservation: the role decides the delivered
     ///         allowance a reserved record's payout charges, so a transition
@@ -528,6 +537,9 @@ interface IVaipakamErrors {
     ///         other era refuses rather than pairing an empty era-specific
     ///         queue with the global custody figures (Codex #2206 r9).
     error ReconciliationUnknownEra(uint64 era);
+    /// @notice #1566 PR C revision — reconciliation entry `index` was made in era `era`, which a role change
+    ///         has since retired: its value lives in that era's row, so it is no longer correctable.
+    error ReconciliationEntryEraRetired(uint256 index, uint64 era);
     // ─── #1566 transport epochs PR 3a — the day list, the attested split ────
     /// @notice No packet is recorded under this stamp.
     error IngressPacketUnknown(bytes32 packetHash);
@@ -644,17 +656,6 @@ interface IVaipakamErrors {
     ///         classification is what keeps it from reporting value that has
     ///         already left, and the bound falls out of the same arithmetic.
     error TransportRemainderExceeded(bytes32 batchId, uint256 requested, uint256 available);
-    /// @notice #1566 transport epochs PR 3b-i — the transport-epoch RELEASE is
-    ///         not available in this cut, to anyone. Owner decision on #2258
-    ///         (2026-09-20): §5c requires the classification entry to refuse a
-    ///         batch that still lists an outstanding obligation, and 3b-i has
-    ///         no per-day obligation figure to test — that is the unbounded
-    ///         walk 3b-ii's tracking exists for. Until it lands, a release
-    ///         followed by a classification would move a delivery's value out
-    ///         of its membership-bound earmark on nobody's authority but the
-    ///         caller's. The entries exist so the surface, the cut wiring and
-    ///         the atomic cut group keep their shape; 3b-ii replaces bodies.
-    error TransportReleaseNotYetAvailable(bytes32 batchId);
     /// @notice #1566 transport epochs PR 3b — an old-wire packet whose batch
     ///         has not been released cannot be classified. The only route by
     ///         which what remains of such a packet becomes classifiable is its
@@ -790,6 +791,8 @@ interface IVaipakamErrors {
     ///         revert data (the entry point is not routed, or the Diamond's
     ///         fallback refused it).
     error RewardCustodyCallFailed();
+    /// @notice A diamond-internal reward-lifecycle hook (InteractionRewardsFacet) reverted with no data.
+    error RewardHookCallFailed();
     /// @notice #1566 slice 4 PR B — activation was attempted on a `Detached`
     ///         deployment. Its value-bearing receive ingresses do not yet
     ///         refuse by role (the intended-era gates land with slice 4 PR
@@ -810,14 +813,6 @@ interface IVaipakamErrors {
     /// @notice #1566 slice 4 PR B — an overage release exceeds the recorded
     ///         overage position.
     error RewardCustodyOverageExceedsRecorded(uint256 requested, uint256 recorded);
-    /// @notice #1566 slice 4 PR B — an EFFECTIVE reward-role change was
-    ///         refused: holder allocations exist (or custody is activated)
-    ///         and the era registry that could carry them across a
-    ///         transition lands with slice 4 PR C, whose backfill clears the
-    ///         freeze.
-    /// @param current   The resolved {LibVaipakam.RewardRole} ordinal now.
-    /// @param requested The role the write would have resolved to.
-    error RewardRoleChangeFrozen(uint8 current, uint8 requested);
     /// @notice #1566 slice 4 PR B — a mirror's authenticated base chain was
     ///         being rebound directly to a different one. Design §5c: a
     ///         source change passes through `Detached` (the old residual
@@ -961,15 +956,6 @@ interface IVaipakamErrors {
     error BroadcastEraUnauthenticated(
         uint256 dayId, address expected, address packetEra
     );
-    /// @notice A LEGACY broadcast (kind-5 / kind-2) attempted a FRESH
-    ///         apply after this mirror rotated Base eras (Codex #1632 r2:
-    ///         legacy packets carry no deployment identity, so a retired
-    ///         era's delayed or manually re-executed delivery is
-    ///         indistinguishable from a legitimate one — after a rotation
-    ///         the only legitimate sender speaks V3, and the legacy wires
-    ///         retire permanently). Replays of already-applied days stay
-    ///         idempotent.
-    error LegacyBroadcastRetired(uint256 dayId);
     /// @notice A re-delivered V3 broadcast disagreed with the day's already-
     ///         installed frozen clock facts (finalizedAt / schedule version /
     ///         inline parameters / zeroed marker).
@@ -1760,12 +1746,147 @@ interface IVaipakamErrors {
     ///         whole — than it tracks; it can only be unwound, and the day
     ///         stays draw-only for them.
     error StagingPendingOverflow(bytes32 key);
+    /// @notice The record under `key` never found `batchId` contested, so it
+    ///         may not register for the batch's priority window (A2-ii).
+    error StagingNotWaiting(bytes32 key, bytes32 batchId);
+    /// @notice The obligation under `key` already took its one priority
+    ///         reservation on `batchId` — non-renewable (A2-ii).
+    error StagingPriorityUsed(bytes32 key, bytes32 batchId);
+    /// @notice No registration window is open on `batchId` (A2-ii).
+    error TransportBatchWindowNotOpen(bytes32 batchId);
+    /// @notice The record under `key` belongs to domain `domainKey`: its
+    ///         reservation, resolution and unwind go through the domain (A2-ii).
+    error StagingRecordInDomain(bytes32 key, bytes32 domainKey);
+    /// @notice A domain's per-record entry was reached for a record no domain holds (A2-ii).
+    error StagingRecordNotInDomain(bytes32 key);
+
+    // ── 3b-ii-B: the per-day closure proof ──
+    /// @notice The day has not elapsed on this chain's clock: no closure can be proven for it.
+    error ClosureDayNotElapsed(uint256 dayId);
+    /// @notice The interest fold has not reached the day on at least one side (#2277): catch it up first.
+    error ClosureFrontierShort(uint256 dayId, uint256 lenderFrontier, uint256 borrowerFrontier);
+    /// @notice The day is already proven closed.
+    error ClosureDayAlreadyClosed(uint256 dayId);
+    /// @notice No walk under this key (never started, or not this caller's).
+    error ClosureWalkUnknown(bytes32 key);
+    /// @notice Entry ids must strictly ascend past the walk's side cursor.
+    error ClosureEntriesNotAscending(uint256 entryId);
+    /// @notice The entry is not of this side or does not cover the day.
+    error ClosureEntryNotCovering(uint256 dayId, uint256 entryId);
+    /// @notice The entry still stands on the day: not settled past it, or a staging record / legacy domain holds it.
+    error ClosureEntryOpen(uint256 dayId, uint256 entryId);
+    /// @notice The visited entries' per-day sum exceeds the day's folded side total: the day's records disagree.
+    error ClosureConservationExceeded(uint256 dayId, uint8 side, uint256 sum, uint256 total);
+    /// @notice The batch lists a day not yet proven closed: its remainder cannot be parked (3b-ii-B).
+    error TransportDayNotClosed(bytes32 batchId, uint256 dayId);
+    /// @notice The d6 wire's extent is not one the chain can index: no days, a chunk count that is not the
+    ///         fixed-size chunking of the element count, or more chunks than the index marks (3d-1).
+    error TransportRootExtentInvalid(bytes32 packetHash, uint256 elementCount, uint256 chunkCount);
+    /// @notice The batch's membership is committed by a root: it is indexed by proven chunks, not by the flat-hash page (3d-1).
+    error TransportBatchRooted(bytes32 batchId);
+    /// @notice The batch's membership is committed by a flat hash, not a root: it is not chunk-indexed (3d-1).
+    error TransportBatchNotRooted(bytes32 batchId);
+    /// @notice `chunkIndex` is at or past the committed chunk count (3d-1).
+    error TransportChunkOutOfExtent(bytes32 batchId, uint256 chunkIndex, uint256 chunkCount);
+    /// @notice Chunk `chunkIndex` has already been indexed (3d-1).
+    error TransportChunkAlreadyIndexed(bytes32 batchId, uint256 chunkIndex);
+    /// @notice The supplied chunk is not the committed length for its index (3d-1).
+    error TransportChunkLengthMismatch(bytes32 batchId, uint256 chunkIndex, uint256 expected, uint256 supplied);
+    /// @notice The chunk's leaf does not verify against the packet's day-list root under the supplied proof (3d-1).
+    error TransportChunkProofInvalid(bytes32 batchId, uint256 chunkIndex, bytes32 leaf);
+    /// @notice A d6 delivery held as its own epoch needs a split that accounts for the whole delivery (3d-1).
+    error TransportSplitNotWhole(bytes32 packetHash, uint256 fresh, uint256 recycled, uint256 amount);
+    /// @notice The domain under `domainKey` is not in the phase this entry
+    ///         needs (A2-ii).
+    error StagingDomainPhaseInvalid(bytes32 domainKey, uint8 phase);
+    /// @notice The domain's extent is not fully prepared: `preparedThrough`
+    ///         has not reached `lastDay` (A2-ii).
+    error StagingDomainNotPrepared(bytes32 domainKey, uint64 preparedThrough, uint64 lastDay);
+    /// @notice The domain's deadline has not passed and the caller is not its
+    ///         claimant (A2-ii).
+    error StagingDomainNotExpired(bytes32 domainKey, uint64 deadline);
+    /// @notice A new domain may not be committed for the claimant-side while
+    ///         the standing one still has live records (A2-ii).
+    error StagingDomainStanding(bytes32 domainKey, uint8 phase);
+    /// @notice Only the claimant may do this to the record or domain under `key`.
+    error StagingNotClaimant(bytes32 key, address caller);
+    /// @notice Entry `entryId` has no legacy slice listed by any epoch, or its
+    ///         slice domain is not in the phase this entry needs (A2-ii (c)).
+    error LegacySliceNotPending(uint256 entryId);
     /// @notice The reward this settlement would pay a loan side fits the
     ///         side's lifetime cap but not what is left of it after standing
     ///         staging reservations: a deferral, retryable once a reservation
     ///         resolves or unwinds — never a trim, which only the lifetime
     ///         cap may cause (3b-ii-A2; Codex #2308 r4).
     error LoanSideReservedShortfall(uint256 loanId, uint8 side, uint256 needed, uint256 available);
+    /// @notice Era `era` is not in the custody era registry: above the live era (slice 4 PR C-1).
+    error CustodyEraUnknown(uint64 era);
+    /// @notice Era `era` is the live era: it cannot be finalized while open.
+    error CustodyEraLive(uint64 era);
+    /// @notice Era `era` is not final: `daysClosed` of its `span` days are proven closed, and staging records still
+    ///         hold `stagedFresh` of its row.
+    error CustodyEraNotTerminal(uint64 era, uint256 daysClosed, uint256 span, uint256 stagedFresh);
+    /// @notice Era `era` was already finalized.
+    error CustodyEraAlreadyFinalized(uint64 era);
+    /// @notice The pending-surplus drain needs an ACTIVE role (Canonical or Mirror); the chain's role is `role`.
+    error CustodyPendingSurplusNeedsActiveRole(uint8 role);
+    /// @notice Era `era`'s row can fund `room`, less than `amount` (PR C-2).
+    error CustodyEraRoomShort(uint64 era, uint256 amount, uint256 room);
+    /// @notice No parked broadcast under `id` (PR C-4).
+    error ParkedBroadcastUnknown(uint256 id);
+    /// @notice Parked broadcast `id` is not in the parked state (`status`: 1 tombstoned, 2 applied).
+    error ParkedBroadcastNotParked(uint256 id, uint8 status);
+    /// @notice The re-supplied broadcast is not the one parked under `id`.
+    error ParkedBroadcastDigestMismatch(uint256 id);
+    /// @notice The gate still refuses parked broadcast `id`: it stays parked.
+    error ParkedBroadcastStillUnroutable(uint256 id);
+    /// @notice Parked broadcast `id` was first received after the next era opened: it exits by tombstone only.
+    error ParkedBroadcastQuarantineOnly(uint256 id);
+
+    // ── #1219 (S-4) — service capacity deposits ──
+    /// @notice The service capacity deposit channel is dark: posting is refused (withdrawals stand).
+    error ServiceCapacityDisabled();
+    /// @notice `adapter` is not a registered aggregator adapter: only an adapter's fills are bound to an operator.
+    error ServiceCapacityNotAnAdapter(address adapter);
+    /// @notice The capacity spend is reachable only by the Diamond's own self-call; `caller` is not the Diamond.
+    error ServiceCapacityOnlyDiamondInternal(address caller);
+    /// @notice A zero-principal post must arm something: nothing deposited is above the armed balance and under the knee.
+    error ServiceCapacityNothingToArm(uint8 role, address operator);
+    /// @notice `role` is not a capacity role.
+    error ServiceCapacityRoleUnknown(uint8 role);
+    /// @notice The deposit escrow holder is not bound yet.
+    error ServiceCapacityEscrowNotBound();
+    /// @notice The deposit escrow holder is already bound.
+    error ServiceCapacityEscrowAlreadyBound();
+    /// @notice The deposit `(role, operator)` holds `have`, less than the `want` asked.
+    error ServiceCapacityInsufficient(uint8 role, address operator, uint256 have, uint256 want);
+    /// @notice A token move of `expected` changed the destination's balance by `moved`.
+    error ServiceCapacityMoveUnverified(uint256 expected, uint256 moved);
+    /// @notice The configured sanctions oracle was unavailable for `party`: every deposit mutation defers (fail-closed) and persists nothing.
+    error ServiceCapacitySanctionsUnavailable(address party);
+    /// @notice A curve parameter violates a floor: every figure positive and `freeTier >= classCost` (one free action, always).
+    error ServiceCapacityCurveInvalid(uint8 role);
+    /// @notice `actor`'s bucket for `role` holds `have` (units x 1e18), less than the `cost` of this action: admission refused.
+    error ServiceCapacityExhausted(uint8 role, address actor, uint256 cost, uint256 have);
+    /// @notice The capacity spend self-call failed without revert data (the capacity facet is not routed, or ran out of gas).
+    error ServiceCapacityCallFailed();
+    /// @notice Arming is dark for `role`: no positive arming fee rate is set, or the role's curve is unset — posting is refused (withdrawals stand).
+    error ServiceCapacityArmingDark(uint8 role);
+    /// @notice The arming fee `rate` sits under the `floor` (or no positive floor is set yet).
+    error ServiceCapacityArmingFeeBelowFloor(uint256 rate, uint256 floor);
+    /// @notice The arming fee floor is raise-only: `proposed` does not exceed `current`.
+    error ServiceCapacityArmingFloorNotRaised(uint256 current, uint256 proposed);
+    /// @notice #2459 r6 — the VPFI token cannot rotate while `held` of provisional compensation awaits its
+    ///         day's broadcast: the hold is in the old token and its record names no asset.
+    error RewardTokenRotationBlockedByProvisional(uint256 held);
+    /// @notice An arming fee rate or floor of `value` sits above the knob's ceiling `cap` (the whole newly-armed principal).
+    error ServiceCapacityArmingFeeAboveCap(uint256 value, uint256 cap);
+    /// @notice A term the payer bound moved between the quote and the post: `which` names it (0 fee, 1 capacity after, 2 rotation epoch, 3 curve epoch), `bound` what they bound, `actual` what stands.
+    error ServiceCapacityTermsMoved(uint8 which, uint256 bound, uint256 actual);
+    /// @notice `operator` still holds principal for `role` in RETIRED rotation epoch `epoch`: drain it before posting under the new token.
+    error ServiceCapacityOldEpochBalanceStands(uint8 role, address operator, uint64 epoch);
+    /// @notice Rotation `epoch` is not archived: it is the live one, or never existed.
+    error ServiceCapacityEpochNotArchived(uint64 epoch);
 
     /// @notice #2407 — a live refinance request (`offerId`, a refinance-tagged
     ///         borrower offer) targets `loanId`. Raised by the borrower actions

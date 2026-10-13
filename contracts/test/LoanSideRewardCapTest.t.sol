@@ -200,10 +200,13 @@ contract LoanSideRewardCapTest is SetupTest {
         _mut().setRewardEntryClaimNextDayRaw(id, 3);
         _mut().setLoanSideRewardedDaysRaw(LOAN_ID, 0, 2);
 
-        // Remaining split = days 3-4 (raw 2e18). Correct daysIncl = 2 walked
-        // + 2 remaining = 4 -> capEff = 1e18 x 4/10 = 0.4e18, which binds.
+        // The funding need is the STATIC read (A2-iii): the first remaining
+        // day, day 3, priced alone. Correct daysIncl = 2 walked + 1 (this
+        // day) = 3 -> capEff = 1e18 x 3/10 = 0.3e18, which binds. The
+        // double-counting mutant (2 walked + the whole 4-day window) reads
+        // 0.6e18 here, so the cell still discriminates.
         uint256 need = _mut().userClaimFundingNeedRaw(rewardLender);
-        assertEq(need, 0.4e18, "proration counts each walked day exactly once");
+        assertEq(need, 0.3e18, "proration counts each walked day exactly once");
     }
 
     // ── Dark: an unarmed claim is uncapped (the #1008 regime is untouched) ──

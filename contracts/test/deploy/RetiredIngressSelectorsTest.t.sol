@@ -100,7 +100,7 @@ contract RetiredIngressSelectorsTest is Test {
     function test_ReceiverGeneration_AdvancedWithTheWidenedIngress() public pure {
         assertEq(
             REMIT_RECEIVER_WIRE_GENERATION,
-            5,
+            6,
             "the receiver changed, so its generation advances or the refresh skips the upgrade"
         );
     }

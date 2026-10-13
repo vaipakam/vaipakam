@@ -4813,6 +4813,25 @@ What the first PR ships, mapped to the rules above:
   and records it as what a demotion later removes; confirmation promotes
   nothing. The two fixtures the section asks for exist: provisional-confirm
   and provisional-demote, each proven against the credit it starts from.
+
+  > **REVISED 2026-10-13 (#2459 r5) — a provisional credit is HELD APART,
+  > not counted at ingress.** Counting it at arrival put a value whose
+  > ownership was still unknown to work: with custody eras, a role change
+  > carries it into an era's row, a finalization releases it to pending
+  > surplus or the live baseline (split under the deficit rule), a drain
+  > moves it on, and a staging reservation can take its headroom — so a
+  > demotion had to chase it through pooled moves no per-credit record can
+  > trace (Codex #2308 r21; #2459 r4, and r5 twice). Now the provisional
+  > credit's value goes into a `Provisional` custody row of its own (at the
+  > Diamond before activation), counted by neither side of the ledger;
+  > confirmation counts it ONCE, by exactly the held figure — the
+  > fresh-only, once-only promotion this table's first column described —
+  > and credits it to the day's era as an arrival at that moment; demotion
+  > moves it untouched into `Unclassified` and records it uncounted. The
+  > two fixtures still stand, each against the state it starts from:
+  > confirm counts what was held; demote unwinds nothing because nothing
+  > was counted. The funding identity gains a third term: delivered =
+  > counted + uncounted + held.
 - **The two administrative writers are retained unchanged** — the
   role-transition retirement and `seedArmedFreshPaid`. Their natspec now
   describes the vintage-blind noun.
@@ -7656,6 +7675,28 @@ ERA the packet was dispatched in** (review r3). The compact admission for
 the OLD wires is 3b's (above), so 3d changes no admission a live packet
 depends on; it is what lets the dispatch cap move. After 3b.
 
+> **LANDED — 3d-1 / 3d-2 (in #1566 PR 1).** As planned: the rooted wire
+> carries a root over fixed-size chunks of the day list, the authenticated
+> extent (capped at 256 chunks) and the split; chunks are indexed
+> permissionlessly, each proven against the root, once (a bitmap), each of
+> its fixed length; the flat-hash page and the rooted route refuse each
+> other's batches; every ordinary remittance moved onto the rooted wire
+> (3d-2), its send and its quote sharing one builder. Two things differ
+> from the plan, both named by the PR 1 pre-open review:
+> - **The era word is the DESTINATION's era** (owner decision 2026-10-12,
+>   option 1; the PR 1 review's P1). Eras are numbered per chain, so the
+>   pre-registry constant PR C left in place would have quarantined every
+>   rooted remittance to a mirror whose role had changed. Each mirror's day
+>   report now carries its live custody era (a fourth report generation,
+>   B4, on the existing downgrade ladder), the canonical chain keeps the
+>   highest era each chain reported, and every rooted remittance — and its
+>   quote — is stamped with it.
+> - **The destination gas budget is derived, not matched.** The 300,000 the
+>   send declared (matched to the buyback receiver) was below even the typed
+>   ingress; the budget is now the measured ingress of both wires, cold and
+>   over the widest list, plus a reserve for the receiver's own work, and two
+>   gas cells pin it.
+
 - **The intended era is why 3d is a PR C dependency, not a loose end**
   (review r3). PR C's receive ingresses are specified to validate a
   packet's intended era against the live one and route a mismatch to
@@ -7690,6 +7731,55 @@ ceremonies.
 
 **Slice 4 PR C — the era-bound carry-forward (role transitions), after
 closure 2's cutover PR.**
+
+> **LANDED — C-1 … C-5 (in #1566 PR 1), with these departures from the plan
+> below.**
+> - **The registry** keeps, per era: the holder row, the days proven closed,
+>   the opening deficit, the boundary day,
+>   the opening time, the staged holds on the row, and the terminal flag.
+>   A role change carries the LIVE ROW — the custody — into the retiring
+>   era's row and levels the delivered counters; a deficit is carried as the
+>   new era's opening deficit, covered first by its first credit.
+> - **No liability counter, and no manual step** (owner decision 2026-10-12:
+>   "things should not rely on manual updates and checks"). An era is FINAL
+>   when every day of its span is proven closed by the per-day closure proof
+>   (3b-ii-B, counted into the era of the day; anyone may run it) and nothing
+>   staged holds its row. Its row then releases to the live baseline under
+>   the deficit split, or into pending surplus while Detached (drained once a
+>   role is active). It does not wait on packets awaiting classification — a
+>   closed era owes nothing, and a packet's later exit routes by its era
+>   (below) — nor on the parked-broadcast lane.
+> - **No backfill at all.** Every packet recorded before the registry existed
+>   is era 0 — no era opens before the registry does — so there is nothing to
+>   assign and nothing for an operator to attest; C-5's backfill, its count,
+>   the open-classification count of C-3 and the role freeze it lifted are
+>   removed (their storage fields stay, retired, for the append-only
+>   layout). **3b-ii-B must still never deploy without C-1**: a day proven
+>   closed before C-1's counter exists is never counted, and the stamp
+>   cannot be re-proven. Both ship in PR 1 — a deploy invariant.
+> - **Every packet is stamped with its era, and every exit routes by it**
+>   (owner decision 2026-10-12). A rooted delivery belongs to the era it was
+>   sent for; a retired-era delivery is not held inert — it opens its epoch,
+>   the design's separately backed, consumable home. A classification or a
+>   compensation credit goes to the live baseline for a live-era packet, into
+>   the retired era's row (counted as delivered and levelled at once) for an
+>   unclosed one, and where the release went for a closed one; a demotion
+>   takes its credit back from there; a reconciliation entry is correctable
+>   only in the era it was made in. The queues stay keyed by era 0, so the
+>   known-era guard stays at era 0.
+> - **A rooted remainder's release is the operator's.** The released-
+>   remainder acknowledgment remains the operator's disposition (the
+>   ratified closure design); nothing about an era waits on it.
+> - **Changed by the PR 1 review.** A day proves closed once the fold has
+>   reached it — the chain's own day close is not a condition, since the
+>   canonical chain may finalize a day the chain never closed itself and a
+>   detached mirror cannot close one, and such a day would have held its
+>   era, and every token rotation the era's row blocks, for ever (the
+>   rotation runbook now names the era rows). The day→era lookup is a
+>   binary search, so a deep registry never stalls a claim.
+>   An era release or a surplus drain is tallied as a RE-CREDIT, so the
+>   counted-funding view still reconciles against what Base sent. The
+>   cutover version is 4.
 
 - An era registry: the current era id; per era, a holder row, an outstanding
   LIABILITY counter and an OPEN-CLASSIFICATION counter (§5c: two counters, two

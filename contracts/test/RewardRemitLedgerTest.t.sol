@@ -311,12 +311,13 @@ contract RewardRemitLedgerTest is SetupTest {
         assertEq(rlens.getRemitAckedTotal(CHAIN_ARB), 0, "acked 0");
         assertEq(rlens.getDayClosedByRemitId(CHAIN_ARB, 1), 1, "day closed by 1");
 
-        // The widened payload carries the echo remitId.
-        (, uint256[] memory pd, uint256 pt, uint256 prid, , ) = abi.decode(
+        // The rooted payload carries the echo remitId (3d-2: the day list is
+        // committed to, not carried; its extent is one day).
+        (, , uint256 pn, , uint256 pt, uint256 prid, , , ) = abi.decode(
             ccip.sentPayload(0),
-            (uint256, uint256[], uint256, uint256, address, uint256)
+            (uint256, bytes32, uint256, uint256, uint256, uint256, address, uint256, uint256)
         );
-        assertEq(pd.length, 1, "payload days");
+        assertEq(pn, 1, "payload extent: one day");
         assertEq(pt, total, "payload total");
         assertEq(prid, 1, "payload remitId");
     }

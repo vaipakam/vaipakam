@@ -936,8 +936,11 @@ library LibVaipakam {
      *           payout row: what enters it leaves only to a destination the
      *           record names or back to the row it came from.
      *
-     *         Retired-ERA rows (one per era) are a separate, era-keyed
-     *         mapping that lands with the era registry (slice 4 PR C).
+     *         Retired-ERA rows (one per era) live in
+     *         `Storage.custodyEras[era].holderRow` (slice 4 PR C-1), summed
+     *         by `custodyEraRowsTotal` into the attributed total; they are
+     *         written only by the role-change carry-forward and the
+     *         era-terminal release.
      */
     enum RewardCustodyRow {
         LiveFresh,
@@ -948,7 +951,13 @@ library LibVaipakam {
         Intent,
         Unclassified,
         Restitution,
-        Resolving
+        Resolving,
+        /// @dev #2459 r5 — a PROVISIONAL compensation's value, HELD APART until
+        ///      the day's broadcast settles it: counted as neither delivered nor
+        ///      uncounted, backing nothing, carried by no era move. Confirmation
+        ///      counts it and credits it to the day's era like any arrival;
+        ///      demotion moves it, untouched, into `Unclassified`.
+        Provisional
     }
 
     /**
@@ -1424,7 +1433,7 @@ library LibVaipakam {
         bool cfgAutoRefinanceEnabled;
         bool cfgAutoExtendEnabled;
         // ── #393 v1 — LenderIntentVault master kill-switch ────────────
-        // Gates the standing-intent fill path (`OfferMatchFacet.matchIntent`).
+        // Gates the standing-intent fill path (`OfferMatchIntentFacet.matchIntent`).
         // Default `false` on a fresh deploy: a user can `setLenderIntent`
         // (register standing terms) but no fill executes until governance
         // flips this on post-bake. Same ship-off / governance-on / break-
@@ -1588,7 +1597,7 @@ library LibVaipakam {
 
     /// @notice #625 WI-2c — register/deregister an intent-originated loan in the
     ///         `activeIntentLoans` roll-discovery set. Called at the SET site
-    ///         (`OfferMatchFacet.matchIntent`, when `intentOrigin` is written) and
+    ///         (`OfferMatchIntentFacet.matchIntent`, when `intentOrigin` is written) and
     ///         both CLEAR sites (`LenderIntentFacet.releaseIntentExposure` — the
     ///         shared claim/withdraw/consolidation terminal hook — and
     ///         `LenderIntentFacet.rollIntentLoan`), so the set tracks EXACTLY the
@@ -7501,15 +7510,10 @@ library LibVaipakam {
         ///      `LibRewardCustody.active` only — that is the design's role
         ///      branch, in one place.
         bool rewardCustodyActivated;
-        /// @dev #1566 slice 4 PR B — the role and source freeze (design §5d):
-        ///      armed by the first holder attribution or by the activation,
-        ///      whichever comes first; while set, `setBaseChainId` and
-        ///      `setIsCanonicalRewardChain` refuse every EFFECTIVE role change,
-        ///      because the retained residual retirement can level the
-        ///      delivered counters but cannot re-key a holder allocation, so a
-        ///      transition would orphan funded custody. Cleared by slice 4
-        ///      PR C's era-registry backfill as its last step, and by nothing
-        ///      else.
+        /// @dev RETIRED (#1566 PR C revision) — the role and source freeze. The
+        ///      era registry carries a holder allocation across a role change, so
+        ///      nothing arms, clears or reads this flag; kept for the append-only
+        ///      layout.
         bool rewardRoleChangesFrozen;
         /// @dev #1566 slice 4 PR B (Codex #2186 r4, r5) — the COMPLETE-cut
         ///      record: the custody protocol version
@@ -7708,6 +7712,10 @@ library LibVaipakam {
         ///      closed record's entries; and until when a new record may not
         ///      open after a non-settlement release.
         mapping(bytes32 => uint256) stagingNonce;
+        /// @dev RETIRED by A2-ii: the obligation-keyed cooldown A2-i set at an
+        ///      unwind. The design's cooldown is keyed to the BATCH
+        ///      (`transportBatchWindows`); this slot stays allocated, never
+        ///      read, per the append-only layout rule.
         mapping(bytes32 => uint64) stagingCooldownUntil;
         /// @dev Per (key, nonce): a batch's position in the record's list plus
         ///      one, and whether it was passed over untyped — both O(1).
@@ -7776,6 +7784,165 @@ library LibVaipakam {
         ///      cleared; `ClaimFacet.getOwedAtInternalMatch` reports it only
         ///      while the loan stands `InternalMatched`, closed from `Active`.
         mapping(uint256 => OwedAtInternalMatch) owedAtInternalMatch;
+        /// @dev A2-ii — the batch-keyed priority window ({TransportBatchWindow}).
+        mapping(bytes32 => TransportBatchWindow) transportBatchWindows;
+        /// @dev A2-ii — record nonce key => batch => the record found the batch
+        ///      CONTESTED (fully held by other records while it stayed short),
+        ///      so it may register for that batch's window.
+        mapping(bytes32 => mapping(bytes32 => bool)) transportBatchWaiting;
+        /// @dev A2-ii — batch => obligation key => a priority reservation was
+        ///      taken: NON-RENEWABLE, permanent for the obligation on the batch.
+        mapping(bytes32 => mapping(bytes32 => bool)) transportBatchPriorityUsed;
+        /// @dev A2-ii — the claimant-side DOMAIN records ({StagingDomain}),
+        ///      keyed `keccak256(abi.encode(user, side))`.
+        mapping(bytes32 => StagingDomain) stagingDomains;
+        /// @dev A2-ii — domain key => loan id => the DAYS of that loan the
+        ///      domain's reserved day records carry: the proration carry the
+        ///      domain's later days count as already rewarded.
+        mapping(bytes32 => mapping(uint256 => uint32)) stagingDomainLoanDays;
+        /// @dev A2-ii — domain key => loan id => the loan-side amount the
+        ///      domain's reserved records hold: counted as PAID by the domain's
+        ///      later days, and excluded from the "another holder's reservation
+        ///      binds" test, since it is this domain's own.
+        mapping(bytes32 => mapping(uint256 => uint256)) stagingDomainLoanReserved;
+        /// @dev A2-ii — user => side => the claimant-side's entry LIFECYCLE
+        ///      VERSION, bumped by every lifecycle transition of any of the
+        ///      user's entries on that side ({LibInteractionRewards.noteEntryLifecycle}),
+        ///      so a domain's revalidation is O(1) when nothing moved.
+        mapping(address => mapping(uint8 => uint256)) rewardLifecycleVersion;
+        /// @dev A2-ii (c) — how many transport batches this chain has ever
+        ///      admitted: the global short-circuit that makes the legacy
+        ///      slice's listed-day scan free on every chain without one.
+        uint256 transportBatchesAdmitted;
+        /// @dev 3b-ii-B — a day every obligation covering which has TERMINATED,
+        ///      proven once by a completed closure walk. A monotone fact of a
+        ///      past day (no entry can begin or stop covering it), so irreversible.
+        mapping(uint256 => bool) dayObligationsClosed;
+        /// @dev 3b-ii-B — closure walks by `LibRewardClosure.walkKey(day, starter, nonce)`.
+        mapping(bytes32 => ClosureWalk) closureWalks;
+        /// @dev 3b-ii-B — the last walk nonce each starter used.
+        mapping(address => uint64) closureWalkNonce;
+        /// @dev 3b-ii-B — how many of a batch's listed days the park has checked
+        ///      closed so far (the park is paged like the index was).
+        mapping(bytes32 => uint32) transportParkCursor;
+        /// @dev 3c-1 — the days a batch listed, kept as its membership is indexed
+        ///      (beside the inverse index), so the two allocation gates read each
+        ///      listed day's arrival and closure LIVE. Empty for a batch indexed
+        ///      before this field existed: such a batch is withheld as contested.
+        mapping(bytes32 => uint256[]) transportBatchDays;
+        /// @dev Slice 4 PR C-1 (#1566) — the custody era registry. Era 0 is
+        ///      the pre-registry era every existing figure keys
+        ///      (`LibRewardCustody.RECONCILIATION_QUEUE_ERA`); a role change on an
+        ///      activated custody retires the live era and opens the next.
+        ///      NOT the reporter's `rewardEra*` / `dayClockEra` family, which
+        ///      tracks the canonical DEPLOYMENT a day's clock came from.
+        uint64 custodyEraCurrent;
+        mapping(uint64 => CustodyEra) custodyEras;
+        /// @dev Σ `custodyEras[*].holderRow` — kept as a counter so the
+        ///      attributed total stays one read, never a scan over eras.
+        uint256 custodyEraRowsTotal;
+        /// @dev RETIRED (#1566 PR C revision — no backfill: history is era 0).
+        ///      Kept for the append-only layout; nothing reads or writes it.
+        bool custodyEraBackfillComplete;
+        /// @dev PR C-2 — Σ fresh absorbed into the recycle bucket that a RETIRED
+        ///      era's row funded (counted apart from live-funded absorption).
+        uint256 recycleEraFundedCumulative;
+        /// @dev PR C-4 — the parked-message lane, by local id (1-based), and
+        ///      how many parked entries each custody era still carries open.
+        mapping(uint256 => ParkedBroadcast) parkedBroadcasts;
+        uint256 parkedBroadcastCount;
+        mapping(uint64 => uint256) custodyEraParkedOpen;
+        /// @dev RETIRED with the backfill (#1566 PR C revision): the packet list
+        ///      and the backfill's record. Kept for the append-only layout;
+        ///      nothing reads or writes them.
+        bytes32[] ingressPacketHashes;
+        bool custodyEraBackfillStarted;
+        uint256 custodyEraBackfillPacketsSupplied;
+        uint256 custodyEraBackfillPacketsCounted;
+        uint256 custodyEraBackfillPacketsAttested;
+        // ── #1219 (S-4) — service capacity deposits, DARK behind `serviceCapacityEnabled` ──
+        /// @dev The channel's switch (admin now, governance later). While false,
+        ///      posting is refused; withdrawals and the permissionless free tier
+        ///      stand — the disabled path is the LAUNCH path, since VPFI is
+        ///      earn-only and a required deposit would make the gated roles
+        ///      unreachable (owner, 2026-08-03).
+        bool serviceCapacityEnabled;
+        /// @dev The deposit escrow: a `RewardCustodyHolder` instance bound once,
+        ///      moving tokens only at the Diamond's instruction. NEVER the reward
+        ///      holder and never this contract's own balance — the delivered-funding
+        ///      bound is the remedy for new custody classes, not another
+        ///      subtraction in `backingPosition`, and deposits must not commingle
+        ///      with LIF custody or reward budgets.
+        address serviceCapacityEscrow;
+        /// @dev The VPFI rotation epoch deposits are keyed by: 0 until the first
+        ///      rotation under this regime (slice 3 bumps and archives it).
+        uint64 vpfiRotationEpoch;
+        /// @dev `(role, operator, rotationEpoch)` → the deposit record.
+        mapping(uint8 => mapping(address => mapping(uint64 => ServiceCapacityDeposit))) serviceDeposits;
+        /// @dev Σ principal the escrow holds per rotation epoch — the fourth
+        ///      tracked VPFI balance class, published by the facet.
+        mapping(uint64 => uint256) serviceDepositEscrowByEpoch;
+        /// @dev role → its capacity curve (slice 2). `freeTier == 0` — unset, or
+        ///      CLEARED by a VPFI token rotation (slice 3) — means that role's limiter
+        ///      is dark; the epoch counter is never reset, so a re-set curve still
+        ///      retires every bucket of the old regime.
+        mapping(uint8 => CapacityCurve) capacityCurves;
+        /// @dev (role, actor) → the capacity bucket (slice 2).
+        mapping(uint8 => mapping(address => CapacityBucket)) capacityBuckets;
+        /// @dev adapter → the operator identity its fills are charged to (actor
+        ///      rule 2): written by the adapter factory at creation (the keeper it
+        ///      names), overridable by the admin for adapters created before this.
+        mapping(address => address) adapterOperator;
+        /// @dev Slice 3 — the ARMING FEE's shape: a rate (1e18 = the whole newly-armed
+        ///      principal) charged on the principal a post or raise ACTUALLY arms
+        ///      (the part landing below `bondAt4x`), and the floor it may never sit
+        ///      under. `armingFeeRate == 0` ⇒ arming is dark: posting is refused.
+        uint256 armingFeeRate;
+        uint256 armingFeeFloor;
+        /// @dev Slice 3 — rotation epochs RETIRED by a VPFI token rotation, and the
+        ///      token each epoch's principal is denominated in (the live epoch's is
+        ///      `vpfiToken`; it is recorded here too, so a retired epoch keeps its
+        ///      asset after the pointer moves on).
+        mapping(uint64 => bool) rotationEpochArchived;
+        mapping(uint64 => address) rotationEpochToken;
+        /// @dev #1219 review — (role, initiator) → the FREE-TIER bucket the backstop
+        ///      route (actor rule 3) and an unbound route (rule 4) charge: the outer
+        ///      initiator's permissionless baseline, kept apart from that address's
+        ///      bonded bucket so a free-tier charge never re-clamps credit a deposit
+        ///      bought, and a deposit never lifts a free-tier route.
+        mapping(uint8 => mapping(address => CapacityBucket)) capacityFreeBuckets;
+        /// @notice #1566 PR 1 review — Σ fresh RE-CREDITED in-holder (an era's
+        ///         release, a pending-surplus drain): raised into
+        ///         `rewardBudgetArmedFreshReceived` as headroom, but counted
+        ///         there once already at its delivery. The counted-funding view
+        ///         nets it out so a chain's counted funding still reconciles
+        ///         against what Base sent.
+        uint256 rewardBudgetFreshReCredited;
+        /// @notice #1566 PR C revision — the HIGHEST custody era each source
+        ///         chain has reported (B4 day report), keyed by chain id. The
+        ///         canonical chain stamps every rooted remittance to that chain
+        ///         with it. Eras only grow on a chain; reports may arrive out of
+        ///         order, so the record only rises.
+        mapping(uint32 => uint64) chainCustodyEraReported;
+        /// @notice #1566 PR C revision — the custody era each reconciliation entry
+        ///         was made in, plus one (zero: made before the stamp, era 0). A
+        ///         correction is admitted only in that era.
+        mapping(uint256 => uint64) reconciliationEntryEraPlusOne;
+        /// @notice #2459 r1 — set the first time a NONZERO sanctions oracle is
+        ///         installed, never cleared. The service-capacity deposit surface
+        ///         reads a disabled oracle on a chain that once screened as an
+        ///         OUTAGE (design: "disabled-after-configured defers every
+        ///         mutation"): with screening once live, "no persisted flag" no
+        ///         longer proves an operator clean, so an off switch must not
+        ///         reopen principal release. A never-configured chain runs open.
+        bool sanctionsOracleEverSet;
+        /// @notice #2459 r5 — provisional compensation value HELD APART: counted as
+        ///         neither delivered (`rewardBudgetArmedFreshReceived`) nor uncounted
+        ///         (`rewardBudgetFreshUncounted`) until the day's broadcast confirms or
+        ///         demotes it, so delivered = counted + uncounted + this, always. In
+        ///         custody it is the `Provisional` row; a hold made before custody
+        ///         activation rests at the Diamond and is counted here alone.
+        uint256 rewardBudgetFreshProvisional;
     }
 
     /// @notice 3b-ii-A2 (#2305) — one batch a staging record staged from, with
@@ -7784,6 +7951,254 @@ library LibVaipakam {
         bytes32 id;
         uint256 fresh;
         uint256 recycled;
+    }
+
+    /// @notice 3b-ii-A2-ii — the PRIORITY WINDOW a non-settlement release (an
+    ///         unwind page returning a record's staged coverage) puts on a
+    ///         transport batch. Until `closesAt` ordinary staging from the
+    ///         batch is suspended for every record — the releaser included —
+    ///         while a one-call draw consumes the restored coverage directly.
+    ///         Meanwhile the records that found the batch CONTESTED register,
+    ///         and the oldest registrant by its record's opening time (a
+    ///         running minimum: encounter order never decides) stages the
+    ///         batch first once the window closes — ONE priority reservation
+    ///         ever per obligation and batch, burnt whether taken or let lapse.
+    ///         Ordinary staging of the unreferenced remainder resumes once the
+    ///         reservation is taken, or once the right lapses untaken
+    ///         (#1566 PR 1 review: the whole batch is not held for the winner). This is what bounds
+    ///         the two-obligation hostage: unwind-and-restage alternation burns
+    ///         each controlled obligation once, and the oldest honest waiter
+    ///         is served at every burn.
+    struct TransportBatchWindow {
+        uint64 closesAt;
+        bytes32 releasedBy;
+        bytes32 oldestKey;
+        bytes32 oldestNonceKey;
+        uint64 oldestOpenedAt;
+        bytes32 winnerNonceKey;
+    }
+
+    /// @notice #1219 (S-4) — the state of an operator's service capacity deposit:
+    ///         `None` (no record), `Active`, or `SanctionsParked` — a withdrawal
+    ///         parked by the FIRST authoritative sanctions flag, released only by
+    ///         an authoritative clean read (frozen funds are never seized).
+    enum ServiceDepositState {
+        None,
+        Active,
+        SanctionsParked
+    }
+
+    /// @notice #1219 (S-4) — the roles a capacity deposit may buy throughput for.
+    ///         `Solver` is the matcher / solver family (match fills); `Keeper` the
+    ///         granted `KEEPER_ACTION_*` family. A deposit is per `(role, address)`.
+    enum ServiceCapacityRole {
+        Solver,
+        Keeper
+    }
+
+    /// @notice #1219 (S-4) — an operator's SERVICE CAPACITY DEPOSIT for one role in
+    ///         one VPFI rotation epoch: a refundable, non-yielding, non-confiscatable
+    ///         deposit that buys operational capacity above the permissionless free
+    ///         tier (the capacity curve is the next slice). It is never a bond: v1
+    ///         has no slash, nothing is ever at risk, and nothing is unlocked by a
+    ///         threshold.
+    /// @dev    `rotationEpoch` is the partition KEY and `token` its attribute
+    ///         (A -> B -> A is two epochs). `eligibleAmount` is the ARMED balance
+    ///         the capacity rules read — equal to `amount` (the arming fee, slice 3,
+    ///         is paid BESIDE the principal, never out of it). `parkedRequest` is
+    ///         the CAP of a sanctions-parked withdrawal,
+    ///         never a promise: the release pays `min(parkedRequest, principal)`.
+    struct ServiceCapacityDeposit {
+        address token;
+        uint64 rotationEpoch;
+        ServiceDepositState state;
+        uint256 amount;
+        uint256 eligibleAmount;
+        uint256 parkedRequest;
+        /// @dev Slice 3 — set on the first touch of a record in a RETIRED rotation
+        ///      epoch: the lazy per-record materialization the epoch archival
+        ///      announces (`CapacityDepositMigrated`), no walk at rotation time.
+        bool migrated;
+    }
+
+    /// @notice #1219 (S-4) — one role's capacity CURVE. `freeTier` is the free
+    ///         bucket's capacity (cost units, 1e18-scaled) — the permissionless
+    ///         baseline, floored at one `classCost` so a zero-deposit operator can
+    ///         always complete one action; `freeRatePerSec` its refill rate
+    ///         (units × 1e18 per second); `bondAt4x` the deposit (VPFI wei) at which
+    ///         the rate and ceiling reach 4× the free tier; `classCost` what one
+    ///         executed fill or action costs (units × 1e18; one class per role in
+    ///         v1). `epoch` increments on every retune — a bucket on an older epoch
+    ///         is RESET (the design's conservative branch: pre-retune credit is
+    ///         forfeited, never silently re-credited under the new capacity). All
+    ///         zero = the role's limiter is DARK: no charge, no refusal.
+    struct CapacityCurve {
+        uint256 freeTier;
+        uint256 freeRatePerSec;
+        uint256 bondAt4x;
+        uint256 classCost;
+        uint64 epoch;
+        /// @dev #1219 review — when the curve was last SET: a bucket settled under an
+        ///      older epoch accrues under this curve from here (its old credit is
+        ///      forfeited, never its future). Appended; held only as a mapping value.
+        uint64 setAt;
+    }
+
+    /// @notice #1219 (S-4) — one `(role, actor)` capacity BUCKET: its balance
+    ///         (units × 1e18), when it was last touched, and the curve epoch it
+    ///         last settled under. An unseen bucket starts with exactly ONE free
+    ///         action at its first touch — the permissionless floor every operator
+    ///         has, never deposit-derived credit, so a fresh address buys no burst
+    ///         — then accrues at the actor's OWN rate from its OWN last touch and
+    ///         is clamped to the actor's OWN ceiling.
+    struct CapacityBucket {
+        uint128 balance;
+        uint64 lastTouch;
+        uint64 curveEpoch;
+        bool seen;
+    }
+
+    /// @notice 3b-ii-A2-ii — the lifecycle of a multi-chunk claim DOMAIN
+    ///         ({StagingDomain}): STAGING while the claim's preparation
+    ///         stages one day record per day of the extent and pays nothing;
+    ///         RESERVING while a cursor reserves each day's residual from the
+    ///         live sources and the cap headroom (a day they cannot bear stops
+    ///         the domain here, nothing paid); RESOLVING once every day is
+    ///         reserved — irrevocable, no deadline, each record pays on its
+    ///         last page in day order; UNWINDING past the deadline, on the
+    ///         claimant's cancel, or on a stale commitment. CLEARED is the
+    ///         domain's deletion once its live records reach zero.
+    enum DomainPhase {
+        None,
+        Staging,
+        Reserving,
+        Resolving,
+        Unwinding
+    }
+
+    /// @notice 3b-ii-A2-ii — one per claimant-side: a claim whose pending
+    ///         armed days exceed one settlement chunk decides as a UNIT. The
+    ///         committed extent is a SNAPSHOT — the entry set and the last day
+    ///         fixed when the staging pass begins; an entry accruing after it
+    ///         queues for the next domain — and its day records are the same
+    ///         staging records a one-day settlement opens, stamped with this
+    ///         domain's key, their deadline and unwind the domain's.
+    /// @dev 3b-ii-B — one per-day CLOSURE WALK, keyed (day, starter, nonce): the
+    ///      starter's own proof that every obligation covering `day` has
+    ///      terminated. Per-side cursors (last entry id visited) and conservation
+    ///      sums (Σ perDayNumeraire18 of the visited entries); a side is complete
+    ///      when its sum equals the day's folded side total; the walk completes
+    ///      when both are, stamping the day. A walk that omitted an id can never
+    ///      complete (the cursor only advances) and is simply abandoned.
+    struct ClosureWalk {
+        address starter;
+        uint64 day;
+        uint64 nonce;
+        bool lenderComplete;
+        bool borrowerComplete;
+        bool completed;
+        uint256 lenderCursor;
+        uint256 borrowerCursor;
+        uint256 lenderConservation;
+        uint256 borrowerConservation;
+    }
+
+    /// @notice Slice 4 PR C-1 (#1566) — one CUSTODY ERA: the span of a chain's
+    ///         reward role between two role changes. The live era is
+    ///         `Storage.custodyEraCurrent`; every earlier era is RETIRED and
+    ///         holds, in `holderRow`, the live-fresh custody it carried at the
+    ///         change — consumable by the obligations accrued in it (PR C-2)
+    ///         and released only when the era is terminal (writer 2).
+    /// @dev    Two counters make the terminal condition. `daysClosed` is how
+    ///         many of the era's days the per-day CLOSURE PROOF (3b-ii-B) has
+    ///         proven closed — "every obligation covering the day has
+    ///         terminated" — written where that proof flips a day's flag, so an
+    ///         era is free of outstanding reward liability exactly when every
+    ///         day of its span is proven closed; nothing is written on the
+    ///         entry-creation path, whose host has no byte margin left.
+    ///         `openClassification` is RETIRED (#1566 PR C revision): no count
+    ///         gates an era — a packet classified after its era closed routes its
+    ///         value by its era — so nothing writes it; kept for the layout. The
+    ///         terminal writers wait on the closed days alone. `openingDeficit` is what the
+    ///         retiring baseline owed (`paid - received`) when this era opened —
+    ///         carried, not erased, so the first credit covers it first (§5c).
+    struct CustodyEra {
+        uint256 holderRow;
+        uint256 daysClosed;
+        uint256 openClassification;
+        uint256 openingDeficit;
+        uint64 boundaryDay;
+        uint64 openedAt;
+        bool terminal;
+        /// @dev PR C-2 — era custody HELD by standing staging reservations (the
+        ///      records' era legs): the era's room nets it; a resolve consumes it
+        ///      and an unwind restores it.
+        uint256 stagedFresh;
+    }
+
+    /// @notice Slice 4 PR C-4 (#1566) — one PARKED legacy broadcast: an era-less
+    ///         kind-2 or kind-5 wire the deployment-rotation gate refused, kept as
+    ///         a record with a disposition instead of a transport-side revert.
+    /// @dev    `status`: 0 parked, 1 tombstoned (operator-recorded disposition),
+    ///         2 applied (a retry passed the gate). `quarantineOnly`: first
+    ///         received after era 0 — exits by tombstone alone (design §5c: the
+    ///         next era's opening never certifies a later arrival).
+    struct ParkedBroadcast {
+        uint8 kind;
+        uint8 status;
+        bool quarantineOnly;
+        uint64 receivedAt;
+        uint64 custodyEraAtReceipt;
+        uint256 dayId;
+        bytes32 digest;
+    }
+
+    struct StagingDomain {
+        DomainPhase phase;
+        address user;
+        RewardSide side;
+        RewardDelivery venue;
+        bool venueSet;
+        uint64 firstDay;
+        uint64 lastDay;
+        /// @dev The preparation cursor: the last day of the extent whose
+        ///      record is opened (or that priced to nothing).
+        uint64 preparedThrough;
+        uint64 reserveCursor;
+        uint64 resolveCursor;
+        uint64 unwindCursor;
+        /// @dev The revalidation cursor over the extent's days (addendum 1).
+        uint64 revalidateCursor;
+        /// @dev Records opened and not yet closed; the extent clears at zero.
+        uint32 liveRecords;
+        uint64 openedAt;
+        uint64 deadline;
+        /// @dev The claimant-side's entry lifecycle version when the extent
+        ///      was committed (addenda 1–2): equal now means nothing moved.
+        uint256 lifecycleVersionAtCommit;
+        /// @dev The settlement chunks the extent needs — the deadline's base.
+        uint256 chunks;
+        /// @dev The day records' own lease growth, accumulated (each record's
+        ///      deadline moves are added here; the domain's deadline is its
+        ///      opening plus the chunks' cadences plus this plus the grace).
+        uint256 leaseAccum;
+        uint256[] entryIds;
+        /// @dev A2-ii (c) — a LEGACY-SLICE domain: the entry's pre-`D*` window,
+        ///      prepared (listed days staged) and CONSUMED into the aggregates
+        ///      below for the slice's one whole-window settlement; never
+        ///      reserved from the live sources, never unwound, no deadline.
+        bool legacy;
+        /// @dev The epoch fresh the consumed records contributed — what the
+        ///      slice's settlement pays as transport legs instead of live.
+        uint256 aggFresh;
+        /// @dev The part of `aggFresh` held in the `Resolving` custody row
+        ///      until the settlement (custody active); released to
+        ///      `Unclassified` right before the payout takes it.
+        uint256 heldAgg;
+        /// @dev #1566 PR 1 review — the lifecycle version the CURRENT revalidation
+        ///      pass reads the extent against: a pass completes only against one
+        ///      version, and anchors to it. Appended; held only as a mapping value.
+        uint256 revalidatingVersion;
     }
 
     /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss: the
@@ -7851,7 +8266,7 @@ library LibVaipakam {
         uint8 reason;
         /// @dev #1566 closure 2 cutover PR 1 — how much of `amount` is HELD
         ///      in the custody holder's `Unclassified` row (a quarantine
-        ///      landed or a demotion unwound on an ACTIVATED deployment).
+        ///      landed or a demotion released its hold on an ACTIVATED deployment).
         ///      The R4 return draws `held` from the row and the rest from
         ///      the Diamond's balance (a quarantine that predates the
         ///      activation). Appended: a mapped struct grows at its end.
@@ -7997,6 +8412,42 @@ library LibVaipakam {
         ///      the attested caps it is drawn under, and never retyped
         ///      (Codex #2276 r26 P1) — an unattested epoch is not drawn.
         uint256 drawn;
+        /// @dev 3d-1 (#1566 transport epochs, the d6 wire), appended — the
+        ///      authenticated day-list COMMITMENT a d6 delivery carries in place
+        ///      of a flat hash: a Merkle root over fixed-size indexed chunks of
+        ///      the list, with the extent the wire committed to (`dayCount`
+        ///      elements in `chunkCount` chunks). Zero for every pre-d6 packet,
+        ///      and `dayListHash` is zero for every d6 one: a packet is committed
+        ///      one way or the other, never both. On the epoch path such a
+        ///      packet keeps `freshShare == recycledShare == 0` — those two
+        ///      record what the INGRESS credited to the shared ledgers, which for
+        ///      a delivery held whole as its own epoch is nothing; the wire's
+        ///      split lives in `freshAttested` / `recycledAttested`.
+        bytes32 dayListRoot;
+        uint32 chunkCount;
+        /// @dev Which indexed chunks have landed — bit `i` set once chunk `i`
+        ///      is proven and written; the batch's `indexedDays` reaches
+        ///      `dayCount` exactly when every bit below `chunkCount` is set.
+        uint256 chunksIndexed;
+        /// @dev The era the packet was dispatched in, as the wire stated it.
+        ///      STORED, not yet validated: PR C's receive ingresses read it
+        ///      against the live era; no wire before d6 carried one.
+        uint64 intendedEra;
+        /// @dev PR C-3 — the custody era the packet was counted into, and the
+        ///      registry's view of it: `eraCounted` once unclassified value is
+        ///      attributed under the packet (the ingress from this slice on; the
+        ///      backfill for history), `classificationFinal` once nothing is left
+        ///      unclassified under it — the era's open-classification count rises
+        ///      and falls with those two marks, each at most once per opening.
+        ///      #1566 PR C revision: `custodyEra` is stamped at arrival for every
+        ///      packet (the era it belongs to, which every exit routes by);
+        ///      `eraCounted`, `classificationFinal` and `eraQuarantined` are
+        ///      RETIRED — no count gates an era, and no delivery is held inert.
+        ///      Kept for the layout; nothing writes them.
+        uint64 custodyEra;
+        bool eraCounted;
+        bool classificationFinal;
+        bool eraQuarantined;
     }
 
     /// @notice #1566 transport epochs PR 3b — the TRANSPORT EPOCH of one
@@ -8016,10 +8467,11 @@ library LibVaipakam {
     ///         ADMISSION IS ALWAYS COMPACT (Codex #2232 r2): it writes this
     ///         row and nothing per-day, whatever the list's length. The
     ///         receiver's callback runs inside
-    ///         `LibRewardRemitDispatch.REWARD_BUDGET_DEST_GAS_LIMIT`, which is
-    ///         300,000 — and 32 first-time per-day pushes, two new storage
-    ///         slots each, exceed that on their own before the packet record
-    ///         and the custody relocation are counted. An admission that
+    ///         `LibRewardRemitDispatch.REWARD_BUDGET_DEST_GAS_LIMIT`, a FIXED
+    ///         figure derived from this compact admission — and per-day
+    ///         pushes, two new storage slots each, grow with a list's length
+    ///         without bound (32 of them alone were over the 300,000 the
+    ///         budget stood at then). An admission that
     ///         indexed short lists synchronously would therefore have failed
     ///         to deliver exactly the in-flight old-wire messages this path
     ///         exists to preserve. `indexedDays` climbs afterwards, one
@@ -8087,7 +8539,12 @@ library LibVaipakam {
         None,
         Claim,
         Forfeit,
-        Expiry
+        Expiry,
+        /// @dev A2-ii (c) — a listed pre-`D*` day of an entry's LEGACY SLICE,
+        ///      staged for the slice's whole-window settlement to consume
+        ///      before the schedule funds it; never reserved, never paid by
+        ///      the record itself.
+        LegacySlice
     }
 
     /// @notice 3b-ii-A2 (#2305) — where a staging record stands. `Staging`:
@@ -8221,6 +8678,15 @@ library LibVaipakam {
         ///      after a finished scan still lengthens the lease by the call
         ///      it costs. A call with nothing new adds nothing.
         uint256 forcedPages;
+        /// @dev A2-ii — the domain this record belongs to ({StagingDomain}),
+        ///      zero for a standalone record. A domain record's deadline,
+        ///      reservation, resolution and unwind are the domain's.
+        bytes32 domainKey;
+        /// @dev PR C-2 — the era the record's day was live in and the era legs
+        ///      it holds, user and treasury, reserved against that era's row.
+        uint64 eraId;
+        uint256 eraUserFresh;
+        uint256 eraTreasuryFresh;
     }
 
     /// @notice #1566 transport epochs PR 3b — a batch's PENDING REMAINDER:
@@ -8367,13 +8833,17 @@ library LibVaipakam {
     ///         authenticated remitter as the assumed era — the V3 arrival
     ///         later CONFIRMS it in place (matching deployment) or DEMOTES
     ///         the whole credit to the stranded-recovery reservation
-    ///         (mismatch: the confirmed era's state governs).
+    ///         (mismatch: the confirmed era's state governs). Until then its
+    ///         value is HELD APART (#2459 r5, `provisionalHeld`): counted by
+    ///         neither side of the funding ledger and backing nothing, so no
+    ///         era move ever carries it and a demotion takes back exactly it.
     struct DayCompensation {
         uint128 lenderPool18;
         uint128 borrowerPool18;
         // What this day's credits added to `rewardBudgetArmedFreshReceived`
-        // — stored, not recomputed, so a demotion moves EXACTLY what was
-        // counted even if the arming day changed in between.
+        // — stored, not recomputed. A provisional credit adds nothing until
+        // its confirmation counts it (#2459 r5), so a demotion has nothing
+        // counted to unwind.
         uint128 armedFreshCounted;
         // The ACTUAL credited delivery total (#1634 r3): the per-side pools
         // each floor when a fee-on-transfer delivery scales, so their sum
@@ -8387,6 +8857,12 @@ library LibVaipakam {
         // payload's authenticated remitter) it reconstructs the receipt
         // key a demotion records the quarantine under.
         uint256 remitId;
+        // #2459 r5, appended — the provisional credit's value HELD APART until
+        // the broadcast settles it, and where: the custody `Provisional` row
+        // (`provisionalHeldInCustody`) or, for a hold made before custody
+        // activation, the Diamond. Zero once confirmed (counted) or demoted.
+        uint128 provisionalHeld;
+        bool provisionalHeldInCustody;
     }
 
     /// @notice #1434 P2-w1 — one day's frozen lapse clock (design §1.1's
@@ -8646,6 +9122,13 @@ library LibVaipakam {
         ///      watermark that guessed wrong would refuse a legitimate
         ///      attestation for good — a worse failure than a wasted fee.
         bool splitOnWire;
+        /// @dev 3d-2 (#1566 transport epochs, the d6 wire), appended — the
+        ///      day-list ROOT this reservation's payload committed to. The
+        ///      receive side indexes the delivery's membership by proofs against
+        ///      exactly this word, so the canonical record of what was sent
+        ///      carries the same commitment the mirror holds. Zero for every
+        ///      reservation dispatched before the rooted wire.
+        bytes32 dayListRoot;
     }
 
     /// @notice #1222 M3 B2-d2 — a mirror's receipt record for one delivered
@@ -9069,7 +9552,7 @@ library LibVaipakam {
     ///      shipped in Phase 1 stay forward-compatible.
     uint16 internal constant KEEPER_ACTION_EXTEND = 1 << 5; // 0x20
     /// @dev #393 v1-c — authorize a solver to fill the principal owner's
-    ///      standing lending INTENT (`OfferMatchFacet.matchIntent`) when that
+    ///      standing lending INTENT (`OfferMatchIntentFacet.matchIntent`) when that
     ///      intent is set `requiresKeeperAuth`. PRE-loan / principal-keyed (the
     ///      loan doesn't exist at fill time), so it is checked via
     ///      `LibAuth.requireKeeperForPrincipal`, not the loan-keyed
@@ -11024,15 +11507,23 @@ library LibVaipakam {
 
     /// @notice Emitted when the chain's sanctions oracle address changes.
     ///         Off-chain monitoring should alert on a transition to or
-    ///         from `address(0)`: zero disables the check globally, so
-    ///         the event is worth a human review either way.
+    ///         from `address(0)`: zero disables the Tier-1 check, and on a
+    ///         chain that has ever configured an oracle it FREEZES the
+    ///         service-capacity deposit surface (see {setSanctionsOracle}),
+    ///         so the event is worth a human review either way.
     /// @custom:event-category informational/config
     event SanctionsOracleSet(address indexed previous, address indexed next);
 
     /// @notice Installs the chain's sanctions oracle address (any
     ///         `ISanctionsList`). Owner-only — timelock-gated after the
-    ///         governance handover. Setting to `address(0)` disables
-    ///         sanctions screening across the chain. Never set it to
+    ///         governance handover. Setting to `address(0)` disables the
+    ///         Tier-1 sanctions screen (it fails open). The service-capacity
+    ///         deposit surface is the exception, and it fails CLOSED: once any
+    ///         oracle has been installed (the never-cleared
+    ///         `sanctionsOracleEverSet` latch, #2459), a zero oracle reads as an
+    ///         outage there, so every deposit post and withdrawal defers until an
+    ///         oracle — a vendor's, or governance's attested snapshot — is
+    ///         installed again. Never set it to
     ///         Chainalysis's retired on-chain oracle (#2443): it still
     ///         answers but no longer updates.
     /// @param oracle The sanctions oracle contract address, or zero.
@@ -11041,6 +11532,7 @@ library LibVaipakam {
         Storage storage s = storageSlot();
         address prev = s.sanctionsOracle;
         s.sanctionsOracle = oracle;
+        if (oracle != address(0)) s.sanctionsOracleEverSet = true; // the latch never clears (#2459 r1)
         emit SanctionsOracleSet(prev, oracle);
     }
 

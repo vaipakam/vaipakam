@@ -91,6 +91,11 @@ import {RewardEpochViewFacet} from "../src/facets/RewardEpochViewFacet.sol";
 import {RewardStagingFacet} from "../src/facets/RewardStagingFacet.sol";
 import {RewardClaimWalkFacet} from "../src/facets/RewardClaimWalkFacet.sol";
 import {RewardStagingSettleFacet} from "../src/facets/RewardStagingSettleFacet.sol";
+import {RewardStagingDomainFacet} from "../src/facets/RewardStagingDomainFacet.sol";
+import {RewardClosureFacet} from "../src/facets/RewardClosureFacet.sol";
+import {RewardEraFacet} from "../src/facets/RewardEraFacet.sol";
+import {ServiceCapacityFacet} from "../src/facets/ServiceCapacityFacet.sol";
+import {OfferMatchIntentFacet} from "../src/facets/OfferMatchIntentFacet.sol";
 import {RewardSweepWalkFacet} from "../src/facets/RewardSweepWalkFacet.sol";
 import {RewardForfeitWalkFacet} from "../src/facets/RewardForfeitWalkFacet.sol";
 import {LibPausable} from "../src/libraries/LibPausable.sol";
@@ -240,7 +245,9 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     // off OfferAcceptFacet, which was 164 bytes under EIP-170.
     // 87 -> 88: SwapToRepayPartialFacet (#2416) — the partial swap-to-repay
     // route split off SwapToRepayFacet, which was 73 bytes under EIP-170.
-    uint256 public constant EXPECTED_FACETS = 88;
+    // 92 -> 93: the merge of main brings SwapToRepayPartialFacet (#2416) to the
+    // #1566 build stack's 92 (87 + the stack's five).
+    uint256 public constant EXPECTED_FACETS = 93;
 
     function refresh() external {
         uint256 cid = block.chainid;
@@ -1382,9 +1389,14 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         items[84] = Item("rewardSweepWalkFacet", address(new RewardSweepWalkFacet()), _getRewardSweepWalkSelectors());
         items[85] = Item("rewardStagingSettleFacet", address(new RewardStagingSettleFacet()), _getRewardStagingSettleSelectors());
         items[86] = Item("rewardForfeitWalkFacet", address(new RewardForfeitWalkFacet()), _getRewardForfeitWalkSelectors());
+        items[87] = Item("rewardStagingDomainFacet", address(new RewardStagingDomainFacet()), _getRewardStagingDomainSelectors());
+        items[88] = Item("rewardClosureFacet", address(new RewardClosureFacet()), _getRewardClosureSelectors());
+        items[89] = Item("rewardEraFacet", address(new RewardEraFacet()), _getRewardEraSelectors());
+        items[90] = Item("serviceCapacityFacet", address(new ServiceCapacityFacet()), _getServiceCapacitySelectors());
+        items[91] = Item("offerMatchIntentFacet", address(new OfferMatchIntentFacet()), _getOfferMatchIntentSelectors());
         // #2416 — refreshed WITH swapToRepayFacet (items[43]): one surface
         // across the two, so refreshing either alone splits the routes.
-        items[87] = Item("swapToRepayPartialFacet", address(new SwapToRepayPartialFacet()), _getSwapToRepayPartialFacetSelectors());
+        items[92] = Item("swapToRepayPartialFacet", address(new SwapToRepayPartialFacet()), _getSwapToRepayPartialFacetSelectors());
         items[26] = Item("rewardReporterFacet", address(new RewardReporterFacet()), _getRewardReporterSelectors());
         // #1222 M3 B3 — `getChainRecycledLedger` /
         // `getChainDailyRecycledCredit` moved here from ConfigFacet (EIP-170).

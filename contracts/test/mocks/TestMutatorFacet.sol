@@ -963,9 +963,11 @@ contract TestMutatorFacet {
     ///         via {LibInteractionRewards.closeLoan}; this is the test escape
     ///         hatch so a cap test can seed an entry + close it in one step.
     function closeRewardEntryRaw(uint256 id, uint32 endDay) external {
-        LibVaipakam.RewardEntry storage e = LibVaipakam.storageSlot().rewardEntries[id];
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
         e.endDay = endDay;
         e.closed = true;
+        LibInteractionRewards.noteEntryLifecycle(s, e); // the real close bumps the version (A2-ii)
     }
 
     /// @notice Governor PR-3b test-only — seed the recycle bucket + per-day
@@ -1233,12 +1235,9 @@ contract TestMutatorFacet {
                 // those cases into defers. Delivered-bound behaviour is
                 // covered through the real walk instead, where the bound is
                 // read from storage.
-                deliveredFresh: type(uint256).max,
-                // 3b-ii-A — the direct primitive harness prices one day: the day is the domain.
-                domainFresh: type(uint256).max,
-                domainRecycled: type(uint256).max
+                deliveredFresh: type(uint256).max
             }),
-            LibInteractionRewards._noDryRun()
+            LibInteractionRewards._dayContext()
         );
     }
 
@@ -1569,7 +1568,9 @@ contract TestMutatorFacet {
     }
 
     function setRewardEntryForfeitedRaw(uint256 id) external {
-        LibVaipakam.storageSlot().rewardEntries[id].forfeited = true;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.rewardEntries[id].forfeited = true;
+        LibInteractionRewards.noteEntryLifecycle(s, s.rewardEntries[id]); // the real forfeit bumps the version (A2-ii)
     }
 
     /// @notice #1434 P2-w1 test-only — erase a day's frozen lapse clock,
@@ -2615,6 +2616,17 @@ contract TestMutatorFacet {
         return LibVaipakam.storageSlot().liveFreshReserved;
     }
 
+    /// @notice A2-iii test-only — one obligation-day's gross needs, priced by
+    ///         the day primitive with no source applied; sizes fixtures where
+    ///         the retired domain view once did.
+    function dayNeedsRaw(address user, LibVaipakam.RewardSide side, uint256 d)
+        external
+        view
+        returns (uint256 needFresh, uint256 needRecycled)
+    {
+        return LibInteractionRewards.dayNeedsView(user, side, d);
+    }
+
     /// @notice 3b-ii-A2 test-only (Codex #2308 r21) — stand in for a staging
     ///         record's reservation of the delivered ledger.
     function setRewardBudgetArmedFreshReservedRaw(uint256 amount) external {
@@ -2654,12 +2666,6 @@ contract TestMutatorFacet {
         LibVaipakam.storageSlot().recycleBucketReserved = amount;
     }
 
-    /// @dev 3b-ii-A2 test-only — drive the compensation demotion's uncredit
-    ///      directly, so a cell can put it against a record's reservation.
-    function uncreditFreshInHolderRaw(uint256 amount) external returns (uint256 moved) {
-        return LibRewardCustody.uncreditFreshInHolder(LibVaipakam.storageSlot(), amount);
-    }
-
     /// @dev 3b-ii-A2 test-only — the count of resolving staging records the
     ///      custody activation refuses on, read and written raw.
     function stagingEncumberedCountRaw() external view returns (uint256) {
@@ -2668,6 +2674,19 @@ contract TestMutatorFacet {
 
     function setStagingEncumberedCountRaw(uint256 count) external {
         LibVaipakam.storageSlot().stagingEncumberedCount = count;
+    }
+
+    /// @dev #1566 PR 1 review test-only — plant a STANDALONE record (no domain)
+    ///      at the (user, side, day) key, as a forfeit or expiry sweep of an
+    ///      entry outside a domain's snapshot opens one on a gap day of its extent.
+    function plantForeignStagingRecordRaw(address user, uint8 side, uint256 day) external {
+        LibVaipakam.StagingRecord storage r =
+            LibVaipakam.storageSlot().stagingRecords[keccak256(abi.encode(user, side, day))];
+        r.phase = LibVaipakam.StagingPhase.Staging;
+        r.user = user;
+        r.side = LibVaipakam.RewardSide(side);
+        r.day = uint64(day);
+        r.op = LibVaipakam.StagingOp.Expiry;
     }
 
     /// @dev 3b-ii-A2 test-only — VPFI in staged form across every batch: the
@@ -2694,5 +2713,88 @@ contract TestMutatorFacet {
 
     function consumeRecycleBucketRaw(uint256 amount) external {
         LibVpfiRecycle.consume(amount, false, 0);
+    }
+
+    /// @dev #2277 test-only — add to the interest fold's per-day DELTAS at `day`
+    ///      (what {LibInteractionRewards.registerLoan} writes through
+    ///      `_applyDelta`), so a cell can give the fold something to fold
+    ///      without driving a loan: a +x at day d and nothing after means
+    ///      every day from d carries x of open per-day interest.
+    function setInterestFoldDeltaRaw(uint256 day, int256 lenderDelta, int256 borrowerDelta) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.lenderPerDayDeltaNumeraire18[day] += lenderDelta;
+        s.borrowerPerDayDeltaNumeraire18[day] += borrowerDelta;
+    }
+
+    /// @dev 3b-ii-B test-only — mark an entry settled whole (or not), the first of
+    ///      the proof's two termination facts.
+    function setRewardEntryProcessedRaw(uint256 id, bool processed) external {
+        LibVaipakam.storageSlot().rewardEntries[id].processed = processed;
+    }
+
+    /// @dev 3b-ii-B test-only — stand an OPEN legacy-slice domain for `entryId`
+    ///      over `[firstDay, lastDay]`, as A2-ii (c) opens one, without the epochs.
+    function setLegacyDomainOpenRaw(uint256 entryId, uint64 firstDay, uint64 lastDay) external {
+        LibVaipakam.StagingDomain storage dom =
+            LibVaipakam.storageSlot().stagingDomains[LibRewardCustody.legacyDomainKey(entryId)];
+        dom.phase = LibVaipakam.DomainPhase.Staging;
+        dom.legacy = true;
+        dom.firstDay = firstDay;
+        dom.lastDay = lastDay;
+    }
+
+    /// @dev 3c-1 test-only — forget a batch's kept day list, the state of a
+    ///      batch indexed before the list was kept (withheld as contested).
+    function clearTransportBatchDaysRaw(bytes32 batchId) external {
+        delete LibVaipakam.storageSlot().transportBatchDays[batchId];
+    }
+
+    /// @dev slice 4 PR C-1 test-only — declare the backfill done so the dark
+    ///      era writers can be exercised before PR C-5 exists.
+    /// @dev #1566 PR C revision test-only — the era routing rule for a packet's
+    ///      fresh, driven directly ({LibRewardCustody.creditFreshToEraFromRow}).
+    function creditFreshToEraFromRowRaw(uint8 from, uint256 amount, uint64 era)
+        external
+        returns (uint256 toLive, uint256 toRestitution)
+    {
+        return LibRewardCustody.creditFreshToEraFromRow(
+            LibVaipakam.storageSlot(), LibVaipakam.RewardCustodyRow(from), amount, era
+        );
+    }
+
+    /// @dev slice 4 PR C-1 test-only — stand an era's two terminal counters (the
+    ///      closure proof and PR C-3 write them) so the condition can be tested
+    ///      on both sides.
+    function setCustodyEraCountersRaw(uint64 era, uint256 daysClosed, uint256 openClassification) external {
+        LibVaipakam.CustodyEra storage e = LibVaipakam.storageSlot().custodyEras[era];
+        e.daysClosed = daysClosed;
+        e.openClassification = openClassification;
+    }
+
+    /// @dev #2459 r6 test-only — what Base has instructed `chainId` to fund
+    ///      locally, and how much of it is still outstanding.
+    function setChainConsumedRecycledRaw(uint32 chainId, uint256 consumed, uint256 outstanding) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.chainConsumedRecycled[chainId] = consumed;
+        s.chainOutstandingRecycledCommit[chainId] = outstanding;
+    }
+
+    /// @dev #2459 r4 test-only — register `adapter` as an aggregator adapter bound to
+    ///      `operator` (zero: unbound), as the factory's registration writes it.
+    function setAggregatorAdapterRaw(address adapter, address operator) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.isAggregatorAdapter[adapter] = true;
+        s.adapterOperator[adapter] = operator;
+    }
+
+    /// @dev #1566 PR 1 re-review (B-N1) — mark an entry's expiry begun, as the
+    ///      expiry sweep does at the removal point.
+    function setRewardEntryExpiryBegunRaw(uint256 id, bool begun) external {
+        LibVaipakam.storageSlot().rewardEntries[id].expiryBegun = begun;
+    }
+
+    /// @dev #1566 PR 1 re-review (C-1) — set the in-holder re-credit tally.
+    function setFreshReCreditedRaw(uint256 v) external {
+        LibVaipakam.storageSlot().rewardBudgetFreshReCredited = v;
     }
 }

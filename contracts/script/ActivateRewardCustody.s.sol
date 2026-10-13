@@ -481,7 +481,7 @@ contract ActivateRewardCustody is RewardCustodyCeremonyBase {
             "ActivateRewardCustody: the reward role is not the one the ceremony record names -- the record does not describe this activation"
         );
         (uint256 received, uint256 paid) = c.armedFreshLedger();
-        (bool activated, bool frozen, uint256 live, uint256 recycled, uint256 recovery, uint256 overage, , , , , ) = c.rewardCustodyLedger();
+        (bool activated, uint256 live, uint256 recycled, uint256 recovery, uint256 overage, , , , , ) = c.rewardCustodyLedger();
         // The one ledger fact a write-down leaves behind: `received` equals
         // `paid + live row` at the moment of activation. Checked for a
         // write-down record only while nothing has moved the ledger since
@@ -493,7 +493,7 @@ contract ActivateRewardCustody is RewardCustodyCeremonyBase {
                 "ActivateRewardCustody: the record claims a mirror-gap write-down but the live ledger still carries received above paid + live row -- the write-down did not execute as staged"
             );
         }
-        console.log("Confirmed -- activated:", activated, "frozen:", frozen);
+        console.log("Confirmed -- activated:", activated);
         console.log("Confirmed -- received / paid:", received, paid);
         console.log("Confirmed rows -- live / recycled:", live, recycled);
         console.log("Confirmed rows -- recovery / overage:", recovery, overage);
@@ -503,7 +503,6 @@ contract ActivateRewardCustody is RewardCustodyCeremonyBase {
             vm.serializeAddress(obj, "confirmedHolder", liveHolder);
             vm.serializeUint(obj, "confirmedRole", liveRole);
             vm.serializeBool(obj, "confirmedActivated", activated);
-            vm.serializeBool(obj, "confirmedRoleChangesFrozen", frozen);
             vm.serializeUint(obj, "confirmedReceived", received);
             vm.serializeUint(obj, "confirmedPaid", paid);
             vm.serializeUint(obj, "confirmedRowLiveFresh", live);

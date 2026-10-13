@@ -18,6 +18,7 @@ import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibRewardRemitDispatch} from "../src/libraries/LibRewardRemitDispatch.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
+import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
 
 /**
  * @title RewardTransportEpochTest
@@ -266,8 +267,8 @@ contract RewardTransportEpochTest is SetupTest, IVaipakamErrors {
     /// because that is the claim — constant cost — and it is the claim a test
     /// can hold the code to. Asserting a total against the budget instead
     /// would be asserting something this PR neither causes nor can fix; see
-    /// `test_Ingress_BaselineAlreadyExceedsTheTransportBudget` below, which
-    /// records that separately and honestly.
+    /// `test_TheTypedIngress_FitsTheDestinationBudget` below, which pins the
+    /// ingress against the budget separately.
     function test_Admission_CostDoesNotScaleWithTheDayList() public {
         // A WARM-UP delivery first. The ledger's shared slots — the received
         // totals, the uncounted counter, the holder's row — are cold on the
@@ -310,33 +311,28 @@ contract RewardTransportEpochTest is SetupTest, IVaipakamErrors {
         );
     }
 
-    /// Recorded rather than asserted-away: the ingress ALREADY costs more than
-    /// the transport's declared destination budget, with no transport epoch
-    /// involved at all.
-    ///
-    /// Found while measuring the admission above. A typed delivery — which
-    /// opens no epoch and runs only the code that predates this PR — measured
-    /// about 400k against a declared 300k. That is a pre-existing gap between
-    /// `REWARD_BUDGET_DEST_GAS_LIMIT` and what the mirror ingress actually
-    /// costs, and it is not this PR's to close; the epoch's own contribution
-    /// is bounded by the test above.
-    ///
-    /// This test FAILS THE DAY THE GAP CLOSES, which is the point: whoever
-    /// fixes the budget should be told there is a test here describing the old
-    /// state, rather than finding a stale comment.
-    function test_Ingress_BaselineAlreadyExceedsTheTransportBudget() public {
-        uint256[] memory one = _days(1);
+    /// @dev #1566 PR 1 review (P2-5) — the TYPED (d5) ingress fits the destination budget the send
+    ///      declares, with the receiver's own work reserved. It did not while the budget was 300,000
+    ///      (about 400k measured — this cell recorded that gap until the budget was derived from the
+    ///      ingress). Measured COLD — the first ingress of the test, the worst case for the shared
+    ///      slots — over the widest list the wire carries, both legs typed.
+    function test_TheTypedIngress_FitsTheDestinationBudget() public {
+        uint256[] memory full = _days(LibRewardCustody.TRANSPORT_DAY_FANOUT_CAP);
         uint256 before = gasleft();
         _ingress().onRewardBudgetReceived(
-            address(vpfi), 10e18, one, CHAIN_BASE, 79, REMITTER, 10e18, 0, keccak256("gas-typed"), true
+            address(vpfi), 10e18, full, CHAIN_BASE, 79, REMITTER, 4e18, 6e18, keccak256("gas-typed"), true
         );
-        uint256 typedUsed = before - gasleft();
-        emit log_named_uint("typed ingress gas (no epoch)", typedUsed);
-        emit log_named_uint("declared destination budget ", LibRewardRemitDispatch.REWARD_BUDGET_DEST_GAS_LIMIT);
-        assertGt(
-            typedUsed,
+        uint256 used = before - gasleft();
+        emit log_named_uint("typed ingress gas", used);
+        // The budget's own derivation rule, not merely "fits": the receiver's
+        // reserve plus a QUARTER's margin, which is what absorbs the transport's
+        // receive overhead and the two 63/64 forwarding hops. A figure that eats
+        // into the margin fails here, before it can fail on-chain: re-derive
+        // REWARD_BUDGET_DEST_GAS_LIMIT (#1566 PR 1 re-review).
+        assertLe(
+            (used + LibRewardRemitDispatch.REWARD_BUDGET_RECEIVER_RESERVE) * 5 / 4,
             LibRewardRemitDispatch.REWARD_BUDGET_DEST_GAS_LIMIT,
-            "if this now fits, the pre-existing budget gap was closed - delete this test and say so"
+            "the typed ingress has eaten the destination budget's margin: re-derive it"
         );
     }
 
@@ -714,37 +710,41 @@ contract RewardTransportEpochTest is SetupTest, IVaipakamErrors {
         assertEq(parked, 0, "the entry is emptied exactly");
     }
 
-    /// #2258 (owner decision 2026-09-20) — the RELEASE IS NOT AVAILABLE in
-    /// 3b-i, to anyone. §5c requires classification to refuse a batch that
-    /// still lists an outstanding obligation, and 3b-i has no per-day figure to
-    /// test that with; a release the chain cannot check is an earmark spent on
-    /// the caller's say-so. Both entries refuse FIRST — the admin, a stranger
-    /// and an unknown id all get the same answer — while the library
-    /// machinery behind them stays reachable through the test-only raw entry,
+    /// 3b-ii-B — the RELEASE IS A GATE, not a shut door (3b-i shipped both
+    /// entries refusing everyone because the rule could not be checked). The
+    /// park is open to anyone and refuses BY NAME while a listed day is not
+    /// proven closed — the same answer for the administrator and a stranger —
+    /// and the acknowledgment is the administrator's disposition: a stranger
+    /// is refused by role, the administrator by state while nothing is parked.
+    /// The library machinery stays reachable through the test-only raw entry,
     /// which is how every lifecycle test above still runs.
-    function test_Release_IsNotAvailableInThisCut_ForAnyone() public {
+    function test_Release_IsGatedOnClosedDays_NotShut() public {
         bytes32 h = _untyped(6e18, 2, 12, keccak256("shut"));
-        address[2] memory callers = [address(this), makeAddr("stranger")];
+        uint256[] memory list = _days(2);
+        address stranger = makeAddr("stranger");
+        address[2] memory callers = [address(this), stranger];
         for (uint256 i; i < callers.length; ++i) {
             vm.prank(callers[i]);
-            vm.expectRevert(abi.encodeWithSelector(TransportReleaseNotYetAvailable.selector, h));
-            _epoch().parkTransportBatchRemainder(h);
-            vm.prank(callers[i]);
-            vm.expectRevert(abi.encodeWithSelector(TransportReleaseNotYetAvailable.selector, h));
-            _epoch().acknowledgeTransportBatchRemainder(h);
+            vm.expectRevert(abi.encodeWithSelector(TransportDayNotClosed.selector, h, 1));
+            _epoch().parkTransportBatchRemainder(h, list);
         }
-        // Refused before it looks: an id no delivery opened gets the same
-        // answer, not `TransportBatchUnknown`.
+        vm.prank(stranger);
+        vm.expectRevert(
+            abi.encodeWithSelector(LibAccessControl.AccessControlUnauthorizedAccount.selector, stranger, LibAccessControl.ADMIN_ROLE)
+        );
+        _epoch().acknowledgeTransportBatchRemainder(h);
+        vm.expectRevert(abi.encodeWithSelector(TransportRemainderNotParked.selector, h));
+        _epoch().acknowledgeTransportBatchRemainder(h);
+        // An id no delivery opened is refused by name.
         bytes32 nobody = keccak256("nobody");
-        vm.expectRevert(abi.encodeWithSelector(TransportReleaseNotYetAvailable.selector, nobody));
-        _epoch().parkTransportBatchRemainder(nobody);
-        // And therefore nothing can be classified early: the gate still holds
-        // because no production path can open it.
+        vm.expectRevert(abi.encodeWithSelector(TransportBatchUnknown.selector, nobody));
+        _epoch().parkTransportBatchRemainder(nobody, list);
+        // Nothing released: the gate holds until every listed day is proven closed.
         ( , , , , , bool released) = _epoch().getTransportBatch(h);
-        assertFalse(released, "no production path releases a batch in 3b-i");
-        // The machinery exists and is the 3b-ii implementation — the raw entry
-        // proves it, and every lifecycle test in this suite runs through it.
-        assertEq(_mut().releaseTransportBatchRaw(h), 6e18, "the library release works, behind the door");
+        assertFalse(released, "no production path releases a batch with an open listed day");
+        // The machinery exists — the raw entry proves it, and every lifecycle
+        // test in this suite runs through it.
+        assertEq(_mut().releaseTransportBatchRaw(h), 6e18, "the library release works behind the gate");
     }
 
     /// The library's own refusals, unchanged and reached raw: an unknown id is

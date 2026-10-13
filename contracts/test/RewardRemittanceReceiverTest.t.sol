@@ -98,6 +98,42 @@ contract MockRewardBudgetIngress is IRewardBudgetIngress {
         lastFreshShare = freshShare;
         callCount++;
     }
+
+    // 3d-1 — the rooted ingress.
+    bytes32 public lastRoot;
+    uint256 public lastElementCount;
+    uint256 public lastChunkCount;
+    uint64 public lastIntendedEra;
+    uint256 public rootedCalls;
+
+    function onRewardBudgetReceivedD6(
+        address token,
+        uint256 amount,
+        bytes32 dayListRoot,
+        uint256 elementCount,
+        uint256 chunkCount,
+        uint256 sourceChainId,
+        uint256 remitId,
+        address remitter,
+        uint256 recycledShare,
+        uint256 freshShare,
+        bytes32 transportMessageId,
+        uint64 intendedEra
+    ) external override {
+        require(token == vpfi, "ingress: token");
+        lastAmount = amount;
+        lastRoot = dayListRoot;
+        lastElementCount = elementCount;
+        lastChunkCount = chunkCount;
+        lastSourceChainId = sourceChainId;
+        lastRemitId = remitId;
+        lastRemitter = remitter;
+        lastRecycledShare = recycledShare;
+        lastFreshShare = freshShare;
+        lastTransportMessageId = transportMessageId;
+        lastIntendedEra = intendedEra;
+        rootedCalls++;
+    }
 }
 
 /// @title RewardRemittanceReceiverTest — #776 PR2 (mirror receiver) unit coverage.
@@ -219,6 +255,54 @@ contract RewardRemittanceReceiverTest is Test {
         // mean different things and both are correct: nothing is known, so
         // nothing is claimed in either direction.
         assertEq(diamond.lastFreshShare(), 0, "d2 shape declares no fresh");
+    }
+
+    /// @dev #1566 transport epochs 3d-1 — the d6 (ROOTED) shape takes its own
+    ///      frame and its own Diamond ingress: the commitment, the extent, the
+    ///      typed split and the era all surface, and the fresh component is
+    ///      what is left of the delivery after the recycled share.
+    function test_Deliver_D6PayloadReachesTheRootedIngress() public {
+        vpfi.mint(address(receiver), 500e18);
+        messenger.relayWithId(
+            receiver,
+            SRC_BASE,
+            address(0xBA5E),
+            RemitWire.encodeD6(bytes32(uint256(0xBEEF)), 33, 3, 500e18, 78, address(0xD1A), 120e18, 4),
+            _tokens(address(vpfi), 500e18),
+            keccak256("d6-msg")
+        );
+        assertEq(diamond.rootedCalls(), 1, "the rooted ingress, once");
+        assertEq(diamond.callCount(), 0, "and not the list-bearing one");
+        assertEq(diamond.lastAmount(), 500e18);
+        assertEq(diamond.lastRoot(), bytes32(uint256(0xBEEF)), "the root surfaces");
+        assertEq(diamond.lastElementCount(), 33, "and the extent");
+        assertEq(diamond.lastChunkCount(), 3);
+        assertEq(diamond.lastRemitId(), 78);
+        assertEq(diamond.lastRemitter(), address(0xD1A));
+        assertEq(diamond.lastRecycledShare(), 120e18, "the recycled share as sent");
+        assertEq(diamond.lastFreshShare(), 380e18, "fresh is the remainder of what landed");
+        assertEq(diamond.lastIntendedEra(), 4, "the era surfaces");
+        assertEq(diamond.lastTransportMessageId(), keccak256("d6-msg"));
+        assertEq(vpfi.balanceOf(address(diamond)), 500e18, "the tokens were forwarded");
+    }
+
+    /// @dev A short delivery scales the recycled share and gives the fresh
+    ///      share the rest, so the two always account for the whole delivery —
+    ///      the rooted ingress holds the whole delivery as one epoch typed by
+    ///      exactly those two caps.
+    function test_Deliver_D6ShortDelivery_KeepsTheSplitWhole() public {
+        vpfi.mint(address(receiver), 300e18); // declared 500, only 300 to forward
+        messenger.relay(
+            receiver,
+            SRC_BASE,
+            address(0xBA5E),
+            RemitWire.encodeD6(bytes32(uint256(1)), 2, 1, 500e18, 79, address(0xD1A), 120e18, 0),
+            _tokens(address(vpfi), 500e18)
+        );
+        assertEq(diamond.lastAmount(), 300e18, "what landed");
+        assertEq(diamond.lastRecycledShare(), 72e18, "recycled scaled to what landed");
+        assertEq(diamond.lastFreshShare(), 228e18, "fresh is the rest");
+        assertEq(diamond.lastRecycledShare() + diamond.lastFreshShare(), diamond.lastAmount(), "whole");
     }
 
     /// @dev #1222 M3 B2-d5 — the THIRD payload layout, discriminated by a

@@ -206,6 +206,16 @@
             "name": "remitId",
             "type": "uint256",
             "internalType": "uint256"
+          },
+          {
+            "name": "provisionalHeld",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "provisionalHeldInCustody",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       }
@@ -392,6 +402,46 @@
             "name": "drawn",
             "type": "uint256",
             "internalType": "uint256"
+          },
+          {
+            "name": "dayListRoot",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "chunkCount",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "chunksIndexed",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "intendedEra",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "custodyEra",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "eraCounted",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "classificationFinal",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "eraQuarantined",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       }
@@ -421,6 +471,19 @@
       },
       {
         "name": "nextStartId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getProvisionalFreshHeld",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -769,6 +832,11 @@
             "name": "splitOnWire",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "dayListRoot",
+            "type": "bytes32",
+            "internalType": "bytes32"
           }
         ]
       }

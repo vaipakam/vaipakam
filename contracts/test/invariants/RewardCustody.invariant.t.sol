@@ -10,6 +10,7 @@ import {AdminFacet} from "../../src/facets/AdminFacet.sol";
 import {AccessControlFacet} from "../../src/facets/AccessControlFacet.sol";
 import {ConfigFacet} from "../../src/facets/ConfigFacet.sol";
 import {RewardClaimFacet} from "../../src/facets/RewardClaimFacet.sol";
+import {RewardStagingDomainFacet} from "../../src/facets/RewardStagingDomainFacet.sol";
 import {RewardCustodyFacet} from "../../src/facets/RewardCustodyFacet.sol";
 import {RewardReconciliationFacet} from "../../src/facets/RewardReconciliationFacet.sol";
 import {RewardRemittanceLensFacet} from "../../src/facets/RewardRemittanceLensFacet.sol";
@@ -599,12 +600,32 @@ contract RewardCustodyHandler is Test {
         TestMutatorFacet mut = TestMutatorFacet(diamond);
         uint256 id = mut.pushRewardEntry(user, nextLoan++, LibVaipakam.RewardSide.Lender, 100e18, 1);
         mut.closeRewardEntryRaw(id, 3);
+        // An entry listed by an admitted (untyped) batch defers its first claim
+        // while its legacy-slice domain is driven (A2-ii (c)); drive it home with
+        // the facet's permissionless step, then claim again, as a keeper would.
+        bool paidOut;
         vm.prank(user);
         try RewardClaimFacet(diamond).claimInteractionRewards() returns (uint256 paid, uint256, uint256) {
-            if (paid != 0) payouts++;
+            paidOut = paid != 0;
         } catch {
             refusals++;
         }
+        if (!paidOut) {
+            for (uint256 i; i < 16; ++i) {
+                try RewardStagingDomainFacet(diamond).stepLegacySlice(id) returns (bool consumed) {
+                    if (consumed) break;
+                } catch {
+                    break;
+                }
+            }
+            vm.prank(user);
+            try RewardClaimFacet(diamond).claimInteractionRewards() returns (uint256 paid, uint256, uint256) {
+                paidOut = paid != 0;
+            } catch {
+                refusals++;
+            }
+        }
+        if (paidOut) payouts++;
     }
 
     /// A reward absorption: live-fresh → recycled, in-holder.

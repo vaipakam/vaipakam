@@ -1,0 +1,476 @@
+[
+  {
+    "type": "function",
+    "name": "matchIntent",
+    "inputs": [
+      {
+        "name": "lender",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "lendingAsset",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "collateralAsset",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "counterpartyOfferId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "fillAmount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "event",
+    "name": "IntentMatched",
+    "inputs": [
+      {
+        "name": "lender",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "matcher",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "lendingAsset",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "collateralAsset",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "sliceOfferId",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "counterpartyOfferId",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "fillAmount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "OfferClosed",
+    "inputs": [
+      {
+        "name": "offerId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "reason",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "enum LibOfferMatchExecute.OfferCloseReason"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "OfferMatched",
+    "inputs": [
+      {
+        "name": "lenderOfferId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "borrowerOfferId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "matcher",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "matchAmount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "matchRateBps",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "lenderRemainingPostMatch",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "lifMatcherFee",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "borrowerAmountFilled",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "borrowerAccepted",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "AggregatorAdaptersPaused",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "AmountNoOverlap",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "AonRequiresFullFill",
+    "inputs": [
+      {
+        "name": "offerId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "required",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "provided",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "AssetMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CollateralBelowRequired",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "DurationMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ERC721NonexistentToken",
+    "inputs": [
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "EncumbranceUnderflow",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "requested",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "available",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "EnforcedPause",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "FunctionDisabled",
+    "inputs": [
+      {
+        "name": "whichFlag",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "IntentCapitalInsufficient",
+    "inputs": [
+      {
+        "name": "owner",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "lend",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "coll",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "requested",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "available",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidOfferType",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "KeeperAccessRequired",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "LenderIntentCollateralUnresolvable",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "LenderIntentDurationTooLong",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "LenderIntentExposureExceeded",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "LenderIntentFillBelowMin",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "LenderIntentFullTermRequired",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "LenderIntentInactive",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "LenderIntentPartialRepayNotAllowed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "LenderIntentVpfiLendingUnsupported",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "MatchHFTooLow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "OfferAlreadyAccepted",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "OfferExpired",
+    "inputs": [
+      {
+        "name": "offerId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "expiresAt",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "OffsetVehicleNotMatchable",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ParameterOutOfRange",
+    "inputs": [
+      {
+        "name": "name",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "value",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "min",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "max",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RateNoOverlap",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ReentrancyGuardReentrantCall",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RefinanceCarryOverCollateralShortfall",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RefinanceTaggedOfferNotMatchable",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SaleVehicleNotMatchable",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SanctionedAddress",
+    "inputs": [
+      {
+        "name": "who",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SelfTradeForbidden",
+    "inputs": [
+      {
+        "name": "party",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SignedOfferMaterializeFailed",
+    "inputs": []
+  }
+]

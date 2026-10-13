@@ -7,6 +7,7 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {InteractionRewardsFacet} from "./InteractionRewardsFacet.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
+import {LibServiceCapacity} from "../libraries/LibServiceCapacity.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibSettlement} from "../libraries/LibSettlement.sol";
 import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
@@ -216,11 +217,11 @@ contract PrecloseFacet is
         // Phase 6: borrower-entitled strategic flow. Authority follows the
         // current borrower-NFT owner OR a keeper with the InitPreclose
         // action bit.
-        LibAuth.requireKeeperFor(
+        if (LibAuth.requireKeeperFor(
             LibVaipakam.KEEPER_ACTION_INIT_PRECLOSE,
             loan,
             /* lenderSide */ false
-        );
+        )) LibServiceCapacity.chargeKeeper(); // #1219 — one keeper action
         if (loan.status != LibVaipakam.LoanStatus.Active)
             revert LoanNotActive();
 
@@ -680,11 +681,11 @@ contract PrecloseFacet is
         // Phase 6: borrower-entitled strategic flow (Preclose Option 2).
         // Authority binds to the current borrower-NFT owner OR a keeper
         // with the InitPreclose action bit.
-        LibAuth.requireKeeperFor(
+        if (LibAuth.requireKeeperFor(
             LibVaipakam.KEEPER_ACTION_INIT_PRECLOSE,
             loan,
             /* lenderSide */ false
-        );
+        )) LibServiceCapacity.chargeKeeper(); // #1219 — one keeper action
         // #819 Tier-1 sanctions on the EXITING borrower-position holder.
         // `requireKeeperFor` authorises against the borrower NFT owner, but a
         // keeper caller leaves that holder unscreened — and the exiting
@@ -1495,6 +1496,9 @@ contract PrecloseFacet is
      * @dev Common guard clauses for {offsetWithNewOffer}. Extracted so the
      *      outer function has fewer locals in scope when it reaches the
      *      storage-link + lock tail (stack-too-deep under --ir-minimum).
+     *      #1219 (S-4) -- not `view`: when a delegated keeper is the actor, the
+     *      authority check is where that identity is established, so the
+     *      keeper's one-action capacity charge lives here with it.
      */
     function _validateOffsetRequest(
         LibVaipakam.Loan storage loan,
@@ -1502,15 +1506,15 @@ contract PrecloseFacet is
         address collateralAsset,
         uint256 collateralAmount,
         address prepayAsset
-    ) private view {
+    ) private {
         // Phase 6: borrower-entitled strategic flow (Preclose Option 3).
         // Authority binds to current borrower-NFT owner OR a keeper with
         // the InitPreclose action bit.
-        LibAuth.requireKeeperFor(
+        if (LibAuth.requireKeeperFor(
             LibVaipakam.KEEPER_ACTION_INIT_PRECLOSE,
             loan,
             /* lenderSide */ false
-        );
+        )) LibServiceCapacity.chargeKeeper(); // #1219 — one keeper action
         if (loan.status != LibVaipakam.LoanStatus.Active)
             revert LoanNotActive();
         // NFT rentals cannot use the offset path: the NFT is in the lender's
@@ -2061,11 +2065,11 @@ contract PrecloseFacet is
         // Phase 6: borrower-entitled action. Authority resolves against
         // the current borrower-NFT holder OR a keeper with the
         // CompleteOffset action bit.
-        LibAuth.requireKeeperFor(
+        if (LibAuth.requireKeeperFor(
             LibVaipakam.KEEPER_ACTION_COMPLETE_OFFSET,
             loan,
             /* lenderSide */ false
-        );
+        )) LibServiceCapacity.chargeKeeper(); // #1219 — one keeper action
 
         // #1001 (S3, Codex #1070 r8 P2) — clear any parallel-sale listing BEFORE
         // the consolidation below. A borrower-side listing (`prepayListingOrderHash`

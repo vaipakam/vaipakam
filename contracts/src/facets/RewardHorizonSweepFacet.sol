@@ -8,6 +8,7 @@ import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessCont
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
+import {LibRewardCustody} from "../libraries/LibRewardCustody.sol";
 
 /**
  * @title  RewardHorizonSweepFacet
@@ -171,7 +172,7 @@ contract RewardHorizonSweepFacet is
         // 3b-ii-A — the epoch-paid legs the sweep draws, absorbed net below.
         LibInteractionRewards.TransportLegs memory tp;
         for (uint256 i = 0; i < entryIds.length; ) {
-            uint256 tBefore = tp.treasuryFresh + tp.userFresh;
+            uint256 tBefore = tp.treasuryFresh + tp.userFresh + tp.treasuryEraFresh + tp.userEraFresh;
             (
                 LibInteractionRewards.EntrySplit memory ex,
                 uint256 freshCredited,
@@ -189,7 +190,8 @@ contract RewardHorizonSweepFacet is
             // credited figure is already the cap-trimmed amount that moves.)
             // 3b-ii-A — and NET of the epoch-paid fresh, which the delivered
             // ledger never received.
-            uint256 liveFresh = freshCredited - (tp.treasuryFresh + tp.userFresh - tBefore);
+            uint256 liveFresh =
+                freshCredited - (tp.treasuryFresh + tp.userFresh + tp.treasuryEraFresh + tp.userEraFresh - tBefore);
             allowance = allowance > liveFresh ? allowance - liveFresh : 0;
             t.fresh += freshCredited;
             t.recycled += ex.recycled;
@@ -228,6 +230,19 @@ contract RewardHorizonSweepFacet is
         // The comment below already promised this retirement happens "even
         // when the pool cap truncated the creditable fresh". This is the
         // guard that was contradicting it.
+        expiredTotal = _settleSweepTotals(s, paidOut, t, tp);
+    }
+
+    /// @dev The sweep's post-loop settle: the pool reservation check, the paid-out
+    ///      and armed-commitment bookkeeping, and the one leg settle under the
+    ///      expired-reward source. (The retirement, B-6, settles its own: it draws
+    ///      and credits nothing.)
+    function _settleSweepTotals(
+        LibVaipakam.Storage storage s,
+        uint256 paidOut,
+        SweepTotals memory t,
+        LibInteractionRewards.TransportLegs memory tp
+    ) private returns (uint256 total) {
         if (t.fresh + t.recycled == 0 && t.armedFresh == 0) return 0;
 
         // Fresh share: consumes the 69M pool (tokens leave the fresh
@@ -258,23 +273,82 @@ contract RewardHorizonSweepFacet is
         // legs recycle in place from the epochs' custody (§5c); see the
         // forfeit sweep for why the user legs are folded in.
         uint256 epochFresh = tp.treasuryFresh + tp.userFresh;
-        if (t.fresh > epochFresh) {
-            LibVpfiRecycle.absorbRewardFresh(
-                LibVpfiRecycle.RecycleSource.ExpiredReward,
-                0,
-                t.fresh - epochFresh
-            );
-        }
-        LibVpfiRecycle.absorbTransportFunded(
-            LibVpfiRecycle.RecycleSource.ExpiredReward, 0, epochFresh + tp.treasuryRecycled + tp.userRecycled
+        uint256 eraFresh = tp.treasuryEraFresh + tp.userEraFresh; // PR C-2: era-funded, absorbed by the hosted settle with no bound charge
+        // ONE leg settle for every close-out (A2-ii): the live-funded fresh
+        // absorbed as expired reward, the epoch-funded legs recycled in
+        // place, the recycled commitment released — the same implementation
+        // the forfeit, the claim and a staged expiry day's payout use.
+        LibRewardCustody.callSettleLegs(
+            uint8(LibVpfiRecycle.RecycleSource.ExpiredReward),
+            t.fresh > epochFresh + eraFresh ? t.fresh - epochFresh - eraFresh : 0,
+            epochFresh + tp.treasuryRecycled + tp.userRecycled,
+            t.recycled,
+            0,
+            eraFresh, // PR C-2 - the era-funded legs: absorbed by the host, no bound charge
+            0
         );
-        if (t.recycled > 0) {
-            LibVpfiRecycle.releaseCommitment(
-                LibVpfiRecycle.RecycleSource.ExpiredReward,
-                0,
-                t.recycled
-            );
+        total = t.fresh + t.recycled;
+    }
+
+    /// @notice 3b-ii-B (B-6) — retire ZERO-PRICED remainders, permissionless: for each
+    ///         entry, if it is closed, not forfeited, and its remaining window prices
+    ///         to nothing payable — an empty window, or one the loan-side cap trims to
+    ///         a zero user split while its raw split stands — the entry is retired
+    ///         (marked processed, or one day of it retired as a claim retires a capped
+    ///         day; repeat until processed). Anything payable, open, forfeited or not
+    ///         yet priceable is left as it is. A retirement moves no value: the
+    ///         capped-off commitments retire, the pool is not drawn and nothing is
+    ///         credited to the recycle bucket (#1566 PR 1 review: the cap had refused
+    ///         that value, so it is retired, never recycled).
+    /// @return retiredCount How many of `entryIds` this call moved.
+    /// @return settledTotal The commitments the retired days released (fresh and recycled).
+    function retireZeroPricedRemainders(uint256[] calldata entryIds)
+        external
+        nonReentrant
+        whenNotPaused
+        returns (uint256 retiredCount, uint256 settledTotal)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (s.interactionLaunchTimestamp == 0) revert InteractionEmissionsNotStarted();
+        if (s.vpfiToken == address(0)) revert VPFITokenNotSet();
+        uint256 paidOut = s.interactionPoolPaidOut;
+        uint256 headroom;
+        {
+            uint256 reserved = paidOut + s.rewardBudgetRemittedGlobal;
+            headroom = LibVaipakam.VPFI_INTERACTION_POOL_CAP > reserved
+                ? LibVaipakam.VPFI_INTERACTION_POOL_CAP - reserved
+                : 0;
         }
-        expiredTotal = t.fresh + t.recycled;
+        uint256 allowance = LibInteractionRewards.deliveredFreshBound(s);
+        {
+            uint256 backingCap = LibVpfiRecycle.freshBackingRoom(s);
+            if (backingCap < allowance) allowance = backingCap;
+        }
+        SweepTotals memory t;
+        LibInteractionRewards.TransportLegs memory tp;
+        for (uint256 i = 0; i < entryIds.length; ) {
+            uint256 tBefore = tp.treasuryFresh + tp.userFresh + tp.treasuryEraFresh + tp.userEraFresh;
+            (bool retired, LibInteractionRewards.EntrySplit memory ex, uint256 freshCredited, ) =
+                LibInteractionRewards.callRetireZeroPricedRemainderWalk(entryIds[i], headroom, allowance, tp);
+            if (retired) ++retiredCount;
+            // A retirement credits nothing (`freshCredited` is zero since the
+            // #1566 PR 1 review), so the headroom and allowance the walk prices
+            // the capped day against stay at their opening values.
+            headroom -= freshCredited;
+            uint256 liveFresh =
+                freshCredited - (tp.treasuryFresh + tp.userFresh + tp.treasuryEraFresh + tp.userEraFresh - tBefore);
+            allowance = allowance > liveFresh ? allowance - liveFresh : 0;
+            t.fresh += freshCredited;
+            t.recycled += ex.recycled;
+            t.armedFresh += ex.armedFresh;
+            unchecked { ++i; }
+        }
+        // Nothing was credited (`t.fresh == 0`): retire the commitments as the
+        // claim retires a capped day, and draw nothing.
+        LibInteractionRewards.consumeArmedFresh(t.armedFresh);
+        LibRewardCustody.callSettleLegs(
+            uint8(LibVpfiRecycle.RecycleSource.ForfeitedReward), 0, 0, t.recycled, 0, 0, 0
+        );
+        settledTotal = t.armedFresh + t.recycled;
     }
 }

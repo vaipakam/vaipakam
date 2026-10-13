@@ -23,6 +23,7 @@ interface ICompensationDayHook {
 }
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {LibVpfiRecycle} from "../libraries/LibVpfiRecycle.sol";
+import {LibRewardCustody} from "../libraries/LibRewardCustody.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 /// @notice #1222 M3 B1 (Codex #1413 r3) — the pre-widening sender shape, the
@@ -113,7 +114,18 @@ contract RewardReporterFacet is
         uint256 recycledForDay18;
         uint256 commitRetiredCumulative18;
         uint256 commitReleasedCumulative18;
+        /// @dev #1566 PR C revision — this chain's live custody era (B4).
+        uint64 custodyEra;
     }
+
+    /// @notice The interest fold was advanced through `through` (or as far as one
+    ///         call reaches): the two per-side frontiers after the call (#2277).
+    event InterestFrontiersAdvanced(uint256 through, uint256 lenderFrontier, uint256 borrowerFrontier);
+
+    /// @notice `closeDay(dayId)` refused: the interest fold has not reached the
+    ///         day on at least one side, so its totals are not yet final. Catch
+    ///         the fold up with {advanceInterestFrontiers} and retry (#2277).
+    error ChainReportFrontierShort(uint256 dayId, uint256 lenderFrontier, uint256 borrowerFrontier);
 
     /// @notice Emitted when the local chain reports its day-`D` interest
     ///         totals — directly to aggregator storage on Base, or via
@@ -206,6 +218,16 @@ contract RewardReporterFacet is
         // the legacy per-day counters.
         LibInteractionRewards.advanceLenderThrough(dayId);
         LibInteractionRewards.advanceBorrowerThrough(dayId);
+        // #2277 — the fold must have REACHED the day before its totals are read.
+        // Each advance is clamped at MAX_FRONTIER_ADVANCE_DAYS per call, so after
+        // a gap wider than that the two slots below are still zero or partial;
+        // stamping would ship a false report ONCE and the stamp would make it
+        // irreversible. Refuse by name instead — the advance above rolls back
+        // with the revert, and {advanceInterestFrontiers} catches the fold up
+        // in bounded, permissionless calls until this passes.
+        if (s.lenderFrontierDay < dayId || s.borrowerFrontierDay < dayId) {
+            revert ChainReportFrontierShort(dayId, s.lenderFrontierDay, s.borrowerFrontierDay);
+        }
 
         uint256 lenderNumeraire18 = s.totalLenderInterestNumeraire18[dayId];
         uint256 borrowerNumeraire18 = s.totalBorrowerInterestNumeraire18[dayId];
@@ -227,7 +249,8 @@ contract RewardReporterFacet is
             recycledCumulative18: LibVpfiRecycle.creditedCumulative(s),
             recycledForDay18: s.recycledCreditedByDay[dayId],
             commitRetiredCumulative18: s.recycleCommitRetiredCumulative,
-            commitReleasedCumulative18: s.recycleCommitReleasedCumulative
+            commitReleasedCumulative18: s.recycleCommitReleasedCumulative,
+            custodyEra: s.custodyEraCurrent
         });
 
         s.chainReportSentAt[dayId] = uint64(block.timestamp);
@@ -285,7 +308,67 @@ contract RewardReporterFacet is
      *      would permanently strip that day's extra fields
      *      (`chainReportSentAt` blocks a resend).
      */
+    /// @notice Catch the interest fold up through a strictly-past day — permissionless
+    ///         and resumable (#2277; the 3b-ii closure proof's frontier condition
+    ///         relies on it too). Each call advances each side's frontier by at
+    ///         most `MAX_FRONTIER_ADVANCE_DAYS`; repeat until both frontiers reach
+    ///         `through`, after which {closeDay} passes for every day up to it.
+    ///         Bounded to days that have elapsed, exactly as {closeDay} is: a
+    ///         frontier run ahead of the clock would make the delta writer drop
+    ///         the start and end of every loan registered afterwards — false
+    ///         totals, false reports, false closure proofs.
+    /// @return lenderFrontier   The lender-side frontier after this call.
+    /// @return borrowerFrontier The borrower-side frontier after this call.
+    function advanceInterestFrontiers(uint256 through)
+        external
+        nonReentrant
+        whenNotPaused
+        returns (uint256 lenderFrontier, uint256 borrowerFrontier)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        (uint256 today, bool active) = LibInteractionRewards.currentDayOrZero();
+        if (!active || through >= today) revert RewardDayNotElapsed();
+        LibInteractionRewards.advanceLenderThrough(through);
+        LibInteractionRewards.advanceBorrowerThrough(through);
+        lenderFrontier = s.lenderFrontierDay;
+        borrowerFrontier = s.borrowerFrontierDay;
+        emit InterestFrontiersAdvanced(through, lenderFrontier, borrowerFrontier);
+    }
+
+    /// @notice The interest fold's two per-side frontiers: the last day whose
+    ///         per-side total is final (#2277).
+    function getInterestFrontiers() external view returns (uint256 lenderFrontier, uint256 borrowerFrontier) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        return (s.lenderFrontierDay, s.borrowerFrontierDay);
+    }
+
     function _dispatchChainReport(
+        address messenger,
+        uint256 dayId,
+        ReportFigures memory f
+    ) private {
+        // #1566 PR C revision — the B4 report carries this chain's live custody
+        // era, so the canonical chain stamps every rooted remittance it sends
+        // here with the era it will land in. Tried first; a messenger without
+        // it (the empty revert of an unknown selector) downgrades a generation.
+        try IRewardMessenger(messenger).sendChainReport{value: msg.value}(
+            dayId,
+            f.lender,
+            f.borrower,
+            f.recycledCumulative18,
+            f.recycledForDay18,
+            f.commitRetiredCumulative18,
+            f.commitReleasedCumulative18,
+            f.custodyEra,
+            payable(msg.sender)
+        ) {} catch (bytes memory b4Reason) {
+            _bubbleUnlessMissingSelector(b4Reason);
+            _dispatchChainReportB3(messenger, dayId, f);
+        }
+    }
+
+    /// @dev The B3 → B1 → legacy ladder, for a messenger without the B4 send.
+    function _dispatchChainReportB3(
         address messenger,
         uint256 dayId,
         ReportFigures memory f
@@ -413,21 +496,7 @@ contract RewardReporterFacet is
         if (s.knownGlobalSet[dayId]) {
             // Idempotent re-delivery is fine — CCIP retries can
             // duplicate a packet. Divergent values must never overwrite.
-            // #1008 (S13) — `capThreshold18` is part of the broadcast's
-            // consensus value, so a divergent-threshold replay reverts too
-            // (Codex #1147 r7 K6). PR-3c — the composition halves join the
-            // consensus tuple for the same reason.
-            LibVaipakam.DayPoolStamp storage prior = s.dayPoolStamp[dayId];
-            if (
-                s.knownGlobalLenderInterestNumeraire18[dayId] != globalLenderNumeraire18 ||
-                s.knownGlobalBorrowerInterestNumeraire18[dayId] != globalBorrowerNumeraire18 ||
-                s.dayCapThreshold18[dayId] != capThreshold18 ||
-                (prior.stamped &&
-                    (uint256(prior.scheduleFloor) != scheduleFloorHalf * 2 ||
-                        uint256(prior.recycledBudget) != recycledHalf * 2))
-            ) {
-                revert KnownGlobalAlreadySet();
-            }
+            _requireV1Consensus(s, dayId, globalLenderNumeraire18, globalBorrowerNumeraire18, capThreshold18, scheduleFloorHalf, recycledHalf);
             return;
         }
 
@@ -435,9 +504,67 @@ contract RewardReporterFacet is
         // kind-2 write after an era rotation could install a retired era's
         // consensus pair, which would then wedge the day against the new
         // era's V3 (mixed-generation comparison). Replays above stay
-        // idempotent.
-        if (s.rewardEraRotated) revert LegacyBroadcastRetired(dayId);
+        // idempotent. PR C-4 — refused is PARKED, not reverted: the message is
+        // accepted by the transport and recorded with a disposition to come.
+        if (s.rewardEraRotated) {
+            LibRewardCustody.parkBroadcast(
+                s,
+                2,
+                dayId,
+                keccak256(
+                    abi.encode(
+                        uint8(2), dayId, globalLenderNumeraire18, globalBorrowerNumeraire18, capThreshold18,
+                        scheduleFloorHalf, recycledHalf, armedFromDay
+                    )
+                )
+            );
+            return;
+        }
+        _applyLegacyBroadcastV1(
+            s, dayId, globalLenderNumeraire18, globalBorrowerNumeraire18, capThreshold18, scheduleFloorHalf,
+            recycledHalf, armedFromDay
+        );
+    }
 
+    /// @dev The kind-2 REPLAY rule — ONE body for the ingress and the parked retry
+    ///      (#1566 PR 1 review): a day already known must carry the SAME
+    ///      consensus or the write is refused. #1008 (S13) — `capThreshold18` is
+    ///      part of the broadcast's consensus value, so a divergent-threshold
+    ///      replay reverts too (Codex #1147 r7 K6). PR-3c — the composition
+    ///      halves join the consensus tuple for the same reason.
+    function _requireV1Consensus(
+        LibVaipakam.Storage storage s,
+        uint256 dayId,
+        uint256 globalLenderNumeraire18,
+        uint256 globalBorrowerNumeraire18,
+        uint256 capThreshold18,
+        uint256 scheduleFloorHalf,
+        uint256 recycledHalf
+    ) private view {
+        LibVaipakam.DayPoolStamp storage prior = s.dayPoolStamp[dayId];
+        if (
+            s.knownGlobalLenderInterestNumeraire18[dayId] != globalLenderNumeraire18 ||
+            s.knownGlobalBorrowerInterestNumeraire18[dayId] != globalBorrowerNumeraire18 ||
+            s.dayCapThreshold18[dayId] != capThreshold18 ||
+            (prior.stamped &&
+                (uint256(prior.scheduleFloor) != scheduleFloorHalf * 2 ||
+                    uint256(prior.recycledBudget) != recycledHalf * 2))
+        ) {
+            revert KnownGlobalAlreadySet();
+        }
+    }
+
+    /// @dev PR C-4 — the kind-2 apply body, shared by the ingress and the parked retry.
+    function _applyLegacyBroadcastV1(
+        LibVaipakam.Storage storage s,
+        uint256 dayId,
+        uint256 globalLenderNumeraire18,
+        uint256 globalBorrowerNumeraire18,
+        uint256 capThreshold18,
+        uint256 scheduleFloorHalf,
+        uint256 recycledHalf,
+        uint256 armedFromDay
+    ) private {
         s.knownGlobalLenderInterestNumeraire18[dayId] = globalLenderNumeraire18;
         s.knownGlobalBorrowerInterestNumeraire18[dayId] = globalBorrowerNumeraire18;
         // #1008 (S13) — store the CANONICAL threshold from Base; mirrors never
@@ -574,7 +701,57 @@ contract RewardReporterFacet is
         external
     {
         LibVaipakam.Storage storage s = _broadcastIngressGates(b.destChainId);
-        _applyBroadcastV2Core(s, b, /* legacyWire */ true);
+        _applyBroadcastV2Core(s, b, /* legacyWire */ true, 0);
+    }
+
+    /// @notice PR C-4 — retry a PARKED kind-2 broadcast: re-supply it, prove it is
+    ///         the one parked, and run the same apply through the same gate.
+    ///         Permissionless: the digest is the authority. It stays parked while
+    ///         the gate refuses; a quarantine-only entry is refused by name.
+    function retryParkedBroadcastV1(
+        uint256 id,
+        uint256 dayId,
+        uint256 globalLenderNumeraire18,
+        uint256 globalBorrowerNumeraire18,
+        uint256 capThreshold18,
+        uint256 scheduleFloorHalf,
+        uint256 recycledHalf,
+        uint256 armedFromDay
+    ) external nonReentrant {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibRewardCustody.requireParkedRetryable(
+            s,
+            id,
+            keccak256(
+                abi.encode(
+                    uint8(2), dayId, globalLenderNumeraire18, globalBorrowerNumeraire18, capThreshold18,
+                    scheduleFloorHalf, recycledHalf, armedFromDay
+                )
+            )
+        );
+        if (s.knownGlobalSet[dayId]) {
+            // The day landed by another route since this copy was parked
+            // (#1566 PR 1 review): one carrying the SAME consensus is moot and
+            // retires as applied — as the kind-5 retry's replay always did —
+            // while a divergent one is refused and stays parked.
+            _requireV1Consensus(s, dayId, globalLenderNumeraire18, globalBorrowerNumeraire18, capThreshold18, scheduleFloorHalf, recycledHalf);
+        } else {
+            if (s.rewardEraRotated) revert ParkedBroadcastStillUnroutable(id);
+            _applyLegacyBroadcastV1(
+                s, dayId, globalLenderNumeraire18, globalBorrowerNumeraire18, capThreshold18, scheduleFloorHalf,
+                recycledHalf, armedFromDay
+            );
+        }
+        LibRewardCustody.parkedBroadcastApplied(s, id);
+    }
+
+    /// @notice PR C-4 — retry a PARKED kind-5 broadcast; see {retryParkedBroadcastV1}.
+    function retryParkedBroadcastV2(uint256 id, RewardBroadcastV2 calldata b) external nonReentrant {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibRewardCustody.requireParkedRetryable(s, id, keccak256(abi.encode(uint8(5), b)));
+        if (b.destChainId != block.chainid) revert BroadcastDestinationMismatch(b.destChainId);
+        _applyBroadcastV2Core(s, b, /* legacyWire */ true, id);
+        LibRewardCustody.parkedBroadcastApplied(s, id);
     }
 
     /// @dev #1434 P2-w1 — the trust + destination-binding gates shared by
@@ -605,7 +782,8 @@ contract RewardReporterFacet is
     function _applyBroadcastV2Core(
         LibVaipakam.Storage storage s,
         RewardBroadcastV2 memory b,
-        bool legacyWire
+        bool legacyWire,
+        uint256 parkedId
     ) private {
         uint32 selfId = uint32(block.chainid);
         if (s.broadcastV2Applied[b.dayId]) {
@@ -659,8 +837,8 @@ contract RewardReporterFacet is
             // main-path install below.
             //
             // RETIRED ERAS ARE EXCLUDED, and that is not the same test the
-            // fresh path makes. {LegacyBroadcastRetired} sits BELOW this
-            // branch on purpose, so an applied day keeps replaying
+            // fresh path makes. The rotation gate (a fresh legacy apply after
+            // a rotation is PARKED, PR C-4) sits BELOW this branch on purpose, so an applied day keeps replaying
             // idempotently after a rotation — but idempotent replay is a
             // no-op, and this install is not. Without the clause, a kind-5
             // packet from a retired era could still choose this mirror's
@@ -689,13 +867,19 @@ contract RewardReporterFacet is
         }
 
         // #1632 r2 — after an era ROTATION, the identity-less kind-5 wire
-        // refuses FRESH applies (see {LegacyBroadcastRetired}). Placed
+        // refuses FRESH applies (Codex #1632 r2: legacy packets carry no
+        // deployment identity, so a retired era's delayed delivery is
+        // indistinguishable from a legitimate one). Placed
         // AFTER the replay branch above, so already-applied days replay
         // idempotently forever. The V3 caller passes `legacyWire = false`:
         // it reaches this core only having authenticated its era against
         // the configured ground truth.
         if (legacyWire && s.rewardEraRotated) {
-            revert LegacyBroadcastRetired(b.dayId);
+            // PR C-4 — refused is PARKED on first receipt; a retry that still
+            // meets the gate stays parked, by name.
+            if (parkedId != 0) revert ParkedBroadcastStillUnroutable(parkedId);
+            LibRewardCustody.parkBroadcast(s, 5, b.dayId, keccak256(abi.encode(uint8(5), b)));
+            return;
         }
 
         // Mixed-generation same-day: a legacy kind-2 delivery may already
@@ -999,7 +1183,7 @@ contract RewardReporterFacet is
             return;
         }
 
-        _applyBroadcastV2Core(s, b.v2, /* legacyWire */ false);
+        _applyBroadcastV2Core(s, b.v2, /* legacyWire */ false, 0);
         // #1636 r2 — install (or verify) the day-level funded pool stamp
         // from the V3 packet. The V2 core deliberately does not write it
         // (the V2 wire never carried the day-level figure — only per-chain
@@ -1293,6 +1477,7 @@ contract RewardReporterFacet is
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint32 old = s.baseChainId;
         bool wasMirror = LibVaipakam.isMirrorRewardChain(s);
+        LibVaipakam.RewardRole before = LibVaipakam.rewardRole(s); // PR C-1: the carry-forward keys on the four-state role
         // #1566 slice 4 PR B (design §5c/§5d) — a mirror's authenticated
         // source is never rebound DIRECTLY to a different one: the old
         // residual must retire and delayed packets from the old source must
@@ -1332,7 +1517,7 @@ contract RewardReporterFacet is
         // whose backing was already spent. One helper, called on the
         // EFFECTIVE role predicate, so a third role input can never repeat
         // this by construction.
-        _retireDeliveredResidualOnRoleChange(s, wasMirror);
+        _retireDeliveredResidualOnRoleChange(s, before);
         emit RewardReporterConfigUpdated(
             // forge-lint: disable-next-line(unsafe-typecast)
             bytes32("baseChainId"),
@@ -1341,15 +1526,12 @@ contract RewardReporterFacet is
         );
     }
 
-    /// @dev #1566 slice 4 PR B — the role freeze (design §5d, "role and
-    ///      SOURCE changes freeze here"): from the first holder attribution
-    ///      or the activation until slice 4 PR C's backfill clears
-    ///      `rewardRoleChangesFrozen`, every EFFECTIVE role change is refused
-    ///      with the two roles named. Why: between the two PRs the residual
-    ///      retirement below can only level `paid` to `received`; it cannot
-    ///      re-key a holder allocation, so a transition would orphan funded
-    ///      custody or re-expose a stale residual after reattachment. One
-    ///      helper on the RESOLVED role, so a third role input inherits it.
+    /// @dev The posture gate on an EFFECTIVE role change, on the RESOLVED role so
+    ///      a third role input inherits it. Slice 4 PR B froze every change until
+    ///      PR C (a transition would have orphaned funded custody); with PR C's
+    ///      carry-forward in place a change carries the custody into the retiring
+    ///      era, so the freeze is gone (#1566 PR C revision) — nothing waits on
+    ///      a manual step. The staging gate below stands.
     function _requireRoleChangeAllowed(
         LibVaipakam.Storage storage s,
         LibVaipakam.RewardRole next
@@ -1365,8 +1547,6 @@ contract RewardReporterFacet is
         if (s.stagingEncumberedCount != 0) {
             revert IVaipakamErrors.RewardRoleChangeBlockedByStagedRecords(s.stagingEncumberedCount);
         }
-        if (!s.rewardRoleChangesFrozen) return;
-        revert IVaipakamErrors.RewardRoleChangeFrozen(uint8(current), uint8(next));
     }
 
     /// @dev Retire the delivered-fresh residual (`received - paid`) whenever
@@ -1381,15 +1561,31 @@ contract RewardReporterFacet is
     ///      transition and re-attachment.
     ///      Shared by every setter that feeds the role predicate, so the
     ///      check IS the operation and a new role input inherits it.
+    ///
+    ///      Slice 4 PR C-1 (#1566) — the retirement is now the ERA CARRY-FORWARD
+    ///      ({LibRewardCustody.retireCustodyEraOnRoleChange}) and it runs on
+    ///      every effective change of the four-state role, not only of the
+    ///      mirror predicate: Canonical→Detached and Detached→Canonical change
+    ///      the bound as much as a mirror transition does. A first
+    ///      configuration (Unconfigured → anything) opens and retires no era —
+    ///      there is none to close — but it still LEVELS the delivered residual
+    ///      (#1566 PR 1 review), as every role change before PR C did. The live-fresh custody is carried into the
+    ///      retiring era's row rather than left behind a levelled counter, so
+    ///      what the old era delivered stays consumable by the obligations it
+    ///      accrued (PR C-2) and reaches live headroom only through the era's
+    ///      terminal release.
     function _retireDeliveredResidualOnRoleChange(
         LibVaipakam.Storage storage s,
-        bool wasMirror
+        LibVaipakam.RewardRole before
     ) private {
-        if (wasMirror == LibVaipakam.isMirrorRewardChain(s)) return;
-        uint256 received = s.rewardBudgetArmedFreshReceived;
-        if (s.rewardBudgetArmedFreshPaid < received) {
-            s.rewardBudgetArmedFreshPaid = received;
+        LibVaipakam.RewardRole current = LibVaipakam.rewardRole(s);
+        if (before == current) return;
+        if (before == LibVaipakam.RewardRole.Unconfigured) {
+            LibRewardCustody.levelDeliveredResidual(s);
+            return;
         }
+        (uint256 today, ) = LibInteractionRewards.currentDayOrZero();
+        LibRewardCustody.retireCustodyEraOnRoleChange(s, SafeCast.toUint64(today));
     }
 
     /// @notice Flip this Diamond's canonical-reward-chain flag.
@@ -1400,7 +1596,7 @@ contract RewardReporterFacet is
     ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         bool old = s.isCanonicalRewardChain;
-        bool wasMirror = LibVaipakam.isMirrorRewardChain(s);
+        LibVaipakam.RewardRole before = LibVaipakam.rewardRole(s); // PR C-1: the carry-forward keys on the four-state role
         // #1566 slice 4 PR B — the role freeze, on the would-be role (a
         // false→false write on a never-configured deployment resolves
         // `Unconfigured` again and is not a change).
@@ -1464,7 +1660,7 @@ contract RewardReporterFacet is
         // because mirror-ness has two inputs and `setBaseChainId` mutates
         // the other one. Guarding each knob's own delta re-created the
         // one-fix-two-sites defect r2 already catalogued.
-        _retireDeliveredResidualOnRoleChange(s, wasMirror);
+        _retireDeliveredResidualOnRoleChange(s, before);
         emit RewardReporterConfigUpdated(
             // forge-lint: disable-next-line(unsafe-typecast)
             bytes32("isCanonicalRewardChain"),

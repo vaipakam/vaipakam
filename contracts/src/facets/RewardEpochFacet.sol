@@ -17,41 +17,23 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
  *         paged indexing, and the parking and acknowledgment that release a
  *         batch so what remains of its packet becomes classifiable.
  *
- *         WHAT THIS CUT ACTUALLY OFFERS, stated here because the rest of this
- *         file describes the release in the present tense and a reader meets
- *         this header first (#2258, owner decision 2026-09-20; Codex #2232
- *         r10). It is stated as a COMPLEMENT — the refused set named
- *         exhaustively, everything else live — rather than by listing what
- *         works, because a list of what works omits an entry silently and a
- *         complement cannot (Codex #2232 r11, which is what an earlier
- *         "only the paged indexing is live" did to {admitLegacyTransportBatch}):
+ *         WHAT THIS FACET OFFERS — every entry is live. Indexing
+ *         ({admitLegacyTransportBatch}, {materializeTransportBatchPage}) and
+ *         parking ({parkTransportBatchRemainder}) are permissionless; parking is
+ *         gated on STATE — every listed day proven closed by the per-day closure
+ *         proof (3b-ii-B) and no staging reference standing. The acknowledgment
+ *         that RELEASES a parked batch ({acknowledgeTransportBatchRemainder}) is
+ *         an operator disposition, ADMIN. (3b-i shipped the two release entries
+ *         shut to every caller until the closure proof existed; 3b-ii-B opened
+ *         them, #2258.)
  *
- *           * REFUSED, to every caller, the administrator included — EXACTLY
- *             TWO entries: {parkTransportBatchRemainder} and
- *             {acknowledgeTransportBatchRemainder}, which revert
- *             `TransportReleaseNotYetAvailable`. So no batch on this
- *             deployment is ever `released`.
- *           * LIVE — everything else on this facet. That is
- *             {admitLegacyTransportBatch}, {materializeTransportBatchPage}
- *             and every read surface. The two write entries there are not
- *             optional housekeeping: a delivery from the 3a-to-3b rollout
- *             window is admitted ONLY by {admitLegacyTransportBatch} (until
- *             it is, its packet is refused with `TransportBatchNotAdmitted`),
- *             and every admitted batch — oversize or not — has its membership
- *             written ONLY by {materializeTransportBatchPage}.
- *
- *         Read every "the release does X" below as 3b-ii's shape, which the
- *         library already implements and which this facet's bodies do not yet
- *         reach.
- *
- *         THE CONSEQUENCE IS NOT CONFINED TO THIS FACET, and is a funds fact
- *         rather than a surface one: {LibRewardCustody.takeFromReleasedRemainder}
- *         refuses a packet whose batch is not released BEFORE it looks at the
- *         fresh-versus-recycled split, so for as long as this door is shut a
- *         packet holding an epoch is WHOLLY unclassifiable — not "classifiable
- *         recycled only". Its value stays in the membership-bound holding,
- *         visible in the ledger, spendable by nobody. A packet holding no
- *         epoch is untouched by all of this.
+ *         THE FUNDS FACT: {LibRewardCustody.takeFromReleasedRemainder} refuses
+ *         a packet whose batch is not released BEFORE it looks at the
+ *         fresh-versus-recycled split, so a packet holding an epoch is
+ *         unclassifiable until its batch is parked AND acknowledged; until then
+ *         its value stays in the membership-bound holding, visible in the
+ *         ledger, spendable only by the obligations of the days it lists. A
+ *         packet holding no epoch is untouched by all of this.
  * @dev    #1566 transport epochs PR 3b (design §5c).
  *
  *         WHY ITS OWN FACET. Admission happens at ingress and lives with the
@@ -119,6 +101,38 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
         );
     }
 
+    /// @notice 3d-1 — index ONE proven chunk of a ROOTED (d6) batch's
+    ///         membership: chunk `chunkIndex` of the committed list, with the
+    ///         Merkle proof of its indexed leaf. Any order; each chunk once.
+    /// @dev    Permissionless — the authority is the root the delivery's own
+    ///         ingress stamped. `hints` / `lateHints` are optional (empty =
+    ///         unhinted), per day of the chunk, with the meaning
+    ///         {materializeTransportBatchPageHinted} gives them; a crowded day
+    ///         that trips the unhinted walk cap is indexed with a hint, exactly
+    ///         as a flat-hash page is. The rule is
+    ///         {LibRewardCustody.materializeTransportBatchChunk}.
+    /// @return indexedDays The batch's day-index progress after this call; it
+    ///                     is whole when it equals the batch's `dayCount`,
+    ///                     which is when every chunk has landed.
+    function materializeTransportBatchChunk(
+        bytes32 batchId,
+        uint256 chunkIndex,
+        uint256[] calldata dayIds,
+        bytes32[] calldata proof,
+        bytes32[] calldata hints,
+        bytes32[] calldata lateHints
+    ) external nonReentrant returns (uint32 indexedDays) {
+        if (
+            (hints.length != 0 && hints.length != dayIds.length)
+                || (lateHints.length != 0 && lateHints.length != dayIds.length)
+        ) {
+            revert TransportDayListMismatch(batchId, bytes32(0), bytes32(0));
+        }
+        return LibRewardCustody.materializeTransportBatchChunk(
+            LibVaipakam.storageSlot(), batchId, chunkIndex, dayIds, proof, hints, lateHints
+        );
+    }
+
     /// @notice {materializeTransportBatchPage} with the predecessor named for
     ///         each day (Codex #2276 r7): `hints[i]` is the batch after which
     ///         this one belongs in day `dayIds[i]`'s ordered list, zero for the
@@ -143,9 +157,8 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
     }
 
     /// @notice PARK what a batch's obligations left, under the batch's own key.
-    ///         NOT OFFERED IN THIS CUT — this entry refuses every caller (see
-    ///         the body, and the header's "what this cut actually offers").
-    ///         Everything the dev note below describes is 3b-ii's shape.
+    ///         Permissionless, gated on state: every listed day proven closed and
+    ///         no staging reference standing (3b-ii-B).
     /// @dev    The first half of the release, and not the whole of it: the
     ///         remainder becomes classifiable only once
     ///         {acknowledgeTransportBatchRemainder} records the acknowledgment
@@ -177,32 +190,30 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
     ///         must exist and its membership must be whole. 3b-ii adds §5c's
     ///         remaining condition — a batch with outstanding staging
     ///         references cannot be retired — to the same place.
-    /// @return amount What was parked.
-    function parkTransportBatchRemainder(bytes32 batchId)
+    /// @param  batchId The batch whose remainder is parked.
+    /// @param  dayIds  The batch's WHOLE day list (checked against its commitment).
+    /// @return checkedDays How many listed days the park has now checked closed.
+    /// @return parked      Whether this page completed the park.
+    /// @return amount      What was parked (on the completing page).
+    function parkTransportBatchRemainder(bytes32 batchId, uint256[] calldata dayIds)
         external
         nonReentrant
-        returns (uint256 amount)
+        returns (uint32 checkedDays, bool parked, uint256 amount)
     {
-        // #2258 (owner decision 2026-09-20) — NOT AVAILABLE in 3b-i, to
-        // anyone, checked before anything else so the answer is the same for
-        // an admin, a stranger and an unknown id: the release does not exist
-        // yet. The design's rule for this act — refuse a batch that still
-        // lists an outstanding obligation — cannot be tested until 3b-ii
-        // tracks obligations per day, and a release the chain cannot check is
-        // an earmark spent on the caller's say-so. The library function this
-        // will call is written and tested (through the test-only raw entry);
-        // only the door is shut.
-        amount; // the return exists for 3b-ii's shape; nothing reaches it
-        revert TransportReleaseNotYetAvailable(batchId);
+        // 3b-ii-B (#1566; #2258 Reading B) — THE RELEASE GATE, now checkable:
+        // every listed day must be proven closed (its obligations all
+        // terminated — {RewardClosureFacet}) and no staging reference may
+        // stand; the day list is re-supplied against the 3a commitment and the
+        // check is paged with a per-batch cursor like the index was. State,
+        // not the caller, makes the release valid — permissionless.
+        return LibRewardCustody.parkTransportRemainderPage(LibVaipakam.storageSlot(), batchId, dayIds);
     }
 
-    /// @notice Record the acknowledgment that RELEASES a batch.
-    ///         NOT OFFERED IN THIS CUT — this entry refuses every caller, the
-    ///         administrator included. In particular the `ADMIN_ROLE` gate the
-    ///         dev note below argues for is ABSENT from this cut's signature on
-    ///         purpose, so that the refusal is uniform; do not read that
-    ///         paragraph as a description of who may call this today. Nobody
-    ///         may.
+    /// @notice Record the acknowledgment that RELEASES a batch — ADMIN (3b-ii-B).
+    ///         (3b-i shipped this entry shut to everyone, the administrator
+    ///         included, so the refusal was uniform while the release could
+    ///         not yet be checked; the park's day-closure gate now exists, so
+    ///         the door is open and the gate the note below argues for is on.)
     /// @dev    After this, and only after this, the batch's packet passes the
     ///         classification gate: {LibRewardCustody.authenticatedFresh} then
     ///         derives the bound a classification reads from the packet's
@@ -244,13 +255,12 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
     function acknowledgeTransportBatchRemainder(bytes32 batchId)
         external
         nonReentrant
+        onlyRole(LibAccessControl.ADMIN_ROLE)
     {
-        // #2258 — as above. The `onlyRole(ADMIN_ROLE)` gate this act carries
-        // in 3b-ii (the acknowledgment is an operator disposition; parking is
-        // not) is deliberately absent here so the refusal is uniform: a
-        // stranger and the admin both learn the release does not exist yet,
-        // rather than one of them learning they lack a role for it.
-        revert TransportReleaseNotYetAvailable(batchId);
+        // 3b-ii-B — the disposition, gated as the note above argues: a parked,
+        // unacknowledged remainder becomes RELEASED, and the batch's packet
+        // passes the classification gate from here on.
+        LibRewardCustody.acknowledgeTransportRemainder(LibVaipakam.storageSlot(), batchId);
     }
 
     /// @notice 3b-ii-A2 (#2305) — a batch's STAGED components and the count of
@@ -604,9 +614,31 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
     function getTransportCoverageForDay(uint256 dayId)
         external
         view
-        returns (uint256 available, bool capHit, uint256 withheldShared, uint256 withheldUnattested)
+        returns (uint256 available, bool capHit, uint256 withheldContested, uint256 withheldUnattested)
     {
         return LibRewardCustody.transportCoverageForDay(LibVaipakam.storageSlot(), dayId);
+    }
+
+    /// @notice 3c-1 — a day's plannable rooms by tier: `ordinary` pays transport-first;
+    ///         `necessity` (epochs with an unarrived listed day) is drawn last, only
+    ///         for the shortfall the live sources and the bucket leave.
+    function getTransportTiersForDay(uint256 dayId) external view returns (uint256 ordinary, uint256 necessity) {
+        return LibRewardCustody.transportTiersForDay(LibVaipakam.storageSlot(), dayId);
+    }
+
+    /// @notice 3c-1 — the gates a batch is admitted through, as flags (0 = ordinary;
+    ///         1 unattested, 2 unindexed, 4 contested, 8 necessity), and whether a
+    ///         staging record may stage from it (ordinary only).
+    function getTransportBatchGates(bytes32 batchId) external view returns (uint8 gates, bool stageable) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        gates = LibRewardCustody.batchGates(s, batchId, s.transportBatches[batchId]);
+        stageable = gates == 0;
+    }
+
+    /// @notice 3c-1 — whether the batch's listed days have been kept (false for a
+    ///         batch indexed before the list existed: it is withheld as contested).
+    function getTransportBatchDays(bytes32 batchId) external view returns (uint256[] memory days_) {
+        return LibVaipakam.storageSlot().transportBatchDays[batchId];
     }
 
     /// @notice What `dayId`'s epochs would pay of an obligation's two legs,
@@ -638,18 +670,22 @@ contract RewardEpochFacet is DiamondReentrancyGuard, DiamondAccessControl, IVaip
     /// @dev    Hosted here for `RewardClaimFacet`'s and
     ///         `InteractionRewardsFacet`'s EIP-170 headroom (3b-ii-A); the
     ///         operations are the callers' own, unchanged.
-    function epochSettleClaimLegs(
+    function epochSettleLegs(
+        uint8 source,
         uint256 liveFresh,
         uint256 epochLegs,
         uint256 treasuryRecycledRelease,
         uint256 userEpochRecycled,
+        uint256 eraFunded,
         uint256 refId
     ) external {
         _requireDiamondInternal();
-        LibVpfiRecycle.absorbRewardFresh(LibVpfiRecycle.RecycleSource.ForfeitedReward, refId, liveFresh);
-        LibVpfiRecycle.absorbTransportFunded(LibVpfiRecycle.RecycleSource.ForfeitedReward, refId, epochLegs);
+        LibVpfiRecycle.RecycleSource src = LibVpfiRecycle.RecycleSource(source);
+        LibVpfiRecycle.absorbRewardFresh(src, refId, liveFresh);
+        LibVpfiRecycle.absorbTransportFunded(src, refId, epochLegs);
+        LibVpfiRecycle.absorbEraFunded(src, refId, eraFunded); // PR C-2 - era-funded: its own class, no bound charge
         if (treasuryRecycledRelease > 0) {
-            LibVpfiRecycle.releaseCommitment(LibVpfiRecycle.RecycleSource.ForfeitedReward, refId, treasuryRecycledRelease);
+            LibVpfiRecycle.releaseCommitment(src, refId, treasuryRecycledRelease);
         }
         if (userEpochRecycled > 0) {
             LibVpfiRecycle.releaseCommitment(LibVpfiRecycle.RecycleSource.TransportPaidClaim, refId, userEpochRecycled);

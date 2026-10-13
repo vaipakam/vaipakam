@@ -26,7 +26,7 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
  *         an on-chain counterparty offer, full or partial, earning the 1%
  *         LIF. Each call materializes EXACTLY the `fillAmount` slice as a
  *         single-value on-chain offer, routes it through the shared
- *         `_executeMatch`, and decrements the off-chain
+ *         `executeMatch`, and decrements the off-chain
  *         `signedOfferFilled[orderHash]` ledger.
  *
  *         Setup posture mirrors `MatchOffersScaffoldTest` /

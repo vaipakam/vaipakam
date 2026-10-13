@@ -25,6 +25,7 @@ import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
 import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
 import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {FacetSelectors} from "./lib/FacetSelectors.sol";
 import {RefinanceRecordRollout} from "./lib/RefinanceRecordRollout.sol";
 
 /**
@@ -155,10 +156,11 @@ contract ReplaceStaleFacets is DeployDiamond {
         // the inherited `DeployDiamond` getter that defines what the Diamond
         // routes, so the surface cannot be partial (#778/#779).
         //
-        // Ten facets, so at most two cuts each; empty partitions are skipped
+        // Ten facets, so at most two cuts each, plus one retired-selector
+        // Remove (#2459 r4); empty partitions are skipped
         // and the staging array is trimmed to what was actually used (a
         // zero-selector cut reverts).
-        IDiamondCut.FacetCut[] memory staging = new IDiamondCut.FacetCut[](20);
+        IDiamondCut.FacetCut[] memory staging = new IDiamondCut.FacetCut[](21);
         uint256 n;
         n = _appendPartitioned(
             staging, n, diamond, address(offerCreateFacet), _getOfferCreateSelectors()
@@ -217,6 +219,19 @@ contract ReplaceStaleFacets is DeployDiamond {
         // a pre-#1503 Diamond the seven older preview selectors are routed
         // (Replace) and `saleAdmission` is not (Add); the Add is the half that
         // keeps the refreshed `OfferAcceptFacet`'s sale branch from reverting.
+        // #2459 r4 — `previewIntent` gained the route's outer initiator, so its
+        // selector CHANGED; the old one is Removed wherever still routed, or it
+        // would stay live on the old build beside the new entry.
+        bytes4 retiredPreview = FacetSelectors.retiredPreviewIntentSelector();
+        if (IDiamondLoupe(diamond).facetAddress(retiredPreview) != address(0)) {
+            bytes4[] memory gone = new bytes4[](1);
+            gone[0] = retiredPreview;
+            staging[n++] = IDiamondCut.FacetCut({
+                facetAddress: address(0),
+                action: IDiamondCut.FacetCutAction.Remove,
+                functionSelectors: gone
+            });
+        }
         n = _appendPartitioned(
             staging,
             n,

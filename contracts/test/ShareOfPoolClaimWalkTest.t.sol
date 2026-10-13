@@ -10,6 +10,7 @@ import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensF
 import {VPFIToken} from "../src/token/VPFIToken.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
+import {RewardStagingDomainFacet} from "../src/facets/RewardStagingDomainFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
@@ -108,6 +109,59 @@ contract ShareOfPoolClaimWalkTest is SetupTest {
         (paid, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
     }
 
+    function _domain() internal view returns (RewardStagingDomainFacet) {
+        return RewardStagingDomainFacet(address(diamond));
+    }
+
+    function _dk() internal view returns (bytes32) {
+        return keccak256(abi.encode(alice, LibVaipakam.RewardSide.Lender));
+    }
+
+    function _domainState() internal view returns (uint8 phase, uint64 prepared, uint64 lastDay) {
+        (, phase, , lastDay, prepared, , , , , , , , ) = _domain().getStagingDomain(alice, LibVaipakam.RewardSide.Lender);
+    }
+
+    /// @dev Since A2-ii a side whose pending window exceeds one chunk is settled as
+    ///      a staging DOMAIN — deferral, not truncation: each claim prepares up to a
+    ///      chunk of day records and pays nothing; once the extent is prepared the
+    ///      claim has nothing left to do (and refuses), and the permissionless
+    ///      reserve/resolve pages settle the whole window, the last resolve page
+    ///      paying. A one-chunk side still pays in the claim itself. Drives whichever
+    ///      applies and returns everything alice was paid.
+    function _claimDriven() internal returns (uint256 paid) {
+        uint256 before = vpfi.balanceOf(alice);
+        for (uint256 i; i < 8; ++i) {
+            (uint8 phase, uint64 prepared, uint64 lastDay) = _domainState();
+            if (phase == uint8(LibVaipakam.DomainPhase.Staging) && prepared >= lastDay) break;
+            if (phase != uint8(LibVaipakam.DomainPhase.None) && phase != uint8(LibVaipakam.DomainPhase.Staging)) break;
+            _claim();
+            (phase, , ) = _domainState();
+            if (phase == uint8(LibVaipakam.DomainPhase.None)) break; // a one-chunk side paid in the claim
+        }
+        (uint8 ph, , ) = _domainState();
+        if (ph == uint8(LibVaipakam.DomainPhase.Staging)) {
+            uint256 n;
+            while (!_domain().reserveDomainPage(_dk())) { if (++n > 64) fail(); }
+            n = 0;
+            while (!_domain().resolveDomainPage(_dk())) { if (++n > 128) fail(); }
+        }
+        paid = vpfi.balanceOf(alice) - before;
+    }
+
+    /// @dev Nothing left: a further claim pays NOTHING — it either refuses (the
+    ///      next pending day is the unfinalized one past the window, or no entry
+    ///      remains) or returns zero; either way alice's balance does not move.
+    function _assertNothingLeft() internal {
+        uint256 before = vpfi.balanceOf(alice);
+        vm.prank(alice);
+        (bool ok, bytes memory ret) = address(diamond).call(abi.encodeWithSelector(RewardClaimFacet.claimInteractionRewards.selector));
+        if (ok) {
+            (uint256 paid, , ) = abi.decode(ret, (uint256, uint256, uint256));
+            assertEq(paid, 0, "a further claim pays nothing");
+        }
+        assertEq(vpfi.balanceOf(alice), before, "nothing paid twice");
+    }
+
     // ── The D1 ceiling binds THROUGH the claim ───────────────────────────────
 
     /// @dev The point of the slice: a claim over ShareOfPool days is bounded by
@@ -165,11 +219,13 @@ contract ShareOfPoolClaimWalkTest is SetupTest {
 
     // ── Chunking: cursors persist, no day is paid twice ─────────────────────
 
-    /// @dev A window longer than one chunk needs repeated claims. Each pays
-    ///      only the days it walked and persists its cursor, so the totals sum
-    ///      to the full entitlement with nothing double-paid or skipped. The
-    ///      second claim is the double-pay guard: re-walking settled days would
-    ///      surface as an over-payment.
+    /// @dev A window longer than one chunk is settled as a staging DOMAIN since
+    ///      A2-ii (deferral, not truncation): the claims prepare it a chunk at a
+    ///      time and pay nothing, the domain's pages then settle every day in
+    ///      order. The property this cell has always guarded is unchanged: every
+    ///      day is paid exactly once, nothing skipped, nothing twice — a re-walk of
+    ///      settled days would surface as an over-payment, and a further claim
+    ///      finds nothing left.
     function test_ChunkedClaimNeverPaysADayTwice() public {
         uint256 chunk = LibVaipakam.MAX_INTERACTION_CLAIM_DAYS;
         uint256 span = chunk + 5;
@@ -181,12 +237,9 @@ contract ShareOfPoolClaimWalkTest is SetupTest {
         _loanSideOpen(uint32(span));
         _entry(1, uint32(span + 1));
 
-        uint256 first = _claim();
-        uint256 second = _claim();
-
-        assertEq(first, chunk * 0.5e18, "first claim walks exactly one chunk");
-        assertEq(second, 5 * 0.5e18, "second finishes the remaining days");
-        assertEq(first + second, span * 0.5e18, "none paid twice, none skipped");
+        assertEq(_claim(), 0, "a multi-chunk window defers: the first claim prepares and pays nothing");
+        assertEq(_claimDriven(), span * 0.5e18, "the domain pays every day once: none twice, none skipped");
+        _assertNothingLeft();
     }
 
     /// @dev A day whose ceiling is already fully drawn must ADVANCE with a zero
@@ -227,20 +280,25 @@ contract ShareOfPoolClaimWalkTest is SetupTest {
         }
         _mut().setGovernorCommitArmedFromDayRaw(2); // D* = 2
         _loanSideOpen(uint32(lastArmed));
+        // Control: the legacy day alone, so its schedule-priced value is derived,
+        // not pinned (as in the spanning-window cell above).
+        address bob = makeAddr("2c-bob-retry");
+        uint256 bobEntry = _mut().pushRewardEntry(bob, LOAN + 1, LibVaipakam.RewardSide.Lender, 1e18, 1);
+        _mut().closeRewardEntryRaw(bobEntry, 2);
+        vm.prank(bob);
+        (uint256 legacyOnly, , ) = RewardClaimFacet(address(diamond)).claimInteractionRewards();
+        assertGt(legacyOnly, 1 ether, "the control really did pay the legacy day (non-vacuous)");
         _entry(1, uint32(lastArmed + 1));
 
-        uint256 first = _claim();
-        uint256 second = _claim();
-
-        // The legacy day is priced from the real emission schedule, so it is
-        // orders of magnitude larger than an armed day's 0.5e18 ceiling —
-        // a re-paid legacy slice is unmistakable in `second`.
-        assertGt(first, 1 ether, "first claim includes the legacy slice");
-        assertEq(
-            second,
-            3 * 0.5e18,
-            "second claim is armed-tail ONLY - no legacy re-pay"
-        );
+        // Since A2-ii the armed tail (longer than a chunk) is a staging DOMAIN,
+        // so the window settles across several calls and pages — the very
+        // retries this cell exists for. Paid once means: the total is the legacy
+        // slice plus the armed tail at its ceiling, and a further claim finds
+        // nothing. A re-paid legacy slice is orders of magnitude larger than an
+        // armed day's 0.5e18 ceiling and would be unmistakable in the total.
+        uint256 total = _claimDriven();
+        assertEq(total, legacyOnly + (lastArmed - 1) * 0.5e18, "legacy slice ONCE + the armed tail at its ceiling - no legacy re-pay");
+        _assertNothingLeft();
     }
 
     /// @dev Codex #1404 **P2** — a walk that advances only ZERO-PAY days has
@@ -396,9 +454,9 @@ contract ShareOfPoolClaimWalkTest is SetupTest {
 
     // ── #1351 slice 2e — preview parity with the walk ────────────────────────
 
-    function _preview() internal view returns (uint256 amount) {
-        (amount, , ) = InteractionRewardsLensFacet(address(diamond))
-            .previewInteractionRewards(alice);
+    /// @dev The preview IS the claim (A2-iii): run in a reverting frame.
+    function _preview() internal returns (uint256 amount) {
+        (amount, , ) = previewByExecution(alice);
     }
 
     /// @dev {_loanSideOpen} for an arbitrary loan id.
@@ -448,10 +506,12 @@ contract ShareOfPoolClaimWalkTest is SetupTest {
         assertEq(pre, paid, "preview == claim on a shared (side, day)");
     }
 
-    /// @dev DISCRIMINATION (criterion 3b): the preview is chunk-bounded like
-    ///      the claim — a long armed window previews exactly what THIS claim
-    ///      call pays, and the next chunk appears only after the walk
-    ///      advances. The pre-2e preview reported the whole window at once.
+    /// @dev DISCRIMINATION (criterion 3b): the preview is bounded like the
+    ///      claim — by EXECUTION, so it reports what THIS claim call pays. Since
+    ///      A2-ii a long armed window defers (the call prepares a chunk of the
+    ///      staging domain and pays nothing), so the preview says nothing too;
+    ///      the window then pays in full through the domain's pages, once. The
+    ///      pre-2e preview reported the whole window at once.
     function test_PreviewIsChunkBoundedLikeTheClaim() public {
         uint256 chunk = LibVaipakam.MAX_INTERACTION_CLAIM_DAYS;
         uint256 total = chunk + 10;
@@ -469,13 +529,11 @@ contract ShareOfPoolClaimWalkTest is SetupTest {
         _mut().userClaimFundingNeedRaw(alice);
         uint256 pre = _preview();
         uint256 paid = _claim();
-        assertEq(paid, chunk * 1e18, "one claim pays exactly the chunk");
-        assertEq(pre, paid, "preview == this claim's chunk, not the window");
+        assertEq(paid, 0, "a multi-chunk window defers: this call prepares and pays nothing");
+        assertEq(pre, paid, "preview == what this call pays, never the window");
 
-        uint256 pre2 = _preview();
-        uint256 paid2 = _claim();
-        assertEq(paid2, 10 * 1e18, "second claim pays the remainder");
-        assertEq(pre2, paid2, "preview follows the walk's persisted cursor");
+        assertEq(_claimDriven(), total * 1e18, "the domain then pays the whole window, once");
+        _assertNothingLeft();
     }
 
     /// @dev DISCRIMINATION (criterion 3c): a window spanning `D*` previews as
@@ -557,16 +615,12 @@ contract ShareOfPoolClaimWalkTest is SetupTest {
         _mut().userClaimFundingNeedRaw(alice);
         uint256 pre = _preview();
         uint256 paid = _claim();
-        assertEq(
-            paid,
-            chunk * 1e18,
-            "claim spends the whole allowance on real value"
-        );
-        assertEq(
-            pre,
-            paid,
-            "no allowance burnt previewing a retired-empty entry"
-        );
+        assertEq(pre, paid, "no allowance burnt previewing a retired-empty entry: preview == this call");
+        // Since A2-ii the long entry's window (longer than a chunk) is a staging
+        // DOMAIN; the retired-empty entry must not crowd it out of its full
+        // payout any more than it may burn the preview's allowance.
+        assertEq(_claimDriven(), (chunk + 1) * 1e18, "the real entry pays in full; the retired-empty one took nothing");
+        _assertNothingLeft();
     }
 
     /// @dev Codex #1410 r2 — the DryRun carries the REAL recycle bucket: a

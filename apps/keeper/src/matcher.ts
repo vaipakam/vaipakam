@@ -43,13 +43,14 @@
  * table via the shared D1 binding and only `previewMatch` on-chain.
  */
 
-import { createPublicClient, http, type Abi, type Address, type Hex } from 'viem';
+import { createPublicClient, http, zeroAddress, type Abi, type Address, type Hex } from 'viem';
 import {
   MetricsFacetABI,
   OfferCreateFacetABI,
   OfferAcceptFacetABI,
   OfferCancelFacetABI,
   OfferMatchFacetABI,
+  OfferMatchIntentFacetABI,
   RiskAccessFacetABI,
   RiskPreviewFacetABI,
   AdminFacetABI,
@@ -70,7 +71,8 @@ import {
 // relevant facet ABIs so viem can resolve every selector against the
 // Diamond.
 // `getActiveLenderIntents` lives on MetricsFacet; `previewIntent` on
-// RiskPreviewFacet (split off RiskAccessFacet in #1104); `matchIntent` on OfferMatchFacet — added for the #625
+// RiskPreviewFacet (split off RiskAccessFacet in #1104); `matchIntent` on OfferMatchIntentFacet (split out of
+// OfferMatchFacet in the #1219 host split) — added for the #625
 // WI-2c auto-lend intent-fill pass alongside the Range-Orders selectors.
 const MATCHER_ABI: Abi = [
   ...(MetricsFacetABI as Abi),
@@ -78,6 +80,7 @@ const MATCHER_ABI: Abi = [
   ...(OfferAcceptFacetABI as Abi),
   ...(OfferCancelFacetABI as Abi),
   ...(OfferMatchFacetABI as Abi),
+  ...(OfferMatchIntentFacetABI as Abi), // matchIntent — its own host since #1219
   ...(RiskAccessFacetABI as Abi),
   ...(RiskPreviewFacetABI as Abi), // previewIntent — split off RiskAccessFacet (#1104)
   ...(AdminFacetABI as Abi), // keepersPaused() self-gate (Codex #748 r3)
@@ -116,6 +119,10 @@ const MATCH_ERR_OK = 0;
  *  short-circuit before submitting `matchOffers`. Numeric value 11 —
  *  the variant is the 12th in the enum (after `LtvAboveTier`). */
 const MATCH_ERR_SELF_TRADE = 11;
+/** `LibOfferMatch.MatchError.CapacityExhausted` (#1219) — this keeper's own fill
+ *  capacity is spent: the same verdict for every pair this tick, so the match
+ *  pass stops until the bucket refills. */
+const MATCH_ERR_CAPACITY_EXHAUSTED = 18;
 
 /** `LibVaipakam.OfferType`. */
 const OFFER_TYPE_LENDER = 0;
@@ -199,6 +206,7 @@ const INTENT_ERR_PASS_TERMINAL = new Set<number>([
   1, // Paused — diamond globally paused
   3, // MatcherDisabled — partialFillEnabled off
   4, // IntentDisabled — lenderIntentEnabled off
+  22, // CapacityExhausted (#1219) — this keeper's fill capacity is spent until it refills
 ]);
 const INTENT_ERR_MATCHER_DISABLED = 3;
 const INTENT_ERR_INTENT_DISABLED = 4;
@@ -412,18 +420,66 @@ function partitionByBucket(offers: readonly OfferLite[]): {
   return { lenders, borrowers };
 }
 
+/**
+ * The `previewMatch` read for THIS keeper: the preview checks the service
+ * capacity the route charges for the matcher and initiator it is NAMED (#2459
+ * r2 made the matcher an explicit argument, r4 the initiator), so the keeper
+ * names itself for both — it calls `matchOffers` from its own transaction.
+ * Before, the preview keyed on `msg.sender`, and an `eth_call` with no `from`
+ * read as the zero address, whose never-seen bucket always reads covered.
+ */
+export function previewMatchRequest(
+  ctx: Pick<KeeperContext, 'diamond' | 'wallet'>,
+  lenderId: bigint,
+  borrowerId: bigint,
+) {
+  const self = ctx.wallet.account?.address ?? zeroAddress;
+  return {
+    address: ctx.diamond,
+    abi: MATCHER_ABI,
+    functionName: 'previewMatch' as const,
+    args: [lenderId, borrowerId, self, self] as const,
+  };
+}
+
+/**
+ * The `previewIntent` read for a fill THIS keeper submits: `solver` is the
+ * keeper, and — since it sends its own transaction — also the route's outer
+ * initiator (#2459 r4: the preview names it rather than reading the view's
+ * transaction, whose originator an `eth_call` leaves unset).
+ */
+export function previewIntentRequest(
+  diamond: Address,
+  solver: Address,
+  intent: { owner: Address; lendingAsset: Address; collateralAsset: Address },
+  borrowerId: bigint,
+  fillAmount: bigint,
+) {
+  return {
+    address: diamond,
+    abi: MATCHER_ABI,
+    functionName: 'previewIntent' as const,
+    args: [
+      solver,
+      solver,
+      intent.owner,
+      intent.lendingAsset,
+      intent.collateralAsset,
+      borrowerId,
+      fillAmount,
+    ] as const,
+  };
+}
+
 async function previewMatch(
   ctx: KeeperContext,
   lenderId: bigint,
   borrowerId: bigint,
 ): Promise<MatchPreview | null> {
   try {
-    const raw = (await ctx.client.readContract({
-      address: ctx.diamond,
-      abi: MATCHER_ABI,
-      functionName: 'previewMatch',
-      args: [lenderId, borrowerId],
-    })) as Record<string, unknown>;
+    const raw = (await ctx.client.readContract(
+      previewMatchRequest(ctx, lenderId, borrowerId) as never,
+    )) as Record<string, unknown>;
     return {
       errorCode: Number(raw['errorCode']),
       matchAmount: BigInt(raw['matchAmount'] as bigint | number),
@@ -584,19 +640,9 @@ async function previewIntent(
   fillAmount: bigint,
 ): Promise<IntentPreview | null> {
   try {
-    const raw = (await ctx.client.readContract({
-      address: ctx.diamond,
-      abi: MATCHER_ABI,
-      functionName: 'previewIntent',
-      args: [
-        solver,
-        intent.owner,
-        intent.lendingAsset,
-        intent.collateralAsset,
-        borrowerId,
-        fillAmount,
-      ],
-    })) as Record<string, unknown>;
+    const raw = (await ctx.client.readContract(
+      previewIntentRequest(ctx.diamond, solver, intent, borrowerId, fillAmount) as never,
+    )) as Record<string, unknown>;
     return {
       ok: Boolean(raw['ok']),
       intentError: Number(raw['intentError']),
@@ -1129,14 +1175,15 @@ async function runOfferMatcherTickForChain(ctx: KeeperContext): Promise<void> {
   // tx may still mine.
   const uncertainBorrowers = new Set<string>();
 
+  let capacitySpent = false; // #1219 — set once a preview says this keeper's fill capacity is spent
   for (const [key, lenderList] of lenders) {
-    if (submits >= MAX_SUBMITS_PER_TICK) break;
+    if (submits >= MAX_SUBMITS_PER_TICK || capacitySpent) break;
     if (overBudget()) break;
     const borrowerList = borrowers.get(key);
     if (!borrowerList || borrowerList.length === 0) continue;
 
     for (const L of lenderList) {
-      if (submits >= MAX_SUBMITS_PER_TICK) break;
+      if (submits >= MAX_SUBMITS_PER_TICK || capacitySpent) break;
       if (overBudget()) break;
       for (const B of borrowerList) {
         if (previewCalls >= MAX_PREVIEW_CALLS_PER_TICK) break;
@@ -1160,6 +1207,13 @@ async function runOfferMatcherTickForChain(ctx: KeeperContext): Promise<void> {
 
         previewCalls += 1;
         const p = await previewMatch(ctx, L.id, B.id);
+        if (p && p.errorCode === MATCH_ERR_CAPACITY_EXHAUSTED) {
+          console.log(
+            `[matcher] chain=${ctx.chainId} match pass: this keeper's fill capacity is spent; waiting for it to refill`,
+          );
+          capacitySpent = true;
+          break;
+        }
         if (!p || p.errorCode !== MATCH_ERR_OK) {
           // Defence-in-depth: the client-side self-trade pre-filter
           // above should catch every same-creator pair, but log here

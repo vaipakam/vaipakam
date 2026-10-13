@@ -9,6 +9,7 @@ import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferMutateFacet} from "../src/facets/OfferMutateFacet.sol";
 import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
+import {LibOfferMatchExecute} from "../src/libraries/LibOfferMatchExecute.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {FeeEntitlementFacet} from "../src/facets/FeeEntitlementFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
@@ -1038,7 +1039,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         _admin().setAutoRefinanceEnabled(false);
 
         vm.expectRevert(
-            OfferMatchFacet.RefinanceTaggedOfferNotMatchable.selector
+            LibOfferMatchExecute.RefinanceTaggedOfferNotMatchable.selector
         );
         OfferMatchFacet(address(diamond)).matchOffers(999, taggedOfferId);
     }
@@ -1109,7 +1110,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
 
         // §3.1-3.3 — previewMatch admits with the forced/pinned values.
         LibOfferMatch.MatchResult memory mr = OfferMatchFacet(address(diamond))
-            .previewMatch(lenderOfferId, taggedOfferId);
+            .previewMatch(lenderOfferId, taggedOfferId, address(this), address(this));
         assertEq(uint8(mr.errorCode), uint8(LibOfferMatch.MatchError.Ok), "admitted");
         assertEq(mr.matchAmount, LOAN_PRINCIPAL, "matchAmount = borrower full amount");
         assertEq(mr.reqCollateral, LOAN_COLLATERAL, "reqCollateral pinned to carried");
@@ -1138,7 +1139,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
             _refiLenderOfferId(400, LOAN_COLLATERAL + 100 ether);
 
         LibOfferMatch.MatchResult memory mr = OfferMatchFacet(address(diamond))
-            .previewMatch(lenderOfferId, taggedOfferId);
+            .previewMatch(lenderOfferId, taggedOfferId, address(this), address(this));
         assertEq(
             uint8(mr.errorCode),
             uint8(LibOfferMatch.MatchError.RefinanceCarryOverCollateralShortfall),
@@ -1186,14 +1187,14 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         _admin().setAutoRefinanceEnabled(false);
 
         LibOfferMatch.MatchResult memory mr = OfferMatchFacet(address(diamond))
-            .previewMatch(lenderOfferId, taggedOfferId);
+            .previewMatch(lenderOfferId, taggedOfferId, address(this), address(this));
         assertEq(
             uint8(mr.errorCode),
             uint8(LibOfferMatch.MatchError.RefinanceTagged),
             "gated kill-switch -> not admissible"
         );
         vm.expectRevert(
-            OfferMatchFacet.RefinanceTaggedOfferNotMatchable.selector
+            LibOfferMatchExecute.RefinanceTaggedOfferNotMatchable.selector
         );
         OfferMatchFacet(address(diamond)).matchOffers(lenderOfferId, taggedOfferId);
     }

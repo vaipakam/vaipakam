@@ -27,6 +27,8 @@ import {LibRewardCustody} from "../src/libraries/LibRewardCustody.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {Vm} from "forge-std/Vm.sol";
+import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
+import {RewardHorizonSweepFacet} from "../src/facets/RewardHorizonSweepFacet.sol";
 
 /// @title RewardStagingTest
 /// @notice #1566 transport epochs 3b-ii-A2 (#2305) — the staging record's
@@ -238,8 +240,9 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         (, , , c) = _epoch().getTransportDayBatches(d, 0, 100);
     }
 
-    function _preview() internal view returns (uint256 amount) {
-        (amount, , ) = InteractionRewardsLensFacet(address(diamond)).previewInteractionRewards(alice);
+    /// @dev The preview IS the claim (A2-iii): run in a reverting frame.
+    function _preview() internal returns (uint256 amount) {
+        (amount, , ) = previewByExecution(alice);
     }
 
     function _rowsSum() internal view returns (uint256 s) {
@@ -253,13 +256,8 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         LibRewardCustody.AllocRequest memory q;
         q.dayId = 1;
         q.needFresh = need;
-        q.domainFresh = type(uint256).max;
-        q.domainRecycled = type(uint256).max;
         q.poolFresh = type(uint256).max;
         q.deliveredCap = type(uint256).max;
-        q.ovIds = new bytes32[](0);
-        q.ovFresh = new uint256[](0);
-        q.ovRecycled = new uint256[](0);
         LibRewardCustody.AllocResult memory r = _epoch().getTransportAllocationForDay(q);
         return r.transportFresh;
     }
@@ -641,14 +639,14 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.InteractionPoolReservedShortfall.selector, NEED, 0.1e18));
         RewardClaimFacet(address(diamond)).claimInteractionRewards();
         assertEq(_mut().rewardEntryClaimNextDayRaw(bobEntry), 0, "nothing was written off");
-        (uint256 previewed, , ) = InteractionRewardsLensFacet(address(diamond)).previewInteractionRewards(bob);
+        (uint256 previewed, , ) = previewByExecution(bob);
         assertEq(previewed, 0, "the preview says what the claim does: nothing, while the reservation binds");
         assertFalse(_mut().entryExecutableNowRaw(bobEntry), "and the expiry clock does not count the interval");
         // The reservation unwinds: the room is bob's, in full.
         vm.warp(uint256(_rec().deadline) + 1);
         _settle().unwindStagedDayPage(_key());
         _settle().unwindStagedDayPage(_key());
-        (previewed, , ) = InteractionRewardsLensFacet(address(diamond)).previewInteractionRewards(bob);
+        (previewed, , ) = previewByExecution(bob);
         assertEq(previewed, NEED, "and the full amount once it released");
         assertTrue(_mut().entryExecutableNowRaw(bobEntry), "executable again once it released");
         uint256 bobBefore = vpfi.balanceOf(bob);
@@ -810,7 +808,7 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         assertEq(r.heldEpoch, 64 * TINY, "the page's epoch legs are held");
         assertEq(_row(LibVaipakam.RewardCustodyRow.Resolving), 64 * TINY, "in the resolving row");
         assertEq(_mut().attributedTotalRaw(), _rowsSum(), "and attributed, never sweepable");
-        (, , , , , , , , , , uint256 resolvingRow) = _custody().rewardCustodyLedger();
+        (, , , , , , , , , uint256 resolvingRow) = _custody().rewardCustodyLedger();
         assertEq(resolvingRow, 64 * TINY, "and named in the ledger");
         assertEq(unclassifiedBefore - _row(LibVaipakam.RewardCustodyRow.Unclassified), 64 * TINY, "out of the packets' row");
         (uint256 lf0, ) = _legs(hs[0]);
@@ -860,15 +858,20 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
             assertEq(refs, 0);
         }
         _assertConserved(hs);
-        // A non-settlement release starts the obligation's cooldown: the
-        // next claim opens no record and defers as A1 did, the restored
-        // coverage being the window's meanwhile; past it, it stages again.
+        // A non-settlement release puts a priority WINDOW on each batch it
+        // restored (A2-ii) — not a cooldown on the obligation: the next claim
+        // finds every batch of the day suspended, so it has nothing to stage
+        // and opens no record; past the window, it stages the day again.
         vm.prank(alice);
         (bool ok, ) = address(diamond).call(abi.encodeWithSelector(RewardClaimFacet.claimInteractionRewards.selector));
         ok; // deferred: no record either way
-        assertEq(_rec().phase, uint8(LibVaipakam.StagingPhase.None), "no record during the cooldown");
+        assertEq(_rec().phase, uint8(LibVaipakam.StagingPhase.None), "no record: the released batches are the window's");
+        (uint64 closesAt, bytes32 releasedBy, , , , bool ordinaryOpen) = _view().getTransportBatchWindow(hs[0]);
+        assertEq(closesAt, uint64(block.timestamp) + 3 days, "the window closes one grace after the release");
+        assertEq(releasedBy, _key(), "and names the releaser");
+        assertFalse(ordinaryOpen, "ordinary staging suspended meanwhile");
         vm.warp(block.timestamp + 3 days + 1);
-        assertEq(_claim(), 0, "past the cooldown the claim stages the window again");
+        assertEq(_claim(), 0, "past the window the claim stages the day again");
         assertEq(_rec().batchCount, 64);
     }
 
@@ -992,7 +995,7 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         vm.expectRevert(IVaipakamErrors.NoInteractionRewardsToClaim.selector);
         RewardClaimFacet(address(diamond)).claimInteractionRewards();
         assertEq(_mut().rewardEntryClaimNextDayRaw(bobEntry), 0, "the day was not persisted: nothing written off");
-        (uint256 previewed, , ) = InteractionRewardsLensFacet(address(diamond)).previewInteractionRewards(bob);
+        (uint256 previewed, , ) = previewByExecution(bob);
         assertEq(previewed, 0, "the preview says what the claim does: nothing, while the reservation binds");
         assertFalse(_mut().entryExecutableNowRaw(bobEntry), "and the expiry clock does not count the interval");
         // The reservation unwinds: the side's hard headroom is bob's, in full.
@@ -1106,26 +1109,10 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         assertEq(_rec().skippedCount, 0, "forgotten once offered");
     }
 
-    function test_ADemotion_LeavesTheReservedLiveFresh_InTheRowAndOnTheLedger() public {
-        _stagedAndScanned();
-        _liveFresh(1e18);
-        _staging().reserveStagedDay(_key());
-        uint256 reserved = _rec().reservedLiveUserFresh;
-        assertEq(reserved, NEED - WIDE * TINY);
-        uint256 row = _row(LibVaipakam.RewardCustodyRow.LiveFresh);
-        assertGt(row, reserved, "live: the row holds more than the reservation");
-        // A compensation demotion asks to uncredit more than the row holds:
-        // it takes everything but the reservation, on the row and on the
-        // delivered ledger alike, and the record still pays its last page.
-        uint256 moved = _mut().uncreditFreshInHolderRaw(2e18);
-        assertEq(moved, row - reserved, "the reserved live fresh is not the demotion's to take");
-        assertEq(_row(LibVaipakam.RewardCustodyRow.LiveFresh), reserved, "it stays in the row");
-        uint256 aliceBefore = vpfi.balanceOf(alice);
-        _settle().resolveStagedDayPage(_key());
-        assertTrue(_settle().resolveStagedDayPage(_key()), "and the last page pays");
-        assertEq(vpfi.balanceOf(alice) - aliceBefore, NEED);
-        assertEq(_row(LibVaipakam.RewardCustodyRow.LiveFresh), 0);
-    }
+    // #2459 r5 — `test_ADemotion_LeavesTheReservedLiveFresh_InTheRowAndOnTheLedger`
+    // is retired with the path it guarded: a compensation demotion no longer
+    // unwinds live custody at all (its provisional value was held apart and is
+    // released from its own row), so no demotion can reach a reservation.
 
     function test_TheLens_ReportsWhatIsReserved_AndWhatIsAvailable() public {
         _stagedAndScanned();
@@ -1273,6 +1260,14 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         // The blocker is readable (Codex #2308 r16): 65 restorations unread.
         RewardEpochViewFacet.StagingRecordView memory bv = _view().getStagingRecord(bobKey);
         assertEq(bv.restoredLogLength - bv.restoredSeen, 65, "the view names the unread restorations");
+        // A2-ii: each restored batch carries a priority window; the record's
+        // re-check stops at the first windowed restoration and leaves it
+        // UNREAD, so the reservation keeps refusing and nothing is passed over.
+        (uint256 sfW, ) = _staging().prepareStagedDay(bobKey);
+        assertEq(sfW, 0, "nothing staged while the windows stand");
+        bv = _view().getStagingRecord(bobKey);
+        assertEq(bv.restoredLogLength - bv.restoredSeen, 65, "and all of them still unread");
+        vm.warp(block.timestamp + 3 days + 1); // the windows close with no registrant: ordinary staging resumes
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.StagingScanIncomplete.selector, bobKey));
         _staging().reserveStagedDay(bobKey);
         (uint256 sf, ) = _staging().prepareStagedDay(bobKey);
@@ -1313,6 +1308,246 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
     }
 
     // ───────────────────────── round 6 ─────────────────────────
+
+    /// @dev A2-iii — a standing record on a lender day ends the claim there
+    ///      ({processUserSideDay} reports it staged elsewhere; the walk stops
+    ///      on every side), so the user-level read counts nothing after it —
+    ///      not even a borrower day the live sources would cover.
+    // ───────── A2-ii (a): a sweep's wide day is staged like a claim's ─────────
+
+    function _epochOnDay(uint256 amount, uint256 d, uint256 remitId, bytes32 id) internal returns (bytes32 h) {
+        _ingress().onRewardBudgetReceived(address(vpfi), amount, _one(d), CHAIN_BASE, remitId, REMITTER, 0, 0, id, false);
+        h = keccak256(abi.encode(uint256(CHAIN_BASE), id));
+        _epoch().materializeTransportBatchPage(h, _one(d));
+        _ingress().onRemitSplitAttested(CHAIN_BASE, REMITTER, remitId, amount, 0);
+    }
+
+    /// @dev A wide day on `d`: more attested epochs than one window scans.
+    function _wideDayOn(uint256 d, uint256 salt) internal {
+        uint256 t0 = block.timestamp;
+        for (uint256 i; i < WIDE; ++i) {
+            vm.warp(t0 + 10 * (i + 1));
+            _epochOnDay(TINY, d, salt + i, keccak256(abi.encode("wide", d, salt, i)));
+        }
+    }
+
+    function _bucket() internal view returns (uint256 b) {
+        (, b, , , , , , ) = InteractionRewardsLensFacet(address(diamond)).getRecycleBackingSnapshot();
+    }
+
+    function _resolveAll(bytes32 key) internal {
+        while (!_settle().resolveStagedDayPage(key)) {}
+    }
+
+    /// @dev A2-ii — a forfeit sweep's wide day is STAGED like a claim's: the
+    ///      sweep pays nothing, a record stands under the forfeit's own
+    ///      commitment, and its resolution routes the day as the sweep would
+    ///      — to the bucket as forfeited reward, charging no loan-side cap.
+    function test_AForfeitSweepsWideDay_IsStaged_AndResolvesAsAForfeit() public {
+        uint256 id = _scene();
+        _mut().setRewardEntryForfeitedRaw(id);
+        _mut().setLoanActiveLenderEntryId(LOAN, id);
+        _wideDay(true);
+        uint256 bucketBefore = _bucket();
+        assertEq(InteractionRewardsFacet(address(diamond)).sweepForfeitedInteractionRewards(LOAN), 0, "deferred: the wide day is staged, not swept short");
+        RewardEpochViewFacet.StagingRecordView memory r = _rec();
+        assertEq(r.phase, uint8(LibVaipakam.StagingPhase.Staging), "a record stands");
+        assertEq(r.op, uint8(LibVaipakam.StagingOp.Forfeit), "under the forfeit's own commitment");
+        _staging().prepareStagedDay(_key());
+        _staging().prepareStagedDay(_key());
+        _liveFresh(1e18);
+        _staging().reserveStagedDay(_key());
+        r = _rec();
+        assertEq(r.reservedLiveUserFresh + r.epochUserFresh + r.reservedLiveUserRecycled + r.epochUserRecycled, 0, "no user share: a forfeit routes to the treasury legs");
+        uint256 treasuryFresh = r.reservedLiveTreasuryFresh + r.epochTreasuryFresh;
+        assertGt(treasuryFresh, 0, "fixture: the day's forfeit leg");
+        uint256 paidBefore = _mut().loanSideRewardPaidRaw(LOAN, uint8(LibVaipakam.RewardSide.Lender));
+        _resolveAll(_key());
+        assertEq(_rec().phase, uint8(LibVaipakam.StagingPhase.None), "resolved and closed");
+        assertEq(_bucket() - bucketBefore, treasuryFresh, "the forfeited day absorbed into the bucket, as the sweep absorbs it");
+        assertEq(_mut().loanSideRewardPaidRaw(LOAN, uint8(LibVaipakam.RewardSide.Lender)), paidBefore, "a forfeit charges no loan-side cap");
+        assertEq(InteractionRewardsFacet(address(diamond)).sweepForfeitedInteractionRewards(LOAN), 0, "nothing left to sweep: the day is settled");
+    }
+
+    /// @dev #1566 PR 1 review (P3) — the forfeited party cannot cancel the forfeit sweep's record
+    ///      before its deadline: the voluntary cancellation is a claimant's, and a forfeit has none.
+    ///      Past the deadline anyone may, the party included, as before.
+    function test_TheForfeitedParty_CannotCancelTheForfeitsRecord() public {
+        uint256 id = _scene();
+        _mut().setRewardEntryForfeitedRaw(id);
+        _mut().setLoanActiveLenderEntryId(LOAN, id);
+        _wideDay(true);
+        InteractionRewardsFacet(address(diamond)).sweepForfeitedInteractionRewards(LOAN);
+        RewardEpochViewFacet.StagingRecordView memory r = _rec();
+        assertEq(r.op, uint8(LibVaipakam.StagingOp.Forfeit), "fixture-live: the forfeit's record");
+        assertEq(r.user, alice, "fixture-live: keyed to the forfeited party");
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.StagingNotExpired.selector, _key(), r.deadline));
+        _settle().unwindStagedDayPage(_key());
+        vm.warp(uint256(r.deadline) + 1);
+        vm.prank(alice);
+        _settle().unwindStagedDayPage(_key()); // past the deadline: anyone, the party included
+        assertTrue(_rec().phase != uint8(LibVaipakam.StagingPhase.Staging), "the unwind ran");
+    }
+
+    /// @dev #1566 PR 1 re-review (B-N2) — the claimant cannot stall an EXPIRY's record
+    ///      either: it settles a removed entitlement, as a forfeit's does. Past its
+    ///      deadline it is anyone's, the claimant included.
+    function test_TheClaimant_CannotCancelAnExpirysRecord() public {
+        _armedDay(1, NEED);
+        _armedDay(2, NEED);
+        _mut().setGovernorCommitArmedFromDayRaw(1);
+        _loanSideOpen(2);
+        uint256 id = _entry(1, 3);
+        _mut().setArmedFreshLedgerRaw(0, 0);
+        _mut().userClaimFundingNeedRaw(alice);
+        ConfigFacet(address(diamond)).setRewardClaimHorizonDays(180);
+        _liveFresh(1e18);
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = id;
+        RewardHorizonSweepFacet sweep = RewardHorizonSweepFacet(address(diamond));
+        sweep.sweepExpiredInteractionRewards(ids);
+        uint256 swept;
+        for (uint256 k; k < 60 && swept == 0; ++k) {
+            vm.warp(vm.getBlockTimestamp() + 7 days);
+            swept = sweep.sweepExpiredInteractionRewards(ids);
+        }
+        assertTrue(_mut().getRewardEntryExpiryBegunRaw(id), "fixture: expiry begun");
+        _wideDayOn(2, 300);
+        sweep.sweepExpiredInteractionRewards(ids);
+        bytes32 key2 = keccak256(abi.encode(alice, LibVaipakam.RewardSide.Lender, uint256(2)));
+        RewardEpochViewFacet.StagingRecordView memory r = _view().getStagingRecord(key2);
+        assertEq(r.op, uint8(LibVaipakam.StagingOp.Expiry), "fixture-live: the expiry's record");
+        assertEq(r.user, alice, "fixture-live: keyed to the claimant");
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.StagingNotExpired.selector, key2, r.deadline));
+        _settle().unwindStagedDayPage(key2);
+        vm.warp(uint256(r.deadline) + 1);
+        vm.prank(alice);
+        _settle().unwindStagedDayPage(key2);
+        assertTrue(_view().getStagingRecord(key2).phase != uint8(LibVaipakam.StagingPhase.Staging), "the unwind ran");
+    }
+
+    /// @dev A2-ii — an expiry's wide day is staged too: once the removal
+    ///      point has begun on a day the live sources settled, a later wide
+    ///      day stages under the expiry's commitment and resolves as the
+    ///      sweep would — the expired totals recorded, the entry's expiry
+    ///      announced on its last day, the value absorbed as expired reward.
+    function test_AnExpirysWideDay_IsStaged_AndResolvesAsExpired() public {
+        _armedDay(1, NEED);
+        _armedDay(2, NEED);
+        _mut().setGovernorCommitArmedFromDayRaw(1);
+        _loanSideOpen(2);
+        uint256 id = _entry(1, 3);
+        _mut().setArmedFreshLedgerRaw(0, 0);
+        _mut().userClaimFundingNeedRaw(alice);
+        ConfigFacet(address(diamond)).setRewardClaimHorizonDays(180);
+        _liveFresh(1e18);
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = id;
+        RewardHorizonSweepFacet sweep = RewardHorizonSweepFacet(address(diamond));
+        assertEq(sweep.sweepExpiredInteractionRewards(ids), 0, "stamps only");
+        uint256 swept;
+        for (uint256 k; k < 60 && swept == 0; ++k) {
+            vm.warp(vm.getBlockTimestamp() + 7 days);
+            swept = sweep.sweepExpiredInteractionRewards(ids);
+        }
+        assertGt(swept, 0, "fixture: the removal point began on day 1, settled from the live sources");
+        assertTrue(_mut().getRewardEntryExpiryBegunRaw(id), "fixture: expiry begun");
+        _wideDayOn(2, 300);
+        uint256 bucketBefore = _bucket();
+        assertEq(sweep.sweepExpiredInteractionRewards(ids), 0, "day 2 is wide: staged, not swept short");
+        bytes32 key2 = keccak256(abi.encode(alice, LibVaipakam.RewardSide.Lender, uint256(2)));
+        RewardEpochViewFacet.StagingRecordView memory r = _view().getStagingRecord(key2);
+        assertEq(r.phase, uint8(LibVaipakam.StagingPhase.Staging), "a record stands on day 2");
+        assertEq(r.op, uint8(LibVaipakam.StagingOp.Expiry), "under the expiry's own commitment");
+        _staging().prepareStagedDay(key2);
+        _staging().prepareStagedDay(key2);
+        _staging().reserveStagedDay(key2);
+        r = _view().getStagingRecord(key2);
+        assertEq(r.reservedLiveUserFresh + r.epochUserFresh, 0, "an expiry pays the user nothing");
+        uint256 treasuryFresh = r.reservedLiveTreasuryFresh + r.epochTreasuryFresh;
+        assertGt(treasuryFresh, 0, "fixture: the day's expired leg");
+        vm.recordLogs();
+        _resolveAll(key2);
+        assertEq(_view().getStagingRecord(key2).phase, uint8(LibVaipakam.StagingPhase.None), "resolved and closed");
+        assertEq(_bucket() - bucketBefore, treasuryFresh, "absorbed as expired reward");
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 expiredTopic = keccak256("RewardEntryExpired(uint256,address,uint256,uint256)");
+        bool announced;
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].topics[0] == expiredTopic) announced = true;
+        }
+        assertTrue(announced, "the entry's expiry is announced on its last day, from the record's payout");
+        assertEq(sweep.sweepExpiredInteractionRewards(ids), 0, "nothing left to sweep");
+    }
+
+    /// @dev #1566 PR 1 review (P2-5) — a staged EXPIRY keeps the sweep's rule: before its entry's
+    ///      removal has begun, a fresh shortfall under the 69M cap is NOT covered (the reservation
+    ///      refuses) rather than reserved and written off at resolution. Straddle: with the pool's
+    ///      headroom back the same record reserves.
+    function test_AStagedExpiry_DefersAFreshShortfall_BeforeRemoval() public {
+        _armedDay(1, NEED);
+        _mut().setGovernorCommitArmedFromDayRaw(1);
+        _loanSideOpen(1);
+        uint256 id = _entry(1, 2);
+        _mut().setArmedFreshLedgerRaw(0, 0);
+        _mut().userClaimFundingNeedRaw(alice);
+        ConfigFacet(address(diamond)).setRewardClaimHorizonDays(180);
+        _liveFresh(1e18);
+        _wideDayOn(1, 300); // day 1 is wide: the sweep stages it rather than settling it
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = id;
+        RewardHorizonSweepFacet sweep = RewardHorizonSweepFacet(address(diamond));
+        bytes32 key1 = keccak256(abi.encode(alice, LibVaipakam.RewardSide.Lender, uint256(1)));
+        sweep.sweepExpiredInteractionRewards(ids); // stamps
+        for (uint256 k; k < 60 && _view().getStagingRecord(key1).phase == uint8(LibVaipakam.StagingPhase.None); ++k) {
+            vm.warp(vm.getBlockTimestamp() + 7 days);
+            sweep.sweepExpiredInteractionRewards(ids);
+        }
+        assertEq(_view().getStagingRecord(key1).op, uint8(LibVaipakam.StagingOp.Expiry), "fixture-live: an expiry record");
+        assertFalse(_mut().getRewardEntryExpiryBegunRaw(id), "fixture-live: removal not begun");
+        _staging().prepareStagedDay(key1);
+        _staging().prepareStagedDay(key1);
+        _mut().setInteractionPoolPaidOut(LibVaipakam.VPFI_INTERACTION_POOL_CAP - 1); // the 69M headroom nearly gone: the day's fresh is short
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.StagingNotCovered.selector, key1));
+        _staging().reserveStagedDay(key1);
+        _mut().setInteractionPoolPaidOut(0);
+        // The owner is never stranded by the deferral: an uncovered record unwinds (owner any time, anyone past the deadline).
+        _staging().reserveStagedDay(key1); // straddle: covered again, it reserves
+        assertEq(_view().getStagingRecord(key1).phase, uint8(LibVaipakam.StagingPhase.Reserved));
+    }
+
+    /// @dev A2-ii — a sweep on a day a CLAIM's record holds defers on the
+    ///      record (the day is the record's to settle) and opens no second
+    ///      record under its own commitment.
+    function test_ASweepOnADayAClaimRecordHolds_Defers() public {
+        (, uint256 id) = _stagedScene();
+        _mut().setRewardEntryForfeitedRaw(id);
+        _mut().setLoanActiveLenderEntryId(LOAN, id);
+        assertEq(InteractionRewardsFacet(address(diamond)).sweepForfeitedInteractionRewards(LOAN), 0, "deferred on the claim's record");
+        RewardEpochViewFacet.StagingRecordView memory r = _rec();
+        assertEq(r.op, uint8(LibVaipakam.StagingOp.Claim), "the claim's record stands, unchanged");
+        assertEq(r.phase, uint8(LibVaipakam.StagingPhase.Staging));
+    }
+
+    function test_AStandingRecord_EndsTheUserRead_BeforeTheBorrowerSide() public {
+        _stagedScene(); // the lender day 1 is a record's
+        _armedDay(2, NEED);
+        _mut().setKnownGlobalDailyInterest(2, 1e18, 1e18, true); // the borrower side's interest too
+        _loanSideOpen(2);
+        uint256 b = _mut().pushRewardEntry(alice, LOAN, LibVaipakam.RewardSide.Borrower, 1e18, 2);
+        _mut().closeRewardEntryRaw(b, 3);
+        _mut().userClaimFundingNeedRaw(alice); // the side cursors, as the claim advances them
+        _liveFresh(1e18); // would cover the borrower day on its own
+        (uint256 needB, ) = _mut().dayNeedsRaw(alice, LibVaipakam.RewardSide.Borrower, 2);
+        assertGt(needB, 0, "fixture: the borrower day prices");
+        (uint256 armed, , , , , bool cap, , uint256 userPaid) = RewardEpochViewFacet(address(diamond)).getUserArmedFreshNeedWithLegs(alice);
+        assertTrue(cap, "the record's day is not this claim's");
+        assertEq(armed, 0, "and nothing after it is counted");
+        assertEq(userPaid, 0);
+        assertEq(_preview(), 0, "as the claim pays nothing: it stops on the record");
+    }
 
     function test_AStandingRecord_PausesTheClaimantsExpiryClock() public {
         // A standing record implies a day wider than one window, so there is
@@ -1416,7 +1651,10 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
 
     // ───────────────────────── round 7 ─────────────────────────
 
-    event StagingCooldownSet(bytes32 indexed key, uint64 until);
+    event TransportBatchWindowOpened(bytes32 indexed batchId, bytes32 indexed releasedBy, uint64 closesAt);
+    event TransportBatchContested(bytes32 indexed batchId, bytes32 indexed key);
+    event TransportBatchWaiterRegistered(bytes32 indexed batchId, bytes32 indexed key, uint64 openedAt);
+    event TransportBatchPriorityStaged(bytes32 indexed batchId, bytes32 indexed key);
 
     function test_AReservedRecord_IsCounted_ForEveryPostureGate() public {
         _stagedAndScanned();
@@ -1431,24 +1669,237 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         assertEq(_mut().stagingEncumberedCountRaw(), 0, "released with the payout");
     }
 
-    function test_TheCooldown_IsPublished() public {
-        _stagedAndScanned();
+    function test_TheWindow_IsPublished() public {
+        (bytes32[] memory hs, ) = _stagedAndScanned();
         uint64 deadline = _rec().deadline;
-        assertEq(_view().getStagingCooldown(alice, LibVaipakam.RewardSide.Lender, 1), 0, "none before a release");
+        (uint64 closesAt, , , , , bool ordinaryOpen) = _view().getTransportBatchWindow(hs[0]);
+        assertEq(closesAt, 0, "no release ever touched the batch");
+        assertTrue(ordinaryOpen);
         vm.warp(uint256(deadline) + 1);
-        _settle().unwindStagedDayPage(_key());
         uint64 until = uint64(block.timestamp) + 3 days;
-        vm.expectEmit(true, false, false, true);
-        emit StagingCooldownSet(_key(), until);
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit TransportBatchWindowOpened(hs[0], _key(), until);
+        _settle().unwindStagedDayPage(_key());
         assertTrue(_settle().unwindStagedDayPage(_key()));
-        assertEq(_view().getStagingCooldown(alice, LibVaipakam.RewardSide.Lender, 1), until, "read back");
+        (closesAt, , , , , ordinaryOpen) = _view().getTransportBatchWindow(hs[0]);
+        assertEq(closesAt, until, "read back");
+        assertFalse(ordinaryOpen, "suspended while the window stands");
         vm.warp(uint256(until));
-        assertEq(_view().getStagingCooldown(alice, LibVaipakam.RewardSide.Lender, 1), 0, "passed is none, as the claim path reads it");
-        vm.warp(uint256(until) - 1);
-        vm.prank(alice);
-        (bool ok, ) = address(diamond).call(abi.encodeWithSelector(RewardClaimFacet.claimInteractionRewards.selector));
-        ok; // deferred either way: the cooldown is what says why
-        assertEq(_rec().phase, uint8(LibVaipakam.StagingPhase.None), "no record while the published cooldown stands");
+        (, , , , , ordinaryOpen) = _view().getTransportBatchWindow(hs[0]);
+        assertTrue(ordinaryOpen, "closed with no registrant: ordinary staging resumes at once");
+    }
+
+    // ───────── A2-ii (d): the priority window — contested marks, registration, the one reservation ─────────
+
+    /// @dev An ATTESTED, fully fresh epoch on day 1 — stageable at once.
+    function _epochAttested(uint256 remitId, bytes32 id) internal returns (bytes32 h) {
+        h = _epochOf(TINY, remitId, id);
+        _ingress().onRemitSplitAttested(CHAIN_BASE, REMITTER, remitId, TINY, 0);
+    }
+
+    /// @dev An attested epoch OLDER than the whole wide day, linked late, so a
+    ///      fresh walk's window meets it first — the one epoch a rival's claim
+    ///      can stage past the 65 another record holds (the restored-epoch
+    ///      cell's recipe).
+    function _olderEpoch(uint256 remitId, bytes32 id) internal returns (bytes32 h) {
+        // The cheatcode read, not `block.timestamp`: viaIR reorders the latter
+        // past the warp, and the restore then warps BACK to the old time.
+        uint256 now_ = vm.getBlockTimestamp();
+        vm.warp(arrivedAt[0] - 2000 - remitId);
+        h = _epochOfHinted(remitId, id, bytes32(0), bytes32(0), true);
+        _ingress().onRemitSplitAttested(CHAIN_BASE, REMITTER, remitId, TINY, 0);
+        vm.warp(now_);
+    }
+
+    /// @dev A second claimant on alice's day whose claim opens a record: an
+    ///      extra attested epoch (`remitId`) gives its walk one epoch to stage
+    ///      past the 65 alice's record holds, so the cap hit opens the record;
+    ///      its first preparation then finds alice's batches CONTESTED.
+    function _rival(string memory name, uint64 loanId, uint256 remitId) internal returns (address who, bytes32 key) {
+        who = makeAddr(name);
+        _mut().setFeeEntitlementRaw(
+            loanId,
+            LibVaipakam.FeeEntitlement({
+                borrowerMode: LibVaipakam.FeeEntitlementMode.None,
+                lenderMode: LibVaipakam.FeeEntitlementMode.None,
+                openDays: 1,
+                rewardHaircutBpsAtOpen: 0,
+                borrowerTariffPaid: 0,
+                lenderTariffPaid: 0,
+                cStarOpen: 0,
+                loanSideRewardCapOpen: type(uint128).max
+            })
+        );
+        uint256 e = _mut().pushRewardEntry(who, loanId, LibVaipakam.RewardSide.Lender, 1e18, 1);
+        _mut().closeRewardEntryRaw(e, 2);
+        _mut().userClaimFundingNeedRaw(who);
+        _olderEpoch(remitId, keccak256(abi.encode("rival-epoch", remitId)));
+        vm.prank(who);
+        RewardClaimFacet(address(diamond)).claimInteractionRewards();
+        key = keccak256(abi.encode(who, LibVaipakam.RewardSide.Lender, uint256(1)));
+        assertEq(_view().getStagingRecord(key).phase, uint8(LibVaipakam.StagingPhase.Staging), "fixture: the rival's record stands");
+    }
+
+    function _window(bytes32 h) internal view returns (uint64 closesAt, bytes32 oldestKey, bool priorityHeld, bool ordinaryOpen) {
+        (closesAt, , oldestKey, , priorityHeld, ordinaryOpen) = _view().getTransportBatchWindow(h);
+    }
+
+    /// @dev A2-ii — a rival's preparation that ends short marks every batch it
+    ///      met fully held by another record as CONTESTED; alice's cancel then
+    ///      opens each restored batch's window, during which the rival stages
+    ///      nothing from them; it registers; and once the window closes it
+    ///      takes the batch as its ONE priority reservation, burning the mark
+    ///      and holding the batch against every other stager.
+    function test_TheWindow_ServesTheRegistrant_OnceItCloses() public {
+        (bytes32[] memory hs, ) = _stagedAndScanned();
+        (, bytes32 bobKey) = _rival("staging-bob", 78, 900);
+        vm.recordLogs();
+        _staging().prepareStagedDay(bobKey); // the scan: alice's 65 are contested
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 contestedTopic = keccak256("TransportBatchContested(bytes32,bytes32)");
+        uint256 marks;
+        for (uint256 i; i < logs.length; ++i) if (logs[i].topics[0] == contestedTopic) ++marks;
+        assertGt(marks, 0, "the short record found alice's batches contested");
+        uint256 bobStagedBefore = _view().getStagingRecord(bobKey).stagedFresh;
+        // Alice cancels: every batch restored opens its window.
+        vm.startPrank(alice);
+        while (!_settle().unwindStagedDayPage(_key())) {}
+        vm.stopPrank();
+        (uint64 closesAt, bytes32 oldest, , bool ordinaryOpen) = _window(hs[0]);
+        assertGt(closesAt, block.timestamp); assertEq(oldest, bytes32(0)); assertFalse(ordinaryOpen);
+        _staging().prepareStagedDay(bobKey);
+        assertEq(_view().getStagingRecord(bobKey).stagedFresh, bobStagedBefore, "during the window the rival stages nothing from the released batches");
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit TransportBatchWaiterRegistered(hs[0], bobKey, _view().getStagingRecord(bobKey).openedAt);
+        _settle().registerForBatchWindow(bobKey, hs[0]);
+        (, oldest, , ) = _window(hs[0]);
+        assertEq(oldest, bobKey, "the registrant");
+        vm.warp(uint256(closesAt));
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit TransportBatchPriorityStaged(hs[0], bobKey);
+        _staging().prepareStagedDay(bobKey);
+        assertTrue(_view().isTransportBatchPriorityUsed(hs[0], bobKey), "the one reservation, burnt");
+        (, , bool held, bool open) = _window(hs[0]);
+        assertTrue(held, "and held");
+        assertTrue(open, "#1566 PR 1 review: once taken, the unreferenced remainder is anyone's");
+        (uint256 sf, , uint256 refs) = _staged(hs[0]);
+        assertEq(sf, TINY, "the whole batch, staged by the registrant"); assertEq(refs, 1);
+        _assertConserved(hs);
+    }
+
+    /// @dev A2-ii — the oldest RECORD wins, not the first to register: the
+    ///      younger rival registers first and still loses to the older one.
+    function test_TheOldestRegistrant_Wins_NotTheFirstToRegister() public {
+        (bytes32[] memory hs, ) = _stagedAndScanned();
+        (, bytes32 bobKey) = _rival("staging-bob", 78, 900);
+        vm.warp(block.timestamp + 1 hours);
+        (, bytes32 carolKey) = _rival("staging-carol", 79, 901);
+        _staging().prepareStagedDay(bobKey);
+        _staging().prepareStagedDay(carolKey);
+        vm.startPrank(alice);
+        while (!_settle().unwindStagedDayPage(_key())) {}
+        vm.stopPrank();
+        _settle().registerForBatchWindow(carolKey, hs[0]); // the younger, first
+        (, bytes32 oldest, , ) = _window(hs[0]);
+        assertEq(oldest, carolKey);
+        _settle().registerForBatchWindow(bobKey, hs[0]); // the older, second
+        (uint64 closesAt, bytes32 oldest2, , ) = _window(hs[0]);
+        assertEq(oldest2, bobKey, "the running minimum of opening times: the older record");
+        vm.warp(uint256(closesAt));
+        _staging().prepareStagedDay(carolKey); // the other released batches, unregistered, are hers to take ordinarily —
+        (uint256 f0, , uint256 refs0) = _staged(hs[0]);
+        assertEq(f0 + refs0, 0, "but not the registered one: the younger waits on it");
+        _staging().prepareStagedDay(bobKey);
+        assertTrue(_view().isTransportBatchPriorityUsed(hs[0], bobKey), "the older takes it");
+        (f0, , refs0) = _staged(hs[0]);
+        assertEq(f0, TINY); assertEq(refs0, 1);
+        assertFalse(_view().isTransportBatchPriorityUsed(hs[0], carolKey));
+    }
+
+    /// @dev A2-ii — NON-RENEWABLE: a registrant whose reservation unwinds is
+    ///      permanently out of priority mode on that batch, so the alternation
+    ///      of two controlled obligations burns each once and ordinary
+    ///      staging resumes for everyone.
+    function test_PriorityMode_IsNonRenewable_SoTheAlternationIsBounded() public {
+        (bytes32[] memory hs, ) = _stagedAndScanned();
+        (, bytes32 bobKey) = _rival("staging-bob", 78, 900);
+        _staging().prepareStagedDay(bobKey);
+        vm.startPrank(alice);
+        while (!_settle().unwindStagedDayPage(_key())) {}
+        vm.stopPrank();
+        _settle().registerForBatchWindow(bobKey, hs[0]);
+        (uint64 closesAt, , , ) = _window(hs[0]);
+        vm.warp(uint256(closesAt));
+        _staging().prepareStagedDay(bobKey); // bob's one reservation on hs[0]
+        assertTrue(_view().isTransportBatchPriorityUsed(hs[0], bobKey));
+        // Bob unwinds: the batch returns, a new window opens, bob is out.
+        RewardEpochViewFacet.StagingRecordView memory br = _view().getStagingRecord(bobKey);
+        vm.warp(uint256(br.deadline) + 1);
+        while (!_settle().unwindStagedDayPage(bobKey)) {}
+        (uint64 closesAt2, bytes32 oldest, , bool open) = _window(hs[0]);
+        assertGt(closesAt2, block.timestamp); assertEq(oldest, bytes32(0)); assertFalse(open);
+        // A fresh bob record on the same obligation finds nothing to register: used.
+        _olderEpoch(902, keccak256("bob-reopen"));
+        vm.prank(makeAddr("staging-bob"));
+        RewardClaimFacet(address(diamond)).claimInteractionRewards();
+        _staging().prepareStagedDay(bobKey);
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.StagingPriorityUsed.selector, bobKey, hs[0]));
+        _settle().registerForBatchWindow(bobKey, hs[0]);
+        vm.warp(uint256(closesAt2));
+        (, , , open) = _window(hs[0]);
+        assertTrue(open, "no registrant: ordinary staging resumes for everyone");
+    }
+
+    /// @dev #1566 PR 1 review (P3) — a priority right that LAPSES untaken is burnt when the next
+    ///      window opens, as a taken one is: the registrant cannot hold the next window's priority by
+    ///      registering and never staging.
+    function test_ALapsedPriorityRight_IsBurntAtTheNextWindow() public {
+        (bytes32[] memory hs, ) = _stagedAndScanned();
+        (, bytes32 bobKey) = _rival("staging-bob", 78, 900);
+        _staging().prepareStagedDay(bobKey);
+        vm.startPrank(alice);
+        while (!_settle().unwindStagedDayPage(_key())) {}
+        vm.stopPrank();
+        _settle().registerForBatchWindow(bobKey, hs[0]);
+        (uint64 closesAt, bytes32 oldest, , ) = _window(hs[0]);
+        assertEq(oldest, bobKey, "fixture-live: bob holds the right");
+        vm.warp(uint256(closesAt) + 1 days + 1); // the right lapses untaken
+        assertFalse(_view().isTransportBatchPriorityUsed(hs[0], bobKey), "a lapse alone burns nothing yet");
+        // Alice re-stages the released batches ordinarily and cancels again: a new window opens.
+        assertEq(_claim(), 0);
+        (uint256 sf0, , uint256 refs0) = _staged(hs[0]);
+        assertGt(sf0 + refs0, 0, "fixture-live: alice re-staged the batch");
+        vm.startPrank(alice);
+        while (!_settle().unwindStagedDayPage(_key())) {}
+        vm.stopPrank();
+        assertTrue(_view().isTransportBatchPriorityUsed(hs[0], bobKey), "the lapsed right, burnt at the next window");
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.StagingPriorityUsed.selector, bobKey, hs[0]));
+        _settle().registerForBatchWindow(bobKey, hs[0]);
+    }
+
+    /// @dev A2-ii — the releaser may not re-take what it released, and is not
+    ///      barred from anything else: its next claim stages a fresh epoch of
+    ///      the day at once (no obligation cooldown), and takes the released
+    ///      batches only once their windows have closed with no registrant.
+    function test_TheReleaser_StagesElsewhereAtOnce_AndTheReleasedBatchesOnlyAfterTheWindow() public {
+        (bytes32[] memory hs, ) = _stagedAndScanned();
+        vm.startPrank(alice);
+        while (!_settle().unwindStagedDayPage(_key())) {}
+        vm.stopPrank();
+        bytes32 fresh = _olderEpoch(903, keccak256("after-the-release"));
+        assertEq(_claim(), 0, "the claim re-opens a record at once");
+        assertEq(_rec().phase, uint8(LibVaipakam.StagingPhase.Staging));
+        (uint256 sf, , ) = _staged(fresh);
+        assertEq(sf, TINY, "and stages the fresh epoch");
+        (uint256 sf0, , ) = _staged(hs[0]);
+        assertEq(sf0, 0, "but none of what it released");
+        (uint64 closesAt, , , ) = _window(hs[0]);
+        vm.warp(uint256(closesAt));
+        _staging().prepareStagedDay(_key());
+        _staging().prepareStagedDay(_key());
+        (sf0, , ) = _staged(hs[0]);
+        assertEq(sf0, TINY, "past the window, with no registrant, it stages them again");
+        _assertConserved(hs);
     }
 
     // ───────────────────────── round 8 ─────────────────────────
@@ -1507,13 +1958,16 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         _mut().setRewardEntryForfeitedRaw(bobEntry);
         _mut().userClaimFundingNeedRaw(bob);
         InteractionRewardsLensFacet lens = InteractionRewardsLensFacet(address(diamond));
-        (, , uint256 treasuryLegs, uint256 legacyFresh, , , ) = lens.getUserArmedFreshNeedWithLegs(bob);
+        (, , uint256 treasuryLegs, uint256 legacyFresh, , , , ) = RewardEpochViewFacet(address(diamond)).getUserArmedFreshNeedWithLegs(bob);
         assertGt(treasuryLegs, 0, "live: the forfeit's fresh is a treasury leg");
         assertEq(legacyFresh, treasuryLegs, "and the same figure is the legacy fresh");
         // Availability between the aggregate counted once and counted twice.
         uint256 available = treasuryLegs + treasuryLegs / 2;
         _mut().setInteractionPoolPaidOut(LibVaipakam.VPFI_INTERACTION_POOL_CAP - NEED - available);
         assertEq(_mut().poolAvailableRaw(), available);
+        // The LENS preview — the on-chain lower bound (A2-iii) — is what this
+        // cell is about: the aggregate counts the forfeit's fresh once, so it
+        // fits the availability and the preview is not deferred.
         (uint256 amount, uint256 fromDay, ) = lens.previewInteractionRewards(bob);
         assertEq(amount, 0, "a forfeit pays the user nothing");
         assertEq(fromDay, 1, "not deferred: the forfeit's fresh fits availability, counted once");
@@ -1606,21 +2060,16 @@ contract RewardStagingTest is SetupTest, IVaipakamErrors {
         RewardReporterFacet(address(diamond)).setIsCanonicalRewardChain(true);
         vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.RewardRoleChangeBlockedByStagedRecords.selector, uint256(1)));
         RewardReporterFacet(address(diamond)).setBaseChainId(0);
-        // Settled, the reservation is no longer what refuses: this scene has
-        // custody activated, so the standing role FREEZE takes over — a
-        // different gate, named differently, and the discrimination between
-        // them is the point.
+        // Settled, the reservation is no longer there to refuse — and nothing
+        // else does (#1566 PR C revision: no role freeze; the carry-forward
+        // makes the change safe), so the same write now goes through.
         _settle().resolveStagedDayPage(_key());
         assertTrue(_settle().resolveStagedDayPage(_key()));
         assertEq(_mut().stagingEncumberedCountRaw(), 0);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IVaipakamErrors.RewardRoleChangeFrozen.selector,
-                uint8(LibVaipakam.RewardRole.Mirror),
-                uint8(LibVaipakam.RewardRole.Detached)
-            )
-        );
         RewardReporterFacet(address(diamond)).setBaseChainId(0);
+        assertEq(
+            RewardReporterFacet(address(diamond)).getRewardRole(), uint8(LibVaipakam.RewardRole.Detached), "the change went through"
+        );
     }
 
     function test_EverySourceRoom_IsNetOfItsReservation() public {

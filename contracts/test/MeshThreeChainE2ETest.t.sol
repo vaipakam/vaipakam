@@ -25,6 +25,8 @@ import {RewardSweepWalkFacet} from "../src/facets/RewardSweepWalkFacet.sol";
 import {RewardForfeitWalkFacet} from "../src/facets/RewardForfeitWalkFacet.sol";
 import {RewardStagingFacet} from "../src/facets/RewardStagingFacet.sol";
 import {RewardStagingSettleFacet} from "../src/facets/RewardStagingSettleFacet.sol";
+import {RewardStagingDomainFacet} from "../src/facets/RewardStagingDomainFacet.sol";
+import {RewardClosureFacet} from "../src/facets/RewardClosureFacet.sol";
 import {RewardCompensationDispatchFacet} from "../src/facets/RewardCompensationDispatchFacet.sol";
 import {RewardCustodyFacet} from "../src/facets/RewardCustodyFacet.sol";
 import {RewardEpochFacet} from "../src/facets/RewardEpochFacet.sol";
@@ -143,7 +145,7 @@ contract MeshThreeChainE2ETest is Test {
         private
         returns (IDiamondCut.FacetCut[] memory cuts)
     {
-        cuts = new IDiamondCut.FacetCut[](25);
+        cuts = new IDiamondCut.FacetCut[](27);
         cuts[0] = _cut(
             address(new AccessControlFacet()),
             helper.getAccessControlFacetSelectors()
@@ -258,6 +260,17 @@ contract MeshThreeChainE2ETest is Test {
         cuts[24] = _cut(
             address(new RewardRemittanceLensFacet()),
             helper.getRewardRemittanceLensFacetSelectors()
+        );
+        // 3b-ii-A2-ii / 3b-ii-B — the claim walk reaches the legacy slice's hosted
+        // gate on the domain facet by self-call, and the closure proof reads the
+        // same Diamond: carried here for the same reason as the hosts above.
+        cuts[25] = _cut(
+            address(new RewardStagingDomainFacet()),
+            helper.getRewardStagingDomainFacetSelectors()
+        );
+        cuts[26] = _cut(
+            address(new RewardClosureFacet()),
+            helper.getRewardClosureFacetSelectors()
         );
     }
 
@@ -1502,8 +1515,9 @@ contract MeshThreeChainE2ETest is Test {
         _allChainsCloseDay(4);
 
         assertEq(bus.reportCount(), 2, "both mirrors queued a report");
-        assertEq(bus.reportAt(0).arity, 8, "ARB sent the eight-word shape");
-        assertEq(bus.reportAt(1).arity, 8, "OP sent the eight-word shape");
+        assertEq(bus.reportAt(0).arity, 9, "ARB sent the B4 shape (#1566 PR C revision)");
+        assertEq(bus.reportAt(1).arity, 9, "OP sent the B4 shape");
+        assertEq(bus.reportAt(0).custodyEra, 0, "carrying its live custody era");
         assertEq(bus.reportAt(0).srcChainId, ARB, "source identified by sender");
         assertEq(bus.reportAt(1).srcChainId, OP, "source identified by sender");
     }

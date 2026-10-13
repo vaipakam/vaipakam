@@ -614,7 +614,7 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
         _cfg().setRewardClaimHorizonDays(180);
         uint256 id = _seedClaimableEntry();
         _sweeper().sweepExpiredInteractionRewards(_ids(id)); // stamp
-        (uint256 fullClaim, , ) = _lens().previewInteractionRewards(alice);
+        (uint256 fullClaim, , ) = previewByExecution(alice);
         assertGt(fullClaim, 1, "entry has a claimable amount");
 
         // Balance one wei below the full claim. A large bucket would have made
@@ -664,7 +664,7 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
         both[0] = idA;
         both[1] = idB;
         _sweeper().sweepExpiredInteractionRewards(both);
-        (uint256 aggregate, , ) = _lens().previewInteractionRewards(alice);
+        (uint256 aggregate, , ) = previewByExecution(alice);
         assertGt(aggregate, 1, "user has an aggregate claim");
 
         // Balance covers each single entry (each < aggregate) but NOT the
@@ -713,18 +713,20 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
         );
         _mut().closeRewardEntryRaw(idB, 6);
 
-        // Before any sweep both cursors are behind, so the preview sees
-        // nothing — neither entry's value is resolvable yet.
-        (uint256 pre, , ) = _lens().previewInteractionRewards(alice);
-        assertEq(pre, 0, "cursors behind: preview is 0 pre-sweep");
+        // The preview IS the claim (A2-iii): it advances the cursors inside
+        // its reverting frame exactly as the claim would, so B's value is
+        // resolved before any sweep has touched the storage cursors. (The
+        // retired view read storage cursors and saw nothing here.)
+        (uint256 pre, , ) = previewByExecution(alice);
+        assertGt(pre, 1000e18, "the preview resolves the cursor-behind entry as the claim would");
 
         // Stamp ONLY idA. The gate advances EVERY one of alice's side cursors
         // (not just the swept entry's), so idB — which no keeper has swept —
-        // is now resolvable and counted (the xkk fix). The aggregate jumps to
-        // include B's ~1000x value.
+        // is resolvable and counted (the xkk fix): the aggregate the gate
+        // reads is the same figure the claim pays.
         _sweeper().sweepExpiredInteractionRewards(_ids(idA));
-        (uint256 aggFull, , ) = _lens().previewInteractionRewards(alice);
-        assertGt(aggFull, pre + 1000e18, "unswept idB is now counted");
+        (uint256 aggFull, , ) = previewByExecution(alice);
+        assertEq(aggFull, pre, "the swept cursors change nothing the claim did not already resolve");
 
         // Balance one wei under the full aggregate — a gate that ignored the
         // unswept idB would see only A and let the clock run; the fixed gate
@@ -764,7 +766,7 @@ contract RewardClaimHorizonTest is SetupTest, IVaipakamErrors {
         both[0] = idA;
         both[1] = idF;
         _sweeper().sweepExpiredInteractionRewards(both);
-        (uint256 payout, , ) = _lens().previewInteractionRewards(alice);
+        (uint256 payout, , ) = previewByExecution(alice);
         assertGt(payout, 0, "A previews non-zero");
 
         // Bucket ledger set high; balance covers the payout AND the bucket but

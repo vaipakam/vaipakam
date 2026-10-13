@@ -20,12 +20,14 @@ import {OfferAcceptFeeFacet} from "../src/facets/OfferAcceptFeeFacet.sol";
 import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
 import {OfferMutateFacet} from "../src/facets/OfferMutateFacet.sol";
 import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
+import {LibOfferMatchExecute} from "../src/libraries/LibOfferMatchExecute.sol";
 import {LibOfferMatch} from "../src/libraries/LibOfferMatch.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
+import {ServiceCapacityFacet} from "../src/facets/ServiceCapacityFacet.sol";
 import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {LibSaleSolvency} from "../src/libraries/LibSaleSolvency.sol";
@@ -245,7 +247,7 @@ contract EarlyWithdrawalFacetTest is Test {
         // reads to prove a torn-down vehicle drops out of the open-position view.
         MetricsFacet metricsFacet = new MetricsFacet();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](31);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](32);
         cuts[25] = IDiamondCut.FacetCut({
             facetAddress: address(metricsFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -328,6 +330,9 @@ contract EarlyWithdrawalFacetTest is Test {
         // #951 redesign — OfferMutate/OfferMatch for the sale-vehicle guard tests.
         cuts[21] = IDiamondCut.FacetCut({facetAddress: address(offerMutateFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferMutateFacetSelectors()});
         cuts[22] = IDiamondCut.FacetCut({facetAddress: address(offerMatchFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferMatchFacetSelectors()});
+        // #1219 (S-4) — the keeper routes charge capacity through a self-call into
+        // this facet once a curve is set; the route cells below set one.
+        cuts[31] = IDiamondCut.FacetCut({facetAddress: address(new ServiceCapacityFacet()), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getServiceCapacityFacetSelectors()});
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
 
@@ -1934,6 +1939,39 @@ contract EarlyWithdrawalFacetTest is Test {
 
     // ─── createLoanSaleOffer reverts ─────────────────────────────────────────
 
+    event CapacitySpent(uint8 indexed role, address indexed actor, uint256 cost, uint256 balanceAfter);
+
+    /// @dev #1219 (S-4) — a KEEPER's action is charged to the keeper (one action,
+    ///      refused while its bucket is empty); the OWNER acting on their own position
+    ///      is never capacity-gated, even with the keeper curve set and no credit.
+    function test_keeperAction_IsCharged_OwnerActingIsNot() public {
+        uint8 role = uint8(LibVaipakam.ServiceCapacityRole.Keeper);
+        ServiceCapacityFacet(address(diamond)).setCapacityCurve(role, 1e18, 1e16, 100e18, 1e18);
+        address keeper = makeAddr("ew-keeper-cap");
+        vm.prank(lender);
+        ProfileFacet(address(diamond)).setKeeperAccess(true);
+        vm.prank(lender);
+        ProfileFacet(address(diamond)).approveKeeper(keeper, LibVaipakam.KEEPER_ACTION_INIT_EARLY_WITHDRAW);
+        vm.prank(lender);
+        ProfileFacet(address(diamond)).setLoanKeeperEnabled(activeLoanId, keeper, true);
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit CapacitySpent(role, keeper, 1e18, 0); // the keeper's one free action
+        vm.prank(keeper);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days);
+        // The charge landed on the KEEPER: its bucket is spent, so the next keeper action is refused.
+        vm.prank(address(diamond));
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.ServiceCapacityExhausted.selector, role, keeper, 1e18, 0));
+        ServiceCapacityFacet(address(diamond)).capacityChargeInternal(role, keeper);
+    }
+
+    function test_ownerActing_IsNeverCapacityGated() public {
+        uint8 role = uint8(LibVaipakam.ServiceCapacityRole.Keeper);
+        ServiceCapacityFacet(address(diamond)).setCapacityCurve(role, 1e18, 1e16, 100e18, 1e18);
+        vm.prank(lender);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true, 7 days); // no refusal, no charge
+        assertFalse(ServiceCapacityFacet(address(diamond)).getCapacityBucket(role, lender).seen, "the owner's own action touched no bucket");
+    }
+
     function testCreateSaleOfferRevertsNotNFTOwner() public {
         // Phase 6: createLoanSaleOffer is a lender-entitled strategic flow.
         // Non-lender-NFT callers without keeper auth revert with
@@ -2135,7 +2173,7 @@ contract EarlyWithdrawalFacetTest is Test {
             })
         );
 
-        vm.expectRevert(OfferMatchFacet.SaleVehicleNotMatchable.selector);
+        vm.expectRevert(LibOfferMatchExecute.SaleVehicleNotMatchable.selector);
         OfferMatchFacet(address(diamond)).matchOffers(lenderOfferId, saleOfferId);
     }
 
@@ -3147,7 +3185,7 @@ contract EarlyWithdrawalFacetTest is Test {
     function testPreviewMatchFlagsSaleVehicle() public {
         uint256 saleOfferId = _listSaleOffer();
         LibOfferMatch.MatchResult memory r =
-            OfferMatchFacet(address(diamond)).previewMatch(buyOfferId, saleOfferId);
+            OfferMatchFacet(address(diamond)).previewMatch(buyOfferId, saleOfferId, address(this), address(this));
         assertEq(
             uint8(r.errorCode),
             uint8(LibOfferMatch.MatchError.SaleVehicleTagged),

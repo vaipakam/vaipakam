@@ -10,6 +10,8 @@ import {
   BaseError,
   ContractFunctionRevertedError,
   ContractFunctionZeroDataError,
+  type Address,
+  type PublicClient,
 } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
@@ -20,6 +22,78 @@ export interface RewardsSnapshot {
   pending: bigint;
   /** True when a reward day is still finalizing for this user. */
   waiting: boolean;
+}
+
+/**
+ * The EXACT claimable figure, read BY EXECUTION (A2-iii): the Diamond's
+ * `simulateClaimInteractionRewards` runs the real claim for `user` and then
+ * always reverts with `InteractionRewardsSimulation(paid, fromDay, toDay)`,
+ * so an `eth_call` (viem's `simulateContract`) carries the figure in its
+ * revert data and nothing it did survives. A different revert is what the
+ * claim itself would revert with. Only the reverts that MEAN nothing is owed
+ * read as zero ({NOTHING_OWED_REVERTS}); every other one — the pause, a
+ * staging hold, a sanctions refusal — throws {ClaimPreviewUnavailable}, so
+ * the card says "unavailable" instead of telling a user whose rewards are
+ * merely held that there is nothing (#2459 r1). The lens's
+ * `previewInteractionRewards` view still exists for on-chain readers, as a
+ * conservative lower bound; the app reads the exact figure.
+ */
+/** The claim's reverts that mean nothing is claimable — and only those. */
+export const NOTHING_OWED_REVERTS: ReadonlySet<string> = new Set([
+  'NoInteractionRewardsToClaim',
+  'InteractionEmissionsNotStarted',
+]);
+
+/**
+ * The claim would revert for an OPERATIONAL reason (paused, held, refused),
+ * not because nothing is owed. Deliberately not a viem error: the snapshot
+ * hook maps viem reverts to its quiet empty state, and this must not be.
+ */
+export class ClaimPreviewUnavailable extends Error {
+  readonly errorName: string;
+  constructor(errorName: string) {
+    super(`claim preview unavailable: ${errorName}`);
+    this.name = 'ClaimPreviewUnavailable';
+    this.errorName = errorName;
+  }
+}
+
+export async function previewClaimByExecution(
+  client: Pick<PublicClient, 'simulateContract'>,
+  diamond: Address,
+  user: Address,
+): Promise<bigint> {
+  try {
+    await client.simulateContract({
+      address: diamond,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'simulateClaimInteractionRewards',
+      args: [user, 0 /* RewardDelivery.Default */],
+      account: user,
+    });
+  } catch (err) {
+    const revert =
+      err instanceof BaseError
+        ? err.walk((e) => e instanceof ContractFunctionRevertedError)
+        : null;
+    if (revert instanceof ContractFunctionRevertedError) {
+      if (revert.data?.errorName === 'InteractionRewardsSimulation') {
+        const [paid] = (revert.data.args ?? [0n]) as readonly [bigint, bigint, bigint];
+        return paid;
+      }
+      const name = revert.data?.errorName ?? 'unknown';
+      if (NOTHING_OWED_REVERTS.has(name)) return 0n;
+      throw new ClaimPreviewUnavailable(name);
+    }
+    const zero =
+      err instanceof BaseError &&
+      err.walk((e) => e instanceof ContractFunctionZeroDataError) !== null;
+    if (zero) return 0n;
+    throw err;
+  }
+  // The entry cannot return: it reverts by construction. A return means the
+  // routed code is not this one, and a figure invented here would be wrong.
+  throw new Error('simulateClaimInteractionRewards returned without reverting');
 }
 
 export function useInteractionRewards() {
@@ -33,13 +107,8 @@ export function useInteractionRewards() {
     refetchInterval: signalAware(60_000),
     queryFn: async (): Promise<RewardsSnapshot> => {
       try {
-        const [preview, claimability] = await Promise.all([
-          publicClient!.readContract({
-            address: readChain.diamondAddress,
-            abi: DIAMOND_ABI_VIEM,
-            functionName: 'previewInteractionRewards',
-            args: [address!],
-          }) as Promise<readonly [bigint, bigint, bigint]>,
+        const [pending, claimability] = await Promise.all([
+          previewClaimByExecution(publicClient!, readChain.diamondAddress, address!),
           publicClient!.readContract({
             address: readChain.diamondAddress,
             abi: DIAMOND_ABI_VIEM,
@@ -48,7 +117,7 @@ export function useInteractionRewards() {
           }) as Promise<readonly [bigint, bigint, bigint, boolean, bigint]>,
         ]);
         return {
-          pending: preview[0] ?? 0n,
+          pending,
           waiting: (claimability[4] ?? 0n) > 0n,
         };
       } catch (err) {

@@ -9,7 +9,7 @@ import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibSettlement} from "../libraries/LibSettlement.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
-import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
+import {InteractionRewardsFacet} from "./InteractionRewardsFacet.sol";
 import {LibPeriodicInterest} from "../libraries/LibPeriodicInterest.sol";
 import {LibSwap} from "../libraries/LibSwap.sol";
 import {LibFallback} from "../libraries/LibFallback.sol";
@@ -526,10 +526,16 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         LibVPFIDiscount.settleBorrowerLifProper(loan);
 
         // ── Phase-2 reward accrual close ─────────────────────────────
-        LibInteractionRewards.closeLoan(
-            loanId,
-            /* borrowerClean */ true,
-            /* lenderForfeit */ false
+        // Through the diamond-internal hook InteractionRewardsFacet hosts for
+        // every terminal path (#969 / #1067), by self-call: inlining the
+        // {LibInteractionRewards.closeLoan} graph here put this facet over
+        // EIP-170 once the reward lifecycle grew (A2-ii). `borrowerClean =
+        // true` (a proper close — the borrower keeps its reward); the lender
+        // never forfeits on this path. BUBBLING, exactly as the inline call
+        // was — a failed reward close is not swallowed here.
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(InteractionRewardsFacet.terminalRewardClose.selector, loanId, true),
+            RewardHookCallFailed.selector
         );
 
         // Codex round-3 P2 #1 — emit the caller (current borrower-NFT

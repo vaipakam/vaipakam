@@ -73,7 +73,10 @@ abstract contract DiamondFacetNames {
     ///      swap-to-repay route split off `SwapToRepayFacet`, which had 73
     ///      bytes of EIP-170 headroom — less than the refinance-request
     ///      guard #2407 has to add to that route).
-    function cutFacetNames() internal pure returns (string[88] memory) {
+    ///      88 → 93 with the #1566 build stack's five: `RewardStagingDomainFacet`,
+    ///      `RewardClosureFacet`, `RewardEraFacet`, `ServiceCapacityFacet` and
+    ///      `OfferMatchIntentFacet`.
+    function cutFacetNames() internal pure returns (string[93] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -176,6 +179,16 @@ abstract contract DiamondFacetNames {
             "RewardForfeitWalkFacet",
             // 3b-ii-A2 (#2305) — the staging record's settlement half.
             "RewardStagingSettleFacet",
+            // 3b-ii-A2-ii (#2305) — the multi-chunk claim domain's lifecycle entries.
+            "RewardStagingDomainFacet",
+            // 3b-ii-B (#1566) — the per-day closure proof.
+            "RewardClosureFacet",
+            // slice 4 PR C-1 (#1566) — the custody era registry.
+            "RewardEraFacet",
+            // #1219 (S-4) — service capacity deposits.
+            "ServiceCapacityFacet",
+            // #1219 (S-4) — the standing-intent fill, split out of OfferMatchFacet (EIP-170).
+            "OfferMatchIntentFacet",
             "RiskFacet",
             "RiskMatchLiquidationFacet",
             "RiskSplitLiquidationFacet",
@@ -243,7 +256,7 @@ abstract contract DiamondFacetNames {
             // #393 v1 — LenderIntentVault standing-terms surface. A lender
             // registers set-and-forget lending bounds for an ERC-20 pair; a
             // permissioned solver fills concrete offers within them via
-            // OfferMatchFacet.matchIntent. See `LenderIntentFacet.sol` natspec.
+            // OfferMatchIntentFacet.matchIntent. See `LenderIntentFacet.sol` natspec.
             "LenderIntentFacet",
             // #398 v1.5 — provisions + version-manages the per-aggregator
             // ERC-4626 lender adapters (HybridIntentLayer L3).

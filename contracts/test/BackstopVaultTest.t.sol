@@ -12,6 +12,8 @@ import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {BackstopFacet} from "../src/facets/BackstopFacet.sol";
+import {ServiceCapacityFacet} from "../src/facets/ServiceCapacityFacet.sol";
+import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {LibBackstopOracleGate} from "../src/libraries/LibBackstopOracleGate.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
@@ -19,6 +21,8 @@ import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {LibSwap} from "../src/libraries/LibSwap.sol";
+import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
+import {LibOfferMatch} from "../src/libraries/LibOfferMatch.sol";
 
 /**
  * @title  BackstopVaultTest
@@ -47,6 +51,70 @@ contract BackstopVaultTest is SetupTest {
     uint256 internal constant MIN_FILL = 1 ether;
 
     uint64 internal base; // a sane base timestamp for the deadline math
+    event CapacityFreeTierSpent(uint8 indexed role, address indexed initiator, uint256 cost, uint256 balanceAfter);
+
+    /// @dev #1219 (S-4) — the backstop route charges the OUTER initiator's FREE tier,
+    ///      never the shared vault (actor rule 3): the refusal names the poker, and the
+    ///      spend names the poker once the free action has accrued.
+    function test_backstopFill_ChargesTheInitiatorNotTheVault() public {
+        (uint256 offerId1, address borrower) = _postBorrowerOffer(base + 7 days);
+        uint256 offerId2 = _postOfferAs(borrower, base + 7 days); // the same registered borrower
+        vm.prank(borrower);
+        BackstopFacet(address(diamond)).setOfferBackstopEligible(offerId1, base + 2 days);
+        vm.prank(borrower);
+        BackstopFacet(address(diamond)).setOfferBackstopEligible(offerId2, base + 2 days);
+        vm.warp(base + 3 days);
+        uint8 role = uint8(LibVaipakam.ServiceCapacityRole.Solver);
+        vm.prank(owner);
+        ServiceCapacityFacet(address(diamond)).setCapacityCurve(role, 1e18, 1e16, 100e18, 1e18);
+        address poker = makeAddr("poker-cap");
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit CapacityFreeTierSpent(role, poker, 1e18, 0); // the POKER's one free action, from the free-tier bucket
+        vm.prank(poker);
+        uint256 loanId = BackstopFacet(address(diamond)).backstopFill(offerId1);
+        assertGt(loanId, 0, "filled by the backstop on the poker's free action");
+        vm.prank(poker);
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.ServiceCapacityExhausted.selector, role, poker, 1e18, 0));
+        BackstopFacet(address(diamond)).backstopFill(offerId2);
+        assertFalse(ServiceCapacityFacet(address(diamond)).getCapacityBucket(role, vault).seen, "the vault is never charged");
+        assertFalse(
+            ServiceCapacityFacet(address(diamond)).getCapacityBucket(role, poker).seen,
+            "#1219 review: the free-tier route never touches the poker's bonded bucket"
+        );
+    }
+
+    /// @dev #2459 r4 — a backstop fill's preview names the initiator the fill charges:
+    ///      the vault's fill is charged to the caller of `backstopFill`, which a view's
+    ///      own transaction need not be (and a sender-less `eth_call` never is). An
+    ///      exhausted poker previews `CapacityExhausted` and the fill then reverts for
+    ///      capacity; the SAME preview naming a fresh initiator reads clean (straddle) —
+    ///      the named initiator decides, not the view's originator.
+    function test_backstopPreview_NamesTheInitiatorTheFillCharges() public {
+        (uint256 offerId1, address borrower) = _postBorrowerOffer(base + 7 days);
+        uint256 offerId2 = _postOfferAs(borrower, base + 7 days);
+        vm.prank(borrower);
+        BackstopFacet(address(diamond)).setOfferBackstopEligible(offerId1, base + 2 days);
+        vm.prank(borrower);
+        BackstopFacet(address(diamond)).setOfferBackstopEligible(offerId2, base + 2 days);
+        vm.warp(base + 3 days);
+        uint8 role = uint8(LibVaipakam.ServiceCapacityRole.Solver);
+        vm.prank(owner);
+        ServiceCapacityFacet(address(diamond)).setCapacityCurve(role, 1e18, 1e16, 100e18, 1e18);
+        address poker = makeAddr("poker-preview");
+        vm.prank(poker);
+        BackstopFacet(address(diamond)).backstopFill(offerId1); // the poker's one free action
+        LibOfferMatch.IntentPreviewResult memory r = RiskPreviewFacet(address(diamond)).previewIntent(
+            vault, poker, vault, mockERC20, mockCollateralERC20, offerId2, PRINCIPAL
+        );
+        assertEq(uint8(r.intentError), uint8(LibOfferMatch.IntentError.CapacityExhausted), "the exhausted poker is named");
+        r = RiskPreviewFacet(address(diamond)).previewIntent(
+            vault, makeAddr("fresh-initiator"), vault, mockERC20, mockCollateralERC20, offerId2, PRINCIPAL
+        );
+        assertTrue(r.ok, "a fresh initiator's free action covers the same fill");
+        vm.prank(poker);
+        vm.expectRevert(abi.encodeWithSelector(IVaipakamErrors.ServiceCapacityExhausted.selector, role, poker, 1e18, 0));
+        BackstopFacet(address(diamond)).backstopFill(offerId2); // the preview's verdict, executed
+    }
 
     function setUp() public {
         setupHelper();
@@ -115,6 +183,11 @@ contract BackstopVaultTest is SetupTest {
         returns (uint256 offerId, address borrower)
     {
         borrower = _newBorrower("backstopBorrower");
+        offerId = _postOfferAs(borrower, expiresAt);
+    }
+
+    /// @dev The same offer, posted by an ALREADY-REGISTERED borrower — a second offer in one cell.
+    function _postOfferAs(address borrower, uint64 expiresAt) internal returns (uint256 offerId) {
         vm.prank(borrower);
         offerId = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({

@@ -106,6 +106,16 @@ export interface DeploymentFacets {
   rewardForfeitWalkFacet?: HexAddress;
   /** #1566 transport epochs 3b-ii-A2 (#2305) — the staging record's settlement half (resolve, unwind, venue). */
   rewardStagingSettleFacet?: HexAddress;
+  /** #1566 transport epochs 3b-ii-A2-ii (#2305) — the multi-chunk claim domain's lifecycle entries. */
+  rewardStagingDomainFacet?: HexAddress;
+  /** #1566 transport epochs 3b-ii-B — the per-day closure proof. */
+  rewardClosureFacet?: HexAddress;
+  /** #1566 slice 4 PR C-1 — the custody era registry. */
+  rewardEraFacet?: HexAddress;
+  /** #1219 (S-4) — service capacity deposits. */
+  serviceCapacityFacet?: HexAddress;
+  /** #1219 (S-4) — the standing-intent fill, split out of OfferMatchFacet (EIP-170). */
+  offerMatchIntentFacet?: HexAddress;
   rewardReporterFacet?: HexAddress;
   riskFacet?: HexAddress;
   stakingRewardsFacet?: HexAddress;

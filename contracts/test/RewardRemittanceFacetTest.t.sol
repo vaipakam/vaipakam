@@ -19,6 +19,7 @@ import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {LibRewardCustody} from "../src/libraries/LibRewardCustody.sol";
 import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
 import {MockCrossChainMessenger} from "./mocks/MockCrossChainMessenger.sol";
+import {RemitWire} from "../src/crosschain/RemitWire.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 
 /**
@@ -95,6 +96,11 @@ contract RewardRemittanceFacetTest is SetupTest {
     // ─── helpers ──────────────────────────────────────────────────────────
 
     /// @dev Finalize day `d` with BASE/ARB/OP lender+borrower numerators.
+    event ChainReportArrivedAfterFinalization(uint32 indexed sourceChainId, uint256 indexed dayId, uint64 custodyEra);
+    event ChainRecycledReported(
+        uint32 indexed sourceChainId, uint256 indexed dayId, uint256 cumulative, uint256 forDayReported, uint256 dayCreditAccepted
+    );
+
     function _finalizeDay1() internal {
         rewardMessenger.deliverChainReport(CHAIN_BASE, 1, 10e18, 5e18);
         rewardMessenger.deliverChainReport(CHAIN_ARB, 1, 20e18, 10e18);
@@ -172,6 +178,74 @@ contract RewardRemittanceFacetTest is SetupTest {
         assertEq(total, expectedTotal, "total matches quoteRewardBudget");
         assertEq(fee, ccip.fee(), "fee routed through the messenger");
         assertGt(total, 0, "non-zero remittable total");
+    }
+
+    /// @dev #2459 r1 — a B4 report that reaches the canonical chain after its day
+    ///      FINALIZED still carries the reporting chain's live era: the era is
+    ///      recorded, the day's figures are not applied, and nothing reverts (a
+    ///      revert would roll the observation back and leave a message no retry
+    ///      could deliver). Straddle: an unexpected chain's late report still refuses.
+    function test_ALateB4Report_RecordsItsEra_NotItsFigures() public {
+        rewardMessenger.deliverChainReport(CHAIN_BASE, 1, 10e18, 5e18);
+        rewardMessenger.deliverChainReport(CHAIN_OP, 1, 30e18, 15e18);
+        RewardAggregatorFacet agg = RewardAggregatorFacet(address(diamond));
+        agg.forceFinalizeDay(1);
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit ChainReportArrivedAfterFinalization(CHAIN_ARB, 1, 4);
+        rewardMessenger.deliverChainReportB4(CHAIN_ARB, 1, 20e18, 10e18, 4);
+        assertEq(agg.getChainCustodyEraReported(CHAIN_ARB), 4, "the era is observed");
+        assertFalse(agg.isChainReported(1, CHAIN_ARB), "the late figures are not applied");
+        (uint256 lender, ) = agg.getChainReport(1, CHAIN_ARB);
+        assertEq(lender, 0, "nothing stored for the closed day");
+        vm.expectRevert(IVaipakamErrors.SourceChainIdNotExpected.selector);
+        rewardMessenger.deliverChainReportB4(77777, 1, 1, 1, 9);
+    }
+
+    /// @dev #2459 r6 — a late B4 report still applies what it says about the
+    ///      CHAIN — its recycled availability and its commitment retirement and
+    ///      release cumulatives, one-way ratchets clamped against Base's own
+    ///      instructions — and drops only the closed day's figures, so a chain
+    ///      whose last report lands late (or that then detaches) never leaves
+    ///      retired commitments outstanding.
+    function test_ALateB4Report_AppliesTheChainsCumulatives_NotTheDays() public {
+        TestMutatorFacet(address(diamond)).setChainConsumedRecycledRaw(CHAIN_ARB, 6e18, 6e18);
+        RewardAggregatorFacet agg = RewardAggregatorFacet(address(diamond));
+        agg.forceFinalizeDay(1);
+        // #2459 r7 — the availability advance is named by its one event (the
+        // indexer's source for the cumulative), with no day credit accepted.
+        vm.expectEmit(true, true, false, true, address(diamond));
+        emit ChainRecycledReported(CHAIN_ARB, 1, 9e18, 2e18, 0);
+        rewardMessenger.deliverChainReportB4Full(CHAIN_ARB, 1, 20e18, 10e18, 9e18, 2e18, 4e18, 1e18, 4);
+        (uint256 retired, uint256 released) = agg.getChainRecycledCommitRetirement(CHAIN_ARB);
+        assertEq(retired, 4e18, "the retirement ratchet applies");
+        assertEq(released, 1e18, "and the release ratchet");
+        assertEq(agg.getChainOutstandingRecycledCommit(CHAIN_ARB), 2e18, "retired commitments leave the ledger");
+        (uint256 reported, , , uint256 attributed) = agg.getChainRecycledLedger(CHAIN_ARB);
+        assertEq(reported, 9e18, "the availability ratchet applies");
+        assertEq(attributed, 0, "the closed day's attribution is dropped");
+        assertFalse(agg.isChainReported(1, CHAIN_ARB), "and its figures are not applied");
+    }
+
+    /// @dev #1566 PR C revision — a rooted remittance carries the custody era the
+    ///      DESTINATION last reported (its B4 day report), never the canonical
+    ///      chain's own or a constant; an older report never lowers it.
+    function test_ARemittance_CarriesTheDestinationsReportedEra() public {
+        rewardMessenger.deliverChainReport(CHAIN_BASE, 1, 10e18, 5e18);
+        rewardMessenger.deliverChainReportB4(CHAIN_ARB, 1, 20e18, 10e18, 3);
+        rewardMessenger.deliverChainReport(CHAIN_OP, 1, 30e18, 15e18);
+        RewardAggregatorFacet(address(diamond)).finalizeDay(1);
+        RewardAggregatorFacet agg = RewardAggregatorFacet(address(diamond));
+        assertEq(agg.getChainCustodyEraReported(CHAIN_ARB), 3, "the destination's reported era is recorded");
+        assertEq(agg.getChainCustodyEraReported(CHAIN_OP), 0, "a pre-B4 report records none");
+        remit.remitRewardBudget{value: 1 ether}(CHAIN_ARB, _days(1), CAP);
+        bytes memory wire = ccip.sentPayload(ccip.sentCount() - 1);
+        (, , , , , , , , uint256 intendedEra) = abi.decode(
+            wire, (uint256, bytes32, uint256, uint256, uint256, uint256, address, uint256, uint256)
+        );
+        assertEq(intendedEra, 3, "stamped with the destination's era");
+        rewardMessenger.deliverChainReport(CHAIN_BASE, 2, 10e18, 5e18);
+        rewardMessenger.deliverChainReportB4(CHAIN_ARB, 2, 20e18, 10e18, 2); // an older era, delivered late
+        assertEq(agg.getChainCustodyEraReported(CHAIN_ARB), 3, "an older report never lowers it");
     }
 
     function test_QuoteRemittanceFee_ZeroWhenNothingRemittable() public {
@@ -541,16 +615,41 @@ contract RewardRemittanceFacetTest is SetupTest {
         dup[0] = 1;
         dup[1] = 1;
         remit.remitRewardBudget{value: 1 ether}(CHAIN_ARB, dup, CAP);
-        // B2-d5 — the payload leads with the wire tag (see {RemitWire}); the
-        // pre-tag prefix decode now reverts by design, which is the whole
-        // point of the tag.
-        (, uint256[] memory sentDays, uint256 sentTotal, , , ) = abi.decode(
-            ccip.sentPayload(0),
-            (uint256, uint256[], uint256, uint256, address, uint256)
-        );
-        assertEq(sentDays.length, 1, "payload carries only the funded day");
-        assertEq(sentDays[0], 1, "funded day is day 1");
+        // 3d-2 — the payload is the ROOTED (d6) shape: it names no days, it
+        // commits to them. The extent says ONE day, and the root is the root
+        // over exactly [1] — a list echoing the caller's [1, 1] would root
+        // differently.
+        (uint256 tag, bytes32 root, uint256 n, uint256 chunks, uint256 sentTotal, uint256 remitId, address remitter, , uint256 era) =
+            abi.decode(ccip.sentPayload(0), (uint256, bytes32, uint256, uint256, uint256, uint256, address, uint256, uint256));
+        assertEq(tag, RemitWire.REMIT_WIRE_TAG_D6, "the rooted wire");
+        assertEq(n, 1, "the extent names only the funded day");
+        assertEq(chunks, 1);
+        assertEq(root, RemitWire.d6Root(RemitWire.d6Chunks(_days(1))), "the root is over exactly [1]");
+        assertEq(remitter, address(diamond), "the deployment's identity rides the wire");
+        assertEq(era, 0, "the pre-registry era");
         assertGt(sentTotal, 0, "non-zero total");
+        assertEq(rlens.getRemitReservation(remitId).dayListRoot, root, "the reservation keeps the root it committed to");
+    }
+
+    /// @dev 3d-2 — a send wider than one chunk roots every funded day in
+    ///      chunk order, and the quote's total is the send's: the two are built
+    ///      by one rule.
+    function test_Remit_RootsTheFundedDays_InChunks_AndTheQuoteIsTheSend() public {
+        uint256 n = RemitWire.D6_CHUNK_DAYS + 1;
+        _finalizeDays(n);
+        uint256[] memory days_ = new uint256[](n);
+        for (uint256 i; i < n; ++i) days_[i] = i + 1;
+        (uint256 fee, uint256 quotedTotal) = remit.quoteRemittanceFee(CHAIN_ARB, days_);
+        assertGt(quotedTotal, 0, "the quote prices the batch");
+        remit.remitRewardBudget{value: fee}(CHAIN_ARB, days_, CAP);
+        (, bytes32 root, uint256 e, uint256 chunks, uint256 sentTotal, uint256 remitId, , , ) =
+            abi.decode(ccip.sentPayload(0), (uint256, bytes32, uint256, uint256, uint256, uint256, address, uint256, uint256));
+        assertEq(e, n, "every funded day is in the extent");
+        assertEq(chunks, 2, "two chunks");
+        assertEq(root, RemitWire.d6Root(RemitWire.d6Chunks(days_)), "rooted over the funded days in order");
+        assertEq(sentTotal, quotedTotal, "the quote's total is the send's");
+        assertEq(rlens.getRemitReservation(remitId).dayListRoot, root, "kept on the reservation");
+        assertEq(rlens.getRemitReservation(remitId).dayIds.length, n, "and the closed days are recorded as before");
     }
 
     // ─── mirror-side ingress: onRewardBudgetReceived (#776 PR2) ────────────

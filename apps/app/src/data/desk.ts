@@ -26,7 +26,7 @@
 import { useMemo } from 'react';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { usePublicClient } from 'wagmi';
-import { erc20Abi, type PublicClient } from 'viem';
+import { erc20Abi, zeroAddress, type PublicClient } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
 import { idleAware } from '../lib/idle';
@@ -804,13 +804,19 @@ export async function readMatchPreviewLive(
   publicClient: PublicClient,
   diamondAddress: `0x${string}`,
   pair: { lenderOfferId: number; borrowerOfferId: number },
+  /** The account that would call `matchOffers` — the preview checks the
+   *  service capacity its route charges (#2459 r2: named, never the read's
+   *  sender; the zero address when no wallet is connected). The connected
+   *  wallet sends that transaction itself, so it is also the route's outer
+   *  initiator, the preview's fourth argument (#2459 r4). */
+  matcher: `0x${string}`,
 ): Promise<MatchPreview | null> {
   try {
     const r = (await publicClient.readContract({
       address: diamondAddress,
       abi: DIAMOND_ABI_VIEM,
       functionName: 'previewMatch',
-      args: [BigInt(pair.lenderOfferId), BigInt(pair.borrowerOfferId)],
+      args: [BigInt(pair.lenderOfferId), BigInt(pair.borrowerOfferId), matcher, matcher],
     })) as {
       errorCode: number;
       matchAmount: bigint;
@@ -878,14 +884,18 @@ export async function readMatchRiskBlockLive(
 export function usePreviewMatch(
   pair: { lenderOfferId: number; borrowerOfferId: number } | null,
 ) {
-  const { readChain } = useActiveChain();
+  const { readChain, address } = useActiveChain();
   const publicClient = usePublicClient({ chainId: readChain.chainId });
+  // The connected wallet is the matcher the preview checks (#2459 r2); keyed
+  // on it, so a wallet switch re-reads its own capacity.
+  const matcher = address ?? zeroAddress;
   return useQuery({
     queryKey: [
       'deskPreviewMatch',
       readChain.chainId,
       pair?.lenderOfferId ?? null,
       pair?.borrowerOfferId ?? null,
+      matcher.toLowerCase(),
     ],
     enabled: pair !== null && Boolean(publicClient),
     // RPC read-diet PR A (Codex #1228 r1) — crossability is an ACTION
@@ -893,7 +903,7 @@ export function usePreviewMatch(
     // (LiveChainSync never mounts on HTTP-only chains).
     refetchInterval: tipAware(REFRESH_MS, Boolean(readChain.wsUrl)),
     queryFn: () =>
-      readMatchPreviewLive(publicClient!, readChain.diamondAddress, pair!),
+      readMatchPreviewLive(publicClient!, readChain.diamondAddress, pair!, matcher),
   });
 }
 

@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibRewardCustody} from "../libraries/LibRewardCustody.sol";
+import {LibServiceCapacity} from "../libraries/LibServiceCapacity.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {IVPFIToken} from "../interfaces/IVPFIToken.sol";
@@ -123,6 +124,13 @@ contract VPFITokenFacet is DiamondAccessControl, IVaipakamErrors {
         // relabel live custody as the new token and leave the old token
         // behind as a "foreign" asset. The token-rotation runbook drains
         // both first; this is the check that makes the runbook a rule.
+        // #2459 r6 — a PROVISIONAL compensation is held in the token it arrived
+        // in (the custody row, or the Diamond before custody activation) until
+        // the day's broadcast settles it, and its record names no asset: a
+        // rotation waits for every such hold to settle, wherever it rests.
+        if (previous != address(0) && s.rewardBudgetFreshProvisional != 0) {
+            revert IVaipakamErrors.RewardTokenRotationBlockedByProvisional(s.rewardBudgetFreshProvisional);
+        }
         if (previous != address(0) && s.rewardCustodyHolder != address(0)) {
             uint256 attributed = LibRewardCustody.attributedTotal(s);
             (bool known, uint256 heldOld) = LibRewardCustody.tryBalance(previous, s.rewardCustodyHolder);
@@ -138,6 +146,15 @@ contract VPFITokenFacet is DiamondAccessControl, IVaipakamErrors {
         // initial registration. Emit the distinct audit event so ops/indexers
         // can detect it and verify the rotation runbook was followed.
         if (previous != address(0)) {
+            // #1219 (S-4) slice 3 — the epoch flip IS the rotation transition:
+            // the live capacity-deposit epoch is retired (its principal stays in
+            // the escrow, keyed by the epoch, in the old asset), a new one opens
+            // under the new token, and every role's curve is cleared so a
+            // differing-decimals token can never inherit the old thresholds.
+            // Atomic with the pointer write — a pointer-only rotation would
+            // strand every residual old-token deposit; the rotation runbook's
+            // step 7 reads this hook's effects back before re-enabling.
+            LibServiceCapacity.onTokenRotated(s, previous, newToken);
             emit VPFITokenRotated(previous, newToken);
         }
     }

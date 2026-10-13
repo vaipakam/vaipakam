@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {LibServiceCapacity} from "../libraries/LibServiceCapacity.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
@@ -319,7 +320,7 @@ contract BackstopFacet is
     ///      AFTER opt-in (e.g. fixed-size → ranged), and `backstopEligibleAfter`
     ///      is not cleared on mutation, so the opt-in check alone is not load-
     ///      bearing. Rejects the shapes the later `matchIntent` path rejects:
-    ///        • refinance-tagged (direct-accept-only, #576 — `_executeMatch` rejects);
+    ///        • refinance-tagged (direct-accept-only, #576 — `executeMatch` rejects);
     ///        • non-ERC20-on-ERC20 (the backstop intent + vault are ERC20-on-ERC20;
     ///          `previewMatch` rejects an asset-type mismatch);
     ///        • a genuine principal range (`amountMax != amount`) — the backstop
@@ -461,12 +462,17 @@ contract BackstopFacet is
         // `matchIntent` screens only the solver / backstop vault, never
         // `o.creator`. Mirrors the shape re-assert already done above.
         LibVaipakam._assertNotSanctioned(o.creator);
+        // #1219 (S-4) — the inner `matchIntent` sees the shared vault as its
+        // caller; record the OUTER initiator in transient storage so the fill is
+        // charged to their free tier, never to the vault (actor rule 3).
+        LibServiceCapacity.setBackstopInitiator(msg.sender);
         loanId = BackstopVaultImplementation(vault).executeFill(
             o.lendingAsset,
             o.collateralAsset,
             offerId,
             remainder
         );
+        LibServiceCapacity.takeBackstopInitiator(); // cleared even when the inner match did not read it
         emit BackstopFilled(offerId, loanId, remainder);
     }
 

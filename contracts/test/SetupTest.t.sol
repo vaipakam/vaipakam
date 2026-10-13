@@ -156,6 +156,11 @@ import {RewardEpochViewFacet} from "../src/facets/RewardEpochViewFacet.sol";
 import {RewardStagingFacet} from "../src/facets/RewardStagingFacet.sol";
 import {RewardClaimWalkFacet} from "../src/facets/RewardClaimWalkFacet.sol";
 import {RewardStagingSettleFacet} from "../src/facets/RewardStagingSettleFacet.sol";
+import {RewardStagingDomainFacet} from "../src/facets/RewardStagingDomainFacet.sol";
+import {RewardClosureFacet} from "../src/facets/RewardClosureFacet.sol";
+import {RewardEraFacet} from "../src/facets/RewardEraFacet.sol";
+import {ServiceCapacityFacet} from "../src/facets/ServiceCapacityFacet.sol";
+import {OfferMatchIntentFacet} from "../src/facets/OfferMatchIntentFacet.sol";
 import {RewardSweepWalkFacet} from "../src/facets/RewardSweepWalkFacet.sol";
 import {RewardForfeitWalkFacet} from "../src/facets/RewardForfeitWalkFacet.sol";
 import {RewardCompensationDispatchFacet} from "../src/facets/RewardCompensationDispatchFacet.sol";
@@ -358,6 +363,11 @@ contract SetupTest is Test {
     RewardSweepWalkFacet rewardSweepWalkFacet;
     RewardForfeitWalkFacet rewardForfeitWalkFacet;
     RewardStagingSettleFacet rewardStagingSettleFacet;
+    RewardStagingDomainFacet rewardStagingDomainFacet;
+    RewardClosureFacet rewardClosureFacet;
+    RewardEraFacet rewardEraFacet;
+    ServiceCapacityFacet serviceCapacityFacet;
+    OfferMatchIntentFacet offerMatchIntentFacet;
     RewardCompensationDispatchFacet rewardCompensationDispatchFacet;
     RewardCommitmentFacet rewardCommitmentFacet;
     RepatriationFacet repatriationFacet;
@@ -489,6 +499,11 @@ contract SetupTest is Test {
         rewardSweepWalkFacet = new RewardSweepWalkFacet();
         rewardForfeitWalkFacet = new RewardForfeitWalkFacet();
         rewardStagingSettleFacet = new RewardStagingSettleFacet();
+        rewardStagingDomainFacet = new RewardStagingDomainFacet();
+        rewardClosureFacet = new RewardClosureFacet();
+        rewardEraFacet = new RewardEraFacet();
+        serviceCapacityFacet = new ServiceCapacityFacet();
+        offerMatchIntentFacet = new OfferMatchIntentFacet();
         rewardCompensationDispatchFacet = new RewardCompensationDispatchFacet();
         rewardCommitmentFacet = new RewardCommitmentFacet();
         repatriationFacet = new RepatriationFacet();
@@ -521,7 +536,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](89);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](94);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -858,6 +873,36 @@ contract SetupTest is Test {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getRewardForfeitWalkFacetSelectors()
         });
+        // 3b-ii-A2-ii (#2305) — the multi-chunk claim domain's lifecycle entries (slot 88).
+        cuts[88] = IDiamondCut.FacetCut({
+            facetAddress: address(rewardStagingDomainFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getRewardStagingDomainFacetSelectors()
+        });
+        // 3b-ii-B (#1566) — the per-day closure proof (slot 89).
+        cuts[89] = IDiamondCut.FacetCut({
+            facetAddress: address(rewardClosureFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getRewardClosureFacetSelectors()
+        });
+        // slice 4 PR C-1 (#1566) — the custody era registry (slot 90).
+        cuts[90] = IDiamondCut.FacetCut({
+            facetAddress: address(rewardEraFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getRewardEraFacetSelectors()
+        });
+        // #1219 (S-4) — service capacity deposits (slot 91).
+        cuts[91] = IDiamondCut.FacetCut({
+            facetAddress: address(serviceCapacityFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getServiceCapacityFacetSelectors()
+        });
+        // #1219 (S-4) — the standing-intent fill, split out of OfferMatchFacet (slot 92).
+        cuts[92] = IDiamondCut.FacetCut({
+            facetAddress: address(offerMatchIntentFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getOfferMatchIntentFacetSelectors()
+        });
         // #1306 follow-up — read-only lens facet (view/getter surface split
         // off InteractionRewardsFacet for EIP-170 headroom; shared storage).
         cuts[66] = IDiamondCut.FacetCut({
@@ -934,7 +979,7 @@ contract SetupTest is Test {
             functionSelectors: helperTest.getSwapToRepayFacetSelectors()
         });
         // #2416 — the partial swap-to-repay route, split off for EIP-170.
-        cuts[88] = IDiamondCut.FacetCut({
+        cuts[93] = IDiamondCut.FacetCut({
             facetAddress: address(swapToRepayPartialFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getSwapToRepayPartialFacetSelectors()
@@ -1495,6 +1540,44 @@ contract SetupTest is Test {
     }
 
     // ─── #1566 slice 4 PR B — the reward custody activation fixture ──────────
+
+    /// @dev A2-iii — preview BY EXECUTION: run `user`'s claim through
+    ///      {RewardClaimFacet.simulateClaimInteractionRewards}, which always
+    ///      reverts, and decode the figures from its revert data. A revert
+    ///      other than the simulation's is what the claim itself would revert
+    ///      with (nothing to claim, a reservation, the pause), reported here
+    ///      as nothing claimable — (0, 0, 0) — exactly as the app reads it.
+    ///      Not a view: the frame writes before it reverts, so no helper
+    ///      built on it can be `view` either.
+    function previewByExecution(address user) internal returns (uint256 amount, uint256 fromDay, uint256 toDay) {
+        (, amount, fromDay, toDay) = previewByExecutionStatus(user, LibVaipakam.RewardDelivery.Default);
+    }
+
+    function previewByExecutionTo(address user, LibVaipakam.RewardDelivery venue)
+        internal
+        returns (uint256 amount, uint256 fromDay, uint256 toDay)
+    {
+        (, amount, fromDay, toDay) = previewByExecutionStatus(user, venue);
+    }
+
+    /// @dev As above, with whether the claim COMPLETED: a completed claim that
+    ///      paid the user nothing (a forfeit routed to treasury) is distinct
+    ///      from a claim the Diamond refused, and the figures alone cannot say.
+    function previewByExecutionStatus(address user, LibVaipakam.RewardDelivery venue)
+        internal
+        returns (bool completed, uint256 amount, uint256 fromDay, uint256 toDay)
+    {
+        (bool ok, bytes memory ret) = address(diamond).call(
+            abi.encodeWithSelector(RewardClaimFacet.simulateClaimInteractionRewards.selector, user, venue)
+        );
+        require(!ok, "simulation must revert");
+        if (ret.length == 100 && bytes4(ret) == bytes4(keccak256("InteractionRewardsSimulation(uint256,uint256,uint256)"))) {
+            bytes memory data = new bytes(96);
+            for (uint256 i; i < 96; ++i) data[i] = ret[i + 4];
+            (amount, fromDay, toDay) = abi.decode(data, (uint256, uint256, uint256));
+            completed = true;
+        }
+    }
 
     /// @dev Runs the per-chain activation ceremony the way the ceremony script
     ///      does, on a Diamond whose reward role is ALREADY configured (the

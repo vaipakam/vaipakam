@@ -293,6 +293,13 @@ contract RedeployFacets is Script {
         // refreshed EarlyWithdrawalFacet's sale paths from reverting.
         (bytes4[] memory rpToAdd, bytes4[] memory rpToReplace) =
             _partitionByRouting(diamond, FacetSelectors.riskPreview());
+        // #2459 r4 — `previewIntent` gained the route's outer initiator, so its
+        // selector CHANGED: the new one is in `riskPreview()` above, and the old
+        // one is Removed wherever it is still routed (empty on a fresh or
+        // migrated Diamond, so the step is idempotent).
+        bytes4[] memory retiredPreview = new bytes4[](1);
+        retiredPreview[0] = FacetSelectors.retiredPreviewIntentSelector();
+        (, bytes4[] memory rpToRemove) = _partitionByRouting(diamond, retiredPreview);
 
         // #1503 item 28 — the mark's WRITERS. `RepayPeriodicFacet`'s surface is
         // unchanged (plain Replace); `EncumbranceMutateFacet`'s is not — the
@@ -324,7 +331,8 @@ contract RedeployFacets is Script {
             (rpsToAdd.length > 0 ? 1 : 0) + (rpsToReplace.length > 0 ? 1 : 0) +
             (encToAdd.length > 0 ? 1 : 0) + (encToReplace.length > 0 ? 1 : 0) +
             (encToRemove.length > 0 ? 1 : 0) +
-            (profToRemove.length > 0 ? 1 : 0);
+            (profToRemove.length > 0 ? 1 : 0) +
+            (rpToRemove.length > 0 ? 1 : 0);
         IDiamondCut.FacetCut[] memory cuts =
             new IDiamondCut.FacetCut[](9 + nExtra);
         cuts[0] = _replace(address(riskFacet), _riskSelectors());
@@ -447,6 +455,9 @@ contract RedeployFacets is Script {
         // #1649 — route the sale classifier. The Add branch is the one that
         // matters on a pre-#1503 diamond: without it the refreshed
         // EarlyWithdrawalFacet above would be live and every sale would revert.
+        if (rpToRemove.length > 0) {
+            cuts[idx++] = _remove(rpToRemove);
+        }
         if (rpToReplace.length > 0) {
             cuts[idx++] = _replace(address(riskPreviewFacet), rpToReplace);
         }
@@ -489,6 +500,7 @@ contract RedeployFacets is Script {
         console.log("  Legacy uint8 keeper selectors removed:", profToRemove.length);
         console.log("  RiskPreview selectors added: ", rpToAdd.length);
         console.log("  RiskPreview selectors repl.: ", rpToReplace.length);
+        console.log("  Retired previewIntent removed:", rpToRemove.length);
         console.log("  RepayPeriodic selectors repl.:", rpsToReplace.length);
         console.log("  EncumbranceMutate repl.:      ", encToReplace.length);
         console.log("  EncumbranceMutate added:      ", encToAdd.length);

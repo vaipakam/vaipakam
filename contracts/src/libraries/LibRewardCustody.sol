@@ -9,6 +9,8 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {RewardCustodyHolder} from "../RewardCustodyHolder.sol";
 import {LibDiamond} from "@diamond-3/libraries/LibDiamond.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
+import {RemitWire} from "../crosschain/RemitWire.sol";
 
 /**
  * @title LibRewardCustody — the ONE seam between the reward ledgers and the
@@ -82,6 +84,55 @@ library LibRewardCustody {
     ///               re-attribution.
     /// @custom:event-category state-change/reward-custody
     event RewardCustodyRowDebited(uint8 indexed row, uint256 amount, address to);
+    /// @notice Slice 4 PR C-1 — the live era was RETIRED at a role change: `carried` moved from the live-fresh
+    ///         row into the era's holder row (in-holder), and the baseline was levelled so the next era opens with
+    ///         no headroom and `openingDeficit` still owed.
+    /// @custom:event-category state-change/reward-custody
+    event CustodyEraRetired(uint64 indexed era, uint256 carried, uint256 openingDeficit, uint64 boundaryDay);
+    /// @notice Slice 4 PR C-1 — era `era` opened as the live era; `boundaryDay` is its first reward day.
+    /// @custom:event-category state-change/reward-custody
+    event CustodyEraOpened(uint64 indexed era, uint64 boundaryDay);
+    /// @notice Slice 4 PR C-1 — `amount` left era `era`'s holder row at finalization: into the live/restitution rows
+    ///         of era `into` (the live era at the release) under the deficit split, or into PENDING SURPLUS
+    ///         (`toPending`, `into` zero) while the chain is Detached (#2459 r4).
+    /// @custom:event-category state-change/reward-custody
+    event CustodyEraReleased(uint64 indexed era, uint256 amount, bool toPending, uint64 into);
+    /// @notice Slice 4 PR C-1 — era `era` is terminal: its counters read zero and its row was released.
+    /// @custom:event-category state-change/reward-custody
+    event CustodyEraClosed(uint64 indexed era);
+    /// @notice Slice 4 PR C-1 — `amount` of PENDING SURPLUS was credited to the live baseline under the deficit split.
+    /// @custom:event-category state-change/reward-custody
+    event CustodyPendingSurplusDrained(uint256 amount, uint256 toLive, uint256 toRestitution);
+    /// @notice PR C-2 — `amount` of era `era`'s row funded day `dayId`'s obligations: moved in-holder into the
+    ///         live-fresh row for the payout or absorption that follows, charged to no delivered bound.
+    /// @custom:event-category state-change/reward-custody
+    event CustodyEraDrawn(uint64 indexed era, uint256 indexed dayId, uint256 amount);
+    /// @notice `amount` of era `era`'s room was HELD for a standing staging reservation; `stagedFresh` is the
+    ///         era's total held after (#1566 PR 1 review — a hold is a movement of what the row may fund).
+    /// @custom:event-category state-change/reward-custody
+    event CustodyEraHeld(uint64 indexed era, uint256 amount, uint256 stagedFresh);
+    /// @notice #1566 PR C revision — `amount` of a packet's fresh was booked to retired era `era`'s row (a
+    ///         classification or a compensation of that era), counted as delivered and levelled at once.
+    /// @custom:event-category state-change/reward-custody
+    event CustodyEraCredited(uint64 indexed era, uint256 amount);
+    /// @notice A staging reservation's hold of `amount` on era `era` was released — consumed by its resolve or
+    ///         restored by its unwind; `stagedFresh` is the era's total held after.
+    /// @custom:event-category state-change/reward-custody
+    event CustodyEraHoldReleased(uint64 indexed era, uint256 amount, uint256 stagedFresh);
+    /// @notice #1566 PR C revision — packet `packetHash` belongs to era `era`, named by
+    ///         its ingress (a rooted delivery's dispatch era, an older-wire delivery's
+    ///         earliest listed day's era, a compensation's day's era).
+    /// @custom:event-category state-change/reward-custody
+    event IngressPacketEraStamped(bytes32 indexed packetHash, uint64 indexed era);
+    /// @notice PR C-4 — an era-less broadcast the rotation gate refused was PARKED under `id`, counted against era `era`.
+    /// @custom:event-category state-change/reward-custody
+    event BroadcastParked(uint256 indexed id, uint8 kind, uint256 indexed dayId, uint64 indexed era, bool quarantineOnly);
+    /// @notice PR C-4 — parked broadcast `id` was tombstoned by the operator with `reason`.
+    /// @custom:event-category state-change/reward-custody
+    event ParkedBroadcastTombstoned(uint256 indexed id, bytes32 reason);
+    /// @notice PR C-4 — parked broadcast `id` passed the gate on retry and was applied.
+    /// @custom:event-category state-change/reward-custody
+    event ParkedBroadcastApplied(uint256 indexed id);
 
     /// @notice Fresh funding was credited to the delivered ledger's received
     ///         side, and its custody attributed under the §5c deficit split.
@@ -157,7 +208,11 @@ library LibRewardCustody {
     ///      (the staged record's pages), a vault-only delivery entry on the
     ///      custody facet, and the `Resolving` row in the attributed total —
     ///      an activation must see a custody cut that carries all three.
-    uint32 internal constant CUTOVER_VERSION = 3;
+    /// @dev 4 since slice 4 PR C (#1566 PR 1 review): {RewardEraFacet} adds
+    ///      holder-moving seams — the era draw a day's pricing makes, the era
+    ///      release and the pending-surplus drain — so a cut without that facet
+    ///      must not certify.
+    uint32 internal constant CUTOVER_VERSION = 4;
 
     /// @notice A complete facet cut recorded the custody protocol version and
     ///         the routing it installed.
@@ -261,12 +316,14 @@ library LibRewardCustody {
     function attributedTotal(
         LibVaipakam.Storage storage s
     ) internal view returns (uint256 total) {
-        // Through the last row, `Resolving` included (3b-ii-A2, #2305): a hold
-        // between resolution pages is attributed, never sweepable.
-        uint256 last = uint256(LibVaipakam.RewardCustodyRow.Resolving);
+        // Through the last row: `Resolving` (3b-ii-A2, #2305) — a hold between
+        // resolution pages — and `Provisional` (#2459 r5) — a provisional
+        // compensation held apart — are attributed, never sweepable.
+        uint256 last = uint256(LibVaipakam.RewardCustodyRow.Provisional);
         for (uint256 i = 0; i <= last; ++i) {
             total += s.rewardCustodyRows[LibVaipakam.RewardCustodyRow(i)];
         }
+        total += s.custodyEraRowsTotal; // slice 4 PR C-1: the retired eras' rows are attributed custody too
     }
 
     /// @notice The bound holder and the configured token, or a named refusal
@@ -318,14 +375,10 @@ library LibRewardCustody {
     ///         arrival at the holder ({relocateToHolder}, {fundFromCaller})
     ///         or an in-holder re-attribution ({move}); nothing else may, or
     ///         the rows would describe custody the holder does not hold.
-    /// @dev    Arms the role freeze (design §5d, "role and SOURCE changes
-    ///         freeze here"): once any holder allocation exists, a role
-    ///         transition could orphan it — the retained residual retirement
-    ///         can level counters but cannot re-key a row — so the setters
-    ///         refuse every effective role change until PR C's era registry
-    ///         can carry an allocation across one. Armed here rather than only
-    ///         at activation so the bootstrap writers, which credit rows
-    ///         before activation, are covered by the same rule.
+    /// @dev    No role freeze (#1566 PR C revision): on an activated chain a role
+    ///         change carries the live row into the retiring era
+    ///         ({retireCustodyEraOnRoleChange}). Before activation nothing is
+    ///         carried — see the activation's note on bootstrap ordering.
     function credit(
         LibVaipakam.Storage storage s,
         LibVaipakam.RewardCustodyRow r,
@@ -334,7 +387,6 @@ library LibRewardCustody {
     ) internal {
         if (amount == 0) return;
         s.rewardCustodyRows[r] += amount;
-        if (!s.rewardRoleChangesFrozen) s.rewardRoleChangesFrozen = true;
         emit RewardCustodyRowCredited(uint8(r), amount, origin);
     }
 
@@ -374,8 +426,9 @@ library LibRewardCustody {
         uint256 have = _debitRow(s, from, amount);
         // An in-holder move out of the live row is a payout of the fresh
         // ledger's (the absorption of forfeited reward value charges `paid`)
-        // — except the demotion's re-attribution into `Unclassified`, the
-        // one path that unwinds `received` instead: spent, never paid. Out
+        // — except a re-attribution into `Unclassified`: spent, never paid
+        // (no path makes one out of the live row since a demotion releases a
+        // provisional hold instead, #2459 r5; the rule stays general). Out
         // of restitution INTO the live row it is the paid-correction: the
         // released records re-enter the queue backed by that very inflow.
         _recordOutflow(
@@ -446,8 +499,8 @@ library LibRewardCustody {
     ///      an entry's spent-ness and what of it the other side may inherit
     ///      are read from its own record, never inferred. The live row's
     ///      outflows spend the fresh queue (paid where the fresh ledger
-    ///      charges them; the demotion's unwind into `Unclassified` is spent,
-    ///      never paid). The restitution row's outflows RELEASE the absorbed
+    ///      charges them; a re-attribution into `Unclassified` is spent, never
+    ///      paid — no demotion makes one since #2459 r5). The restitution row's outflows RELEASE the absorbed
     ///      records, each released part re-entering the entry's own fresh
     ///      record — free when the paid-correction moved the custody to
     ///      live, spent (and paid) when the deficit was paid with it, spent
@@ -468,7 +521,7 @@ library LibRewardCustody {
         bool toLive
     ) private {
         if (r == LibVaipakam.RewardCustodyRow.LiveFresh) {
-            if (s.freshUnspentByEra[PRE_BACKFILL_ERA] == 0) return;
+            if (s.freshUnspentByEra[RECONCILIATION_QUEUE_ERA] == 0) return;
             _custody(abi.encodeWithSignature("reconciliationTakeFresh(uint256,uint256,bool)", have, amount, paid));
         } else if (r == LibVaipakam.RewardCustodyRow.Restitution) {
             if (s.absorbedUnreleased == 0) return;
@@ -531,7 +584,7 @@ library LibRewardCustody {
         if (take == 0) return;
         s.absorbedUnreleased = unreleased - take;
         s.absorbedReleasedTotal += take;
-        uint64 era = PRE_BACKFILL_ERA;
+        uint64 era = RECONCILIATION_QUEUE_ERA;
         if (toLive) {
             s.freshUnspentByEra[era] += take;
         } else {
@@ -927,13 +980,411 @@ library LibRewardCustody {
         LibVaipakam.Storage storage s,
         uint256 amount
     ) internal returns (uint256 toLive, uint256 toRestitution) {
+        return creditFreshSplit(s, amount, 0);
+    }
+
+    /// @notice The ONE fresh credit under the §5c deficit split — writer 1 (a
+    ///         measured ingress, `origin` 0) and the two in-holder writers of
+    ///         slice 4 PR C-1 (the era-terminal release and the pending-surplus
+    ///         drain, `origin` 1) all raise `received` and allocate here, so the
+    ///         rule that the deficit's cover is never headroom has one body.
+    function creditFreshSplit(
+        LibVaipakam.Storage storage s,
+        uint256 amount,
+        uint8 origin
+    ) internal returns (uint256 toLive, uint256 toRestitution) {
         if (amount == 0) return (0, 0);
         (toLive, toRestitution) = freshSplit(s, amount);
         uint256 received = s.rewardBudgetArmedFreshReceived;
         s.rewardBudgetArmedFreshReceived = received + amount;
-        credit(s, LibVaipakam.RewardCustodyRow.LiveFresh, toLive, 0);
-        credit(s, LibVaipakam.RewardCustodyRow.Restitution, toRestitution, 0);
+        // An in-holder re-credit (an era release, a surplus drain) raises the
+        // headroom basis but is no DELIVERY — its value was counted when it
+        // arrived — so it is tallied apart, and the counted-funding view nets
+        // it out (#1566 PR 1 review).
+        if (origin == 1) s.rewardBudgetFreshReCredited += amount;
+        credit(s, LibVaipakam.RewardCustodyRow.LiveFresh, toLive, origin);
+        credit(s, LibVaipakam.RewardCustodyRow.Restitution, toRestitution, origin);
         emit RewardCustodyFreshCredited(amount, toLive, toRestitution, received + amount);
+    }
+
+    // ── Slice 4 PR C-1 — the custody era registry ──
+
+    /// @notice Retire the live era at an EFFECTIVE role change and open the
+    ///         next: the live-fresh row moves, in-holder, into the retiring
+    ///         era's holder row — custody the obligations accrued in that era
+    ///         may still consume (PR C-2) and nothing else may — and the
+    ///         delivered counters are levelled so the new baseline opens with
+    ///         no headroom; a `paid > received` deficit is NOT erased, it is
+    ///         the new era's opening deficit, covered first by its first credit.
+    /// @dev    Design §5d rows 8–10. Before custody activation nothing is carried:
+    ///         the counters are levelled as before and the registry is untouched,
+    ///         so every pre-activation figure is era 0's (#1566 PR C revision: no
+    ///         backfill). A row a bootstrap writer credited before activation is
+    ///         therefore NOT carried either (see the activation's ordering note). The carried amount is the live ROW — the
+    ///         custody — and the headroom counter is levelled to match; the
+    ///         two agree on an activated chain (`invariant_LiveRowIsTheBound`),
+    ///         and where they would not the custody is the fact.
+    ///         Staging reservations are excluded by the setter's gate
+    ///         (`stagingEncumberedCount == 0`), so no reserved headroom straddles
+    ///         the change.
+    function retireCustodyEraOnRoleChange(LibVaipakam.Storage storage s, uint64 boundaryDay) internal {
+        uint256 deficit = levelDeliveredResidual(s);
+        if (!active(s)) return;
+        uint64 era = s.custodyEraCurrent;
+        uint256 carried = s.rewardCustodyRows[LibVaipakam.RewardCustodyRow.LiveFresh];
+        if (carried != 0) {
+            uint256 have = _debitRow(s, LibVaipakam.RewardCustodyRow.LiveFresh, carried);
+            _recordOutflow(s, LibVaipakam.RewardCustodyRow.LiveFresh, have, carried, false, false);
+            emit RewardCustodyRowDebited(uint8(LibVaipakam.RewardCustodyRow.LiveFresh), carried, address(0));
+            s.custodyEras[era].holderRow += carried;
+            s.custodyEraRowsTotal += carried;
+        }
+        emit CustodyEraRetired(era, carried, deficit, boundaryDay);
+        uint64 next = era + 1;
+        s.custodyEraCurrent = next;
+        LibVaipakam.CustodyEra storage opened = s.custodyEras[next];
+        opened.boundaryDay = boundaryDay;
+        opened.openedAt = uint64(block.timestamp);
+        opened.openingDeficit = deficit;
+        emit CustodyEraOpened(next, boundaryDay);
+    }
+
+    /// @notice Level the delivered ledger on a role change: `paid` rises to
+    ///         `received`, so an old delivered residual never becomes reusable
+    ///         headroom in the new role. Returns the DEFICIT (`paid` over
+    ///         `received`) the new era opens with. Every effective change runs it,
+    ///         a first configuration included (#1566 PR 1 review: typed deliveries
+    ///         received while Unconfigured raise `received`, nothing charges `paid`
+    ///         in that role, and a first role must not inherit that as headroom).
+    function levelDeliveredResidual(LibVaipakam.Storage storage s) internal returns (uint256 deficit) {
+        uint256 received = s.rewardBudgetArmedFreshReceived;
+        uint256 paid = s.rewardBudgetArmedFreshPaid;
+        deficit = paid > received ? paid - received : 0;
+        if (paid < received) s.rewardBudgetArmedFreshPaid = received;
+    }
+
+    /// @notice Writer 2 of 3 — release a RETIRED era's holder row once the era
+    ///         is final. On an active role the amount is credited to the live
+    ///         baseline under the deficit split; while Detached it goes to
+    ///         PENDING SURPLUS (never RECOVERY: a recovery dispatch must not be
+    ///         able to draw a surplus), drained later by writer 3 once an active
+    ///         era exists.
+    /// @dev    FINAL means every day of the era's span proven closed by the
+    ///         per-day closure proof — which anyone may run — and nothing staged
+    ///         holding its row (#1566 PR C revision: no manual step). A closed era
+    ///         owes nothing; value a packet of it still holds exits later by the
+    ///         era routing rule ({creditFreshToEraFromRow}), and a parked copy of a
+    ///         closed day's broadcast installs nothing that prices an obligation.
+    function finalizeCustodyEra(LibVaipakam.Storage storage s, uint64 era, LibVaipakam.RewardRole role)
+        internal
+        returns (uint256 amount, bool toPending)
+    {
+        uint64 current = s.custodyEraCurrent;
+        if (era > current) revert IVaipakamErrors.CustodyEraUnknown(era);
+        if (era == current) revert IVaipakamErrors.CustodyEraLive(era);
+        LibVaipakam.CustodyEra storage e = s.custodyEras[era];
+        if (e.terminal) revert IVaipakamErrors.CustodyEraAlreadyFinalized(era);
+        uint256 span = custodyEraSpan(s, era);
+        // A staged hold on the row is unreachable here today — a staged record
+        // blocks closing its day — but releasing a held row would brick that
+        // record's payout, so the condition is stated, not inferred
+        // (#1566 PR 1 review).
+        if (e.daysClosed < span || e.stagedFresh != 0) {
+            revert IVaipakamErrors.CustodyEraNotTerminal(era, e.daysClosed, span, e.stagedFresh);
+        }
+        e.terminal = true;
+        amount = e.holderRow;
+        // The route is named in the event (#2459 r4): pending surplus while
+        // Detached, else the live baseline of the live era.
+        toPending = role == LibVaipakam.RewardRole.Detached;
+        uint64 into = toPending ? 0 : current;
+        if (amount != 0) {
+            e.holderRow = 0;
+            s.custodyEraRowsTotal -= amount;
+            if (toPending) credit(s, LibVaipakam.RewardCustodyRow.PendingSurplus, amount, 1);
+            else creditFreshSplit(s, amount, 1);
+        }
+        emit CustodyEraReleased(era, amount, toPending, into);
+        emit CustodyEraClosed(era);
+    }
+
+    /// @notice How many reward days a RETIRED era spans: from its boundary day
+    ///         to the next era's. The live era has no upper boundary yet.
+    function custodyEraSpan(LibVaipakam.Storage storage s, uint64 era) internal view returns (uint256) {
+        if (era >= s.custodyEraCurrent) return 0;
+        return uint256(s.custodyEras[era + 1].boundaryDay) - uint256(s.custodyEras[era].boundaryDay);
+    }
+
+    /// @notice The era `dayId` was live in: the newest era whose boundary day is
+    ///         at or before it; era 0 holds every earlier day.
+    /// @dev A BINARY search (#1566 PR 1 review): an era's boundary day is the
+    ///      day of the role change that opened it, so boundaries never fall as
+    ///      the registry grows, and the newest era at or before `dayId` is found
+    ///      in log-many reads however deep the registry — no scan cap, and no
+    ///      revert that would stall an old day's claim or closure.
+    function custodyEraOfDay(LibVaipakam.Storage storage s, uint256 dayId) internal view returns (uint64 era) {
+        uint64 hi = s.custodyEraCurrent;
+        while (era < hi) {
+            uint64 mid = era + (hi - era + 1) / 2;
+            if (s.custodyEras[mid].boundaryDay <= dayId) era = mid;
+            else hi = mid - 1;
+        }
+    }
+
+    /// @notice Writer 3 of 3 — credit PENDING SURPLUS to the live baseline
+    ///         under the deficit split, once an active era exists. The caller
+    ///         holds the role check; the split is the same body as every other
+    ///         fresh credit.
+    function drainPendingSurplus(LibVaipakam.Storage storage s, uint256 amount) internal {
+        if (amount == 0) revert IVaipakamErrors.InvalidAmount();
+        uint256 have = _debitRow(s, LibVaipakam.RewardCustodyRow.PendingSurplus, amount);
+        _recordOutflow(s, LibVaipakam.RewardCustodyRow.PendingSurplus, have, amount, false, true);
+        emit RewardCustodyRowDebited(uint8(LibVaipakam.RewardCustodyRow.PendingSurplus), amount, address(0));
+        (uint256 toLive, uint256 toRestitution) = creditFreshSplit(s, amount, 1);
+        emit CustodyPendingSurplusDrained(amount, toLive, toRestitution);
+    }
+
+    // ── #1566 PR C revision — routing a packet's fresh by its era ──
+
+    /// @dev Whether era `era` books a credit of fresh on its OWN books: a retired
+    ///      era not yet final (its row), or a final one while the chain is
+    ///      Detached (pending surplus, as the era's own release went). False: the
+    ///      live baseline takes it under the deficit split — the live era, or a
+    ///      final era while a role is active.
+    function _eraBooksFresh(LibVaipakam.Storage storage s, uint64 era) private view returns (bool) {
+        if (era >= s.custodyEraCurrent) return false;
+        if (!s.custodyEras[era].terminal) return true;
+        return LibVaipakam.rewardRole(s) == LibVaipakam.RewardRole.Detached;
+    }
+
+    /// @dev Book `amount` of fresh the holder already holds, uncredited, to retired
+    ///      era `era`: counted as delivered and levelled at once — the live
+    ///      baseline gains no headroom from value sent for an era it no longer
+    ///      is — into the era's row while it is not final, else pending surplus.
+    function _bookRetiredFresh(LibVaipakam.Storage storage s, uint64 era, uint256 amount) private {
+        s.rewardBudgetArmedFreshReceived += amount;
+        s.rewardBudgetArmedFreshPaid += amount;
+        LibVaipakam.CustodyEra storage e = s.custodyEras[era];
+        if (!e.terminal) {
+            e.holderRow += amount;
+            s.custodyEraRowsTotal += amount;
+            emit CustodyEraCredited(era, amount);
+        } else {
+            credit(s, LibVaipakam.RewardCustodyRow.PendingSurplus, amount, 1);
+        }
+    }
+
+    /// @notice Credit `amount` of a packet's FRESH, now in row `from`, to the era
+    ///         the packet belongs to — the ONE routing rule for an exit that
+    ///         credits fresh outside a draw. The live baseline's part returns as
+    ///         `(toLive, toRestitution)`; both are zero when the era booked it.
+    function creditFreshToEraFromRow(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.RewardCustodyRow from,
+        uint256 amount,
+        uint64 era
+    ) internal returns (uint256 toLive, uint256 toRestitution) {
+        if (!_eraBooksFresh(s, era)) return creditFreshFromRow(s, from, amount);
+        if (amount == 0) return (0, 0);
+        _debitRow(s, from, amount);
+        emit RewardCustodyRowDebited(uint8(from), amount, address(0));
+        _bookRetiredFresh(s, era, amount);
+    }
+
+    /// @notice A fresh INFLOW for era `era` (a compensation): relocated (measured)
+    ///         into the holder and credited by the same rule.
+    function relocateFreshIngressToEra(LibVaipakam.Storage storage s, uint256 amount, uint64 era) internal {
+        if (!_eraBooksFresh(s, era)) {
+            relocateFreshIngress(s, amount);
+            return;
+        }
+        if (amount == 0) return;
+        relocateToHolderUncredited(s, amount);
+        _bookRetiredFresh(s, era, amount);
+    }
+
+    // ── #2459 r5 — a provisional compensation is HELD APART until it settles ──
+    //
+    // A provisional credit's value is not yet known to belong to this
+    // deployment: the day's broadcast may still demote it. So it is never put
+    // to work — relocated (measured) into its own `Provisional` row, counted
+    // by neither side of the funding ledger, backing nothing — and nothing
+    // that moves custody (a role change's carry, an era release, a surplus
+    // drain, a staging reservation) can reach it. Confirmation counts it and
+    // credits it to the day's era by the routing rule, exactly as an arrival
+    // at that moment; demotion moves it, untouched, into `Unclassified`. Both
+    // are exact by construction: there is nothing to chase. (Counting it at
+    // arrival, as closure 2 did, made a demotion follow the value through
+    // pooled moves no per-credit record can trace — #2459 r4 and r5, and the
+    // staging-reservation floor of Codex #2308 r21.)
+
+    /// @notice Hold `amount` of a provisional compensation's value apart:
+    ///         relocated (measured) from the Diamond into the `Provisional` row.
+    function holdProvisional(LibVaipakam.Storage storage s, uint256 amount) internal {
+        if (amount == 0) return;
+        relocateToHolder(s, LibVaipakam.RewardCustodyRow.Provisional, amount);
+    }
+
+    /// @dev {creditFreshToEraFromRow} on {RewardEraFacet} (Diamond-internal self-call).
+    function callEraCreditFreshFromRow(LibVaipakam.RewardCustodyRow from, uint256 amount, uint64 era)
+        internal
+        returns (uint256 toLive, uint256 toRestitution)
+    {
+        (toLive, toRestitution) = abi.decode(
+            _custodyReturning(
+                abi.encodeWithSignature("eraCreditFreshFromRow(uint8,uint256,uint64)", uint8(from), amount, era)
+            ),
+            (uint256, uint256)
+        );
+    }
+
+    /// @dev {relocateFreshIngressToEra} on {RewardEraFacet} (Diamond-internal self-call).
+    function callEraRelocateFreshIngress(uint256 amount, uint64 era) internal {
+        if (amount == 0) return;
+        _custody(abi.encodeWithSignature("eraRelocateFreshIngress(uint256,uint64)", amount, era));
+    }
+
+    /// @dev {holdProvisional} on {RewardEraFacet} (Diamond-internal self-call).
+    function callEraHoldProvisional(uint256 amount) internal {
+        if (amount == 0) return;
+        _custody(abi.encodeWithSignature("eraHoldProvisional(uint256)", amount));
+    }
+
+    // ── Slice 4 PR C-2 — the era term of a day's fresh ──
+
+    /// @notice What a RETIRED era's row can still fund: the row net of standing
+    ///         staging holds. The live era has no row — its custody IS the live
+    ///         row — and a finalized era has released its row.
+    function custodyEraRoom(LibVaipakam.Storage storage s, uint64 era) internal view returns (uint256) {
+        if (era >= s.custodyEraCurrent) return 0;
+        LibVaipakam.CustodyEra storage e = s.custodyEras[era];
+        if (e.terminal) return 0;
+        uint256 row = e.holderRow;
+        uint256 held = e.stagedFresh;
+        return row > held ? row - held : 0;
+    }
+
+    /// @notice Fund `amount` of day `dayId`'s fresh from era `era`: an in-holder
+    ///         move era row → live-fresh row, so the payout or absorption that
+    ///         follows leaves the holder from the live row exactly as a
+    ///         live-funded one does, while the delivered bound is charged only for
+    ///         what the live era funded (the caller's arithmetic, rows 2 and 6).
+    function drawCustodyEraForDay(LibVaipakam.Storage storage s, uint64 era, uint256 dayId, uint256 amount) internal {
+        if (amount == 0) return;
+        uint256 room = custodyEraRoom(s, era);
+        if (amount > room) revert IVaipakamErrors.CustodyEraRoomShort(era, amount, room);
+        s.custodyEras[era].holderRow -= amount;
+        s.custodyEraRowsTotal -= amount;
+        credit(s, LibVaipakam.RewardCustodyRow.LiveFresh, amount, 1);
+        emit CustodyEraDrawn(era, dayId, amount);
+    }
+
+    /// @notice Hold `amount` of era `era`'s room for a staging record; released by
+    ///         the record's resolve (consumed) or unwind (restored).
+    function holdCustodyEra(LibVaipakam.Storage storage s, uint64 era, uint256 amount) internal {
+        if (amount == 0) return;
+        uint256 room = custodyEraRoom(s, era);
+        if (amount > room) revert IVaipakamErrors.CustodyEraRoomShort(era, amount, room);
+        uint256 held = s.custodyEras[era].stagedFresh + amount;
+        s.custodyEras[era].stagedFresh = held;
+        emit CustodyEraHeld(era, amount, held);
+    }
+
+    function releaseCustodyEraHold(LibVaipakam.Storage storage s, uint64 era, uint256 amount) internal {
+        if (amount == 0) return;
+        uint256 held = s.custodyEras[era].stagedFresh - amount;
+        s.custodyEras[era].stagedFresh = held;
+        emit CustodyEraHoldReleased(era, amount, held);
+    }
+
+    // ── Slice 4 PR C-3 — the era a packet belongs to ──
+
+    /// @notice Stamp packet `h` with the era it belongs to, when its ingress
+    ///         names one other than the live era (#1566 PR C revision): a rooted
+    ///         delivery's dispatch era, an older-wire delivery's earliest listed
+    ///         day's era, a compensation's day's era. Every exit that credits the
+    ///         packet's fresh outside a draw routes by it ({LibRewardCustody}
+    ///         era routing, hosted on {RewardEraFacet}).
+    function stampPacketEra(LibVaipakam.Storage storage s, bytes32 h, uint64 era) internal {
+        LibVaipakam.IngressPacket storage p = s.ingressPackets[h];
+        if (p.custodyEra == era) return;
+        p.custodyEra = era;
+        emit IngressPacketEraStamped(h, era);
+    }
+
+    /// @notice The earliest day a list names (the list is bounded by the fan-out cap).
+    function earliestListedDay(uint256[] calldata dayIds) internal pure returns (uint256 d) {
+        uint256 n = dayIds.length;
+        d = type(uint256).max;
+        for (uint256 i; i < n; ) {
+            if (dayIds[i] < d) d = dayIds[i];
+            unchecked { ++i; }
+        }
+    }
+
+    // ── Slice 4 PR C-4 — the parked-message lane ──
+
+    /// @notice Park an era-less broadcast the rotation gate refused: a record
+    ///         with a disposition in place of a transport-side revert, counted
+    ///         against the custody era live at receipt.
+    function parkBroadcast(LibVaipakam.Storage storage s, uint8 kind, uint256 dayId, bytes32 digest)
+        internal
+        returns (uint256 id)
+    {
+        id = ++s.parkedBroadcastCount;
+        uint64 era = s.custodyEraCurrent;
+        LibVaipakam.ParkedBroadcast storage pb = s.parkedBroadcasts[id];
+        pb.kind = kind;
+        pb.receivedAt = uint64(block.timestamp);
+        pb.custodyEraAtReceipt = era;
+        pb.dayId = dayId;
+        pb.digest = digest;
+        pb.quarantineOnly = era != 0;
+        ++s.custodyEraParkedOpen[era];
+        emit BroadcastParked(id, kind, dayId, era, pb.quarantineOnly);
+    }
+
+    /// @notice The retry guard: the entry exists, is parked, is the broadcast
+    ///         re-supplied, and is not quarantine-only.
+    function requireParkedRetryable(LibVaipakam.Storage storage s, uint256 id, bytes32 digest) internal view {
+        LibVaipakam.ParkedBroadcast storage pb = s.parkedBroadcasts[id];
+        if (pb.receivedAt == 0) revert IVaipakamErrors.ParkedBroadcastUnknown(id);
+        if (pb.status != 0) revert IVaipakamErrors.ParkedBroadcastNotParked(id, pb.status);
+        if (pb.digest != digest) revert IVaipakamErrors.ParkedBroadcastDigestMismatch(id);
+        if (pb.quarantineOnly) revert IVaipakamErrors.ParkedBroadcastQuarantineOnly(id);
+    }
+
+    /// @notice A retry passed the gate: the entry is applied and leaves its era's open count.
+    function parkedBroadcastApplied(LibVaipakam.Storage storage s, uint256 id) internal {
+        LibVaipakam.ParkedBroadcast storage pb = s.parkedBroadcasts[id];
+        pb.status = 2;
+        --s.custodyEraParkedOpen[pb.custodyEraAtReceipt];
+        emit ParkedBroadcastApplied(id);
+    }
+
+    /// @notice The operator's recorded disposition of a parked entry the gate refuses.
+    function tombstoneParkedBroadcast(LibVaipakam.Storage storage s, uint256 id, bytes32 reason) internal {
+        LibVaipakam.ParkedBroadcast storage pb = s.parkedBroadcasts[id];
+        if (pb.receivedAt == 0) revert IVaipakamErrors.ParkedBroadcastUnknown(id);
+        if (pb.status != 0) revert IVaipakamErrors.ParkedBroadcastNotParked(id, pb.status);
+        pb.status = 1;
+        --s.custodyEraParkedOpen[pb.custodyEraAtReceipt];
+        emit ParkedBroadcastTombstoned(id, reason);
+    }
+
+    /// @notice PR C-3 — whether every listed day is live in the current era. The
+    ///         era of a day is {custodyEraOfDay}; the live era holds every day at
+    ///         or after its boundary, so each day is checked against that one
+    ///         figure. An empty list is live: undated value names no obligation
+    ///         of a retired era.
+    function listedDaysAreLive(LibVaipakam.Storage storage s, uint256[] calldata dayIds) internal view returns (bool) {
+        uint256 boundary = s.custodyEras[s.custodyEraCurrent].boundaryDay;
+        uint256 n = dayIds.length;
+        for (uint256 i; i < n; ) {
+            if (dayIds[i] < boundary) return false;
+            unchecked { ++i; }
+        }
+        return true;
     }
 
     /// @notice The §5c deficit split, in ONE place: of a fresh credit of
@@ -953,33 +1404,11 @@ library LibRewardCustody {
         toLive = amount - toRestitution;
     }
 
-    /**
-     * @notice Reverse a fresh credit (a provisional compensation being
-     *         demoted): the received side unwinds by `amount`, saturating
-     *         as it always has, and the holder RE-ATTRIBUTES what it still
-     *         holds of that credit — from the live-fresh row first, then
-     *         from the restitution row — into the `Unclassified` row, in
-     *         place, at most `amount`, less only where part of it was
-     *         already paid out.
-     * @dev    Both rows give back, because the demotion re-attributes the
-     *         WHOLE credited amount to the stranded-recovery reservation
-     *         (Codex #2186 r1 P1); the deficit the restitution portion
-     *         covered re-opens with the received unwind, exactly as it would
-     *         have without the split. Whatever was already paid out cannot
-     *         come back; the reservation is short by that much, as before.
-     *         After the unwind the live row again equals `received − paid`.
-     *         #1566 closure 2 cutover PR 1: the tokens MOVE IN-HOLDER
-     *         (design §5c, "classification is an IN-HOLDER reattribution")
-     *         and the R4 return then draws them from the row — an earlier
-     *         revision released them to the Diamond's balance, where the
-     *         quarantine reservation was still Diamond-side.
-     * @return moved What the holder re-attributed into `Unclassified`.
-     */
     /// @notice The live fresh row less what staging records have reserved of
     ///         it (3b-ii-A2, #2305) — THE figure every mover of the row reads:
-    ///         the claim gate's room ({LibVpfiRecycle.freshBackingRoom}), the
-    ///         compensation demotion and the fresh-to-recycled correction
-    ///         (Codex #2308 r5). Fresh is reserved by count, never held out of
+    ///         the claim gate's room ({LibVpfiRecycle.freshBackingRoom}) and the
+    ///         fresh-to-recycled correction (Codex #2308 r5). (A compensation
+    ///         demotion no longer reads it: it never touches live fresh, #2459 r5.) Fresh is reserved by count, never held out of
     ///         the row, so the row alone overstates what may leave it.
     function liveFreshUnreserved(LibVaipakam.Storage storage s) internal view returns (uint256) {
         uint256 row = s.rewardCustodyRows[LibVaipakam.RewardCustodyRow.LiveFresh];
@@ -987,7 +1416,7 @@ library LibRewardCustody {
         return row > reserved ? row - reserved : 0;
     }
 
-    /// @notice What a demotion or a correction may still UNCREDIT from the
+    /// @notice What a correction may still UNCREDIT from the
     ///         delivered fresh ledger without leaving a standing reservation
     ///         unable to charge it (3b-ii-A2, #2305; Codex #2308 r5). While a
     ///         staging reservation stands, the ledger may not fall below
@@ -1007,54 +1436,13 @@ library LibRewardCustody {
         return received > floor ? received - floor : 0;
     }
 
-    /// @notice Lower the delivered ledger's RECEIVED side for a demoted
-    ///         credit, never below what is paid plus what staging records
-    ///         have reserved: the ONE write by which a demotion lowers it, on
-    ///         every custody posture (Codex #2308 r5, r21). A resolving record
-    ///         is irrevocable and its last page charges the ledger by exactly
-    ///         its reservation, so the reservation is unavailable to the cut;
-    ///         the part of `amount` above the floor is cut, the rest is not.
-    ///         With no reservation standing this is the original saturating
-    ///         cut ({deliveredFreshUncreditable} keeps the deficit model).
-    /// @return cut What the received side fell by.
-    function uncreditDeliveredFresh(LibVaipakam.Storage storage s, uint256 amount) internal returns (uint256 cut) {
-        cut = deliveredFreshUncreditable(s);
-        if (cut > amount) cut = amount;
-        s.rewardBudgetArmedFreshReceived -= cut;
-    }
-
-    function uncreditFreshInHolder(
-        LibVaipakam.Storage storage s,
-        uint256 amount
-    ) internal returns (uint256 moved) {
-        if (amount == 0) return 0;
-        // What staging records have RESERVED of the live fresh — on the row
-        // and on the delivered ledger — is unavailable to this demotion
-        // (3b-ii-A2, #2305; Codex #2308 r5): a resolving record is irrevocable,
-        // and its last page charges the ledger and debits the row by exactly
-        // the reserved figures. Each bound reads the one figure its source
-        // keeps; the ledger's keeps the deficit model where no reservation
-        // stands ({deliveredFreshUncreditable}).
-        uncreditDeliveredFresh(s, amount);
-        uint256 fromLive = liveFreshUnreserved(s);
-        if (fromLive > amount) fromLive = amount;
-        move(s, LibVaipakam.RewardCustodyRow.LiveFresh, LibVaipakam.RewardCustodyRow.Unclassified, fromLive);
-        uint256 rest = amount - fromLive;
-        uint256 restitution = s.rewardCustodyRows[LibVaipakam.RewardCustodyRow.Restitution];
-        uint256 fromRestitution = rest < restitution ? rest : restitution;
-        move(
-            s, LibVaipakam.RewardCustodyRow.Restitution, LibVaipakam.RewardCustodyRow.Unclassified, fromRestitution
-        );
-        moved = fromLive + fromRestitution;
-    }
-
     // ─── The UNCLASSIFIED ingress attribution (#1566 closure 2 cutover PR 1) ──
     //
     // Design §5c: "An untyped arrival is PROTECTED AT INGRESS — actualReceived
     // routes into an UNCLASSIFIED holder attribution the moment it lands."
     // On an ACTIVATED deployment the three untyped arrivals PR B left
     // Diamond-side — the uncounted remainder of a delivery, a quarantined
-    // compensation (and a demotion's unwind), and a stranded return for a
+    // compensation (and a demotion's released provisional hold), and a stranded return for a
     // receipt that predates recovery attribution — are relocated (measured)
     // into the `Unclassified` row as they land, and every value-bearing
     // packet is recorded under its INGRESS STAMP so the cutover's second PR
@@ -1064,17 +1452,22 @@ library LibRewardCustody {
 
     uint8 internal constant PACKET_KIND_BUDGET = 1;
     uint8 internal constant PACKET_KIND_COMPENSATION = 2;
-    /// @dev The one era every reconciliation entry keys until slice 4 PR C's
-    ///      registry assigns real ids; the row hook records into it.
-    uint64 internal constant PRE_BACKFILL_ERA = 0;
+    /// @dev The era every reconciliation queue is keyed under: era 0, the
+    ///      pre-registry era. The queues stay keyed by it until they are
+    ///      era-keyed; the row hook records into it.
+    uint64 internal constant RECONCILIATION_QUEUE_ERA = 0;
 
-    /// @notice The one predicate for "this era exists" — the pre-backfill
-    ///         era alone until the transport epochs' registry replaces this
-    ///         body. A caller-supplied era that does not exist refuses here
+    /// @notice The one predicate for "this era exists" — the queue era alone
+    ///         while the reconciliation queues are keyed by it. A caller-supplied era that does not exist refuses here
     ///         rather than reading an empty era-keyed queue beside the
     ///         global custody figures as if it were one (Codex #2206 r9).
     function requireKnownEra(uint64 era) internal pure {
-        if (era != PRE_BACKFILL_ERA) revert IVaipakamErrors.ReconciliationUnknownEra(era);
+        // The reconciliation QUEUES are keyed by the queue era alone —
+        // every entry is pushed under it — so a later registry era, real as it
+        // is, has no queue to read: answering it would pair an always-empty
+        // era-keyed queue with the global rows (#1566 PR 1 review). The guard
+        // follows the registry once the queues are era-keyed.
+        if (era != RECONCILIATION_QUEUE_ERA) revert IVaipakamErrors.ReconciliationUnknownEra(era);
     }
     uint8 internal constant PACKET_KIND_STRANDED_RETURN = 3;
     uint8 internal constant PACKET_KIND_CEREMONY_INFLOW = 4;
@@ -1119,6 +1512,18 @@ library LibRewardCustody {
     ///         was parked under the batch's key, still bound by its membership.
     /// @custom:event-category state-change/reward-custody
     event TransportRemainderParked(bytes32 indexed batchId, uint256 amount, bytes32 dayListHash);
+    /// @notice A park page checked `checkedDays` of the batch's `dayCount` listed days proven closed (3b-ii-B).
+    /// @custom:event-category state-change/reward-transport
+    event TransportParkPageChecked(bytes32 indexed batchId, uint32 checkedDays, uint32 dayCount);
+    /// @notice 3d-1 — a d6 delivery committed to its day list by a Merkle root over `chunkCount` indexed
+    ///         chunks of `dayCount` days, stamped with the era it was dispatched in.
+    /// @custom:event-category state-change/reward-custody
+    event IngressPacketDayListRooted(
+        bytes32 indexed packetHash, bytes32 dayListRoot, uint256 dayCount, uint256 chunkCount, uint64 intendedEra
+    );
+    /// @notice 3d-1 — one proven chunk of a rooted batch's membership was indexed.
+    /// @custom:event-category state-change/reward-custody
+    event TransportBatchChunkIndexed(bytes32 indexed batchId, uint256 chunkIndex, uint32 indexedDays, uint32 dayCount);
     /// @notice #1566 transport epochs PR 3b — a batch's parked remainder was
     ///         acknowledged, which is what makes its packet classifiable.
     /// @custom:event-category state-change/reward-custody
@@ -1155,6 +1560,18 @@ library LibRewardCustody {
     ///         logged for every standing record of that day to re-offer.
     /// @custom:event-category state-change/reward-staging
     event TransportDayRestored(uint256 indexed dayId, bytes32 indexed batchId);
+    /// @notice A non-settlement release by the record under `releasedBy` opened
+    ///         (or re-opened) `batchId`'s priority window, closing at `closesAt`
+    ///         (A2-ii, {LibVaipakam.TransportBatchWindow}).
+    event TransportBatchWindowOpened(bytes32 indexed batchId, bytes32 indexed releasedBy, uint64 closesAt);
+    /// @notice The record under `key` found `batchId` contested — fully held by
+    ///         other records while the record stayed short — and may register
+    ///         for the batch's next priority window (A2-ii).
+    event TransportBatchContested(bytes32 indexed batchId, bytes32 indexed key);
+    /// @notice The record under `key` took its one priority reservation on
+    ///         `batchId` (A2-ii): ordinary staging of the batch resumes once the
+    ///         record no longer holds it.
+    event TransportBatchPriorityStaged(bytes32 indexed batchId, bytes32 indexed key);
     /// @notice A packet's split was attested and a classification it already
     ///         carried exceeds a component's recorded cap by these amounts
     ///         (Codex #2276 r15 P1) — a divergence recorded for the
@@ -1383,6 +1800,40 @@ library LibRewardCustody {
         emit IngressPacketDayListRecorded(h, commitment, dayIds.length);
     }
 
+    /// @notice 3d-1 — stamp a d6 packet's ROOTED commitment: the day-list root,
+    ///         the extent it committed to and the era it was dispatched in.
+    /// @dev    The extent is validated here, once, so every later chunk call
+    ///         can trust it: a chunk count that is not the fixed-size chunking
+    ///         of the element count would let a chunk be proven at a length the
+    ///         sender never committed; more chunks than the index can mark would
+    ///         leave the membership unable to complete. A packet is committed by
+    ///         a hash OR a root, never both (`IngressPacketDayListStamped`).
+    function stampPacketDayListRoot(
+        LibVaipakam.Storage storage s,
+        bytes32 h,
+        bytes32 root,
+        uint256 elementCount,
+        uint256 chunkCount,
+        uint64 intendedEra
+    ) internal {
+        LibVaipakam.IngressPacket storage p = s.ingressPackets[h];
+        if (p.arrivedAt == 0) revert IVaipakamErrors.IngressPacketUnknown(h);
+        if (p.dayListHash != bytes32(0) || p.dayListRoot != bytes32(0)) {
+            revert IVaipakamErrors.IngressPacketDayListStamped(h);
+        }
+        if (
+            root == bytes32(0) || elementCount == 0 || chunkCount > RemitWire.D6_MAX_CHUNKS
+                || chunkCount != RemitWire.d6ChunkCount(elementCount)
+        ) {
+            revert IVaipakamErrors.TransportRootExtentInvalid(h, elementCount, chunkCount);
+        }
+        p.dayListRoot = root;
+        p.dayCount = elementCount;
+        p.chunkCount = SafeCast.toUint32(chunkCount);
+        p.intendedEra = intendedEra;
+        emit IngressPacketDayListRooted(h, root, elementCount, chunkCount, intendedEra);
+    }
+
     // ─── The transport epochs (#1566 PR 3b) ──────────────────────────────────
 
     /// @notice The largest `dayIds` fan-out the canonical chain will build a
@@ -1502,10 +1953,11 @@ library LibRewardCustody {
     ///         The admission is COMPACT for every delivery, whatever its
     ///         list's length (Codex #2232 r2): it writes this batch's row and
     ///         nothing per-day. The receiver's callback runs inside
-    ///         `LibRewardRemitDispatch.REWARD_BUDGET_DEST_GAS_LIMIT` — 300,000
-    ///         — and 32 first-time per-day pushes cost two new storage slots
-    ///         each, which exceeds that budget on its own before the packet
-    ///         record and the custody relocation are counted. Indexing short
+    ///         `LibRewardRemitDispatch.REWARD_BUDGET_DEST_GAS_LIMIT` — a FIXED
+    ///         figure, derived from this compact admission — and a list's
+    ///         first-time per-day pushes cost two new storage slots each,
+    ///         growing with its length without bound (32 of them alone were
+    ///         over the 300,000 the budget stood at then). Indexing short
     ///         lists here would therefore have failed to deliver precisely the
     ///         in-flight old-wire messages this path exists to preserve.
     ///
@@ -1556,6 +2008,24 @@ library LibRewardCustody {
         // holds no epoch value for the gate to protect.
         if (untyped == 0) return bytes32(0);
         batchId = _openTransportBatch(s, p, h, dayIds.length, untyped);
+    }
+
+    /// @notice 3d-1 — open the transport epoch of a ROOTED (d6) delivery,
+    ///         holding the WHOLE delivery: both components, typed by the caps
+    ///         the wire attested, drawn by the days the root commits to.
+    /// @dev    Same opener as the untyped admission ({_openTransportBatch}), so
+    ///         every later rule — draws, staging, gates, park, release — sees
+    ///         one kind of epoch. The membership count is the stamped extent;
+    ///         the index arrives chunk by chunk.
+    function admitRootedTransportBatch(
+        LibVaipakam.Storage storage s,
+        bytes32 h,
+        uint256 amount
+    ) internal returns (bytes32 batchId) {
+        LibVaipakam.IngressPacket storage p = s.ingressPackets[h];
+        if (p.arrivedAt == 0) revert IVaipakamErrors.IngressPacketUnknown(h);
+        if (p.dayListRoot == bytes32(0)) revert IVaipakamErrors.TransportBatchNotRooted(h);
+        batchId = _openTransportBatch(s, p, h, p.dayCount, amount);
     }
 
     /// @notice #1566 transport epochs PR 3b (Codex #2232 r3) — admit the
@@ -1777,6 +2247,7 @@ library LibRewardCustody {
         // oversize batch fully indexed.
         b.dayCount = SafeCast.toUint32(count);
         p.batchId = batchId;
+        ++s.transportBatchesAdmitted; // the legacy slice's global short-circuit (A2-ii (c))
         emit TransportBatchAdmitted(batchId, h, untyped, count);
     }
 
@@ -1834,6 +2305,7 @@ library LibRewardCustody {
         if (!transportBatchExists(b)) revert IVaipakamErrors.TransportBatchUnknown(batchId);
         uint32 done = b.indexedDays;
         if (done >= b.dayCount) revert IVaipakamErrors.TransportBatchFullyIndexed(batchId);
+        if (s.ingressPackets[batchId].dayListRoot != bytes32(0)) revert IVaipakamErrors.TransportBatchRooted(batchId);
         bytes32 committed = s.ingressPackets[batchId].dayListHash;
         bytes32 supplied = keccak256(abi.encode(dayIds));
         if (supplied != committed) {
@@ -1873,15 +2345,87 @@ library LibRewardCustody {
         h.hinted = hints.length != 0;
         h.lateHinted = lateHints.length != 0;
         for (uint256 i = done; i < end; ++i) {
-            uint256 d = dayIds[i];
-            s.transportBatchesByDay[d].push(batchId);
             if (h.hinted) h.prev = hints[i];
             if (h.lateHinted) h.latePrev = lateHints[i];
-            _linkIntoDay(s, d, batchId, arrived, h);
+            _indexBatchDay(s, dayIds[i], batchId, arrived, h);
         }
         indexedDays = uint32(end);
         b.indexedDays = indexedDays;
         emit TransportBatchPageIndexed(batchId, indexedDays, b.dayCount);
+    }
+
+    /// @dev The ONE writer of a batch's per-day membership — the inverse index,
+    ///      the kept list the gates read (3c-1) and the day's arrival-ordered
+    ///      link — shared by the flat-hash page and the rooted chunk (3d-1), so
+    ///      the two commitments index a day identically.
+    function _indexBatchDay(
+        LibVaipakam.Storage storage s,
+        uint256 d,
+        bytes32 batchId,
+        uint64 arrived,
+        LinkHint memory h
+    ) private {
+        s.transportBatchesByDay[d].push(batchId);
+        s.transportBatchDays[batchId].push(d);
+        _linkIntoDay(s, d, batchId, arrived, h);
+    }
+
+    /// @notice 3d-1 — index ONE proven chunk of a rooted (d6) batch's membership.
+    /// @dev    Permissionless, in any chunk order: the authority is the root the
+    ///         delivery's own ingress stamped. The chunk is checked three ways
+    ///         before a word is written — its index is inside the committed
+    ///         extent and not yet marked, its length is the one the extent
+    ///         commits to for that index (so a short or padded chunk cannot be
+    ///         proven), and its indexed leaf verifies against the root under the
+    ///         supplied proof. Each chunk's days then go through the same
+    ///         per-day writer as a flat-hash page. `indexedDays` reaches
+    ///         `dayCount` exactly when every chunk has landed, and that figure is
+    ///         what every allocation and the park already gate on — so a rooted
+    ///         epoch is spendable only when its membership is whole, by the
+    ///         existing rule rather than a new one.
+    ///
+    ///         The kept list ({LibVaipakam.Storage.transportBatchDays}) is in
+    ///         INDEXING order, which need not be list order when chunks land out
+    ///         of turn; its readers treat it as the membership SET, and none
+    ///         depends on its order.
+    function materializeTransportBatchChunk(
+        LibVaipakam.Storage storage s,
+        bytes32 batchId,
+        uint256 chunkIndex,
+        uint256[] calldata dayIds,
+        bytes32[] calldata proof,
+        bytes32[] memory hints,
+        bytes32[] memory lateHints
+    ) internal returns (uint32 indexedDays) {
+        LibVaipakam.TransportBatch storage b = s.transportBatches[batchId];
+        if (!transportBatchExists(b)) revert IVaipakamErrors.TransportBatchUnknown(batchId);
+        LibVaipakam.IngressPacket storage p = s.ingressPackets[batchId];
+        if (p.dayListRoot == bytes32(0)) revert IVaipakamErrors.TransportBatchNotRooted(batchId);
+        uint256 chunks = p.chunkCount;
+        if (chunkIndex >= chunks) revert IVaipakamErrors.TransportChunkOutOfExtent(batchId, chunkIndex, chunks);
+        uint256 bit = 1 << chunkIndex;
+        if ((p.chunksIndexed & bit) != 0) revert IVaipakamErrors.TransportChunkAlreadyIndexed(batchId, chunkIndex);
+        uint256 expected = RemitWire.d6ChunkLength(p.dayCount, chunkIndex);
+        if (dayIds.length != expected) {
+            revert IVaipakamErrors.TransportChunkLengthMismatch(batchId, chunkIndex, expected, dayIds.length);
+        }
+        bytes32 leaf = RemitWire.d6Leaf(chunkIndex, dayIds);
+        if (!MerkleProof.verifyCalldata(proof, p.dayListRoot, leaf)) {
+            revert IVaipakamErrors.TransportChunkProofInvalid(batchId, chunkIndex, leaf);
+        }
+        uint64 arrived = p.arrivedAt;
+        LinkHint memory h;
+        h.hinted = hints.length != 0;
+        h.lateHinted = lateHints.length != 0;
+        for (uint256 i; i < expected; ++i) {
+            if (h.hinted) h.prev = hints[i];
+            if (h.lateHinted) h.latePrev = lateHints[i];
+            _indexBatchDay(s, dayIds[i], batchId, arrived, h);
+        }
+        p.chunksIndexed |= bit;
+        indexedDays = b.indexedDays + uint32(expected);
+        b.indexedDays = indexedDays;
+        emit TransportBatchChunkIndexed(batchId, chunkIndex, indexedDays, b.dayCount);
     }
 
     /// @dev Where a day's scan starts: the first node AFTER its cursor in the
@@ -2136,6 +2680,59 @@ library LibRewardCustody {
     ///         packet and {authenticatedFresh} derives the classification's
     ///         bound from the packet's immutable attested caps NET of what the
     ///         batch's own transport legs already spent.
+    /// @notice 3b-ii-B — the RELEASE GATE: one page of the park. The caller re-supplies
+    ///         the batch's whole day list, checked against the 3a commitment exactly
+    ///         as the index was; from the batch's park cursor, up to
+    ///         `TRANSPORT_INDEX_PAGE` listed days must each be proven closed (every
+    ///         obligation covering them terminated — {LibRewardClosure}), or the page
+    ///         refuses naming the first open day and applies nothing. When the cursor
+    ///         reaches the list's end the remainder parks through
+    ///         {parkTransportRemainder}, which still refuses a batch with a standing
+    ///         staging reference or one not fully indexed. Permissionless: what makes
+    ///         the release valid is STATE, not the caller.
+    function parkTransportRemainderPage(
+        LibVaipakam.Storage storage s,
+        bytes32 batchId,
+        uint256[] calldata dayIds
+    ) internal returns (uint32 checkedDays, bool parked, uint256 amount) {
+        LibVaipakam.TransportBatch storage b = s.transportBatches[batchId];
+        if (!transportBatchExists(b)) revert IVaipakamErrors.TransportBatchUnknown(batchId);
+        if (b.indexedDays < b.dayCount) {
+            revert IVaipakamErrors.TransportBatchNotFullyIndexed(batchId, b.indexedDays, b.dayCount);
+        }
+        // 3d-1 — a ROOTED batch's list is the one its proven chunks wrote
+        // (`transportBatchDays`, whole once fully indexed, which the guard
+        // above holds): it is read from storage and no list is supplied. A
+        // flat-hash batch still proves the list it supplies by its commitment.
+        bool rooted = s.ingressPackets[batchId].dayListRoot != bytes32(0);
+        uint256 count;
+        if (rooted) {
+            if (dayIds.length != 0) {
+                revert IVaipakamErrors.TransportDayListMismatch(batchId, bytes32(0), keccak256(abi.encode(dayIds)));
+            }
+            count = s.transportBatchDays[batchId].length;
+        } else {
+            bytes32 committed = s.ingressPackets[batchId].dayListHash;
+            bytes32 supplied = keccak256(abi.encode(dayIds));
+            if (supplied != committed) revert IVaipakamErrors.TransportDayListMismatch(batchId, committed, supplied);
+            count = dayIds.length;
+        }
+        uint256 done = s.transportParkCursor[batchId];
+        uint256 end = done + TRANSPORT_INDEX_PAGE;
+        if (end > count) end = count;
+        for (uint256 i = done; i < end; ) {
+            uint256 d = rooted ? s.transportBatchDays[batchId][i] : dayIds[i];
+            if (!s.dayObligationsClosed[d]) revert IVaipakamErrors.TransportDayNotClosed(batchId, d);
+            unchecked { ++i; }
+        }
+        checkedDays = uint32(end);
+        s.transportParkCursor[batchId] = checkedDays;
+        emit TransportParkPageChecked(batchId, checkedDays, b.dayCount);
+        if (end < count) return (checkedDays, false, 0);
+        amount = parkTransportRemainder(s, batchId);
+        parked = true;
+    }
+
     function acknowledgeTransportRemainder(
         LibVaipakam.Storage storage s,
         bytes32 batchId
@@ -2169,18 +2766,13 @@ library LibRewardCustody {
     ///         later disposition makes them differ the stricter one binds,
     ///         which is the conservative direction.
     ///
-    ///         IN 3b-i THE RELEASED BRANCH IS UNREACHABLE, and that is worth
-    ///         stating here rather than only at the door (#2258, owner
-    ///         decision 2026-09-20; Codex #2232 r10). Both of
-    ///         {RewardEpochFacet}'s release entries revert
-    ///         `TransportReleaseNotYetAvailable` for every caller, so no batch
-    ///         is ever `released` and every packet holding one is refused
-    ///         below by `TransportBatchNotReleased` — BEFORE the split is ever
-    ///         consulted. The honest description of this cut is therefore that
-    ///         an epoch-holding packet is WHOLLY unclassifiable, not that it
-    ///         "classifies recycled only": the fresh-versus-recycled question
-    ///         is never reached. Nothing leaves the holder; the value stays
-    ///         membership-bound until 3b-ii opens the door.
+    ///         A packet whose batch is not RELEASED — parked (every listed day
+    ///         proven closed, 3b-ii-B) and acknowledged — is refused below by
+    ///         `TransportBatchNotReleased` BEFORE the split is ever consulted:
+    ///         an epoch-holding packet is wholly unclassifiable until then, not
+    ///         "classifiable recycled only". Nothing leaves the holder; the value
+    ///         stays membership-bound. (3b-i shipped the release entries shut to
+    ///         every caller; 3b-ii-B opened them, #2258.)
     ///
     ///         A packet with NO batch passes untouched and is debited nothing:
     ///         the rule is about value held in a transport epoch. Which
@@ -2268,6 +2860,12 @@ library LibRewardCustody {
         ///      the live, fully indexed epochs it passed over UNTYPED, for the
         ///      record to remember and re-check.
         bytes32[] skipped;
+        /// @dev A2-ii — set by {planTransportDrawForRecord} only: the epochs it
+        ///      passed that are CONTESTED for this record — whole and typed,
+        ///      but with every unit held by other records' staging — for the
+        ///      record to register on when it ends its scan short.
+        bytes32[] contested;
+        uint256 contestedCount;
         /// @dev Each drawable epoch's effective balance (net of the overlay)
         ///      and the ROOM each of its packet's two attested component caps
         ///      leaves it (Codex #2276 r4 P1: a cap covers classification PLUS
@@ -2289,10 +2887,14 @@ library LibRewardCustody {
         ///      exact feasibility test for two legs sharing balances.
         uint256 ordinaryFresh;
         uint256 ordinaryRecycled;
+        /// @dev 3c-1 — the necessity tier's rooms (epochs with an unarrived listed
+        ///      day): served only for the shortfall the live sources leave.
+        uint256 necessityFresh;
+        uint256 necessityRecycled;
         /// @dev What the window held that the plan WITHHELD, by named reason
         ///      (Codex #2276 r26 P1, both):
         ///
-        ///      - `withheldShared` — epochs listing more than one day. A draw
+        ///      - `withheldContested` — epochs listing more than one day. A draw
         ///        on such an epoch is contested whenever another listed day
         ///        carries a known unmet obligation, and the spec refuses a
         ///        contested draw until the contested-allocation machinery
@@ -2316,7 +2918,7 @@ library LibRewardCustody {
         ///
         ///      A withheld epoch still occupies its window slot: the scan stays
         ///      bounded, and the day's cursor passes only exhausted epochs.
-        uint256 withheldShared;
+        uint256 withheldContested;
         uint256 withheldUnattested;
         /// @dev The window ended before the index did: unseen epochs may hold
         ///      coverage this plan could not see.
@@ -2339,29 +2941,18 @@ library LibRewardCustody {
         uint256 dayId;
         uint256 needFresh;
         uint256 needRecycled;
-        uint256 domainFresh;
-        uint256 domainRecycled;
         uint256 poolFresh;
         uint256 deliveredCap;
         uint256 bucket;
-        /// @dev The preview's simulation of draws already planned on earlier
-        ///      days of the same dry run, by leg (a leg counts against its
-        ///      cap's room), as a hash table over batch ids — length zero or
-        ///      a power of two, empty slots zero (Codex #2276 r12 P1) — holding
-        ///      only the entries THIS day's plan can look up (r13 P1); empty
-        ///      on the settle path.
-        bytes32[] ovIds;
-        uint256[] ovFresh;
-        uint256[] ovRecycled;
     }
 
     struct AllocResult {
         uint256 transportFresh;
         uint256 transportRecycled;
         bool capHit;
-        /// @dev The per-epoch legs the allocation would draw — what a dry run
-        ///      folds into its overlay; the settle wrapper re-derives the same
-        ///      legs from the same plan and split in the same transaction.
+        /// @dev The per-epoch legs the allocation would draw; the settle
+        ///      wrapper re-derives the same legs from the same plan and split
+        ///      in the same transaction.
         bytes32[] planIds;
         uint256[] planFresh;
         uint256[] planRecycled;
@@ -2381,7 +2972,7 @@ library LibRewardCustody {
     ///         whatever order (r5 P1: a caller-ordered prefix would let a
     ///         materializer decide what a bounded window sees). Within the
     ///         window every planned epoch lists this one day (a shared epoch is
-    ///         withheld — see `withheldShared`), so they are spent OLDEST
+    ///         withheld — see `withheldContested`), so they are spent OLDEST
     ///         ARRIVAL FIRST, the batch id breaking ties. The window is at most
     ///         `TRANSPORT_DRAW_SCAN_CAP` entries, so the sort is bounded, and
     ///         everything beyond it is newer than everything in it.
@@ -2399,41 +2990,22 @@ library LibRewardCustody {
     ///         classified and what its own draws already took — and
     ///         {splitTransportTakes} never assigns a leg past it. An
     ///         epoch whose packet is unattested, or that lists more than one
-    ///         day, is WITHHELD and counted by reason (see `withheldShared`).
+    ///         day, is WITHHELD and counted by reason (see `withheldContested`).
     ///
-    ///         `ovIds` / `ovFresh` / `ovRecycled` is the preview's overlay
-    ///         (Codex #2276 r1 P2, typed since r4): each batch's balance and
-    ///         rooms are read net of what the overlay records for it, so a
-    ///         batch listing two days is not counted for both in one dry run.
-    ///         Empty on the settle path, where the storage the draw just
-    ///         wrote is the truth.
+    ///         Storage is the ONLY input (A2-iii): the preview that once
+    ///         mirrored planned draws through an overlay is gone — a preview
+    ///         now IS the settlement, run in a frame that reverts
+    ///         ({RewardClaimFacet.simulateClaimInteractionRewards}) — so the
+    ///         plan reads what the draws wrote and nothing simulated.
     function planTransportDraw(
         LibVaipakam.Storage storage s,
-        uint256 dayId,
-        bytes32[] memory ovIds,
-        uint256[] memory ovFresh,
-        uint256[] memory ovRecycled
+        uint256 dayId
     ) internal view returns (TransportDrawPlan memory plan) {
         // The window's source is the day's ORDER from its cursor: the list,
         // which holds every day whole (Codex #2296 items 2 and 4). One scan,
         // one source, and so no case in which a window could be a prefix of
         // one order and not of another.
         bytes32 node = _scanStart(s, dayId);
-        // A day this dry run has already settled had its cursor advanced by
-        // the live draw's prune before the next side read it (Codex #2276 r9
-        // P2): mirror that here — pass the leading epochs exhausted net of
-        // the overlay, at most one window of them, exactly the prune's bound
-        // — so the preview's later side reads what the claim's would.
-        {
-            (uint256 settled, ) = overlayOf(ovIds, ovFresh, ovRecycled, transportDaySettledKey(dayId));
-            uint256 passed;
-            while (settled != 0 && node != bytes32(0) && passed < TRANSPORT_DRAW_SCAN_CAP) {
-                (uint256 f, uint256 r) = overlayOf(ovIds, ovFresh, ovRecycled, node);
-                if (!_exhaustedNet(s, node, f, r)) break;
-                node = s.transportDayNext[dayId][node];
-                unchecked { ++passed; }
-            }
-        }
         bytes32[] memory ids = new bytes32[](TRANSPORT_DRAW_SCAN_CAP);
         uint256[] memory bals = new uint256[](TRANSPORT_DRAW_SCAN_CAP);
         uint256[] memory fRoom = new uint256[](TRANSPORT_DRAW_SCAN_CAP);
@@ -2445,23 +3017,27 @@ library LibRewardCustody {
             LibVaipakam.TransportBatch storage b = s.transportBatches[node];
             uint256 bal = b.balance;
             if (bal != 0 && b.indexedDays == b.dayCount) {
-                (uint256 ovF, uint256 ovR) = overlayOf(ovIds, ovFresh, ovRecycled, node);
-                bal = bal > ovF + ovR ? bal - (ovF + ovR) : 0;
-                if (bal == 0) {
-                    // Exhausted net of the overlay: nothing to plan or withhold.
-                } else if (b.dayCount > 1 || !s.ingressPackets[node].attested) {
-                    // Each reason counted on its own (Codex #2276 r27 P2): an
-                    // unattested shared epoch is withheld for BOTH, and a
+                uint8 gates = batchGates(s, node, b);
+                if ((gates & (GATE_UNATTESTED | GATE_CONTESTED)) != 0) {
+                    // Each reason counted on its own (Codex #2276 r27 P2): a
                     // reader asking whether an attestation is pending must not
-                    // be told no because the epoch is also shared.
-                    if (b.dayCount > 1) plan.withheldShared += bal;
-                    if (!s.ingressPackets[node].attested) plan.withheldUnattested += bal;
+                    // be told no because the epoch is also contested.
+                    if ((gates & GATE_UNATTESTED) != 0) plan.withheldUnattested += bal;
+                    if ((gates & GATE_CONTESTED) != 0) plan.withheldContested += bal;
                 } else {
-                    (uint256 fr, uint256 rr) = _capRooms(s, node, b, bal, ovF, ovR);
-                    // Arrival order: every planned epoch lists this one day.
+                    (uint256 fr, uint256 rr) = _capRooms(s, node, b, bal);
+                    // Arrival order within a tier; the necessity tier sorts after
+                    // every ordinary epoch (3c-1), so the prefix-first allocator
+                    // draws it only for what the ordinary tier cannot cover.
                     uint256 key = uint256(s.ingressPackets[node].arrivedAt);
-                    plan.ordinaryFresh += fr < bal ? fr : bal;
-                    plan.ordinaryRecycled += rr < bal ? rr : bal;
+                    if ((gates & GATE_NECESSITY) != 0) {
+                        key |= NECESSITY_TIER_BIT;
+                        plan.necessityFresh += fr < bal ? fr : bal;
+                        plan.necessityRecycled += rr < bal ? rr : bal;
+                    } else {
+                        plan.ordinaryFresh += fr < bal ? fr : bal;
+                        plan.ordinaryRecycled += rr < bal ? rr : bal;
+                    }
                     // The batch id is the final tie-break, so the plan's
                     // order is a function of the SET in the window and not
                     // of the order it was scanned in (Codex #2276 r9 P1) —
@@ -2507,9 +3083,8 @@ library LibRewardCustody {
 
     /// @dev An ATTESTED epoch's two leg rooms (only an attested epoch is
     ///      planned — Codex #2276 r26 P1): each component's RECORDED cap net of
-    ///      the packet's classification of that component, the epoch's own
-    ///      draws of it, and the overlay's planned draws of it — never above
-    ///      the balance. The two attested figures are floored independently
+    ///      the packet's classification of that component and the epoch's own
+    ///      draws of it — never above the balance. The two attested figures are floored independently
     ///      and can sum to one unit less than what landed; that unit fits
     ///      neither room and is never drawn once the split is known — it stays
     ///      in the balance for the close-out's disposition path (Codex #2276
@@ -2521,17 +3096,15 @@ library LibRewardCustody {
         LibVaipakam.Storage storage s,
         bytes32 id,
         LibVaipakam.TransportBatch storage b,
-        uint256 bal,
-        uint256 ovF,
-        uint256 ovR
+        uint256 bal
     ) private view returns (uint256 fr, uint256 rr) {
         (uint256 capF, uint256 capR) = _netCaps(s.ingressPackets[id]);
         // Net of what standing records have STAGED of each component as well
         // as what draws consumed (3b-ii-A2, #2305; Codex #2308 r1): a staged
         // leg is a claim on that component's cap, and two records reading a
         // clear counter against one cap could otherwise both take it.
-        uint256 usedF = b.consumedFresh + b.stagedFresh + ovF;
-        uint256 usedR = b.consumedRecycled + b.stagedRecycled + ovR;
+        uint256 usedF = b.consumedFresh + b.stagedFresh;
+        uint256 usedR = b.consumedRecycled + b.stagedRecycled;
         fr = capF > usedF ? capF - usedF : 0;
         rr = capR > usedR ? capR - usedR : 0;
         if (fr > bal) fr = bal;
@@ -2668,32 +3241,6 @@ library LibRewardCustody {
         if (c < m) m = c;
     }
 
-    /// @dev What the overlay records as already drawn from `id`, by leg. The
-    ///      overlay is an open-addressing HASH TABLE over batch ids (Codex
-    ///      #2276 r12 P1): its length is zero or a power of two, an empty
-    ///      slot holds zero, and a key is probed linearly from
-    ///      `uint256(key) & (length - 1)`; the dry run keeps it under half
-    ///      full, so a probe is a few reads. A chunk of thirty days each
-    ///      drawing a window of epochs was a linear scan of every prior draw
-    ///      per plan entry — quadratic in the chunk — and is now a probe.
-    function overlayOf(
-        bytes32[] memory ovIds,
-        uint256[] memory ovFresh,
-        uint256[] memory ovRecycled,
-        bytes32 id
-    ) internal pure returns (uint256 f, uint256 r) {
-        uint256 n = ovIds.length;
-        if (n == 0) return (0, 0);
-        uint256 mask = n - 1;
-        uint256 i = uint256(id) & mask;
-        while (true) {
-            bytes32 k = ovIds[i];
-            if (k == id) return (ovFresh[i], ovRecycled[i]);
-            if (k == bytes32(0)) return (0, 0);
-            i = (i + 1) & mask;
-        }
-    }
-
     /// @notice What `dayId`'s epochs can fund right now, within one scan
     ///         window, whether the window ended before the index did, and what
     ///         it withheld by reason.
@@ -2731,7 +3278,12 @@ library LibRewardCustody {
         uint256 members = len > passed ? len - passed : 0;
         uint256 lateNow = s.transportDayLateCount[r.day];
         members += lateNow > r.lateWorkBase ? lateNow - r.lateWorkBase : 0;
-        uint256 pages = scanPagesOf(members);
+        // A day no epoch lists has nothing to scan (#1566 PR 1 review): its
+        // record opened scan-complete and needs no preparation call, so it
+        // adds no page — the at-least-one floor is for a record that must
+        // be called. The list only grows, so an empty one was never scanned;
+        // an epoch listing the day later is forced work, counted below.
+        uint256 pages = len == 0 ? 0 : scanPagesOf(members);
         // …plus every page FORCED on the record (Codex #2308 r5, r10, r15,
         // r17, r22): the ones already taken, cumulatively; the restart a
         // generation move will cost, by its chain's pages; and the call that
@@ -2745,9 +3297,47 @@ library LibRewardCustody {
         uint256 forcedItems = forcedScanItems(s, r);
         if (forcedItems != 0) pages += scanPagesOf(forcedItems);
         uint64 next = r.openedAt + uint64(pages) * STAGING_RETRY_CADENCE + STAGING_GRACE;
+        if (r.domainKey != bytes32(0)) {
+            // A domain record's lease is the DOMAIN's (A2-ii): its own figure
+            // is kept on the record only as the ledger of what it has added,
+            // and every upward move adds the pages to the domain's accumulator;
+            // the domain's deadline is its opening plus its chunks' cadences
+            // plus every record's pages plus one grace, upward-only while
+            // unexpired. No record of a domain expires before the domain.
+            if (next > current) {
+                uint256 contrib = uint256(next) - r.openedAt - STAGING_GRACE;
+                uint256 prev = current == 0 ? 0 : uint256(current) - r.openedAt - STAGING_GRACE;
+                r.deadline = next;
+                LibVaipakam.StagingDomain storage dom = s.stagingDomains[r.domainKey];
+                dom.leaseAccum += contrib - prev;
+                domainDeadlineRefresh(s, r.domainKey, dom);
+            }
+            return;
+        }
         if (next > current) {
             r.deadline = next;
             emit StagingDeadlineSet(key, next);
+        }
+    }
+
+    /// @notice The domain's deadline (A2-ii): opening + one cadence per chunk
+    ///         of its extent + every day record's own lease pages (accumulated
+    ///         as they grow) + one grace; moves only upward and only while it
+    ///         has not passed (addendum 7).
+    event StagingDomainDeadlineSet(bytes32 indexed domainKey, uint64 deadline);
+
+    function domainDeadlineRefresh(
+        LibVaipakam.Storage storage s,
+        bytes32 dk,
+        LibVaipakam.StagingDomain storage dom
+    ) internal {
+        s; // the storage pointer is the domain's; kept for symmetry with the record refresh
+        uint64 current = dom.deadline;
+        if (current != 0 && block.timestamp >= current) return; // expired: terminal
+        uint64 next = dom.openedAt + uint64(dom.chunks) * STAGING_RETRY_CADENCE + uint64(dom.leaseAccum) + STAGING_GRACE;
+        if (next > current) {
+            dom.deadline = next;
+            emit StagingDomainDeadlineSet(dk, next);
         }
     }
 
@@ -2783,8 +3373,36 @@ library LibRewardCustody {
         if (anySkippedNowStageable(s, r)) ++items;
     }
 
+    /// @notice The claimant-side DOMAIN key (A2-ii): one domain per claimant and side.
+    function domainKey(address user, LibVaipakam.RewardSide side) internal pure returns (bytes32) {
+        return keccak256(abi.encode(user, side));
+    }
+
+    /// @notice The LEGACY-SLICE domain key (A2-ii (c)): one per entry — the
+    ///         slice's identity is the entry.
+    function legacyDomainKey(uint256 entryId) internal pure returns (bytes32) {
+        return keccak256(abi.encode("legacy-slice", entryId));
+    }
+
     function stagingKey(address user, LibVaipakam.RewardSide side, uint256 day) internal pure returns (bytes32) {
         return keccak256(abi.encode(user, side, day));
+    }
+
+    /// @notice A LEGACY-SLICE day record's key (A2-ii (c); #1566 PR 1 review): one
+    ///         per SLICE and day, derived from the slice's domain key — never the
+    ///         shared (user, side, day) key, under which two slices of one claimant
+    ///         and side shared one record and the second consumed the first's
+    ///         coverage (leaving the excess in `Unclassified` with no batch behind it).
+    function legacyRecordKey(bytes32 legacyDomain, uint256 day) internal pure returns (bytes32) {
+        return keccak256(abi.encode(legacyDomain, day));
+    }
+
+    /// @notice The key a record lives under, from its own fields — the ONE
+    ///         derivation every site that re-keys a record uses.
+    function recordKeyOf(LibVaipakam.StagingRecord storage r) internal view returns (bytes32) {
+        return r.op == LibVaipakam.StagingOp.LegacySlice
+            ? legacyRecordKey(r.domainKey, r.day)
+            : stagingKey(r.user, r.side, r.day);
     }
 
     function stagingCommitment(uint256[] memory entryIds, LibVaipakam.StagingOp op) internal pure returns (bytes32) {
@@ -2804,8 +3422,172 @@ library LibRewardCustody {
     ///      never pending either ({_pendingCandidate}), since nothing before
     ///      3c makes it stageable.
     function stageable(LibVaipakam.Storage storage s, bytes32 batchId) internal view returns (bool) {
-        LibVaipakam.TransportBatch storage b = s.transportBatches[batchId];
-        return s.ingressPackets[batchId].attested && b.indexedDays == b.dayCount && b.dayCount == 1;
+        return batchGates(s, batchId, s.transportBatches[batchId]) == 0;
+    }
+
+    // ── 3c-1 — the two allocation gates (#2318, the design text as written) ──
+    /// @dev The packet's split is not attested: a leg would be typed by caps not yet known.
+    uint8 internal constant GATE_UNATTESTED = 1;
+    /// @dev The batch's membership is not fully indexed.
+    uint8 internal constant GATE_UNINDEXED = 2;
+    /// @dev CONTESTED: another ARRIVED listed day carries an obligation not proven
+    ///      terminated (the per-day closure proof's stamp is the fact read), or the
+    ///      list is too wide or unknown to read on a hot path.
+    uint8 internal constant GATE_CONTESTED = 4;
+    /// @dev NECESSITY: a listed day whose broadcast has not arrived — the batch is
+    ///      drawn LAST, only for the shortfall the live sources leave.
+    uint8 internal constant GATE_NECESSITY = 8;
+    /// @dev The sort-key bit that places the necessity tier after every ordinary epoch.
+    uint256 internal constant NECESSITY_TIER_BIT = 1 << 255;
+
+    /// @notice Whether day `d`'s broadcast has arrived on this chain: an ARMED day is
+    ///         funded by its governor day-pool stamp; a pre-arming day by the known
+    ///         global interest for it (the schedule prices it once that is set).
+    function dayArrived(LibVaipakam.Storage storage s, uint256 d) internal view returns (bool) {
+        uint256 armedFrom = s.governorCommitArmedFromDay;
+        if (armedFrom != 0 && d >= armedFrom) return s.dayPoolStamp[d].stamped;
+        return s.knownGlobalSet[d];
+    }
+
+    /// @notice The gates a batch is admitted to a day's draw through, as flags (0 =
+    ///         ordinary). Day-agnostic on purpose: the day being drawn for is
+    ///         always arrived and still open, so "more than one arrived listed day
+    ///         not proven closed" is exactly "another arrived day with an unmet
+    ///         obligation", and "any unarrived listed day" is the necessity rule.
+    ///         Reads O(dayCount) for a multi-day batch, bounded by the fan-out cap;
+    ///         a wider list, or one not kept, is withheld as contested rather than
+    ///         read on a hot path.
+    function batchGates(LibVaipakam.Storage storage s, bytes32 batchId, LibVaipakam.TransportBatch storage b)
+        internal
+        view
+        returns (uint8 flags)
+    {
+        if (!s.ingressPackets[batchId].attested) flags |= GATE_UNATTESTED;
+        uint256 n = b.dayCount;
+        if (b.indexedDays != n) flags |= GATE_UNINDEXED;
+        if (n <= 1) return flags;
+        if (n > TRANSPORT_DAY_FANOUT_CAP) return flags | GATE_CONTESTED;
+        uint256[] storage listed = s.transportBatchDays[batchId];
+        if (listed.length != n) return flags | GATE_CONTESTED;
+        uint256 openArrived;
+        for (uint256 i; i < n; ) {
+            uint256 d = listed[i];
+            if (!dayArrived(s, d)) {
+                flags |= GATE_NECESSITY;
+            } else if (!s.dayObligationsClosed[d]) {
+                unchecked { ++openArrived; }
+            }
+            unchecked { ++i; }
+        }
+        if (openArrived > 1) flags |= GATE_CONTESTED;
+    }
+
+    /// @notice Whether the record under nonce key `nk` may stage from `batchId`
+    ///         NOW — the batch intrinsically stageable ({stageable}) AND its
+    ///         priority window ({LibVaipakam.TransportBatchWindow}) admitting
+    ///         this record — and whether that admission is the window's one
+    ///         PRIORITY reservation (A2-ii). The ONE rule every staging read
+    ///         applies (the planner, the take, the skipped re-checks); a draw
+    ///         never reads it, since a one-call draw consumes restored coverage
+    ///         directly. `nk == 0` reads as a stranger: ordinary admission only.
+    ///         - no window ever opened: ordinary;
+    ///         - window open (`now < closesAt`): nobody stages — the releaser
+    ///           cannot re-take what it released, and waiters register;
+    ///         - window closed, a registrant standing (its record alive on that
+    ///           nonce, its right unused, within one cadence of the close):
+    ///           only the registrant, as priority;
+    ///         - the priority reservation taken: that is the holder's referenced
+    ///           share, and the unreferenced remainder is ordinary — anyone's,
+    ///           first staged wins (#1566 PR 1 review);
+    ///         - otherwise ordinary.
+    function stageableFor(LibVaipakam.Storage storage s, bytes32 batchId, bytes32 nk)
+        internal
+        view
+        returns (bool ok, bool priority)
+    {
+        if (!stageable(s, batchId)) return (false, false);
+        LibVaipakam.TransportBatchWindow storage w = s.transportBatchWindows[batchId];
+        uint64 closesAt = w.closesAt;
+        if (closesAt == 0) return (true, false);
+        if (block.timestamp < closesAt) return (false, false);
+        if (w.winnerNonceKey == bytes32(0)) {
+            bytes32 oldest = w.oldestNonceKey;
+            if (oldest != bytes32(0) && _priorityRightStands(s, w, batchId)) return (nk == oldest, nk == oldest);
+        }
+        // Once the priority reservation is TAKEN it is the winner's referenced
+        // share, and the unreferenced remainder is anyone's — the contention
+        // rule, first staged wins (#1566 PR 1 review): holding the whole batch
+        // for the winner's lease let a tiny take freeze the rest of it.
+        return (true, false);
+    }
+
+    /// @dev The window's oldest registrant may still take its reservation: the
+    ///      obligation unused on this batch, its record alive on the registered
+    ///      nonce and still staging, and the close not a cadence old (an
+    ///      untaken right LAPSES, so a vanished registrant never holds a batch).
+    ///      A lapsed right is burnt when the next window opens ({openBatchWindow});
+    ///      a sibling hold unwound inside the cadence leaves it standing until
+    ///      then — a carry-over bounded by one cadence, kept by owner decision
+    ///      (2026-10-13) over a write on every unwind.
+    function _priorityRightStands(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.TransportBatchWindow storage w,
+        bytes32 batchId
+    ) private view returns (bool) {
+        bytes32 key = w.oldestKey;
+        if (s.transportBatchPriorityUsed[batchId][key]) return false;
+        LibVaipakam.StagingRecord storage r = s.stagingRecords[key];
+        if (r.phase != LibVaipakam.StagingPhase.Staging || recordNonceKey(key, r.nonce) != w.oldestNonceKey) return false;
+        return block.timestamp < uint256(w.closesAt) + STAGING_RETRY_CADENCE;
+    }
+
+    /// @notice A NON-SETTLEMENT release of `batchId`'s staged coverage by the
+    ///         record under `key` opens (or re-opens) the batch's priority
+    ///         window: one grace from now, registrants reset, the releaser
+    ///         recorded (A2-ii). Called from the unwind page beside
+    ///         {offerRestored}, never from a resolution — a resolution is the
+    ///         settlement itself, and its surplus return is not a release.
+    function openBatchWindow(LibVaipakam.Storage storage s, bytes32 batchId, bytes32 key) internal {
+        LibVaipakam.TransportBatchWindow storage w = s.transportBatchWindows[batchId];
+        // A priority right the window being replaced let LAPSE untaken is burnt
+        // as a taken one is (#1566 PR 1 review): one priority chance per
+        // obligation and batch, so registering and never staging cannot hold
+        // the next window's priority — the hostage bound counts each
+        // controlled obligation once whichever way its chance ended.
+        bytes32 lapsed = w.oldestKey;
+        if (
+            lapsed != bytes32(0) && w.winnerNonceKey == bytes32(0)
+                && block.timestamp >= uint256(w.closesAt) + STAGING_RETRY_CADENCE
+        ) {
+            s.transportBatchPriorityUsed[batchId][lapsed] = true;
+        }
+        w.closesAt = uint64(block.timestamp) + STAGING_GRACE;
+        w.releasedBy = key;
+        w.oldestKey = bytes32(0);
+        w.oldestNonceKey = bytes32(0);
+        w.oldestOpenedAt = 0;
+        w.winnerNonceKey = bytes32(0);
+        emit TransportBatchWindowOpened(batchId, key, w.closesAt);
+    }
+
+    /// @notice Record `r` (under `key`) ended a preparation short with these
+    ///         CONTESTED batches passed: mark each so the record may register
+    ///         for its window (A2-ii). Idempotent per record and batch.
+    function noteContested(
+        LibVaipakam.Storage storage s,
+        bytes32 key,
+        LibVaipakam.StagingRecord storage r,
+        bytes32[] memory contested
+    ) internal {
+        bytes32 nk = recordNonceKey(key, r.nonce);
+        for (uint256 i; i < contested.length; ) {
+            bytes32 id = contested[i];
+            if (!s.transportBatchWaiting[nk][id]) {
+                s.transportBatchWaiting[nk][id] = true;
+                emit TransportBatchContested(id, key);
+            }
+            unchecked { ++i; }
+        }
     }
 
     /// @notice The plan for a RECORD's resume: the day's late chain past what
@@ -2820,9 +3602,11 @@ library LibRewardCustody {
         uint256 dayId,
         bytes32 fromNode,
         bytes32 lateSeen,
-        bytes32[] memory extraIds
+        bytes32[] memory extraIds,
+        bytes32 nk
     ) internal view returns (TransportDrawPlan memory plan) {
         uint256 cap = TRANSPORT_DRAW_SCAN_CAP + extraIds.length;
+        plan.contested = new bytes32[](cap);
         bytes32[] memory ids = new bytes32[](cap);
         uint256[] memory bals = new uint256[](cap);
         uint256[] memory fRoom = new uint256[](cap);
@@ -2838,7 +3622,7 @@ library LibRewardCustody {
         // one page, not counted against the window — {_planAdd} skips one
         // still pending).
         for (uint256 k; k < extraIds.length; ) {
-            live = _planAdd(s, extraIds[k], ids, bals, fRoom, rRoom, keys, live, plan);
+            live = _planAdd(s, extraIds[k], nk, ids, bals, fRoom, rRoom, keys, live, plan);
             unchecked { ++k; }
         }
         // The late chain first — but only the epochs that sort AHEAD of the
@@ -2857,8 +3641,12 @@ library LibRewardCustody {
                 // re-checks already offered is passed here, not planned twice
                 // — a restarted chain walk meets the re-checked epochs again.
                 if (_keyBefore(s, s.ingressPackets[node].arrivedAt, node, fromNode) && !_among(extraIds, node)) {
+                    if (_windowBlocks(s, node, nk)) {
+                        plan.capHit = true; // the scan stops here; the resume starts at this link
+                        break;
+                    }
                     if (_pendingCandidate(s, node)) skipped[nSkipped++] = node;
-                    else live = _planAdd(s, node, ids, bals, fRoom, rRoom, keys, live, plan);
+                    else live = _planAdd(s, node, nk, ids, bals, fRoom, rRoom, keys, live, plan);
                 }
                 plan.lastLate = node;
                 node = s.transportDayLateNext[dayId][node];
@@ -2877,8 +3665,12 @@ library LibRewardCustody {
         }
         while (node != bytes32(0) && seen < TRANSPORT_DRAW_SCAN_CAP) {
             if (!_among(extraIds, node)) {
+                if (_windowBlocks(s, node, nk)) {
+                    plan.capHit = true; // the scan stops here; the resume starts at this node
+                    break;
+                }
                 if (_pendingCandidate(s, node)) skipped[nSkipped++] = node;
-                else live = _planAdd(s, node, ids, bals, fRoom, rRoom, keys, live, plan);
+                else live = _planAdd(s, node, nk, ids, bals, fRoom, rRoom, keys, live, plan);
             }
             plan.lastNode = node;
             node = s.transportDayNext[dayId][node];
@@ -2897,12 +3689,30 @@ library LibRewardCustody {
         plan.bals = bals;
         plan.freshRoom = fRoom;
         plan.recycledRoom = rRoom;
+        bytes32[] memory contested = plan.contested;
+        uint256 nContested = plan.contestedCount;
+        assembly ("memory-safe") {
+            mstore(contested, nContested)
+        }
     }
 
     /// @notice The takes for a record's resume: {planTransportDrawForRecord}
     ///         split for the ask, in one frame that holds no record pointer —
     ///         the split's own frame is wide, and a caller holding the key and
     ///         the record beside it is what pushed viaIR past the stack.
+    /// @notice One preparation page's result for a record (A2-ii: one struct,
+    ///         so the record's scan frame holds one pointer, not eight locals).
+    struct RecordTakes {
+        bytes32[] ids;
+        uint256[] fresh;
+        uint256[] recycled;
+        bytes32 lastNode;
+        bytes32 lastLate;
+        bool complete;
+        bytes32[] skipped;
+        bytes32[] contested;
+    }
+
     function planTakesForRecord(
         LibVaipakam.Storage storage s,
         uint256 dayId,
@@ -2910,31 +3720,21 @@ library LibRewardCustody {
         bytes32 lateSeen,
         uint256 askF,
         uint256 askR,
-        bytes32[] memory extraIds
-    )
-        internal
-        view
-        returns (
-            bytes32[] memory ids,
-            uint256[] memory fresh,
-            uint256[] memory recycled,
-            bytes32 lastNode,
-            bytes32 lastLate,
-            bool complete,
-            bytes32[] memory skipped
-        )
-    {
-        TransportDrawPlan memory plan = planTransportDrawForRecord(s, dayId, fromNode, lateSeen, extraIds);
+        bytes32[] memory extraIds,
+        bytes32 nk
+    ) internal view returns (RecordTakes memory out) {
+        TransportDrawPlan memory plan = planTransportDrawForRecord(s, dayId, fromNode, lateSeen, extraIds, nk);
         if (plan.ids.length != 0) {
             TransportTakes memory t = splitTransportTakes(plan, askF, askR);
-            ids = plan.ids;
-            fresh = t.fresh;
-            recycled = t.recycled;
+            out.ids = plan.ids;
+            out.fresh = t.fresh;
+            out.recycled = t.recycled;
         }
-        lastNode = plan.lastNode;
-        lastLate = plan.lastLate;
-        complete = !plan.capHit;
-        skipped = plan.skipped;
+        out.lastNode = plan.lastNode;
+        out.lastLate = plan.lastLate;
+        out.complete = !plan.capHit;
+        out.contested = plan.contested;
+        out.skipped = plan.skipped;
     }
 
     /// @notice Remember an epoch the record's own scan passed over pending.
@@ -2977,8 +3777,17 @@ library LibRewardCustody {
             out[n++] = r.skippedIds[i];
             unchecked { ++i; }
         }
+        bytes32 nk = recordNonceKey(recordKeyOf(r), r.nonce);
         for (uint256 i = from; i < to; ) {
             bytes32 id = log[i];
+            // A restoration the record cannot stage yet for its window stays
+            // UNREAD (A2-ii): the page ends here, the reservation keeps
+            // refusing on it, and the next preparation re-reads it once the
+            // window admits the record — nothing restored is ever passed over.
+            if (_windowBlocks(s, id, nk)) {
+                to = i;
+                break;
+            }
             if (!_amongFirst(out, n, id)) out[n++] = id;
             unchecked { ++i; }
         }
@@ -3021,6 +3830,28 @@ library LibRewardCustody {
         return b.balance != 0 && b.dayCount == 1 && !stageable(s, node);
     }
 
+    /// @dev A batch the record under `nk` could stage but for its priority
+    ///      window ({stageableFor}): the record's scan STOPS at it — the page is
+    ///      incomplete, the continuation stays before it, and the resume meets
+    ///      it again once the window admits the record (A2-ii). Not a pending
+    ///      candidate: the bounded skipped list is for epochs still untyped or
+    ///      incomplete, and a day's worth of windowed batches would overflow it.
+    function _windowBlocks(LibVaipakam.Storage storage s, bytes32 node, bytes32 nk) private view returns (bool) {
+        if (s.transportBatches[node].balance == 0 || !stageable(s, node)) return false;
+        (bool ok, ) = stageableFor(s, node, nk);
+        return !ok;
+    }
+
+    /// @dev A batch CONTESTED for the record under `nk` (A2-ii): typed, whole
+    ///      and single-day, but every unit of it held by OTHER records' staging
+    ///      — nothing for this record to take now, and the one it may register
+    ///      on for the batch's next window.
+    function _contestedFor(LibVaipakam.Storage storage s, bytes32 node, bytes32 nk) private view returns (bool) {
+        LibVaipakam.TransportBatch storage b = s.transportBatches[node];
+        return b.balance == 0 && b.stagedFresh + b.stagedRecycled != 0 && stageable(s, node)
+            && s.stagingBatchIndexPlusOne[nk][node] == 0;
+    }
+
     /// @dev One candidate into the record plan: live and stageable (attested,
     ///      whole, one day), rooms from its caps, sorted by the plan's key
     ///      exactly as {planTransportDraw} sorts — oldest arrival, batch id
@@ -3028,6 +3859,7 @@ library LibRewardCustody {
     function _planAdd(
         LibVaipakam.Storage storage s,
         bytes32 node,
+        bytes32 nk,
         bytes32[] memory ids,
         uint256[] memory bals,
         uint256[] memory fRoom,
@@ -3038,8 +3870,13 @@ library LibRewardCustody {
     ) private view returns (uint256) {
         LibVaipakam.TransportBatch storage b = s.transportBatches[node];
         uint256 bal = b.balance;
-        if (bal == 0 || !stageable(s, node)) return live;
-        (uint256 fr, uint256 rr) = _capRooms(s, node, b, bal, 0, 0);
+        if (bal == 0) {
+            if (_contestedFor(s, node, nk)) plan.contested[plan.contestedCount++] = node;
+            return live;
+        }
+        (bool ok, ) = stageableFor(s, node, nk);
+        if (!ok) return live;
+        (uint256 fr, uint256 rr) = _capRooms(s, node, b, bal);
         uint256 key = uint256(s.ingressPackets[node].arrivedAt);
         uint256 k = live;
         while (k != 0 && (keys[k - 1] > key || (keys[k - 1] == key && ids[k - 1] > node))) {
@@ -3063,6 +3900,16 @@ library LibRewardCustody {
     ///         extend the standing one, and stage the plan's legs into it.
     ///         Called by the claim's entry walk on a cap-hit deferral — on the
     ///         host, never inlined into a settle facet.
+    /// @notice Open or extend the staging record for (`user`, `side`, `day`)
+    ///         under operation `op` from a priced plan — the claim's (A2-i),
+    ///         or a forfeit's or an expiry's (A2-ii: a sweep's wide day is
+    ///         staged exactly as a claim's, under its own commitment, so the
+    ///         same record machinery prepares, reserves and resolves it and
+    ///         a sweep on a claim's day, or a claim on a sweep's, is refused
+    ///         by the commitment). Hosted ONCE on `RewardStagingFacet` behind
+    ///         a Diamond-gated entry and reached by {callStageDayFromPlan}:
+    ///         the walks' hosts cannot all carry it (the expiry walk's facet
+    ///         has under 3 KB of EIP-170 room).
     function stageDayFromPlan(
         LibVaipakam.Storage storage s,
         address user,
@@ -3072,28 +3919,37 @@ library LibRewardCustody {
         bytes32[] memory ids,
         uint256[] memory fresh,
         uint256[] memory recycled,
-        LibVaipakam.RewardDelivery deliverTo
+        LibVaipakam.RewardDelivery deliverTo,
+        LibVaipakam.StagingOp op,
+        bytes32 domainKey
     ) internal returns (bytes32 key, uint256 staged) {
-        key = stagingKey(user, side, day);
+        key = op == LibVaipakam.StagingOp.LegacySlice ? legacyRecordKey(domainKey, day) : stagingKey(user, side, day);
         LibVaipakam.StagingRecord storage r = s.stagingRecords[key];
-        bytes32 commitment = stagingCommitment(entryIds, LibVaipakam.StagingOp.Claim);
+        bytes32 commitment = stagingCommitment(entryIds, op);
         bool opened;
         if (r.phase == LibVaipakam.StagingPhase.None) {
-            // After a non-settlement release the same obligation may not open
-            // a record again until the cooldown has passed (Codex #2308 r2):
-            // the restored coverage is the window's, directly consumable by
-            // every other obligation meanwhile. The batch-keyed window and
-            // priority mode of the design are A2-ii's (#2305).
-            // The cooldown is published: set with `StagingCooldownSet` at the
-            // release and read back through the epoch view's
-            // `getStagingCooldown`, so this silent deferral is never a state a
-            // client cannot name (Codex #2308 r7).
-            if (block.timestamp < s.stagingCooldownUntil[key]) return (key, 0);
+            // No obligation-keyed cooldown since A2-ii: a release puts a
+            // window on the BATCH it released ({openBatchWindow}), so the same
+            // obligation may open a record again at once and stage the day's
+            // other epochs; what it released is the window's.
             opened = true;
             r.nonce = ++s.stagingNonce[key];
             r.user = user;
             r.side = side;
-            r.op = LibVaipakam.StagingOp.Claim;
+            r.op = op;
+            // A domain's day record (A2-ii): its deadline, reservation,
+            // resolution and unwind are the domain's; its pricing reads the
+            // domain's context. Stamped at opening, never changed.
+            r.domainKey = domainKey;
+            // The domain's live-record count: up at opening here, down at the
+            // record's close ({LibRewardStaging._close}); the extent clears at
+            // zero (A2-ii).
+            if (domainKey != bytes32(0)) ++s.stagingDomains[domainKey].liveRecords;
+            // A day no epoch lists has nothing to scan (A2-ii): the record is
+            // scan-complete at opening — a domain's live-only days are
+            // reservable without a preparation call each; a listed day's
+            // record scans its list as before.
+            if (s.transportBatchesByDay[day].length == 0) r.scanComplete = true;
             r.phase = LibVaipakam.StagingPhase.Staging;
             r.day = SafeCast.toUint64(day);
             r.openedAt = uint64(block.timestamp);
@@ -3109,10 +3965,13 @@ library LibRewardCustody {
         // A window with nothing stageable in it opens no record: an empty
         // record would hold nothing, reference nothing, and only stop the
         // walk on a day it could not help.
-        if (staged == 0 && opened) {
+        if (staged == 0 && opened && domainKey == bytes32(0)) {
             delete s.stagingRecords[key];
             return (key, 0);
         }
+        // A DOMAIN day with nothing to stage keeps its record (A2-ii): the
+        // day is still the domain's to reserve from the live sources and to
+        // pay in order — an empty record is the day's place in the extent.
         // Opened only once something was staged, so no indexer holds an
         // opening for a record that never stood (Codex #2308 r1 P2).
         if (opened) emit StagingRecordOpened(key, user, uint8(side), r.day, commitment);
@@ -3173,7 +4032,16 @@ library LibRewardCustody {
             uint256 br = recycled[k];
             if (bf + br != 0) {
                 bytes32 id = ids[k];
-                if (stageable(s, id)) {
+                (bool ok, bool priority) = stageableFor(s, id, recordNonceKey(key, r.nonce));
+                if (ok) {
+                    if (priority) {
+                        // The window's ONE priority reservation, taken: burnt
+                        // for this obligation on this batch for good; what it
+                        // took is its reference, and the remainder is open.
+                        s.transportBatchPriorityUsed[id][key] = true;
+                        s.transportBatchWindows[id].winnerNonceKey = recordNonceKey(key, r.nonce);
+                        emit TransportBatchPriorityStaged(id, key);
+                    }
                     LibVaipakam.TransportBatch storage b = s.transportBatches[id];
                     b.balance -= bf + br;
                     b.stagedFresh += bf;
@@ -3318,15 +4186,33 @@ library LibRewardCustody {
     ///         it needs no further revisit (Codex #2308 r3).
     function forgetSkippedIfStageable(LibVaipakam.Storage storage s, bytes32 key, LibVaipakam.StagingRecord storage r, bytes32 id) internal {
         bytes32 nk = recordNonceKey(key, r.nonce);
-        if (s.stagingSkippedSeen[nk][id] && stageable(s, id)) _forgetSkipped(s, nk, r, id);
+        (bool ok, ) = stageableFor(s, id, nk);
+        if (s.stagingSkippedSeen[nk][id] && ok) _forgetSkipped(s, nk, r, id);
     }
 
     /// @notice Whether any epoch the record passed over pending is stageable
     ///         now — what the reservation must not walk past.
+    /// @notice Whether record `r`'s scan is SETTLED — nothing the reservation
+    ///         would refuse `StagingScanIncomplete` for: the scan reached the
+    ///         list's end and the list has not grown since; no late link
+    ///         landed behind the record's place; no epoch it passed over
+    ///         pending has become stageable; and no restoration on its day is
+    ///         unread. The ONE statement of that rule (A2-iii), which the
+    ///         reservation refuses on the negation of; a record's day reads
+    ///         not executable to the static read whatever this says, since
+    ///         the day is the record's to settle, not the claim's.
+    function recordScanSettled(LibVaipakam.Storage storage s, LibVaipakam.StagingRecord storage r) internal view returns (bool) {
+        if (!r.scanComplete || s.transportBatchesByDay[r.day].length != r.listCountSeen) return false;
+        if (s.transportDayLateGen[r.day] != r.lateGenSeen || anySkippedNowStageable(s, r)) return false;
+        return r.restoredSeen == s.transportDayRestored[r.day].length;
+    }
+
     function anySkippedNowStageable(LibVaipakam.Storage storage s, LibVaipakam.StagingRecord storage r) internal view returns (bool) {
         uint256 n = r.skippedIds.length;
+        bytes32 nk = recordNonceKey(recordKeyOf(r), r.nonce);
         for (uint256 i; i < n; ) {
-            if (stageable(s, r.skippedIds[i])) return true;
+            (bool ok, ) = stageableFor(s, r.skippedIds[i], nk);
+            if (ok) return true;
             unchecked { ++i; }
         }
         return false;
@@ -3338,12 +4224,53 @@ library LibRewardCustody {
     )
         internal
         view
-        returns (uint256 available, bool capHit, uint256 withheldShared, uint256 withheldUnattested)
+        returns (uint256 available, bool capHit, uint256 withheldContested, uint256 withheldUnattested)
     {
         if (s.transportBatchesByDay[dayId].length == 0) return (0, false, 0, 0);
         TransportDrawPlan memory plan =
-            planTransportDraw(s, dayId, new bytes32[](0), new uint256[](0), new uint256[](0));
-        return (plan.available, plan.capHit, plan.withheldShared, plan.withheldUnattested);
+            planTransportDraw(s, dayId);
+        return (plan.available, plan.capHit, plan.withheldContested, plan.withheldUnattested);
+    }
+
+    /// @notice The ONE batch at `dayId`'s cursor — the first node after the
+    ///         day's consumption cursor — as the two leg rooms a draw could
+    ///         take from it right now, or zeros where that node is exhausted,
+    ///         not yet whole, withheld (shared or unattested) or absent.
+    /// @dev    Row 13's static coverage read (A2-iii; design question 10): the
+    ///         expiry clock, the lens's armed-need view and the conservative
+    ///         preview may not run a settlement, and may not scan either — a
+    ///         day's coverage spread over several batches cannot be summed in
+    ///         O(1) — so they read an obligation's STAGED legs plus at most
+    ///         this one batch, and read a wide unprepared day as not yet
+    ///         executable. Never over-counts: both rooms are each cap net of
+    ///         classification, consumption and staging ({_capRooms}), and the
+    ///         two together are bounded by the balance, fresh first.
+    /// @notice 3c-1 — a day's plannable rooms by tier: ordinary, and the necessity
+    ///         tier (epochs with an unarrived listed day, served only for a shortfall).
+    function transportTiersForDay(LibVaipakam.Storage storage s, uint256 dayId)
+        internal
+        view
+        returns (uint256 ordinary, uint256 necessity)
+    {
+        if (s.transportBatchesByDay[dayId].length == 0) return (0, 0);
+        TransportDrawPlan memory plan = planTransportDraw(s, dayId);
+        ordinary = plan.ordinaryFresh + plan.ordinaryRecycled;
+        necessity = plan.necessityFresh + plan.necessityRecycled;
+    }
+
+    function cursorBatchRooms(LibVaipakam.Storage storage s, uint256 dayId)
+        internal
+        view
+        returns (uint256 fr, uint256 rr)
+    {
+        if (s.transportBatchesByDay[dayId].length == 0) return (0, 0);
+        bytes32 node = _scanStart(s, dayId);
+        if (node == bytes32(0)) return (0, 0);
+        LibVaipakam.TransportBatch storage b = s.transportBatches[node];
+        uint256 bal = b.balance;
+        if (bal == 0 || batchGates(s, node, b) != 0) return (0, 0); // 3c-1: ordinary only
+        (fr, rr) = _capRooms(s, node, b, bal);
+        if (fr + rr > bal) rr = bal > fr ? bal - fr : 0;
     }
 
     /// @notice §5c's split of `dayId`'s cursor-visible epoch coverage across
@@ -3371,7 +4298,7 @@ library LibRewardCustody {
         AllocRequest memory q
     ) internal view returns (AllocResult memory r) {
         uint256 needFresh = q.needFresh > q.poolFresh ? q.poolFresh : q.needFresh;
-        TransportDrawPlan memory plan = planTransportDraw(s, q.dayId, q.ovIds, q.ovFresh, q.ovRecycled);
+        TransportDrawPlan memory plan = planTransportDraw(s, q.dayId);
         r.capHit = plan.capHit;
         if (plan.available == 0) return r;
         uint256 avail = plan.available;
@@ -3380,34 +4307,41 @@ library LibRewardCustody {
         uint256 sR = q.needRecycled > q.bucket ? q.needRecycled - q.bucket : 0;
         // Each leg bounded by the ordinary tier's capacity FOR THAT LEG as well
         // as by the joint figure (Codex #2276): see `ordinaryFresh`.
-        uint256 tf = _min3(sF, avail, plan.ordinaryFresh);
+        // 3c-1 — the SHORTFALL (what live funding and the bucket leave) may draw
+        // both tiers; the allocator's prefix-first order spends the ordinary
+        // tier before the necessity tier reaches it. The "more" phase below —
+        // transport-first beyond the shortfall — is ordinary only.
+        uint256 tf = _min3(sF, avail, plan.ordinaryFresh + plan.necessityFresh);
         avail -= tf;
-        uint256 tr = _min3(sR, avail, plan.ordinaryRecycled);
+        uint256 tr = _min3(sR, avail, plan.ordinaryRecycled + plan.necessityRecycled);
         avail -= tr;
+        uint256 ordLeftF = plan.ordinaryFresh > tf ? plan.ordinaryFresh - tf : 0;
+        uint256 ordLeftR = plan.ordinaryRecycled > tr ? plan.ordinaryRecycled - tr : 0;
         if (avail != 0) {
-            uint256 domainFresh = q.domainFresh == type(uint256).max ? needFresh : q.domainFresh;
-            uint256 domainRecycled = q.domainRecycled == type(uint256).max ? q.needRecycled : q.domainRecycled;
-            uint256 dF = domainFresh > liveF ? domainFresh - liveF : 0;
-            uint256 dR = domainRecycled > q.bucket ? domainRecycled - q.bucket : 0;
-            // The deficits NET of the mandatory draws just made (Codex #2276
-            // r4 P1): those draws already relieved each leg's deficit by
-            // exactly what they took, and choosing the residual leg on the
-            // gross figures parked coverage on a leg the other could not do
-            // without.
-            dF = dF > tf ? dF - tf : 0;
-            dR = dR > tr ? dR - tr : 0;
+            // The residual: whichever leg's own shortfall the mandatory draws
+            // left larger takes the rest first, fresh first on ties, then the
+            // other leg up to its need. The DAY is the domain (A2-iii): the
+            // gross-needs pre-pass that once widened this to the whole
+            // settlement call was a fixed point of the choice it guided, and
+            // under the round-26 rule it was inert — every drawable epoch's
+            // two rooms together never exceed its balance, so no unit can be
+            // flexible between legs and the order never changes what a leg
+            // receives. A claim spanning more than one chunk is A2-ii's
+            // DOMAIN, staged whole and challengeable, never a pre-pass.
+            uint256 dF = sF > tf ? sF - tf : 0;
+            uint256 dR = sR > tr ? sR - tr : 0;
             uint256 moreF = needFresh - tf;
             uint256 moreR = q.needRecycled - tr;
             if (dR > dF) {
-                uint256 a = _min3(moreR, avail, plan.ordinaryRecycled - tr);
+                uint256 a = _min3(moreR, avail, ordLeftR);
                 tr += a;
                 avail -= a;
-                tf += _min3(moreF, avail, plan.ordinaryFresh - tf);
+                tf += _min3(moreF, avail, ordLeftF);
             } else {
-                uint256 a = _min3(moreF, avail, plan.ordinaryFresh - tf);
+                uint256 a = _min3(moreF, avail, ordLeftF);
                 tf += a;
                 avail -= a;
-                tr += _min3(moreR, avail, plan.ordinaryRecycled - tr);
+                tr += _min3(moreR, avail, ordLeftR);
             }
         }
         // The rule's totals, then the ONE split that realizes them against
@@ -3432,7 +4366,7 @@ library LibRewardCustody {
         }
         // The call's epoch-write budget (Codex #2276 r14 P1): the epochs this
         // day would write, over what the transaction's draws have written
-        // (and, in a dry run, what its simulated draws have), must fit
+        // must fit
         // `TRANSPORT_DRAW_CALL_CAP`; past it the day is reported as a cap
         // hit with no coverage, which the day primitive defers on — the walk
         // ends, the days before stand, the next call starts here.
@@ -3444,8 +4378,7 @@ library LibRewardCustody {
                 }
                 unchecked { ++k; }
             }
-            (uint256 simulated, ) = overlayOf(q.ovIds, q.ovFresh, q.ovRecycled, transportWritesKey());
-            if (_transientWrites() + simulated + writes > TRANSPORT_DRAW_CALL_CAP) {
+            if (_transientWrites() + writes > TRANSPORT_DRAW_CALL_CAP) {
                 AllocResult memory deferred;
                 deferred.capHit = true;
                 return deferred;
@@ -3495,7 +4428,7 @@ library LibRewardCustody {
     ) internal returns (bool pruned) {
         if (fresh + recycled != 0) {
             TransportDrawPlan memory plan =
-                planTransportDraw(s, dayId, new bytes32[](0), new uint256[](0), new uint256[](0));
+                planTransportDraw(s, dayId);
             TransportTakes memory t = splitTransportTakes(plan, fresh, recycled);
             if (t.coveredFresh != fresh || t.coveredRecycled != recycled) {
                 revert IVaipakamErrors.TransportDrawExceedsCoverage(
@@ -3586,37 +4519,16 @@ library LibRewardCustody {
 
     /// @dev An epoch the cursor may pass: see {pruneTransportDayCursor}.
     function _exhaustedForCursor(LibVaipakam.Storage storage s, bytes32 id) private view returns (bool) {
-        return _exhaustedNet(s, id, 0, 0);
-    }
-
-    /// @dev The same rule net of a dry run's overlay (Codex #2276 r9 P2): what
-    ///      the prune would pass after the draws the overlay records.
-    function _exhaustedNet(
-        LibVaipakam.Storage storage s,
-        bytes32 id,
-        uint256 ovF,
-        uint256 ovR
-    ) private view returns (bool) {
         // A referenced batch is never exhausted for a cursor (3b-ii-A2,
         // #2305): a standing record may unwind into it, and a cursor that had
         // passed it would never revisit what the unwind restored.
         if (s.transportBatchReferences[id] != 0) return false;
         LibVaipakam.TransportBatch storage b = s.transportBatches[id];
         uint256 bal = b.balance;
-        bal = bal > ovF + ovR ? bal - (ovF + ovR) : 0;
         if (bal == 0) return true;
         if (!s.ingressPackets[id].attested) return false;
-        (uint256 fr, uint256 rr) = _capRooms(s, id, b, bal, ovF, ovR);
+        (uint256 fr, uint256 rr) = _capRooms(s, id, b, bal);
         return fr + rr == 0;
-    }
-
-    /// @notice The overlay key under which a dry run carries how many epochs
-    ///         its simulated draws have written so far (Codex #2276 r14 P1),
-    ///         as the entry's fresh figure: the plan adds it to the
-    ///         transaction's own count so the preview stops where the claim
-    ///         would. Keyed apart from every batch id.
-    function transportWritesKey() internal pure returns (bytes32) {
-        return keccak256("vaipakam.transport.draw-writes");
     }
 
     /// @dev The epochs this transaction's draws have written so far.
@@ -3633,14 +4545,6 @@ library LibRewardCustody {
         assembly ("memory-safe") {
             tstore(slot, add(tload(slot), n))
         }
-    }
-
-    /// @notice The overlay key under which a dry run records that it settled
-    ///         `dayId` (Codex #2276 r9 P2): an entry with a fresh figure of one
-    ///         under this key tells the plan the live draw's prune has run on
-    ///         the day. Keyed apart from every batch id.
-    function transportDaySettledKey(uint256 dayId) internal pure returns (bytes32) {
-        return keccak256(abi.encode("vaipakam.transport.day-settled", dayId));
     }
 
     /// @dev The day's prune: pass up to one window of leading exhausted nodes
@@ -3693,98 +4597,11 @@ library LibRewardCustody {
         if (s.transportBatchesByDay[q.dayId].length == 0) return r;
         bytes memory ret = _selfStatic(
             abi.encodeWithSignature(
-                "getTransportAllocationForDay((uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,bytes32[],uint256[],uint256[]))",
+                "getTransportAllocationForDay((uint256,uint256,uint256,uint256,uint256,uint256))",
                 q
             )
         );
         r = abi.decode(ret, (AllocResult));
-    }
-
-    /// @dev The preview's dry run of `user`'s ShareOfPool days, through the
-    ///      epoch facet ({RewardEpochFacet.getDryRunShareOfPoolDays}); see
-    ///      {LibInteractionRewards.dryRunShareOfPoolDaysView} for why it is
-    ///      hosted there ({RewardEpochViewFacet} since Codex #2276 r2). `armedTotal` is the FULL capped armed fresh the
-    ///      chunk charges the emission cap and the armed commitment, the
-    ///      epoch-paid fresh included (the public armed need, Codex #2276 r2
-    ///      P2); `liveArmed` is the part the live delivery must fund — what
-    ///      the delivered and backing gates test. The last two are the
-    ///      walk's own readings for the expiry gates (Codex #2276 r1): the
-    ///      chunk's draw on the recycle bucket net of the epoch-paid share,
-    ///      a deferred day included, and whether a day was deferred on the
-    ///      transport scan window.
-    function callDryRunShareOfPoolDays(
-        address user,
-        uint256 deliveredCap,
-        uint256 freshBudget
-    )
-        internal
-        view
-        returns (
-            uint256 userTotal,
-            uint256 armedTotal,
-            uint256 liveArmed,
-            uint256 bucketRecycled,
-            bool capHit,
-            bool deferred
-        )
-    {
-        bytes memory ret = _selfStatic(
-            abi.encodeWithSignature(
-                "getDryRunShareOfPoolDays(address,uint256,uint256)", user, deliveredCap, freshBudget
-            )
-        );
-        (userTotal, armedTotal, liveArmed, bucketRecycled, capHit, deferred) =
-            abi.decode(ret, (uint256, uint256, uint256, uint256, bool, bool));
-    }
-
-    /// @dev The allocation DOMAIN's gross needs for `user`'s next claim call,
-    ///      through the epoch facet ({RewardEpochFacet.getObligationDomainNeeds}).
-    ///      `max` — "the day is the domain" — when no day that call could
-    ///      price has an epoch listed. That is decided by the view itself,
-    ///      from the LEDGER: it enumerates the chunk's days without pricing
-    ///      them and reads each day's index length — the slots the walk's
-    ///      per-day short-circuit reads anyway — so a chain with no epochs
-    ///      pays the call and the enumeration and no pricing, and a ledger
-    ///      that already held epochs before this release is read exactly
-    ///      right from its first block, with no counter to backfill and no
-    ///      migration (Codex #2276 r2 P1: a counter appended here read zero
-    ///      over pre-existing batches until the next admission, and on a
-    ///      chain the old wire no longer fed it stayed zero for good).
-    ///      Two reads through {RewardEpochViewFacet}: the probe first, the
-    ///      pricing only where it says a listed day is in reach.
-    function callDomainNeeds(address user) internal view returns (uint256 domainFresh, uint256 domainRecycled) {
-        bytes memory ret = _selfStatic(abi.encodeWithSignature("getObligationDomainListsAnEpoch(address)", user));
-        if (!abi.decode(ret, (bool))) return (type(uint256).max, type(uint256).max);
-        ret = _selfStatic(abi.encodeWithSignature("getObligationDomainNeeds(address)", user));
-        (domainFresh, domainRecycled) = abi.decode(ret, (uint256, uint256));
-    }
-
-    /// @dev A settlement's treasury and epoch legs through the epoch facet
-    ///      ({RewardEpochFacet.epochSettleClaimLegs}): the live-funded fresh
-    ///      absorbed through the bounding operation, the epoch-funded legs
-    ///      recycled in place, the recycled commitment released for the
-    ///      treasury's recycled AND for the user's epoch-paid recycled — the
-    ///      latter without a bucket debit, since the bucket never paid it
-    ///      (Codex #2276 r1). Hosted off `RewardClaimFacet` and
-    ///      `InteractionRewardsFacet` for their EIP-170 headroom.
-    function callSettleClaimLegs(
-        uint256 liveFresh,
-        uint256 epochLegs,
-        uint256 treasuryRecycledRelease,
-        uint256 userEpochRecycled,
-        uint256 refId
-    ) internal {
-        if (liveFresh + epochLegs + treasuryRecycledRelease + userEpochRecycled == 0) return;
-        _custody(
-            abi.encodeWithSignature(
-                "epochSettleClaimLegs(uint256,uint256,uint256,uint256,uint256)",
-                liveFresh,
-                epochLegs,
-                treasuryRecycledRelease,
-                userEpochRecycled,
-                refId
-            )
-        );
     }
 
     /// @dev {drawTransportForDay} through the epoch facet. With both legs zero
@@ -3792,6 +4609,121 @@ library LibRewardCustody {
     ///      that, so an ordinary day with nothing to draw makes no call.
     ///      Returns whether the day's cursor MOVED — persisted progress the
     ///      claim must keep even when it paid nothing (Codex #2276 r4 P2).
+    /// @dev The record-opening seam ({stageDayFromPlan}) by Diamond self-call
+    ///      to its one host, `RewardStagingFacet.stageDayFromPlanInternal`
+    ///      (A2-ii): a walk stages a cap-hit day without inlining the record
+    ///      machinery into its own facet.
+    function callStageDayFromPlan(
+        address user,
+        LibVaipakam.RewardSide side,
+        uint256 day,
+        uint256[] memory entryIds,
+        bytes32[] memory ids,
+        uint256[] memory fresh,
+        uint256[] memory recycled,
+        LibVaipakam.RewardDelivery deliverTo,
+        LibVaipakam.StagingOp op,
+        bytes32 domainKey
+    ) internal returns (bytes32 key, uint256 staged) {
+        bytes memory ret = _custodyReturning(
+            abi.encodeWithSignature(
+                "stageDayFromPlanInternal(address,uint8,uint256,uint256[],bytes32[],uint256[],uint256[],uint8,uint8,bytes32)",
+                user,
+                uint8(side),
+                day,
+                entryIds,
+                ids,
+                fresh,
+                recycled,
+                uint8(deliverTo),
+                uint8(op),
+                domainKey
+            )
+        );
+        (key, staged) = abi.decode(ret, (bytes32, uint256));
+    }
+
+    /// @dev The leg settle for a close-out of any operation (A2-ii): the
+    ///      live-funded fresh absorbed under `source`, the epoch-funded legs
+    ///      recycled in place, the treasury's recycled commitment released,
+    ///      the user's epoch-paid recycled retired without a bucket debit —
+    ///      ONE implementation on the epoch facet
+    ///      ({RewardEpochFacet.epochSettleLegs}) for the claim, the forfeit
+    ///      sweep, the expiry sweep and every staged record's payout, so no
+    ///      two of them can route a leg differently. `source` is a
+    ///      {LibVpfiRecycle.RecycleSource}; `refId` is the forfeit's loan id,
+    ///      else zero. PR C-2 — `eraFunded` is the close-out's era-funded
+    ///      fresh, absorbed as its own class with no bound charge; it rides
+    ///      this one call so that no close-out inlines the recycle credit
+    ///      (the settle facet has no room for it). No call when every figure
+    ///      is zero.
+    /// @notice The per-record operations a DOMAIN page drives (A2-ii), each
+    ///         hosted ONCE on the record facet that already inlines it and
+    ///         reached by Diamond self-call: the domain facet holds the ordering
+    ///         and the snapshot, nothing of the record machinery (EIP-170 — the
+    ///         inlined reserve, resolve and unwind paths put it 2,191 bytes over).
+    ///         Reverts bubble verbatim.
+    function callReserveRecordInDomain(bytes32 key) internal returns (bool ok) {
+        bytes memory ret = _custodyReturning(abi.encodeWithSignature("reserveRecordInDomainInternal(bytes32)", key));
+        ok = abi.decode(ret, (bool));
+    }
+
+    function callResolveRecordInDomain(bytes32 key) internal returns (bool done) {
+        bytes memory ret = _custodyReturning(abi.encodeWithSignature("resolveRecordInDomainInternal(bytes32)", key));
+        done = abi.decode(ret, (bool));
+    }
+
+    function callUnwindRecordInDomain(bytes32 key) internal returns (bool done) {
+        bytes memory ret = _custodyReturning(abi.encodeWithSignature("unwindRecordInDomainInternal(bytes32)", key));
+        done = abi.decode(ret, (bool));
+    }
+
+    /// @notice The legacy slice's hosted entries (A2-ii (c)): the gate and the
+    ///         settle live on the domain facet; the per-record preparation on the
+    ///         staging facet; the per-record consumption on the settle facet.
+    ///         Every settlement site carries only these stubs. Reverts bubble.
+    function callLegacySliceEpochs(uint256 entryId) internal returns (bool ready, uint256 epochFresh, bool stepped) {
+        bytes memory ret = _custodyReturning(abi.encodeWithSignature("legacySliceEpochsInternal(uint256)", entryId));
+        (ready, epochFresh, stepped) = abi.decode(ret, (bool, uint256, bool));
+    }
+
+    function callLegacySliceSettled(uint256 entryId) internal {
+        _custody(abi.encodeWithSignature("legacySliceSettledInternal(uint256)", entryId));
+    }
+
+    function callPrepareRecordInDomain(bytes32 key) internal {
+        _custody(abi.encodeWithSignature("prepareRecordInDomainInternal(bytes32)", key));
+    }
+
+    function callConsumeRecordInLegacy(bytes32 key) internal returns (uint256 held, bool done, bool unsettled) {
+        bytes memory ret = _custodyReturning(abi.encodeWithSignature("consumeRecordInLegacyInternal(bytes32)", key));
+        (held, done, unsettled) = abi.decode(ret, (uint256, bool, bool));
+    }
+
+    function callSettleLegs(
+        uint8 source,
+        uint256 liveFresh,
+        uint256 epochLegs,
+        uint256 treasuryRecycledRelease,
+        uint256 userEpochRecycled,
+        uint256 eraFunded,
+        uint256 refId
+    ) internal {
+        if (liveFresh + epochLegs + treasuryRecycledRelease + userEpochRecycled + eraFunded == 0) return;
+        _custody(
+            abi.encodeWithSignature(
+                "epochSettleLegs(uint8,uint256,uint256,uint256,uint256,uint256,uint256)",
+                source,
+                liveFresh,
+                epochLegs,
+                treasuryRecycledRelease,
+                userEpochRecycled,
+                eraFunded,
+                refId
+            )
+        );
+    }
+
     function callDrawTransportForDay(
         uint256 dayId,
         uint256 fresh,
@@ -3803,6 +4735,25 @@ library LibRewardCustody {
             abi.encodeWithSignature("epochDrawForDay(uint256,uint256,uint256)", dayId, fresh, recycled)
         );
         pruned = abi.decode(ret, (bool));
+    }
+
+    /// @dev PR C-2 — the era allocation for a day: a VIEW on {RewardEraFacet},
+    ///      reached by staticcall from the pricing primitive like the transport
+    ///      allocation, so no pricing host inlines the registry read.
+    function callEraAllocateForDay(LibVaipakam.Storage storage s, uint64 era, uint256 need)
+        internal
+        view
+        returns (uint256 eraFresh)
+    {
+        if (need == 0 || era >= s.custodyEraCurrent) return 0;
+        bytes memory ret = _selfStatic(abi.encodeWithSignature("getCustodyEraAllocationForDay(uint64,uint256)", era, need));
+        eraFresh = abi.decode(ret, (uint256));
+    }
+
+    /// @dev PR C-2 — the per-day era draw, hosted on {RewardEraFacet}.
+    function callEraDrawForDay(uint64 era, uint256 dayId, uint256 amount) internal {
+        if (amount == 0) return;
+        _custody(abi.encodeWithSignature("eraDrawForDay(uint64,uint256,uint256)", era, dayId, amount));
     }
 
     /// @dev {RewardCustodyFacet.custodyDeliverClaim}: the claim's three legs to
@@ -3912,6 +4863,29 @@ library LibRewardCustody {
         // custody ledgers settlement moved for it never need revisiting.
     }
 
+    /// @notice 3d-1 — attest a packet's split FROM ITS OWN WIRE: a d6 delivery
+    ///         carries the split the sender recorded, authenticated by the
+    ///         transport, so the caps are known at ingress and no later
+    ///         attestation message is needed.
+    /// @dev    Writes the same three fields {attestPacketSplit} writes and
+    ///         emits the same event, so every reader of a packet's caps sees one
+    ///         kind of attestation. A packet is attested once: a later Base
+    ///         attestation for a d6 remit finds `attested` set and is held to
+    ///         the same figures by {attestPacketSplit}'s own guard.
+    function attestPacketFromWire(
+        LibVaipakam.Storage storage s,
+        bytes32 h,
+        uint256 fresh,
+        uint256 recycled
+    ) internal {
+        LibVaipakam.IngressPacket storage p = s.ingressPackets[h];
+        if (p.attested) revert IVaipakamErrors.IngressPacketAlreadyAttested(h);
+        p.freshAttested = fresh;
+        p.recycledAttested = recycled;
+        p.attested = true;
+        emit IngressPacketSplitAttested(h, p.remitter, p.remitId, fresh, recycled);
+    }
+
     /// @notice Move `amount` of a packet's classification between components.
     /// @dev    The correction path's single write to a packet's classification
     ///         (Codex #2276). It never retypes a transport leg (Codex #2276 r26
@@ -3971,6 +4945,11 @@ library LibRewardCustody {
         p.actualReceived = actualReceived;
         p.freshShare = freshShare;
         p.recycledShare = recycledShare;
+        // #1566 PR C revision — every packet belongs to an era from its arrival:
+        // the live one unless its ingress names another ({stampPacketEra}). A
+        // packet recorded before the registry existed reads era 0, which is
+        // exactly its era — no era opens before the registry does.
+        p.custodyEra = s.custodyEraCurrent;
         // The receipt a delivery creates on a MIRROR (kinds 1 and 2) —
         // `(srcChainId, receivedAt, amount, remitter)`, bound to the stamp —
         // is written here with the record, so the ingress facet at EIP-170
@@ -4014,22 +4993,26 @@ library LibRewardCustody {
 
     /// @notice A quarantined compensation into the row — `relocate` for a
     ///         quarantine landing (tokens at the Diamond, relocated
-    ///         measured), `uncredit` for a demotion (the credit's remainder
-    ///         re-attributed in-holder) — with the stranded record and the
-    ///         reservation told how much of them the holder now backs.
+    ///         measured), `fromProvisional` for a demotion (the provisional
+    ///         credit's held value, moved in-holder out of the `Provisional`
+    ///         row it never left, #2459 r5) — with the stranded record and
+    ///         the reservation told how much of them the holder now backs.
     /// @return got What entered the row.
     function unclassifiedQuarantine(
         LibVaipakam.Storage storage s,
         bytes32 h,
         bytes32 receiptKey,
         uint256 relocate,
-        uint256 uncredit
+        uint256 fromProvisional
     ) internal returns (uint256 got) {
         if (relocate != 0) {
             relocateToHolder(s, LibVaipakam.RewardCustodyRow.Unclassified, relocate);
             got = relocate;
         }
-        if (uncredit != 0) got += uncreditFreshInHolder(s, uncredit);
+        if (fromProvisional != 0) {
+            move(s, LibVaipakam.RewardCustodyRow.Provisional, LibVaipakam.RewardCustodyRow.Unclassified, fromProvisional);
+            got += fromProvisional;
+        }
         if (got == 0) return 0;
         LibVaipakam.StrandedRecovery storage sr = s.strandedRecoveries[receiptKey];
         sr.held += got;

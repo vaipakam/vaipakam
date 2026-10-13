@@ -1,45 +1,6 @@
 [
   {
     "type": "function",
-    "name": "matchIntent",
-    "inputs": [
-      {
-        "name": "lender",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "lendingAsset",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "collateralAsset",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "counterpartyOfferId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "fillAmount",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "matchOffers",
     "inputs": [
       {
@@ -251,6 +212,16 @@
         "name": "borrowerOfferId",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "matcher",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "initiator",
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "outputs": [
@@ -291,61 +262,6 @@
   },
   {
     "type": "event",
-    "name": "IntentMatched",
-    "inputs": [
-      {
-        "name": "lender",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "matcher",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "lendingAsset",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
-      },
-      {
-        "name": "collateralAsset",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
-      },
-      {
-        "name": "sliceOfferId",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "counterpartyOfferId",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "fillAmount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "OfferClosed",
     "inputs": [
       {
@@ -358,7 +274,7 @@
         "name": "reason",
         "type": "uint8",
         "indexed": false,
-        "internalType": "enum OfferMatchFacet.OfferCloseReason"
+        "internalType": "enum LibOfferMatchExecute.OfferCloseReason"
       }
     ],
     "anonymous": false
@@ -481,11 +397,6 @@
   },
   {
     "type": "error",
-    "name": "AggregatorAdaptersPaused",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "AmountNoOverlap",
     "inputs": []
   },
@@ -538,37 +449,6 @@
   },
   {
     "type": "error",
-    "name": "EncumbranceUnderflow",
-    "inputs": [
-      {
-        "name": "user",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "asset",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "tokenId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "requested",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "available",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "EnforcedPause",
     "inputs": []
   },
@@ -585,93 +465,12 @@
   },
   {
     "type": "error",
-    "name": "IntentCapitalInsufficient",
-    "inputs": [
-      {
-        "name": "owner",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "lend",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "coll",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "requested",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "available",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "InvalidOfferType",
     "inputs": []
   },
   {
     "type": "error",
-    "name": "KeeperAccessRequired",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "LenderIntentCollateralUnresolvable",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "LenderIntentDurationTooLong",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "LenderIntentExposureExceeded",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "LenderIntentFillBelowMin",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "LenderIntentFullTermRequired",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "LenderIntentInactive",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "LenderIntentPartialRepayNotAllowed",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "LenderIntentVpfiLendingUnsupported",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "MatchHFTooLow",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "NFTBurnFailed",
     "inputs": []
   },
   {
@@ -847,10 +646,5 @@
         "internalType": "uint256"
       }
     ]
-  },
-  {
-    "type": "error",
-    "name": "VaultWithdrawFailed",
-    "inputs": []
   }
 ]

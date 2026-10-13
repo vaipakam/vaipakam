@@ -7,6 +7,7 @@ import {LibRewardStaging} from "../libraries/LibRewardStaging.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
+import {LibRewardCustody} from "../libraries/LibRewardCustody.sol";
 
 /**
  * @title RewardStagingFacet
@@ -41,6 +42,10 @@ contract RewardStagingFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
     ///         #2308 r17).
     /// @custom:event-category state-change/reward-staging
     event StagingRecordOpened(bytes32 indexed key, address indexed user, uint8 side, uint64 day, bytes32 commitment);
+    /// @notice A2-ii priority-window events the staging library emits through
+    ///         this facet's entries, declared here for the exported ABI.
+    event TransportBatchContested(bytes32 indexed batchId, bytes32 indexed key);
+    event TransportBatchPriorityStaged(bytes32 indexed batchId, bytes32 indexed key);
 
     // ────────────────────────── the staging lifecycle ──────────────────────────
 
@@ -66,4 +71,22 @@ contract RewardStagingFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         LibRewardStaging.reserve(LibVaipakam.storageSlot(), key);
     }
 
+    /// @notice A domain record's reservation, hosted here (A2-ii; EIP-170): the
+    ///         domain facet's reservation page reaches it by Diamond self-call,
+    ///         so the reservation machinery is compiled into one facet. Gated
+    ///         to the Diamond; no reentrancy guard or pause check of its own —
+    ///         the page that calls it carries both.
+    function reserveRecordInDomainInternal(bytes32 key) external returns (bool ok) {
+        if (msg.sender != address(this)) revert RewardCustodyOnlyDiamondInternal(msg.sender);
+        return LibRewardStaging.reserveInDomain(LibVaipakam.storageSlot(), key);
+    }
+
+    /// @notice A domain record's preparation page, hosted here (A2-ii (c);
+    ///         EIP-170): a legacy slice's preparation reaches it by Diamond
+    ///         self-call, so the scan machinery is compiled into one facet.
+    ///         Gated to the Diamond; the step that calls it carries the guards.
+    function prepareRecordInDomainInternal(bytes32 key) external returns (uint256 stagedFresh, uint256 stagedRecycled) {
+        if (msg.sender != address(this)) revert RewardCustodyOnlyDiamondInternal(msg.sender);
+        return LibRewardStaging.prepareInDomain(LibVaipakam.storageSlot(), key);
+    }
 }
