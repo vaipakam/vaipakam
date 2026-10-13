@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { IndexedLoanStatus } from '../data/indexer';
-import { initiatedPrincipal, lockedCollateralLine, type LockedLineLabels } from './positionAmounts';
+import {
+  initiatedPrincipal,
+  lockedCollateralLine,
+  withIndexedInitPrincipal,
+  type LockedLineLabels,
+} from './positionAmounts';
 
 describe('initiatedPrincipal (#2453)', () => {
   it('reads the initiation snapshot, not the live principal', () => {
@@ -69,5 +74,32 @@ describe('lockedCollateralLine (#2454)', () => {
   it('keeps "No collateral" for an open loan that holds none', () => {
     expect(line(false, 'active')).toBe('No collateral');
     expect(line(false, 'fallback_pending')).toBe('No collateral');
+  });
+});
+
+describe('withIndexedInitPrincipal (#2461 r1)', () => {
+  const live = [
+    { loanId: 1, initPrincipal: null, role: 'lender' as const },
+    { loanId: 2, initPrincipal: null, role: 'borrower' as const },
+    { loanId: 3, initPrincipal: null, role: 'lender' as const },
+  ];
+
+  it('takes the initiated amount from the indexed row with the same loan id', () => {
+    const out = withIndexedInitPrincipal(live, [
+      { loanId: 1, initPrincipal: '100' },
+      { loanId: 2, initPrincipal: '200' },
+    ]);
+    expect(out.map((r) => r.initPrincipal)).toEqual(['100', '200', null]);
+    // Everything else on the chain row stays the chain's.
+    expect(out.map((r) => r.role)).toEqual(['lender', 'borrower', 'lender']);
+  });
+
+  it('keeps null where the indexer has no value, and when the indexed leg failed', () => {
+    expect(withIndexedInitPrincipal(live, [{ loanId: 1, initPrincipal: null }])[0].initPrincipal).toBeNull();
+    expect(withIndexedInitPrincipal(live, null).map((r) => r.initPrincipal)).toEqual([null, null, null]);
+  });
+
+  it('adds no row the chain did not return', () => {
+    expect(withIndexedInitPrincipal(live, [{ loanId: 99, initPrincipal: '1' }])).toHaveLength(3);
   });
 });

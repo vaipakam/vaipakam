@@ -28,6 +28,7 @@ import {
   type IndexerFreshness,
 } from './indexer';
 import { readLoanRowLive } from './liveLoanRow';
+import { withIndexedInitPrincipal } from '../lib/positionAmounts';
 import { scanTerminalOfferIds } from './bookCatchUp';
 import {
   readOfferRowLive,
@@ -298,9 +299,11 @@ export function useMyLoansFull() {
       // fallback when the chain leg is unavailable — but their ids
       // still ride along (see MyLoanRows) for Activity's
       // participation filter.
-      const rows = [...(chainRows ?? indexedRows ?? [])].sort(
-        (a, b) => b.startAt - a.startAt,
-      );
+      // #2461 r1 (P1) — the chain rows cannot know what a loan was
+      // initiated with; that one field comes from the indexed leg.
+      const rows = [
+        ...(chainRows !== null ? withIndexedInitPrincipal(chainRows, indexedRows) : (indexedRows ?? [])),
+      ].sort((a, b) => b.startAt - a.startAt);
       return {
         rows,
         chainOk: chainRows !== null,

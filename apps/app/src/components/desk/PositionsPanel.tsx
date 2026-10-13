@@ -59,19 +59,27 @@ function HealthBadge({ loan }: { loan: PositionLoan }) {
 
 function PositionRow({ loan }: { loan: PositionLoan }) {
   const meta = useTokenMeta(loan.lendingAsset);
+  // #2453 — the position and what the loan started with, not the live
+  // outstanding principal, and never "You lent".
   const initPrincipal = initiatedPrincipal(loan);
+  const amount =
+    initPrincipal === null
+      ? null
+      : `${meta.data ? formatTokenAmount(initPrincipal, meta.data.decimals) : '…'} ${meta.data?.symbol ?? ''}`;
+  const title =
+    loan.role === 'borrower'
+      ? amount === null
+        ? copy.positions.rowBorrowedAmountUnknown
+        : copy.positions.rowBorrowed(amount)
+      : amount === null
+        ? copy.positions.rowLentAmountUnknown
+        : copy.positions.rowLent(amount);
   const remaining = daysRemaining(loan.startTime, loan.durationDays);
   return (
     <div className="item-row">
       <span className="row-main">
         <span className="row-title">
-          {loan.role === 'borrower'
-            ? copy.positions.roleBorrower
-            : copy.positions.roleLender}{' '}
-          {/* #2453 — what was lent or borrowed, not the live outstanding principal. */}
-          {initPrincipal === null
-            ? copy.positions.amountUnknownAfterRole
-            : `${meta.data ? formatTokenAmount(initPrincipal, meta.data.decimals) : '…'} ${meta.data?.symbol ?? ''}`}{' '}
+          {title}{' '}
           ·{' '}
           <span title={`${loan.interestRateBps} bps`}>
             {formatBpsAsPercent(loan.interestRateBps)}

@@ -464,6 +464,13 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         // and only after taking it did the rows turn to "failed". The
         // switch was an invitation to discover a dead end.
         sellerWindowReadable: live.lenderForfeitFrom !== undefined,
+        // #2461 r1 (P2) — the two amounts a terminal transition moves,
+        // from the same struct: when this read reconciles the status ahead
+        // of the indexed row, the row's principal and collateral are just
+        // as stale, and pairing them with the live status would state the
+        // pre-match collateral as still locked.
+        principal: live.principal,
+        collateralAmount: live.collateralAmount,
       };
     },
   });
@@ -1251,9 +1258,17 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     liveStatus.data === undefined ? undefined : Number(liveStatus.data.status),
   );
   const statusIsReconciled = reconciledStatus !== loan.data.status;
-  const row = statusIsReconciled
-    ? { ...loan.data, status: reconciledStatus }
-    : loan.data;
+  // A reconciled row takes the live amounts with the live status (#2461 r1):
+  // one snapshot, never the chain's status beside the indexer's amounts.
+  const row =
+    statusIsReconciled && liveStatus.data
+      ? {
+          ...loan.data,
+          status: reconciledStatus,
+          principal: liveStatus.data.principal.toString(),
+          collateralAmount: liveStatus.data.collateralAmount.toString(),
+        }
+      : loan.data;
   const view = loanStateView(row);
   const isRental = row.assetType !== AssetType.ERC20;
   // Judged on the RECONCILED status (live override folded in): a loan
@@ -3049,12 +3064,12 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                   : copy.positions.details.nftRentalBetween(nftStr)
               : role === 'borrower'
                 ? lentStr === null
-                  ? copy.positions.details.youBorrowedAmountUnknown
-                  : copy.positions.details.youBorrowed(lentStr)
+                  ? copy.positions.details.positionBorrowedAmountUnknown
+                  : copy.positions.details.positionBorrowed(lentStr)
                 : role === 'lender'
                   ? lentStr === null
-                    ? copy.positions.details.youLentAmountUnknown
-                    : copy.positions.details.youLent(lentStr)
+                    ? copy.positions.details.positionLentAmountUnknown
+                    : copy.positions.details.positionLent(lentStr)
                   : lentStr === null
                     ? copy.positions.details.loanBetweenAmountUnknown
                     : copy.positions.details.loanBetween(lentStr)}

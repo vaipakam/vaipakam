@@ -1236,8 +1236,6 @@
         "collateralBackPlain": "{{collateral}} garantía de vuelta.",
         "owedPrincipalPlusInterest": "{{principal}} + los intereses de este préstamo. En los préstamos de plazo completo (la opción por defecto del protocolo) se pagan los intereses de todo el plazo aunque se devuelva antes; los préstamos día a día cobran solo lo que se ha sumado. El importe exacto se lee en vivo cuando confirmas; la aprobación incluye un pequeño margen que nunca se gasta.",
         "youRent": "Alquilas {{nft}}",
-        "youBorrowed": "Pediste prestado {{principal}}",
-        "youLent": "Prestaste {{principal}}",
         "paidNow": "~{{amount}} {{symbol}}, pagado ahora.",
         "exactAmountNote": "El importe exacto se lee en vivo cuando confirmas; la aprobación lleva un pequeño margen que nunca se gasta.",
         "toppingUp": "Añadir más garantía {{symbol}} hace el préstamo más seguro y aleja la liquidación.",
@@ -1390,12 +1388,14 @@
           "submitting": "Enviando…",
           "waiting": "Esperando la billetera…"
         },
-        "youBorrowedAmountUnknown": "Pediste prestado en este préstamo — el importe que pediste no está disponible ahora mismo",
-        "youLentAmountUnknown": "Prestaste en este préstamo — el importe que prestaste no está disponible ahora mismo",
         "loanBetweenAmountUnknown": "Un préstamo entre otras dos wallets — el importe prestado no está disponible ahora mismo",
         "nothingLockedClosed": "Ahora no hay nada bloqueado — este préstamo se ha cerrado.",
         "nothingLockedInternalMatch": "Ahora no hay nada bloqueado — el emparejamiento interno pagó el colateral del prestatario al prestamista del préstamo con el que se emparejó. Cualquier excedente vuelve al prestatario mediante su reclamación.",
-        "receiveInternalMatchProceeds": "Los fondos que el emparejamiento interno registró para el prestamista de este préstamo."
+        "receiveInternalMatchProceeds": "Los fondos que el emparejamiento interno registró para el prestamista de este préstamo.",
+        "positionBorrowed": "Tu posición prestataria · {{principal}} tomados cuando empezó este préstamo",
+        "positionLent": "Tu posición prestamista · {{principal}} prestados cuando empezó este préstamo",
+        "positionBorrowedAmountUnknown": "Tu posición prestataria · el importe tomado cuando empezó este préstamo no está disponible ahora mismo",
+        "positionLentAmountUnknown": "Tu posición prestamista · el importe prestado cuando empezó este préstamo no está disponible ahora mismo"
       },
       "loading": "Cargando tus posiciones…",
       "openOffers": "Ofertas abiertas",
@@ -1423,8 +1423,6 @@
       "emptyBody": "Pide prestado o presta para empezar.",
       "unavailable": "No pudimos cargar tus posiciones ahora mismo. Tus fondos no se ven afectados — inténtalo de nuevo en un momento.",
       "sourcesDegraded": "Una de las fuentes de datos de esta página no está disponible temporalmente. Tus posiciones actuales se muestran desde la fuente restante y los elementos cambiados recientemente pueden tardar un momento en aparecer.",
-      "roleBorrower": "Pediste prestado",
-      "roleLender": "Prestaste",
       "whatIfNothingBorrower": "Si no haces nada y el préstamo pasa su vencimiento y el período de gracia {{grace}} (una breve ventana extra para reembolsar antes de que el prestamista pueda tomar la garantía), el prestamista puede recibir tu garantía {{collateral}}.",
       "whatIfNothingLender": "Si el prestatario no reembolsa antes del vencimiento más el período de gracia {{grace}} (una breve ventana extra de reembolso), puedes reclamar su garantía.",
       "whatIfNothingViewer": "Si el prestatario no reembolsa antes del vencimiento más el período de gracia {{grace}} (una breve ventana extra de reembolso), el prestamista puede reclamar la garantía.",
@@ -1459,9 +1457,12 @@
       "whatNextClosed": "Este préstamo está completamente liquidado — no queda nada por hacer.",
       "whatNextRentalEnded": "Este alquiler terminó. Cualquier tarifa ganada o colchón reembolsable puede reclamarse abajo por los titulares de posición — nada más puede cambiarlo.",
       "settledAhead": "Esta posición ya se cerró en la blockchain — el estado que ves aquí está en vivo. Tus listas pueden tardar un momento en actualizarse.",
-      "amountUnknownAfterRole": "un importe que no está disponible ahora mismo",
       "amountUnknown": "Importe no disponible",
-      "owedRepaidAmountUnknown": "Nada — este préstamo se reembolsó por completo."
+      "owedRepaidAmountUnknown": "Nada — este préstamo se reembolsó por completo.",
+      "rowBorrowed": "Posición prestataria · {{amount}} tomados al inicio",
+      "rowLent": "Posición prestamista · {{amount}} prestados al inicio",
+      "rowBorrowedAmountUnknown": "Posición prestataria · el importe tomado al inicio no está disponible",
+      "rowLentAmountUnknown": "Posición prestamista · el importe prestado al inicio no está disponible"
     },
     "powerSurface": {
       "body": "Esta página muestra las ofertas abiertas de un par una junto a otra y te deja fijar tu propia tasa. ¿Prefieres ir paso a paso? Las páginas Pedir prestado y Prestar hacen lo mismo con explicaciones.",

@@ -6,9 +6,10 @@
  * amount: a partial repayment, a partial swap-to-repay and internal matching
  * all reduce it, and a full internal match takes it to zero. `initPrincipal`
  * is what the loan was initiated with — the indexer stamps it once, from the
- * loan's `LoanInitiated`, and never rewrites it. "You lent" / "You borrowed"
- * describe the second; what is owed describes the first. Reading the live one
- * for the headline is how an internally matched loan came to say "You lent 0".
+ * loan's `LoanInitiated`, and never rewrites it. What a position STARTED
+ * with describes the second; what is owed describes the first. Reading the
+ * live one for the headline is how an internally matched loan came to say
+ * "You lent 0".
  *
  * Pure, so both rules are tested rather than read.
  */
@@ -24,6 +25,30 @@ export function initiatedPrincipal(loan: Pick<IndexedLoan, 'initPrincipal'>): bi
   const raw = loan.initPrincipal;
   if (typeof raw !== 'string' || !/^\d+$/.test(raw)) return null;
   return BigInt(raw);
+}
+
+/** Carry each loan's indexed `initPrincipal` onto the chain-read rows.
+ *
+ *  When the wallet's RPC answers, the live enumeration is the SOLE row
+ *  source for the positions lists (ghosts must not survive — see
+ *  `useMyLoansFull`), but the live struct holds only the outstanding
+ *  principal. The initiated amount is a fact about the loan, not about who
+ *  holds it now, so it is taken from the indexed row with the same loan id
+ *  whatever role that row was fetched under. A loan the indexer has not seen
+ *  keeps `null` — never the live principal. */
+export function withIndexedInitPrincipal<T extends Pick<IndexedLoan, 'loanId' | 'initPrincipal'>>(
+  liveRows: readonly T[],
+  indexedRows: readonly Pick<IndexedLoan, 'loanId' | 'initPrincipal'>[] | null,
+): T[] {
+  if (!indexedRows || indexedRows.length === 0) return [...liveRows];
+  const byId = new Map<number, string>();
+  for (const r of indexedRows) {
+    if (typeof r.initPrincipal === 'string') byId.set(r.loanId, r.initPrincipal);
+  }
+  return liveRows.map((r) => {
+    const recorded = byId.get(r.loanId);
+    return recorded === undefined ? r : { ...r, initPrincipal: recorded };
+  });
 }
 
 /** The labels {@link lockedCollateralLine} chooses from. */

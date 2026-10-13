@@ -3060,13 +3060,20 @@ const copySource = {
         ['principal'],
       ),
       youRent: tmpl('You rent {{nft}}', ['nft']),
-      youBorrowed: tmpl('You borrowed {{principal}}', ['principal']),
-      youLent: tmpl('You lent {{principal}}', ['principal']),
       // #2453 — the headline names the amount the loan was INITIATED with,
-      // never the live outstanding principal. When this row does not carry
-      // that amount (read straight from the chain), it says so.
-      youBorrowedAmountUnknown: 'You borrowed on this loan — the amount you borrowed isn’t available right now',
-      youLentAmountUnknown: 'You lent on this loan — the amount you lent isn’t available right now',
+      // never the live outstanding principal, and describes the POSITION
+      // rather than crediting the reader with it: whoever holds a position
+      // now may have bought it, and a buyer never lent or borrowed anything
+      // (the same rule as the claim lines, Alpha02ConnectedApp.md). When the
+      // row does not carry the initiated amount, it says so.
+      positionBorrowed: tmpl('Your borrowing position · {{principal}} borrowed when this loan started', [
+        'principal',
+      ]),
+      positionLent: tmpl('Your lending position · {{principal}} lent when this loan started', ['principal']),
+      positionBorrowedAmountUnknown:
+        'Your borrowing position · the amount borrowed when this loan started isn’t available right now',
+      positionLentAmountUnknown:
+        'Your lending position · the amount lent when this loan started isn’t available right now',
       loanBetweenAmountUnknown: 'A loan between two other wallets — the amount lent isn’t available right now',
       paidNow: tmpl('~{{amount}} {{symbol}}, paid now.', ['amount', 'symbol']),
       exactAmountNote:
@@ -3324,11 +3331,13 @@ const copySource = {
       'We couldn’t load your positions right now. Your funds are unaffected — please try again in a moment.',
     sourcesDegraded:
       'One of this page\u2019s data sources is temporarily unavailable. Your current positions are shown from the remaining source and recently changed items may take a moment to appear.',
-    roleBorrower: 'You borrowed',
-    roleLender: 'You lent',
-    // #2453 — follows roleBorrower / roleLender when the row does not carry
-    // the amount the loan was initiated with.
-    amountUnknownAfterRole: 'an amount that isn’t available right now',
+    // #2453 — a position row's title: the position, and what the loan
+    // started with — never "You lent", which a holder who bought the
+    // position never did.
+    rowBorrowed: tmpl('Borrowing position · {{amount}} borrowed at the start', ['amount']),
+    rowLent: tmpl('Lending position · {{amount}} lent at the start', ['amount']),
+    rowBorrowedAmountUnknown: 'Borrowing position · the amount borrowed at the start isn’t available',
+    rowLentAmountUnknown: 'Lending position · the amount lent at the start isn’t available',
     // #2453 — a history row's amount, when it is not carried.
     amountUnknown: 'Amount not available',
     // UX-030 — "grace period" glossed inline, with the concrete window
